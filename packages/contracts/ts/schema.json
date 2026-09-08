@@ -190,7 +190,7 @@
     "ContextLinks": {
       "properties": {
         "contract_version": {
-          "default": "1.0",
+          "default": "1.1",
           "title": "Contract Version",
           "type": "string"
         },
@@ -334,7 +334,7 @@
     "ExtractionResult": {
       "properties": {
         "contract_version": {
-          "default": "1.0",
+          "default": "1.1",
           "title": "Contract Version",
           "type": "string"
         },
@@ -440,7 +440,7 @@
     "GapReport": {
       "properties": {
         "contract_version": {
-          "default": "1.0",
+          "default": "1.1",
           "title": "Contract Version",
           "type": "string"
         },
@@ -489,7 +489,7 @@
     "IntelligenceSnapshot": {
       "properties": {
         "contract_version": {
-          "default": "1.0",
+          "default": "1.1",
           "title": "Contract Version",
           "type": "string"
         },
@@ -792,7 +792,7 @@
     "TranscriptReady": {
       "properties": {
         "contract_version": {
-          "default": "1.0",
+          "default": "1.1",
           "title": "Contract Version",
           "type": "string"
         },
@@ -821,8 +821,10 @@
       "type": "object"
     },
     "TranscriptSource": {
+      "description": "How the audio reached us. Both MVP paths converge on one TranscriptReady.",
       "enum": [
         "file_upload",
+        "web_mic",
         "desktop_app"
       ],
       "title": "TranscriptSource",

@@ -69,7 +69,8 @@ reports) → VP/CTO (dashboard).
 ## 5. Key features
 
 ### 5.1 Audio capture and per-speaker transcription (A)
-- Input: uploaded recording file. Desktop app is Phase 2.
+- Input: live browser microphone or an uploaded recording file — both MVP.
+  Desktop app is Phase 2.
 - Whisper STT + Pyannote diarization + speaker embedding identification.
 - Real-time transcription with timestamps. Speakers start as "Speaker 1" and
   switch to a name once identified.
@@ -152,7 +153,8 @@ Implementation rules: `../architecture/privacy.md`.
 
 ```
 [Input]
-  Recording file upload ───┐
+  Live browser mic ────────┐
+  Recording file upload ───┤
   Material upload (PDF) ───┤
   Desktop app (Phase 2) ───┘
               │

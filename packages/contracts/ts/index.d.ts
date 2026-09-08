@@ -1,5 +1,5 @@
 /**
- * Generated from packages/contracts (contract version 1.0).
+ * Generated from packages/contracts (contract version 1.1).
  * Do not edit. Run `pnpm run gen:contracts` and commit the result.
  */
 
@@ -35,10 +35,12 @@ export type Utterances = Utterance[];
 export type Duration = number;
 export type Participants = string[];
 /**
+ * How the audio reached us. Both MVP paths converge on one TranscriptReady.
+ *
  * This interface was referenced by `AutuneContracts`'s JSON-Schema
  * via the `definition` "TranscriptSource".
  */
-export type TranscriptSource = "file_upload" | "desktop_app";
+export type TranscriptSource = "file_upload" | "web_mic" | "desktop_app";
 export type Language = string;
 export type OriginalAudioDeleted = boolean;
 export type PiiMasked = boolean;

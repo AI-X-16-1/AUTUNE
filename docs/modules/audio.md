@@ -133,7 +133,29 @@ A carries most of the system's privacy burden. Read
 - Korean STT accuracy is improved with domain hints and accumulated corrections,
   not by keeping audio.
 
+## Both input paths are in the MVP
+
+Live browser recording and file upload are both MVP, decided 2026-09-08
+(issue #18). The design assumed this all along — S06 offers an audio-source
+radio, S10 checks the microphone, S12 shows the upload pipeline and S13 shows
+the live transcript.
+
+What this costs, and what it does not:
+
+- **Contracts are unaffected.** `TranscriptReady` stays terminal: it is
+  published once, when the meeting ends. B, C and D analyse a finished meeting —
+  gap detection needs the whole discussion, context linking needs the final
+  decisions — so nothing downstream wants partial results.
+- **Only the live transcript screen needs incremental data**, and that flows
+  from A straight to the frontend over a live channel, never through a contract
+  or an event. Keep it that way: an incremental contract would force B, C and D
+  to handle partial input for no benefit.
+- **A pays for two entry paths** converging on one persistence-and-publish step.
+  Both must delete the raw audio and mask before the first write; neither path
+  gets an exemption.
+- `source` distinguishes them (`web_mic`, `file_upload`) for analytics. It is
+  not a branch point for consumers.
+
 ## Open questions
 
-- Real-time streaming transcription versus post-upload batch for the MVP.
 - Speaker-enrollment UX: prompt on first meeting, or opt-in later.

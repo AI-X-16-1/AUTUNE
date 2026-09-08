@@ -19,7 +19,13 @@ masking → raw-audio deletion → `utterances` → publish `TranscriptReady`.
 
 ## Consumes
 
-Uploaded recording files. Nothing from another module.
+Uploaded recording files and live browser microphone audio — both are MVP.
+Nothing from another module.
+
+Both paths converge on one persistence-and-publish step, and `TranscriptReady`
+is still published once, at the end. Incremental transcript updates go straight
+to the frontend over a live channel; never put partial results in a contract or
+an event, or B, C and D inherit a problem they do not have.
 
 ## Publishes
 

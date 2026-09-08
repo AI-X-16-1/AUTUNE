@@ -76,7 +76,9 @@ Notes for consumers:
 - `text` is already PII-masked. Do not attempt to recover the original.
 - `privacy.original_audio_deleted` must be `true`. If it is not, the pipeline
   is broken: fail loudly, do not proceed.
-- `source` is `"file_upload"` in the MVP. `"desktop_app"` arrives in Phase 2.
+- `source` is `"file_upload"` or `"web_mic"` — both are MVP and both produce
+  the same payload, so consumers need not branch on it. `"desktop_app"`
+  arrives in Phase 2.
 
 ### 2. `ExtractionResult` — B → E
 

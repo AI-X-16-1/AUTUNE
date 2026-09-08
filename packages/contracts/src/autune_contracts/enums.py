@@ -50,7 +50,10 @@ class NliLabel(StrEnum):
 
 
 class TranscriptSource(StrEnum):
+    """How the audio reached us. Both MVP paths converge on one TranscriptReady."""
+
     FILE_UPLOAD = "file_upload"
+    WEB_MIC = "web_mic"  # Live browser recording (S06, S10, S13)
     DESKTOP_APP = "desktop_app"  # Phase 2
 
 

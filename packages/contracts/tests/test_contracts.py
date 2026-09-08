@@ -12,6 +12,7 @@ from autune_contracts import (
     IntelligenceSnapshot,
     Payload,
     TranscriptReady,
+    TranscriptSource,
     UtteranceKind,
     fixtures,
     validate_major_version,
@@ -72,6 +73,23 @@ def test_major_version_mismatch_is_rejected() -> None:
 def test_matching_major_version_passes() -> None:
     validate_major_version(GapReport.model_validate(fixtures.load("gap_report")))
     assert CONTRACT_VERSION.startswith("1.")
+
+
+def test_an_older_minor_version_is_still_accepted() -> None:
+    """The fixtures say 1.0 while the code is on 1.1, on purpose.
+
+    Additive changes must not break a producer that has not caught up yet — that
+    is the whole promise of the additive-only policy.
+    """
+    payload = fixtures.load("transcript_ready.short")
+    assert payload["contract_version"] == "1.0"
+    validate_major_version(TranscriptReady.model_validate(payload))
+
+
+def test_both_mvp_input_paths_exist() -> None:
+    """Live browser recording and file upload are both MVP (issue #18)."""
+    assert TranscriptSource.WEB_MIC == "web_mic"
+    assert TranscriptSource.FILE_UPLOAD == "file_upload"
 
 
 def test_utterance_kinds_are_exactly_five() -> None:
