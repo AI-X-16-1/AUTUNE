@@ -19,7 +19,7 @@ git config core.hooksPath .githooks   # refuse accidental pushes to main
 cp .env.example .env             # then fill in the secrets you need
 
 docker compose -f infra/docker-compose.yml up -d      # postgres (pgvector), redis
-uv sync
+uv sync --all-packages
 pnpm install
 
 uv run alembic -c infra/alembic.ini upgrade heads
@@ -30,8 +30,16 @@ pnpm --filter @autune/web dev                        # web   :3000
 uv run python -m autune_bot                          # Slack bot (socket mode)
 ```
 
+`--all-packages` is not optional. The workspace root is virtual — it declares
+`package = false` and no dependencies of its own — so a plain `uv sync` installs
+the dev tooling and nothing else, and the first `import autune_core` fails.
+
 Working on one module only? `uv sync --package autune-gap` installs just that
-module's dependencies and skips several gigabytes of ML wheels.
+module's dependencies and skips several gigabytes of ML wheels. It brings in
+`autune_core` and `autune_contracts` as well, because your module depends on
+them, but not the other four modules — so the full test suite cannot run in that
+environment. Run `uv sync --all-packages` before `uv run pytest`, or scope the
+run to your own tests with `uv run pytest modules/gap`.
 
 ## Services
 
@@ -133,7 +141,8 @@ transcript, generate one.
 | Symptom | Cause |
 | --- | --- |
 | `alembic upgrade head` errors about multiple heads | Use `heads`, plural. See `migrations.md` |
-| Import error for `autune_core` | `uv sync` was not run, or the module is missing from the workspace members list |
+| Import error for `autune_core` | `uv sync` was run without `--all-packages`. The root is a virtual workspace, so a plain sync installs no members. Re-run `uv sync --all-packages` |
+| `pytest` fails collecting another module's tests | The environment was built with `uv sync --package <yours>`, which installs only your module. Use `uv sync --all-packages`, or run `uv run pytest modules/<yours>` |
 | Celery task never runs | Worker is not listening on that queue. Check `-Q` |
 | import-linter fails | You imported another module. Fix the import, not the config |
 | Whisper is very slow | Running on CPU. Set `AUTUNE_AUDIO_DEVICE=cuda` or use a smaller model locally |
