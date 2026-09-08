@@ -1,0 +1,15 @@
+{
+  "_comment": "No speaking ratios here, by design. See docs/architecture/privacy.md section 3.",
+  "contract_version": "1.0",
+  "meeting_id": "mtg_20260918_002",
+  "team_id": "team_001",
+  "quality_score": { "grade": "B", "value": 0.74 },
+  "gap_distribution": { "technical_spec": 3, "ownership": 1 },
+  "alignment": [
+    { "role_a": "PM", "role_b": "Dev", "score": 0.62 }
+  ],
+  "predictions": [
+    { "kind": "misalignment_risk", "horizon_days": 14, "probability": 0.31 }
+  ],
+  "missing_sources": []
+}

@@ -37,8 +37,15 @@ These are not optional; a PR without them does not merge.
 
 ## Fixtures
 
-Shared fixtures live in `packages/contracts/fixtures/` so all five modules test
-against the same payloads:
+Shared fixtures ship inside the contracts package so all five modules test
+against the same payloads, however the package is installed:
+
+```python
+from autune_contracts import fixtures
+
+payload = fixtures.load("transcript_ready.unidentified")
+```
+
 
 ```
 fixtures/

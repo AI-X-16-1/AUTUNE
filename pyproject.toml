@@ -55,6 +55,11 @@ strict = false
 warn_unused_ignores = true
 warn_redundant_casts = true
 ignore_missing_imports = true
+# Source only. Every module has its own tests/ package, so type-checking them
+# together makes mypy see several packages all named "tests".
+files = ["packages/*/src", "modules/*/src", "apps/*/src"]
+explicit_package_bases = true
+mypy_path = "packages/contracts/src:packages/core/src:packages/integrations/src:modules/audio/src:modules/extraction/src:modules/gap/src:modules/context/src:modules/intelligence/src:apps/api/src:apps/worker/src"
 
 [tool.pytest.ini_options]
 testpaths = ["packages", "modules"]

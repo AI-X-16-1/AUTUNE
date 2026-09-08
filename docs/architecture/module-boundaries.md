@@ -44,8 +44,8 @@ Shared shapes. Pydantic models, no behavior, no I/O, no database access.
 See `contracts.md`.
 
 ```python
-from autune_contracts import TranscriptReady   # correct
-from autune_audio.schemas import Transcript    # forbidden
+from autune_contracts import TranscriptReady  # correct
+from autune_audio.schemas import Transcript  # forbidden
 ```
 
 ### 2. Celery events
@@ -56,6 +56,7 @@ type serialized to JSON. See `async-pipeline.md`.
 ```python
 # in autune_audio
 publish("autune.transcript.ready", TranscriptReady(...).model_dump())
+
 
 # in autune_extraction
 @app.task(name="autune.extraction.on_transcript_ready")

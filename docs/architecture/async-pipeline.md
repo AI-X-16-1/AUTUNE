@@ -77,8 +77,10 @@ array, a tensor, or a file path to something in local storage.
 ```python
 # publishing
 from autune_contracts import TranscriptReady
+
 payload = TranscriptReady(...).model_dump(mode="json")
 celery_app.send_task("autune.extraction.on_transcript_ready", args=[payload])
+
 
 # consuming
 @celery_app.task(name="autune.extraction.on_transcript_ready")
@@ -136,6 +138,7 @@ Users watch a progress bar during processing. Report progress through
 
 ```python
 from autune_core.progress import report
+
 report(meeting_id, stage="diarization", percent=45)
 ```
 

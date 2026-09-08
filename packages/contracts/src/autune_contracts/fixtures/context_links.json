@@ -1,0 +1,24 @@
+{
+  "contract_version": "1.0",
+  "meeting_id": "mtg_20260918_002",
+  "topic_links": [
+    {
+      "topic_label": "search personalization",
+      "linked_meeting_id": "mtg_20260904_002",
+      "linked_meeting_date": "2026-09-04",
+      "similarity": 0.83, "rerank_score": 0.91
+    }
+  ],
+  "decision_lineage": [
+    {
+      "decision_id": "dec_014",
+      "current_statement": "인기순 정렬로 진행",
+      "previous_statement": "실시간 개인화로 진행",
+      "previous_meeting_id": "mtg_20260904_002",
+      "change_type": "reversed",
+      "nli_label": "contradiction",
+      "confidence": 0.87,
+      "key_stakeholders_absent": ["user_002"]
+    }
+  ]
+}

@@ -92,7 +92,7 @@ Notes for consumers:
       "assignee_label": "김서연",
       "due_date": "2026-09-25",
       "source_utterance_ids": ["utt_001"],
-      "status": "open",
+      "status": "todo",
       "confidence": 0.88,
       "external_refs": [
         {"system": "notion", "url": "https://..."},
@@ -120,6 +120,10 @@ Notes for consumers:
 
 `kind` is one of `commitment`, `decision`, `open_question`, `concern`,
 `ambiguous`.
+
+`status` is one of `needs_confirmation`, `todo`, `in_progress`, `done` — the
+four columns of the action board (S17) and the Jira states they map to.
+`needs_confirmation` means Autune has the item but no external issue exists yet.
 
 ### 3. `GapReport` — C → E
 
@@ -226,15 +230,46 @@ carries it.
 Consumers validate the major version and reject a mismatch loudly rather than
 guessing.
 
+## Fixtures
+
+`autune_contracts.fixtures` ships the payloads every module tests against:
+
+```python
+from autune_contracts import TranscriptReady, fixtures
+
+transcript = TranscriptReady.model_validate(fixtures.load("transcript_ready.unidentified"))
+```
+
+Available: `transcript_ready.short`, `transcript_ready.typical`,
+`transcript_ready.unidentified`, `extraction_result`, `gap_report`,
+`context_links`, `intelligence_snapshot`.
+
+`transcript_ready.unidentified` exists because every consumer must handle a null
+`speaker_id`, and it is the case people forget. Fixtures hold synthetic text
+only — never commit a real transcript, even masked.
+
+## Consuming a payload safely
+
+```python
+from autune_contracts import TranscriptReady, validate_major_version
+
+transcript = TranscriptReady.model_validate(payload)
+validate_major_version(transcript)  # reject an incompatible producer
+transcript.require_privacy_guarantees()  # refuse unmasked or undeleted input
+```
+
+`require_privacy_guarantees()` raises when module A published without deleting
+the raw audio or without masking. Call it before touching `utterances`.
+
 ## TypeScript generation
 
 ```bash
 pnpm run gen:contracts
 ```
 
-Generates `packages/contracts/ts/` from the Pydantic models. Never edit the
-generated output. Regenerate and commit whenever the Python models change; CI
-fails if the committed output is out of date.
+Generates `packages/contracts/ts/schema.json` and `index.d.ts` from the Pydantic
+models. Never edit the generated output. Regenerate and commit whenever the
+Python models change; CI fails if the committed output is out of date.
 
 ## Adding a field — the checklist
 

@@ -1,0 +1,917 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "AutuneContracts",
+  "type": "object",
+  "properties": {
+    "TranscriptReady": {
+      "$ref": "#/$defs/TranscriptReady"
+    },
+    "ExtractionResult": {
+      "$ref": "#/$defs/ExtractionResult"
+    },
+    "GapReport": {
+      "$ref": "#/$defs/GapReport"
+    },
+    "ContextLinks": {
+      "$ref": "#/$defs/ContextLinks"
+    },
+    "IntelligenceSnapshot": {
+      "$ref": "#/$defs/IntelligenceSnapshot"
+    }
+  },
+  "required": [
+    "TranscriptReady",
+    "ExtractionResult",
+    "GapReport",
+    "ContextLinks",
+    "IntelligenceSnapshot"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "ActionItem": {
+      "properties": {
+        "id": {
+          "pattern": "^act_",
+          "title": "Id",
+          "type": "string"
+        },
+        "description": {
+          "title": "Description",
+          "type": "string"
+        },
+        "assignee_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "None until someone is assigned.",
+          "title": "Assignee Id"
+        },
+        "assignee_label": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Assignee Label"
+        },
+        "due_date": {
+          "anyOf": [
+            {
+              "format": "date",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Due Date"
+        },
+        "source_utterance_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Source Utterance Ids",
+          "type": "array"
+        },
+        "status": {
+          "$ref": "#/$defs/ActionStatus",
+          "default": "needs_confirmation"
+        },
+        "confidence": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Confidence",
+          "type": "number"
+        },
+        "external_refs": {
+          "items": {
+            "$ref": "#/$defs/ExternalRef"
+          },
+          "title": "External Refs",
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "description",
+        "confidence"
+      ],
+      "title": "ActionItem",
+      "type": "object"
+    },
+    "ActionStatus": {
+      "description": "Action item state. Maps 1:1 to the columns on the action board (S17).",
+      "enum": [
+        "needs_confirmation",
+        "todo",
+        "in_progress",
+        "done"
+      ],
+      "title": "ActionStatus",
+      "type": "string"
+    },
+    "AmbiguousAgreement": {
+      "description": "Assent too weak to treat as a commitment; the speaker was asked to confirm.",
+      "properties": {
+        "utterance_id": {
+          "pattern": "^utt_",
+          "title": "Utterance Id",
+          "type": "string"
+        },
+        "reason": {
+          "title": "Reason",
+          "type": "string"
+        },
+        "confirmation_sent": {
+          "default": false,
+          "title": "Confirmation Sent",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "utterance_id",
+        "reason"
+      ],
+      "title": "AmbiguousAgreement",
+      "type": "object"
+    },
+    "ChangeType": {
+      "description": "How a decision moved between meetings.",
+      "enum": [
+        "unchanged",
+        "modified",
+        "reversed",
+        "new"
+      ],
+      "title": "ChangeType",
+      "type": "string"
+    },
+    "Classification": {
+      "properties": {
+        "utterance_id": {
+          "pattern": "^utt_",
+          "title": "Utterance Id",
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/UtteranceKind"
+        },
+        "confidence": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Confidence",
+          "type": "number"
+        },
+        "nli_verified": {
+          "default": false,
+          "title": "Nli Verified",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "utterance_id",
+        "kind",
+        "confidence"
+      ],
+      "title": "Classification",
+      "type": "object"
+    },
+    "ContextLinks": {
+      "properties": {
+        "contract_version": {
+          "default": "1.0",
+          "title": "Contract Version",
+          "type": "string"
+        },
+        "meeting_id": {
+          "pattern": "^mtg_",
+          "title": "Meeting Id",
+          "type": "string"
+        },
+        "topic_links": {
+          "items": {
+            "$ref": "#/$defs/TopicLink"
+          },
+          "title": "Topic Links",
+          "type": "array"
+        },
+        "decision_lineage": {
+          "items": {
+            "$ref": "#/$defs/DecisionChange"
+          },
+          "title": "Decision Lineage",
+          "type": "array"
+        }
+      },
+      "required": [
+        "meeting_id"
+      ],
+      "title": "ContextLinks",
+      "type": "object"
+    },
+    "DecisionChange": {
+      "properties": {
+        "decision_id": {
+          "pattern": "^dec_",
+          "title": "Decision Id",
+          "type": "string"
+        },
+        "current_statement": {
+          "title": "Current Statement",
+          "type": "string"
+        },
+        "previous_statement": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Previous Statement"
+        },
+        "previous_meeting_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Previous Meeting Id"
+        },
+        "change_type": {
+          "$ref": "#/$defs/ChangeType"
+        },
+        "nli_label": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NliLabel"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "confidence": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Confidence",
+          "type": "number"
+        },
+        "key_stakeholders_absent": {
+          "description": "User ids absent when the decision changed. Drives the drift warning.",
+          "items": {
+            "type": "string"
+          },
+          "title": "Key Stakeholders Absent",
+          "type": "array"
+        }
+      },
+      "required": [
+        "decision_id",
+        "current_statement",
+        "change_type",
+        "confidence"
+      ],
+      "title": "DecisionChange",
+      "type": "object"
+    },
+    "ExternalRef": {
+      "properties": {
+        "system": {
+          "$ref": "#/$defs/ExternalSystem"
+        },
+        "url": {
+          "title": "Url",
+          "type": "string"
+        },
+        "external_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "External Id"
+        }
+      },
+      "required": [
+        "system",
+        "url"
+      ],
+      "title": "ExternalRef",
+      "type": "object"
+    },
+    "ExternalSystem": {
+      "enum": [
+        "notion",
+        "jira",
+        "slack"
+      ],
+      "title": "ExternalSystem",
+      "type": "string"
+    },
+    "ExtractionResult": {
+      "properties": {
+        "contract_version": {
+          "default": "1.0",
+          "title": "Contract Version",
+          "type": "string"
+        },
+        "meeting_id": {
+          "pattern": "^mtg_",
+          "title": "Meeting Id",
+          "type": "string"
+        },
+        "action_items": {
+          "items": {
+            "$ref": "#/$defs/ActionItem"
+          },
+          "title": "Action Items",
+          "type": "array"
+        },
+        "classifications": {
+          "items": {
+            "$ref": "#/$defs/Classification"
+          },
+          "title": "Classifications",
+          "type": "array"
+        },
+        "ambiguous_agreements": {
+          "items": {
+            "$ref": "#/$defs/AmbiguousAgreement"
+          },
+          "title": "Ambiguous Agreements",
+          "type": "array"
+        }
+      },
+      "required": [
+        "meeting_id"
+      ],
+      "title": "ExtractionResult",
+      "type": "object"
+    },
+    "Gap": {
+      "properties": {
+        "id": {
+          "pattern": "^gap_",
+          "title": "Id",
+          "type": "string"
+        },
+        "category": {
+          "title": "Category",
+          "type": "string"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        },
+        "severity": {
+          "$ref": "#/$defs/GapSeverity"
+        },
+        "risk_score": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Risk Score",
+          "type": "number"
+        },
+        "template_item": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Template Item"
+        },
+        "related_topic_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Related Topic Ids",
+          "type": "array"
+        },
+        "suggested_question": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Suggested Question"
+        }
+      },
+      "required": [
+        "id",
+        "category",
+        "title",
+        "severity",
+        "risk_score"
+      ],
+      "title": "Gap",
+      "type": "object"
+    },
+    "GapReport": {
+      "properties": {
+        "contract_version": {
+          "default": "1.0",
+          "title": "Contract Version",
+          "type": "string"
+        },
+        "meeting_id": {
+          "pattern": "^mtg_",
+          "title": "Meeting Id",
+          "type": "string"
+        },
+        "gaps": {
+          "items": {
+            "$ref": "#/$defs/Gap"
+          },
+          "title": "Gaps",
+          "type": "array"
+        },
+        "topics": {
+          "items": {
+            "$ref": "#/$defs/Topic"
+          },
+          "title": "Topics",
+          "type": "array"
+        },
+        "participation": {
+          "items": {
+            "$ref": "#/$defs/Participation"
+          },
+          "title": "Participation",
+          "type": "array"
+        }
+      },
+      "required": [
+        "meeting_id"
+      ],
+      "title": "GapReport",
+      "type": "object"
+    },
+    "GapSeverity": {
+      "enum": [
+        "high",
+        "medium",
+        "low"
+      ],
+      "title": "GapSeverity",
+      "type": "string"
+    },
+    "IntelligenceSnapshot": {
+      "properties": {
+        "contract_version": {
+          "default": "1.0",
+          "title": "Contract Version",
+          "type": "string"
+        },
+        "meeting_id": {
+          "pattern": "^mtg_",
+          "title": "Meeting Id",
+          "type": "string"
+        },
+        "team_id": {
+          "pattern": "^team_",
+          "title": "Team Id",
+          "type": "string"
+        },
+        "quality_score": {
+          "$ref": "#/$defs/QualityScore"
+        },
+        "gap_distribution": {
+          "additionalProperties": {
+            "type": "integer"
+          },
+          "title": "Gap Distribution",
+          "type": "object"
+        },
+        "alignment": {
+          "items": {
+            "$ref": "#/$defs/RoleAlignment"
+          },
+          "title": "Alignment",
+          "type": "array"
+        },
+        "predictions": {
+          "items": {
+            "$ref": "#/$defs/Prediction"
+          },
+          "title": "Predictions",
+          "type": "array"
+        },
+        "missing_sources": {
+          "description": "Modules that had not reported when this snapshot was built.",
+          "items": {
+            "type": "string"
+          },
+          "title": "Missing Sources",
+          "type": "array"
+        }
+      },
+      "required": [
+        "meeting_id",
+        "team_id",
+        "quality_score"
+      ],
+      "title": "IntelligenceSnapshot",
+      "type": "object"
+    },
+    "NliLabel": {
+      "enum": [
+        "entailment",
+        "contradiction",
+        "neutral"
+      ],
+      "title": "NliLabel",
+      "type": "string"
+    },
+    "Participation": {
+      "description": "Whether a participant spoke on a topic — coverage, not speech volume.\n\nThis must never become a per-person talk-time metric. See\ndocs/architecture/privacy.md section 3.",
+      "properties": {
+        "topic_id": {
+          "title": "Topic Id",
+          "type": "string"
+        },
+        "spoke": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Spoke",
+          "type": "array"
+        },
+        "silent": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Silent",
+          "type": "array"
+        }
+      },
+      "required": [
+        "topic_id"
+      ],
+      "title": "Participation",
+      "type": "object"
+    },
+    "Prediction": {
+      "properties": {
+        "kind": {
+          "title": "Kind",
+          "type": "string"
+        },
+        "horizon_days": {
+          "exclusiveMinimum": 0,
+          "title": "Horizon Days",
+          "type": "integer"
+        },
+        "probability": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Probability",
+          "type": "number"
+        }
+      },
+      "required": [
+        "kind",
+        "horizon_days",
+        "probability"
+      ],
+      "title": "Prediction",
+      "type": "object"
+    },
+    "PrivacyFlags": {
+      "description": "Proof that module A honored its obligations before publishing.\n\n``original_audio_deleted`` being False means the pipeline is broken.\nConsumers fail loudly rather than proceeding.",
+      "properties": {
+        "original_audio_deleted": {
+          "title": "Original Audio Deleted",
+          "type": "boolean"
+        },
+        "pii_masked": {
+          "title": "Pii Masked",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "original_audio_deleted",
+        "pii_masked"
+      ],
+      "title": "PrivacyFlags",
+      "type": "object"
+    },
+    "QualityScore": {
+      "properties": {
+        "grade": {
+          "enum": [
+            "A",
+            "B",
+            "C",
+            "D",
+            "E",
+            "F"
+          ],
+          "title": "Grade",
+          "type": "string"
+        },
+        "value": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Value",
+          "type": "number"
+        }
+      },
+      "required": [
+        "grade",
+        "value"
+      ],
+      "title": "QualityScore",
+      "type": "object"
+    },
+    "RoleAlignment": {
+      "description": "Agreement between two roles. Role level, never person level.",
+      "properties": {
+        "role_a": {
+          "title": "Role A",
+          "type": "string"
+        },
+        "role_b": {
+          "title": "Role B",
+          "type": "string"
+        },
+        "score": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Score",
+          "type": "number"
+        }
+      },
+      "required": [
+        "role_a",
+        "role_b",
+        "score"
+      ],
+      "title": "RoleAlignment",
+      "type": "object"
+    },
+    "Topic": {
+      "properties": {
+        "id": {
+          "pattern": "^topic_",
+          "title": "Id",
+          "type": "string"
+        },
+        "label": {
+          "title": "Label",
+          "type": "string"
+        },
+        "centrality": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Centrality",
+          "type": "number"
+        },
+        "utterance_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Utterance Ids",
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "label",
+        "centrality"
+      ],
+      "title": "Topic",
+      "type": "object"
+    },
+    "TopicLink": {
+      "properties": {
+        "topic_label": {
+          "title": "Topic Label",
+          "type": "string"
+        },
+        "linked_meeting_id": {
+          "pattern": "^mtg_",
+          "title": "Linked Meeting Id",
+          "type": "string"
+        },
+        "linked_meeting_date": {
+          "format": "date",
+          "title": "Linked Meeting Date",
+          "type": "string"
+        },
+        "similarity": {
+          "description": "Hybrid retrieval score.",
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Similarity",
+          "type": "number"
+        },
+        "rerank_score": {
+          "description": "Cross-encoder score; the one to trust.",
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Rerank Score",
+          "type": "number"
+        }
+      },
+      "required": [
+        "topic_label",
+        "linked_meeting_id",
+        "linked_meeting_date",
+        "similarity",
+        "rerank_score"
+      ],
+      "title": "TopicLink",
+      "type": "object"
+    },
+    "TranscriptMetadata": {
+      "properties": {
+        "duration": {
+          "description": "Seconds.",
+          "minimum": 0,
+          "title": "Duration",
+          "type": "number"
+        },
+        "participants": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Participants",
+          "type": "array"
+        },
+        "source": {
+          "$ref": "#/$defs/TranscriptSource"
+        },
+        "language": {
+          "default": "ko",
+          "title": "Language",
+          "type": "string"
+        },
+        "privacy": {
+          "$ref": "#/$defs/PrivacyFlags"
+        }
+      },
+      "required": [
+        "duration",
+        "source",
+        "privacy"
+      ],
+      "title": "TranscriptMetadata",
+      "type": "object"
+    },
+    "TranscriptReady": {
+      "properties": {
+        "contract_version": {
+          "default": "1.0",
+          "title": "Contract Version",
+          "type": "string"
+        },
+        "meeting_id": {
+          "pattern": "^mtg_",
+          "title": "Meeting Id",
+          "type": "string"
+        },
+        "utterances": {
+          "items": {
+            "$ref": "#/$defs/Utterance"
+          },
+          "title": "Utterances",
+          "type": "array"
+        },
+        "metadata": {
+          "$ref": "#/$defs/TranscriptMetadata"
+        }
+      },
+      "required": [
+        "meeting_id",
+        "utterances",
+        "metadata"
+      ],
+      "title": "TranscriptReady",
+      "type": "object"
+    },
+    "TranscriptSource": {
+      "enum": [
+        "file_upload",
+        "desktop_app"
+      ],
+      "title": "TranscriptSource",
+      "type": "string"
+    },
+    "Utterance": {
+      "description": "One continuous stretch of speech by one speaker.\n\n``text`` is already PII-masked. There is no unmasked form to recover.",
+      "properties": {
+        "id": {
+          "pattern": "^utt_",
+          "title": "Id",
+          "type": "string"
+        },
+        "speaker": {
+          "description": "Display label. 'Speaker 2' when unidentified.",
+          "title": "Speaker",
+          "type": "string"
+        },
+        "speaker_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "None when diarized but not identified. Consumers must handle this.",
+          "title": "Speaker Id"
+        },
+        "role": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "None when unidentified or unset.",
+          "title": "Role"
+        },
+        "start": {
+          "description": "Seconds from the start of the recording.",
+          "minimum": 0,
+          "title": "Start",
+          "type": "number"
+        },
+        "end": {
+          "minimum": 0,
+          "title": "End",
+          "type": "number"
+        },
+        "text": {
+          "description": "PII-masked.",
+          "title": "Text",
+          "type": "string"
+        },
+        "confidence": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Confidence",
+          "type": "number"
+        }
+      },
+      "required": [
+        "id",
+        "speaker",
+        "start",
+        "end",
+        "text",
+        "confidence"
+      ],
+      "title": "Utterance",
+      "type": "object"
+    },
+    "UtteranceKind": {
+      "description": "The five-way classification module B applies to every utterance.",
+      "enum": [
+        "commitment",
+        "decision",
+        "open_question",
+        "concern",
+        "ambiguous"
+      ],
+      "title": "UtteranceKind",
+      "type": "string"
+    }
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "_comment": "Every speaker is diarized but unidentified. Every consumer must handle speaker_id = null and role = null; this is the case people forget.",
+  "contract_version": "1.0",
+  "meeting_id": "mtg_20260918_003",
+  "utterances": [
+    {
+      "id": "utt_001", "speaker": "Speaker 1", "speaker_id": null, "role": null,
+      "start": 0.0, "end": 4.2,
+      "text": "그럼 이 안건은 다음 주에 다시 보는 걸로 하죠",
+      "confidence": 0.81
+    },
+    {
+      "id": "utt_002", "speaker": "Speaker 2", "speaker_id": null, "role": null,
+      "start": 4.6, "end": 8.9,
+      "text": "네 그렇게 하시죠",
+      "confidence": 0.64
+    }
+  ],
+  "metadata": {
+    "duration": 8.9,
+    "participants": [],
+    "source": "file_upload",
+    "language": "ko",
+    "privacy": { "original_audio_deleted": true, "pii_masked": true }
+  }
+}

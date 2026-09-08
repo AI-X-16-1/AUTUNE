@@ -92,7 +92,7 @@ a plain string column with no foreign-key constraint, populated from the
 
 ```python
 # in intel_scores — correct
-source_action_item_id = Column(String, nullable=True)   # no ForeignKey
+source_action_item_id = Column(String, nullable=True)  # no ForeignKey
 
 # forbidden
 source_action_item_id = Column(String, ForeignKey("ext_action_items.id"))

@@ -1,0 +1,29 @@
+{
+  "contract_version": "1.0",
+  "meeting_id": "mtg_20260918_002",
+  "gaps": [
+    {
+      "id": "gap_001", "category": "technical_spec",
+      "title": "Performance requirements not defined",
+      "severity": "high", "risk_score": 0.82,
+      "template_item": "nfr.performance",
+      "related_topic_ids": ["topic_003"],
+      "suggested_question": "검색 개인화의 목표 응답 시간은 몇 ms인가요?"
+    },
+    {
+      "id": "gap_002", "category": "ownership",
+      "title": "No owner for cold-start handling",
+      "severity": "medium", "risk_score": 0.58,
+      "template_item": "ownership.assignee",
+      "related_topic_ids": ["topic_003"],
+      "suggested_question": "콜드스타트 처리는 누가 맡나요?"
+    }
+  ],
+  "topics": [
+    { "id": "topic_003", "label": "search personalization", "centrality": 0.71,
+      "utterance_ids": ["utt_001", "utt_002"] }
+  ],
+  "participation": [
+    { "topic_id": "topic_003", "spoke": ["user_001", "user_002"], "silent": ["user_003", "user_004"] }
+  ]
+}

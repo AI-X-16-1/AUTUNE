@@ -2,9 +2,12 @@
   "name": "autune",
   "private": true,
   "packageManager": "pnpm@9.15.4",
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "lint": "pnpm -r lint",
-    "typecheck": "pnpm -r typecheck"
+    "typecheck": "pnpm -r typecheck",
+    "gen:contracts": "pnpm --filter @autune/contracts run generate"
   }
 }

@@ -5,7 +5,12 @@
   "description": "TypeScript types generated from packages/contracts. Never edit by hand.",
   "types": "index.d.ts",
   "scripts": {
+    "generate": "uv run python ../scripts/generate_ts.py",
     "lint": "echo 'generated output' && exit 0",
-    "typecheck": "echo 'generated output' && exit 0"
+    "typecheck": "tsc --noEmit index.d.ts"
+  },
+  "devDependencies": {
+    "json-schema-to-typescript": "^15.0.4",
+    "typescript": "^5.7.3"
   }
 }
