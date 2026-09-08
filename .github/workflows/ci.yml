@@ -97,6 +97,18 @@ jobs:
       - name: Types
         run: pnpm run typecheck
 
+      - name: Build
+        run: pnpm run build
+
+      # docs/design/design-tokens.json is the single source of truth for every
+      # colour, size and motion value. If regenerating changes the committed
+      # CSS, someone hand-edited generated output or forgot to regenerate.
+      - name: Design tokens are current
+        run: |
+          pnpm run gen:tokens
+          git diff --exit-code -- apps/web/src/app/tokens.css \
+            || { echo "::error::Run 'pnpm run gen:tokens' and commit the result."; exit 1; }
+
       # The Pydantic models are the source of truth. If regenerating changes the
       # committed output, someone edited generated code or forgot to regenerate.
       - name: Generated contract types are current

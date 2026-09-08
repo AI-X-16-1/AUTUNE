@@ -1,0 +1,67 @@
+@import "tailwindcss";
+@import "./tokens.css";
+
+/* Expose the generated tokens to Tailwind utilities: bg-panel, text-ink-body,
+   rounded (radius 4), h-control-default, and so on. Values live in tokens.css
+   and come from docs/design/design-tokens.json — never write a literal here. */
+@theme inline {
+  --color-paper: var(--color-surface-paper);
+  --color-panel: var(--color-surface-panel);
+  --color-sunken: var(--color-surface-sunken);
+
+  --color-ink-strong: var(--color-ink-strong);
+  --color-ink-body: var(--color-ink-body);
+  --color-ink-muted: var(--color-ink-muted);
+  --color-hairline: var(--color-hairline);
+
+  --color-accent: var(--color-accent-default);
+  --color-accent-hover: var(--color-accent-hover);
+  --color-selection: var(--color-accent-selection);
+  --color-on-accent: var(--color-accent-on-accent);
+
+  --color-attention: var(--color-signal-attention);
+  --color-critical: var(--color-signal-critical);
+  --color-confirmed: var(--color-signal-confirmed);
+  --color-progress: var(--color-signal-progress);
+  --color-idle: var(--color-signal-idle);
+
+  --font-sans: var(--font-sans);
+  --font-mono: var(--font-mono);
+
+  --radius-DEFAULT: var(--radius);
+  --shadow-overlay: var(--shadow-overlay);
+}
+
+/* One radius everywhere, one divider colour, no gradients, no shadows outside
+   modals and drawers. See docs/design/ui-spec.md section 0. */
+:root {
+  color-scheme: light dark;
+}
+
+body {
+  margin: 0;
+  background: var(--color-surface-paper);
+  color: var(--color-ink-body);
+  font-family: var(--font-sans);
+  font-size: var(--text-body);
+  line-height: var(--text-body-leading);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* The single "recording" signal, identical in both themes. */
+@keyframes autune-recording-glow {
+  0%,
+  100% {
+    box-shadow: var(--recording-glow-from);
+  }
+  50% {
+    box-shadow: var(--recording-glow-to);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .autune-recording-frame {
+    animation: none !important;
+    box-shadow: inset 0 0 0 2px var(--color-signal-critical);
+  }
+}

@@ -8,6 +8,8 @@
   "scripts": {
     "lint": "pnpm -r lint",
     "typecheck": "pnpm -r typecheck",
-    "gen:contracts": "pnpm --filter @autune/contracts run generate"
+    "gen:contracts": "pnpm --filter @autune/contracts run generate",
+    "gen:tokens": "pnpm --filter @autune/web run gen:tokens",
+    "build": "pnpm --filter @autune/web run build"
   }
 }

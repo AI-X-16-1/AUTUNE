@@ -127,15 +127,25 @@ there. If a design needs one, it is a token change, not a local style.
 ```
 apps/web/src/
 ├── app/                # Routing only. Pages compose features; no logic here.
+│   ├── globals.css     # Tailwind entry + @theme mapping
+│   └── tokens.css      # GENERATED from design-tokens.json — never edit
 ├── features/<module>/  # Owned by that module's owner
+│   ├── CLAUDE.md       # That feature's rules and owner
 │   ├── components/
 │   ├── hooks/
 │   ├── api.ts          # Calls to /api/<module>
 │   └── types.ts        # Re-exports generated contract types
-└── shared/             # ui/, api client, hooks, utils — team-owned
+└── shared/             # ui/, api/, lib/ — team-owned
 ```
 
-- A feature folder never imports from another feature folder.
+- A feature folder never imports from another feature folder. Enforced by
+  eslint `no-restricted-imports`, the frontend counterpart of import-linter.
+- **Every colour, size, radius, control height and motion value is a token.**
+  `src/app/tokens.css` is generated from `docs/design/design-tokens.json` by
+  `pnpm run gen:tokens`; CI fails if the committed file is stale. A value that
+  is not a token is a token change, not a local style.
+- Shared components come from `@/shared/ui` and are named in
+  `../design/ui-spec.md` section 2. Do not build a second version of one.
 - Types for API payloads come from generated contract types
   (`../architecture/contracts.md`). Never hand-write a type that mirrors a
   Pydantic model.
@@ -147,6 +157,20 @@ apps/web/src/
 - Component names come from `../design/ui-spec.md` section 2 (`StatusDot`,
   `Row`, `Band`, `ScoreLabel`, `ChipToggle`, `PiiToken`, `RecordingFrame`,
   `Waveform`). Do not invent a second name for one of these.
+
+### What is genuinely shared in the frontend
+
+Unlike the backend, `apps/web` is one application, so two files are shared by
+all five owners and need a word in Slack before you change them:
+
+- `src/app/layout.tsx` and the app shell — the sidebar, top bar and theme root.
+- `apps/web/package.json` — one manifest for everyone's JS dependencies, where
+  the backend gives each module its own `pyproject.toml`. Adding a dependency is
+  rare after the first week; when it happens, say so, and regenerate the
+  lockfile rather than merging it.
+
+Routes under `src/app/` are per-screen files, so two people adding two screens
+add two different files. That is not a conflict.
 
 ## Comments
 
