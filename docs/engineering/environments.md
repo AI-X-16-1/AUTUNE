@@ -14,6 +14,8 @@
 ```bash
 git clone <repo> && cd autune
 
+git config core.hooksPath .githooks   # refuse accidental pushes to main
+
 cp .env.example .env             # then fill in the secrets you need
 
 docker compose -f infra/docker-compose.yml up -d

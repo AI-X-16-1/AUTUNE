@@ -211,6 +211,10 @@ pnpm --filter @autune/web dev                                          # 웹 :30
 ## 협업 규칙
 
 - 브랜치는 `<모듈>/<작업>` (예: `gap/topic-graph`). `main` 직접 push 금지, PR만.
+  클론 직후 `git config core.hooksPath .githooks` 를 한 번 실행하면 실수로 `main`에
+  push하는 걸 막아줍니다. (레포가 Free 플랜 Private이라 GitHub 브랜치 보호는 못 씁니다)
+- 승인은 **내 모듈만 고쳤으면 아무나 1명**, **남의 모듈을 건드렸으면 그 소유자**.
+  CODEOWNERS가 자동으로 리뷰를 요청합니다.
 - 자기 소유가 아닌 파일은 건드리지 않습니다. 필요하면 소유자에게 요청.
 - `packages/contracts`는 W1에 확정, 이후 **추가만**. 필드 삭제·이름 변경은 Slack
   공지 + 관련 모듈 담당자 전원 승인.

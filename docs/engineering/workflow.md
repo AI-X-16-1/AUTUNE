@@ -27,19 +27,77 @@ Examples: `audio/pii-masking`, `gap/topic-graph`, `context/decision-lineage`,
 For shared code, use the layer name: `contracts/add-context-links`,
 `core/auth-session`, `infra/docker-compose`.
 
-- `main` is protected. No direct pushes.
 - Branch from the latest `main`. Rebase rather than merge to stay current.
 - One branch per task. A branch that touches three modules is three branches.
+- Do not push to `main`. See "How `main` is protected" below — the rule is real
+  even though GitHub is not the thing enforcing it.
 
 ## Pull requests
 
 Every change lands through a pull request.
 
 **Requirements:**
-- CI green: lint, type check, import-linter, tests.
-- At least one approval. Changes to `packages/contracts` need approval from
-  every affected module owner.
+- CI green: lint, type check, import-linter, tests, migrations.
+- Approval, by what the pull request touches:
+
+| What you changed | Who must approve |
+| --- | --- |
+| Only your own module (`modules/<yours>/`, `apps/web/src/features/<yours>/`) | Any one teammate |
+| Another module | That module's owner. CODEOWNERS requests them automatically |
+| `packages/`, `apps/`, `infra/`, `docs/`, `CLAUDE.md` | Any one teammate; for `packages/contracts` every affected module owner |
+
+  One approval is the floor. Touching someone else's module means *their*
+  approval specifically, not just anyone's — they are the person who knows what
+  your change breaks.
+
 - Documents updated in the same PR when behavior they describe changed.
+
+## How `main` is protected
+
+Not by GitHub. This repository is private on the organization's free plan, and
+GitHub branch protection and rulesets are paid features there — the API returns
+`403 Upgrade to GitHub Pro or make this repository public`. Making the repo
+public would enable them for free, but the project may ship commercially, so it
+stays private.
+
+Three things stand in for it:
+
+1. **A local pre-push hook** refuses a direct push to `main`. Enable it once per
+   clone, right after you clone:
+
+   ```bash
+   git config core.hooksPath .githooks
+   ```
+
+   It is not a security control — `git push --no-verify` bypasses it. It stops
+   the accident, which is nearly all of the risk on a five-person team.
+
+2. **CODEOWNERS** still requests reviews automatically, with no paid plan. Touch
+   another module and its owner is added to the pull request without anyone
+   remembering to do it.
+
+3. **CI runs on pushes to `main` as well as on pull requests**, so anything that
+   lands without review still turns the branch red where everyone can see it.
+
+**If the plan ever changes** — the organization upgrades, or the repository goes
+public — enable real protection immediately:
+
+```bash
+gh api -X PUT repos/AI-X-16-1/AUTUNE/branches/main/protection \
+  -F required_pull_request_reviews[required_approving_review_count]=1 \
+  -F required_pull_request_reviews[require_code_owner_reviews]=true \
+  -F required_pull_request_reviews[dismiss_stale_reviews]=true \
+  -F required_status_checks[strict]=true \
+  -F 'required_status_checks[contexts][]=Python' \
+  -F 'required_status_checks[contexts][]=JavaScript' \
+  -F enforce_admins=true \
+  -F restrictions=
+```
+
+`require_code_owner_reviews` is what makes the table above enforceable: GitHub
+allows only one approval count per branch, so the count stays at 1 and the code
+owner requirement supplies the rest — touching another module then genuinely
+requires that owner's approval.
 
 **Description template:**
 

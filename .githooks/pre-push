@@ -1,0 +1,45 @@
+#!/bin/sh
+# Refuse a direct push to main.
+#
+# GitHub branch protection is a paid feature on a private repository, and this
+# repository is private on the free plan, so nothing server-side blocks a direct
+# push. This hook catches the accident, which is most of the risk on a small
+# team. It is not a security control: anyone can bypass it, deliberately, with
+#   git push --no-verify
+#
+# Enable it once per clone:
+#   git config core.hooksPath .githooks
+#
+# See docs/engineering/workflow.md.
+
+protected="main"
+remote_sha_zero="0000000000000000000000000000000000000000"
+
+while read -r local_ref local_sha remote_ref remote_sha; do
+    case "$remote_ref" in
+        "refs/heads/$protected")
+            if [ "$local_sha" = "$remote_sha_zero" ]; then
+                echo "pre-push: refusing to delete $protected." >&2
+            else
+                echo "" >&2
+                echo "pre-push: direct pushes to '$protected' are not allowed." >&2
+                echo "" >&2
+                echo "  Branch first, then open a pull request:" >&2
+                echo "    git switch -c <module>/<task>" >&2
+                echo "    git push -u origin <module>/<task>" >&2
+                echo "" >&2
+                echo "  Approval needed before merge:" >&2
+                echo "    your module only        -> any one teammate" >&2
+                echo "    another module or       -> the owner of what you touched" >&2
+                echo "    packages/ apps/ infra/     (CODEOWNERS requests them automatically)" >&2
+                echo "" >&2
+                echo "  If you genuinely need to push to $protected, say so:" >&2
+                echo "    git push --no-verify" >&2
+                echo "" >&2
+            fi
+            exit 1
+            ;;
+    esac
+done
+
+exit 0

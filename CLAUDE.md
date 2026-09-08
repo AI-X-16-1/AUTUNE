@@ -120,7 +120,10 @@ lockfile conflict, do not hand-merge — regenerate with `uv lock` or
 
 ### 9. Branch `<module>/<task>`, PR only
 Branch names look like `gap/topic-graph` or `audio/pii-masking`. Direct pushes
-to `main` are forbidden. Every change lands through a pull request.
+to `main` are forbidden and a pre-push hook refuses them — run
+`git config core.hooksPath .githooks` once per clone. Every change lands through
+a pull request: one approval for your own module, the owner's approval for
+anyone else's.
 → `docs/engineering/workflow.md`
 
 ### 10. Do not edit files you do not own
