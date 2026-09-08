@@ -1,0 +1,171 @@
+{
+  "$schema": "https://design-tokens.github.io/community-group/format/",
+  "meta": {
+    "product": "AUTUNE — Meeting Intelligence Platform",
+    "version": "2.1.0",
+    "source": "AUTUNE Spec 00 공통.dc.html",
+    "spec": "ui-spec.md",
+    "principles": [
+      "One accent for everything clickable. There is no black filled button.",
+      "Red is only for elapsing time and failure (recording dot, overdue, processing failure, delete confirmation). Never a button fill.",
+      "Status is a 6px dot plus sentence-case text. No filled badges, no pills, no left color bars.",
+      "A single radius of 4; control heights 32/40/48; button labels at weight 600.",
+      "Secondary actions are text rather than outline, then a faint sunken fill. There is no grey outlined button.",
+      "Monospace is only for machine-produced values (time codes, scores, IDs, dates, percentages).",
+      "Per-person speech volume and ranking appear nowhere except the subject's own DM (S23)."
+    ],
+    "changelog": [
+      "2.1.0 — Added color.*.chart and color.*.waveform ramps, four typography steps (13.5/11.5) and layout widths, all observed in the design files but previously untokenized. Descriptions translated to English.",
+      "2.1.1 — Rebuilt color.dark.chart from the dark surface/ink scale so it matches how the light ramp is constructed. The earlier version borrowed waveform values and skipped ink.body."
+    ]
+  },
+  "color": {
+    "light": {
+      "surface": {
+        "paper":  { "$value": "#F4F3EF", "$type": "color", "$description": "App background, sidebar, quotation blocks" },
+        "panel":  { "$value": "#FFFFFF", "$type": "color", "$description": "Content panel, cards, modals" },
+        "sunken": { "$value": "#EBEAE5", "$type": "color", "$description": "Secondary button fill, search input, unselected chips" }
+      },
+      "ink": {
+        "strong": { "$value": "#16191F", "$type": "color", "$description": "Titles, emphasized text, inverted band background, confirmed status dot" },
+        "body":   { "$value": "#3A3F47", "$type": "color", "$description": "Body text" },
+        "muted":  { "$value": "#7A8089", "$type": "color", "$description": "Meta, section labels, quiet buttons, hollow-ring borders" }
+      },
+      "hairline": { "$value": "rgba(22,25,31,0.12)", "$type": "color", "$description": "The single kind of divider" },
+      "accent": {
+        "default":   { "$value": "#3B4A9E", "$type": "color", "$description": "Primary button fill, text buttons, links, active tab underline, checkbox and radio, focus ring, in-progress status dot" },
+        "hover":     { "$value": "#2C3878", "$type": "color" },
+        "selection": { "$value": "#E9EBF6", "$type": "color", "$description": "Background of a selected row, chip, or sidebar item. No other decoration" },
+        "onAccent":  { "$value": "#FFFFFF", "$type": "color" }
+      },
+      "signal": {
+        "attention": { "$value": "#B8862B", "$type": "color", "$description": "Needs a person: unidentified speaker, ambiguous agreement, undecided item, gap MEDIUM, changed decision node" },
+        "critical":  { "$value": "#C2443C", "$type": "color", "$description": "Time and risk: recording, overdue, failure, gap HIGH, deletion. Dots, text, 2px bars and the glow only" },
+        "confirmed": { "$value": "#16191F", "$type": "color", "$description": "Confirmed: decisions (hollow ring), commitments and completions (filled dot)" },
+        "progress":  { "$value": "#3B4A9E", "$type": "color", "$description": "System in progress: analyzing, syncing, linking materials, open question" },
+        "idle":      { "$value": "#7A8089", "$type": "color", "$description": "Hollow-ring border: scheduled, not started, not connected, Phase 2" }
+      },
+      "chart": {
+        "$description": "The only fills permitted in charts and heatmaps — five achromatic steps, low to high. Signal colors never fill a chart; they appear on numeric text only. The ramp is not a separate palette: it is the surface/ink scale (sunken → muted → body → strong) with one intermediate step added between sunken and muted.",
+        "step1": { "$value": "#EBEAE5", "$type": "color", "$description": "= surface.sunken" },
+        "step2": { "$value": "#C9CCD1", "$type": "color", "$description": "The one value in the ramp that is not another token" },
+        "step3": { "$value": "#7A8089", "$type": "color", "$description": "= ink.muted" },
+        "step4": { "$value": "#3A3F47", "$type": "color", "$description": "= ink.body" },
+        "step5": { "$value": "#16191F", "$type": "color", "$description": "= ink.strong" }
+      },
+      "waveform": {
+        "$description": "Audio waveform bar fill by amplitude, quiet to loud. Bars are 3–4px wide with a 2–3px gap, aligned to the baseline.",
+        "q1": { "$value": "#D3D5D8", "$type": "color" },
+        "q2": { "$value": "#BFC2C7", "$type": "color" },
+        "q3": { "$value": "#8F949C", "$type": "color" },
+        "q4": { "$value": "#3A3F47", "$type": "color" }
+      }
+    },
+    "dark": {
+      "$description": "A user preference. It does not signify any functional state. The accent fill is identical to light.",
+      "surface": {
+        "paper":  { "$value": "#111318", "$type": "color" },
+        "panel":  { "$value": "#181B21", "$type": "color" },
+        "sunken": { "$value": "#20242B", "$type": "color" }
+      },
+      "ink": {
+        "strong": { "$value": "#EDEEF0", "$type": "color" },
+        "body":   { "$value": "#D5D8DD", "$type": "color" },
+        "muted":  { "$value": "#9298A3", "$type": "color" }
+      },
+      "hairline": { "$value": "rgba(255,255,255,0.10)", "$type": "color" },
+      "accent": {
+        "default":   { "$value": "#3B4A9E", "$type": "color", "$description": "Fill is unchanged from light" },
+        "text":      { "$value": "#8F9BE0", "$type": "color", "$description": "Lightened indigo for text buttons, links and the active tab underline only (6.2:1)" },
+        "selection": { "$value": "#2C3878", "$type": "color" }
+      },
+      "signal": {
+        "attention": { "$value": "#D9A441", "$type": "color" },
+        "critical":  { "$value": "#E0625A", "$type": "color" },
+        "confirmed": { "$value": "#EDEEF0", "$type": "color" },
+        "progress":  { "$value": "#8F9BE0", "$type": "color" },
+        "idle":      { "$value": "#9298A3", "$type": "color" }
+      },
+      "chart": {
+        "$description": "Built the same way as the light ramp: sunken → intermediate → muted → body → strong. Four of the five steps are existing dark tokens, so no dark analytics screen is needed to define them. Only step2 is a judgment call — it reuses waveform.q1, which sits at the same relative position between sunken and muted that #C9CCD1 occupies in light.",
+        "step1": { "$value": "#20242B", "$type": "color", "$description": "= surface.sunken" },
+        "step2": { "$value": "#3A414D", "$type": "color", "$description": "= waveform.q1. The only chosen value; revisit if a dark dashboard ever gets drawn" },
+        "step3": { "$value": "#9298A3", "$type": "color", "$description": "= ink.muted" },
+        "step4": { "$value": "#D5D8DD", "$type": "color", "$description": "= ink.body" },
+        "step5": { "$value": "#EDEEF0", "$type": "color", "$description": "= ink.strong" }
+      },
+      "waveform": {
+        "$description": "Observed in the dark examples on S10, S14 and S33. Bars are 3px wide there.",
+        "q1": { "$value": "#3A414D", "$type": "color" },
+        "q2": { "$value": "#6B7482", "$type": "color" },
+        "q3": { "$value": "#9298A3", "$type": "color" },
+        "q4": { "$value": "#EDEEF0", "$type": "color" }
+      },
+      "inverted-band": { "background": { "$value": "#EDEEF0", "$type": "color" }, "text": { "$value": "#16191F", "$type": "color" } }
+    }
+  },
+  "typography": {
+    "fontFamily": {
+      "sans": { "$value": "Pretendard, system-ui, -apple-system, sans-serif", "$type": "fontFamily" },
+      "mono": { "$value": "ui-monospace, Menlo, monospace", "$type": "fontFamily", "$description": "Time codes, scores, IDs, dates and percentages only" }
+    },
+    "scale": {
+      "display":    { "size": 32,   "weight": 700, "lineHeight": 1.15, "letterSpacing": "-0.025em", "$description": "Landing headline (a 46px variant is permitted)" },
+      "title":      { "size": 20,   "weight": 600, "lineHeight": 1.3,  "letterSpacing": "-0.015em", "$description": "Page and modal titles" },
+      "heading":    { "size": 14,   "weight": 600, "lineHeight": 1.4,  "$description": "Card titles, top bar, section headings" },
+      "body":       { "size": 14,   "weight": 400, "lineHeight": 1.65, "$description": "Transcript and summary body" },
+      "rowTitle":   { "size": 13.5, "weight": 600, "lineHeight": 1.45, "$description": "List row and card item titles — the most common title size in the app" },
+      "rowLabel":   { "size": 13.5, "weight": 500, "lineHeight": 1.45, "$description": "Settings row labels, policy rows" },
+      "rowBody":    { "size": 13.5, "weight": 400, "lineHeight": 1.6,  "$description": "Slack message body, quotation body, longer row descriptions" },
+      "status":     { "size": 12.5, "weight": 500, "lineHeight": 1.4,  "$description": "Status text beside a dot" },
+      "meta":       { "size": 12.5, "weight": 400, "lineHeight": 1.55, "color": "{color.light.ink.muted}" },
+      "metaSmall":  { "size": 11.5, "weight": 400, "lineHeight": 1.5,  "color": "{color.light.ink.muted}", "$description": "Timestamps and secondary meta beneath a row" },
+      "label":      { "size": 12,   "weight": 600, "color": "{color.light.ink.muted}", "$description": "Section labels. Sentence case; never uppercase or letter-spaced" },
+      "data":       { "size": 12.5, "weight": 500, "fontFamily": "{typography.fontFamily.mono}" },
+      "dataSmall":  { "size": 11.5, "weight": 500, "fontFamily": "{typography.fontFamily.mono}", "$description": "Sidebar counts, inline counts, tab counts" },
+      "timer":      { "size": 56,   "weight": 700, "lineHeight": 1, "letterSpacing": "-0.03em", "fontFamily": "{typography.fontFamily.mono}", "$description": "Recording timer block" }
+    }
+  },
+  "spacing": {
+    "scale": { "$value": [4, 8, 12, 16, 24, 32, 48], "$type": "dimension" },
+    "page":    { "$value": 28, "$type": "dimension" },
+    "card":    { "$value": 20, "$type": "dimension" },
+    "row":     { "$value": 14, "$type": "dimension", "$description": "Vertical padding of a list row" },
+    "topbar":  { "$value": 56, "$type": "dimension" },
+    "sidebar": { "$value": 200, "$type": "dimension" }
+  },
+  "layout": {
+    "canvas":     { "$value": 1280, "$type": "dimension", "$description": "Design width for standard screens" },
+    "canvasWide": { "$value": 1440, "$type": "dimension", "$description": "S13 live transcript" },
+    "miniWindow": { "$value": 380,  "$type": "dimension", "$description": "S33 desktop mini window (Phase 2)" }
+  },
+  "shape": {
+    "radius":  { "$value": 4, "$type": "dimension", "$description": "Buttons, inputs, cards, modals and tooltips all share it" },
+    "dot":     { "$value": 6, "$type": "dimension", "$description": "Status dot. A decision is a 7px hollow ring with a 1.5px border" },
+    "bar":     { "$value": 2, "$type": "dimension", "$description": "Thickness of a data bar (gap score, progress)" },
+    "shadow":  { "$value": "0 2px 12px rgba(22,25,31,0.10)", "$type": "shadow", "$description": "Modals, drawers and popovers only" }
+  },
+  "control": {
+    "height":     { "compact": 32, "default": 40, "hero": 48 },
+    "paddingX":   { "compact": 12, "default": 18, "hero": 22, "text": 8 },
+    "fontSize":   { "compact": 12, "default": 13, "hero": 14 },
+    "fontWeight": 600
+  },
+  "border": {
+    "input":   { "$value": "1px solid rgba(22,25,31,0.2)", "$type": "border", "$description": "Default input border" },
+    "focus":   { "$value": "1.5px solid #3B4A9E", "$type": "border", "$description": "Focus ring, selected card" },
+    "error":   { "$value": "1.5px solid #C2443C", "$type": "border", "$description": "Invalid input; always paired with a message below" },
+    "hollow":  { "$value": "1.5px solid #7A8089", "$type": "border", "$description": "Hollow status ring (decision, pending)" }
+  },
+  "motion": {
+    "recording": {
+      "glow": {
+        "duration": "3s", "easing": "ease-in-out", "iteration": "infinite",
+        "from": "inset 0 0 0 2px rgba(194,68,60,0.55), inset 0 0 48px rgba(194,68,60,0.16)",
+        "to":   "inset 0 0 0 2px rgba(194,68,60,0.18), inset 0 0 16px rgba(194,68,60,0.04)",
+        "$description": "A top-level pointer-events:none overlay on the window, independent of theme. When paused, the animation stops and the line becomes rgba(22,25,31,.2). Under prefers-reduced-motion it is a static 2px line"
+      },
+      "dot": { "duration": "3s", "easing": "ease-in-out", "opacity": [1, 0.3], "$description": "REC dot, synchronized with the glow" }
+    }
+  }
+}

@@ -1,0 +1,122 @@
+# Module C. Gap Detection
+
+| | |
+| --- | --- |
+| **Package** | `autune_gap` |
+| **Owner** | 박재경 |
+| **Backend** | `modules/gap/` |
+| **Frontend** | `apps/web/src/features/gap/` |
+| **Table prefix** | `gap_` |
+| **API prefix** | `/api/gap` |
+
+## Responsibility
+
+Find what the meeting should have covered and did not. Build a topic graph from
+the transcript, measure who participated in which topic, compare against a
+domain template, and score the risk of each missing item.
+
+## Non-goals
+
+- Extracting what *was* said into action items — that is B.
+- Connecting to past meetings — that is D. C works within one meeting.
+- Predicting future misalignment — that is E.
+
+## Inputs
+
+| Source | Contract |
+| --- | --- |
+| A | `TranscriptReady` via `autune.transcript.ready` |
+| `packages/core` | `meetings`, `participants`, `utterances` (read-only) |
+
+## Outputs
+
+| Destination | Contract | Event |
+| --- | --- | --- |
+| E | `GapReport` | `autune.gap.completed` |
+| Slack | Gap report and question cards | — |
+
+## Pipeline
+
+1. **NER** — spaCy extracts entities: features, systems, metrics, people, dates.
+2. **Relation extraction** — build subject–relation–object triples, with LLM
+   assistance for hard cases.
+3. **Topic graph** — write nodes and edges to Neo4j.
+4. **Centrality** — PageRank and betweenness identify which topics carried the
+   meeting.
+5. **Participation matrix** — per topic, who spoke and who was silent.
+6. **Template comparison** — match the meeting against a domain template and
+   find unfilled items.
+7. **Risk scoring** — score each gap using topic centrality, participation
+   imbalance (a topic no engineer spoke on is riskier), and template weight.
+8. **Question generation** — produce a concrete question that would close each
+   gap.
+9. **Publish** — emit `GapReport`.
+
+## Storage
+
+| Store | Contents |
+| --- | --- |
+| PostgreSQL `gap_topics` | Topic nodes with centrality, per meeting |
+| PostgreSQL `gap_gaps` | Detected gaps, category, severity, risk score, question |
+| PostgreSQL `gap_participation` | Topic × participant speech presence |
+| PostgreSQL `gap_templates` | Domain templates and their items |
+| Neo4j | `GapTopic` nodes and their relations |
+
+Neo4j nodes are removed by C's deletion hook when a meeting is deleted — the
+Postgres cascade does not reach them.
+
+## API
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| GET | `/reports/{meeting_id}` | Full gap report |
+| GET | `/topics/{meeting_id}` | Topic graph for visualization |
+| POST | `/gaps/{id}/dismiss` | Mark a gap as a false positive (feeds threshold tuning) |
+| GET | `/templates` | Available domain templates |
+
+## Celery tasks
+
+| Task | Trigger | Queue |
+| --- | --- | --- |
+| `autune.gap.on_transcript_ready` | `autune.transcript.ready` | `cpu_heavy` |
+
+## Slack surface
+
+- Gap report thread in the meeting channel, `high` severity only by default
+- Generated question cards teams can act on
+
+## AI stack
+
+| Component | Model or algorithm |
+| --- | --- |
+| Entity extraction | spaCy NER (Korean model) |
+| Relation extraction | Rule-based patterns plus LLM assistance |
+| Graph | Neo4j |
+| Topic importance | PageRank, betweenness centrality |
+| Risk scoring | Weighted heuristic; thresholds in `config.py` |
+
+## Metric
+
+Gap detection precision — 0.70+ at six weeks, 0.82+ at three months.
+
+Precision, not recall: a false gap costs user trust, a missed gap costs
+nothing they did not already have. Only `high` severity is shown by default,
+and dismissals feed threshold tuning.
+
+```bash
+uv run --package autune-gap python -m autune_gap.eval
+```
+
+## Privacy notes
+
+- The participation matrix records **whether** a participant spoke on a topic,
+  not how much. It is topic coverage, not speech volume — do not let it drift
+  into a per-person talk-time metric. See `../architecture/privacy.md` section 3.
+- Topic labels derived from transcript text are already masked upstream. Do not
+  re-derive anything from an unmasked source; there is not one.
+
+## Open questions
+
+- How many domain templates for the MVP, and who authors them.
+- Whether topic graphs persist across meetings in Neo4j or are rebuilt per
+  meeting. (Cross-meeting linking is D's job; C should not grow into it.)

@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet data-dc-atomics=""><meta name="design_doc_mode" content="canvas"><link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.css"><style>body{margin:0;background:#e9e7e2;font-family:Pretendard,system-ui,sans-serif}a{color:#3B4A9E}a:hover{color:#2C3878}.fl-sec{padding:36px 44px 30px;border-bottom:1px solid rgba(0,0,0,.08)}.fl-sname{display:flex;align-items:baseline;gap:10px;margin:0 0 18px}.fl-sbadge{font:700 10px ui-monospace,Menlo,monospace;padding:3px 8px;background:#16191F;color:#fff;border-radius:4px}.fl-stitle{font:600 13px Pretendard,sans-serif;color:#16191F}.fl-row{display:flex;flex-wrap:wrap;gap:30px;align-items:flex-start}.fl-item{display:flex;flex-direction:column;gap:9px;flex:none;scroll-margin-top:16px}.fl-ilabel{display:flex;align-items:center;gap:8px;font:400 11.5px Pretendard,sans-serif;color:rgba(22,25,31,.6)}.fl-iid{font:700 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:rgba(22,25,31,.1);color:#16191F;border-radius:4px;text-decoration:none}.fl-item:target .fl-iid{background:#3B4A9E;color:#fff}.fl-ph{font:500 10.5px Pretendard,sans-serif;color:#7A8089}.fl-card{background:#fff;border:1px solid rgba(22,25,31,.12);border-radius:4px;overflow:hidden}.fl-spec{max-width:100%;padding:12px 16px;border-radius:4px;background:#fff;border:1px solid rgba(22,25,31,.12);display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;font:400 11px/1.6 Pretendard,sans-serif;color:#7A8089}.fl-spec b{display:block;font:600 11px Pretendard,sans-serif;color:#16191F;margin-bottom:3px}.fl-note{margin:20px 0 0;font:12px/1.6 Pretendard,sans-serif;color:rgba(22,25,31,.55)}@keyframes recpulse{0%,100%{opacity:1}50%{opacity:.25}}</style></helmet>
+
+<section class="fl-sec" style="background:#f3f2ee">
+  <div class="fl-sname"><span class="fl-sbadge">02</span><span class="fl-stitle">회의 전 · 회의 중 — <a href="AUTUNE Spec 01 진입·홈.dc.html">← 01 진입·홈</a> · <a href="AUTUNE Spec 03 회의 후.dc.html">03 회의 후 →</a></span></div>
+  <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;font:500 12px Pretendard,sans-serif;color:#7A8089"><a class="fl-iid" href="#s07">S07 자료</a>›<a class="fl-iid" href="#s08">S08 어젠다</a>›<a class="fl-iid" href="#s09">S09 브리프</a>›<a class="fl-iid" href="#s10">S10 녹음 시작</a>›<a class="fl-iid" href="#s11">S11 동의</a>›<a class="fl-iid" href="#s12">S12 처리 파이프라인</a>›<a class="fl-iid" href="#s13">S13 전사</a>›<a class="fl-iid" href="#s14">S14 미결정 알림</a></div>
+</section>
+
+<section class="fl-sec">
+  <div class="fl-sname"><span class="fl-sbadge">D</span><span class="fl-stitle">회의 전 — 자료 · 어젠다 · 브리프 (Phase 2)</span></div>
+  <div class="fl-row">
+
+    <div class="fl-item" id="s07">
+      <div class="fl-ilabel"><a class="fl-iid" href="#s07">S07</a>자료 라이브러리 — 업로드 · 분석 상태 · Notion 페이지 연결<span class="fl-ph">Phase 2</span></div>
+      <div class="fl-card" style="width:1280px;height:720px;display:grid;grid-template-columns:200px minmax(0,1fr);background:#F4F3EF">
+        <div style="padding:22px 18px;display:flex;flex-direction:column;gap:20px;border-right:1px solid rgba(22,25,31,.12)">
+          <div style="font:700 13px Pretendard,sans-serif;color:#16191F;letter-spacing:.04em">AUTUNE</div>
+          <button style="height:40px;border-radius:4px;border:none;background:#3B4A9E;color:#fff;font:600 13px Pretendard,sans-serif;display:flex;align-items:center;justify-content:center;gap:9px"><span style="width:8px;height:8px;border-radius:50%;background:#fff"></span>회의 시작</button>
+          <div style="display:flex;flex-direction:column;font:500 13px Pretendard,sans-serif"><div style="padding:8px 0;color:#3A3F47">홈</div><div style="padding:8px 0;color:#3A3F47">회의</div><div style="padding:8px 0;color:#3A3F47">액션아이템</div><div style="padding:8px 0;color:#3A3F47">갭 리포트</div><div style="padding:8px 0;color:#3A3F47">결정 계보</div><div style="padding:8px 10px;margin:0 -10px;border-radius:4px;background:#E9EBF6;color:#2C3878;font-weight:600">자료</div><div style="padding:8px 0;color:#3A3F47">대시보드</div></div>
+          <div style="flex:1"></div><div style="font:500 13px Pretendard,sans-serif;color:#3A3F47">설정</div>
+        </div>
+        <div style="background:#fff;display:flex;flex-direction:column;min-width:0">
+          <div style="height:56px;border-bottom:1px solid rgba(22,25,31,.12);display:flex;align-items:center;gap:14px;padding:0 28px"><span style="font:600 14px Pretendard,sans-serif;color:#16191F">자료</span><span style="font:400 12.5px Pretendard,sans-serif;color:#7A8089">12건 · 회의 중 자료 감지와 어젠다 생성에 사용</span><div style="flex:1"></div><button style="height:40px;padding:0 8px;border:none;background:transparent;color:#3B4A9E;font:600 13px Pretendard,sans-serif">Notion 페이지 연결</button><button style="height:40px;padding:0 18px;border-radius:4px;border:none;background:#3B4A9E;color:#fff;font:600 13px Pretendard,sans-serif">업로드</button></div>
+          <div style="padding:20px 28px;display:flex;flex-direction:column;gap:18px;overflow:hidden">
+            <div style="display:flex;gap:20px;border-bottom:1px solid rgba(22,25,31,.12)"><span style="font:600 13px Pretendard,sans-serif;color:#16191F;padding-bottom:9px;border-bottom:2px solid #3B4A9E;margin-bottom:-1px">전체 <span style="font:500 11.5px ui-monospace,Menlo,monospace;color:#7A8089">12</span></span><span style="font:500 13px Pretendard,sans-serif;color:#7A8089;padding-bottom:9px">문서</span><span style="font:500 13px Pretendard,sans-serif;color:#7A8089;padding-bottom:9px">회의록</span><span style="font:500 13px Pretendard,sans-serif;color:#7A8089;padding-bottom:9px">Notion</span><span style="font:500 13px Pretendard,sans-serif;color:#7A8089;padding-bottom:9px;display:inline-flex;align-items:center;gap:6px"><span style="width:6px;height:6px;border-radius:50%;background:#3B4A9E"></span>분석 중 <span style="font:500 11.5px ui-monospace,Menlo,monospace">1</span></span></div>
+            <div style="display:grid;grid-template-columns:auto 1fr 140px 120px 110px auto;gap:14px;align-items:center;padding:0 0 8px;font:600 12px Pretendard,sans-serif;color:#7A8089;border-bottom:1px solid rgba(22,25,31,.12)"><span style="width:6px"></span><span>이름</span><span style="text-align: center">출처</span><span style="text-align: center">연결된 회의</span><span style="text-align: center">업데이트</span><span style="width: 70px"></span></div>
+            <div style="display:flex;flex-direction:column;margin-top:-18px">
+              <div style="display:grid;grid-template-columns:auto 1fr 140px 120px 110px auto;gap:14px;align-items:center;padding:13px 0;border-bottom:1px solid rgba(22,25,31,.12)"><span style="width:6px;height:6px;border-radius:50%;background:#16191F"></span><div><div style="font: 600 13.5px Pretendard,sans-serif; color: #16191F">검색 개인화 PRD v2.pdf</div><div style="font: 400 12px Pretendard,sans-serif; color: #7A8089; margin-top: 2px">14p · 어젠다 후보 4 · 청크 212</div></div><span style="font: 400 12.5px Pretendard,sans-serif; color: #3A3F47; text-align: center">업로드</span><span style="font: 500 12px ui-monospace,Menlo,monospace; color: #3A3F47; text-align: center">3</span><span style="font: 500 12px ui-monospace,Menlo,monospace; color: #7A8089; text-align: center">09/15</span><button style="height: 32px; padding: 0 6px; border: none; background: transparent; color: #3B4A9E; font: 600 12px Pretendard,sans-serif; width: 40px; text-align: center; margin-left: 30px; margin-right: 0px">열기</button></div>
+              <div style="display:grid;grid-template-columns:auto 1fr 140px 120px 110px auto;gap:14px;align-items:center;padding:13px 0;border-bottom:1px solid rgba(22,25,31,.12)"><span style="width:6px;height:6px;border-radius:50%;background:#16191F"></span><div><div style="font:600 13.5px Pretendard,sans-serif;color:#16191F">검색 스쿼드 › 제품 스펙 › 개인화</div><div style="font:400 12px Pretendard,sans-serif;color:#7A8089;margin-top:2px">Notion 페이지 · 하위 6 · 변경 시 자동 재색인</div></div><span style="font: 400 12.5px Pretendard,sans-serif; color: #3A3F47; text-align: center">Notion</span><span style="font: 500 12px ui-monospace,Menlo,monospace; color: #3A3F47; text-align: center">5</span><span style="font: 500 12px ui-monospace,Menlo,monospace; color: #7A8089; text-align: center">09/17</span><button style="height: 32px; padding: 0 6px; border: none; background: transparent; color: #3B4A9E; font: 600 12px Pretendard,sans-serif; width: 40px; text-align: center; margin-left: 30px">열기</button></div>
+              <div style="display:grid;grid-template-columns:auto 1fr 140px 120px 110px auto;gap:14px;align-items:center;padding:13px 0;border-bottom:1px solid rgba(22,25,31,.12)"><span style="width:6px;height:6px;border-radius:50%;background:#3B4A9E"></span><div><div style="font:600 13.5px Pretendard,sans-serif;color:#16191F">랭킹 지표 정의.xlsx</div><div style="font:400 12px Pretendard,sans-serif;color:#7A8089;margin-top:2px">분석 중 <span style="font-family:ui-monospace,Menlo,monospace">62%</span> · 표 3개 추출</div></div><span style="font: 400 12.5px Pretendard,sans-serif; color: #3A3F47; text-align: center">업로드</span><span style="font: 500 12px ui-monospace,Menlo,monospace; color: #7A8089; text-align: center">—</span><span style="font: 500 12px ui-monospace,Menlo,monospace; color: #7A8089; text-align: center">방금</span><button style="height: 32px; padding: 0 6px; border: none; background: transparent; color: #7A8089; font: 600 12px Pretendard,sans-serif; width: 40px; text-align: center; margin-left: 30px">취소</button></div>
+              <div style="display:grid;grid-template-columns:auto 1fr 140px 120px 110px auto;gap:14px;align-items:center;padding:13px 0;border-bottom:1px solid rgba(22,25,31,.12)"><span style="width:6px;height:6px;border-radius:50%;background:#16191F"></span><div><div style="font:600 13.5px Pretendard,sans-serif;color:#16191F">2026-09-04 검색 개편 우선순위 논의</div><div style="font:400 12px Pretendard,sans-serif;color:#7A8089;margin-top:2px">회의록 · 자동 추가 · 결정 3 · 미완료 액션 2</div></div><span style="font: 400 12.5px Pretendard,sans-serif; color: #3A3F47; text-align: center">회의록</span><span style="font: 500 12px ui-monospace,Menlo,monospace; color: #3A3F47; text-align: center">2</span><span style="font: 500 12px ui-monospace,Menlo,monospace; color: #7A8089; text-align: center">09/04</span><button style="height: 32px; padding: 0 6px; border: none; background: transparent; color: #3B4A9E; font: 600 12px Pretendard,sans-serif; width: 40px; text-align: center; margin-left: 30px">열기</button></div><div style="display: grid; grid-template-columns: auto 1fr 140px 120px 110px auto; gap: 14px; align-items: center; padding: 13px 0; border-bottom: 1px solid rgba(22,25,31,.12)"><span style="width:6px;height:6px;border-radius:50%;background:#C2443C"></span><div><div style="font: 600 13.5px Pretendard,sans-serif; color: #16191F">경쟁사 개인화 사례.docx</div><div style="font: 400 12px Pretendard,sans-serif; color: #C2443C; margin-top: 2px">텍스트 추출 실패 · 스캔 이미지 문서</div></div><span style="font: 400 12.5px Pretendard,sans-serif; color: #3A3F47; text-align: center">업로드</span><span style="font: 500 12px ui-monospace,Menlo,monospace; color: #7A8089; text-align: center">—</span><span style="font: 500 12px ui-monospace,Menlo,monospace; color: #7A8089; height: 15px; text-align: center">09/12</span><button style="padding: 0 6px; border: none; background: transparent; color: #3B4A9E; font: 600 12px Pretendard,sans-serif; width: 40px; height: 32px; text-align: center; padding-left: 0px; padding-right: 0px; margin-left: 30px">재시도</button></div>
+              
+            </div>
+            <div style="padding:22px;border-radius:4px;border:1.5px dashed rgba(22,25,31,.25);background:repeating-linear-gradient(135deg,#F4F3EF 0 6px,#fff 6px 12px);display:flex;align-items:center;justify-content:center;gap:14px"><span style="font:600 13px Pretendard,sans-serif;color:#16191F">파일 끌어다 놓기</span><span style="font:400 12px ui-monospace,Menlo,monospace;color:#7A8089">pdf · docx · md · xlsx · pptx</span></div>
+          </div>
+        </div>
+      </div>
+      <div class="fl-spec" style="width:1280px"><div><b>Notion 연결</b>페이지/DB 선택 → 하위 페이지 포함 여부 → 변경 감지 시 자동 재색인(웹훅). 출처 "Notion" 행은 열기 시 Notion 새 탭</div><div><b>상태</b>잉크 = 색인 완료 · 인디고 = 분석 중 · 빨강 = 실패(사유 텍스트) · 회색 = 보관 만료 임박</div><div><b>모듈</b>D 맥락 엔진 — Sentence-BERT 청크 임베딩, BM25 하이브리드</div></div>
+    </div>
+
+    <div class="fl-item" id="s08">
+      <div class="fl-ilabel"><a class="fl-iid" href="#s08">S08</a>회의 상세 (회의 전) — 자료 기반 어젠다 자동 생성<span class="fl-ph">Phase 2</span></div>
+      <div class="fl-card" style="width:1280px;height:720px;display:flex;flex-direction:column">
+        <div style="height:56px;border-bottom:1px solid rgba(22,25,31,.12);display:flex;align-items:center;gap:12px;padding:0 28px"><span style="font:400 13px Pretendard,sans-serif;color:#7A8089">회의</span><span style="color:#C9CCD1">/</span><span style="font:600 14px Pretendard,sans-serif;color:#16191F">검색 개인화 기능 스프린트 킥오프</span><span style="display:flex;align-items:center;gap:6px;font:500 12.5px Pretendard,sans-serif;color:#7A8089;margin-left:6px"><span style="width:6px;height:6px;border-radius:50%;border:1.5px solid #7A8089;box-sizing:border-box"></span>예정 · 오늘 14:00</span><div style="flex:1"></div><button style="height:40px;padding:0 8px;border:none;background:transparent;color:#3B4A9E;font:600 13px Pretendard,sans-serif">Slack에 어젠다 공유</button><button style="height:40px;padding:0 18px;border-radius:4px;border:none;background:#3B4A9E;color:#fff;font:600 13px Pretendard,sans-serif;display:inline-flex;align-items:center;gap:9px"><span style="width:8px;height:8px;border-radius:50%;background:#fff"></span>녹음 시작</button></div>
+        <div style="flex:1;display:grid;grid-template-columns:minmax(0,1fr) 380px;min-height:0">
+          <div style="padding:24px 28px;display:flex;flex-direction:column;gap:14px;border-right:1px solid rgba(22,25,31,.12);overflow:hidden">
+            <div style="display:flex;align-items:baseline;gap:10px"><span style="font:600 14px Pretendard,sans-serif;color:#16191F">어젠다 초안</span><span style="font:400 12.5px Pretendard,sans-serif;color:#7A8089">자료 3건 + 이전 회의 1건에서 생성 · 합계 <span style="font-family:ui-monospace,Menlo,monospace">45</span> / 60분</span><div style="flex:1"></div><button style="height:32px;padding:0 6px;border:none;background:transparent;color:#3B4A9E;font:600 12px Pretendard,sans-serif">다시 생성</button></div>
+            <div style="display:flex;flex-direction:column;border-top:1px solid rgba(22,25,31,.12)">
+              <div style="display:grid;grid-template-columns:28px 1fr auto;gap:14px;align-items:start;padding:16px 0;border-bottom:1px solid rgba(22,25,31,.12)"><span style="font:500 13px ui-monospace,Menlo,monospace;color:#7A8089;padding-top:1px">01</span><div><div style="font:600 14px Pretendard,sans-serif;color:#16191F">개인화 범위 — 실시간 vs 배치</div><div style="font:400 12.5px/1.6 Pretendard,sans-serif;color:#7A8089;margin-top:4px">근거 PRD v2 p.3 "실시간 여부는 회의에서 결정" · 결정 필요</div></div><span style="font:500 12px ui-monospace,Menlo,monospace;color:#3A3F47">15분</span></div>
+              <div style="display:grid;grid-template-columns:28px 1fr auto;gap:14px;align-items:start;padding:16px 0;border-bottom:1px solid rgba(22,25,31,.12)"><span style="font:500 13px ui-monospace,Menlo,monospace;color:#7A8089;padding-top:1px">02</span><div><div style="display:flex;align-items:center;gap:8px"><span style="width:6px;height:6px;border-radius:50%;background:#B8862B"></span><span style="font:600 14px Pretendard,sans-serif;color:#16191F">응답 지연 목표와 폴백 정책</span></div><div style="font:400 12.5px/1.6 Pretendard,sans-serif;color:#7A8089;margin-top:4px">근거 PRD v2 p.4 · <span style="color:#B8862B">09/04 회의에서 미결정으로 종료</span></div></div><span style="font:500 12px ui-monospace,Menlo,monospace;color:#3A3F47">10분</span></div>
+              <div style="display:grid;grid-template-columns:28px 1fr auto;gap:14px;align-items:start;padding:16px 0;border-bottom:1px solid rgba(22,25,31,.12)"><span style="font:500 13px ui-monospace,Menlo,monospace;color:#7A8089;padding-top:1px">03</span><div><div style="display:flex;align-items:center;gap:8px"><span style="width:6px;height:6px;border-radius:50%;background:#B8862B"></span><span style="font:600 14px Pretendard,sans-serif;color:#16191F">콜드스타트 유저 처리</span></div><div style="font:400 12.5px/1.6 Pretendard,sans-serif;color:#7A8089;margin-top:4px">근거 없음 — 도메인 템플릿(추천 기능) 필수 항목 · <span style="color:#B8862B">자료 누락</span></div></div><span style="font:500 12px ui-monospace,Menlo,monospace;color:#3A3F47">10분</span></div>
+              <div style="display:grid;grid-template-columns:28px 1fr auto;gap:14px;align-items:start;padding:16px 0;border-bottom:1px solid rgba(22,25,31,.12)"><span style="font:500 13px ui-monospace,Menlo,monospace;color:#7A8089;padding-top:1px">04</span><div><div style="font:600 14px Pretendard,sans-serif;color:#16191F">클릭 로그 스키마와 수집 범위</div><div style="font:400 12.5px/1.6 Pretendard,sans-serif;color:#7A8089;margin-top:4px">근거 랭킹 지표 정의.xlsx 미정 컬럼 3 · 결정 필요</div></div><span style="font:500 12px ui-monospace,Menlo,monospace;color:#3A3F47">10분</span></div>
+              <div style="display:grid;grid-template-columns:28px 1fr auto;gap:14px;align-items:center;padding:14px 0"><span style="font:500 13px ui-monospace,Menlo,monospace;color:#7A8089">05</span><input placeholder="어젠다 직접 추가" style="height:36px;border:none;border-bottom:1px solid rgba(22,25,31,.2);padding:0;font:400 13.5px Pretendard,sans-serif;color:#16191F;background:transparent;outline:none"><span style="font:500 12px ui-monospace,Menlo,monospace;color:#7A8089">— 분</span></div>
+            </div>
+          </div>
+          <div style="padding:24px;background:#F4F3EF;display:flex;flex-direction:column;gap:22px;overflow:hidden">
+            <div>
+              <div style="font:600 13px Pretendard,sans-serif;color:#16191F;margin-bottom:4px">연결된 자료 <span style="font:500 12px ui-monospace,Menlo,monospace;color:#7A8089">3</span></div>
+              <div style="display:flex;flex-direction:column;border-top:1px solid rgba(22,25,31,.12)">
+                <div style="display:grid;grid-template-columns:auto 1fr;gap:10px;align-items:center;padding:11px 0;border-bottom:1px solid rgba(22,25,31,.12)"><span style="width:6px;height:6px;border-radius:50%;background:#16191F"></span><div><div style="font:500 13px Pretendard,sans-serif;color:#16191F">검색 개인화 PRD v2.pdf</div><div style="font:400 12px Pretendard,sans-serif;color:#7A8089">어젠다 4 추출</div></div></div>
+                <div style="display:grid;grid-template-columns:auto 1fr;gap:10px;align-items:center;padding:11px 0;border-bottom:1px solid rgba(22,25,31,.12)"><span style="width:6px;height:6px;border-radius:50%;background:#16191F"></span><div><div style="font:500 13px Pretendard,sans-serif;color:#16191F">Notion › 제품 스펙 › 개인화</div><div style="font:400 12px Pretendard,sans-serif;color:#7A8089">하위 6 · 09/17 재색인</div></div></div>
+                <div style="display:grid;grid-template-columns:auto 1fr;gap:10px;align-items:center;padding:11px 0;border-bottom:1px solid rgba(22,25,31,.12)"><span style="width:6px;height:6px;border-radius:50%;background:#3B4A9E"></span><div><div style="font:500 13px Pretendard,sans-serif;color:#16191F">랭킹 지표 정의.xlsx</div><div style="font:400 12px Pretendard,sans-serif;color:#7A8089">분석 중 <span style="font-family:ui-monospace,Menlo,monospace">62%</span></div></div></div>
+              </div>
+              <button style="margin-top:8px;height:32px;padding:0;border:none;background:transparent;color:#3B4A9E;font:600 12.5px Pretendard,sans-serif">+ 자료 · Notion 페이지 연결</button>
+            </div>
+            <div>
+              <div style="font:600 13px Pretendard,sans-serif;color:#16191F;margin-bottom:4px">이월 항목</div>
+              <div style="display:flex;flex-direction:column;border-top:1px solid rgba(22,25,31,.12)">
+                <div style="display:grid;grid-template-columns:auto 1fr;gap:10px;align-items:center;padding:11px 0;border-bottom:1px solid rgba(22,25,31,.12)"><span style="width:6px;height:6px;border-radius:50%;background:#C2443C"></span><div style="font:500 13px Pretendard,sans-serif;color:#16191F">랭킹 A/B 결과 공유 <span style="font:500 12px ui-monospace,Menlo,monospace;color:#C2443C">D+2</span></div></div>
+                <div style="display:grid;grid-template-columns:auto 1fr;gap:10px;align-items:center;padding:11px 0;border-bottom:1px solid rgba(22,25,31,.12)"><span style="width:6px;height:6px;border-radius:50%;background:#16191F"></span><div style="font:500 13px Pretendard,sans-serif;color:#16191F">개인화 대상 지표 정리 문서</div></div>
+                <div style="display:grid;grid-template-columns:auto 1fr;gap:10px;align-items:center;padding:11px 0;border-bottom:1px solid rgba(22,25,31,.12)"><span style="width:6px;height:6px;border-radius:50%;background:#B8862B"></span><div style="font:500 13px Pretendard,sans-serif;color:#16191F">미해소 갭 2 → 어젠다 02·03에 반영됨</div></div>
+              </div>
+            </div>
+            <div style="font:400 12px/1.6 Pretendard,sans-serif;color:#7A8089">회의 중 위 자료가 언급되면 전사 화면에 근거 카드가 자동 표시됩니다.</div>
+          </div>
+        </div>
+      </div>
+      <div class="fl-spec" style="width:1280px"><div><b>어젠다 항목 상태</b>일반 = 점 없음 · 황토 점 = 이전 미결정/자료 누락 (S20 갭, S22 계보와 같은 라벨)</div><div><b>편집</b>드래그 정렬, 시간 인라인 수정, 05행은 항상 입력 대기. 확정 시 Slack 공유 + 캘린더 설명에 첨부</div><div><b>모듈</b>D — 자료 청크 → 토픽 클러스터 → 어젠다 문장 생성(LLM), 근거 링크 필수</div></div>
+    </div>
+
+    <div class="fl-item" id="s09">
+      <div class="fl-ilabel"><a class="fl-iid" href="#s09">S09</a>프리미팅 브리프 — 회의 30분 전 Slack<span class="fl-ph">Phase 2</span></div>
+      <div class="fl-card" style="width:600px;height:720px;display:flex;flex-direction:column">
+        <div style="height:48px;border-bottom:1px solid rgba(22,25,31,.12);display:flex;align-items:center;gap:10px;padding:0 18px"><span style="font:600 13px Pretendard,sans-serif;color:#16191F"># search-squad</span><span style="font:400 12px Pretendard,sans-serif;color:#7A8089">Slack</span></div>
+        <div style="flex:1;padding:18px;display:flex;flex-direction:column;gap:16px;overflow:hidden">
+          <div style="display:flex;gap:11px">
+            <div style="width:34px;height:34px;flex:none;border-radius:4px;background:#3B4A9E;color:#fff;font:700 11px Pretendard,sans-serif;display:grid;place-items:center">AT</div>
+            <div style="min-width:0;flex:1">
+              <div style="display:flex;align-items:baseline;gap:7px"><span style="font:700 13px Pretendard,sans-serif;color:#16191F">Autune</span><span style="font:400 11.5px Pretendard,sans-serif;color:#7A8089">앱 · 13:30</span></div>
+              <div style="font:400 13.5px/1.65 Pretendard,sans-serif;color:#3A3F47;margin-top:5px">30분 뒤 <b style="color:#16191F">검색 개인화 기능 스프린트 킥오프</b>가 시작됩니다. 들어가기 전에 세 가지만 확인하세요.</div>
+              <div style="margin-top:12px;display:flex;flex-direction:column;border-top:1px solid rgba(22,25,31,.12)">
+                <div style="display:grid;grid-template-columns:auto 1fr;gap:10px;padding:12px 0;border-bottom:1px solid rgba(22,25,31,.12)"><span style="width:6px;height:6px;border-radius:50%;background:#C2443C;margin-top:7px"></span><div><div style="font:600 13px Pretendard,sans-serif;color:#16191F">기한이 지난 액션 1건</div><div style="font:400 12.5px/1.6 Pretendard,sans-serif;color:#3A3F47;margin-top:3px">이개발 · 랭킹 A/B 결과 공유 · 기한 <span style="font-family:ui-monospace,Menlo,monospace;color:#C2443C">09/16 · D+2</span></div></div></div>
+                <div style="display:grid;grid-template-columns:auto 1fr;gap:10px;padding:12px 0;border-bottom:1px solid rgba(22,25,31,.12)"><span style="width:6px;height:6px;border-radius:50%;background:#B8862B;margin-top:7px"></span><div><div style="font:600 13px Pretendard,sans-serif;color:#16191F">정해지지 않은 항목 2건</div><div style="font:400 12.5px/1.6 Pretendard,sans-serif;color:#3A3F47;margin-top:3px">응답 지연 목표 · 콜드스타트 처리 — 09/04 회의에서 결론 없이 종료됨</div></div></div>
+                <div style="display:grid;grid-template-columns:auto 1fr;gap:10px;padding:12px 0;border-bottom:1px solid rgba(22,25,31,.12)"><span style="width:6px;height:6px;border-radius:50%;background:#16191F;margin-top:7px"></span><div><div style="font:600 13px Pretendard,sans-serif;color:#16191F">이전 결정 요약</div><div style="font:400 12.5px/1.6 Pretendard,sans-serif;color:#3A3F47;margin-top:3px">08/29 "인기순 정렬 유지" → 09/04 "개인화 도입 검토"로 변경. 변경 시 정데이터 불참.</div></div></div>
+                <div style="padding:12px 0;font:400 12.5px/1.6 Pretendard,sans-serif;color:#3A3F47"><b style="color:#16191F">패턴 경고</b> — 이 참석자 조합의 최근 3회 중 2회에서 기술 스펙이 미정으로 남았습니다. 지연 목표를 먼저 다루는 것을 권합니다.</div>
+              </div>
+              <div style="display:flex;gap:4px;margin-top:8px;margin-left:-8px"><button style="height:32px;padding:0 8px;border:none;background:transparent;color:#3B4A9E;font:600 12.5px Pretendard,sans-serif">어젠다 열기</button><button style="height:32px;padding:0 8px;border:none;background:transparent;color:#3B4A9E;font:600 12.5px Pretendard,sans-serif">액션 4건</button><button style="height:32px;padding:0 8px;border:none;background:transparent;color:#3B4A9E;font:600 12.5px Pretendard,sans-serif">결정 계보</button></div>
+            </div>
+          </div>
+          <div style="display:flex;gap:11px"><div style="width:34px;height:34px;flex:none;border-radius:4px;background:#EBEAE5;color:#3A3F47;font:600 11px Pretendard,sans-serif;display:grid;place-items:center">개발</div><div><div style="display:flex;align-items:baseline;gap:7px"><span style="font:700 13px Pretendard,sans-serif;color:#16191F">이개발</span><span style="font:400 11.5px Pretendard,sans-serif;color:#7A8089">13:34</span></div><div style="font:400 13.5px/1.65 Pretendard,sans-serif;color:#3A3F47;margin-top:4px">A/B 결과 지금 올릴게요. 지연 목표는 회의에서 정하는 게 맞겟네요.</div></div></div>
+        </div>
+        <div style="padding:12px 18px;border-top:1px solid rgba(22,25,31,.12);font:400 12px/1.6 Pretendard,sans-serif;color:#7A8089">30분 전 자동 발송 · 채널 또는 참석자 DM · 개인 발화량은 포함하지 않음</div>
+      </div>
+      <div class="fl-spec" style="width:600px;grid-template-columns:1fr 1fr"><div><b>Slack 표현 규칙</b>Block Kit 제약 안에서 동일 원칙: 상태는 이모지 대신 "●" 문자 + 텍스트, 굵기로 위계. 버튼은 최대 3개</div><div><b>모듈</b>D 브리프 생성 + E 패턴 경고(SetFit/XGBoost)</div></div>
+    </div>
+
+  </div>
+</section>
+
+<section class="fl-sec" style="background:#e4e2dc">
+  <div class="fl-sname"><span class="fl-sbadge">E</span><span class="fl-stitle">회의 중 — 기본은 라이트 + 녹음 프레임 글로우(00 T7-b). 아래 S10·S14는 다크 테마 적용 예시</span></div>
+  <div class="fl-row">
+
+    <div class="fl-item" id="s10">
+      <div class="fl-ilabel"><a class="fl-iid" href="#s10">S10</a>녹음 시작 — 마이크 점검 · 참석자 동의 상태<span class="fl-ph">MVP</span></div>
+      <div class="fl-card" style="width:560px;height:660px;background:#111318;border-color:rgba(255,255,255,.12);display:flex;flex-direction:column">
+        <div style="padding:20px 24px;border-bottom:1px solid rgba(255,255,255,.1);display:flex;align-items:center;gap:10px"><span style="font:600 15px Pretendard,sans-serif;color:#EDEEF0">녹음 시작</span><span style="font:400 12.5px Pretendard,sans-serif;color:#9298A3">검색 개인화 기능 스프린트 킥오프</span><div style="flex:1"></div><button style="width:32px;height:32px;border:none;background:transparent;color:#9298A3;font:400 18px Pretendard,sans-serif">×</button></div>
+        <div style="flex:1;padding:24px;display:flex;flex-direction:column;gap:22px">
+          <div>
+            <div style="font:600 12px Pretendard,sans-serif;color:#9298A3;margin-bottom:10px">입력 장치</div>
+            <div style="display:flex;align-items:center;gap:14px;padding:14px 16px;border-radius:4px;background:#181B21">
+              <div style="display:flex;align-items:flex-end;gap:2px;height:22px"><span style="width:3px;height:8px;background:#3A414D"></span><span style="width:3px;height:16px;background:#6B7482"></span><span style="width:3px;height:22px;background:#EDEEF0"></span><span style="width:3px;height:12px;background:#6B7482"></span><span style="width:3px;height:18px;background:#9298A3"></span><span style="width:3px;height:9px;background:#3A414D"></span><span style="width:3px;height:20px;background:#9298A3"></span><span style="width:3px;height:14px;background:#6B7482"></span></div>
+              <div style="flex:1"><div style="font:600 13px Pretendard,sans-serif;color:#EDEEF0">MacBook Pro 마이크</div><div style="font:400 12px Pretendard,sans-serif;color:#9298A3;margin-top:2px">입력 레벨 정상 · 노이즈 제거 켬</div></div>
+              <button style="height:32px;padding:0 6px;border:none;background:transparent;color:#8F9BE0;font:600 12px Pretendard,sans-serif">변경</button>
+            </div>
+          </div>
+          <div>
+            <div style="font:600 12px Pretendard,sans-serif;color:#9298A3;margin-bottom:10px">예정 종료 · 미결정 알림 <span style="font-weight:400">Phase 2</span></div>
+            <div style="display:flex;gap:6px"><span style="height:32px;padding:0 12px;border-radius:4px;background:#2C3878;color:#fff;font:600 12.5px ui-monospace,Menlo,monospace;display:inline-flex;align-items:center">15:00</span><span style="height:32px;padding:0 12px;border-radius:4px;background:#181B21;color:#9298A3;font:600 12.5px Pretendard,sans-serif;display:inline-flex;align-items:center">+30분</span><span style="height:32px;padding:0 12px;border-radius:4px;background:#181B21;color:#9298A3;font:600 12.5px Pretendard,sans-serif;display:inline-flex;align-items:center">미설정</span><span style="font:400 12px Pretendard,sans-serif;color:#9298A3;align-self:center;margin-left:6px">종료 5분 전 알림</span></div>
+          </div>
+          <div>
+            <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:6px"><span style="font:600 12px Pretendard,sans-serif;color:#9298A3">참석자 동의</span><span style="font:500 12px ui-monospace,Menlo,monospace;color:#9298A3">3 / 4</span></div>
+            <div style="display:flex;flex-direction:column;border-top:1px solid rgba(255,255,255,.1)">
+              <div style="display:grid;grid-template-columns:auto 1fr auto;gap:10px;align-items:center;padding:10px 0;border-bottom:1px solid rgba(255,255,255,.1)"><span style="width:6px;height:6px;border-radius:50%;background:#EDEEF0"></span><span style="font:500 13px Pretendard,sans-serif;color:#EDEEF0">김서연 <span style="color:#9298A3">PM</span></span><span style="font:400 12px Pretendard,sans-serif;color:#9298A3">동의 · 음성 등록됨</span></div>
+              <div style="display:grid;grid-template-columns:auto 1fr auto;gap:10px;align-items:center;padding:10px 0;border-bottom:1px solid rgba(255,255,255,.1)"><span style="width:6px;height:6px;border-radius:50%;background:#EDEEF0"></span><span style="font:500 13px Pretendard,sans-serif;color:#EDEEF0">이개발 <span style="color:#9298A3">Backend</span></span><span style="font:400 12px Pretendard,sans-serif;color:#9298A3">동의 · 음성 등록됨</span></div>
+              <div style="display:grid;grid-template-columns:auto 1fr auto;gap:10px;align-items:center;padding:10px 0;border-bottom:1px solid rgba(255,255,255,.1)"><span style="width:6px;height:6px;border-radius:50%;background:#EDEEF0"></span><span style="font:500 13px Pretendard,sans-serif;color:#EDEEF0">최디자인 <span style="color:#9298A3">Design</span></span><span style="font:400 12px Pretendard,sans-serif;color:#9298A3">동의</span></div>
+              <div style="display:grid;grid-template-columns:auto 1fr auto;gap:10px;align-items:center;padding:10px 0;border-bottom:1px solid rgba(255,255,255,.1)"><span style="width:6px;height:6px;border-radius:50%;background:#D9A441"></span><span style="font:500 13px Pretendard,sans-serif;color:#EDEEF0">정데이터 <span style="color:#9298A3">Data</span></span><span style="font:400 12px Pretendard,sans-serif;color:#D9A441">응답 없음 · 음성 미등록</span></div>
+            </div>
+            <div style="display:flex;align-items:center;gap:10px;margin-top:12px"><span style="width:16px;height:16px;border-radius:4px;background:#3B4A9E;color:#fff;font:700 11px Pretendard,sans-serif;display:grid;place-items:center">✓</span><span style="font:400 13px Pretendard,sans-serif;color:#EDEEF0">미동의 참석자 발화는 분석에서 제외</span></div>
+          </div>
+          <div style="flex:1"></div>
+          <div style="font:400 12px/1.6 Pretendard,sans-serif;color:#9298A3">녹음 시작 시 채널에 안내가 게시됩니다. 원본 음성은 분석 후 즉시 삭제되고, 전사 텍스트의 개인정보는 자동 마스킹됩니다.</div>
+        </div>
+        <div style="padding:14px 24px;border-top:1px solid rgba(255,255,255,.1);display:flex;justify-content:flex-end;gap:4px"><button style="height:40px;padding:0 10px;border:none;background:transparent;color:#9298A3;font:600 13px Pretendard,sans-serif">파일 업로드로 대신</button><button style="height:40px;padding:0 18px;border-radius:4px;border:none;background:#3B4A9E;color:#fff;font:600 13px Pretendard,sans-serif;display:inline-flex;align-items:center;gap:9px"><span style="width:8px;height:8px;border-radius:50%;background:#fff"></span>녹음 시작</button></div>
+      </div>
+      <div class="fl-spec" style="width:560px;grid-template-columns:1fr 1fr"><div><b>다크 토큰</b>bg #111318 · panel #181B21 · ink #EDEEF0 · muted #9298A3 · 인디고 텍스트는 밝힌 #8F9BE0, 채움은 #3B4A9E 유지 · 황토 #D9A441</div><div><b>상태</b>마이크 권한 거부 → 장치 행 빨강 텍스트 + "권한 허용" 텍스트 버튼. 동의 0명이면 시작 버튼 비활성</div></div>
+    </div>
+
+    <div class="fl-item" id="s11">
+      <div class="fl-ilabel"><a class="fl-iid" href="#s11">S11</a>참석자 동의 요청 — Slack DM<span class="fl-ph">MVP</span></div>
+      <div class="fl-card" style="width:560px;height:660px;display:flex;flex-direction:column">
+        <div style="height:48px;border-bottom:1px solid rgba(22,25,31,.12);display:flex;align-items:center;gap:10px;padding:0 18px"><span style="font:600 13px Pretendard,sans-serif;color:#16191F">Autune</span><span style="font:400 12px Pretendard,sans-serif;color:#7A8089">DM · 정데이터</span></div>
+        <div style="flex:1;padding:18px;display:flex;flex-direction:column;gap:18px">
+          <div style="display:flex;gap:11px">
+            <div style="width:34px;height:34px;flex:none;border-radius:4px;background:#3B4A9E;color:#fff;font:700 11px Pretendard,sans-serif;display:grid;place-items:center">AT</div>
+            <div style="flex:1;min-width:0">
+              <div style="display:flex;align-items:baseline;gap:7px"><span style="font:700 13px Pretendard,sans-serif;color:#16191F">Autune</span><span style="font:400 11.5px Pretendard,sans-serif;color:#7A8089">13:58</span></div>
+              <div style="font:400 13.5px/1.65 Pretendard,sans-serif;color:#3A3F47;margin-top:5px"><b style="color:#16191F">검색 개인화 기능 스프린트 킥오프</b> 회의가 곧 녹음됩니다. 정데이터님의 발화를 분석에 포함해도 될까요?</div>
+              <div style="margin-top:12px;display:flex;flex-direction:column;border-top:1px solid rgba(22,25,31,.12)">
+                <div style="display:grid;grid-template-columns:auto 1fr;gap:10px;padding:11px 0;border-bottom:1px solid rgba(22,25,31,.12);font:400 12.5px/1.55 Pretendard,sans-serif;color:#3A3F47"><span style="width:6px;height:6px;border-radius:50%;background:#16191F;margin-top:7px"></span><span>원본 음성은 분석 직후 삭제되고 복원되지 않습니다</span></div>
+                <div style="display:grid;grid-template-columns:auto 1fr;gap:10px;padding:11px 0;border-bottom:1px solid rgba(22,25,31,.12);font:400 12.5px/1.55 Pretendard,sans-serif;color:#3A3F47"><span style="width:6px;height:6px;border-radius:50%;background:#16191F;margin-top:7px"></span><span>전화번호·이메일 등 개인정보는 저장 전 마스킹됩니다</span></div>
+                <div style="display:grid;grid-template-columns:auto 1fr;gap:10px;padding:11px 0;border-bottom:1px solid rgba(22,25,31,.12);font:400 12.5px/1.55 Pretendard,sans-serif;color:#3A3F47"><span style="width:6px;height:6px;border-radius:50%;background:#16191F;margin-top:7px"></span><span>내 발언 비중은 나에게만 전달되며 타인은 볼 수 없습니다</span></div>
+                <div style="display:grid;grid-template-columns:auto 1fr;gap:10px;padding:11px 0;font:400 12.5px/1.55 Pretendard,sans-serif;color:#3A3F47"><span style="width:6px;height:6px;border-radius:50%;background:#16191F;margin-top:7px"></span><span>분석 결과는 90일 후 자동 삭제되며 언제든 직접 삭제할 수 있습니다</span></div>
+              </div>
+              <div style="display:flex;gap:6px;margin-top:12px"><button style="height:36px;padding:0 16px;border-radius:4px;border:none;background:#3B4A9E;color:#fff;font:600 13px Pretendard,sans-serif">동의합니다</button><button style="height:36px;padding:0 14px;border-radius:4px;border:none;background:#EBEAE5;color:#16191F;font:600 13px Pretendard,sans-serif">이번 회의는 제외</button></div>
+              <div style="font:400 12px/1.6 Pretendard,sans-serif;color:#7A8089;margin-top:10px">응답이 없으면 발화는 기록되되 분석·요약에서 제외됩니다. 설정에서 "항상 동의"로 바꿀 수 있습니다.</div>
+            </div>
+          </div>
+          <div style="display:flex;gap:11px">
+            <div style="width:34px;height:34px;flex:none;border-radius:4px;background:#3B4A9E;color:#fff;font:700 11px Pretendard,sans-serif;display:grid;place-items:center">AT</div>
+            <div style="flex:1;min-width:0">
+              <div style="display:flex;align-items:baseline;gap:7px"><span style="font:700 13px Pretendard,sans-serif;color:#16191F">Autune</span><span style="font:400 11.5px Pretendard,sans-serif;color:#7A8089">14:00</span></div>
+              <div style="font:400 13.5px/1.65 Pretendard,sans-serif;color:#3A3F47;margin-top:5px">아직 목소리가 등록되지 않았습니다. 지금 등록하면 이 회의부터 "화자 4" 대신 이름으로 표시됩니다.</div>
+              <div style="display:flex;gap:4px;margin-top:8px;margin-left:-8px"><button style="height:32px;padding:0 8px;border:none;background:transparent;color:#3B4A9E;font:600 12.5px Pretendard,sans-serif">20초 만에 등록</button><button style="height:32px;padding:0 8px;border:none;background:transparent;color:#7A8089;font:600 12.5px Pretendard,sans-serif">나중에</button></div>
+            </div>
+          </div>
+        </div>
+        <div style="padding:12px 18px;border-top:1px solid rgba(22,25,31,.12);font:400 12px/1.6 Pretendard,sans-serif;color:#7A8089">채널에는 "녹음이 시작되었습니다 · 참석자 4명 중 3명 동의"가 게시됨</div>
+      </div>
+      <div class="fl-spec" style="width:560px;grid-template-columns:1fr 1fr"><div><b>응답 처리</b>동의 → S10 행 잉크 점. 제외 → 회색 점 "제외" · 해당 화자 발화는 전사에만 남고 B/C/D 모듈 입력에서 필터</div><div><b>법적</b>동의 로그(누가·언제·어떤 문구)는 감사 로그로 저장. 기획서 6-5</div></div>
+    </div>
+
+    <div class="fl-item" id="s12">
+      <div class="fl-ilabel"><a class="fl-iid" href="#s12">S12</a>파일 업로드 처리 — 파이프라인 진행<span class="fl-ph">MVP</span></div>
+      <div class="fl-card" style="width:1280px;height:560px;display:grid;grid-template-columns:200px minmax(0,1fr);background:#F4F3EF">
+        <div style="padding:22px 18px;display:flex;flex-direction:column;gap:20px;border-right:1px solid rgba(22,25,31,.12)">
+          <div style="font:700 13px Pretendard,sans-serif;color:#16191F;letter-spacing:.04em">AUTUNE</div>
+          <button style="height:40px;border-radius:4px;border:none;background:#3B4A9E;color:#fff;font:600 13px Pretendard,sans-serif;display:flex;align-items:center;justify-content:center;gap:9px"><span style="width:8px;height:8px;border-radius:50%;background:#fff"></span>회의 시작</button>
+          <div style="display:flex;flex-direction:column;font:500 13px Pretendard,sans-serif"><div style="padding:8px 0;color:#3A3F47">홈</div><div style="padding:8px 10px;margin:0 -10px;border-radius:4px;background:#E9EBF6;color:#2C3878;font-weight:600">회의</div><div style="padding:8px 0;color:#3A3F47">액션아이템</div><div style="padding:8px 0;color:#3A3F47">갭 리포트</div><div style="padding:8px 0;color:#3A3F47">결정 계보</div><div style="padding:8px 0;color:#7A8089">자료</div><div style="padding:8px 0;color:#3A3F47">대시보드</div></div>
+          <div style="flex:1"></div><div style="font:500 13px Pretendard,sans-serif;color:#3A3F47">설정</div>
+        </div>
+        <div style="background:#fff;display:flex;flex-direction:column;min-width:0">
+          <div style="height:56px;border-bottom:1px solid rgba(22,25,31,.12);display:flex;align-items:center;gap:12px;padding:0 28px"><span style="font:400 13px Pretendard,sans-serif;color:#7A8089">회의</span><span style="color:#C9CCD1">/</span><span style="font:600 14px Pretendard,sans-serif;color:#16191F">랭킹 지표 정의 미팅</span><span style="display:flex;align-items:center;gap:6px;font:500 12.5px Pretendard,sans-serif;color:#16191F;margin-left:6px"><span style="width:6px;height:6px;border-radius:50%;background:#3B4A9E"></span>분석 중 <span style="font-family:ui-monospace,Menlo,monospace;color:#7A8089">62%</span></span><div style="flex:1"></div><span style="font:400 12.5px Pretendard,sans-serif;color:#7A8089">약 6분 남음 · 완료되면 Slack으로 알림</span><button style="height:40px;padding:0 8px;border:none;background:transparent;color:#7A8089;font:600 13px Pretendard,sans-serif">취소</button></div>
+          <div style="padding:28px;display:grid;grid-template-columns:minmax(0,1fr) 360px;gap:40px">
+            <div>
+              <div style="display:flex;align-items:baseline;gap:10px"><span style="font:600 14px Pretendard,sans-serif;color:#16191F">처리 단계</span><span style="font:400 12.5px Pretendard,sans-serif;color:#7A8089">ranking_metrics_0917.m4a · <span style="font-family:ui-monospace,Menlo,monospace">52:14</span> · 61MB</span></div>
+              <div style="height:2px;background:rgba(22,25,31,.1);margin:14px 0 6px"><div style="width:62%;height:2px;background:#3B4A9E"></div></div>
+              <div style="display:flex;flex-direction:column;border-top:1px solid rgba(22,25,31,.12);margin-top:12px">
+                <div style="display:grid;grid-template-columns:auto 1fr auto;gap:12px;align-items:center;padding:13px 0;border-bottom:1px solid rgba(22,25,31,.12)"><span style="width:6px;height:6px;border-radius:50%;background:#16191F"></span><div><div style="font:600 13.5px Pretendard,sans-serif;color:#16191F">업로드 · 형식 검증</div><div style="font:400 12px Pretendard,sans-serif;color:#7A8089;margin-top:2px">m4a → 16kHz mono 변환</div></div><span style="font:500 12px ui-monospace,Menlo,monospace;color:#7A8089">00:41</span></div>
+                <div style="display:grid;grid-template-columns:auto 1fr auto;gap:12px;align-items:center;padding:13px 0;border-bottom:1px solid rgba(22,25,31,.12)"><span style="width:6px;height:6px;border-radius:50%;background:#16191F"></span><div><div style="font:600 13.5px Pretendard,sans-serif;color:#16191F">음성 인식</div><div style="font:400 12px Pretendard,sans-serif;color:#7A8089;margin-top:2px">Whisper large-v3 · 발화 412개 · 평균 신뢰도 <span style="font-family:ui-monospace,Menlo,monospace">0.91</span></div></div><span style="font:500 12px ui-monospace,Menlo,monospace;color:#7A8089">04:52</span></div>
+                <div style="display:grid;grid-template-columns:auto 1fr auto;gap:12px;align-items:center;padding:13px 0;border-bottom:1px solid rgba(22,25,31,.12)"><span style="width:6px;height:6px;border-radius:50%;background:#3B4A9E"></span><div><div style="font:600 13.5px Pretendard,sans-serif;color:#16191F">화자 분리 · 식별</div><div style="font:400 12px Pretendard,sans-serif;color:#7A8089;margin-top:2px">Pyannote · 화자 4명 감지 · 등록 음성과 매칭 중 (3 / 4)</div></div><span style="font:500 12px ui-monospace,Menlo,monospace;color:#3B4A9E">진행</span></div>
+                <div style="display:grid;grid-template-columns:auto 1fr auto;gap:12px;align-items:center;padding:13px 0;border-bottom:1px solid rgba(22,25,31,.12)"><span style="width:6px;height:6px;border-radius:50%;border:1.5px solid #7A8089;box-sizing:border-box"></span><div><div style="font:600 13.5px Pretendard,sans-serif;color:#7A8089">개인정보 마스킹</div><div style="font:400 12px Pretendard,sans-serif;color:#7A8089;margin-top:2px">전화 · 이메일 · 주민번호 · 계좌 — 정규식 + NER</div></div><span></span></div>
+                <div style="display:grid;grid-template-columns:auto 1fr auto;gap:12px;align-items:center;padding:13px 0;border-bottom:1px solid rgba(22,25,31,.12)"><span style="width:6px;height:6px;border-radius:50%;border:1.5px solid #7A8089;box-sizing:border-box"></span><div><div style="font:600 13.5px Pretendard,sans-serif;color:#7A8089">원본 음성 삭제</div><div style="font:400 12px Pretendard,sans-serif;color:#7A8089;margin-top:2px">마스킹 완료 즉시 · 삭제 시각이 회의 메타에 기록</div></div><span></span></div>
+                <div style="display:grid;grid-template-columns:auto 1fr auto;gap:12px;align-items:center;padding:13px 0"><span style="width:6px;height:6px;border-radius:50%;border:1.5px solid #7A8089;box-sizing:border-box"></span><div><div style="font:600 13.5px Pretendard,sans-serif;color:#7A8089">구조화 · 갭 · 맥락 분석</div><div style="font:400 12px Pretendard,sans-serif;color:#7A8089;margin-top:2px">B · C · D 병렬 → 요약 확인 화면(S15)으로 이동</div></div><span></span></div>
+              </div>
+            </div>
+            <div style="padding:20px;background:#F4F3EF;border-radius:4px;display:flex;flex-direction:column;gap:14px;align-self:start">
+              <div style="font:600 13px Pretendard,sans-serif;color:#16191F">지금까지 감지된 것</div>
+              <div style="display:flex;flex-direction:column;border-top:1px solid rgba(22,25,31,.12)">
+                <div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid rgba(22,25,31,.12);font:500 13px Pretendard,sans-serif;color:#3A3F47"><span>발화</span><span style="font-family:ui-monospace,Menlo,monospace;color:#16191F">412</span></div>
+                <div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid rgba(22,25,31,.12);font:500 13px Pretendard,sans-serif;color:#3A3F47"><span>화자</span><span style="font-family:ui-monospace,Menlo,monospace;color:#16191F">4 <span style="color:#7A8089">(1 미식별)</span></span></div>
+                <div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid rgba(22,25,31,.12);font:500 13px Pretendard,sans-serif;color:#3A3F47"><span>낮은 신뢰 구간</span><span style="font-family:ui-monospace,Menlo,monospace;color:#16191F">2</span></div>
+                <div style="display:flex;justify-content:space-between;padding:10px 0;font:500 13px Pretendard,sans-serif;color:#3A3F47"><span>참석자 등록</span><span style="font-family:ui-monospace,Menlo,monospace;color:#16191F">4</span></div>
+              </div>
+              <div style="font:400 12px/1.6 Pretendard,sans-serif;color:#7A8089">화자 식별이 끝나면 미식별 화자에 대해 확인 요청(S16)이 발송됩니다. 이 페이지를 떠나도 처리는 계속됩니다.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="fl-spec" style="width:1280px"><div><b>단계 상태</b>완료 = 잉크 점 + 소요 시간 · 진행 = 인디고 점 + "진행" · 대기 = 빈 원 · 실패 = 빨강 점 + 사유 + "다시 시도" 텍스트 버튼</div><div><b>실패 케이스</b>무음 파일 · 3시간 초과 · 화자 0명 · GPU 큐 지연(예상 시간 갱신)</div><div><b>모듈</b>A — Celery 태스크 체인. 진행률은 WebSocket, 이탈 시 Slack 완료 알림</div></div>
+    </div>
+
+    <div class="fl-item" id="s13">
+      <div class="fl-ilabel"><a class="fl-iid" href="#s13">S13</a>회의 중 실시간 전사 — 별도 파일<span class="fl-ph">MVP</span></div>
+      <div class="fl-card" style="width:600px;height:560px;background:#111318;border-color:rgba(255,255,255,.12);display:flex;flex-direction:column">
+        <div style="padding:16px 22px;border-bottom:1px solid rgba(255,255,255,.1);display:flex;align-items:center;gap:10px"><span style="width:8px;height:8px;border-radius:50%;background:#C2443C;animation:recpulse 1.6s ease-in-out infinite"></span><span style="font:600 13px Pretendard,sans-serif;color:#EDEEF0">녹음 중</span><span style="font:500 13px ui-monospace,Menlo,monospace;color:#EDEEF0">00:47:22</span><div style="flex:1"></div><span style="font:400 12px Pretendard,sans-serif;color:#9298A3">1440 × 936</span></div>
+        <div style="flex:1;padding:26px 22px;display:flex;flex-direction:column;gap:14px">
+          <div style="font:400 13.5px/1.7 Pretendard,sans-serif;color:#9298A3">완성본은 <a href="AUTUNE 실시간 전사.dc.html" style="color:#8F9BE0;font-weight:600">AUTUNE 실시간 전사.dc.html</a>에서 관리합니다. 이 디자인 시스템 기준으로 아래 항목을 반영해 재작업합니다.</div>
+          <div style="display:flex;flex-direction:column;border-top:1px solid rgba(255,255,255,.1)">
+            <div style="display:grid;grid-template-columns:auto 1fr;gap:10px;padding:11px 0;border-bottom:1px solid rgba(255,255,255,.1);font:400 13px/1.55 Pretendard,sans-serif;color:#EDEEF0"><span style="width:6px;height:6px;border-radius:50%;background:#EDEEF0;margin-top:7px"></span>우측 상단 진행 시간·녹음 상태 블록 (타이머 58px, 경과율, 남은 시간, 파형)</div>
+            <div style="display:grid;grid-template-columns:auto 1fr;gap:10px;padding:11px 0;border-bottom:1px solid rgba(255,255,255,.1);font:400 13px/1.55 Pretendard,sans-serif;color:#EDEEF0"><span style="width:6px;height:6px;border-radius:50%;background:#EDEEF0;margin-top:7px"></span>발화 5종 태그 → 점 + 텍스트, 화자 미확인 → 황토 점 행</div>
+            <div style="display:grid;grid-template-columns:auto 1fr;gap:10px;padding:11px 0;border-bottom:1px solid rgba(255,255,255,.1);font:400 13px/1.55 Pretendard,sans-serif;color:#EDEEF0"><span style="width:6px;height:6px;border-radius:50%;background:#EDEEF0;margin-top:7px"></span>자료·과거 회의 언급 시 근거 카드 (인용 블록 + 텍스트 버튼 3)</div>
+            <div style="display:grid;grid-template-columns:auto 1fr;gap:10px;padding:11px 0;border-bottom:1px solid rgba(255,255,255,.1);font:400 13px/1.55 Pretendard,sans-serif;color:#EDEEF0"><span style="width:6px;height:6px;border-radius:50%;background:#EDEEF0;margin-top:7px"></span>PII 마스킹 토큰 (점선 밑줄 모노) · 발언 비중 패널 없음</div>
+            <div style="display:grid;grid-template-columns:auto 1fr;gap:10px;padding:11px 0;font:400 13px/1.55 Pretendard,sans-serif;color:#EDEEF0"><span style="width:6px;height:6px;border-radius:50%;background:#EDEEF0;margin-top:7px"></span>10분 간격 중간 요약 구분선 + "지금까지 정해진 것" 패널 갱신</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="fl-item" id="s14">
+      <div class="fl-ilabel"><a class="fl-iid" href="#s14">S14</a>회의 중 미결정 알림 — 종료 5분 전 (전사 화면 상단 P1 띠)<span class="fl-ph">Phase 2</span></div>
+      <div class="fl-card" style="width:600px;background:#111318;border-color:rgba(255,255,255,.12);display:flex;flex-direction:column">
+        <div style="margin:18px;background:#EDEEF0;color:#16191F;padding:16px 18px;border-radius:4px;display:flex;align-items:center;gap:14px">
+          <span style="width:8px;height:8px;border-radius:50%;background:#C2443C;flex:none"></span>
+          <div style="flex:1"><div style="font:600 13.5px Pretendard,sans-serif">종료 5분 전 · 아직 결정되지 않은 사항 2건</div><div style="font:400 12.5px/1.5 Pretendard,sans-serif;color:#3A3F47;margin-top:3px">콜드스타트 처리 방식 · 클릭 로그 스키마 담당</div></div>
+          <button style="height:32px;padding:0 6px;border:none;background:transparent;color:#7A8089;font:600 12px Pretendard,sans-serif">닫기</button>
+          <button style="height:32px;padding:0 12px;border-radius:4px;border:none;background:#3B4A9E;color:#fff;font:600 12px Pretendard,sans-serif">질문으로 띄우기</button>
+        </div>
+        <div style="padding:0 18px 18px;display:flex;flex-direction:column;gap:10px">
+          <div style="font:600 12px Pretendard,sans-serif;color:#9298A3">"질문으로 띄우기" 후 전사 흐름에 삽입되는 행</div>
+          <div style="padding:14px 16px;border-radius:4px;background:#181B21;display:grid;grid-template-columns:auto 1fr;gap:12px">
+            <span style="width:6px;height:6px;border-radius:50%;background:#8F9BE0;margin-top:7px"></span>
+            <div><div style="font:600 13px Pretendard,sans-serif;color:#EDEEF0">Autune 제안 질문 <span style="font:500 12px ui-monospace,Menlo,monospace;color:#9298A3;margin-left:6px">00:55:10</span></div><div style="font:400 13.5px/1.6 Pretendard,sans-serif;color:#EDEEF0;margin-top:5px">로그가 없는 신규 유저에게는 어떤 순위 기준을 적용하나요? 인기순 폴백과 동일한 기준인가요?</div><div style="display:flex;gap:4px;margin-top:8px;margin-left:-8px"><button style="height:32px;padding:0 8px;border:none;background:transparent;color:#8F9BE0;font:600 12px Pretendard,sans-serif">답변됨으로 표시</button><button style="height:32px;padding:0 8px;border:none;background:transparent;color:#9298A3;font:600 12px Pretendard,sans-serif">다음 회의로 이월</button></div></div>
+          </div>
+          <div style="font:400 12px/1.6 Pretendard,sans-serif;color:#9298A3">간격 알림(예: 20분마다)은 같은 띠를 재사용하되 문구만 "지금까지 결정되지 않은 사항 n건". 띠는 화면에 하나만, 새 알림이 오면 교체.</div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</section>
+</x-dc>
+</body>
+</html>

@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet data-dc-atomics><meta name="design_doc_mode" content="canvas"><link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.css"><style>body{margin:0;background:#e9e7e2;font-family:Pretendard,system-ui,sans-serif}a{color:#3B4A9E}a:hover{color:#2C3878}.fl-sec{padding:36px 44px 30px;border-bottom:1px solid rgba(0,0,0,.08)}.fl-sname{display:flex;align-items:baseline;gap:10px;margin:0 0 18px}.fl-sbadge{font:700 10px ui-monospace,Menlo,monospace;padding:3px 8px;background:#16191F;color:#fff;border-radius:4px}.fl-stitle{font:600 13px Pretendard,sans-serif;color:#16191F}.fl-row{display:flex;flex-wrap:wrap;gap:30px;align-items:flex-start}.fl-item{display:flex;flex-direction:column;gap:9px;flex:none;scroll-margin-top:16px}.fl-ilabel{display:flex;align-items:baseline;gap:8px;font:400 11.5px Pretendard,sans-serif;color:rgba(22,25,31,.6)}.fl-iid{font:700 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:rgba(22,25,31,.1);color:#16191F;border-radius:4px;text-decoration:none}.fl-card{background:#fff;border:1px solid rgba(22,25,31,.12);border-radius:4px;overflow:hidden}.fl-note{margin:20px 0 0;font:12px/1.6 Pretendard,sans-serif;color:rgba(22,25,31,.55)}@keyframes recdot{0%,100%{opacity:1}50%{opacity:.3}}@keyframes recglow{0%,100%{box-shadow:inset 0 0 0 2px rgba(194,68,60,.55),inset 0 0 48px rgba(194,68,60,.16)}50%{box-shadow:inset 0 0 0 2px rgba(194,68,60,.18),inset 0 0 16px rgba(194,68,60,.04)}}</style></helmet>
+
+<section class="fl-sec" style="background:#f3f2ee">
+  <div class="fl-sname"><span class="fl-sbadge">AUTUNE DESIGN SYSTEM</span><span class="fl-stitle">회의 전·중·후 업무 흐름에서 빠르게 읽히는 것을 최우선으로 한 규칙 모음</span></div>
+  <div style="display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:1px;max-width:1400px;background:rgba(22,25,31,.12);border:1px solid rgba(22,25,31,.12);border-radius:4px;overflow:hidden">
+    <a href="AUTUNE Spec 00 공통.dc.html" style="text-decoration:none;padding:18px;background:#16191F;color:#fff;display:flex;flex-direction:column;gap:8px"><span style="font:600 10px ui-monospace,Menlo,monospace;opacity:.6">00</span><span style="font:600 14px Pretendard,sans-serif">디자인 시스템</span><span style="font:400 11.5px/1.5 Pretendard,sans-serif;opacity:.7">원칙 · 컬러 역할 · 활자 · 버튼 · 상태 · 폼 · 셸</span></a>
+    <a href="AUTUNE Spec 01 진입·홈.dc.html" style="text-decoration:none;padding:18px;background:#fff;display:flex;flex-direction:column;gap:8px"><span style="font:600 10px ui-monospace,Menlo,monospace;color:#7A8089">01</span><span style="font:600 14px Pretendard,sans-serif;color:#16191F">진입 · 홈</span><span style="font:400 11.5px/1.5 Pretendard,sans-serif;color:#7A8089">S01 랜딩/로그인 · S02 워크스페이스 · S03 온보딩 · S04 음성 등록 · S05 홈 · S06 회의 생성</span></a>
+    <a href="AUTUNE Spec 02 회의 전·중.dc.html" style="text-decoration:none;padding:18px;background:#fff;display:flex;flex-direction:column;gap:8px"><span style="font:600 10px ui-monospace,Menlo,monospace;color:#7A8089">02</span><span style="font:600 14px Pretendard,sans-serif;color:#16191F">회의 전 · 회의 중</span><span style="font:400 11.5px/1.5 Pretendard,sans-serif;color:#7A8089">S07 자료 · S08 어젠다 · S09 브리프 · S10 녹음 시작 · S11 동의 · S12 처리 파이프라인 · S13 전사 · S14 미결정 알림</span></a>
+    <a href="AUTUNE Spec 03 회의 후.dc.html" style="text-decoration:none;padding:18px;background:#fff;display:flex;flex-direction:column;gap:8px"><span style="font:600 10px ui-monospace,Menlo,monospace;color:#7A8089">03</span><span style="font:600 14px Pretendard,sans-serif;color:#16191F">회의 후</span><span style="font:400 11.5px/1.5 Pretendard,sans-serif;color:#7A8089">S15 요약 확인 · S16 화자 확인 DM · S17 액션 보드 · S18 액션 상세 · S19 모호 동의 DM · S20 갭 리포트 · S21 질문 쓰레드 · S22 결정 계보 · S23 발언 비중 DM · S24 직무별 요약 · S25 다음 어젠다</span></a>
+    <a href="AUTUNE Spec 04 분석·설정·Phase2.dc.html" style="text-decoration:none;padding:18px;background:#fff;display:flex;flex-direction:column;gap:8px"><span style="font:600 10px ui-monospace,Menlo,monospace;color:#7A8089">04</span><span style="font:600 14px Pretendard,sans-serif;color:#16191F">분석 · 설정 · Phase 2</span><span style="font:400 11.5px/1.5 Pretendard,sans-serif;color:#7A8089">S26 대시보드 · S27 주간 리포트 · S28 연동 · S29 개인정보·보관 · S30 PII 신고 · S31 프로액티브 에이전트 · S32 회의실 예약 · S33 데스크탑 앱</span></a>
+  </div>
+</section>
+
+<section class="fl-sec">
+  <div class="fl-sname"><span class="fl-sbadge">R</span><span class="fl-stitle">여섯 가지 원칙</span></div>
+  <div class="fl-row">
+    <div class="fl-item" id="rule">
+      <div class="fl-card" style="width:1180px;display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:rgba(22,25,31,.12)">
+        <div style="background:#fff;padding:22px 24px"><div style="font:500 11.5px Pretendard,sans-serif;color:#7A8089">1 · 행동</div><div style="font:600 16px/1.4 Pretendard,sans-serif;color:#16191F;margin-top:6px">누를 수 있는 것은 전부 인디고 하나.</div><div style="font:400 12.5px/1.6 Pretendard,sans-serif;color:#3A3F47;margin-top:8px">주요 버튼, 텍스트 버튼, 링크, 활성 탭, 포커스 링, 체크 상태 모두 <span style="color:#3B4A9E;font-weight:600">#3B4A9E</span>. "녹음 시작"도 행동이므로 인디고. 검정 채움 버튼은 없다.</div></div>
+        <div style="background:#fff;padding:22px 24px"><div style="font:500 11.5px Pretendard,sans-serif;color:#7A8089">2 · 위험·시간</div><div style="font:600 16px/1.4 Pretendard,sans-serif;color:#16191F;margin-top:6px">빨강은 흐르는 시간과 실패에만.</div><div style="font:400 12.5px/1.6 Pretendard,sans-serif;color:#3A3F47;margin-top:8px">녹음 진행 점, 기한 초과, 처리 실패, 삭제 확정. 빨강은 버튼 채움으로 쓰지 않고 점·텍스트·타이머 숫자에만 쓴다.</div></div>
+        <div style="background:#fff;padding:22px 24px"><div style="font:500 11.5px Pretendard,sans-serif;color:#7A8089">3 · 상태</div><div style="font:600 16px/1.4 Pretendard,sans-serif;color:#16191F;margin-top:6px">상태는 6px 점 + 문장체 텍스트.</div><div style="font:400 12.5px/1.6 Pretendard,sans-serif;color:#3A3F47;margin-top:8px">채움 배지, pill, 좌측 컬러 바는 쓰지 않는다. 점의 색은 4가지만: 잉크(확정), 인디고(진행 중), 황토(확인 필요), 빨강(초과·실패). 대기·비활성은 빈 원.</div></div>
+        <div style="background:#fff;padding:22px 24px"><div style="font:500 11.5px Pretendard,sans-serif;color:#7A8089">4 · 형태</div><div style="font:600 16px/1.4 Pretendard,sans-serif;color:#16191F;margin-top:6px">라운드 4, 높이 3단, 굵기 600.</div><div style="font:400 12.5px/1.6 Pretendard,sans-serif;color:#3A3F47;margin-top:8px">버튼·인풋·카드·모달 모두 radius 4. 컨트롤 높이는 32 / 40 / 48만. 버튼 라벨은 항상 600. 그림자는 모달·드로어에만.</div></div>
+        <div style="background:#fff;padding:22px 24px"><div style="font:500 11.5px Pretendard,sans-serif;color:#7A8089">5 · 보조 행동</div><div style="font:600 16px/1.4 Pretendard,sans-serif;color:#16191F;margin-top:6px">outline 대신 텍스트, 그 다음 옅은 채움.</div><div style="font:400 12.5px/1.6 Pretendard,sans-serif;color:#3A3F47;margin-top:8px">2순위 행동은 인디고 텍스트 버튼. 나란히 놓여 형태가 필요할 때만 함몰색(#EBEAE5) 채움. 회색 테두리 버튼은 없다.</div></div>
+        <div style="background:#fff;padding:22px 24px"><div style="font:500 11.5px Pretendard,sans-serif;color:#7A8089">6 · 활자</div><div style="font:600 16px/1.4 Pretendard,sans-serif;color:#16191F;margin-top:6px">모노는 기계가 만든 값에만.</div><div style="font:400 12.5px/1.6 Pretendard,sans-serif;color:#3A3F47;margin-top:8px">시간코드, 점수, 이슈 ID, 날짜, 퍼센트. 섹션 라벨·상태·버튼은 Pretendard 문장체. 대문자 자간 라벨은 쓰지 않는다.</div></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="fl-sec">
+  <div class="fl-sname"><span class="fl-sbadge">T1</span><span class="fl-stitle">컬러 역할</span></div>
+  <div class="fl-row">
+    <div class="fl-item" id="tok-color">
+      <div class="fl-ilabel"><a class="fl-iid" href="#tok-color">T1</a>표면 · 잉크 · 행동 · 신호 — 각 색은 한 역할만 맡는다</div>
+      <div class="fl-card" style="width:1180px;padding:26px 28px;display:grid;grid-template-columns:1.1fr 1fr 1.3fr;gap:36px">
+        <div>
+          <div style="font:600 12.5px Pretendard,sans-serif;color:#16191F">표면 · 잉크</div>
+          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:rgba(22,25,31,.12);border:1px solid rgba(22,25,31,.12);border-radius:4px;overflow:hidden;margin-top:12px">
+            <div style="background:#F4F3EF;height:64px;padding:8px;display:flex;flex-direction:column;justify-content:flex-end"><span style="font:600 11px Pretendard,sans-serif;color:#16191F">종이</span><span style="font:400 10px ui-monospace,Menlo,monospace;color:#7A8089">#F4F3EF</span></div>
+            <div style="background:#FFFFFF;height:64px;padding:8px;display:flex;flex-direction:column;justify-content:flex-end"><span style="font:600 11px Pretendard,sans-serif;color:#16191F">패널</span><span style="font:400 10px ui-monospace,Menlo,monospace;color:#7A8089">#FFFFFF</span></div>
+            <div style="background:#EBEAE5;height:64px;padding:8px;display:flex;flex-direction:column;justify-content:flex-end"><span style="font:600 11px Pretendard,sans-serif;color:#16191F">함몰</span><span style="font:400 10px ui-monospace,Menlo,monospace;color:#7A8089">#EBEAE5</span></div>
+            <div style="background:#7A8089;height:64px;padding:8px;display:flex;flex-direction:column;justify-content:flex-end"><span style="font:600 11px Pretendard,sans-serif;color:#fff">보조 글자</span><span style="font:400 10px ui-monospace,Menlo,monospace;color:rgba(255,255,255,.75)">#7A8089</span></div>
+            <div style="background:#3A3F47;height:64px;padding:8px;display:flex;flex-direction:column;justify-content:flex-end"><span style="font:600 11px Pretendard,sans-serif;color:#fff">본문</span><span style="font:400 10px ui-monospace,Menlo,monospace;color:rgba(255,255,255,.75)">#3A3F47</span></div>
+            <div style="background:#16191F;height:64px;padding:8px;display:flex;flex-direction:column;justify-content:flex-end"><span style="font:600 11px Pretendard,sans-serif;color:#fff">잉크</span><span style="font:400 10px ui-monospace,Menlo,monospace;color:rgba(255,255,255,.75)">#16191F</span></div>
+          </div>
+          <div style="font:400 11.5px/1.6 Pretendard,sans-serif;color:#7A8089;margin-top:10px">구획선은 rgba(22,25,31,.12) 한 종류. 배경 채움은 종이·패널·함몰 3단만.</div>
+        </div>
+        <div>
+          <div style="font:600 12.5px Pretendard,sans-serif;color:#16191F">행동 — 하나</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:1px;background:rgba(22,25,31,.12);border:1px solid rgba(22,25,31,.12);border-radius:4px;overflow:hidden;margin-top:12px">
+            <div style="background:#3B4A9E;height:64px;padding:8px;display:flex;flex-direction:column;justify-content:flex-end"><span style="font:600 11px Pretendard,sans-serif;color:#fff">인디고</span><span style="font:400 10px ui-monospace,Menlo,monospace;color:rgba(255,255,255,.75)">#3B4A9E</span></div>
+            <div style="background:#2C3878;height:64px;padding:8px;display:flex;flex-direction:column;justify-content:flex-end"><span style="font:600 11px Pretendard,sans-serif;color:#fff">hover · active</span><span style="font:400 10px ui-monospace,Menlo,monospace;color:rgba(255,255,255,.75)">#2C3878</span></div>
+            <div style="background:#E9EBF6;height:64px;padding:8px;display:flex;flex-direction:column;justify-content:flex-end"><span style="font:600 11px Pretendard,sans-serif;color:#2C3878">선택 배경</span><span style="font:400 10px ui-monospace,Menlo,monospace;color:#3B4A9E">#E9EBF6</span></div>
+            <div style="background:#fff;height:64px;padding:8px;display:flex;flex-direction:column;justify-content:flex-end"><span style="font:600 11px Pretendard,sans-serif;color:#3B4A9E">텍스트 · 링크</span><span style="font:400 10px ui-monospace,Menlo,monospace;color:#7A8089">#3B4A9E on white 7.3:1</span></div>
+          </div>
+          <div style="font:400 11.5px/1.6 Pretendard,sans-serif;color:#7A8089;margin-top:10px">선택 배경은 리스트 행 선택·활성 탭 배경 전용. 장식으로 쓰지 않는다.</div>
+        </div>
+        <div>
+          <div style="font:600 12.5px Pretendard,sans-serif;color:#16191F">신호 — 점과 텍스트에만</div>
+          <div style="display:flex;flex-direction:column;margin-top:12px;border-top:1px solid rgba(22,25,31,.12)">
+            <div style="display:grid;grid-template-columns:120px 1fr;gap:14px;padding:11px 0;border-bottom:1px solid rgba(22,25,31,.12);align-items:start"><span style="display:flex;align-items:center;gap:8px;font:600 12.5px Pretendard,sans-serif;color:#16191F"><span style="width:7px;height:7px;border-radius:50%;background:#16191F;flex:none"></span>잉크</span><span style="font:400 12px/1.55 Pretendard,sans-serif;color:#3A3F47">확정된 것. 결정, 분석 완료, 전송 완료, 동의함</span></div>
+            <div style="display:grid;grid-template-columns:120px 1fr;gap:14px;padding:11px 0;border-bottom:1px solid rgba(22,25,31,.12);align-items:start"><span style="display:flex;align-items:center;gap:8px;font:600 12.5px Pretendard,sans-serif;color:#16191F"><span style="width:7px;height:7px;border-radius:50%;background:#3B4A9E;flex:none"></span>인디고</span><span style="font:400 12px/1.55 Pretendard,sans-serif;color:#3A3F47">시스템이 진행 중. 분석 중 62%, 동기화 중, 자료 연결됨</span></div>
+            <div style="display:grid;grid-template-columns:120px 1fr;gap:14px;padding:11px 0;border-bottom:1px solid rgba(22,25,31,.12);align-items:start"><span style="display:flex;align-items:center;gap:8px;font:600 12.5px Pretendard,sans-serif;color:#16191F"><span style="width:7px;height:7px;border-radius:50%;background:#B8862B;flex:none"></span>황토 <span style="font:400 10px ui-monospace,Menlo,monospace;color:#7A8089">#B8862B</span></span><span style="font:400 12px/1.55 Pretendard,sans-serif;color:#3A3F47">사람의 확인이 필요. 화자 미확인, 모호한 동의, 미결정 항목, 갭 MEDIUM</span></div>
+            <div style="display:grid;grid-template-columns:120px 1fr;gap:14px;padding:11px 0;border-bottom:1px solid rgba(22,25,31,.12);align-items:start"><span style="display:flex;align-items:center;gap:8px;font:600 12.5px Pretendard,sans-serif;color:#16191F"><span style="width:7px;height:7px;border-radius:50%;background:#C2443C;flex:none"></span>빨강 <span style="font:400 10px ui-monospace,Menlo,monospace;color:#7A8089">#C2443C</span></span><span style="font:400 12px/1.55 Pretendard,sans-serif;color:#3A3F47">시간·위험. 녹음 중, 기한 초과, 처리 실패, 갭 HIGH, 삭제 확정</span></div>
+            <div style="display:grid;grid-template-columns:120px 1fr;gap:14px;padding:11px 0;align-items:start"><span style="display:flex;align-items:center;gap:8px;font:600 12.5px Pretendard,sans-serif;color:#7A8089"><span style="width:7px;height:7px;border-radius:50%;border:1.5px solid #7A8089;box-sizing:border-box;flex:none"></span>빈 원</span><span style="font:400 12px/1.55 Pretendard,sans-serif;color:#3A3F47">아직 아무 일도 없음. 예정, 미착수, 미연결, Phase 2</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="fl-sec">
+  <div class="fl-sname"><span class="fl-sbadge">T2</span><span class="fl-stitle">활자 · 간격</span></div>
+  <div class="fl-row">
+    <div class="fl-item" id="tok-type">
+      <div class="fl-card" style="width:1180px;padding:26px 28px;display:grid;grid-template-columns:1.4fr 1fr;gap:40px">
+        <div style="display:flex;flex-direction:column">
+          <div style="display:flex;justify-content:space-between;align-items:baseline;padding:10px 0;border-bottom:1px solid rgba(22,25,31,.12)"><span style="font:700 32px/1.15 Pretendard,sans-serif;color:#16191F;letter-spacing:-.025em">회의는 끝났는데 실행은</span><span style="font:400 11px ui-monospace,Menlo,monospace;color:#7A8089">display 32/700</span></div>
+          <div style="display:flex;justify-content:space-between;align-items:baseline;padding:10px 0;border-bottom:1px solid rgba(22,25,31,.12)"><span style="font:600 20px/1.3 Pretendard,sans-serif;color:#16191F;letter-spacing:-.015em">검색 개인화 기능 스프린트 킥오프</span><span style="font:400 11px ui-monospace,Menlo,monospace;color:#7A8089">title 20/600</span></div>
+          <div style="display:flex;justify-content:space-between;align-items:baseline;padding:10px 0;border-bottom:1px solid rgba(22,25,31,.12)"><span style="font:600 14px Pretendard,sans-serif;color:#16191F">지금까지 정해진 것</span><span style="font:400 11px ui-monospace,Menlo,monospace;color:#7A8089">heading 14/600</span></div>
+          <div style="display:flex;justify-content:space-between;align-items:baseline;padding:10px 0;border-bottom:1px solid rgba(22,25,31,.12)"><span style="font:400 14px/1.65 Pretendard,sans-serif;color:#3A3F47">p95 200ms 안쪽으로 잡겠습니다. 그 이상 나오면 인기순으로 폴백하는 걸로요.</span><span style="font:400 11px ui-monospace,Menlo,monospace;color:#7A8089;flex:none;margin-left:20px">body 14/400/1.65</span></div>
+          <div style="display:flex;justify-content:space-between;align-items:baseline;padding:10px 0;border-bottom:1px solid rgba(22,25,31,.12)"><span style="font:500 12.5px Pretendard,sans-serif;color:#16191F">화자 확인 대기 · 확인 필요 · 예정</span><span style="font:400 11px ui-monospace,Menlo,monospace;color:#7A8089">status 12.5/500</span></div>
+          <div style="display:flex;justify-content:space-between;align-items:baseline;padding:10px 0;border-bottom:1px solid rgba(22,25,31,.12)"><span style="font:400 12.5px/1.6 Pretendard,sans-serif;color:#7A8089">김서연 · 이개발 · 최디자인 · 자료 3건 연결됨</span><span style="font:400 11px ui-monospace,Menlo,monospace;color:#7A8089">meta 12.5/400 muted</span></div>
+          <div style="display:flex;justify-content:space-between;align-items:baseline;padding:10px 0;border-bottom:1px solid rgba(22,25,31,.12)"><span style="font:600 12px Pretendard,sans-serif;color:#7A8089">결정 3건</span><span style="font:400 11px ui-monospace,Menlo,monospace;color:#7A8089">section label 12/600 muted · 문장체</span></div>
+          <div style="display:flex;justify-content:space-between;align-items:baseline;padding:10px 0"><span style="font:500 12.5px ui-monospace,Menlo,monospace;color:#3A3F47">00:39:02 · 0.81 · SRCH-482 · 09/23 · 62%</span><span style="font:400 11px ui-monospace,Menlo,monospace;color:#7A8089">data 12.5/500 mono — 여기에만</span></div>
+        </div>
+        <div style="font:400 12.5px/1.75 Pretendard,sans-serif;color:#3A3F47">
+          <div style="font:600 12px Pretendard,sans-serif;color:#7A8089">간격</div>
+          <div style="margin-top:4px">4 · 8 · 12 · 16 · 24 · 32 · 48<br>페이지 패딩 28 · 카드 패딩 20 · 행 패딩 14<br>상단바 56 · 사이드바 200</div>
+          <div style="font:600 12px Pretendard,sans-serif;color:#7A8089;margin-top:18px">형태</div>
+          <div style="margin-top:4px">radius 4 전부 (버튼·인풋·카드·모달·툴팁)<br>컨트롤 높이 32 compact / 40 default / 48 hero<br>그림자 0 2px 12px rgba(22,25,31,.10) — 모달·드로어·팝오버만</div>
+          <div style="font:600 12px Pretendard,sans-serif;color:#7A8089;margin-top:18px">읽기 속도 규칙</div>
+          <div style="margin-top:4px">행 하나에 상태 점 → 제목 → 메타 → 행동 순으로 왼쪽에서 오른쪽. 같은 화면에서 이 순서를 바꾸지 않는다.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="fl-sec">
+  <div class="fl-sname"><span class="fl-sbadge">T3</span><span class="fl-stitle">버튼 체계 — 위계 4단 × 높이 3단</span></div>
+  <div class="fl-row">
+    <div class="fl-item" id="cmp-btn">
+      <div class="fl-card" style="width:1180px;padding:26px 28px;display:flex;flex-direction:column;gap:24px">
+        <div style="display:grid;grid-template-columns:150px repeat(4,1fr);gap:16px;align-items:center;border-bottom:1px solid rgba(22,25,31,.12);padding-bottom:12px">
+          <span></span>
+          <span style="font:600 12px Pretendard,sans-serif;color:#7A8089">1 · 주요 — 인디고 채움</span><span style="font:600 12px Pretendard,sans-serif;color:#7A8089">2 · 보조 — 함몰 채움</span><span style="font:600 12px Pretendard,sans-serif;color:#7A8089">3 · 텍스트 — 인디고 글자</span><span style="font:600 12px Pretendard,sans-serif;color:#7A8089">4 · 조용한 — 회색 글자</span>
+        </div>
+        <div style="display:grid;grid-template-columns:150px repeat(4,1fr);gap:16px;align-items:center">
+          <span style="font:500 12.5px Pretendard,sans-serif;color:#3A3F47">48 hero <span style="font:400 11px Pretendard,sans-serif;color:#7A8089">랜딩·모달 확정</span></span>
+          <button style="height:48px;padding:0 22px;border-radius:4px;border:none;background:#3B4A9E;color:#fff;font:600 14px Pretendard,sans-serif;cursor:pointer;justify-self:start" style-hover="background:#2C3878">녹음 파일로 무료 체험</button>
+          <button style="height:48px;padding:0 22px;border-radius:4px;border:none;background:#EBEAE5;color:#16191F;font:600 14px Pretendard,sans-serif;cursor:pointer;justify-self:start" style-hover="background:#E1DFD9">3분 데모 보기</button>
+          <button style="height:48px;padding:0 10px;border:none;background:transparent;color:#3B4A9E;font:600 14px Pretendard,sans-serif;cursor:pointer;justify-self:start" style-hover="color:#2C3878">나중에 하기</button>
+          <button style="height:48px;padding:0 10px;border:none;background:transparent;color:#7A8089;font:600 14px Pretendard,sans-serif;cursor:pointer;justify-self:start" style-hover="color:#16191F">건너뛰기</button>
+        </div>
+        <div style="display:grid;grid-template-columns:150px repeat(4,1fr);gap:16px;align-items:center">
+          <span style="font:500 12.5px Pretendard,sans-serif;color:#3A3F47">40 default <span style="font:400 11px Pretendard,sans-serif;color:#7A8089">상단바·폼</span></span>
+          <button style="height:40px;padding:0 18px;border-radius:4px;border:none;background:#3B4A9E;color:#fff;font:600 13px Pretendard,sans-serif;cursor:pointer;justify-self:start;display:inline-flex;align-items:center;gap:9px" style-hover="background:#2C3878"><span style="width:8px;height:8px;border-radius:50%;background:#fff"></span>녹음 시작</button>
+          <button style="height:40px;padding:0 18px;border-radius:4px;border:none;background:#EBEAE5;color:#16191F;font:600 13px Pretendard,sans-serif;cursor:pointer;justify-self:start" style-hover="background:#E1DFD9">어젠다 보기</button>
+          <button style="height:40px;padding:0 8px;border:none;background:transparent;color:#3B4A9E;font:600 13px Pretendard,sans-serif;cursor:pointer;justify-self:start" style-hover="color:#2C3878">자료 열기</button>
+          <button style="height:40px;padding:0 8px;border:none;background:transparent;color:#7A8089;font:600 13px Pretendard,sans-serif;cursor:pointer;justify-self:start" style-hover="color:#16191F">관련 없음</button>
+        </div>
+        <div style="display:grid;grid-template-columns:150px repeat(4,1fr);gap:16px;align-items:center;border-bottom:1px solid rgba(22,25,31,.12);padding-bottom:24px">
+          <span style="font:500 12.5px Pretendard,sans-serif;color:#3A3F47">32 compact <span style="font:400 11px Pretendard,sans-serif;color:#7A8089">행 안 · 카드 안</span></span>
+          <button style="height:32px;padding:0 12px;border-radius:4px;border:none;background:#3B4A9E;color:#fff;font:600 12px Pretendard,sans-serif;cursor:pointer;justify-self:start" style-hover="background:#2C3878">정데이터로 지정</button>
+          <button style="height:32px;padding:0 12px;border-radius:4px;border:none;background:#EBEAE5;color:#16191F;font:600 12px Pretendard,sans-serif;cursor:pointer;justify-self:start" style-hover="background:#E1DFD9">직접 입력</button>
+          <button style="height:32px;padding:0 6px;border:none;background:transparent;color:#3B4A9E;font:600 12px Pretendard,sans-serif;cursor:pointer;justify-self:start" style-hover="color:#2C3878">확인 DM 보내기</button>
+          <button style="height:32px;padding:0 6px;border:none;background:transparent;color:#7A8089;font:600 12px Pretendard,sans-serif;cursor:pointer;justify-self:start" style-hover="color:#16191F">삭제</button>
+        </div>
+        <div style="display:grid;grid-template-columns:150px 1fr 1fr 1fr;gap:16px;align-items:start">
+          <span style="font:500 12.5px Pretendard,sans-serif;color:#3A3F47">예외 상태</span>
+          <div><button style="height:40px;padding:0 18px;border-radius:4px;border:none;background:#EBEAE5;color:rgba(22,25,31,.35);font:600 13px Pretendard,sans-serif;cursor:not-allowed">등록 완료</button><div style="font:400 11.5px/1.5 Pretendard,sans-serif;color:#7A8089;margin-top:6px">disabled — 함몰 배경 + 35% 잉크. 주요 버튼도 비활성이면 이 모양</div></div>
+          <div><button style="height:40px;padding:0 18px;border-radius:4px;border:none;background:#3B4A9E;color:#fff;font:600 13px Pretendard,sans-serif;cursor:progress;display:inline-flex;align-items:center;gap:9px;opacity:.85"><span style="width:12px;height:12px;border-radius:50%;border:2px solid rgba(255,255,255,.35);border-top-color:#fff"></span>전송 중</button><div style="font:400 11.5px/1.5 Pretendard,sans-serif;color:#7A8089;margin-top:6px">loading — 스피너 + 라벨 변경. 너비 유지</div></div>
+          <div><button style="height:40px;padding:0 8px;border:none;background:transparent;color:#C2443C;font:600 13px Pretendard,sans-serif;cursor:pointer">내 데이터 모두 삭제</button><div style="font:400 11.5px/1.5 Pretendard,sans-serif;color:#7A8089;margin-top:6px">destructive — 텍스트형만. 채움 없음. 확인 모달의 최종 버튼도 인디고 채움에 "삭제" 라벨</div></div>
+        </div>
+        <div style="border-top:1px solid rgba(22,25,31,.12);padding-top:16px;font:400 12px/1.7 Pretendard,sans-serif;color:#3A3F47">
+          한 화면에 1(주요)은 하나. 나란히 놓을 때 순서는 왼쪽 4 → 3 → 2 → 1 오른쪽. 텍스트 버튼(3)은 밑줄 없이 굵기와 색으로만 구분하고, 본문 안의 링크만 밑줄. 아이콘 단독 버튼은 32px 정방형, 함몰 hover.
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="fl-sec">
+  <div class="fl-sname"><span class="fl-sbadge">T4</span><span class="fl-stitle">상태 표현 — 우선순위 3단. 섞어 쓰지 않는다</span></div>
+  <div class="fl-row">
+    <div class="fl-item" id="cmp-status">
+      <div class="fl-card" style="width:1180px;padding:26px 28px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:32px">
+        <div>
+          <div style="font:600 12px Pretendard,sans-serif;color:#7A8089">P1 · 지금 처리해야 하는 단 하나</div>
+          <div style="font:400 12px/1.55 Pretendard,sans-serif;color:#3A3F47;margin-top:4px;min-height:38px">화면당 최대 1개. 잉크 반전 띠. 회의 중 미결정 알림, 처리 실패, 삭제 직전</div>
+          <div style="margin-top:12px;background:#16191F;color:#fff;padding:14px 16px;border-radius:4px;display:flex;align-items:center;gap:14px">
+            <span style="width:8px;height:8px;border-radius:50%;background:#C2443C;flex:none"></span>
+            <div style="flex:1"><div style="font:600 13px Pretendard,sans-serif">종료 5분 전 · 결정되지 않은 사항 2건</div><div style="font:400 12px/1.5 Pretendard,sans-serif;opacity:.7;margin-top:2px">콜드스타트 처리 · 클릭 로그 스키마</div></div>
+            <button style="height:32px;padding:0 12px;border-radius:4px;border:none;background:#fff;color:#16191F;font:600 12px Pretendard,sans-serif;cursor:pointer">보기</button>
+          </div>
+        </div>
+        <div>
+          <div style="font:600 12px Pretendard,sans-serif;color:#7A8089">P2 · 항목 단위 상태</div>
+          <div style="font:400 12px/1.55 Pretendard,sans-serif;color:#3A3F47;margin-top:4px;min-height:38px">행·카드의 맨 앞. 6px 점 + 12.5/500 텍스트. 점 색은 T1 신호 5종만</div>
+          <div style="margin-top:12px;display:flex;flex-direction:column;border-top:1px solid rgba(22,25,31,.12)">
+            <div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid rgba(22,25,31,.12)"><span style="width:6px;height:6px;border-radius:50%;background:#C2443C;flex:none"></span><span style="font:500 12.5px Pretendard,sans-serif;color:#16191F;flex:1">기한 초과</span><span style="font:500 12px ui-monospace,Menlo,monospace;color:#C2443C">D+2</span></div>
+            <div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid rgba(22,25,31,.12)"><span style="width:6px;height:6px;border-radius:50%;background:#B8862B;flex:none"></span><span style="font:500 12.5px Pretendard,sans-serif;color:#16191F;flex:1">화자 확인 대기</span><span style="font:500 12px ui-monospace,Menlo,monospace;color:#7A8089">6건</span></div>
+            <div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid rgba(22,25,31,.12)"><span style="width:6px;height:6px;border-radius:50%;background:#3B4A9E;flex:none"></span><span style="font:500 12.5px Pretendard,sans-serif;color:#16191F;flex:1">분석 중</span><span style="font:500 12px ui-monospace,Menlo,monospace;color:#7A8089">62%</span></div>
+            <div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid rgba(22,25,31,.12)"><span style="width:6px;height:6px;border-radius:50%;background:#16191F;flex:none"></span><span style="font:500 12.5px Pretendard,sans-serif;color:#16191F;flex:1">분석 완료</span><span style="font:500 12px ui-monospace,Menlo,monospace;color:#7A8089">09/18</span></div>
+            <div style="display:flex;align-items:center;gap:10px;padding:10px 0"><span style="width:6px;height:6px;border-radius:50%;border:1.5px solid #7A8089;box-sizing:border-box;flex:none"></span><span style="font:500 12.5px Pretendard,sans-serif;color:#7A8089;flex:1">예정</span><span style="font:500 12px ui-monospace,Menlo,monospace;color:#7A8089">14:00</span></div>
+          </div>
+        </div>
+        <div>
+          <div style="font:600 12px Pretendard,sans-serif;color:#7A8089">P3 · 데이터에 붙는 라벨</div>
+          <div style="font:400 12px/1.55 Pretendard,sans-serif;color:#3A3F47;margin-top:4px;min-height:38px">수치 옆에서만 의미가 있는 것. 갭 레벨, 신뢰도, 일치도. 색 글자 + 모노 값 + 2px 바</div>
+          <div style="margin-top:12px;display:flex;flex-direction:column;gap:12px">
+            <div style="display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:12px"><span style="display:flex;align-items:center;gap:7px;font:600 12.5px Pretendard,sans-serif;color:#C2443C"><span style="width:6px;height:6px;border-radius:50%;background:#C2443C"></span>높음</span><span style="height:2px;background:rgba(22,25,31,.1)"><span style="display:block;width:86%;height:2px;background:#C2443C"></span></span><span style="font:500 12px ui-monospace,Menlo,monospace;color:#3A3F47">0.86</span></div>
+            <div style="display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:12px"><span style="display:flex;align-items:center;gap:7px;font:600 12.5px Pretendard,sans-serif;color:#B8862B"><span style="width:6px;height:6px;border-radius:50%;background:#B8862B"></span>중간</span><span style="height:2px;background:rgba(22,25,31,.1)"><span style="display:block;width:54%;height:2px;background:#B8862B"></span></span><span style="font:500 12px ui-monospace,Menlo,monospace;color:#3A3F47">0.54</span></div>
+            <div style="display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:12px"><span style="display:flex;align-items:center;gap:7px;font:600 12.5px Pretendard,sans-serif;color:#7A8089"><span style="width:6px;height:6px;border-radius:50%;background:#7A8089"></span>낮음</span><span style="height:2px;background:rgba(22,25,31,.1)"><span style="display:block;width:22%;height:2px;background:#7A8089"></span></span><span style="font:500 12px ui-monospace,Menlo,monospace;color:#3A3F47">0.22</span></div>
+            <div style="border-top:1px solid rgba(22,25,31,.12);padding-top:12px;display:flex;flex-wrap:wrap;gap:6px 14px;font:400 12px Pretendard,sans-serif;color:#7A8089">
+              <span>일치도 <span style="font:500 12px ui-monospace,Menlo,monospace;color:#3A3F47">0.81</span></span><span>신뢰도 <span style="font:500 12px ui-monospace,Menlo,monospace;color:#3A3F47">0.94</span></span><span>NLI <span style="font:500 12px ui-monospace,Menlo,monospace;color:#B8862B">0.41</span></span><span style="color:#3A3F47;border-bottom:1px dotted #7A8089;font-family:ui-monospace,Menlo,monospace;font-size:12px">010-****-5678</span>
+            </div>
+            <div style="font:400 11.5px/1.5 Pretendard,sans-serif;color:#7A8089">임계값 미만이면 값의 색만 바뀐다. 마스킹된 개인정보는 점선 밑줄 모노.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <p class="fl-note">발화 5종(약속·결정·미해결 질문·우려·모호)은 P2 형식을 그대로 쓴다: 약속 잉크 점, 결정 빈 원(굵은 테두리), 미해결 질문 인디고, 우려 빨강, 모호 황토.</p>
+</section>
+
+<section class="fl-sec">
+  <div class="fl-sname"><span class="fl-sbadge">T5</span><span class="fl-stitle">폼 · 탭 · 행(row) · 인용</span></div>
+  <div class="fl-row">
+    <div class="fl-item" id="cmp-form">
+      <div class="fl-ilabel"><a class="fl-iid" href="#cmp-form">T5-a</a>인풋 · 선택 · 탭</div>
+      <div class="fl-card" style="width:560px;padding:26px 28px;display:flex;flex-direction:column;gap:22px">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+          <div><div style="font:600 12px Pretendard,sans-serif;color:#3A3F47;margin-bottom:6px">워크스페이스 이름</div><input value="검색 스쿼드" style="width:100%;height:40px;border-radius:4px;border:1px solid rgba(22,25,31,.2);padding:0 12px;font:400 13.5px Pretendard,sans-serif;color:#16191F;background:#fff;outline:none;box-sizing:border-box"></div>
+          <div><div style="font:600 12px Pretendard,sans-serif;color:#3A3F47;margin-bottom:6px">포커스</div><input value="lee.dev@corp.com" style="width:100%;height:40px;border-radius:4px;border:1.5px solid #3B4A9E;padding:0 12px;font:400 13.5px Pretendard,sans-serif;color:#16191F;background:#fff;outline:none;box-sizing:border-box"></div>
+          <div><div style="font:600 12px Pretendard,sans-serif;color:#3A3F47;margin-bottom:6px">오류</div><input value="lee.dev@" style="width:100%;height:40px;border-radius:4px;border:1.5px solid #C2443C;padding:0 12px;font:400 13.5px Pretendard,sans-serif;color:#16191F;background:#fff;outline:none;box-sizing:border-box"><div style="font:400 11.5px Pretendard,sans-serif;color:#C2443C;margin-top:5px">이메일 형식이 아닙니다</div></div>
+          <div><div style="font:600 12px Pretendard,sans-serif;color:#3A3F47;margin-bottom:6px">검색</div><input placeholder="회의 · 결정 · 액션   ⌘K" style="width:100%;height:40px;border-radius:4px;border:none;padding:0 12px;font:400 13.5px Pretendard,sans-serif;color:#16191F;background:#EBEAE5;outline:none;box-sizing:border-box"></div>
+        </div>
+        <div>
+          <div style="font:600 12px Pretendard,sans-serif;color:#3A3F47;margin-bottom:8px">선택 — 체크는 인디고, 라디오도 동일</div>
+          <div style="display:flex;gap:22px;flex-wrap:wrap;font:400 13px Pretendard,sans-serif;color:#16191F">
+            <span style="display:flex;align-items:center;gap:8px"><span style="width:16px;height:16px;border-radius:4px;background:#3B4A9E;color:#fff;font:700 11px Pretendard,sans-serif;display:grid;place-items:center">✓</span>#search-squad 채널</span>
+            <span style="display:flex;align-items:center;gap:8px"><span style="width:16px;height:16px;border-radius:4px;border:1.5px solid rgba(22,25,31,.3);box-sizing:border-box"></span>Jira 이슈 생성</span>
+            <span style="display:flex;align-items:center;gap:8px"><span style="width:16px;height:16px;border-radius:50%;border:5px solid #3B4A9E;box-sizing:border-box"></span>웹 마이크</span>
+            <span style="display:flex;align-items:center;gap:8px"><span style="width:16px;height:16px;border-radius:50%;border:1.5px solid rgba(22,25,31,.3);box-sizing:border-box"></span>파일 업로드</span>
+          </div>
+        </div>
+        <div>
+          <div style="font:600 12px Pretendard,sans-serif;color:#3A3F47;margin-bottom:8px">탭 · 필터 — 밑줄 2px 인디고. 카운트는 모노</div>
+          <div style="display:flex;gap:20px;border-bottom:1px solid rgba(22,25,31,.12)">
+            <span style="font:600 13px Pretendard,sans-serif;color:#16191F;padding:0 0 9px;border-bottom:2px solid #3B4A9E;margin-bottom:-1px">전체 <span style="font:500 11.5px ui-monospace,Menlo,monospace;color:#7A8089;margin-left:2px">7</span></span>
+            <span style="font:500 13px Pretendard,sans-serif;color:#7A8089;padding:0 0 9px">내 담당 <span style="font:500 11.5px ui-monospace,Menlo,monospace;margin-left:2px">4</span></span>
+            <span style="font:500 13px Pretendard,sans-serif;color:#7A8089;padding:0 0 9px;display:inline-flex;align-items:center;gap:6px"><span style="width:6px;height:6px;border-radius:50%;background:#C2443C"></span>기한 초과 <span style="font:500 11.5px ui-monospace,Menlo,monospace">1</span></span>
+          </div>
+          <div style="display:flex;gap:6px;margin-top:12px"><span style="height:32px;padding:0 12px;border-radius:4px;background:#E9EBF6;color:#2C3878;font:600 12px Pretendard,sans-serif;display:inline-flex;align-items:center">결정만</span><span style="height:32px;padding:0 12px;border-radius:4px;background:#EBEAE5;color:#3A3F47;font:600 12px Pretendard,sans-serif;display:inline-flex;align-items:center">액션만</span><span style="height:32px;padding:0 12px;border-radius:4px;background:#EBEAE5;color:#3A3F47;font:600 12px Pretendard,sans-serif;display:inline-flex;align-items:center">질문만</span><span style="font:400 11.5px Pretendard,sans-serif;color:#7A8089;align-self:center;margin-left:6px">토글 칩: 선택 = 선택 배경</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="fl-item" id="cmp-row">
+      <div class="fl-ilabel"><a class="fl-iid" href="#cmp-row">T5-b</a>행(row) — 회의 후 화면의 기본 단위. 점 → 제목 → 메타 → 행동</div>
+      <div class="fl-card" style="width:590px;padding:8px 28px 26px;display:flex;flex-direction:column">
+        <div style="display:grid;grid-template-columns:auto 1fr auto;gap:14px;align-items:start;padding:16px 0;border-bottom:1px solid rgba(22,25,31,.12)">
+          <span style="width:6px;height:6px;border-radius:50%;background:#B8862B;margin-top:7px"></span>
+          <div><div style="font:600 14px Pretendard,sans-serif;color:#16191F">화자 미확인 1명 · 발화 6건</div><div style="font:400 12.5px/1.55 Pretendard,sans-serif;color:#7A8089;margin-top:3px">"화자 3"으로 기록됨 · 후보 정데이터 · 유사도 <span style="font:500 12px ui-monospace,Menlo,monospace;color:#3A3F47">0.62</span></div></div>
+          <div style="display:flex;gap:4px;align-items:center"><button style="height:32px;padding:0 6px;border:none;background:transparent;color:#3B4A9E;font:600 12px Pretendard,sans-serif;cursor:pointer">직접 입력</button><button style="height:32px;padding:0 12px;border-radius:4px;border:none;background:#3B4A9E;color:#fff;font:600 12px Pretendard,sans-serif;cursor:pointer">정데이터로 지정</button></div>
+        </div>
+        <div style="display:grid;grid-template-columns:auto 1fr auto;gap:14px;align-items:start;padding:16px 0;border-bottom:1px solid rgba(22,25,31,.12)">
+          <span style="width:6px;height:6px;border-radius:50%;background:#C2443C;margin-top:7px"></span>
+          <div><div style="font:600 14px Pretendard,sans-serif;color:#16191F">랭킹 A/B 결과 공유</div><div style="font:400 12.5px/1.55 Pretendard,sans-serif;color:#7A8089;margin-top:3px">이개발 · 기한 <span style="font:500 12px ui-monospace,Menlo,monospace;color:#C2443C">09/16 · D+2</span> · 다음 회의 시작 시 자동 팝업</div></div>
+          <button style="height:32px;padding:0 6px;border:none;background:transparent;color:#3B4A9E;font:600 12px Pretendard,sans-serif;cursor:pointer">리마인드</button>
+        </div>
+        <div style="display:grid;grid-template-columns:auto 1fr;gap:14px;align-items:start;padding:16px 0;border-bottom:1px solid rgba(22,25,31,.12)">
+          <span style="width:6px;height:6px;border-radius:50%;background:#3B4A9E;margin-top:7px"></span>
+          <div>
+            <div style="font:600 14px Pretendard,sans-serif;color:#16191F">관련 자료 · 검색 개인화 PRD v2 p.4 <span style="font:500 12px ui-monospace,Menlo,monospace;color:#7A8089;margin-left:4px">일치 0.81</span></div>
+            <div style="font:400 13.5px/1.6 Pretendard,sans-serif;color:#3A3F47;margin-top:8px;padding:10px 14px;background:#F4F3EF;border-radius:4px">추천 응답 시간 목표는 성능 검증 이후 확정한다 — 초기 가설 300ms</div>
+            <div style="display:flex;gap:2px;margin-top:6px;margin-left:-8px"><button style="height:32px;padding:0 8px;border:none;background:transparent;color:#3B4A9E;font:600 12px Pretendard,sans-serif;cursor:pointer">자료 열기</button><button style="height:32px;padding:0 8px;border:none;background:transparent;color:#3B4A9E;font:600 12px Pretendard,sans-serif;cursor:pointer">회의록에 인용</button><button style="height:32px;padding:0 8px;border:none;background:transparent;color:#7A8089;font:600 12px Pretendard,sans-serif;cursor:pointer">관련 없음</button></div>
+          </div>
+        </div>
+        <div style="display:grid;grid-template-columns:auto 1fr auto;gap:14px;align-items:center;padding:16px 0">
+          <span style="width:6px;height:6px;border-radius:50%;background:#16191F"></span>
+          <div><div style="font:600 14px Pretendard,sans-serif;color:#16191F">응답 지연 목표 p95 200ms · 초과 시 인기순 폴백</div><div style="font:400 12.5px/1.55 Pretendard,sans-serif;color:#7A8089;margin-top:3px">결정 · 김서연 · <span style="font:500 12px ui-monospace,Menlo,monospace;color:#3A3F47">00:39:48</span></div></div>
+          <button style="height:32px;padding:0 6px;border:none;background:transparent;color:#7A8089;font:600 12px Pretendard,sans-serif;cursor:pointer">발화 재생</button>
+        </div>
+        <div style="border-top:1px solid rgba(22,25,31,.12);padding-top:12px;font:400 11.5px/1.6 Pretendard,sans-serif;color:#7A8089">인용은 종이색 블록 하나. 좌측 바·따옴표 장식 없음. 행 안의 버튼은 32 compact, 오른쪽 정렬, 주요 1개까지.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="fl-sec">
+  <div class="fl-sname"><span class="fl-sbadge">T6</span><span class="fl-stitle">앱 셸 — 사이드바 200 종이색 · 콘텐츠 패널 · 상단바는 헤어라인만</span></div>
+  <div class="fl-row">
+    <div class="fl-item" id="cmp-shell">
+      <div class="fl-card" style="width:1180px;height:520px;display:grid;grid-template-columns:200px minmax(0,1fr);background:#F4F3EF">
+        <div style="padding:22px 18px;display:flex;flex-direction:column;gap:20px;border-right:1px solid rgba(22,25,31,.12)">
+          <div style="font:700 13px Pretendard,sans-serif;color:#16191F;letter-spacing:.04em">AUTUNE</div>
+          <button style="height:40px;border-radius:4px;border:none;background:#3B4A9E;color:#fff;font:600 13px Pretendard,sans-serif;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:9px" style-hover="background:#2C3878"><span style="width:8px;height:8px;border-radius:50%;background:#fff"></span>회의 시작</button>
+          <div style="display:flex;flex-direction:column;gap:0;font:500 13px Pretendard,sans-serif">
+            <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 10px;margin:0 -10px;border-radius:4px;background:#E9EBF6;color:#2C3878;font-weight:600">홈</div>
+            <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;color:#3A3F47">회의<span style="font:500 11.5px ui-monospace,Menlo,monospace;color:#7A8089">32</span></div>
+            <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;color:#3A3F47">액션아이템<span style="display:flex;align-items:center;gap:6px;font:500 11.5px ui-monospace,Menlo,monospace;color:#7A8089"><span style="width:6px;height:6px;border-radius:50%;background:#C2443C"></span>1</span></div>
+            <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;color:#3A3F47">갭 리포트<span style="font:500 11.5px ui-monospace,Menlo,monospace;color:#7A8089">3</span></div>
+            <div style="padding:8px 0;color:#3A3F47">결정 계보</div>
+            <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;color:#7A8089">자료<span style="width:6px;height:6px;border-radius:50%;border:1.5px solid #7A8089;box-sizing:border-box"></span></div>
+            <div style="padding:8px 0;color:#3A3F47">대시보드</div>
+          </div>
+          <div style="flex:1"></div>
+          <div style="font:500 13px Pretendard,sans-serif;color:#3A3F47">설정</div>
+          <div style="display:flex;flex-direction:column;gap:2px;border-top:1px solid rgba(22,25,31,.12);padding-top:12px"><span style="font:600 12.5px Pretendard,sans-serif;color:#16191F">정하은</span><span style="font:400 11.5px Pretendard,sans-serif;color:#7A8089">검색 스쿼드 · Team</span></div>
+        </div>
+        <div style="background:#fff;display:flex;flex-direction:column;min-width:0">
+          <div style="height:56px;border-bottom:1px solid rgba(22,25,31,.12);display:flex;align-items:center;gap:14px;padding:0 28px"><span style="font:600 14px Pretendard,sans-serif;color:#16191F">회의</span><span style="font:400 12.5px Pretendard,sans-serif;color:#7A8089">검색 스쿼드 · 이번 주 6건</span><div style="flex:1"></div><button style="height:40px;padding:0 8px;border:none;background:transparent;color:#3B4A9E;font:600 13px Pretendard,sans-serif;cursor:pointer">파일 업로드</button><button style="height:40px;padding:0 18px;border-radius:4px;border:none;background:#EBEAE5;color:#16191F;font:600 13px Pretendard,sans-serif;cursor:pointer">회의 만들기</button></div>
+          <div style="padding:20px 28px;display:flex;flex-direction:column">
+            <div style="display:flex;gap:20px;border-bottom:1px solid rgba(22,25,31,.12)"><span style="font:600 13px Pretendard,sans-serif;color:#16191F;padding:0 0 9px;border-bottom:2px solid #3B4A9E;margin-bottom:-1px">전체</span><span style="font:500 13px Pretendard,sans-serif;color:#7A8089;padding:0 0 9px">확인 대기 <span style="font:500 11.5px ui-monospace,Menlo,monospace">2</span></span><span style="font:500 13px Pretendard,sans-serif;color:#7A8089;padding:0 0 9px">분석 완료</span></div>
+            <div style="display:grid;grid-template-columns:auto 1fr 150px 120px auto;gap:14px;align-items:center;padding:14px 0;border-bottom:1px solid rgba(22,25,31,.12)"><span style="width:6px;height:6px;border-radius:50%;border:1.5px solid #7A8089;box-sizing:border-box"></span><div><div style="font:600 13.5px Pretendard,sans-serif;color:#16191F">검색 개인화 기능 스프린트 킥오프</div><div style="font:400 12px Pretendard,sans-serif;color:#7A8089;margin-top:2px">김서연 · 이개발 · 최디자인 · 정데이터</div></div><span style="font:500 12px ui-monospace,Menlo,monospace;color:#3A3F47">오늘 14:00</span><span style="font:500 12.5px Pretendard,sans-serif;color:#7A8089">예정</span><button style="height:32px;padding:0 12px;border-radius:4px;border:none;background:#3B4A9E;color:#fff;font:600 12px Pretendard,sans-serif;cursor:pointer">녹음 시작</button></div>
+            <div style="display:grid;grid-template-columns:auto 1fr 150px 120px auto;gap:14px;align-items:center;padding:14px 0;border-bottom:1px solid rgba(22,25,31,.12)"><span style="width:6px;height:6px;border-radius:50%;background:#B8862B"></span><div><div style="font:600 13.5px Pretendard,sans-serif;color:#16191F">디자인 시스템 정리 회의</div><div style="font:400 12px Pretendard,sans-serif;color:#7A8089;margin-top:2px">화자 1명 미확인 · 발화 6건</div></div><span style="font:500 12px ui-monospace,Menlo,monospace;color:#3A3F47">08/29 16:00</span><span style="font:500 12.5px Pretendard,sans-serif;color:#16191F">확인 대기</span><button style="height:32px;padding:0 6px;border:none;background:transparent;color:#3B4A9E;font:600 12px Pretendard,sans-serif;cursor:pointer">확인하기</button></div>
+            <div style="display:grid;grid-template-columns:auto 1fr 150px 120px auto;gap:14px;align-items:center;padding:14px 0;border-bottom:1px solid rgba(22,25,31,.12)"><span style="width:6px;height:6px;border-radius:50%;background:#3B4A9E"></span><div><div style="font:600 13.5px Pretendard,sans-serif;color:#16191F">랭킹 지표 정의 미팅 (업로드)</div><div style="font:400 12px Pretendard,sans-serif;color:#7A8089;margin-top:2px">화자 분리 → 마스킹 · 원본 삭제 예정</div></div><span style="font:500 12px ui-monospace,Menlo,monospace;color:#3A3F47">09/17 11:00</span><span style="font:500 12.5px Pretendard,sans-serif;color:#16191F">분석 중 <span style="font:500 12px ui-monospace,Menlo,monospace;color:#7A8089">62%</span></span><button style="height:32px;padding:0 6px;border:none;background:transparent;color:#7A8089;font:600 12px Pretendard,sans-serif;cursor:pointer">취소</button></div>
+            <div style="display:grid;grid-template-columns:auto 1fr 150px 120px auto;gap:14px;align-items:center;padding:14px 0"><span style="width:6px;height:6px;border-radius:50%;background:#16191F"></span><div><div style="font:600 13.5px Pretendard,sans-serif;color:#16191F">검색 개편 우선순위 논의</div><div style="font:400 12px Pretendard,sans-serif;color:#7A8089;margin-top:2px">액션 5 · 갭 2 · 결정 3</div></div><span style="font:500 12px ui-monospace,Menlo,monospace;color:#3A3F47">09/04 15:00</span><span style="font:500 12.5px Pretendard,sans-serif;color:#16191F">분석 완료</span><button style="height:32px;padding:0 6px;border:none;background:transparent;color:#3B4A9E;font:600 12px Pretendard,sans-serif;cursor:pointer">열기</button></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="fl-sec">
+  <div class="fl-sname"><span class="fl-sbadge">T7</span><span class="fl-stitle">다크 테마 — 사용자 설정(선택). 녹음 상태와 무관</span></div>
+  <div class="fl-row">
+    <div class="fl-item" id="tok-dark">
+      <div class="fl-card" style="width:1180px;padding:26px 28px;display:grid;grid-template-columns:1.1fr 1fr 1.3fr;gap:36px;background:#111318;border-color:rgba(255,255,255,.12)">
+        <div>
+          <div style="font:600 12.5px Pretendard,sans-serif;color:#EDEEF0">표면 · 잉크</div>
+          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.12);border-radius:4px;overflow:hidden;margin-top:12px">
+            <div style="background:#111318;height:64px;padding:8px;display:flex;flex-direction:column;justify-content:flex-end"><span style="font:600 11px Pretendard,sans-serif;color:#EDEEF0">종이</span><span style="font:400 10px ui-monospace,Menlo,monospace;color:#9298A3">#111318</span></div>
+            <div style="background:#181B21;height:64px;padding:8px;display:flex;flex-direction:column;justify-content:flex-end"><span style="font:600 11px Pretendard,sans-serif;color:#EDEEF0">패널</span><span style="font:400 10px ui-monospace,Menlo,monospace;color:#9298A3">#181B21</span></div>
+            <div style="background:#20242B;height:64px;padding:8px;display:flex;flex-direction:column;justify-content:flex-end"><span style="font:600 11px Pretendard,sans-serif;color:#EDEEF0">함몰</span><span style="font:400 10px ui-monospace,Menlo,monospace;color:#9298A3">#20242B</span></div>
+            <div style="background:#9298A3;height:64px;padding:8px;display:flex;flex-direction:column;justify-content:flex-end"><span style="font:600 11px Pretendard,sans-serif;color:#111318">보조 글자</span><span style="font:400 10px ui-monospace,Menlo,monospace;color:#111318">#9298A3</span></div>
+            <div style="background:#D5D8DD;height:64px;padding:8px;display:flex;flex-direction:column;justify-content:flex-end"><span style="font:600 11px Pretendard,sans-serif;color:#111318">본문</span><span style="font:400 10px ui-monospace,Menlo,monospace;color:#3A3F47">#D5D8DD</span></div>
+            <div style="background:#EDEEF0;height:64px;padding:8px;display:flex;flex-direction:column;justify-content:flex-end"><span style="font:600 11px Pretendard,sans-serif;color:#111318">잉크</span><span style="font:400 10px ui-monospace,Menlo,monospace;color:#3A3F47">#EDEEF0</span></div>
+          </div>
+          <div style="font:400 11.5px/1.6 Pretendard,sans-serif;color:#9298A3;margin-top:10px">구획선 rgba(255,255,255,.10) · 잉크 반전 띠는 #EDEEF0 배경 + #16191F 글자로 역전</div>
+        </div>
+        <div>
+          <div style="font:600 12.5px Pretendard,sans-serif;color:#EDEEF0">행동</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:1px;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.12);border-radius:4px;overflow:hidden;margin-top:12px">
+            <div style="background:#3B4A9E;height:64px;padding:8px;display:flex;flex-direction:column;justify-content:flex-end"><span style="font:600 11px Pretendard,sans-serif;color:#fff">채움 유지</span><span style="font:400 10px ui-monospace,Menlo,monospace;color:rgba(255,255,255,.75)">#3B4A9E</span></div>
+            <div style="background:#2C3878;height:64px;padding:8px;display:flex;flex-direction:column;justify-content:flex-end"><span style="font:600 11px Pretendard,sans-serif;color:#fff">선택 배경</span><span style="font:400 10px ui-monospace,Menlo,monospace;color:rgba(255,255,255,.75)">#2C3878</span></div>
+            <div style="background:#181B21;height:64px;padding:8px;display:flex;flex-direction:column;justify-content:flex-end"><span style="font:600 11px Pretendard,sans-serif;color:#8F9BE0">텍스트 · 링크</span><span style="font:400 10px ui-monospace,Menlo,monospace;color:#9298A3">#8F9BE0 · 6.2:1</span></div>
+            <div style="background:#20242B;height:64px;padding:8px;display:flex;flex-direction:column;justify-content:flex-end"><span style="font:600 11px Pretendard,sans-serif;color:#EDEEF0">보조 버튼</span><span style="font:400 10px ui-monospace,Menlo,monospace;color:#9298A3">#20242B 채움</span></div>
+          </div>
+          <div style="font:400 11.5px/1.6 Pretendard,sans-serif;color:#9298A3;margin-top:10px">채움 버튼 색은 라이트와 동일. 텍스트 버튼·링크·활성 탭 밑줄만 밝힌 인디고.</div>
+        </div>
+        <div>
+          <div style="font:600 12.5px Pretendard,sans-serif;color:#EDEEF0">신호 — 밝기만 보정</div>
+          <div style="display:flex;flex-direction:column;margin-top:12px;border-top:1px solid rgba(255,255,255,.12)">
+            <div style="display:grid;grid-template-columns:120px 1fr;gap:14px;padding:11px 0;border-bottom:1px solid rgba(255,255,255,.12)"><span style="display:flex;align-items:center;gap:8px;font:600 12.5px Pretendard,sans-serif;color:#EDEEF0"><span style="width:7px;height:7px;border-radius:50%;background:#EDEEF0;flex:none"></span>잉크</span><span style="font:400 12px Pretendard,sans-serif;color:#9298A3">#EDEEF0 — 결정은 같은 색의 빈 원</span></div>
+            <div style="display:grid;grid-template-columns:120px 1fr;gap:14px;padding:11px 0;border-bottom:1px solid rgba(255,255,255,.12)"><span style="display:flex;align-items:center;gap:8px;font:600 12.5px Pretendard,sans-serif;color:#EDEEF0"><span style="width:7px;height:7px;border-radius:50%;background:#8F9BE0;flex:none"></span>인디고</span><span style="font:400 12px Pretendard,sans-serif;color:#9298A3">#8F9BE0 · 진행 중 · 자료 연결</span></div>
+            <div style="display:grid;grid-template-columns:120px 1fr;gap:14px;padding:11px 0;border-bottom:1px solid rgba(255,255,255,.12)"><span style="display:flex;align-items:center;gap:8px;font:600 12.5px Pretendard,sans-serif;color:#EDEEF0"><span style="width:7px;height:7px;border-radius:50%;background:#D9A441;flex:none"></span>황토</span><span style="font:400 12px Pretendard,sans-serif;color:#9298A3">#D9A441 · 확인 필요</span></div>
+            <div style="display:grid;grid-template-columns:120px 1fr;gap:14px;padding:11px 0;border-bottom:1px solid rgba(255,255,255,.12)"><span style="display:flex;align-items:center;gap:8px;font:600 12.5px Pretendard,sans-serif;color:#EDEEF0"><span style="width:7px;height:7px;border-radius:50%;background:#E0625A;flex:none"></span>빨강</span><span style="font:400 12px Pretendard,sans-serif;color:#9298A3">#E0625A · 녹음 점 · 기한 초과 · 실패</span></div>
+            <div style="display:grid;grid-template-columns:120px 1fr;gap:14px;padding:11px 0"><span style="display:flex;align-items:center;gap:8px;font:600 12.5px Pretendard,sans-serif;color:#9298A3"><span style="width:7px;height:7px;border-radius:50%;border:1.5px solid #9298A3;box-sizing:border-box;flex:none"></span>빈 원</span><span style="font:400 12px Pretendard,sans-serif;color:#9298A3">#9298A3 · 예정 · 미착수</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="fl-item" id="cmp-recframe">
+      <div class="fl-ilabel"><a class="fl-iid" href="#cmp-recframe">T7-b</a>녹음 상태 프레임 — 테마와 무관한 단 하나의 "녹음 중" 표현</div>
+      <div class="fl-card" style="width:1180px;padding:26px 28px;display:grid;grid-template-columns:1fr 1fr;gap:36px">
+        <div>
+          <div style="position:relative;height:200px;border-radius:4px;background:#fff;border:1px solid rgba(22,25,31,.12);overflow:hidden">
+            <div style="position:absolute;inset:0;pointer-events:none;border-radius:4px;animation:recglow 3s ease-in-out infinite"></div>
+            <div style="height:44px;border-bottom:1px solid rgba(22,25,31,.12);display:flex;align-items:center;gap:12px;padding:0 16px"><span style="font:700 12px Pretendard,sans-serif;color:#16191F">AUTUNE</span><div style="flex:1"></div><span style="display:flex;align-items:center;gap:7px;font:600 12px ui-monospace,Menlo,monospace;color:#C2443C"><span style="width:7px;height:7px;border-radius:50%;background:#C2443C;animation:recdot 3s ease-in-out infinite"></span>REC 00:47:22</span></div>
+            <div style="padding:16px;font:400 12.5px/1.7 Pretendard,sans-serif;color:#7A8089">화면 내용은 라이트 테마 그대로. 창 가장자리만 붉게 숨 쉰다.</div>
+          </div>
+          <div style="font:400 12px/1.7 Pretendard,sans-serif;color:#3A3F47;margin-top:12px">라이트</div>
+        </div>
+        <div>
+          <div style="position:relative;height:200px;border-radius:4px;background:#111318;border:1px solid rgba(255,255,255,.12);overflow:hidden">
+            <div style="position:absolute;inset:0;pointer-events:none;border-radius:4px;animation:recglow 3s ease-in-out infinite"></div>
+            <div style="height:44px;border-bottom:1px solid rgba(255,255,255,.1);display:flex;align-items:center;gap:12px;padding:0 16px"><span style="font:700 12px Pretendard,sans-serif;color:#EDEEF0">AUTUNE</span><div style="flex:1"></div><span style="display:flex;align-items:center;gap:7px;font:600 12px ui-monospace,Menlo,monospace;color:#E0625A"><span style="width:7px;height:7px;border-radius:50%;background:#E0625A;animation:recdot 3s ease-in-out infinite"></span>REC 00:47:22</span></div>
+            <div style="padding:16px;font:400 12.5px/1.7 Pretendard,sans-serif;color:#9298A3">다크 테마에서도 같은 프레임. 글로우 색은 동일한 빨강.</div>
+          </div>
+          <div style="font:400 12px/1.7 Pretendard,sans-serif;color:#3A3F47;margin-top:12px">다크</div>
+        </div>
+        <div style="grid-column:span 2;border-top:1px solid rgba(22,25,31,.12);padding-top:14px;font:400 12.5px/1.75 Pretendard,sans-serif;color:#3A3F47">
+          <b style="color:#16191F">규격</b> — 창 최상위에 pointer-events:none 오버레이. box-shadow: inset 0 0 0 2px rgba(194,68,60,.55), inset 0 0 48px rgba(194,68,60,.16) → 절반 밝기까지 3s ease-in-out 무한 왕복. 상단바 REC 점도 같은 3s 주기로 동기화.<br>
+          <b style="color:#16191F">상태</b> — 일시정지: 애니메이션 정지 + 선 rgba(22,25,31,.2) 정적. 종료: 프레임 제거. 마이크 끊김: 선 색 유지 + 상단바 REC 자리에 빨강 텍스트 "입력 없음".<br>
+          <b style="color:#16191F">접근성</b> — prefers-reduced-motion 시 정적 2px 선만. 글로우는 화면 안쪽으로만 번지며 콘텐츠 대비를 해치지 않는 폭(48px) 유지.
+        </div>
+      </div>
+    </div>
+  </div>
+  <p class="fl-note">회의 중 화면(S13)은 라이트 기본. 다크는 설정에서 켜는 사용자 테마이며 기능 상태를 뜻하지 않는다.</p>
+</section>
+</x-dc>
+</body>
+</html>
