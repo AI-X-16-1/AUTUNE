@@ -19,7 +19,21 @@ class TopicLink(ContractModel):
 
 
 class DecisionChange(ContractModel):
-    decision_id: str = Field(pattern=r"^dec_")
+    """One version of a decision, as tracked across meetings.
+
+    Two identities meet here and they are not the same thing:
+
+    ``thread_id`` is the lineage — the identity that persists across meetings,
+    owned by D. ``source_decision_id`` is the decision B extracted from *this*
+    meeting, which D matched into that thread.
+    """
+
+    thread_id: str = Field(
+        pattern=r"^thr_", description="D's lineage identity, stable across meetings."
+    )
+    source_decision_id: str = Field(
+        pattern=r"^dec_", description="The decision B extracted from this meeting."
+    )
     current_statement: str
     previous_statement: str | None = None
     previous_meeting_id: str | None = None
@@ -33,5 +47,18 @@ class DecisionChange(ContractModel):
 
 
 class ContextLinks(Payload):
+    """D's output. Topic linking and decision lineage have different inputs.
+
+    Topic linking needs only the transcript, so it runs in parallel with B and C.
+    Decision lineage needs B's decisions, so it runs after B. D publishes once
+    both are in — or, if B never reports, with an empty ``decision_lineage`` and
+    ``"extraction"`` in ``missing_sources``. A failure in B must not cost the
+    user their topic links.
+    """
+
     topic_links: list[TopicLink] = Field(default_factory=list)
     decision_lineage: list[DecisionChange] = Field(default_factory=list)
+    missing_sources: list[str] = Field(
+        default_factory=list,
+        description="Modules that had not reported when this payload was built.",
+    )

@@ -1,43 +1,71 @@
 {
-  "contract_version": "1.0",
+  "contract_version": "2.0",
   "meeting_id": "mtg_20260918_002",
   "utterances": [
     {
-      "id": "utt_001", "speaker": "김서연", "speaker_id": "user_001", "role": "PM",
-      "start": 12.0, "end": 18.4,
+      "id": "utt_001",
+      "speaker": "김서연",
+      "speaker_id": "user_001",
+      "role": "PM",
+      "start": 12.0,
+      "end": 18.4,
       "text": "지난 회의에서 실시간 개인화로 합의했는데 오늘은 인기순 정렬 얘기가 나왔네요",
       "confidence": 0.93
     },
     {
-      "id": "utt_002", "speaker": "이개발", "speaker_id": "user_002", "role": "Dev",
-      "start": 19.1, "end": 26.8,
+      "id": "utt_002",
+      "speaker": "이개발",
+      "speaker_id": "user_002",
+      "role": "Dev",
+      "start": 19.1,
+      "end": 26.8,
       "text": "실시간은 콜드스타트 처리가 안 잡혀 있어서 이번 스프린트엔 무리입니다",
       "confidence": 0.9
     },
     {
-      "id": "utt_003", "speaker": "최디자인", "speaker_id": "user_003", "role": "Design",
-      "start": 27.2, "end": 31.0,
+      "id": "utt_003",
+      "speaker": "최디자인",
+      "speaker_id": "user_003",
+      "role": "Design",
+      "start": 27.2,
+      "end": 31.0,
       "text": "한번 볼게요",
       "confidence": 0.72
     },
     {
-      "id": "utt_004", "speaker": "정데이터", "speaker_id": "user_004", "role": "Data",
-      "start": 31.5, "end": 40.2,
+      "id": "utt_004",
+      "speaker": "정데이터",
+      "speaker_id": "user_004",
+      "role": "Data",
+      "start": 31.5,
+      "end": 40.2,
       "text": "A/B 결과는 제가 다음 주 화요일까지 정리해서 올리겠습니다",
       "confidence": 0.95
     },
     {
-      "id": "utt_005", "speaker": "이개발", "speaker_id": "user_002", "role": "Dev",
-      "start": 41.0, "end": 48.6,
+      "id": "utt_005",
+      "speaker": "이개발",
+      "speaker_id": "user_002",
+      "role": "Dev",
+      "start": 41.0,
+      "end": 48.6,
       "text": "연락은 010-****-5678 로 주시면 됩니다",
       "confidence": 0.87
     }
   ],
   "metadata": {
     "duration": 2700.0,
-    "participants": ["김서연", "이개발", "최디자인", "정데이터"],
+    "participants": [
+      "김서연",
+      "이개발",
+      "최디자인",
+      "정데이터"
+    ],
     "source": "file_upload",
     "language": "ko",
-    "privacy": { "original_audio_deleted": true, "pii_masked": true }
+    "privacy": {
+      "original_audio_deleted": true,
+      "pii_masked": true
+    }
   }
 }

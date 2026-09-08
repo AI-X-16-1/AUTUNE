@@ -28,6 +28,23 @@ class ActionItem(ContractModel):
     external_refs: list[ExternalRef] = Field(default_factory=list)
 
 
+class Decision(ContractModel):
+    """A decision the meeting settled.
+
+    Distinct from a `Classification` with ``kind="decision"``: that marks one
+    utterance, while a decision is often spread over several. B owns deciding
+    *what counts as a decision in this meeting*; D owns deciding *whether it is
+    the same decision as one from a past meeting*.
+    """
+
+    id: str = Field(pattern=r"^dec_")
+    statement: str = Field(description="The decision as settled, in one sentence.")
+    source_utterance_ids: list[str] = Field(
+        default_factory=list, description="One decision may span several utterances."
+    )
+    confidence: float = Field(ge=0, le=1)
+
+
 class Classification(ContractModel):
     utterance_id: str = Field(pattern=r"^utt_")
     kind: UtteranceKind
@@ -45,5 +62,9 @@ class AmbiguousAgreement(ContractModel):
 
 class ExtractionResult(Payload):
     action_items: list[ActionItem] = Field(default_factory=list)
+    decisions: list[Decision] = Field(
+        default_factory=list,
+        description="Consumed by D to build decision lineage across meetings.",
+    )
     classifications: list[Classification] = Field(default_factory=list)
     ambiguous_agreements: list[AmbiguousAgreement] = Field(default_factory=list)

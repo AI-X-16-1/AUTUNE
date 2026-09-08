@@ -20,8 +20,25 @@ briefs are Phase 2.
 
 ## Consumes
 
-`TranscriptReady` on `autune.transcript.ready`, read-only shared entities,
-uploaded material (Phase 2), and this module's own history.
+Two inputs, and they arrive at different times:
+
+- `TranscriptReady` on `autune.transcript.ready` → **topic linking**. Needs only
+  the transcript, so it runs in parallel with B and C.
+- `ExtractionResult` on `autune.extraction.completed` → **decision lineage**.
+  Needs `result.decisions`, so it runs after B.
+
+Plus read-only shared entities, uploaded material (Phase 2), and this module's
+own history.
+
+**Do not extract decisions here.** B owns what counts as a decision in a
+meeting; D owns whether it is the same decision as one from before. Duplicating
+B's classifier makes the two disagree, and a decision then shows in the summary
+tab and vanishes from the lineage view. `thread_id` (`thr_`) is yours;
+`source_decision_id` (`dec_`) is B's.
+
+**Publish even when B fails.** A failure in B must not cost the user their topic
+links: publish `ContextLinks` with an empty `decision_lineage` and
+`"extraction"` in `missing_sources`.
 
 ## Publishes
 

@@ -32,7 +32,7 @@ agreement, and sync the result to Notion and Jira.
 
 | Destination | Contract | Event |
 | --- | --- | --- |
-| E | `ExtractionResult` | `autune.extraction.completed` |
+| D, E | `ExtractionResult` | `autune.extraction.completed` |
 | Notion, Jira | Issue creation via `packages/integrations` | — |
 | Slack | Action-item card thread, confirmation DMs | — |
 
@@ -46,9 +46,14 @@ agreement, and sync the result to Notion and Jira.
    commitment. Assignee maps to a `user_id` when possible.
 4. **NLI verification** — check whether an apparent agreement entails an actual
    commitment. Weak assent ("한번 볼게요") is labeled `ambiguous`.
-5. **Confirm** — send a Slack DM to the speaker for each ambiguous agreement.
-6. **Sync** — create Notion pages and Jira issues, storing the returned URLs.
-7. **Publish** — emit `ExtractionResult`.
+5. **Build decision entities** — group the utterances classified as decisions
+   into `Decision` records with a `dec_` id and the statement as settled. One
+   decision often spans several utterances. **Module D depends on this**: it is
+   what a decision lineage is keyed on, and a `Classification` alone is not
+   enough. See `../architecture/contracts.md`, "The B → D boundary".
+6. **Confirm** — send a Slack DM to the speaker for each ambiguous agreement.
+7. **Sync** — create Notion pages and Jira issues, storing the returned URLs.
+8. **Publish** — emit `ExtractionResult`.
 
 ## Tables
 
@@ -58,6 +63,7 @@ agreement, and sync the result to Notion and Jira.
 | `ext_action_items` | Assignee, description, due date, status, source utterances |
 | `ext_external_refs` | Notion and Jira URLs per action item |
 | `ext_confirmations` | Ambiguous-agreement DMs sent and their responses |
+| `ext_decisions` | Decision entities, their statements and source utterances |
 
 `ext_action_items` references `utterances.id`. It does **not** reference any
 other module's tables.

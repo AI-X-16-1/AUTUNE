@@ -73,6 +73,7 @@ __all__ = [
     "ExtractionResult",
     "ActionItem",
     "Classification",
+    "Decision",
     "AmbiguousAgreement",
     "ExternalRef",
     # C -> E

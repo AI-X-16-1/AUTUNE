@@ -1,5 +1,5 @@
 /**
- * Generated from packages/contracts (contract version 1.1).
+ * Generated from packages/contracts (contract version 2.0).
  * Do not edit. Run `pnpm run gen:contracts` and commit the result.
  */
 
@@ -69,6 +69,20 @@ export type Url = string;
 export type ExternalId = string | null;
 export type ExternalRefs = ExternalRef[];
 export type ActionItems = ActionItem[];
+export type Id2 = string;
+/**
+ * The decision as settled, in one sentence.
+ */
+export type Statement = string;
+/**
+ * One decision may span several utterances.
+ */
+export type SourceUtteranceIds1 = string[];
+export type Confidence2 = number;
+/**
+ * Consumed by D to build decision lineage across meetings.
+ */
+export type Decisions = Decision[];
 export type UtteranceId = string;
 /**
  * The five-way classification module B applies to every utterance.
@@ -77,7 +91,7 @@ export type UtteranceId = string;
  * via the `definition` "UtteranceKind".
  */
 export type UtteranceKind = "commitment" | "decision" | "open_question" | "concern" | "ambiguous";
-export type Confidence2 = number;
+export type Confidence3 = number;
 export type NliVerified = boolean;
 export type Classifications = Classification[];
 export type UtteranceId1 = string;
@@ -86,7 +100,7 @@ export type ConfirmationSent = boolean;
 export type AmbiguousAgreements = AmbiguousAgreement[];
 export type ContractVersion2 = string;
 export type MeetingId2 = string;
-export type Id2 = string;
+export type Id3 = string;
 export type Category = string;
 export type Title = string;
 /**
@@ -99,7 +113,7 @@ export type TemplateItem = string | null;
 export type RelatedTopicIds = string[];
 export type SuggestedQuestion = string | null;
 export type Gaps = Gap[];
-export type Id3 = string;
+export type Id4 = string;
 export type Label = string;
 export type Centrality = number;
 export type UtteranceIds = string[];
@@ -122,7 +136,14 @@ export type Similarity = number;
  */
 export type RerankScore = number;
 export type TopicLinks = TopicLink[];
-export type DecisionId = string;
+/**
+ * D's lineage identity, stable across meetings.
+ */
+export type ThreadId = string;
+/**
+ * The decision B extracted from this meeting.
+ */
+export type SourceDecisionId = string;
 export type CurrentStatement = string;
 export type PreviousStatement = string | null;
 export type PreviousMeetingId = string | null;
@@ -138,12 +159,16 @@ export type ChangeType = "unchanged" | "modified" | "reversed" | "new";
  * via the `definition` "NliLabel".
  */
 export type NliLabel = "entailment" | "contradiction" | "neutral";
-export type Confidence3 = number;
+export type Confidence4 = number;
 /**
  * User ids absent when the decision changed. Drives the drift warning.
  */
 export type KeyStakeholdersAbsent = string[];
 export type DecisionLineage = DecisionChange[];
+/**
+ * Modules that had not reported when this payload was built.
+ */
+export type MissingSources = string[];
 export type ContractVersion4 = string;
 export type MeetingId4 = string;
 export type TeamId = string;
@@ -160,7 +185,7 @@ export type Predictions = Prediction[];
 /**
  * Modules that had not reported when this snapshot was built.
  */
-export type MissingSources = string[];
+export type MissingSources1 = string[];
 /**
  * Action item state. Maps 1:1 to the columns on the action board (S17).
  *
@@ -236,6 +261,7 @@ export interface ExtractionResult {
   contract_version?: ContractVersion1;
   meeting_id: MeetingId1;
   action_items?: ActionItems;
+  decisions?: Decisions;
   classifications?: Classifications;
   ambiguous_agreements?: AmbiguousAgreements;
 }
@@ -264,13 +290,30 @@ export interface ExternalRef {
   external_id?: ExternalId;
 }
 /**
+ * A decision the meeting settled.
+ *
+ * Distinct from a `Classification` with ``kind="decision"``: that marks one
+ * utterance, while a decision is often spread over several. B owns deciding
+ * *what counts as a decision in this meeting*; D owns deciding *whether it is
+ * the same decision as one from a past meeting*.
+ *
+ * This interface was referenced by `AutuneContracts`'s JSON-Schema
+ * via the `definition` "Decision".
+ */
+export interface Decision {
+  id: Id2;
+  statement: Statement;
+  source_utterance_ids?: SourceUtteranceIds1;
+  confidence: Confidence2;
+}
+/**
  * This interface was referenced by `AutuneContracts`'s JSON-Schema
  * via the `definition` "Classification".
  */
 export interface Classification {
   utterance_id: UtteranceId;
   kind: UtteranceKind;
-  confidence: Confidence2;
+  confidence: Confidence3;
   nli_verified?: NliVerified;
 }
 /**
@@ -300,7 +343,7 @@ export interface GapReport {
  * via the `definition` "Gap".
  */
 export interface Gap {
-  id: Id2;
+  id: Id3;
   category: Category;
   title: Title;
   severity: GapSeverity;
@@ -314,7 +357,7 @@ export interface Gap {
  * via the `definition` "Topic".
  */
 export interface Topic {
-  id: Id3;
+  id: Id4;
   label: Label;
   centrality: Centrality;
   utterance_ids?: UtteranceIds;
@@ -334,6 +377,14 @@ export interface Participation1 {
   silent?: Silent;
 }
 /**
+ * D's output. Topic linking and decision lineage have different inputs.
+ *
+ * Topic linking needs only the transcript, so it runs in parallel with B and C.
+ * Decision lineage needs B's decisions, so it runs after B. D publishes once
+ * both are in — or, if B never reports, with an empty ``decision_lineage`` and
+ * ``"extraction"`` in ``missing_sources``. A failure in B must not cost the
+ * user their topic links.
+ *
  * This interface was referenced by `AutuneContracts`'s JSON-Schema
  * via the `definition` "ContextLinks".
  */
@@ -342,6 +393,7 @@ export interface ContextLinks {
   meeting_id: MeetingId3;
   topic_links?: TopicLinks;
   decision_lineage?: DecisionLineage;
+  missing_sources?: MissingSources;
 }
 /**
  * This interface was referenced by `AutuneContracts`'s JSON-Schema
@@ -355,17 +407,26 @@ export interface TopicLink {
   rerank_score: RerankScore;
 }
 /**
+ * One version of a decision, as tracked across meetings.
+ *
+ * Two identities meet here and they are not the same thing:
+ *
+ * ``thread_id`` is the lineage — the identity that persists across meetings,
+ * owned by D. ``source_decision_id`` is the decision B extracted from *this*
+ * meeting, which D matched into that thread.
+ *
  * This interface was referenced by `AutuneContracts`'s JSON-Schema
  * via the `definition` "DecisionChange".
  */
 export interface DecisionChange {
-  decision_id: DecisionId;
+  thread_id: ThreadId;
+  source_decision_id: SourceDecisionId;
   current_statement: CurrentStatement;
   previous_statement?: PreviousStatement;
   previous_meeting_id?: PreviousMeetingId;
   change_type: ChangeType;
   nli_label?: NliLabel | null;
-  confidence: Confidence3;
+  confidence: Confidence4;
   key_stakeholders_absent?: KeyStakeholdersAbsent;
 }
 /**
@@ -380,7 +441,7 @@ export interface IntelligenceSnapshot {
   gap_distribution?: GapDistribution;
   alignment?: Alignment;
   predictions?: Predictions;
-  missing_sources?: MissingSources;
+  missing_sources?: MissingSources1;
 }
 /**
  * This interface was referenced by `AutuneContracts`'s JSON-Schema

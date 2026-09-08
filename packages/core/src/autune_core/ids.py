@@ -18,6 +18,7 @@ ACTION_ITEM: Final = "act"
 GAP: Final = "gap"
 TOPIC: Final = "topic"
 DECISION: Final = "dec"
+DECISION_THREAD: Final = "thr"  # D's lineage identity, spanning meetings
 JOB: Final = "job"
 
 

@@ -1,34 +1,76 @@
 {
-  "contract_version": "1.0",
+  "contract_version": "2.0",
   "meeting_id": "mtg_20260918_002",
   "action_items": [
     {
       "id": "act_001",
       "description": "A/B 결과 정리해서 공유",
-      "assignee_id": "user_004", "assignee_label": "정데이터",
+      "assignee_id": "user_004",
+      "assignee_label": "정데이터",
       "due_date": "2026-09-22",
-      "source_utterance_ids": ["utt_004"],
-      "status": "todo", "confidence": 0.91,
+      "source_utterance_ids": [
+        "utt_004"
+      ],
+      "status": "todo",
+      "confidence": 0.91,
       "external_refs": [
-        { "system": "jira", "url": "https://example.atlassian.net/browse/AUT-31", "external_id": "AUT-31" }
+        {
+          "system": "jira",
+          "url": "https://example.atlassian.net/browse/AUT-31",
+          "external_id": "AUT-31"
+        }
       ]
     },
     {
       "id": "act_002",
       "description": "콜드스타트 처리 방안 검토",
-      "assignee_id": null, "assignee_label": null,
+      "assignee_id": null,
+      "assignee_label": null,
       "due_date": null,
-      "source_utterance_ids": ["utt_002"],
-      "status": "needs_confirmation", "confidence": 0.66,
+      "source_utterance_ids": [
+        "utt_002"
+      ],
+      "status": "needs_confirmation",
+      "confidence": 0.66,
       "external_refs": []
     }
   ],
+  "decisions": [
+    {
+      "id": "dec_014",
+      "statement": "검색 정렬은 인기순으로 진행",
+      "source_utterance_ids": [
+        "utt_001",
+        "utt_002"
+      ],
+      "confidence": 0.86
+    }
+  ],
   "classifications": [
-    { "utterance_id": "utt_002", "kind": "concern", "confidence": 0.88, "nli_verified": false },
-    { "utterance_id": "utt_003", "kind": "ambiguous", "confidence": 0.59, "nli_verified": true },
-    { "utterance_id": "utt_004", "kind": "commitment", "confidence": 0.94, "nli_verified": true }
+    {
+      "utterance_id": "utt_002",
+      "kind": "concern",
+      "confidence": 0.88,
+      "nli_verified": false
+    },
+    {
+      "utterance_id": "utt_003",
+      "kind": "ambiguous",
+      "confidence": 0.59,
+      "nli_verified": true
+    },
+    {
+      "utterance_id": "utt_004",
+      "kind": "commitment",
+      "confidence": 0.94,
+      "nli_verified": true
+    }
   ],
   "ambiguous_agreements": [
-    { "utterance_id": "utt_003", "reason": "weak_assent", "confirmation_sent": true }
+    {
+      "utterance_id": "utt_003",
+      "reason": "weak_assent",
+      "confirmation_sent": true
+    }
   ]
 }

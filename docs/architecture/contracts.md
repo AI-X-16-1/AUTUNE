@@ -30,7 +30,7 @@ CODEOWNERS requires approval from the whole team for changes to this package.
 | Contract | From | To | Event |
 | --- | --- | --- | --- |
 | `TranscriptReady` | A | B, C, D | `autune.transcript.ready` |
-| `ExtractionResult` | B | E | `autune.extraction.completed` |
+| `ExtractionResult` | B | D, E | `autune.extraction.completed` |
 | `GapReport` | C | E | `autune.gap.completed` |
 | `ContextLinks` | D | E | `autune.context.completed` |
 | `IntelligenceSnapshot` | E | apps (dashboard, Slack) | `autune.intelligence.completed` |
@@ -80,7 +80,9 @@ Notes for consumers:
   the same payload, so consumers need not branch on it. `"desktop_app"`
   arrives in Phase 2.
 
-### 2. `ExtractionResult` — B → E
+### 2. `ExtractionResult` — B → D, E
+
+D consumes this too, for `decisions` only. See "The B → D boundary" below.
 
 ```json
 {
@@ -100,6 +102,14 @@ Notes for consumers:
         {"system": "notion", "url": "https://..."},
         {"system": "jira", "url": "https://..."}
       ]
+    }
+  ],
+  "decisions": [
+    {
+      "id": "dec_014",
+      "statement": "검색 정렬은 인기순으로 진행",
+      "source_utterance_ids": ["utt_001", "utt_002"],
+      "confidence": 0.86
     }
   ],
   "classifications": [
@@ -122,6 +132,10 @@ Notes for consumers:
 
 `kind` is one of `commitment`, `decision`, `open_question`, `concern`,
 `ambiguous`.
+
+A `Decision` is not the same as a `Classification` with `kind="decision"`. The
+classification marks one utterance; a decision is an entity that often spans
+several, and it is what D keys a lineage on.
 
 `status` is one of `needs_confirmation`, `todo`, `in_progress`, `done` — the
 four columns of the action board (S17) and the Jira states they map to.
@@ -183,7 +197,8 @@ default in the UI.
   ],
   "decision_lineage": [
     {
-      "decision_id": "dec_014",
+      "thread_id": "thr_007",
+      "source_decision_id": "dec_014",
       "current_statement": "인기순 정렬로 진행",
       "previous_statement": "실시간 개인화로 진행",
       "previous_meeting_id": "mtg_20260904_002",
@@ -197,6 +212,37 @@ default in the UI.
 ```
 
 `change_type` is one of `unchanged`, `modified`, `reversed`, `new`.
+
+## The B → D boundary
+
+This is the only place two module owners depend on each other, so it is written
+down rather than left to be discovered.
+
+**B owns: what counts as a decision in this meeting.** It publishes `decisions`,
+each with a `dec_` id, the statement as settled, and the utterances it came
+from. B does not know or care whether the decision existed before.
+
+**D owns: whether this decision is the same one as before.** It matches each of
+B's decisions into a lineage thread with its own `thr_` id, then compares
+statements with NLI to classify the change.
+
+Two identities meet in `DecisionChange` and they are not interchangeable:
+
+| Field | Owner | Lifetime |
+| --- | --- | --- |
+| `thread_id` (`thr_`) | D | Spans meetings — the lineage's identity |
+| `source_decision_id` (`dec_`) | B | This meeting only |
+
+**D must not extract decisions itself.** Doing so would duplicate B's
+classifier, and the two would disagree — a decision would appear in the summary
+tab (S15) and be missing from the lineage view (S22), which reads to a user as a
+bug.
+
+**A failure in B must not cost the user their topic links.** Topic linking needs
+only the transcript, so it runs in parallel with B and C; decision lineage needs
+B, so it runs after. D publishes `ContextLinks` once both are in, or with an
+empty `decision_lineage` and `"extraction"` in `missing_sources` when B never
+reports.
 
 ### 5. `IntelligenceSnapshot` — E → apps
 
@@ -225,9 +271,14 @@ in aggregate and not exposed through any shared payload. See `privacy.md`.
 `packages/contracts/__init__.py` exports `CONTRACT_VERSION`. Every payload
 carries it.
 
-- Additive change → bump the minor version (`1.0` → `1.1`)
-- Breaking change → bump the major version (`1.1` → `2.0`), and only after Slack
+- Additive change → bump the minor version (`2.0` → `2.1`)
+- Breaking change → bump the major version (`2.0` → `3.0`), and only after Slack
   announcement plus approval from every affected owner
+
+Version 2.0 renamed `DecisionChange.decision_id` to `thread_id` and added
+`source_decision_id`, because one field was carrying two identities. It was done
+before anyone consumed the field, which is the only cheap moment for a change
+like that.
 
 Consumers validate the major version and reject a mismatch loudly rather than
 guessing.

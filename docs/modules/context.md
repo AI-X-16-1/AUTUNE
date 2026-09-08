@@ -29,7 +29,8 @@ processes "this meeting"; D connects meetings to one another.
 
 | Source | Contract or form |
 | --- | --- |
-| A | `TranscriptReady` via `autune.transcript.ready` |
+| A | `TranscriptReady` via `autune.transcript.ready` — topic linking |
+| B | `ExtractionResult` via `autune.extraction.completed` — decision lineage |
 | `packages/core` | `meetings`, `participants`, `utterances` (read-only) |
 | Web upload | Material documents — PDF, docx, markdown (Phase 2) |
 | Own history | `ctx_decisions`, `ctx_decision_versions`, Chroma embeddings |
@@ -56,7 +57,15 @@ Retrieve broad, re-rank narrow. Topic mis-linking is the module's main risk, and
 re-ranking is what buys precision.
 
 ### Decision lineage
-1. Match the current meeting's decisions to existing decision threads.
+
+Input is `ExtractionResult.decisions` — B decides what counts as a decision in
+this meeting, D decides whether it is the same decision as one from before.
+**Do not extract decisions here.** Duplicating B's classifier makes the two
+disagree, and a decision then appears in the summary tab (S15) while missing
+from the lineage view (S22), which reads to a user as a bug.
+
+1. Match each of B's decisions to an existing thread, or open a new one. The
+   thread id (`thr_`) is D's; the decision id (`dec_`) is B's.
 2. Run NLI between the previous statement and the current one:
    `entailment` → unchanged, `contradiction` → reversed, `neutral` → modified.
 3. Record a new version with what changed, when, in which meeting, and who was
@@ -97,6 +106,8 @@ cascade does not reach either.
 | Task | Trigger | Queue |
 | --- | --- | --- |
 | `autune.context.on_transcript_ready` | `autune.transcript.ready` | `cpu_heavy` |
+| `autune.context.on_extraction_completed` | `autune.extraction.completed` | `cpu_heavy` |
+| `autune.context.publish_if_ready` | after either half finishes, or on timeout | `default` |
 | `autune.context.index_material` | Material upload | `cpu_heavy` |
 | `autune.context.send_brief` | 30 minutes before a meeting (Phase 2) | `default` |
 
@@ -140,5 +151,3 @@ uv run --package autune-context python -m autune_context.eval
 ## Open questions
 
 - Confidence threshold for asserting a link versus asking the user.
-- Whether decision lineage is keyed on an extracted decision ID from B or on D's
-  own clustering.

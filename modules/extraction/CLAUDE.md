@@ -24,7 +24,14 @@ agreement with NLI → sync to Notion and Jira.
 
 ## Publishes
 
-`ExtractionResult` on `autune.extraction.completed`, consumed by E.
+`ExtractionResult` on `autune.extraction.completed`, consumed by **D and E**.
+
+D depends on `decisions`: entities with a `dec_` id, the statement as settled,
+and the utterances they came from. One decision often spans several utterances,
+so a `Classification` with `kind="decision"` is not enough — D has nothing to
+key a lineage on without the entity. Changing or dropping that field breaks D.
+
+See `/docs/architecture/contracts.md`, "The B → D boundary".
 
 ## Owns
 

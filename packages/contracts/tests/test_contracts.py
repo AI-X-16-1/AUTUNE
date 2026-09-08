@@ -65,25 +65,34 @@ def test_additive_field_does_not_break_a_consumer() -> None:
 
 
 def test_major_version_mismatch_is_rejected() -> None:
-    payload = fixtures.load("gap_report") | {"contract_version": "2.0"}
+    """A version from a different major is rejected, never guessed at."""
+    payload = fixtures.load("gap_report") | {"contract_version": "1.0"}
     with pytest.raises(ValueError, match="major version mismatch"):
         validate_major_version(GapReport.model_validate(payload))
 
 
 def test_matching_major_version_passes() -> None:
     validate_major_version(GapReport.model_validate(fixtures.load("gap_report")))
-    assert CONTRACT_VERSION.startswith("1.")
+    assert CONTRACT_VERSION.startswith("2.")
 
 
 def test_an_older_minor_version_is_still_accepted() -> None:
-    """The fixtures say 1.0 while the code is on 1.1, on purpose.
+    """Additive changes must not break a producer that has not caught up.
 
-    Additive changes must not break a producer that has not caught up yet — that
-    is the whole promise of the additive-only policy.
+    That is the whole promise of the additive-only policy: a producer still
+    emitting 2.0 keeps working when the consumer moves to 2.1.
     """
-    payload = fixtures.load("transcript_ready.short")
-    assert payload["contract_version"] == "1.0"
+    major = CONTRACT_VERSION.split(".", 1)[0]
+    payload = fixtures.load("transcript_ready.short") | {"contract_version": f"{major}.0"}
     validate_major_version(TranscriptReady.model_validate(payload))
+
+
+def test_a_different_major_version_is_rejected() -> None:
+    """A breaking change must be loud, not guessed at."""
+    for version in ("1.0", "99.0"):
+        payload = fixtures.load("transcript_ready.short") | {"contract_version": version}
+        with pytest.raises(ValueError, match="major version mismatch"):
+            validate_major_version(TranscriptReady.model_validate(payload))
 
 
 def test_both_mvp_input_paths_exist() -> None:

@@ -34,3 +34,8 @@ def on_transcript_ready(payload: dict) -> None:
     )
     # TODO(강민구): run the pipeline, persist to ext_* tables,
     # then publish autune.extraction.completed.
+    #
+    # ExtractionResult.decisions is consumed by module D to build decision
+    # lineage. A decision is its own entity, often spanning several utterances
+    # — not simply a Classification with kind="decision". D depends on this
+    # field; see docs/modules/extraction.md.

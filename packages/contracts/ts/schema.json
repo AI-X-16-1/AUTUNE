@@ -188,9 +188,10 @@
       "type": "object"
     },
     "ContextLinks": {
+      "description": "D's output. Topic linking and decision lineage have different inputs.\n\nTopic linking needs only the transcript, so it runs in parallel with B and C.\nDecision lineage needs B's decisions, so it runs after B. D publishes once\nboth are in — or, if B never reports, with an empty ``decision_lineage`` and\n``\"extraction\"`` in ``missing_sources``. A failure in B must not cost the\nuser their topic links.",
       "properties": {
         "contract_version": {
-          "default": "1.1",
+          "default": "2.0",
           "title": "Contract Version",
           "type": "string"
         },
@@ -212,6 +213,14 @@
           },
           "title": "Decision Lineage",
           "type": "array"
+        },
+        "missing_sources": {
+          "description": "Modules that had not reported when this payload was built.",
+          "items": {
+            "type": "string"
+          },
+          "title": "Missing Sources",
+          "type": "array"
         }
       },
       "required": [
@@ -220,11 +229,55 @@
       "title": "ContextLinks",
       "type": "object"
     },
-    "DecisionChange": {
+    "Decision": {
+      "description": "A decision the meeting settled.\n\nDistinct from a `Classification` with ``kind=\"decision\"``: that marks one\nutterance, while a decision is often spread over several. B owns deciding\n*what counts as a decision in this meeting*; D owns deciding *whether it is\nthe same decision as one from a past meeting*.",
       "properties": {
-        "decision_id": {
+        "id": {
           "pattern": "^dec_",
-          "title": "Decision Id",
+          "title": "Id",
+          "type": "string"
+        },
+        "statement": {
+          "description": "The decision as settled, in one sentence.",
+          "title": "Statement",
+          "type": "string"
+        },
+        "source_utterance_ids": {
+          "description": "One decision may span several utterances.",
+          "items": {
+            "type": "string"
+          },
+          "title": "Source Utterance Ids",
+          "type": "array"
+        },
+        "confidence": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Confidence",
+          "type": "number"
+        }
+      },
+      "required": [
+        "id",
+        "statement",
+        "confidence"
+      ],
+      "title": "Decision",
+      "type": "object"
+    },
+    "DecisionChange": {
+      "description": "One version of a decision, as tracked across meetings.\n\nTwo identities meet here and they are not the same thing:\n\n``thread_id`` is the lineage — the identity that persists across meetings,\nowned by D. ``source_decision_id`` is the decision B extracted from *this*\nmeeting, which D matched into that thread.",
+      "properties": {
+        "thread_id": {
+          "description": "D's lineage identity, stable across meetings.",
+          "pattern": "^thr_",
+          "title": "Thread Id",
+          "type": "string"
+        },
+        "source_decision_id": {
+          "description": "The decision B extracted from this meeting.",
+          "pattern": "^dec_",
+          "title": "Source Decision Id",
           "type": "string"
         },
         "current_statement": {
@@ -285,7 +338,8 @@
         }
       },
       "required": [
-        "decision_id",
+        "thread_id",
+        "source_decision_id",
         "current_statement",
         "change_type",
         "confidence"
@@ -334,7 +388,7 @@
     "ExtractionResult": {
       "properties": {
         "contract_version": {
-          "default": "1.1",
+          "default": "2.0",
           "title": "Contract Version",
           "type": "string"
         },
@@ -348,6 +402,14 @@
             "$ref": "#/$defs/ActionItem"
           },
           "title": "Action Items",
+          "type": "array"
+        },
+        "decisions": {
+          "description": "Consumed by D to build decision lineage across meetings.",
+          "items": {
+            "$ref": "#/$defs/Decision"
+          },
+          "title": "Decisions",
           "type": "array"
         },
         "classifications": {
@@ -440,7 +502,7 @@
     "GapReport": {
       "properties": {
         "contract_version": {
-          "default": "1.1",
+          "default": "2.0",
           "title": "Contract Version",
           "type": "string"
         },
@@ -489,7 +551,7 @@
     "IntelligenceSnapshot": {
       "properties": {
         "contract_version": {
-          "default": "1.1",
+          "default": "2.0",
           "title": "Contract Version",
           "type": "string"
         },
@@ -792,7 +854,7 @@
     "TranscriptReady": {
       "properties": {
         "contract_version": {
-          "default": "1.1",
+          "default": "2.0",
           "title": "Contract Version",
           "type": "string"
         },

@@ -17,12 +17,17 @@ publish  autune.transcript.ready        (TranscriptReady)
   │
   ├────────────────┬────────────────┐
   ▼                ▼                ▼
-extraction (B)   gap (C)        context (D)      ← parallel, independent
+extraction (B)   gap (C)     context (D): topic linking   ← parallel
   │                │                │
+  ├────────────────┼────────────────┤
+  │                │                │
+  ▼                │                │
+autune.extraction.completed         │
+  │                │                │
+  ├──→ context (D): decision lineage │      ← D's second entry point
   │                │                │
   ▼                ▼                ▼
-autune.extraction.completed          autune.context.completed
-              autune.gap.completed
+              autune.gap.completed  autune.context.completed
   │                │                │
   └────────────────┼────────────────┘
                    ▼
@@ -32,8 +37,17 @@ autune.extraction.completed          autune.context.completed
          autune.intelligence.completed
 ```
 
-B, C, and D do not depend on one another and must not wait for one another. E
-aggregates whatever has arrived; see "E and partial results" below.
+B and C do not depend on anything but A. D is the one exception, and only in
+half of its work: **topic linking** needs only the transcript and runs in
+parallel, while **decision lineage** needs the decisions B extracted and runs
+after `autune.extraction.completed`.
+
+D publishes `ContextLinks` once both halves are in, or — if B never reports —
+with an empty `decision_lineage` and `"extraction"` in `missing_sources`. A
+failure in B must not cost the user their topic links. See
+`contracts.md`, "The B → D boundary".
+
+E aggregates whatever has arrived; see "E and partial results" below.
 
 ## Naming
 
@@ -49,6 +63,8 @@ Task names are `autune.<module>.<verb>`. Event names are
 | `autune.gap.on_transcript_ready` | task | C |
 | `autune.gap.completed` | event | C |
 | `autune.context.on_transcript_ready` | task | D |
+| `autune.context.on_extraction_completed` | task | D |
+| `autune.context.publish_if_ready` | task | D |
 | `autune.context.completed` | event | D |
 | `autune.intelligence.aggregate` | task | E |
 | `autune.intelligence.completed` | event | E |
