@@ -22,7 +22,8 @@ jobs:
 
     services:
       postgres:
-        image: postgres:16-alpine
+        # Must match infra/docker-compose.yml: embeddings need pgvector.
+        image: pgvector/pgvector:pg16
         env:
           POSTGRES_USER: autune
           POSTGRES_PASSWORD: autune
