@@ -8,6 +8,7 @@ dependencies = [
     "autune-core",
     "fastapi>=0.115",
     "celery>=5.4",
+    "pgvector>=0.3",
 ]
 
 [build-system]

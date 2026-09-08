@@ -32,7 +32,6 @@ structure.
 | TS component | `PascalCase` | `GapReportCard` |
 | TS hook | `useSomething` | `useGapReport` |
 | Neo4j label | `<Prefix><Noun>` | `GapTopic`, `CtxDecision` |
-| Chroma collection | `<prefix>_<noun>` | `ctx_materials` |
 
 Domain terms come from `../product/glossary.md`. Do not invent a synonym for a
 term that already exists.

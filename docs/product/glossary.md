@@ -101,7 +101,7 @@ gaps, decision-lineage summary. Phase 2.
 
 **Material (자료)**
 A document uploaded alongside a meeting — spec, PRD, previous minutes. Chunked
-and embedded into Chroma for retrieval.
+and embedded into a pgvector column for retrieval.
 
 ## Module E — intelligence
 

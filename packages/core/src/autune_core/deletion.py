@@ -1,8 +1,10 @@
 """Deletion registry.
 
 Rows reachable by ON DELETE CASCADE from ``meetings`` are handled by the
-database. Everything else — Neo4j nodes, Chroma embeddings, cached artifacts,
-files — is the owning module's responsibility, registered here.
+database, which is most things: embeddings live in PostgreSQL via pgvector, so
+they cascade like any other row. Everything outside PostgreSQL — Neo4j nodes,
+cached artifacts, files — is the owning module's responsibility, registered
+here.
 
 A table that cannot be cleaned up is a compliance defect, not a backlog item.
 See docs/architecture/privacy.md section 4.

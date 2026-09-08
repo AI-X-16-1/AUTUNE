@@ -119,7 +119,7 @@ A가 만든 전사 결과를 B·C·D가 **병렬로** 소비하고, 각자 Slack
 | ----------- | ------------------------------------------------------------------------------- |
 | Backend     | FastAPI (Python 3.12), Celery + Redis                                           |
 | Frontend    | Next.js + Tailwind (Node 22)                                                    |
-| Database    | PostgreSQL (구조화 데이터), Neo4j (토픽 그래프·결정 계보), Chroma (임베딩 검색) |
+| Database    | PostgreSQL + pgvector (구조화 데이터 · 임베딩 검색), Neo4j (토픽 그래프·결정 계보) |
 | 패키지 관리 | uv workspace (Python), pnpm workspace (JS)                                      |
 | 연동        | Slack Bolt, Notion API, Jira REST API, Google Calendar API                      |
 
@@ -170,7 +170,7 @@ autune/
 git clone <repo> && cd autune
 
 cp .env.example .env                                 # 필요한 값 채우기
-docker compose -f infra/docker-compose.yml up -d     # postgres, redis, neo4j, chroma
+docker compose -f infra/docker-compose.yml up -d     # postgres(pgvector), redis, neo4j
 uv sync
 pnpm install
 uv run alembic -c infra/alembic.ini upgrade heads

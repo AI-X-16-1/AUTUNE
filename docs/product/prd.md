@@ -207,7 +207,7 @@ keep the team building real models rather than prompt chains.
 | Task queue | Celery + Redis | AI pipeline orchestration |
 | Database | PostgreSQL | Structured data and history |
 | Graph DB | Neo4j | Topic graph, decision lineage |
-| Vector DB | Chroma | Embedding search, topic matching, material retrieval |
+| Vector search | pgvector, inside PostgreSQL | Embedding search, topic matching, material retrieval — no separate service |
 | Slack | Bolt for Python | Bot framework |
 | External | Notion API, Jira REST API, Google Calendar API | Action item and schedule sync |
 | Infra | Railway / AWS with GPU instances | STT inference |

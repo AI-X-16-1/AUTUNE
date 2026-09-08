@@ -18,7 +18,7 @@ git config core.hooksPath .githooks   # refuse accidental pushes to main
 
 cp .env.example .env             # then fill in the secrets you need
 
-docker compose -f infra/docker-compose.yml up -d
+docker compose -f infra/docker-compose.yml up -d      # postgres (pgvector), redis, neo4j
 uv sync
 pnpm install
 
@@ -40,7 +40,11 @@ module's dependencies and skips several gigabytes of ML wheels.
 | PostgreSQL | 5432 | Shared entities and all module tables | Everyone |
 | Redis | 6379 | Celery broker and result backend | Everyone |
 | Neo4j | 7474 / 7687 | Topic graph, decision lineage | C, D |
-| Chroma | 8001 | Embeddings for retrieval | D |
+
+Embeddings are stored in PostgreSQL through pgvector, so there is no separate
+vector service. The image is `pgvector/pgvector:pg16` rather than plain
+`postgres`; the extension itself is enabled by a `packages/core` migration.
+See `../decisions/0004-pgvector-over-chroma.md`.
 
 ```bash
 docker compose -f infra/docker-compose.yml up -d postgres redis   # minimal
@@ -60,7 +64,6 @@ prefix `AUTUNE_<MODULE>_`.
 | `AUTUNE_REDIS_URL` | `redis://localhost:6379/0` | |
 | `AUTUNE_NEO4J_URI` | `bolt://localhost:7687` | C, D |
 | `AUTUNE_NEO4J_USER` / `AUTUNE_NEO4J_PASSWORD` | | C, D |
-| `AUTUNE_CHROMA_URL` | `http://localhost:8001` | D |
 | `AUTUNE_SECRET_KEY` | | JWT signing. Never commit |
 | `AUTUNE_LOG_LEVEL` | `INFO` | |
 | `AUTUNE_RETENTION_DAYS` | `90` | Default analysis retention |

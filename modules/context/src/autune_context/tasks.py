@@ -37,8 +37,8 @@ def on_transcript_ready(payload: dict) -> None:
         meeting_id=transcript.meeting_id,
         utterances=len(transcript.utterances),
     )
-    # TODO(문민재): embed topics into Chroma, hybrid-retrieve past meetings,
-    #   re-rank, persist ctx_topic_links, then try to publish.
+    # TODO(문민재): embed topics into ctx_embeddings (pgvector), hybrid-retrieve
+    #   past meetings, re-rank, persist ctx_topic_links, then try to publish.
 
 
 @shared_task(name="autune.context.on_extraction_completed", acks_late=True)

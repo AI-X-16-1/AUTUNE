@@ -4,7 +4,9 @@ name: autune
 
 services:
   postgres:
-    image: postgres:16-alpine
+    # pgvector, not plain postgres: embeddings live here rather than in a
+    # separate vector database. See docs/decisions/0004-pgvector-over-chroma.md
+    image: pgvector/pgvector:pg16
     environment:
       POSTGRES_USER: autune
       POSTGRES_PASSWORD: autune
@@ -35,13 +37,6 @@ services:
     ports: ["7474:7474", "7687:7687"]
     volumes: ["neo4jdata:/data"]
 
-  # Embedding search for materials and past meetings (D).
-  chroma:
-    image: chromadb/chroma:0.5.23
-    ports: ["8001:8000"]
-    volumes: ["chromadata:/chroma/chroma"]
-
 volumes:
   pgdata:
   neo4jdata:
-  chromadata:

@@ -33,7 +33,7 @@ processes "this meeting"; D connects meetings to one another.
 | B | `ExtractionResult` via `autune.extraction.completed` — decision lineage |
 | `packages/core` | `meetings`, `participants`, `utterances` (read-only) |
 | Web upload | Material documents — PDF, docx, markdown (Phase 2) |
-| Own history | `ctx_decisions`, `ctx_decision_versions`, Chroma embeddings |
+| Own history | `ctx_decisions`, `ctx_decision_versions`, `ctx_embeddings` |
 
 ## Outputs
 
@@ -73,7 +73,7 @@ from the lineage view (S22), which reads to a user as a bug.
 4. Flag a change made while a key stakeholder was absent.
 
 ### Material analysis (Phase 2)
-Chunk uploaded documents, embed into Chroma, retrieve against the meeting title
+Chunk uploaded documents, embed into `ctx_embeddings`, retrieve against the meeting title
 and participants, draft an agenda.
 
 ## Storage
@@ -84,11 +84,16 @@ and participants, draft an agenda.
 | PostgreSQL `ctx_topic_links` | Meeting-to-meeting topic links with scores |
 | PostgreSQL `ctx_decisions` | Decision threads |
 | PostgreSQL `ctx_decision_versions` | Each version, with change type and NLI label |
-| Chroma `ctx_materials`, `ctx_meeting_topics` | Embeddings for retrieval |
+| PostgreSQL `ctx_embeddings` | Embeddings for materials and meeting topics, in a `vector` column |
 | Neo4j `CtxDecision` | Decision lineage graph for visualization |
 
-Chroma embeddings and Neo4j nodes need D's own deletion hook — the Postgres
-cascade does not reach either.
+Embeddings are PostgreSQL rows, so they cascade with the meeting like every
+other table — no hook needed. Neo4j nodes still need D's own deletion hook,
+because the cascade does not reach them.
+
+The `vector` column's dimension is fixed at migration time, so the embedding
+model has to be chosen before the table is created. The `vector` extension is
+already enabled by a `packages/core` migration; chain your table onto that.
 
 ## API
 
@@ -124,11 +129,11 @@ cascade does not reach either.
 | Component | Model |
 | --- | --- |
 | Dense retrieval | Sentence-BERT (Korean) |
-| Lexical retrieval | BM25 |
+| Lexical retrieval | BM25, in application code |
 | Re-ranking | Cross-encoder |
 | Decision-change detection | NLI |
 | Agenda and brief generation | LLM (Phase 2) |
-| Vector store | Chroma |
+| Vector store | pgvector, in PostgreSQL |
 
 ## Metric
 
@@ -144,7 +149,9 @@ uv run --package autune-context python -m autune_context.eval
   deleted by the retention sweep. Handle a dangling link gracefully — show that
   the meeting is gone, never resurrect its content from an embedding.
 - Embeddings are derived from masked text. Deleting a meeting deletes its
-  embeddings; an embedding that outlives its meeting is a retention violation.
+  embeddings automatically, because they are rows in a table that cascades from
+  `meetings.id` — an embedding outliving its meeting would be a retention
+  violation, and pgvector removes the way that used to happen.
 - Briefs sent to Slack contain summaries, never transcript excerpts beyond what
   the brief needs.
 

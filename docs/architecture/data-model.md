@@ -4,13 +4,16 @@
 
 | Store | Purpose | Who uses it |
 | --- | --- | --- |
-| **PostgreSQL** | Shared entities, all module tables, history | Everyone |
+| **PostgreSQL** | Shared entities, all module tables, history, **embeddings via pgvector** | Everyone |
 | **Neo4j** | Topic graph, decision lineage graph | C (topics), D (lineage) |
-| **Chroma** | Embeddings for material and past-meeting retrieval | D |
 | **Redis** | Celery broker and result backend, short-lived cache | Everyone, through `autune_core` |
 | **Object storage / local temp** | Uploaded recording during processing only | A, transient only |
 
-Never invent a sixth store. If you need one, that is an ADR.
+Never invent a fifth store. If you need one, that is an ADR.
+
+Embeddings are PostgreSQL rows, not a separate service. That is deliberate:
+they then cascade on meeting deletion like everything else, instead of needing
+their own cleanup path. See `../decisions/0004-pgvector-over-chroma.md`.
 
 ## Shared entities — `packages/core`
 
@@ -72,8 +75,12 @@ Every table a module owns is named `<prefix>_<name>`.
 A table without a prefix is a shared entity. If you are creating one, you are
 either mistaken or you need team approval.
 
-The same rule applies to Neo4j labels (`GapTopic`, `CtxDecision`) and Chroma
-collection names (`ctx_materials`, `ctx_meeting_topics`).
+The same rule applies to Neo4j labels (`GapTopic`, `CtxDecision`). Embedding
+tables are ordinary prefixed tables — `ctx_embeddings` — with a `vector` column.
+
+The `vector` extension is enabled by a `packages/core` migration, because
+`CREATE EXTENSION` is database-level. A module's embedding table chains onto
+that; do not enable the extension from a module migration.
 
 ## Foreign keys across module boundaries
 
@@ -118,15 +125,17 @@ because both must be deletable on request:
 
 - **Meeting deletion** cascades from `meetings` through shared entities. Module
   tables that reference `meetings.id` with `ON DELETE CASCADE` are handled
-  automatically. Tables that store a `meeting_id` without a constraint must be
-  cleaned up by the module's own deletion hook.
+  automatically — embeddings included, since they are rows. Tables that store a
+  `meeting_id` without a constraint must be cleaned up by the module's own
+  deletion hook.
 - **User deletion / team departure** removes that user's utterances and anything
   derived from them.
 - **Retention sweep** deletes analysis results past the retention window (90
   days by default).
 
-Each module registers its cleanup in `autune_core`'s deletion registry. A table
-that cannot be cleaned up is a compliance defect. See `privacy.md`.
+Each module registers its cleanup in `autune_core`'s deletion registry for
+anything outside PostgreSQL — Neo4j nodes, cached files. A table that cannot be
+cleaned up is a compliance defect. See `privacy.md`.
 
 ## Migrations
 

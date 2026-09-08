@@ -28,8 +28,6 @@ class Settings(BaseSettings):
     neo4j_user: str = "neo4j"
     neo4j_password: str = "autunedev"
 
-    chroma_url: str = "http://localhost:8001"
-
     secret_key: str = "local-development-only-change-me-in-every-environment"
     """JWT signing key. Must be overridden outside local; see the validator below."""
 

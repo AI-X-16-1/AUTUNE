@@ -47,17 +47,24 @@ links: publish `ContextLinks` with an empty `decision_lineage` and
 ## Owns
 
 - PostgreSQL: `ctx_materials`, `ctx_topic_links`, `ctx_decisions`,
-  `ctx_decision_versions`
-- Chroma: `ctx_materials`, `ctx_meeting_topics`
+  `ctx_decision_versions`, `ctx_embeddings` (a `vector` column, via pgvector)
 - Neo4j: `CtxDecision` lineage
 
-Chroma embeddings and Neo4j nodes need this module's own deletion hook — the
-Postgres cascade reaches neither.
+Embeddings cascade with the meeting like any other row, so they need no hook.
+Neo4j nodes still do — the Postgres cascade does not reach them.
+
+The `vector` dimension is fixed when you create the table, so pick the embedding
+model first. The extension is enabled by a `packages/core` migration already.
 
 ## AI stack
 
 Sentence-BERT + BM25 hybrid retrieval, cross-encoder re-ranking, NLI for
 decision-change detection, LLM for agenda and brief generation (Phase 2).
+
+Vector search runs in PostgreSQL through pgvector, so a similarity search and a
+metadata filter (`team_id`, `meeting_id`, retention window) are one query. BM25
+stays in application code: PostgreSQL full-text search has no Korean analyzer
+without a further extension, so hybrid retrieval is not a single query.
 
 **Retrieve broad, re-rank narrow.** Top 50 from hybrid retrieval, top 10 after
 re-ranking. Mis-linking is this module's main risk, and re-ranking is what buys
