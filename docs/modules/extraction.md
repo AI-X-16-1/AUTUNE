@@ -103,6 +103,45 @@ other module's tables.
 Target non-LLM share is roughly 60%: classification and verification are models
 we train, not prompts.
 
+### Classifier training data
+
+Labels are produced by an LLM in a first pass over Korean meeting utterances and
+then corrected by hand. Hand-labelling from nothing spends the only days this
+project has for it, and labelling functions break down on exactly the two classes
+that matter most here — `concern` and `ambiguous` are what feeds the NLI
+confirmation step, and neither reduces to a keyword rule.
+
+This does not spend the non-LLM budget above. That target describes what runs at
+inference: it is "a design target, not a metric we measure... to keep the team
+building real models rather than prompt chains" (`../product/prd.md` section 8).
+An LLM that writes training labels produces a trained classifier, which is the
+thing the target is asking for.
+
+The label definitions come from the AMI Meeting Corpus rather than being invented
+here, because AMI annotates the same boundaries already:
+
+| Kind | AMI source |
+| --- | --- |
+| `commitment` | Dialogue act `Offer`; abstractive `actions` |
+| `decision` | Extractive `decision` spans; abstractive `decisions` |
+| `open_question` | The four `Elicit-*` dialogue acts |
+| `concern` | Adjacency-pair `NEG`; abstractive `problems` |
+| `ambiguous` | Adjacency-pair `UNC` and `PART` |
+
+Two of those are worth knowing. `Suggest` is not a commitment — it is a proposal,
+and it outnumbers `Offer` six to one, so folding it in buys noise. Polarity is not
+in the dialogue-act inventory at all; `Assess` is the largest task act and carries
+no sign, which is why `concern` is keyed on the adjacency pairs instead.
+
+Corpora are downloaded per machine and never committed (`dataset/` is gitignored).
+AMI is CC BY 4.0 and requires attribution wherever results are published. Analysis
+scripts live in `modules/extraction/scripts/`.
+
+Neither corpus is a Korean team meeting — AMI is English design roleplay, and the
+Korean set is broadcast discussion. A model tuned on them has not been shown to
+reach the F1 target on real meetings; an evaluation set drawn from the team's own
+meetings is what would measure that gap.
+
 ## Metric
 
 Action item extraction F1 — 0.80+ at six weeks, 0.88+ at three months.
@@ -121,5 +160,7 @@ uv run --package autune-extraction python -m autune_extraction.eval
 
 ## Open questions
 
-- Labeling strategy for the classifier: manual seed set versus weak supervision.
 - Whether Jira sync is per-action or batched per meeting.
+- Whether reference resolution runs before classification or after. The pipeline
+  above puts classification first; the argument for the other order is that
+  assignees and objects parse more accurately once pronouns are resolved.
