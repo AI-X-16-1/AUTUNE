@@ -62,11 +62,13 @@ explicit_package_bases = true
 mypy_path = "packages/contracts/src:packages/core/src:packages/integrations/src:modules/audio/src:modules/extraction/src:modules/gap/src:modules/context/src:modules/intelligence/src:apps/api/src:apps/worker/src"
 
 [tool.pytest.ini_options]
-testpaths = ["packages", "modules"]
+testpaths = ["packages", "modules", "apps"]
 markers = [
     "model: needs downloaded model weights; excluded from the default run",
 ]
-addopts = "-m 'not model'"
+# importlib mode: several packages are named "tests", and the default import
+# mode makes pytest collide on them.
+addopts = "-m 'not model' --import-mode=importlib"
 
 # Module independence. A failure here is fixed by removing the import,
 # never by editing this config. See docs/architecture/module-boundaries.md.
