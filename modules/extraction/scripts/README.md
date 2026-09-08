@@ -23,6 +23,25 @@ summary sections and the adjacency-pair polarity types.
 
 Both print JSON on stdout.
 
+## AI Hub Korean meeting corpus
+
+`002. 주요 영역별 회의 음성인식 데이터`. Transcription only — `annotation_level` is
+`원시`, so there are no class labels in it. What it provides is Korean meeting
+utterances, which AMI cannot.
+
+```bash
+uv run python modules/extraction/scripts/ko_reference_overlap.py <corpus-root>
+```
+
+Measures how often an unresolved reference shares an utterance with a class cue,
+for the pipeline-order question in `docs/modules/extraction.md`. Read the output
+as population size, not accuracy: both pattern sets are hand-written
+approximations, and deciding which order classifies better needs a labelled set
+and two trained classifiers.
+
+Point it at a directory of label files; it reads `form`, the masked field, and
+never `original_form`.
+
 ## Why two passes
 
 AMI splits information across layers that have to be read together:
