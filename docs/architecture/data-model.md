@@ -27,6 +27,7 @@ absence of a prefix is what marks a table as shared.
 | `users` | A person with an account |
 | `teams` | An organization or squad |
 | `team_members` | User ↔ team membership and role |
+| `team_integrations` | One team's connection to Notion, Jira, Slack or Calendar |
 | `meetings` | One analysis unit |
 | `participants` | A person present at a meeting, identified or not |
 | `utterances` | One continuous stretch of speech, PII-masked |
@@ -42,6 +43,25 @@ prefixed table with a foreign key to `utterances.id`.
 
 `users`, `teams`, and `team_members` are written by the auth layer in
 `packages/core`, not by any module.
+
+`team_integrations` is written by `packages/core` as well, from the settings
+screen (S28). Modules read it and never write it:
+
+```python
+from autune_core import load_integration
+
+config = load_integration(session, meeting.team_id, "notion")
+if config is None:
+    return  # this team has not connected Notion; skip the feature
+client = NotionClient(config.require_secret())
+```
+
+Ask per call rather than caching the result — a team can disconnect a service
+between two meetings. Credentials belong to the customer team, not to the
+deployment, which is why they are not environment variables: one deployment
+serves many teams, and each points Autune at their own workspace. `secret` is
+Fernet ciphertext (`autune_core.crypto`), so a database dump is not a set of
+working tokens.
 
 This is not a style preference. Two modules writing the same row is the
 failure mode this whole structure exists to prevent.
