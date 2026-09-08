@@ -4,8 +4,10 @@ Everything here is used by all five modules, so it changes rarely and by team
 agreement. ``autune_core`` never imports a module.
 """
 
-from . import ids
+from . import deletion, ids
+from .auth import CurrentUser, current_user, issue_token, require_self
 from .db import Base, get_engine, get_session, get_sessionmaker, session_scope
+from .entities import Meeting, Participant, Team, TeamMember, User, Utterance
 from .errors import (
     AutuneError,
     ConflictError,
@@ -24,6 +26,17 @@ __all__ = [
     "configure_logging",
     "get_logger",
     "Base",
+    "Meeting",
+    "Participant",
+    "Team",
+    "TeamMember",
+    "User",
+    "Utterance",
+    "CurrentUser",
+    "current_user",
+    "issue_token",
+    "require_self",
+    "deletion",
     "get_engine",
     "get_sessionmaker",
     "get_session",
