@@ -1,0 +1,91 @@
+"""The outbound boundary is where data leaves our infrastructure.
+
+These tests exist because a leak here is not a bug — it is an incident.
+See docs/architecture/privacy.md.
+"""
+
+from __future__ import annotations
+
+import pytest
+
+from autune_core.errors import PrivacyViolationError
+from autune_integrations import find_unmasked
+from autune_integrations.fakes import FakeJira, FakeSlack
+from autune_integrations.privacy import (
+    MAX_OUTBOUND_CHARS,
+    assert_masked,
+    assert_personal_delivery,
+    check_outbound,
+)
+
+UNMASKED = [
+    ("phone", "연락은 010-1234-5678 로 주세요"),
+    ("rrn", "주민번호 900101-1234567 입니다"),
+    ("card", "카드 1234-5678-9012-3456 로 결제"),
+    ("email", "메일은 hong@example.com 입니다"),
+]
+
+MASKED = [
+    "연락은 010-****-5678 로 주세요",
+    "주민번호 900101-1****** 입니다",
+    "카드 ****-****-****-3456 로 결제",
+    "메일은 h***@example.com 입니다",
+]
+
+
+@pytest.mark.parametrize(("category", "text"), UNMASKED)
+def test_unmasked_data_is_refused(category: str, text: str) -> None:
+    assert category in find_unmasked(text)
+    with pytest.raises(PrivacyViolationError):
+        assert_masked(text, destination="slack")
+
+
+@pytest.mark.parametrize("text", MASKED)
+def test_masked_data_passes(text: str) -> None:
+    """Masking preserves shape, so the guard must not fire on masked values."""
+    assert find_unmasked(text) == []
+    assert_masked(text, destination="slack")
+
+
+def test_the_exception_names_categories_not_values() -> None:
+    """An exception message reaches error tracking, itself a third party."""
+    with pytest.raises(PrivacyViolationError) as caught:
+        assert_masked("hong@example.com", destination="slack")
+    assert "hong@example.com" not in str(caught.value)
+    assert caught.value.details["categories"] == ["email"]
+
+
+def test_a_whole_transcript_is_refused() -> None:
+    """Send what the feature needs, never the whole meeting."""
+    with pytest.raises(PrivacyViolationError, match="exceeds"):
+        check_outbound("가" * (MAX_OUTBOUND_CHARS + 1), destination="notion")
+
+
+def test_personal_data_cannot_go_to_a_channel() -> None:
+    with pytest.raises(PrivacyViolationError, match="direct message"):
+        assert_personal_delivery(subject_id="user_1", recipient_id="user_1", is_direct=False)
+
+
+def test_personal_data_cannot_go_to_someone_else() -> None:
+    """Not a teammate, not a manager, not an administrator."""
+    with pytest.raises(PrivacyViolationError, match="the person it describes"):
+        assert_personal_delivery(subject_id="user_1", recipient_id="user_2", is_direct=True)
+
+
+def test_speaking_ratio_reaches_only_its_subject() -> None:
+    slack = FakeSlack()
+    slack.send_personal(subject_id="user_1", recipient_id="user_1", text="발언 비중 12%")
+    assert len(slack.sent) == 1
+    assert slack.sent[0].is_dm
+    assert slack.channel_messages == []
+
+    with pytest.raises(PrivacyViolationError):
+        slack.send_personal(subject_id="user_1", recipient_id="user_2", text="발언 비중 12%")
+
+
+def test_fakes_enforce_the_same_guards_as_real_clients() -> None:
+    """A test that would have leaked must fail in tests too."""
+    with pytest.raises(PrivacyViolationError):
+        FakeSlack().post_message("#general", "전화번호 010-1234-5678")
+    with pytest.raises(PrivacyViolationError):
+        FakeJira().create_issue("AUT", "Task", "요약", "담당자 메일 hong@example.com")

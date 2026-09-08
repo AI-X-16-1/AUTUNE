@@ -27,6 +27,7 @@ uv run alembic -c infra/alembic.ini upgrade heads
 uv run uvicorn apps.api.main:app --reload            # API   :8000
 uv run celery -A apps.worker.celery_app worker -Q default,cpu_heavy -l info
 pnpm --filter @autune/web dev                        # web   :3000
+uv run python -m autune_bot                          # Slack bot (socket mode)
 ```
 
 Working on one module only? `uv sync --package autune-gap` installs just that
@@ -69,6 +70,7 @@ prefix `AUTUNE_<MODULE>_`.
 | Variable | Used by |
 | --- | --- |
 | `AUTUNE_SLACK_BOT_TOKEN`, `AUTUNE_SLACK_SIGNING_SECRET` | `apps/bot`, all modules that notify |
+| `AUTUNE_SLACK_APP_TOKEN` | `apps/bot` socket mode, local development only |
 | `AUTUNE_NOTION_TOKEN`, `AUTUNE_NOTION_DATABASE_ID` | B |
 | `AUTUNE_JIRA_URL`, `AUTUNE_JIRA_EMAIL`, `AUTUNE_JIRA_TOKEN` | B |
 | `AUTUNE_GOOGLE_CALENDAR_CREDENTIALS` | D, and Phase 2 proactive agent |

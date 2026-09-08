@@ -35,8 +35,8 @@ autune/
 ├── apps/
 │   ├── api/               # FastAPI — router auto-registration only
 │   ├── worker/            # Celery — task auto-registration only
-│   ├── web/               # Next.js + Tailwind
-│   └── bot/               # Slack Bolt
+│   ├── web/               # Next.js + Tailwind (pnpm workspace)
+│   └── bot/               # Slack Bolt for Python (uv workspace)
 │
 ├── infra/                 # docker-compose, alembic, deployment
 └── docs/
@@ -56,6 +56,7 @@ modules/<name>/
 │   ├── __init__.py
 │   ├── router.py           # APIRouter — collected automatically by apps/api
 │   ├── tasks.py            # Celery tasks — collected automatically by apps/worker
+│   ├── slack.py            # register(app) — collected automatically by apps/bot
 │   ├── service.py          # Business logic
 │   ├── pipeline.py         # AI pipeline
 │   ├── models.py           # This module's tables (prefix mandatory)
@@ -102,7 +103,11 @@ for name in MODULES:
     app.include_router(router, prefix=f"/api/{name}", tags=[name])
 ```
 
-Celery does the same: `include=[f"autune_{m}.tasks" for m in MODULES]`.
+Celery does the same: `include=[f"autune_{m}.tasks" for m in MODULES]`, and
+`apps/bot` calls `autune_{m}.slack.register(app)` for each module.
+
+`apps/web` is the only JavaScript app; `apps/bot` is Python, because Slack
+integration uses Bolt for Python.
 
 If you need custom registration behavior for your module, put the behavior in
 your module's `router.py`, not in a special case in `main.py`.

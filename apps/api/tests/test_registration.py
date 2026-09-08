@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import pytest
-from autune_api.main import app
 from fastapi.testclient import TestClient
 
+from autune_api.main import app
 from autune_contracts import MODULES
 
 client = TestClient(app)

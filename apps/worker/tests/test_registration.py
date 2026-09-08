@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import pytest
-from autune_worker import celery_app
 
 from autune_contracts import MODULES
+from autune_worker import celery_app
 
 
 @pytest.fixture(scope="module")

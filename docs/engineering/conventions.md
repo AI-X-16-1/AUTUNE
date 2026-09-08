@@ -45,6 +45,7 @@ Keep the standard shape (`../architecture/monorepo.md`). Responsibilities:
 | --- | --- | --- |
 | `router.py` | FastAPI routes, request/response schemas, auth, validation | Business logic, model inference |
 | `tasks.py` | Celery task definitions, event publishing | Business logic |
+| `slack.py` | `register(app)` attaching Bolt handlers | Business logic |
 | `service.py` | Business logic, orchestration, persistence | HTTP concerns, Celery concerns |
 | `pipeline.py` | Model loading and inference | Database writes, HTTP |
 | `models.py` | SQLAlchemy tables | Business logic |

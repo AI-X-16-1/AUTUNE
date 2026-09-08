@@ -33,6 +33,11 @@ class Settings(BaseSettings):
     secret_key: str = "local-development-only-change-me-in-every-environment"
     """JWT signing key. Must be overridden outside local; see the validator below."""
 
+    slack_bot_token: str = ""
+    slack_signing_secret: str = ""
+    slack_app_token: str = ""
+    """Socket-mode token, local development only."""
+
     retention_days: int = 90
     """Analysis results are deleted after this many days.
     See docs/architecture/privacy.md section 4."""

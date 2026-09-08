@@ -12,7 +12,7 @@ dependencies = []
 package = false
 
 [tool.uv.workspace]
-members = ["packages/*", "modules/*", "apps/api", "apps/worker"]
+members = ["packages/*", "modules/*", "apps/api", "apps/worker", "apps/bot"]
 
 [tool.uv.sources]
 autune-contracts = { workspace = true }
@@ -37,7 +37,7 @@ dev = [
 [tool.ruff]
 line-length = 100
 target-version = "py312"
-src = ["packages/*/src", "modules/*/src", "apps"]
+src = ["packages/*/src", "modules/*/src", "apps/api/src", "apps/worker/src", "apps/bot/src"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "UP", "B", "SIM", "TID"]
@@ -63,9 +63,9 @@ ignore_missing_imports = true
 # Source only. Every module has its own tests/ package, so type-checking them
 # together makes mypy see several packages all named "tests".
 # Python apps only — apps/web and apps/bot are JavaScript.
-files = ["packages/*/src", "modules/*/src", "apps/api/src", "apps/worker/src"]
+files = ["packages/*/src", "modules/*/src", "apps/api/src", "apps/worker/src", "apps/bot/src"]
 explicit_package_bases = true
-mypy_path = "packages/contracts/src:packages/core/src:packages/integrations/src:modules/audio/src:modules/extraction/src:modules/gap/src:modules/context/src:modules/intelligence/src:apps/api/src:apps/worker/src"
+mypy_path = "packages/contracts/src:packages/core/src:packages/integrations/src:modules/audio/src:modules/extraction/src:modules/gap/src:modules/context/src:modules/intelligence/src:apps/api/src:apps/worker/src:apps/bot/src"
 
 [tool.pytest.ini_options]
 testpaths = ["packages", "modules", "apps"]
