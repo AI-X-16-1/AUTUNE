@@ -1,0 +1,39 @@
+# Who must approve a change. See docs/engineering/workflow.md.
+#
+# A · Audio Pipeline          김민경  @mkkim68
+# B · Structured Extraction   강민구  @kjfcvx12
+# C · Gap Detection           박재경  @PARKJAEKYUNG0525
+# D · Meeting Context Engine  문민재  @mminjae97
+# E · Meeting Intelligence    이승환  @lsh2217
+#
+# Owners are listed individually because the organization has no teams.
+# If a @AI-X-16-1/autune team is created later, the shared paths can use it.
+
+# Fallback: shared code needs a second pair of eyes from anyone on the team.
+*                                   @mkkim68 @kjfcvx12 @PARKJAEKYUNG0525 @mminjae97 @lsh2217
+
+# --- Owned: one owner per module ---
+/modules/audio/                     @mkkim68
+/modules/extraction/                @kjfcvx12
+/modules/gap/                       @PARKJAEKYUNG0525
+/modules/context/                   @mminjae97
+/modules/intelligence/              @lsh2217
+
+# Frontend is cut along the same axis; one person owns both halves.
+/apps/web/src/features/transcript/  @mkkim68
+/apps/web/src/features/actions/     @kjfcvx12
+/apps/web/src/features/gap/         @PARKJAEKYUNG0525
+/apps/web/src/features/context/     @mminjae97
+/apps/web/src/features/dashboard/   @lsh2217
+
+# --- Shared: everyone approves ---
+# packages/contracts breaks four modules at once when it changes badly.
+/packages/                          @mkkim68 @kjfcvx12 @PARKJAEKYUNG0525 @mminjae97 @lsh2217
+/apps/api/                          @mkkim68 @kjfcvx12 @PARKJAEKYUNG0525 @mminjae97 @lsh2217
+/apps/worker/                       @mkkim68 @kjfcvx12 @PARKJAEKYUNG0525 @mminjae97 @lsh2217
+/apps/bot/                          @mkkim68 @kjfcvx12 @PARKJAEKYUNG0525 @mminjae97 @lsh2217
+/apps/web/src/shared/               @mkkim68 @kjfcvx12 @PARKJAEKYUNG0525 @mminjae97 @lsh2217
+/infra/                             @mkkim68 @kjfcvx12 @PARKJAEKYUNG0525 @mminjae97 @lsh2217
+/docs/                              @mkkim68 @kjfcvx12 @PARKJAEKYUNG0525 @mminjae97 @lsh2217
+/CLAUDE.md                          @mkkim68 @kjfcvx12 @PARKJAEKYUNG0525 @mminjae97 @lsh2217
+/.github/                           @mkkim68 @kjfcvx12 @PARKJAEKYUNG0525 @mminjae97 @lsh2217

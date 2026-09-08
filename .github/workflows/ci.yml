@@ -1,0 +1,104 @@
+# The rules in docs/ are advice until this workflow enforces them.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  AUTUNE_ENV: local
+  AUTUNE_DATABASE_URL: postgresql+psycopg://autune:autune@localhost:5432/autune
+  AUTUNE_REDIS_URL: redis://localhost:6379/0
+
+jobs:
+  python:
+    name: Python
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: autune
+          POSTGRES_PASSWORD: autune
+          POSTGRES_DB: autune
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U autune"
+          --health-interval 5s --health-timeout 3s --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 3s --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - run: uv sync --all-packages --frozen
+
+      - name: Lint
+        run: uv run ruff check .
+
+      - name: Format
+        run: uv run ruff format --check .
+
+      - name: Types
+        run: uv run mypy
+
+      # Modules must not import one another. A failure here is fixed by removing
+      # the import, never by editing the config.
+      - name: Module boundaries
+        run: uv run lint-imports
+
+      - name: Tests
+        run: uv run pytest
+
+      # Every branch applies, and the schema round-trips.
+      - name: Migrations
+        run: |
+          uv run alembic -c infra/alembic.ini upgrade heads
+          uv run alembic -c infra/alembic.ini downgrade core@base
+          uv run alembic -c infra/alembic.ini upgrade heads
+
+  javascript:
+    name: JavaScript
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - run: corepack enable pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: uv sync --all-packages --frozen
+
+      - name: Lint
+        run: pnpm run lint
+
+      - name: Types
+        run: pnpm run typecheck
+
+      # The Pydantic models are the source of truth. If regenerating changes the
+      # committed output, someone edited generated code or forgot to regenerate.
+      - name: Generated contract types are current
+        run: |
+          pnpm run gen:contracts
+          git diff --exit-code -- packages/contracts/ts \
+            || { echo "::error::Run 'pnpm run gen:contracts' and commit the result."; exit 1; }
