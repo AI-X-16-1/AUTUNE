@@ -41,7 +41,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: astral-sh/setup-uv@v10
+      # setup-uv stopped publishing bare major tags after v7, so this is an
+      # exact version rather than a moving one.
+      - uses: astral-sh/setup-uv@v10.0.1
         with:
           enable-cache: true
 
@@ -81,7 +83,7 @@ jobs:
         with:
           node-version-file: .nvmrc
 
-      - uses: astral-sh/setup-uv@v10
+      - uses: astral-sh/setup-uv@v10.0.1
         with:
           enable-cache: true
 
