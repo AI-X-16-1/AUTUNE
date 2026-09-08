@@ -212,6 +212,30 @@ Link work to its issue: create the branch from the issue so the name is
 `<module>/<task>`, and write `Closes #12` in the pull request body so the card
 moves to Done on merge.
 
+### Filtering the board
+
+Filtering is not in the view menu — that menu (`Fields`, `Group by`, `Sort by`,
+`Slice by`) controls how items are displayed. The filter is the search box above
+the board, marked with a funnel icon; `/` focuses it. Type a query there, then
+**Save** the view, or the filter is gone on reload.
+
+```
+scope:"MVP"                       only what ships in six weeks
+scope:"MVP" week:"W2 Pipeline"    what to do this week
+label:decision                    choices nobody has made yet
+label:privacy                     work that touches personal data
+assignee:@me                      mine
+module:"A Audio" -status:Done     one module's remaining work
+no:assignee                       unclaimed
+```
+
+Quote any value containing a space (`week:"W2 Pipeline"`); a single word needs
+no quotes. A leading `-` excludes.
+
+`Slice by Module` is worth knowing as well: it puts the module list beside the
+board and filters as you click, which reads better than editing a query each
+time you want to look at one person's work.
+
 ## Reporting status
 
 Each module owner reports their product KPI (`../product/prd.md` section 12)
