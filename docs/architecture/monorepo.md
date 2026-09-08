@@ -28,7 +28,7 @@ autune/
 ├── modules/
 │   ├── audio/             # A  Audio pipeline (Whisper, Pyannote, PII masking)
 │   ├── extraction/        # B  Structured extraction (DeBERTa, NLI)
-│   ├── gap/               # C  Gap detection (spaCy, Neo4j)
+│   ├── gap/               # C  Gap detection (spaCy, NetworkX)
 │   ├── context/           # D  Meeting context engine (SBERT, BM25, cross-encoder)
 │   └── intelligence/      # E  Meeting intelligence (SetFit, XGBoost, Prophet)
 │

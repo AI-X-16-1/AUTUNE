@@ -18,7 +18,7 @@ git config core.hooksPath .githooks   # refuse accidental pushes to main
 
 cp .env.example .env             # then fill in the secrets you need
 
-docker compose -f infra/docker-compose.yml up -d      # postgres (pgvector), redis, neo4j
+docker compose -f infra/docker-compose.yml up -d      # postgres (pgvector), redis
 uv sync
 pnpm install
 
@@ -39,16 +39,14 @@ module's dependencies and skips several gigabytes of ML wheels.
 | --- | --- | --- | --- |
 | PostgreSQL | 5432 | Shared entities and all module tables | Everyone |
 | Redis | 6379 | Celery broker and result backend | Everyone |
-| Neo4j | 7474 / 7687 | Topic graph, decision lineage | C, D |
 
-Embeddings are stored in PostgreSQL through pgvector, so there is no separate
-vector service. The image is `pgvector/pgvector:pg16` rather than plain
-`postgres`; the extension itself is enabled by a `packages/core` migration.
-See `../decisions/0004-pgvector-over-chroma.md`.
+Two services, and everyone needs both. Embeddings, topic graphs and decision
+lineage are all PostgreSQL rows — there is no vector database and no graph
+database. The image is `pgvector/pgvector:pg16` rather than plain `postgres`;
+the extension is enabled by a `packages/core` migration. See
+`../decisions/0004-pgvector-over-chroma.md` and
+`../decisions/0005-no-graph-database.md`.
 
-```bash
-docker compose -f infra/docker-compose.yml up -d postgres redis   # minimal
-```
 
 ## Environment variables
 
@@ -62,8 +60,6 @@ prefix `AUTUNE_<MODULE>_`.
 | `AUTUNE_ENV` | `local` | `local`, `staging`, `production` |
 | `AUTUNE_DATABASE_URL` | `postgresql+psycopg://autune:autune@localhost:5432/autune` | |
 | `AUTUNE_REDIS_URL` | `redis://localhost:6379/0` | |
-| `AUTUNE_NEO4J_URI` | `bolt://localhost:7687` | C, D |
-| `AUTUNE_NEO4J_USER` / `AUTUNE_NEO4J_PASSWORD` | | C, D |
 | `AUTUNE_SECRET_KEY` | | JWT signing. Never commit |
 | `AUTUNE_LOG_LEVEL` | `INFO` | |
 | `AUTUNE_RETENTION_DAYS` | `90` | Default analysis retention |

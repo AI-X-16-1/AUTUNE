@@ -100,9 +100,9 @@ distribution — are team-level and contain no per-person speech volume.
 - Every module-owned table is reachable from a `meeting_id` or a `user_id`.
 - Each module registers a deletion hook in `autune_core`'s deletion registry.
   Rows reachable by `ON DELETE CASCADE` from `meetings` are covered
-  automatically — embeddings included, since pgvector keeps them in PostgreSQL.
-  Anything outside PostgreSQL — Neo4j nodes, cached artifacts, files — is your
-  responsibility.
+  automatically — embeddings and topic graphs included, since both are
+  PostgreSQL rows. Anything kept outside the database — a cached artifact, a
+  file on disk — is your responsibility.
 - Deletion is real. No soft deletes, no tombstones holding content.
 
 A test proving that your module's data is fully removed when a meeting is

@@ -14,7 +14,7 @@ Full detail: `/docs/modules/gap.md`.
 
 ## What this module does
 
-Entity and relation extraction → topic graph in Neo4j → participation matrix →
+Entity and relation extraction → topic graph (rows + NetworkX) → participation matrix →
 domain-template comparison → risk-scored gaps with generated questions.
 
 ## Consumes
@@ -28,16 +28,20 @@ domain-template comparison → risk-scored gaps with generated questions.
 
 ## Owns
 
-- PostgreSQL: `gap_topics`, `gap_gaps`, `gap_participation`, `gap_templates`
-- Neo4j: `GapTopic` nodes and their relations
+PostgreSQL only: `gap_topics`, `gap_topic_edges`, `gap_gaps`,
+`gap_participation`, `gap_templates`.
 
-Neo4j nodes are **not** removed by the Postgres cascade. Register a deletion
-hook and test it.
+Everything cascades from `meetings.id`, so no deletion hook is needed.
 
 ## AI stack
 
-spaCy NER (Korean), rule-based relation extraction with LLM assistance, Neo4j,
-PageRank and betweenness centrality, weighted risk scoring.
+spaCy NER (Korean), rule-based relation extraction with LLM assistance,
+NetworkX for PageRank and betweenness, weighted risk scoring.
+
+The graph is one meeting's worth — tens of nodes — so it is built in memory from
+rows each run. At that size PageRank and betweenness take single-digit
+milliseconds; a graph database would buy nothing.
+See `/docs/decisions/0005-no-graph-database.md`.
 
 ## Privacy
 

@@ -70,8 +70,10 @@ feature-planning meeting is expected to cover performance requirements, error
 handling, rollout, and so on.
 
 **Topic graph (토픽 그래프)**
-The graph of entities and their relations extracted from a meeting, stored in
-Neo4j. Centrality over this graph identifies which topics carried the meeting.
+The graph of entities and their relations extracted from a meeting, stored as
+rows in PostgreSQL and loaded into NetworkX to compute centrality, which
+identifies which topics carried the meeting. Built per meeting, never
+accumulated — cross-meeting linking is module D's job.
 
 **Participation matrix (참여도 매트릭스)**
 Per topic and per participant: who spoke and who was silent. Feeds gap risk

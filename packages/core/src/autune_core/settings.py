@@ -24,10 +24,6 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+psycopg://autune:autune@localhost:5432/autune"
     redis_url: str = "redis://localhost:6379/0"
 
-    neo4j_uri: str = "bolt://localhost:7687"
-    neo4j_user: str = "neo4j"
-    neo4j_password: str = "autunedev"
-
     secret_key: str = "local-development-only-change-me-in-every-environment"
     """JWT signing key. Must be overridden outside local; see the validator below."""
 

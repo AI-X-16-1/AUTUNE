@@ -85,11 +85,14 @@ and participants, draft an agenda.
 | PostgreSQL `ctx_decisions` | Decision threads |
 | PostgreSQL `ctx_decision_versions` | Each version, with change type and NLI label |
 | PostgreSQL `ctx_embeddings` | Embeddings for materials and meeting topics, in a `vector` column |
-| Neo4j `CtxDecision` | Decision lineage graph for visualization |
 
-Embeddings are PostgreSQL rows, so they cascade with the meeting like every
-other table — no hook needed. Neo4j nodes still need D's own deletion hook,
-because the cascade does not reach them.
+Everything D owns is a PostgreSQL row, so it all cascades with the meeting and
+no deletion hook is needed.
+
+A lineage is a chain, not a general graph: `ctx_decision_versions` with a
+`previous_version_id` expresses it, and a recursive CTE walks it. The
+relationship-graph visualisation on S22 is Phase 2 and is a rendering concern —
+the frontend draws it from rows.
 
 The `vector` column's dimension is fixed at migration time, so the embedding
 model has to be chosen before the table is created. The `vector` extension is

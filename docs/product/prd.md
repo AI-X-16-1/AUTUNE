@@ -191,7 +191,7 @@ Detail: `../architecture/async-pipeline.md`.
 | --- | --- | --- | --- |
 | A | Whisper, Pyannote, speaker embedding, silero-vad, PII detection | Interim summary generation | ~80% |
 | B | DeBERTa fine-tuned classifier, NLI verification | Reference resolution, report generation | ~60% |
-| C | spaCy NER, relation extraction, Neo4j, PageRank / betweenness centrality | Relation extraction assistance | ~70% |
+| C | spaCy NER, relation extraction, NetworkX, PageRank / betweenness centrality | Relation extraction assistance | ~70% |
 | D | Sentence-BERT, BM25, cross-encoder re-ranking, NLI for decision-change detection | Agenda and brief generation | ~70% |
 | E | SetFit, XGBoost, Prophet, active learning | Report generation | ~75% |
 
@@ -206,7 +206,6 @@ keep the team building real models rather than prompt chains.
 | Frontend | Next.js + Tailwind (Node 22) | Fast iteration, responsive |
 | Task queue | Celery + Redis | AI pipeline orchestration |
 | Database | PostgreSQL | Structured data and history |
-| Graph DB | Neo4j | Topic graph, decision lineage |
 | Vector search | pgvector, inside PostgreSQL | Embedding search, topic matching, material retrieval — no separate service |
 | Slack | Bolt for Python | Bot framework |
 | External | Notion API, Jira REST API, Google Calendar API | Action item and schedule sync |

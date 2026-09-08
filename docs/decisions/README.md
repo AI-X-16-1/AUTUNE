@@ -55,3 +55,4 @@ Written in English, like every document here.
 | [0002](0002-no-cross-module-imports.md) | Modules communicate only through contracts and events | Accepted |
 | [0003](0003-privacy-first-data-handling.md) | Privacy constraints are code-level, not policy | Accepted |
 | [0004](0004-pgvector-over-chroma.md) | Embeddings live in PostgreSQL, not a separate vector database | Accepted |
+| [0005](0005-no-graph-database.md) | No graph database — graphs are PostgreSQL rows | Accepted |

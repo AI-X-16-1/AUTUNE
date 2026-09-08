@@ -65,7 +65,7 @@
 | ---------------------- | ----------------------------------------------------------------------- | ------------------------------------ | ------ |
 | **A. Audio Pipeline**  | 녹음 → 화자별 전사 → 개인정보 마스킹 → 원본 삭제                        | Whisper, Pyannote, Speaker Embedding | 김민경 |
 | **B. 구조화 추출**     | 발화 5종 분류 → 액션아이템 카드 → 모호 동의 NLI 검증 → Notion·Jira 연동 | DeBERTa 분류기, NLI                  | 강민구 |
-| **C. 갭 탐지**         | 토픽 그래프 → 참여도 매트릭스 → 템플릿 대조 → 리스크 스코어링           | spaCy NER, Neo4j, Graph Centrality   | 박재경 |
+| **C. 갭 탐지**         | 토픽 그래프 → 참여도 매트릭스 → 템플릿 대조 → 리스크 스코어링           | spaCy NER, NetworkX, Graph Centrality | 박재경 |
 | **D. 회의 맥락 엔진**  | 과거 회의 토픽 연결 → 결정 계보 추적 → 어젠다·브리프 생성               | Sentence-BERT, BM25, Cross-encoder   | 문민재 |
 | **E. 회의 인텔리전스** | 품질 점수 → 갭 분류 → 예측 → 히트맵 → 주간 리포트                       | SetFit, XGBoost, Prophet             | 이승환 |
 
@@ -119,7 +119,7 @@ A가 만든 전사 결과를 B·C·D가 **병렬로** 소비하고, 각자 Slack
 | ----------- | ------------------------------------------------------------------------------- |
 | Backend     | FastAPI (Python 3.12), Celery + Redis                                           |
 | Frontend    | Next.js + Tailwind (Node 22)                                                    |
-| Database    | PostgreSQL + pgvector (구조화 데이터 · 임베딩 검색), Neo4j (토픽 그래프·결정 계보) |
+| Database    | PostgreSQL + pgvector — 구조화 데이터, 임베딩 검색, 토픽 그래프, 결정 계보를 모두 담습니다 |
 | 패키지 관리 | uv workspace (Python), pnpm workspace (JS)                                      |
 | 연동        | Slack Bolt, Notion API, Jira REST API, Google Calendar API                      |
 
@@ -170,7 +170,7 @@ autune/
 git clone <repo> && cd autune
 
 cp .env.example .env                                 # 필요한 값 채우기
-docker compose -f infra/docker-compose.yml up -d     # postgres(pgvector), redis, neo4j
+docker compose -f infra/docker-compose.yml up -d     # postgres(pgvector), redis
 uv sync
 pnpm install
 uv run alembic -c infra/alembic.ini upgrade heads

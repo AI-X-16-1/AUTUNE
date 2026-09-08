@@ -46,12 +46,13 @@ links: publish `ContextLinks` with an empty `decision_lineage` and
 
 ## Owns
 
-- PostgreSQL: `ctx_materials`, `ctx_topic_links`, `ctx_decisions`,
-  `ctx_decision_versions`, `ctx_embeddings` (a `vector` column, via pgvector)
-- Neo4j: `CtxDecision` lineage
+PostgreSQL only: `ctx_materials`, `ctx_topic_links`, `ctx_decisions`,
+`ctx_decision_versions`, `ctx_embeddings` (a `vector` column, via pgvector).
 
-Embeddings cascade with the meeting like any other row, so they need no hook.
-Neo4j nodes still do — the Postgres cascade does not reach them.
+Everything cascades with the meeting, so no deletion hook is needed.
+
+A lineage is a chain: `previous_version_id` plus a recursive CTE. The graph
+visualisation on S22 is Phase 2 and belongs to the frontend.
 
 The `vector` dimension is fixed when you create the table, so pick the embedding
 model first. The extension is enabled by a `packages/core` migration already.

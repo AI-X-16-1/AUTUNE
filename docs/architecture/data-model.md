@@ -4,16 +4,18 @@
 
 | Store | Purpose | Who uses it |
 | --- | --- | --- |
-| **PostgreSQL** | Shared entities, all module tables, history, **embeddings via pgvector** | Everyone |
-| **Neo4j** | Topic graph, decision lineage graph | C (topics), D (lineage) |
+| **PostgreSQL** | Shared entities, all module tables, history, embeddings via pgvector, topic graphs and decision lineage as rows | Everyone |
 | **Redis** | Celery broker and result backend, short-lived cache | Everyone, through `autune_core` |
 | **Object storage / local temp** | Uploaded recording during processing only | A, transient only |
 
-Never invent a fifth store. If you need one, that is an ADR.
+Three stores, and two of them are infrastructure. Never invent a fourth. If you
+need one, that is an ADR.
 
-Embeddings are PostgreSQL rows, not a separate service. That is deliberate:
-they then cascade on meeting deletion like everything else, instead of needing
-their own cleanup path. See `../decisions/0004-pgvector-over-chroma.md`.
+Embeddings and graphs are PostgreSQL rows, not separate services. That is
+deliberate: they cascade on meeting deletion like everything else, instead of
+needing their own cleanup path. See
+`../decisions/0004-pgvector-over-chroma.md` and
+`../decisions/0005-no-graph-database.md`.
 
 ## Shared entities — `packages/core`
 
@@ -75,8 +77,9 @@ Every table a module owns is named `<prefix>_<name>`.
 A table without a prefix is a shared entity. If you are creating one, you are
 either mistaken or you need team approval.
 
-The same rule applies to Neo4j labels (`GapTopic`, `CtxDecision`). Embedding
-tables are ordinary prefixed tables — `ctx_embeddings` — with a `vector` column.
+Graphs and embeddings follow the same rule: they are ordinary prefixed tables.
+A topic graph is `gap_topics` plus `gap_topic_edges`; embeddings are
+`ctx_embeddings` with a `vector` column.
 
 The `vector` extension is enabled by a `packages/core` migration, because
 `CREATE EXTENSION` is database-level. A module's embedding table chains onto
@@ -133,9 +136,10 @@ because both must be deletable on request:
 - **Retention sweep** deletes analysis results past the retention window (90
   days by default).
 
-Each module registers its cleanup in `autune_core`'s deletion registry for
-anything outside PostgreSQL — Neo4j nodes, cached files. A table that cannot be
-cleaned up is a compliance defect. See `privacy.md`.
+Everything a module owns is a PostgreSQL row, so meeting deletion cascades
+reach all of it. Register a hook in `autune_core`'s deletion registry only for
+something kept outside the database — a cached artifact, a file on disk. A table
+that cannot be cleaned up is a compliance defect. See `privacy.md`.
 
 ## Migrations
 

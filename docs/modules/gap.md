@@ -40,7 +40,8 @@ domain template, and score the risk of each missing item.
 1. **NER** — spaCy extracts entities: features, systems, metrics, people, dates.
 2. **Relation extraction** — build subject–relation–object triples, with LLM
    assistance for hard cases.
-3. **Topic graph** — write nodes and edges to Neo4j.
+3. **Topic graph** — persist nodes and edges as rows (`gap_topics`,
+   `gap_topic_edges`), then load them into NetworkX.
 4. **Centrality** — PageRank and betweenness identify which topics carried the
    meeting.
 5. **Participation matrix** — per topic, who spoke and who was silent.
@@ -60,10 +61,9 @@ domain template, and score the risk of each missing item.
 | PostgreSQL `gap_gaps` | Detected gaps, category, severity, risk score, question |
 | PostgreSQL `gap_participation` | Topic × participant speech presence |
 | PostgreSQL `gap_templates` | Domain templates and their items |
-| Neo4j | `GapTopic` nodes and their relations |
+| PostgreSQL `gap_topic_edges` | Relations between topics, per meeting |
 
-Neo4j nodes are removed by C's deletion hook when a meeting is deleted — the
-Postgres cascade does not reach them.
+Everything cascades from `meetings.id`, so no deletion hook is needed.
 
 ## API
 
@@ -91,7 +91,7 @@ Postgres cascade does not reach them.
 | --- | --- |
 | Entity extraction | spaCy NER (Korean model) |
 | Relation extraction | Rule-based patterns plus LLM assistance |
-| Graph | Neo4j |
+| Graph | NetworkX, in memory |
 | Topic importance | PageRank, betweenness centrality |
 | Risk scoring | Weighted heuristic; thresholds in `config.py` |
 

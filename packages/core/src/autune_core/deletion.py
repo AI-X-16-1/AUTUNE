@@ -1,10 +1,13 @@
 """Deletion registry.
 
 Rows reachable by ON DELETE CASCADE from ``meetings`` are handled by the
-database, which is most things: embeddings live in PostgreSQL via pgvector, so
-they cascade like any other row. Everything outside PostgreSQL — Neo4j nodes,
-cached artifacts, files — is the owning module's responsibility, registered
-here.
+database, which is nearly everything: topic graphs and embeddings are ordinary
+PostgreSQL rows. Anything a module keeps outside PostgreSQL — a cached artifact,
+a file on disk — is its own responsibility and is registered here.
+
+The registry stays even though little needs it today. Phase 2 adds uploaded
+material and desktop capture, and a module that stores something outside the
+database must have somewhere to say so.
 
 A table that cannot be cleaned up is a compliance defect, not a backlog item.
 See docs/architecture/privacy.md section 4.

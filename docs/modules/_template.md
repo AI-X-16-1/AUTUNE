@@ -40,7 +40,6 @@ The processing steps, in order, with the model or algorithm used at each.
 | Table | Purpose | Key columns |
 | --- | --- | --- |
 
-Neo4j labels, if any.
 
 ## API
 

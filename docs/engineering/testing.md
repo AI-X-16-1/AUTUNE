@@ -27,7 +27,7 @@ These are not optional; a PR without them does not merge.
 2. **Idempotency.** Running your Celery task twice with the same payload leaves
    the same state. See `../architecture/async-pipeline.md`.
 3. **Deletion.** Deleting a meeting removes everything your module stored about
-   it — Postgres rows (embeddings included), Neo4j nodes, cached files. See
+   it — every table it owns, plus anything kept outside the database. See
    `../architecture/privacy.md`.
 4. **Privacy, for module A.** The raw file is gone after the task, including on
    failure. Masking applies before the first write. Unmasked text appears in no
@@ -69,8 +69,8 @@ Integration tests run against a real PostgreSQL from `docker-compose`, not
 SQLite — the schema uses JSONB and PostgreSQL-specific constraints.
 
 Each test gets a transactional rollback via the `db_session` fixture from
-`autune_core.testing` — embeddings included, since pgvector keeps them in the
-same database. Neo4j tests use a per-test namespace and clean up afterwards.
+`autune_core.testing` — embeddings and topic graphs included, since all of it
+lives in the same database. Nothing needs a separate namespace or cleanup.
 
 ## Model-dependent tests
 

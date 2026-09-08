@@ -172,7 +172,7 @@ Start here if you are new: `docs/README.md`.
 
 - Python **3.12**, managed by **uv** workspace
 - Node **22** (current LTS), managed by **pnpm** workspace
-- FastAPI, Celery + Redis, PostgreSQL (with pgvector), Neo4j
+- FastAPI, Celery + Redis, PostgreSQL (with pgvector)
 - Next.js + Tailwind
 - Lint/format: **ruff** (Python), **eslint** + **prettier** (JS/TS)
 - Types: **mypy** (Python), **tsc** (TS)

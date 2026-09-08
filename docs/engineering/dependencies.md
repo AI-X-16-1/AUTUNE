@@ -35,7 +35,7 @@ dependencies = [
     "autune-contracts",
     "autune-core",
     "spacy>=3.7",
-    "neo4j>=5.0",
+    "networkx>=3.4",
 ]
 
 [tool.uv.sources]

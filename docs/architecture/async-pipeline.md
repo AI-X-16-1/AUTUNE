@@ -171,7 +171,7 @@ See `privacy.md`. These are enforced in code review and in tests.
 ## Local development
 
 ```bash
-docker compose up -d          # postgres (pgvector), redis, neo4j
+docker compose up -d          # postgres (pgvector), redis
 uv run celery -A apps.worker.celery_app worker -Q default,cpu_heavy -l info
 ```
 

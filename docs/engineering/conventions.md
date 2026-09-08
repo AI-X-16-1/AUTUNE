@@ -31,7 +31,6 @@ structure.
 | Env var | `AUTUNE_<MODULE>_<NAME>` | `AUTUNE_GAP_RISK_THRESHOLD` |
 | TS component | `PascalCase` | `GapReportCard` |
 | TS hook | `useSomething` | `useGapReport` |
-| Neo4j label | `<Prefix><Noun>` | `GapTopic`, `CtxDecision` |
 
 Domain terms come from `../product/glossary.md`. Do not invent a synonym for a
 term that already exists.
