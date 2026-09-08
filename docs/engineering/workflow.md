@@ -180,6 +180,38 @@ Explain *why* in the body when the reason is not obvious from the diff.
   PR touching transcripts, audio, or speaker identity.
 - Approving a contract change means you have checked your own module against it.
 
+## The project board
+
+<https://github.com/orgs/AI-X-16-1/projects/9>
+
+Work lives on the board; the documents describe *what a module is responsible
+for*, and the board tracks *what someone is doing this week*. Do not keep a
+second task list somewhere else.
+
+Every item carries four fields:
+
+| Field | Values | Why |
+| --- | --- | --- |
+| Status | Todo / In Progress / Done | Daily state |
+| Module | A Audio · B Extraction · C Gap · D Context · E Intelligence · Shared | Same axis as CODEOWNERS, so load per owner is visible |
+| Week | W1 Infra … W6 Polish | Matches the roadmap in `../product/prd.md` |
+| Scope | MVP / Phase 2 | Keeps Phase 2 work out of the six weeks |
+
+Issues carry a `module:*` label as well, so they can be filtered in the repo
+without opening the board.
+
+Two label conventions worth knowing:
+
+- **`decision`** — a choice someone must make before work can proceed. These
+  come from the "Open questions" section of each module document. Closing one
+  means updating that document too, so the answer outlives the issue.
+- **`privacy`** — touches audio, transcripts or personal data. Reviewers run the
+  checklist in `../architecture/privacy.md` on these.
+
+Link work to its issue: create the branch from the issue so the name is
+`<module>/<task>`, and write `Closes #12` in the pull request body so the card
+moves to Done on merge.
+
 ## Reporting status
 
 Each module owner reports their product KPI (`../product/prd.md` section 12)

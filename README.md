@@ -220,6 +220,9 @@ pnpm --filter @autune/web dev                                          # 웹 :30
   공지 + 관련 모듈 담당자 전원 승인.
 - lockfile 충돌은 병합하지 말고 재생성 (`uv lock` / `pnpm install`).
 
+- 작업은 [프로젝트 보드](https://github.com/orgs/AI-X-16-1/projects/9)에서 추적합니다.
+  이슈에서 브랜치를 만들고, PR 본문에 `Closes #번호` 를 쓰면 머지 시 카드가 자동으로 Done이 됩니다.
+
 상세: [`docs/engineering/workflow.md`](docs/engineering/workflow.md)
 
 ## 로드맵 (6주)
