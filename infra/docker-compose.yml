@@ -1,0 +1,47 @@
+# Local development services. See docs/engineering/environments.md.
+# Minimal set for most work:  docker compose up -d postgres redis
+name: autune
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: autune
+      POSTGRES_PASSWORD: autune
+      POSTGRES_DB: autune
+    ports: ["5432:5432"]
+    volumes: ["pgdata:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U autune"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports: ["6379:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # Topic graph (C) and decision lineage (D).
+  neo4j:
+    image: neo4j:5-community
+    environment:
+      NEO4J_AUTH: neo4j/autunedev
+      NEO4J_PLUGINS: '["apoc"]'
+    ports: ["7474:7474", "7687:7687"]
+    volumes: ["neo4jdata:/data"]
+
+  # Embedding search for materials and past meetings (D).
+  chroma:
+    image: chromadb/chroma:0.5.23
+    ports: ["8001:8000"]
+    volumes: ["chromadata:/chroma/chroma"]
+
+volumes:
+  pgdata:
+  neo4jdata:
+  chromadata:

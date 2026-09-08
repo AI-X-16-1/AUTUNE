@@ -1,0 +1,49 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+
+# Node
+node_modules/
+.next/
+out/
+.turbo/
+*.tsbuildinfo
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+
+# Audio and models — never commit either.
+# Recordings are deleted after processing (docs/architecture/privacy.md);
+# model weights are downloaded on first run (docs/engineering/environments.md).
+*.mp3
+*.wav
+*.m4a
+*.flac
+models/
+.cache/
+
+# Local data
+*.db
+*.sqlite3
+data/
+
+# Editors and OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Claude Code local settings
+.claude/settings.local.json

@@ -118,7 +118,7 @@ A가 만든 전사 결과를 B·C·D가 **병렬로** 소비하고, 각자 Slack
 | 영역        | 기술                                                                            |
 | ----------- | ------------------------------------------------------------------------------- |
 | Backend     | FastAPI (Python 3.12), Celery + Redis                                           |
-| Frontend    | Next.js + Tailwind (Node 20)                                                    |
+| Frontend    | Next.js + Tailwind (Node 22)                                                    |
 | Database    | PostgreSQL (구조화 데이터), Neo4j (토픽 그래프·결정 계보), Chroma (임베딩 검색) |
 | 패키지 관리 | uv workspace (Python), pnpm workspace (JS)                                      |
 | 연동        | Slack Bolt, Notion API, Jira REST API, Google Calendar API                      |

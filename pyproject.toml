@@ -1,0 +1,96 @@
+# Workspace root. This file declares the workspace and shared tooling only.
+# Runtime dependencies belong in the member that uses them —
+# see docs/engineering/dependencies.md.
+[project]
+name = "autune"
+version = "0.1.0"
+description = "AUTUNE — Meeting Intelligence Platform"
+requires-python = ">=3.12,<3.13"
+dependencies = []
+
+[tool.uv]
+package = false
+
+[tool.uv.workspace]
+members = ["packages/*", "modules/*", "apps/api", "apps/worker"]
+
+[tool.uv.sources]
+autune-contracts = { workspace = true }
+autune-core = { workspace = true }
+autune-integrations = { workspace = true }
+autune-audio = { workspace = true }
+autune-extraction = { workspace = true }
+autune-gap = { workspace = true }
+autune-context = { workspace = true }
+autune-intelligence = { workspace = true }
+
+[dependency-groups]
+dev = [
+    "ruff>=0.9",
+    "mypy>=1.14",
+    "pytest>=8.3",
+    "pytest-asyncio>=0.25",
+    "import-linter>=2.1",
+    "httpx>=0.28",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["packages/*/src", "modules/*/src", "apps"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "UP", "B", "SIM", "TID"]
+
+[tool.ruff.lint.isort]
+known-first-party = [
+    "autune_contracts", "autune_core", "autune_integrations",
+    "autune_audio", "autune_extraction", "autune_gap",
+    "autune_context", "autune_intelligence",
+]
+
+[tool.mypy]
+python_version = "3.12"
+strict = false
+warn_unused_ignores = true
+warn_redundant_casts = true
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["packages", "modules"]
+markers = [
+    "model: needs downloaded model weights; excluded from the default run",
+]
+addopts = "-m 'not model'"
+
+# Module independence. A failure here is fixed by removing the import,
+# never by editing this config. See docs/architecture/module-boundaries.md.
+[tool.importlinter]
+root_packages = [
+    "autune_contracts", "autune_core", "autune_integrations",
+    "autune_audio", "autune_extraction", "autune_gap",
+    "autune_context", "autune_intelligence",
+]
+
+[[tool.importlinter.contracts]]
+name = "Modules are independent"
+type = "independence"
+modules = [
+    "autune_audio", "autune_extraction", "autune_gap",
+    "autune_context", "autune_intelligence",
+]
+
+[[tool.importlinter.contracts]]
+name = "Packages do not depend on modules"
+type = "forbidden"
+source_modules = ["autune_contracts", "autune_core", "autune_integrations"]
+forbidden_modules = [
+    "autune_audio", "autune_extraction", "autune_gap",
+    "autune_context", "autune_intelligence",
+]
+
+[[tool.importlinter.contracts]]
+name = "Contracts depend on nothing of ours"
+type = "forbidden"
+source_modules = ["autune_contracts"]
+forbidden_modules = ["autune_core", "autune_integrations"]

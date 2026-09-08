@@ -168,7 +168,7 @@ Start here if you are new: `docs/README.md`.
 ## 5. Runtime and tooling
 
 - Python **3.12**, managed by **uv** workspace
-- Node **20**, managed by **pnpm** workspace
+- Node **22** (current LTS), managed by **pnpm** workspace
 - FastAPI, Celery + Redis, PostgreSQL, Neo4j, Chroma
 - Next.js + Tailwind
 - Lint/format: **ruff** (Python), **eslint** + **prettier** (JS/TS)

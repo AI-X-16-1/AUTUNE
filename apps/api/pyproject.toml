@@ -1,0 +1,19 @@
+[project]
+name = "autune-api"
+version = "0.1.0"
+description = "FastAPI app — router auto-registration only, no business logic"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "autune-core",
+    "autune-audio", "autune-extraction", "autune-gap",
+    "autune-context", "autune-intelligence",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.34",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/autune_api"]

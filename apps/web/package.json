@@ -1,0 +1,10 @@
+{
+  "name": "@autune/web",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "echo 'Next.js app not scaffolded yet — W4' && exit 0",
+    "lint": "echo 'no sources yet' && exit 0",
+    "typecheck": "echo 'no sources yet' && exit 0"
+  }
+}

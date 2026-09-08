@@ -90,9 +90,13 @@ tree nobody has ever installed.
 
 - Python **3.12** — best-supported combination for torch, whisper, pyannote, and
   spaCy at project start
-- Node **20 LTS**
-- pnpm **9**
+- Node **22 LTS**
+- pnpm **9.15.4**, provided by corepack
 - uv — latest
+
+If `corepack enable pnpm` fails with `Cannot find matching keyid`, the corepack
+bundled with your Node is too old for npm's current signing keys. Fix it with
+`npm i -g corepack@latest`, then enable pnpm again.
 
 Pinned in `.python-version`, `.nvmrc`, and `packageManager` in the root
 `package.json`.

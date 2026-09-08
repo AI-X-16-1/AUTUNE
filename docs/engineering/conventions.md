@@ -117,7 +117,7 @@ Document every new variable in `environments.md` and add it to
 
 ## Frontend
 
-**Node 20, pnpm, Next.js App Router, Tailwind, TypeScript strict.**
+**Node 22, pnpm, Next.js App Router, Tailwind, TypeScript strict.**
 
 Before writing any UI, read `../design/ui-spec.md` and
 `../design/design-tokens.json`. Every color, size, radius, control height and

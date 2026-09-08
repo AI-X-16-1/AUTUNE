@@ -1,0 +1,11 @@
+{
+  "name": "@autune/contracts",
+  "version": "0.1.0",
+  "private": true,
+  "description": "TypeScript types generated from packages/contracts. Never edit by hand.",
+  "types": "index.d.ts",
+  "scripts": {
+    "lint": "echo 'generated output' && exit 0",
+    "typecheck": "echo 'generated output' && exit 0"
+  }
+}

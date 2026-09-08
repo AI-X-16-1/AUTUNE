@@ -201,7 +201,7 @@ keep the team building real models rather than prompt chains.
 | Area | Technology | Why |
 | --- | --- | --- |
 | Backend | FastAPI (Python 3.12) | AI library ecosystem, async |
-| Frontend | Next.js + Tailwind (Node 20) | Fast iteration, responsive |
+| Frontend | Next.js + Tailwind (Node 22) | Fast iteration, responsive |
 | Task queue | Celery + Redis | AI pipeline orchestration |
 | Database | PostgreSQL | Structured data and history |
 | Graph DB | Neo4j | Topic graph, decision lineage |

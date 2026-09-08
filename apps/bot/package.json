@@ -1,0 +1,9 @@
+{
+  "name": "@autune/bot",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "lint": "echo 'no sources yet' && exit 0",
+    "typecheck": "echo 'no sources yet' && exit 0"
+  }
+}

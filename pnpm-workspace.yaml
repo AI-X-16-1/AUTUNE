@@ -1,0 +1,4 @@
+packages:
+  - "apps/web"
+  - "apps/bot"
+  - "packages/contracts/ts"

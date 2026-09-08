@@ -3,7 +3,7 @@
 ## Prerequisites
 
 - Python 3.12 (`.python-version`)
-- Node 20 (`.nvmrc`)
+- Node 22 (`.nvmrc`)
 - uv, pnpm 9
 - Docker and Docker Compose
 - Optional: an NVIDIA GPU for module A. Without one, A falls back to
