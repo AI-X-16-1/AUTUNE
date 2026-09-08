@@ -115,8 +115,33 @@ uv run --package autune-gap python -m autune_gap.eval
 - Topic labels derived from transcript text are already masked upstream. Do not
   re-derive anything from an unmasked source; there is not one.
 
+## The topic graph is per meeting
+
+Decided 2026-09-08 (issue #23): C builds a fresh subgraph for each meeting and
+does not accumulate across meetings.
+
+Nothing C produces needs accumulation. Centrality answers "which topics carried
+*this* meeting", the participation matrix and template comparison are
+within-meeting by definition, and risk scoring feeds on all three. C's metric is
+gap detection precision, which accumulation does not help.
+
+What it avoids:
+
+- **Two mechanisms answering the same question.** D already matches topics
+  across meetings with SBERT, BM25 and cross-encoder re-ranking. A second,
+  graph-based matcher would disagree with it, and users would see the
+  contradiction.
+- **Ambiguous centrality.** A topic central to today's meeting and a topic
+  central to the quarter are different things; an accumulated PageRank measures
+  the second while the gap report needs the first.
+- **Surgical deletion.** Retention has to remove one meeting's data
+  (`../architecture/privacy.md` section 4). Dropping a per-meeting subgraph is
+  trivial; unpicking one meeting's contribution from a shared graph, where edges
+  may be shared, is error-prone.
+
+The dashboard's topic-recurrence figure (S26) does not need it either: D's
+`topic_links` already say a topic came up before, so E counts those.
+
 ## Open questions
 
 - How many domain templates for the MVP, and who authors them.
-- Whether topic graphs persist across meetings in Neo4j or are rebuilt per
-  meeting. (Cross-meeting linking is D's job; C should not grow into it.)
