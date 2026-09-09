@@ -98,7 +98,7 @@ other module's tables.
 | GET | `/action-items` | Filter by assignee, status, due date |
 | PATCH | `/action-items/{id}` | Edit or close an item |
 | POST | `/action-items` | Add an item the model missed |
-| DELETE | `/action-items/{id}` | Soft-delete an item the model got wrong |
+| DELETE | `/action-items/{id}` | Delete an item the model got wrong |
 | POST | `/results/{meeting_id}/sync` | Re-sync to Notion and Jira |
 
 ## Celery tasks
@@ -178,6 +178,12 @@ Corrections stay in the meeting. They update `ext_action_items` and increment th
 edit-cost counters; they are never exported as training labels (ADR 0003), and
 edit cost is aggregated per meeting, never per person.
 
+A deleted item is deleted. `privacy.md` allows no soft deletes and no tombstones
+holding content, and edit cost does not need one: the counter records that a
+deletion happened, which is the whole of what the metric asks. Keeping the row to
+remember the model was wrong would be keeping meeting content for a reason the
+privacy rules do not grant.
+
 ## Metric
 
 The classifier's five-way macro F1 is what we train against and what the harness
@@ -191,8 +197,15 @@ figure for the task, per ADR 0006.
 | Items the user accepts with no edit | the first measurement is the baseline | improve on it |
 
 ```bash
-uv run --package autune-extraction python -m autune_extraction.eval
+uv run --package autune-extraction python -m autune_extraction.eval \
+    --eval-set dataset/extraction_eval.jsonl \
+    --predictions runs/<model>.jsonl
 ```
+
+The evaluation set is drawn from real meetings and is never committed. The
+harness scores a predictions file rather than loading a model, so a run can be
+rescored without a GPU and the metric means the same thing across model
+versions.
 
 ## Privacy notes
 
