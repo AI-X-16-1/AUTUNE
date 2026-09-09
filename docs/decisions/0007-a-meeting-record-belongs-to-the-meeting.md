@@ -158,12 +158,31 @@ part of this ADR most likely to be underestimated. `participants.user_id` become
 nullable and every consumer handles that. `needs_reassignment` is new UI in
 `features/actions/`.
 
-**Contract impact, and this is why it is urgent.** `packages/contracts` freezes
-after W1 and only additions are permitted afterwards:
+**Contract impact.** `packages/contracts` freezes after W1 and only additions are
+permitted afterwards. Most of what this ADR needs is already there:
 
-- `ActionItem.assignee` must be able to represent unassigned. It resolves to a
-  `user_id` today.
-- `ActionItem` needs `needs_reassignment`.
+- `ActionItem.assignee_id` is already `str | None` with a default of `None`, and
+  its description already reads *"None until someone is assigned."* Unassigned is
+  representable today; nothing to add.
+- `ActionItem.assignee_label` already exists, which is the field decision 2's
+  label replacement writes into. Also nothing to add.
+- `ActionItem` needs `needs_reassignment`. **This is the only new field**, and it
+  is an optional addition, which invariant 5 permits.
+- **`Participation.spoke` and `Participation.silent` hold `prt_` ids, not
+  `user_`.** The contract constrains neither today while `Topic.id` is pinned to
+  `^topic_`, so this ADR settles it. Three reasons, and the third is the one that
+  matters most:
+  1. `participants` is the boundary row that survives a departure, so a `prt_`
+     list stays valid and C's participation matrix really is *unchanged* — with
+     `user_` ids the list would be full of dangling references and the claim
+     would be false.
+  2. `utterances.participant_id` already references `participants` with
+     `ON DELETE SET NULL`. Using the same identity keeps one join path.
+  3. A `user_` id is stable across meetings and a `prt_` id is not. Joining
+     `Participation` rows across meetings on a stable id reconstructs one
+     person's speaking coverage over time, which is the shape of data section 3
+     forbids — the same reason decision 2 makes replacement labels deliberately
+     unstable between meetings. `prt_` cannot be joined that way.
 - `ContextLinks.decision_lineage[].key_stakeholders_absent` names people and
   takes the same treatment as a display label.
 - Consumers of `ActionItem.source_utterances` and `Decision` must tolerate a
