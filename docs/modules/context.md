@@ -207,7 +207,7 @@ cleaned up by a deletion hook (see "Deletion").
 | --- | --- | --- | --- |
 | `ctx_embeddings` | Topic (and, Phase 2, material) embeddings | `kind`, `ref_label`, `embedding vector(N)`, `model_version` | `meeting_id` FK `ON DELETE CASCADE` |
 | `ctx_topic_links` | Meeting-to-meeting topic links with scores | `topic_label`, `linked_meeting_date`, `similarity`, `rerank_score`, `confidence`, `status` (`asserted`/`pending`/`confirmed`/`rejected`), `retriever_version`, `reranker_version` | `meeting_id` FK `CASCADE`; `linked_meeting_id` FK `ON DELETE SET NULL` |
-| `ctx_decisions` | Decision threads (lineage identity, spans meetings) | `id` (`thr_`), `topic_label` | `team_id` FK `CASCADE` + orphan-cleanup hook |
+| `ctx_decisions` | Decision threads (lineage identity, spans meetings) | `id` (`thr_`), `topic_label` | `team_id` FK `CASCADE`; orphan sweep deferred (#87) |
 | `ctx_decision_versions` | Each version of a decision | `source_decision_id` (`dec_`, no FK), `previous_version_id` (self-FK), `current_statement`, `previous_statement`, `previous_meeting_id` (no FK), `change_type`, `nli_label`, `confidence`, `key_stakeholders_absent` (JSONB), `nli_version` | `thread_id` FK `CASCADE`, `meeting_id` FK `CASCADE` |
 | `ctx_meeting_status` | Completion tracking for the two halves | `topic_linking_done`, `lineage_done`, `extraction_seen`, `deadline_at`, `published_at` | `meeting_id` FK `CASCADE` |
 | `ctx_materials` | Uploaded documents and chunk metadata | — | Phase 2 — not created in the MVP |
@@ -235,27 +235,37 @@ its origin meeting, the whole lineage would collapse the moment that meeting
 hit the 90-day retention window — visible immediately in a demo. So the thread
 is anchored on `team_id` (which still cascades on team deletion), each version
 is anchored on its own meeting, and a thread whose last version has been deleted
-is removed by a deletion hook.
+is swept by `service.sweep_orphan_decision_threads`.
 
 ## Deletion
 
 Meeting deletion cascades through `meeting_id` foreign keys and reaches
 `ctx_embeddings`, `ctx_topic_links`, `ctx_decision_versions` and
-`ctx_meeting_status`. Two things are **not** covered by cascade and need a hook
-registered in `autune_core`'s deletion registry:
+`ctx_meeting_status`. Two things are **not** covered by cascade:
 
-- **Orphaned decision threads.** After a meeting's versions are deleted, remove
-  any `ctx_decisions` row with zero remaining versions.
-- **Dangling topic links.** `linked_meeting_id` is set to NULL when the linked
-  meeting is deleted; the API and UI show "the linked meeting is gone" and never
-  reconstruct its content from an embedding.
+- **Dangling topic links.** `linked_meeting_id` is `ON DELETE SET NULL`, so the
+  link row survives with its label and date; the API and UI show "the linked
+  meeting is gone" and never reconstruct its content from an embedding.
+- **Orphaned decision threads.** Once a `ctx_decisions` row has zero remaining
+  versions it is dead weight. `service.sweep_orphan_decision_threads(session)`
+  removes every such row — a global, idempotent sweep.
+
+  It is **not** yet registered as an `autune_core.deletion` meeting hook.
+  ADR 0008 found that a hook issuing a real `DELETE` breaks `packages/core`'s
+  own unit tests, which run before migrations on a clean CI database and iterate
+  every registered hook; the fix needs shared-owner changes tracked in #87.
+  Module E hit the same wall with `intel_reports` and deferred the same way.
+  Until #87 lands, the sweep is called explicitly — by the integration test now,
+  by the retention sweep once it exists. A thread orphaned in the meantime holds
+  only a `topic_label` and a `team_id`, no per-person data, and still cascades on
+  team deletion, so the exposure of the gap is small.
 
 A test that deletes a meeting and asserts every `ctx_*` row for it is gone —
-threads included — is part of shipping the schema, not an extra.
+threads included, after the sweep — is part of shipping the schema, not an extra.
 
-> This corrects `modules/context/CLAUDE.md` and earlier drafts of this document,
-> which stated that everything cascades and no deletion hook is needed. That is
-> true for four of the five tables; `ctx_decisions` is the exception.
+> `modules/context/CLAUDE.md` originally said everything cascades and no deletion
+> hook is needed. That holds for four of the five tables; `ctx_decisions` is the
+> exception, and its sweep is deferred rather than wired (see above).
 
 ## API
 
@@ -337,7 +347,7 @@ confirmation flow feed threshold tuning.
 | Phase | Scope |
 | --- | --- |
 | **0** | Lock the model stack and embedding dimension. Define the self-hosted serving contract with `infra/`. Propose `autune_core.publish_event` in Slack. Land this document. |
-| **1** | Five migrations (`ctx_embeddings`, `ctx_topic_links`, `ctx_decisions`, `ctx_decision_versions`, `ctx_meeting_status`). `models.py`, `config.py`, manifest dependencies. `pipeline/` skeleton: the four Protocols, `Fake*` implementations, `registry.py` with the dimension guard, the warm-up hook. Tests: migration round-trip, meeting-deletion cascade, orphan-thread hook. |
+| **1** | Five migrations (`ctx_embeddings`, `ctx_topic_links`, `ctx_decisions`, `ctx_decision_versions`, `ctx_meeting_status`). `models.py`, `config.py`, manifest dependencies. `pipeline/` skeleton: the four Protocols, `Fake*` implementations, `registry.py` with the dimension guard, the warm-up hook. Tests: migration round-trip, meeting-deletion cascade, orphan-thread sweep. |
 | **2** | `KureHttpEmbedder`, `BgeRerankerKoHttp`, `HybridRetriever` (RRF), `topics.py`. Wire `on_transcript_ready` and `publish_if_ready` (including the B-timeout path). Evaluation harness and the first accuracy number. |
 | **3** | `KlueKorNliHttp` and the KorNLI fine-tuning job. Wire `on_extraction_completed`: thread matching, NLI, version records, absent-stakeholder detection. Publish once both halves are in. |
 | **4** | The four API routes (recursive-CTE lineage, confirmation flow). Frontend: S22 lineage timeline, S15 context tab, link-confirmation UI. |

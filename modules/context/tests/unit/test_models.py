@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import autune_context.models  # noqa: F401  (registers ctx_* tables on Base.metadata)
+from autune_context import models
 from autune_context.config import ContextSettings
 from autune_context.constants import EMBEDDING_DIM
 from autune_core import Base
@@ -14,22 +14,25 @@ CTX_TABLES = {
     "ctx_decision_versions",
     "ctx_meeting_status",
 }
+_MODEL_CLASSES = (
+    models.CtxEmbedding,
+    models.CtxTopicLink,
+    models.CtxDecision,
+    models.CtxDecisionVersion,
+    models.CtxMeetingStatus,
+)
 
 
 def test_all_five_ctx_tables_are_registered():
     assert set(Base.metadata.tables) >= CTX_TABLES
 
 
-def test_every_owned_table_carries_the_ctx_prefix():
-    owned = set(Base.metadata.tables) - {
-        "teams",
-        "users",
-        "team_members",
-        "meetings",
-        "participants",
-        "utterances",
-    }
-    assert all(name.startswith("ctx_") for name in owned), owned
+def test_this_module_registers_only_ctx_prefixed_tables():
+    # Every table any Ctx* model declares, prefixed; and no stray non-ctx table
+    # slipped in among the ctx_-named ones.
+    assert {m.__tablename__ for m in _MODEL_CLASSES} == CTX_TABLES
+    assert all(name.startswith("ctx_") for name in CTX_TABLES)
+    assert {t for t in Base.metadata.tables if t.startswith("ctx_")} == CTX_TABLES
 
 
 def test_every_ctx_table_has_a_deletion_path():
