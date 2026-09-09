@@ -136,6 +136,22 @@ than a value you can set.
 `autune_integrations.HttpClient` so the outbound guard reads the request body:
 the endpoint being ours is exactly the reasoning that leaves a guard unrun.
 
+That guard caps a request at 4,000 characters, which one meeting is far over, so
+`hosted` splits its batches to fit rather than the cap being widened for our own
+host. A meeting of 3,000 utterances becomes roughly 28 requests.
+
+`local` needs weights and a library, and the library is an optional extra:
+
+```bash
+uv sync --package autune-extraction --extra local-models
+```
+
+It is not an ordinary dependency because `apps/api` serves a health check and
+must not load a deep-learning stack to do it, and a worker on `hosted` never
+touches it. Without the extra the classifier raises a `RuntimeError` naming this
+command — the default implementation failing with `No module named
+'transformers'` tells the reader nothing about the extra existing.
+
 ## Secrets
 
 - `.env` is gitignored. `.env.example` holds names and dummy values only.

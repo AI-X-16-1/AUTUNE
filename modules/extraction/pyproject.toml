@@ -22,6 +22,16 @@ training = [
     "transformers>=4.44",
     "numpy>=1.26",
 ]
+# The five-way classifier's in-process implementation. An extra rather than a
+# dependency: apps/api serves a health check and must not load a deep-learning
+# stack to do it, and a worker on the `hosted` implementation never touches
+# these. See docs/engineering/dependencies.md.
+#
+#     uv sync --package autune-extraction --extra local-models
+local-models = [
+    "transformers>=4.46",
+    "torch>=2.5",
+]
 
 [build-system]
 requires = ["hatchling"]

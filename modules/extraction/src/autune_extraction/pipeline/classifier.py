@@ -70,11 +70,21 @@ class LocalDeberta:
     def _load(self) -> None:
         if self._model is not None:
             return
-        import torch  # noqa: PLC0415
-        from transformers import (  # noqa: PLC0415
-            AutoModelForSequenceClassification,
-            AutoTokenizer,
-        )
+        try:
+            import torch  # noqa: PLC0415
+            from transformers import (  # noqa: PLC0415
+                AutoModelForSequenceClassification,
+                AutoTokenizer,
+            )
+        except ModuleNotFoundError as exc:  # pragma: no cover - depends on optional extra
+            # Named rather than left as a bare ImportError because this is the
+            # default implementation: the first person to run a worker hits it,
+            # and "No module named 'transformers'" does not say that an extra
+            # exists or what it is called.
+            raise RuntimeError(
+                "the local classifier needs the 'local-models' extra: "
+                "uv sync --package autune-extraction --extra local-models"
+            ) from exc
 
         self._torch = torch
         self._tokenizer = AutoTokenizer.from_pretrained(self._checkpoint)

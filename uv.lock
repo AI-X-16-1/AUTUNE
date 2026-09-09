@@ -414,6 +414,10 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+local-models = [
+    { name = "torch" },
+    { name = "transformers" },
+]
 training = [
     { name = "numpy" },
     { name = "torch" },
@@ -428,10 +432,12 @@ requires-dist = [
     { name = "celery", specifier = ">=5.4" },
     { name = "fastapi", specifier = ">=0.115" },
     { name = "numpy", marker = "extra == 'training'", specifier = ">=1.26" },
+    { name = "torch", marker = "extra == 'local-models'", specifier = ">=2.5" },
     { name = "torch", marker = "extra == 'training'", specifier = ">=2.4" },
+    { name = "transformers", marker = "extra == 'local-models'", specifier = ">=4.46" },
     { name = "transformers", marker = "extra == 'training'", specifier = ">=4.44" },
 ]
-provides-extras = ["training"]
+provides-extras = ["training", "local-models"]
 
 [[package]]
 name = "autune-gap"
