@@ -5,7 +5,7 @@
 | Surface | Language |
 | --- | --- |
 | Documents, code comments, docstrings, commit messages, PR titles and bodies, ADRs, test names, log messages, error strings | **English** |
-| Conversation with teammates and users — chat, Slack, review comments addressed to a person | **Korean (한국어)** |
+| Conversation with teammates and users — chat, and review comments addressed to a person | **Korean (한국어)** |
 
 Everyone follows this, including AI agents. The repository is permanent and
 shared; conversation is ephemeral and belongs in the team's working language.
@@ -179,6 +179,21 @@ Explain *why* in the body when the reason is not obvious from the diff.
 - Reviewers check the privacy checklist in `../architecture/privacy.md` on any
   PR touching transcripts, audio, or speaker identity.
 - Approving a contract change means you have checked your own module against it.
+
+## Where team conversation happens
+
+GitHub, and nowhere else. Issues for decisions, pull requests for review, the
+project board for what is in flight.
+
+**Slack is a product feature, not a tool this team uses.** Autune sends action
+cards, gap reports and confirmation DMs to *its users'* Slack workspaces — that
+is what `apps/bot` and `packages/integrations` are for. Nobody here coordinates
+in Slack, and a document that says "announce it in Slack" is telling a reader to
+use a channel that does not exist. The wording is corrected wherever it appeared.
+
+A decision that needs the team gets an issue with the `decision` label, so the
+answer outlives the conversation and the module document can cite it. That is
+how the contract change in #25 and the graph question in #23 were settled.
 
 ## The project board
 

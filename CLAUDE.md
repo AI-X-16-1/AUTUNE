@@ -11,7 +11,7 @@ lives in `docs/` and is linked from here.
 | Surface | Language |
 | --- | --- |
 | Everything written into the repository — docs, code comments, docstrings, commit messages, PR titles and descriptions, ADRs, test names, log messages, error strings | **English** |
-| Conversation with the user (chat, review comments addressed to a person, Slack) | **Korean (한국어)** |
+| Conversation with the user — chat, and review comments addressed to a person | **Korean (한국어)** |
 
 Rationale: the repository is the shared, permanent artifact and must be readable
 by any tool or contributor; conversation is ephemeral and should be in the
@@ -94,9 +94,9 @@ your own prefixed tables. → `docs/architecture/data-model.md`
 
 ### 5. `packages/contracts` is frozen after W1 — additive changes only
 Adding an optional field is fine. Removing a field, renaming a field, changing
-a type, or tightening a constraint is a breaking change: announce it in Slack,
-get approval from every affected module owner, and bump the contract version in
-the same PR. A silent contract change breaks four modules at once.
+a type, or tightening a constraint is a breaking change: open an issue with the
+`decision` label, get approval from every affected module owner, and bump the
+contract version in the same PR. A silent contract change breaks four modules at once.
 → `docs/architecture/contracts.md`
 
 ### 6. `apps/` is assembly only — no business logic, no hardcoded registration
@@ -129,7 +129,7 @@ anyone else's.
 ### 10. Do not edit files you do not own
 CODEOWNERS is the source of truth for who owns what. If a change you need lives
 in someone else's module, in `packages/contracts`, or under `apps/`, open an
-issue or ask the owner in Slack. Do not "just fix it" across a boundary.
+issue and assign it to the owner. Do not "just fix it" across a boundary.
 
 GitHub does not act on CODEOWNERS on this plan — it assigns no reviewers and
 blocks no merge. Add the reviewers your change needs yourself.

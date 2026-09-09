@@ -224,8 +224,8 @@ import이 바로 실패합니다.
   **리뷰어는 직접 지정해야 합니다** — 무료 플랜 private 저장소에서는 CODEOWNERS가
   리뷰어를 자동 배정하지 않습니다. 파일은 "누가 승인해야 하는지"를 적어둔 지도입니다.
 - 자기 소유가 아닌 파일은 건드리지 않습니다. 필요하면 소유자에게 요청.
-- `packages/contracts`는 W1에 확정, 이후 **추가만**. 필드 삭제·이름 변경은 Slack
-  공지 + 관련 모듈 담당자 전원 승인.
+- `packages/contracts`는 W1에 확정, 이후 **추가만**. 필드 삭제·이름 변경은
+  `decision` 레이블 이슈 + 관련 모듈 담당자 전원 승인.
 - lockfile 충돌은 병합하지 말고 재생성 (`uv lock` / `pnpm install`).
 
 - 작업은 [프로젝트 보드](https://github.com/orgs/AI-X-16-1/projects/9)에서 추적합니다.
