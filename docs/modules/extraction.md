@@ -197,8 +197,15 @@ figure for the task, per ADR 0006.
 | Items the user accepts with no edit | the first measurement is the baseline | improve on it |
 
 ```bash
-uv run --package autune-extraction python -m autune_extraction.eval
+uv run --package autune-extraction python -m autune_extraction.eval \
+    --eval-set dataset/extraction_eval.jsonl \
+    --predictions runs/<model>.jsonl
 ```
+
+The evaluation set is drawn from real meetings and is never committed. The
+harness scores a predictions file rather than loading a model, so a run can be
+rescored without a GPU and the metric means the same thing across model
+versions.
 
 ## Privacy notes
 
