@@ -13,18 +13,28 @@ timeout elapses. The Celery glue that enqueues the aggregate task lives in
 
 from __future__ import annotations
 
+from collections import Counter
 from datetime import UTC, datetime, timedelta
 from typing import Final
 
+import sqlalchemy as sa
 from sqlalchemy import func, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
-from autune_contracts import QualityScore
+from autune_contracts import (
+    ContextLinks,
+    ExtractionResult,
+    GapReport,
+    GapSeverity,
+    IntelligenceSnapshot,
+    QualityScore,
+)
 from autune_contracts.intelligence import Grade
+from autune_core import Meeting
 
 from .config import get_settings
-from .models import IntelCompletion
+from .models import IntelCompletion, IntelGapPattern, IntelScore
 
 SOURCES: tuple[str, ...] = ("extraction", "gap", "context")
 """The three upstream modules E waits on. Each maps to an ``<source>_at`` column
@@ -140,15 +150,119 @@ def _quality_score(components: dict[str, float | None]) -> QualityScore:
     return QualityScore(grade=_grade_for(value), value=value)
 
 
-def close_aggregation(session: Session, meeting_id: str) -> list[str] | None:
-    """Mark the meeting aggregated; return which sources were missing at that point.
+def reopen(session: Session, meeting_id: str) -> None:
+    """Clear ``aggregated_at`` so a late source triggers a fresh aggregation."""
+    row = session.get(IntelCompletion, meeting_id, with_for_update=True)
+    if row is not None:
+        row.aggregated_at = None
 
-    Returns ``None`` when there is nothing to do — no completion row, or it was
-    already closed. Both the timeout countdown and an all-three trigger can fire
-    for the same meeting, so this must be idempotent.
+
+def aggregate_meeting(session: Session, meeting_id: str) -> IntelligenceSnapshot | None:
+    """Turn the staged B/C/D payloads into an IntelligenceSnapshot and persist it.
+
+    Returns ``None`` when there is no completion row or it is already aggregated —
+    the countdown task and an all-three trigger both call this. A late source
+    calls ``reopen`` first.
     """
     row = session.get(IntelCompletion, meeting_id, with_for_update=True)
     if row is None or row.aggregated_at is not None:
         return None
+
+    meeting = session.get(Meeting, meeting_id)
+    if meeting is None:
+        return None
+    duration_minutes = (meeting.duration_seconds or 0.0) / 60.0
+
+    extraction = (
+        ExtractionResult.model_validate(row.extraction_payload)
+        if row.extraction_payload is not None
+        else None
+    )
+    gap = GapReport.model_validate(row.gap_payload) if row.gap_payload is not None else None
+    _ = (
+        ContextLinks.model_validate(row.context_payload)
+        if row.context_payload is not None
+        else None
+    )
+    missing = missing_sources(row)
+
+    high_gap_count = (
+        sum(1 for g in gap.gaps if g.severity == GapSeverity.HIGH) if gap is not None else None
+    )
+    components: dict[str, float | None] = {
+        "decision_density": (
+            _decision_density(len(extraction.decisions), duration_minutes)
+            if extraction is not None
+            else None
+        ),
+        "gap_burden": _gap_burden(high_gap_count) if high_gap_count is not None else None,
+        "action_item_completion_rate": (
+            _action_item_completion_rate(extraction.action_items)
+            if extraction is not None
+            else None
+        ),
+        "participation_balance": (
+            _participation_balance(gap.participation) if gap is not None else None
+        ),
+    }
+    score = _quality_score(components)
+
+    distribution = dict(Counter(g.category for g in gap.gaps)) if gap is not None else {}
+
+    session.execute(
+        pg_insert(IntelScore)
+        .values(
+            meeting_id=meeting_id,
+            team_id=meeting.team_id,
+            grade=score.grade,
+            value=score.value,
+            decision_density=components["decision_density"],
+            gap_count=high_gap_count,
+            action_item_completion_rate=components["action_item_completion_rate"],
+            participation_balance=components["participation_balance"],
+            missing_sources=missing,
+        )
+        .on_conflict_do_update(
+            index_elements=["meeting_id"],
+            set_={
+                "team_id": meeting.team_id,
+                "grade": score.grade,
+                "value": score.value,
+                "decision_density": components["decision_density"],
+                "gap_count": high_gap_count,
+                "action_item_completion_rate": components["action_item_completion_rate"],
+                "participation_balance": components["participation_balance"],
+                "missing_sources": missing,
+            },
+        )
+    )
+
+    session.execute(sa.delete(IntelGapPattern).where(IntelGapPattern.meeting_id == meeting_id))
+    if gap is not None:
+        ids_by_category: dict[str, list[str]] = {}
+        for g in gap.gaps:
+            ids_by_category.setdefault(g.category, []).append(g.id)
+        for category, count in distribution.items():
+            session.add(
+                IntelGapPattern(
+                    meeting_id=meeting_id,
+                    pattern_type=category,
+                    team_id=meeting.team_id,
+                    count=count,
+                    source_gap_ids=ids_by_category[category],
+                )
+            )
+
     row.aggregated_at = datetime.now(UTC)
-    return missing_sources(row)
+    session.flush()
+    session.expire_all()
+
+    return IntelligenceSnapshot(
+        meeting_id=meeting_id,
+        team_id=meeting.team_id,
+        quality_score=score,
+        gap_distribution=distribution,
+        alignment=[],
+        predictions=[],
+        missing_sources=missing,
+    )
