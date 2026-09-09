@@ -4,12 +4,21 @@ Everything here is used by all five modules, so it changes rarely and by team
 agreement. ``autune_core`` never imports a module.
 """
 
-from . import deletion, ids
+from . import crypto, deletion, ids
 from .auth import CurrentUser, current_user, issue_token, require_self
 from .db import Base, get_engine, get_session, get_sessionmaker, session_scope
-from .entities import Meeting, Participant, Team, TeamMember, User, Utterance
+from .entities import (
+    Meeting,
+    Participant,
+    Team,
+    TeamIntegration,
+    TeamMember,
+    User,
+    Utterance,
+)
 from .errors import (
     AutuneError,
+    ConfigurationError,
     ConflictError,
     NotFoundError,
     PermissionDeniedError,
@@ -17,6 +26,14 @@ from .errors import (
     ValidationError,
 )
 from .ids import new_id
+from .integrations_config import (
+    SERVICES,
+    IntegrationConfig,
+    disconnect_integration,
+    load_integration,
+    require_integration,
+    save_integration,
+)
 from .logging import configure_logging, get_logger
 from .settings import Settings, get_settings
 
@@ -29,6 +46,7 @@ __all__ = [
     "Meeting",
     "Participant",
     "Team",
+    "TeamIntegration",
     "TeamMember",
     "User",
     "Utterance",
@@ -47,6 +65,14 @@ __all__ = [
     "PermissionDeniedError",
     "PrivacyViolationError",
     "ConflictError",
+    "ConfigurationError",
     "ids",
     "new_id",
+    "crypto",
+    "SERVICES",
+    "IntegrationConfig",
+    "load_integration",
+    "require_integration",
+    "save_integration",
+    "disconnect_integration",
 ]

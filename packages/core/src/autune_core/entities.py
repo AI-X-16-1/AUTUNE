@@ -11,6 +11,7 @@ See docs/architecture/data-model.md.
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any
 
 from sqlalchemy import (
     CheckConstraint,
@@ -24,6 +25,7 @@ from sqlalchemy import (
     UniqueConstraint,
     func,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .db import Base
@@ -48,6 +50,48 @@ class Team(Base, TimestampMixin):
     """Per-team override of the retention window. See docs/architecture/privacy.md."""
 
     members: Mapped[list[TeamMember]] = relationship(back_populates="team")
+
+
+class TeamIntegration(Base, TimestampMixin):
+    """One team's connection to one outside service.
+
+    Credentials belong to the customer team, not to the deployment. A row here is
+    what makes Notion, Jira, Slack and Calendar configurable per team on screen
+    S28, instead of one workspace for everybody.
+
+    Written by ``autune_core``, the way ``users`` and ``teams`` are — no module
+    writes it. Modules read it through ``load_integration``.
+
+    ``secret`` is Fernet ciphertext, never a usable token. ``config`` holds the
+    non-secret half — database ids, project key, property mapping — which is
+    JSONB because its shape differs per service and nothing joins on it.
+    """
+
+    __tablename__ = "team_integrations"
+    __table_args__ = (
+        UniqueConstraint("team_id", "service", name="uq_team_integrations_team_service"),
+        CheckConstraint(
+            "service IN ('notion','jira','slack','calendar')",
+            name="ck_team_integrations_service",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    team_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("teams.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    service: Mapped[str] = mapped_column(String(32), nullable=False)
+
+    secret: Mapped[str | None] = mapped_column(Text)
+    """Fernet ciphertext. Never assign a plaintext token to this column —
+    go through ``save_integration``."""
+
+    config: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+
+    connected_by: Mapped[str | None] = mapped_column(
+        String(64), ForeignKey("users.id", ondelete="SET NULL")
+    )
+    """Who connected it, for the sync-log drawer on S28. Null once they leave."""
 
 
 class User(Base, TimestampMixin):

@@ -69,6 +69,7 @@ prefix `AUTUNE_<MODULE>_`.
 | `AUTUNE_DATABASE_URL` | `postgresql+psycopg://autune:autune@localhost:5432/autune` | |
 | `AUTUNE_REDIS_URL` | `redis://localhost:6379/0` | |
 | `AUTUNE_SECRET_KEY` | | JWT signing. Never commit |
+| `AUTUNE_ENCRYPTION_KEY` | | Encrypts team integration credentials at rest. Required outside local |
 | `AUTUNE_LOG_LEVEL` | `INFO` | |
 | `AUTUNE_RETENTION_DAYS` | `90` | Default analysis retention |
 
@@ -78,9 +79,6 @@ prefix `AUTUNE_<MODULE>_`.
 | --- | --- |
 | `AUTUNE_SLACK_BOT_TOKEN`, `AUTUNE_SLACK_SIGNING_SECRET` | `apps/bot`, all modules that notify |
 | `AUTUNE_SLACK_APP_TOKEN` | `apps/bot` socket mode, local development only |
-| `AUTUNE_NOTION_TOKEN`, `AUTUNE_NOTION_DATABASE_ID` | B |
-| `AUTUNE_JIRA_URL`, `AUTUNE_JIRA_EMAIL`, `AUTUNE_JIRA_TOKEN` | B |
-| `AUTUNE_GOOGLE_CALENDAR_CREDENTIALS` | D, and Phase 2 proactive agent |
 | `AUTUNE_LLM_API_KEY` | Any module using an LLM |
 
 ### Module-specific
@@ -92,6 +90,11 @@ prefix `AUTUNE_<MODULE>_`.
 | `AUTUNE_AUDIO_TEMP_DIR` | A | Where the recording lives during processing, and only then |
 | `AUTUNE_GAP_RISK_THRESHOLD` | C | Default `0.7` |
 | `AUTUNE_CONTEXT_RERANK_TOP_K` | D | Default `10` |
+
+Notion, Jira and Calendar credentials are **not** environment variables. Each
+team configures its own on screen S28 and they are stored encrypted in
+`team_integrations` — read them with `autune_core.load_integration`, never from
+settings. See `../architecture/data-model.md`.
 
 Every new variable goes into `.env.example` with a comment and into this table.
 A variable that exists only in someone's local `.env` will break the next
