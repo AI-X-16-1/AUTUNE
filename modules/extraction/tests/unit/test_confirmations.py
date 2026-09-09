@@ -162,12 +162,11 @@ def test_sending_one_speakers_utterance_to_anyone_else_is_refused() -> None:
 def test_unmasked_text_is_refused_before_it_reaches_slack() -> None:
     """Masking happens before the write, so this should be unreachable — checked anyway.
 
-    The client's own guard cannot catch this one. ``check_outbound`` reads the
-    fallback text, and every message this module sends carries its content in
-    blocks, which nothing inspects. So the check is made here, in module B, until
-    ``packages/integrations`` closes it — see the comment at the call site.
-
-    Without that line this test fails by sending, which is how the gap was found.
+    The quotation lives in blocks, and the client's guard now reads a structured
+    payload as well as the fallback text. It did not when this test was written:
+    module B carried its own check until the shared guard learned to look inside.
+    The test is unchanged across that move, which is the point of it — what it
+    asserts is that the leak does not happen, not which layer stops it.
     """
     fake = FakeSlack()
 
@@ -183,20 +182,17 @@ def test_unmasked_text_is_refused_before_it_reaches_slack() -> None:
     assert fake.sent == []
 
 
-def test_the_clients_own_guard_does_not_see_blocks() -> None:
-    """Pins the gap the test above works around, so closing it is visible here.
+def test_a_clean_rich_message_still_sends() -> None:
+    """The guard reads blocks now, so it is worth pinning that it lets them past.
 
-    ``FakeSlack.send_dm`` runs the same guard as the real client. Handing it an
-    unmasked quotation inside blocks sends cleanly; the fallback text is all that
-    is read. When ``packages/integrations`` starts inspecting blocks this test
-    fails, which is the moment module B's own check becomes redundant.
+    A masking check that refuses every structured payload is as broken as one
+    that reads none — and it would fail here rather than in whichever module
+    shipped the next Slack surface.
     """
     fake = FakeSlack()
-    _, blocks = build_confirmation_dm(
-        utterance_id=UTTERANCE, quoted_text="제 번호는 010-1234-5678 입니다"
-    )
+    text, blocks = build_confirmation_dm(utterance_id=UTTERANCE, quoted_text=QUOTED)
 
-    fake.send_dm("U_SPEAKER", "확인이 필요합니다.", blocks)
+    fake.send_dm("U_SPEAKER", text, blocks)
 
     assert len(fake.sent) == 1
 
