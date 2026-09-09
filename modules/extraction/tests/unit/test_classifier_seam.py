@@ -190,3 +190,37 @@ def test_an_utterance_larger_than_the_whole_budget_is_refused() -> None:
 
 def test_an_empty_meeting_produces_no_requests() -> None:
     assert list(_batches_within_budget([], MAX_OUTBOUND_CHARS)) == []
+
+
+# --- the fake keys on endings, not on one verb -------------------------------
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("제가 정리해서 공유드리겠습니다", K.COMMITMENT),
+        ("내일까지 보내겠습니다", K.COMMITMENT),
+        ("제가 확인하겠습니다", K.COMMITMENT),
+        ("그럼 인기순으로 가기로 했습니다", K.DECISION),
+        ("이걸로 하기로 했습니다", K.DECISION),
+        ("이거 지금 되나요", K.OPEN_QUESTION),
+        ("일정이 좀 어렵습니다", K.CONCERN),
+    ],
+)
+def test_the_fake_reads_the_ending_and_not_the_verb(text: str, expected: K) -> None:
+    """An earlier version matched ``하겠습니다`` and ``하기로 했``.
+
+    Those carry the verb stem 하-, so they only fire when the verb happens to be
+    하다: three of these five landed on ``ambiguous``. The marker is ``-겠-`` and
+    ``-기로 하-``; what precedes it is the verb, not the class.
+
+    It matters because ``ambiguous`` is what triggers a confirmation DM. A fake
+    that calls every ordinary commitment ambiguous makes every downstream fixture
+    look like it needs to ask the speaker something.
+    """
+    assert FakeClassifier().classify([text])[0].kind is expected
+
+
+def test_a_reported_decision_is_not_a_fresh_promise() -> None:
+    """``기로 했`` is checked before ``겠습니다``; both endings can co-occur."""
+    assert FakeClassifier().classify(["그렇게 하기로 했겠습니다"])[0].kind is K.DECISION

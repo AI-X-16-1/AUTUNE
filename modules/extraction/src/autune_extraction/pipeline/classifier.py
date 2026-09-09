@@ -191,20 +191,32 @@ class FakeClassifier:
     of the model's accuracy and must not be used to estimate it; it exists so
     everything downstream of classification can be built and tested before the
     model is trained.
+
+    **The endings carry no verb stem.** An earlier version matched "하겠습니다"
+    and "하기로 했", which only fire when the verb happens to be 하다:
+    "공유드리겠습니다" and "가기로 했습니다" both fell through to ``ambiguous``.
+    The marker is "-겠-" and "-기로 하-"; the stem in front of it is the verb,
+    not the class.
+
+    Deliberately conservative otherwise. A miss lands on ``ambiguous``, which
+    downstream means *ask the speaker* — so under-matching costs a question and
+    over-matching invents a commitment nobody made.
     """
 
     model_version = "fake"
 
     _ENDINGS: tuple[tuple[str, UtteranceKind], ...] = (
-        ("하겠습니다", UtteranceKind.COMMITMENT),
+        ("기로 했", UtteranceKind.DECISION),
+        ("겠습니다", UtteranceKind.COMMITMENT),
         ("할게요", UtteranceKind.COMMITMENT),
-        ("하기로 했", UtteranceKind.DECISION),
         ("갑니다", UtteranceKind.DECISION),
         ("까요", UtteranceKind.OPEN_QUESTION),
         ("나요", UtteranceKind.OPEN_QUESTION),
         ("어렵", UtteranceKind.CONCERN),
         ("걱정", UtteranceKind.CONCERN),
     )
+    """Checked in order, first match wins. ``기로 했`` comes before ``겠습니다``
+    because "하기로 했겠습니다" is a decision being reported, not a new promise."""
 
     def classify(self, texts: list[str]) -> list[Prediction]:
         predictions = []
