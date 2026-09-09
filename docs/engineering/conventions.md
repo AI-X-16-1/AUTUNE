@@ -167,6 +167,9 @@ all five owners and need a word in Slack before you change them:
   the backend gives each module its own `pyproject.toml`. Adding a dependency is
   rare after the first week; when it happens, say so, and regenerate the
   lockfile rather than merging it.
+- Sign-in (S01) belongs to no module: the screen lives at `src/app/login/` with
+  its card colocated there, and `src/shared/api/auth.ts` is its API surface —
+  the frontend mirror of the hand-mounted `/api/auth` router.
 
 Routes under `src/app/` are per-screen files, so two people adding two screens
 add two different files. That is not a conflict.
