@@ -23,11 +23,14 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from autune_contracts import (
+    ActionItem,
+    ActionStatus,
     ContextLinks,
     ExtractionResult,
     GapReport,
     GapSeverity,
     IntelligenceSnapshot,
+    Participation,
     QualityScore,
 )
 from autune_contracts.intelligence import Grade
@@ -107,6 +110,10 @@ WEIGHTS: Final = {
 GRADE_CUTOFFS: Final = ((0.9, "A"), (0.8, "B"), (0.7, "C"), (0.6, "D"), (0.5, "E"))
 """Descending; value below the last cutoff is F. First heuristic — P2 tunes these."""
 
+_MAX_PATTERN_TYPE: Final = 100
+"""``Gap.category`` has no length limit but ``intel_gap_patterns.pattern_type`` is
+``String(100)`` and part of the PK; truncate before it reaches the table."""
+
 
 def _decision_density(decision_count: int, duration_minutes: float) -> float:
     expected = max(1.0, duration_minutes / DECISION_CADENCE_MINUTES)
@@ -117,16 +124,14 @@ def _gap_burden(high_gap_count: int) -> float:
     return 1.0 - min(1.0, high_gap_count / HIGH_GAP_CEILING)
 
 
-def _action_item_completion_rate(action_items: list) -> float | None:
+def _action_item_completion_rate(action_items: list[ActionItem]) -> float | None:
     if not action_items:
         return None
-    from autune_contracts import ActionStatus
-
     done = sum(1 for a in action_items if a.status != ActionStatus.NEEDS_CONFIRMATION)
     return done / len(action_items)
 
 
-def _participation_balance(participation: list) -> float | None:
+def _participation_balance(participation: list[Participation]) -> float | None:
     if not participation:
         return None
     ratios = [len(p.spoke) / max(1, len(p.spoke) + len(p.silent)) for p in participation]
@@ -207,7 +212,9 @@ def aggregate_meeting(session: Session, meeting_id: str) -> IntelligenceSnapshot
     }
     score = _quality_score(components)
 
-    distribution = dict(Counter(g.category for g in gap.gaps)) if gap is not None else {}
+    distribution = (
+        dict(Counter(g.category[:_MAX_PATTERN_TYPE] for g in gap.gaps)) if gap is not None else {}
+    )
 
     session.execute(
         pg_insert(IntelScore)
@@ -233,6 +240,7 @@ def aggregate_meeting(session: Session, meeting_id: str) -> IntelligenceSnapshot
                 "action_item_completion_rate": components["action_item_completion_rate"],
                 "participation_balance": components["participation_balance"],
                 "missing_sources": missing,
+                "updated_at": func.now(),
             },
         )
     )
@@ -241,7 +249,8 @@ def aggregate_meeting(session: Session, meeting_id: str) -> IntelligenceSnapshot
     if gap is not None:
         ids_by_category: dict[str, list[str]] = {}
         for g in gap.gaps:
-            ids_by_category.setdefault(g.category, []).append(g.id)
+            category = g.category[:_MAX_PATTERN_TYPE]
+            ids_by_category.setdefault(category, []).append(g.id)
         for category, count in distribution.items():
             session.add(
                 IntelGapPattern(

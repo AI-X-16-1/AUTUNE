@@ -145,6 +145,58 @@ def test_re_aggregation_after_reopen_updates_the_score(db_session: Session, meet
     assert db_session.get(IntelScore, meeting).decision_density > low
 
 
+def _gap_with_categories(meeting_id: str, pairs: list[tuple[str, str]]) -> dict:
+    """A GapReport whose gaps are ``(gap_id, category)`` pairs, all low severity."""
+    return GapReport(
+        meeting_id=meeting_id,
+        gaps=[
+            {
+                "id": gap_id,
+                "category": category,
+                "title": "t",
+                "severity": "low",
+                "risk_score": 0.2,
+            }
+            for gap_id, category in pairs
+        ],
+        participation=[{"topic_id": "t1", "spoke": ["u1", "u2"], "silent": ["u3"]}],
+    ).model_dump(mode="json")
+
+
+def test_re_aggregation_replaces_the_gap_patterns(db_session: Session, meeting: str) -> None:
+    _stage(db_session, meeting, "extraction", _extraction(meeting))
+    _stage(
+        db_session,
+        meeting,
+        "gap",
+        _gap_with_categories(meeting, [("gap_1", "schedule"), ("gap_2", "ownership")]),
+    )
+    _stage(db_session, meeting, "context", _context(meeting))
+    assert service.aggregate_meeting(db_session, meeting) is not None
+    db_session.flush()
+
+    _stage(
+        db_session,
+        meeting,
+        "gap",
+        _gap_with_categories(meeting, [("gap_3", "schedule"), ("gap_4", "risk")]),
+    )
+    service.reopen(db_session, meeting)
+    db_session.flush()
+    assert service.aggregate_meeting(db_session, meeting) is not None
+    db_session.flush()
+
+    patterns = (
+        db_session.execute(sa.select(IntelGapPattern).where(IntelGapPattern.meeting_id == meeting))
+        .scalars()
+        .all()
+    )
+    by_type = {p.pattern_type: p for p in patterns}
+    assert set(by_type) == {"schedule", "risk"}
+    assert by_type["schedule"].source_gap_ids == ["gap_3"]
+    assert by_type["risk"].source_gap_ids == ["gap_4"]
+
+
 def test_aggregate_meeting_is_idempotent(db_session: Session, meeting: str) -> None:
     _stage(db_session, meeting, "extraction", _extraction(meeting))
     row = db_session.get(IntelCompletion, meeting)
