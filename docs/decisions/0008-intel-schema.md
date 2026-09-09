@@ -58,7 +58,8 @@ shared-owner changes: test-isolation of the registry in
 `packages/core/tests/test_core.py`, running the CI `Migrations` step before
 `Tests`, and `apps/` discovery of `<module>.deletion` (nothing imports it
 today, so the hook would be dormant anyway). Deferred rather than block the
-schema on a cross-team change. Tracked as a follow-up.
+schema on a cross-team change. Tracked in #86 (the `intel_reports` deletion
+path) and #87 (the `packages/core` registry fix it depends on).
 
 **Persist the assembled `IntelligenceSnapshot` in an `intel_snapshots` table.**
 Rejected: the dashboard re-queries the component tables on each request;
@@ -67,14 +68,16 @@ Rejected: the dashboard re-queries the component tables on each request;
 ## Consequences
 
 - A team's weekly report survives the deletion of one of its source meetings
-  until the retention window drops it. Accepted as a gap until the follow-up
-  lands. `intel_reports` holds team-level aggregates and LLM prose generated
-  from computed numbers — no per-person data — so the privacy exposure of the
-  gap is small; the compliance rule in `../architecture/privacy.md` §4 is the
-  reason it is a tracked follow-up rather than a "won't do".
+  until the retention window drops it. Accepted as a gap until #86 lands.
+  `intel_reports` holds team-level aggregates and LLM prose generated from
+  computed numbers — no per-person data — so the privacy exposure of the gap is
+  small; the compliance rule in `../architecture/privacy.md` §4 is the reason it
+  is tracked in #86 rather than a "won't do". (When #45 builds the report
+  generator, the prose in `body_markdown` must stay team-level narration for
+  that "no per-person data" premise to hold.)
 - `depends_on` couples the `intelligence` branch to a specific `core` revision
   id. ADR and migration history are append-only, so the id is stable; if `core`
   ever renumbered it the pin would break.
 - The registry defect this surfaced is not E's alone: any module that registers
   a deletion hook touching the database will break the same core test. Worth
-  fixing in `packages/core` once, not per module.
+  fixing in `packages/core` once, not per module — #87.
