@@ -46,6 +46,13 @@ def _context(meeting_id: str) -> dict:
     return ContextLinks(meeting_id=meeting_id).model_dump(mode="json")
 
 
+_PAYLOAD = {"extraction": _extraction, "gap": _gap, "context": _context}
+
+
+def _seed(session: Session, meeting_id: str, source: str) -> bool:
+    return service.record_completion(session, meeting_id, source, _PAYLOAD[source](meeting_id))
+
+
 @pytest.mark.usefixtures("use_test_session")
 def test_first_completion_schedules_the_timeout_countdown(
     mock_aggregate: object, db_session: Session, meeting: str
@@ -73,8 +80,8 @@ def test_a_repeated_completion_does_not_schedule_again(
 def test_the_third_completion_enqueues_aggregation_immediately(
     mock_aggregate: object, db_session: Session, meeting: str
 ) -> None:
-    service.record_completion(db_session, meeting, "extraction")
-    service.record_completion(db_session, meeting, "gap")
+    _seed(db_session, meeting, "extraction")
+    _seed(db_session, meeting, "gap")
     db_session.flush()
 
     tasks.on_context_completed(_context(meeting))
@@ -87,7 +94,7 @@ def test_a_late_completion_after_aggregation_enqueues_nothing(
     mock_aggregate: object, db_session: Session, meeting: str
 ) -> None:
     for source in ("extraction", "gap", "context"):
-        service.record_completion(db_session, meeting, source)
+        _seed(db_session, meeting, source)
     db_session.flush()
     service.close_aggregation(db_session, meeting)
     db_session.flush()
@@ -101,7 +108,7 @@ def test_a_late_completion_after_aggregation_enqueues_nothing(
 def test_aggregate_task_closes_the_lifecycle_and_is_idempotent(
     db_session: Session, meeting: str
 ) -> None:
-    service.record_completion(db_session, meeting, "extraction")
+    _seed(db_session, meeting, "extraction")
     db_session.flush()
 
     tasks.aggregate(meeting)

@@ -29,34 +29,39 @@ on ``intel_completion``."""
 _COLUMN = {source: f"{source}_at" for source in SOURCES}
 
 
-def record_completion(session: Session, meeting_id: str, source: str) -> bool:
-    """Record that ``source`` has reported for ``meeting_id``.
+def record_completion(session: Session, meeting_id: str, source: str, payload: dict) -> bool:
+    """Record that ``source`` has reported for ``meeting_id`` and stash its payload.
 
-    Upserts ``intel_completion``: sets ``<source>_at`` on the first arrival for
-    that source and leaves it untouched on a re-delivery, and stamps
-    ``first_seen_at`` once when the row is created.
+    Upserts ``intel_completion``: ``<source>_at`` is set on the first arrival and
+    kept on a re-delivery (the countdown anchor must not move); ``<source>_payload``
+    takes the latest payload every call. ``first_seen_at`` is stamped once.
 
-    Returns ``True`` when this call created the row — i.e. this was the first of
-    the three sources seen for the meeting, and the caller should schedule the
-    timeout countdown.
+    Returns ``True`` when this call created the row — the first of the three
+    sources for the meeting, whose caller schedules the timeout countdown.
     """
     if source not in SOURCES:
         raise ValueError(f"unknown source {source!r}; expected one of {SOURCES}")
 
-    column = _COLUMN[source]
+    at_column = _COLUMN[source]
+    payload_column = f"{source}_payload"
     now = datetime.now(UTC)
     stmt = (
         pg_insert(IntelCompletion)
-        .values(meeting_id=meeting_id, first_seen_at=now, **{column: now})
+        .values(
+            meeting_id=meeting_id,
+            first_seen_at=now,
+            **{at_column: now, payload_column: payload},
+        )
         .on_conflict_do_update(
             index_elements=["meeting_id"],
-            set_={column: func.coalesce(getattr(IntelCompletion, column), now)},
+            set_={
+                at_column: func.coalesce(getattr(IntelCompletion, at_column), now),
+                payload_column: payload,
+            },
         )
         .returning(text("(xmax = 0) AS inserted"))
     )
     inserted = bool(session.execute(stmt).scalar_one())
-    # The upsert is a Core statement, so the ORM identity map still holds the
-    # pre-write row. Drop it so the caller's next read sees the new timestamps.
     session.expire_all()
     return inserted
 

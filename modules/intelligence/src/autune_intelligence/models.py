@@ -50,6 +50,9 @@ class IntelCompletion(Base, TimestampMixin):
     context_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     aggregated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    extraction_payload: Mapped[dict | None] = mapped_column(JSONB)
+    gap_payload: Mapped[dict | None] = mapped_column(JSONB)
+    context_payload: Mapped[dict | None] = mapped_column(JSONB)
 
 
 class IntelScore(Base, TimestampMixin):

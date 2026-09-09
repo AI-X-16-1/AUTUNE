@@ -28,27 +28,27 @@ log = get_logger(__name__)
 def on_extraction_completed(payload: dict) -> None:
     result = ExtractionResult.model_validate(payload)
     validate_major_version(result)
-    _record(result.meeting_id, "extraction")
+    _record(result.meeting_id, "extraction", payload)
 
 
 @shared_task(name="autune.intelligence.on_gap_completed", acks_late=True)
 def on_gap_completed(payload: dict) -> None:
     report = GapReport.model_validate(payload)
     validate_major_version(report)
-    _record(report.meeting_id, "gap")
+    _record(report.meeting_id, "gap", payload)
 
 
 @shared_task(name="autune.intelligence.on_context_completed", acks_late=True)
 def on_context_completed(payload: dict) -> None:
     links = ContextLinks.model_validate(payload)
     validate_major_version(links)
-    _record(links.meeting_id, "context")
+    _record(links.meeting_id, "context", payload)
 
 
-def _record(meeting_id: str, source: str) -> None:
+def _record(meeting_id: str, source: str, payload: dict) -> None:
     """Record one source's completion and enqueue ``aggregate`` when it is due."""
     with session_scope() as session:
-        first = service.record_completion(session, meeting_id, source)
+        first = service.record_completion(session, meeting_id, source, payload)
         row = session.get(IntelCompletion, meeting_id)
         if row is None:  # record_completion just upserted it; a miss means a torn write
             raise RuntimeError(f"intel_completion row missing right after upsert: {meeting_id}")
