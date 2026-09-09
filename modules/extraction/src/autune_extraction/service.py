@@ -8,16 +8,26 @@ Never imports another module.
 
 from __future__ import annotations
 
-from sqlalchemy import func, select
+from collections.abc import Sequence
+
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from autune_contracts.enums import ActionStatus
+from autune_contracts.extraction import Decision
 from autune_core import get_logger
 from autune_integrations import SlackApi, assert_personal_delivery, check_outbound
 
 from .confirmations import ConfirmationResponse, build_confirmation_dm
+from .decisions import DEFAULT_MAX_GAP, ClassifiedUtterance, group_decisions
 from .edit_cost import EditCost
-from .models import ExtActionItem, ExtActionItemSource, ExtEditEvent
+from .models import (
+    ExtActionItem,
+    ExtActionItemSource,
+    ExtDecision,
+    ExtDecisionSource,
+    ExtEditEvent,
+)
 from .schemas import ActionItemCreate, ActionItemUpdate
 
 log = get_logger(__name__)
@@ -190,3 +200,80 @@ def edit_cost_for_meeting(session: Session, meeting_id: str) -> EditCost:
         added_items=added,
         edits=len(edits),
     )
+
+
+# --- decisions ---------------------------------------------------------------
+
+
+def build_decisions(
+    session: Session,
+    *,
+    meeting_id: str,
+    utterances: Sequence[ClassifiedUtterance],
+    max_gap: int = DEFAULT_MAX_GAP,
+) -> list[ExtDecision]:
+    """Rebuild this meeting's decisions from its classified utterances.
+
+    ``utterances`` is every utterance of the meeting in ``start_sec`` order; see
+    ``group_decisions`` for why the non-decision ones have to be there.
+
+    **Rebuilding replaces.** The meeting's existing decisions are deleted and the
+    new ones get fresh ``dec_`` ids, so a caller that rebuilds must republish
+    ``ExtractionResult`` — D's lineage points at ids that no longer exist
+    otherwise. That is why this is a rebuild rather than a merge: matching an old
+    decision to a new one is the same-decision question, and #25 gave that to D.
+
+    The delete is a real delete. These rows are derived from utterances that are
+    still there, so nothing is lost that cannot be recomputed, and privacy.md
+    leaves no room for a soft one.
+    """
+    session.execute(delete(ExtDecision).where(ExtDecision.meeting_id == meeting_id))
+
+    decisions = [
+        ExtDecision(
+            meeting_id=meeting_id,
+            statement=group.statement,
+            confidence=group.confidence,
+            sources=[
+                ExtDecisionSource(utterance_id=utterance_id, position=position)
+                for position, utterance_id in enumerate(group.source_utterance_ids)
+            ],
+        )
+        for group in group_decisions(utterances, max_gap=max_gap)
+    ]
+    session.add_all(decisions)
+    session.flush()
+
+    # Ids only. A statement is meeting content and a log line is a store.
+    log.info("extraction_decisions_built", meeting_id=meeting_id, count=len(decisions))
+    return decisions
+
+
+def decisions_for_meeting(session: Session, meeting_id: str) -> list[Decision]:
+    """This meeting's decisions as the contract D reads.
+
+    ``Decision`` is imported from ``autune_contracts.extraction`` rather than the
+    package root: the root lists it in ``__all__`` but never imports it, so
+    ``from autune_contracts import Decision`` raises (#98). Fixing that is a
+    ``packages/`` change, which module B does not own.
+
+    Sources come back in meeting order because the order carries the argument --
+    the proposal first, the sentence that settles it last.
+    """
+    rows = session.scalars(
+        select(ExtDecision)
+        .where(ExtDecision.meeting_id == meeting_id)
+        .order_by(ExtDecision.created_at, ExtDecision.id)
+    ).all()
+
+    return [
+        Decision(
+            id=row.id,
+            statement=row.statement,
+            source_utterance_ids=[
+                source.utterance_id for source in sorted(row.sources, key=lambda s: s.position)
+            ],
+            confidence=row.confidence,
+        )
+        for row in rows
+    ]
