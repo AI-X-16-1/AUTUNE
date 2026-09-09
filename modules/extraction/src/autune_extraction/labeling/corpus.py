@@ -28,6 +28,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from collections import Counter, defaultdict
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -330,26 +331,25 @@ def split_by_meeting(
     distribution, and a validation score from that says nothing about the
     training one.
 
-    See ``_place_stratum`` for how a stratum is divided, and for the two ways of
-    doing it that looked right and were not.
+    See ``_place_stratum`` for how a stratum is divided, and for the three ways
+    of doing it that looked right and were not.
     """
     if not 0.999 <= sum(ratios) <= 1.001:
         raise ValueError(f"ratios must sum to 1, got {sum(ratios)}")
 
-    sizes: dict[str, int] = {}
-    decision_meetings: set[str] = set()
+    profiles: dict[str, Counter[str]] = defaultdict(Counter)
     for example in examples:
-        sizes[example.meeting] = sizes.get(example.meeting, 0) + 1
-        if example.kind == "decision":
-            decision_meetings.add(example.meeting)
+        profiles[example.meeting][example.kind] += 1
+        profiles[example.meeting]["*"] += 1
 
+    decision_meetings = {m for m, counts in profiles.items() if counts["decision"]}
     # A meeting with any decision belongs to the annotated stratum, even though
     # most of its utterances are something else.
-    strata = (decision_meetings, set(sizes) - decision_meetings)
+    strata = (decision_meetings, set(profiles) - decision_meetings)
 
     placement: dict[str, str] = {}
     for meetings in strata:
-        placement.update(_place_stratum(meetings, sizes, ratios))
+        placement.update(_place_stratum(meetings, profiles, ratios))
 
     out: dict[str, list[Example]] = {name: [] for name in SPLITS}
     for example in examples:
@@ -358,39 +358,71 @@ def split_by_meeting(
 
 
 def _place_stratum(
-    meetings: set[str], sizes: dict[str, int], ratios: tuple[float, float, float]
+    meetings: set[str], profiles: dict[str, Counter[str]], ratios: tuple[float, float, float]
 ) -> dict[str, str]:
-    """Assign one stratum's meetings, filling by utterance count.
+    """Assign one stratum's meetings, balancing every class at once.
 
-    Two earlier attempts are worth knowing about, because each looked right.
+    Three earlier attempts are worth knowing about, because each looked right.
 
     Comparing every meeting's hash against 0.8 does not stratify at all: a
     meeting's hash is the same number whichever group it is considered in, so
     grouping changes no assignment. It produced exactly the split it was meant to
-    fix — 47.5% decisions in train against 6.5% in validation.
+    fix.
 
     Ranking within the stratum and cutting at 80% *of the meetings* fixes the
-    class shares but not the sizes, because meetings differ in length: a tenth of
+    class shares and not the sizes, because meetings differ in length: a tenth of
     the meetings was an eighth of the utterances.
 
-    So each meeting goes to whichever split is furthest below its target
-    utterance count. Meetings are considered in hash order, which is stable
-    across machines and runs; the greedy choice then depends on what came before
-    it, so adding meetings to a corpus reshuffles the ones after. That is
-    acceptable for a fixed corpus download and would not be for the team's own
-    meetings, which arrive one at a time — an evaluation set built that way needs
-    a placement it can store rather than recompute.
+    Filling by total count fixes the sizes and not the classes. Decisions are not
+    spread evenly over the meetings that have any — once the filler was removed
+    from that class, the same split held 29.9% decisions in train against 40.8%
+    in test.
+
+    So each meeting goes wherever it leaves the worst-served class best served:
+    the score is the largest shortfall any class would still have, and the
+    meeting goes to the split that minimises it. Meetings are considered in hash
+    order, stable across machines and runs; the greedy choice then depends on
+    what came before, so adding meetings to a corpus reshuffles the ones after.
+    Acceptable for a fixed corpus download, and not for the team's own meetings,
+    which arrive one at a time — an evaluation set built that way needs a
+    placement it can store rather than recompute.
     """
     ordered = sorted(meetings, key=_bucket)
-    total = sum(sizes[meeting] for meeting in ordered)
-    targets = dict(zip(SPLITS, (total * ratio for ratio in ratios), strict=True))
-    filled = dict.fromkeys(SPLITS, 0)
+    totals: Counter[str] = Counter()
+    for meeting in ordered:
+        totals.update(profiles[meeting])
+
+    targets = {
+        name: {kind: count * ratio for kind, count in totals.items()}
+        for name, ratio in zip(SPLITS, ratios, strict=True)
+    }
+    filled: dict[str, Counter[str]] = {name: Counter() for name in SPLITS}
+
+    def shortfall(name: str, extra: Counter[str] | None = None) -> float:
+        """How badly served this split's neediest class is, as a share of target.
+
+        Goes negative once a class is over-filled, so a split that has had enough
+        stops competing rather than merely competing less.
+        """
+        have = filled[name] + (extra or Counter())
+        return max(
+            (target - have[kind]) / target for kind, target in targets[name].items() if target > 0
+        )
 
     placement: dict[str, str] = {}
     for meeting in ordered:
-        split = max(SPLITS, key=lambda name: targets[name] - filled[name])
+        # The split whose neediest class is furthest from its target. Shortfall is
+        # a *share* of the target, so train's eightfold larger quota does not let
+        # it win every round — one meeting closes eight times less of its gap.
+        #
+        # Two objectives that read better and do not work: placing the meeting
+        # where the receiving split ends up best served picks whichever split is
+        # nearest done, which is the smallest one; and minimising the worst
+        # shortfall across all splits is flat, because the maximum sits on a split
+        # this meeting is not going to. Both put all 139 meetings in ``test``.
+        split = max(SPLITS, key=lambda name: (shortfall(name), SPLITS.index(name)))
         placement[meeting] = split
-        filled[split] += sizes[meeting]
+        filled[split].update(profiles[meeting])
     return placement
 
 

@@ -71,9 +71,36 @@ def _report(splits: dict[str, list]) -> None:
 
         by_kind = Counter(row.kind for row in rows)
         for kind, count in by_kind.most_common():
-            print(f"      {kind:<14} {count:>6}", file=sys.stderr)
+            print(
+                f"      {kind:<14} {count:>6}  {count / max(len(rows), 1):>6.1%}", file=sys.stderr
+            )
         if not by_kind:
             print("      (empty)", file=sys.stderr)
+
+    _warn_on_drift(splits)
+
+
+def _warn_on_drift(splits: dict[str, list], *, limit: float = 0.1) -> None:
+    """Say so when a class is a different share of one split than of another.
+
+    The splits are balanced by meeting, and a meeting is not divisible: with
+    seventeen of them in a held-out split there is a floor on how even this can
+    get. Printing the gap is what keeps it from being discovered as a surprising
+    validation score months later.
+    """
+    kinds = {row.kind for rows in splits.values() for row in rows}
+    for kind in sorted(kinds):
+        shares = {
+            name: sum(1 for row in rows if row.kind == kind) / max(len(rows), 1)
+            for name, rows in splits.items()
+        }
+        spread = max(shares.values()) - min(shares.values())
+        if spread > limit:
+            detail = "  ".join(f"{name} {share:.1%}" for name, share in shares.items())
+            print(
+                f"  note: {kind} differs by {spread:.1%} between splits ({detail})",
+                file=sys.stderr,
+            )
 
 
 if __name__ == "__main__":

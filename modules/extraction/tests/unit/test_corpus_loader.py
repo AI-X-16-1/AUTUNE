@@ -262,3 +262,41 @@ def test_the_written_rows_are_valid_json_lines(tmp_path: Path) -> None:
 
     rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
     assert rows == [{"utterance_id": "d1", "kind": "commitment", "text": "I will do it"}]
+
+
+def test_a_class_concentrated_in_a_few_meetings_is_spread_across_splits() -> None:
+    """Filling by total count alone balances sizes and not classes.
+
+    Decisions are not spread evenly over the meetings that have any. Once the
+    filler was removed from that class, a total-count fill left 29.9% decisions
+    in train against 40.8% in test — so each meeting now goes to whichever split
+    has the largest shortfall in its neediest class.
+    """
+    meetings = {f"ES{n:04d}": 30 for n in range(60)}
+    # A tenth of the meetings carry nearly all of the decisions.
+    dense = {f"ES{n:04d}" for n in range(0, 60, 10)}
+    examples = [
+        example(meeting, "decision" if meeting in dense and i < 25 else "commitment", i)
+        for meeting, count in meetings.items()
+        for i in range(count)
+    ]
+
+    splits = split_by_meeting(examples)
+
+    shares = [
+        sum(1 for row in splits[name] if row.kind == "decision") / len(splits[name])
+        for name in SPLITS
+    ]
+    assert max(shares) - min(shares) < 0.25, f"decision share spread too wide: {shares}"
+
+
+def test_a_split_is_never_left_empty() -> None:
+    """The first two greedy objectives put all 139 meetings in one split.
+
+    Scoring the receiving split alone picks whichever is nearest done — the
+    smallest — and minimising the worst across all splits is flat, because the
+    maximum sits on a split the meeting is not going to.
+    """
+    splits = split_by_meeting(corpus({f"ES{n:04d}": 20 for n in range(40)}))
+
+    assert all(splits[name] for name in SPLITS)

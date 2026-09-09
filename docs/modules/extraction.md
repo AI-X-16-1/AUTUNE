@@ -248,13 +248,19 @@ uv run --package autune-extraction python -m autune_extraction.labeling     --co
 It writes `train.jsonl`, `validation.jsonl` and `test.jsonl` in the same format
 the evaluation harness reads, and prints the per-class counts of each split.
 
-**The split is by meeting, never by utterance**, and stratified on whether the
-meeting carries a decision layer. Two utterances from one meeting share a topic,
-four speakers and a vocabulary, so splitting at the utterance level scores the
-model on conversations it has already read. Stratifying matters because AMI
-annotates decisions in 47 of its 139 meetings and those meetings supply almost
-every `decision` label: without it, the first run put 47.5% decisions in train
-against 6.5% in validation.
+**The split is by meeting, never by utterance.** Two utterances from one meeting
+share a topic, four speakers and a vocabulary, so splitting at the utterance
+level scores the model on conversations it has already read.
+
+Meetings are stratified on whether they carry a decision layer — AMI annotates
+decisions in 47 of its 139, and those meetings supply almost every `decision`
+label — and then each goes to whichever split has the largest shortfall in its
+neediest class. Balancing on total count alone leaves the classes uneven,
+because decisions are not spread evenly even among the meetings that have them.
+
+A meeting is not divisible, so with seventeen of them in a held-out split there
+is a floor on how even this gets. The summary prints the remaining gap rather
+than leaving it to be discovered as a surprising validation score.
 
 A file it writes is training data, not an evaluation set. The evaluation set is
 drawn from the team's own meetings and is what ADR 0006 measures against; the
