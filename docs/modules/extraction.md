@@ -97,6 +97,8 @@ other module's tables.
 | GET | `/results/{meeting_id}` | Classifications and action items |
 | GET | `/action-items` | Filter by assignee, status, due date |
 | PATCH | `/action-items/{id}` | Edit or close an item |
+| POST | `/action-items` | Add an item the model missed |
+| DELETE | `/action-items/{id}` | Soft-delete an item the model got wrong |
 | POST | `/results/{meeting_id}/sync` | Re-sync to Notion and Jira |
 
 ## Celery tasks
@@ -164,9 +166,29 @@ Korean set is broadcast discussion. A model tuned on them has not been shown to
 reach the F1 target on real meetings; an evaluation set drawn from the team's own
 meetings is what would measure that gap.
 
+## User correction
+
+Everything the pipeline produces is a draft. ADR 0006 sets the rule: an item can
+be edited, deleted, or added by hand, every item carries the utterances it came
+from, and items below the confidence threshold appear as candidates rather than
+being dropped. Recall is ranked above precision for that reason — a wrong item
+costs a click, a missing one costs re-reading the meeting.
+
+Corrections stay in the meeting. They update `ext_action_items` and increment the
+edit-cost counters; they are never exported as training labels (ADR 0003), and
+edit cost is aggregated per meeting, never per person.
+
 ## Metric
 
-Action item extraction F1 — 0.80+ at six weeks, 0.88+ at three months.
+The classifier's five-way macro F1 is what we train against and what the harness
+scores. Action item F1 is derived from it and reported beside the best published
+figure for the task, per ADR 0006.
+
+| Metric | Six weeks | Three months |
+| --- | --- | --- |
+| Action item F1 | 0.43 — matching the best published AMI result | above it |
+| Classifier macro F1, five-way | set in week 2 from the AMI dialogue-act literature, once the evaluation set exists | above it |
+| Items the user accepts with no edit | the first measurement is the baseline | improve on it |
 
 ```bash
 uv run --package autune-extraction python -m autune_extraction.eval
