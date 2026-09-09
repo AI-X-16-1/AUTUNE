@@ -12,10 +12,12 @@ serve a health check, and would make this module's unit tests need one.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from typing import TYPE_CHECKING, Any
 
 from autune_contracts.enums import UtteranceKind
 from autune_core import get_logger
+from autune_integrations.privacy import MAX_OUTBOUND_CHARS
 
 from .base import Prediction
 
@@ -99,6 +101,34 @@ class LocalDeberta:
         return predictions
 
 
+def _batches_within_budget(texts: list[str], budget: int) -> Iterator[list[str]]:
+    """Split so no one request carries more than the outbound guard allows.
+
+    ``check_outbound`` sums every string in the body, so the budget is exactly
+    the total characters of a batch — ``strings_in`` collects values and not
+    keys, which is why this can count rather than guess at a margin.
+
+    A single utterance over the whole budget is refused instead of truncated.
+    Truncating would classify something the meeting did not say, and the label
+    would then look like a model error rather than a transport one.
+    """
+    batch: list[str] = []
+    size = 0
+    for text in texts:
+        if len(text) > budget:
+            raise ValueError(
+                f"one utterance is {len(text)} characters, over the {budget}-character "
+                "outbound limit; it cannot be sent to the inference server"
+            )
+        if batch and size + len(text) > budget:
+            yield batch
+            batch, size = [], 0
+        batch.append(text)
+        size += len(text)
+    if batch:
+        yield batch
+
+
 class HostedDeberta:
     """The same model on our own inference server.
 
@@ -107,6 +137,15 @@ class HostedDeberta:
     ours and utterances are masked before they are ever stored, but "it is our
     server" is the reasoning that leaves a guard unrun, and the guard costs one
     call.
+
+    **Requests are split to fit that guard.** ``MAX_OUTBOUND_CHARS`` caps an
+    outbound body at 4,000 characters and its error says "send what the feature
+    needs, not the whole meeting" — but the whole meeting is exactly what this
+    feature needs, since it classifies every utterance. Sending one request per
+    meeting raised ``PrivacyViolationError`` at 109 utterances of ordinary
+    length, which is a couple of minutes of talk. The cap is right and the batch
+    was wrong: it is aimed at the integrations that carry meeting content
+    outward, and the fix is to fit it rather than to widen it for our own host.
     """
 
     def __init__(self, endpoint: str, model_version: str) -> None:
@@ -123,11 +162,15 @@ class HostedDeberta:
     def classify(self, texts: list[str]) -> list[Prediction]:
         if not texts:
             return []
-        body = self._client.request("POST", "/classify", json={"texts": texts})
-        rows = body.get("scores", [])
-        if len(rows) != len(texts):
-            raise ValueError(f"asked for {len(texts)} predictions, got {len(rows)}")
-        return [_to_prediction(row) for row in rows]
+
+        predictions: list[Prediction] = []
+        for batch in _batches_within_budget(texts, MAX_OUTBOUND_CHARS):
+            body = self._client.request("POST", "/classify", json={"texts": batch})
+            rows = body.get("scores", [])
+            if len(rows) != len(batch):
+                raise ValueError(f"asked for {len(batch)} predictions, got {len(rows)}")
+            predictions.extend(_to_prediction(row) for row in rows)
+        return predictions
 
 
 class FakeClassifier:

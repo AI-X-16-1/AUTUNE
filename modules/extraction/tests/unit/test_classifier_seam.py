@@ -10,8 +10,13 @@ import pytest
 
 from autune_contracts.enums import UtteranceKind
 from autune_extraction.pipeline import FakeClassifier, Prediction
-from autune_extraction.pipeline.classifier import LABELS, _to_prediction
+from autune_extraction.pipeline.classifier import (
+    LABELS,
+    _batches_within_budget,
+    _to_prediction,
+)
 from autune_extraction.pipeline.registry import _CLASSIFIERS
+from autune_integrations.privacy import MAX_OUTBOUND_CHARS, check_outbound
 
 K = UtteranceKind
 
@@ -127,3 +132,61 @@ def test_the_fake_names_itself() -> None:
     """model_version is recorded with every row; a score that cannot be
     attributed to a version cannot be compared against the next one."""
     assert FakeClassifier().model_version == "fake"
+
+
+# --- the hosted classifier fits the outbound guard ---------------------------
+
+
+def utterances(count: int, length: int = 37) -> list[str]:
+    """A meeting's worth of ordinary masked utterances."""
+    return ["a" * length] * count
+
+
+def test_a_meetings_worth_of_utterances_passes_the_outbound_guard() -> None:
+    """The guard caps a request at 4,000 characters and a meeting is far over it.
+
+    ``check_outbound`` sums every string in the body, and its message says "send
+    what the feature needs, not the whole meeting". But the whole meeting is what
+    this feature needs — it classifies every utterance — so the request has to be
+    split rather than the cap widened.
+
+    Sent as one request this raised ``PrivacyViolationError`` at 109 utterances,
+    which is a couple of minutes of talk.
+    """
+    for batch in _batches_within_budget(utterances(3000), MAX_OUTBOUND_CHARS):
+        check_outbound({"texts": batch}, destination="extraction-classifier")
+
+
+def test_no_batch_exceeds_the_cap() -> None:
+    batches = list(_batches_within_budget(utterances(3000), MAX_OUTBOUND_CHARS))
+
+    assert len(batches) > 1, "a meeting has to be split"
+    assert all(sum(len(t) for t in b) <= MAX_OUTBOUND_CHARS for b in batches)
+
+
+def test_every_utterance_is_sent_exactly_once_and_in_order() -> None:
+    """Order is the contract: callers zip predictions against their own ids."""
+    texts = [f"{i:04d}" + "a" * 33 for i in range(500)]
+
+    rejoined = [t for batch in _batches_within_budget(texts, MAX_OUTBOUND_CHARS) for t in batch]
+
+    assert rejoined == texts
+
+
+def test_the_budget_is_read_from_the_guard_not_copied() -> None:
+    """A local 4000 would drift the day the shared cap changes."""
+    small = list(_batches_within_budget(utterances(10), budget=100))
+
+    assert all(sum(len(t) for t in b) <= 100 for b in small)
+    assert len(small) == 5  # 37 + 37 = 74 fits, 111 does not, so two per request
+
+
+def test_an_utterance_larger_than_the_whole_budget_is_refused() -> None:
+    """Not truncated. A shortened utterance would be classified as something the
+    meeting did not say, and the label would read as a model error."""
+    with pytest.raises(ValueError, match="over the .* outbound limit"):
+        list(_batches_within_budget(["x" * (MAX_OUTBOUND_CHARS + 1)], MAX_OUTBOUND_CHARS))
+
+
+def test_an_empty_meeting_produces_no_requests() -> None:
+    assert list(_batches_within_budget([], MAX_OUTBOUND_CHARS)) == []
