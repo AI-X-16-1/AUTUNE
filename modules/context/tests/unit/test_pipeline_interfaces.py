@@ -1,0 +1,90 @@
+"""The four models sit behind interfaces, chosen by config, with a dimension guard."""
+
+from __future__ import annotations
+
+import pytest
+
+from autune_context.config import get_settings
+from autune_context.constants import EMBEDDING_DIM
+from autune_context.pipeline import (
+    Embedder,
+    LlmClient,
+    NliModel,
+    Reranker,
+    registry,
+    reset_cache,
+)
+from autune_context.pipeline.embedding import FakeEmbedder
+from autune_context.pipeline.llm import FakeLlm
+from autune_context.pipeline.nli import FakeNli
+from autune_context.pipeline.reranking import FakeReranker
+
+
+@pytest.fixture(autouse=True)
+def _clean_caches():
+    get_settings.cache_clear()
+    reset_cache()
+    yield
+    get_settings.cache_clear()
+    reset_cache()
+
+
+@pytest.mark.parametrize(
+    ("impl", "protocol"),
+    [
+        (FakeEmbedder, Embedder),
+        (FakeReranker, Reranker),
+        (FakeNli, NliModel),
+        (FakeLlm, LlmClient),
+    ],
+)
+def test_fake_implementation_satisfies_its_protocol(impl, protocol):
+    assert isinstance(impl(), protocol)
+
+
+def test_registry_selects_the_configured_implementation(monkeypatch):
+    for knob in ("EMBEDDER", "RERANKER", "NLI", "LLM"):
+        monkeypatch.setenv(f"AUTUNE_CONTEXT_{knob}_IMPL", "fake")
+    get_settings.cache_clear()
+
+    assert registry.get_embedder().model_version == "fake-embedder-v1"
+    assert registry.get_reranker().model_version == "fake-reranker-v1"
+    assert registry.get_nli().model_version == "fake-nli-v1"
+    assert registry.get_llm().model_version == "fake-llm-v1"
+
+
+def test_unknown_implementation_string_is_rejected(monkeypatch):
+    monkeypatch.setenv("AUTUNE_CONTEXT_EMBEDDER_IMPL", "does_not_exist")
+    get_settings.cache_clear()
+    with pytest.raises(ValueError, match="EMBEDDER_IMPL"):
+        registry.get_embedder()
+
+
+def test_dimension_guard_rejects_a_mismatched_embedder(monkeypatch):
+    class WrongDimEmbedder:
+        def __init__(self, _settings):
+            pass
+
+        dim = EMBEDDING_DIM + 1
+        model_version = "wrong-dim"
+
+        def embed(self, texts):
+            return []
+
+    monkeypatch.setitem(registry._EMBEDDERS, "wrong_dim", WrongDimEmbedder)
+    monkeypatch.setenv("AUTUNE_CONTEXT_EMBEDDER_IMPL", "wrong_dim")
+    get_settings.cache_clear()
+    with pytest.raises(RuntimeError, match="new migration"):
+        registry.get_embedder()
+
+
+def test_fake_embedder_is_deterministic_and_correctly_sized():
+    a = FakeEmbedder().embed(["같은 문장"])
+    b = FakeEmbedder().embed(["같은 문장"])
+    assert a == b
+    assert len(a[0]) == EMBEDDING_DIM
+
+
+def test_fake_nli_flags_a_negation_as_contradiction():
+    (result,) = FakeNli().classify([("정렬은 인기순으로 진행", "정렬은 인기순으로 안 함")])
+    assert result.label == "contradiction"

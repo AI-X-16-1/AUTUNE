@@ -91,7 +91,17 @@ prefix `AUTUNE_<MODULE>_`.
 | `AUTUNE_AUDIO_DEVICE` | A | `cuda` or `cpu` |
 | `AUTUNE_AUDIO_TEMP_DIR` | A | Where the recording lives during processing, and only then |
 | `AUTUNE_GAP_RISK_THRESHOLD` | C | Default `0.7` |
-| `AUTUNE_CONTEXT_RERANK_TOP_K` | D | Default `10` |
+| `AUTUNE_CONTEXT_EMBEDDER_IMPL` | D | `kure_v1_http` (default), `kure_v1_local`, `fake` |
+| `AUTUNE_CONTEXT_RERANKER_IMPL` | D | `bge_reranker_v2_m3_ko_http` (default), `..._local`, `fake` |
+| `AUTUNE_CONTEXT_NLI_IMPL` | D | `klue_kornli_http` (default), `klue_kornli_local`, `fake` |
+| `AUTUNE_CONTEXT_LLM_IMPL` | D | `external` (default), `self_hosted_http`, `fake` |
+| `AUTUNE_CONTEXT_EMBEDDER_ENDPOINT` | D | Self-hosted KURE-v1 inference server |
+| `AUTUNE_CONTEXT_RERANKER_ENDPOINT` | D | Self-hosted reranker inference server |
+| `AUTUNE_CONTEXT_NLI_ENDPOINT` | D | Self-hosted NLI inference server |
+| `AUTUNE_CONTEXT_RETRIEVE_TOP_K` | D | Hybrid retrieval breadth. Default `50` |
+| `AUTUNE_CONTEXT_RERANK_TOP_K` | D | Kept after re-ranking. Default `10` |
+| `AUTUNE_CONTEXT_LINK_CONFIDENCE_THRESHOLD` | D | Assert vs. ask. Default `0.6`, tuned in eval |
+| `AUTUNE_CONTEXT_PUBLISH_TIMEOUT_S` | D | Wait for B before publishing. Default `600` |
 
 Every new variable goes into `.env.example` with a comment and into this table.
 A variable that exists only in someone's local `.env` will break the next
