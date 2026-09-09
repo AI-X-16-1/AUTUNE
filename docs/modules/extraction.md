@@ -173,6 +173,32 @@ and it outnumbers `Offer` six to one, so folding it in buys noise. Polarity is n
 in the dialogue-act inventory at all; `Assess` is the largest task act and carries
 no sign, which is why `concern` is keyed on the adjacency pairs instead.
 
+The table above lives in code as `autune_extraction.labeling.ami`, along with the
+acts it deliberately leaves out and the reason for each. Three things read it —
+the corpus loader, the LLM labelling prompt, and the hand-correction pass — and
+three paraphrases of a table drift apart.
+
+An utterance can carry evidence from several layers at once: an `Offer` inside a
+UNC adjacency pair is both a commitment and an ambiguity. `PRECEDENCE` settles
+those, highest first:
+
+```
+decision  >  concern  >  ambiguous  >  commitment  >  open_question
+```
+
+**This ordering is a judgement, not something the corpus documentation states.**
+A decision span is the most specific human annotation in AMI and the field module
+D keys a lineage on. Polarity outranks the act because the act inventory carries
+no sign, so the pair is the better-informed layer — an `Offer` inside a UNC pair
+is "한번 볼게요", the shape of a commitment without the substance, and calling it a
+commitment is the error the confirmation DM exists to undo. An uncertain
+objection is an objection: asking whether someone meant to commit, when they were
+disagreeing, is worse than staying silent.
+
+Each label records which layer produced it and which kinds it overruled, so the
+first pass over the corpus reports how often the ordering decides anything rather
+than leaving it an unexamined constant.
+
 Corpora are downloaded per machine and never committed (`dataset/` is gitignored).
 AMI is CC BY 4.0 and requires attribution wherever results are published. Analysis
 scripts live in `modules/extraction/scripts/`.
