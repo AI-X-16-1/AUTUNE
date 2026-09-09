@@ -10,13 +10,16 @@ attendees, which are other people's data.
 from __future__ import annotations
 
 from .base import HttpClient
-from .privacy import check_outbound
 
 DESTINATION = "google_calendar"
 
 
 class CalendarClient(HttpClient):
     service = "google_calendar"
+
+    addressing = frozenset({"attendees", "email", "calendar_id"})
+    """An attendee's address is supplied by the feature, not extracted from a
+    meeting. Checking it would refuse every invitation."""
 
     def __init__(self, access_token: str) -> None:
         super().__init__(
@@ -27,7 +30,6 @@ class CalendarClient(HttpClient):
     def create_event(
         self, calendar_id: str, summary: str, start_iso: str, end_iso: str, attendees: list[str]
     ) -> str:
-        check_outbound(summary, destination=DESTINATION)
         body = {
             "summary": summary,
             "start": {"dateTime": start_iso},

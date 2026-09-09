@@ -41,6 +41,14 @@ class AudioSettings(BaseSettings):
     a usable message instead. See docs/engineering/environments.md.
     """
 
+    beam_size: int = 5
+    """Whisper beam width. Higher is slower and marginally better; 5 is the
+    faster-whisper default and what the processing-time target assumes."""
+
+    model_cache: str = ""
+    """Where model weights are downloaded. Empty uses the library default.
+    Weights are never committed — see docs/engineering/environments.md."""
+
     diarization_model: str = "pyannote/speaker-diarization-3.1"
     """Pinned explicitly. Never load a floating "latest"."""
 

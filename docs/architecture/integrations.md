@@ -24,6 +24,18 @@ This is the last code that runs before data leaves. Every client calls
 An exception from these names the categories found, never the values: an
 exception message reaches error tracking, which is itself a third party.
 
+**The guard runs in `HttpClient.request`, not in each method.** Every client
+method builds a body and hands it to the transport, which checks every string in
+it before the request leaves. A per-method call would be a step someone forgets
+when they add the next endpoint, and forgetting it is silent — which is how the
+hole below happened in the first place.
+
+A client may declare `addressing`: keys whose values say *where* a request goes
+rather than *what it carries*. `CalendarClient` declares `attendees`, because an
+invitee's address is supplied by the feature, not extracted from a meeting, and
+checking it would refuse every invitation. Declaring nothing checks everything,
+so forgetting to declare fails closed.
+
 **Pass the structured payload, not just the text.** A rich message carries its
 content in a nested structure and leaves a bland summary at the top: a Slack
 Block Kit `text` field is the notification preview, and the message is in

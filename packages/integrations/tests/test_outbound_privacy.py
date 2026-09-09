@@ -16,6 +16,7 @@ from autune_integrations.privacy import (
     assert_masked,
     assert_personal_delivery,
     check_outbound,
+    strings_in,
 )
 
 UNMASKED = [
@@ -151,3 +152,51 @@ def test_size_is_measured_over_the_whole_payload() -> None:
             "회의 요약",
             blocks=[{"text": "가" * 500} for _ in range(20)],
         )
+
+
+# The guard runs in HttpClient.request, so a client cannot skip it by forgetting
+# an argument. Addressing keys are the one declared exception.
+
+
+def test_an_address_the_feature_supplies_is_not_meeting_content() -> None:
+    """A calendar attendee's email is where the invitation goes, not what it says.
+
+    Checking it would refuse every invitation, so the client declares the key.
+    """
+    body = {
+        "summary": "검색 개인화 후속",
+        "attendees": [{"email": "hong@example.com"}, {"email": "kim@example.com"}],
+    }
+    check_outbound(body, destination="google_calendar", addressing=frozenset({"attendees"}))
+
+
+def test_declaring_nothing_checks_everything() -> None:
+    """Forgetting to declare an addressing key fails closed, not open."""
+    body = {"attendees": [{"email": "hong@example.com"}]}
+    with pytest.raises(PrivacyViolationError):
+        check_outbound(body, destination="google_calendar")
+
+
+def test_an_exemption_covers_only_the_key_it_names() -> None:
+    """Exempting attendees must not exempt a phone number in the summary."""
+    body = {
+        "summary": "연락처 010-1234-5678",
+        "attendees": [{"email": "hong@example.com"}],
+    }
+    with pytest.raises(PrivacyViolationError):
+        check_outbound(body, destination="google_calendar", addressing=frozenset({"attendees"}))
+
+
+def test_strings_in_skips_the_named_key_at_any_depth() -> None:
+    assert strings_in(
+        {"a": {"b": "keep"}, "skip": {"c": "drop"}}, addressing=frozenset({"skip"})
+    ) == ["keep"]
+
+
+def test_every_client_runs_the_guard_through_the_transport() -> None:
+    """The check lives in HttpClient.request, so no client method can omit it."""
+    import inspect
+
+    from autune_integrations.base import HttpClient
+
+    assert "check_outbound" in inspect.getsource(HttpClient.request)

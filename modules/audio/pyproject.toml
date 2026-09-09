@@ -17,6 +17,11 @@ dependencies = [
     "torch>=2.5",
     "torchaudio>=2.5",
     "soundfile>=0.12",
+    # CTranslate2 inference. The metric is 1.5x realtime and openai-whisper does
+    # not reach it on CPU; word timestamps matter because speaker alignment (#6)
+    # splits segments where two people overlap.
+    "faster-whisper>=1.1",
+    "python-multipart>=0.0.20",  # file uploads on the dev endpoint
 ]
 
 [build-system]

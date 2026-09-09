@@ -12,7 +12,6 @@ from __future__ import annotations
 from typing import Any
 
 from .base import HttpClient
-from .privacy import check_outbound
 
 DESTINATION = "notion"
 API_VERSION = "2022-06-28"
@@ -32,6 +31,5 @@ class NotionClient(HttpClient):
         )
 
     def create_page(self, database_id: str, properties: dict[str, Any]) -> str:
-        check_outbound("", destination=DESTINATION, payload=properties)
         body = {"parent": {"database_id": database_id}, "properties": properties}
         return str(self.request("POST", "/pages", json=body).get("id", ""))

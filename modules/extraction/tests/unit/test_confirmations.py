@@ -183,25 +183,23 @@ def test_unmasked_text_is_refused_before_it_reaches_slack() -> None:
     assert fake.sent == []
 
 
-def test_the_clients_own_guard_does_not_see_blocks() -> None:
-    """Pins the gap the test above works around, so closing it is visible here.
+def test_the_clients_own_guard_now_sees_blocks() -> None:
+    """``packages/integrations`` inspects blocks, so this module's own check is
+    redundant — kept as the record that the gap is closed.
 
-    ``FakeSlack.send_dm`` runs the same guard as the real client. Handing it an
-    unmasked quotation inside blocks sends cleanly; the fallback text is all that
-    is read. When ``packages/integrations`` starts inspecting blocks this test
-    fails, which is the moment module B's own check becomes redundant.
+    It used to pin the opposite: the guard read only the fallback text, so an
+    unmasked quotation inside blocks sent cleanly. Closing that in
+    ``check_outbound`` is what flipped this test.
     """
     fake = FakeSlack()
     _, blocks = build_confirmation_dm(
         utterance_id=UTTERANCE, quoted_text="제 번호는 010-1234-5678 입니다"
     )
 
-    fake.send_dm("U_SPEAKER", "확인이 필요합니다.", blocks)
+    with pytest.raises(PrivacyViolationError):
+        fake.send_dm("U_SPEAKER", "확인이 필요합니다.", blocks)
 
-    assert len(fake.sent) == 1
-
-
-# --- registration -----------------------------------------------------------
+    assert fake.sent == []
 
 
 def test_every_button_has_a_handler_registered() -> None:

@@ -13,7 +13,7 @@ from __future__ import annotations
 from typing import Any, Protocol
 
 from .base import HttpClient
-from .privacy import assert_personal_delivery, check_outbound
+from .privacy import assert_personal_delivery
 
 DESTINATION = "slack"
 
@@ -36,19 +36,16 @@ class SlackClient(HttpClient):
         )
 
     def post_message(self, channel: str, text: str, blocks: list[dict] | None = None) -> str:
-        check_outbound(text, destination=DESTINATION, payload=blocks)
         body: dict[str, Any] = {"channel": channel, "text": text}
         if blocks:
             body["blocks"] = blocks
         return str(self.request("POST", "/chat.postMessage", json=body).get("ts", ""))
 
     def reply_in_thread(self, channel: str, thread_ts: str, text: str) -> str:
-        check_outbound(text, destination=DESTINATION)
         body = {"channel": channel, "text": text, "thread_ts": thread_ts}
         return str(self.request("POST", "/chat.postMessage", json=body).get("ts", ""))
 
     def send_dm(self, user_id: str, text: str, blocks: list[dict] | None = None) -> str:
-        check_outbound(text, destination=DESTINATION, payload=blocks)
         body: dict[str, Any] = {"channel": user_id, "text": text}
         if blocks:
             body["blocks"] = blocks
