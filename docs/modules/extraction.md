@@ -82,10 +82,26 @@ the overlap the question turns on.
 | Table | Purpose |
 | --- | --- |
 | `ext_classifications` | Per-utterance kind, confidence, NLI result |
-| `ext_action_items` | Assignee, description, due date, status, source utterances |
+| `ext_action_items` | Assignee, description, due date, status, origin |
+| `ext_action_item_sources` | Which utterances an item came from |
+| `ext_edit_events` | One row per correction. Counts only — no person on it |
 | `ext_external_refs` | Notion and Jira URLs per action item |
 | `ext_confirmations` | Ambiguous-agreement DMs sent and their responses |
 | `ext_decisions` | Decision entities, their statements and source utterances |
+
+`ext_action_items.origin` is `model` or `user`. ADR 0006 makes the output a draft
+the user completes, so an item somebody typed is an ordinary row rather than an
+anomaly — and telling the two apart is what edit cost is measured against.
+
+Source utterances are a table rather than a JSONB list because the detail drawer
+joins them back to read the quotation, and `data-model.md` rules JSONB out for
+anything you join on.
+
+`ext_edit_events` carries no user id and must not gain one. ADR 0003 forbids
+per-person metrics, and "who corrected the model most" is the same shape of data
+as a speaking ratio. Its `action_item_id` clears on delete rather than cascading:
+cascading would remove the evidence that the model was wrong along with the wrong
+item, and the metric would improve every time somebody deleted something.
 
 `ext_action_items` references `utterances.id`. It does **not** reference any
 other module's tables.
