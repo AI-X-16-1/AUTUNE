@@ -10,11 +10,20 @@
 extraction F1 of 0.80 at six weeks and 0.88 at three months. Those numbers were
 set before anyone checked what the task scores in the literature.
 
-The best published action item extraction F1 on the AMI Meeting Corpus is around
-0.43. Inter-annotator agreement on the same task is around κ 0.47 — two trained
-humans marking the same meeting agree less than the figure we set for a model in
-six weeks. A target above the ceiling is not ambition. At the six-week review it
-reads as a miss, and it says nothing about whether the module works.
+The best published action item detection F1 on the AMI Meeting Corpus is **43.12**
+[1]. That is the positive-class F1 of the best configuration in the paper that
+introduced the task's current strongest results; the plain sentence-level baseline
+in the same table scores 38.67, and no configuration reaches 44.
+
+Human agreement on the task sits in the same region. The same paper reports κ 0.46
+for the English data and κ 0.47 between annotator pairs on its Chinese corpus [1];
+the earliest annotation study on ICSI reports agreement as low as κ 0.373 on an
+individual meeting [2]. κ and F1 do not measure the same thing, so this is not a
+like-for-like comparison — but two trained humans marking the same meeting land
+nowhere near 0.80, and that is the figure we set for a model in six weeks.
+
+A target above the ceiling is not ambition. At the six-week review it reads as a
+miss, and it says nothing about whether the module works.
 
 The corpus gap makes it worse. AMI is English design roleplay. The AI Hub Korean
 set is committee and broadcast discussion, with a chair and a formal register.
@@ -90,3 +99,19 @@ establish ours and the first report has nothing to compare against.
 **Revisit if** an evaluation set drawn from the team's own meetings scores well
 above the AMI ceiling, which would mean Korean team meetings are an easier task
 than AMI rather than a harder one.
+
+## References
+
+[1] Liu, Deng, Zhang, Chen and Wang, *Meeting Action Item Detection with
+Regularized Context Modeling*, ICASSP 2023. https://arxiv.org/abs/2303.16763 —
+source of the 43.12 AMI figure, the 38.67 baseline, and both κ values.
+
+[2] Morgan, Chang, Gupta and Purver, *Automatically Detecting Action Items in
+Audio Meeting Recordings*, SIGdial 2006.
+https://nlp.stanford.edu/pubs/sigdial06.pdf — the ICSI annotation study, F
+measure between 13.81 and 31.92 and per-meeting κ as low as 0.373.
+
+Note that AMI has no dedicated action item annotation layer — its own
+documentation places actions inside the abstractive summaries — so an AMI action
+item benchmark is derived rather than annotated directly. Read 43.12 as the best
+published number on the task, not as a figure from a canonical labelled split.

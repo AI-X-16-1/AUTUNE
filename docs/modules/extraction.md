@@ -186,7 +186,7 @@ figure for the task, per ADR 0006.
 
 | Metric | Six weeks | Three months |
 | --- | --- | --- |
-| Action item F1 | 0.43 — matching the best published AMI result | above it |
+| Action item F1 | 0.43 — matching the best published AMI result, 43.12 (ADR 0006) | above it |
 | Classifier macro F1, five-way | set in week 2 from the AMI dialogue-act literature, once the evaluation set exists | above it |
 | Items the user accepts with no edit | the first measurement is the baseline | improve on it |
 
