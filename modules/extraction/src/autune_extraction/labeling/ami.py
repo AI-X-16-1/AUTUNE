@@ -89,6 +89,28 @@ commitment — treating it as one is the failure the confirmation DM exists to
 catch — and an elaboration takes its kind from what it elaborates.
 """
 
+ASSERTIVE_ACTS: Final[frozenset[str]] = frozenset({"Inform", "Assess", "Suggest", "Offer"})
+"""Acts that assert something about the task, and so can carry a decision.
+
+The extractive decision layer marks a *region* — the stretch a human selected as
+evidence that something was settled — not one utterance. Everything inside it
+was being promoted to ``decision``, and a third of what that produced was
+"Hmm.", "Um." and "Yeah.": 1,331 Fragments, 1,271 Backchannels and 730 Stalls,
+9,835 labels from 288 annotated decisions.
+
+Those are acts ``EXCLUDED_ACTS`` already refuses by name. The region was
+overriding the exclusion, so the mapping said "a backchannel is filler" and the
+loader taught the model that a backchannel is a decision.
+
+The four here are the ones that put something on the record. ``Elicit-*`` asks
+rather than asserts, and a question inside the region is a question — it does
+not cost a decision entity either, because ``group_decisions`` spans a gap of
+two and absorbs it into the run around it.
+
+Membership is required *in addition* to the region, never instead of it: an
+``Inform`` outside a decision span is still just an inform.
+"""
+
 DECISION_SPAN: Final = "decision"
 """AMI's extractive decision layer: word spans a human marked as where a decision
 was made. Not an act and not a polarity, so it is passed separately."""
@@ -108,11 +130,15 @@ dialogue acts, 21,601 labelled, **1,439 of them contested (6.7%)**. Frequent
 enough that the ordering decides real training data, so the counts below are
 per rule rather than a total.
 
-``decision`` first, and it is most of the disagreement — 1,039 of the 1,439.
-An extractive decision span is the most specific human judgement in the corpus,
-a person pointing at where the meeting settled something, and it is the field
-module D keys a lineage on. A decision demoted to something else costs more than
-the reverse.
+``decision`` first, and it is most of the disagreement. An extractive decision
+span is the most specific human judgement in the corpus, a person pointing at
+where the meeting settled something, and it is the field module D keys a lineage
+on. A decision demoted to something else costs more than the reverse.
+
+It only outranks anything for the acts in ``ASSERTIVE_ACTS``. The span is a
+region and not an utterance, so promoting everything inside it labelled "Hmm."
+and "Um." as decisions — a third of the class, and every one of them an act
+``EXCLUDED_ACTS`` had already refused by name.
 
 ``open_question`` over ``ambiguous`` — 362 cases, and **the measurement is what
 put it there.** The ordering originally ran the other way, on the reasoning that
@@ -193,7 +219,7 @@ def label_for(evidence: Evidence) -> Label | None:
     """
     candidates: dict[UtteranceKind, str] = {}
 
-    if evidence.in_decision_span:
+    if evidence.in_decision_span and (evidence.dialogue_act or "") in ASSERTIVE_ACTS:
         candidates[UtteranceKind.DECISION] = DECISION_SPAN
 
     act_kind = DIALOGUE_ACTS.get(evidence.dialogue_act or "")

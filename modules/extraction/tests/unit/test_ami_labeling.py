@@ -11,6 +11,7 @@ import pytest
 from autune_contracts.enums import UtteranceKind
 from autune_extraction.labeling.ami import (
     ADJACENCY_PAIRS,
+    ASSERTIVE_ACTS,
     DIALOGUE_ACTS,
     EXCLUDED_ACTS,
     PRECEDENCE,
@@ -148,7 +149,7 @@ def test_an_uncertain_objection_is_a_concern() -> None:
     assert label.kind is UtteranceKind.CONCERN
 
 
-def test_a_decision_span_outranks_everything() -> None:
+def test_a_decision_span_outranks_everything_it_can_promote() -> None:
     """The most specific human judgement in the corpus, and the field D keys on."""
     label = label_for(
         Evidence(in_decision_span=True, dialogue_act="Offer", adjacency_pair_type="apt_2")
@@ -157,6 +158,42 @@ def test_a_decision_span_outranks_everything() -> None:
     assert label is not None
     assert label.kind is UtteranceKind.DECISION
     assert label.overruled == (UtteranceKind.CONCERN, UtteranceKind.COMMITMENT)
+
+
+def test_filler_inside_a_decision_span_is_not_a_decision() -> None:
+    """A span is a region, not an utterance, and "Hmm." is filler wherever it sits.
+
+    Promoting everything inside the region produced 9,835 decision labels from
+    288 annotated decisions, a third of them acts ``EXCLUDED_ACTS`` had already
+    refused by name: 1,331 Fragments, 1,271 Backchannels, 730 Stalls. The model
+    would have learned that "Yeah." is where a meeting settles something.
+    """
+    for filler in ("Backchannel", "Stall", "Fragment"):
+        assert label_for(Evidence(in_decision_span=True, dialogue_act=filler)) is None
+
+
+def test_a_question_inside_a_decision_span_stays_a_question() -> None:
+    """``Elicit-*`` asks rather than asserts, so the region cannot promote it.
+
+    It costs no decision entity either: ``group_decisions`` spans a gap of two
+    and absorbs the question into the run around it.
+    """
+    label = label_for(Evidence(in_decision_span=True, dialogue_act="Elicit-Inform"))
+
+    assert label is not None
+    assert label.kind is UtteranceKind.OPEN_QUESTION
+
+
+def test_only_assertive_acts_can_carry_a_decision() -> None:
+    """The four that put something on the record, and no others."""
+    assert {"Inform", "Assess", "Suggest", "Offer"} == ASSERTIVE_ACTS
+    assert set(DIALOGUE_ACTS) | set(EXCLUDED_ACTS) >= ASSERTIVE_ACTS
+
+
+def test_an_assertive_act_outside_a_span_is_not_a_decision() -> None:
+    """Membership is required in addition to the region, never instead of it."""
+    assert label_for(Evidence(dialogue_act="Inform")) is None
+    assert label_for(Evidence(dialogue_act="Assess")) is None
 
 
 def test_an_uncontested_label_says_so() -> None:
@@ -173,17 +210,18 @@ def test_the_label_records_which_layer_produced_it() -> None:
     """A corpus pass that cannot say where a label came from cannot be audited."""
     assert label_for(Evidence(dialogue_act="Offer")).source == "act:Offer"  # type: ignore[union-attr]
     assert label_for(Evidence(adjacency_pair_type="apt_2")).source == "pair:apt_2"  # type: ignore[union-attr]
-    assert label_for(Evidence(in_decision_span=True)).source == "decision"  # type: ignore[union-attr]
+    span = Evidence(in_decision_span=True, dialogue_act="Inform")
+    assert label_for(span).source == "decision"  # type: ignore[union-attr]
 
 
 def test_overruled_is_ordered_by_precedence() -> None:
     """So a conflict tally reads the same way every time it is printed."""
     label = label_for(
-        Evidence(in_decision_span=True, dialogue_act="Elicit-Inform", adjacency_pair_type="apt_3")
+        Evidence(in_decision_span=True, dialogue_act="Inform", adjacency_pair_type="apt_3")
     )
 
     assert label is not None
-    assert label.overruled == (UtteranceKind.OPEN_QUESTION, UtteranceKind.AMBIGUOUS)
+    assert label.overruled == (UtteranceKind.AMBIGUOUS,)
 
 
 # --- the mapping is data, not a mutable global ------------------------------
@@ -199,7 +237,7 @@ def test_the_mapping_cannot_be_edited_at_runtime(mapping: object) -> None:
 
 def _label_everything() -> list[Label]:
     """Every label the mapping can produce, one layer at a time."""
-    evidence = [Evidence(in_decision_span=True)]
+    evidence = [Evidence(in_decision_span=True, dialogue_act="Inform")]
     evidence += [Evidence(dialogue_act=act) for act in DIALOGUE_ACTS]
     evidence += [Evidence(adjacency_pair_type=pair) for pair in ADJACENCY_PAIRS]
     return [label for item in evidence if (label := label_for(item)) is not None]
