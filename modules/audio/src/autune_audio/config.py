@@ -31,9 +31,14 @@ class AudioSettings(BaseSettings):
     hf_token: str = ""
     """Hugging Face token for the gated pyannote models.
 
-    The licence must be accepted on **two** repositories — the diarization
-    pipeline and the segmentation model it loads itself. Empty is allowed so the
-    API can boot without it; diarization fails with a usable message instead.
+    The licence must be accepted on **three** repositories, not one:
+    ``speaker-diarization-3.1``, ``segmentation-3.0``, and
+    ``speaker-diarization-community-1``. The pipeline loads the latter two
+    itself, so a missing acceptance surfaces partway through loading with an
+    error naming a model you never asked for.
+
+    Empty is allowed so the API can boot without it; diarization then fails with
+    a usable message instead. See docs/engineering/environments.md.
     """
 
     diarization_model: str = "pyannote/speaker-diarization-3.1"
@@ -50,13 +55,14 @@ class AudioSettings(BaseSettings):
         return self
 
     def require_hf_token(self) -> str:
-        """The token, or an error naming both repositories that need accepting."""
+        """The token, or an error naming every repository that needs accepting."""
         if not self.hf_token:
             raise ValueError(
                 "AUTUNE_AUDIO_HF_TOKEN is not set. Create a Hugging Face token with "
-                "read access to gated repos, and accept the licence on BOTH "
-                "pyannote/speaker-diarization-3.1 and pyannote/segmentation-3.0 — "
-                "the pipeline loads the second one itself."
+                "read access to gated repos, then accept the licence on all three: "
+                "pyannote/speaker-diarization-3.1, pyannote/segmentation-3.0, and "
+                "pyannote/speaker-diarization-community-1. The pipeline loads the "
+                "last two itself, so missing either fails partway through loading."
             )
         return self.hf_token
 
