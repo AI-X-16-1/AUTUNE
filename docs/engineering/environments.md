@@ -75,6 +75,18 @@ prefix `AUTUNE_<MODULE>_`.
 | `AUTUNE_LOG_LEVEL` | `INFO` | |
 | `AUTUNE_RETENTION_DAYS` | `90` | Default analysis retention |
 | `AUTUNE_CORS_ALLOWED_ORIGINS` | `` | Comma-separated origins `apps/api` allows via CORS. Empty (default) means no CORS headers at all. Set to `http://localhost:3000` for local dev when running `apps/web`'s dev server against `apps/api`'s — a browser blocks the response otherwise, since `:3000` and `:8000` are different origins. Outside `local`, every origin must be an explicit `https://` URL — `*` and plain `http://` are refused at startup |
+| `AUTUNE_WEB_BASE_URL` | `http://localhost:3000` | Where the OAuth callback sends the browser back to |
+
+### Sign-in
+
+| Variable | Example | Notes |
+| --- | --- | --- |
+| `AUTUNE_GOOGLE_CLIENT_ID` | | Google Cloud OAuth client (W2). Blank disables Google sign-in |
+| `AUTUNE_GOOGLE_CLIENT_SECRET` | | Never commit |
+| `AUTUNE_GOOGLE_REDIRECT_URI` | `http://localhost:8000/api/auth/google/callback` | Must match a redirect URI registered in the Google Cloud console exactly, per environment |
+
+Google *sign-in* is identity only (`openid email profile`) and is unrelated to
+`AUTUNE_GOOGLE_CALENDAR_CREDENTIALS`, which grants module D calendar access.
 
 ### Web (`apps/web`)
 
