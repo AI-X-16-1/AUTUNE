@@ -8,9 +8,11 @@ dependencies = [
     "autune-core",
     "fastapi>=0.115",
     "celery>=5.4",
-    # Speaker diarization. Both pyannote repos are gated: the licence has to be
-    # accepted on speaker-diarization-3.1 and on segmentation-3.0, which the
-    # pipeline loads itself. See docs/engineering/environments.md.
+    # Speaker diarization. Three pyannote repos are gated and the licence has to
+    # be accepted on all of them: speaker-diarization-3.1, segmentation-3.0, and
+    # speaker-diarization-community-1. The pipeline loads the last two itself, so
+    # missing either fails partway through loading with an error naming a model
+    # you never asked for. See docs/engineering/environments.md.
     "pyannote-audio>=3.3",
     "torch>=2.5",
     "torchaudio>=2.5",
