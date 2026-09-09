@@ -10,7 +10,16 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
+from autune_core.settings import get_settings as get_core_settings
+
 router = APIRouter()
+
+# A local-only page for putting a recording through the pipeline by hand.
+# It has no auth, so it is mounted nowhere but a developer's machine.
+if get_core_settings().env == "local":
+    from .dev import router as dev_router
+
+    router.include_router(dev_router, prefix="/dev")
 
 
 @router.get("/health")
