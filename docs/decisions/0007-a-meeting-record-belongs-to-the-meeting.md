@@ -59,6 +59,11 @@ The path by which a row is reachable is its owner:
 `participants` is the boundary row: it belongs to a meeting and references a
 user. The row stays and its `user_id` clears.
 
+**The schema already does this.** `participants.user_id` is nullable with
+`ON DELETE SET NULL`, so the boundary behaves as described today, before this ADR
+is adopted. What is decided here is the rule, not a change to the tables — read
+this section as naming existing behaviour rather than requesting a migration.
+
 That is the whole mechanism. There is no de-identification migration and no
 per-module anonymisation path — the earlier draft of this ADR required one in
 every module, and this version requires none. A record nobody has to operate on
