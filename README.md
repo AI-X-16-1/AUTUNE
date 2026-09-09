@@ -171,7 +171,7 @@ git clone <repo> && cd autune
 
 cp .env.example .env                                 # 필요한 값 채우기
 docker compose -f infra/docker-compose.yml up -d     # postgres(pgvector), redis
-uv sync
+uv sync --all-packages
 pnpm install
 uv run alembic -c infra/alembic.ini upgrade heads
 
@@ -181,8 +181,15 @@ uv run celery -A apps.worker.celery_app worker -Q default,cpu_heavy    # 워커
 pnpm --filter @autune/web dev                                          # 웹 :3000
 ```
 
+`--all-packages`는 생략하면 안 됩니다. 워크스페이스 루트는 가상 패키지라
+(`package = false`) 그냥 `uv sync`만 하면 개발 도구만 깔리고 `autune_core`
+import이 바로 실패합니다.
+
 자기 모듈만 작업한다면 `uv sync --package autune-gap`으로 해당 모듈 의존성만
-설치할 수 있습니다 (A의 수 GB짜리 ML 휠을 안 받아도 됩니다).
+설치할 수 있습니다 (A의 수 GB짜리 ML 휠을 안 받아도 됩니다). 단 이 경우 다른
+모듈은 설치되지 않아 전체 테스트는 돌릴 수 없습니다 — `uv run pytest`를 돌리려면
+`uv sync --all-packages`를 하거나, `uv run pytest modules/gap`처럼 자기 모듈로
+범위를 좁히세요.
 
 상세: [`docs/engineering/environments.md`](docs/engineering/environments.md)
 

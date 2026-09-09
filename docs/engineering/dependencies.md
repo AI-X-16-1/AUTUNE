@@ -17,7 +17,7 @@ declares the workspace and shared dev tooling — nothing else.
 uv add --package autune-gap spacy
 ```
 
-Or edit `modules/gap/pyproject.toml` and run `uv sync`.
+Or edit `modules/gap/pyproject.toml` and run `uv sync --all-packages`.
 
 **Add to your own module. Never to the root.** The root manifest is shared by
 five people; a dependency there is a merge conflict and a dependency everyone
@@ -113,9 +113,10 @@ Pinned in `.python-version`, `.nvmrc`, and `packageManager` in the root
 ## Common commands
 
 ```bash
-uv sync                          # install everything in the workspace
-uv sync --package autune-gap     # install one module
-uv run --package autune-gap pytest
+uv sync --all-packages           # install everything in the workspace
+uv sync --package autune-gap     # install one module — see environments.md
+uv run pytest                    # whole suite; needs --all-packages
+uv run pytest modules/gap        # one module's tests
 uv lock --upgrade-package spacy  # bump one package
 pnpm install
 pnpm --filter @autune/web dev
