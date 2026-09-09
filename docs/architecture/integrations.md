@@ -30,6 +30,16 @@ it before the request leaves. A per-method call would be a step someone forgets
 when they add the next endpoint, and forgetting it is silent — which is how the
 hole below happened in the first place.
 
+**It reads every channel a body can arrive on**, not only `json`. `data` and
+`params` are checked the same way; `content` and `files` are raw bytes that
+cannot be shown to be free of personal data, so a request carrying them is
+refused rather than waved through. An integration that needs to upload a file is
+a design conversation, not a keyword argument.
+
+Guarding one channel and not the others is the same defect as guarding one field
+and not the others, one level up. It is worth saying out loud because it is the
+shape this file has now been wrong in twice.
+
 A client may declare `addressing`: keys whose values say *where* a request goes
 rather than *what it carries*. `CalendarClient` declares `attendees`, because an
 invitee's address is supplied by the feature, not extracted from a meeting, and

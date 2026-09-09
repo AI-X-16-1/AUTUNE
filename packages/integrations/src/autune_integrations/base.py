@@ -43,9 +43,24 @@ class HttpClient:
     def request(self, method: str, path: str, **kwargs: Any) -> dict[str, Any]:
         # Here rather than in each method: a per-method call is a step someone
         # forgets when they add the next endpoint, and forgetting it is silent.
-        body = kwargs.get("json")
-        if body is not None:
-            check_outbound(body, destination=self.service, addressing=self.addressing)
+        #
+        # Every channel httpx can carry content on, not just `json`. Guarding
+        # one of them is the bug this function exists to fix, one level up.
+        for channel in ("json", "data", "params"):
+            body = kwargs.get(channel)
+            if body is not None:
+                check_outbound(body, destination=self.service, addressing=self.addressing)
+
+        # `content` and `files` are raw bytes. There is no reading them well
+        # enough to say a phone number is not in there, so they are refused
+        # rather than waved through: an integration that needs to upload a file
+        # is a design conversation, not a keyword argument.
+        opaque = [c for c in ("content", "files") if kwargs.get(c) is not None]
+        if opaque:
+            raise PermanentIntegrationError(
+                f"{self.service}: {', '.join(opaque)} cannot be checked for personal "
+                "data, so it is not sent. See docs/architecture/privacy.md."
+            )
 
         try:
             response = self._client.request(method, path, **kwargs)

@@ -10,6 +10,8 @@ import pytest
 
 from autune_core.errors import PrivacyViolationError
 from autune_integrations import find_unmasked
+from autune_integrations.base import HttpClient
+from autune_integrations.errors import PermanentIntegrationError
 from autune_integrations.fakes import FakeJira, FakeNotion, FakeSlack
 from autune_integrations.privacy import (
     MAX_OUTBOUND_CHARS,
@@ -200,3 +202,43 @@ def test_every_client_runs_the_guard_through_the_transport() -> None:
     from autune_integrations.base import HttpClient
 
     assert "check_outbound" in inspect.getsource(HttpClient.request)
+
+
+# The guard reads the body httpx is given. httpx can be given a body five ways,
+# and guarding one of them is the same bug one level up.
+
+
+class _Unsent(HttpClient):
+    """A client with no transport, used to run the guard and nothing else.
+
+    Built without ``__init__`` so there is no httpx client behind it. A body the
+    guard rejects raises; a body it allows runs on and fails reaching for the
+    transport that is not there, which is how "allowed" is asserted below.
+    """
+
+    service = "probe"
+
+
+def _guarded(**kwargs: object) -> None:
+    HttpClient.request(_Unsent.__new__(_Unsent), "POST", "/anything", **kwargs)
+
+
+@pytest.mark.parametrize("channel", ["json", "data", "params"])
+def test_every_inspectable_channel_is_checked(channel: str) -> None:
+    """Not just json. A body sent as form data leaves by the same wire."""
+    with pytest.raises(PrivacyViolationError):
+        _guarded(**{channel: {"note": "제 번호는 010-1234-5678 입니다"}})
+
+
+@pytest.mark.parametrize("channel", ["content", "files"])
+def test_channels_that_cannot_be_read_are_refused(channel: str) -> None:
+    """Raw bytes cannot be shown to be free of personal data, so they do not go."""
+    with pytest.raises(PermanentIntegrationError):
+        _guarded(**{channel: b"anything at all"})
+
+
+def test_a_clean_body_still_passes_the_guard() -> None:
+    """The guard must not be the reason every request fails."""
+    with pytest.raises(AttributeError):
+        # Past the guard, reaching for the transport _Unsent does not have.
+        _guarded(json={"note": "마스킹된 번호는 [전화번호] 입니다"})
