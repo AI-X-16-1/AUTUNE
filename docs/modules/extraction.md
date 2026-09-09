@@ -55,6 +55,28 @@ agreement, and sync the result to Notion and Jira.
 7. **Sync** — create Notion pages and Jira issues, storing the returned URLs.
 8. **Publish** — emit `ExtractionResult`.
 
+Classification runs before reference resolution, which is worth stating because
+the opposite reads as more natural: resolve the pronouns, then work on clean
+text. Two things decide it.
+
+The class is marked at the sentence ending in Korean, and the referent does not
+carry it — "이걸 확정하도록 **하겠습니다**" is a commitment whether or not anything
+knows what 이걸 points at. Slot filling is the step that genuinely cannot proceed
+unresolved, and it comes after resolution either way.
+
+Resolution is an LLM call. Running it first means one per utterance; running it
+after classification means one per utterance in the classes that still need it —
+roughly an eleventh as many on a corpus of 398,748 meeting utterances. That also
+points the same way as `privacy.md`, which asks for the smallest window that
+resolves a reference rather than the whole meeting.
+
+Neither argument is an accuracy measurement — comparing the two orders needs a
+labelled set and two trained classifiers. If the evaluation harness later shows
+resolution-first classifies better, moving the step is the cheap direction to go;
+building on an LLM call per utterance and cutting it back later is not. Keep the
+step positionable. `modules/extraction/scripts/ko_reference_overlap.py` measures
+the overlap the question turns on.
+
 ## Tables
 
 | Table | Purpose |
@@ -161,6 +183,3 @@ uv run --package autune-extraction python -m autune_extraction.eval
 ## Open questions
 
 - Whether Jira sync is per-action or batched per meeting.
-- Whether reference resolution runs before classification or after. The pipeline
-  above puts classification first; the argument for the other order is that
-  assignees and objects parse more accurately once pronouns are resolved.
