@@ -43,7 +43,7 @@ Every change lands through a pull request.
 | What you changed | Who must approve |
 | --- | --- |
 | Only your own module (`modules/<yours>/`, `apps/web/src/features/<yours>/`) | Any one teammate |
-| Another module | That module's owner. CODEOWNERS requests them automatically |
+| Another module | That module's owner. **Request them yourself** — see below |
 | `packages/`, `apps/`, `infra/`, `docs/`, `CLAUDE.md` | Any one teammate; for `packages/contracts` every affected module owner |
 
   One approval is the floor. Touching someone else's module means *their*
@@ -54,7 +54,8 @@ Every change lands through a pull request.
 
 ## How `main` is protected
 
-Not by GitHub. This repository is private on the organization's free plan, and
+Not by GitHub, and only partly by tooling. Read this before assuming a rule
+enforces itself. This repository is private on the organization's free plan, and
 GitHub branch protection and rulesets are paid features there — the API returns
 `403 Upgrade to GitHub Pro or make this repository public`. Making the repo
 public would enable them for free, but the project may ship commercially, so it
@@ -72,9 +73,17 @@ Three things stand in for it:
    It is not a security control — `git push --no-verify` bypasses it. It stops
    the accident, which is nearly all of the risk on a five-person team.
 
-2. **CODEOWNERS** still requests reviews automatically, with no paid plan. Touch
-   another module and its owner is added to the pull request without anyone
-   remembering to do it.
+2. **CODEOWNERS, read by people rather than by GitHub.** Automatic reviewer
+   assignment from CODEOWNERS is behind the same paywall as branch protection:
+   on a private repository on the free plan, the file parses cleanly
+   (`gh api repos/{owner}/{repo}/codeowners/errors` returns no errors) and
+   assigns nobody. Verified on this repository — every review request on every
+   pull request so far was created by a person.
+
+   So CODEOWNERS is an ownership map you consult, not a mechanism that runs.
+   **Add the reviewers yourself when you open a pull request.** If you touched
+   another module, its owner; if you touched `packages/`, `apps/`, `infra/` or
+   `docs/`, everyone.
 
 3. **CI runs on pushes to `main` as well as on pull requests**, so anything that
    lands without review still turns the branch red where everyone can see it.
@@ -102,6 +111,9 @@ requires that owner's approval.
 **Description template:**
 
 ```markdown
+## Reviewers
+Added manually — CODEOWNERS does not assign them on this plan.
+
 ## What
 One or two sentences.
 
@@ -124,9 +136,11 @@ still.
 
 ## CODEOWNERS
 
-GitHub handles below are placeholders — replace them with real handles when
-the repository is created, and create a `@autune/core` team for the shared
-paths. Ownership by person: A 김민경, B 강민구, C 박재경, D 문민재, E 이승환.
+This file is a written ownership map. On this plan GitHub does not act on it —
+it assigns no reviewers and blocks no merge — so treat it as the answer to "who
+must approve this", which you then act on by adding those reviewers yourself.
+
+Owners are listed individually because the organization has no teams.
 
 ```
 /modules/audio/          @audio-owner

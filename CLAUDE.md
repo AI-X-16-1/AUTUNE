@@ -127,9 +127,13 @@ anyone else's.
 → `docs/engineering/workflow.md`
 
 ### 10. Do not edit files you do not own
-CODEOWNERS is the source of truth. If a change you need lives in someone else's
-module, in `packages/contracts`, or under `apps/`, open an issue or ask the
-owner in Slack. Do not "just fix it" across a boundary.
+CODEOWNERS is the source of truth for who owns what. If a change you need lives
+in someone else's module, in `packages/contracts`, or under `apps/`, open an
+issue or ask the owner in Slack. Do not "just fix it" across a boundary.
+
+GitHub does not act on CODEOWNERS on this plan — it assigns no reviewers and
+blocks no merge. Add the reviewers your change needs yourself.
+→ `docs/engineering/workflow.md`
 
 ### 11. Privacy rules are code-level constraints, not policy documents
 - Raw audio is deleted immediately after transcription completes. It is never
