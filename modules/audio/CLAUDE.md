@@ -67,8 +67,13 @@ Diarization DER ≤ 15%, PII masking recall 0.95+, processing time ≤ 1.5×
 recording length.
 
 ```bash
-uv run --package autune-audio python -m autune_audio.eval
+# What a corpus can measure, before committing to downloading it
+uv run python modules/audio/scripts/inspect_corpus.py <corpus-root>
 ```
+
+Scoring lives in `autune_audio.eval` and takes structures, not a model, so it
+runs without a GPU. There is no `__main__` yet — the CLI arrives with the corpus
+loader, once the label format is known.
 
 A is the critical path — B, C, and D cannot integrate until `TranscriptReady`
 is real. Ship it first.
