@@ -14,7 +14,7 @@ from unittest.mock import patch
 import pytest
 from sqlalchemy.orm import Session
 
-from autune_contracts import ContextLinks, ExtractionResult, GapReport
+from autune_contracts import ContextLinks, ExtractionResult, GapReport, IntelligenceSnapshot
 from autune_intelligence import service, tasks
 from autune_intelligence.models import IntelCompletion
 
@@ -90,32 +90,73 @@ def test_the_third_completion_enqueues_aggregation_immediately(
 
 
 @pytest.mark.usefixtures("use_test_session")
-def test_a_late_completion_after_aggregation_enqueues_nothing(
-    mock_aggregate: object, db_session: Session, meeting: str
+def test_aggregate_publishes_a_valid_snapshot(
+    db_session: Session, meeting: str, team: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    for source in ("extraction", "gap", "context"):
-        _seed(db_session, meeting, source)
-    db_session.flush()
-    service.close_aggregation(db_session, meeting)
+    from autune_intelligence import service
+
+    service.record_completion(
+        db_session,
+        meeting,
+        "extraction",
+        {"meeting_id": meeting, "decisions": [], "action_items": []},
+    )
     db_session.flush()
 
-    tasks.on_extraction_completed(_extraction(meeting))
+    sent: list[tuple] = []
+    monkeypatch.setattr(
+        tasks.current_app, "send_task", lambda name, args: sent.append((name, args))
+    )
 
-    mock_aggregate.apply_async.assert_not_called()
+    tasks.aggregate(meeting)
+
+    assert len(sent) == 1
+    name, args = sent[0]
+    assert name == "autune.intelligence.completed"
+    IntelligenceSnapshot.model_validate(args[0])  # contract conformance
 
 
 @pytest.mark.usefixtures("use_test_session")
-def test_aggregate_task_closes_the_lifecycle_and_is_idempotent(
-    db_session: Session, meeting: str
+def test_aggregate_publishes_once_and_the_second_pass_is_a_no_op(
+    db_session: Session, meeting: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _seed(db_session, meeting, "extraction")
     db_session.flush()
+
+    sent: list[tuple] = []
+    monkeypatch.setattr(
+        tasks.current_app, "send_task", lambda name, args: sent.append((name, args))
+    )
 
     tasks.aggregate(meeting)
     db_session.flush()
     aggregated_at = db_session.get(IntelCompletion, meeting).aggregated_at
     assert aggregated_at is not None
 
-    tasks.aggregate(meeting)  # second run is a no-op
+    tasks.aggregate(meeting)  # second run is a no-op: no row change, no publish
     db_session.flush()
     assert db_session.get(IntelCompletion, meeting).aggregated_at == aggregated_at
+    assert len(sent) == 1
+
+
+@pytest.mark.usefixtures("use_test_session")
+def test_a_completion_after_the_first_pass_reopens_and_re_enqueues(
+    mock_aggregate: object, db_session: Session, meeting: str
+) -> None:
+    from autune_intelligence import service
+
+    for source in ("extraction", "gap", "context"):
+        service.record_completion(
+            db_session,
+            meeting,
+            source,
+            {"meeting_id": meeting},
+        )
+    db_session.flush()
+    service.aggregate_meeting(db_session, meeting)
+    db_session.flush()
+
+    tasks.on_extraction_completed({"meeting_id": meeting, "decisions": [], "action_items": []})
+
+    assert db_session.get(service.IntelCompletion, meeting).aggregated_at is None
+    mock_aggregate.apply_async.assert_called_once_with((meeting,))
