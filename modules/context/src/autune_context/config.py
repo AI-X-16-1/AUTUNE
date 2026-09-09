@@ -12,7 +12,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class ContextSettings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="AUTUNE_CONTEXT_", extra="ignore")
+    # env_file mirrors autune_core.Settings: without it a module reads only
+    # real environment variables and silently ignores .env.
+    model_config = SettingsConfigDict(env_prefix="AUTUNE_CONTEXT_", env_file=".env", extra="ignore")
 
     rerank_top_k: int = 10
 

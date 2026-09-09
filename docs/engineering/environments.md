@@ -6,6 +6,8 @@
 - Node 22 (`.nvmrc`)
 - uv, pnpm 9
 - Docker and Docker Compose
+- FFmpeg — `brew install ffmpeg` (macOS) or `apt install ffmpeg`. Module A needs
+  it to decode uploads; see "FFmpeg" below
 - Optional: an NVIDIA GPU for module A. Without one, A falls back to
   whisper.cpp on CPU.
 
@@ -88,6 +90,8 @@ prefix `AUTUNE_<MODULE>_`.
 | `AUTUNE_AUDIO_WHISPER_MODEL` | A | e.g. `large-v3` |
 | `AUTUNE_AUDIO_DEVICE` | A | `cuda` or `cpu` |
 | `AUTUNE_AUDIO_TEMP_DIR` | A | Where the recording lives during processing, and only then |
+| `AUTUNE_AUDIO_HF_TOKEN` | A | Hugging Face token for the gated pyannote models |
+| `AUTUNE_AUDIO_DIARIZATION_MODEL` | A | Default `pyannote/speaker-diarization-3.1` |
 | `AUTUNE_GAP_RISK_THRESHOLD` | C | Default `0.7` |
 | `AUTUNE_CONTEXT_RERANK_TOP_K` | D | Default `10` |
 
@@ -117,9 +121,52 @@ Weights are not in git. They download on first run into a cached directory:
 AUTUNE_MODEL_CACHE=~/.cache/autune/models
 ```
 
-Pin versions explicitly in code (`../engineering/conventions.md`). Pyannote
-models need a Hugging Face token with the model licenses accepted:
-`AUTUNE_HF_TOKEN`.
+Pin versions explicitly in code (`../engineering/conventions.md`).
+
+### Pyannote and its three gated repositories
+
+Diarization needs a Hugging Face token in `AUTUNE_AUDIO_HF_TOKEN` and the licence
+accepted on **three** repositories. The pipeline loads the other two itself, so
+accepting only the first fails partway through, with an error naming a model you
+never asked for:
+
+| Repository | Why |
+| --- | --- |
+| `pyannote/speaker-diarization-3.1` | The pipeline you ask for |
+| `pyannote/segmentation-3.0` | Speech segmentation, loaded by the pipeline |
+| `pyannote/speaker-diarization-community-1` | PLDA for speaker comparison. **New in pyannote.audio 4.x** — 3.x tutorials do not mention it |
+
+A fine-grained token needs "Read access to contents of all public gated repos
+you can access"; a plain Read token already has it.
+
+### pyannote.audio 4.x differs from the tutorials
+
+Most material online is 3.x. Two things changed:
+
+```python
+# 3.x, and every tutorial
+pipeline = Pipeline.from_pretrained(model, use_auth_token=token)
+for turn, _, speaker in pipeline(path).itertracks(yield_label=True): ...
+
+# 4.x, what we run
+pipeline = Pipeline.from_pretrained(model, token=token)
+output = pipeline({"waveform": waveform, "sample_rate": sr})
+for turn, _, speaker in output.speaker_diarization.itertracks(yield_label=True): ...
+```
+
+`use_auth_token` no longer exists, and the result is a `DiarizeOutput` rather
+than an `Annotation`. It carries `speaker_diarization`,
+`exclusive_speaker_diarization`, and — useful for speaker identification —
+`speaker_embeddings`, one 256-dimension vector per speaker. Module A does not
+need a separate embedding model.
+
+### FFmpeg
+
+pyannote 4.x decodes audio through `torchcodec`, which links against FFmpeg's
+shared libraries. Without them, passing a **file path** to the pipeline fails
+with `Library not loaded: @rpath/libavutil.*`. Passing a waveform already in
+memory works without FFmpeg, but uploads arrive as mp3, wav and m4a, so decoding
+them needs it either way.
 
 ## Local privacy hygiene
 

@@ -102,8 +102,8 @@ Plus the shared entities in `packages/core`, which A writes.
 | --- | --- | --- |
 | STT | Whisper (`large-v3`), whisper.cpp on CPU | `AUTUNE_AUDIO_WHISPER_MODEL` |
 | VAD | silero-vad | |
-| Diarization | Pyannote | Needs `AUTUNE_HF_TOKEN` with licenses accepted |
-| Speaker ID | Speaker embedding + cosine similarity | Threshold in `config.py` |
+| Diarization | Pyannote 4.x, `speaker-diarization-3.1` | `AUTUNE_AUDIO_HF_TOKEN`, licence accepted on **three** gated repos — see `../engineering/environments.md` |
+| Speaker ID | The pipeline's own `speaker_embeddings` (256-d) + cosine similarity | Threshold in `config.py`. pyannote 4.x returns a vector per speaker, so no separate embedding model is needed |
 | PII detection | Regex + NER | Double detection, recall-weighted |
 | Interim summary | LLM | The only LLM use in A |
 
