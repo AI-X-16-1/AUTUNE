@@ -7,6 +7,10 @@
  */
 const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
+/** The API origin. Needed for full-page navigations the browser must follow
+ *  itself, such as the OAuth authorize redirect (`/api/auth/google/start`). */
+export const API_BASE = BASE;
+
 export class ApiError extends Error {
   constructor(
     readonly status: number,
