@@ -50,7 +50,8 @@ def _record(meeting_id: str, source: str) -> None:
     with session_scope() as session:
         first = service.record_completion(session, meeting_id, source)
         row = session.get(IntelCompletion, meeting_id)
-        assert row is not None  # record_completion just upserted it  # noqa: S101
+        if row is None:  # record_completion just upserted it; a miss means a torn write
+            raise RuntimeError(f"intel_completion row missing right after upsert: {meeting_id}")
         already_aggregated = row.aggregated_at is not None
         ready = service.ready_to_aggregate(row)
 

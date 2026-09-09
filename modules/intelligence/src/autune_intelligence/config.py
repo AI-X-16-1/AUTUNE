@@ -19,6 +19,10 @@ class IntelligenceSettings(BaseSettings):
     )
 
     aggregate_timeout_seconds: int = 600
+    """How long E waits after the first of B/C/D reports before aggregating
+    without the rest. The timeout is anchored to the first arrival, so the
+    slowest module gets the least slack — and B is the heaviest (per-utterance
+    LLM calls). Revisit this number once B's pipeline has real timings (#10)."""
 
 
 @lru_cache
