@@ -14,6 +14,14 @@ from dataclasses import dataclass, field
 from .privacy import assert_personal_delivery, check_outbound
 
 
+def _slack_body(channel: str, text: str, blocks: list[dict] | None) -> dict:
+    """The body the real client would send, so the fake checks the same thing."""
+    body: dict = {"channel": channel, "text": text}
+    if blocks:
+        body["blocks"] = blocks
+    return body
+
+
 @dataclass
 class SentMessage:
     channel: str
@@ -34,17 +42,17 @@ class FakeSlack:
         return f"{self._ts}.000000"
 
     def post_message(self, channel: str, text: str, blocks: list[dict] | None = None) -> str:
-        check_outbound(text, destination="slack")
+        check_outbound(_slack_body(channel, text, blocks), destination="slack")
         self.sent.append(SentMessage(channel=channel, text=text))
         return self._next_ts()
 
     def reply_in_thread(self, channel: str, thread_ts: str, text: str) -> str:
-        check_outbound(text, destination="slack")
+        check_outbound(_slack_body(channel, text, None), destination="slack")
         self.sent.append(SentMessage(channel=channel, text=text, thread_ts=thread_ts))
         return self._next_ts()
 
     def send_dm(self, user_id: str, text: str, blocks: list[dict] | None = None) -> str:
-        check_outbound(text, destination="slack")
+        check_outbound(_slack_body(user_id, text, blocks), destination="slack")
         self.sent.append(SentMessage(channel=user_id, text=text, is_dm=True))
         return self._next_ts()
 
@@ -62,6 +70,7 @@ class FakeNotion:
     pages: list[tuple[str, dict]] = field(default_factory=list)
 
     def create_page(self, database_id: str, properties: dict) -> str:
+        check_outbound({"properties": properties}, destination="notion")
         self.pages.append((database_id, properties))
         return f"page_{len(self.pages)}"
 
@@ -74,8 +83,7 @@ class FakeJira:
     def create_issue(
         self, project_key: str, issue_type: str, summary: str, description: str
     ) -> str:
-        check_outbound(summary, destination="jira")
-        check_outbound(description, destination="jira")
+        check_outbound({"summary": summary, "description": description}, destination="jira")
         self.issues.append(
             {
                 "project": project_key,

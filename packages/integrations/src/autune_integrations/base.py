@@ -13,6 +13,7 @@ import httpx
 from autune_core import get_logger
 
 from .errors import PermanentIntegrationError, TransientIntegrationError
+from .privacy import check_outbound
 
 log = get_logger(__name__)
 
@@ -28,12 +29,39 @@ class HttpClient:
 
     service: str = "http"
 
+    addressing: frozenset[str] = frozenset()
+    """Keys whose values address the request rather than carry meeting content.
+
+    Everything else in the body is checked. Declaring nothing means everything
+    is checked, so forgetting to declare fails closed."""
+
     def __init__(self, base_url: str, headers: dict[str, str] | None = None) -> None:
         self._client = httpx.Client(
             base_url=base_url, headers=headers or {}, timeout=DEFAULT_TIMEOUT
         )
 
     def request(self, method: str, path: str, **kwargs: Any) -> dict[str, Any]:
+        # Here rather than in each method: a per-method call is a step someone
+        # forgets when they add the next endpoint, and forgetting it is silent.
+        #
+        # Every channel httpx can carry content on, not just `json`. Guarding
+        # one of them is the bug this function exists to fix, one level up.
+        for channel in ("json", "data", "params"):
+            body = kwargs.get(channel)
+            if body is not None:
+                check_outbound(body, destination=self.service, addressing=self.addressing)
+
+        # `content` and `files` are raw bytes. There is no reading them well
+        # enough to say a phone number is not in there, so they are refused
+        # rather than waved through: an integration that needs to upload a file
+        # is a design conversation, not a keyword argument.
+        opaque = [c for c in ("content", "files") if kwargs.get(c) is not None]
+        if opaque:
+            raise PermanentIntegrationError(
+                f"{self.service}: {', '.join(opaque)} cannot be checked for personal "
+                "data, so it is not sent. See docs/architecture/privacy.md."
+            )
+
         try:
             response = self._client.request(method, path, **kwargs)
         except httpx.TimeoutException as exc:

@@ -18,7 +18,7 @@ any surface other than their own DM.
 from __future__ import annotations
 
 import re
-from typing import Final
+from typing import Any, Final
 
 from autune_core.errors import PrivacyViolationError
 
@@ -85,7 +85,44 @@ def assert_personal_delivery(*, subject_id: str, recipient_id: str, is_direct: b
         )
 
 
-def check_outbound(text: str, *, destination: str) -> None:
-    """Every outbound client calls this before the request leaves."""
-    assert_masked(text, destination=destination)
-    assert_within_size(text, destination=destination)
+def strings_in(value: Any, *, addressing: frozenset[str] = frozenset()) -> list[str]:
+    """Every string anywhere in a payload, minus the ones that address it.
+
+    Rich messages put their content in a nested structure and leave a bland
+    summary at the top — a Slack Block Kit ``text`` field is the notification
+    preview, not the message. Checking only the top level checks the least
+    important field.
+
+    ``addressing`` names keys whose values say *where* the request goes rather
+    than *what it carries*: a calendar attendee's email address is supplied by
+    the feature, not extracted from a meeting, and refusing it would refuse
+    every invitation.
+    """
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, dict):
+        return [
+            s
+            for key, v in value.items()
+            if key not in addressing
+            for s in strings_in(v, addressing=addressing)
+        ]
+    if isinstance(value, (list, tuple)):
+        return [s for v in value for s in strings_in(v, addressing=addressing)]
+    return []
+
+
+def check_outbound(
+    payload: Any, *, destination: str, addressing: frozenset[str] = frozenset()
+) -> None:
+    """The last check before a request leaves. Pass the whole request body.
+
+    Taking the body rather than a text field plus an optional extra is
+    deliberate: an optional argument is a step someone forgets, and forgetting
+    it here restores the exact hole this function exists to close. There is
+    nothing to remember — every string in the body is checked.
+    """
+    parts = strings_in(payload, addressing=addressing)
+    for part in parts:
+        assert_masked(part, destination=destination)
+    assert_within_size("".join(parts), destination=destination)
