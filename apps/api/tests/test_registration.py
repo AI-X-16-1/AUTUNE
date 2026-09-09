@@ -24,6 +24,11 @@ def test_module_router_is_registered(module: str) -> None:
     assert response.json() == {"module": module, "status": "ok"}
 
 
+def test_auth_router_is_mounted() -> None:
+    """The hand-mounted /api/auth router: /me with no session is 403, not 404."""
+    assert client.get("/api/auth/me").status_code == 403
+
+
 def test_application_errors_render_consistently() -> None:
     from autune_core import NotFoundError
 

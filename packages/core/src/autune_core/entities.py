@@ -57,6 +57,14 @@ class User(Base, TimestampMixin):
     email: Mapped[str] = mapped_column(String(320), nullable=False, unique=True)
     display_name: Mapped[str] = mapped_column(String(200), nullable=False)
 
+    google_sub: Mapped[str | None] = mapped_column(String(255), unique=True)
+    """Google's stable subject identifier. Set on first Google sign-in and kept
+    even if the account's email later changes. Null for a user who has only ever
+    used a magic link. Other providers (Slack) get their own column here rather
+    than a shared identities table until a third provider makes that pay off."""
+
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
     memberships: Mapped[list[TeamMember]] = relationship(back_populates="user")
 
 

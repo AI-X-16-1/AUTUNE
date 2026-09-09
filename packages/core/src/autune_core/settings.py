@@ -32,6 +32,15 @@ class Settings(BaseSettings):
     slack_app_token: str = ""
     """Socket-mode token, local development only."""
 
+    web_base_url: str = "http://localhost:3000"
+    """Where the browser is sent back to after an OAuth round trip."""
+
+    google_client_id: str = ""
+    google_client_secret: str = ""
+    google_redirect_uri: str = ""
+    """The /api/auth/google/callback URL, per environment. Must match a redirect
+    URI registered in the Google Cloud console exactly."""
+
     retention_days: int = 90
     """Analysis results are deleted after this many days.
     See docs/architecture/privacy.md section 4."""
@@ -52,6 +61,11 @@ class Settings(BaseSettings):
     @property
     def is_production(self) -> bool:
         return self.env == "production"
+
+    @property
+    def session_cookie_secure(self) -> bool:
+        """Send the session cookie over HTTPS only, everywhere but local."""
+        return self.env != "local"
 
 
 @lru_cache

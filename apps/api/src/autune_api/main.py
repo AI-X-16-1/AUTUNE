@@ -3,6 +3,9 @@
 Routers are collected by iterating the module list. Nobody edits this file to
 ship a feature: if you need custom behavior, put it in your module's router.
 See docs/architecture/monorepo.md.
+
+The one hand-mounted router is ``/api/auth``: sign-in is cross-cutting, owned by
+the whole team, and belongs to no module, so it is registered by name.
 """
 
 from __future__ import annotations
@@ -14,6 +17,7 @@ from fastapi.responses import JSONResponse
 
 from autune_contracts import MODULES
 from autune_core import AutuneError, configure_logging, get_logger, get_settings
+from autune_core.auth_router import router as auth_router
 
 configure_logging()
 log = get_logger(__name__)
@@ -34,6 +38,9 @@ async def _autune_error_handler(_: Request, exc: AutuneError) -> JSONResponse:
 def health() -> dict[str, object]:
     return {"status": "ok", "env": get_settings().env, "modules": list(MODULES)}
 
+
+app.include_router(auth_router, prefix="/api/auth", tags=["auth"])
+log.info("router_registered", module="auth", prefix="/api/auth")
 
 for _name in MODULES:
     _router = import_module(f"autune_{_name}.router").router

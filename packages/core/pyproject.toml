@@ -10,8 +10,15 @@ dependencies = [
     "psycopg[binary]>=3.2",
     "alembic>=1.14",
     "structlog>=24.4",
-    "pyjwt>=2.10",
+    # [crypto] pulls `cryptography`: needed to verify Google's RS256 ID tokens,
+    # not just to sign our own HS256 sessions.
+    "pyjwt[crypto]>=2.10",
     "redis>=5.2",
+    # auth.py wires FastAPI dependencies (current_user) and, from W2, the
+    # /api/auth router lives here — the auth layer is core's, not a module's.
+    "fastapi>=0.115",
+    # Server-to-server call to Google's OAuth token endpoint.
+    "httpx>=0.28",
 ]
 
 [build-system]
