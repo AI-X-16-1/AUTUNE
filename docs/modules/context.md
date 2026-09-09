@@ -53,8 +53,8 @@ contract change is needed for the confirmation flow.
 
 ## AI stack
 
-Four models sit behind interfaces (see "Model abstraction layer"). Three are
-self-hosted; the LLM is an external API for the MVP.
+The three trained models sit behind interfaces (see "Model abstraction layer")
+and are self-hosted. The LLM is Phase 2 and is declared as an interface only.
 
 | Component | Model or algorithm | Hosting | Version pin |
 | --- | --- | --- | --- |
@@ -62,7 +62,7 @@ self-hosted; the LLM is an external API for the MVP.
 | Lexical retrieval | BM25 over a kiwipiepy tokenization | In application code | `rank-bm25`, `kiwipiepy` pinned in the manifest |
 | Re-ranking | `dragonkue/bge-reranker-v2-m3-ko` | Self-hosted HTTP | HF revision, recorded per row |
 | Decision-change detection | `klue/roberta` fine-tuned on KorNLI (in-house) | Self-hosted HTTP | Training job in `modules/context/scripts/`; checkpoint id recorded per row |
-| Agenda and brief generation | LLM (external API) | External for the MVP, self-hosted later | Phase 2 |
+| Agenda and brief generation | LLM | Phase 2, through `autune_integrations` | — |
 
 PostgreSQL full-text search has no Korean analyzer without a further extension,
 so hybrid retrieval is **not** a single query: the vector similarity plus its
@@ -100,39 +100,42 @@ only — never the matching representation.
 ## Model abstraction layer
 
 Every AI model this module uses sits behind a `typing.Protocol` in
-`autune_context/pipeline/`. The concrete implementation — self-hosted HTTP,
-in-process weights, or external API — is selected by a config string and is
-never referenced directly outside that package.
+`autune_context/pipeline/`. The concrete implementation — self-hosted HTTP or
+in-process weights — is selected by a config string and is never referenced
+directly outside that package.
 
 ```
 autune_context/pipeline/
-├── __init__.py     # public surface: get_embedder / get_reranker / get_nli / get_llm,
+├── __init__.py     # public surface: get_embedder / get_reranker / get_nli,
 │                   #   plus a worker_process_init hook that warms and logs each model
 ├── base.py         # Protocols: Embedder, Reranker, NliModel, LlmClient (+ result dataclasses)
 ├── registry.py     # config string → implementation, lru_cache, startup dimension guard
+├── _serving.py     # shared /health + /info probe for the self-hosted HTTP clients
 ├── embedding.py    # KureHttpEmbedder / KureLocalEmbedder / FakeEmbedder
 ├── reranking.py    # BgeRerankerKoHttp / ...Local / Fake
 ├── nli.py          # KlueKorNliHttp / ...Local / Fake
-├── llm.py          # ExternalLlm (OpenAI-compatible) / SelfHostedLlm / Fake
 ├── retrieval.py    # HybridRetriever: KURE dense + BM25, RRF fusion
 └── topics.py       # TextTiling segmentation + keyphrase labelling
 ```
 
 Rules:
 
-- **Selection is config.** `AUTUNE_CONTEXT_EMBEDDER_IMPL`,
-  `_RERANKER_IMPL`, `_NLI_IMPL`, `_LLM_IMPL`. Swapping an implementation changes
-  no code outside `pipeline/`.
+- **Selection is config.** `AUTUNE_CONTEXT_EMBEDDER_IMPL`, `_RERANKER_IMPL`,
+  `_NLI_IMPL`. Swapping an implementation changes no code outside `pipeline/`.
 - **Load once at worker startup**, not per task — `registry.get_*()` is
   `lru_cache`d and warmed from `worker_process_init`.
 - **`model_version` is read from the serving endpoint** (`/info`) at warm-up and
-  written onto every output row, so results stay traceable across redeploys.
+  written onto every output row, so results stay traceable across redeploys. The
+  `*Http` client also probes `/health` in its constructor, so an unreachable
+  endpoint fails the warm-up rather than the first task.
 - **The embedding dimension is a compile-time fact.** `ctx_embeddings.embedding`
   is `vector(N)` where `N = autune_context.constants.EMBEDDING_DIM`, fixed at
   migration time. `get_embedder()` raises at startup unless the chosen model's
-  `dim` equals it. `AUTUNE_CONTEXT_EMBEDDING_DIM` is an operator-visible mirror
-  of the same value; a unit test fails if the two drift. A re-dimensioned model
-  is a new migration, not a config change.
+  `dim` equals it. The `*Http` embedder reads its dimension from `/info`, so the
+  guard covers the self-hosted impl too, not only `*_local`.
+  `AUTUNE_CONTEXT_EMBEDDING_DIM` is an operator-visible mirror of the same value;
+  a unit test fails if the two drift. A re-dimensioned model is a new migration,
+  not a config change.
 - **`*_local` implementations are optional.** They pull `sentence-transformers`,
   `torch` and `transformers`, which live in the `local-models` optional
   dependency group and are used only for local development, CI-free runs, and
@@ -140,9 +143,17 @@ Rules:
 - **`Fake*` implementations** back unit tests; integration and pipeline tests
   select them with `AUTUNE_CONTEXT_*_IMPL=fake`.
 
-The LLM client stays inside this module for now. If B and C end up needing an
-LLM client too, moving it to `packages/integrations` is a team decision to make
-at the start of Phase 2, not before.
+### The LLM client is declared, not implemented (PR #90 review)
+
+`LlmClient` is a Protocol only. It has no Phase 1 implementation and no config
+knob. It is the one path that would leave our infrastructure, so it must be
+built on top of `autune_integrations` (or a shared LLM client added there) —
+`check_outbound` has to run on every call. That is invariant 11: a docstring
+saying "masked text only" is not the guard. A module-local `httpx` client
+(`ExternalLlm`, defaulting to OpenAI) was written for the scaffold and removed
+in review — an unused external client with a third-party default is the worst
+state. It comes back in Phase 2 with the agenda/brief work, done through the
+integration boundary.
 
 ### Self-hosted serving contract
 
@@ -336,11 +347,20 @@ confirmation flow feed threshold tuning.
 - Embeddings are derived from masked text and are rows that cascade from
   `meetings.id`; an embedding outliving its meeting is a retention violation.
 - The three self-hosted models receive masked transcript text within our
-  infrastructure. The external LLM (Phase 2) receives only the snippet a feature
-  needs — never a full transcript — and nothing goes into an exception message
-  or a log line. See `../architecture/privacy.md` sections 2 and 6.
+  infrastructure. The Phase 2 LLM path goes through `autune_integrations` so
+  `check_outbound` runs; it receives only the snippet a feature needs — never a
+  full transcript — and nothing goes into an exception message or a log line.
+  See `../architecture/privacy.md` sections 2 and 6.
 - No screen, endpoint, export, or Slack message in this module surfaces any
   per-person speaking ratio. This module does not compute one.
+- `ctx_decision_versions.key_stakeholders_absent` records who was *not* present
+  when a decision changed. Attendance is already shared data (`participants`),
+  so this is a precomputation, not a new disclosure. It exists only to fire the
+  decision-drift warning to the team and to the absent person — never a
+  per-person aggregate ("how often is X absent from decisions"), never a
+  dashboard column, never a ranking. Treated the same as `privacy.md` §3's
+  logic about small-meeting distributions: the raw event is fine, an aggregate
+  over a person is not. (Raised by the PR #90 reviewers; settled here.)
 
 ## Phased delivery
 

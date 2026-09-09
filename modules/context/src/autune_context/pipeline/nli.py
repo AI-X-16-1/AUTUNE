@@ -11,10 +11,11 @@ contradiction -> reversed, neutral -> modified.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import httpx
 
+from autune_context.pipeline._serving import probe
 from autune_context.pipeline.base import NliScores
 
 if TYPE_CHECKING:
@@ -29,20 +30,14 @@ def _argmax_label(scores: NliScores) -> str:
 
 class KlueKorNliHttp:
     """Expects ``POST {endpoint}/nli {"pairs": [[premise, hypothesis]]}`` ->
-    ``{"results": [{"entailment": f, "contradiction": f, "neutral": f}]}``.
+    ``{"results": [{"entailment": f, "contradiction": f, "neutral": f}]}``;
+    ``GET {endpoint}/info`` -> ``{"model_version"}``.
     """
 
     def __init__(self, settings: ContextSettings) -> None:
         self._client = httpx.Client(base_url=settings.nli_endpoint, timeout=settings.nli_timeout_s)
-        self._model_version = self._read_version(fallback="klue-roberta-kornli")
-
-    def _read_version(self, fallback: str) -> str:
-        try:
-            resp = self._client.get("/info")
-            resp.raise_for_status()
-            return str(resp.json()["model_version"])
-        except (httpx.HTTPError, KeyError, ValueError):
-            return fallback
+        info = probe(self._client, service="nli")
+        self._model_version = str(info.get("model_version", "klue-roberta-kornli"))
 
     @property
     def model_version(self) -> str:
@@ -78,7 +73,9 @@ class KlueKorNliLocal:
             ) from exc
         if not settings.nli_local_model:
             raise RuntimeError("set AUTUNE_CONTEXT_NLI_LOCAL_MODEL to the in-house checkpoint")
-        self._pipe = hf_pipeline("text-classification", model=settings.nli_local_model, top_k=None)
+        self._pipe: Any = hf_pipeline(
+            "text-classification", model=settings.nli_local_model, top_k=None
+        )
         self._model_version = settings.nli_local_model
 
     @property
@@ -88,10 +85,8 @@ class KlueKorNliLocal:
     def classify(self, pairs: list[tuple[str, str]]) -> list[NliScores]:
         out: list[NliScores] = []
         for premise, hypothesis in pairs:
-            scored = {
-                d["label"].lower(): float(d["score"])
-                for d in self._pipe({"text": premise, "text_pair": hypothesis})[0]
-            }
+            records = self._pipe({"text": premise, "text_pair": hypothesis})[0]
+            scored = {r["label"].lower(): float(r["score"]) for r in records}
             out.append(
                 _with_label(
                     NliScores(

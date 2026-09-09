@@ -1,8 +1,9 @@
 """Config-string -> implementation, with the startup dimension guard.
 
 Nothing outside this package instantiates a model class directly. Call
-``get_embedder()`` / ``get_reranker()`` / ``get_nli()`` / ``get_llm()``; each is
-cached, so the model loads once per worker process.
+``get_embedder()`` / ``get_reranker()`` / ``get_nli()``; each is cached, so the
+model loads once per worker process. (``LlmClient`` has no Phase 1
+implementation — see ``base.LlmClient``.)
 """
 
 from __future__ import annotations
@@ -11,8 +12,8 @@ from functools import lru_cache
 
 from autune_context.config import get_settings
 from autune_context.constants import EMBEDDING_DIM
-from autune_context.pipeline import embedding, llm, nli, reranking
-from autune_context.pipeline.base import Embedder, LlmClient, NliModel, Reranker
+from autune_context.pipeline import embedding, nli, reranking
+from autune_context.pipeline.base import Embedder, NliModel, Reranker
 
 _EMBEDDERS: dict[str, type] = {
     "kure_v1_http": embedding.KureHttpEmbedder,
@@ -28,11 +29,6 @@ _NLI: dict[str, type] = {
     "klue_kornli_http": nli.KlueKorNliHttp,
     "klue_kornli_local": nli.KlueKorNliLocal,
     "fake": nli.FakeNli,
-}
-_LLM: dict[str, type] = {
-    "external": llm.ExternalLlm,
-    "self_hosted_http": llm.SelfHostedLlm,
-    "fake": llm.FakeLlm,
 }
 
 
@@ -70,13 +66,7 @@ def get_nli() -> NliModel:
     return _pick("NLI", _NLI, settings.nli_impl)(settings)
 
 
-@lru_cache
-def get_llm() -> LlmClient:
-    settings = get_settings()
-    return _pick("LLM", _LLM, settings.llm_impl)(settings)
-
-
 def reset_cache() -> None:
     """Drop every cached model. For tests that switch implementations."""
-    for getter in (get_embedder, get_reranker, get_nli, get_llm):
+    for getter in (get_embedder, get_reranker, get_nli):
         getter.cache_clear()

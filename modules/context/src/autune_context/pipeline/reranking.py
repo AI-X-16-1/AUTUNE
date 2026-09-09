@@ -12,28 +12,23 @@ from typing import TYPE_CHECKING
 
 import httpx
 
+from autune_context.pipeline._serving import probe
+
 if TYPE_CHECKING:
     from autune_context.config import ContextSettings
 
 
 class BgeRerankerKoHttp:
-    """Expects ``POST {endpoint}/rerank {"query": str, "passages": [str]}`` ->
-    ``{"scores": [float]}`` and ``GET {endpoint}/info``.
+    """``POST {endpoint}/rerank {"query": str, "passages": [str]}`` ->
+    ``{"scores": [float]}``; ``GET {endpoint}/info`` -> ``{"model_version"}``.
     """
 
     def __init__(self, settings: ContextSettings) -> None:
         self._client = httpx.Client(
             base_url=settings.reranker_endpoint, timeout=settings.reranker_timeout_s
         )
-        self._model_version = self._read_version(fallback=settings.reranker_local_model)
-
-    def _read_version(self, fallback: str) -> str:
-        try:
-            resp = self._client.get("/info")
-            resp.raise_for_status()
-            return str(resp.json()["model_version"])
-        except (httpx.HTTPError, KeyError, ValueError):
-            return fallback
+        info = probe(self._client, service="reranker")
+        self._model_version = str(info.get("model_version", settings.reranker_local_model))
 
     @property
     def model_version(self) -> str:

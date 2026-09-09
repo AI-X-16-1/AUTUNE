@@ -8,7 +8,7 @@ Never imports another module.
 
 from __future__ import annotations
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, exists, select
 from sqlalchemy.orm import Session
 
 from autune_context.models import CtxDecision, CtxDecisionVersion
@@ -27,12 +27,17 @@ def sweep_orphan_decision_threads(session: Session) -> int:
     which run before migrations on a clean CI database and iterate every
     registered hook (see ADR 0008 and #87). Until #87 lands this is called
     explicitly — by the integration test, and later by the retention sweep once
-    that exists. It is a global, idempotent sweep, safe to run at any time.
+    that exists. Global and idempotent.
     """
-    live_threads = select(CtxDecisionVersion.thread_id).distinct()
-    orphans = session.scalars(
-        select(CtxDecision.id).where(CtxDecision.id.not_in(live_threads))
-    ).all()
+    # Correlated NOT EXISTS, not `id NOT IN (subquery)`: the latter deletes every
+    # thread when the versions table is empty, and threads are always written
+    # with a first version, so an empty versions table means something is wrong.
+    if not session.scalar(select(exists().select_from(CtxDecisionVersion))):
+        return 0
+    has_version = (
+        select(CtxDecisionVersion.id).where(CtxDecisionVersion.thread_id == CtxDecision.id).exists()
+    )
+    orphans = session.scalars(select(CtxDecision.id).where(~has_version)).all()
     if orphans:
         session.execute(delete(CtxDecision).where(CtxDecision.id.in_(orphans)))
     return len(orphans)

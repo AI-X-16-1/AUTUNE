@@ -1,4 +1,4 @@
-"""The four models sit behind interfaces, chosen by config, with a dimension guard."""
+"""The models sit behind interfaces, chosen by config, with a dimension guard."""
 
 from __future__ import annotations
 
@@ -8,14 +8,12 @@ from autune_context.config import get_settings
 from autune_context.constants import EMBEDDING_DIM
 from autune_context.pipeline import (
     Embedder,
-    LlmClient,
     NliModel,
     Reranker,
     registry,
     reset_cache,
 )
 from autune_context.pipeline.embedding import FakeEmbedder
-from autune_context.pipeline.llm import FakeLlm
 from autune_context.pipeline.nli import FakeNli
 from autune_context.pipeline.reranking import FakeReranker
 
@@ -35,7 +33,6 @@ def _clean_caches():
         (FakeEmbedder, Embedder),
         (FakeReranker, Reranker),
         (FakeNli, NliModel),
-        (FakeLlm, LlmClient),
     ],
 )
 def test_fake_implementation_satisfies_its_protocol(impl, protocol):
@@ -43,14 +40,13 @@ def test_fake_implementation_satisfies_its_protocol(impl, protocol):
 
 
 def test_registry_selects_the_configured_implementation(monkeypatch):
-    for knob in ("EMBEDDER", "RERANKER", "NLI", "LLM"):
+    for knob in ("EMBEDDER", "RERANKER", "NLI"):
         monkeypatch.setenv(f"AUTUNE_CONTEXT_{knob}_IMPL", "fake")
     get_settings.cache_clear()
 
     assert registry.get_embedder().model_version == "fake-embedder-v1"
     assert registry.get_reranker().model_version == "fake-reranker-v1"
     assert registry.get_nli().model_version == "fake-nli-v1"
-    assert registry.get_llm().model_version == "fake-llm-v1"
 
 
 def test_unknown_implementation_string_is_rejected(monkeypatch):

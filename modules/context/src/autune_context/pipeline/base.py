@@ -1,10 +1,12 @@
-"""Model-facing interfaces for module D.
+"""Model-facing interfaces for the Meeting Context Engine.
 
 Every AI model this module uses sits behind one of these Protocols. The concrete
-implementation — self-hosted HTTP, in-process weights, or external API — is
-chosen by a config string (``AUTUNE_CONTEXT_*_IMPL``) and is never referenced
-directly outside this package. See docs/modules/context.md, "Model abstraction
-layer".
+implementation — self-hosted HTTP, in-process weights — is chosen by a config
+string (``AUTUNE_CONTEXT_*_IMPL``) and is never referenced directly outside this
+package. See docs/modules/context.md, "Model abstraction layer".
+
+``Embedder`` / ``Reranker`` / ``NliModel`` have Phase 1 implementations.
+``LlmClient`` is declared but not implemented — see its docstring.
 """
 
 from __future__ import annotations
@@ -64,10 +66,16 @@ class NliModel(Protocol):
 
 @runtime_checkable
 class LlmClient(Protocol):
-    """Text generation. External API for the MVP, self-hosted later.
+    """Text generation. Phase 2 only (agenda / brief generation) — **no Phase 1
+    implementation**.
 
-    Privacy: callers pass the smallest snippet a feature needs, never a full
-    transcript, and always masked text. See docs/architecture/privacy.md §6.
+    The one path that leaves our infrastructure. It must be built on top of
+    ``autune_integrations`` (or a shared LLM client added there) so
+    ``check_outbound`` runs on every call — invariant 11, "privacy rules are
+    code-level constraints, not policy documents". A module-local ``httpx``
+    client was written and rejected in review (PR #90): a docstring saying
+    "masked text only" is not the guard. Callers still pass the smallest snippet
+    a feature needs, always masked.
     """
 
     @property

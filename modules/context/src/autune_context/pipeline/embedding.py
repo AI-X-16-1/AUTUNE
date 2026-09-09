@@ -15,33 +15,30 @@ from typing import TYPE_CHECKING
 import httpx
 
 from autune_context.constants import EMBEDDING_DIM
+from autune_context.pipeline._serving import probe
 
 if TYPE_CHECKING:
     from autune_context.config import ContextSettings
 
 
 class KureHttpEmbedder:
-    """KURE-v1 over HTTP. Expects ``POST {endpoint}/embed {"texts": [...]}`` ->
-    ``{"embeddings": [[...]], "model_version": "..."}`` and ``GET {endpoint}/info``.
+    """KURE-v1 over HTTP. ``POST {endpoint}/embed {"texts": [...]}`` ->
+    ``{"embeddings": [[...]]}``; ``GET {endpoint}/info`` -> ``{"model_version",
+    "dim"}`` (both read at construction, so a wrong-dimension model is caught by
+    ``get_embedder()``'s guard even for the HTTP impl).
     """
 
     def __init__(self, settings: ContextSettings) -> None:
         self._client = httpx.Client(
             base_url=settings.embedder_endpoint, timeout=settings.embedder_timeout_s
         )
-        self._model_version = self._read_version(fallback=settings.embedder_local_model)
-
-    def _read_version(self, fallback: str) -> str:
-        try:
-            resp = self._client.get("/info")
-            resp.raise_for_status()
-            return str(resp.json()["model_version"])
-        except (httpx.HTTPError, KeyError, ValueError):
-            return fallback
+        info = probe(self._client, service="embedder")
+        self._model_version = str(info.get("model_version", settings.embedder_local_model))
+        self._dim = int(info.get("dim", EMBEDDING_DIM))
 
     @property
     def dim(self) -> int:
-        return EMBEDDING_DIM
+        return self._dim
 
     @property
     def model_version(self) -> str:
@@ -69,7 +66,10 @@ class KureLocalEmbedder:
 
     @property
     def dim(self) -> int:
-        return int(self._model.get_sentence_embedding_dimension())
+        reported = self._model.get_sentence_embedding_dimension()
+        if reported is None:
+            raise RuntimeError(f"{self._model_version} did not report an embedding dimension")
+        return int(reported)
 
     @property
     def model_version(self) -> str:

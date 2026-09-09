@@ -3,10 +3,19 @@
 from __future__ import annotations
 
 import subprocess
+from pathlib import Path
 
 import sqlalchemy as sa
 
 from autune_core import get_settings
+
+
+def _repo_root() -> Path:
+    for parent in Path(__file__).resolve().parents:
+        if (parent / "infra" / "alembic.ini").is_file():
+            return parent
+    raise RuntimeError("could not locate repo root (infra/alembic.ini not found)")
+
 
 ALEMBIC = ["uv", "run", "alembic", "-c", "infra/alembic.ini"]
 CTX_TABLES = {
@@ -31,12 +40,13 @@ def _ctx_tables_in_db() -> set[str]:
 
 
 def test_upgrade_creates_then_downgrade_removes_every_ctx_table() -> None:
-    subprocess.run([*ALEMBIC, "upgrade", "heads"], check=True)
+    root = _repo_root()
+    subprocess.run([*ALEMBIC, "upgrade", "heads"], check=True, cwd=root)
     assert _ctx_tables_in_db() == CTX_TABLES
 
     # Back to the branch anchor (five revisions down), then forward again.
-    subprocess.run([*ALEMBIC, "downgrade", "context@-5"], check=True)
+    subprocess.run([*ALEMBIC, "downgrade", "context@-5"], check=True, cwd=root)
     assert _ctx_tables_in_db() == set()
 
-    subprocess.run([*ALEMBIC, "upgrade", "heads"], check=True)
+    subprocess.run([*ALEMBIC, "upgrade", "heads"], check=True, cwd=root)
     assert _ctx_tables_in_db() == CTX_TABLES

@@ -96,7 +96,6 @@ prefix `AUTUNE_<MODULE>_`.
 | `AUTUNE_CONTEXT_EMBEDDER_IMPL` | D | `kure_v1_http` (default), `kure_v1_local`, `fake` |
 | `AUTUNE_CONTEXT_RERANKER_IMPL` | D | `bge_reranker_v2_m3_ko_http` (default), `..._local`, `fake` |
 | `AUTUNE_CONTEXT_NLI_IMPL` | D | `klue_kornli_http` (default), `klue_kornli_local`, `fake` |
-| `AUTUNE_CONTEXT_LLM_IMPL` | D | `external` (default), `self_hosted_http`, `fake` |
 | `AUTUNE_CONTEXT_EMBEDDER_ENDPOINT` | D | Self-hosted KURE-v1 inference server |
 | `AUTUNE_CONTEXT_RERANKER_ENDPOINT` | D | Self-hosted reranker inference server |
 | `AUTUNE_CONTEXT_NLI_ENDPOINT` | D | Self-hosted NLI inference server |

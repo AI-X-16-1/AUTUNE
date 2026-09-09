@@ -3,8 +3,8 @@
 Document every new variable in docs/engineering/environments.md and add it to
 .env.example.
 
-Implementation selection lives here: ``*_impl`` picks which class backs each of
-the four models, and swapping it changes no code outside ``autune_context.pipeline``.
+Implementation selection lives here: ``*_impl`` picks which class backs each
+model, and swapping it changes no code outside ``autune_context.pipeline``.
 See docs/modules/context.md, "Model abstraction layer".
 """
 
@@ -24,7 +24,7 @@ class ContextSettings(BaseSettings):
     embedder_impl: str = "kure_v1_http"
     reranker_impl: str = "bge_reranker_v2_m3_ko_http"
     nli_impl: str = "klue_kornli_http"
-    llm_impl: str = "external"  # later: "self_hosted_http"
+    # LLM (agenda / briefs) is Phase 2 and has no impl yet — see base.LlmClient.
 
     # --- embedding (KURE-v1) ---
     embedding_dim: int = 1024
@@ -46,17 +46,10 @@ class ContextSettings(BaseSettings):
     nli_local_model: str = ""
     """Path or hub id of the in-house checkpoint. Set for ``klue_kornli_local``."""
 
-    # --- llm (external API for the MVP; key comes from core AUTUNE_LLM_API_KEY) ---
-    llm_api_base: str = "https://api.openai.com/v1"
-    llm_model: str = "gpt-4o-mini"
-    llm_timeout_s: float = 30.0
-    llm_self_hosted_endpoint: str = "http://autune-llm.internal:8000/v1"
-
     # --- retrieval / linking knobs ---
     retrieve_top_k: int = 50
     rerank_top_k: int = 10
     rrf_k: int = 60
-    bm25_weight: float = 0.3
     link_confidence_threshold: float = 0.6
     """Above: assert the link. Below: store it as ``pending`` and ask the user.
     Placeholder value; tuned against the evaluation set in Phase 2."""
