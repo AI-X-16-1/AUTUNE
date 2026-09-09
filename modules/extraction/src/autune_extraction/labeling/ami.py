@@ -32,7 +32,7 @@ DIALOGUE_ACTS: Final[Mapping[str, UtteranceKind]] = MappingProxyType(
         "Elicit-Comment-Understanding": UtteranceKind.OPEN_QUESTION,
     }
 )
-"""AMI dialogue acts that map to a kind. The other ten map to nothing.
+"""AMI dialogue acts that map to a kind. The other eleven map to nothing.
 
 All four ``Elicit-*`` acts are one class here. AMI separates them by what is being
 asked for; this module only needs that something was asked and left open.
@@ -58,9 +58,17 @@ EXCLUDED_ACTS: Final[Mapping[str, str]] = MappingProxyType(
         "Stall": "Filler.",
         "Fragment": "Incomplete.",
         "Other": "AMI's catch-all.",
+        "Unlab": "Annotated as not annotatable. Not a class, an absence.",
     }
 )
 """Acts deliberately left unmapped, and why.
+
+Together with ``DIALOGUE_ACTS`` this accounts for all sixteen leaf acts in AMI's
+``ontologies/da-types.xml``. Accounting for every one is the point: an act
+nobody decided about is indistinguishable from an act somebody forgot, and the
+forgetting is silent — a key that matches nothing yields an empty class, not an
+error. ``scripts/ami_label_conflicts.py`` refuses to run when the two sets
+disagree.
 
 Written down rather than omitted: the next person to look at recall on the
 commitment class will reach for ``Suggest``, and the reason not to is a measured
@@ -88,36 +96,58 @@ was made. Not an act and not a polarity, so it is passed separately."""
 PRECEDENCE: Final[tuple[UtteranceKind, ...]] = (
     UtteranceKind.DECISION,
     UtteranceKind.CONCERN,
+    UtteranceKind.OPEN_QUESTION,
     UtteranceKind.AMBIGUOUS,
     UtteranceKind.COMMITMENT,
-    UtteranceKind.OPEN_QUESTION,
 )
 """Which kind wins when the layers disagree, highest first.
 
-**This ordering is not in the corpus documentation and not in ours.** It is a
-judgement, and the reasoning is below so it can be argued with rather than
-guessed at. ``label_for`` reports what it overruled so the first real corpus pass
-measures how often any of this matters.
+AMI does not say. This ordering was a judgement, and then
+``scripts/ami_label_conflicts.py`` measured it against the corpus: 117,915
+dialogue acts, 21,601 labelled, **1,439 of them contested (6.7%)**. Frequent
+enough that the ordering decides real training data, so the counts below are
+per rule rather than a total.
 
-``decision`` first — an extractive decision span is the most specific human
-judgement in the corpus, a person pointing at where the meeting settled
-something. It is also the field module D keys a lineage on, so a decision
-demoted to something else costs more than the reverse.
+``decision`` first, and it is most of the disagreement — 1,039 of the 1,439.
+An extractive decision span is the most specific human judgement in the corpus,
+a person pointing at where the meeting settled something, and it is the field
+module D keys a lineage on. A decision demoted to something else costs more than
+the reverse.
 
-``concern`` over ``ambiguous`` — an utterance that is both uncertain and an
-objection is an objection. The ambiguous class exists to trigger a "did you mean
-to commit?" DM, and asking that about a stated objection is worse than useless:
-it was not assent at all.
+``open_question`` over ``ambiguous`` — 362 cases, and **the measurement is what
+put it there.** The ordering originally ran the other way, on the reasoning that
+polarity is the better-informed layer. Reading the cases it produced showed that
+is wrong here: they are questions, not hedged assent.
 
-``concern`` and ``ambiguous`` over ``commitment`` — polarity is a fact about how
-an utterance answers the one before it, and the act inventory carries no sign, so
-polarity is the *more* informed source here, not the less. An ``Offer`` inside a
-NEG or UNC pair is "한번 볼게요": the shape of a commitment without the substance,
-and calling it a commitment is exactly the error ADR 0006 asks us to catch.
+    [Elicit-Assessment/UNC]  Do we need an L_C_D_ display?
+    [Elicit-Inform/UNC]      Is that something they want actually written on it,
 
-``open_question`` last — it is the only kind that describes what the utterance
-asks for rather than what it settles, so anything else known about the utterance
-is more useful downstream.
+An ``ambiguous`` label triggers a DM asking the speaker whether they meant to
+commit (#12). Asking that about a question is not a near miss — the person was
+not assenting at all, and 362 of them is a steady stream of DMs that make the
+product look like it is not listening.
+
+``ambiguous`` over ``commitment`` — 5 cases. This is the "한번 볼게요" rule, and it
+is right where it fires:
+
+    [Offer/UNC]   Mm, I gotta think about it for a second like.
+    [Offer/PART]  Have to think about the question,
+
+But five. An earlier draft of this called it the load-bearing rule; it is not,
+and the reason is structural rather than a quirk of this corpus. Polarity is a
+property of a *response*, and an ``Offer`` is an initiating move — the two
+rarely land on the same utterance in any corpus. Keep the rule, because calling
+"let me see" a commitment is exactly the error ADR 0006 asks us to catch. Do not
+tune anything on the strength of it.
+
+``concern`` over the two below it — 31 cases, and mixed. "how are we going to
+achieve this high-end product if" is a concern; "Uh what can a T_V_ do?" is a
+question that happened to answer something negatively. Kept above
+``open_question`` because a concern feeds gap detection and costs nobody a DM
+when it is wrong, so the asymmetry runs the other way from the ambiguous case.
+
+``commitment`` last, which is free: an act is either ``Offer`` or ``Elicit-*``
+and never both, so it can only lose to a decision span.
 """
 
 

@@ -176,28 +176,43 @@ no sign, which is why `concern` is keyed on the adjacency pairs instead.
 The table above lives in code as `autune_extraction.labeling.ami`, along with the
 acts it deliberately leaves out and the reason for each. Three things read it —
 the corpus loader, the LLM labelling prompt, and the hand-correction pass — and
-three paraphrases of a table drift apart.
+three paraphrases of a table drift apart. All sixteen of AMI's leaf acts are
+either mapped or excluded by name, because an act nobody decided about looks
+exactly like an act somebody forgot.
 
 An utterance can carry evidence from several layers at once: an `Offer` inside a
 UNC adjacency pair is both a commitment and an ambiguity. `PRECEDENCE` settles
 those, highest first:
 
 ```
-decision  >  concern  >  ambiguous  >  commitment  >  open_question
+decision  >  concern  >  open_question  >  ambiguous  >  commitment
 ```
 
-**This ordering is a judgement, not something the corpus documentation states.**
-A decision span is the most specific human annotation in AMI and the field module
-D keys a lineage on. Polarity outranks the act because the act inventory carries
-no sign, so the pair is the better-informed layer — an `Offer` inside a UNC pair
-is "한번 볼게요", the shape of a commitment without the substance, and calling it a
-commitment is the error the confirmation DM exists to undo. An uncertain
-objection is an objection: asking whether someone meant to commit, when they were
-disagreeing, is worse than staying silent.
+AMI does not state an ordering, so this one was a judgement — and then
+`scripts/ami_label_conflicts.py` measured it. Over 117,915 dialogue acts it
+labels 21,601 and finds **1,439 contested (6.7%)**, so the ordering decides real
+training data rather than a handful of edge cases.
 
-Each label records which layer produced it and which kinds it overruled, so the
-first pass over the corpus reports how often the ordering decides anything rather
-than leaving it an unexamined constant.
+| Rule | Cases |
+| --- | --- |
+| `decision` over anything | 1,039 |
+| `open_question` over `ambiguous` | 362 |
+| `concern` over the two below it | 31 |
+| `ambiguous` over `commitment` | 5 |
+
+The measurement changed the ordering. `ambiguous` originally outranked
+`open_question`, on the reasoning that polarity is the better-informed layer.
+The 362 cases it produced are questions, not hedged assent — "Do we need an LCD
+display?" — and an `ambiguous` label triggers a DM asking the speaker whether
+they meant to commit. Asking that about a question is not a near miss.
+
+The `ambiguous` over `commitment` rule is the "한번 볼게요" case and is right where
+it fires, but it fires five times, and structurally so: polarity is a property of
+a response while an `Offer` is an initiating move, so the two rarely land on one
+utterance. Keep the rule; tune nothing on it.
+
+Each label records which layer produced it and which kinds it overruled, which is
+what makes the table above producible at all.
 
 Corpora are downloaded per machine and never committed (`dataset/` is gitignored).
 AMI is CC BY 4.0 and requires attribution wherever results are published. Analysis

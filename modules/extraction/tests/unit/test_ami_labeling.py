@@ -79,6 +79,16 @@ def test_every_unmapped_act_says_why() -> None:
     assert all(reason.strip() for reason in EXCLUDED_ACTS.values())
 
 
+def test_all_sixteen_ami_acts_are_accounted_for() -> None:
+    """AMI's ontology has sixteen leaf acts; every one is mapped or excluded.
+
+    ``Unlab`` was missing until the corpus pass refused to run. Nothing failed
+    before that — an unrecognised act simply produced no label, which is
+    indistinguishable from an act somebody decided not to use.
+    """
+    assert len(DIALOGUE_ACTS) + len(EXCLUDED_ACTS) == 16
+
+
 def test_all_four_elicit_acts_are_one_class() -> None:
     elicits = {act for act in DIALOGUE_ACTS if act.startswith("Elicit-")}
 
@@ -95,12 +105,31 @@ def test_precedence_covers_every_kind() -> None:
     assert len(PRECEDENCE) == len(set(PRECEDENCE))
 
 
+def test_a_hesitant_question_stays_a_question() -> None:
+    """362 cases in AMI, and the reason the ordering was changed.
+
+    An ``ambiguous`` label triggers a DM asking the speaker whether they meant to
+    commit. "Do we need an LCD display?" is a question — the person was not
+    assenting at all, and asking them to confirm a promise they never made is not
+    a near miss. Measured by ``scripts/ami_label_conflicts.py``.
+    """
+    label = label_for(Evidence(dialogue_act="Elicit-Assessment", adjacency_pair_type="apt_3"))
+
+    assert label is not None
+    assert label.kind is UtteranceKind.OPEN_QUESTION
+    assert UtteranceKind.AMBIGUOUS in label.overruled
+
+
 def test_an_uncertain_offer_is_ambiguous_not_a_commitment() -> None:
     """ "한번 볼게요" — the shape of a commitment without the substance.
 
-    This is the single most load-bearing precedence rule. Letting the act win
-    would train the model to promote weak assent to a promise, which is the error
-    the NLI verification step and the confirmation DM both exist to undo.
+    Letting the act win would train the model to promote weak assent to a
+    promise, which is the error the NLI verification step and the confirmation DM
+    both exist to undo.
+
+    Only 5 cases in AMI, and structurally so: polarity is a property of a
+    response and an ``Offer`` is an initiating move, so the two rarely land on
+    one utterance. Right where it fires, and nothing should be tuned on it.
     """
     label = label_for(Evidence(dialogue_act="Offer", adjacency_pair_type="apt_3"))
 
@@ -154,7 +183,7 @@ def test_overruled_is_ordered_by_precedence() -> None:
     )
 
     assert label is not None
-    assert label.overruled == (UtteranceKind.AMBIGUOUS, UtteranceKind.OPEN_QUESTION)
+    assert label.overruled == (UtteranceKind.OPEN_QUESTION, UtteranceKind.AMBIGUOUS)
 
 
 # --- the mapping is data, not a mutable global ------------------------------
