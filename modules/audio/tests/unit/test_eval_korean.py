@@ -59,6 +59,36 @@ class TestNormalise:
     def test_spoken_numerals_become_digits_a_date_parser_can_read(self) -> None:
         assert normalise("구월 십팔일") == "9월 18일"
 
+    def test_a_scale_character_is_kept_and_the_numeral_before_it_converted(self) -> None:
+        """백팔십억 becomes 180억, not 18000000000.
+
+        Expanding it would make one misheard figure cost eleven characters of
+        CER instead of four, which is not what a listener would notice.
+        """
+        assert normalise("백팔십억 달러") == "180억 달러"
+        assert normalise("백팔십억 달러") == normalise("180억 달러")
+        assert normalise("천오백만 달러") == normalise("1,500만 달러")
+        assert normalise("이천사백칠십오달러") == normalise("2,475달러")
+
+    def test_percentages_and_dollars_are_units_too(self) -> None:
+        """S3 is the numbers session; spelling must not show up in its CER."""
+        assert normalise("삼십 퍼센트 증가") == normalise("30% 증가")
+        assert normalise("백사십사달러") == normalise("144달러")
+
+    def test_a_word_that_merely_starts_with_a_numeral_is_left_alone(self) -> None:
+        """원 is not a unit here: it would turn 공원 into 0원 and 사원 into 4원."""
+        for word in ("공원에서", "사원 다섯", "제일 먼저", "내일", "병원"):
+            assert normalise(word) == word
+
+    def test_composition_across_a_scale_is_a_known_limit(self) -> None:
+        """1만 4,400 and 14400 are the same amount, and this does not know it.
+
+        Handling it needs a parser rather than a substitution. Pinned so the
+        limit is visible: here the normalised score is worse than the raw one,
+        which is the symptom the module docstring says to look for.
+        """
+        assert normalise("1만 4,400달러") != normalise("14400달러")
+
     def test_spoken_units_become_the_latin_spelling_the_model_writes(self) -> None:
         """Both spellings are correct; scoring them apart measures orthography."""
         assert normalise("약 30센티미터이며") == normalise("약 30cm이며")

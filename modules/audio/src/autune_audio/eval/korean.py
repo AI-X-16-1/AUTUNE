@@ -74,7 +74,26 @@ def _sino_to_int(text: str) -> int | None:
     return total + current
 
 
-_NUMERAL = re.compile(r"[영공일이삼사오육칠팔구십백천]+(?=[월일시분초년개번호])")
+_DIGITS = "영공일이삼사오육칠팔구십백천"
+
+# A numeral is only a numeral when a unit follows it, and only when a Hangul
+# syllable does not precede it -- 제일 is not 제1.
+#
+# 원 is deliberately absent. As a one-character lookahead it turns 공원 into 0원
+# and 사원 into 4원, and those words are far more common in a meeting than a sum
+# in won spelled out in Hangul. 달러 is safe because it is two characters.
+#
+# 만 and 억 stay as they are, and the numerals around them are converted, so
+# 백팔십억 becomes 180억 rather than 18000000000. That is the form the model
+# writes, and it keeps a number's weight in CER proportional to how long it is
+# said -- full expansion would make one misheard figure cost eleven characters.
+#
+# A space is allowed only before the multi-character units, where it cannot cost
+# anything: 삼십 % is a percentage, but 이 시점 is not two o'clock.
+_NUMERAL = re.compile(rf"(?<![가-힣])[{_DIGITS}]+(?=[월일시분초년개번호만억]|\s?%|\s?달러)")
+
+# Digit-group separators. 2,475 and 2475 are the same number said aloud.
+_GROUPED = re.compile(r"(?<=\d),(?=\d)")
 
 
 def normalise(text: str) -> str:
@@ -90,13 +109,19 @@ def normalise(text: str) -> str:
     whose word list is incomplete removes text from one side only. Record the
     raw score next to the normalised one so the two stay separable.
     """
+    # Before punctuation goes, because otherwise 2,475 becomes 2 475.
+    text = _GROUPED.sub("", text)
     text = _PUNCT.sub(" ", text)
-    text = _NUMERAL.sub(lambda m: str(_sino_to_int(m.group()) or m.group()), text)
-    text = _FILLER.sub(" ", text)
-    text = text.lower()
+    # Units are written before numerals are read, so that 삼십 퍼센트 has become
+    # 삼십 % by the time the numeral looks for the unit that follows it.
     for spoken, written in _SPOKEN_UNITS:
         text = text.replace(spoken, written)
-    return _SPACE.sub(" ", text).strip()
+    text = _NUMERAL.sub(lambda m: str(_sino_to_int(m.group()) or m.group()), text)
+    text = _FILLER.sub(" ", text)
+    # 30 % and 30% read the same. CER drops spaces anyway; this keeps normalise
+    # itself canonical, so equal output means the two were read the same way.
+    text = re.sub(r"(?<=\d)\s+%", "%", text)
+    return _SPACE.sub(" ", text.lower()).strip()
 
 
 @dataclass(frozen=True)
