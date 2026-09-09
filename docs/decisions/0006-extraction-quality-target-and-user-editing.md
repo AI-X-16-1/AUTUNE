@@ -88,7 +88,7 @@ whatever the number turns out to be. Per-item source utterances were already
 wanted for 근거 발화 보기; this makes them load-bearing, and AMI's own
 `summaryLinks` annotation is the precedent for the shape.
 
-**Harder.** The API grows: creating an item by hand, soft-deleting one, and
+**Harder.** The API grows: creating an item by hand, deleting one, and
 confidence plus source utterances on every row. Edit cost needs instrumentation
 that counts without identifying anyone. The candidate section needs a confidence
 threshold, and the threshold needs the evaluation set before it can be set.
@@ -115,3 +115,20 @@ Note that AMI has no dedicated action item annotation layer — its own
 documentation places actions inside the abstractive summaries — so an AMI action
 item benchmark is derived rather than annotated directly. Read 43.12 as the best
 published number on the task, not as a figure from a canonical labelled split.
+
+## Amendments
+
+**Soft delete removed (#66, #83).** The Consequences section said the API would
+grow "soft-deleting one". It should not have: `privacy.md` allows no soft deletes
+and no tombstones holding content, and ADR 0003 rule 4 says the same. The delete
+endpoint is a real delete.
+
+Edit cost does not lose anything to that. The metric needs to know **that** a
+deletion happened, not **what** was deleted, so a counter in `ext_edit_events`
+carries the whole of it. Keeping the row would have been keeping meeting content
+for a purpose the privacy rules do not grant — there was never a trade-off here,
+only a rule nobody checked.
+
+`docs/modules/extraction.md` was corrected in #66. This document was missed, and
+an ADR is what somebody reads before implementing an endpoint, so the wrong
+instruction outlived the right one by a day.
