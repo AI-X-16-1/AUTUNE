@@ -55,6 +55,28 @@ agreement, and sync the result to Notion and Jira.
 7. **Sync** — create Notion pages and Jira issues, storing the returned URLs.
 8. **Publish** — emit `ExtractionResult`.
 
+Classification runs before reference resolution, which is worth stating because
+the opposite reads as more natural: resolve the pronouns, then work on clean
+text. Two things decide it.
+
+The class is marked at the sentence ending in Korean, and the referent does not
+carry it — "이걸 확정하도록 **하겠습니다**" is a commitment whether or not anything
+knows what 이걸 points at. Slot filling is the step that genuinely cannot proceed
+unresolved, and it comes after resolution either way.
+
+Resolution is an LLM call. Running it first means one per utterance; running it
+after classification means one per utterance in the classes that still need it —
+roughly an eleventh as many on a corpus of 398,748 meeting utterances. That also
+points the same way as `privacy.md`, which asks for the smallest window that
+resolves a reference rather than the whole meeting.
+
+Neither argument is an accuracy measurement — comparing the two orders needs a
+labelled set and two trained classifiers. If the evaluation harness later shows
+resolution-first classifies better, moving the step is the cheap direction to go;
+building on an LLM call per utterance and cutting it back later is not. Keep the
+step positionable. `modules/extraction/scripts/ko_reference_overlap.py` measures
+the overlap the question turns on.
+
 ## Tables
 
 | Table | Purpose |
@@ -103,6 +125,45 @@ other module's tables.
 Target non-LLM share is roughly 60%: classification and verification are models
 we train, not prompts.
 
+### Classifier training data
+
+Labels are produced by an LLM in a first pass over Korean meeting utterances and
+then corrected by hand. Hand-labelling from nothing spends the only days this
+project has for it, and labelling functions break down on exactly the two classes
+that matter most here — `concern` and `ambiguous` are what feeds the NLI
+confirmation step, and neither reduces to a keyword rule.
+
+This does not spend the non-LLM budget above. That target describes what runs at
+inference: it is "a design target, not a metric we measure... to keep the team
+building real models rather than prompt chains" (`../product/prd.md` section 8).
+An LLM that writes training labels produces a trained classifier, which is the
+thing the target is asking for.
+
+The label definitions come from the AMI Meeting Corpus rather than being invented
+here, because AMI annotates the same boundaries already:
+
+| Kind | AMI source |
+| --- | --- |
+| `commitment` | Dialogue act `Offer`; abstractive `actions` |
+| `decision` | Extractive `decision` spans; abstractive `decisions` |
+| `open_question` | The four `Elicit-*` dialogue acts |
+| `concern` | Adjacency-pair `NEG`; abstractive `problems` |
+| `ambiguous` | Adjacency-pair `UNC` and `PART` |
+
+Two of those are worth knowing. `Suggest` is not a commitment — it is a proposal,
+and it outnumbers `Offer` six to one, so folding it in buys noise. Polarity is not
+in the dialogue-act inventory at all; `Assess` is the largest task act and carries
+no sign, which is why `concern` is keyed on the adjacency pairs instead.
+
+Corpora are downloaded per machine and never committed (`dataset/` is gitignored).
+AMI is CC BY 4.0 and requires attribution wherever results are published. Analysis
+scripts live in `modules/extraction/scripts/`.
+
+Neither corpus is a Korean team meeting — AMI is English design roleplay, and the
+Korean set is broadcast discussion. A model tuned on them has not been shown to
+reach the F1 target on real meetings; an evaluation set drawn from the team's own
+meetings is what would measure that gap.
+
 ## Metric
 
 Action item extraction F1 — 0.80+ at six weeks, 0.88+ at three months.
@@ -121,5 +182,4 @@ uv run --package autune-extraction python -m autune_extraction.eval
 
 ## Open questions
 
-- Labeling strategy for the classifier: manual seed set versus weak supervision.
 - Whether Jira sync is per-action or batched per meeting.
