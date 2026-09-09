@@ -11,8 +11,9 @@ break at once when it changes badly.
 2. **Frozen after W1. Additive changes only.** Adding an optional field with a
    default is safe and needs a normal review. Removing a field, renaming a
    field, changing a type, making an optional field required, or narrowing a
-   constraint is breaking: announce in Slack, get approval from every affected
-   module owner, bump `CONTRACT_VERSION`, and ship it in one pull request.
+   constraint is breaking: open an issue with the `decision` label, get approval
+   from every affected module owner, bump `CONTRACT_VERSION`, and ship it in one
+   pull request.
 3. **Every payload carries `contract_version` and `meeting_id`.**
 4. **Timestamps are UTC ISO-8601.** Audio offsets are seconds as floats,
    relative to the start of the recording.
@@ -272,8 +273,8 @@ in aggregate and not exposed through any shared payload. See `privacy.md`.
 carries it.
 
 - Additive change → bump the minor version (`2.0` → `2.1`)
-- Breaking change → bump the major version (`2.0` → `3.0`), and only after Slack
-  announcement plus approval from every affected owner
+- Breaking change → bump the major version (`2.0` → `3.0`), and only after a
+  `decision` issue plus approval from every affected owner
 
 Version 2.0 renamed `DecisionChange.decision_id` to `thread_id` and added
 `source_decision_id`, because one field was carrying two identities. It was done
