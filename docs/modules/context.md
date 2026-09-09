@@ -8,106 +8,269 @@
 | **Frontend** | `apps/web/src/features/context/` |
 | **Table prefix** | `ctx_` |
 | **API prefix** | `/api/context` |
+| **Alembic branch** | `context` |
 
 ## Responsibility
 
 Keep context alive across meetings. Link the current meeting's topics to past
-meetings, track how decisions changed over time, and — in Phase 2 — analyze
+meetings, and track how a decision changed over time. In Phase 2, analyze
 uploaded material into an agenda and send pre-meeting briefs.
 
-D is what makes Autune different from every transcription tool. Everything else
-processes "this meeting"; D connects meetings to one another.
+D is what makes Autune more than a transcription tool. Everything else processes
+"this meeting"; D connects meetings to one another.
 
 ## Non-goals
 
-- Extracting decisions from a single meeting — B classifies them; D tracks how
-  they change.
-- Detecting what was missing — that is C.
+- Extracting decisions from a single meeting — B classifies them; D only tracks
+  how they change. See "The B → D boundary" in `../architecture/contracts.md`.
+- Detecting what was missing within one meeting — that is C.
 - Team-level analytics — that is E.
+- Building any Phase 2 feature during the six weeks (material analysis, agenda
+  generation, briefs, the S22 relationship graph).
 
 ## Inputs
 
-| Source | Contract or form |
-| --- | --- |
-| A | `TranscriptReady` via `autune.transcript.ready` — topic linking |
-| B | `ExtractionResult` via `autune.extraction.completed` — decision lineage |
-| `packages/core` | `meetings`, `participants`, `utterances` (read-only) |
-| Web upload | Material documents — PDF, docx, markdown (Phase 2) |
-| Own history | `ctx_decisions`, `ctx_decision_versions`, `ctx_embeddings` |
+| Source | Contract or table | Notes |
+| --- | --- | --- |
+| A | `TranscriptReady` via `autune.transcript.ready` | Topic linking. Needs only the transcript, so it runs in parallel with B and C. |
+| B | `ExtractionResult` via `autune.extraction.completed` | Decision lineage. Needs `result.decisions`, so it runs after B. |
+| `packages/core` | `meetings`, `participants`, `utterances` | Read-only. Never `INSERT`/`UPDATE`/`DELETE`. |
+| Own history | `ctx_decisions`, `ctx_decision_versions`, `ctx_embeddings` | Past meetings' topic embeddings and decision threads. |
+| Web upload | Material documents (PDF, docx, markdown) | Phase 2 only. |
 
 ## Outputs
 
 | Destination | Contract | Event |
 | --- | --- | --- |
 | E | `ContextLinks` | `autune.context.completed` |
-| Slack | Topic-link notifications, pre-meeting briefs (Phase 2) | — |
+| Slack | Topic-link notice, decision-drift warning | — |
+| Slack | Pre-meeting brief | Phase 2 |
+
+`ContextLinks` carries only `asserted` and user-`confirmed` links. `pending`
+links (below the confidence threshold, awaiting user confirmation) live in
+`ctx_topic_links` and are served through the API, not published to E. No
+contract change is needed for the confirmation flow.
+
+## AI stack
+
+Four models sit behind interfaces (see "Model abstraction layer"). Three are
+self-hosted; the LLM is an external API for the MVP.
+
+| Component | Model or algorithm | Hosting | Version pin |
+| --- | --- | --- | --- |
+| Dense retrieval | KURE-v1 (inherits bge-m3's dimension) | Self-hosted HTTP | HF revision, recorded per row |
+| Lexical retrieval | BM25 over a kiwipiepy tokenization | In application code | `rank-bm25`, `kiwipiepy` pinned in the manifest |
+| Re-ranking | `dragonkue/bge-reranker-v2-m3-ko` | Self-hosted HTTP | HF revision, recorded per row |
+| Decision-change detection | `klue/roberta` fine-tuned on KorNLI (in-house) | Self-hosted HTTP | Training job in `modules/context/scripts/`; checkpoint id recorded per row |
+| Agenda and brief generation | LLM (external API) | External for the MVP, self-hosted later | Phase 2 |
+
+PostgreSQL full-text search has no Korean analyzer without a further extension,
+so hybrid retrieval is **not** a single query: the vector similarity plus its
+metadata filter (`team_id`, retention window) run in PostgreSQL through pgvector,
+and BM25 runs in application code. The two rankings are fused with reciprocal
+rank fusion (RRF).
+
+**Retrieve broad, re-rank narrow.** Top 50 from hybrid retrieval, top 10 after
+re-ranking. Mis-linking is this module's main risk, and re-ranking is what buys
+precision. Below the confidence threshold, offer the link for user confirmation
+rather than asserting it.
+
+### Topic-statement extraction is not an LLM task (MVP)
+
+The linking pipeline is `topic → embed → hybrid retrieve → re-rank → link`.
+Accuracy is bought by retrieval and re-ranking, not by the polish of a topic
+label, and what is matched across meetings is the topic **embedding** — as long
+as both sides use the same extraction method, they stay consistent.
+
+For the MVP, topics are extracted without an LLM:
+
+1. **Segment** the transcript with an embedding-based TextTiling: a sliding
+   window over consecutive utterance embeddings, cut at local similarity minima,
+   with sub-minimum-length segments merged.
+2. **Label** each segment with kiwipiepy noun-phrase candidates scored by
+   in-segment frequency against rarity in a background corpus of past meetings.
+3. **Represent** each topic for matching as the segment's mean-pooled embedding,
+   plus its top utterances for BM25 and the re-ranker.
+
+This keeps the core path fully on self-hosted infrastructure, keeps the
+evaluation deterministic, and avoids sending a full transcript to an external
+API. An optional Phase 2 step may use the LLM to rewrite the **display** label
+only — never the matching representation.
+
+## Model abstraction layer
+
+Every AI model this module uses sits behind a `typing.Protocol` in
+`autune_context/pipeline/`. The concrete implementation — self-hosted HTTP,
+in-process weights, or external API — is selected by a config string and is
+never referenced directly outside that package.
+
+```
+autune_context/pipeline/
+├── __init__.py     # public surface: get_embedder / get_reranker / get_nli / get_llm,
+│                   #   plus a worker_process_init hook that warms and logs each model
+├── base.py         # Protocols: Embedder, Reranker, NliModel, LlmClient (+ result dataclasses)
+├── registry.py     # config string → implementation, lru_cache, startup dimension guard
+├── embedding.py    # KureHttpEmbedder / KureLocalEmbedder / FakeEmbedder
+├── reranking.py    # BgeRerankerKoHttp / ...Local / Fake
+├── nli.py          # KlueKorNliHttp / ...Local / Fake
+├── llm.py          # ExternalLlm (OpenAI-compatible) / SelfHostedLlm / Fake
+├── retrieval.py    # HybridRetriever: KURE dense + BM25, RRF fusion
+└── topics.py       # TextTiling segmentation + keyphrase labelling
+```
+
+Rules:
+
+- **Selection is config.** `AUTUNE_CONTEXT_EMBEDDER_IMPL`,
+  `_RERANKER_IMPL`, `_NLI_IMPL`, `_LLM_IMPL`. Swapping an implementation changes
+  no code outside `pipeline/`.
+- **Load once at worker startup**, not per task — `registry.get_*()` is
+  `lru_cache`d and warmed from `worker_process_init`.
+- **`model_version` is read from the serving endpoint** (`/info`) at warm-up and
+  written onto every output row, so results stay traceable across redeploys.
+- **The embedding dimension is a compile-time fact.** `ctx_embeddings.embedding`
+  is `vector(N)` where `N = autune_context.constants.EMBEDDING_DIM`, fixed at
+  migration time. `get_embedder()` raises at startup unless the chosen model's
+  `dim` equals it. `AUTUNE_CONTEXT_EMBEDDING_DIM` is an operator-visible mirror
+  of the same value; a unit test fails if the two drift. A re-dimensioned model
+  is a new migration, not a config change.
+- **`*_local` implementations are optional.** They pull `sentence-transformers`,
+  `torch` and `transformers`, which live in the `local-models` optional
+  dependency group and are used only for local development, CI-free runs, and
+  evaluation. The worker image runs the `*_http` implementations.
+- **`Fake*` implementations** back unit tests; integration and pipeline tests
+  select them with `AUTUNE_CONTEXT_*_IMPL=fake`.
+
+The LLM client stays inside this module for now. If B and C end up needing an
+LLM client too, moving it to `packages/integrations` is a team decision to make
+at the start of Phase 2, not before.
+
+### Self-hosted serving contract
+
+The three self-hosted models are reached over HTTP. Each endpoint exposes
+`/health`, `/info` (returns the model id and revision), and its inference route
+(`/embed`, `/rerank`, `/nli`). Deployment of these services is owned by `infra/`
+and is settled in Phase 0.
 
 ## Pipeline
 
-### Topic linking
-1. Extract topic statements from the transcript and embed them with
-   Sentence-BERT.
-2. Hybrid retrieval over past meetings: BM25 for lexical overlap, dense
-   similarity for paraphrase. Retrieve the top 50.
-3. Cross-encoder re-ranking over those 50, keep the top 10.
-4. Above the confidence threshold, create a link; below it, offer the link for
-   user confirmation rather than asserting it.
+### Topic linking — from `autune.transcript.ready`
 
-Retrieve broad, re-rank narrow. Topic mis-linking is the module's main risk, and
-re-ranking is what buys precision.
+1. `require_privacy_guarantees()` on the payload; refuse an undeleted-audio or
+   unmasked transcript.
+2. Extract topics (`pipeline/topics.py`), embed them with KURE-v1, persist to
+   `ctx_embeddings` (`kind = "topic"`).
+3. Hybrid retrieval over past meetings of the same team, within the retention
+   window: pgvector cosine + in-process BM25, fused with RRF, top 50.
+4. Re-rank those 50 with the cross-encoder, keep the top 10.
+5. Above `link_confidence_threshold`, write an `asserted` link; below it, write a
+   `pending` link for the user to confirm.
+6. Mark `ctx_meeting_status.topic_linking_done`, then schedule
+   `autune.context.publish_if_ready` with a countdown of
+   `publish_timeout_s`.
 
-### Decision lineage
+### Decision lineage — from `autune.extraction.completed`
 
-Input is `ExtractionResult.decisions` — B decides what counts as a decision in
-this meeting, D decides whether it is the same decision as one from before.
-**Do not extract decisions here.** Duplicating B's classifier makes the two
-disagree, and a decision then appears in the summary tab (S15) while missing
-from the lineage view (S22), which reads to a user as a bug.
+Input is `ExtractionResult.decisions`. B owns *what counts as a decision in this
+meeting*; D owns *whether it is the same decision as one from before*. **D does
+not run a decision classifier.** Duplicating B's would make the two disagree,
+and a decision would then show in the summary tab (S15) while missing from the
+lineage view (S22), which reads to a user as a bug.
 
-1. Match each of B's decisions to an existing thread, or open a new one. The
-   thread id (`thr_`) is D's; the decision id (`dec_`) is B's.
+1. For each of B's decisions (`dec_` id), find the matching lineage thread by
+   semantic similarity to existing thread statements, or open a new thread with
+   a fresh `thr_` id.
 2. Run NLI between the previous statement and the current one:
-   `entailment` → unchanged, `contradiction` → reversed, `neutral` → modified.
-3. Record a new version with what changed, when, in which meeting, and who was
-   present.
-4. Flag a change made while a key stakeholder was absent.
+   `entailment` → `unchanged`, `contradiction` → `reversed`,
+   `neutral` → `modified`; no match → `new`.
+3. Record a `ctx_decision_versions` row: what changed, in which meeting, chained
+   onto the previous version, with the NLI label and confidence.
+4. Compute `key_stakeholders_absent` from the shared `participants` of the
+   current meeting against the thread's known stakeholders. A non-empty list
+   drives the drift warning.
+5. Mark `ctx_meeting_status.lineage_done`, then call
+   `autune.context.publish_if_ready`.
 
-### Material analysis (Phase 2)
-Chunk uploaded documents, embed into `ctx_embeddings`, retrieve against the meeting title
-and participants, draft an agenda.
+### Publishing — `autune.context.publish_if_ready`
+
+Publish `ContextLinks` when `topic_linking_done` is set **and** either
+`lineage_done` is set or the timeout has elapsed. If B has not reported by the
+timeout, publish with an empty `decision_lineage` and `"extraction"` in
+`missing_sources`. **A failure in B must never cost the user their topic links.**
+`published_at` guards against a double publish; the task is safe to run twice.
 
 ## Storage
 
-| Store | Contents |
-| --- | --- |
-| PostgreSQL `ctx_materials` | Uploaded documents and chunk metadata |
-| PostgreSQL `ctx_topic_links` | Meeting-to-meeting topic links with scores |
-| PostgreSQL `ctx_decisions` | Decision threads |
-| PostgreSQL `ctx_decision_versions` | Each version, with change type and NLI label |
-| PostgreSQL `ctx_embeddings` | Embeddings for materials and meeting topics, in a `vector` column |
+PostgreSQL only. Every row is reachable from a `meeting_id`, a `team_id`, or is
+cleaned up by a deletion hook (see "Deletion").
 
-Everything D owns is a PostgreSQL row, so it all cascades with the meeting and
-no deletion hook is needed.
+| Table | Purpose | Key columns | Anchor / deletion |
+| --- | --- | --- | --- |
+| `ctx_embeddings` | Topic (and, Phase 2, material) embeddings | `kind`, `ref_label`, `embedding vector(N)`, `model_version` | `meeting_id` FK `ON DELETE CASCADE` |
+| `ctx_topic_links` | Meeting-to-meeting topic links with scores | `topic_label`, `linked_meeting_date`, `similarity`, `rerank_score`, `confidence`, `status` (`asserted`/`pending`/`confirmed`/`rejected`), `retriever_version`, `reranker_version` | `meeting_id` FK `CASCADE`; `linked_meeting_id` FK `ON DELETE SET NULL` |
+| `ctx_decisions` | Decision threads (lineage identity, spans meetings) | `id` (`thr_`), `topic_label` | `team_id` FK `CASCADE` + orphan-cleanup hook |
+| `ctx_decision_versions` | Each version of a decision | `source_decision_id` (`dec_`, no FK), `previous_version_id` (self-FK), `current_statement`, `previous_statement`, `previous_meeting_id` (no FK), `change_type`, `nli_label`, `confidence`, `key_stakeholders_absent` (JSONB), `nli_version` | `thread_id` FK `CASCADE`, `meeting_id` FK `CASCADE` |
+| `ctx_meeting_status` | Completion tracking for the two halves | `topic_linking_done`, `lineage_done`, `extraction_seen`, `deadline_at`, `published_at` | `meeting_id` FK `CASCADE` |
+| `ctx_materials` | Uploaded documents and chunk metadata | — | Phase 2 — not created in the MVP |
 
-A lineage is a chain, not a general graph: `ctx_decision_versions` with a
-`previous_version_id` expresses it, and a recursive CTE walks it. The
-relationship-graph visualisation on S22 is Phase 2 and is a rendering concern —
-the frontend draws it from rows.
+Notes:
 
-The `vector` column's dimension is fixed at migration time, so the embedding
-model has to be chosen before the table is created. The `vector` extension is
-already enabled by a `packages/core` migration; chain your table onto that.
+- The `vector` dimension is fixed at migration time, so the embedding model is
+  chosen before the table is created (Phase 0). The `vector` extension is
+  already enabled by a `packages/core` migration; the embedding table chains
+  onto that. Index the column with HNSW. Index every `meeting_id` column.
+- Enums are stored as strings with a check constraint, not PostgreSQL enum
+  types.
+- **No cross-module foreign keys.** `source_decision_id` is B's, stored as a
+  plain string. `previous_meeting_id` references a meeting but is left
+  unconstrained so a retention sweep on that meeting does not cascade into an
+  unrelated thread's lineage; the reader treats a missing meeting as "gone".
+- A lineage is a chain, not a graph: `ctx_decision_versions.previous_version_id`
+  plus a recursive CTE. The S22 graph visualisation is Phase 2 and is a frontend
+  rendering concern.
+
+### Why `ctx_decisions` is anchored on `team_id`
+
+A decision thread's value is continuity across meetings. If it were anchored on
+its origin meeting, the whole lineage would collapse the moment that meeting
+hit the 90-day retention window — visible immediately in a demo. So the thread
+is anchored on `team_id` (which still cascades on team deletion), each version
+is anchored on its own meeting, and a thread whose last version has been deleted
+is removed by a deletion hook.
+
+## Deletion
+
+Meeting deletion cascades through `meeting_id` foreign keys and reaches
+`ctx_embeddings`, `ctx_topic_links`, `ctx_decision_versions` and
+`ctx_meeting_status`. Two things are **not** covered by cascade and need a hook
+registered in `autune_core`'s deletion registry:
+
+- **Orphaned decision threads.** After a meeting's versions are deleted, remove
+  any `ctx_decisions` row with zero remaining versions.
+- **Dangling topic links.** `linked_meeting_id` is set to NULL when the linked
+  meeting is deleted; the API and UI show "the linked meeting is gone" and never
+  reconstruct its content from an embedding.
+
+A test that deletes a meeting and asserts every `ctx_*` row for it is gone —
+threads included — is part of shipping the schema, not an extra.
+
+> This corrects `modules/context/CLAUDE.md` and earlier drafts of this document,
+> which stated that everything cascades and no deletion hook is needed. That is
+> true for four of the five tables; `ctx_decisions` is the exception.
 
 ## API
 
+All paths are relative to `/api/context`. Long work is already done by the time
+these are called (the pipeline runs off Celery events), so these are reads plus
+one mutation.
+
 | Method | Path | Purpose |
 | --- | --- | --- |
-| GET | `/links/{meeting_id}` | Topic links for a meeting |
-| POST | `/links/{id}/confirm` | User confirms or rejects a link |
-| GET | `/decisions/{decision_id}` | Full lineage timeline |
+| GET | `/links/{meeting_id}` | Topic links for a meeting, `asserted` and `pending` separated |
+| POST | `/links/{link_id}/confirm` | User confirms or rejects a `pending` link (`status` → `confirmed`/`rejected`) |
+| GET | `/decisions/{thread_id}` | Full lineage timeline, walked with a recursive CTE |
 | GET | `/decisions` | Filter by team, topic, change type |
-| POST | `/materials` | Upload material (Phase 2) |
-| GET | `/briefs/{meeting_id}` | Pre-meeting brief (Phase 2) |
+| POST | `/materials` | Upload material — Phase 2 |
+| GET | `/briefs/{meeting_id}` | Pre-meeting brief — Phase 2 |
 
 ## Celery tasks
 
@@ -116,48 +279,80 @@ already enabled by a `packages/core` migration; chain your table onto that.
 | `autune.context.on_transcript_ready` | `autune.transcript.ready` | `cpu_heavy` |
 | `autune.context.on_extraction_completed` | `autune.extraction.completed` | `cpu_heavy` |
 | `autune.context.publish_if_ready` | after either half finishes, or on timeout | `default` |
-| `autune.context.index_material` | Material upload | `cpu_heavy` |
-| `autune.context.send_brief` | 30 minutes before a meeting (Phase 2) | `default` |
+| `autune.context.index_material` | material upload | `cpu_heavy` — Phase 2 |
+| `autune.context.send_brief` | 30 minutes before a meeting | `default` — Phase 2 |
+
+Every task is idempotent: writes are keyed by `meeting_id` and applied as
+delete-then-insert within one transaction, and `publish_if_ready` checks
+`published_at`.
+
+### Event publishing
+
+D is the repository's first module to publish a Celery event. A module may not
+import `apps/worker`. The intended mechanism is a thin
+`autune_core.publish_event(name, payload)` helper that owns the
+`contract.model_dump(mode="json") → send_task` convention for every module.
+Because it touches `packages/core` it needs team approval; until it lands, D
+publishes with `celery.current_app.send_task`.
 
 ## Slack surface
 
-- Topic-link notification: "이 안건은 2026년 9월 4일 회의에서 논의된 적 있습니다"
-  with a link to the minutes
-- Decision-drift warning when a decision changed while a key stakeholder was
-  absent
-- Pre-meeting brief 30 minutes before the meeting (Phase 2)
+- **Topic-link notice** — "이 안건은 2026년 9월 4일 회의에서 논의된 적 있습니다",
+  with a link to the minutes.
+- **Decision-drift warning** — when a decision changed while a key stakeholder
+  was absent.
+- **Pre-meeting brief** — 30 minutes before the meeting. Phase 2. Contains
+  summaries, never transcript excerpts beyond what the brief needs.
 
-## AI stack
-
-| Component | Model |
-| --- | --- |
-| Dense retrieval | Sentence-BERT (Korean) |
-| Lexical retrieval | BM25, in application code |
-| Re-ranking | Cross-encoder |
-| Decision-change detection | NLI |
-| Agenda and brief generation | LLM (Phase 2) |
-| Vector store | pgvector, in PostgreSQL |
+Handlers acknowledge and delegate to `service`; no business logic in `slack.py`.
 
 ## Metric
 
-Topic linking accuracy — 0.75+ at six weeks, 0.85+ at three months.
+Topic linking accuracy — **0.75+ at six weeks**, 0.85+ at three months.
 
 ```bash
 uv run --package autune-context python -m autune_context.eval
 ```
+
+The evaluation set is small, hand-labeled, and versioned inside the module. The
+non-LLM extraction path keeps the metric deterministic. Link dismissals from the
+confirmation flow feed threshold tuning.
 
 ## Privacy notes
 
 - Retention interacts directly with this module: a linked past meeting may be
   deleted by the retention sweep. Handle a dangling link gracefully — show that
   the meeting is gone, never resurrect its content from an embedding.
-- Embeddings are derived from masked text. Deleting a meeting deletes its
-  embeddings automatically, because they are rows in a table that cascades from
-  `meetings.id` — an embedding outliving its meeting would be a retention
-  violation, and pgvector removes the way that used to happen.
-- Briefs sent to Slack contain summaries, never transcript excerpts beyond what
-  the brief needs.
+- Embeddings are derived from masked text and are rows that cascade from
+  `meetings.id`; an embedding outliving its meeting is a retention violation.
+- The three self-hosted models receive masked transcript text within our
+  infrastructure. The external LLM (Phase 2) receives only the snippet a feature
+  needs — never a full transcript — and nothing goes into an exception message
+  or a log line. See `../architecture/privacy.md` sections 2 and 6.
+- No screen, endpoint, export, or Slack message in this module surfaces any
+  per-person speaking ratio. This module does not compute one.
+
+## Phased delivery
+
+| Phase | Scope |
+| --- | --- |
+| **0** | Lock the model stack and embedding dimension. Define the self-hosted serving contract with `infra/`. Propose `autune_core.publish_event` in Slack. Land this document. |
+| **1** | Five migrations (`ctx_embeddings`, `ctx_topic_links`, `ctx_decisions`, `ctx_decision_versions`, `ctx_meeting_status`). `models.py`, `config.py`, manifest dependencies. `pipeline/` skeleton: the four Protocols, `Fake*` implementations, `registry.py` with the dimension guard, the warm-up hook. Tests: migration round-trip, meeting-deletion cascade, orphan-thread hook. |
+| **2** | `KureHttpEmbedder`, `BgeRerankerKoHttp`, `HybridRetriever` (RRF), `topics.py`. Wire `on_transcript_ready` and `publish_if_ready` (including the B-timeout path). Evaluation harness and the first accuracy number. |
+| **3** | `KlueKorNliHttp` and the KorNLI fine-tuning job. Wire `on_extraction_completed`: thread matching, NLI, version records, absent-stakeholder detection. Publish once both halves are in. |
+| **4** | The four API routes (recursive-CTE lineage, confirmation flow). Frontend: S22 lineage timeline, S15 context tab, link-confirmation UI. |
+| **5** | Slack notice and drift warning. Threshold tuning from dismissals. Push the metric to 0.75+. |
+
+**Out of the six-week scope:** `ctx_materials`, material analysis, agenda
+generation (S08), pre-meeting briefs, the S22 relationship graph, and the
+self-hosted LLM.
 
 ## Open questions
 
-- Confidence threshold for asserting a link versus asking the user.
+- The exact confidence threshold for asserting a link versus asking the user.
+  Ships as `AUTUNE_CONTEXT_LINK_CONFIDENCE_THRESHOLD = 0.6` and is tuned against
+  the evaluation set in Phase 2.
+- Whether `autune_core.publish_event` lands before Phase 2, or D ships the
+  interim `current_app.send_task` path.
+- Whether the LLM client moves to `packages/integrations` at the start of
+  Phase 2 (depends on B's and C's needs).
