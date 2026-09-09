@@ -5,8 +5,13 @@ Topic (and, in Phase 2, material) embeddings for cross-meeting retrieval.
 the model to a different dimension is a new migration, not a config edit; see
 autune_context.constants.EMBEDDING_DIM.
 
-The ``vector`` extension is enabled by a packages/core migration; this only uses
-it. Owner: 문민재.
+The ``vector`` extension is enabled by a packages/core migration; ``depends_on``
+pins that revision so ``alembic upgrade heads`` cannot run this branch before the
+extension exists. ``aad0ea392ddc`` (enable_pgvector) chains onto
+``d34994600a9a`` (shared_entities), so this one pin covers both the extension
+type and the ``meetings`` foreign key. The rest of the context branch chains onto
+this revision and inherits the ordering. See docs/engineering/migrations.md,
+"Ordering against the core branch". Owner: 문민재.
 
 Revision ID: b1c0d2e3f4a5
 Revises: aea84543c9c3
@@ -24,7 +29,7 @@ from pgvector.sqlalchemy import Vector
 revision: str = "b1c0d2e3f4a5"
 down_revision: str | None = "aea84543c9c3"
 branch_labels: str | Sequence[str] | None = None
-depends_on: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = "aad0ea392ddc"  # core: enable_pgvector
 
 
 def upgrade() -> None:
