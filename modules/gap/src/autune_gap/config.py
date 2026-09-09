@@ -12,7 +12,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class GapSettings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="AUTUNE_GAP_", extra="ignore")
+    # env_file mirrors autune_core.Settings: without it a module reads only
+    # real environment variables and silently ignores .env.
+    model_config = SettingsConfigDict(env_prefix="AUTUNE_GAP_", env_file=".env", extra="ignore")
 
     risk_threshold: float = 0.7
 
