@@ -144,9 +144,10 @@ Do not widen this list without a reason written down.
 
 ### Notion
 
-Notion needs two steps and people reliably do only the first. Creating the
-integration gives you a token; the token can see nothing until you also share
-the target database with it.
+Notion needs three steps and each one fails differently. Creating the integration
+gives you a token; the token sees nothing until you share the target database
+with it; and sharing is still not enough unless the integration was granted the
+capability to read.
 
 1. notion.so/my-integrations → New integration → internal.
 2. Capabilities: **Read content, Update content, Insert content**. No user
@@ -160,6 +161,29 @@ the target database with it.
 5. Keep the database id from its URL — the 32-character hex between the
    workspace name and the `?v=`. It belongs in the same row's `config`, which is
    JSONB precisely because each service needs a different shape.
+6. **Verify, because step 2 fails quietly.** An integration created without
+   *Read content* still passes every check that looks like a check:
+
+   ```bash
+   # the token is valid                     -> 200, bot name and workspace
+   GET  /v1/users/me
+   # the database is shared                 -> 200, the database is listed
+   POST /v1/search
+   # the database can be read               -> 200 with only id and object,
+   GET  /v1/databases/{id}                  #    no title and no properties
+   # what actually tells you                -> 403 restricted_resource
+   POST /v1/databases/{id}/query
+   ```
+
+   Three of the four look fine. The read returns **200 with an empty shell**
+   rather than 403, so the obvious reading is "the database is empty" or "the
+   API version is wrong", and the missing capability is the last thing anyone
+   checks. Query the database: that is the call that says
+   `Insufficient permissions for this endpoint`.
+
+   Fix it at notion.so/my-integrations → the integration → **Capabilities**.
+   `create_page` needs *Insert content* as well, so a write fails the same way
+   later if only reading was granted.
 
 The database needs the properties B actually sends, per
 `ExtractionResult.action_items` in `../architecture/contracts.md`:
