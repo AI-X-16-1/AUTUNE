@@ -11,7 +11,7 @@ regressions in shared code either. Test where a break is expensive.
 | Contract | `packages/contracts/tests/` | ms | Payloads validate; example fixtures round-trip |
 | Integration | `modules/<name>/tests/integration/` | seconds | Router + service + database against real Postgres |
 | Pipeline | `modules/<name>/tests/pipeline/` | slow, marked | Model inference on small fixtures |
-| Evaluation | `modules/<name>/eval/` | slow, manual | The module's product KPI |
+| Evaluation | `modules/<name>/src/autune_<name>/eval/` | slow, manual | The module's product KPI |
 
 Unit and contract tests run on every push. Integration runs in CI. Pipeline
 tests are marked and excluded from the default run. Evaluation is run on demand
@@ -107,6 +107,10 @@ Each module owner maintains an evaluation script reporting their KPI from
 ```bash
 uv run --package autune-gap python -m autune_gap.eval
 ```
+
+The harness lives inside the package, next to the code it scores, because
+`python -m` imports it. A sibling `eval/` directory beside `src/` is not on the
+import path and this command would not find it.
 
 The evaluation set is small and hand-labeled. Keep it in the module and version
 it — a metric that moves because the eval set changed is not a metric.
