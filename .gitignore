@@ -56,3 +56,9 @@ corpus/
 
 # Claude Code local settings
 .claude/settings.local.json
+
+# Agent working artifacts. Notes, patch drafts and staging directories a Claude
+# Code session leaves in the checkout; they belong to the session, not here. A
+# file worth keeping goes into docs/ as a document, not in as a by-product.
+Claude outputs/
+_to_delete/
