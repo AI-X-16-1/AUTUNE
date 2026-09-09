@@ -53,6 +53,7 @@ documents cover how it is built.
 | `dependencies.md` | uv and pnpm workspaces, lockfile conflict policy |
 | `testing.md` | Test layers, fixtures, model-dependent tests, CI gates |
 | `environments.md` | Docker services, environment variables, local setup, secrets |
+| `external-approvals.md` | HuggingFace, Slack, Notion registrations and the AI Hub terms questions |
 
 ### design/
 | Document | Contents |
