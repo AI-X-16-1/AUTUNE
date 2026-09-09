@@ -36,6 +36,10 @@ back. Both of those happened on its first run.
 
 All three print JSON on stdout.
 
+They read the corpus through `autune_extraction.labeling.corpus`, which is also
+what builds the training set — a script with its own reader would report on a
+corpus the loader does not build from.
+
 ## AI Hub Korean meeting corpus
 
 `002. 주요 영역별 회의 음성인식 데이터`. Transcription only — `annotation_level` is

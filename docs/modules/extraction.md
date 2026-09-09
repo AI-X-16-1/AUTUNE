@@ -239,6 +239,27 @@ region, never instead of it.
 Each label records which layer produced it and which kinds it overruled, which is
 what makes the table above producible at all.
 
+Building the training set from an annotated corpus:
+
+```bash
+uv run --package autune-extraction python -m autune_extraction.labeling     --corpus dataset/ami_public_manual_1.6.2 --out dataset/ami
+```
+
+It writes `train.jsonl`, `validation.jsonl` and `test.jsonl` in the same format
+the evaluation harness reads, and prints the per-class counts of each split.
+
+**The split is by meeting, never by utterance**, and stratified on whether the
+meeting carries a decision layer. Two utterances from one meeting share a topic,
+four speakers and a vocabulary, so splitting at the utterance level scores the
+model on conversations it has already read. Stratifying matters because AMI
+annotates decisions in 47 of its 139 meetings and those meetings supply almost
+every `decision` label: without it, the first run put 47.5% decisions in train
+against 6.5% in validation.
+
+A file it writes is training data, not an evaluation set. The evaluation set is
+drawn from the team's own meetings and is what ADR 0006 measures against; the
+format is shared for convenience, not because a score on AMI would transfer.
+
 Corpora are downloaded per machine and never committed (`dataset/` is gitignored).
 AMI is CC BY 4.0 and requires attribution wherever results are published. Analysis
 scripts live in `modules/extraction/scripts/`.
