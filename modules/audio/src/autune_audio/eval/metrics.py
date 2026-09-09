@@ -132,31 +132,45 @@ def diarization_error_rate(
 class MaskingRecall:
     recall: float
     spans_in_reference: int
-    spans_we_masked: int
+    spans_we_caught: int
 
     def __repr__(self) -> str:
         return (
             f"MaskingRecall(recall={self.recall:.4f}, "
-            f"reference={self.spans_in_reference}, ours={self.spans_we_masked})"
+            f"reference={self.spans_in_reference}, caught={self.spans_we_caught})"
         )
 
 
 def masking_recall(reference_masked: str, ours: str) -> MaskingRecall:
-    """How much of what the corpus masked did we mask.
+    """How much of what the corpus masked did we mask, **in the same places**.
+
+    Counting masked spans on each side is not enough: masking two different
+    words scores the same as masking the right two, and a run that hid nothing
+    personal would report a perfect score. Positions are compared instead.
 
     Recall, not precision, because the asymmetry is not close: an over-masked
-    word is an annoyance and a leaked national ID number is an incident. The
-    target in docs/modules/audio.md is 0.95 and then 0.99.
+    word is an annoyance and a leaked national ID number is an incident.
+    Over-masking therefore cannot lower this number, and is not measured here.
+    The target in docs/modules/audio.md is 0.95 and then 0.99.
 
-    Both arguments are already masked text. The unmasked original is read only
-    to produce ``ours`` and is never passed here.
+    Both arguments are already masked text describing the same utterance. The
+    unmasked original is read only to produce ``ours`` and never passed here.
     """
-    expected = len(_MASK.findall(reference_masked))
-    if expected == 0:
+    reference_tokens = _TOKEN.findall(reference_masked)
+    our_tokens = _TOKEN.findall(ours)
+    if len(reference_tokens) != len(our_tokens):
+        raise ValueError(
+            f"the two texts do not describe the same utterance: "
+            f"{len(reference_tokens)} tokens against {len(our_tokens)}"
+        )
+
+    expected = [i for i, token in enumerate(reference_tokens) if _MASK.fullmatch(token)]
+    if not expected:
         raise ValueError("reference has no masked spans; recall is undefined")
-    got = len(_MASK.findall(ours))
+
+    caught = sum(1 for i in expected if _MASK.fullmatch(our_tokens[i]))
     return MaskingRecall(
-        recall=min(got, expected) / expected,
-        spans_in_reference=expected,
-        spans_we_masked=got,
+        recall=caught / len(expected),
+        spans_in_reference=len(expected),
+        spans_we_caught=caught,
     )

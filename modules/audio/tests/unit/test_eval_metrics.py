@@ -84,24 +84,41 @@ class TestDiarizationErrorRate:
 
 
 class TestMaskingRecall:
-    def test_masking_everything_the_corpus_masked_scores_one(self) -> None:
-        reference = "연락처 010-****-5678 이고 메일은 k***@example.com 입니다"
-        assert masking_recall(reference, reference).recall == 1.0
+    REFERENCE = "연락처 010-****-5678 이고 메일은 k***@example.com 입니다"
+
+    def test_masking_the_same_spans_scores_one(self) -> None:
+        assert masking_recall(self.REFERENCE, self.REFERENCE).recall == 1.0
 
     def test_a_missed_span_lowers_recall(self) -> None:
-        """The number that matters: what leaked, not what was over-masked."""
-        reference = "연락처 010-****-5678 이고 메일은 k***@example.com 입니다"
+        """The number that matters: what leaked."""
         ours = "연락처 010-****-5678 이고 메일은 hong@example.com 입니다"
-        result = masking_recall(reference, ours)
+        result = masking_recall(self.REFERENCE, ours)
         assert result.recall == 0.5
-        assert (result.spans_in_reference, result.spans_we_masked) == (2, 1)
+        assert (result.spans_in_reference, result.spans_we_caught) == (2, 1)
 
-    def test_over_masking_does_not_score_above_one(self) -> None:
-        """Recall is what we promise. Precision is a separate, smaller worry."""
-        reference = "연락처 010-****-5678 입니다"
-        ours = "**** 010-****-5678 ****"
-        assert masking_recall(reference, ours).recall == 1.0
+    def test_masking_the_wrong_places_scores_zero(self) -> None:
+        """Counting spans is not enough — this is what the count missed.
+
+        Two spans masked on each side, and not one of them is the personal data.
+        A count-based recall calls this perfect.
+        """
+        ours = "**** 010-1234-5678 이고 **** hong@example.com 입니다"
+        assert masking_recall(self.REFERENCE, ours).recall == 0.0
+
+    def test_over_masking_does_not_lower_recall(self) -> None:
+        """Recall is what we promise. An over-masked word is an annoyance."""
+        ours = "**** 010-****-5678 **** **** k***@example.com ****"
+        assert masking_recall(self.REFERENCE, ours).recall == 1.0
+
+    def test_two_different_utterances_raise_rather_than_score(self) -> None:
+        """Both texts describe the same utterance; a length mismatch means they do not."""
+        with pytest.raises(ValueError, match="same utterance"):
+            masking_recall(self.REFERENCE, "짧은 문장")
 
     def test_a_reference_with_nothing_to_mask_raises(self) -> None:
         with pytest.raises(ValueError, match="undefined"):
             masking_recall("아무것도 없습니다", "아무것도 없습니다")
+
+    def test_the_repr_carries_no_text(self) -> None:
+        result = masking_recall(self.REFERENCE, self.REFERENCE)
+        assert "010" not in repr(result) and "example" not in repr(result)
