@@ -5,9 +5,10 @@ is deleted in a ``finally`` block — success, failure, and cancellation all del
 it. That is invariant 11, and it applies to a developer tool exactly as it
 applies to the worker: there is no debug flag that keeps the audio.
 
-Error strings are the exception's type and message. A decoder failure can carry
-bytes of the file it was reading, so nothing derived from the file content is
-returned to the browser or logged.
+A ``DecodeError`` carries a message written to name the file and never its
+contents, so it is safe to show. Anything else is reported by exception type
+alone: ffmpeg's stderr can quote bytes of what it was reading, and that must not
+reach the browser or the log.
 """
 
 from __future__ import annotations
@@ -21,6 +22,7 @@ from fastapi import APIRouter, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse
 
 from autune_audio.config import get_settings
+from autune_audio.decoding import DecodeError
 from autune_audio.pipeline import transcribe_file
 
 from .page import PAGE
@@ -29,17 +31,23 @@ log = structlog.get_logger(__name__)
 
 router = APIRouter()
 
-# Whisper is the slow part, and a browser upload is not a job queue. Anything
-# longer than this belongs in the Celery path, not in a page that blocks on it.
-MAX_UPLOAD_BYTES = 200 * 1024 * 1024
+MAX_UPLOAD_BYTES = 500 * 1024 * 1024
+"""Matches the dropzone limit on design screen S03.
+
+The body is streamed to disk a megabyte at a time rather than read whole: at
+this limit, buffering the upload in memory is how the API falls over.
+"""
+
+# Not in the OpenAPI schema. These endpoints exist on a developer's machine and
+# nowhere else, and the generated client should not know about them.
 
 
-@router.get("", response_class=HTMLResponse)
+@router.get("", response_class=HTMLResponse, include_in_schema=False)
 def page() -> str:
     return PAGE
 
 
-@router.post("/transcribe")
+@router.post("/transcribe", include_in_schema=False)
 async def transcribe_upload(file: UploadFile) -> JSONResponse:
     """Decode, transcribe, and delete. The shape here is what page.py renders."""
     settings = get_settings()
@@ -66,9 +74,15 @@ async def transcribe_upload(file: UploadFile) -> JSONResponse:
         started = time.monotonic()
         transcription = transcribe_file(path)
         elapsed = time.monotonic() - started
-    except Exception as error:  # noqa: BLE001 - the browser gets a message, not a traceback
-        log.warning("dev_transcribe_failed", error=type(error).__name__)
-        return JSONResponse({"error": f"{type(error).__name__}: {error}"}, status_code=500)
+    except DecodeError as error:
+        # Written to name the file rather than quote it; safe to show.
+        log.warning("dev_decode_failed", code=error.code)
+        return JSONResponse({"error": error.message}, status_code=error.status_code)
+    except Exception as error:  # noqa: BLE001 - the browser gets a type, not a traceback
+        # Never the message: it can carry bytes of the recording.
+        kind = type(error).__name__
+        log.warning("dev_transcribe_failed", error=kind)
+        return JSONResponse({"error": f"전사에 실패했습니다 ({kind})"}, status_code=500)
     finally:
         # Invariant 11: the recording does not outlive the request.
         path.unlink(missing_ok=True)
