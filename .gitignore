@@ -40,6 +40,14 @@ models/
 *.sqlite3
 data/
 
+# Training corpora. Downloaded per machine, never committed: they are large
+# (AI Hub 002 alone is ~154GB), they carry their own licences, and GitHub
+# rejects files over 100MB. Record where a corpus came from in the module's
+# documentation instead. See docs/engineering/environments.md.
+dataset/
+datasets/
+corpus/
+
 # Editors and OS
 .DS_Store
 .idea/
