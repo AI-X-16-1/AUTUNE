@@ -79,10 +79,15 @@ prefix `AUTUNE_<MODULE>_`.
 | --- | --- | --- |
 | `AUTUNE_GOOGLE_CLIENT_ID` | | Google Cloud OAuth client (W2). Blank disables Google sign-in |
 | `AUTUNE_GOOGLE_CLIENT_SECRET` | | Never commit |
-| `AUTUNE_GOOGLE_REDIRECT_URI` | `http://localhost:8000/api/auth/google/callback` | Must match a redirect URI registered in the Google Cloud console exactly, per environment |
+| `AUTUNE_GOOGLE_REDIRECT_URI` | `http://localhost:3000/api/auth/google/callback` | The **web** origin, not the API — the browser reaches `/api/*` through the Next proxy, so the callback must land there too. Must match a redirect URI registered in the Google Cloud console exactly, per environment |
+| `API_PROXY_TARGET` | `http://localhost:8000` | Web-only (read by `apps/web/next.config.ts`), where `/api/*` is proxied. Set per environment; not an `autune_core` setting |
 
 Google *sign-in* is identity only (`openid email profile`) and is unrelated to
 `AUTUNE_GOOGLE_CALENDAR_CREDENTIALS`, which grants module D calendar access.
+
+The web app proxies `/api/*` to the API (`next.config.ts`) so the browser sees
+one origin and the `autune_session` cookie stays first-party. `NEXT_PUBLIC_API_URL`
+overrides the client base only if you deliberately want cross-origin calls.
 
 ### Integrations
 

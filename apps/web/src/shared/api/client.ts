@@ -5,10 +5,16 @@
  * Pydantic models — never hand-write a type that mirrors a contract.
  * See docs/architecture/contracts.md.
  */
-const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+// In the browser, talk to our own origin and let Next rewrite `/api/*` to the
+// API (see next.config.ts) — that keeps the session cookie first-party. On the
+// server there is no origin, so fall back to a direct address.
+const BASE =
+  process.env.NEXT_PUBLIC_API_URL ??
+  (typeof window === "undefined" ? "http://localhost:8000" : "");
 
-/** The API origin. Needed for full-page navigations the browser must follow
- *  itself, such as the OAuth authorize redirect (`/api/auth/google/start`). */
+/** The API prefix for this context. `""` in the browser (same-origin, proxied);
+ *  a full origin on the server. Prepend it to a path, e.g. for the OAuth
+ *  authorize navigation (`/api/auth/google/start`). */
 export const API_BASE = BASE;
 
 export class ApiError extends Error {
