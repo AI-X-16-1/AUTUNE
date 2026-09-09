@@ -36,7 +36,7 @@ class SlackClient(HttpClient):
         )
 
     def post_message(self, channel: str, text: str, blocks: list[dict] | None = None) -> str:
-        check_outbound(text, destination=DESTINATION)
+        check_outbound(text, destination=DESTINATION, payload=blocks)
         body: dict[str, Any] = {"channel": channel, "text": text}
         if blocks:
             body["blocks"] = blocks
@@ -48,7 +48,7 @@ class SlackClient(HttpClient):
         return str(self.request("POST", "/chat.postMessage", json=body).get("ts", ""))
 
     def send_dm(self, user_id: str, text: str, blocks: list[dict] | None = None) -> str:
-        check_outbound(text, destination=DESTINATION)
+        check_outbound(text, destination=DESTINATION, payload=blocks)
         body: dict[str, Any] = {"channel": user_id, "text": text}
         if blocks:
             body["blocks"] = blocks

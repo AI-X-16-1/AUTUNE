@@ -32,18 +32,6 @@ class NotionClient(HttpClient):
         )
 
     def create_page(self, database_id: str, properties: dict[str, Any]) -> str:
-        for value in _strings(properties):
-            check_outbound(value, destination=DESTINATION)
+        check_outbound("", destination=DESTINATION, payload=properties)
         body = {"parent": {"database_id": database_id}, "properties": properties}
         return str(self.request("POST", "/pages", json=body).get("id", ""))
-
-
-def _strings(value: Any) -> list[str]:
-    """Every string anywhere in a nested payload, so none escapes the check."""
-    if isinstance(value, str):
-        return [value]
-    if isinstance(value, dict):
-        return [s for v in value.values() for s in _strings(v)]
-    if isinstance(value, list):
-        return [s for v in value for s in _strings(v)]
-    return []

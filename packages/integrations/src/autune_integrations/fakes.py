@@ -34,7 +34,7 @@ class FakeSlack:
         return f"{self._ts}.000000"
 
     def post_message(self, channel: str, text: str, blocks: list[dict] | None = None) -> str:
-        check_outbound(text, destination="slack")
+        check_outbound(text, destination="slack", payload=blocks)
         self.sent.append(SentMessage(channel=channel, text=text))
         return self._next_ts()
 
@@ -44,7 +44,7 @@ class FakeSlack:
         return self._next_ts()
 
     def send_dm(self, user_id: str, text: str, blocks: list[dict] | None = None) -> str:
-        check_outbound(text, destination="slack")
+        check_outbound(text, destination="slack", payload=blocks)
         self.sent.append(SentMessage(channel=user_id, text=text, is_dm=True))
         return self._next_ts()
 
@@ -62,6 +62,7 @@ class FakeNotion:
     pages: list[tuple[str, dict]] = field(default_factory=list)
 
     def create_page(self, database_id: str, properties: dict) -> str:
+        check_outbound("", destination="notion", payload=properties)
         self.pages.append((database_id, properties))
         return f"page_{len(self.pages)}"
 

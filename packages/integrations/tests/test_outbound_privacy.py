@@ -10,7 +10,7 @@ import pytest
 
 from autune_core.errors import PrivacyViolationError
 from autune_integrations import find_unmasked
-from autune_integrations.fakes import FakeJira, FakeSlack
+from autune_integrations.fakes import FakeJira, FakeNotion, FakeSlack
 from autune_integrations.privacy import (
     MAX_OUTBOUND_CHARS,
     assert_masked,
@@ -89,3 +89,65 @@ def test_fakes_enforce_the_same_guards_as_real_clients() -> None:
         FakeSlack().post_message("#general", "전화번호 010-1234-5678")
     with pytest.raises(PrivacyViolationError):
         FakeJira().create_issue("AUT", "Task", "요약", "담당자 메일 hong@example.com")
+
+
+# A rich message carries its content in a nested structure and leaves a bland
+# summary at the top. The guard used to read only the summary.
+
+
+def test_slack_blocks_are_checked_not_just_the_fallback_text() -> None:
+    """Block Kit puts the message in `blocks`; `text` is the notification preview.
+
+    A guard reading only `text` checks the least important field, and every rich
+    message walks straight past it.
+    """
+    with pytest.raises(PrivacyViolationError):
+        FakeSlack().post_message(
+            "#squad",
+            "액션아이템이 준비되었습니다",
+            blocks=[
+                {
+                    "type": "section",
+                    "text": {"type": "mrkdwn", "text": "담당자 연락처 010-1234-5678"},
+                }
+            ],
+        )
+
+
+def test_the_check_reaches_the_bottom_of_a_nested_payload() -> None:
+    """Block Kit nests several levels deep; one pass over the top is not enough."""
+    with pytest.raises(PrivacyViolationError):
+        FakeSlack().send_dm(
+            "U123",
+            "확인 부탁드립니다",
+            blocks=[{"elements": [{"elements": [{"text": "hong@example.com"}]}]}],
+        )
+
+
+def test_notion_properties_are_checked_through_their_nesting() -> None:
+    """A Notion property wraps its value three objects deep."""
+    with pytest.raises(PrivacyViolationError):
+        FakeNotion().create_page(
+            "db_1", {"제목": {"title": [{"text": {"content": "010-9999-8888"}}]}}
+        )
+
+
+def test_a_clean_rich_message_still_goes_out() -> None:
+    """The guard must not reject every structured payload it is handed."""
+    slack = FakeSlack()
+    slack.post_message(
+        "#squad",
+        "갭 리포트가 준비되었습니다",
+        blocks=[{"type": "section", "text": {"type": "mrkdwn", "text": "HIGH 2건"}}],
+    )
+    assert len(slack.sent) == 1
+
+
+def test_size_is_measured_over_the_whole_payload() -> None:
+    """Splitting a transcript across many blocks must not evade the size limit."""
+    with pytest.raises(PrivacyViolationError, match="exceeds"):
+        FakeSlack().post_message(
+            "#squad",
+            "회의 요약",
+            blocks=[{"text": "가" * 500} for _ in range(20)],
+        )

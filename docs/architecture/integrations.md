@@ -18,10 +18,21 @@ This is the last code that runs before data leaves. Every client calls
 | --- | --- |
 | `assert_masked` | Text still containing a phone number, national ID, card number, email or account number. Masked values keep their shape (`010-****-5678`), so the guard fires only on the unmasked original |
 | `assert_within_size` | A payload over 4,000 characters — send what the feature needs, never the whole meeting |
+| Nesting | Both checks run over every string in the structured payload, not only the top-level text |
 | `assert_personal_delivery` | Data describing one person going anywhere but that person's own DM |
 
 An exception from these names the categories found, never the values: an
 exception message reaches error tracking, which is itself a third party.
+
+**Pass the structured payload, not just the text.** A rich message carries its
+content in a nested structure and leaves a bland summary at the top: a Slack
+Block Kit `text` field is the notification preview, and the message is in
+`blocks`. A guard reading only `text` checks the least important field, and
+every rich message walks past it. `check_outbound(text, destination=...,
+payload=blocks)` walks the whole structure.
+
+This was a real hole, not a hypothetical one — it shipped, and it was found
+while building the first message that used blocks.
 
 `SlackClient.send_personal()` is the only path for data that belongs to one
 person, and is what the speaking-ratio DM (S23) uses. There is no channel

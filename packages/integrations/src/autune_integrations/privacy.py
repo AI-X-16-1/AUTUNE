@@ -18,7 +18,7 @@ any surface other than their own DM.
 from __future__ import annotations
 
 import re
-from typing import Final
+from typing import Any, Final
 
 from autune_core.errors import PrivacyViolationError
 
@@ -85,7 +85,36 @@ def assert_personal_delivery(*, subject_id: str, recipient_id: str, is_direct: b
         )
 
 
-def check_outbound(text: str, *, destination: str) -> None:
-    """Every outbound client calls this before the request leaves."""
+def strings_in(value: Any) -> list[str]:
+    """Every string anywhere in a nested payload, so none escapes the check.
+
+    Rich messages put their content in a nested structure and leave a bland
+    summary at the top level — a Slack Block Kit ``text`` field is the
+    notification preview, not the message. Checking only the top level checks
+    the least important field.
+    """
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, dict):
+        return [s for v in value.values() for s in strings_in(v)]
+    if isinstance(value, (list, tuple)):
+        return [s for v in value for s in strings_in(v)]
+    return []
+
+
+def check_outbound(text: str, *, destination: str, payload: Any = None) -> None:
+    """Every outbound client calls this before the request leaves.
+
+    ``payload`` is anything structured going out alongside ``text`` — Slack
+    blocks, Notion properties, a Jira description document. Pass it: a guard
+    that reads only ``text`` is a guard a rich message walks straight past.
+    """
     assert_masked(text, destination=destination)
     assert_within_size(text, destination=destination)
+
+    if payload is None:
+        return
+    nested = strings_in(payload)
+    for part in nested:
+        assert_masked(part, destination=destination)
+    assert_within_size("".join(nested), destination=destination)
