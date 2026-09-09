@@ -43,18 +43,23 @@ Every change lands through a pull request.
 | What you changed | Who must approve |
 | --- | --- |
 | Only your own module (`modules/<yours>/`, `apps/web/src/features/<yours>/`) | Any one teammate |
-| Another module | That module's owner. CODEOWNERS requests them automatically |
-| `packages/`, `apps/`, `infra/`, `docs/`, `CLAUDE.md` | Any one teammate; for `packages/contracts` every affected module owner |
+| Another module | That module's owner. **Request them yourself** — see below |
+| `packages/`, `apps/`, `infra/`, `docs/`, `CLAUDE.md`, `.github/` | Everyone. These are the paths `.github/CODEOWNERS` gives to all five |
 
-  One approval is the floor. Touching someone else's module means *their*
-  approval specifically, not just anyone's — they are the person who knows what
-  your change breaks.
+  One approval is the floor for your own module. Touching someone else's means
+  *their* approval specifically, not just anyone's — they are the person who
+  knows what your change breaks. Shared code needs all five, because it is what
+  everyone builds on.
+
+  `.github/CODEOWNERS` is the authority when this table and the file disagree.
+  Fix the table.
 
 - Documents updated in the same PR when behavior they describe changed.
 
 ## How `main` is protected
 
-Not by GitHub. This repository is private on the organization's free plan, and
+Not by GitHub, and only partly by tooling. Read this before assuming a rule
+enforces itself. This repository is private on the organization's free plan, and
 GitHub branch protection and rulesets are paid features there — the API returns
 `403 Upgrade to GitHub Pro or make this repository public`. Making the repo
 public would enable them for free, but the project may ship commercially, so it
@@ -72,9 +77,32 @@ Three things stand in for it:
    It is not a security control — `git push --no-verify` bypasses it. It stops
    the accident, which is nearly all of the risk on a five-person team.
 
-2. **CODEOWNERS** still requests reviews automatically, with no paid plan. Touch
-   another module and its owner is added to the pull request without anyone
-   remembering to do it.
+2. **CODEOWNERS, read by people rather than by GitHub.** Automatic reviewer
+   assignment from CODEOWNERS is behind the same paywall as branch protection:
+   on a private repository on the free plan, the file parses cleanly
+   (`gh api repos/{owner}/{repo}/codeowners/errors` returns no errors) and
+   assigns nobody. Verified on this repository — every review request on every
+   pull request so far was created by a person.
+
+   So CODEOWNERS is an ownership map you consult, not a mechanism that runs.
+   **Add the reviewers yourself when you open a pull request.** If you touched
+   another module, its owner; if you touched `packages/`, `apps/`, `infra/`,
+   `docs/` or `.github/`, everyone.
+
+   Adding several people has a trap worth knowing, because it fails quietly.
+   `gh pr edit --add-reviewer` **replaces** the request list rather than adding
+   to it, and a comma-separated list does not reliably register everyone in it.
+   Observed on #63: two reviewers were already requested,
+   `--add-reviewer mminjae97,lsh2217` left exactly one, and a single REST call
+   carrying three names registered one of them. One person per call, verified
+   after each, is what works:
+
+   ```bash
+   echo '{"reviewers":["someone"]}' | \
+     gh api repos/AI-X-16-1/AUTUNE/pulls/<n>/requested_reviewers -X POST --input -
+   ```
+
+   Or add them in the web UI, which has none of this.
 
 3. **CI runs on pushes to `main` as well as on pull requests**, so anything that
    lands without review still turns the branch red where everyone can see it.
@@ -99,24 +127,10 @@ allows only one approval count per branch, so the count stays at 1 and the code
 owner requirement supplies the rest — touching another module then genuinely
 requires that owner's approval.
 
-**Description template:**
-
-```markdown
-## What
-One or two sentences.
-
-## Why
-The reason, or the issue link.
-
-## Contract changes
-None. / Added optional field `X` to `Y` (version 1.0 → 1.1).
-
-## Privacy impact
-None. / Touches transcript text — masking applied at <location>.
-
-## How to verify
-The commands or steps a reviewer runs.
-```
+**Description:** `.github/PULL_REQUEST_TEMPLATE.md` fills the body in for you.
+It opens with a Reviewers block because that step is manual here and easy to
+forget; the rest asks what, why, contract changes, privacy impact, and how to
+verify.
 
 Keep pull requests small. A PR that touches your module only should be
 reviewable in ten minutes. A PR that touches `packages/` should be smaller
@@ -124,32 +138,18 @@ still.
 
 ## CODEOWNERS
 
-GitHub handles below are placeholders — replace them with real handles when
-the repository is created, and create a `@autune/core` team for the shared
-paths. Ownership by person: A 김민경, B 강민구, C 박재경, D 문민재, E 이승환.
+The file is [`.github/CODEOWNERS`](../../.github/CODEOWNERS). Read it there.
 
-```
-/modules/audio/          @audio-owner
-/modules/extraction/     @extraction-owner
-/modules/gap/            @gap-owner
-/modules/context/        @context-owner
-/modules/intelligence/   @intelligence-owner
+It is not copied here on purpose. A second copy drifts from the first, and this
+section used to prove it: it still listed `@audio-owner` placeholders and gave
+eight paths to `@autune/core`, a team that does not exist, months after the real
+file had actual handles and named all five people individually.
 
-/apps/web/src/features/transcript/  @audio-owner
-/apps/web/src/features/actions/     @extraction-owner
-/apps/web/src/features/gap/         @gap-owner
-/apps/web/src/features/context/     @context-owner
-/apps/web/src/features/dashboard/   @intelligence-owner
+That matters more now than it did. GitHub does not act on CODEOWNERS on this
+plan, so the file is a map a person reads and then acts on — and a map with the
+wrong names on it sends people to the wrong place.
 
-/packages/contracts/     @autune/core
-/packages/core/          @autune/core
-/packages/integrations/  @autune/core
-/apps/api/               @autune/core
-/apps/worker/            @autune/core
-/apps/bot/               @autune/core
-/infra/                  @autune/core
-/docs/                   @autune/core
-```
+Owners are listed individually in it because the organization has no teams.
 
 If a change you need lives outside your ownership, ask the owner. Do not edit
 across a boundary because it is faster.
