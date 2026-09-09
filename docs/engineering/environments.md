@@ -91,6 +91,9 @@ prefix `AUTUNE_<MODULE>_`.
 | `AUTUNE_AUDIO_TEMP_DIR` | A | Where the recording lives during processing, and only then |
 | `AUTUNE_AUDIO_HF_TOKEN` | A | Hugging Face token for the gated pyannote models |
 | `AUTUNE_AUDIO_DIARIZATION_MODEL` | A | Default `pyannote/speaker-diarization-3.1` |
+| `AUTUNE_EXTRACTION_CLASSIFIER_IMPL` | B | `local` · `hosted` · `fake`. Default `local`. **No `external`** — see below |
+| `AUTUNE_EXTRACTION_CLASSIFIER_CHECKPOINT` | B | Pinned model, recorded with every classification. Never a floating tag |
+| `AUTUNE_EXTRACTION_CLASSIFIER_ENDPOINT` | B | Our own inference server. Required when `CLASSIFIER_IMPL=hosted` |
 | `AUTUNE_GAP_RISK_THRESHOLD` | C | Default `0.7` |
 | `AUTUNE_CONTEXT_EMBEDDER_IMPL` | D | `kure_v1_http` (default), `kure_v1_local`, `fake` |
 | `AUTUNE_CONTEXT_RERANKER_IMPL` | D | `bge_reranker_v2_m3_ko_http` (default), `..._local`, `fake` |
@@ -120,6 +123,18 @@ settings. See `../architecture/data-model.md`.
 Every new variable goes into `.env.example` with a comment and into this table.
 A variable that exists only in someone's local `.env` will break the next
 person's setup.
+
+### The classifier has no external option
+
+`AUTUNE_EXTRACTION_CLASSIFIER_IMPL` accepts `local`, `hosted` and `fake`, and
+nothing else. Module B classifies every utterance in a meeting, so an external
+implementation would mean sending the whole transcript to somebody else's model —
+which section 6 of `../architecture/privacy.md` makes a design conversation rather
+than a value you can set.
+
+`hosted` points at an inference server we run. It still goes through
+`autune_integrations.HttpClient` so the outbound guard reads the request body:
+the endpoint being ours is exactly the reasoning that leaves a guard unrun.
 
 ## Secrets
 
