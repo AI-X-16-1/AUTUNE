@@ -105,6 +105,9 @@ prefix `AUTUNE_<MODULE>_`.
 | `AUTUNE_CONTEXT_EMBEDDER_LOCAL_MODEL` | D | Only for `kure_v1_local`. Default `nlpai-lab/KURE-v1` |
 | `AUTUNE_CONTEXT_RERANKER_LOCAL_MODEL` | D | Only for `bge_reranker_v2_m3_ko_local`. Default `dragonkue/bge-reranker-v2-m3-ko` |
 | `AUTUNE_CONTEXT_NLI_LOCAL_MODEL` | D | Only for `klue_kornli_local`. Path or hub id of the in-house checkpoint |
+| `AUTUNE_CONTEXT_TOPIC_WINDOW` | D | TextTiling block size, in utterances. Default `3` |
+| `AUTUNE_CONTEXT_TOPIC_MIN_SEGMENT` | D | Shortest topic segment. Default `3` |
+| `AUTUNE_CONTEXT_TOPIC_DEPTH_THRESHOLD` | D | Min TextTiling depth for a boundary. Default `0.1` |
 | `AUTUNE_CONTEXT_RETRIEVE_TOP_K` | D | Hybrid retrieval breadth. Default `50` |
 | `AUTUNE_CONTEXT_RERANK_TOP_K` | D | Kept after re-ranking. Default `10` |
 | `AUTUNE_CONTEXT_RRF_K` | D | Reciprocal-rank-fusion constant. Default `60` |
