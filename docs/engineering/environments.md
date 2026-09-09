@@ -146,12 +146,14 @@ Most material online is 3.x. Two things changed:
 ```python
 # 3.x, and every tutorial
 pipeline = Pipeline.from_pretrained(model, use_auth_token=token)
-for turn, _, speaker in pipeline(path).itertracks(yield_label=True): ...
+for turn, _, speaker in pipeline(path).itertracks(yield_label=True):
+    ...
 
 # 4.x, what we run
 pipeline = Pipeline.from_pretrained(model, token=token)
 output = pipeline({"waveform": waveform, "sample_rate": sr})
-for turn, _, speaker in output.speaker_diarization.itertracks(yield_label=True): ...
+for turn, _, speaker in output.speaker_diarization.itertracks(yield_label=True):
+    ...
 ```
 
 `use_auth_token` no longer exists, and the result is a `DiarizeOutput` rather
