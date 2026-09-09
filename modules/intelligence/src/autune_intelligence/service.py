@@ -14,10 +14,14 @@ timeout elapses. The Celery glue that enqueues the aggregate task lives in
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from typing import Final
 
 from sqlalchemy import func, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
+
+from autune_contracts import QualityScore
+from autune_contracts.intelligence import Grade
 
 from .config import get_settings
 from .models import IntelCompletion
@@ -78,6 +82,62 @@ def ready_to_aggregate(row: IntelCompletion, *, now: datetime | None = None) -> 
     now = now or datetime.now(UTC)
     timeout = timedelta(seconds=get_settings().aggregate_timeout_seconds)
     return now - row.first_seen_at >= timeout
+
+
+DECISION_CADENCE_MINUTES: Final = 10.0
+"""One decision per this many minutes scores decision_density 1.0."""
+HIGH_GAP_CEILING: Final = 5
+"""This many HIGH-severity gaps drives gap_burden to 0.0."""
+WEIGHTS: Final = {
+    "decision_density": 0.3,
+    "gap_burden": 0.3,
+    "action_item_completion_rate": 0.2,
+    "participation_balance": 0.2,
+}
+GRADE_CUTOFFS: Final = ((0.9, "A"), (0.8, "B"), (0.7, "C"), (0.6, "D"), (0.5, "E"))
+"""Descending; value below the last cutoff is F. First heuristic — P2 tunes these."""
+
+
+def _decision_density(decision_count: int, duration_minutes: float) -> float:
+    expected = max(1.0, duration_minutes / DECISION_CADENCE_MINUTES)
+    return min(1.0, decision_count / expected)
+
+
+def _gap_burden(high_gap_count: int) -> float:
+    return 1.0 - min(1.0, high_gap_count / HIGH_GAP_CEILING)
+
+
+def _action_item_completion_rate(action_items: list) -> float | None:
+    if not action_items:
+        return None
+    from autune_contracts import ActionStatus
+
+    done = sum(1 for a in action_items if a.status != ActionStatus.NEEDS_CONFIRMATION)
+    return done / len(action_items)
+
+
+def _participation_balance(participation: list) -> float | None:
+    if not participation:
+        return None
+    ratios = [len(p.spoke) / max(1, len(p.spoke) + len(p.silent)) for p in participation]
+    return sum(ratios) / len(ratios)
+
+
+def _grade_for(value: float) -> Grade:
+    for cutoff, grade in GRADE_CUTOFFS:
+        if value >= cutoff:
+            return grade  # type: ignore[return-value]
+    return "F"
+
+
+def _quality_score(components: dict[str, float | None]) -> QualityScore:
+    present = {k: v for k, v in components.items() if v is not None}
+    if not present:
+        value = 0.5
+    else:
+        total_weight = sum(WEIGHTS[k] for k in present)
+        value = sum(v * WEIGHTS[k] for k, v in present.items()) / total_weight
+    return QualityScore(grade=_grade_for(value), value=value)
 
 
 def close_aggregation(session: Session, meeting_id: str) -> list[str] | None:
