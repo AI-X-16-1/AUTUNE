@@ -12,7 +12,11 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class IntelligenceSettings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="AUTUNE_INTELLIGENCE_", extra="ignore")
+    # env_file mirrors autune_core.Settings: without it a module reads only
+    # real environment variables and silently ignores .env.
+    model_config = SettingsConfigDict(
+        env_prefix="AUTUNE_INTELLIGENCE_", env_file=".env", extra="ignore"
+    )
 
     aggregate_timeout_seconds: int = 600
 

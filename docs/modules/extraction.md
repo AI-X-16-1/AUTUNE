@@ -82,10 +82,26 @@ the overlap the question turns on.
 | Table | Purpose |
 | --- | --- |
 | `ext_classifications` | Per-utterance kind, confidence, NLI result |
-| `ext_action_items` | Assignee, description, due date, status, source utterances |
+| `ext_action_items` | Assignee, description, due date, status, origin |
+| `ext_action_item_sources` | Which utterances an item came from |
+| `ext_edit_events` | One row per correction. Counts only — no person on it |
 | `ext_external_refs` | Notion and Jira URLs per action item |
 | `ext_confirmations` | Ambiguous-agreement DMs sent and their responses |
 | `ext_decisions` | Decision entities, their statements and source utterances |
+
+`ext_action_items.origin` is `model` or `user`. ADR 0006 makes the output a draft
+the user completes, so an item somebody typed is an ordinary row rather than an
+anomaly — and telling the two apart is what edit cost is measured against.
+
+Source utterances are a table rather than a JSONB list because the detail drawer
+joins them back to read the quotation, and `data-model.md` rules JSONB out for
+anything you join on.
+
+`ext_edit_events` carries no user id and must not gain one. ADR 0003 forbids
+per-person metrics, and "who corrected the model most" is the same shape of data
+as a speaking ratio. Its `action_item_id` clears on delete rather than cascading:
+cascading would remove the evidence that the model was wrong along with the wrong
+item, and the metric would improve every time somebody deleted something.
 
 `ext_action_items` references `utterances.id`. It does **not** reference any
 other module's tables.
@@ -97,6 +113,8 @@ other module's tables.
 | GET | `/results/{meeting_id}` | Classifications and action items |
 | GET | `/action-items` | Filter by assignee, status, due date |
 | PATCH | `/action-items/{id}` | Edit or close an item |
+| POST | `/action-items` | Add an item the model missed |
+| DELETE | `/action-items/{id}` | Delete an item the model got wrong |
 | POST | `/results/{meeting_id}/sync` | Re-sync to Notion and Jira |
 
 ## Celery tasks
@@ -164,13 +182,46 @@ Korean set is broadcast discussion. A model tuned on them has not been shown to
 reach the F1 target on real meetings; an evaluation set drawn from the team's own
 meetings is what would measure that gap.
 
+## User correction
+
+Everything the pipeline produces is a draft. ADR 0006 sets the rule: an item can
+be edited, deleted, or added by hand, every item carries the utterances it came
+from, and items below the confidence threshold appear as candidates rather than
+being dropped. Recall is ranked above precision for that reason — a wrong item
+costs a click, a missing one costs re-reading the meeting.
+
+Corrections stay in the meeting. They update `ext_action_items` and increment the
+edit-cost counters; they are never exported as training labels (ADR 0003), and
+edit cost is aggregated per meeting, never per person.
+
+A deleted item is deleted. `privacy.md` allows no soft deletes and no tombstones
+holding content, and edit cost does not need one: the counter records that a
+deletion happened, which is the whole of what the metric asks. Keeping the row to
+remember the model was wrong would be keeping meeting content for a reason the
+privacy rules do not grant.
+
 ## Metric
 
-Action item extraction F1 — 0.80+ at six weeks, 0.88+ at three months.
+The classifier's five-way macro F1 is what we train against and what the harness
+scores. Action item F1 is derived from it and reported beside the best published
+figure for the task, per ADR 0006.
+
+| Metric | Six weeks | Three months |
+| --- | --- | --- |
+| Action item F1 | 0.43 — matching the best published AMI result, 43.12 (ADR 0006) | above it |
+| Classifier macro F1, five-way | set in week 2 from the AMI dialogue-act literature, once the evaluation set exists | above it |
+| Items the user accepts with no edit | the first measurement is the baseline | improve on it |
 
 ```bash
-uv run --package autune-extraction python -m autune_extraction.eval
+uv run --package autune-extraction python -m autune_extraction.eval \
+    --eval-set dataset/extraction_eval.jsonl \
+    --predictions runs/<model>.jsonl
 ```
+
+The evaluation set is drawn from real meetings and is never committed. The
+harness scores a predictions file rather than loading a model, so a run can be
+rescored without a GPU and the metric means the same thing across model
+versions.
 
 ## Privacy notes
 

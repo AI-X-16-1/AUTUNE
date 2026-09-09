@@ -160,13 +160,13 @@ apps/web/src/
 ### What is genuinely shared in the frontend
 
 Unlike the backend, `apps/web` is one application, so two files are shared by
-all five owners and need a word in Slack before you change them:
+all five owners and need an issue before you change them:
 
 - `src/app/layout.tsx` and the app shell — the sidebar, top bar and theme root.
 - `apps/web/package.json` — one manifest for everyone's JS dependencies, where
   the backend gives each module its own `pyproject.toml`. Adding a dependency is
-  rare after the first week; when it happens, say so, and regenerate the
-  lockfile rather than merging it.
+  rare after the first week; when it happens, say so in the pull request, and
+  regenerate the lockfile rather than merging it.
 
 Routes under `src/app/` are per-screen files, so two people adding two screens
 add two different files. That is not a conflict.

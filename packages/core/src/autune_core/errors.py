@@ -58,3 +58,15 @@ class PrivacyViolationError(AutuneError):
 class ConflictError(AutuneError):
     code = "conflict"
     status_code = 409
+
+
+class ConfigurationError(AutuneError):
+    """A deployment is missing or misconfigured a value it cannot run without.
+
+    Raised at the point of use rather than at import, so a deployment that never
+    touches the feature still starts. The message names the variable, never its
+    value.
+    """
+
+    code = "configuration_error"
+    status_code = 500

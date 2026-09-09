@@ -27,6 +27,14 @@ class Settings(BaseSettings):
     secret_key: str = "local-development-only-change-me-in-every-environment"
     """JWT signing key. Must be overridden outside local; see the validator below."""
 
+    encryption_key: str = ""
+    """Fernet key for integration credentials at rest (``autune_core.crypto``).
+
+    Empty is allowed: a deployment that never stores a team's token never needs
+    it, and failing at first use gives a better message than failing at import.
+    Required outside local — see the validator below.
+    """
+
     slack_bot_token: str = ""
     slack_signing_secret: str = ""
     slack_app_token: str = ""
@@ -49,6 +57,21 @@ class Settings(BaseSettings):
             raise ValueError(
                 f"AUTUNE_SECRET_KEY still holds the development default in env={self.env}. "
                 'Generate one: python -c "import secrets; print(secrets.token_urlsafe(32))"'
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _require_encryption_key_outside_local(self) -> Settings:
+        """Team credentials are stored encrypted, so staging and production need a key.
+
+        Checked at startup rather than at the first Notion call, because
+        discovering it there means a team has already tried to connect.
+        """
+        if self.env != "local" and not self.encryption_key:
+            raise ValueError(
+                f"AUTUNE_ENCRYPTION_KEY is not set in env={self.env}; integration "
+                "credentials cannot be stored. Generate one: python -c "
+                '"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"'
             )
         return self
 

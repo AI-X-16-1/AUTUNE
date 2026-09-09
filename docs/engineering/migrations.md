@@ -105,7 +105,8 @@ Always run `upgrade heads` before generating, and always read the diff.
 `meetings`, `utterances`, and the rest belong to `packages/core`. To add
 something:
 
-1. Ask in Slack — other modules read these tables.
+1. Open an issue — other modules read these tables, and the answer should
+   outlive the conversation.
 2. The change is made in `packages/core`, on the `core` branch.
 3. It goes through a pull request with team review.
 

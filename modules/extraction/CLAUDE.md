@@ -64,8 +64,13 @@ The five kinds: `commitment`, `decision`, `open_question`, `concern`,
 
 ## Metric
 
-Action item extraction F1 — 0.80+ at six weeks.
+The classifier's five-way macro F1 (ADR 0006). Action item F1 is derived from it
+and reported beside the best published figure for the task, 43.12 on AMI.
 
 ```bash
-uv run --package autune-extraction python -m autune_extraction.eval
+uv run --package autune-extraction python -m autune_extraction.eval \
+    --eval-set dataset/extraction_eval.jsonl \
+    --predictions runs/<model>.jsonl
 ```
+
+The evaluation set is drawn from real meetings and is never committed.

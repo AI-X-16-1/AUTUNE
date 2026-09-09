@@ -102,8 +102,8 @@ Plus the shared entities in `packages/core`, which A writes.
 | --- | --- | --- |
 | STT | Whisper (`large-v3`), whisper.cpp on CPU | `AUTUNE_AUDIO_WHISPER_MODEL` |
 | VAD | silero-vad | |
-| Diarization | Pyannote | Needs `AUTUNE_HF_TOKEN` with licenses accepted |
-| Speaker ID | Speaker embedding + cosine similarity | Threshold in `config.py` |
+| Diarization | Pyannote 4.x, `speaker-diarization-3.1` | `AUTUNE_AUDIO_HF_TOKEN`, licence accepted on **three** gated repos — see `../engineering/environments.md` |
+| Speaker ID | The pipeline's own `speaker_embeddings` (256-d) + cosine similarity | Threshold in `config.py`. pyannote 4.x returns a vector per speaker, so no separate embedding model is needed |
 | PII detection | Regex + NER | Double detection, recall-weighted |
 | Interim summary | LLM | The only LLM use in A |
 
@@ -116,8 +116,34 @@ Plus the shared entities in `packages/core`, which A writes.
 | Processing time | ≤ 1.5× recording length | ≤ 1× |
 
 ```bash
-uv run --package autune-audio python -m autune_audio.eval
+# What a corpus can measure, before committing to it
+uv run python modules/audio/scripts/inspect_corpus.py <corpus-root>
 ```
+
+Scoring takes structures rather than a model, so it runs without a GPU and the
+number means the same thing across model versions — the same shape as
+`autune_extraction.eval`.
+
+| Metric | Needs from the labels |
+| --- | --- |
+| WER | Reference text |
+| DER | Speaker **and** turn boundaries. Text alone cannot produce it |
+| PII masking recall | A masked and an unmasked form of the same utterance |
+
+DER comes from `pyannote.metrics`, not a local implementation: optimal speaker
+mapping is where a hand-rolled version goes wrong, and a figure that cannot be
+compared to published ones is not worth having. Scoring uses a 0.25s collar,
+which is the convention those published figures use.
+
+The evaluation corpus is `002. 주요 영역별 회의 음성인식 데이터` from AI Hub —
+the same one module B uses, so it is downloaded once. It is committee and
+broadcast discussion with a chair, while Autune is for team meetings without
+one, so a DER measured here reads optimistically: those meetings have less
+overlapping speech than ours will.
+
+`original_form` is unmasked personal data. Read it in memory to produce a
+masking hypothesis and never write it, log it, or commit anything derived from
+it.
 
 ## Privacy notes
 

@@ -56,3 +56,5 @@ Written in English, like every document here.
 | [0003](0003-privacy-first-data-handling.md) | Privacy constraints are code-level, not policy | Accepted |
 | [0004](0004-pgvector-over-chroma.md) | Embeddings live in PostgreSQL, not a separate vector database | Accepted |
 | [0005](0005-no-graph-database.md) | No graph database — graphs are PostgreSQL rows | Accepted |
+| [0006](0006-extraction-quality-target-and-user-editing.md) | Extraction aims at the published ceiling, and the user finishes the list | Accepted |
+| [0008](0008-intel-schema.md) | Module E's `intel_` tables: natural keys, and `intel_reports` deletion is deferred | Accepted |

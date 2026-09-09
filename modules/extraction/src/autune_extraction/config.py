@@ -12,7 +12,11 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class ExtractionSettings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="AUTUNE_EXTRACTION_", extra="ignore")
+    # env_file mirrors autune_core.Settings: without it a module reads only
+    # real environment variables and silently ignores .env.
+    model_config = SettingsConfigDict(
+        env_prefix="AUTUNE_EXTRACTION_", env_file=".env", extra="ignore"
+    )
 
     pass
 
