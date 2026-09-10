@@ -82,6 +82,13 @@ def test_confidence_outside_zero_to_one_raises() -> None:
 
 
 def test_label_order_matches_the_contract_enum() -> None:
+    """Two independent statements of the order, so they can disagree.
+
+    ``LABELS`` used to be ``tuple(UtteranceKind)``, which made this ``x == x``:
+    reordering the enum moved both sides together, the checkpoint's fixed head
+    columns were mapped onto the new order, and every prediction came back
+    mislabelled with the suite still green.
+    """
     """The fine-tuned head's columns are in this order, and the order ships with
     the weights. Reordering UtteranceKind without retraining would relabel every
     prediction silently, so the coupling is asserted rather than assumed."""
@@ -234,14 +241,28 @@ def test_a_reported_decision_is_not_a_fresh_promise() -> None:
 # --- the device is chosen, not discovered -----------------------------------
 
 
-def test_the_default_device_is_cpu() -> None:
+def settings(**overrides: str) -> ExtractionSettings:
+    """Settings built from the declared defaults and nothing else.
+
+    ``model_config`` carries ``env_file=".env"``, so a plain ``ExtractionSettings()``
+    reads whatever the developer running the suite happens to have exported. A
+    test that asserts a *default* has to be told not to — otherwise it fails for
+    somebody with ``AUTUNE_EXTRACTION_CLASSIFIER_DEVICE=cuda`` in their shell,
+    and the parametrised ``cuda`` case passes for them without testing anything.
+    """
+    return ExtractionSettings(_env_file=None, **overrides)  # type: ignore[call-arg]
+
+
+def test_the_default_device_is_cpu(monkeypatch: pytest.MonkeyPatch) -> None:
     """Not "whatever this machine has".
 
     A worker that picks up a GPU because it happened to land on one has a
     throughput that changes when it is rescheduled, and a latency measured on
     one scheduling says nothing about the other.
     """
-    assert ExtractionSettings().classifier_device == "cpu"
+    monkeypatch.delenv("AUTUNE_EXTRACTION_CLASSIFIER_DEVICE", raising=False)
+
+    assert settings().classifier_device == "cpu"
 
 
 @pytest.mark.parametrize("value", ["gpu", "CUDA", "cuda:0", "mps"])
@@ -249,12 +270,12 @@ def test_a_device_name_we_do_not_handle_is_refused_at_startup(value: str) -> Non
     """A typo should surface when the worker boots, not mid-meeting as a CUDA
     error naming a tensor."""
     with pytest.raises(ValidationError):
-        ExtractionSettings(classifier_device=value)
+        settings(classifier_device=value)
 
 
 @pytest.mark.parametrize("value", ["cpu", "cuda"])
 def test_both_devices_we_handle_are_accepted(value: str) -> None:
-    assert ExtractionSettings(classifier_device=value).classifier_device == value
+    assert settings(classifier_device=value).classifier_device == value
 
 
 def test_asking_for_cuda_without_it_fails_before_the_model_loads() -> None:

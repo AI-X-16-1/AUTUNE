@@ -22,14 +22,27 @@ from autune_integrations.privacy import MAX_OUTBOUND_CHARS
 from .base import Prediction
 
 if TYPE_CHECKING:
-    from autune_integrations.base import HttpClient
+    pass
 
 log = get_logger(__name__)
 
-LABELS: tuple[UtteranceKind, ...] = tuple(UtteranceKind)
+LABELS: tuple[UtteranceKind, ...] = (
+    UtteranceKind.COMMITMENT,
+    UtteranceKind.DECISION,
+    UtteranceKind.OPEN_QUESTION,
+    UtteranceKind.CONCERN,
+    UtteranceKind.AMBIGUOUS,
+)
 """Label order. The fine-tuned head's output columns are in this order and the
 order is part of the checkpoint — reordering ``UtteranceKind`` without retraining
-would silently relabel every prediction."""
+would silently relabel every prediction.
+
+Written out rather than ``tuple(UtteranceKind)``. Deriving it made the test that
+was supposed to catch a divergence read ``x == x``: ``LABELS`` followed any
+reordering of the enum, ``_to_prediction`` mapped the checkpoint's fixed columns
+onto the new order, every prediction came back mislabelled, and the suite stayed
+green. A literal is the only version of this that can disagree with the contract.
+"""
 
 
 def _to_prediction(scores: list[float]) -> Prediction:
@@ -48,6 +61,26 @@ def _to_prediction(scores: list[float]) -> Prediction:
     distribution = dict(zip(LABELS, scores, strict=True))
     kind = max(distribution, key=lambda k: distribution[k])
     return Prediction(kind=kind, confidence=distribution[kind], scores=distribution)
+
+
+def _classifier_client(endpoint: str) -> Any:
+    """Our inference server, as a client the way every other one is written.
+
+    A subclass rather than an instance whose ``service`` is reassigned after
+    construction: ``JiraClient``, ``NotionClient``, ``SlackClient`` and
+    ``CalendarClient`` are all ``class X(HttpClient): service = "x"``, and
+    ``addressing`` can only be declared the standard way on a class.
+
+    ``addressing`` stays empty. Every string in this body is an utterance, so
+    there is nothing here that addresses the request rather than carrying
+    meeting content — and declaring nothing is what fails closed.
+    """
+    from autune_integrations.base import HttpClient  # noqa: PLC0415
+
+    class ClassifierClient(HttpClient):
+        service = "extraction-classifier"
+
+    return ClassifierClient(endpoint)
 
 
 class LocalDeberta:
@@ -176,10 +209,7 @@ class HostedDeberta:
     """
 
     def __init__(self, endpoint: str, model_version: str) -> None:
-        from autune_integrations.base import HttpClient  # noqa: PLC0415
-
-        self._client: HttpClient = HttpClient(endpoint)
-        self._client.service = "extraction-classifier"
+        self._client = _classifier_client(endpoint)
         self._model_version = model_version
 
     @property
@@ -193,9 +223,14 @@ class HostedDeberta:
         predictions: list[Prediction] = []
         for batch in _batches_within_budget(texts, MAX_OUTBOUND_CHARS):
             body = self._client.request("POST", "/classify", json={"texts": batch})
-            rows = body.get("scores", [])
-            if len(rows) != len(batch):
-                raise ValueError(f"asked for {len(batch)} predictions, got {len(rows)}")
+            # A server answering with a bare array is wrong but comprehensible;
+            # letting it surface as AttributeError on a dict method is not.
+            rows = body.get("scores", []) if isinstance(body, dict) else body
+            if not isinstance(rows, list) or len(rows) != len(batch):
+                raise ValueError(
+                    f"asked for {len(batch)} predictions, got {type(rows).__name__} "
+                    f"of length {len(rows) if isinstance(rows, list) else 'n/a'}"
+                )
             predictions.extend(_to_prediction(row) for row in rows)
         return predictions
 
