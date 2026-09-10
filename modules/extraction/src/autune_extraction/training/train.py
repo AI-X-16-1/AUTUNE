@@ -75,6 +75,7 @@ def train(data: Path, out: Path, config: RunConfig | None = None) -> Path:
     from transformers import (
         AutoModelForSequenceClassification,
         AutoTokenizer,
+        DataCollatorWithPadding,
         Trainer,
         TrainingArguments,
         set_seed,
@@ -169,6 +170,11 @@ def train(data: Path, out: Path, config: RunConfig | None = None) -> Path:
         ),
         train_dataset=encode(splits["train"]),
         eval_dataset=encode(splits["validation"]),
+        # ``encode`` leaves every utterance at its own length, so a batch has to
+        # be padded when it is formed. Without a collator the Trainer falls back
+        # to one that stacks rows as they are, which fails on the first batch
+        # holding two utterances of different lengths -- that is, the first one.
+        data_collator=DataCollatorWithPadding(tokenizer),
         compute_metrics=macro_f1,
     )
     trainer.train()
@@ -176,6 +182,12 @@ def train(data: Path, out: Path, config: RunConfig | None = None) -> Path:
 
     out.mkdir(parents=True, exist_ok=True)
     trainer.save_model(str(out))
+    # The truncation length is part of the checkpoint, like the label order: the
+    # head was trained on utterances cut at this length, and a classifier that
+    # cuts them anywhere else is feeding it inputs it never saw. Saved on the
+    # tokenizer so that whatever loads the checkpoint truncates the same way
+    # without being told.
+    tokenizer.model_max_length = config.max_length
     tokenizer.save_pretrained(str(out))
     (out / "run.json").write_text(
         json.dumps(
