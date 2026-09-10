@@ -19,6 +19,18 @@ words into utterances.
 
 `pyannote/speaker-diarization-3.1`, CPU, on the waveform in memory.
 
+**Which track the numbers come from.** pyannote returns two: `speaker_diarization`,
+which contains overlapping turns, and `exclusive_speaker_diarization`, which does
+not. DER is scored against the first, because that is what the metric is defined
+over. The join consumes the second, because a word can only belong to one
+speaker and reading overlapping turns hands an interruption to whoever started
+talking first.
+
+On this recording the choice makes almost no difference — 155 turns against 147,
+the same four speakers, the same 49 utterances, the same DER — and that is the
+point rather than a reassurance. **S1 to S3 are one person at a time, so this
+recording cannot measure the thing the two tracks disagree about.**
+
 ## 2. What the reference is, and what it is not
 
 There are no per-speaker tracks, so the reference is written by hand — which is
@@ -81,6 +93,10 @@ join makes and why.
 ## 5. What is still open
 
 - **DER on overlapping speech.** Needs per-speaker tracks. Next recording.
+  Until then nothing here measures the overlap path: the two diarization tracks
+  produce the same answer on this audio, and a bug that only appears when two
+  people talk at once would be invisible in every number above. One was found by
+  reading the code (#136) rather than by measuring.
 - **Identification.** Turns carry a local label — `SPEAKER_00` means "the same
   voice as the other turns with this label", nothing more. Matching a label to a
   person is the second half of #6.
