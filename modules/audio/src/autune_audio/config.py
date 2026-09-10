@@ -24,8 +24,13 @@ class AudioSettings(BaseSettings):
     temp_dir: str = "/tmp/autune-audio"
     """Where a recording lives while a task runs, and only then.
 
-    Deleted in a ``finally`` block before the task returns. Never point this at a
-    synced folder. See docs/architecture/privacy.md section 1.
+    Every path that writes a recording goes through
+    ``storage.recording_on_disk``, which deletes it in a ``finally`` and confirms
+    it is gone. That primitive also refuses a directory the file could survive in
+    — a cloud-sync folder, or anywhere inside the checkout — so "never point this
+    at a synced folder" is now enforced rather than requested.
+
+    See docs/architecture/privacy.md section 1.
     """
 
     hf_token: str = ""

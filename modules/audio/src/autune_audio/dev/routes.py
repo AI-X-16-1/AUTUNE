@@ -1,9 +1,16 @@
 """Serve the dev page and transcribe what it uploads.
 
-The recording is written to a temp file because the decoder takes a path, and it
-is deleted in a ``finally`` block — success, failure, and cancellation all delete
-it. That is invariant 11, and it applies to a developer tool exactly as it
-applies to the worker: there is no debug flag that keeps the audio.
+The recording goes to disk through ``storage.recording_on_disk``, the same
+primitive the worker uses. Invariant 11 applies to a developer tool exactly as
+it applies to the worker — there is no debug flag that keeps the audio — and a
+second hand-written ``finally`` here would be a second place to get it wrong.
+
+One copy is outside that guarantee and worth naming: Starlette spools an upload
+over 1 MB to its own temp file before this function is entered, in the system
+temp directory rather than ``AUTUNE_AUDIO_TEMP_DIR``. It is removed when the
+request ends, so it does not outlive the task, but ``_reject_persistent`` never
+sees it. The real pipeline does not have this copy — the worker is handed a path
+by the upload endpoint, not a multipart body.
 
 A ``DecodeError`` carries a message written to name the file and never its
 contents, so it is safe to show. Anything else is reported by exception type
@@ -15,15 +22,14 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
-from tempfile import NamedTemporaryFile
 
 import structlog
 from fastapi import APIRouter, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse
 
-from autune_audio.config import get_settings
 from autune_audio.decoding import DecodeError
 from autune_audio.pipeline import transcribe_file
+from autune_audio.storage import recording_on_disk
 
 from .page import PAGE
 
@@ -32,11 +38,7 @@ log = structlog.get_logger(__name__)
 router = APIRouter()
 
 MAX_UPLOAD_BYTES = 500 * 1024 * 1024
-"""Matches the dropzone limit on design screen S03.
-
-The body is streamed to disk a megabyte at a time rather than read whole: at
-this limit, buffering the upload in memory is how the API falls over.
-"""
+"""Matches the dropzone limit on design screen S03."""
 
 # Not in the OpenAPI schema. These endpoints exist on a developer's machine and
 # nowhere else, and the generated client should not know about them.
@@ -50,30 +52,20 @@ def page() -> str:
 @router.post("/transcribe", include_in_schema=False)
 async def transcribe_upload(file: UploadFile) -> JSONResponse:
     """Decode, transcribe, and delete. The shape here is what page.py renders."""
-    settings = get_settings()
-    temp_dir = Path(settings.temp_dir)
-    temp_dir.mkdir(parents=True, exist_ok=True)
-
-    suffix = Path(file.filename or "").suffix
-    with NamedTemporaryFile(dir=temp_dir, suffix=suffix, delete=False) as handle:
-        path = Path(handle.name)
+    # Checked from the declared size rather than by reading: a body over the
+    # limit is refused without this endpoint having copied it anywhere.
+    if file.size is not None and file.size > MAX_UPLOAD_BYTES:
+        limit = MAX_UPLOAD_BYTES // 1024 // 1024
+        return JSONResponse(
+            {"error": f"파일이 너무 큽니다. {limit}MB 이하로 올려주세요."},
+            status_code=413,
+        )
 
     try:
-        size = 0
-        with path.open("wb") as out:
-            while chunk := await file.read(1024 * 1024):
-                size += len(chunk)
-                if size > MAX_UPLOAD_BYTES:
-                    limit = MAX_UPLOAD_BYTES // 1024 // 1024
-                    return JSONResponse(
-                        {"error": f"파일이 너무 큽니다. {limit}MB 이하로 올려주세요."},
-                        status_code=413,
-                    )
-                out.write(chunk)
-
-        started = time.monotonic()
-        transcription = transcribe_file(path)
-        elapsed = time.monotonic() - started
+        with recording_on_disk(file.file, suffix=Path(file.filename or "").suffix) as recording:
+            started = time.monotonic()
+            transcription = transcribe_file(recording.path)
+            elapsed = time.monotonic() - started
     except DecodeError as error:
         # Written to name the file rather than quote it; safe to show.
         log.warning("dev_decode_failed", code=error.code)
@@ -83,9 +75,6 @@ async def transcribe_upload(file: UploadFile) -> JSONResponse:
         kind = type(error).__name__
         log.warning("dev_transcribe_failed", error=kind)
         return JSONResponse({"error": f"전사에 실패했습니다 ({kind})"}, status_code=500)
-    finally:
-        # Invariant 11: the recording does not outlive the request.
-        path.unlink(missing_ok=True)
 
     return JSONResponse(
         {
