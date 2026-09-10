@@ -12,7 +12,7 @@ serve a health check, and would make this module's unit tests need one.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from typing import TYPE_CHECKING, Any
 
 from autune_contracts.enums import UtteranceKind
@@ -63,6 +63,42 @@ def _to_prediction(scores: list[float]) -> Prediction:
     return Prediction(kind=kind, confidence=distribution[kind], scores=distribution)
 
 
+def _check_label_order(id2label: Mapping[int | str, str]) -> None:
+    """Refuse a checkpoint whose head is not in ``LABELS`` order.
+
+    ``LABELS`` says the order is part of the checkpoint, and the checkpoint says
+    what it is: the training loop writes ``id2label`` into ``config.json``. This
+    reads it back. Without it, a checkpoint trained in another order -- or a bare
+    encoder, whose untrained head is labelled ``LABEL_0`` to ``LABEL_4`` -- loads
+    cleanly and relabels every prediction behind confidences that look fine.
+
+    Keys are compared as integers because ``config.json`` stores them as strings
+    and transformers converts them on load; either should be accepted here.
+    """
+    by_index = {int(index): label for index, label in id2label.items()}
+    found = [by_index.get(index) for index in range(max(len(by_index), len(LABELS)))]
+    expected = [label.value for label in LABELS]
+    if found != expected:
+        raise RuntimeError(
+            f"the checkpoint's head is labelled {found}, but this classifier reads its "
+            f"columns as {expected}. Retrain, or load a checkpoint the training loop wrote."
+        )
+
+
+def _truncation_length(model_max_length: int, max_position_embeddings: int) -> int:
+    """How many tokens of an utterance the classifier reads.
+
+    The training loop saves its ``MAX_LENGTH`` as the tokenizer's
+    ``model_max_length``, so a checkpoint it wrote is cut where it was trained.
+    This used to be a hardcoded 256 against a training length of 96 -- two
+    numbers in two files that nothing connected.
+
+    A tokenizer that never had a length set reports a sentinel around ``1e30``;
+    the position embeddings are the real limit then.
+    """
+    return min(model_max_length, max_position_embeddings)
+
+
 def _classifier_client(endpoint: str) -> Any:
     """Our inference server, as a client the way every other one is written.
 
@@ -100,6 +136,7 @@ class LocalDeberta:
         self._batch_size = batch_size
         self._model: Any = None
         self._tokenizer: Any = None
+        self._max_length = 0
 
     @property
     def model_version(self) -> str:
@@ -138,6 +175,11 @@ class LocalDeberta:
 
         self._tokenizer = AutoTokenizer.from_pretrained(self._checkpoint)
         self._model = AutoModelForSequenceClassification.from_pretrained(self._checkpoint)
+        _check_label_order(self._model.config.id2label)
+        self._max_length = _truncation_length(
+            self._tokenizer.model_max_length,
+            getattr(self._model.config, "max_position_embeddings", 512),
+        )
         self._model.to(self._device)
         self._model.eval()
         log.info("extraction_classifier_loaded", checkpoint=self._checkpoint, device=self._device)
@@ -152,7 +194,11 @@ class LocalDeberta:
         for start in range(0, len(texts), self._batch_size):
             batch = texts[start : start + self._batch_size]
             encoded = self._tokenizer(
-                batch, padding=True, truncation=True, max_length=256, return_tensors="pt"
+                batch,
+                padding=True,
+                truncation=True,
+                max_length=self._max_length,
+                return_tensors="pt",
             ).to(self._device)
             with torch.no_grad():
                 logits = self._model(**encoded).logits

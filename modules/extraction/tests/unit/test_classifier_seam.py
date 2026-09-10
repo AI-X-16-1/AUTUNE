@@ -7,18 +7,21 @@ shape everything downstream is built against, and it is testable now.
 from __future__ import annotations
 
 import importlib.util
+from collections.abc import Callable, Iterator
 
 import pytest
 from pydantic import ValidationError
 
 from autune_contracts.enums import UtteranceKind
 from autune_extraction.config import ExtractionSettings
-from autune_extraction.pipeline import FakeClassifier, Prediction
+from autune_extraction.pipeline import FakeClassifier, Prediction, registry
 from autune_extraction.pipeline.classifier import (
     LABELS,
     LocalDeberta,
     _batches_within_budget,
+    _check_label_order,
     _to_prediction,
+    _truncation_length,
 )
 from autune_extraction.pipeline.registry import _CLASSIFIERS
 from autune_integrations.privacy import MAX_OUTBOUND_CHARS, check_outbound
@@ -94,6 +97,48 @@ def test_label_order_matches_the_contract_enum() -> None:
     prediction silently, so the coupling is asserted rather than assumed."""
     assert tuple(UtteranceKind) == LABELS
     assert len(LABELS) == 5
+
+
+def test_a_checkpoint_in_label_order_is_accepted() -> None:
+    """Integer keys as transformers holds them, string keys as ``config.json``
+    stores them. The training loop writes this exact mapping."""
+    _check_label_order({i: label.value for i, label in enumerate(LABELS)})
+    _check_label_order({str(i): label.value for i, label in enumerate(LABELS)})
+
+
+def test_a_checkpoint_in_another_order_is_refused() -> None:
+    """Loading it would relabel every prediction behind plausible confidences."""
+    swapped = [label.value for label in LABELS]
+    swapped[0], swapped[1] = swapped[1], swapped[0]
+
+    with pytest.raises(RuntimeError, match="labelled"):
+        _check_label_order(dict(enumerate(swapped)))
+
+
+def test_a_bare_encoder_is_refused() -> None:
+    """An untrained head is labelled ``LABEL_0``... and would load without
+    complaint, classifying at random."""
+    with pytest.raises(RuntimeError, match="labelled"):
+        _check_label_order({i: f"LABEL_{i}" for i in range(len(LABELS))})
+
+
+def test_a_head_with_an_extra_column_is_refused() -> None:
+    """Five matching names are not enough if a sixth column exists: the softmax
+    would run over six and ``_to_prediction`` would refuse every row mid-meeting."""
+    extra = {i: label.value for i, label in enumerate(LABELS)} | {len(LABELS): "none"}
+
+    with pytest.raises(RuntimeError, match="labelled"):
+        _check_label_order(extra)
+
+
+def test_inference_truncates_where_the_checkpoint_was_trained() -> None:
+    """The training loop saves its length as ``model_max_length``."""
+    assert _truncation_length(96, 512) == 96
+
+
+def test_a_tokenizer_without_a_length_falls_back_to_the_positions() -> None:
+    """transformers reports ``int(1e30)`` for a length nobody set."""
+    assert _truncation_length(int(1e30), 512) == 512
 
 
 # --- what has deliberately no implementation --------------------------------
@@ -276,6 +321,59 @@ def test_a_device_name_we_do_not_handle_is_refused_at_startup(value: str) -> Non
 @pytest.mark.parametrize("value", ["cpu", "cuda"])
 def test_both_devices_we_handle_are_accepted(value: str) -> None:
     assert settings(classifier_device=value).classifier_device == value
+
+
+# --- there is no checkpoint to default to ------------------------------------
+
+
+@pytest.fixture
+def configured(monkeypatch: pytest.MonkeyPatch) -> Iterator[Callable[..., None]]:
+    """Point the registry at chosen settings, and forget the cached classifier
+    on both sides so no test sees another's."""
+
+    def configure(**overrides: str) -> None:
+        monkeypatch.setattr(registry, "get_settings", lambda: settings(**overrides))
+
+    registry.get_classifier.cache_clear()
+    yield configure
+    registry.get_classifier.cache_clear()
+
+
+def test_the_default_checkpoint_is_blank() -> None:
+    """The name it used to default to was never published. A default that cannot
+    load is found by the first meeting a worker picks up."""
+    assert settings().classifier_checkpoint == ""
+
+
+@pytest.mark.parametrize("impl", ["local", "hosted"])
+def test_a_real_classifier_without_a_checkpoint_is_refused(
+    configured: Callable[..., None], impl: str
+) -> None:
+    """Named in the registry, rather than a hub error from the first forward pass
+    -- or, for ``hosted``, classifications stored with no model version."""
+    configured(classifier_impl=impl, classifier_endpoint="https://classifier.internal")
+
+    with pytest.raises(ValueError, match="AUTUNE_EXTRACTION_CLASSIFIER_CHECKPOINT"):
+        registry.get_classifier()
+
+
+def test_the_fake_needs_no_checkpoint(configured: Callable[..., None]) -> None:
+    configured(classifier_impl="fake")
+
+    assert isinstance(registry.get_classifier(), FakeClassifier)
+
+
+def test_a_checkpoint_is_enough_to_build_the_local_classifier(
+    configured: Callable[..., None],
+) -> None:
+    """Construction loads nothing -- the weights come on the first
+    classification -- so this runs without the extra."""
+    configured(classifier_impl="local", classifier_checkpoint="runs/kf-deberta-v1")
+
+    classifier = registry.get_classifier()
+
+    assert isinstance(classifier, LocalDeberta)
+    assert classifier.model_version == "runs/kf-deberta-v1"
 
 
 def test_asking_for_cuda_without_it_fails_before_the_model_loads() -> None:

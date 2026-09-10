@@ -28,6 +28,18 @@ def get_classifier() -> Classifier:
     settings = get_settings()
     impl = settings.classifier_impl
 
+    if impl in ("local", "hosted") and not settings.classifier_checkpoint:
+        # Both record the checkpoint with every classification, and ``local``
+        # loads it. Refused here, by name, rather than as a hub error from inside
+        # the first forward pass -- or, for ``hosted``, as classifications stored
+        # with no model version at all.
+        raise ValueError(
+            f"AUTUNE_EXTRACTION_CLASSIFIER_IMPL={impl} needs "
+            "AUTUNE_EXTRACTION_CLASSIFIER_CHECKPOINT. No trained checkpoint is "
+            "published yet: train one with `python -m autune_extraction.training` "
+            "and point this at its output directory, or use CLASSIFIER_IMPL=fake."
+        )
+
     if impl == "local":
         return LocalDeberta(settings.classifier_checkpoint, device=settings.classifier_device)
     if impl == "hosted":

@@ -26,8 +26,19 @@ class ExtractionSettings(BaseSettings):
     is a decision about where personal data goes, not a config value -- see
     ``pipeline.base``."""
 
-    classifier_checkpoint: str = "team-autune/deberta-v3-ko-utterance-5way"
-    """Pinned, and recorded with every classification. Never a floating tag."""
+    classifier_checkpoint: str = ""
+    """Pinned, and recorded with every classification. Never a floating tag.
+
+    **Blank by default, because no trained checkpoint exists yet** (#10). The
+    name this used to default to, ``team-autune/deberta-v3-ko-utterance-5way``,
+    was never published -- the hub answers 401 for it. A default that cannot
+    load fails on the first meeting a worker picks up, with a hub error that
+    reads like a network problem.
+
+    Blank makes ``local`` and ``hosted`` refuse in the registry instead, naming
+    this variable. Point it at a directory ``python -m
+    autune_extraction.training`` wrote, or at a hub revision once one is
+    published. ``fake`` needs none."""
 
     classifier_endpoint: str = ""
     """Our own inference server, required when ``classifier_impl=hosted``."""
