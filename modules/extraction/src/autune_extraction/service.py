@@ -8,16 +8,19 @@ Never imports another module.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from autune_contracts.enums import ActionStatus
-from autune_core import get_logger
+from autune_contracts.extraction import AmbiguousAgreement
+from autune_core import get_logger, session_scope
 from autune_integrations import SlackApi, assert_personal_delivery
 
-from .confirmations import ConfirmationResponse, build_confirmation_dm
+from .confirmations import WEAK_ASSENT, ConfirmationResponse, build_confirmation_dm
 from .edit_cost import EditCost
-from .models import ExtActionItem, ExtActionItemSource, ExtEditEvent
+from .models import ExtActionItem, ExtActionItemSource, ExtConfirmation, ExtEditEvent
 from .schemas import ActionItemCreate, ActionItemUpdate
 
 log = get_logger(__name__)
@@ -58,26 +61,142 @@ def send_confirmation_dm(
     return timestamp
 
 
-def apply_confirmation_response(response: ConfirmationResponse) -> None:
-    """Record what the speaker answered.
+def ask_for_confirmation(
+    session: Session,
+    slack: SlackApi,
+    *,
+    meeting_id: str,
+    speaker_id: str,
+    recipient_id: str,
+    utterance_id: str,
+    quoted_text: str,
+    reason: str = WEAK_ASSENT,
+) -> ExtConfirmation:
+    """Open a confirmation and send its DM, in that order.
 
-    The seam the Slack handler delegates to. Persistence lands with
-    ``ext_confirmations`` in #12: the table does not exist yet, and inventing it
-    here would put a module table outside the migration that owns it.
+    The row goes in first. Delivery is at-least-once and Slack can fail after
+    accepting the call, so a send that is not preceded by a row can leave a
+    question asked with no deadline running — the state where nothing ever
+    resolves it. The reverse, a row whose DM failed, is visible and retryable.
 
-    What is settled is the shape — one response resolves one utterance to one
-    kind — so the handler and the message can be finished and tested now, and
-    this function grows a body rather than a caller.
+    ``send_confirmation_dm`` stays callable on its own for the privacy guards it
+    carries; this is the entry point that also starts the clock.
     """
+    row = open_confirmation(
+        session, meeting_id=meeting_id, utterance_id=utterance_id, reason=reason
+    )
+    send_confirmation_dm(
+        slack,
+        speaker_id=speaker_id,
+        recipient_id=recipient_id,
+        utterance_id=utterance_id,
+        quoted_text=quoted_text,
+    )
+    return row
+
+
+def open_confirmation(
+    session: Session, *, meeting_id: str, utterance_id: str, reason: str = WEAK_ASSENT
+) -> ExtConfirmation:
+    """Start the clock, once.
+
+    A re-send keeps the original ``sent_at``. The deadline measures how long the
+    speaker has had the question in front of them, and a Celery retry means they
+    had it the whole time — restarting it would give the model another day to
+    look undecided for free.
+
+    Deliberately not a place to reset an answer: someone who has already replied
+    keeps their reply if the DM is sent again.
+    """
+    row = session.get(ExtConfirmation, utterance_id)
+    if row is not None:
+        return row
+
+    row = ExtConfirmation(
+        utterance_id=utterance_id,
+        meeting_id=meeting_id,
+        reason=reason,
+        sent_at=datetime.now(UTC),
+    )
+    session.add(row)
+    session.flush()
+    return row
+
+
+def apply_confirmation_response(response: ConfirmationResponse) -> None:
+    """Record what the speaker answered. The seam the Slack handler delegates to.
+
+    Opens its own session because the handler has none — a Slack action arrives
+    outside any request or task that owns one.
+    """
+    with session_scope() as session:
+        resolve_confirmation(session, response)
+
+
+def resolve_confirmation(
+    session: Session, response: ConfirmationResponse
+) -> ExtConfirmation | None:
+    """Write one answer down, or decline to.
+
+    Idempotent by assignment rather than by a guard: Slack retries a click it has
+    not heard back from within three seconds, and writing the same kind twice
+    leaves the row where it already was. A person who changes their mind and
+    clicks a different button is the same code path, and the later answer wins —
+    which is what a person expects a button to do.
+
+    **A missing row is ignored, not created.** A click can only exist because a
+    DM went out, so no row means the meeting was deleted underneath it. Creating
+    one here would write meeting-scoped data back after the cascade that was
+    meant to remove it.
+    """
+    row = session.get(ExtConfirmation, response.utterance_id)
+    if row is None:
+        log.info("extraction_confirmation_orphaned", utterance_id=response.utterance_id)
+        return None
+
+    row.resolved_kind = response.resolved_kind.value
+    row.responded_at = datetime.now(UTC)
+
+    # Ids and a label. The utterance itself is meeting content.
     log.info(
         "extraction_confirmation_received",
         utterance_id=response.utterance_id,
         resolved_kind=response.resolved_kind.value,
     )
-    # TODO(강민구): #12 — upsert ext_confirmations, reclassify the utterance in
-    # ext_classifications, and build an action item when the answer is a
-    # commitment. Idempotent on utterance_id: a second click must not create a
-    # second card.
+    # TODO(강민구): #10 — reclassify the utterance in ext_classifications, which
+    # does not exist until the classifier lands. #11 — build an action item from
+    # a confirmed commitment; the description and due date come from slot
+    # filling, and inventing them here would put a guess where a parse belongs.
+    return row
+
+
+def ambiguous_agreements_for_meeting(
+    session: Session, meeting_id: str, *, now: datetime | None = None
+) -> list[AmbiguousAgreement]:
+    """This meeting's ambiguous agreements as the contract E reads.
+
+    Every stored row is one a DM went out for, so ``confirmation_sent`` is true
+    throughout. The field stays in the contract because an ambiguity found with
+    no DM sent — the workspace app missing, the speaker unmapped — is a state
+    that has to be expressible even though this query cannot produce it.
+
+    ``now`` is a parameter so a caller can ask what the outcome was at publish
+    time rather than at read time.
+    """
+    rows = session.scalars(
+        select(ExtConfirmation)
+        .where(ExtConfirmation.meeting_id == meeting_id)
+        .order_by(ExtConfirmation.sent_at, ExtConfirmation.utterance_id)
+    ).all()
+
+    return [
+        AmbiguousAgreement(
+            utterance_id=row.utterance_id,
+            reason=row.reason,
+            confirmation_sent=row.confirmation_sent,
+        )
+        for row in rows
+    ]
 
 
 def create_action_item(session: Session, payload: ActionItemCreate) -> ExtActionItem:

@@ -24,9 +24,30 @@ concern when denied*.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import Any
 
 from autune_contracts.enums import UtteranceKind
+
+CONFIRMATION_TIMEOUT = timedelta(hours=24)
+"""How long the speaker has before the question resolves itself as undecided.
+
+A product rule (#12, ui-spec S19), not an environment knob: shortening it in one
+deployment would change what "undecided" means in the numbers ADR 0006 reports.
+
+Nothing sweeps at the deadline. The outcome is derived from ``sent_at`` whenever
+it is read, so there is no stored flag that can disagree with the clock and no
+periodic job that has to be running for the rule to hold.
+"""
+
+WEAK_ASSENT = "weak_assent"
+"""Why an agreement was called ambiguous. Travels to E in
+``AmbiguousAgreement.reason``.
+
+The only reason there is today. It is a column rather than a constant in the
+payload because the NLI step will have more of them, and a reason invented at
+publish time cannot be traced back to what the model actually found.
+"""
 
 CONFIRM_COMMITMENT = "autune_extraction.confirm_commitment"
 CONFIRM_DECISION = "autune_extraction.confirm_decision"
