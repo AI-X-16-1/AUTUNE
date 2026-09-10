@@ -57,13 +57,44 @@ domain template, and score the risk of each missing item.
 
 | Store | Contents |
 | --- | --- |
-| PostgreSQL `gap_topics` | Topic nodes with centrality, per meeting |
-| PostgreSQL `gap_gaps` | Detected gaps, category, severity, risk score, question |
+| PostgreSQL `gap_topics` | Topic nodes with PageRank and betweenness, per meeting |
+| PostgreSQL `gap_topic_utterances` | Which utterances a topic was built from, in order |
+| PostgreSQL `gap_topic_edges` | Relations between topics, directed, per meeting |
 | PostgreSQL `gap_participation` | Topic × participant speech presence |
-| PostgreSQL `gap_templates` | Domain templates and their items |
-| PostgreSQL `gap_topic_edges` | Relations between topics, per meeting |
+| PostgreSQL `gap_gaps` | Detected gaps, category, severity, risk score, question |
+| PostgreSQL `gap_related_topics` | Which topics a gap was inferred from |
+| PostgreSQL `gap_templates` | Domain templates and their items — **not built yet**, see below |
 
-Everything cascades from `meetings.id`, so no deletion hook is needed.
+Everything that exists cascades from `meetings.id`, so no deletion hook is
+needed.
+
+`gap_topic_utterances` and `gap_related_topics` are link tables rather than
+JSONB lists on their parents. The report joins both back — to `utterances` for
+the quotation behind a topic, to `gap_topics` for why a gap was raised — and
+`../architecture/data-model.md` rules JSONB out for anything you join on. They
+store ids and never the text: a copy of an utterance here would leave transcript
+content behind a cascade that no longer reaches it.
+
+`gap_topics` keeps PageRank and betweenness in separate columns rather than one
+blended score. Risk scoring weights them differently, and a single number could
+not be re-weighted afterwards without rebuilding the graph.
+
+`gap_gaps.dismissed_at` marks a false positive without hiding the row —
+threshold tuning has to read what was dismissed, and soft deletes are forbidden
+(`../architecture/data-model.md`). No dismisser is recorded: which teammate
+pressed the button is not something tuning needs, and storing it would be a
+per-person record of conduct that ADR 0003 refuses.
+
+### `gap_templates` is deferred, not forgotten
+
+A domain template is reference data — it is not derived from any meeting, so it
+is the one table this module owns that cannot cascade from `meetings.id`. What
+it *does* hang off, a team or nothing at all, follows from who writes templates
+and how many there are, which is open as issue #22. Creating it now means
+guessing an anchor and migrating away from it later.
+
+It blocks nothing in the meantime: template comparison (#14) is waiting on the
+same decision.
 
 ## API
 
@@ -94,6 +125,39 @@ Everything cascades from `meetings.id`, so no deletion hook is needed.
 | Graph | NetworkX, in memory |
 | Topic importance | PageRank, betweenness centrality |
 | Risk scoring | Weighted heuristic; thresholds in `config.py` |
+
+### Model abstraction layer
+
+Every model sits behind a Protocol in `autune_gap.pipeline.base`, and the
+implementation is chosen by `AUTUNE_GAP_*_IMPL` and reached through
+`registry`. Nothing outside that package names a model class, so swapping a
+model does not touch a caller. Modules B and D settled on the same shape.
+
+`FakeNer` is what the tests run. It is deterministic, needs no weights and no
+network, and it exists so the topic graph, the centrality pass and the
+participation matrix can be built and tested before the real extractor lands
+(#13). It is **not** an approximation of the model's accuracy and must not be
+used to estimate it.
+
+There is no `external` implementation and adding one is a privacy decision
+rather than a config string — see `../engineering/environments.md`, "The entity
+extractor has no external option".
+
+Entities are normalised onto five labels — `feature`, `system`, `metric`,
+`person`, `date` — rather than spaCy's own inventory. A model trained on news
+text emits `ORG` and `LOC`, and a meeting about search ranking has no
+organisations in it worth graphing. `feature` and `system` have no spaCy
+equivalent at all: they are this product's vocabulary, so a general model
+cannot supply them and #13 is where they come from. Until then the graph is
+built from the three a general model does give, and the mapping in
+`pipeline.ner` shows that limit rather than hiding it behind an empty class.
+
+There is deliberately **no `worker_process_init` warm-up hook**. `apps/worker`
+imports every module's `tasks.py` into one Celery app, so a hook registered
+here would run in every worker process regardless of `-Q` — including workers
+that never run a gap task. Module D shipped one and had to gate it behind a
+setting (PR #90). The cost of not having one is that the first task of a
+process pays the model load.
 
 ## Metric
 
