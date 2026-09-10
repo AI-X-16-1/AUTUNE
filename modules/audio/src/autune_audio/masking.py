@@ -31,10 +31,20 @@ from typing import Protocol, runtime_checkable
 
 MASK_CHAR = "*"
 
+# Kept inside a numeric span so the value still reads as a phone number or an
+# account. Everything else is content, whoever found the span.
+_SHAPE_CHARS = "-. +"
+
 # The categories the patterns below produce, and the only ones with a digit
 # layout worth preserving. Anything else comes from the recogniser and is hidden
 # whole.
-_NUMERIC_CATEGORIES = frozenset({"phone", "rrn", "card", "account"})
+_NUMERIC_CATEGORIES = frozenset({"phone", "rrn", "card", "account", "digits"})
+
+# A Korean bank account number is ten digits or more. A date is eight, a version
+# string is eight, and a three-part figure said aloud is fewer. Counting digits
+# is what tells them apart, and it does not need a list of date formats that
+# would go stale the first time somebody writes one differently.
+MIN_ACCOUNT_DIGITS = 10
 
 # Speech, not writing. A transcript of somebody reading a phone number aloud
 # comes back with whatever separators Whisper felt like: "010-1234-5678",
@@ -60,7 +70,11 @@ _PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     # somebody: 1-4 Korean, 5-8 registered foreign national, 9-0 born in the
     # 1800s. Accepting only 1-4 left a registered foreign colleague's number
     # matching nothing.
-    ("rrn", re.compile(rf"{_L}\d{{6}}{_SEP}[0-9]\d{{6}}{_R}")),
+    # The second group takes six to eight digits, not exactly seven. A single
+    # mis-transcribed digit used to drop the whole thing to `account`, which
+    # keeps the last four -- four digits of a national ID number, left standing
+    # because the transcript was slightly wrong.
+    ("rrn", re.compile(rf"{_L}\d{{6}}{_SEP}[0-9]\d{{6,7}}{_R}")),
     ("card", re.compile(rf"{_L}(?:\d{{4}}{_SEP}){{3}}\d{{4}}{_R}")),
     # Any leading-zero prefix, not an enumerated list of them. An earlier
     # version spelled out 01x/02/03x-06x and let 070, 080 and 0505 through
@@ -73,7 +87,22 @@ _PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     # Bank account layouts vary by bank -- 3-2-6, 6-2-6, 3-3-6 -- and get said
     # without separators as often as with. Requiring a literal hyphen and a
     # short first group missed a KB number and every run-together one.
+    #
+    # Widening it that far made it match any three groups of digits, which in a
+    # meeting transcript means dates and versions: 2024.01.15 came back as
+    # ****.01.15 and 100 200 300 lost its first two groups. Over-masking is
+    # allowed by policy and still costs something -- module B parses due dates
+    # out of this text.
+    #
+    # The floor below is what separates them without special-casing a date
+    # format: a Korean bank account is ten digits or more, and a date is eight.
     ("account", re.compile(rf"{_L}\d{{2,6}}{_SEP}\d{{2,6}}{_SEP}\d{{2,6}}{_R}")),
+    # 3) Nothing above can span a run of digits longer than eighteen, because
+    # each is three groups of at most six with no digit allowed on either end.
+    # Two personal numbers transcribed without a break -- an ID then a phone --
+    # matched nothing at all, and neither did the outbound guard. A run this
+    # long in a meeting is not a quantity.
+    ("digits", re.compile(rf"{_L}\d{{12,}}{_R}")),
     ("email", re.compile(r"\b[\w.+-]+@[\w-]+\.[\w.-]+\b")),
 )
 
@@ -125,7 +154,10 @@ def mask(text: str, *, recogniser: EntityRecogniser | None = None) -> Masked:
     """
     spans: list[tuple[int, int, str]] = []
     for category, pattern in _PATTERNS:
-        spans.extend((m.start(), m.end(), category) for m in pattern.finditer(text))
+        for match in pattern.finditer(text):
+            if category == "account" and _digit_count(match.group()) < MIN_ACCOUNT_DIGITS:
+                continue
+            spans.append((match.start(), match.end(), category))
     if recogniser is not None:
         spans.extend(recogniser.find(text))
 
@@ -140,6 +172,10 @@ def mask(text: str, *, recogniser: EntityRecogniser | None = None) -> Masked:
         cursor = end
     out.append(text[cursor:])
     return Masked(text="".join(out), counts=counts)
+
+
+def _digit_count(value: str) -> int:
+    return sum(1 for c in value if c.isdigit())
 
 
 def _resolve_overlaps(
@@ -246,7 +282,12 @@ def _hide(value: str, category: str, *, merged: bool = False) -> str:
     index = 0
     for char in value:
         if not char.isdigit():
-            out.append(char)
+            # Separators keep the shape a reader needs; anything else in a span
+            # the recogniser called a phone number is content. A span it returns
+            # for "공일공 일이삼사 오육칠팔" is exactly the case patterns cannot
+            # describe, and passing the syllables through masked nothing while
+            # the counts recorded a masked span.
+            out.append(char if char in _SHAPE_CHARS else MASK_CHAR)
             continue
         out.append(char if index in keep else MASK_CHAR)
         index += 1

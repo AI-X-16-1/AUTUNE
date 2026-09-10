@@ -196,6 +196,24 @@ class TestTheSecondDetector:
         assert result.text == "담당자는 김** 님입니다"
         assert result.counts["name"] == 1
 
+    def test_a_numeric_category_from_the_recogniser_hides_words_too(self) -> None:
+        """Spoken-out numbers are what the recogniser exists for.
+
+        `_hide` chose its rule by category, so a span the recogniser labelled
+        "phone" took the digit path — and that path passed every non-digit
+        through. "공일공 일이삼사 오육칠팔" came back untouched while the counts
+        recorded a masked span.
+        """
+
+        class SpokenNumber:
+            def find(self, text: str) -> list[tuple[int, int, str]]:
+                return [(4, 17, "phone")]
+
+        result = mask("번호는 공일공 일이삼사 오육칠팔 입니다", recogniser=SpokenNumber())
+        assert "공일공" not in result.text
+        assert "일이삼사" not in result.text
+        assert result.text == "번호는 *** **** **** 입니다"
+
     def test_no_recogniser_is_a_supported_configuration(self) -> None:
         assert mask("010-1234-5678").text == "010-****-5678"
 
@@ -270,6 +288,53 @@ NOT_PERSONAL = [
     "large-v3가 3.9, turbo가 4.4 나왔고요. RTF는 large가 0.42, turbo가 0.15예요",
     "오디오는 16킬로헤르츠 모노 WAV로 통일하고, 청크는 30초에 오버랩 2초로 잡았습니다",
 ]
+
+
+# Widening the account pattern to catch run-together and 6-2-6 layouts made it
+# match any three groups of digits, which in a transcript means dates and
+# versions. A digit floor separates them: an account is ten digits, a date is
+# eight.
+EVERYDAY_NUMBERS = [
+    "배포는 2024.01.15 예정입니다",
+    "2026-09-10에 확정하겠습니다",
+    "버전 20260910이에요",
+    "예산 100 200 300 만원으로 잡았습니다",
+]
+
+
+@pytest.mark.parametrize("line", EVERYDAY_NUMBERS)
+def test_a_date_or_a_version_is_not_an_account_number(line: str) -> None:
+    """Over-masking is allowed by policy and is not free.
+
+    Module B parses due dates out of this text, so a year turned into stars is
+    a feature lost — and a transcript where every figure is starred is one
+    people ask for the original of.
+    """
+    assert mask(line).text == line
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "주민 900101123456701012345678 입니다",
+        "01012345678900101234567 로 연락주세요",
+    ],
+)
+def test_two_numbers_run_together_are_still_caught(line: str) -> None:
+    """Every shaped pattern is three groups of at most six, bounded by
+    non-digits, so nothing above could span a run longer than eighteen. Two
+    personal numbers transcribed without a break matched nothing — and neither
+    did the outbound guard, so both layers were open on the same input."""
+    assert mask(line).text != line
+    assert find_unmasked(mask(line).text) == []
+
+
+@pytest.mark.parametrize("line", ["900101-12345678", "주민번호 90010112345678 이요"])
+def test_a_national_id_with_a_stray_digit_is_still_a_national_id(line: str) -> None:
+    """One mis-transcribed digit used to drop it to `account`, which keeps the
+    last four — four digits of an ID number left standing because the
+    transcript was slightly wrong."""
+    assert mask(line).counts == {"rrn": 1}
 
 
 @pytest.mark.parametrize("line", NOT_PERSONAL)
