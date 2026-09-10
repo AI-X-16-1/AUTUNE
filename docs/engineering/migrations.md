@@ -90,6 +90,25 @@ uv run alembic -c infra/alembic.ini downgrade gap@-1
 7. **One logical change per revision.** Do not batch a week of schema work into
    one file.
 
+## Ordering against the core branch
+
+`alembic upgrade heads` applies every branch, but it does **not** order one
+branch against another. A module revision that references anything the `core`
+branch creates — a foreign key to a shared entity, or a type from an extension —
+can run before `core` has caught up, and fails on a clean database (which is
+what CI starts from).
+
+Pin it with `depends_on` on the **first** revision that needs it; the rest of
+your branch chains onto that one and inherits the ordering.
+
+| Your revision uses… | `depends_on` |
+| --- | --- |
+| A foreign key to `meetings`, `teams`, `users`, … | `"d34994600a9a"` (core: shared_entities) |
+| A `vector` column (pgvector) | `"aad0ea392ddc"` (core: enable_pgvector — chains onto shared_entities, so this covers both) |
+
+`depends_on` couples your branch to a specific `core` revision id. Migration
+history is append-only, so the id is stable. See ADR 0008.
+
 ## The autogenerate trap
 
 Autogenerate compares full model metadata against the live database. If your

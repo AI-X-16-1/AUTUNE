@@ -81,7 +81,6 @@ prefix `AUTUNE_<MODULE>_`.
 | --- | --- |
 | `AUTUNE_SLACK_BOT_TOKEN`, `AUTUNE_SLACK_SIGNING_SECRET` | `apps/bot`, all modules that notify |
 | `AUTUNE_SLACK_APP_TOKEN` | `apps/bot` socket mode, local development only |
-| `AUTUNE_LLM_API_KEY` | Any module using an LLM |
 
 ### Module-specific
 
@@ -93,7 +92,25 @@ prefix `AUTUNE_<MODULE>_`.
 | `AUTUNE_AUDIO_HF_TOKEN` | A | Hugging Face token for the gated pyannote models |
 | `AUTUNE_AUDIO_DIARIZATION_MODEL` | A | Default `pyannote/speaker-diarization-3.1` |
 | `AUTUNE_GAP_RISK_THRESHOLD` | C | Default `0.7` |
-| `AUTUNE_CONTEXT_RERANK_TOP_K` | D | Default `10` |
+| `AUTUNE_CONTEXT_EMBEDDER_IMPL` | D | `kure_v1_http` (default), `kure_v1_local`, `fake` |
+| `AUTUNE_CONTEXT_RERANKER_IMPL` | D | `bge_reranker_v2_m3_ko_http` (default), `..._local`, `fake` |
+| `AUTUNE_CONTEXT_NLI_IMPL` | D | `klue_kornli_http` (default), `klue_kornli_local`, `fake` |
+| `AUTUNE_CONTEXT_EMBEDDING_DIM` | D | Must match the model behind `EMBEDDER_IMPL`. Default `1024` (KURE-v1) |
+| `AUTUNE_CONTEXT_EMBEDDER_ENDPOINT` | D | Self-hosted KURE-v1 inference server |
+| `AUTUNE_CONTEXT_RERANKER_ENDPOINT` | D | Self-hosted reranker inference server |
+| `AUTUNE_CONTEXT_NLI_ENDPOINT` | D | Self-hosted NLI inference server |
+| `AUTUNE_CONTEXT_EMBEDDER_TIMEOUT_S` | D | HTTP timeout, seconds. Default `10.0` |
+| `AUTUNE_CONTEXT_RERANKER_TIMEOUT_S` | D | HTTP timeout, seconds. Default `10.0` |
+| `AUTUNE_CONTEXT_NLI_TIMEOUT_S` | D | HTTP timeout, seconds. Default `10.0` |
+| `AUTUNE_CONTEXT_EMBEDDER_LOCAL_MODEL` | D | Only for `kure_v1_local`. Default `nlpai-lab/KURE-v1` |
+| `AUTUNE_CONTEXT_RERANKER_LOCAL_MODEL` | D | Only for `bge_reranker_v2_m3_ko_local`. Default `dragonkue/bge-reranker-v2-m3-ko` |
+| `AUTUNE_CONTEXT_NLI_LOCAL_MODEL` | D | Only for `klue_kornli_local`. Path or hub id of the in-house checkpoint |
+| `AUTUNE_CONTEXT_RETRIEVE_TOP_K` | D | Hybrid retrieval breadth. Default `50` |
+| `AUTUNE_CONTEXT_RERANK_TOP_K` | D | Kept after re-ranking. Default `10` |
+| `AUTUNE_CONTEXT_RRF_K` | D | Reciprocal-rank-fusion constant. Default `60` |
+| `AUTUNE_CONTEXT_LINK_CONFIDENCE_THRESHOLD` | D | Assert vs. ask. Default `0.6`, tuned in eval |
+| `AUTUNE_CONTEXT_PUBLISH_TIMEOUT_S` | D | Wait for B before publishing. Default `600` |
+| `AUTUNE_CONTEXT_WARM_MODELS_ON_WORKER_INIT` | D | `true` only on workers consuming `cpu_heavy`. Default `false` |
 
 Notion, Jira and Calendar credentials are **not** environment variables. Each
 team configures its own on screen S28 and they are stored encrypted in

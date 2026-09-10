@@ -46,16 +46,23 @@ links: publish `ContextLinks` with an empty `decision_lineage` and
 
 ## Owns
 
-PostgreSQL only: `ctx_materials`, `ctx_topic_links`, `ctx_decisions`,
-`ctx_decision_versions`, `ctx_embeddings` (a `vector` column, via pgvector).
+PostgreSQL only: `ctx_topic_links`, `ctx_decisions`, `ctx_decision_versions`,
+`ctx_embeddings` (a `vector` column, via pgvector), `ctx_meeting_status`.
+`ctx_materials` is Phase 2.
 
-Everything cascades with the meeting, so no deletion hook is needed.
+Four of those cascade from `meetings.id`. `ctx_decisions` is anchored on
+`team_id` instead — a lineage must outlive its origin meeting reaching the
+retention window — so a thread left with no versions is dead weight.
+`service.sweep_orphan_decision_threads` removes them; it is not yet an
+`autune_core.deletion` hook (blocked on #87, same as module E's `intel_reports`).
+See `/docs/modules/context.md`, "Deletion".
 
 A lineage is a chain: `previous_version_id` plus a recursive CTE. The graph
 visualisation on S22 is Phase 2 and belongs to the frontend.
 
 The `vector` dimension is fixed when you create the table, so pick the embedding
-model first. The extension is enabled by a `packages/core` migration already.
+model first. The extension is enabled by a `packages/core` migration; the
+`ctx_embeddings` revision `depends_on` it so `upgrade heads` orders them.
 
 ## AI stack
 
