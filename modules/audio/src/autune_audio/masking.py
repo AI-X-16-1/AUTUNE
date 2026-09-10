@@ -31,6 +31,11 @@ from typing import Protocol, runtime_checkable
 
 MASK_CHAR = "*"
 
+# The categories the patterns below produce, and the only ones with a digit
+# layout worth preserving. Anything else comes from the recogniser and is hidden
+# whole.
+_NUMERIC_CATEGORIES = frozenset({"phone", "rrn", "card", "account"})
+
 # Speech, not writing. A transcript of somebody reading a phone number aloud
 # comes back with whatever separators Whisper felt like: "010-1234-5678",
 # "010 1234 5678", "01012345678". Every pattern here allows all three, because
@@ -43,7 +48,16 @@ _PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     # first wins the span, so the most specific has to.
     ("rrn", re.compile(rf"\b\d{{6}}{_SEP}[1-4]\d{{6}}\b")),
     ("card", re.compile(rf"\b(?:\d{{4}}{_SEP}){{3}}\d{{4}}\b")),
-    ("phone", re.compile(rf"\b0(?:1[016-9]|2|[3-6][0-5]){_SEP}\d{{3,4}}{_SEP}\d{{4}}\b")),
+    # Any leading-zero prefix, not an enumerated list of them. An earlier
+    # version spelled out 01x/02/03x-06x and let 070, 080 and 0505 through
+    # untouched -- 070 is a common Korean VoIP range and gets said in meetings.
+    # Enumerating is how a pattern goes stale: the number ranges change and the
+    # regex does not, and the one it does not accept is the one that leaks.
+    ("phone", re.compile(rf"\b0\d{{1,3}}{_SEP}\d{{3,4}}{_SEP}\d{{4}}\b")),
+    # +82-10-1234-5678. Without this the account pattern eats the first two
+    # groups and leaves the last eight digits standing, which is worse than not
+    # matching at all.
+    ("phone", re.compile(rf"\+?82{_SEP}\d{{1,3}}{_SEP}\d{{3,4}}{_SEP}\d{{4}}\b")),
     ("account", re.compile(r"\b\d{2,3}-\d{2,6}-\d{2,6}\b")),
     ("email", re.compile(r"\b[\w.+-]+@[\w-]+\.[\w.-]+\b")),
 )
@@ -114,19 +128,32 @@ def mask(text: str, *, recogniser: EntityRecogniser | None = None) -> Masked:
 
 
 def _resolve_overlaps(spans: list[tuple[int, int, str]]) -> list[tuple[int, int, str]]:
-    """Sort, and drop any span that starts inside one already kept.
+    """Sort, and merge anything that touches. Nothing is discarded.
 
     Two detectors finding the same number is the normal case, not an error —
-    that is what doubling detection means. The longer span wins, because the
-    shorter one is usually a fragment of the same value and masking only part of
-    a national ID number is worse than useless.
+    that is what doubling detection means.
+
+    Overlaps are **merged, not dropped**. An earlier version kept the first span
+    and skipped any that started inside it, which quietly *shrank* what was
+    covered: a name at (0, 3) and an address at (2, 20) left everything from 3
+    to 20 in the clear. Every other judgement in this file goes toward covering
+    more when the answer is unclear, and this was the one place going the other
+    way.
+
+    The category of a merged span comes from its longest contributor, since that
+    is the one that saw the whole value. It only decides how the span is hidden
+    and what the counts say, never whether it is.
     """
-    ordered = sorted(spans, key=lambda s: (s[0], -(s[1] - s[0])))
     kept: list[tuple[int, int, str]] = []
-    for span in ordered:
-        if kept and span[0] < kept[-1][1]:
+    for start, end, category in sorted(spans, key=lambda s: (s[0], -(s[1] - s[0]))):
+        if kept and start <= kept[-1][1]:
+            previous_start, previous_end, previous_category = kept[-1]
+            longest = (
+                category if (end - start) > (previous_end - previous_start) else previous_category
+            )
+            kept[-1] = (previous_start, max(previous_end, end), longest)
             continue
-        kept.append(span)
+        kept.append((start, end, category))
     return kept
 
 
@@ -168,14 +195,19 @@ def _hide(value: str, category: str) -> str:
         local, _, domain = value.partition("@")
         return f"{local[:1]}{MASK_CHAR * 3}@{domain}"
 
-    digits = [c for c in value if c.isdigit()]
-    if not digits:
-        # A span with no digits is what the recogniser is for: a name, a place,
-        # an address. There is no shape to preserve, so the first character
-        # stays and the rest goes -- 김민경 becomes 김**, which is how a Korean
-        # document redacts a name and matches what the email rule already does.
+    if category not in _NUMERIC_CATEGORIES:
+        # What the recogniser is for: a name, a place, an address. There is no
+        # digit layout to preserve, so the first character stays and the rest
+        # goes -- 김민경 becomes 김**, the way a Korean document redacts a name
+        # and the way the email rule above already works.
+        #
+        # Dispatched on the category rather than on whether the span happens to
+        # contain digits. An address ends in a building number, and keying off
+        # the digits sent it down the numeric path, where every Korean character
+        # in it passed through untouched.
         return value[:1] + MASK_CHAR * (len(value) - 1)
 
+    digits = [c for c in value if c.isdigit()]
     keep = _digits_to_keep(category, digits)
 
     out: list[str] = []

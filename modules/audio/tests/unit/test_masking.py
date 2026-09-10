@@ -56,6 +56,29 @@ class TestSpeechNotWriting:
     def test_a_national_id_is_caught_however_it_was_written(self, spoken: str) -> None:
         assert find_unmasked(mask(spoken).text) == []
 
+    @pytest.mark.parametrize(
+        "number",
+        [
+            "070-1234-5678",
+            "07012345678",
+            "0800012345",
+            "0505-123-4567",
+            "+82-10-1234-5678",
+            "82-10-1234-5678",
+        ],
+    )
+    def test_a_number_outside_the_mobile_ranges_is_still_a_number(self, number: str) -> None:
+        """An enumerated list of prefixes went stale before it shipped.
+
+        070 is a common Korean VoIP range and it was passing through whole; the
+        international form was worse, with the account pattern taking the first
+        two groups and leaving the last eight digits standing. Partial masking
+        is worse than none — the same argument the overlap rule makes.
+        """
+        masked = mask(number).text
+        assert masked != number
+        assert "1234" not in masked.replace("-1234-5678", "").replace("-****-5678", "")
+
 
 class TestWhatIsReported:
     def test_counts_are_by_category(self) -> None:
@@ -89,6 +112,39 @@ class TestOverlaps:
         enough to identify somebody.
         """
         assert mask("900101-1234567").text == "******-1******"
+
+    def test_a_partial_overlap_is_merged_rather_than_dropped(self) -> None:
+        """Keeping the first span and skipping the next *shrank* the cover.
+
+        A name at (0, 3) and an address at (2, 23) left everything from 3 to 23
+        in the clear. Every other judgement in this file covers more when the
+        answer is unclear; this was the one going the other way.
+        """
+
+        class NameThenAddress:
+            def find(self, text: str) -> list[tuple[int, int, str]]:
+                return [(0, 3, "name"), (2, 23, "address")]
+
+        line = "김민경 서울시 강남구 테헤란로 123"
+        result = mask(line, recogniser=NameThenAddress())
+        assert result.text == "김" + "*" * (len(line) - 1)
+        assert result.counts == {"address": 1}
+
+    def test_a_span_of_text_and_digits_is_hidden_whole(self) -> None:
+        """An address ends in a building number.
+
+        Choosing the masking rule by "does this span contain digits" sent it
+        down the numeric path, where the digits were starred and every Korean
+        character passed through untouched.
+        """
+
+        class Address:
+            def find(self, text: str) -> list[tuple[int, int, str]]:
+                return [(0, 23, "address")]
+
+        assert (
+            "테헤란로" not in mask("김민경 서울시 강남구 테헤란로 123", recogniser=Address()).text
+        )
 
     def test_a_second_detector_agreeing_does_not_double_mask(self) -> None:
         class Duplicate:
@@ -140,6 +196,9 @@ CORPUS: list[tuple[str, str]] = [
     ("준호님 번호 01098765432 로 전화드릴게요", "준호님 번호 010****5432 로 전화드릴게요"),
     ("사무실은 02-123-4567 입니다", "사무실은 **-***-4567 입니다"),
     ("hong.gil-dong+tag@sub.example.co.kr 로 보냈어요", "h***@sub.example.co.kr 로 보냈어요"),
+    ("대표번호는 070-1234-5678 입니다", "대표번호는 ***-****-5678 입니다"),
+    ("해외에서는 +82-10-9876-5432 로 걸어주세요", "해외에서는 +**-**-****-5432 로 걸어주세요"),
+    ("수신자부담 0800012345 로 문의주세요", "수신자부담 ******2345 로 문의주세요"),
     ("다음 회의는 9월 18일 오후 3시 반입니다", "다음 회의는 9월 18일 오후 3시 반입니다"),
     (
         "A100 40기가 인스턴스는 시간당 4달러 90센트입니다",
