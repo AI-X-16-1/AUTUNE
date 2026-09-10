@@ -35,9 +35,17 @@ from autune_contracts import (
 )
 from autune_contracts.intelligence import Grade
 from autune_core import Meeting
+from autune_core.errors import NotFoundError
 
 from .config import get_settings
-from .models import IntelCompletion, IntelGapPattern, IntelScore
+from .models import (
+    IntelAlignment,
+    IntelCompletion,
+    IntelGapPattern,
+    IntelReport,
+    IntelScore,
+)
+from .schemas import DashboardRead, DashboardScoreEntry, HeatmapCell
 
 SOURCES: tuple[str, ...] = ("extraction", "gap", "context")
 """The three upstream modules E waits on. Each maps to an ``<source>_at`` column
@@ -292,4 +300,96 @@ def aggregate_meeting(session: Session, meeting_id: str) -> IntelligenceSnapshot
         alignment=[],
         predictions=[],
         missing_sources=missing,
+    )
+
+
+# --- Read API -------------------------------------------------------------
+#
+# Routes in ``router.py`` parse the path parameter and call one of these; the
+# query and its shaping live here so they are testable without HTTP. Every
+# function reads only ``intel_*`` tables.
+
+_DASHBOARD_RECENT_LIMIT: Final = 12
+"""How many recent meeting scores the dashboard returns for the trend strip.
+Bucketing them into the eight-week bars on S26 is the frontend's job."""
+
+
+def get_score(session: Session, meeting_id: str) -> IntelScore:
+    """The meeting's quality score, or a 404 that names no meeting content."""
+    row = session.get(IntelScore, meeting_id)
+    if row is None:
+        raise NotFoundError("intelligence score", meeting_id)
+    return row
+
+
+def get_heatmap(session: Session, team_id: str) -> list[HeatmapCell]:
+    """Role-pair alignment for the team, averaged over its scored meetings.
+
+    Empty until the alignment step that fills ``intel_alignment`` is built.
+    """
+    rows = session.execute(
+        sa.select(
+            IntelAlignment.role_a,
+            IntelAlignment.role_b,
+            func.avg(IntelAlignment.score),
+            func.count(),
+        )
+        .where(IntelAlignment.team_id == team_id)
+        .group_by(IntelAlignment.role_a, IntelAlignment.role_b)
+        .order_by(IntelAlignment.role_a, IntelAlignment.role_b)
+    ).all()
+    return [
+        HeatmapCell(role_a=role_a, role_b=role_b, score=float(avg), meeting_count=count)
+        for role_a, role_b, avg, count in rows
+    ]
+
+
+def list_reports(session: Session, team_id: str) -> list[IntelReport]:
+    """The team's generated weekly reports, newest period first."""
+    return list(
+        session.execute(
+            sa.select(IntelReport)
+            .where(IntelReport.team_id == team_id)
+            .order_by(IntelReport.period_start.desc())
+        )
+        .scalars()
+        .all()
+    )
+
+
+def get_dashboard(session: Session, team_id: str) -> DashboardRead:
+    """Team rollup over ``intel_scores`` and ``intel_gap_patterns``.
+
+    A team with nothing scored yet gets an empty rollup, not a 404 — the
+    dashboard is a landing surface, not a resource that is missing.
+    """
+    scores = list(
+        session.execute(
+            sa.select(IntelScore)
+            .where(IntelScore.team_id == team_id)
+            .order_by(IntelScore.created_at.desc(), IntelScore.meeting_id.desc())
+        )
+        .scalars()
+        .all()
+    )
+    values = [s.value for s in scores]
+    rates = [
+        s.action_item_completion_rate for s in scores if s.action_item_completion_rate is not None
+    ]
+    gap_rows = session.execute(
+        sa.select(IntelGapPattern.pattern_type, func.sum(IntelGapPattern.count))
+        .where(IntelGapPattern.team_id == team_id)
+        .group_by(IntelGapPattern.pattern_type)
+    ).all()
+
+    return DashboardRead(
+        team_id=team_id,
+        meeting_count=len(scores),
+        average_score=(sum(values) / len(values)) if values else None,
+        action_item_completion_rate=(sum(rates) / len(rates)) if rates else None,
+        recent_scores=[
+            DashboardScoreEntry(meeting_id=s.meeting_id, grade=s.grade, value=s.value)
+            for s in scores[:_DASHBOARD_RECENT_LIMIT]
+        ],
+        gap_distribution={pattern: int(total) for pattern, total in gap_rows},
     )
