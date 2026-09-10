@@ -3,8 +3,10 @@
 import { useMemo } from "react";
 
 import { ActionCard } from "./ActionCard";
+import { AddActionItem } from "./AddActionItem";
 import { CandidateBand } from "./CandidateBand";
 import { COLUMNS, COLUMN_LABELS, isCandidate } from "../types";
+import type { ActionItemDraft } from "../api";
 import type { ActionItem, ActionStatus } from "../types";
 
 /**
@@ -18,20 +20,34 @@ import type { ActionItem, ActionStatus } from "../types";
  * and ADR 0006 keeps them visible rather than dropping them because a missing
  * item costs the user far more than a wrong one. Putting them in a column would
  * claim they are work; the band says they are a question.
+ *
+ * `add` is one object rather than a `meetingId` and an `onAdd` beside each
+ * other: a hand-added item is written to a meeting, so the two are only ever
+ * useful together and passing one without the other should not typecheck. The
+ * board renders read-only when it is absent — S15 lists items across meetings
+ * and has no single meeting to add to.
  */
 export function ActionBoard({
   items,
   selectedId,
   onSelect,
+  add,
 }: {
   items: ActionItem[];
   selectedId?: string;
   onSelect?: (id: string) => void;
+  add?: { meetingId: string; onAdd: (draft: ActionItemDraft) => Promise<unknown> };
 }) {
   const { candidates, byColumn } = useMemo(() => group(items), [items]);
 
   return (
     <div style={{ display: "grid", gap: "var(--space-page)" }}>
+      {add !== undefined && (
+        <div className="flex justify-end">
+          <AddActionItem meetingId={add.meetingId} onAdd={add.onAdd} />
+        </div>
+      )}
+
       <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
         {COLUMNS.map((status) => (
           <section key={status} aria-label={COLUMN_LABELS[status]}>

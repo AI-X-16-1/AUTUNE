@@ -103,7 +103,7 @@ export function ActionDetailDrawer({
               height: "var(--control-h-default)",
               paddingInline: "var(--control-px-text)",
               borderRadius: "var(--radius)",
-              borderColor: "var(--border-input)",
+              border: "var(--border-input)",
               fontSize: "var(--text-body)",
             }}
           >
