@@ -22,24 +22,43 @@ from .base import Entity
 log = get_logger(__name__)
 
 _SPACY_LABELS: dict[str, str] = {
-    # spaCy's Korean pipelines emit the news-text inventory. Only these four
-    # carry anything a topic graph can use; ORG, LOC, NORP and the rest are
-    # dropped rather than forced into a bucket they do not belong in.
     "PS": "person",
-    "PERSON": "person",
     "DT": "date",
-    "DATE": "date",
+    "TI": "date",
     "QT": "metric",
-    "QUANTITY": "metric",
-    "PERCENT": "metric",
 }
-"""spaCy label -> one of ``ENTITY_LABELS``. Unmapped labels are dropped.
+"""spaCy label -> one of ``ENTITY_LABELS``.
 
-``feature`` and ``system`` have no spaCy equivalent — they are this product's
-vocabulary, not a general NER inventory — so a general model cannot supply them
-and the fine-tuning issue (#13) is where they come from. Until then the graph is
-built from the three a general model does give, and that limit is visible here
-rather than hidden behind an empty class.
+``TI`` (time) and ``DT`` (date) are one class here. "다음 주 화요일" and "오후
+3시" are both when-something-happens, and nothing downstream weights them
+differently.
+
+``feature`` and ``system`` have no entry, because a general model has no label
+for them — they are this product's vocabulary, not a general NER inventory. #13
+is where they come from. Until then the graph is built from the three a general
+model does give, and that limit is visible here rather than hidden.
+"""
+
+_IGNORED_LABELS: dict[str, str] = {
+    "LC": (
+        "Place. A meeting room or a market is not a topic the graph weights, and "
+        "promoting one would put a node in the graph nobody discussed."
+    ),
+    "OG": (
+        "Organisation. In a product meeting these are the team itself and the "
+        "vendors it names, neither of which is a topic the meeting covered."
+    ),
+}
+"""Labels the model emits and this module deliberately drops, and why.
+
+Together with ``_SPACY_LABELS`` this accounts for all six labels
+``ko_core_news_lg`` 3.8.0 declares (``DT LC OG PS QT TI``, the KLUE inventory).
+Accounting for every one is the point: a label nobody decided about is
+indistinguishable from a label somebody forgot, and the forgetting is silent —
+an unmapped label yields no entity, not an error. ``TI`` was missing from the
+first version of this map, so "오후 3시" was dropped and nothing said so.
+
+The same argument module B wrote down for ``EXCLUDED_ACTS``.
 """
 
 
@@ -59,10 +78,27 @@ class SpacyNer:
     def __init__(self, model_name: str) -> None:
         self._model_name = model_name
         self._nlp: Any = None
+        self._version = ""
+        self._unaccounted: set[str] = set()
 
     @property
     def model_version(self) -> str:
-        return self._model_name
+        """``ko_core_news_lg-3.8.0`` — the name **and** the version.
+
+        The name alone is not a version. ``ko_core_news_lg`` is a pipeline that
+        ships a new release with every spaCy minor, so a graph built with 3.7
+        and one built with 3.8 would carry the same string and gap precision
+        could not be compared across the two — which is the whole reason this is
+        recorded on every row.
+
+        Loading is what makes the version knowable: it is in the pipeline's own
+        ``meta``, not in the configuration. That makes this property load the
+        model, which is unusual for a property and is the honest shape — the
+        registry loads once per process anyway, and there is no version to
+        report for a model that will not load.
+        """
+        self._load()
+        return f"{self._model_name}-{self._version}"
 
     def _load(self) -> None:
         if self._nlp is not None:
@@ -83,10 +119,12 @@ class SpacyNer:
             self._nlp = spacy.load(self._model_name)
         except OSError as exc:
             raise RuntimeError(
-                f"spaCy model {self._model_name!r} is not installed: "
-                f"python -m spacy download {self._model_name}"
+                f"spaCy model {self._model_name!r} is not installed. It ships in "
+                "the 'local-models' extra: uv sync --package autune-gap --extra "
+                "local-models"
             ) from exc
-        log.info("gap_ner_loaded", model=self._model_name)
+        self._version = str(self._nlp.meta["version"])
+        log.info("gap_ner_loaded", model=self._model_name, version=self._version)
 
     def extract(self, utterances: list[tuple[str, str]]) -> list[Entity]:
         if not utterances:
@@ -99,9 +137,32 @@ class SpacyNer:
             for span in doc.ents:
                 label = _SPACY_LABELS.get(span.label_)
                 if label is None:
+                    self._note_unaccounted(span.label_)
                     continue
                 found.append(Entity(text=span.text, label=label, utterance_id=utterance_id))
         return found
+
+    def _note_unaccounted(self, label: str) -> None:
+        """Say something the first time a label neither mapped nor ignored appears.
+
+        Dropping it silently is what the two maps exist to prevent, and a model
+        swapped through ``AUTUNE_GAP_NER_MODEL`` can emit an inventory nobody
+        here decided about. Logged rather than raised: a label we did not expect
+        should not end a meeting's analysis, and the log line is what tells
+        somebody to decide about it.
+
+        No entity text is logged — the label is the model's vocabulary, the span
+        would be the meeting's.
+        """
+        if label in _IGNORED_LABELS or label in self._unaccounted:
+            return
+        self._unaccounted.add(label)
+        log.warning(
+            "gap_ner_unaccounted_label",
+            label=label,
+            model=self._model_name,
+            version=self._version,
+        )
 
 
 _FAKE_PATTERNS: tuple[tuple[str, str], ...] = (

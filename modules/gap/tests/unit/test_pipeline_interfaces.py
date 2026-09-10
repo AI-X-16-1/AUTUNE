@@ -10,8 +10,18 @@ from __future__ import annotations
 import pytest
 
 from autune_gap.pipeline import ENTITY_LABELS, Entity, EntityExtractor, FakeNer
-from autune_gap.pipeline.ner import _claim_spans
+from autune_gap.pipeline.ner import _IGNORED_LABELS, _SPACY_LABELS, _claim_spans
 from autune_gap.pipeline.registry import _EXTRACTORS
+
+KO_CORE_NEWS_LG_NER = frozenset({"DT", "LC", "OG", "PS", "QT", "TI"})
+"""The NER inventory ``ko_core_news_lg`` 3.8.0 declares in its own ``meta``.
+
+Written down here rather than read from the model: the pipeline is a 220MB
+wheel in an optional extra, and this file must run without it. Read back with
+
+    uv run --package autune-gap --extra local-models python -c \\
+        "import spacy; print(sorted(spacy.load('ko_core_news_lg').meta['labels']['ner']))"
+"""
 
 # --- what an entity means ---------------------------------------------------
 
@@ -53,6 +63,42 @@ def test_there_is_no_external_extractor() -> None:
     written down, rather than passing as an ordinary feature.
     """
     assert set(_EXTRACTORS) == {"spacy", "fake"}
+
+
+# --- every label the model emits is decided about ---------------------------
+
+
+def test_every_label_the_model_emits_is_mapped_or_ignored() -> None:
+    """An unmapped label yields no entity, not an error.
+
+    ``TI`` was missing from the first version of the map, so "오후 3시" was
+    dropped and nothing said so. Accounting for the whole inventory is what
+    makes a forgotten label look different from a rejected one — the argument
+    module B wrote down for ``EXCLUDED_ACTS``.
+    """
+    accounted = set(_SPACY_LABELS) | set(_IGNORED_LABELS)
+
+    assert accounted == KO_CORE_NEWS_LG_NER
+
+
+def test_the_two_maps_do_not_overlap() -> None:
+    """A label cannot be both used and refused."""
+    assert not (_SPACY_LABELS.keys() & _IGNORED_LABELS.keys())
+
+
+def test_every_ignored_label_says_why() -> None:
+    """A label left out silently reads as an oversight a year from now."""
+    assert all(reason.strip() for reason in _IGNORED_LABELS.values())
+
+
+def test_every_mapped_label_lands_in_the_vocabulary() -> None:
+    assert set(_SPACY_LABELS.values()) <= set(ENTITY_LABELS)
+
+
+def test_a_time_is_a_date() -> None:
+    """ "다음 주 화요일" and "오후 3시" are both when-something-happens, and
+    nothing downstream weights them differently."""
+    assert _SPACY_LABELS["TI"] == _SPACY_LABELS["DT"] == "date"
 
 
 # --- the fake, which everything downstream is built on ----------------------

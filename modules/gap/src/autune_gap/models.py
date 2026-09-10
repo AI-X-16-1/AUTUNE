@@ -62,6 +62,13 @@ class GapTopic(Base, TimestampMixin):
 
     ``label`` is derived from utterance text, which module A masked before the
     first write. There is no unmasked source to re-derive it from.
+
+    ``extractor_version`` is what makes the rest of this comparable. C's metric
+    is gap precision measured over time, and dismissals feed threshold tuning —
+    both read across model versions, and a row that cannot say which model built
+    it cannot take part in either. Added with the table rather than later,
+    because a column added afterwards leaves every earlier row unattributable
+    forever.
     """
 
     __tablename__ = "gap_topics"
@@ -76,6 +83,15 @@ class GapTopic(Base, TimestampMixin):
         String(64), ForeignKey("meetings.id", ondelete="CASCADE"), nullable=False
     )
     label: Mapped[str] = mapped_column(String(400), nullable=False)
+    extractor_version: Mapped[str] = mapped_column(String(200), nullable=False)
+    """The extractor that produced this node, name and version
+    (``ko_core_news_lg-3.8.0``). ``EntityExtractor.model_version`` supplies it.
+
+    ``gap_gaps`` carries no copy: a gap is inferred from topics and reaches this
+    through ``gap_related_topics``. Risk scoring is a weighted heuristic whose
+    thresholds live in ``config``, not a model — when that becomes one, its
+    version belongs on ``gap_gaps`` and not here."""
+
     centrality: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     betweenness: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
 

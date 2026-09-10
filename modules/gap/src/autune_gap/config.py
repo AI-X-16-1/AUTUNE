@@ -28,7 +28,13 @@ class GapSettings(BaseSettings):
     goes rather than a config value — see ``pipeline.base``."""
 
     ner_model: str = "ko_core_news_lg"
-    """Pinned, and recorded with the rows it produces. Never a floating tag.
+    """The pipeline to load. A **name**, not a version.
+
+    The version is read from the loaded pipeline's own ``meta`` and recorded on
+    every row as ``gap_topics.extractor_version`` — this string alone could not
+    tell a graph built with 3.7 from one built with 3.8. The wheel is pinned in
+    the ``local-models`` extra, so which version loads is decided by
+    ``uv.lock`` rather than by the day somebody ran ``spacy download``.
 
     A general Korean pipeline trained on written text; meeting speech is spoken
     Korean, so recall is expected to be poor until #13 fine-tunes one."""

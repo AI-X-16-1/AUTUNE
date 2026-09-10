@@ -143,6 +143,35 @@ There is no `external` implementation and adding one is a privacy decision
 rather than a config string — see `../engineering/environments.md`, "The entity
 extractor has no external option".
 
+Every row a topic produces records `extractor_version` — the pipeline name and
+its version, `ko_core_news_lg-3.8.0`. The name alone is not a version: the
+pipeline ships a new release with every spaCy minor, so a graph built with 3.7
+and one built with 3.8 would carry the same string. Gap precision is measured
+over time and dismissals feed threshold tuning; both read across model
+versions, so a row that cannot name its extractor takes part in neither. The
+version comes from the pipeline's own `meta`, and the wheel is pinned in the
+`local-models` extra so `uv.lock` decides it rather than the day somebody ran
+`spacy download`.
+
+### `ko_core_news_lg` is CC BY-SA 4.0
+
+The pipeline and both of its annotated sources — UD Korean Kaist v2.8 and
+KLUE v1.1.0 — are CC BY-SA 4.0. (Its vectors are CC0.)
+
+Running it inside our own infrastructure is unencumbered. **ShareAlike bites if
+a model derived from it is distributed**, which is the shape #13 takes: a
+pipeline fine-tuned from these weights, published or shipped to a customer,
+carries the same licence onward. Read the meta before assuming otherwise:
+
+```bash
+uv run --package autune-gap --extra local-models python -c \
+  "import spacy; print(spacy.load('ko_core_news_lg').meta['license'])"
+```
+
+The same question module B has open for its classifier checkpoint and AMI
+(#112). If #13 trains from a differently licensed base instead, this note is
+what says why that mattered.
+
 Entities are normalised onto five labels — `feature`, `system`, `metric`,
 `person`, `date` — rather than spaCy's own inventory. A model trained on news
 text emits `ORG` and `LOC`, and a meeting about search ranking has no
@@ -176,6 +205,14 @@ uv run --package autune-gap python -m autune_gap.eval
 - The participation matrix records **whether** a participant spoke on a topic,
   not how much. It is topic coverage, not speech volume — do not let it drift
   into a per-person talk-time metric. See `../architecture/privacy.md` section 3.
+  `gap_participation.spoke` is a boolean and a test asserts the whole column set
+  so it stays one.
+- **The boolean is not the whole guarantee — how the report reads it matters.**
+  Summing the matrix *along a person* ("spoke on 1 of 12 topics") rebuilds the
+  speaking-ratio metric the column shape was chosen to prevent, out of data that
+  is individually harmless. The report reads it along a *topic* instead
+  ("검색 랭킹 — 백엔드 쪽 발언 없음"), which is what a gap is and what the whole
+  team may see. Raised in review of #134; the surface it constrains is #36.
 - Topic labels derived from transcript text are already masked upstream. Do not
   re-derive anything from an unmasked source; there is not one.
 

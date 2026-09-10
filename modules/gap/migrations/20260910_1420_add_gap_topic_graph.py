@@ -42,6 +42,12 @@ def upgrade() -> None:
         sa.Column("id", sa.String(length=64), nullable=False),
         sa.Column("meeting_id", sa.String(length=64), nullable=False),
         sa.Column("label", sa.String(length=400), nullable=False),
+        # Name and version, e.g. ko_core_news_lg-3.8.0. Gap precision is measured
+        # across model versions and dismissals feed threshold tuning, so a row
+        # that cannot name its extractor cannot take part in either. NOT NULL
+        # from the start: a column added later leaves every earlier row
+        # unattributable forever.
+        sa.Column("extractor_version", sa.String(length=200), nullable=False),
         sa.Column("centrality", sa.Float(), nullable=False),
         sa.Column("betweenness", sa.Float(), nullable=False),
         sa.Column(

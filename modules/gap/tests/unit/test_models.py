@@ -81,6 +81,30 @@ def test_no_table_copies_utterance_text(table: Table) -> None:
     assert not {"text", "utterance_text", "quoted_text", "transcript"} & columns
 
 
+# --- a row can name the model that produced it ------------------------------
+
+
+def test_a_topic_records_which_extractor_built_it() -> None:
+    """Three docstrings promise "recorded with the rows this produces", and the
+    promise needs a column to be true.
+
+    C's metric is gap precision over time and dismissals feed threshold tuning;
+    both read across model versions. A row that cannot name its extractor takes
+    part in neither, and after #13 lands a tuning pass would be mixing two
+    models without knowing it.
+    """
+    assert "extractor_version" in GapTopic.__table__.c
+    assert GapTopic.__table__.c.extractor_version.nullable is False
+
+
+def test_the_extractor_version_is_required_from_the_start() -> None:
+    """Not added later. A column added afterwards leaves every row written
+    before it unattributable forever, and those are the rows the first tuning
+    pass would read."""
+    assert GapTopic.__table__.c.extractor_version.default is None
+    assert GapTopic.__table__.c.extractor_version.server_default is None
+
+
 def test_a_topic_points_at_its_evidence_by_id() -> None:
     columns = {column.name for column in GapTopicUtterance.__table__.columns}
 
