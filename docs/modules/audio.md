@@ -182,6 +182,27 @@ What this costs, and what it does not:
 - `source` distinguishes them (`web_mic`, `file_upload`) for analytics. It is
   not a branch point for consumers.
 
-## Open questions
+## Speaker enrollment
 
-- Speaker-enrollment UX: prompt on first meeting, or opt-in later.
+Enrolling a voice is **opt-in, and there are two ways in**. Neither blocks a
+meeting: a participant who has enrolled nothing is transcribed with a
+`speaker_id` of `null` and a `Speaker N` label, which the contract requires
+consumers to handle (`packages/contracts`, `transcript.py`).
+
+1. **Onboarding, offered not required.** Design screen S03 lists "내 목소리 등록,
+   약 20초" as one of three checklist items, next to an upload dropzone that
+   works whether or not the item is done. S04 is the 20-second modal.
+2. **Retroactively, from the confirmation DM.** S16 asks the participant whether
+   a run of utterances was theirs; answering yes enrols the voice — "이 음성
+   특성이 등록되어 다음 회의부터 자동으로 인식됩니다".
+
+The second path is why an upfront gate is not needed, and it is the better
+consent moment. A voice embedding identifies a person more durably than an
+utterance does, and §5 of `../architecture/privacy.md` asks for consent that the
+participant can act on. S16 asks at the point where the benefit is concrete and
+checkable — *these six utterances, are they yours?* — instead of asking for
+biometric data before the user has seen what it buys them.
+
+S06 already shows unenrolled participants as "음성 미등록 · 회의 후 화자 확인이
+필요할 수 있습니다", so an unidentified speaker is a supported state rather than
+a degraded one. See issue #19.
