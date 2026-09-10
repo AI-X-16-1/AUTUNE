@@ -88,6 +88,7 @@ the overlap the question turns on.
 | `ext_external_refs` | Notion and Jira URLs per action item |
 | `ext_confirmations` | Ambiguous-agreement DMs sent and their responses |
 | `ext_decisions` | Decision entities, their statements and source utterances |
+| `ext_decision_sources` | Which utterances a decision was settled in, in order |
 
 `ext_action_items.origin` is `model` or `user`. ADR 0006 makes the output a draft
 the user completes, so an item somebody typed is an ordinary row rather than an
@@ -102,6 +103,20 @@ per-person metrics, and "who corrected the model most" is the same shape of data
 as a speaking ratio. Its `action_item_id` clears on delete rather than cascading:
 cascading would remove the evidence that the model was wrong along with the wrong
 item, and the metric would improve every time somebody deleted something.
+
+`ext_decisions` carries no owner column. ADR 0007 makes a record reachable by
+`meeting_id` the meeting's, and a decision is the clearest case of it: the team
+is still bound by what was settled after the person who proposed it leaves.
+
+`ext_decision_sources` keeps a `position` so the sources come back in meeting
+order without a second join. The order carries the argument — the proposal
+first, the sentence that settles it last — and the statement is taken from the
+last one.
+
+Rebuilding a meeting's decisions replaces them, and the new rows get fresh `dec_`
+ids. A caller that rebuilds must republish `ExtractionResult`, because D's
+lineage points at the old ids otherwise. Matching an old decision to a new one is
+the same-decision question, and #25 gave that to D.
 
 `ext_action_items` references `utterances.id`. It does **not** reference any
 other module's tables.

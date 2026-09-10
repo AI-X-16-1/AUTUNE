@@ -26,7 +26,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from autune_core import Base
-from autune_core.ids import ACTION_ITEM, new_id
+from autune_core.ids import ACTION_ITEM, DECISION, new_id
 
 from .confirmations import CONFIRMATION_TIMEOUT
 
@@ -151,6 +151,75 @@ class ExtActionItemSource(Base):
     )
 
     action_item: Mapped[ExtActionItem] = relationship(back_populates="sources")
+
+
+class ExtDecision(Base, TimestampMixin):
+    """A decision the meeting settled, as an entity rather than a label.
+
+    ``Classification(kind="decision")`` marks one utterance; a decision usually
+    spans several, and module D keys a decision lineage on this row. Dropping it
+    or changing its id shape breaks D — see docs/architecture/contracts.md,
+    "The B -> D boundary", and packages/contracts/tests/test_decision_boundary.py.
+
+    The id prefix is ``dec_``. D's threads are ``thr_``. The two are deliberately
+    not interchangeable: a ``dec_`` id names what *this* meeting settled, a
+    ``thr_`` id names the same decision tracked across meetings, and a lineage
+    that confused them would claim a meeting decided something it never
+    discussed.
+
+    **There is no owner column and there must not be one.** ADR 0007: a record
+    reachable by ``meeting_id`` belongs to the meeting and survives the departure
+    of whoever spoke it. A decision is the clearest case of that -- the team is
+    still bound by it after the person who proposed it leaves.
+    """
+
+    __tablename__ = "ext_decisions"
+    __table_args__ = (
+        CheckConstraint("confidence >= 0 AND confidence <= 1", name="ck_ext_decisions_confidence"),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=lambda: new_id(DECISION))
+    meeting_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("meetings.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    statement: Mapped[str] = mapped_column(Text, nullable=False)
+    """The decision as settled, in one sentence. PII-masked like every utterance
+    it is drawn from — there is no unmasked text to reach this column."""
+
+    confidence: Mapped[float] = mapped_column(Float, nullable=False)
+
+    sources: Mapped[list[ExtDecisionSource]] = relationship(
+        back_populates="decision", cascade="all, delete-orphan"
+    )
+
+
+class ExtDecisionSource(Base):
+    """Which utterances a decision was settled in.
+
+    A table rather than a JSONB list for the same reason as
+    ``ext_action_item_sources``: the lineage view joins these back to read the
+    quotation, and data-model.md rules JSONB out for anything you join on.
+
+    ``position`` keeps meeting order without a second join to ``utterances``.
+    The order is the argument of the decision -- the proposal first, the sentence
+    that settles it last -- and sorting by id would scramble it.
+    """
+
+    __tablename__ = "ext_decision_sources"
+    __table_args__ = (
+        UniqueConstraint("decision_id", "utterance_id", name="uq_ext_decision_sources"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    decision_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("ext_decisions.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    utterance_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("utterances.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    decision: Mapped[ExtDecision] = relationship(back_populates="sources")
 
 
 def _utc(moment: datetime) -> datetime:

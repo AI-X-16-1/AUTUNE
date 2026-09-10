@@ -35,8 +35,13 @@ See `/docs/architecture/contracts.md`, "The B → D boundary".
 
 ## Owns
 
-`ext_classifications`, `ext_action_items`, `ext_external_refs`,
+`ext_classifications`, `ext_action_items`, `ext_action_item_sources`,
+`ext_edit_events`, `ext_decisions`, `ext_decision_sources`, `ext_external_refs`,
 `ext_confirmations`.
+
+The list in `/docs/modules/extraction.md` is the same set; keep the two together.
+This one drifted once already — the B/D boundary commit updated "Publishes" here
+and left "Owns" at the four tables the module had before any of them existed.
 
 ## AI stack
 
