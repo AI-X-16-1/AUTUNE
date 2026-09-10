@@ -188,6 +188,57 @@ and it outnumbers `Offer` six to one, so folding it in buys noise. Polarity is n
 in the dialogue-act inventory at all; `Assess` is the largest task act and carries
 no sign, which is why `concern` is keyed on the adjacency pairs instead.
 
+The table above lives in code as `autune_extraction.labeling.ami`, along with the
+acts it deliberately leaves out and the reason for each. Three things read it —
+the corpus loader, the LLM labelling prompt, and the hand-correction pass — and
+three paraphrases of a table drift apart. All sixteen of AMI's leaf acts are
+either mapped or excluded by name, because an act nobody decided about looks
+exactly like an act somebody forgot.
+
+An utterance can carry evidence from several layers at once: an `Offer` inside a
+UNC adjacency pair is both a commitment and an ambiguity. `PRECEDENCE` settles
+those, highest first:
+
+```
+decision  >  concern  >  open_question  >  ambiguous  >  commitment
+```
+
+AMI does not state an ordering, so this one was a judgement — and then
+`scripts/ami_label_conflicts.py` measured it. Over 117,915 dialogue acts it
+labels 17,876 and finds **809 contested (4.5%)**, so the ordering decides real
+training data rather than a handful of edge cases.
+
+| Rule | Cases |
+| --- | --- |
+| `open_question` over `ambiguous` | 406 |
+| `decision` over anything | 365 |
+| `concern` over the two below it | 33 |
+| `ambiguous` over `commitment` | 5 |
+
+The measurement changed the ordering. `ambiguous` originally outranked
+`open_question`, on the reasoning that polarity is the better-informed layer.
+The cases it produced are questions, not hedged assent — "Do we need an LCD
+display?" — and an `ambiguous` label triggers a DM asking the speaker whether
+they meant to commit. Asking that about a question is not a near miss.
+
+The `ambiguous` over `commitment` rule is the "한번 볼게요" case and is right where
+it fires, but it fires five times, and structurally so: polarity is a property of
+a response while an `Offer` is an initiating move, so the two rarely land on one
+utterance. Keep the rule; tune nothing on it.
+
+**A decision span promotes only an act that asserts something.** The extractive
+layer marks a *region* — the stretch a human selected as evidence — not one
+utterance, and promoting everything inside it produced 9,835 `decision` labels
+from AMI's 288 annotated decisions. A third of those were acts the table above
+already excludes by name: 1,331 Fragments, 1,271 Backchannels, 730 Stalls, so
+the corpus taught that "Hmm." and "Yeah." are where a meeting settles something.
+`ASSERTIVE_ACTS` is the four that put something on the record — `Inform`,
+`Assess`, `Suggest`, `Offer` — and membership is required in addition to the
+region, never instead of it.
+
+Each label records which layer produced it and which kinds it overruled, which is
+what makes the table above producible at all.
+
 Corpora are downloaded per machine and never committed (`dataset/` is gitignored).
 AMI is CC BY 4.0 and requires attribution wherever results are published. Analysis
 scripts live in `modules/extraction/scripts/`.

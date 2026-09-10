@@ -17,11 +17,24 @@ uv run python modules/extraction/scripts/ami_analyze.py <corpus-root>
 uv run python modules/extraction/scripts/ami_layers.py  <corpus-root>
 ```
 
+```bash
+uv run python modules/extraction/scripts/ami_label_conflicts.py <corpus-root>
+```
+
 `ami_analyze.py` reports the dialogue-act distribution and resolves the
 extractive `decision` layer to text. `ami_layers.py` reports the abstractive
 summary sections and the adjacency-pair polarity types.
 
-Both print JSON on stdout.
+`ami_label_conflicts.py` is the one that produces a number somebody acts on. It
+joins the three layers per dialogue act, runs the real mapping over them
+(`autune_extraction.labeling.ami`, imported rather than restated), and reports
+how often the layers disagree and which precedence rule settled it. It refuses to
+run if the mapping names an act the corpus ontology does not have, or leaves one
+unaccounted for — a mismatch there produces an empty class rather than an error,
+and an empty class in a macro-averaged F1 is a zero somebody spends a day tracing
+back. Both of those happened on its first run.
+
+All three print JSON on stdout.
 
 ## AI Hub Korean meeting corpus
 
