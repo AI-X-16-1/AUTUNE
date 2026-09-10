@@ -19,6 +19,7 @@ from autune_core import get_logger
 
 from .config import get_settings
 from .decoding import decode
+from .quality import detect_repetition
 from .schemas import Segment, Transcription, Waveform, Word
 
 log = get_logger(__name__)
@@ -80,13 +81,21 @@ def transcribe(waveform: Waveform, *, language: str | None = "ko") -> Transcript
         language_probability=info.language_probability,
         duration=waveform.duration,
     )
+    # Measured here rather than at the publish step so it lands in the log next
+    # to the run that produced it: the glossary and the decoder settings are the
+    # things that cause a collapse, and they are visible from here.
+    repetition = detect_repetition(transcription)
     log.info(
         "whisper_transcribed",
         segments=len(segments),
         words=len(transcription.words),
         seconds=round(waveform.duration, 1),
         language=info.language,
+        distinct_ratio=round(repetition.distinct_ratio, 3),
+        longest_repeat_run=repetition.longest_repeat_run,
     )
+    if repetition.collapsed:
+        log.error("whisper_collapsed", segments=repetition.segments)
     return transcription
 
 
