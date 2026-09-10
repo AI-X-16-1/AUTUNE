@@ -89,18 +89,21 @@ def assign_speakers(transcription: Transcription, turns: tuple[Turn, ...]) -> tu
     diarizer's uncertainty is about the boundary, not about whether anybody
     spoke — so it stays with the voice it was already part of.
 
-    Segments whose words Whisper did not time are attributed as a whole, by the
-    midpoint of the segment. That is the old behaviour and it is wrong at
-    boundaries; it applies only when word timings are missing, which for this
-    pipeline means never.
+    **A segment Whisper did not time is attributed whole**, by its own midpoint,
+    and takes its place in time order among the rest. Cutting it is impossible
+    without word times; dropping it would lose the transcript, and it would lose
+    it only when diarization *succeeded* — the no-diarization path below keeps
+    such a segment. `pipeline` reads `s.words or ()`, which is the same
+    admission that faster-whisper can return a segment with no word times.
     """
     if not turns:
         return _one_utterance_per_segment(transcription.segments, speaker=f"{UNIDENTIFIED} 1")
 
+    pieces: list[tuple[float, Utterance]] = []
+
     runs: list[list[Word]] = []
     speakers: list[str] = []
     current: str | None = None
-
     for word in _timed_words(transcription):
         speaker = speaker_at(turns, word) or current or turns[0].speaker
         if speaker != current or not runs:
@@ -108,12 +111,37 @@ def assign_speakers(transcription: Transcription, turns: tuple[Turn, ...]) -> tu
             speakers.append(speaker)
             current = speaker
         runs[-1].append(word)
-
-    return tuple(
-        _utterance(speaker, tuple(words))
+    pieces.extend(
+        (words[0].start, _utterance(speaker, tuple(words)))
         for speaker, words in zip(speakers, runs, strict=True)
         if words
     )
+
+    for segment in transcription.segments:
+        if segment.words or not segment.text:
+            continue
+        middle = Word(
+            start=(segment.start + segment.end) / 2,
+            end=(segment.start + segment.end) / 2,
+            text=segment.text,
+            probability=0.0,
+        )
+        speaker = speaker_at(turns, middle) or turns[0].speaker
+        pieces.append(
+            (
+                segment.start,
+                Utterance(
+                    speaker=speaker,
+                    start=segment.start,
+                    end=segment.end,
+                    text=segment.text,
+                    words=(),
+                    confidence=0.0,
+                ),
+            )
+        )
+
+    return tuple(utterance for _, utterance in sorted(pieces, key=lambda p: p[0]))
 
 
 def _timed_words(transcription: Transcription) -> list[Word]:

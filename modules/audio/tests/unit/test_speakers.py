@@ -124,6 +124,40 @@ class TestGaps:
         assert [u.speaker for u in assign_speakers(transcript(spoken), turns)] == ["A"]
 
 
+class TestSegmentsWhisperDidNotTime:
+    """Cutting one is impossible; dropping it loses transcript.
+
+    And it would lose it only when diarization *succeeded* — the no-diarization
+    path keeps such a segment. `pipeline` reads `s.words or ()`, which is the
+    same admission that faster-whisper can return one.
+    """
+
+    def test_an_untimed_segment_survives_in_time_order(self) -> None:
+        timed_first = segment(word("첫", 0.0, 0.5), word("문장입니다", 0.5, 1.0))
+        untimed = Segment(start=1.5, end=2.5, text="단어 타이밍이 없는 세그먼트", words=())
+        timed_last = segment(word("마지막", 3.5, 4.0), word("문장", 4.0, 4.5))
+
+        utterances = assign_speakers(
+            transcript(timed_first, untimed, timed_last),
+            (Turn(0.0, 3.0, "A"), Turn(3.0, 6.0, "B")),
+        )
+
+        assert [u.text for u in utterances] == [
+            "첫 문장입니다",
+            "단어 타이밍이 없는 세그먼트",
+            "마지막 문장",
+        ]
+
+    def test_it_is_attributed_by_its_own_midpoint(self) -> None:
+        """Whole-segment attribution is wrong at boundaries, which is why it is
+        the fallback rather than the rule."""
+        untimed = Segment(start=2.5, end=3.5, text="경계에 걸친 문장", words=())
+        utterances = assign_speakers(
+            transcript(untimed), (Turn(0.0, 3.0, "A"), Turn(3.0, 6.0, "B"))
+        )
+        assert [u.speaker for u in utterances] == ["B"]
+
+
 class TestNoDiarization:
     """A one-person recording is a real case, not an error.
 

@@ -40,7 +40,13 @@ class Diarizer(Protocol):
         ...
 
     def diarize(self, waveform: Waveform) -> tuple[Turn, ...]:
-        """Turns in time order. May leave gaps; may not overlap."""
+        """Turns in time order. May leave gaps; **may not overlap**.
+
+        Not a formality. The join reads the first turn containing a word, so
+        overlapping turns silently hand an interruption to whoever started
+        first — see ``PyannoteDiarizer.diarize`` for which of pyannote's two
+        tracks satisfies this.
+        """
         ...
 
 
@@ -89,9 +95,21 @@ class PyannoteDiarizer:
             "sample_rate": waveform.sample_rate,
         }
         output = pipeline(audio)  # type: ignore[operator]
+        # `exclusive_speaker_diarization`, not `speaker_diarization`. pyannote
+        # keeps both: the first is what it calls "adapted to downstream
+        # transcription" and holds no overlapping turns, the second holds them.
+        #
+        # With overlaps, `speakers.speaker_at` returns the first turn containing
+        # a word's midpoint -- whoever started earlier -- so an interruption is
+        # absorbed into the speech it interrupted. "아니요" said over somebody
+        # becomes part of their sentence, which is the misattribution this whole
+        # join exists to prevent. DER is still scored against the overlapping
+        # track, because that is what the metric is defined over.
         turns = tuple(
             Turn(start=float(segment.start), end=float(segment.end), speaker=str(label))
-            for segment, _, label in output.speaker_diarization.itertracks(yield_label=True)
+            for segment, _, label in output.exclusive_speaker_diarization.itertracks(
+                yield_label=True
+            )
         )
         log.info("diarized", turns=len(turns), speakers=len({t.speaker for t in turns}))
         return turns
