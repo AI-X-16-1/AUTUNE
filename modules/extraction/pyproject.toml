@@ -10,6 +10,16 @@ dependencies = [
     "celery>=5.4",
 ]
 
+[project.optional-dependencies]
+training = [
+    # Fine-tuning only. Not a runtime dependency: the API and the worker never
+    # train, and pulling torch into their image for code that runs on a
+    # workstation would add gigabytes to every deploy.
+    "torch>=2.4",
+    "transformers>=4.44",
+    "numpy>=1.26",
+]
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"

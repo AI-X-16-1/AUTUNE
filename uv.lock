@@ -412,13 +412,24 @@ dependencies = [
     { name = "fastapi" },
 ]
 
+[package.optional-dependencies]
+training = [
+    { name = "numpy" },
+    { name = "torch" },
+    { name = "transformers" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "autune-contracts", editable = "packages/contracts" },
     { name = "autune-core", editable = "packages/core" },
     { name = "celery", specifier = ">=5.4" },
     { name = "fastapi", specifier = ">=0.115" },
+    { name = "numpy", marker = "extra == 'training'", specifier = ">=1.26" },
+    { name = "torch", marker = "extra == 'training'", specifier = ">=2.4" },
+    { name = "transformers", marker = "extra == 'training'", specifier = ">=4.44" },
 ]
+provides-extras = ["training"]
 
 [[package]]
 name = "autune-gap"
