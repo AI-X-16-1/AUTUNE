@@ -19,19 +19,12 @@ from dataclasses import dataclass
 from pyannote.core import Annotation, Segment
 from pyannote.metrics.diarization import DiarizationErrorRate
 
+from autune_audio.schemas import Turn
+
 # A masked span keeps its shape and replaces the content. Anything holding "*"
 # is masked; this is the same convention as autune_integrations.privacy.
 _MASK = re.compile(r"\S*\*+\S*")
 _TOKEN = re.compile(r"\S+")
-
-
-@dataclass(frozen=True)
-class Turn:
-    """One speaker's stretch of speech, from a label file or from our output."""
-
-    start: float
-    end: float
-    speaker: str
 
 
 @dataclass(frozen=True)
