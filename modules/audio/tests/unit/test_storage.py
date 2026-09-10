@@ -227,6 +227,14 @@ class TestSyncedFolderNamesAsTheyActuallyAppear:
         "directory",
         [
             "~/OneDrive - Acme Corp/tmp",
+            # macOS 12.3+ moved every provider here and names the folders with a
+            # hyphen, which is the opposite of the rule the rest of this list
+            # relies on. Matching the parent covers providers not listed at all.
+            "~/Library/CloudStorage/OneDrive-Personal/tmp",
+            "~/Library/CloudStorage/OneDrive-Acme Inc/tmp",
+            "~/Library/CloudStorage/GoogleDrive-user@gmail.com/tmp",
+            "~/Library/CloudStorage/Box-Box/tmp",
+            "~/Library/CloudStorage/pCloudDrive/tmp",
             "~/Dropbox (Acme Inc)/scratch",
             "~/Library/Mobile Documents/com~apple~CloudDocs/tmp",
             "~/Google Drive/My Drive/tmp",

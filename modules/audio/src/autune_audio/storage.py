@@ -75,9 +75,20 @@ class Recording:
 # positive. False positives are not free here -- they teach people to work
 # around the check, and the check is the whole point.
 #
-# The space is what separates the two. Every sync client's suffix begins with
-# one; a local name joins with a hyphen or an underscore.
+# The space is what separates the two on Windows and in a home directory. Every
+# sync client's suffix there begins with one; a local name joins with a hyphen
+# or an underscore. It is not true under ~/Library/CloudStorage, which is why
+# that parent is matched on its own above.
 _SYNCED_SEGMENTS = (
+    # macOS 12.3+ puts every provider under ~/Library/CloudStorage, and names
+    # the folders <Provider>-<Account>: OneDrive-Personal,
+    # GoogleDrive-user@gmail.com, Box-Box. That inverts the space rule below --
+    # on a Mac a hyphen is what a *sync* folder uses. Matching the parent
+    # catches all of them, and catches providers not listed here at all.
+    "cloudstorage",
+    # Google Drive for desktop mounted as a drive letter: the top level is
+    # G:\My Drive and the provider's name is nowhere in the path.
+    "my drive",
     "dropbox",
     "onedrive",
     "google drive",
