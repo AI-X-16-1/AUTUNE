@@ -57,6 +57,28 @@ class TestSpeechNotWriting:
         assert find_unmasked(mask(spoken).text) == []
 
     @pytest.mark.parametrize(
+        "line",
+        [
+            "010-1234-5678로 연락 주세요",
+            "01012345678이에요",
+            "주민번호 900101-1234567이고요",
+            "계좌 110-123-456789로 보내주세요",
+            "카드 1234-5678-9012-3456으로 결제했어요",
+        ],
+    )
+    def test_a_particle_attached_to_the_value_does_not_hide_it(self, line: str) -> None:
+        """`\\b` is a `\\w` edge and a Hangul syllable is `\\w`.
+
+        So there is no word boundary between `5678` and `로`, and every one of
+        these went through untouched — as did `find_unmasked`, which uses the
+        same anchor. Two layers pierced by the same input. Korean attaches its
+        particles directly and Whisper writes them that way; the patterns anchor
+        on digit boundaries now.
+        """
+        assert mask(line).text != line
+        assert find_unmasked(mask(line).text) == []
+
+    @pytest.mark.parametrize(
         "number",
         [
             "070-1234-5678",
@@ -182,23 +204,34 @@ class TestTheSecondDetector:
 # with those spans already hidden. Recall is measured by position, so the two
 # have to tokenise the same way -- see eval.metrics.masking_recall.
 CORPUS: list[tuple[str, str]] = [
-    ("연락처는 010-1234-5678 입니다", "연락처는 010-****-5678 입니다"),
+    # Particles attach directly to the value. Korean is written this way and
+    # Whisper writes it this way -- an earlier version of this corpus put a
+    # space before every one of them, which is why it scored 1.000 while every
+    # one of these lines went through untouched.
+    ("연락처는 010-1234-5678입니다", "연락처는 010-****-5678입니다"),
+    ("메일은 minkyoung@example.com로 부탁드립니다", "메일은 m***@example.com로 부탁드립니다"),
+    ("주민번호 900101-1234567이고요", "주민번호 ******-1******이고요"),
     (
-        "메일 주소는 minkyoung@example.com 로 부탁드립니다",
-        "메일 주소는 m***@example.com 로 부탁드립니다",
+        "법인카드 1234-5678-9012-3456으로 결제했습니다",
+        "법인카드 ****-****-****-3456으로 결제했습니다",
     ),
-    ("주민번호 900101-1234567 확인 부탁드려요", "주민번호 ******-1****** 확인 부탁드려요"),
+    ("계좌는 110-123-456789로 보내주세요", "계좌는 ***-***-**6789로 보내주세요"),
+    ("준호님 번호 01098765432이에요", "준호님 번호 010****5432이에요"),
+    ("사무실은 02-123-4567입니다", "사무실은 **-***-4567입니다"),
     (
-        "법인카드 1234-5678-9012-3456 로 결제했습니다",
-        "법인카드 ****-****-****-3456 로 결제했습니다",
+        "hong.gil-dong+tag@sub.example.co.kr로 보냈어요",
+        "h***@sub.example.co.kr로 보냈어요",
     ),
-    ("계좌는 110-123-456789 입니다", "계좌는 ***-***-**6789 입니다"),
-    ("준호님 번호 01098765432 로 전화드릴게요", "준호님 번호 010****5432 로 전화드릴게요"),
-    ("사무실은 02-123-4567 입니다", "사무실은 **-***-4567 입니다"),
-    ("hong.gil-dong+tag@sub.example.co.kr 로 보냈어요", "h***@sub.example.co.kr 로 보냈어요"),
-    ("대표번호는 070-1234-5678 입니다", "대표번호는 ***-****-5678 입니다"),
-    ("해외에서는 +82-10-9876-5432 로 걸어주세요", "해외에서는 +**-**-****-5432 로 걸어주세요"),
-    ("수신자부담 0800012345 로 문의주세요", "수신자부담 ******2345 로 문의주세요"),
+    ("대표번호는 070-1234-5678입니다", "대표번호는 ***-****-5678입니다"),
+    ("해외에서는 +82-10-9876-5432로 걸어주세요", "해외에서는 +**-**-****-5432로 걸어주세요"),
+    ("수신자부담 0800012345로 문의주세요", "수신자부담 ******2345로 문의주세요"),
+    # A registered foreign national's number. The seventh digit is 5-8 for them
+    # and the pattern accepted only 1-4, so it matched nothing at all.
+    ("등록번호 900101-5123456이라고 하셨어요", "등록번호 ******-5******이라고 하셨어요"),
+    # Run together, and a 6-2-6 layout. Both were missed by a pattern that
+    # required literal hyphens and a short first group.
+    ("계좌는 110234567890이에요", "계좌는 ********7890이에요"),
+    ("KB계좌 123456-78-901234입니다", "KB계좌 ******-**-**1234입니다"),
     ("다음 회의는 9월 18일 오후 3시 반입니다", "다음 회의는 9월 18일 오후 3시 반입니다"),
     (
         "A100 40기가 인스턴스는 시간당 4달러 90센트입니다",

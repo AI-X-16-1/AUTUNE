@@ -42,23 +42,38 @@ _NUMERIC_CATEGORIES = frozenset({"phone", "rrn", "card", "account"})
 # the one it does not allow is the one that leaks.
 _SEP = r"[-.\s]?"
 
+# Digit boundaries, not word boundaries. `\b` is a `\w`/non-`\w` edge, and in
+# Python's unicode mode a Hangul syllable is `\w` -- so there is no boundary
+# between `5678` and `로`. Korean attaches its particles directly to the number
+# and Whisper writes them that way, which made `010-1234-5678로` match nothing
+# at all. The corpus missed it by putting a space before every particle, which
+# is not how the language is written.
+_L = r"(?<!\d)"
+_R = r"(?!\d)"
+
 _PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     # Longest shapes first: an RRN also looks like two number groups, and a card
     # number contains things that look like account fragments. Whichever runs
     # first wins the span, so the most specific has to.
-    ("rrn", re.compile(rf"\b\d{{6}}{_SEP}[1-4]\d{{6}}\b")),
-    ("card", re.compile(rf"\b(?:\d{{4}}{_SEP}){{3}}\d{{4}}\b")),
+    #
+    # The seventh digit is the century-and-sex marker and every value of it is
+    # somebody: 1-4 Korean, 5-8 registered foreign national, 9-0 born in the
+    # 1800s. Accepting only 1-4 left a registered foreign colleague's number
+    # matching nothing.
+    ("rrn", re.compile(rf"{_L}\d{{6}}{_SEP}[0-9]\d{{6}}{_R}")),
+    ("card", re.compile(rf"{_L}(?:\d{{4}}{_SEP}){{3}}\d{{4}}{_R}")),
     # Any leading-zero prefix, not an enumerated list of them. An earlier
     # version spelled out 01x/02/03x-06x and let 070, 080 and 0505 through
     # untouched -- 070 is a common Korean VoIP range and gets said in meetings.
-    # Enumerating is how a pattern goes stale: the number ranges change and the
-    # regex does not, and the one it does not accept is the one that leaks.
-    ("phone", re.compile(rf"\b0\d{{1,3}}{_SEP}\d{{3,4}}{_SEP}\d{{4}}\b")),
+    ("phone", re.compile(rf"{_L}0\d{{1,3}}{_SEP}\d{{3,4}}{_SEP}\d{{4}}{_R}")),
     # +82-10-1234-5678. Without this the account pattern eats the first two
     # groups and leaves the last eight digits standing, which is worse than not
     # matching at all.
-    ("phone", re.compile(rf"\+?82{_SEP}\d{{1,3}}{_SEP}\d{{3,4}}{_SEP}\d{{4}}\b")),
-    ("account", re.compile(r"\b\d{2,3}-\d{2,6}-\d{2,6}\b")),
+    ("phone", re.compile(rf"\+?82{_SEP}\d{{1,3}}{_SEP}\d{{3,4}}{_SEP}\d{{4}}{_R}")),
+    # Bank account layouts vary by bank -- 3-2-6, 6-2-6, 3-3-6 -- and get said
+    # without separators as often as with. Requiring a literal hyphen and a
+    # short first group missed a KB number and every run-together one.
+    ("account", re.compile(rf"{_L}\d{{2,6}}{_SEP}\d{{2,6}}{_SEP}\d{{2,6}}{_R}")),
     ("email", re.compile(r"\b[\w.+-]+@[\w-]+\.[\w.-]+\b")),
 )
 
@@ -115,19 +130,21 @@ def mask(text: str, *, recogniser: EntityRecogniser | None = None) -> Masked:
         spans.extend(recogniser.find(text))
 
     kept = _resolve_overlaps(spans)
-    counts: Counter[str] = Counter(category for _, _, category in kept)
+    counts: Counter[str] = Counter(category for _, _, category, _ in kept)
 
     out: list[str] = []
     cursor = 0
-    for start, end, category in kept:
+    for start, end, category, merged in kept:
         out.append(text[cursor:start])
-        out.append(_hide(text[start:end], category))
+        out.append(_hide(text[start:end], category, merged=merged))
         cursor = end
     out.append(text[cursor:])
     return Masked(text="".join(out), counts=counts)
 
 
-def _resolve_overlaps(spans: list[tuple[int, int, str]]) -> list[tuple[int, int, str]]:
+def _resolve_overlaps(
+    spans: list[tuple[int, int, str]],
+) -> list[tuple[int, int, str, bool]]:
     """Sort, and merge anything that touches. Nothing is discarded.
 
     Two detectors finding the same number is the normal case, not an error —
@@ -140,21 +157,32 @@ def _resolve_overlaps(spans: list[tuple[int, int, str]]) -> list[tuple[int, int,
     more when the answer is unclear, and this was the one place going the other
     way.
 
-    The category of a merged span comes from its longest contributor, since that
-    is the one that saw the whole value. It only decides how the span is hidden
-    and what the counts say, never whether it is.
+    The fourth element says whether a span is the result of a merge. A merged
+    span has no digit layout worth preserving — two values ran together, and the
+    rules that keep a card's last four or a national ID's century digit are
+    counting positions that no longer mean anything. Two ways that leaked: a
+    name ending in a space merged with a following phone number took the numeric
+    rule and passed the name through in the clear, and an RRN merged with an
+    adjacent number moved the kept index off the century digit and onto part of
+    the birth date. Hiding a merged span whole avoids reasoning about either.
     """
-    kept: list[tuple[int, int, str]] = []
+    # (start, end, category, longest single contributor) while building.
+    building: list[list] = []
     for start, end, category in sorted(spans, key=lambda s: (s[0], -(s[1] - s[0]))):
-        if kept and start <= kept[-1][1]:
-            previous_start, previous_end, previous_category = kept[-1]
-            longest = (
-                category if (end - start) > (previous_end - previous_start) else previous_category
-            )
-            kept[-1] = (previous_start, max(previous_end, end), longest)
+        length = end - start
+        if building and start <= building[-1][1]:
+            entry = building[-1]
+            if length > entry[3]:
+                entry[2], entry[3] = category, length
+            entry[1] = max(entry[1], end)
             continue
-        kept.append((start, end, category))
-    return kept
+        building.append([start, end, category, length])
+
+    # Merged only when the union came out larger than any one detector's span.
+    # Two detectors returning the same span -- or one containing the other --
+    # is agreement, not a run-together, and the layout of the longer one still
+    # describes it.
+    return [(s, e, c, (e - s) > longest) for s, e, c, longest in building]
 
 
 def _digits_to_keep(category: str, digits: list[str]) -> set[int]:
@@ -187,8 +215,12 @@ def _digits_to_keep(category: str, digits: list[str]) -> set[int]:
     return tail
 
 
-def _hide(value: str, category: str) -> str:
+def _hide(value: str, category: str, *, merged: bool = False) -> str:
     """Keep the shape a reader needs, remove the part they must not have."""
+    if merged:
+        # See _resolve_overlaps: a merged span's digit positions no longer line
+        # up with any one value's layout.
+        return value[:1] + MASK_CHAR * (len(value) - 1)
     if category == "email":
         # The first character and the domain: enough to tell two people apart in
         # a transcript, not enough to write to either of them.
