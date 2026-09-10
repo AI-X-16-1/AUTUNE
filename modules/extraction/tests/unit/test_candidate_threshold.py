@@ -7,6 +7,8 @@ one setting, so all three are readable without Postgres — the same split as
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from autune_extraction import service
@@ -131,3 +133,47 @@ def test_the_setting_refuses_a_threshold_outside_the_confidence_range() -> None:
     candidate and read as a deliberate choice in whoever's .env it came from."""
     with pytest.raises(ValueError):
         ExtractionSettings(candidate_confidence=5.0)
+
+
+# --- a blank in .env is a blank, not a crash ---------------------------------
+
+
+def test_an_empty_environment_variable_reads_as_no_threshold() -> None:
+    """What ``cp .env.example .env`` actually produces.
+
+    ``candidate_confidence`` is the first non-``str`` setting in this repo whose
+    example value is blank, and pydantic does not coerce "" to None on its own:
+    without the validator this raises ``float_parsing`` on every
+    ``get_settings()`` call, which ``read_model`` makes for every item read.
+    """
+    assert ExtractionSettings(_env_file=None, candidate_confidence="").candidate_confidence is None
+    assert (
+        ExtractionSettings(_env_file=None, candidate_confidence="   ").candidate_confidence is None
+    )
+
+
+def test_every_blank_extraction_variable_in_env_example_loads(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The whole file, not just the one field this PR added.
+
+    The bug was not that this setting is special; it is that ``.env.example``
+    documents "unset" by writing the name with no value, and that only survives
+    while every such field is a ``str``. The next non-``str`` one fails the same
+    way, in the same place, for whoever copied the file. Asserting the file
+    itself means the test finds that field instead of a teammate's first run.
+    """
+    example = Path(__file__).resolve().parents[4] / ".env.example"
+    lines = example.read_text(encoding="utf-8").splitlines()
+
+    declared = [
+        line.split("=", 1)
+        for line in lines
+        if line.startswith("AUTUNE_EXTRACTION_") and "=" in line
+    ]
+    assert declared, "no AUTUNE_EXTRACTION_ variables found — did the prefix change?"
+
+    for name, value in declared:
+        monkeypatch.setenv(name, value)
+
+    ExtractionSettings(_env_file=None)  # raises if any blank fails to parse
