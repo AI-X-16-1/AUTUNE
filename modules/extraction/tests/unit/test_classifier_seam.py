@@ -6,6 +6,8 @@ shape everything downstream is built against, and it is testable now.
 
 from __future__ import annotations
 
+import importlib.util
+
 import pytest
 from pydantic import ValidationError
 
@@ -261,10 +263,29 @@ def test_asking_for_cuda_without_it_fails_before_the_model_loads() -> None:
 
     Raised from ``_load`` rather than left to the first forward pass: by then a
     meeting is already being processed, and the error names a tensor.
+
+    Needs the whole ``local-models`` stack, not just torch. CI installs neither,
+    and ``_load`` reports the missing extra before it can look at a device — so a
+    version of this that only skipped on torch passed here and failed there.
     """
+    pytest.importorskip("transformers")
     torch = pytest.importorskip("torch")
     if torch.cuda.is_available():
         pytest.skip("this box has CUDA; the guard cannot fire")
 
     with pytest.raises(RuntimeError, match="no CUDA device"):
+        LocalDeberta("kakaobank/kf-deberta-base", device="cuda")._load()
+
+
+def test_a_missing_extra_is_reported_even_when_a_gpu_was_asked_for() -> None:
+    """Without ``transformers`` there is no torch to ask about a device, so the
+    extra has to be named first — otherwise the reader is told to check a GPU
+    they were never going to reach.
+
+    This is the case CI runs: it installs the workspace but not the extra.
+    """
+    if importlib.util.find_spec("transformers") is not None:
+        pytest.skip("the extra is installed here; the missing-extra path cannot fire")
+
+    with pytest.raises(RuntimeError, match="local-models"):
         LocalDeberta("kakaobank/kf-deberta-base", device="cuda")._load()
