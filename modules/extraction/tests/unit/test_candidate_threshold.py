@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 
 from autune_extraction import service
-from autune_extraction.config import ExtractionSettings, get_settings
+from autune_extraction.config import ExtractionSettings
 from autune_extraction.models import ExtActionItem, ExtActionItemSource
 from autune_extraction.schemas import ActionItemRead
 
@@ -20,12 +20,24 @@ MEETING = "mtg_1"
 
 
 @pytest.fixture(autouse=True)
-def _clear_settings_cache():
-    """``get_settings`` is ``lru_cache``d, so a test that sets an environment
-    variable would otherwise be answered from another test's reading."""
-    get_settings.cache_clear()
-    yield
-    get_settings.cache_clear()
+def _isolated_settings(monkeypatch: pytest.MonkeyPatch):
+    """Answer from the code's defaults and this test's own environment only.
+
+    ``get_settings`` reads ``.env`` and whatever the shell exported, so a
+    developer who has set a threshold locally failed the unset test while CI,
+    which has neither, passed. The same defect #97's device test had, and the
+    same fix: ``_env_file=None``. ``read_model`` calls ``get_settings`` itself,
+    so the patch goes on the service rather than on one assertion.
+
+    Built fresh on every call rather than cached, so a test that sets an
+    environment variable is not answered from another test's reading.
+    """
+    monkeypatch.delenv("AUTUNE_EXTRACTION_CANDIDATE_CONFIDENCE", raising=False)
+    monkeypatch.setattr(
+        service,
+        "get_settings",
+        lambda: ExtractionSettings(_env_file=None),  # type: ignore[call-arg]
+    )
 
 
 def item(*, confidence: float = 0.9, sources: tuple[str, ...] = ()) -> ExtActionItem:
@@ -92,14 +104,13 @@ def test_nothing_is_a_candidate_while_the_threshold_is_unset() -> None:
     A confidence of zero is still not a candidate, because "candidate" means
     "below the line" and there is no line.
     """
-    assert get_settings().candidate_confidence is None
+    assert service.get_settings().candidate_confidence is None
 
     assert service.read_model(item(confidence=0.0)).is_candidate is False
 
 
 def test_the_threshold_is_read_from_the_setting(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("AUTUNE_EXTRACTION_CANDIDATE_CONFIDENCE", "0.5")
-    get_settings.cache_clear()
 
     assert service.read_model(item(confidence=0.49)).is_candidate is True
     assert service.read_model(item(confidence=0.51)).is_candidate is False
@@ -112,7 +123,6 @@ def test_an_item_exactly_at_the_threshold_is_not_a_candidate(
     says, and a boundary that drifts is a boundary two people read differently.
     """
     monkeypatch.setenv("AUTUNE_EXTRACTION_CANDIDATE_CONFIDENCE", "0.5")
-    get_settings.cache_clear()
 
     assert service.read_model(item(confidence=0.5)).is_candidate is False
 
@@ -123,7 +133,6 @@ def test_a_hand_added_item_cannot_land_in_the_candidate_band(
     """``create_action_item`` stores 1.0 for a typed item — a person entering it
     is the certainty — so no threshold in range can pull it into the band."""
     monkeypatch.setenv("AUTUNE_EXTRACTION_CANDIDATE_CONFIDENCE", "1.0")
-    get_settings.cache_clear()
 
     assert service.read_model(item(confidence=1.0)).is_candidate is False
 
