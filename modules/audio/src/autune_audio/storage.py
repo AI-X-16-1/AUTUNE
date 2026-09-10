@@ -27,13 +27,24 @@ from tempfile import NamedTemporaryFile
 from typing import IO
 
 from autune_core import get_logger
-from autune_core.errors import PrivacyViolationError
+from autune_core.errors import AutuneError, PrivacyViolationError
 
 from .config import AudioSettings, get_settings
 
 log = get_logger(__name__)
 
 CHUNK_BYTES = 1024 * 1024
+
+
+class RecordingTooLargeError(AutuneError):
+    """The stream ran past ``max_bytes``. The partial file is deleted anyway."""
+
+    code = "recording_too_large"
+    status_code = 413
+
+    def __init__(self, limit_bytes: int) -> None:
+        self.limit_mb = limit_bytes // 1024 // 1024
+        super().__init__(f"recording exceeds {self.limit_mb}MB")
 
 
 @dataclass
@@ -52,6 +63,32 @@ class Recording:
     bytes_written: int = field(default=0, init=False)
 
 
+# A path segment matches when it *is* one of these or begins with one followed
+# by a space.
+#
+# Exact match alone is too strict: the names a sync client actually creates
+# carry a suffix -- "OneDrive - Acme", "Dropbox (Acme Inc)" -- and waving those
+# through means missing the configuration a work laptop arrives in.
+#
+# A bare prefix is too loose in the other direction: "onedrive-backups" and
+# "my-dropbox-cache" are local directories, and refusing them is a false
+# positive. False positives are not free here -- they teach people to work
+# around the check, and the check is the whole point.
+#
+# The space is what separates the two. Every sync client's suffix begins with
+# one; a local name joins with a hyphen or an underscore.
+_SYNCED_SEGMENTS = (
+    "dropbox",
+    "onedrive",
+    "google drive",
+    "googledrive",
+    "icloud drive",
+    "mobile documents",  # ~/Library/Mobile Documents: iCloud Drive on macOS
+    "nextcloud",
+    "sync.com",
+)
+
+
 def _reject_persistent(directory: Path) -> None:
     """Refuse a directory a recording could survive in.
 
@@ -60,16 +97,19 @@ def _reject_persistent(directory: Path) -> None:
     while debugging, and the failure has to say why that is not a small thing.
     """
     resolved = directory.expanduser().resolve()
-    parts = {p.lower() for p in resolved.parts}
 
-    synced = {"dropbox", "onedrive", "google drive", "googledrive", "icloud drive"}
-    hit = parts & synced
-    if hit or any("mobile documents" in p for p in parts):
-        raise PrivacyViolationError(
-            f"AUTUNE_AUDIO_TEMP_DIR resolves inside {hit or {'iCloud'}}, which copies "
-            "the recording off this machine before it is deleted. Point it at a "
-            "local scratch directory. See docs/architecture/privacy.md section 1."
+    for part in resolved.parts:
+        lowered = part.lower()
+        hit = next(
+            (p for p in _SYNCED_SEGMENTS if lowered == p or lowered.startswith(f"{p} ")),
+            None,
         )
+        if hit is not None:
+            raise PrivacyViolationError(
+                f"AUTUNE_AUDIO_TEMP_DIR passes through {part!r}, which copies the "
+                "recording off this machine before it is deleted. Point it at a "
+                "local scratch directory. See docs/architecture/privacy.md section 1."
+            )
 
     repo = Path(__file__).resolve().parents[4]
     if resolved == repo or repo in resolved.parents:
@@ -81,8 +121,34 @@ def _reject_persistent(directory: Path) -> None:
 
 
 @contextmanager
+def adopt(path: Path) -> Iterator[Recording]:
+    """Take ownership of a recording already on disk and delete it.
+
+    The worker is handed a path by the upload endpoint rather than a stream, and
+    that file is the durable copy invariant 11 cares about. Passing it through
+    ``recording_on_disk`` would copy it, delete the copy, and leave the original
+    exactly where it was — so the worker adopts it instead.
+
+    No directory check here. The location was chosen by whoever wrote the file,
+    and refusing it would mean declining to delete a recording that is already
+    on disk, which is strictly worse than deleting it.
+    """
+    recording = Recording(path=path)
+    try:
+        yield recording
+    finally:
+        failure = _delete(recording)
+        if failure is not None and sys.exc_info()[0] is None:
+            raise failure
+
+
+@contextmanager
 def recording_on_disk(
-    stream: IO[bytes], *, suffix: str = "", settings: AudioSettings | None = None
+    stream: IO[bytes],
+    *,
+    suffix: str = "",
+    max_bytes: int | None = None,
+    settings: AudioSettings | None = None,
 ) -> Iterator[Recording]:
     """Write ``stream`` to a temp file, yield it, and delete it whatever happens.
 
@@ -96,6 +162,11 @@ def recording_on_disk(
     incident, not a warning. If an exception *is* propagating, the original one
     wins — masking it would lose the reason the task failed — and ``deleted``
     stays False so nothing downstream can claim the audio is gone.
+
+    ``max_bytes`` stops a stream that runs over, and the partial file is deleted
+    by the same ``finally`` as any other. The limit belongs here rather than in
+    the caller because here is where the bytes reach disk: a caller that checks
+    a declared size first is trusting a number the client sent.
     """
     settings = settings or get_settings()
     directory = Path(settings.temp_dir)
@@ -109,6 +180,8 @@ def recording_on_disk(
         with recording.path.open("wb") as out:
             while chunk := stream.read(CHUNK_BYTES):
                 recording.bytes_written += len(chunk)
+                if max_bytes is not None and recording.bytes_written > max_bytes:
+                    raise RecordingTooLargeError(max_bytes)
                 out.write(chunk)
         yield recording
     finally:

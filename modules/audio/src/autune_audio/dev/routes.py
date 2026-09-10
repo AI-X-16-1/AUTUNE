@@ -16,6 +16,17 @@ A ``DecodeError`` carries a message written to name the file and never its
 contents, so it is safe to show. Anything else is reported by exception type
 alone: ffmpeg's stderr can quote bytes of what it was reading, and that must not
 reach the browser or the log.
+
+``PrivacyViolationError`` is the exception to that and is re-raised untouched.
+``autune_core.errors`` says of it: "Never caught and downgraded. If this fires,
+stop and fix the caller." Turning "the recording could not be deleted" into a
+plain 500 would let the request finish looking ordinary, which is the opposite
+of what the primitive raising it is for.
+
+The endpoint is ``def`` rather than ``async def`` on purpose. Copying the upload
+and then transcribing it are both blocking and the transcription runs for
+minutes; Starlette gives a sync endpoint a worker thread, so neither stalls the
+event loop.
 """
 
 from __future__ import annotations
@@ -29,7 +40,8 @@ from fastapi.responses import HTMLResponse, JSONResponse
 
 from autune_audio.decoding import DecodeError
 from autune_audio.pipeline import transcribe_file
-from autune_audio.storage import recording_on_disk
+from autune_audio.storage import RecordingTooLargeError, recording_on_disk
+from autune_core.errors import PrivacyViolationError
 
 from .page import PAGE
 
@@ -38,7 +50,13 @@ log = structlog.get_logger(__name__)
 router = APIRouter()
 
 MAX_UPLOAD_BYTES = 500 * 1024 * 1024
-"""Matches the dropzone limit on design screen S03."""
+"""Matches the dropzone limit on design screen S03.
+
+Enforced while the bytes are written, not from ``UploadFile.size``: that is a
+number the client sent, and it is ``None`` on a request without a
+Content-Length. Counting as we write means an over-long body is stopped and its
+partial file deleted whatever the client claimed.
+"""
 
 # Not in the OpenAPI schema. These endpoints exist on a developer's machine and
 # nowhere else, and the generated client should not know about them.
@@ -50,22 +68,25 @@ def page() -> str:
 
 
 @router.post("/transcribe", include_in_schema=False)
-async def transcribe_upload(file: UploadFile) -> JSONResponse:
+def transcribe_upload(file: UploadFile) -> JSONResponse:
     """Decode, transcribe, and delete. The shape here is what page.py renders."""
-    # Checked from the declared size rather than by reading: a body over the
-    # limit is refused without this endpoint having copied it anywhere.
-    if file.size is not None and file.size > MAX_UPLOAD_BYTES:
-        limit = MAX_UPLOAD_BYTES // 1024 // 1024
-        return JSONResponse(
-            {"error": f"파일이 너무 큽니다. {limit}MB 이하로 올려주세요."},
-            status_code=413,
-        )
-
     try:
-        with recording_on_disk(file.file, suffix=Path(file.filename or "").suffix) as recording:
+        with recording_on_disk(
+            file.file,
+            suffix=Path(file.filename or "").suffix,
+            max_bytes=MAX_UPLOAD_BYTES,
+        ) as recording:
             started = time.monotonic()
             transcription = transcribe_file(recording.path)
             elapsed = time.monotonic() - started
+    except PrivacyViolationError:
+        # Never downgraded to a 500. See the module docstring.
+        raise
+    except RecordingTooLargeError as error:
+        return JSONResponse(
+            {"error": f"파일이 너무 큽니다. {error.limit_mb}MB 이하로 올려주세요."},
+            status_code=error.status_code,
+        )
     except DecodeError as error:
         # Written to name the file rather than quote it; safe to show.
         log.warning("dev_decode_failed", code=error.code)

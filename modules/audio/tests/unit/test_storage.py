@@ -13,7 +13,12 @@ from pathlib import Path
 import pytest
 
 from autune_audio.config import AudioSettings
-from autune_audio.storage import recording_on_disk
+from autune_audio.storage import (
+    RecordingTooLargeError,
+    _reject_persistent,
+    adopt,
+    recording_on_disk,
+)
 from autune_core.errors import PrivacyViolationError
 
 
@@ -142,3 +147,107 @@ class TestRefusesToWriteWhereAFileWouldSurvive:
             recording_on_disk(io.BytesIO(b"audio"), settings=AudioSettings(temp_dir=str(inside))),
         ):
             pass  # pragma: no cover - the context manager raises on entry
+
+
+class TestAdoptingAFileSomebodyElseWrote:
+    """The worker is handed a path, not a stream.
+
+    Wrapping that path in ``recording_on_disk`` would copy it and delete the
+    copy, leaving the original — the durable copy invariant 11 is actually
+    about. The leak would look fixed.
+    """
+
+    def test_the_adopted_file_is_the_one_deleted(self, tmp_path: Path) -> None:
+        upload = tmp_path / "meeting.m4a"
+        upload.write_bytes(b"audio")
+
+        with adopt(upload) as recording:
+            assert recording.path == upload
+
+        assert not upload.exists()
+        assert recording.deleted is True
+
+    def test_it_is_deleted_when_the_body_raises(self, tmp_path: Path) -> None:
+        upload = tmp_path / "meeting.m4a"
+        upload.write_bytes(b"audio")
+
+        with pytest.raises(RuntimeError), adopt(upload):
+            raise RuntimeError("pipeline fell over")
+
+        assert not upload.exists()
+
+    def test_a_synced_location_is_deleted_rather_than_refused(self, tmp_path: Path) -> None:
+        """Refusing here would decline to delete a file that is already there.
+
+        ``recording_on_disk`` rejects a bad directory before writing anything.
+        By the time a file has been adopted the choice is already made, and
+        deleting it is strictly better than leaving it.
+        """
+        synced = tmp_path / "Dropbox (Acme Inc)"
+        synced.mkdir()
+        upload = synced / "meeting.m4a"
+        upload.write_bytes(b"audio")
+
+        with adopt(upload):
+            pass
+
+        assert not upload.exists()
+
+
+class TestTheSizeLimit:
+    def test_an_overlong_stream_stops_and_leaves_nothing_behind(
+        self, settings: AudioSettings
+    ) -> None:
+        """Counted while writing, because a declared size is a client's claim."""
+        held: Path | None = None
+        with (
+            pytest.raises(RecordingTooLargeError),
+            recording_on_disk(
+                io.BytesIO(b"x" * 4096), max_bytes=1024, settings=settings
+            ) as recording,
+        ):
+            held = recording.path  # pragma: no cover - the write raises first
+
+        assert held is None or not held.exists()
+        assert not any(Path(settings.temp_dir).iterdir())
+
+    def test_a_stream_within_the_limit_is_untouched(self, settings: AudioSettings) -> None:
+        with recording_on_disk(io.BytesIO(b"x" * 512), max_bytes=1024, settings=settings) as rec:
+            assert rec.path.read_bytes() == b"x" * 512
+
+
+class TestSyncedFolderNamesAsTheyActuallyAppear:
+    """A sync client does not name its folder exactly "Dropbox".
+
+    An exact-segment check waved through the configuration a work laptop
+    arrives in, which is the one that matters most.
+    """
+
+    @pytest.mark.parametrize(
+        "directory",
+        [
+            "~/OneDrive - Acme Corp/tmp",
+            "~/Dropbox (Acme Inc)/scratch",
+            "~/Library/Mobile Documents/com~apple~CloudDocs/tmp",
+            "~/Google Drive/My Drive/tmp",
+            "~/Nextcloud/tmp",
+        ],
+    )
+    def test_a_suffixed_sync_folder_is_still_refused(self, directory: str) -> None:
+        with (
+            pytest.raises(PrivacyViolationError, match="copies"),
+            recording_on_disk(io.BytesIO(b"audio"), settings=AudioSettings(temp_dir=directory)),
+        ):
+            pass  # pragma: no cover - the context manager raises on entry
+
+    def test_a_name_that_merely_contains_one_is_allowed(self) -> None:
+        """The check refuses synced directories, not directories named like one.
+
+        ``/tmp/my-dropbox-cache`` is local. Refusing it would be a false
+        positive, and false positives teach people to work around the check.
+        """
+        _reject_persistent(Path("/tmp/my-dropbox-cache"))
+        _reject_persistent(Path("/var/onedrive-backups"))
+
+        with pytest.raises(PrivacyViolationError):
+            _reject_persistent(Path("/Users/x/Dropbox (Acme)/tmp"))
