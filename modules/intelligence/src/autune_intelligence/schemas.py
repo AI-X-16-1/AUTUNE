@@ -9,6 +9,7 @@ other service parses them.
 from __future__ import annotations
 
 from datetime import date
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
@@ -88,9 +89,20 @@ class SpeakingRatioRead(BaseModel):
     (``1 / participant_count``) are on the same population. Served only to the
     person it describes and never persisted — ``stored`` is always ``False`` and
     says so to the client. See docs/architecture/privacy.md section 3.
+
+    ``ratio`` is ``None`` (and ``reason`` says why) in two cases:
+
+    - ``small_meeting`` — fewer than three participants consented. With two,
+      ``1 - ratio`` fixes the other person's share exactly, so the number is
+      withheld rather than returned.
+    - ``not_measured`` — the requester was in the meeting but did not consent to
+      speaker attribution, so their speech is not in the measured set. This is
+      distinct from a consenting participant who was simply silent, who gets
+      ``0.0``.
     """
 
     meeting_id: str
-    ratio: float
+    ratio: float | None
     participant_count: int
+    reason: Literal["small_meeting", "not_measured"] | None = None
     stored: bool = False

@@ -406,6 +406,17 @@ def get_dashboard(session: Session, team_id: str) -> DashboardRead:
 # written to a table, never returned for anyone else. docs/architecture/privacy.md
 # section 3 is binding here.
 
+_MIN_CONSENTING_FOR_RATIO: Final = 3
+"""Below this many consenting participants, the ratio is withheld entirely.
+
+The shares of the measured participants sum to 1.0, so at two consenting
+participants a recipient's ``1 - ratio`` is the other person's share exactly —
+the response would *contain* someone else's speaking ratio, which
+docs/architecture/privacy.md section 3 forbids. An above/below-baseline band
+does not help: at N=2 the two are mirror images. So the number does not go out
+at all — ``/me/speaking-ratio`` answers with ``reason="small_meeting"`` and no
+DM is sent."""
+
 
 def compute_speaking_shares(session: Session, meeting_id: str) -> list[SpeakingShare]:
     """Each identified participant's share of the meeting's *measured* speech.
@@ -456,11 +467,15 @@ def speaking_ratio_for_user(
 ) -> SpeakingRatioRead | None:
     """The user's own share of ``meeting_id``, or ``None`` if they were not in it.
 
-    The share is over measured speech — attributed to consenting participants —
-    matching the ``participant_count`` baseline in the response. A participant
-    who was present but silent (or who did not consent to attribution) gets
-    ``0.0``, not ``None`` — that is a real answer. ``None`` is only for "you were
-    not in this meeting", which the route turns into a 404.
+    ``None`` return is only "you were not in this meeting", which the route turns
+    into a 404. Otherwise a ``SpeakingRatioRead`` comes back, and its ``ratio``
+    may still be ``None``:
+
+    - ``reason="small_meeting"`` — fewer than ``_MIN_CONSENTING_FOR_RATIO``
+      participants consented, so any real number would fix another person's.
+    - ``reason="not_measured"`` — the requester did not consent to attribution,
+      so their speech is not in the measured set. Distinct from a consenting
+      participant who was simply silent, who gets ``0.0``.
     """
     participant = session.scalar(
         sa.select(Participant).where(
@@ -470,6 +485,22 @@ def speaking_ratio_for_user(
     )
     if participant is None:
         return None
+
+    consenting = _consented_participant_count(session, meeting_id)
+    if consenting < _MIN_CONSENTING_FOR_RATIO:
+        return SpeakingRatioRead(
+            meeting_id=meeting_id,
+            ratio=None,
+            participant_count=consenting,
+            reason="small_meeting",
+        )
+    if not participant.consented:
+        return SpeakingRatioRead(
+            meeting_id=meeting_id,
+            ratio=None,
+            participant_count=consenting,
+            reason="not_measured",
+        )
 
     mine = next(
         (
@@ -482,7 +513,8 @@ def speaking_ratio_for_user(
     return SpeakingRatioRead(
         meeting_id=meeting_id,
         ratio=mine.ratio if mine is not None else 0.0,
-        participant_count=_consented_participant_count(session, meeting_id),
+        participant_count=consenting,
+        reason=None,
         stored=False,
     )
 
@@ -500,6 +532,14 @@ def send_personal_feedback(session: Session, slack: SlackApi, meeting_id: str) -
         return 0
 
     participant_count = _consented_participant_count(session, meeting_id)
+    if participant_count < _MIN_CONSENTING_FOR_RATIO:
+        log.info(
+            "speaking_ratio_feedback_withheld_small_meeting",
+            meeting_id=meeting_id,
+            consenting=participant_count,
+        )
+        return 0
+
     sent = 0
     for share in shares:
         if share.user_id is None:

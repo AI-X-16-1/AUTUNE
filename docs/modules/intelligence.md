@@ -74,6 +74,18 @@ See `../architecture/async-pipeline.md`.
    ratios sum to 100%. A "share of the whole meeting" denominator was rejected:
    any unattributed speech would push every participant below a baseline none of
    them could reach.
+
+   **The ratio is withheld when fewer than three participants consented.**
+   Because the measured shares sum to 100%, at two consenting participants one
+   person's ratio fixes the other's exactly — the response would then *contain*
+   another person's speaking ratio, which `../architecture/privacy.md` section 3
+   forbids, and an above/below-baseline band does not help because at N=2 the
+   two mirror each other. In that case `GET /me/speaking-ratio` returns
+   `ratio: null` with `reason: "small_meeting"` (distinct from the `404` for
+   someone who was not in the meeting), and no DM goes out. A participant who
+   did not consent to attribution gets `ratio: null` with
+   `reason: "not_measured"` — distinct from a consenting participant who was
+   silent, who gets `0.0`.
 8. **Publish** — emit `IntelligenceSnapshot`.
 
 ## Tables

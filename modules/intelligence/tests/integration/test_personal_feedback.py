@@ -70,7 +70,46 @@ def _count_all_intel_rows(session: Session) -> int:
     )
 
 
+def _three_speakers(session: Session, meeting_id: str) -> list[str]:
+    """alice/bob/carol, all consenting, each with an utterance. Returns user ids."""
+    uids = []
+    for i, name in enumerate(("alice", "bob", "carol")):
+        uid = _user(session, name)
+        uids.append(uid)
+        pid = _participant(session, meeting_id, user_id=uid, label=name.title())
+        _utter(session, meeting_id, pid, i * 20.0, i * 20.0 + 20.0)
+    return uids
+
+
 def test_dms_each_identified_participant_their_own_ratio(db_session: Session, meeting: str) -> None:
+    alice, bob, carol = _three_speakers(db_session, meeting)
+    db_session.flush()
+    slack = FakeSlack()
+
+    sent = service.send_personal_feedback(db_session, slack, meeting)
+
+    assert sent == 3
+    assert {m.channel for m in slack.sent} == {alice, bob, carol}
+    assert all(m.is_dm for m in slack.sent)
+
+
+def test_a_speaker_with_no_user_account_is_skipped(db_session: Session, meeting: str) -> None:
+    alice, bob, _carol = _three_speakers(db_session, meeting)
+    p_ghost = _participant(db_session, meeting, user_id=None, label="Speaker 4")
+    _utter(db_session, meeting, p_ghost, 100.0, 140.0)
+    db_session.flush()
+    slack = FakeSlack()
+
+    sent = service.send_personal_feedback(db_session, slack, meeting)
+
+    assert sent == 3  # alice, bob, carol — the ghost has no account to DM
+    assert alice in {m.channel for m in slack.sent}
+    assert bob in {m.channel for m in slack.sent}
+
+
+def test_no_dm_goes_out_below_three_consenting_participants(
+    db_session: Session, meeting: str
+) -> None:
     alice = _user(db_session, "alice")
     bob = _user(db_session, "bob")
     p_alice = _participant(db_session, meeting, user_id=alice, label="Alice")
@@ -82,37 +121,19 @@ def test_dms_each_identified_participant_their_own_ratio(db_session: Session, me
 
     sent = service.send_personal_feedback(db_session, slack, meeting)
 
-    assert sent == 2
-    recipients = {m.channel for m in slack.sent}
-    assert recipients == {alice, bob}
-    assert all(m.is_dm for m in slack.sent)
-
-
-def test_a_speaker_with_no_user_account_is_skipped(db_session: Session, meeting: str) -> None:
-    alice = _user(db_session, "alice")
-    p_alice = _participant(db_session, meeting, user_id=alice, label="Alice")
-    p_ghost = _participant(db_session, meeting, user_id=None, label="Speaker 2")
-    _utter(db_session, meeting, p_alice, 0.0, 20.0)
-    _utter(db_session, meeting, p_ghost, 20.0, 40.0)
-    db_session.flush()
-    slack = FakeSlack()
-
-    sent = service.send_personal_feedback(db_session, slack, meeting)
-
-    assert sent == 1
-    assert {m.channel for m in slack.sent} == {alice}
+    assert sent == 0
+    assert slack.sent == []
 
 
 def test_nothing_is_persisted(db_session: Session, meeting: str) -> None:
-    alice = _user(db_session, "alice")
-    p_alice = _participant(db_session, meeting, user_id=alice, label="Alice")
-    _utter(db_session, meeting, p_alice, 0.0, 30.0)
+    _three_speakers(db_session, meeting)
     db_session.flush()
     before = _count_all_intel_rows(db_session)
 
-    service.send_personal_feedback(db_session, FakeSlack(), meeting)
+    sent = service.send_personal_feedback(db_session, FakeSlack(), meeting)
     db_session.flush()
 
+    assert sent == 3
     assert _count_all_intel_rows(db_session) == before
 
 
