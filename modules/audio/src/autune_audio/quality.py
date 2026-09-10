@@ -49,17 +49,31 @@ MIN_DISTINCT_RATIO = 0.5
 # would mean refusing to publish a meeting that a reader could use.
 MAX_REPEAT_RUN = 10
 
-# Below this the ratio is noise: a four-segment meeting where two are "네." is
-# 0.5 and perfectly fine.
+# Below this the *ratio* is noise: a four-segment meeting where two are "네." is
+# 0.5 and perfectly fine. The consecutive-run bar is not gated on it.
 MIN_SEGMENTS_TO_JUDGE = 20
+
+# Short segments do not count toward the run. "네." ten times in a row is a
+# roll-call or an answer to "들리세요?", not a decoder loop, and refusing that
+# meeting costs somebody the meeting. Whisper's own silence hallucination —
+# "시청해 주셔서 감사합니다." — is far longer than this and still counts.
+MIN_CHARS_TO_COUNT_AS_A_REPEAT = 6
 
 
 class TranscriptCollapsedError(AutuneError):
-    """The decoder repeated itself instead of transcribing.
+    """The decoder repeated itself, twice, and this meeting has no transcript.
 
-    Raised rather than logged. A collapsed transcript that reaches the database
-    is worse than a failed job: the job can be retried, and four modules have
-    already built on the transcript.
+    Raised rather than logged: a collapsed transcript reaching the database is
+    worse than no transcript, because four modules build on it and nothing
+    downstream can tell.
+
+    **This is terminal for the meeting, not a retry.** By the time it is raised
+    the recording is gone — ``storage.adopt`` deletes in a ``finally`` and
+    invariant 11 does not bend for a failed job — so there is nothing left to
+    run again. Recovery happens earlier, inside ``pipeline.transcribe``, while
+    the waveform is still in memory: a collapse there is retried once without
+    the glossary and without ``condition_on_previous_text``. This exception
+    means that retry collapsed too.
     """
 
     code = "transcript_collapsed"
@@ -78,9 +92,14 @@ class RepetitionReport:
 
     @property
     def collapsed(self) -> bool:
-        if not self.judged:
-            return False
-        return self.distinct_ratio < MIN_DISTINCT_RATIO or self.longest_repeat_run >= MAX_REPEAT_RUN
+        """The ratio needs a long transcript to mean anything. The run does not.
+
+        ``judged`` gates only the ratio. Fifteen identical segments in a row is a
+        collapse whether the meeting had eighteen segments or eight hundred —
+        unlike the ratio, it does not get noisier as the transcript gets shorter.
+        """
+        ratio_collapsed = self.judged and self.distinct_ratio < MIN_DISTINCT_RATIO
+        return ratio_collapsed or self.longest_repeat_run >= MAX_REPEAT_RUN
 
     def __repr__(self) -> str:
         """Counts and ratios. The repeated sentence is still meeting content."""
@@ -97,8 +116,9 @@ class RepetitionReport:
         raise TranscriptCollapsedError(
             f"the decoder repeated itself: {self.segments} segments, "
             f"{self.distinct_ratio:.2f} distinct, longest run {self.longest_repeat_run}. "
-            "Refusing to publish; re-run the job. If it repeats, the glossary is "
-            "the first thing to change back — see docs/modules/audio.md.",
+            "The fallback pass collapsed as well, so this meeting has no usable "
+            "transcript and the recording is already deleted. Do not re-run the "
+            "job — there is nothing to read. See docs/modules/audio.md.",
             segments=self.segments,
         )
 
@@ -114,8 +134,14 @@ def detect_repetition(transcription: Transcription) -> RepetitionReport:
     if not texts:
         return RepetitionReport(segments=0, distinct_ratio=1.0, longest_repeat_run=0, judged=False)
 
-    longest = current = 1
-    for previous, this in zip(texts, texts[1:], strict=False):
+    # Counted over the substantial segments only; see the constant. Two loops
+    # this does not catch: a decoder alternating between two sentences has a run
+    # of one, and if the meeting was long enough its ratio stays above the bar.
+    # It is a rarer shape than a single repeated line and is left visible here
+    # rather than guessed at.
+    substantial = [t for t in texts if len(t) >= MIN_CHARS_TO_COUNT_AS_A_REPEAT]
+    longest = current = 1 if substantial else 0
+    for previous, this in zip(substantial, substantial[1:], strict=False):
         current = current + 1 if this == previous else 1
         longest = max(longest, current)
 

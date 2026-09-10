@@ -110,22 +110,63 @@ class TestDetection:
         assert not report.collapsed
 
 
+class TestTheRunBarIsNotGatedOnLength:
+    """``MIN_SEGMENTS_TO_JUDGE`` exists because the *ratio* is noisy when short.
+
+    The consecutive run is not: fifteen identical segments in a row is a
+    collapse whether the meeting had eighteen segments or eight hundred.
+    Gating both on the floor let a short meeting collapse entirely and pass.
+    """
+
+    def test_a_short_meeting_that_collapsed_entirely_is_caught(self) -> None:
+        report = detect_repetition(transcript(varied(3) + ["같은 문장입니다"] * 15))
+        assert report.segments < MIN_SEGMENTS_TO_JUDGE
+        assert not report.judged
+        assert report.collapsed
+
+
+class TestShortSegmentsAreNotARepeat:
+    """ "네." ten times running is a roll-call, not a decoder loop.
+
+    Refusing that meeting costs somebody their meeting, and by the time this
+    fires the recording is already deleted — there is no retry to fall back on.
+    """
+
+    def test_a_run_of_backchannel_passes(self) -> None:
+        report = detect_repetition(transcript(varied(200) + ["네."] * 10))
+        assert report.longest_repeat_run == 1
+        assert not report.collapsed
+
+    def test_whispers_own_silence_hallucination_still_counts(self) -> None:
+        """It is far longer than the cutoff, which is why the cutoff works."""
+        report = detect_repetition(transcript(varied(200) + ["시청해 주셔서 감사합니다."] * 12))
+        assert report.collapsed
+
+    def test_two_sentences_alternating_is_a_known_gap(self) -> None:
+        """A decoder ping-ponging between two lines has a run of one.
+
+        Rarer than a single repeated line, and left visible rather than guessed
+        at — a rule tight enough to catch it would start refusing real meetings.
+        """
+        report = detect_repetition(transcript(varied(300) + ["네 알겠습니다.", "감사합니다."] * 40))
+        assert not report.collapsed
+
+
 class TestShortTranscripts:
     """Below the floor the ratio is noise, and a wrong refusal costs a meeting."""
 
-    def test_a_short_transcript_is_not_judged(self) -> None:
+    def test_a_short_transcript_is_not_judged_on_ratio(self) -> None:
         report = detect_repetition(transcript(["네.", "네.", "네.", "좋습니다"]))
         assert report.distinct_ratio == 0.5
         assert not report.judged
         assert not report.collapsed
         report.raise_if_collapsed()
 
-    def test_the_floor_is_where_judging_starts(self) -> None:
-        just_under = detect_repetition(transcript(["같은 문장"] * (MIN_SEGMENTS_TO_JUDGE - 1)))
-        at_the_floor = detect_repetition(transcript(["같은 문장"] * MIN_SEGMENTS_TO_JUDGE))
+    def test_the_floor_is_where_ratio_judging_starts(self) -> None:
+        just_under = detect_repetition(transcript(varied(MIN_SEGMENTS_TO_JUDGE - 1)))
+        at_the_floor = detect_repetition(transcript(varied(MIN_SEGMENTS_TO_JUDGE)))
         assert not just_under.judged
         assert at_the_floor.judged
-        assert at_the_floor.collapsed
 
     def test_an_empty_transcript_is_not_a_collapse(self) -> None:
         """Silence is a real answer; the hallucination check is what covers it."""
