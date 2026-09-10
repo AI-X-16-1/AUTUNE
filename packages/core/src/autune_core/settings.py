@@ -40,9 +40,6 @@ class Settings(BaseSettings):
     slack_app_token: str = ""
     """Socket-mode token, local development only."""
 
-    llm_api_key: str = ""
-    """External LLM API key. Shared: any module that calls an LLM reads it here."""
-
     retention_days: int = 90
     """Analysis results are deleted after this many days.
     See docs/architecture/privacy.md section 4."""

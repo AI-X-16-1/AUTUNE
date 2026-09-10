@@ -107,7 +107,7 @@ directly outside that package.
 ```
 autune_context/pipeline/
 ├── __init__.py     # public surface: get_embedder / get_reranker / get_nli,
-│                   #   plus a worker_process_init hook that warms and logs each model
+│                   #   plus an opt-in worker_process_init hook that warms and logs each model
 ├── base.py         # Protocols: Embedder, Reranker, NliModel, LlmClient (+ result dataclasses)
 ├── registry.py     # config string → implementation, lru_cache, startup dimension guard
 ├── _serving.py     # shared /health + /info probe for the self-hosted HTTP clients
@@ -123,7 +123,13 @@ Rules:
 - **Selection is config.** `AUTUNE_CONTEXT_EMBEDDER_IMPL`, `_RERANKER_IMPL`,
   `_NLI_IMPL`. Swapping an implementation changes no code outside `pipeline/`.
 - **Load once at worker startup**, not per task — `registry.get_*()` is
-  `lru_cache`d and warmed from `worker_process_init`.
+  `lru_cache`d and warmed from `worker_process_init` when
+  `AUTUNE_CONTEXT_WARM_MODELS_ON_WORKER_INIT=true`. Opt-in, not automatic:
+  `apps/worker` imports every module's `tasks.py` into one Celery app, so an
+  unconditional hook would run in every worker process regardless of `-Q` —
+  including `gpu`/`default` workers that never see a context task and cannot
+  reach the context model endpoints. Set it only on workers that consume
+  `cpu_heavy`.
 - **`model_version` is read from the serving endpoint** (`/info`) at warm-up and
   written onto every output row, so results stay traceable across redeploys. The
   `*Http` client also probes `/health` in its constructor, so an unreachable

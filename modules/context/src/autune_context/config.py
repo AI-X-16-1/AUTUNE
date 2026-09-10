@@ -59,6 +59,17 @@ class ContextSettings(BaseSettings):
     """How long topic linking waits for B before publishing ``ContextLinks`` with
     ``missing_sources=["extraction"]``. Matches E's own aggregation timeout."""
 
+    # --- worker bootstrap ---
+    warm_models_on_worker_init: bool = False
+    """Set only on workers that actually consume the ``cpu_heavy`` queue.
+
+    ``apps/worker`` imports every module's ``tasks.py`` into one Celery app
+    (see docs/architecture/async-pipeline.md, "Queues"), so a warm-up hook
+    registered unconditionally on ``worker_process_init`` would run in every
+    worker process regardless of ``-Q`` — including ``gpu`` and ``default``
+    workers that never run a context task and cannot reach the context model
+    endpoints."""
+
 
 @lru_cache
 def get_settings() -> ContextSettings:

@@ -8,7 +8,7 @@ Never imports another module.
 
 from __future__ import annotations
 
-from sqlalchemy import delete, exists, select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from autune_context.models import CtxDecision, CtxDecisionVersion
@@ -30,10 +30,9 @@ def sweep_orphan_decision_threads(session: Session) -> int:
     that exists. Global and idempotent.
     """
     # Correlated NOT EXISTS, not `id NOT IN (subquery)`: the latter deletes every
-    # thread when the versions table is empty, and threads are always written
-    # with a first version, so an empty versions table means something is wrong.
-    if not session.scalar(select(exists().select_from(CtxDecisionVersion))):
-        return 0
+    # thread when the versions table is empty. A globally empty versions table
+    # is not a sign of trouble — the retention sweep deleting a team's last
+    # version is exactly the case this function exists to clean up after.
     has_version = (
         select(CtxDecisionVersion.id).where(CtxDecisionVersion.thread_id == CtxDecision.id).exists()
     )

@@ -136,3 +136,21 @@ def test_a_thread_survives_its_origin_meeting_but_an_emptied_thread_is_swept(
     assert swept == 1
     assert db_session.get(CtxDecision, emptied.id) is None
     assert db_session.get(CtxDecision, kept.id) is not None
+
+
+def test_sweep_still_clears_a_thread_when_the_versions_table_is_globally_empty(
+    db_session: Session, team: str
+) -> None:
+    """A retention sweep can delete a team's last remaining version anywhere,
+    leaving `ctx_decision_versions` empty. That must not stop the orphan sweep —
+    it is exactly the case the function exists for."""
+    orphan = CtxDecision(team_id=team, topic_label="가격 정책")
+    db_session.add(orphan)
+    db_session.flush()
+    assert db_session.query(CtxDecisionVersion).count() == 0
+
+    swept = sweep_orphan_decision_threads(db_session)
+    db_session.flush()
+
+    assert swept == 1
+    assert db_session.get(CtxDecision, orphan.id) is None

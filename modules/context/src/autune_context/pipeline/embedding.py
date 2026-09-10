@@ -33,8 +33,15 @@ class KureHttpEmbedder:
             base_url=settings.embedder_endpoint, timeout=settings.embedder_timeout_s
         )
         info = probe(self._client, service="embedder")
-        self._model_version = str(info.get("model_version", settings.embedder_local_model))
-        self._dim = int(info.get("dim", EMBEDDING_DIM))
+        try:
+            self._model_version = str(info["model_version"])
+            self._dim = int(info["dim"])
+        except KeyError as exc:
+            raise RuntimeError(
+                f"{settings.embedder_endpoint}/info is missing {exc}; "
+                "get_embedder()'s dimension guard needs a real reading, not a "
+                "silently-assumed default."
+            ) from exc
 
     @property
     def dim(self) -> int:
