@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from typing import TYPE_CHECKING
 
 from sqlalchemy import or_, select
@@ -83,6 +83,24 @@ class HybridRetriever:
         candidates.sort(key=lambda c: c.fusion_score, reverse=True)
         return candidates[: self._top_k]
 
+    def _visible(self, team_id: str, before: datetime):
+        """A meeting D is allowed to link to: this team, in the past, still inside
+        its retention window.
+
+        Shared between the dense and corpus queries so they cannot drift apart —
+        `retrieve()` indexes `corpus` by every id either ranking returns, so a
+        meeting visible to one and not the other is a `KeyError` at best and a
+        retention-window bypass at worst (see docs/architecture/privacy.md,
+        section 4).
+        """
+        now = datetime.now(tz=UTC)
+        return (
+            CtxEmbedding.kind == "topic",
+            Meeting.team_id == team_id,
+            Meeting.started_at < before,
+            or_(Meeting.expires_at.is_(None), Meeting.expires_at > now),
+        )
+
     def _dense_ranking(
         self, vector: list[float], team_id: str, before: datetime, exclude: str
     ) -> list[tuple[str, float]]:
@@ -90,10 +108,8 @@ class HybridRetriever:
         stmt = (
             select(CtxEmbedding.meeting_id, distance.label("distance"))
             .join(Meeting, Meeting.id == CtxEmbedding.meeting_id)
-            .where(CtxEmbedding.kind == "topic")
-            .where(Meeting.team_id == team_id)
+            .where(*self._visible(team_id, before))
             .where(CtxEmbedding.meeting_id != exclude)
-            .where(Meeting.started_at < before)
             .order_by(distance)
             .limit(self._top_k)
         )
@@ -106,15 +122,11 @@ class HybridRetriever:
         return sorted(best.items(), key=lambda kv: kv[1], reverse=True)
 
     def _corpus(self, team_id: str, before: datetime, exclude: str) -> dict[str, _CorpusEntry]:
-        now = datetime.now(tz=before.tzinfo)
         stmt = (
             select(CtxEmbedding.meeting_id, CtxEmbedding.ref_label, Meeting.started_at)
             .join(Meeting, Meeting.id == CtxEmbedding.meeting_id)
-            .where(CtxEmbedding.kind == "topic")
-            .where(Meeting.team_id == team_id)
+            .where(*self._visible(team_id, before))
             .where(CtxEmbedding.meeting_id != exclude)
-            .where(Meeting.started_at < before)
-            .where(or_(Meeting.expires_at.is_(None), Meeting.expires_at > now))
         )
         corpus: dict[str, _CorpusEntry] = {}
         for meeting_id, label, started_at in self._session.execute(stmt):

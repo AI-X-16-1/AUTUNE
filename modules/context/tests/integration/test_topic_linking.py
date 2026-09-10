@@ -67,13 +67,14 @@ def team_id(db_engine: object) -> Iterator[str]:  # db_engine ensures migrations
         s.execute(delete(Team).where(Team.id == tid))
 
 
-def _meeting(team_id: str, *, days_ago: int) -> str:
+def _meeting(team_id: str, *, days_ago: int, expires_at: datetime | None = None) -> str:
     with session_scope() as s:
         row = Meeting(
             team_id=team_id,
             title="회의",
             status="analyzing",
             started_at=datetime.now(tz=UTC) - timedelta(days=days_ago),
+            expires_at=expires_at,
         )
         s.add(row)
         s.flush()
@@ -122,6 +123,25 @@ def test_a_repeated_topic_links_to_the_past_meeting(team_id: str) -> None:
         assert any(link.status == "asserted" for link in links)
         status = s.get(CtxMeetingStatus, current)
         assert status is not None and status.topic_linking_done is True
+
+
+def test_an_expired_past_meeting_is_not_a_link_candidate(team_id: str) -> None:
+    """`_corpus` and `_dense_ranking` must apply the same retention filter.
+
+    A meeting past its `expires_at` still has rows until the retention sweep
+    runs. If only one of the two rankings excludes it, a dense hit on it either
+    crashes `retrieve()` with a `KeyError` (missing from `corpus`) or, if that
+    were papered over with `.get()`, lets a link to it slip past the retention
+    window (privacy.md section 4)."""
+    expired = _meeting(team_id, days_ago=100, expires_at=datetime.now(tz=UTC) - timedelta(days=10))
+    current = _meeting(team_id, days_ago=0)
+
+    service.run_topic_linking(_transcript(expired, _SEARCH + _SORT))
+    service.run_topic_linking(_transcript(current, _SEARCH + _SORT))  # must not raise
+
+    with session_scope() as s:
+        links = s.scalars(select(CtxTopicLink).where(CtxTopicLink.meeting_id == current)).all()
+        assert all(link.linked_meeting_id != expired for link in links)
 
 
 def test_topic_linking_is_idempotent(team_id: str) -> None:
