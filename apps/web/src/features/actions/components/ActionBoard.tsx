@@ -42,11 +42,7 @@ export function ActionBoard({
 
   return (
     <div style={{ display: "grid", gap: "var(--space-page)" }}>
-      {add !== undefined && (
-        <div className="flex justify-end">
-          <AddActionItem meetingId={add.meetingId} onAdd={add.onAdd} />
-        </div>
-      )}
+      {add !== undefined && <AddActionItem meetingId={add.meetingId} onAdd={add.onAdd} />}
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
         {COLUMNS.map((status) => (

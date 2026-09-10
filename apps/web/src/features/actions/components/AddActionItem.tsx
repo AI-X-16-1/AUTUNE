@@ -38,19 +38,41 @@ export function AddActionItem({
   onAdd: (draft: ActionItemDraft) => Promise<unknown>;
 }) {
   const [open, setOpen] = useState(false);
+  const shell = useRef<HTMLDivElement>(null);
+  const wasOpen = useRef(false);
 
-  if (!open) {
-    return (
-      <Button tone="text" size="compact" onClick={() => setOpen(true)}>
-        + 액션 아이템 추가
-      </Button>
-    );
-  }
+  useEffect(() => {
+    // Closing unmounts the form, and the focus that was inside it falls to
+    // <body> — the user's next Tab starts from the top of the page (WCAG 2.4.3).
+    // Put it back on the control they opened this from.
+    //
+    // Found through the shell rather than a ref on the button: `Button`'s props
+    // are `ButtonHTMLAttributes`, which does not declare `ref`, and teaching it
+    // to forward one is a change to shared UI the whole team owns.
+    if (wasOpen.current && !open) {
+      shell.current?.querySelector("button")?.focus();
+    }
+    wasOpen.current = open;
+  }, [open]);
 
-  // Remounted on every open so a cancelled draft does not come back. The text
-  // the user abandoned is not worth keeping around, and restoring it would make
-  // "취소" mean something different the second time.
-  return <AddForm meetingId={meetingId} onAdd={onAdd} onClose={() => setOpen(false)} />;
+  // The wrapper belongs here, not to the board. Collapsed, this is one text
+  // button that sits at the right end of the row; open, it is a panel that
+  // wants the full width — a `justify-end` flex parent would shrink the form to
+  // its content and lay the textarea and the two-column row out inside that.
+  return (
+    <div ref={shell} className={open ? "" : "flex justify-end"}>
+      {open ? (
+        // Remounted on every open so a cancelled draft does not come back. The
+        // text the user abandoned is not worth keeping, and restoring it would
+        // make "취소" mean something different the second time.
+        <AddForm meetingId={meetingId} onAdd={onAdd} onClose={() => setOpen(false)} />
+      ) : (
+        <Button tone="text" size="compact" onClick={() => setOpen(true)}>
+          + 액션 아이템 추가
+        </Button>
+      )}
+    </div>
+  );
 }
 
 /**
@@ -190,12 +212,15 @@ const CONTROL =
   "w-full rounded-[var(--radius)] bg-[var(--color-surface-paper)] text-[var(--color-ink-strong)] placeholder:text-[var(--color-ink-muted)] focus-visible:outline-none focus-visible:ring-[1.5px] focus-visible:ring-[var(--color-accent-default)]";
 
 const CONTROL_STYLE = {
-  // `--border-input` is a whole `border` shorthand, so it goes on `border`.
-  // Assigning it to `border-color` is invalid CSS and the browser drops the
-  // declaration silently, leaving the control with whatever colour it inherited.
-  border: "var(--border-input)",
+  // `--color-hairline` rather than `--border-input`, which is defined once on
+  // `:root` and never redefined for dark — `rgba(22,25,31,0.2)` on the dark
+  // panel `#181B21` is not a border anyone can see. `--color-hairline` is
+  // themed in both blocks. Giving `--border-input` a dark value would be the
+  // other fix, but tokens.css is generated from docs/design/design-tokens.json
+  // and that is a team decision, not one this feature makes on its way past.
+  border: "1px solid var(--color-hairline)",
   paddingInline: "var(--control-px-text)",
-  paddingBlock: "6px",
+  paddingBlock: "var(--space-8)",
   fontSize: "var(--text-body)",
   lineHeight: "var(--text-body-leading)",
   fontFamily: "var(--font-sans)",
