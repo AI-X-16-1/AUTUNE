@@ -300,3 +300,43 @@ def test_a_split_is_never_left_empty() -> None:
     splits = split_by_meeting(corpus({f"ES{n:04d}": 20 for n in range(40)}))
 
     assert all(splits[name] for name in SPLITS)
+
+
+def test_an_act_with_no_id_is_dropped(tmp_path: Path) -> None:
+    """Every row it becomes is keyed by that id.
+
+    Two id-less acts would both write ``utterance_id: ""``, and the harness
+    rejects duplicates (#95) — but only when it reads the file, long after the
+    loader reported a clean build. Dropping them here makes the writer and the
+    reader agree.
+    """
+    write_ami(tmp_path)
+    acts = tmp_path / "dialogueActs" / "ES2002a.A.dialog-act.xml"
+    nite = 'xmlns:nite="http://nite.sourceforge.net/"'
+    acts.write_text(
+        f'<nite:root nite:id="d" {nite}>'
+        "<dact>"  # no nite:id at all
+        '<nite:pointer role="da-aspect" href="da-types.xml#id(ami_da_7)"/>'
+        '<nite:child href="ES2002a.A.words.xml#id(w0)..id(w3)"/>'
+        "</dact>"
+        '<dact nite:id="d2">'
+        '<nite:pointer role="da-aspect" href="da-types.xml#id(ami_da_7)"/>'
+        '<nite:child href="ES2002a.A.words.xml#id(w0)..id(w3)"/>'
+        "</dact>"
+        "</nite:root>",
+        encoding="utf-8",
+    )
+
+    examples = list(AmiReader(tmp_path).load())
+
+    assert [e.utterance_id for e in examples] == ["d2"]
+
+
+def test_no_two_examples_share_an_id(tmp_path: Path) -> None:
+    """The property the drop protects, stated where it can be checked."""
+    write_ami(tmp_path)
+
+    ids = [e.utterance_id for e in AmiReader(tmp_path).load()]
+
+    assert ids == list(dict.fromkeys(ids))
+    assert all(ids)

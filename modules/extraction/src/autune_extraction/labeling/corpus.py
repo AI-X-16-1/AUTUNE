@@ -233,10 +233,18 @@ class AmiReader:
             meeting = path.name.split(".")[0]
 
             for dact in root.findall("dact"):
+                act_id = dact.get(f"{NITE}id")
+                if not act_id:
+                    # Every row this becomes is keyed by it. Two id-less acts
+                    # would both write ``utterance_id: ""``, which the harness
+                    # rejects as a duplicate (#95) — but only when it reads the
+                    # file, long after the loader said it was fine.
+                    continue
+
                 spans = self.spans_of(dact)
                 yield Act(
                     meeting=meeting,
-                    act_id=dact.get(f"{NITE}id", ""),
+                    act_id=act_id,
                     name=names.get(_pointer(dact, "da-aspect") or "", ""),
                     pair_type=polarity.get(dact.get(f"{NITE}id", "")),
                     spans=spans,
@@ -247,7 +255,7 @@ class AmiReader:
         """Every act the mapping gives a kind, with its text resolved.
 
         Acts the mapping is silent about are dropped rather than labelled. They
-        are most of the corpus — 96,314 of 117,915 — and a loader that forced a
+        are most of the corpus — 100,039 of 117,915 — and a loader that forced a
         label on them would teach the model that everything is a commitment.
 
         ``min_words`` drops acts that resolve to nothing or to a single token. A
@@ -398,13 +406,13 @@ def _place_stratum(
     }
     filled: dict[str, Counter[str]] = {name: Counter() for name in SPLITS}
 
-    def shortfall(name: str, extra: Counter[str] | None = None) -> float:
+    def shortfall(name: str) -> float:
         """How badly served this split's neediest class is, as a share of target.
 
         Goes negative once a class is over-filled, so a split that has had enough
         stops competing rather than merely competing less.
         """
-        have = filled[name] + (extra or Counter())
+        have = filled[name]
         return max(
             (target - have[kind]) / target for kind, target in targets[name].items() if target > 0
         )
