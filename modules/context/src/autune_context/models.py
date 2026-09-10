@@ -127,7 +127,11 @@ class CtxDecisionVersion(Base, TimestampMixin):
 
     ``source_decision_id`` (``dec_``) is B's — stored as a plain string, no FK.
     ``previous_meeting_id`` is unconstrained on purpose: a retention sweep on that
-    meeting must not cascade into this thread.
+    meeting must not cascade into this thread. ``previous_statement`` is a
+    verbatim copy of that meeting's decision text, though, and must not outlive
+    it — ``service.sweep_dangling_previous_statements`` nulls it once
+    ``previous_meeting_id`` no longer resolves. See docs/modules/context.md,
+    "Deletion".
     """
 
     __tablename__ = "ctx_decision_versions"

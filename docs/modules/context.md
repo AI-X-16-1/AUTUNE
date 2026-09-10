@@ -258,7 +258,7 @@ is swept by `service.sweep_orphan_decision_threads`.
 
 Meeting deletion cascades through `meeting_id` foreign keys and reaches
 `ctx_embeddings`, `ctx_topic_links`, `ctx_decision_versions` and
-`ctx_meeting_status`. Two things are **not** covered by cascade:
+`ctx_meeting_status`. Three things are **not** covered by cascade:
 
 - **Dangling topic links.** `linked_meeting_id` is `ON DELETE SET NULL`, so the
   link row survives with its label and date; the API and UI show "the linked
@@ -266,16 +266,28 @@ Meeting deletion cascades through `meeting_id` foreign keys and reaches
 - **Orphaned decision threads.** Once a `ctx_decisions` row has zero remaining
   versions it is dead weight. `service.sweep_orphan_decision_threads(session)`
   removes every such row — a global, idempotent sweep.
+- **Dangling `previous_statement`.** `previous_meeting_id` is deliberately
+  unconstrained (see `CtxDecisionVersion`'s docstring) so a retention sweep on
+  that meeting does not cascade into an unrelated thread's lineage — but
+  `previous_statement` is a verbatim copy of that meeting's decision text, and
+  it would otherwise outlive the meeting it came from. That is the same
+  violation `ctx_embeddings` and the topic-link rule above both refuse.
+  `service.sweep_dangling_previous_statements(session)` nulls `previous_statement`
+  on any version whose `previous_meeting_id` no longer exists — `change_type`,
+  `nli_label` and `confidence` are untouched, so "what changed" survives and
+  only the deleted meeting's wording goes.
 
-  It is **not** yet registered as an `autune_core.deletion` meeting hook.
+  Neither sweep is yet registered as an `autune_core.deletion` meeting hook.
   ADR 0008 found that a hook issuing a real `DELETE` breaks `packages/core`'s
   own unit tests, which run before migrations on a clean CI database and iterate
   every registered hook; the fix needs shared-owner changes tracked in #87.
   Module E hit the same wall with `intel_reports` and deferred the same way.
-  Until #87 lands, the sweep is called explicitly — by the integration test now,
-  by the retention sweep once it exists. A thread orphaned in the meantime holds
-  only a `topic_label` and a `team_id`, no per-person data, and still cascades on
-  team deletion, so the exposure of the gap is small.
+  Until #87 lands, both sweeps are called explicitly — by the integration test
+  now, by the retention sweep once it exists. A thread orphaned in the meantime
+  holds only a `topic_label` and a `team_id`, no per-person data, and still
+  cascades on team deletion; a version with a dangling `previous_statement`
+  still holds every other field, so the exposure of the gap is small in both
+  cases.
 
 A test that deletes a meeting and asserts every `ctx_*` row for it is gone —
 threads included, after the sweep — is part of shipping the schema, not an extra.

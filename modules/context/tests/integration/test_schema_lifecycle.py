@@ -11,7 +11,10 @@ from autune_context.models import (
     CtxMeetingStatus,
     CtxTopicLink,
 )
-from autune_context.service import sweep_orphan_decision_threads
+from autune_context.service import (
+    sweep_dangling_previous_statements,
+    sweep_orphan_decision_threads,
+)
 from autune_core import Meeting
 
 
@@ -154,3 +157,79 @@ def test_sweep_still_clears_a_thread_when_the_versions_table_is_globally_empty(
 
     assert swept == 1
     assert db_session.get(CtxDecision, orphan.id) is None
+
+
+def test_previous_statement_is_nulled_once_its_meeting_is_gone(
+    db_session: Session, team: str, meeting: str
+) -> None:
+    """`previous_meeting_id` is unconstrained, so deleting `origin` leaves it
+    dangling rather than cascading. `previous_statement` must not survive it —
+    everything else on the version does."""
+    origin = Meeting(team_id=team, title="1월 회의")
+    db_session.add(origin)
+    db_session.flush()
+    origin_id = origin.id
+
+    thread = CtxDecision(team_id=team, topic_label="정렬 방식")
+    db_session.add(thread)
+    db_session.flush()
+
+    version = CtxDecisionVersion(
+        thread_id=thread.id,
+        source_decision_id="dec_1",
+        meeting_id=meeting,
+        current_statement="개인화",
+        previous_statement="인기순",
+        previous_meeting_id=origin_id,
+        change_type="modified",
+        nli_label="contradiction",
+        confidence=0.9,
+        nli_version="fake",
+    )
+    db_session.add(version)
+    db_session.flush()
+
+    db_session.delete(origin)
+    db_session.flush()
+
+    swept = sweep_dangling_previous_statements(db_session)
+    db_session.flush()
+    db_session.refresh(version)
+
+    assert swept == 1
+    assert version.previous_statement is None
+    assert version.previous_meeting_id == origin_id  # left as a dangling id, not a leak
+    assert version.change_type == "modified"
+    assert version.nli_label == "contradiction"
+    assert version.confidence == 0.9
+
+    assert sweep_dangling_previous_statements(db_session) == 0  # idempotent
+
+
+def test_previous_statement_survives_while_its_meeting_still_exists(
+    db_session: Session, team: str, meeting: str
+) -> None:
+    origin = Meeting(team_id=team, title="1월 회의")
+    db_session.add(origin)
+    db_session.flush()
+
+    thread = CtxDecision(team_id=team, topic_label="정렬 방식")
+    db_session.add(thread)
+    db_session.flush()
+
+    db_session.add(
+        CtxDecisionVersion(
+            thread_id=thread.id,
+            source_decision_id="dec_1",
+            meeting_id=meeting,
+            current_statement="개인화",
+            previous_statement="인기순",
+            previous_meeting_id=origin.id,
+            change_type="modified",
+            confidence=0.9,
+            nli_version="fake",
+        )
+    )
+    db_session.flush()
+
+    assert sweep_dangling_previous_statements(db_session) == 0
