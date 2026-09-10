@@ -7,10 +7,13 @@ Postgres — the same split as ``test_action_item_editing``.
 
 from __future__ import annotations
 
+import ast
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import pytest
 
+from autune_extraction import confirmations
 from autune_extraction.confirmations import ACTION_IDS, CONFIRMATION_TIMEOUT, WEAK_ASSENT
 from autune_extraction.models import (
     CONFIRMATION_KINDS,
@@ -171,3 +174,42 @@ def test_a_resolved_row_reads_as_resolved_for_every_kind(kind: str) -> None:
     row = confirmation(resolved_kind=kind, responded_at=SENT)
 
     assert row.outcome_at(SENT) == RESOLVED
+
+
+# --- the import direction stays one-way -------------------------------------
+
+
+def test_confirmations_does_not_reach_back_into_models() -> None:
+    """``models`` imports ``confirmations``; the reverse would close a cycle.
+
+    ``confirmations`` is pure values — no Slack client, no database, no
+    settings — which is what lets ``models`` read ``CONFIRMATION_TIMEOUT`` from
+    it without importing anything heavy. That purity is stated in its docstring
+    and nowhere else, so this asserts it instead.
+
+    A module-level ``from .models import ...`` already fails loudly: Python
+    raises ``ImportError`` on the partially initialised module. The case worth a
+    test is the quiet one — an import written inside a function body, which runs
+    only when that function is called and closes the cycle at some later
+    runtime. So this walks every import node in the file, not just the header,
+    and uses the AST rather than a string search so a wrapped or aliased import
+    cannot slip past.
+    """
+    source = Path(confirmations.__file__).read_text(encoding="utf-8")
+    reached = {
+        node.module
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.ImportFrom) and node.module is not None
+    } | {
+        alias.name
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Import)
+        for alias in node.names
+    }
+    offenders = {name for name in reached if name.split(".")[-1] == "models"}
+
+    assert not offenders, (
+        f"autune_extraction.confirmations imports {sorted(offenders)}. "
+        "models imports confirmations; the reverse closes a cycle. "
+        "Keep the constant where the pure module can hold it."
+    )
