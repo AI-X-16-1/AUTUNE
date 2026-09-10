@@ -10,6 +10,11 @@ percentage, an even-share baseline, and a line stating the number is not stored.
 No buttons — a working opt-out needs a handler and a stored preference, which is
 a separate change.
 
+The percentage and the ``100 / participant_count`` baseline are taken over the
+same set of people — participants who consented to speaker attribution — so a
+number below the baseline means the subject spoke less than an even share of the
+speech we could measure, not of some larger whole.
+
 The percentage is personal data. It goes in the blocks, which Slack shows only
 after the DM is opened, and not in the fallback, which appears in a notification
 preview on a phone the person may not be holding.
@@ -25,9 +30,10 @@ _NOT_STORED = "이 수치는 서버에 저장되지 않으며, 본인에게만 �
 def build_speaking_ratio_dm(*, ratio: float, participant_count: int) -> tuple[str, list[dict]]:
     """The DM telling one participant their share of one meeting.
 
-    ``ratio`` is 0..1. ``participant_count`` is how many people the ratio is
-    shared among, used for the even-share baseline and shown so the number is
-    legible in a small meeting.
+    ``ratio`` is 0..1, a share of the speech attributed to consenting
+    participants. ``participant_count`` is how many people that share is split
+    among — the same population — used for the even-share baseline and shown so
+    the number is legible in a small meeting.
     """
     percent = round(ratio * 100)
     fallback = "이번 회의에서의 발언 비중을 알려드립니다."

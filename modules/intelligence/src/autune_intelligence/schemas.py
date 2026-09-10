@@ -81,12 +81,13 @@ class DashboardRead(BaseModel):
 
 
 class SpeakingRatioRead(BaseModel):
-    """One participant's share of one meeting's speech time.
+    """One participant's share of one meeting's measured speech time.
 
-    Served only to the person it describes and never persisted — ``stored`` is
-    always ``False`` and says so to the client. ``participant_count`` is here so
-    the number is legible in a small meeting (even share = ``1 / count``).
-    See docs/architecture/privacy.md section 3.
+    ``ratio`` is over the speech attributed to consenting participants, and
+    ``participant_count`` counts that same set — so ``ratio`` and the even share
+    (``1 / participant_count``) are on the same population. Served only to the
+    person it describes and never persisted — ``stored`` is always ``False`` and
+    says so to the client. See docs/architecture/privacy.md section 3.
     """
 
     meeting_id: str

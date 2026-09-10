@@ -147,7 +147,7 @@ def test_there_is_no_route_that_names_another_user(
 # --- service edge cases ---------------------------------------------------
 
 
-def test_compute_speaking_shares_puts_unattributed_speech_in_the_denominator(
+def test_compute_speaking_shares_excludes_unattributed_speech_from_the_denominator(
     db_session: Session, meeting: str
 ) -> None:
     alice = _user(db_session, "alice")
@@ -159,4 +159,43 @@ def test_compute_speaking_shares_puts_unattributed_speech_in_the_denominator(
     shares = service.compute_speaking_shares(db_session, meeting)
 
     assert len(shares) == 1
-    assert shares[0].ratio == pytest.approx(0.5)
+    assert shares[0].ratio == pytest.approx(1.0)
+
+
+def test_compute_speaking_shares_ignores_a_participant_who_did_not_consent(
+    db_session: Session, meeting: str
+) -> None:
+    alice = _user(db_session, "alice")
+    carol = _user(db_session, "carol")
+    p_alice = _participant(db_session, meeting, user_id=alice, label="Alice")
+    p_carol = _participant(db_session, meeting, user_id=carol, label="Carol", consented=False)
+    _utter(db_session, meeting, p_alice, 0.0, 30.0)
+    _utter(db_session, meeting, p_carol, 30.0, 90.0)
+    db_session.flush()
+
+    shares = service.compute_speaking_shares(db_session, meeting)
+
+    assert [s.participant_id for s in shares] == [p_alice]
+    assert shares[0].ratio == pytest.approx(1.0)
+
+
+def test_ratio_and_baseline_share_the_same_population(
+    app_for, db_session: Session, meeting: str
+) -> None:
+    """Three equal speakers, one un-consented: the consenting two split 50/50
+    and the DM baseline (100 / 2) is a number they can sit exactly on."""
+    alice = _user(db_session, "alice")
+    bob = _user(db_session, "bob")
+    carol = _user(db_session, "carol")
+    p_alice = _participant(db_session, meeting, user_id=alice, label="Alice")
+    p_bob = _participant(db_session, meeting, user_id=bob, label="Bob")
+    p_carol = _participant(db_session, meeting, user_id=carol, label="Carol", consented=False)
+    _utter(db_session, meeting, p_alice, 0.0, 20.0)
+    _utter(db_session, meeting, p_bob, 20.0, 40.0)
+    _utter(db_session, meeting, p_carol, 40.0, 60.0)
+    db_session.flush()
+
+    body = app_for(alice).get(f"/api/intelligence/me/speaking-ratio/{meeting}").json()
+
+    assert body["ratio"] == pytest.approx(0.5)
+    assert body["participant_count"] == 2

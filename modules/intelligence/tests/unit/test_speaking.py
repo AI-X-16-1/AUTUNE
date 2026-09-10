@@ -42,12 +42,24 @@ def test_multiple_segments_for_one_participant_are_summed() -> None:
     assert by_id["p_a"].ratio == pytest.approx(0.5)
 
 
-def test_unattributed_speech_counts_toward_the_total_but_gets_no_share() -> None:
+def test_unattributed_speech_is_excluded_from_the_denominator() -> None:
     shares = speaking_shares([_seg("p_a", 0.0, 30.0, "user_a"), _seg(None, 30.0, 60.0)])
 
     assert len(shares) == 1
     assert shares[0].participant_id == "p_a"
-    assert shares[0].ratio == pytest.approx(0.5)
+    assert shares[0].ratio == pytest.approx(1.0)
+
+
+def test_shares_of_measured_speech_sum_to_one_even_with_unattributed_speech() -> None:
+    shares = speaking_shares(
+        [
+            _seg("p_a", 0.0, 20.0, "user_a"),
+            _seg("p_b", 20.0, 30.0, "user_b"),
+            _seg(None, 30.0, 90.0),
+        ]
+    )
+
+    assert sum(s.ratio for s in shares) == pytest.approx(1.0)
 
 
 def test_a_meeting_with_no_speech_yields_no_shares() -> None:

@@ -3,7 +3,13 @@
 Pure functions over values — no database, no Slack, no settings. The service
 layer reads utterances and delivers the result; this only turns a list of
 (who spoke, for how long) into each identified participant's share of the
-meeting.
+speech we could attribute.
+
+The denominator is attributed speech only. Speech that was diarized but never
+matched to a participant is dropped from both numerator and denominator, so the
+shares of the measured participants sum to 1.0 and the even-share baseline the
+DM shows (``100 / participant_count``) is a mean they can actually sit above or
+below. This is a share of *measured* speech, not of the whole meeting.
 
 The number produced here is private to the speaker: it is DM'd to that person
 and never persisted, never put in a contract, never returned for anyone else.
@@ -21,7 +27,9 @@ class SpeechSegment:
     """One utterance reduced to who spoke and for how long.
 
     ``participant_id`` is ``None`` for speech that was diarized but not matched
-    to a participant; it still happened, so it counts toward the meeting total.
+    to a participant. It is not counted — the ratio is a share of attributed
+    speech, so unmatched speech would only depress every participant's number
+    below a baseline none of them could reach.
     """
 
     participant_id: str | None
@@ -45,26 +53,28 @@ class SpeakingShare:
 
 
 def speaking_shares(segments: Iterable[SpeechSegment]) -> list[SpeakingShare]:
-    """Each identified participant's share of total speech time.
+    """Each identified participant's share of *attributed* speech time.
 
-    The denominator is *all* speech, unattributed included, so a participant's
-    ratio is their share of the meeting rather than their share of the parts we
-    could attribute. Returns an empty list when nobody spoke.
+    The denominator is speech matched to a participant; segments with no
+    ``participant_id`` are ignored entirely. A participant's ratio is therefore
+    their share of the speech we could measure, and the ratios sum to 1.0.
+    Returns an empty list when no attributed speech was found.
     """
     segs = list(segments)
-    total = sum(s.duration for s in segs)
+    total = sum(s.duration for s in segs if s.participant_id is not None)
     if total <= 0:
         return []
 
     seconds: dict[str, float] = {}
     user_ids: dict[str, str | None] = {}
     for seg in segs:
-        if seg.participant_id is None:
+        pid = seg.participant_id
+        if pid is None:
             continue
-        seconds[seg.participant_id] = seconds.get(seg.participant_id, 0.0) + seg.duration
+        seconds[pid] = seconds.get(pid, 0.0) + seg.duration
         if seg.user_id is not None:
-            user_ids[seg.participant_id] = seg.user_id
-        user_ids.setdefault(seg.participant_id, None)
+            user_ids[pid] = seg.user_id
+        user_ids.setdefault(pid, None)
 
     return [
         SpeakingShare(

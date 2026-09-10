@@ -408,11 +408,14 @@ def get_dashboard(session: Session, team_id: str) -> DashboardRead:
 
 
 def compute_speaking_shares(session: Session, meeting_id: str) -> list[SpeakingShare]:
-    """Each identified participant's share of the meeting's speech time.
+    """Each identified participant's share of the meeting's *measured* speech.
 
     Reads only ``utterances`` and ``participants`` (shared, read-only). The
-    denominator includes speech that was never matched to a participant, so a
-    share is a fraction of the whole meeting.
+    denominator is speech attributed to a participant who consented to speaker
+    attribution — the same population the even-share baseline
+    (``_consented_participant_count``) is taken over, so ``ratio`` and that
+    baseline answer the same question. Unattributed speech and speech from a
+    non-consenting participant are both left out.
     """
     rows = session.execute(
         sa.select(
@@ -421,8 +424,11 @@ def compute_speaking_shares(session: Session, meeting_id: str) -> list[SpeakingS
             Utterance.start_sec,
             Utterance.end_sec,
         )
-        .outerjoin(Participant, Participant.id == Utterance.participant_id)
-        .where(Utterance.meeting_id == meeting_id)
+        .join(Participant, Participant.id == Utterance.participant_id)
+        .where(
+            Utterance.meeting_id == meeting_id,
+            Participant.consented.is_(True),
+        )
     ).all()
     segments = [
         SpeechSegment(participant_id=pid, user_id=uid, start_sec=start, end_sec=end)
@@ -450,9 +456,11 @@ def speaking_ratio_for_user(
 ) -> SpeakingRatioRead | None:
     """The user's own share of ``meeting_id``, or ``None`` if they were not in it.
 
-    A participant who was present but silent gets ``0.0``, not ``None`` — that is
-    a real answer. ``None`` is only for "you were not in this meeting", which the
-    route turns into a 404.
+    The share is over measured speech — attributed to consenting participants —
+    matching the ``participant_count`` baseline in the response. A participant
+    who was present but silent (or who did not consent to attribution) gets
+    ``0.0``, not ``None`` — that is a real answer. ``None`` is only for "you were
+    not in this meeting", which the route turns into a 404.
     """
     participant = session.scalar(
         sa.select(Participant).where(
