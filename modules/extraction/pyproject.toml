@@ -6,8 +6,21 @@ requires-python = ">=3.12,<3.13"
 dependencies = [
     "autune-contracts",
     "autune-core",
+    # service.py sends the confirmation DM through SlackApi. It resolved anyway
+    # because the workspace has it, which is what made the omission invisible.
+    "autune-integrations",
     "fastapi>=0.115",
     "celery>=5.4",
+]
+
+[project.optional-dependencies]
+training = [
+    # Fine-tuning only. Not a runtime dependency: the API and the worker never
+    # train, and pulling torch into their image for code that runs on a
+    # workstation would add gigabytes to every deploy.
+    "torch>=2.4",
+    "transformers>=4.44",
+    "numpy>=1.26",
 ]
 
 [build-system]
