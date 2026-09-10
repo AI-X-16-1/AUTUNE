@@ -165,75 +165,38 @@ Numbers and dates were otherwise near-perfect (42/43). The one other failure was
 
 ## 4. Experiment: does a glossary fix it?
 
-Run on the same audio, changing one thing at a time. `faster-whisper` offers two
-ways to bias the vocabulary and they are not equivalent — the difference only
-shows at meeting length.
+Run immediately after the baseline, on the same audio, changing one thing at a
+time. `faster-whisper` offers two ways to bias the vocabulary, and they are not
+equivalent.
 
-### On the 165-second file, `initial_prompt` won
+| | Drill 04 terms | Drill 04 CER | Drill 08 terms | Hallucination |
+| --- | --- | --- | --- | --- |
+| baseline | 2/11 = 18% | 0.404 | 0/6 = 0% | 0 |
+| `hotwords` | 4/11 = 36% | 0.347 | 0/6 = 0% | 0 |
+| **`initial_prompt`** | **9/11 = 82%** | **0.155** | **2/6 = 33%** | **0** |
 
-| | Drill 04 terms | Drill 04 CER | Hallucination |
-| --- | --- | --- | --- |
-| baseline | 2/11 = 18% | 0.404 | 0 |
-| `hotwords` | 4/11 = 36% | 0.347 | 0 |
-| `initial_prompt` | 9/11 = 82% | 0.155 | 0 |
+`initial_prompt` recovered term accuracy from 18% to 82% and cut CER by 2.6×.
+`hotwords` — which reads like the purpose-built option — barely moved. Use
+`initial_prompt`.
 
-### On the 11m37s file, it loses to doing nothing
+Two things this run also settles:
 
-Whole transcript against whole reference, so segment-boundary drift cannot
-flatter any variant:
+- **The glossary does not cause hallucination.** Zero characters over the silent
+  drills in all three variants. The risk that a prompt gets echoed into quiet
+  audio did not materialise.
+- **It fixes library names, not loanwords.** `pyannote` and `FastAPI` came back;
+  `wrapping`, `Chroma`, `embedding`, and `flow` stayed Korean (랩핑, 크로마,
+  임베딩, 플로우). That is the right half to win. A reader understands 크로마;
+  module B cannot key an entity on 파이노트.
 
-| | CER | Term accuracy |
-| --- | --- | --- |
-| baseline | **0.157** | 9/29 = 31% |
-| `initial_prompt` | 0.232 | 8/29 = 28% |
-| **`hotwords`** | 0.170 | **25/29 = 86%** |
-| both | 0.220 | 15/29 = 52% |
-
-`hotwords` clears the 85% target. `initial_prompt` is worse than no glossary at
-all, and combining them is worse than `hotwords` alone.
-
-### Why the reading reversed
-
-`faster_whisper`'s `get_prompt` treats the two channels differently:
-
-```python
-hotwords_tokens[: self.max_length // 2 - 1]  # head kept, re-applied every segment
-previous_tokens[-(self.max_length // 2 - 1) :]  # tail kept — initial_prompt lives here
-```
-
-`initial_prompt` is appended to `previous_tokens`, a 223-token window that
-decoded text keeps pushing into. Korean runs about a token per syllable, so the
-glossary survives roughly 30 to 40 seconds of transcript and is then evicted.
-
-The two recordings differ in exactly that: the short one says its first
-technical term at 34 seconds, while the long one says it at 148. **On the short
-file the glossary was still in the window; on the long one it was gone before a
-single term was spoken.** `hotwords` are re-prepended on every `get_prompt`
-call, so they reach the end of a meeting.
-
-The first reading was not wrong about the file it was taken on. It was wrong to
-generalise from it, and a 45-minute meeting is the case this pipeline is for.
-
-### What it costs and what it buys
-
-`hotwords` moves CER from 0.157 to 0.170 — 0.013 worse — while term accuracy
-goes from 31% to 86%. That is the trade this is for: a wrong particle costs
-readability, a wrong entity name costs the action item attached to it.
-
-Sixteen terms came back and none were lost: `pyannote`, `faster-whisper`,
-`silero-VAD`, `tabCapture`, `large-v3-turbo`, `DeBERTa`, `spaCy`, `NER`,
-`Neo4j`, `PageRank`, `betweenness`, `cross-encoder`, `SetFit`, `Prophet`,
-`FastAPI`, `Bolt for Python`.
-
-Four still fail, and they are the compound ones: `speaker embedding`,
-`ECAPA-TDNN`, `CTranslate2`, `Sentence-BERT`. Those are the workload for the
-correction pass in 5.2.
+What `initial_prompt` still misses — `tabCapture`, `speaker embedding`, and the
+loanwords above — is the workload for the correction pass in 5.2.
 
 ## 5. What this changes
 
 | Priority | Action | Why |
 | --- | --- | --- |
-| 1 | Build the glossary into `hotwords`, per meeting | 4 — measured, 31% -> 86% at meeting length |
+| 1 | Build the glossary into `initial_prompt`, per meeting | 4 — measured, 18% -> 82% |
 | 2 | Lexicon-based correction pass over the transcript | 3.2, 4 — what the prompt misses, confidence cannot find |
 | 3 | Seed the glossary from `participants` and `aud_corrections` | 3.6 — two of four names were wrong, and B keys assignees on them |
 | 4 | Keep `vad_filter=True`; drop the planned `condition_on_previous_text` work | 3.4 — already solved |
@@ -242,7 +205,7 @@ correction pass in 5.2.
 
 ### 5.1 The glossary is per meeting, not global
 
-Both channels are capped at 223 tokens. A company-wide vocabulary does not fit
+`initial_prompt` is capped at 224 tokens. A company-wide vocabulary does not fit
 and would dilute what does. The glossary has to be assembled for each meeting
 from sources module A already owns: the meeting's `participants`, a small static
 list of the project's stack, and `aud_corrections`.
