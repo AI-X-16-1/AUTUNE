@@ -91,6 +91,10 @@ prefix `AUTUNE_<MODULE>_`.
 | `AUTUNE_AUDIO_TEMP_DIR` | A | Where the recording lives during processing, and only then |
 | `AUTUNE_AUDIO_HF_TOKEN` | A | Hugging Face token for the gated pyannote models |
 | `AUTUNE_AUDIO_DIARIZATION_MODEL` | A | Default `pyannote/speaker-diarization-3.1` |
+| `AUTUNE_EXTRACTION_CLASSIFIER_IMPL` | B | `local` · `hosted` · `fake`. Default `local`. **No `external`** — see below |
+| `AUTUNE_EXTRACTION_CLASSIFIER_CHECKPOINT` | B | Pinned model, recorded with every classification. Never a floating tag. **Blank by default** — no trained checkpoint is published yet, and `local` / `hosted` refuse to start without one |
+| `AUTUNE_EXTRACTION_CLASSIFIER_ENDPOINT` | B | Our own inference server. Required when `CLASSIFIER_IMPL=hosted` |
+| `AUTUNE_EXTRACTION_CLASSIFIER_DEVICE` | B | `cpu` · `cuda`. Default `cpu`. Mirrors `AUTUNE_AUDIO_DEVICE` |
 | `AUTUNE_GAP_RISK_THRESHOLD` | C | Default `0.7` |
 | `AUTUNE_CONTEXT_EMBEDDER_IMPL` | D | `kure_v1_http` (default), `kure_v1_local`, `fake` |
 | `AUTUNE_CONTEXT_RERANKER_IMPL` | D | `bge_reranker_v2_m3_ko_http` (default), `..._local`, `fake` |
@@ -120,6 +124,60 @@ settings. See `../architecture/data-model.md`.
 Every new variable goes into `.env.example` with a comment and into this table.
 A variable that exists only in someone's local `.env` will break the next
 person's setup.
+
+### The classifier has no external option
+
+`AUTUNE_EXTRACTION_CLASSIFIER_IMPL` accepts `local`, `hosted` and `fake`, and
+nothing else. Module B classifies every utterance in a meeting, so an external
+implementation would mean sending the whole transcript to somebody else's model —
+which section 6 of `../architecture/privacy.md` makes a design conversation rather
+than a value you can set.
+
+`hosted` points at an inference server we run. It still goes through
+`autune_integrations.HttpClient` so the outbound guard reads the request body:
+the endpoint being ours is exactly the reasoning that leaves a guard unrun.
+
+That guard caps a request at 4,000 characters, which one meeting is far over, so
+`hosted` splits its batches to fit rather than the cap being widened for our own
+host. A meeting of 3,000 utterances becomes roughly 28 requests.
+
+`local` needs weights and a library, and the library is an optional extra:
+
+```bash
+uv sync --package autune-extraction --extra local-models
+```
+
+It is not an ordinary dependency because `apps/api` serves a health check and
+must not load a deep-learning stack to do it, and a worker on `hosted` never
+touches it. Without the extra the classifier raises a `RuntimeError` naming this
+command — the default implementation failing with `No module named
+'transformers'` tells the reader nothing about the extra existing.
+
+### A GPU is not picked up by being there
+
+`AUTUNE_EXTRACTION_CLASSIFIER_DEVICE` defaults to `cpu` and is never inferred
+from the machine. A worker that quietly takes whichever hardware it landed on
+has a throughput that changes when it is rescheduled, and a latency measured on
+one scheduling says nothing about the other.
+
+Setting it to `cuda` needs a CUDA build of torch, which the extra does **not**
+install. `torch>=2.5` from PyPI resolves to a CPU-only wheel on Windows and
+Linux alike; a version ending in `+cpu` has no CUDA support whatever the machine
+reports. Install the CUDA build from PyTorch's own index:
+
+```bash
+uv pip install torch --index-url https://download.pytorch.org/whl/cu121
+```
+
+Pinning that in the extra would make every checkout download a multi-gigabyte
+CUDA wheel, including the ones that only ever run `fake` — so it stays a manual
+step, and the classifier raises rather than falling back when the two disagree.
+Falling back would turn a missing GPU into a silent thirty-fold slowdown, which
+reads as the model being slow rather than the box being wrong.
+
+This module classifies every utterance of every meeting, so it is the heaviest
+inference in the product — heavier than module A, which runs its model once per
+recording.
 
 ## Secrets
 
