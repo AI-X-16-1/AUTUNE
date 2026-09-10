@@ -44,6 +44,53 @@ def _model() -> WhisperModel:
     )
 
 
+def _glossary_kwargs(glossary: str, mode: str) -> dict[str, str]:
+    """Which of Whisper's two prompt channels carries the glossary.
+
+    They are not interchangeable, and reading ``faster_whisper``'s ``get_prompt``
+    says why:
+
+    - ``initial_prompt`` is appended to ``previous_tokens``, which is truncated
+      to the last 223 tokens. Decoded text keeps pushing into that window, so on
+      a long recording the glossary is evicted by the transcript itself.
+    - ``hotwords`` are re-prepended on every ``get_prompt`` call, so they last
+      the whole file — but they are truncated from the *other* end.
+
+    On a 165-second recording ``initial_prompt`` won clearly — term accuracy 18%
+    to 82%, against 36% for ``hotwords`` — and that reading does not survive a
+    meeting. Re-run on the 11m37s recording, whole transcript against whole
+    reference:
+
+    ======== ===== ==============
+    variant  CER   term accuracy
+    ======== ===== ==============
+    none     0.157 9/29 = 31%
+    prompt   0.232 8/29 = 28%
+    hotwords 0.170 25/29 = 86%
+    both     0.220 15/29 = 52%
+    ======== ===== ==============
+
+    The short file put its first technical term at 34 seconds, while the long
+    one puts it at 148 — and 223 tokens is roughly 30 to 40 seconds of decoded
+    Korean, so the prompt was gone before a single term was spoken. ``hotwords``
+    is the only one of the two that reaches the end of a meeting.
+
+    The CER cost of ``hotwords`` is 0.013, against nearly tripling term
+    accuracy. That trade is the one this module exists to make: a wrong particle
+    costs readability, a wrong entity name costs the action item attached to it.
+
+    ``AUTUNE_AUDIO_GLOSSARY_MODE`` keeps the comparison runnable on a new model
+    without a code change. See issue #118.
+    """
+    if not glossary:
+        return {}
+    if mode == "hotwords":
+        return {"hotwords": glossary}
+    if mode == "both":
+        return {"initial_prompt": glossary, "hotwords": glossary}
+    return {"initial_prompt": glossary}
+
+
 def _decode(
     waveform: Waveform, *, language: str | None, settings: AudioSettings, **bias: Any
 ) -> Transcription:
@@ -82,12 +129,19 @@ def _decode(
     )
 
 
-def transcribe(waveform: Waveform, *, language: str | None = "ko") -> Transcription:
+def transcribe(
+    waveform: Waveform, *, language: str | None = "ko", glossary: str = ""
+) -> Transcription:
     """Transcribe a decoded waveform, retrying once if the decoder loops.
 
     ``language`` is pinned to Korean by default rather than detected: detection
     on a short or noisy opening picks the wrong language and the whole meeting
     comes back as nonsense. Pass ``None`` to detect.
+
+    ``glossary`` is this meeting's vocabulary, from
+    ``glossary.build_prompt(mode=settings.glossary_mode)`` — it has to be built
+    for the channel it will travel on, because the two truncate from opposite
+    ends. How it reaches the model is decided in ``_glossary_kwargs``.
 
     Word timestamps are always on. Speaker alignment needs them — a segment can
     span a turn change, and only word times say where to cut it.
@@ -95,7 +149,8 @@ def transcribe(waveform: Waveform, *, language: str | None = "ko") -> Transcript
     **The retry happens here because here is where the audio still is.** Whisper
     can lock onto a sentence and repeat it to the end of the file, and the
     recovery for that is a second pass with the decoder steered less: no
-    glossary, and ``condition_on_previous_text`` off, which is what feeds a
+    glossary — one term in it was enough to cause a collapse on the evaluation
+    recording — and ``condition_on_previous_text`` off, which is what feeds a
     repetition back into itself. By the time the transcript reaches the publish
     step the recording has been deleted — ``storage.adopt`` deletes in a
     ``finally`` and invariant 11 does not bend for a failed job — so a retry
@@ -107,7 +162,12 @@ def transcribe(waveform: Waveform, *, language: str | None = "ko") -> Transcript
     decision belongs.
     """
     settings = get_settings()
-    transcription = _decode(waveform, language=language, settings=settings)
+    transcription = _decode(
+        waveform,
+        language=language,
+        settings=settings,
+        **_glossary_kwargs(glossary, settings.glossary_mode),
+    )
     repetition = detect_repetition(transcription)
     _log_transcription(transcription, repetition, attempt="first")
 
@@ -149,11 +209,13 @@ def _log_transcription(
     )
 
 
-def transcribe_file(path: Path, *, language: str | None = "ko") -> Transcription:
+def transcribe_file(
+    path: Path, *, language: str | None = "ko", glossary: str = ""
+) -> Transcription:
     """Decode and transcribe in one step.
 
     The waveform stays in memory and is dropped when this returns. Deleting the
     source recording is the caller's job, in a ``finally`` block — see
     docs/architecture/privacy.md section 1.
     """
-    return transcribe(decode(path), language=language)
+    return transcribe(decode(path), language=language, glossary=glossary)

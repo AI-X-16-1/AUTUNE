@@ -54,6 +54,16 @@ class AudioSettings(BaseSettings):
     """Where model weights are downloaded. Empty uses the library default.
     Weights are never committed — see docs/engineering/environments.md."""
 
+    glossary_mode: str = "hotwords"
+    """How the meeting glossary reaches Whisper: ``hotwords``, ``prompt``, ``both``.
+
+    Not interchangeable, and the difference only shows at meeting length.
+    Measured on the 11m37s evaluation recording (issue #118): term accuracy 31%
+    without a glossary, 86% with ``hotwords``, 28% with ``prompt``, 52% with
+    both. A setting rather than a constant so the comparison can be re-run on a
+    new model without editing code. See ``pipeline._glossary_kwargs``.
+    """
+
     diarization_model: str = "pyannote/speaker-diarization-3.1"
     """Pinned explicitly. Never load a floating "latest"."""
 
