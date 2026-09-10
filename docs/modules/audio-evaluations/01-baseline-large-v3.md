@@ -197,8 +197,8 @@ all, and combining them is worse than `hotwords` alone.
 `faster_whisper`'s `get_prompt` treats the two channels differently:
 
 ```python
-hotwords_tokens[: self.max_length // 2 - 1]        # head kept, re-applied every segment
-previous_tokens[-(self.max_length // 2 - 1) :]     # tail kept — initial_prompt lives here
+hotwords_tokens[: self.max_length // 2 - 1]  # head kept, re-applied every segment
+previous_tokens[-(self.max_length // 2 - 1) :]  # tail kept — initial_prompt lives here
 ```
 
 `initial_prompt` is appended to `previous_tokens`, a 223-token window that
