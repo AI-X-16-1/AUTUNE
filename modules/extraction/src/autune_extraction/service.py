@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 from autune_contracts.enums import ActionStatus
 from autune_contracts.extraction import AmbiguousAgreement
 from autune_core import get_logger, session_scope
-from autune_integrations import SlackApi, assert_personal_delivery, check_outbound
+from autune_integrations import SlackApi, assert_personal_delivery
 
 from .confirmations import WEAK_ASSENT, ConfirmationResponse, build_confirmation_dm
 from .edit_cost import EditCost
@@ -45,13 +45,13 @@ def send_confirmation_dm(
     else. ``assert_personal_delivery`` states that as a precondition instead of
     leaving it to whoever next edits the call site — invariant 11, and
     ``docs/architecture/privacy.md`` section 3.
+
+    Masking is checked by the client, which reads the blocks as well as the
+    fallback text. It did not always: this function carried its own
+    ``check_outbound`` on the quotation until #74 taught the shared guard to read
+    a whole request body.
     """
     assert_personal_delivery(subject_id=speaker_id, recipient_id=recipient_id, is_direct=True)
-
-    # The client's own guard reads the fallback text and never the blocks, so the
-    # quotation would reach Slack unchecked. Checked here until that is closed in
-    # packages/integrations, which module B does not own.
-    check_outbound(quoted_text, destination="slack")
 
     text, blocks = build_confirmation_dm(utterance_id=utterance_id, quoted_text=quoted_text)
     timestamp = slack.send_dm(recipient_id, text, blocks)
