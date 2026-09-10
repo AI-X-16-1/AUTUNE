@@ -242,3 +242,63 @@ def test_a_clean_body_still_passes_the_guard() -> None:
     with pytest.raises(AttributeError):
         # Past the guard, reaching for the transport _Unsent does not have.
         _guarded(json={"note": "마스킹된 번호는 [전화번호] 입니다"})
+
+
+# The six shapes that walked past this guard before #126. Every one of them is
+# ordinary in a Korean meeting transcript, and the last three were invisible to
+# the patterns entirely rather than hidden by a boundary.
+LEAKED_BEFORE_126 = [
+    "제 번호는 010-1234-5678입니다",
+    "주민번호 900101-1234567이고요",
+    "카드 1234-5678-9012-3456으로 결제했습니다",
+    "등록번호 900101-5123456 입니다",
+    "계좌는 110234567890 이에요",
+    "주민 900101123456701012345678 입니다",
+]
+
+
+@pytest.mark.parametrize("line", LEAKED_BEFORE_126)
+def test_a_particle_or_a_run_together_number_does_not_hide_it(line: str) -> None:
+    """`\\b` is a `\\w` edge and a Hangul syllable is `\\w`.
+
+    So there was no word boundary between `5678` and `입니다`, and a number with
+    a particle attached — which is how Korean is written and how Whisper writes
+    it — matched nothing. Module A had the same bug and fixed it in #125; this
+    file kept the originals, so both layers were open on the same input.
+    """
+    assert find_unmasked(line) != []
+
+
+@pytest.mark.parametrize("line", LEAKED_BEFORE_126)
+def test_the_client_refuses_to_send_it(line: str) -> None:
+    with pytest.raises(PrivacyViolationError):
+        FakeSlack().post_message("#general", line)
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "다음 회의는 9월 18일 오후 3시 반, 405호입니다",
+        "배포는 2024.01.15 예정입니다",
+        "예산 100 200 300 만원으로 잡았습니다",
+        "학습 데이터는 총 1,240건인데 그중 870건이에요",
+    ],
+)
+def test_a_meeting_full_of_numbers_still_goes_out(line: str) -> None:
+    """Widening the patterns has a cost in the other direction.
+
+    A guard that refuses every date stops a team from being told when their
+    meeting is, and the account shape is three groups of digits — which is also
+    what a date is. `MIN_ACCOUNT_DIGITS` is what separates them.
+    """
+    assert find_unmasked(line) == []
+    FakeSlack().post_message("#general", line)
+
+
+def test_each_span_is_reported_as_one_category() -> None:
+    """A phone number also matches the account shape and the long-digit
+    catch-all. Without resolving the overlap an exception names categories the
+    text does not contain, which sends whoever reads it looking for a card
+    number that was never there."""
+    assert find_unmasked("제 번호는 010-1234-5678입니다") == ["phone"]
+    assert find_unmasked("a@b.com 와 010-1111-2222") == ["phone", "email"]

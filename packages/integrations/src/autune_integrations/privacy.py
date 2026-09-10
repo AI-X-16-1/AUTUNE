@@ -22,15 +22,100 @@ from typing import Any, Final
 
 from autune_core.errors import PrivacyViolationError
 
-# Unmasked shapes only. A masked value contains "*" and is filtered out below,
-# so "010-****-5678" and "k***@example.com" pass while the originals do not.
-_PATTERNS: Final[dict[str, re.Pattern[str]]] = {
-    "phone": re.compile(r"\b01[016-9][-.\s]?\d{3,4}[-.\s]?\d{4}\b"),
-    "rrn": re.compile(r"\b\d{6}[-\s]?[1-4]\d{6}\b"),
-    "card": re.compile(r"\b(?:\d{4}[-\s]?){3}\d{4}\b"),
-    "email": re.compile(r"\b[\w.+-]+@[\w-]+\.[\w.-]+\b"),
-    "account": re.compile(r"\b\d{2,3}-\d{2,6}-\d{2,6}\b"),
-}
+# The one set of personal-data shapes in the repository.
+#
+# Module A masks with these and this file refuses text that still matches them,
+# so they have to be the same patterns or the two disagree about what personal
+# data is. They did: module A fixed five of these in #125 while this file kept
+# the originals, and the result was that the guard could not see the most
+# ordinary shape in a Korean transcript. #126.
+#
+# A masked value contains "*" and matches nothing here, so "010-****-5678" and
+# "k***@example.com" pass while the originals do not.
+
+# **Digit boundaries, not word boundaries.** `\b` is a `\w`/non-`\w` edge, and
+# in Python's unicode mode a Hangul syllable is `\w` -- so there is no boundary
+# between `5678` and `로`. Korean attaches its particles directly to the number
+# and Whisper writes them that way, which made `010-1234-5678로` match nothing
+# at all.
+_L: Final = r"(?<!\d)"
+_R: Final = r"(?!\d)"
+
+# Speech, not writing. The same number arrives spaced, hyphenated or run
+# together depending on the sentence around it, and the shape not accepted is
+# the one that leaks.
+_SEP: Final = r"[-.\s]?"
+
+# A Korean bank account is ten digits or more; a date is eight and a version
+# string is eight. Counting digits is what tells them apart, and it needs no
+# list of date formats to go stale.
+MIN_ACCOUNT_DIGITS: Final = 10
+
+PII_PATTERNS: Final[tuple[tuple[str, re.Pattern[str]], ...]] = (
+    # Longest shapes first: an RRN also looks like two number groups, and a card
+    # number contains things that look like account fragments.
+    #
+    # The seventh digit is the century-and-sex marker and every value of it is
+    # somebody: 1-4 Korean, 5-8 registered foreign national, 9-0 born in the
+    # 1800s. The second group takes six to eight digits so one mis-transcribed
+    # digit does not drop the whole thing to `account`, which keeps the last
+    # four -- four digits of an ID number left standing.
+    ("rrn", re.compile(rf"{_L}\d{{6}}{_SEP}[0-9]\d{{6,7}}{_R}")),
+    ("card", re.compile(rf"{_L}(?:\d{{4}}{_SEP}){{3}}\d{{4}}{_R}")),
+    # Any leading-zero prefix rather than an enumerated list. Enumerating is how
+    # a regex goes stale: 070 is a common Korean VoIP range, 0505 is a safe
+    # number and 080 is freephone, and none of them were in the old list.
+    ("phone", re.compile(rf"{_L}0\d{{1,3}}{_SEP}\d{{3,4}}{_SEP}\d{{4}}{_R}")),
+    # +82-10-1234-5678. Without this the account pattern takes the first two
+    # groups and leaves the last eight digits standing.
+    ("phone", re.compile(rf"\+?82{_SEP}\d{{1,3}}{_SEP}\d{{3,4}}{_SEP}\d{{4}}{_R}")),
+    # Bank layouts vary -- 3-2-6, 6-2-6, 3-3-6 -- and get said without
+    # separators as often as with. See MIN_ACCOUNT_DIGITS for what keeps this
+    # from matching every date in a transcript.
+    ("account", re.compile(rf"{_L}\d{{2,6}}{_SEP}\d{{2,6}}{_SEP}\d{{2,6}}{_R}")),
+    # Every shaped pattern above is three groups of at most six bounded by
+    # non-digits, so none can span a longer run. Two personal numbers
+    # transcribed without a break matched nothing at all.
+    ("digits", re.compile(rf"{_L}\d{{12,}}{_R}")),
+    ("email", re.compile(r"\b[\w.+-]+@[\w-]+\.[\w.-]+\b")),
+)
+
+
+def find_pii(text: str) -> list[tuple[int, int, str]]:
+    """Every span of personal data in ``text``, as ``(start, end, category)``.
+
+    The one place the patterns are applied. ``find_unmasked`` reports what this
+    finds and module A hides it, so a change here reaches both.
+    """
+    found: list[tuple[int, int, str]] = []
+    for category, pattern in PII_PATTERNS:
+        for match in pattern.finditer(text):
+            if MASK_CHAR in match.group():
+                # Already masked. Not personal data any more.
+                continue
+            if category == "account" and _digit_count(match.group()) < MIN_ACCOUNT_DIGITS:
+                # A date, a version, a figure said in three parts.
+                continue
+            found.append((match.start(), match.end(), category))
+
+    # One span, one category. A phone number also matches the account shape and
+    # a long run of digits matches the catch-all, so without this a single
+    # number is reported three times and an exception names categories the text
+    # does not contain. The most specific wins, which is the order they are
+    # declared in: whichever pattern claimed the span first keeps it.
+    kept: list[tuple[int, int, str]] = []
+    for start, end, category in sorted(found, key=lambda s: (s[0], -(s[1] - s[0]))):
+        if any(start < other_end and end > other_start for other_start, other_end, _ in kept):
+            continue
+        kept.append((start, end, category))
+    return sorted(kept, key=lambda s: s[0])
+
+
+def _digit_count(value: str) -> int:
+    return sum(1 for c in value if c.isdigit())
+
+
+MASK_CHAR: Final = "*"
 
 MAX_OUTBOUND_CHARS: Final = 4000
 """A single message, not a transcript. Sending a whole meeting to a third party
@@ -38,12 +123,17 @@ is never what a feature needs."""
 
 
 def find_unmasked(text: str) -> list[str]:
-    """Return the categories of personal data still present in ``text``."""
-    found = []
-    for category, pattern in _PATTERNS.items():
-        if any("*" not in match.group(0) for match in pattern.finditer(text)):
-            found.append(category)
-    return found
+    """The categories of personal data still present in ``text``, without repeats.
+
+    Ordered as ``PII_PATTERNS`` is, so the same text always reports the same
+    list — an exception message and a test both read this.
+    """
+    found = {category for _, _, category in find_pii(text)}
+    ordered: list[str] = []
+    for category, _ in PII_PATTERNS:
+        if category in found and category not in ordered:
+            ordered.append(category)
+    return ordered
 
 
 def assert_masked(text: str, *, destination: str) -> None:
