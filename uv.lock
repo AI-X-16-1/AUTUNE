@@ -408,6 +408,7 @@ source = { editable = "modules/extraction" }
 dependencies = [
     { name = "autune-contracts" },
     { name = "autune-core" },
+    { name = "autune-integrations" },
     { name = "celery" },
     { name = "fastapi" },
 ]
@@ -423,6 +424,7 @@ training = [
 requires-dist = [
     { name = "autune-contracts", editable = "packages/contracts" },
     { name = "autune-core", editable = "packages/core" },
+    { name = "autune-integrations", editable = "packages/integrations" },
     { name = "celery", specifier = ">=5.4" },
     { name = "fastapi", specifier = ">=0.115" },
     { name = "numpy", marker = "extra == 'training'", specifier = ">=1.26" },
