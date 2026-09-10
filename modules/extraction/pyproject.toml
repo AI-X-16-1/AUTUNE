@@ -20,6 +20,9 @@ training = [
     # workstation would add gigabytes to every deploy.
     "torch>=2.4",
     "transformers>=4.44",
+    # Trainer refuses to construct its arguments without it, and transformers
+    # does not pull it in: it lives behind transformers' own `torch` extra.
+    "accelerate>=1.1",
     "numpy>=1.26",
 ]
 
