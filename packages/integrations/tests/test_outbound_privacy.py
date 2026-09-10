@@ -18,6 +18,7 @@ from autune_integrations.privacy import (
     assert_masked,
     assert_personal_delivery,
     check_outbound,
+    find_pii,
     strings_in,
 )
 
@@ -293,6 +294,19 @@ def test_a_meeting_full_of_numbers_still_goes_out(line: str) -> None:
     """
     assert find_unmasked(line) == []
     FakeSlack().post_message("#general", line)
+
+
+def test_overlapping_spans_are_all_returned() -> None:
+    """`find_unmasked` collapses to one category per span; `find_pii` does not.
+
+    The guard only needs to fire, so dropping an overlapping span costs it
+    nothing. The masker hides what this returns, and there dropping a span
+    leaves its text in the clear — so the collapse happens in `find_unmasked`
+    and the raw spans reach module A.
+    """
+    line = "사무실 02 1234 5678 9012 3456 이요"
+    assert "card" in [category for _, _, category in find_pii(line)]
+    assert find_unmasked(line) == ["phone"]
 
 
 def test_each_span_is_reported_as_one_category() -> None:

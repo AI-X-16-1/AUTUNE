@@ -86,6 +86,22 @@ def find_pii(text: str) -> list[tuple[int, int, str]]:
 
     The one place the patterns are applied. ``find_unmasked`` reports what this
     finds and module A hides it, so a change here reaches both.
+
+    **Overlapping spans are all returned.** An earlier version kept the first
+    span of any overlapping group and dropped the rest, which is safe for a
+    guard that only needs to fire but not for the masker, because the masker
+    never sees what was dropped:
+
+        '사무실 02 1234 5678 9012 3456 이요'
+            phone matches '02 1234 5678', card matches '1234 5678 9012 3456'
+            dropping the card span left 12 of its 16 digits in the clear
+
+    Merging here instead would lose the thing the masker decides from — whether
+    the union came out longer than any single detector's span, which is what
+    tells two run-together values apart from two detectors agreeing on one. So
+    this reports what each pattern found and the caller decides: module A merges
+    (``masking._resolve_overlaps``) and ``find_unmasked`` collapses to one
+    category per span below.
     """
     found: list[tuple[int, int, str]] = []
     for category, pattern in PII_PATTERNS:
@@ -97,18 +113,28 @@ def find_pii(text: str) -> list[tuple[int, int, str]]:
                 # A date, a version, a figure said in three parts.
                 continue
             found.append((match.start(), match.end(), category))
+    return sorted(found, key=lambda s: (s[0], -(s[1] - s[0])))
 
-    # One span, one category. A phone number also matches the account shape and
-    # a long run of digits matches the catch-all, so without this a single
-    # number is reported three times and an exception names categories the text
-    # does not contain. The most specific wins, which is the order they are
-    # declared in: whichever pattern claimed the span first keeps it.
+
+def _most_specific(spans: list[tuple[int, int, str]]) -> list[tuple[int, int, str]]:
+    """One category per span, for reporting rather than for masking.
+
+    A phone number also matches the account shape and a long run of digits
+    matches the catch-all, so without this a single number is reported three
+    times and an exception names categories the text does not contain. The most
+    specific wins, which is the order they are declared in: whichever pattern
+    claimed the span first keeps it.
+
+    Dropping a span is safe *here* and nowhere else. This feeds a guard that
+    raises on the first category it finds; nothing downstream has to cover the
+    text a dropped span described.
+    """
     kept: list[tuple[int, int, str]] = []
-    for start, end, category in sorted(found, key=lambda s: (s[0], -(s[1] - s[0]))):
+    for start, end, category in spans:
         if any(start < other_end and end > other_start for other_start, other_end, _ in kept):
             continue
         kept.append((start, end, category))
-    return sorted(kept, key=lambda s: s[0])
+    return kept
 
 
 def _digit_count(value: str) -> int:
@@ -128,7 +154,7 @@ def find_unmasked(text: str) -> list[str]:
     Ordered as ``PII_PATTERNS`` is, so the same text always reports the same
     list — an exception message and a test both read this.
     """
-    found = {category for _, _, category in find_pii(text)}
+    found = {category for _, _, category in _most_specific(find_pii(text))}
     ordered: list[str] = []
     for category, _ in PII_PATTERNS:
         if category in found and category not in ordered:

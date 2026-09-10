@@ -169,12 +169,25 @@ def _digits_to_keep(category: str, digits: list[str]) -> set[int]:
     silent this takes the safer reading, which is the one it asks for everywhere
     else.
 
+    ``digits`` keeps **nothing**. It is the catch-all for a run of digits no
+    shaped pattern could describe, which means nobody knows what the last four
+    of it are the last four *of*: `010123456789001011234567` is a phone number
+    followed by a national ID, and the tail rule would leave four digits of the
+    ID standing. The separator layout still survives, so the line still reads as
+    a number having been said.
+
     Everything else keeps its last four — what a person says out loud to tell
     two numbers apart, and what a card statement already shows.
     """
-    count = len(digits)
     if category == "rrn":
-        return {count - 7}
+        # Counted from the start, because the first group is always six digits.
+        # Counting from the end was the same position only while an RRN was
+        # exactly thirteen digits; the second group now takes six to eight, and
+        # at fourteen the kept index slid off the marker onto a serial digit.
+        return {6}
+    if category == "digits":
+        return set()
+    count = len(digits)
     tail = set(range(count - 4, count))
     if category == "phone" and "".join(digits[:2]) == "01":
         return {0, 1, 2} | tail

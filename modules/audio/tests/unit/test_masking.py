@@ -168,6 +168,20 @@ class TestOverlaps:
             "테헤란로" not in mask("김민경 서울시 강남구 테헤란로 123", recogniser=Address()).text
         )
 
+    def test_two_patterns_overlapping_cover_both(self) -> None:
+        """Not only the recogniser overlaps — two patterns do, on one line.
+
+        `find_pii` used to keep the first span of an overlapping group and drop
+        the rest, so the masker never saw the dropped one and could not merge
+        it. An office number followed by a card number is the shape that found
+        it: phone claimed `02 1234 5678`, card claimed `1234 5678 9012 3456`,
+        and twelve of the card's sixteen digits stayed in the clear.
+        """
+        result = mask("사무실 02 1234 5678 9012 3456 이요")
+        assert "9012" not in result.text
+        assert "3456" not in result.text
+        assert result.spans == 1
+
     def test_a_second_detector_agreeing_does_not_double_mask(self) -> None:
         class Duplicate:
             def find(self, text: str) -> list[tuple[int, int, str]]:
@@ -335,6 +349,32 @@ def test_a_national_id_with_a_stray_digit_is_still_a_national_id(line: str) -> N
     last four — four digits of an ID number left standing because the
     transcript was slightly wrong."""
     assert mask(line).counts == {"rrn": 1}
+
+
+def test_a_longer_national_id_still_keeps_only_the_century_marker() -> None:
+    """The kept position is counted from the start, not the end.
+
+    While an RRN was exactly thirteen digits the two were the same index. The
+    second group now takes six to eight so a mis-transcribed digit does not drop
+    the whole value to `account`, and at fourteen the end-counted index slid one
+    place off the century-and-sex marker onto a serial digit.
+    """
+    assert mask("주민번호 900101-12345678 이에요").text == "주민번호 ******-1******* 이에요"
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "900101123456701012345678",  # national ID, then phone
+        "010123456789001011234567",  # phone, then national ID
+    ],
+)
+def test_the_catch_all_keeps_no_digits(line: str) -> None:
+    """`digits` is the span nobody could name, so its last four are the last
+    four of nothing in particular. Whichever value ends the run donates them —
+    put the national ID second and four digits of it are left standing, which is
+    what the shaped patterns go out of their way to prevent."""
+    assert mask(line).text == "*" * len(line)
 
 
 @pytest.mark.parametrize("line", NOT_PERSONAL)
