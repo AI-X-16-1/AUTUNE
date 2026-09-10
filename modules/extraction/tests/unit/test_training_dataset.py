@@ -184,34 +184,97 @@ def test_label_counts_reports_a_collapsed_class_as_zero() -> None:
 
 # --- the training code cannot reach the database -----------------------------
 
+FORBIDDEN = frozenset({"models", "service", "sqlalchemy", "autune_core", "slack", "tasks"})
+
+
+def imported_names(source: str) -> list[str]:
+    """Every module name ``source`` imports, from anywhere in the file.
+
+    Both halves of an ``ImportFrom`` are read. ``from ..models import X`` puts
+    the name in ``node.module``, but ``from .. import models`` leaves that
+    ``None`` and puts it in ``node.names`` -- and the second is the form a person
+    writes by hand. Reading only ``node.module`` let it through, which is what
+    mkkim68 found in review.
+
+    ``ast.walk`` rather than the top-level body, so an import inside a function
+    is seen: that one imports cleanly and closes only when the function first
+    runs, which is the version that survives review.
+
+    Static imports only. ``importlib.import_module("..models")`` defeats this and
+    nothing short of executing the code would catch it.
+    """
+    names: list[str] = []
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.ImportFrom):
+            if node.module is not None:
+                names.append(node.module)
+            names.extend(alias.name for alias in node.names)
+        elif isinstance(node, ast.Import):
+            names.extend(alias.name for alias in node.names)
+    return names
+
+
+def forbidden_in(source: str) -> list[str]:
+    return [name for name in imported_names(source) if set(name.split(".")) & FORBIDDEN]
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "from ..models import ExtActionItem",
+        "from .. import models",
+        "import autune_extraction.models",
+        "import autune_extraction.models as m",
+        "from autune_extraction.service import create_action_item",
+        "import sqlalchemy",
+        "def later():\n    from .. import models",
+    ],
+    ids=[
+        "from-module-import-name",
+        "from-package-import-module",
+        "absolute",
+        "aliased",
+        "service",
+        "sqlalchemy",
+        "inside-a-function",
+    ],
+)
+def test_the_guard_catches_every_way_of_writing_it(source: str) -> None:
+    """The guard is tested, not just used.
+
+    A guard with a hole is worse than no guard: passing it reads as a signal.
+    This one had exactly one hole -- ``from .. import models`` -- and it went
+    unnoticed because the injection used to check the guard happened to use the
+    other form.
+    """
+    assert forbidden_in(source), f"the guard misses: {source!r}"
+
+
+def test_the_guard_does_not_fire_on_what_training_legitimately_imports() -> None:
+    """Over-broad is its own failure: a guard that flags ``torch`` teaches people
+    to delete it."""
+    assert forbidden_in("import torch\nfrom transformers import Trainer") == []
+    assert forbidden_in("from .dataset import LABELS") == []
+
 
 def test_training_cannot_reach_the_database() -> None:
     """ADR 0003 and 0006: a user's corrections never become training labels.
 
     The rule is easiest to keep by making the code unable to break it. Nothing
-    under ``training`` may import this module's ORM models, its service layer,
-    a session, or SQLAlchemy -- with no path to ``ext_action_items`` there is
-    nothing to decide at review time.
+    under ``training`` may import this module's ORM models, its service layer, a
+    session, or SQLAlchemy -- with no path to ``ext_action_items`` there is
+    nothing left to decide at review time.
 
-    Walks the AST of every file in the package rather than searching the text,
-    so an import inside a function body -- which imports cleanly and only runs
-    later -- is caught too. That is the one that would survive review.
+    ``rglob`` rather than ``glob``: a subpackage added later is still inside the
+    rule, and a directory is the obvious place for the import to end up.
     """
     package = Path(training.__file__).parent
-    forbidden = {"models", "service", "sqlalchemy", "autune_core", "slack", "tasks"}
 
-    offenders: list[str] = []
-    for path in sorted(package.glob("*.py")):
-        tree = ast.parse(path.read_text(encoding="utf-8"))
-        for node in ast.walk(tree):
-            names: list[str] = []
-            if isinstance(node, ast.ImportFrom) and node.module is not None:
-                names.append(node.module)
-            elif isinstance(node, ast.Import):
-                names.extend(alias.name for alias in node.names)
-            for name in names:
-                if set(name.split(".")) & forbidden:
-                    offenders.append(f"{path.name}: {name}")
+    offenders = [
+        f"{path.name}: {name}"
+        for path in sorted(package.rglob("*.py"))
+        for name in forbidden_in(path.read_text(encoding="utf-8"))
+    ]
 
     assert not offenders, (
         f"training imports {offenders}. ADR 0003 and 0006 keep user corrections "
