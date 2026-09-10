@@ -119,7 +119,12 @@ class ExtActionItem(Base, TimestampMixin):
     origin: Mapped[str] = mapped_column(String(16), nullable=False, default="model")
 
     sources: Mapped[list[ExtActionItemSource]] = relationship(
-        back_populates="action_item", cascade="all, delete-orphan"
+        back_populates="action_item",
+        cascade="all, delete-orphan",
+        # Insertion order, which is the order they were handed to us. Ordering
+        # here rather than at each read keeps a caller from sorting on ``id``
+        # before the rows are flushed, when every id is still None.
+        order_by="ExtActionItemSource.id",
     )
 
 

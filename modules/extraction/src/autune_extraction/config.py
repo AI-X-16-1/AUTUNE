@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 
-from pydantic import model_validator
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -55,6 +55,20 @@ class ExtractionSettings(BaseSettings):
     This module classifies **every utterance of every meeting**, the heaviest
     inference in the product, so the setting matters more here than in module A,
     which runs its model once per recording.
+    """
+
+    candidate_confidence: float | None = Field(default=None, ge=0, le=1)
+    """Below this confidence an item is shown as a candidate rather than asserted.
+
+    ADR 0006 ranks recall above precision -- a wrong item costs a click, a
+    missing one costs re-reading the meeting -- so low-confidence items are kept
+    and marked rather than dropped.
+
+    **Empty by default, and that is the point.** The number has to come from the
+    classifier's confidence distribution over the evaluation set (#10), which
+    does not exist yet. Until it does there is no honest threshold, so nothing is
+    a candidate. A default picked to make the band look populated would be a
+    number nobody measured, printed to the user as though somebody had.
     """
 
     @model_validator(mode="after")
