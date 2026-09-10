@@ -16,21 +16,30 @@ The short answer is that the model is good enough and the vocabulary is not.
 | | |
 | --- | --- |
 | **Recording** | Two files, 13 minutes total, produced from the module A cue sheet |
+| **Speakers** | Four, one per role, on a single combined track. Slate claps separate the sessions |
 | **Sessions** | S1 calibration · S2 domain terms · S3 numbers and dates · S4 simulated meeting · S5 stress drills |
 | **Model** | `large-v3`, faster-whisper 1.2.1, CTranslate2 int8 |
 | **Hardware** | CPU only, no GPU |
 | **Settings** | `beam_size=5`, `word_timestamps=True`, `vad_filter=True`, `language="ko"` |
 | **Scored by** | `autune_audio.eval.korean` |
 
-The recording was made by one person reading all four parts, so speaker
-diarization is out of scope here: there is no per-speaker ground truth and
-therefore no DER. Everything else the cue sheet asks for was measured.
+Speaker diarization is out of scope in this pass, but not for the reason a
+first draft of this document gave. Four people read the four roles; what is
+missing is the per-speaker tracks the cue sheet asks for, so there is no
+reference for who spoke when, and therefore no DER here.
+
+The gap is smaller than that sounds. S1, S2 and S3 are sequential monologues by
+a known speaker in a known order, and the slate claps mark the boundaries — a
+reference for those sections can be written by hand from the cue sheet without
+recording anything again. What genuinely needs separate tracks is S4, where
+people overlap and interrupt, and stress drill 03, where all four speak at once.
+Those are also the sections where diarization is worth measuring.
 
 ## 2. Headline
 
 | Session | Content | CER raw | CER normalised | Target 5% |
 | --- | --- | --- | --- | --- |
-| S1 | Identical sentence, four readings | 0.107 | **0.035** | pass |
+| S1 | Identical sentence, four speakers | 0.107 | **0.035** | pass |
 | S2 | Domain terminology | 0.309 | **0.307** | fail, 6× over |
 | S3 | Numbers, dates, amounts | 0.104 | **0.080** | near |
 | S4 | Simulated meeting (ad-lib, upper bound) | 0.181 | **0.158** | upper bound |
@@ -119,6 +128,23 @@ form — now part of `normalise()` — cut S1's CER by two thirds.
 
 The gap between the raw and the normalised number is exactly what post-processing
 can recover. What remains, 3.5%, is the model.
+
+S1 exists to hold the text still and vary only the voice, and with four speakers
+reading the same sentence it does that:
+
+| Speaker | Role read | CER normalised |
+| --- | --- | --- |
+| 1 | intelligence | 0.025 |
+| 2 | audio pipeline | 0.024 |
+| 3 | structured extraction | 0.049 |
+| 4 | gap and context | 0.044 |
+
+Twice the error between the best and worst voice, on identical text, in one
+room. It is a small sample and the four differ in more than voice — the cue
+sheet asks two of them to speak quickly and quietly on purpose — so this sizes
+the variation rather than explaining it. It is the number to watch when the
+model changes: a version that improves the average while widening this spread
+has made the pipeline worse for somebody.
 
 ### 3.4 Silence is already safe
 
@@ -239,8 +265,9 @@ Confusion sets to collapse: ㄹ/{r,l}, ㅂ/{b,p,v,f}, ㅈ/{j,z}, ㅅ/{s,th}. Fal
 positives stay controlled because the candidate set is the meeting's glossary —
 tens of terms, not a language.
 
-Diarization, speaker attribution, and DER remain unmeasured. They need a
-recording with per-speaker tracks, which this one does not have.
+Diarization, speaker attribution and DER remain unmeasured. S1 to S3 can be
+scored from a hand-written reference, since each is one known speaker at a time.
+S4 and drill 03 need per-speaker tracks, which this recording does not have.
 
 ## 6. Reproducing this
 
