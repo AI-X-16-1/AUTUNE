@@ -103,7 +103,8 @@ export function ActionDetailDrawer({
               height: "var(--control-h-default)",
               paddingInline: "var(--control-px-text)",
               borderRadius: "var(--radius)",
-              borderColor: "var(--border-input)",
+              // See AddActionItem: `--border-input` has no dark value.
+              border: "1px solid var(--color-hairline)",
               fontSize: "var(--text-body)",
             }}
           >
