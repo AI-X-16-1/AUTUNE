@@ -78,3 +78,18 @@ class DashboardRead(BaseModel):
     action_item_completion_rate: float | None
     recent_scores: list[DashboardScoreEntry]
     gap_distribution: dict[str, int]
+
+
+class SpeakingRatioRead(BaseModel):
+    """One participant's share of one meeting's speech time.
+
+    Served only to the person it describes and never persisted — ``stored`` is
+    always ``False`` and says so to the client. ``participant_count`` is here so
+    the number is legible in a small meeting (even share = ``1 / count``).
+    See docs/architecture/privacy.md section 3.
+    """
+
+    meeting_id: str
+    ratio: float
+    participant_count: int
+    stored: bool = False

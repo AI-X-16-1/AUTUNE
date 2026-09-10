@@ -34,10 +34,12 @@ from autune_contracts import (
     QualityScore,
 )
 from autune_contracts.intelligence import Grade
-from autune_core import Meeting
+from autune_core import Meeting, Participant, Utterance, get_logger
 from autune_core.errors import NotFoundError
+from autune_integrations import SlackApi, assert_personal_delivery
 
 from .config import get_settings
+from .feedback import build_speaking_ratio_dm
 from .models import (
     IntelAlignment,
     IntelCompletion,
@@ -45,7 +47,10 @@ from .models import (
     IntelReport,
     IntelScore,
 )
-from .schemas import DashboardRead, DashboardScoreEntry, HeatmapCell
+from .schemas import DashboardRead, DashboardScoreEntry, HeatmapCell, SpeakingRatioRead
+from .speaking import SpeakingShare, SpeechSegment, speaking_shares
+
+log = get_logger(__name__)
 
 SOURCES: tuple[str, ...] = ("extraction", "gap", "context")
 """The three upstream modules E waits on. Each maps to an ``<source>_at`` column
@@ -393,3 +398,117 @@ def get_dashboard(session: Session, team_id: str) -> DashboardRead:
         ],
         gap_distribution={pattern: int(total) for pattern, total in gap_rows},
     )
+
+
+# --- Speaking ratio (pipeline step 7) -----------------------------------
+#
+# Private to the speaker: computed from A's utterances, delivered by DM, never
+# written to a table, never returned for anyone else. docs/architecture/privacy.md
+# section 3 is binding here.
+
+
+def compute_speaking_shares(session: Session, meeting_id: str) -> list[SpeakingShare]:
+    """Each identified participant's share of the meeting's speech time.
+
+    Reads only ``utterances`` and ``participants`` (shared, read-only). The
+    denominator includes speech that was never matched to a participant, so a
+    share is a fraction of the whole meeting.
+    """
+    rows = session.execute(
+        sa.select(
+            Utterance.participant_id,
+            Participant.user_id,
+            Utterance.start_sec,
+            Utterance.end_sec,
+        )
+        .outerjoin(Participant, Participant.id == Utterance.participant_id)
+        .where(Utterance.meeting_id == meeting_id)
+    ).all()
+    segments = [
+        SpeechSegment(participant_id=pid, user_id=uid, start_sec=start, end_sec=end)
+        for pid, uid, start, end in rows
+    ]
+    return speaking_shares(segments)
+
+
+def _consented_participant_count(session: Session, meeting_id: str) -> int:
+    return (
+        session.scalar(
+            sa.select(func.count())
+            .select_from(Participant)
+            .where(
+                Participant.meeting_id == meeting_id,
+                Participant.consented.is_(True),
+            )
+        )
+        or 0
+    )
+
+
+def speaking_ratio_for_user(
+    session: Session, meeting_id: str, user_id: str
+) -> SpeakingRatioRead | None:
+    """The user's own share of ``meeting_id``, or ``None`` if they were not in it.
+
+    A participant who was present but silent gets ``0.0``, not ``None`` — that is
+    a real answer. ``None`` is only for "you were not in this meeting", which the
+    route turns into a 404.
+    """
+    participant = session.scalar(
+        sa.select(Participant).where(
+            Participant.meeting_id == meeting_id,
+            Participant.user_id == user_id,
+        )
+    )
+    if participant is None:
+        return None
+
+    mine = next(
+        (
+            s
+            for s in compute_speaking_shares(session, meeting_id)
+            if s.participant_id == participant.id
+        ),
+        None,
+    )
+    return SpeakingRatioRead(
+        meeting_id=meeting_id,
+        ratio=mine.ratio if mine is not None else 0.0,
+        participant_count=_consented_participant_count(session, meeting_id),
+        stored=False,
+    )
+
+
+def send_personal_feedback(session: Session, slack: SlackApi, meeting_id: str) -> int:
+    """DM each identified participant their own speaking ratio. Returns the count.
+
+    A speaker with no linked user account cannot be reached and is skipped. The
+    ratio is not stored anywhere; this function writes nothing. The delivery goes
+    through ``assert_personal_delivery``, which refuses any recipient but the
+    subject and refuses a channel.
+    """
+    shares = compute_speaking_shares(session, meeting_id)
+    if not shares:
+        return 0
+
+    participant_count = _consented_participant_count(session, meeting_id)
+    sent = 0
+    for share in shares:
+        if share.user_id is None:
+            log.info(
+                "speaking_ratio_recipient_unmapped",
+                meeting_id=meeting_id,
+                participant_id=share.participant_id,
+            )
+            continue
+        assert_personal_delivery(
+            subject_id=share.user_id, recipient_id=share.user_id, is_direct=True
+        )
+        fallback, blocks = build_speaking_ratio_dm(
+            ratio=share.ratio, participant_count=participant_count
+        )
+        slack.send_dm(share.user_id, fallback, blocks)
+        sent += 1
+
+    log.info("speaking_ratio_feedback_sent", meeting_id=meeting_id, recipients=sent)
+    return sent

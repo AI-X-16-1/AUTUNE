@@ -6,6 +6,7 @@ requires-python = ">=3.12,<3.13"
 dependencies = [
     "autune-contracts",
     "autune-core",
+    "autune-integrations",
     "fastapi>=0.115",
     "celery>=5.4",
 ]

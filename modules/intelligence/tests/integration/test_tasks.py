@@ -34,6 +34,22 @@ def mock_aggregate() -> Iterator[object]:
         yield mock
 
 
+@pytest.fixture
+def mock_personal_feedback() -> Iterator[object]:
+    with patch.object(tasks, "send_personal_feedback") as mock:
+        yield mock
+
+
+@pytest.fixture
+def stub_publish(monkeypatch: pytest.MonkeyPatch) -> list[tuple]:
+    """Capture ``current_app.send_task`` instead of reaching a broker."""
+    sent: list[tuple] = []
+    monkeypatch.setattr(
+        tasks.current_app, "send_task", lambda name, args: sent.append((name, args))
+    )
+    return sent
+
+
 def _extraction(meeting_id: str) -> dict:
     return ExtractionResult(meeting_id=meeting_id).model_dump(mode="json")
 
@@ -89,7 +105,7 @@ def test_the_third_completion_enqueues_aggregation_immediately(
     mock_aggregate.apply_async.assert_called_once_with((meeting,))
 
 
-@pytest.mark.usefixtures("use_test_session")
+@pytest.mark.usefixtures("use_test_session", "mock_personal_feedback")
 def test_aggregate_publishes_a_valid_snapshot(
     db_session: Session, meeting: str, team: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -116,7 +132,7 @@ def test_aggregate_publishes_a_valid_snapshot(
     IntelligenceSnapshot.model_validate(args[0])  # contract conformance
 
 
-@pytest.mark.usefixtures("use_test_session")
+@pytest.mark.usefixtures("use_test_session", "mock_personal_feedback")
 def test_aggregate_publishes_once_and_the_second_pass_is_a_no_op(
     db_session: Session, meeting: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -159,4 +175,38 @@ def test_a_completion_after_the_first_pass_reopens_and_re_enqueues(
     tasks.on_extraction_completed({"meeting_id": meeting, "decisions": [], "action_items": []})
 
     assert db_session.get(service.IntelCompletion, meeting).aggregated_at is None
-    mock_aggregate.apply_async.assert_called_once_with((meeting,))
+    mock_aggregate.apply_async.assert_called_once_with((meeting,), {"notify": False})
+
+
+@pytest.mark.usefixtures("use_test_session", "stub_publish")
+def test_aggregate_enqueues_personal_feedback_after_a_first_pass(
+    mock_personal_feedback: object, db_session: Session, meeting: str, team: str
+) -> None:
+    service.record_completion(db_session, meeting, "extraction", _extraction(meeting))
+    db_session.flush()
+
+    tasks.aggregate(meeting)
+
+    mock_personal_feedback.apply_async.assert_called_once_with((meeting,))
+
+
+@pytest.mark.usefixtures("use_test_session", "stub_publish")
+def test_a_re_aggregation_does_not_enqueue_personal_feedback(
+    mock_personal_feedback: object, db_session: Session, meeting: str, team: str
+) -> None:
+    service.record_completion(db_session, meeting, "extraction", _extraction(meeting))
+    db_session.flush()
+
+    tasks.aggregate(meeting, notify=False)
+
+    mock_personal_feedback.apply_async.assert_not_called()
+
+
+@pytest.mark.usefixtures("use_test_session")
+def test_send_personal_feedback_task_skips_a_team_without_slack(
+    db_session: Session, meeting: str, team: str
+) -> None:
+    with patch.object(tasks.service, "send_personal_feedback") as inner:
+        tasks.send_personal_feedback(meeting)
+
+    inner.assert_not_called()
