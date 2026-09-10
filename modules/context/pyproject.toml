@@ -8,7 +8,22 @@ dependencies = [
     "autune-core",
     "fastapi>=0.115",
     "celery>=5.4",
+    "sqlalchemy>=2.0",
     "pgvector>=0.3",
+    "httpx>=0.27",
+    "rank-bm25>=0.2",
+    "kiwipiepy>=0.18",
+    "numpy>=1.26",
+]
+
+[project.optional-dependencies]
+# In-process model implementations (``*_local``), for local development,
+# CI-free runs, and evaluation. The worker image runs the ``*_http`` clients
+# and does not install these. See docs/modules/context.md.
+local-models = [
+    "sentence-transformers>=3.0",
+    "torch>=2.2",
+    "transformers>=4.44",
 ]
 
 [build-system]

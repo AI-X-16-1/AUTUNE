@@ -102,3 +102,15 @@ def test_json_columns_are_jsonb() -> None:
     assert isinstance(_table("intel_reports").c.metrics_json.type, JSONB)
     assert isinstance(_table("intel_reports").c.source_meeting_ids.type, JSONB)
     assert isinstance(_table("intel_gap_patterns").c.source_gap_ids.type, JSONB)
+
+
+def test_intel_completion_stages_each_upstream_payload() -> None:
+    columns = set(_table("intel_completion").columns.keys())
+    assert {"extraction_payload", "gap_payload", "context_payload"} <= columns
+
+
+def test_the_payload_columns_are_jsonb() -> None:
+    from sqlalchemy.dialects.postgresql import JSONB
+
+    for name in ("extraction_payload", "gap_payload", "context_payload"):
+        assert isinstance(_table("intel_completion").c[name].type, JSONB)

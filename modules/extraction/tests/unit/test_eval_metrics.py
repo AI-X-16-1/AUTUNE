@@ -13,6 +13,7 @@ import pytest
 
 from autune_contracts.enums import UtteranceKind
 from autune_extraction.eval import (
+    EvalExample,
     EvalSetError,
     action_item_f1,
     load_eval_set,
@@ -223,6 +224,26 @@ def test_the_report_prints_the_reference_figure_beside_ours() -> None:
     assert "ICASSP 2023" in rendered
 
 
+def test_the_reference_figure_says_it_is_not_a_bar_we_cleared() -> None:
+    """The two numbers sit two lines apart and measure different things.
+
+    The first real run put 0.7255 above the published 0.4312, which reads as
+    beating the state of the art by two thirds. It is not: ours classifies one
+    utterance against a label we chose (AMI's ``Offer`` dialogue act), theirs
+    detects action items against AMI's abstractive ``actions``, on their split.
+
+    ``metrics.action_item_f1`` says so in its docstring, where nobody running
+    the harness reads it. This is the same sentence where they do.
+    """
+    rendered = format_report(score(ALL_FIVE, list(ALL_FIVE)), "abc123456789")
+
+    published = rendered.index("best published")
+    caveat = rendered.index("Not the same task")
+
+    assert published < caveat, "the caveat has to follow the number it qualifies"
+    assert "never as a bar we cleared" in rendered
+
+
 def test_the_report_survives_a_korean_windows_console() -> None:
     """The team runs Korean Windows, where the console encoding is cp949.
 
@@ -234,3 +255,67 @@ def test_the_report_survives_a_korean_windows_console() -> None:
 
     rendered.encode("cp949")
     assert rendered.isascii()
+
+
+def test_a_duplicate_utterance_in_the_predictions_silently_wins_no_longer(
+    tmp_path: Path,
+) -> None:
+    """Two runs concatenated, or one resumed after a stop, is the realistic shape.
+
+    dict assignment let the later line overwrite the earlier one and the score
+    came out on whichever half was second, with no warning — while every other
+    malformed shape in this file raises. Missing utterances were caught and
+    duplicated ones were not, which is the asymmetry.
+    """
+    eval_set = _write_jsonl(
+        tmp_path / "eval.jsonl",
+        [
+            {"utterance_id": "utt_1", "kind": "commitment", "text": "제가 하겠습니다"},
+            {"utterance_id": "utt_2", "kind": "concern", "text": "그건 좀 어렵지 않을까요"},
+        ],
+    )
+    predictions = _write_jsonl(
+        tmp_path / "run.jsonl",
+        [
+            {"utterance_id": "utt_1", "kind": "commitment"},
+            {"utterance_id": "utt_2", "kind": "concern"},
+            {"utterance_id": "utt_2", "kind": "commitment"},
+        ],
+    )
+
+    loaded = load_eval_set(eval_set)
+    with pytest.raises(EvalSetError, match="line 3: duplicate utterance_id"):
+        load_predictions(predictions, loaded)
+
+
+def test_a_duplicate_utterance_in_the_evaluation_set_raises(tmp_path: Path) -> None:
+    """The same defect from the other side: gold counts it twice, predictions once."""
+    path = _write_jsonl(
+        tmp_path / "eval.jsonl",
+        [
+            {"utterance_id": "utt_1", "kind": "commitment", "text": "제가 하겠습니다"},
+            {"utterance_id": "utt_1", "kind": "concern", "text": "제가 하겠습니다"},
+        ],
+    )
+
+    with pytest.raises(EvalSetError, match="line 2: duplicate utterance_id"):
+        load_eval_set(path)
+
+
+def test_the_loaded_example_does_not_carry_the_utterance_text() -> None:
+    """Invariant 11, made structural rather than watched.
+
+    Scoring never reads the text, so keeping it was meeting content held in
+    memory for no reason — and reachable by any dataclass repr that lands in a
+    traceback. The field set is asserted whole so adding it back fails here.
+    """
+    assert set(EvalExample.__dataclass_fields__) == {"utterance_id", "kind"}
+
+
+def test_a_line_without_text_is_still_rejected(tmp_path: Path) -> None:
+    """The field is required by the format even though the value is not kept."""
+    path = tmp_path / "eval.jsonl"
+    path.write_text(json.dumps({"utterance_id": "utt_1", "kind": "commitment"}), encoding="utf-8")
+
+    with pytest.raises(EvalSetError, match="line 1: KeyError"):
+        load_eval_set(path)

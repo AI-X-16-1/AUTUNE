@@ -18,6 +18,8 @@ from __future__ import annotations
 
 from celery import shared_task
 
+# Importing ``pipeline`` registers the worker_process_init warm-up hook.
+from autune_context import pipeline  # noqa: F401
 from autune_contracts import ExtractionResult, TranscriptReady, validate_major_version
 from autune_core import get_logger
 

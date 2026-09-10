@@ -35,7 +35,7 @@ def test_upgrade_creates_then_downgrade_removes_every_intel_table() -> None:
     subprocess.run([*ALEMBIC, "upgrade", "heads"], check=True)
     assert _intel_tables_in_db() == INTEL_TABLES
 
-    subprocess.run([*ALEMBIC, "downgrade", "intelligence@-1"], check=True)
+    subprocess.run([*ALEMBIC, "downgrade", "intelligence@base"], check=True)
     assert _intel_tables_in_db() == set()
 
     subprocess.run([*ALEMBIC, "upgrade", "heads"], check=True)

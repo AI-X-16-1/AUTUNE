@@ -45,6 +45,12 @@ def format_report(report: Report, eval_set_fingerprint: str) -> str:
         "",
         f"action item F1       {derived:.4f}   derived from the commitment class",
         f"best published (AMI) {AMI_BEST_PUBLISHED_ACTION_ITEM_F1:.4f}   Liu et al., ICASSP 2023",
+        "",
+        "      Not the same task, so the gap between those two means nothing.",
+        "      Ours classifies one utterance against a label we chose (AMI's Offer",
+        "      dialogue act); theirs detects action items against AMI's abstractive",
+        "      actions, on their own split. Read the published figure as the order",
+        "      of magnitude the task sits at, never as a bar we cleared.",
     ]
 
     if report.absent_kinds:
