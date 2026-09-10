@@ -224,6 +224,26 @@ def test_the_report_prints_the_reference_figure_beside_ours() -> None:
     assert "ICASSP 2023" in rendered
 
 
+def test_the_reference_figure_says_it_is_not_a_bar_we_cleared() -> None:
+    """The two numbers sit two lines apart and measure different things.
+
+    The first real run put 0.7255 above the published 0.4312, which reads as
+    beating the state of the art by two thirds. It is not: ours classifies one
+    utterance against a label we chose (AMI's ``Offer`` dialogue act), theirs
+    detects action items against AMI's abstractive ``actions``, on their split.
+
+    ``metrics.action_item_f1`` says so in its docstring, where nobody running
+    the harness reads it. This is the same sentence where they do.
+    """
+    rendered = format_report(score(ALL_FIVE, list(ALL_FIVE)), "abc123456789")
+
+    published = rendered.index("best published")
+    caveat = rendered.index("Not the same task")
+
+    assert published < caveat, "the caveat has to follow the number it qualifies"
+    assert "never as a bar we cleared" in rendered
+
+
 def test_the_report_survives_a_korean_windows_console() -> None:
     """The team runs Korean Windows, where the console encoding is cp949.
 
