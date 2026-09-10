@@ -28,7 +28,11 @@ def test_decision_density_caps_at_one() -> None:
 
 def test_decision_density_tolerates_zero_duration() -> None:
     assert service._decision_density(1, 0.0) == pytest.approx(1.0)
-    assert service._decision_density(0, 0.0) == pytest.approx(0.0)
+
+
+def test_decision_density_is_none_with_no_decisions() -> None:
+    assert service._decision_density(0, 30.0) is None
+    assert service._decision_density(0, 0.0) is None
 
 
 def test_gap_burden_is_one_with_no_high_gaps() -> None:

@@ -129,11 +129,17 @@ def test_only_context_present_scores_neutral(db_session: Session, meeting: str) 
 
 
 def test_re_aggregation_after_reopen_updates_the_score(db_session: Session, meeting: str) -> None:
-    _stage(db_session, meeting, "extraction", _extraction(meeting, decisions=0, items=0))
+    from autune_core import Meeting
+
+    db_session.get(Meeting, meeting).duration_seconds = 3600  # 60 min: density scales below cap
+    db_session.flush()
+
+    _stage(db_session, meeting, "extraction", _extraction(meeting, decisions=1, items=0))
     first = service.aggregate_meeting(db_session, meeting)
     db_session.flush()
     assert first is not None
     low = db_session.get(IntelScore, meeting).decision_density
+    assert low is not None
 
     _stage(db_session, meeting, "extraction", _extraction(meeting, decisions=6, items=0))
     service.reopen(db_session, meeting)

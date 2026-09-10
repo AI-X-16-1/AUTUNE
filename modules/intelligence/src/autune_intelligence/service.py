@@ -98,7 +98,15 @@ def ready_to_aggregate(row: IntelCompletion, *, now: datetime | None = None) -> 
 
 
 DECISION_CADENCE_MINUTES: Final = 10.0
-"""One decision per this many minutes scores decision_density 1.0."""
+"""One decision per this many minutes scores decision_density 1.0.
+
+What counts as "one decision" is B's grouping, not a fixed unit: several
+utterances become one ``Decision`` only if they fall inside
+``autune_extraction.decisions.DEFAULT_MAX_GAP``. That constant is unvalidated
+(#53, ADR 0006), and because the density is capped at 1.0, over-splitting there
+reads here as a *better* meeting. Retune this against the same evaluation set,
+not independently.
+"""
 HIGH_GAP_CEILING: Final = 5
 """This many HIGH-severity gaps drives gap_burden to 0.0."""
 WEIGHTS: Final = {
@@ -115,7 +123,17 @@ _MAX_PATTERN_TYPE: Final = 100
 ``String(100)`` and part of the PK; truncate before it reaches the table."""
 
 
-def _decision_density(decision_count: int, duration_minutes: float) -> float:
+def _decision_density(decision_count: int, duration_minutes: float) -> float | None:
+    """None when B reported no decisions — "not measured", not "scored zero".
+
+    Until the extraction classifier (#10) ships, ``ExtractionResult.decisions``
+    is always empty, so a ``0.0`` here would peg 0.3 of every meeting's score to
+    zero. Returning ``None`` lets ``_quality_score`` renormalise the weight away.
+    The cost: a meeting that genuinely ended with no decisions now scores the
+    same as one we could not measure.
+    """
+    if decision_count == 0:
+        return None
     expected = max(1.0, duration_minutes / DECISION_CADENCE_MINUTES)
     return min(1.0, decision_count / expected)
 
