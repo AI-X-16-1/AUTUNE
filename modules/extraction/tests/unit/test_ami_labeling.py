@@ -6,9 +6,12 @@ can be argued with in review without anyone downloading 207MB first.
 
 from __future__ import annotations
 
+import inspect
+
 import pytest
 
 from autune_contracts.enums import UtteranceKind
+from autune_extraction.labeling import ami
 from autune_extraction.labeling.ami import (
     ADJACENCY_PAIRS,
     ASSERTIVE_ACTS,
@@ -107,7 +110,7 @@ def test_precedence_covers_every_kind() -> None:
 
 
 def test_a_hesitant_question_stays_a_question() -> None:
-    """362 cases in AMI, and the reason the ordering was changed.
+    """406 cases in AMI, the largest single rule, and why the ordering changed.
 
     An ``ambiguous`` label triggers a DM asking the speaker whether they meant to
     commit. "Do we need an LCD display?" is a question — the person was not
@@ -241,3 +244,59 @@ def _label_everything() -> list[Label]:
     evidence += [Evidence(dialogue_act=act) for act in DIALOGUE_ACTS]
     evidence += [Evidence(adjacency_pair_type=pair) for pair in ADJACENCY_PAIRS]
     return [label for item in evidence if (label := label_for(item)) is not None]
+
+
+# --- the numbers in the prose are the numbers ------------------------------
+
+
+MEASURED = {
+    "labelled": "17,876",
+    "contested": "809",
+    "open_question over ambiguous": "406",
+    "decision total": "365",
+    "ambiguous over commitment": "5",
+}
+"""What ``scripts/ami_label_conflicts.py`` reports on AMI 1.6.2.
+
+Not a claim about the model — a claim about what the prose beside ``PRECEDENCE``
+says, which is the only thing a reader has to go on when deciding whether the
+ordering was chosen or guessed.
+"""
+
+
+def test_the_reasoning_beside_precedence_quotes_the_current_numbers() -> None:
+    """The counts moved when ``ASSERTIVE_ACTS`` landed and the docstring did not.
+
+    It kept 21,601 / 1,439 / 362 from before the gate, and said ``decision`` was
+    "most of the disagreement" — which the gate had made false, in the same
+    commit that made it false. A file whose whole purpose is keeping the reason
+    next to the constant went stale internally, and a human reviewer caught it
+    rather than a test.
+    """
+    source = inspect.getsource(ami)
+
+    for label, number in MEASURED.items():
+        assert number in source, f"{label} ({number}) is missing from ami.py"
+
+    for stale in ("21,601", "1,439", "362 cases", "31 cases"):
+        # One deliberate mention survives: the docstring says what it used to
+        # claim, so the correction is legible rather than silent.
+        assert source.count(stale) <= 1, f"{stale} appears more than once"
+
+
+def test_the_share_decision_wins_is_stated_and_current() -> None:
+    """``decision`` is 365 of 809 — 45%, and no longer the largest rule.
+
+    The prose said it was "most of the disagreement", which was true until
+    ``ASSERTIVE_ACTS`` removed 606 conflicts it had been winning over ``Elicit-*``
+    acts it should never have promoted.
+
+    Checked as "the current share is stated" rather than "the old phrase is
+    absent": the old phrase is quoted a few lines up, on purpose, so the
+    correction is legible instead of silent. A test that forbids a string
+    forbids the sentence explaining why it was wrong.
+    """
+    source = inspect.getsource(ami)
+
+    assert "365 of the 809" in source
+    assert "45%, not most" in source

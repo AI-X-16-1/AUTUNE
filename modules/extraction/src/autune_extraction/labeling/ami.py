@@ -126,31 +126,41 @@ PRECEDENCE: Final[tuple[UtteranceKind, ...]] = (
 
 AMI does not say. This ordering was a judgement, and then
 ``scripts/ami_label_conflicts.py`` measured it against the corpus: 117,915
-dialogue acts, 21,601 labelled, **1,439 of them contested (6.7%)**. Frequent
+dialogue acts, 17,876 labelled, **809 of them contested (4.5%)**. Frequent
 enough that the ordering decides real training data, so the counts below are
 per rule rather than a total.
 
-``decision`` first, and it is most of the disagreement. An extractive decision
-span is the most specific human judgement in the corpus, a person pointing at
-where the meeting settled something, and it is the field module D keys a lineage
-on. A decision demoted to something else costs more than the reverse.
+**Every number here is post-``ASSERTIVE_ACTS``.** An earlier version of this
+docstring kept the counts from before that gate — 21,601 labelled, 1,439
+contested — and said "``decision`` first, and it is most of the disagreement",
+which the gate had already made false. Reasoning next to a constant is the whole
+point of this file, and it went stale inside the commit that changed it.
+
+``decision`` first, and it accounts for **365 of the 809** — 45%, not most. An
+extractive decision span is the most specific human judgement in the corpus, a
+person pointing at where the meeting settled something, and it is the field
+module D keys a lineage on. A decision demoted to something else costs more than
+the reverse.
 
 It only outranks anything for the acts in ``ASSERTIVE_ACTS``. The span is a
 region and not an utterance, so promoting everything inside it labelled "Hmm."
 and "Um." as decisions — a third of the class, and every one of them an act
-``EXCLUDED_ACTS`` had already refused by name.
+``EXCLUDED_ACTS`` had already refused by name. That gate is also why ``decision``
+stopped being most of the disagreement: 606 of the conflicts it used to win were
+``Elicit-*`` acts it should never have been promoting.
 
-``open_question`` over ``ambiguous`` — 362 cases, and **the measurement is what
-put it there.** The ordering originally ran the other way, on the reasoning that
-polarity is the better-informed layer. Reading the cases it produced showed that
-is wrong here: they are questions, not hedged assent.
+``open_question`` over ``ambiguous`` — **406 cases, the largest single rule at
+50%**, and **the measurement is what put it there.** The ordering originally ran
+the other way, on the reasoning that polarity is the better-informed layer.
+Reading the cases it produced showed that is wrong here: they are questions, not
+hedged assent.
 
     [Elicit-Assessment/UNC]  Do we need an L_C_D_ display?
     [Elicit-Inform/UNC]      Is that something they want actually written on it,
 
 An ``ambiguous`` label triggers a DM asking the speaker whether they meant to
 commit (#12). Asking that about a question is not a near miss — the person was
-not assenting at all, and 362 of them is a steady stream of DMs that make the
+not assenting at all, and 406 of them is a steady stream of DMs that make the
 product look like it is not listening.
 
 ``ambiguous`` over ``commitment`` — 5 cases. This is the "한번 볼게요" rule, and it
@@ -166,7 +176,7 @@ rarely land on the same utterance in any corpus. Keep the rule, because calling
 "let me see" a commitment is exactly the error ADR 0006 asks us to catch. Do not
 tune anything on the strength of it.
 
-``concern`` over the two below it — 31 cases, and mixed. "how are we going to
+``concern`` over the two below it — 33 cases, and mixed. "how are we going to
 achieve this high-end product if" is a concern; "Uh what can a T_V_ do?" is a
 question that happened to answer something negatively. Kept above
 ``open_question`` because a concern feeds gap detection and costs nobody a DM
