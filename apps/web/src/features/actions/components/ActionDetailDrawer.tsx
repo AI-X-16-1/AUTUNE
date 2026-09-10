@@ -2,10 +2,9 @@
 
 import { useState } from "react";
 
-import { Button, Quote, StatusDot } from "@/shared/ui";
+import { Button, MaskedText, Quote, StatusDot } from "@/shared/ui";
 
 import { ConfirmDelete } from "./ConfirmDelete";
-import { MaskedText } from "./MaskedText";
 import { COLUMNS, COLUMN_LABELS, isCandidate } from "../types";
 import type { ActionItem, ActionStatus } from "../types";
 

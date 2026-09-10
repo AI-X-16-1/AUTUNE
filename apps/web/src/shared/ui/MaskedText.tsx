@@ -1,9 +1,15 @@
 import { Fragment } from "react";
 
-import { PiiToken } from "@/shared/ui";
+import { PiiToken } from "./PiiToken";
 
 /**
  * Transcript text with its masked spans marked.
+ *
+ * Shared because more than one screen renders transcript text — S18's evidence
+ * quotes and S13's live transcript — and they have to draw a redaction the same
+ * way. Features may not import each other, so a copy per feature was the only
+ * alternative, and two copies of `MASKED` drift the way the two copies of the
+ * personal-data patterns did in #126.
  *
  * Masking happens in module A before the first write (`privacy.md` section 2),
  * and the format preserves shape while removing content — `010-****-5678`,
