@@ -98,7 +98,10 @@ def transcribe(
     on a short or noisy opening picks the wrong language and the whole meeting
     comes back as nonsense. Pass ``None`` to detect.
 
-    ``glossary`` is this meeting's vocabulary, from ``glossary.build_prompt``.
+    ``glossary`` is this meeting's vocabulary, from
+    ``glossary.build_prompt(mode=settings.glossary_mode)`` — it has to be built
+    for the channel it will travel on, because the two truncate from opposite
+    ends.
     Evaluation 01 measured term accuracy at 10/31 without it. How it is fed to
     the model is one decision, made in ``_glossary_kwargs`` — the two mechanisms
     behave differently over a long recording and the difference is measured

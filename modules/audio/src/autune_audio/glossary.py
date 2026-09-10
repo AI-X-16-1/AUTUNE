@@ -19,33 +19,47 @@ See docs/modules/audio-evaluations/01-baseline-large-v3.md and issue #118.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable, Sequence
+
+from .config import get_settings
 
 # Whisper reserves half its context for the prompt: `max_length // 2 - 1`, which
 # is 223 for every model we run. Kept a little under, because the count here is
 # over our own terms and the framing sentence is tokenised too.
 PROMPT_TOKEN_BUDGET = 200
 
-# Korean is roughly one token per syllable and latin terms run two to four
-# tokens each. Whisper's tokeniser is not importable without loading a model, so
-# this estimates rather than counts, and estimates high: overrunning the window
-# drops terms silently, and dropping one we thought we sent is the failure this
+# Whisper's tokeniser is not importable without loading a model, so this
+# estimates. It must estimate **high**: the window drops what does not fit, in
+# silence, and dropping a term we believed we had sent is the failure this
 # module exists to prevent.
-_TOKENS_PER_LATIN_WORD = 4
-_TOKENS_PER_HANGUL_CHAR = 1
+#
+# An earlier version counted whitespace-separated words and came out 28-56%
+# under, because BPE does not treat a hyphenated compound as one word:
+# ECAPA-TDNN is eight tokens, not four. Separators are word boundaries here for
+# the same reason they are to the tokeniser.
+_TOKENS_PER_LATIN_PIECE = 4
+_TOKENS_PER_HANGUL_CHAR = 2
+
+_PIECE = re.compile(r"[A-Za-z0-9]+")
 
 
 def estimate_tokens(text: str) -> int:
-    """A deliberate over-estimate of what Whisper will make of ``text``."""
+    """An upper bound on what Whisper will make of ``text``.
+
+    Verified against ``large-v3``'s own tokeniser; every term in
+    ``PROJECT_TERMS`` and every name tried came out at or below this number.
+    Being wasteful costs a low-priority term; being optimistic costs whichever
+    term the window happens to cut.
+    """
     hangul = sum(1 for c in text if "가" <= c <= "힣")
-    words = len([w for w in text.split() if any(c.isascii() and c.isalnum() for c in w)])
-    return hangul * _TOKENS_PER_HANGUL_CHAR + words * _TOKENS_PER_LATIN_WORD
+    pieces = len(_PIECE.findall(text))
+    return hangul * _TOKENS_PER_HANGUL_CHAR + pieces * _TOKENS_PER_LATIN_PIECE
 
 
 # The stack this project is actually built on, which is what the recording
-# showed the model cannot spell. Ordered least to most important, because
-# `initial_prompt` is truncated from the *front*: `previous_tokens[-(n):]` keeps
-# the tail, so anything that has to survive goes last.
+# showed the model cannot spell. Ordered least to most important; ``build_prompt``
+# decides which end that has to come out of.
 PROJECT_TERMS: tuple[str, ...] = (
     "Tailwind",
     "Next.js",
@@ -88,35 +102,57 @@ def build_prompt(
     participants: Sequence[str] = (),
     corrections: Sequence[str] = (),
     terms: Sequence[str] = PROJECT_TERMS,
+    mode: str | None = None,
     budget: int = PROMPT_TOKEN_BUDGET,
 ) -> str:
-    """One meeting's glossary, as the sentence handed to Whisper.
+    """One meeting's glossary, in the order the chosen channel will not cut.
 
-    Priority runs the other way from the text: what matters most is emitted
-    last, because the front of an over-long prompt is what gets dropped.
+    Priority, least to most:
 
+    - ``terms`` is the project stack.
+    - ``corrections`` are terms a user has already fixed by hand in this team's
+      transcripts. Somebody told us the model got these wrong; that is stronger
+      evidence than our own guess at what matters.
     - ``participants`` are the most expensive to lose. A wrong name does not
       look wrong, and module B maps assignees by name — 박준호 heard as 박준우
       silently drops the action item's owner. Two of four names were wrong in
       evaluation 01.
-    - ``corrections`` are terms a user has already fixed by hand in this team's
-      transcripts. Somebody told us the model got these wrong; that is stronger
-      evidence than our own guess at what matters.
-    - ``terms`` is the project stack.
+
+    ``mode`` defaults to ``AUTUNE_AUDIO_GLOSSARY_MODE``, so the glossary is
+    always built for the channel it will actually travel on.
+
+    **Which end that comes out of depends on ``mode``, because the two channels
+    truncate from opposite ends.** ``hotwords`` keeps its first 223 tokens and
+    drops the rest; ``initial_prompt`` lands in ``previous_tokens``, which keeps
+    the *last* 223. Emitting in one fixed order would put the names exactly
+    where the default channel cuts.
+
+    ``both`` follows ``hotwords``: one of the two has to be wrong, and the
+    measurement in issue #118 has ``hotwords`` doing the work.
+
+    The framing sentence is only for ``prompt``. ``hotwords`` is a list of words
+    to boost, not a sentence, so a prefix there would boost 회의 and 녹취록 and
+    spend budget doing it.
 
     Returns an empty string when there is nothing to say, so a caller can pass
     the result straight through — Whisper treats "" and None alike, and a
     special case here would be one the caller has to remember.
     """
+    # Read from settings rather than defaulted here: a default would be a second
+    # place the channel is decided, and the two would drift the first time
+    # anyone changed the setting. The glossary would then be built for the end
+    # that gets cut, silently.
+    mode = mode if mode is not None else get_settings().glossary_mode
+
     ordered = _dedupe(terms, corrections, participants)
     if not ordered:
         return ""
 
-    prefix = "회의 녹취록. 사용 용어: "
+    prefix = "회의 녹취록. 사용 용어: " if mode == "prompt" else ""
     kept: list[str] = []
     used = estimate_tokens(prefix)
-    # Backwards, so that a budget too small to hold everything drops the terms
-    # we would rather lose rather than the ones we would not.
+    # Most important first while packing, so a budget too small to hold
+    # everything drops the terms we would rather lose.
     for term in reversed(ordered):
         cost = estimate_tokens(term) + 1  # the separator
         if used + cost > budget:
@@ -124,7 +160,9 @@ def build_prompt(
         kept.append(term)
         used += cost
 
-    kept.reverse()
+    if mode == "prompt":
+        # This channel keeps the tail, so what has to survive is emitted last.
+        kept.reverse()
     return prefix + ", ".join(kept) + "."
 
 
