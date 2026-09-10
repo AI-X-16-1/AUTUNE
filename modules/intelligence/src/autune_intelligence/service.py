@@ -406,16 +406,20 @@ def get_dashboard(session: Session, team_id: str) -> DashboardRead:
 # written to a table, never returned for anyone else. docs/architecture/privacy.md
 # section 3 is binding here.
 
-_MIN_CONSENTING_FOR_RATIO: Final = 3
-"""Below this many consenting participants, the ratio is withheld entirely.
+_MIN_SPEAKERS_FOR_RATIO: Final = 3
+"""Below this many *consenting participants who spoke*, the ratio is withheld.
 
-The shares of the measured participants sum to 1.0, so at two consenting
-participants a recipient's ``1 - ratio`` is the other person's share exactly —
+The measured shares sum to 1.0, so when only two people's speech is in the
+denominator a recipient's ``1 - ratio`` is the other person's share exactly —
 the response would *contain* someone else's speaking ratio, which
 docs/architecture/privacy.md section 3 forbids. An above/below-baseline band
-does not help: at N=2 the two are mirror images. So the number does not go out
-at all — ``/me/speaking-ratio`` answers with ``reason="small_meeting"`` and no
-DM is sent."""
+does not help: with two, the two are mirror images. So the number does not go
+out at all — ``/me/speaking-ratio`` answers with ``reason="small_meeting"`` and
+no DM is sent.
+
+The gate counts speakers, not the consenting head count: a meeting with three
+consenting participants where one only listened still splits its speech two
+ways, and that is the case this guards."""
 
 
 def compute_speaking_shares(session: Session, meeting_id: str) -> list[SpeakingShare]:
@@ -471,8 +475,9 @@ def speaking_ratio_for_user(
     into a 404. Otherwise a ``SpeakingRatioRead`` comes back, and its ``ratio``
     may still be ``None``:
 
-    - ``reason="small_meeting"`` — fewer than ``_MIN_CONSENTING_FOR_RATIO``
-      participants consented, so any real number would fix another person's.
+    - ``reason="small_meeting"`` — fewer than ``_MIN_SPEAKERS_FOR_RATIO``
+      consenting participants actually spoke, so any real number would fix
+      another person's.
     - ``reason="not_measured"`` — the requester did not consent to attribution,
       so their speech is not in the measured set. Distinct from a consenting
       participant who was simply silent, who gets ``0.0``.
@@ -486,60 +491,71 @@ def speaking_ratio_for_user(
     if participant is None:
         return None
 
-    consenting = _consented_participant_count(session, meeting_id)
-    if consenting < _MIN_CONSENTING_FOR_RATIO:
+    shares = compute_speaking_shares(session, meeting_id)
+    # The baseline is 1 / (consenting participants), silent ones included; the
+    # gate counts only the speakers the ratio is actually split between.
+    participant_count = _consented_participant_count(session, meeting_id)
+
+    if len(shares) < _MIN_SPEAKERS_FOR_RATIO:
         return SpeakingRatioRead(
             meeting_id=meeting_id,
             ratio=None,
-            participant_count=consenting,
+            participant_count=participant_count,
             reason="small_meeting",
         )
     if not participant.consented:
         return SpeakingRatioRead(
             meeting_id=meeting_id,
             ratio=None,
-            participant_count=consenting,
+            participant_count=participant_count,
             reason="not_measured",
         )
 
-    mine = next(
-        (
-            s
-            for s in compute_speaking_shares(session, meeting_id)
-            if s.participant_id == participant.id
-        ),
-        None,
-    )
+    mine = next((s for s in shares if s.participant_id == participant.id), None)
     return SpeakingRatioRead(
         meeting_id=meeting_id,
         ratio=mine.ratio if mine is not None else 0.0,
-        participant_count=consenting,
+        participant_count=participant_count,
         reason=None,
         stored=False,
     )
+
+
+def _deliver_personal(
+    slack: SlackApi, recipient_user_id: str, fallback: str, blocks: list[dict]
+) -> None:
+    """Send a DM that describes exactly one person, to that person only.
+
+    Takes a single id and uses it for both the guard's subject and the
+    recipient, so the two cannot drift apart at a call site — the reason
+    ``assert_personal_delivery`` takes them separately (it also refuses a
+    channel) is that in other flows they come from different places.
+    """
+    assert_personal_delivery(
+        subject_id=recipient_user_id, recipient_id=recipient_user_id, is_direct=True
+    )
+    slack.send_dm(recipient_user_id, fallback, blocks)
 
 
 def send_personal_feedback(session: Session, slack: SlackApi, meeting_id: str) -> int:
     """DM each identified participant their own speaking ratio. Returns the count.
 
     A speaker with no linked user account cannot be reached and is skipped. The
-    ratio is not stored anywhere; this function writes nothing. The delivery goes
-    through ``assert_personal_delivery``, which refuses any recipient but the
-    subject and refuses a channel.
+    ratio is withheld entirely — no DM at all — when fewer than
+    ``_MIN_SPEAKERS_FOR_RATIO`` consenting participants spoke, for the same
+    reason ``/me/speaking-ratio`` withholds it. The ratio is not stored
+    anywhere; this function writes nothing.
     """
     shares = compute_speaking_shares(session, meeting_id)
-    if not shares:
-        return 0
-
-    participant_count = _consented_participant_count(session, meeting_id)
-    if participant_count < _MIN_CONSENTING_FOR_RATIO:
+    if len(shares) < _MIN_SPEAKERS_FOR_RATIO:
         log.info(
             "speaking_ratio_feedback_withheld_small_meeting",
             meeting_id=meeting_id,
-            consenting=participant_count,
+            speakers=len(shares),
         )
         return 0
 
+    participant_count = _consented_participant_count(session, meeting_id)
     sent = 0
     for share in shares:
         if share.user_id is None:
@@ -549,13 +565,10 @@ def send_personal_feedback(session: Session, slack: SlackApi, meeting_id: str) -
                 participant_id=share.participant_id,
             )
             continue
-        assert_personal_delivery(
-            subject_id=share.user_id, recipient_id=share.user_id, is_direct=True
-        )
         fallback, blocks = build_speaking_ratio_dm(
             ratio=share.ratio, participant_count=participant_count
         )
-        slack.send_dm(share.user_id, fallback, blocks)
+        _deliver_personal(slack, share.user_id, fallback, blocks)
         sent += 1
 
     log.info("speaking_ratio_feedback_sent", meeting_id=meeting_id, recipients=sent)

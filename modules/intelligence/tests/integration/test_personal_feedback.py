@@ -107,9 +107,7 @@ def test_a_speaker_with_no_user_account_is_skipped(db_session: Session, meeting:
     assert bob in {m.channel for m in slack.sent}
 
 
-def test_no_dm_goes_out_below_three_consenting_participants(
-    db_session: Session, meeting: str
-) -> None:
+def test_no_dm_goes_out_when_only_two_people_spoke(db_session: Session, meeting: str) -> None:
     alice = _user(db_session, "alice")
     bob = _user(db_session, "bob")
     p_alice = _participant(db_session, meeting, user_id=alice, label="Alice")
@@ -122,6 +120,26 @@ def test_no_dm_goes_out_below_three_consenting_participants(
     sent = service.send_personal_feedback(db_session, slack, meeting)
 
     assert sent == 0
+    assert slack.sent == []
+
+
+def test_no_dm_when_a_third_consenting_participant_only_listened(
+    db_session: Session, meeting: str
+) -> None:
+    alice = _user(db_session, "alice")
+    bob = _user(db_session, "bob")
+    carol = _user(db_session, "carol")
+    p_alice = _participant(db_session, meeting, user_id=alice, label="Alice")
+    p_bob = _participant(db_session, meeting, user_id=bob, label="Bob")
+    _participant(db_session, meeting, user_id=carol, label="Carol")  # consented, silent
+    _utter(db_session, meeting, p_alice, 0.0, 30.0)
+    _utter(db_session, meeting, p_bob, 30.0, 40.0)
+    db_session.flush()
+    slack = FakeSlack()
+
+    sent = service.send_personal_feedback(db_session, slack, meeting)
+
+    assert sent == 0  # only two people's speech — alice would fix bob's
     assert slack.sent == []
 
 

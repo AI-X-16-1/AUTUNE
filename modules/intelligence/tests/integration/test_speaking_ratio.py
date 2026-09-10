@@ -113,9 +113,12 @@ def test_a_consenting_silent_participant_gets_zero_not_a_404(
     app_for, db_session: Session, meeting: str
 ) -> None:
     who = _three_consenting(db_session, meeting)
+    dave = _user(db_session, "dave")
+    p_dave = _participant(db_session, meeting, user_id=dave, label="Dave")
     _utter(db_session, meeting, who["p_alice"], 0.0, 30.0)
     _utter(db_session, meeting, who["p_bob"], 30.0, 40.0)
-    db_session.flush()
+    _utter(db_session, meeting, p_dave, 40.0, 60.0)
+    db_session.flush()  # three speakers; carol consented but never spoke
 
     body = app_for(who["carol"]).get(f"/api/intelligence/me/speaking-ratio/{meeting}").json()
 
@@ -123,24 +126,23 @@ def test_a_consenting_silent_participant_gets_zero_not_a_404(
     assert body["reason"] is None
 
 
-def test_ratio_is_withheld_below_three_consenting_participants(
+def test_ratio_is_withheld_when_fewer_than_three_consenting_participants_spoke(
     app_for, db_session: Session, meeting: str
 ) -> None:
-    alice = _user(db_session, "alice")
-    bob = _user(db_session, "bob")
-    p_alice = _participant(db_session, meeting, user_id=alice, label="Alice")
-    p_bob = _participant(db_session, meeting, user_id=bob, label="Bob")
-    _utter(db_session, meeting, p_alice, 0.0, 30.0)
-    _utter(db_session, meeting, p_bob, 30.0, 40.0)
+    # three consenting participants, but carol only listened — the speech is
+    # split two ways, so alice's ratio would fix bob's exactly.
+    who = _three_consenting(db_session, meeting)
+    _utter(db_session, meeting, who["p_alice"], 0.0, 30.0)
+    _utter(db_session, meeting, who["p_bob"], 30.0, 40.0)
     db_session.flush()
 
-    response = app_for(alice).get(f"/api/intelligence/me/speaking-ratio/{meeting}")
+    response = app_for(who["alice"]).get(f"/api/intelligence/me/speaking-ratio/{meeting}")
 
     assert response.status_code == 200  # not 404 — that means "not in this meeting"
     body = response.json()
     assert body["ratio"] is None
     assert body["reason"] == "small_meeting"
-    assert body["participant_count"] == 2
+    assert body["participant_count"] == 3
 
 
 def test_a_non_consenting_participant_is_told_they_are_not_measured(
@@ -150,8 +152,10 @@ def test_a_non_consenting_participant_is_told_they_are_not_measured(
     dave = _user(db_session, "dave")
     p_dave = _participant(db_session, meeting, user_id=dave, label="Dave", consented=False)
     _utter(db_session, meeting, who["p_alice"], 0.0, 30.0)
-    _utter(db_session, meeting, p_dave, 30.0, 90.0)
-    db_session.flush()
+    _utter(db_session, meeting, who["p_bob"], 30.0, 45.0)
+    _utter(db_session, meeting, who["p_carol"], 45.0, 60.0)
+    _utter(db_session, meeting, p_dave, 60.0, 120.0)
+    db_session.flush()  # three consenting speakers, so the number is not withheld
 
     body = app_for(dave).get(f"/api/intelligence/me/speaking-ratio/{meeting}").json()
 
@@ -178,17 +182,20 @@ def test_the_route_requires_authentication(app_for, meeting: str) -> None:
     assert response.status_code in (401, 403)
 
 
-def test_there_is_no_route_that_names_another_user(
-    app_for, db_session: Session, meeting: str
-) -> None:
-    alice = _user(db_session, "alice")
-    db_session.flush()
+def test_no_intelligence_route_is_keyed_on_a_person() -> None:
+    """The privacy guarantee is structural: no route takes a subject id, so
+    there is no shape of a request that asks for someone else's data. This fails
+    the moment a ``{user_id}`` / ``{subject_id}`` path parameter is added.
+    """
+    from autune_intelligence.router import router
 
-    # a subject in the path is simply not routed
-    assert (
-        app_for(alice).get(f"/api/intelligence/me/speaking-ratio/{meeting}/{alice}").status_code
-        == 404
-    )
+    person_params = ("user_id", "subject_id", "participant_id", "speaker_id")
+    offenders = [
+        route.path
+        for route in router.routes
+        if any(f"{{{name}}}" in getattr(route, "path", "") for name in person_params)
+    ]
+    assert offenders == [], offenders
 
 
 # --- service edge cases -------------------------------------------------
