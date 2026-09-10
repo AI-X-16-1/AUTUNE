@@ -47,4 +47,4 @@ def test_ready_when_partial_but_the_timeout_has_elapsed() -> None:
 
 def test_unknown_source_is_rejected_before_any_database_use() -> None:
     with pytest.raises(ValueError, match="unknown source"):
-        service.record_completion(None, "mtg_1", "audio")  # type: ignore[arg-type]
+        service.record_completion(None, "mtg_1", "audio", {})  # type: ignore[arg-type]

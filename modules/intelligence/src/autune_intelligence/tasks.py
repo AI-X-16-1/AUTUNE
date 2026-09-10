@@ -5,16 +5,23 @@ three have reported or when the timeout elapses, and records which sources were
 missing. It never blocks a user-visible result on a failed module.
 
 The handlers parse a contract and delegate to ``service``; only the Celery
-enqueue lives here, because ``service`` never imports a task. Scoring,
-classification, prediction and publishing ``IntelligenceSnapshot`` are P0.3 —
-``aggregate`` here only closes the completion lifecycle.
+enqueue lives here, because ``service`` never imports a task. ``aggregate`` runs
+``service.aggregate_meeting`` and publishes the resulting ``IntelligenceSnapshot``
+on ``autune.intelligence.completed``; a source that arrives after the first pass
+reopens the meeting and re-enqueues ``aggregate``.
 """
 
 from __future__ import annotations
 
-from celery import shared_task
+from celery import current_app, shared_task
 
-from autune_contracts import ContextLinks, ExtractionResult, GapReport, validate_major_version
+from autune_contracts import (
+    INTELLIGENCE_COMPLETED,
+    ContextLinks,
+    ExtractionResult,
+    GapReport,
+    validate_major_version,
+)
 from autune_core import get_logger, session_scope
 
 from . import service
@@ -28,27 +35,27 @@ log = get_logger(__name__)
 def on_extraction_completed(payload: dict) -> None:
     result = ExtractionResult.model_validate(payload)
     validate_major_version(result)
-    _record(result.meeting_id, "extraction")
+    _record(result.meeting_id, "extraction", payload)
 
 
 @shared_task(name="autune.intelligence.on_gap_completed", acks_late=True)
 def on_gap_completed(payload: dict) -> None:
     report = GapReport.model_validate(payload)
     validate_major_version(report)
-    _record(report.meeting_id, "gap")
+    _record(report.meeting_id, "gap", payload)
 
 
 @shared_task(name="autune.intelligence.on_context_completed", acks_late=True)
 def on_context_completed(payload: dict) -> None:
     links = ContextLinks.model_validate(payload)
     validate_major_version(links)
-    _record(links.meeting_id, "context")
+    _record(links.meeting_id, "context", payload)
 
 
-def _record(meeting_id: str, source: str) -> None:
+def _record(meeting_id: str, source: str, payload: dict) -> None:
     """Record one source's completion and enqueue ``aggregate`` when it is due."""
     with session_scope() as session:
-        first = service.record_completion(session, meeting_id, source)
+        first = service.record_completion(session, meeting_id, source, payload)
         row = session.get(IntelCompletion, meeting_id)
         if row is None:  # record_completion just upserted it; a miss means a torn write
             raise RuntimeError(f"intel_completion row missing right after upsert: {meeting_id}")
@@ -65,12 +72,10 @@ def _record(meeting_id: str, source: str) -> None:
     )
 
     if already_aggregated:
-        log.info(
-            "intelligence_late_completion",
-            meeting_id=meeting_id,
-            source=source,
-            note="re-aggregation warranted; deferred to P0.3",
-        )
+        log.info("intelligence_late_completion", meeting_id=meeting_id, source=source)
+        with session_scope() as session:
+            service.reopen(session, meeting_id)
+        aggregate.apply_async((meeting_id,))
         return
     if first:
         aggregate.apply_async((meeting_id,), countdown=get_settings().aggregate_timeout_seconds)
@@ -80,17 +85,22 @@ def _record(meeting_id: str, source: str) -> None:
 
 @shared_task(name="autune.intelligence.aggregate", acks_late=True)
 def aggregate(meeting_id: str) -> None:
-    """Close the completion lifecycle for a meeting.
+    """Aggregate the meeting and publish the snapshot.
 
-    Fires when B, C and D have all reported or when the timeout countdown
-    elapses. Idempotent: the countdown and an all-three trigger both enqueue it.
+    Fires when B, C and D have all reported or the timeout countdown elapses,
+    and again after ``reopen`` when a source arrives late. Idempotent: a
+    no-op pass publishes nothing.
     """
     with session_scope() as session:
-        missing = service.close_aggregation(session, meeting_id)
+        snapshot = service.aggregate_meeting(session, meeting_id)
 
-    if missing is None:
+    if snapshot is None:
         log.info("intelligence_aggregate_skipped", meeting_id=meeting_id)
         return
-    log.info("intelligence_aggregate_closed", meeting_id=meeting_id, missing_sources=missing)
-    # TODO(이승환, P0.3): score, classify, predict; publish IntelligenceSnapshot
-    #   with missing_sources filled in.
+    current_app.send_task(INTELLIGENCE_COMPLETED, args=[snapshot.model_dump(mode="json")])
+    log.info(
+        "intelligence_aggregate_published",
+        meeting_id=meeting_id,
+        grade=snapshot.quality_score.grade,
+        missing_sources=snapshot.missing_sources,
+    )
