@@ -55,10 +55,15 @@ class LocalDeberta:
 
     Loaded once per process by the registry, not per task: the checkpoint is
     hundreds of megabytes and a per-call load would dominate the pipeline.
+
+    ``device`` is taken rather than detected. A worker that picks whatever
+    hardware it lands on has a throughput that changes when it is rescheduled,
+    and a latency measured on one scheduling is not a measurement of the other.
     """
 
-    def __init__(self, checkpoint: str, *, batch_size: int = 32) -> None:
+    def __init__(self, checkpoint: str, *, device: str = "cpu", batch_size: int = 32) -> None:
         self._checkpoint = checkpoint
+        self._device = device
         self._batch_size = batch_size
         self._model: Any = None
         self._tokenizer: Any = None
@@ -87,10 +92,22 @@ class LocalDeberta:
             ) from exc
 
         self._torch = torch
+        if self._device == "cuda" and not torch.cuda.is_available():
+            # Said here rather than left to a CUDA error inside the first forward
+            # pass, which arrives mid-meeting and names a tensor. A build ending
+            # in "+cpu" has no CUDA support whatever the machine has, which is
+            # not obvious from a version number.
+            raise RuntimeError(
+                "AUTUNE_EXTRACTION_CLASSIFIER_DEVICE=cuda but torch reports no CUDA "
+                f"device (torch {torch.__version__}). See "
+                "docs/engineering/environments.md."
+            )
+
         self._tokenizer = AutoTokenizer.from_pretrained(self._checkpoint)
         self._model = AutoModelForSequenceClassification.from_pretrained(self._checkpoint)
+        self._model.to(self._device)
         self._model.eval()
-        log.info("extraction_classifier_loaded", checkpoint=self._checkpoint)
+        log.info("extraction_classifier_loaded", checkpoint=self._checkpoint, device=self._device)
 
     def classify(self, texts: list[str]) -> list[Prediction]:
         if not texts:
@@ -103,7 +120,7 @@ class LocalDeberta:
             batch = texts[start : start + self._batch_size]
             encoded = self._tokenizer(
                 batch, padding=True, truncation=True, max_length=256, return_tensors="pt"
-            )
+            ).to(self._device)
             with torch.no_grad():
                 logits = self._model(**encoded).logits
             for row in torch.softmax(logits, dim=-1).tolist():

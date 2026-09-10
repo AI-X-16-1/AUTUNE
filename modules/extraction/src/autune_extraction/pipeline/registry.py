@@ -29,7 +29,7 @@ def get_classifier() -> Classifier:
     impl = settings.classifier_impl
 
     if impl == "local":
-        return LocalDeberta(settings.classifier_checkpoint)
+        return LocalDeberta(settings.classifier_checkpoint, device=settings.classifier_device)
     if impl == "hosted":
         if not settings.classifier_endpoint:
             raise ValueError(

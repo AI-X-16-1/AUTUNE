@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -30,6 +31,30 @@ class ExtractionSettings(BaseSettings):
 
     classifier_endpoint: str = ""
     """Our own inference server, required when ``classifier_impl=hosted``."""
+
+    classifier_device: str = "cpu"
+    """``cpu`` or ``cuda``, for ``classifier_impl=local``. Mirrors
+    ``AUTUNE_AUDIO_DEVICE``.
+
+    Defaulting to CPU rather than to whatever the machine has: a worker that
+    silently picks a GPU is a worker whose throughput changes when it is
+    rescheduled, and a latency measured on one scheduling says nothing about the
+    other.
+
+    This module classifies **every utterance of every meeting**, the heaviest
+    inference in the product, so the setting matters more here than in module A,
+    which runs its model once per recording.
+    """
+
+    @model_validator(mode="after")
+    def _device_is_known(self) -> ExtractionSettings:
+        """A typo should not surface as a CUDA error in the middle of a meeting."""
+        if self.classifier_device not in ("cpu", "cuda"):
+            raise ValueError(
+                f"AUTUNE_EXTRACTION_CLASSIFIER_DEVICE={self.classifier_device!r}; "
+                "expected 'cpu' or 'cuda'"
+            )
+        return self
 
 
 @lru_cache

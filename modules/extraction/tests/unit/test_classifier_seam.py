@@ -7,11 +7,14 @@ shape everything downstream is built against, and it is testable now.
 from __future__ import annotations
 
 import pytest
+from pydantic import ValidationError
 
 from autune_contracts.enums import UtteranceKind
+from autune_extraction.config import ExtractionSettings
 from autune_extraction.pipeline import FakeClassifier, Prediction
 from autune_extraction.pipeline.classifier import (
     LABELS,
+    LocalDeberta,
     _batches_within_budget,
     _to_prediction,
 )
@@ -224,3 +227,44 @@ def test_the_fake_reads_the_ending_and_not_the_verb(text: str, expected: K) -> N
 def test_a_reported_decision_is_not_a_fresh_promise() -> None:
     """``기로 했`` is checked before ``겠습니다``; both endings can co-occur."""
     assert FakeClassifier().classify(["그렇게 하기로 했겠습니다"])[0].kind is K.DECISION
+
+
+# --- the device is chosen, not discovered -----------------------------------
+
+
+def test_the_default_device_is_cpu() -> None:
+    """Not "whatever this machine has".
+
+    A worker that picks up a GPU because it happened to land on one has a
+    throughput that changes when it is rescheduled, and a latency measured on
+    one scheduling says nothing about the other.
+    """
+    assert ExtractionSettings().classifier_device == "cpu"
+
+
+@pytest.mark.parametrize("value", ["gpu", "CUDA", "cuda:0", "mps"])
+def test_a_device_name_we_do_not_handle_is_refused_at_startup(value: str) -> None:
+    """A typo should surface when the worker boots, not mid-meeting as a CUDA
+    error naming a tensor."""
+    with pytest.raises(ValidationError):
+        ExtractionSettings(classifier_device=value)
+
+
+@pytest.mark.parametrize("value", ["cpu", "cuda"])
+def test_both_devices_we_handle_are_accepted(value: str) -> None:
+    assert ExtractionSettings(classifier_device=value).classifier_device == value
+
+
+def test_asking_for_cuda_without_it_fails_before_the_model_loads() -> None:
+    """A build ending in ``+cpu`` has no CUDA support whatever the machine has,
+    which a version number does not say.
+
+    Raised from ``_load`` rather than left to the first forward pass: by then a
+    meeting is already being processed, and the error names a tensor.
+    """
+    torch = pytest.importorskip("torch")
+    if torch.cuda.is_available():
+        pytest.skip("this box has CUDA; the guard cannot fire")
+
+    with pytest.raises(RuntimeError, match="no CUDA device"):
+        LocalDeberta("kakaobank/kf-deberta-base", device="cuda")._load()
