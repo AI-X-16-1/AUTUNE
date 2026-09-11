@@ -14,7 +14,7 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 from celery import current_app
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import delete, func, select, text, update
 from sqlalchemy.orm import Session
 
 from autune_context.config import get_settings
@@ -202,10 +202,21 @@ def build_decision_lineage(result: ExtractionResult) -> None:
     """Thread each of B's decisions into a lineage and classify how it moved.
 
     B owns *what counts as a decision in this meeting*; D owns *whether it is the
-    same decision as one from before*. Each ``result.decisions`` entry is matched
-    to an existing ``ctx_decisions`` thread by cosine similarity of its statement
-    to the thread's most recent statement, or opens a new ``thr_`` thread
-    anchored on the meeting's team.
+    same decision as one from before*. Two rules decide the thread for each of
+    ``result.decisions``, in order:
+
+    1. **Identity.** A decision this exact meeting has placed before (same
+       ``source_decision_id``, from an earlier run of this task) keeps that
+       thread — reprocessing must not reassign it just because deleting its old
+       version briefly removes the one piece of evidence that would otherwise
+       rediscover it (see "Concurrency and reprocessing" below).
+    2. **Similarity.** A decision with no prior placement is matched by cosine
+       similarity of its statement to the most similar existing thread's most
+       recent statement — best pairing first across the whole batch, not
+       first-in-``result.decisions``-order, so one weak match earlier in the
+       list can't grab a thread out from under a much stronger match later in
+       it. No match above ``lineage_match_threshold`` opens a new ``thr_``
+       thread anchored on the meeting's team.
 
     Every thread this run touches is then re-chained end to end by
     ``_rethread``: ``previous_*``, ``change_type`` and ``nli_label`` are a
@@ -226,6 +237,14 @@ def build_decision_lineage(result: ExtractionResult) -> None:
     past ``expires_at``. In practice extraction finishes hours after a meeting,
     long before its 90-day window, so this only matters for a backfill or a
     badly delayed pipeline run — not worth gating on until it does.
+
+    Concurrency and reprocessing: two meetings for the same team can be
+    matching against the same thread heads at once (``cpu_heavy`` is a
+    concurrent queue — docs/architecture/async-pipeline.md). Under READ
+    COMMITTED neither would see the other's uncommitted insert, and both could
+    chain onto the same "latest" version. A ``pg_advisory_xact_lock`` keyed on
+    the team serializes this function per team (held for the transaction, never
+    across teams) so that can't happen.
     """
     settings = get_settings()
     embedder = get_embedder()
@@ -236,37 +255,68 @@ def build_decision_lineage(result: ExtractionResult) -> None:
         if meeting is None:
             raise ValueError(f"{result.meeting_id}: meeting row not found")
 
-        # Idempotency: drop this meeting's versions up front. The threads they
-        # were in still need re-chaining even if this run matches the decisions
-        # elsewhere, so remember them.
-        affected: set[str] = set(
-            session.scalars(
-                select(CtxDecisionVersion.thread_id).where(
+        session.execute(
+            text("SELECT pg_advisory_xact_lock(hashtext(:team_id))"),
+            {"team_id": meeting.team_id},
+        )
+
+        # Identity: a decision this meeting placed on an earlier run keeps its
+        # thread. Captured before the delete below removes the evidence.
+        reused_thread_by_decision: dict[str, str] = {
+            source_decision_id: thread_id
+            for source_decision_id, thread_id in session.execute(
+                select(CtxDecisionVersion.source_decision_id, CtxDecisionVersion.thread_id).where(
                     CtxDecisionVersion.meeting_id == result.meeting_id
                 )
-            ).all()
-        )
+            )
+        }
+        affected: set[str] = set(reused_thread_by_decision.values())
         session.execute(
             delete(CtxDecisionVersion).where(CtxDecisionVersion.meeting_id == result.meeting_id)
         )
         session.flush()
 
-        heads = _thread_heads(session, meeting.team_id, embedder)
         decisions = list(result.decisions)
-        statement_vectors = embedder.embed([d.statement for d in decisions]) if decisions else []
-        matched: set[str] = set()
-        new_threads = 0
+        to_match = [d for d in decisions if d.id not in reused_thread_by_decision]
+        # A thread one of *this run's* decisions already claims by identity is
+        # not a candidate for similarity matching — two decisions in this
+        # meeting never end up on one thread. Note this is not the same set as
+        # `reused_thread_by_decision.values()`: a decision reprocessed under a
+        # different id (its old row's thread is still in `affected`, so that
+        # thread gets re-chained) is free to similarity-match back onto it.
+        identity_claimed = {
+            reused_thread_by_decision[d.id] for d in decisions if d.id in reused_thread_by_decision
+        }
+        heads = [
+            head
+            for head in _thread_heads(session, meeting.team_id, embedder)
+            if head.thread_id not in identity_claimed
+        ]
+        vectors = embedder.embed([d.statement for d in to_match]) if to_match else []
+        assignment = _assign_decisions_to_threads(vectors, heads, settings.lineage_match_threshold)
 
-        for decision, vector in zip(decisions, statement_vectors, strict=True):
-            head = _match_thread(vector, heads, matched, settings.lineage_match_threshold)
-            if head is not None:
-                thread_id = head.thread_id
+        new_threads = 0
+        matched_count = 0
+        match_index = 0
+        for decision in decisions:
+            reused = reused_thread_by_decision.get(decision.id)
+            if reused is not None:
+                thread_id = reused
+                matched_count += 1
             else:
-                thread = CtxDecision(team_id=meeting.team_id, topic_label=decision.statement[:400])
-                session.add(thread)
-                session.flush()
-                thread_id = thread.id
-                new_threads += 1
+                head = assignment.get(match_index)
+                match_index += 1
+                if head is not None:
+                    thread_id = head.thread_id
+                    matched_count += 1
+                else:
+                    thread = CtxDecision(
+                        team_id=meeting.team_id, topic_label=decision.statement[:400]
+                    )
+                    session.add(thread)
+                    session.flush()
+                    thread_id = thread.id
+                    new_threads += 1
             # A seed row: _rethread fills in every chain-dependent field once the
             # thread's full history is in place.
             session.add(
@@ -285,7 +335,6 @@ def build_decision_lineage(result: ExtractionResult) -> None:
                     nli_version=nli.model_version,
                 )
             )
-            matched.add(thread_id)
             affected.add(thread_id)
 
         session.flush()
@@ -298,14 +347,15 @@ def build_decision_lineage(result: ExtractionResult) -> None:
             "context_decision_lineage_done",
             meeting_id=result.meeting_id,
             decisions=len(decisions),
+            matched=matched_count,
             new_threads=new_threads,
             threads_swept=swept,
         )
 
 
 class _ThreadHead:
-    """A thread's most recent statement, embedded — the target ``_match_thread``
-    scores a new decision against."""
+    """A thread's most recent statement, embedded — the target
+    ``_assign_decisions_to_threads`` scores a new decision against."""
 
     __slots__ = ("thread_id", "vector")
 
@@ -331,7 +381,8 @@ def _thread_heads(session: Session, team_id: str, embedder: Embedder) -> list[_T
 
     One query and one batch embed — threads accumulate per team over the
     retention window, so neither can be per-thread. The returned list is in a
-    deterministic order so ``_match_thread``'s tie-break is stable.
+    deterministic order so ``_assign_decisions_to_threads``'s tie-break is
+    stable.
     """
     versions = session.scalars(
         select(CtxDecisionVersion)
@@ -353,21 +404,39 @@ def _thread_heads(session: Session, team_id: str, embedder: Embedder) -> list[_T
     ]
 
 
-def _match_thread(
-    vector: list[float], heads: list[_ThreadHead], used: set[str], threshold: float
-) -> _ThreadHead | None:
-    """The most similar thread not already matched this run, if it clears the
-    threshold. ``>`` on the running best keeps the first-scanned thread on a tie,
-    and ``heads`` is ordered, so the result is deterministic."""
-    best: _ThreadHead | None = None
-    best_sim = -1.0
-    for head in heads:
-        if head.thread_id in used:
+def _assign_decisions_to_threads(
+    vectors: list[list[float]], heads: list[_ThreadHead], threshold: float
+) -> dict[int, _ThreadHead]:
+    """Best-similarity-first assignment of decisions (by index into ``vectors``)
+    to threads, each used at most once.
+
+    Every (decision, thread) pair at or above ``threshold`` is scored up front
+    and assignments are made strongest-first — greedy, not the optimal
+    maximum-weight matching, but it fixes the concrete failure that motivated
+    it: a decision earlier in the list matching a thread only weakly can no
+    longer grab it out from under a decision later in the list that matches it
+    almost exactly. ``heads`` is deterministically ordered (``_thread_heads``)
+    and ties are broken by (decision index, thread index), so the result does
+    not depend on dict/set iteration order.
+    """
+    candidates = [
+        (_cosine(vector, head.vector), d_idx, h_idx)
+        for d_idx, vector in enumerate(vectors)
+        for h_idx, head in enumerate(heads)
+    ]
+    candidates = [c for c in candidates if c[0] >= threshold]
+    candidates.sort(key=lambda c: (-c[0], c[1], c[2]))
+
+    assigned_decisions: set[int] = set()
+    assigned_threads: set[int] = set()
+    assignment: dict[int, _ThreadHead] = {}
+    for _similarity, d_idx, h_idx in candidates:
+        if d_idx in assigned_decisions or h_idx in assigned_threads:
             continue
-        sim = _cosine(vector, head.vector)
-        if sim > best_sim:
-            best_sim, best = sim, head
-    return best if best is not None and best_sim >= threshold else None
+        assigned_decisions.add(d_idx)
+        assigned_threads.add(h_idx)
+        assignment[d_idx] = heads[h_idx]
+    return assignment
 
 
 def _rethread(session: Session, thread_id: str, nli: NliModel) -> None:

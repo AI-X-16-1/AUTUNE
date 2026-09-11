@@ -12,7 +12,8 @@ from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from sqlalchemy import delete, select
+import sqlalchemy as sa
+from sqlalchemy import delete, select, text
 
 from autune_context import service
 from autune_context.config import get_settings
@@ -244,6 +245,30 @@ def test_rebuild_replaces_versions_and_leaves_no_orphan_threads(team_id: str) ->
     assert len(threads_after) == len(threads_before) == 1  # still one thread, no orphan
 
 
+def test_reprocessing_a_solo_thread_meeting_keeps_the_same_thread_id(team_id: str) -> None:
+    """A decision with no other meeting on its thread has nothing left to
+    re-match against once its own (only) version is deleted for the rebuild —
+    reprocessing must reuse the thread by (meeting, source_decision_id)
+    identity, not rediscover it by similarity, or it gets a fresh thread_id
+    and the old one is orphan-swept out from under it."""
+    meeting = _meeting(team_id, days_ago=0)
+    service.build_decision_lineage(_extraction(meeting, [("dec_1", _D1, 0.9)]))
+
+    with session_scope() as s:
+        thread_before = s.scalar(
+            select(CtxDecisionVersion.thread_id).where(CtxDecisionVersion.meeting_id == meeting)
+        )
+
+    service.build_decision_lineage(_extraction(meeting, [("dec_1", _D1, 0.9)]))  # reprocess
+
+    with session_scope() as s:
+        thread_after = s.scalar(
+            select(CtxDecisionVersion.thread_id).where(CtxDecisionVersion.meeting_id == meeting)
+        )
+        assert thread_after == thread_before
+        assert s.get(CtxDecision, thread_before) is not None  # never orphan-swept
+
+
 def test_lineage_follows_meeting_time_not_processing_order(team_id: str) -> None:
     """B can finish a February meeting before January's — a long meeting, a
     backfill. The chain must follow when the meetings happened, not when B
@@ -390,3 +415,34 @@ def test_publish_carries_the_decision_lineage(team_id: str, published: _Capturin
     assert change.source_decision_id == "dec_2"
     assert change.previous_meeting_id == first
     assert change.change_type == "unchanged"
+
+
+def test_advisory_lock_serializes_lineage_building_per_team(db_engine: sa.Engine) -> None:
+    """The mechanism `build_decision_lineage` relies on to keep two meetings for
+    the same team from matching against each other's uncommitted thread heads:
+    a `pg_advisory_xact_lock` keyed on the team, held for the transaction.
+
+    This checks the primitive directly rather than racing two real
+    `build_decision_lineage` calls against each other, which would be
+    inherently timing-dependent."""
+    lock = text("SELECT pg_advisory_xact_lock(hashtext('lineage-lock-test'))")
+    try_lock = text("SELECT pg_try_advisory_xact_lock(hashtext('lineage-lock-test'))")
+
+    conn_a = db_engine.connect()
+    conn_b = db_engine.connect()
+    try:
+        txn_a = conn_a.begin()
+        conn_a.execute(lock)
+
+        txn_b = conn_b.begin()
+        assert conn_b.execute(try_lock).scalar() is False  # conn_a still holds it
+        txn_b.rollback()
+
+        txn_a.commit()  # releases conn_a's xact lock
+
+        txn_b = conn_b.begin()
+        assert conn_b.execute(try_lock).scalar() is True  # free again
+        txn_b.rollback()
+    finally:
+        conn_a.close()
+        conn_b.close()

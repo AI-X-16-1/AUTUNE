@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
-from autune_context.service import _NLI_TO_CHANGE, _cosine, _match_thread, _ThreadHead
+from autune_context.service import (
+    _NLI_TO_CHANGE,
+    _assign_decisions_to_threads,
+    _cosine,
+    _ThreadHead,
+)
 from autune_contracts import ChangeType, NliLabel
 
 
@@ -30,23 +35,39 @@ def _head(thread_id: str, vector: list[float]) -> _ThreadHead:
     return _ThreadHead(thread_id, vector)
 
 
-def test_match_thread_picks_the_most_similar_above_the_threshold() -> None:
+def test_assign_picks_the_most_similar_above_the_threshold() -> None:
     heads = [_head("thr_a", [1.0, 0.0]), _head("thr_b", [0.0, 1.0])]
-    assert _match_thread([0.9, 0.1], heads, used=set(), threshold=0.6).thread_id == "thr_a"
+    assignment = _assign_decisions_to_threads([[0.9, 0.1]], heads, threshold=0.6)
+    assert assignment[0].thread_id == "thr_a"
 
 
-def test_match_thread_returns_none_below_the_threshold() -> None:
+def test_assign_leaves_a_decision_unassigned_below_the_threshold() -> None:
     heads = [_head("thr_a", [1.0, 0.0])]
-    assert _match_thread([0.0, 1.0], heads, used=set(), threshold=0.6) is None
+    assert _assign_decisions_to_threads([[0.0, 1.0]], heads, threshold=0.6) == {}
 
 
-def test_match_thread_skips_threads_already_used_this_run() -> None:
+def test_assign_is_one_to_one() -> None:
+    # Both decisions are an equally strong match for both threads; every valid
+    # assignment must still be a bijection — no thread taken twice.
     heads = [_head("thr_a", [1.0, 0.0]), _head("thr_b", [1.0, 0.0])]
-    assert _match_thread([1.0, 0.0], heads, used={"thr_a"}, threshold=0.6).thread_id == "thr_b"
+    vectors = [[1.0, 0.0], [1.0, 0.0]]
+    assignment = _assign_decisions_to_threads(vectors, heads, threshold=0.6)
+    assert len(assignment) == 2
+    assert {head.thread_id for head in assignment.values()} == {"thr_a", "thr_b"}
 
 
-def test_match_thread_breaks_ties_deterministically_by_scan_order() -> None:
-    # Both heads are equally similar; whichever is first in `heads` must win,
-    # every time — `heads` is itself built in a deterministic order.
-    heads = [_head("thr_a", [1.0, 0.0]), _head("thr_b", [1.0, 0.0])]
-    assert _match_thread([1.0, 0.0], heads, used=set(), threshold=0.6).thread_id == "thr_a"
+def test_assign_prefers_the_stronger_match_regardless_of_input_order() -> None:
+    """The bug this replaces: a weak match earlier in the decision list could
+    grab a thread out from under a much stronger match later in it. With only
+    one candidate thread, the weak decision must lose it either way."""
+    heads = [_head("thr_a", [1.0, 0.0])]
+    strong = [0.99, 0.01]  # cosine ~0.9999 to thr_a
+    weak = [0.7, 0.71]  # cosine ~0.70 to thr_a — still clears a 0.6 threshold
+
+    weak_first = _assign_decisions_to_threads([weak, strong], heads, threshold=0.6)
+    assert weak_first.get(0) is None
+    assert weak_first[1].thread_id == "thr_a"
+
+    strong_first = _assign_decisions_to_threads([strong, weak], heads, threshold=0.6)
+    assert strong_first[0].thread_id == "thr_a"
+    assert strong_first.get(1) is None

@@ -193,14 +193,25 @@ not run a decision classifier.** Duplicating B's would make the two disagree,
 and a decision would then show in the summary tab (S15) while missing from the
 lineage view (S22), which reads to a user as a bug.
 
-1. For each of B's decisions (`dec_` id), embed the statement and match it to
-   the most similar existing thread's *chronologically latest* statement — by
-   the matched meeting's `started_at`, not by which version was inserted last —
-   cosine ≥ `lineage_match_threshold` (`AUTUNE_CONTEXT_LINEAGE_MATCH_THRESHOLD`,
-   default `0.6`, tuned in eval). No match opens a new thread with a fresh
-   `thr_` id, anchored on the meeting's team. One thread takes at most one of
-   this meeting's decisions. A meeting past its retention window is excluded
-   from matching — see "Deletion".
+1. Each of B's decisions (`dec_` id) gets a thread by one of two rules, in order:
+   - **Identity.** A decision this exact meeting placed on an earlier run (same
+     `dec_` id) keeps that thread. Reprocessing deletes the meeting's old
+     versions before rebuilding them, which would otherwise erase the one clue
+     ("a version with this id used to sit on thread X") that lets a solo
+     thread — one with no other meeting's version to rediscover it by
+     similarity — survive being reprocessed with a stable `thr_` id.
+   - **Similarity.** A decision with no prior placement is embedded and matched
+     to the most similar existing thread's *chronologically latest* statement —
+     by the matched meeting's `started_at`, not by which version was inserted
+     last — cosine ≥ `lineage_match_threshold`
+     (`AUTUNE_CONTEXT_LINEAGE_MATCH_THRESHOLD`, default `0.6`, tuned in eval).
+     Every (decision, thread) pairing in the meeting is scored up front and
+     assigned strongest-first, so a weak match earlier in `result.decisions`
+     can't grab a thread out from under a much stronger match later in the
+     list. No thread above the threshold opens a new one, anchored on the
+     meeting's team. One thread takes at most one of this meeting's decisions
+     either way. A meeting past its retention window is excluded from
+     similarity matching — see "Deletion".
 2. Every thread this meeting's decisions touched is then **re-chained end to
    end**, not just appended to: order its versions by meeting time and run NLI
    between each pair's earlier statement (premise) and later one (hypothesis):
@@ -231,6 +242,15 @@ meeting arriving late shifts what a later one's `previous_*` point to); their
 already-published `ContextLinks` are not automatically re-emitted — E ends up
 with a stale `decision_lineage` for that meeting until something republishes
 it. No automatic republish exists yet; tracked for a later phase.
+
+**Concurrency.** `cpu_heavy` is a concurrent queue (docs/architecture/async-
+pipeline.md): two meetings for the same team can call `build_decision_lineage`
+at once. Under READ COMMITTED, matching against the same thread head without
+coordination lets both meetings chain onto whatever was "latest" before either
+committed, so one meeting's version silently drops out of the chain. D holds a
+`pg_advisory_xact_lock` keyed on the team for the duration of the transaction —
+scoped to one team, so two different teams' meetings still process fully in
+parallel.
 
 ### Publishing — `autune.context.publish_if_ready`
 
