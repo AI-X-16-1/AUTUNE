@@ -19,6 +19,7 @@ from autune_contracts.extraction import AmbiguousAgreement, Decision
 from autune_core import get_logger, session_scope
 from autune_integrations import SlackApi, assert_personal_delivery
 
+from .config import get_settings
 from .confirmations import WEAK_ASSENT, ConfirmationResponse, build_confirmation_dm
 from .decisions import DEFAULT_MAX_GAP, ClassifiedUtterance, group_decisions
 from .edit_cost import EditCost
@@ -30,7 +31,7 @@ from .models import (
     ExtDecisionSource,
     ExtEditEvent,
 )
-from .schemas import ActionItemCreate, ActionItemUpdate
+from .schemas import ActionItemCreate, ActionItemRead, ActionItemUpdate
 
 log = get_logger(__name__)
 
@@ -237,6 +238,37 @@ def create_action_item(session: Session, payload: ActionItemCreate) -> ExtAction
 
     _record_edit(session, meeting_id=item.meeting_id, action_item_id=item.id, kind="created")
     return item
+
+
+def read_model(item: ExtActionItem) -> ActionItemRead:
+    """One item as this module's own screens read it.
+
+    Built here rather than by ``from_attributes`` on the schema because two of
+    its fields are not columns: the source ids live in the link table, and
+    whether the item is a candidate depends on a setting the row knows nothing
+    about.
+
+    Deciding *candidate* on the server is the point of this function. The
+    threshold belongs to the classifier that produced the confidence, and a
+    browser comparing against a number it happens to hold is one deploy away from
+    disagreeing with the server about what the meeting produced. While
+    ``candidate_confidence`` is unset -- its default until #10 measures one --
+    nothing is a candidate, because there is no honest line to draw yet.
+    """
+    threshold = get_settings().candidate_confidence
+    return ActionItemRead(
+        id=item.id,
+        meeting_id=item.meeting_id,
+        description=item.description,
+        assignee_id=item.assignee_id,
+        assignee_label=item.assignee_label,
+        due_date=item.due_date,
+        status=item.status,
+        confidence=item.confidence,
+        origin=item.origin,
+        source_utterance_ids=[source.utterance_id for source in item.sources],
+        is_candidate=threshold is not None and item.confidence < threshold,
+    )
 
 
 def update_action_item(

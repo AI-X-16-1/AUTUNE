@@ -43,7 +43,7 @@ def _load(session: Session, action_item_id: str) -> ExtActionItem:
 
 
 @router.post("/action-items", response_model=ActionItemRead, status_code=status.HTTP_201_CREATED)
-def create_action_item(payload: ActionItemCreate, session: SessionDep) -> ExtActionItem:
+def create_action_item(payload: ActionItemCreate, session: SessionDep) -> ActionItemRead:
     """Add an item the model missed.
 
     ADR 0006 ranks recall above precision because a wrong item costs a click and
@@ -52,17 +52,17 @@ def create_action_item(payload: ActionItemCreate, session: SessionDep) -> ExtAct
     """
     item = service.create_action_item(session, payload)
     session.commit()
-    return item
+    return service.read_model(item)
 
 
 @router.patch("/action-items/{action_item_id}", response_model=ActionItemRead)
 def update_action_item(
     action_item_id: str, payload: ActionItemUpdate, session: SessionDep
-) -> ExtActionItem:
+) -> ActionItemRead:
     """Edit or close an item."""
     item = service.update_action_item(session, _load(session, action_item_id), payload)
     session.commit()
-    return item
+    return service.read_model(item)
 
 
 @router.delete("/action-items/{action_item_id}", status_code=status.HTTP_204_NO_CONTENT)
