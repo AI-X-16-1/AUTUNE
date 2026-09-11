@@ -453,9 +453,18 @@ def compute_speaking_shares(session: Session, meeting_id: str) -> list[SpeakingS
 
 
 def _consented_participant_count(session: Session, meeting_id: str) -> int:
+    """How many distinct *people* have consented — not how many participant rows.
+
+    Diarization can split one real speaker into two participant rows that are
+    later confirmed to the same ``user_id``; counting rows would inflate the
+    even-share baseline's population past ``compute_speaking_shares``'s, which
+    counts people. An unidentified participant (``user_id`` still ``None``) has
+    no shared identity to collapse onto, so each such row counts as one person,
+    same as ``speaking_shares``' own grouping key.
+    """
     return (
         session.scalar(
-            sa.select(func.count())
+            sa.select(func.count(func.distinct(func.coalesce(Participant.user_id, Participant.id))))
             .select_from(Participant)
             .where(
                 Participant.meeting_id == meeting_id,
@@ -511,7 +520,7 @@ def speaking_ratio_for_user(
             reason="not_measured",
         )
 
-    mine = next((s for s in shares if s.participant_id == participant.id), None)
+    mine = next((s for s in shares if s.user_id == user_id), None)
     return SpeakingRatioRead(
         meeting_id=meeting_id,
         ratio=mine.ratio if mine is not None else 0.0,

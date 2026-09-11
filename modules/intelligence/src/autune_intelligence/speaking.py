@@ -53,12 +53,17 @@ class SpeakingShare:
 
 
 def speaking_shares(segments: Iterable[SpeechSegment]) -> list[SpeakingShare]:
-    """Each identified participant's share of *attributed* speech time.
+    """Each identified person's share of *attributed* speech time.
 
     The denominator is speech matched to a participant; segments with no
-    ``participant_id`` are ignored entirely. A participant's ratio is therefore
-    their share of the speech we could measure, and the ratios sum to 1.0.
-    Returns an empty list when no attributed speech was found.
+    ``participant_id`` are ignored entirely. Grouped by ``user_id`` where known
+    rather than ``participant_id``: diarization can split one real speaker into
+    two participant rows (two labels later confirmed as the same person), and
+    counting that as two people would let a co-attendee derive the real
+    person's exact ratio from ``1 - their own`` — see the ``_MIN_SPEAKERS_FOR_RATIO``
+    docstring in ``service.py``. A person's ratio is their share of the speech we
+    could measure, and the ratios sum to 1.0. Returns an empty list when no
+    attributed speech was found.
     """
     segs = list(segments)
     total = sum(s.duration for s in segs if s.participant_id is not None)
@@ -66,23 +71,24 @@ def speaking_shares(segments: Iterable[SpeechSegment]) -> list[SpeakingShare]:
         return []
 
     seconds: dict[str, float] = {}
+    participant_ids: dict[str, str] = {}
     user_ids: dict[str, str | None] = {}
     for seg in segs:
         pid = seg.participant_id
         if pid is None:
             continue
-        seconds[pid] = seconds.get(pid, 0.0) + seg.duration
-        if seg.user_id is not None:
-            user_ids[pid] = seg.user_id
-        user_ids.setdefault(pid, None)
+        key = seg.user_id if seg.user_id is not None else pid
+        seconds[key] = seconds.get(key, 0.0) + seg.duration
+        participant_ids.setdefault(key, pid)
+        user_ids[key] = seg.user_id
 
     return [
         SpeakingShare(
-            participant_id=pid,
-            user_id=user_ids[pid],
+            participant_id=participant_ids[key],
+            user_id=user_ids[key],
             seconds=secs,
             ratio=secs / total,
         )
-        for pid, secs in seconds.items()
+        for key, secs in seconds.items()
         if secs > 0
     ]

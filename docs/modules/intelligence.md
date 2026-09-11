@@ -68,22 +68,31 @@ See `../architecture/async-pipeline.md`.
 7. **Personal feedback** — compute each participant's speaking ratio and DM it
    to that person. Do not store it. The ratio is a share of *measured* speech:
    the denominator is speech attributed to participants who consented to
-   speaker attribution, and unattributed speech is excluded. The even-share
-   baseline in the DM (`100 / participant_count`) is taken over that same set,
-   so a participant's ratio and the baseline answer the same question and the
-   ratios sum to 100%. A "share of the whole meeting" denominator was rejected:
-   any unattributed speech would push every participant below a baseline none of
-   them could reach.
+   speaker attribution, and unattributed speech is excluded. Speech is grouped
+   by person (`user_id` once identified, falling back to `participant_id`
+   otherwise) rather than by participant row — diarization can split one real
+   speaker across two `participants` rows that later resolve to the same
+   `user_id`, and counting those as two people would let the ratio arithmetic
+   below leak the real person's exact share to whoever else was in the room.
+   The even-share baseline in the DM (`100 / participant_count`) is taken over
+   every *consenting* participant, silent ones included — a silent participant
+   is still part of the room the even share is measured against, so the ratio
+   and the baseline deliberately answer different questions ("my share of what
+   was said" vs. "my share of an even split of the room"). A "share of the
+   whole meeting" denominator was rejected: any unattributed speech would push
+   every participant below a baseline none of them could reach.
 
-   **The ratio is withheld when fewer than three consenting participants
-   spoke.** Because the measured shares sum to 100%, when only two people's
-   speech is in the denominator one person's ratio fixes the other's exactly —
-   the response would then *contain* another person's speaking ratio, which
+   **The ratio is withheld when fewer than three people spoke.** Because the
+   measured shares sum to 100%, when only two people's speech is in the
+   denominator one person's ratio fixes the other's exactly — the response
+   would then *contain* another person's speaking ratio, which
    `../architecture/privacy.md` section 3 forbids, and an above/below-baseline
    band does not help because with two the two mirror each other. The gate
-   counts speakers, not the consenting head count: three consenting
-   participants where one only listened still splits its speech two ways. In
-   that case `GET /me/speaking-ratio` returns `ratio: null` with
+   counts distinct people who spoke (the same person-grouping as the ratio
+   itself, so a diarization split cannot inflate the count), not the consenting
+   head count and not participant rows: three consenting participants where one
+   only listened still splits its speech two ways. In that case
+   `GET /me/speaking-ratio` returns `ratio: null` with
    `reason: "small_meeting"` (distinct from the `404` for someone who was not in
    the meeting), and no DM goes out. A participant who did not consent to
    attribution gets `ratio: null` with `reason: "not_measured"` — distinct from

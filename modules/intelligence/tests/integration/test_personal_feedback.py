@@ -143,6 +143,51 @@ def test_no_dm_when_a_third_consenting_participant_only_listened(
     assert slack.sent == []
 
 
+def test_no_dm_when_a_speaker_is_split_across_two_participant_rows(
+    db_session: Session, meeting: str
+) -> None:
+    """Two real speakers, one split by diarization into two participant rows,
+    must still be withheld as a two-person meeting — not sent as three."""
+    alice = _user(db_session, "alice")
+    bob = _user(db_session, "bob")
+    p_alice_1 = _participant(db_session, meeting, user_id=alice, label="Speaker 0")
+    p_alice_2 = _participant(db_session, meeting, user_id=alice, label="Speaker 2")
+    p_bob = _participant(db_session, meeting, user_id=bob, label="Speaker 1")
+    _utter(db_session, meeting, p_alice_1, 0.0, 20.0)
+    _utter(db_session, meeting, p_alice_2, 20.0, 40.0)
+    _utter(db_session, meeting, p_bob, 40.0, 60.0)
+    db_session.flush()
+    slack = FakeSlack()
+
+    sent = service.send_personal_feedback(db_session, slack, meeting)
+
+    assert sent == 0
+    assert slack.sent == []
+
+
+def test_a_speaker_split_across_two_rows_gets_exactly_one_dm(
+    db_session: Session, meeting: str
+) -> None:
+    alice = _user(db_session, "alice")
+    bob = _user(db_session, "bob")
+    carol = _user(db_session, "carol")
+    p_alice_1 = _participant(db_session, meeting, user_id=alice, label="Speaker 0")
+    p_alice_2 = _participant(db_session, meeting, user_id=alice, label="Speaker 2")
+    p_bob = _participant(db_session, meeting, user_id=bob, label="Speaker 1")
+    p_carol = _participant(db_session, meeting, user_id=carol, label="Speaker 3")
+    _utter(db_session, meeting, p_alice_1, 0.0, 15.0)
+    _utter(db_session, meeting, p_alice_2, 15.0, 30.0)
+    _utter(db_session, meeting, p_bob, 30.0, 60.0)
+    _utter(db_session, meeting, p_carol, 60.0, 90.0)
+    db_session.flush()
+    slack = FakeSlack()
+
+    sent = service.send_personal_feedback(db_session, slack, meeting)
+
+    assert sent == 3
+    assert len([m for m in slack.sent if m.channel == alice]) == 1
+
+
 def test_nothing_is_persisted(db_session: Session, meeting: str) -> None:
     _three_speakers(db_session, meeting)
     db_session.flush()

@@ -145,6 +145,53 @@ def test_ratio_is_withheld_when_fewer_than_three_consenting_participants_spoke(
     assert body["participant_count"] == 3
 
 
+def test_a_two_person_meeting_where_one_speaker_is_split_is_still_withheld(
+    app_for, db_session: Session, meeting: str
+) -> None:
+    """Diarization can put one real speaker under two labels — two participant
+    rows sharing a user_id once identified. That must still read as a two-person
+    meeting, not three, or bob's response fixes alice's real ratio exactly via
+    1 - ratio (docs/architecture/privacy.md section 3)."""
+    alice = _user(db_session, "alice")
+    bob = _user(db_session, "bob")
+    p_alice_1 = _participant(db_session, meeting, user_id=alice, label="Speaker 0")
+    p_alice_2 = _participant(db_session, meeting, user_id=alice, label="Speaker 2")
+    p_bob = _participant(db_session, meeting, user_id=bob, label="Speaker 1")
+    _utter(db_session, meeting, p_alice_1, 0.0, 20.0)
+    _utter(db_session, meeting, p_alice_2, 20.0, 40.0)
+    _utter(db_session, meeting, p_bob, 40.0, 60.0)
+    db_session.flush()
+
+    body = app_for(bob).get(f"/api/intelligence/me/speaking-ratio/{meeting}").json()
+
+    assert body["ratio"] is None
+    assert body["reason"] == "small_meeting"
+
+
+def test_a_participant_split_across_two_rows_gets_their_full_ratio_not_half(
+    app_for, db_session: Session, meeting: str
+) -> None:
+    """Alice's own number must be her combined share, not whichever of her two
+    participant rows the lookup happens to pick."""
+    alice = _user(db_session, "alice")
+    bob = _user(db_session, "bob")
+    carol = _user(db_session, "carol")
+    p_alice_1 = _participant(db_session, meeting, user_id=alice, label="Speaker 0")
+    p_alice_2 = _participant(db_session, meeting, user_id=alice, label="Speaker 2")
+    p_bob = _participant(db_session, meeting, user_id=bob, label="Speaker 1")
+    p_carol = _participant(db_session, meeting, user_id=carol, label="Speaker 3")
+    _utter(db_session, meeting, p_alice_1, 0.0, 15.0)
+    _utter(db_session, meeting, p_alice_2, 15.0, 30.0)
+    _utter(db_session, meeting, p_bob, 30.0, 60.0)
+    _utter(db_session, meeting, p_carol, 60.0, 90.0)
+    db_session.flush()
+
+    body = app_for(alice).get(f"/api/intelligence/me/speaking-ratio/{meeting}").json()
+
+    assert body["ratio"] == pytest.approx(30.0 / 90.0)
+    assert body["participant_count"] == 3
+
+
 def test_a_non_consenting_participant_is_told_they_are_not_measured(
     app_for, db_session: Session, meeting: str
 ) -> None:

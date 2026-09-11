@@ -10,10 +10,12 @@ percentage, an even-share baseline, and a line stating the number is not stored.
 No buttons — a working opt-out needs a handler and a stored preference, which is
 a separate change.
 
-The percentage and the ``100 / participant_count`` baseline are taken over the
-same set of people — participants who consented to speaker attribution — so a
-number below the baseline means the subject spoke less than an even share of the
-speech we could measure, not of some larger whole.
+The percentage is a share of *measured* speech (people who spoke); the
+``100 / participant_count`` baseline is spread over every *consenting*
+participant, silent ones included — a silent participant is still part of the
+room the even share is measured against. The two populations differ on
+purpose: a below-baseline number should read as "quieter than an even split of
+the room," not "quieter than the other people who happened to talk."
 
 The percentage is personal data. It goes in the blocks, which Slack shows only
 after the DM is opened, and not in the fallback, which appears in a notification
