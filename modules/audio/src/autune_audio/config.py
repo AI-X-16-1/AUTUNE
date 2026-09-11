@@ -64,6 +64,19 @@ class AudioSettings(BaseSettings):
     new model without editing code. See ``pipeline._glossary_kwargs``.
     """
 
+    recogniser: str = "spoken_numbers"
+    """The second PII detector, behind ``masking.EntityRecogniser``.
+
+    ``spoken_numbers`` finds the five categories in numbers a person read out
+    one digit at a time -- the shapes a pattern cannot describe. ``none``
+    switches it off, which is how the evaluation harness measures the patterns
+    alone and how a leak is attributed to one detector or the other.
+
+    There is no hosted value and there will not be one. This runs over the
+    unmasked transcript, and invariant 11 says that string does not leave the
+    process it was made in.
+    """
+
     diarization_model: str = "pyannote/speaker-diarization-3.1"
     """Pinned explicitly. Never load a floating "latest"."""
 
