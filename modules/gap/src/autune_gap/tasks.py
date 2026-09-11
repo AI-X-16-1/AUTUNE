@@ -34,5 +34,6 @@ def on_transcript_ready(payload: dict) -> None:
         utterances=len(transcript.utterances),
     )
     service.build_topic_graph(transcript)
-    # TODO(박재경): publish autune.gap.completed (#36). Template comparison and
-    # risk scoring (#14, #35) wait on #22.
+    # TODO(박재경): template comparison and risk scoring (#14, #35) wait on #22.
+    # Until then the report carries topics and participation and no gaps.
+    service.publish_report(transcript.meeting_id)

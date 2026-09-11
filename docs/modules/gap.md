@@ -83,10 +83,27 @@ and stores what comes back.
   one meeting, so the matrix cannot be joined across meetings into a record of
   one person's silences.
 
+`contracts.md` shows `user_…` ids in its `GapReport` example, and the contract
+field has no pattern. The example predates this choice; it is flagged rather
+than edited here, because `contracts.md` is shared.
+
 A re-run deletes the meeting's topics and rebuilds them in one transaction;
 edges, evidence and participation cascade. So would the `gap_related_topics`
 rows of a gap already raised — gap generation (#35) has to rebuild those in the
 same run, and decide what a re-run does to a gap somebody dismissed.
+
+### Step 9 as built
+
+`GapReport` is assembled from the stored rows after their transaction commits,
+then published with `autune_core.publish(GAP_COMPLETED, …)` — C names the event,
+never E's task. Topics come most central first, ties in the order the meeting
+reached them, each with its evidence utterance ids in meeting order;
+participation is the `spoke` and `silent` id lists and nothing else. A
+dismissed gap is left out: its row stays for threshold tuning, but E should not
+score a meeting on a gap the team rejected.
+
+Until template comparison and risk scoring land (#14, #35, both waiting on
+#22), `gaps` is empty and the report carries topics and participation only.
 
 ## Storage
 

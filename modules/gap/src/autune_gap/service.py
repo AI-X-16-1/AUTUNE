@@ -8,16 +8,30 @@ Never imports another module.
 
 from __future__ import annotations
 
+from collections import defaultdict
 from typing import TYPE_CHECKING
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 
+from autune_contracts.enums import GapSeverity
+from autune_contracts.events import GAP_COMPLETED
+from autune_contracts.gap import Gap, GapReport, Participation, Topic
 from autune_core import Meeting, Participant, Utterance, get_logger, ids, new_id, session_scope
+from autune_core.events import publish
 from autune_gap import graph
-from autune_gap.models import GapParticipation, GapTopic, GapTopicEdge, GapTopicUtterance
+from autune_gap.models import (
+    GapGap,
+    GapParticipation,
+    GapRelatedTopic,
+    GapTopic,
+    GapTopicEdge,
+    GapTopicUtterance,
+)
 from autune_gap.pipeline import get_entity_extractor
 
 if TYPE_CHECKING:
+    from sqlalchemy.orm import Session
+
     from autune_contracts import TranscriptReady
 
 log = get_logger(__name__)
@@ -133,3 +147,125 @@ def build_topic_graph(transcript: TranscriptReady) -> int:
         extractor=extractor_version,
     )
     return len(topics)
+
+
+def publish_report(meeting_id: str) -> GapReport:
+    """Publish what is stored for the meeting as ``GapReport`` on
+    ``autune.gap.completed``, and return it.
+
+    Read from the rows after their transaction has committed, not from what
+    ``build_topic_graph`` held in memory. What E receives and what the report
+    screen reads later are then one thing read one way, and a subscriber that
+    looks something up by a topic id finds the row already there.
+
+    C names the event and never its consumer — ``autune_core.publish`` finds
+    E's task (#145). Safe to run twice: E records one report per meeting, and a
+    second publish of the same rows is the same report.
+    """
+    with session_scope() as session:
+        report = build_report(session, meeting_id)
+
+    publish(GAP_COMPLETED, report.model_dump(mode="json"))
+    log.info(
+        "gap_report_published",
+        meeting_id=meeting_id,
+        topics=len(report.topics),
+        gaps=len(report.gaps),
+    )
+    return report
+
+
+def build_report(session: Session, meeting_id: str) -> GapReport:
+    """The meeting's ``GapReport``, assembled from ``gap_*`` rows.
+
+    - Topics come most central first — the order a reader should meet them in —
+      each with its evidence in meeting order. Topics that carried the meeting
+      equally come in the order the meeting reached them. Without a rule for
+      ties the order would follow the random topic ids, and a redelivered task
+      would publish the same report shuffled.
+    - Participation is lists of participant ids and nothing else. ``spoke`` and
+      ``silent`` together are every consenting participant, because silence is
+      what a gap is raised on (privacy.md section 3 is why there is no number).
+    - A dismissed gap is not reported. Its row stays for threshold tuning, but
+      the team has said it is wrong, and E counting it would score the meeting
+      on a gap nobody believes in.
+    """
+    first_said = (
+        select(
+            GapTopicUtterance.topic_id,
+            func.min(GapTopicUtterance.position).label("position"),
+        )
+        .group_by(GapTopicUtterance.topic_id)
+        .subquery()
+    )
+    topics = list(
+        session.scalars(
+            select(GapTopic)
+            .outerjoin(first_said, first_said.c.topic_id == GapTopic.id)
+            .where(GapTopic.meeting_id == meeting_id)
+            .order_by(GapTopic.centrality.desc(), first_said.c.position, GapTopic.label)
+        )
+    )
+    topic_ids = [topic.id for topic in topics]
+
+    evidence: dict[str, list[str]] = defaultdict(list)
+    for topic_id, utterance_id in session.execute(
+        select(GapTopicUtterance.topic_id, GapTopicUtterance.utterance_id)
+        .where(GapTopicUtterance.topic_id.in_(topic_ids))
+        .order_by(GapTopicUtterance.position)
+    ).all():
+        evidence[topic_id].append(utterance_id)
+
+    spoke: dict[str, list[str]] = defaultdict(list)
+    silent: dict[str, list[str]] = defaultdict(list)
+    for topic_id, participant_id, said in session.execute(
+        select(GapParticipation.topic_id, GapParticipation.participant_id, GapParticipation.spoke)
+        .where(GapParticipation.topic_id.in_(topic_ids))
+        .order_by(GapParticipation.participant_id)
+    ).all():
+        (spoke if said else silent)[topic_id].append(participant_id)
+
+    gaps = list(
+        session.scalars(
+            select(GapGap)
+            .where(GapGap.meeting_id == meeting_id, GapGap.dismissed_at.is_(None))
+            .order_by(GapGap.risk_score.desc(), GapGap.id)
+        )
+    )
+    related: dict[str, list[str]] = defaultdict(list)
+    for gap_id, topic_id in session.execute(
+        select(GapRelatedTopic.gap_id, GapRelatedTopic.topic_id)
+        .where(GapRelatedTopic.gap_id.in_([gap.id for gap in gaps]))
+        .order_by(GapRelatedTopic.id)
+    ).all():
+        related[gap_id].append(topic_id)
+
+    return GapReport(
+        meeting_id=meeting_id,
+        topics=[
+            Topic(
+                id=topic.id,
+                label=topic.label,
+                centrality=topic.centrality,
+                utterance_ids=evidence[topic.id],
+            )
+            for topic in topics
+        ],
+        participation=[
+            Participation(topic_id=topic.id, spoke=spoke[topic.id], silent=silent[topic.id])
+            for topic in topics
+        ],
+        gaps=[
+            Gap(
+                id=gap.id,
+                category=gap.category,
+                title=gap.title,
+                severity=GapSeverity(gap.severity),
+                risk_score=gap.risk_score,
+                template_item=gap.template_item,
+                related_topic_ids=related[gap.id],
+                suggested_question=gap.suggested_question,
+            )
+            for gap in gaps
+        ],
+    )
