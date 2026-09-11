@@ -23,7 +23,7 @@ from autune_contracts.extraction import (
     ExtractionResult,
 )
 from autune_contracts.transcript import Utterance as TranscriptUtterance
-from autune_core import Participant, Utterance, get_logger, session_scope
+from autune_core import Meeting, Participant, Utterance, get_logger, session_scope
 from autune_integrations import SlackApi, assert_personal_delivery
 
 from .config import get_settings
@@ -47,6 +47,7 @@ from .schemas import (
     ActionItemUpdate,
     SourceUtterance,
 )
+from .slots import assignee_of, meeting_day, parse_due
 
 log = get_logger(__name__)
 
@@ -365,6 +366,11 @@ def update_action_item(
 
     for field, value in changes.items():
         setattr(item, field, value.value if isinstance(value, ActionStatus) else value)
+    if "due_date" in changes:
+        # The phrase explained the date the model read. A date a person set is
+        # not explained by it, and keeping it would hold on to what they
+        # corrected (#109).
+        item.due_text = None
 
     _record_edit(session, meeting_id=item.meeting_id, action_item_id=item.id, kind="edited")
     return item
@@ -698,3 +704,74 @@ def classifications_for_meeting(session: Session, meeting_id: str) -> list[Class
         )
         for row in rows
     ]
+
+
+# --- step 3: action items from commitments ------------------------------------
+
+
+def build_action_items(
+    session: Session,
+    *,
+    meeting_id: str,
+    utterances: Sequence[TranscriptUtterance],
+    classified: Sequence[ClassifiedUtterance],
+) -> list[ExtActionItem] | None:
+    """One draft item per commitment, replacing the model's previous draft.
+
+    Returns ``None``, and changes nothing, once a person has corrected anything
+    in this meeting. ADR 0006 makes the output a draft the user finishes, and a
+    reprocessed meeting that replaced their finished list with a fresh draft
+    would throw their work away -- an edited item reset, a deleted one back.
+    ``ext_edit_events`` is the record that they started, and it is only ever
+    written by a person.
+
+    Otherwise the meeting's ``origin="model"`` items are deleted and rebuilt,
+    the same replace-not-merge rule as the classifications. Items a person
+    typed are never touched.
+
+    Each item is filled by ``slots``: the utterance as its description, its
+    speaker as the assignee, the first date phrase as the due date. Every model
+    item starts in *needs confirmation*.
+    """
+    edited = session.scalar(
+        select(func.count()).select_from(ExtEditEvent).where(ExtEditEvent.meeting_id == meeting_id)
+    )
+    if edited:
+        log.info("extraction_action_items_kept", meeting_id=meeting_id, edits=edited)
+        return None
+
+    meeting = session.get(Meeting, meeting_id)
+    day = meeting_day(meeting.started_at if meeting is not None else None)
+    spoken = {utterance.id: utterance for utterance in utterances}
+
+    for stale in session.scalars(
+        select(ExtActionItem).where(
+            ExtActionItem.meeting_id == meeting_id, ExtActionItem.origin == "model"
+        )
+    ):
+        session.delete(stale)
+
+    items = []
+    for utterance in classified:
+        if utterance.kind is not UtteranceKind.COMMITMENT:
+            continue
+        said = spoken[utterance.id]
+        assignee = assignee_of(said.speaker_id, said.speaker)
+        due = parse_due(said.text, day)
+        items.append(
+            ExtActionItem(
+                meeting_id=meeting_id,
+                description=said.text,
+                assignee_id=assignee.user_id,
+                assignee_label=assignee.label,
+                due_date=due.date if due is not None else None,
+                due_text=due.text if due is not None else None,
+                status=ActionStatus.NEEDS_CONFIRMATION.value,
+                confidence=utterance.confidence,
+                origin="model",
+                sources=[ExtActionItemSource(utterance_id=utterance.id)],
+            )
+        )
+    session.add_all(items)
+    session.flush()
+    return items

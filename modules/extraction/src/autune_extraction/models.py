@@ -112,6 +112,16 @@ class ExtActionItem(Base, TimestampMixin):
     """The name as spoken, kept when it does not resolve to an account."""
 
     due_date: Mapped[date | None] = mapped_column(Date)
+    due_text: Mapped[str | None] = mapped_column(String(100))
+    """The words the due date was read from -- "다음 주 금요일" -- which S18 shows
+    beside the date so a reader can check the arithmetic. A fragment of the
+    masked utterance.
+
+    Cleared when a person sets the date themselves: the phrase no longer
+    explains the value, and keeping it would be holding on to the version they
+    corrected (#109).
+    """
+
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="needs_confirmation")
     confidence: Mapped[float] = mapped_column(Float, nullable=False)
     """A hand-added item is 1.0: a person typing it is the certainty."""

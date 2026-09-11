@@ -28,7 +28,14 @@ from autune_contracts.transcript import (
 from autune_core import Base, Meeting, Participant
 from autune_core import Utterance as StoredUtterance
 from autune_extraction import service, tasks
-from autune_extraction.models import ExtClassification, ExtDecision, ExtDecisionSource
+from autune_extraction.models import (
+    ExtActionItem,
+    ExtActionItemSource,
+    ExtClassification,
+    ExtDecision,
+    ExtDecisionSource,
+    ExtEditEvent,
+)
 from autune_extraction.pipeline import FakeClassifier, Prediction
 
 K = UtteranceKind
@@ -41,6 +48,10 @@ TABLES = [
     ExtClassification.__table__,
     ExtDecision.__table__,
     ExtDecisionSource.__table__,
+    # The task drafts action items too (step 3).
+    ExtActionItem.__table__,
+    ExtActionItemSource.__table__,
+    ExtEditEvent.__table__,
 ]
 
 # Endings the fake reads: 겠습니다 commitment, 기로 했 decision, 나요 question,
