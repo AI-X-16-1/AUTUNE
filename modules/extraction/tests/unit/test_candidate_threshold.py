@@ -140,8 +140,10 @@ def test_a_hand_added_item_cannot_land_in_the_candidate_band(
 def test_the_setting_refuses_a_threshold_outside_the_confidence_range() -> None:
     """Confidence is a unit interval. A threshold of 5 would mark everything a
     candidate and read as a deliberate choice in whoever's .env it came from."""
-    with pytest.raises(ValueError):
-        ExtractionSettings(candidate_confidence=5.0)
+    with pytest.raises(ValueError, match="candidate_confidence"):
+        # Without _env_file=None a broken value elsewhere in a developer's .env
+        # raised first, and the test passed for a reason it does not name.
+        ExtractionSettings(_env_file=None, candidate_confidence=5.0)  # type: ignore[call-arg]
 
 
 # --- a blank in .env is a blank, not a crash ---------------------------------
