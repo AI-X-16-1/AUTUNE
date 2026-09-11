@@ -7,6 +7,7 @@ Document every new variable in docs/engineering/environments.md and add it to
 from __future__ import annotations
 
 from functools import lru_cache
+from typing import Literal
 
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -64,7 +65,7 @@ class AudioSettings(BaseSettings):
     new model without editing code. See ``pipeline._glossary_kwargs``.
     """
 
-    recogniser: str = "spoken_numbers"
+    recogniser: Literal["spoken_numbers", "none"] = "spoken_numbers"
     """The second PII detector, behind ``masking.EntityRecogniser``.
 
     ``spoken_numbers`` finds the five categories in numbers a person read out

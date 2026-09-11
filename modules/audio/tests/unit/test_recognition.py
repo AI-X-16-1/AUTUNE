@@ -13,7 +13,8 @@ import pytest
 from autune_audio.masking import mask
 from autune_audio.recognition import (
     _DIGIT_SYLLABLES,
-    MIN_RUN_SYLLABLES,
+    MIN_RUN_DIGITS,
+    MIN_SPOKEN_SYLLABLES,
     FakeRecogniser,
     SpokenNumberRecogniser,
     _spell_out,
@@ -169,12 +170,62 @@ def test_spans_are_over_the_original_text(recogniser: SpokenNumberRecogniser) ->
 def test_a_short_run_is_left_alone() -> None:
     """The minimum is for legibility, not for safety.
 
-    It is below the shortest thing any pattern accepts, so lowering it could not
-    reveal a match — it only keeps the rewritten string readable when something
-    goes wrong and somebody prints it.
+    It is below the shortest thing any pattern accepts — nine digits, a phone
+    number — so lowering it could not reveal a match. It only keeps the
+    rewritten string readable when something goes wrong and somebody prints it.
     """
     assert _spell_out("이사") == "이사"
-    assert len("공일공일이삼사오육칠팔") > MIN_RUN_SYLLABLES
+    assert MIN_RUN_DIGITS < 9
+    assert len("공일공일이삼사오육칠팔") > MIN_RUN_DIGITS
+
+
+# --- two leaks the review found ------------------------------------------
+
+
+def test_two_numbers_in_one_run_are_both_covered(
+    recogniser: SpokenNumberRecogniser,
+) -> None:
+    """A run is one run of digits, not one number.
+
+    Two numbers read back to back have nothing between them that ends the run,
+    and returning the best single span left the second one in the clear:
+
+        공일공 일이삼사 오육칠팔 공일공 구팔칠육 오사삼이
+          ->  *** **** **** 공일공 구팔칠육 오사삼이
+    """
+    line = "공일공 일이삼사 오육칠팔 공일공 구팔칠육 오사삼이"
+    result = mask(line, recogniser=recogniser)
+    assert result.counts == {"phone": 2}
+    for syllable in "공일이삼사오육칠팔구":
+        assert syllable not in result.text
+
+
+def test_a_number_written_in_both_scripts_is_found(
+    recogniser: SpokenNumberRecogniser,
+) -> None:
+    """Whisper does not pick one script for a whole number.
+
+    Counting only syllables put both of these under the threshold — four spoken
+    syllables in the first — and neither was masked at all.
+    """
+    assert mask("공일공 1234 5678이요", recogniser=recogniser).counts == {"phone": 1}
+    assert "공일공" not in mask("공일공 1234 5678이요", recogniser=recogniser).text
+    assert mask("010-1234 오육칠팔이요", recogniser=recogniser).counts == {"phone": 1}
+    assert "오육칠팔" not in mask("010-1234 오육칠팔이요", recogniser=recogniser).text
+
+
+def test_digits_beside_a_word_are_not_a_spoken_number(
+    recogniser: SpokenNumberRecogniser,
+) -> None:
+    """The cost of letting a run contain digits, and what stops it.
+
+    `버전 20260910 이사 갑니다` is one run once digits are allowed in: eight
+    digits plus 이사, read as 24, matched the account shape. A run has to be
+    spoken to be a spoken number.
+    """
+    assert MIN_SPOKEN_SYLLABLES >= 3
+    for line in ("버전 20260910 이사 갑니다", "2026-09-10에 이사 갑니다", "IP 192.168.10.20 이요"):
+        assert mask(line, recogniser=recogniser).text == line
 
 
 def test_the_more_specific_reading_wins(recogniser: SpokenNumberRecogniser) -> None:
@@ -221,12 +272,20 @@ def test_the_setting_can_turn_it_off(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_an_unknown_setting_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("AUTUNE_AUDIO_RECOGNISER", "klue_ner")
-    get_recogniser.cache_clear()
+    """And refused when the settings load, not when the recogniser is first built.
+
+    `recogniser` is a `Literal`, so a typo in the environment fails the process
+    that reads it rather than the first task that masks something. A worker that
+    starts and then cannot mask is worse than one that does not start.
+    """
+    from pydantic import ValidationError
+
     from autune_audio.config import get_settings
 
+    monkeypatch.setenv("AUTUNE_AUDIO_RECOGNISER", "klue_ner")
+    get_recogniser.cache_clear()
     get_settings.cache_clear()
-    with pytest.raises(ValueError, match="unknown AUTUNE_AUDIO_RECOGNISER"):
-        get_recogniser()
+    with pytest.raises(ValidationError, match="spoken_numbers"):
+        get_settings()
     get_recogniser.cache_clear()
     get_settings.cache_clear()

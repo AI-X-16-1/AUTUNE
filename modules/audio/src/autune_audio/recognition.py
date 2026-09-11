@@ -40,6 +40,13 @@ bearing one:
    accepts is a ten-digit account. A run long enough to match would have to be
    ten-plus digit syllables in a row, which is a number being read out.
 
+**The masked shape differs from privacy.md's example**, and safely. `010-****-5678`
+keeps a mobile prefix because those three characters are digits; here they are
+syllables, and `masking._hide` covers every character in a numeric span that is
+not a separator. So a spoken number comes out `*** **** ****` -- the reader can
+still see that a number was said, and none of it is recoverable. Keeping "the
+first three" would mean keeping 공일공, which is the prefix written out.
+
 So this file does not decide what is personal data. It rewrites one script into
 another and asks the patterns the same question twice.
 """
@@ -80,21 +87,56 @@ _DIGIT_SYLLABLES: Final[dict[str, str]] = {
     "구": "9",
 }
 
-# A run of digit syllables, optionally broken by the separators a person pauses
-# with. Rewriting only inside a run keeps every other syllable untouched, so a
-# sentence with one 이 in it never changes.
-_RUN: Final = re.compile(rf"[{''.join(_DIGIT_SYLLABLES)}][{''.join(_DIGIT_SYLLABLES)}\s-]*")
+# A run of digits, spoken or written, broken by the separators a person pauses
+# with.
+#
+# **Digits belong in here, not only syllables.** Whisper does not choose one
+# script for a whole number: `공일공 1234 5678` and `010-1234 오육칠팔` are both
+# real transcriptions, and a run made only of syllables stops at the first digit
+# and leaves the rest of the number out of the count. That made a mixed number
+# too short to rewrite and it came out in the clear.
+_SYLLABLES: Final = "".join(_DIGIT_SYLLABLES)
+_RUN: Final = re.compile(rf"[{_SYLLABLES}0-9][{_SYLLABLES}0-9\s-]*")
 
-MIN_RUN_SYLLABLES: Final = 8
-"""Runs shorter than this are left as they are.
+MIN_SPOKEN_SYLLABLES: Final = 3
+"""A run with fewer spoken syllables than this is not a number being read out.
 
-Not a correctness guard — the patterns already reject anything short, and this
-could be 1 without a leak. It is there so the rewritten string stays close to
-the original: with no minimum, every stray 이 and 사 in a meeting becomes a
-digit in the text the patterns then read, and a debugging session on this file
-would be spent staring at nonsense. Eight is below the shortest thing any
-pattern accepts (a ten-digit account), so it cannot hide a match.
+Letting a run contain digits is what makes a mixed transcription reachable, and
+it also lets a number already written as digits reach across a space into
+ordinary Korean: `버전 20260910 이사 갑니다` became one run, 이사 was read as 24,
+and a version string plus the word for "moving house" came out masked as an
+account number. Requiring some of the run to actually be spoken separates "a
+number Whisper wrote in two scripts" from "a number standing next to a word".
+
+Three because a switch of script mid-number happens in chunks -- `공일공 1234`,
+`010-1234 오육칠팔` -- never for one syllable. A number written entirely in
+digits needs none of this: the patterns read it directly.
 """
+
+MIN_RUN_DIGITS: Final = 8
+"""Runs with fewer digit positions than this are left as they are.
+
+Counted over **both scripts**: a syllable in the table and a digit already
+written as one each count once. Counting syllables alone was the bug --
+`공일공 1234 5678이요` has four syllables and twelve digits, and the syllable
+count kept it under the threshold.
+
+Not a correctness guard. The shortest thing any pattern accepts is nine digits
+(a phone number: a two-to-four digit prefix, then three or four, then four), so
+eight cannot hide a match. It is there so the rewritten string stays close to the original: with no
+minimum, every stray 이 and 사 in a meeting becomes a digit in the text the
+patterns then read, and a debugging session here would be spent staring at
+nonsense.
+"""
+
+
+def _worth_rewriting(run: str) -> bool:
+    """Long enough to be a number, and spoken enough to be one being read out."""
+    spoken = sum(1 for c in run if c in _DIGIT_SYLLABLES)
+    return (
+        spoken >= MIN_SPOKEN_SYLLABLES
+        and spoken + sum(1 for c in run if c.isdigit()) >= MIN_RUN_DIGITS
+    )
 
 
 MAX_PARTICLE_SYLLABLES: Final = 3
@@ -136,7 +178,7 @@ def _rewrite(text: str, start: int, end: int) -> str:
 def _spell_out(text: str) -> str:
     """Every long run rewritten, greedily. For tests and for reading the diff."""
     for match in _RUN.finditer(text):
-        if sum(1 for c in match.group() if c in _DIGIT_SYLLABLES) >= MIN_RUN_SYLLABLES:
+        if _worth_rewriting(match.group()):
             text = _rewrite(text, match.start(), match.end())
     return text
 
@@ -152,30 +194,34 @@ class SpokenNumberRecogniser:
     def find(self, text: str) -> list[tuple[int, int, str]]:
         found: list[tuple[int, int, str]] = []
         for match in _RUN.finditer(text):
-            if sum(1 for c in match.group() if c in _DIGIT_SYLLABLES) < MIN_RUN_SYLLABLES:
+            if not _worth_rewriting(match.group()):
                 continue
-            span = _best_reading(text, match.start(), match.end())
-            if span is not None:
-                found.append(span)
+            found.extend(_best_reading(text, match.start(), match.end()))
         return found
 
 
-def _best_reading(text: str, start: int, end: int) -> tuple[int, int, str] | None:
-    """The most specific value the patterns can see in one run.
+def _best_reading(text: str, start: int, end: int) -> list[tuple[int, int, str]]:
+    """Every value the patterns can see in one run, under the best reading of it.
 
     The run is rewritten repeatedly, each time giving one more trailing syllable
     back to the sentence, and every reading the patterns recognise is collected.
-    The winner is the most specific one -- ``phone`` over ``account`` for the
-    same digits -- and the longest of those.
+    The winner is the reading whose most specific span is most specific --
+    ``phone`` over ``account`` for the same digits -- and, among equals, the one
+    that covers the most characters.
 
-    Trying several readings rather than one is what the particle problem forces.
-    Read greedily, ``오육칠팔이에요`` is thirteen digits and the phone pattern
-    rejects it for the digit that follows; give the 이 back and it is a phone
-    number. And ``오육칠팔구공이요`` read greedily is a group of seven, which is
-    wider than any bank layout, so **greedy reading found nothing at all** --
-    a leak, not a mislabel. Both are one syllable of a particle.
+    **All of that reading's spans are returned, not its best one.** A run is one
+    run of digits, not one number: two numbers read back to back have nothing
+    between them that ends the run, and returning a single span left the second
+    one in the clear. Merging what overlaps is `masking._resolve_overlaps`'s job
+    and it already does it.
+
+    Trying several readings is what the particle problem forces. Read greedily,
+    ``오육칠팔이에요`` is one digit too long and the phone pattern rejects it for
+    the digit that follows; give the 이 back and it is a phone number. And
+    ``오육칠팔구공이요`` read greedily is a group of seven, wider than any bank
+    layout, so greedy reading found nothing at all -- a leak, not a mislabel.
     """
-    best: tuple[int, int, str] | None = None
+    best: list[tuple[int, int, str]] = []
     best_key: tuple[int, int] | None = None
 
     for given_back in range(MAX_PARTICLE_SYLLABLES + 1):
@@ -185,12 +231,19 @@ def _best_reading(text: str, start: int, end: int) -> tuple[int, int, str] | Non
         rewritten = _rewrite(text, start, stop)
         if rewritten == text:
             continue
-        for span_start, span_end, category in find_pii(rewritten):
-            if span_start >= end or span_end <= start:
-                continue  # a number somewhere else in the sentence
-            key = (-_SPECIFICITY.get(category, len(_SPECIFICITY)), span_end - span_start)
-            if best_key is None or key > best_key:
-                best, best_key = (span_start, span_end, category), key
+        spans = [
+            (span_start, span_end, category)
+            for span_start, span_end, category in find_pii(rewritten)
+            if span_start < end and span_end > start  # a number elsewhere is not ours
+        ]
+        if not spans:
+            continue
+        key = (
+            -min(_SPECIFICITY.get(c, len(_SPECIFICITY)) for _, _, c in spans),
+            sum(e - s for s, e, _ in spans),
+        )
+        if best_key is None or key > best_key:
+            best, best_key = spans, key
     return best
 
 
@@ -215,8 +268,4 @@ def get_recogniser() -> SpokenNumberRecogniser | FakeRecogniser:
     setting = get_settings().recogniser
     if setting == "none":
         return FakeRecogniser()
-    if setting == "spoken_numbers":
-        return SpokenNumberRecogniser()
-    raise ValueError(
-        f"unknown AUTUNE_AUDIO_RECOGNISER={setting!r}; known: 'spoken_numbers', 'none'"
-    )
+    return SpokenNumberRecogniser()
