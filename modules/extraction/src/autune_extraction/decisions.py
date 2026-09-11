@@ -38,12 +38,17 @@ the argument has somewhere to live.
 class ClassifiedUtterance:
     """One utterance with the label the classifier gave it.
 
+    ``kind`` is ``None`` for an utterance the model calls none of the kinds
+    (#149). Those still belong in the sequence ``group_decisions`` reads: they
+    are most of the utterances between two decisions, and the gap is counted in
+    them.
+
     ``text`` is already PII-masked — module A masks before the first write and
     there is no unmasked column to read (invariant 11, privacy.md section 2).
     """
 
     id: str
-    kind: UtteranceKind
+    kind: UtteranceKind | None
     confidence: float
     text: str
 
