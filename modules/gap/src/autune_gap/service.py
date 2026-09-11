@@ -184,8 +184,11 @@ def build_report(session: Session, meeting_id: str) -> GapReport:
       ties the order would follow the random topic ids, and a redelivered task
       would publish the same report shuffled.
     - Participation is lists of participant ids and nothing else. ``spoke`` and
-      ``silent`` together are every consenting participant, because silence is
-      what a gap is raised on (privacy.md section 3 is why there is no number).
+      ``silent`` together are every consenting person, because silence is what a
+      gap is raised on (privacy.md section 3 is why there is no number). One
+      person is one entry however many voices diarization split them into —
+      see ``_people`` — and having spoken as any of them puts them in
+      ``spoke``: recording speech as silence is the worse of the two mistakes.
     - A dismissed gap is not reported. Its row stays for threshold tuning, but
       the team has said it is wrong, and E counting it would score the meeting
       on a gap nobody believes in.
@@ -216,14 +219,15 @@ def build_report(session: Session, meeting_id: str) -> GapReport:
     ).all():
         evidence[topic_id].append(utterance_id)
 
-    spoke: dict[str, list[str]] = defaultdict(list)
-    silent: dict[str, list[str]] = defaultdict(list)
-    for topic_id, participant_id, said in session.execute(
-        select(GapParticipation.topic_id, GapParticipation.participant_id, GapParticipation.spoke)
-        .where(GapParticipation.topic_id.in_(topic_ids))
-        .order_by(GapParticipation.participant_id)
+    person = _people(session, meeting_id)
+    said: dict[str, dict[str, bool]] = defaultdict(dict)
+    for topic_id, participant_id, spoke_here in session.execute(
+        select(
+            GapParticipation.topic_id, GapParticipation.participant_id, GapParticipation.spoke
+        ).where(GapParticipation.topic_id.in_(topic_ids))
     ).all():
-        (spoke if said else silent)[topic_id].append(participant_id)
+        who = person.get(participant_id, participant_id)
+        said[topic_id][who] = said[topic_id].get(who, False) or spoke_here
 
     gaps = list(
         session.scalars(
@@ -252,7 +256,11 @@ def build_report(session: Session, meeting_id: str) -> GapReport:
             for topic in topics
         ],
         participation=[
-            Participation(topic_id=topic.id, spoke=spoke[topic.id], silent=silent[topic.id])
+            Participation(
+                topic_id=topic.id,
+                spoke=sorted(who for who, spoke_here in said[topic.id].items() if spoke_here),
+                silent=sorted(who for who, spoke_here in said[topic.id].items() if not spoke_here),
+            )
             for topic in topics
         ],
         gaps=[
@@ -269,3 +277,38 @@ def build_report(session: Session, meeting_id: str) -> GapReport:
             for gap in gaps
         ],
     )
+
+
+def _people(session: Session, meeting_id: str) -> dict[str, str]:
+    """Participant id -> the participant id that stands for that person in the
+    report.
+
+    Module A makes one participant row per speaker label, and splitting one
+    voice into two clusters is diarization's characteristic failure. Once
+    identification (#6) fills ``user_id``, one person can own two rows — and
+    the matrix, stored per row, would have them speak on a topic as one and
+    stay silent on it as the other. A gap raised on that silence would be a
+    false statement about somebody who spoke. Raised in review of #164.
+
+    Rows sharing a ``user_id`` are one person, represented by the smallest of
+    their participant ids; a row with no ``user_id`` stands for itself.
+
+    **Represented by a participant id, not by the user id.** A user id is the
+    same in every meeting, so a report carrying one could be joined across
+    meetings into a record of one person's silences; a participant id belongs
+    to this meeting only (docs/modules/gap.md). Grouping by ``user_id`` fixes
+    the double count without giving that up.
+    """
+    rows = session.execute(
+        select(Participant.id, Participant.user_id).where(
+            Participant.meeting_id == meeting_id, Participant.consented.is_(True)
+        )
+    ).all()
+    first: dict[str, str] = {}
+    for participant_id, user_id in rows:
+        if user_id is not None:
+            first[user_id] = min(first.get(user_id, participant_id), participant_id)
+    return {
+        participant_id: participant_id if user_id is None else first[user_id]
+        for participant_id, user_id in rows
+    }

@@ -28,7 +28,7 @@ from autune_contracts import (
 from autune_contracts import Utterance as UtterancePayload
 from autune_contracts.events import GAP_COMPLETED
 from autune_contracts.gap import GapReport
-from autune_core import Meeting, Participant, Team, Utterance, session_scope
+from autune_core import Meeting, Participant, Team, User, Utterance, session_scope
 from autune_gap import service, tasks
 from autune_gap.config import get_settings
 from autune_gap.models import (
@@ -393,6 +393,73 @@ def test_reported_participation_names_who_spoke_and_who_did_not(
     row = next(p for p in report.participation if p.topic_id == metric.id)
     assert row.spoke == [participant_id(meeting_id, "이건우")]
     assert row.silent == [participant_id(meeting_id, "김서연")]
+
+
+def test_one_person_split_into_two_voices_is_reported_once(
+    team_id: str, sent: list[tuple[str, dict]]
+) -> None:
+    """Review of #164. Diarization split alice into 화자1 and 화자2 and she
+    confirmed both. She spoke on "캐시" as 화자1 and not as 화자2 — she spoke on
+    it, once, and is silent on nothing she said."""
+    lines = [
+        Line("화자1", "캐시 만료를 30% 줄이면 됩니다"),
+        Line("화자2", "검색 결과는 다음 주에 다시 보죠"),
+        Line("화자3", "검색 기능 응답이 느립니다"),
+    ]
+    meeting_id = seed(team_id, lines)
+    with session_scope() as s:
+        alice = User(email=f"alice-{meeting_id}@example.com", display_name="alice")
+        s.add(alice)
+        s.flush()
+        alice_id = alice.id
+        for person in s.scalars(
+            select(Participant).where(
+                Participant.meeting_id == meeting_id,
+                Participant.speaker_label.in_(["화자1", "화자2"]),
+            )
+        ):
+            person.user_id = alice_id
+    try:
+        service.build_topic_graph(transcript(meeting_id, lines))
+        service.publish_report(meeting_id)
+        report = published_report(sent)
+    finally:
+        with session_scope() as s:
+            s.execute(delete(User).where(User.id == alice_id))
+
+    as_alice = min(participant_id(meeting_id, "화자1"), participant_id(meeting_id, "화자2"))
+    bob = participant_id(meeting_id, "화자3")
+    cache = next(t for t in report.topics if t.label == "캐시")
+    row = next(p for p in report.participation if p.topic_id == cache.id)
+    assert (row.spoke, row.silent) == ([as_alice], [bob])
+    for row in report.participation:
+        assert {*row.spoke, *row.silent} == {as_alice, bob}
+
+
+def test_a_split_person_is_reported_by_a_participant_id_not_their_user_id(
+    team_id: str, sent: list[tuple[str, dict]]
+) -> None:
+    """A user id is the same in every meeting; a report carrying one could be
+    joined across meetings into a record of one person's silences."""
+    lines = [Line("화자1", "캐시 얘기"), Line("화자2", "검색 얘기")]
+    meeting_id = seed(team_id, lines)
+    with session_scope() as s:
+        alice = User(email=f"alice-{meeting_id}@example.com", display_name="alice")
+        s.add(alice)
+        s.flush()
+        alice_id = alice.id
+        for person in s.scalars(select(Participant).where(Participant.meeting_id == meeting_id)):
+            person.user_id = alice_id
+    try:
+        service.build_topic_graph(transcript(meeting_id, lines))
+        service.publish_report(meeting_id)
+        report = published_report(sent)
+    finally:
+        with session_scope() as s:
+            s.execute(delete(User).where(User.id == alice_id))
+
+    ids = {who for row in report.participation for who in (*row.spoke, *row.silent)}
+    assert ids and all(who.startswith("prt_") for who in ids)
 
 
 def test_the_report_carries_no_utterance_text(team_id: str, sent: list[tuple[str, dict]]) -> None:

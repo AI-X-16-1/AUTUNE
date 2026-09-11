@@ -102,6 +102,16 @@ participation is the `spoke` and `silent` id lists and nothing else. A
 dismissed gap is left out: its row stays for threshold tuning, but E should not
 score a meeting on a gap the team rejected.
 
+**One person is one entry in the report**, however many voices diarization
+split them into. `gap_participation` stays per participant row — the speaker
+track is C's unit of analysis — and the report merges rows that share a
+`user_id`, represented by the smallest of their participant ids. Having spoken
+as any of them puts the person in `spoke`: recording speech as silence would
+raise a gap that is a false statement about somebody. The representative is a
+participant id rather than the user id so the report stays unjoinable across
+meetings. Raised in review of #164; it cannot happen until identification (#6)
+fills `user_id`, which is why it is fixed now rather than found then.
+
 Until template comparison and risk scoring land (#14, #35, both waiting on
 #22), `gaps` is empty and the report carries topics and participation only.
 
