@@ -11,7 +11,7 @@ export type {
   ExtractionResult,
 } from "@autune/contracts";
 
-import type { ActionStatus } from "@autune/contracts";
+import type { ActionItem, ActionStatus } from "@autune/contracts";
 
 /**
  * The four columns of the action board, left to right (S17).
@@ -37,28 +37,52 @@ export const COLUMN_LABELS: Record<ActionStatus, string> = {
 };
 
 /**
- * Below this confidence an item is shown as a candidate rather than asserted.
+ * One item as `/api/extraction` returns it — `ActionItemRead` in
+ * `modules/extraction/src/autune_extraction/schemas.py`.
  *
- * ADR 0006 ranks recall above precision — a wrong item costs a click, a missing
- * one costs re-reading the meeting — so low-confidence items are shown apart
- * instead of dropped.
- *
- * **The number is a placeholder and belongs to the backend.** It should come
- * from the classifier's confidence distribution over the evaluation set (#10,
- * #64), and once it does, the API should say which items are candidates rather
- * than the client deciding from a threshold it happens to hold. Until then this
- * constant is the one place to change it.
+ * **Not a contract, so it is not generated.** The contracts package covers what
+ * crosses between modules; this is module B's own response body, which nobody
+ * else parses, and no generator reads it. It extends the generated `ActionItem`
+ * so every field the two share stays generated, and names only the three the
+ * server adds. `test_the_web_read_model_mirror_is_current` in
+ * `modules/extraction/tests` pins the Python side's field set and names this
+ * file, so a field added there fails a test rather than going missing here.
  */
-export const CANDIDATE_CONFIDENCE = 0.5;
+export interface ActionItemRead extends ActionItem {
+  meeting_id: string;
+  /** `model` for what the pipeline drafted, `user` for what a person typed. */
+  origin: "model" | "user";
+  /**
+   * Whether the item belongs in the candidate band. Decided by the server,
+   * which holds the threshold the classifier's confidences are measured
+   * against; false for everything while that threshold is unset (#122).
+   */
+  is_candidate: boolean;
+}
+
+/** One source utterance's words, already masked by module A. */
+export interface SourceUtterance {
+  id: string;
+  text: string;
+}
+
+/**
+ * One item and its evidence — `ActionItemDetail`, from
+ * `GET /action-items/{id}`. The only response that carries utterances verbatim.
+ */
+export interface ActionItemDetail extends ActionItemRead {
+  /** In the order they were spoken. */
+  sources: SourceUtterance[];
+}
 
 /**
  * An item the model was unsure about.
  *
- * An item somebody typed by hand carries confidence 1.0 — a person entering it
- * is the certainty — so it cannot land in the candidate band. That is why this
- * needs no way to tell the two apart: `ActionItem` does not carry `origin`, and
- * the confidence already answers the only question the band asks.
+ * The server says so. This used to compare `confidence` against a 0.5 the
+ * client held, which was one deploy away from disagreeing with the server about
+ * which items the meeting produced — and the number was a placeholder nobody
+ * had measured.
  */
-export function isCandidate(item: { confidence: number }): boolean {
-  return item.confidence < CANDIDATE_CONFIDENCE;
+export function isCandidate(item: ActionItemRead): boolean {
+  return item.is_candidate;
 }
