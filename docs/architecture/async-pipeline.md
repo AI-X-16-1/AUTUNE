@@ -51,8 +51,32 @@ E aggregates whatever has arrived; see "E and partial results" below.
 
 ## Naming
 
-Task names are `autune.<module>.<verb>`. Event names are
-`autune.<producer>.<noun>` in the past tense.
+Task names are `autune.<module>.<verb>`. Event names are `autune.<noun>.<past
+tense>` — `autune.transcript.ready`, `autune.extraction.completed`.
+
+**An event name does not contain its producer.** `autune.transcript.ready` is
+produced by A, and `audio` is nowhere in it. That is not an inconsistency to fix
+later: the name says what happened, and who published it is exactly the thing a
+consumer must not depend on.
+
+### Subscribing
+
+A consuming task is named by a mechanical transformation of the event: drop the
+`autune.` prefix, join what is left with underscores, prefix `on_`.
+
+```
+autune.transcript.ready      ->  autune.<consumer>.on_transcript_ready
+autune.extraction.completed  ->  autune.<consumer>.on_extraction_completed
+```
+
+`autune_core.publish` finds every registered task whose name ends that way, so
+**subscribing is defining the task and unsubscribing is deleting it.** There is
+no list of consumers anywhere, and a producer never names one.
+
+Read the rule mechanically, not by meaning. "The producer's name, then the noun"
+describes four of the five events and breaks on the first one, and following it
+would produce `autune.audio.transcript_ready` next time — a name neither reading
+agrees on.
 
 | Name | Kind | Owner |
 | --- | --- | --- |
@@ -92,17 +116,41 @@ array, a tensor, or a file path to something in local storage.
 
 ```python
 # publishing
-from autune_contracts import TranscriptReady
+from autune_contracts import TRANSCRIPT_READY, TranscriptReady
+from autune_core import publish
 
-payload = TranscriptReady(...).model_dump(mode="json")
-celery_app.send_task("autune.extraction.on_transcript_ready", args=[payload])
+publish(TRANSCRIPT_READY, TranscriptReady(...).model_dump(mode="json"))
 
 
 # consuming
-@celery_app.task(name="autune.extraction.on_transcript_ready")
+from celery import shared_task
+
+
+@shared_task(name="autune.extraction.on_transcript_ready", acks_late=True)
 def on_transcript_ready(payload: dict) -> None:
     transcript = TranscriptReady.model_validate(payload)
 ```
+
+Publish the **event name**, never a consumer's task name. `send_task(
+"autune.extraction.on_transcript_ready", ...)` inside module A puts B's task name
+in A's source; import-linter cannot see it, because it is a string. And
+`autune.extraction.completed` already has two consumers, so B's source would
+carry D's and E's names — after which adding a third means editing B, which
+belongs to somebody else (invariant 10).
+
+Import the constant rather than typing the string. `publish` refuses a name that
+is not declared in `autune_contracts.events`, because a mis-typed event resolves
+to a suffix nobody registered: nothing is sent, nothing raises, and the meeting
+is simply never analysed.
+
+Publishing to an event nobody consumes logs a warning and succeeds. C not being
+deployed yet must not fail B, and the last event in the pipeline has no
+consumers by design. `apps/worker/tests/test_registration.py` is what tells that
+apart from a typo in a consumer's name — it checks both directions, every event
+reaching a task and every `on_*` task reaching an event.
+
+Fan-out is not atomic. With two subscribers the worker can die between the two
+sends, which is one of the reasons consuming tasks must be idempotent.
 
 Payloads are small — IDs and structured results. If a payload approaches
 hundreds of kilobytes, pass IDs and let the consumer read the shared entities
