@@ -14,13 +14,15 @@ from datetime import UTC, date, datetime
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session, selectinload
 
-from autune_contracts.enums import ActionStatus
+from autune_contracts.enums import ActionStatus, UtteranceKind
 from autune_contracts.extraction import (
     ActionItem,
     AmbiguousAgreement,
+    Classification,
     Decision,
     ExtractionResult,
 )
+from autune_contracts.transcript import Utterance as TranscriptUtterance
 from autune_core import Utterance, get_logger, session_scope
 from autune_integrations import SlackApi, assert_personal_delivery
 
@@ -31,11 +33,13 @@ from .edit_cost import EditCost
 from .models import (
     ExtActionItem,
     ExtActionItemSource,
+    ExtClassification,
     ExtConfirmation,
     ExtDecision,
     ExtDecisionSource,
     ExtEditEvent,
 )
+from .pipeline.base import Classifier
 from .schemas import (
     ActionItemCreate,
     ActionItemDetail,
@@ -555,3 +559,105 @@ def contract_action_item(item: ExtActionItem) -> ActionItem:
         status=ActionStatus(item.status),
         confidence=item.confidence,
     )
+
+
+# --- step 1: classification --------------------------------------------------
+
+
+def classify_utterances(
+    classifier: Classifier, utterances: Sequence[TranscriptUtterance]
+) -> list[ClassifiedUtterance]:
+    """Every utterance of a meeting, in spoken order, with the classifier's answer.
+
+    Takes no session, on purpose. Classifying a meeting is the heaviest thing
+    this module does -- about two minutes of CPU for a 45-minute meeting (#112)
+    -- and a transaction held open around it holds its locks and a pooled
+    connection for all of that time. The caller classifies first and opens a
+    session only to write.
+
+    Sorted by ``start`` because everything downstream reads meeting order:
+    ``group_decisions`` counts its gap in utterances, and a payload is not
+    promised to arrive sorted. The id breaks ties so two utterances starting at
+    the same instant come out the same way on every run.
+
+    Every utterance is returned, the ones the model calls none included --
+    ``kind`` is ``None`` for those. They are what the decision gap is counted
+    in; only ``store_classifications`` leaves them out.
+    """
+    ordered = sorted(utterances, key=lambda u: (u.start, u.id))
+    predictions = classifier.classify([utterance.text for utterance in ordered])
+    if len(predictions) != len(ordered):
+        # The Protocol promises one per input, in order; zipping a short list
+        # would label the wrong utterances without an error.
+        raise ValueError(
+            f"asked for {len(ordered)} predictions, the classifier returned {len(predictions)}"
+        )
+    return [
+        ClassifiedUtterance(
+            id=utterance.id,
+            kind=prediction.kind,
+            confidence=prediction.confidence,
+            text=utterance.text,
+        )
+        for utterance, prediction in zip(ordered, predictions, strict=True)
+    ]
+
+
+def store_classifications(
+    session: Session,
+    *,
+    meeting_id: str,
+    utterances: Sequence[ClassifiedUtterance],
+    model_version: str,
+) -> int:
+    """Replace this meeting's classifications. Returns how many rows it wrote.
+
+    Delete-then-insert in the caller's transaction, which ``async-pipeline.md``
+    allows for derived results: a redelivered task or a reprocessed meeting ends
+    with one set of rows, the last one. A merge would keep a label the new model
+    no longer gives, because the utterance it would be keyed on is now none and
+    has no row to overwrite it with.
+
+    Only the five kinds are written -- see ``ExtClassification``.
+    """
+    session.execute(delete(ExtClassification).where(ExtClassification.meeting_id == meeting_id))
+    rows = [
+        ExtClassification(
+            utterance_id=utterance.id,
+            meeting_id=meeting_id,
+            kind=utterance.kind.value,
+            confidence=utterance.confidence,
+            model_version=model_version,
+            nli_verified=False,
+        )
+        for utterance in utterances
+        if utterance.kind is not None
+    ]
+    session.add_all(rows)
+    session.flush()
+    return len(rows)
+
+
+def classifications_for_meeting(session: Session, meeting_id: str) -> list[Classification]:
+    """This meeting's classifications as the contract describes them, in spoken
+    order.
+
+    Ordered by ``utterances.start_sec`` because the row carries no position and
+    the order is what a reader of a meeting needs. The join is to a table this
+    module may read and never writes.
+    """
+    rows = session.scalars(
+        select(ExtClassification)
+        .join(Utterance, Utterance.id == ExtClassification.utterance_id)
+        .where(ExtClassification.meeting_id == meeting_id)
+        .order_by(Utterance.start_sec, Utterance.id)
+    ).all()
+    return [
+        Classification(
+            utterance_id=row.utterance_id,
+            kind=UtteranceKind(row.kind),
+            confidence=row.confidence,
+            nli_verified=row.nli_verified,
+        )
+        for row in rows
+    ]
