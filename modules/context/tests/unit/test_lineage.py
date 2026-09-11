@@ -27,7 +27,7 @@ def test_cosine_is_1_for_identical_and_0_for_orthogonal() -> None:
 
 
 def _head(thread_id: str, vector: list[float]) -> _ThreadHead:
-    return _ThreadHead(thread_id, latest=object(), vector=vector)  # type: ignore[arg-type]
+    return _ThreadHead(thread_id, vector)
 
 
 def test_match_thread_picks_the_most_similar_above_the_threshold() -> None:
@@ -43,3 +43,10 @@ def test_match_thread_returns_none_below_the_threshold() -> None:
 def test_match_thread_skips_threads_already_used_this_run() -> None:
     heads = [_head("thr_a", [1.0, 0.0]), _head("thr_b", [1.0, 0.0])]
     assert _match_thread([1.0, 0.0], heads, used={"thr_a"}, threshold=0.6).thread_id == "thr_b"
+
+
+def test_match_thread_breaks_ties_deterministically_by_scan_order() -> None:
+    # Both heads are equally similar; whichever is first in `heads` must win,
+    # every time — `heads` is itself built in a deterministic order.
+    heads = [_head("thr_a", [1.0, 0.0]), _head("thr_b", [1.0, 0.0])]
+    assert _match_thread([1.0, 0.0], heads, used=set(), threshold=0.6).thread_id == "thr_a"

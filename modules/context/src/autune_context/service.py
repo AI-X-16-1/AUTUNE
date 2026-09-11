@@ -14,7 +14,7 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 from celery import current_app
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.orm import Session
 
 from autune_context.config import get_settings
@@ -29,10 +29,6 @@ from autune_context.pipeline import get_embedder, get_nli, get_reranker
 from autune_context.pipeline.retrieval import HybridRetriever
 from autune_context.pipeline.topics import extract_topics
 from autune_contracts import ChangeType, ContextLinks, DecisionChange, NliLabel, TopicLink
-
-# ``Decision`` is listed in ``autune_contracts.__all__`` but not re-exported from
-# the package root (a known contracts bug). Import it from the submodule.
-from autune_contracts.extraction import Decision
 from autune_core import Meeting, Participant, get_logger, session_scope
 
 if TYPE_CHECKING:
@@ -204,19 +200,22 @@ def build_decision_lineage(result: ExtractionResult) -> None:
     """Thread each of B's decisions into a lineage and classify how it moved.
 
     B owns *what counts as a decision in this meeting*; D owns *whether it is the
-    same decision as one from before*. For each ``result.decisions`` entry:
+    same decision as one from before*. Each ``result.decisions`` entry is matched
+    to an existing ``ctx_decisions`` thread by cosine similarity of its statement
+    to the thread's most recent statement, or opens a new ``thr_`` thread
+    anchored on the meeting's team.
 
-    1. Match it to an existing ``ctx_decisions`` thread by cosine similarity of
-       the statement to the thread's latest statement, or open a new ``thr_``
-       thread anchored on the meeting's team.
-    2. Run NLI (previous statement -> current) and map the label to a
-       ``change_type``; a brand-new thread is ``new``.
-    3. Write a ``ctx_decision_versions`` row chained onto the thread's latest.
-    4. Record which of the thread's known stakeholders were absent this meeting.
+    Every thread this run touches is then re-chained end to end by
+    ``_rethread``: ``previous_*``, ``change_type`` and ``nli_label`` are a
+    function of *when meetings happened*, not the order B finished them, so a
+    meeting that B processes late — a long February meeting landing after
+    January's, a backfill of past recordings — still has to slot into the middle
+    of a thread's history.
 
-    Idempotent: every ``ctx_decision_versions`` row for this meeting is replaced,
-    then any thread the replacement left empty is swept. Does not publish — that
-    is ``publish_if_ready``.
+    Idempotent: every ``ctx_decision_versions`` row for this meeting is replaced
+    and its threads are re-chained, then any thread left empty is swept. A re-run
+    means the published ``ContextLinks`` should be rebuilt — that is
+    ``publish_if_ready``'s job, not this one.
     """
     settings = get_settings()
     embedder = get_embedder()
@@ -227,139 +226,188 @@ def build_decision_lineage(result: ExtractionResult) -> None:
         if meeting is None:
             raise ValueError(f"{result.meeting_id}: meeting row not found")
 
+        # Idempotency: drop this meeting's versions up front. The threads they
+        # were in still need re-chaining even if this run matches the decisions
+        # elsewhere, so remember them.
+        affected: set[str] = set(
+            session.scalars(
+                select(CtxDecisionVersion.thread_id).where(
+                    CtxDecisionVersion.meeting_id == result.meeting_id
+                )
+            ).all()
+        )
         session.execute(
             delete(CtxDecisionVersion).where(CtxDecisionVersion.meeting_id == result.meeting_id)
         )
         session.flush()
 
-        current_user_ids = _meeting_user_ids(session, result.meeting_id)
         heads = _thread_heads(session, meeting.team_id, embedder)
         decisions = list(result.decisions)
         statement_vectors = embedder.embed([d.statement for d in decisions]) if decisions else []
-        used: set[str] = set()
+        matched: set[str] = set()
+        new_threads = 0
 
         for decision, vector in zip(decisions, statement_vectors, strict=True):
-            head = _match_thread(vector, heads, used, settings.lineage_match_threshold)
-            version = _decision_version(session, decision, head, meeting, nli, current_user_ids)
-            session.add(version)
-            session.flush()  # assign version.id before it becomes a previous_version_id
+            head = _match_thread(vector, heads, matched, settings.lineage_match_threshold)
             if head is not None:
-                used.add(head.thread_id)
+                thread_id = head.thread_id
+            else:
+                thread = CtxDecision(team_id=meeting.team_id, topic_label=decision.statement[:400])
+                session.add(thread)
+                session.flush()
+                thread_id = thread.id
+                new_threads += 1
+            # A seed row: _rethread fills in every chain-dependent field once the
+            # thread's full history is in place.
+            session.add(
+                CtxDecisionVersion(
+                    thread_id=thread_id,
+                    source_decision_id=decision.id,
+                    meeting_id=meeting.id,
+                    current_statement=decision.statement,
+                    previous_version_id=None,
+                    previous_statement=None,
+                    previous_meeting_id=None,
+                    change_type=ChangeType.NEW.value,
+                    nli_label=None,
+                    confidence=_clamp(decision.confidence),
+                    key_stakeholders_absent=[],
+                    nli_version=nli.model_version,
+                )
+            )
+            matched.add(thread_id)
+            affected.add(thread_id)
 
         session.flush()
+        for thread_id in affected:
+            _rethread(session, thread_id, nli)
+
         swept = sweep_orphan_decision_threads(session)
         _upsert_status(session, result.meeting_id, extraction_seen=True, lineage_done=True)
         log.info(
             "context_decision_lineage_done",
             meeting_id=result.meeting_id,
             decisions=len(decisions),
-            new_threads=len(decisions) - len(used),
+            new_threads=new_threads,
             threads_swept=swept,
         )
 
 
 class _ThreadHead:
-    """A decision thread and its most recent version, for matching against."""
+    """A thread's most recent statement, embedded — the target ``_match_thread``
+    scores a new decision against."""
 
-    __slots__ = ("thread_id", "latest", "vector")
+    __slots__ = ("thread_id", "vector")
 
-    def __init__(self, thread_id: str, latest: CtxDecisionVersion, vector: list[float]) -> None:
+    def __init__(self, thread_id: str, vector: list[float]) -> None:
         self.thread_id = thread_id
-        self.latest = latest
         self.vector = vector
 
 
+def _meeting_time():
+    """Order key for a decision version: its meeting's start, falling back to
+    when the meeting row was created for the rare meeting with no ``started_at``."""
+    return func.coalesce(Meeting.started_at, Meeting.created_at)
+
+
 def _thread_heads(session: Session, team_id: str, embedder: Embedder) -> list[_ThreadHead]:
-    """The latest version of every non-empty thread for this team, embedded."""
-    threads = session.scalars(select(CtxDecision).where(CtxDecision.team_id == team_id)).all()
-    latest_by_thread: list[tuple[str, CtxDecisionVersion]] = []
-    for thread in threads:
-        latest = session.scalars(
-            select(CtxDecisionVersion)
-            .where(CtxDecisionVersion.thread_id == thread.id)
-            .order_by(CtxDecisionVersion.id.desc())
-            .limit(1)
-        ).first()
-        if latest is not None:
-            latest_by_thread.append((thread.id, latest))
-    if not latest_by_thread:
+    """Every non-empty thread for this team, represented by its latest version
+    (by meeting time), embedded.
+
+    One query and one batch embed — threads accumulate per team over the
+    retention window, so neither can be per-thread. The returned list is in a
+    deterministic order so ``_match_thread``'s tie-break is stable.
+    """
+    versions = session.scalars(
+        select(CtxDecisionVersion)
+        .join(CtxDecision, CtxDecision.id == CtxDecisionVersion.thread_id)
+        .join(Meeting, Meeting.id == CtxDecisionVersion.meeting_id)
+        .where(CtxDecision.team_id == team_id)
+        .order_by(CtxDecisionVersion.thread_id, _meeting_time(), CtxDecisionVersion.id)
+    ).all()
+    head_by_thread: dict[str, CtxDecisionVersion] = {}
+    for version in versions:
+        head_by_thread[version.thread_id] = version  # last row per thread = its head
+    if not head_by_thread:
         return []
-    vectors = embedder.embed([latest.current_statement for _, latest in latest_by_thread])
+    ordered = sorted(head_by_thread.items())
+    vectors = embedder.embed([version.current_statement for _, version in ordered])
     return [
-        _ThreadHead(thread_id, latest, vector)
-        for (thread_id, latest), vector in zip(latest_by_thread, vectors, strict=True)
+        _ThreadHead(thread_id, vector)
+        for (thread_id, _version), vector in zip(ordered, vectors, strict=True)
     ]
 
 
 def _match_thread(
     vector: list[float], heads: list[_ThreadHead], used: set[str], threshold: float
 ) -> _ThreadHead | None:
-    """The most similar unused thread, if it clears the threshold."""
+    """The most similar thread not already matched this run, if it clears the
+    threshold. ``>`` on the running best keeps the first-scanned thread on a tie,
+    and ``heads`` is ordered, so the result is deterministic."""
     best: _ThreadHead | None = None
-    best_sim = threshold
+    best_sim = -1.0
     for head in heads:
         if head.thread_id in used:
             continue
         sim = _cosine(vector, head.vector)
-        if sim >= best_sim:
+        if sim > best_sim:
             best_sim, best = sim, head
-    return best
+    return best if best is not None and best_sim >= threshold else None
 
 
-def _decision_version(
-    session: Session,
-    decision: Decision,
-    head: _ThreadHead | None,
-    meeting: Meeting,
-    nli: NliModel,
-    current_user_ids: set[str],
-) -> CtxDecisionVersion:
-    if head is None:
-        thread = CtxDecision(team_id=meeting.team_id, topic_label=decision.statement[:400])
-        session.add(thread)
-        session.flush()
-        return CtxDecisionVersion(
-            thread_id=thread.id,
-            source_decision_id=decision.id,
-            meeting_id=meeting.id,
-            previous_version_id=None,
-            current_statement=decision.statement,
-            previous_statement=None,
-            previous_meeting_id=None,
-            change_type=ChangeType.NEW.value,
-            nli_label=None,
-            confidence=_clamp(decision.confidence),
-            key_stakeholders_absent=[],
-            nli_version=nli.model_version,
-        )
+def _rethread(session: Session, thread_id: str, nli: NliModel) -> None:
+    """Re-chain every version of one thread in meeting-chronological order.
 
-    prev = head.latest
-    scores = nli.classify([(prev.current_statement, decision.statement)])[0]
-    label = NliLabel(scores.label)
-    return CtxDecisionVersion(
-        thread_id=head.thread_id,
-        source_decision_id=decision.id,
-        meeting_id=meeting.id,
-        previous_version_id=prev.id,
-        current_statement=decision.statement,
-        previous_statement=prev.current_statement,
-        previous_meeting_id=prev.meeting_id,
-        change_type=_NLI_TO_CHANGE[label].value,
-        nli_label=label.value,
-        confidence=_clamp(float(getattr(scores, label.value))),
-        key_stakeholders_absent=_absent_stakeholders(session, head.thread_id, current_user_ids),
-        nli_version=nli.model_version,
-    )
-
-
-def _absent_stakeholders(session: Session, thread_id: str, current_user_ids: set[str]) -> list[str]:
-    """The thread's known stakeholders (users across every prior version's
-    meeting) who were not in the current meeting. Drives the drift warning."""
-    prior_meeting_ids = session.scalars(
-        select(CtxDecisionVersion.meeting_id).where(CtxDecisionVersion.thread_id == thread_id)
+    ``previous_*``, ``change_type``, ``nli_label``, ``confidence`` and
+    ``key_stakeholders_absent`` all depend on which meeting a version follows, so
+    a version that arrived out of order can only be placed by rebuilding the
+    chain. NLI is re-run for every adjacent pair (one batched call): it is
+    deterministic given the model, and ``nli_version`` is refreshed, so a
+    re-chain does not drift. ``confidence`` on the first version keeps B's
+    decision confidence; on every later version it is the NLI score of the
+    winning label, and it is not recomputed back to B's number if the version
+    later becomes the head of its thread (same stance as
+    ``sweep_dangling_previous_statements``: what changed survives).
+    """
+    versions = session.scalars(
+        select(CtxDecisionVersion)
+        .join(Meeting, Meeting.id == CtxDecisionVersion.meeting_id)
+        .where(CtxDecisionVersion.thread_id == thread_id)
+        .order_by(_meeting_time(), CtxDecisionVersion.id)
     ).all()
-    known = _meeting_user_ids(session, *prior_meeting_ids)
-    return sorted(known - current_user_ids)
+    if not versions:
+        return
+
+    pairs = [
+        (versions[i - 1].current_statement, versions[i].current_statement)
+        for i in range(1, len(versions))
+    ]
+    scored = nli.classify(pairs) if pairs else []
+
+    prior_meeting_ids: list[str] = []
+    for index, version in enumerate(versions):
+        if index == 0:
+            version.previous_version_id = None
+            version.previous_statement = None
+            version.previous_meeting_id = None
+            version.change_type = ChangeType.NEW.value
+            version.nli_label = None
+            version.key_stakeholders_absent = []
+        else:
+            prev = versions[index - 1]
+            label = NliLabel(scored[index - 1].label)
+            version.previous_version_id = prev.id
+            version.previous_statement = prev.current_statement
+            version.previous_meeting_id = prev.meeting_id
+            version.change_type = _NLI_TO_CHANGE[label].value
+            version.nli_label = label.value
+            version.confidence = _clamp(float(getattr(scored[index - 1], label.value)))
+            known = _meeting_user_ids(session, *prior_meeting_ids)
+            present = _meeting_user_ids(session, version.meeting_id)
+            version.key_stakeholders_absent = sorted(known - present)
+        version.nli_version = nli.model_version
+        prior_meeting_ids.append(version.meeting_id)
+    session.flush()
 
 
 def _meeting_user_ids(session: Session, *meeting_ids: str) -> set[str]:

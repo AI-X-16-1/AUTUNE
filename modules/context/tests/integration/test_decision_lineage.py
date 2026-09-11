@@ -237,6 +237,58 @@ def test_rebuild_replaces_versions_and_leaves_no_orphan_threads(team_id: str) ->
     assert len(threads_after) == len(threads_before) == 1  # still one thread, no orphan
 
 
+def test_lineage_follows_meeting_time_not_processing_order(team_id: str) -> None:
+    """B can finish a February meeting before January's — a long meeting, a
+    backfill. The chain must follow when the meetings happened, not when B
+    reported them."""
+    jan = _meeting(team_id, days_ago=30)
+    feb = _meeting(team_id, days_ago=20)
+    mar = _meeting(team_id, days_ago=10)
+
+    service.build_decision_lineage(_extraction(feb, [("dec_feb", _D1, 0.9)]))
+    service.build_decision_lineage(_extraction(jan, [("dec_jan", _D1, 0.9)]))  # arrives late
+    service.build_decision_lineage(_extraction(mar, [("dec_mar", _D1, 0.9)]))
+
+    with session_scope() as s:
+        by_meeting = {
+            m: s.scalars(select(CtxDecisionVersion).where(CtxDecisionVersion.meeting_id == m)).one()
+            for m in (jan, feb, mar)
+        }
+        assert by_meeting[jan].change_type == "new"
+        assert by_meeting[jan].previous_version_id is None
+        assert by_meeting[feb].previous_meeting_id == jan
+        assert by_meeting[feb].previous_version_id == by_meeting[jan].id
+        assert by_meeting[mar].previous_meeting_id == feb
+        assert by_meeting[mar].previous_version_id == by_meeting[feb].id
+        assert by_meeting[jan].thread_id == by_meeting[feb].thread_id == by_meeting[mar].thread_id
+
+
+def test_rerunning_an_earlier_meeting_keeps_the_later_chain_intact(team_id: str) -> None:
+    """A retried task (``acks_late``) or a manual re-run is not guaranteed to be
+    the thread's most recent meeting. Re-threading must repair, not orphan, the
+    versions that already chained onto the one being replaced."""
+    first = _meeting(team_id, days_ago=10)
+    second = _meeting(team_id, days_ago=0)
+    service.build_decision_lineage(_extraction(first, [("dec_1", _D1, 0.9)]))
+    service.build_decision_lineage(_extraction(second, [("dec_2", _D1, 0.9)]))
+
+    service.build_decision_lineage(_extraction(first, [("dec_1b", _D1, 0.9)]))  # re-run
+
+    with session_scope() as s:
+        v1 = s.scalars(
+            select(CtxDecisionVersion).where(CtxDecisionVersion.meeting_id == first)
+        ).one()
+        v2 = s.scalars(
+            select(CtxDecisionVersion).where(CtxDecisionVersion.meeting_id == second)
+        ).one()
+        assert v1.change_type == "new"
+        assert v1.previous_version_id is None
+        assert v2.previous_version_id == v1.id  # re-pointed at the new row, not SET NULL
+        assert v2.previous_meeting_id == first
+        assert v2.previous_statement == _D1
+        assert v2.change_type == "unchanged"
+
+
 def test_publish_carries_the_decision_lineage(team_id: str, published: _CapturingApp) -> None:
     first = _meeting(team_id, days_ago=10)
     second = _meeting(team_id, days_ago=0)
