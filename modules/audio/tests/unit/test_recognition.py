@@ -32,39 +32,59 @@ def recogniser() -> SpokenNumberRecogniser:
 
 # The two rows issue #143 collected, and the particle variants that decide
 # whether the number is read one digit too long.
-# (line, category, the part that must not survive)
+# (line, the masked result in full, the category counted)
+#
+# **The whole string, not a substring.** This table checked that the spoken part
+# had gone and counted the spans, and that passed while every digit of a mixed
+# number stayed: `010-1234 오육칠팔` came out `010-1234 ****`, which is the
+# phone number with its last four written in Korean. A test that checks half of
+# an output is a test that can only find half of a leak.
 SPOKEN = [
-    ("제 번호는 공일공 일이삼사 오육칠팔이에요", "phone", "공일공 일이삼사 오육칠팔"),
-    ("공일공 일이삼사 오육칠팔이랑", "phone", "공일공 일이삼사 오육칠팔"),
-    ("번호 공일공 일이삼사 오육칠팔입니다", "phone", "공일공 일이삼사 오육칠팔"),
-    ("공일공 일이삼사 오육칠팔로 연락주세요", "phone", "공일공 일이삼사 오육칠팔"),
-    ("공일공일이삼사오육칠팔", "phone", "공일공일이삼사오육칠팔"),
-    ("계좌는 국민 삼일이 이사 오육칠팔구공이요", "account", "삼일이 이사 오육칠팔구공"),
-    ("주민번호 구공공일공일 일이삼사오육칠이에요", "rrn", "구공공일공일 일이삼사오육칠"),
+    ("제 번호는 공일공 일이삼사 오육칠팔이에요", "제 번호는 *** **** ****이에요", "phone"),
+    ("공일공 일이삼사 오육칠팔이랑", "*** **** ****이랑", "phone"),
+    ("번호 공일공 일이삼사 오육칠팔입니다", "번호 *** **** ****입니다", "phone"),
+    ("공일공 일이삼사 오육칠팔로 연락주세요", "*** **** ****로 연락주세요", "phone"),
+    ("공일공일이삼사오육칠팔", "***********", "phone"),
+    ("계좌는 국민 삼일이 이사 오육칠팔구공이요", "계좌는 국민 *** ** ******이요", "account"),
+    ("주민번호 구공공일공일 일이삼사오육칠이에요", "주민번호 ****** ********에요", "rrn"),
+    # Written in both scripts. Whisper does not pick one for a whole number.
+    ("010-1234 오육칠팔이요", "***-**** ****이요", "phone"),
+    ("공일공 1234 5678이요", "*** **** ****이요", "phone"),
+    ("공일공 1234 오육칠팔", "*** **** ****", "phone"),
+    ("0101234 오육칠팔", "******* ****", "phone"),
+    ("카드 1234 5678 구공일이 삼사오육", "카드 **** **** **** ****", "card"),
+    # Two numbers with nothing between them that ends the run.
+    ("공일공 일이삼사 오육칠팔 공일공 구팔칠육 오사삼이", "*** **** **** *** **** ****", "phone"),
 ]
 
 
-@pytest.mark.parametrize(("line", "category", "_secret"), SPOKEN)
-def test_a_number_read_aloud_is_found(
-    line: str, category: str, _secret: str, recogniser: SpokenNumberRecogniser
+@pytest.mark.parametrize(("line", "masked", "category"), SPOKEN)
+def test_a_number_read_aloud_is_masked_whole(
+    line: str, masked: str, category: str, recogniser: SpokenNumberRecogniser
 ) -> None:
-    """The whole point: `find_pii` sees no digits in any of these."""
-    assert mask(line).counts == {}, "the patterns alone should find nothing here"
-    assert mask(line, recogniser=recogniser).counts == {category: 1}
+    """The whole point: `find_pii` sees no digits in most of these."""
+    result = mask(line, recogniser=recogniser)
+    assert result.text == masked
+    assert set(result.counts) == {category}
 
 
-@pytest.mark.parametrize(("line", "_category", "secret"), SPOKEN)
-def test_the_number_itself_does_not_survive(
-    line: str, _category: str, secret: str, recogniser: SpokenNumberRecogniser
+@pytest.mark.parametrize(("line", "_masked", "_category"), SPOKEN)
+def test_no_digit_of_the_number_survives(
+    line: str, _masked: str, _category: str, recogniser: SpokenNumberRecogniser
 ) -> None:
-    """`_hide` covers every non-separator character in a numeric span.
+    """Said the other way round, so a wrong expectation above cannot hide it.
 
-    That behaviour was written for exactly this input — a span whose characters
-    are syllables rather than digits — and this is the test that uses it. What
-    must survive is the sentence around the number, including the particle; what
-    must not is any part of the number itself.
+    A digit written as a digit and a digit written as a syllable are the same
+    digit; whichever script the transcript used, none of them may be left.
     """
-    assert secret not in mask(line, recogniser=recogniser).text
+    masked = mask(line, recogniser=recogniser).text
+    span_free = masked.replace("이에요", "").replace("이랑", "").replace("입니다", "")
+    span_free = span_free.replace("이요", "").replace("에요", "").replace("로 연락주세요", "")
+    assert not any(c.isdigit() for c in span_free), masked
+    for syllable in "공일이삼사오육칠팔구":
+        assert syllable not in span_free.replace("카드", "").replace("계좌는 국민", "").replace(
+            "주민번호", ""
+        ).replace("번호", ""), masked
 
 
 def test_the_particle_is_left_on_the_sentence(recogniser: SpokenNumberRecogniser) -> None:
