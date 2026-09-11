@@ -189,8 +189,10 @@ _NLI_TO_CHANGE: dict[NliLabel, ChangeType] = {
 def mark_extraction_seen(meeting_id: str) -> None:
     """Record that B has reported, without building lineage.
 
-    The production path is ``build_decision_lineage``; this stays for callers
-    that only need the publish gate flipped (and for tests).
+    ``tasks.on_extraction_completed`` calls ``build_decision_lineage`` (which
+    sets ``extraction_seen`` itself), not this — there is currently no
+    production caller. Kept for tests that want the publish gate flipped
+    without exercising the matching/NLI machinery.
     """
     with session_scope() as session:
         _upsert_status(session, meeting_id, extraction_seen=True)
@@ -216,6 +218,14 @@ def build_decision_lineage(result: ExtractionResult) -> None:
     and its threads are re-chained, then any thread left empty is swept. A re-run
     means the published ``ContextLinks`` should be rebuilt — that is
     ``publish_if_ready``'s job, not this one.
+
+    Retention is enforced on the *read* side only: ``_thread_heads`` and
+    ``_rethread`` both exclude an expired meeting from matching and chaining
+    (see "Deletion" in docs/modules/context.md), but this function still writes
+    a version for the current meeting even if that meeting is itself already
+    past ``expires_at``. In practice extraction finishes hours after a meeting,
+    long before its 90-day window, so this only matters for a backfill or a
+    badly delayed pipeline run — not worth gating on until it does.
     """
     settings = get_settings()
     embedder = get_embedder()
