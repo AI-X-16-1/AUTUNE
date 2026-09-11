@@ -16,7 +16,7 @@ from __future__ import annotations
 from datetime import date, timedelta
 
 import sqlalchemy as sa
-from celery import current_app, shared_task
+from celery import shared_task
 
 from autune_contracts import (
     INTELLIGENCE_COMPLETED,
@@ -25,7 +25,7 @@ from autune_contracts import (
     GapReport,
     validate_major_version,
 )
-from autune_core import Meeting, get_logger, load_integration, session_scope
+from autune_core import Meeting, get_logger, load_integration, publish, session_scope
 from autune_integrations import SlackClient
 
 from . import service
@@ -107,7 +107,7 @@ def aggregate(meeting_id: str, notify: bool = True) -> None:
     if snapshot is None:
         log.info("intelligence_aggregate_skipped", meeting_id=meeting_id)
         return
-    current_app.send_task(INTELLIGENCE_COMPLETED, args=[snapshot.model_dump(mode="json")])
+    publish(INTELLIGENCE_COMPLETED, snapshot.model_dump(mode="json"))
     log.info(
         "intelligence_aggregate_published",
         meeting_id=meeting_id,
