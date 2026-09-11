@@ -24,7 +24,7 @@ from autune_contracts.extraction import (
     ExtractionResult,
 )
 from autune_contracts.transcript import Utterance as TranscriptUtterance
-from autune_core import Meeting, Participant, Utterance, get_logger, session_scope
+from autune_core import Meeting, Participant, User, Utterance, get_logger, session_scope
 from autune_integrations import SlackApi, assert_personal_delivery
 
 from .config import get_settings
@@ -756,6 +756,14 @@ def build_action_items(
     meeting = session.get(Meeting, meeting_id)
     day = meeting_day(meeting.started_at if meeting is not None else None)
     spoken = {utterance.id: utterance for utterance in utterances}
+    # One read of ``users`` for the whole meeting: an id that is not there
+    # would fail the foreign key and take every item with it.
+    speaker_ids = {u.speaker_id for u in utterances if u.speaker_id is not None}
+    known = (
+        set(session.scalars(select(User.id).where(User.id.in_(speaker_ids))))
+        if speaker_ids
+        else set()
+    )
 
     for stale in session.scalars(
         select(ExtActionItem).where(
@@ -769,7 +777,7 @@ def build_action_items(
         if utterance.kind is not UtteranceKind.COMMITMENT:
             continue
         said = spoken[utterance.id]
-        assignee = assignee_of(said.speaker_id, said.speaker)
+        assignee = assignee_of(said.speaker_id, said.speaker, known=known)
         due = parse_due(said.text, day)
         items.append(
             ExtActionItem(

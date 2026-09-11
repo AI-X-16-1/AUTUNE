@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import calendar
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta, timezone
 
@@ -65,7 +65,7 @@ class Assignee:
     label: str | None
 
 
-def assignee_of(speaker_id: str | None, speaker: str) -> Assignee:
+def assignee_of(speaker_id: str | None, speaker: str, *, known: Collection[str]) -> Assignee:
     """The speaker made the commitment, so the speaker is who it is for.
 
     An identified speaker is an account and goes in ``assignee_id``. An
@@ -73,12 +73,14 @@ def assignee_of(speaker_id: str | None, speaker: str) -> Assignee:
     ``assignee_label`` is for, and the item waits for a person to say who that
     was.
 
-    Only an id with the ``user_`` prefix is taken as an account.
-    ``assignee_id`` is a foreign key to ``users``, and anything else arriving
-    in ``speaker_id`` would fail that insert and lose the meeting's items with
-    it; treating it as unidentified loses only the link.
+    ``known`` is the set of ids that exist in ``users``; the caller reads it.
+    ``assignee_id`` is a foreign key, so an id that is not there -- a deleted
+    account, or a participant id in the wrong field -- would fail the insert
+    and lose every item of the meeting with it. Such a speaker is treated as
+    unidentified, which loses only the link. The ``user_`` prefix alone did not
+    promise that: a well-formed id of a deleted user passed it.
     """
-    if speaker_id is not None and has_prefix(speaker_id, USER):
+    if speaker_id is not None and has_prefix(speaker_id, USER) and speaker_id in known:
         return Assignee(user_id=speaker_id, label=None)
     return Assignee(user_id=None, label=speaker)
 
@@ -121,10 +123,21 @@ def _month_end(day: date, months: int = 0) -> date:
     return date(year, month, calendar.monthrange(year, month)[1])
 
 
+RECENT_PAST = timedelta(days=90)
+"""How far back a named month/day is read as the past rather than next year."""
+
+
 def _next(day: date, month: int, dom: int) -> date:
-    """This year's month/day, or next year's once it has passed."""
+    """This year's month/day; next year's once it is well past.
+
+    A date a few weeks back -- "9월 1일에 공유드렸고" said on the 9th -- is the
+    past, and is returned as such so ``parse_due`` skips it. Six months back
+    -- "3월 2일까지" said in September -- is next year's.
+    """
     candidate = date(day.year, month, dom)
-    return candidate if candidate >= day else date(day.year + 1, month, dom)
+    if candidate >= day or day - candidate <= RECENT_PAST:
+        return candidate
+    return date(day.year + 1, month, dom)
 
 
 def _day_of_month(day: date, dom: int) -> date:
@@ -154,9 +167,9 @@ _PHRASES: tuple[tuple[re.Pattern[str], Resolver], ...] = (
         re.compile(r"(?<!\d)(?P<m>\d{1,2})\s*월\s*(?P<d>\d{1,2})\s*일"),
         _needs_day(lambda m, day: _next(day, int(m["m"]), int(m["d"]))),
     ),
-    # 9/20
+    # 9/20까지 -- only with a deadline word after it; "1/3 정도" is a fraction.
     (
-        re.compile(r"(?<![\d/])(?P<m>\d{1,2})/(?P<d>\d{1,2})(?![\d/])"),
+        re.compile(r"(?<![\d/])(?P<m>\d{1,2})/(?P<d>\d{1,2})(?![\d/])(?=\s*(?:까지|에|중|쯤))"),
         _needs_day(lambda m, day: _next(day, int(m["m"]), int(m["d"]))),
     ),
     # 다음 달 3일
@@ -178,9 +191,10 @@ _PHRASES: tuple[tuple[re.Pattern[str], Resolver], ...] = (
         re.compile(r"(?<!\d)(?P<n>\d{1,2})\s*일\s*(?:후|뒤|안에|이내|내로|내에)"),
         _needs_day(lambda m, day: day + timedelta(days=int(m["n"]))),
     ),
-    # 15일까지 -- a day of this month, or next month's once it has passed.
+    # 15일까지 -- a day of this month, or next month's once it has passed. Not
+    # "3일 전": that is three days ago, not the third.
     (
-        re.compile(r"(?<![\d월/])(?P<d>\d{1,2})\s*일(?=\s*(?:까지|에|전|중|쯤))"),
+        re.compile(r"(?<![\d월/])(?P<d>\d{1,2})\s*일(?=\s*(?:까지|에|중|쯤))"),
         _needs_day(lambda m, day: _day_of_month(day, int(m["d"]))),
     ),
     # 2주 뒤, 일주일 안에, 이틀 뒤
@@ -188,12 +202,14 @@ _PHRASES: tuple[tuple[re.Pattern[str], Resolver], ...] = (
         re.compile(r"(?<!\d)(?P<n>\d{1,2})\s*주\s*(?:후|뒤|안에|이내|내로|내에)"),
         _needs_day(lambda m, day: day + timedelta(weeks=int(m["n"]))),
     ),
+    # Only with a word that makes them a deadline: "일주일에 한 번" is a
+    # frequency and "이틀 전" is the past.
     (
-        re.compile(r"일주일"),
+        re.compile(r"일주일\s*(?:후|뒤|안에|이내|내로|내에)"),
         _needs_day(lambda _, day: day + timedelta(weeks=1)),
     ),
     (
-        re.compile(r"이틀"),
+        re.compile(r"이틀\s*(?:후|뒤|안에|이내|내로|내에)"),
         _needs_day(lambda _, day: day + timedelta(days=2)),
     ),
     # 오늘, 내일, 모레, 글피
@@ -236,26 +252,41 @@ _PHRASES: tuple[tuple[re.Pattern[str], Resolver], ...] = (
 
 
 def parse_due(text: str, day: date | None) -> DueDate | None:
-    """The first date phrase in ``text``, resolved against the meeting's day.
+    """The first date phrase in ``text`` that is not in the past.
 
-    ``None`` when the utterance names no date at all. When it names more than
+    ``None`` when the utterance names no such date. When it names more than
     one -- "다음 주 금요일까지 하고 월요일에 공유" -- the first is taken: the
     rest is usually what happens after the thing promised.
 
+    **A phrase that resolves before the meeting's day is skipped**, and the next
+    one is tried. "이틀 전에 보냈고" or "이번 주 월요일에 말씀드린" said on a
+    Wednesday is what already happened, not a deadline; so is "이번 주" said on
+    a Saturday, whose working week has ended. A card due before it was promised
+    reads as overdue from the moment it exists.
+
     Where two patterns match at the same place the longer wins, so "다음 주
-    금요일" is one phrase and not "다음 주" followed by a weekday.
+    금요일" is one phrase and not "다음 주" followed by a weekday -- and a
+    skipped phrase takes its parts with it, so its "금요일" is not tried alone.
+
+    A phrase with no resolvable day (no meeting day, or "2월 30일") cannot be
+    judged past or not, and is returned with its words and no date.
     """
     found: list[tuple[int, int, re.Match[str], Resolver]] = []
     for pattern, resolve in _PHRASES:
         for match in pattern.finditer(text):
             found.append((match.start(), -(match.end() - match.start()), match, resolve))
-    if not found:
-        return None
 
-    _, _, match, resolve = min(found, key=lambda entry: (entry[0], entry[1]))
-    try:
-        resolved = resolve(match, day)
-    except ValueError:
-        # "2월 30일": the phrase is a date, the day does not exist. Kept as said.
-        resolved = None
-    return DueDate(text=re.sub(r"\s+", " ", match[0]).strip(), date=resolved)
+    taken_until = -1
+    for start, _, match, resolve in sorted(found, key=lambda entry: (entry[0], entry[1])):
+        if start < taken_until:
+            continue  # part of a longer phrase already considered
+        taken_until = match.end()
+        try:
+            resolved = resolve(match, day)
+        except ValueError:
+            # "2월 30일": the phrase is a date, the day does not exist.
+            resolved = None
+        if resolved is not None and day is not None and resolved < day:
+            continue
+        return DueDate(text=re.sub(r"\s+", " ", match[0]).strip(), date=resolved)
+    return None

@@ -54,8 +54,8 @@ WEDNESDAY = date(2026, 9, 9)
         # Counted from the meeting.
         ("3일 후에 드리겠습니다", "3일 후", date(2026, 9, 12)),
         ("2주 뒤까지 하겠습니다", "2주 뒤", date(2026, 9, 23)),
-        ("일주일 안에 하겠습니다", "일주일", date(2026, 9, 16)),
-        ("이틀 뒤에 공유하겠습니다", "이틀", date(2026, 9, 11)),
+        ("일주일 안에 하겠습니다", "일주일 안에", date(2026, 9, 16)),
+        ("이틀 뒤에 공유하겠습니다", "이틀 뒤", date(2026, 9, 11)),
     ],
 )
 def test_a_phrase_resolves_to_a_day(text: str, phrase: str, due: date) -> None:
@@ -117,16 +117,72 @@ def test_no_start_time_is_no_day() -> None:
 # --- the assignee ----------------------------------------------------------------
 
 
+KNOWN = {"user_001"}
+
+
 def test_an_identified_speaker_is_the_assignee() -> None:
-    assert assignee_of("user_001", "김민경") == Assignee(user_id="user_001", label=None)
+    assert assignee_of("user_001", "김민경", known=KNOWN) == Assignee(
+        user_id="user_001", label=None
+    )
 
 
 def test_an_unidentified_speaker_keeps_only_the_label() -> None:
     """'Speaker 2' waits for a person to say who that was."""
-    assert assignee_of(None, "Speaker 2") == Assignee(user_id=None, label="Speaker 2")
+    assert assignee_of(None, "Speaker 2", known=KNOWN) == Assignee(user_id=None, label="Speaker 2")
 
 
 def test_an_id_that_is_not_an_account_is_treated_as_unidentified() -> None:
     """``assignee_id`` is a foreign key to ``users``; anything else would fail the
     insert and lose every item of the meeting with it."""
-    assert assignee_of("par_7", "Speaker 1") == Assignee(user_id=None, label="Speaker 1")
+    assert assignee_of("par_7", "Speaker 1", known=KNOWN) == Assignee(
+        user_id=None, label="Speaker 1"
+    )
+
+
+def test_a_well_formed_id_that_no_longer_exists_is_treated_as_unidentified() -> None:
+    """The prefix alone did not promise the foreign key would hold: a deleted
+    account's id is still ``user_``-shaped (PARKJAEKYUNG0525, #152)."""
+    assert assignee_of("user_gone", "김민경", known=KNOWN) == Assignee(user_id=None, label="김민경")
+
+
+# --- what is not a deadline (review of #152) -------------------------------------
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "1/3 정도는 끝났고 나머지는 제가 하겠습니다",
+        "일주일에 한 번씩 확인하겠습니다",
+        "이틀 전에 보냈는데 다시 확인하겠습니다",
+        "3일 전에 말씀드린 건 제가 정리하겠습니다",
+        "이번 주 월요일에 말씀드린 대로 하겠습니다",
+        "9월 1일에 공유드린 대로 진행하겠습니다",
+    ],
+)
+def test_a_fraction_a_frequency_or_the_past_is_not_a_due_date(text: str) -> None:
+    """Said on Wednesday 09-09. None of these is a day the work is due by."""
+    assert parse_due(text, WEDNESDAY) is None
+
+
+def test_a_past_phrase_is_skipped_and_the_next_one_taken() -> None:
+    due = parse_due("9월 1일에 말씀드렸고 9월 20일까지 드리겠습니다", WEDNESDAY)
+
+    assert due == DueDate(text="9월 20일", date=date(2026, 9, 20))
+
+
+def test_a_skipped_phrase_takes_its_weekday_with_it() -> None:
+    """ "이번 주 월요일" is in the past; its "월요일" must not then be read alone
+    as next Monday."""
+    assert parse_due("이번 주 월요일에 말한 거 제가 하겠습니다", WEDNESDAY) is None
+
+
+def test_this_week_said_on_a_saturday_has_already_ended() -> None:
+    saturday = date(2026, 9, 12)
+
+    assert parse_due("이번 주까지 하겠습니다", saturday) is None
+
+
+def test_a_named_day_long_past_is_next_years() -> None:
+    assert parse_due("3월 2일까지 하겠습니다", WEDNESDAY) == DueDate(
+        text="3월 2일", date=date(2027, 3, 2)
+    )

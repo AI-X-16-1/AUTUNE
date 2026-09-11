@@ -22,7 +22,7 @@ from autune_contracts.transcript import (
     TranscriptSource,
     Utterance,
 )
-from autune_core import Base, Meeting, Participant
+from autune_core import Base, Meeting, Participant, User
 from autune_core import Utterance as StoredUtterance
 from autune_extraction import service, tasks
 from autune_extraction.models import (
@@ -42,6 +42,7 @@ MEETING = "mtg_1"
 STARTED = datetime(2026, 9, 9, 1, 0, tzinfo=UTC)
 
 TABLES = [
+    User.__table__,
     Meeting.__table__,
     Participant.__table__,
     StoredUtterance.__table__,
@@ -67,6 +68,7 @@ def session() -> Iterator[Session]:
     engine = create_engine("sqlite://")
     Base.metadata.create_all(engine, tables=TABLES)
     with Session(engine) as session:
+        session.add(User(id="user_001", email="a@example.com", display_name="김민경"))
         session.add(Meeting(id=MEETING, team_id="team_1", title="주간 회의", started_at=STARTED))
         session.flush()
         yield session
@@ -289,3 +291,28 @@ def test_a_non_consenting_speakers_commitment_never_becomes_a_draft(
     (item,) = model_items(session)
     assert [source.utterance_id for source in item.sources] == ["utt_1"]
     assert all("확인하겠습니다" not in i.description for i in model_items(session))
+
+
+def test_a_speaker_whose_account_is_gone_is_a_label(session: Session) -> None:
+    """An id that is not in ``users`` would fail the foreign key and take every
+    item of the meeting with it (PARKJAEKYUNG0525, #152)."""
+    lines = [("utt_x", 0.0, "김민경", "user_gone", "제가 정리하겠습니다")]
+
+    draft(session, lines)
+    (item,) = model_items(session)
+
+    assert item.assignee_id is None
+    assert item.assignee_label == "김민경"
+
+
+def test_deleting_alone_is_enough_to_keep_the_draft(session: Session) -> None:
+    """A person who only deleted a wrong item has started finishing the list too;
+    a rerun must not bring the item back (PARKJAEKYUNG0525, #152)."""
+    first = draft(session)
+    assert first is not None
+    service.delete_action_item(session, first[0])
+
+    again = draft(session)
+
+    assert again is None
+    assert len(model_items(session)) == 1
