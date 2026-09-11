@@ -92,8 +92,14 @@ def create_action_item(payload: ActionItemCreate, session: SessionDep) -> Action
     second recoverable.
     """
     item = service.create_action_item(session, payload)
+    # The response is built before the commit. ``read_model`` reads the
+    # candidate threshold, and a threshold that does not parse (a 7 in .env)
+    # used to fail here after the item was already saved: the client got a 500
+    # for a write that had happened, and a retry made a second item. Failing
+    # first lets ``get_session`` roll it back.
+    response = service.read_model(item)
     session.commit()
-    return service.read_model(item)
+    return response
 
 
 @router.patch("/action-items/{action_item_id}", response_model=ActionItemRead)
@@ -102,8 +108,12 @@ def update_action_item(
 ) -> ActionItemRead:
     """Edit or close an item."""
     item = service.update_action_item(session, _load(session, action_item_id), payload)
+    # Before the commit, for the reason ``create_action_item`` gives: an edit
+    # answered with a 500 must not also have been saved, or it counts twice
+    # in edit cost when the client retries.
+    response = service.read_model(item)
     session.commit()
-    return service.read_model(item)
+    return response
 
 
 @router.delete("/action-items/{action_item_id}", status_code=status.HTTP_204_NO_CONTENT)

@@ -324,9 +324,10 @@ def list_action_items(
 def read_detail(session: Session, item: ExtActionItem) -> ActionItemDetail:
     """One item with the text of the utterances it was drawn from.
 
-    The only route in this module that returns transcript text. It is here and
-    not on the list because the drawer is the one screen that shows a quotation,
-    and it shows one item's at a time.
+    The only route in this module that returns utterances verbatim. It is here
+    and not on the list because the drawer is the one screen that shows a
+    quotation, and it shows one item's at a time. The list still carries meeting
+    content -- see ``ActionItemDetail``.
     """
     return ActionItemDetail(
         **read_model(item).model_dump(), sources=source_utterances(session, item.id)
