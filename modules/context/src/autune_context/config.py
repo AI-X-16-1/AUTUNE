@@ -62,6 +62,13 @@ class ContextSettings(BaseSettings):
     """Above: assert the link. Below: store it as ``pending`` and ask the user.
     Placeholder value; tuned against the evaluation set in Phase 2."""
 
+    # --- decision lineage ---
+    lineage_match_threshold: float = 0.6
+    """Cosine similarity between B's decision statement and a thread's latest
+    statement, above which the decision is threaded into that existing lineage
+    rather than opening a new one. Placeholder; tuned against the evaluation set
+    in Phase 2."""
+
     # --- publishing ---
     publish_timeout_s: int = 600
     """How long topic linking waits for B before publishing ``ContextLinks`` with

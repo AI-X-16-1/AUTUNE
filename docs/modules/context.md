@@ -193,19 +193,27 @@ not run a decision classifier.** Duplicating B's would make the two disagree,
 and a decision would then show in the summary tab (S15) while missing from the
 lineage view (S22), which reads to a user as a bug.
 
-1. For each of B's decisions (`dec_` id), find the matching lineage thread by
-   semantic similarity to existing thread statements, or open a new thread with
-   a fresh `thr_` id.
-2. Run NLI between the previous statement and the current one:
-   `entailment` → `unchanged`, `contradiction` → `reversed`,
-   `neutral` → `modified`; no match → `new`.
+1. For each of B's decisions (`dec_` id), embed the statement and match it to
+   the most similar existing thread's latest statement — cosine ≥
+   `lineage_match_threshold` (`AUTUNE_CONTEXT_LINEAGE_MATCH_THRESHOLD`, default
+   `0.6`, tuned in eval). No match opens a new thread with a fresh `thr_` id,
+   anchored on the meeting's team. One thread takes at most one of this
+   meeting's decisions.
+2. Run NLI between the previous statement (premise) and the current one
+   (hypothesis): `entailment` → `unchanged`, `contradiction` → `reversed`,
+   `neutral` → `modified`; a new thread is `new`.
 3. Record a `ctx_decision_versions` row: what changed, in which meeting, chained
-   onto the previous version, with the NLI label and confidence.
+   onto the previous version via `previous_version_id`. `confidence` is the NLI
+   score of the winning label for a matched thread, and B's own decision
+   confidence for a new one. `nli_label` is null for a new thread.
 4. Compute `key_stakeholders_absent` from the shared `participants` of the
-   current meeting against the thread's known stakeholders. A non-empty list
-   drives the drift warning.
-5. Mark `ctx_meeting_status.lineage_done`, then call
+   current meeting against the thread's known stakeholders (users across every
+   prior version's meeting). A non-empty list drives the drift warning.
+5. Mark `ctx_meeting_status.lineage_done` (and `extraction_seen`), then call
    `autune.context.publish_if_ready`.
+
+Idempotent: a re-run replaces every `ctx_decision_versions` row for the meeting,
+then sweeps any thread the replacement left with no versions.
 
 ### Publishing — `autune.context.publish_if_ready`
 

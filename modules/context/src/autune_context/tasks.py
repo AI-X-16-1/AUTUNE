@@ -5,7 +5,7 @@ Two entry points with different inputs:
 - **Topic linking** needs only the transcript, so it runs in parallel with B
   and C, straight off ``autune.transcript.ready``.
 - **Decision lineage** needs the decisions B extracted, so it runs after
-  ``autune.extraction.completed`` (Phase 3 fills in the lineage building).
+  ``autune.extraction.completed``.
 
 ``ContextLinks`` is published once both have run — or, if B never reports, with
 an empty ``decision_lineage`` and ``"extraction"`` in ``missing_sources``. A
@@ -53,8 +53,9 @@ def on_transcript_ready(payload: dict) -> None:
 def on_extraction_completed(payload: dict) -> None:
     """Thread B's decisions into lineage. Runs after B.
 
-    Phase 2 only records that B reported; Phase 3 matches each decision to a
-    thread and runs NLI against the previous statement.
+    Matches each decision to a thread, runs NLI against the previous statement,
+    and records how the decision moved. Then re-checks whether ``ContextLinks``
+    can be published.
     """
     result = ExtractionResult.model_validate(payload)
     validate_major_version(result)
@@ -64,7 +65,7 @@ def on_extraction_completed(payload: dict) -> None:
         meeting_id=result.meeting_id,
         decisions=len(result.decisions),
     )
-    service.mark_extraction_seen(result.meeting_id)
+    service.build_decision_lineage(result)
     publish_if_ready.delay(result.meeting_id)
 
 
