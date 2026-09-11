@@ -377,6 +377,42 @@ def test_the_catch_all_keeps_no_digits(line: str) -> None:
     assert mask(line).text == "*" * len(line)
 
 
+def test_a_run_together_run_keeps_nothing_at_any_length() -> None:
+    """`digits` has to out-rank `account`, not just exist.
+
+    `account`'s separators are optional, so it matches a run-together twelve to
+    eighteen digits as three groups — the same span `digits` finds, at the same
+    length, and a tie goes to whichever pattern is declared first. Declared
+    second, `digits` only ever reached nineteen digits and up, which is why the
+    twenty-four-digit regression row passed while this one leaked.
+    """
+    assert mask("주민번호 900101123456712 입니다").text == "주민번호 " + "*" * 15 + " 입니다"
+
+
+def test_a_national_id_short_a_digit_is_still_a_national_id() -> None:
+    """The comment said six to eight and the pattern said seven to eight.
+
+    So the mis-transcription the widening exists to absorb — one digit dropped
+    from the second group — fell through to `account`, which keeps the last
+    four. Four digits of a national ID, left standing by the case the comment
+    claimed to cover.
+    """
+    assert mask("주민번호 900101-123456 이요").counts == {"rrn": 1}
+    assert "3456" not in mask("주민번호 900101-123456 이요").text
+
+
+def test_an_account_said_without_separators_keeps_at_most_one_digit() -> None:
+    """The cost of the line above, written down so nobody trades it back.
+
+    Six-to-eight makes a twelve-digit run match `rrn` first, so an account
+    number said without separators is masked to the national-ID layout and one
+    digit survives instead of four. Said *with* separators it is still an
+    `account` and still keeps its last four, which is the common case.
+    """
+    assert mask("계좌 110123456789").text == "계좌 ******4*****"
+    assert mask("계좌 110-123-456789").text == "계좌 ***-***-**6789"
+
+
 @pytest.mark.parametrize("line", NOT_PERSONAL)
 def test_a_meeting_full_of_numbers_is_left_alone(line: str) -> None:
     """Over-masking is allowed by policy but still has a cost.

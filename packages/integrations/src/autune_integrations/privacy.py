@@ -59,8 +59,14 @@ PII_PATTERNS: Final[tuple[tuple[str, re.Pattern[str]], ...]] = (
     # somebody: 1-4 Korean, 5-8 registered foreign national, 9-0 born in the
     # 1800s. The second group takes six to eight digits so one mis-transcribed
     # digit does not drop the whole thing to `account`, which keeps the last
-    # four -- four digits of an ID number left standing.
-    ("rrn", re.compile(rf"{_L}\d{{6}}{_SEP}[0-9]\d{{6,7}}{_R}")),
+    # four -- four digits of an ID number left standing. `[0-9]\d{5,7}` is six
+    # to eight; it was written `\d{6,7}`, which is seven to eight, so the
+    # dropped-digit case the comment describes fell through to `account` and
+    # left `**3456` standing. The cost of the extra digit: a twelve-digit run
+    # said without separators now matches here first, so an account number said
+    # that way keeps one digit rather than none. One digit of an account for
+    # four digits of a national ID is the trade this file makes everywhere.
+    ("rrn", re.compile(rf"{_L}\d{{6}}{_SEP}[0-9]\d{{5,7}}{_R}")),
     ("card", re.compile(rf"{_L}(?:\d{{4}}{_SEP}){{3}}\d{{4}}{_R}")),
     # Any leading-zero prefix rather than an enumerated list. Enumerating is how
     # a regex goes stale: 070 is a common Korean VoIP range, 0505 is a safe
@@ -69,14 +75,23 @@ PII_PATTERNS: Final[tuple[tuple[str, re.Pattern[str]], ...]] = (
     # +82-10-1234-5678. Without this the account pattern takes the first two
     # groups and leaves the last eight digits standing.
     ("phone", re.compile(rf"\+?82{_SEP}\d{{1,3}}{_SEP}\d{{3,4}}{_SEP}\d{{4}}{_R}")),
+    # Every shaped pattern above is three groups of at most six bounded by
+    # non-digits, so none can span a longer run. Two personal numbers
+    # transcribed without a break matched nothing at all.
+    #
+    # **Above `account` on purpose.** `account`'s separators are optional, so it
+    # also covers a run-together twelve-to-eighteen-digit run -- the same span,
+    # the same length -- and on a tie the first pattern declared wins. Below
+    # `account` this rule only ever reached nineteen digits and up, and
+    # `900101123456712` came out `***********6712` with the tail of a national
+    # ID standing. Declared first, the rule that keeps nothing wins the tie. An
+    # account said *with* separators is not matched here at all and still keeps
+    # its last four.
+    ("digits", re.compile(rf"{_L}\d{{12,}}{_R}")),
     # Bank layouts vary -- 3-2-6, 6-2-6, 3-3-6 -- and get said without
     # separators as often as with. See MIN_ACCOUNT_DIGITS for what keeps this
     # from matching every date in a transcript.
     ("account", re.compile(rf"{_L}\d{{2,6}}{_SEP}\d{{2,6}}{_SEP}\d{{2,6}}{_R}")),
-    # Every shaped pattern above is three groups of at most six bounded by
-    # non-digits, so none can span a longer run. Two personal numbers
-    # transcribed without a break matched nothing at all.
-    ("digits", re.compile(rf"{_L}\d{{12,}}{_R}")),
     ("email", re.compile(r"\b[\w.+-]+@[\w-]+\.[\w.-]+\b")),
 )
 
