@@ -8,12 +8,37 @@ dependencies = [
     "autune-core",
     "fastapi>=0.115",
     "celery>=5.4",
+    "sqlalchemy>=2.0",
     "networkx>=3.4",
+]
+
+[project.optional-dependencies]
+# The in-process entity extractor. An extra rather than a dependency: apps/api
+# serves a health check and must not load a model stack to do it, and the
+# `fake` implementation the tests run never touches it. The model itself is not
+# a package — install it with `python -m spacy download ko_core_news_lg`.
+# See docs/engineering/dependencies.md.
+#
+#     uv sync --package autune-gap --extra local-models
+local-models = [
+    "spacy>=3.8",
+    # The pipeline itself, as a pinned wheel rather than `python -m spacy
+    # download` -- that resolves to whichever version is current on the day
+    # somebody runs it, and two checkouts would then extract with different
+    # models under the same name. uv.lock holds this one.
+    "ko-core-news-lg @ https://github.com/explosion/spacy-models/releases/download/ko_core_news_lg-3.8.0/ko_core_news_lg-3.8.0-py3-none-any.whl",
 ]
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.hatch.metadata]
+# The `local-models` extra points at a wheel URL. spaCy pipelines are not
+# published to PyPI, so a version can only be pinned by its release URL; the
+# alternative, `python -m spacy download`, resolves to whichever version is
+# current that day.
+allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/autune_gap"]

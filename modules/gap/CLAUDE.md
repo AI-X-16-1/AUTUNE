@@ -28,10 +28,26 @@ domain-template comparison → risk-scored gaps with generated questions.
 
 ## Owns
 
-PostgreSQL only: `gap_topics`, `gap_topic_edges`, `gap_gaps`,
-`gap_participation`, `gap_templates`.
+PostgreSQL only: `gap_topics`, `gap_topic_utterances`, `gap_topic_edges`,
+`gap_participation`, `gap_gaps`, `gap_related_topics`.
 
-Everything cascades from `meetings.id`, so no deletion hook is needed.
+The list in `/docs/modules/gap.md` is the same set; keep the two together.
+
+`gap_topic_utterances` and `gap_related_topics` are link tables the original
+sketch folded into their parents. They are tables rather than JSONB lists
+because the report joins them back — to `utterances` for the quotation, to
+`gap_topics` for why a gap was raised — and `data-model.md` rules JSONB out for
+anything you join on.
+
+`gap_templates` is **not built yet**. A domain template is reference data, not
+something derived from a meeting, so it is the one table here that cannot
+cascade from `meetings.id` — and what it does hang off (a team, or nothing at
+all) depends on who writes templates and how many there are, which is issue #22.
+Building it before that answer means guessing an anchor and migrating away from
+it. It blocks nothing: #14 is waiting on #22 too.
+
+Everything that exists cascades from `meetings.id`, so no deletion hook is
+needed. `gap_templates` will need that sentence revisited.
 
 ## AI stack
 
