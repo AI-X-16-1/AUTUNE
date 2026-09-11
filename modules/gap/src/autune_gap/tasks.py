@@ -11,6 +11,7 @@ from celery import shared_task
 
 from autune_contracts import TranscriptReady, validate_major_version
 from autune_core import get_logger
+from autune_gap import service
 
 log = get_logger(__name__)
 
@@ -32,5 +33,6 @@ def on_transcript_ready(payload: dict) -> None:
         meeting_id=transcript.meeting_id,
         utterances=len(transcript.utterances),
     )
-    # TODO(박재경): run the pipeline, persist to gap_* tables,
-    # then publish autune.gap.completed.
+    service.build_topic_graph(transcript)
+    # TODO(박재경): publish autune.gap.completed (#36). Template comparison and
+    # risk scoring (#14, #35) wait on #22.

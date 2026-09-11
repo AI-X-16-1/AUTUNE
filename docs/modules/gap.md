@@ -53,6 +53,41 @@ domain template, and score the risk of each missing item.
    gap.
 9. **Publish** — emit `GapReport`.
 
+### Steps 3 to 5 as built
+
+`autune_gap.graph` holds the decisions as pure functions; `service` feeds it
+and stores what comes back.
+
+- **A topic is a name, normalised.** Mentions whose text matches after
+  collapsing whitespace and folding case are one topic, labelled the way the
+  meeting first said it. Nothing merges "검색" into "검색 기능": that is a
+  judgement about meaning, and a wrong merge hides one topic inside another.
+- **Edges are co-occurrence until #32.** Two topics named in the same utterance
+  get an edge, `relation = "co_occurs"`, weighted by how many utterances named
+  both and scaled so the strongest pair is 1. Written in both directions,
+  because `gap_topic_edges` is directed for the triples #32 will produce.
+- **PageRank is personalised by mention count**, then divided by the top score
+  so the topic that carried the meeting is 1. Without the personalisation a
+  meeting whose topics share no utterance ranks every topic level.
+  Betweenness is unweighted — NetworkX reads a weight there as a distance, and
+  ours is a strength.
+- **Only a consenting participant's speech is analysed**, and only they appear
+  in the participation matrix (`../architecture/privacy.md` section 5). Speech
+  with no participant behind it is left out too: unknown consent is not
+  consent.
+- **Masked spans are never topics.** An entity containing `*` is dropped;
+  `010-****-5678` keeps its last four digits by design, and as a node it would
+  carry them into a report the whole team reads.
+- **Participation is keyed by `participants.id`**, not `users.id`. A
+  participant id exists for an unidentified speaker too, and it is scoped to
+  one meeting, so the matrix cannot be joined across meetings into a record of
+  one person's silences.
+
+A re-run deletes the meeting's topics and rebuilds them in one transaction;
+edges, evidence and participation cascade. So would the `gap_related_topics`
+rows of a gap already raised — gap generation (#35) has to rebuild those in the
+same run, and decide what a re-run does to a gap somebody dismissed.
+
 ## Storage
 
 | Store | Contents |
