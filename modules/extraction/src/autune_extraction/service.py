@@ -8,7 +8,7 @@ Never imports another module.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from datetime import UTC, date, datetime
 
 from sqlalchemy import delete, func, select
@@ -23,7 +23,7 @@ from autune_contracts.extraction import (
     ExtractionResult,
 )
 from autune_contracts.transcript import Utterance as TranscriptUtterance
-from autune_core import Utterance, get_logger, session_scope
+from autune_core import Participant, Utterance, get_logger, session_scope
 from autune_integrations import SlackApi, assert_personal_delivery
 
 from .config import get_settings
@@ -520,9 +520,9 @@ def result_for_meeting(session: Session, meeting_id: str) -> ExtractionResult:
     carry when #31 publishes it, and why the builder is here rather than inside a
     route.
 
-    ``classifications`` is empty because nothing stores one yet.
-    ``ext_classifications`` arrives with the classifier (#10); until then an
-    empty list is the truth about this meeting, not a placeholder for it.
+    ``classifications`` comes from ``ext_classifications``, which the pipeline
+    writes (``store_classifications``); a meeting that has not been classified
+    has none, and an empty list is the truth about it.
     """
     items = session.scalars(
         select(ExtActionItem)
@@ -535,6 +535,7 @@ def result_for_meeting(session: Session, meeting_id: str) -> ExtractionResult:
         meeting_id=meeting_id,
         action_items=[contract_action_item(item) for item in items],
         decisions=decisions_for_meeting(session, meeting_id),
+        classifications=classifications_for_meeting(session, meeting_id),
         ambiguous_agreements=ambiguous_agreements_for_meeting(session, meeting_id),
     )
 
@@ -564,8 +565,32 @@ def contract_action_item(item: ExtActionItem) -> ActionItem:
 # --- step 1: classification --------------------------------------------------
 
 
+def consented_utterance_ids(session: Session, meeting_id: str) -> set[str]:
+    """This meeting's utterances whose speaker consented to analysis.
+
+    ``Participant.consented`` is False for a speaker whose speech is excluded
+    from analysis entirely, and privacy.md section 5 says excluded speech is not
+    stored rather than hidden. An utterance with no participant behind it is out
+    as well: whether its speaker consented is unknown, and unknown is not yes.
+    Module C draws the same line (#163).
+
+    A read on a shared table, in a short session of its own, so the classifier
+    never runs inside a transaction.
+    """
+    return set(
+        session.scalars(
+            select(Utterance.id)
+            .join(Participant, Participant.id == Utterance.participant_id)
+            .where(Utterance.meeting_id == meeting_id, Participant.consented.is_(True))
+        ).all()
+    )
+
+
 def classify_utterances(
-    classifier: Classifier, utterances: Sequence[TranscriptUtterance]
+    classifier: Classifier,
+    utterances: Sequence[TranscriptUtterance],
+    *,
+    consented: Collection[str],
 ) -> list[ClassifiedUtterance]:
     """Every utterance of a meeting, in spoken order, with the classifier's answer.
 
@@ -583,15 +608,25 @@ def classify_utterances(
     Every utterance is returned, the ones the model calls none included --
     ``kind`` is ``None`` for those. They are what the decision gap is counted
     in; only ``store_classifications`` leaves them out.
+
+    **Only ids in ``consented`` reach the classifier** (see
+    ``consented_utterance_ids``). The rest stay in the sequence as a turn with
+    no kind and no text: someone else spoke there, so the gap between two
+    decisions is still counted in it, but what they said is never read,
+    classified or stored. Dropping them instead would shorten every gap they sat
+    in and weld two decisions into one. Keyword-only and required, so a caller
+    cannot forget to filter by leaving it out.
     """
     ordered = sorted(utterances, key=lambda u: (u.start, u.id))
-    predictions = classifier.classify([utterance.text for utterance in ordered])
-    if len(predictions) != len(ordered):
+    analysed = [utterance for utterance in ordered if utterance.id in consented]
+    predictions = classifier.classify([utterance.text for utterance in analysed])
+    if len(predictions) != len(analysed):
         # The Protocol promises one per input, in order; zipping a short list
         # would label the wrong utterances without an error.
         raise ValueError(
-            f"asked for {len(ordered)} predictions, the classifier returned {len(predictions)}"
+            f"asked for {len(analysed)} predictions, the classifier returned {len(predictions)}"
         )
+    answer = dict(zip((utterance.id for utterance in analysed), predictions, strict=True))
     return [
         ClassifiedUtterance(
             id=utterance.id,
@@ -599,7 +634,9 @@ def classify_utterances(
             confidence=prediction.confidence,
             text=utterance.text,
         )
-        for utterance, prediction in zip(ordered, predictions, strict=True)
+        if (prediction := answer.get(utterance.id)) is not None
+        else ClassifiedUtterance(id=utterance.id, kind=None, confidence=0.0, text="")
+        for utterance in ordered
     ]
 
 

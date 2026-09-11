@@ -29,6 +29,7 @@ from autune_extraction.confirmations import WEAK_ASSENT
 from autune_extraction.models import (
     ExtActionItem,
     ExtActionItemSource,
+    ExtClassification,
     ExtConfirmation,
     ExtDecision,
     ExtDecisionSource,
@@ -45,6 +46,7 @@ TABLES = [
     Utterance.__table__,
     ExtActionItem.__table__,
     ExtActionItemSource.__table__,
+    ExtClassification.__table__,
     ExtDecision.__table__,
     ExtDecisionSource.__table__,
     ExtConfirmation.__table__,
@@ -332,6 +334,37 @@ def test_the_result_is_the_contract_and_only_this_meeting(
     assert item.external_refs == [], "nothing is synced before #30"
     assert [d.id for d in result.decisions] == ["dec_1"]
     assert [a.utterance_id for a in result.ambiguous_agreements] == ["utt_3"]
+
+
+def test_the_result_carries_what_the_pipeline_classified(
+    client: TestClient, session: Session
+) -> None:
+    """``ext_classifications`` is what the pipeline writes (#151), in spoken order.
+
+    Without this the endpoint answered ``classifications: []`` for a meeting
+    that had been classified, and the only test here was of one that had not.
+    """
+    utterance(session, "utt_1", 9.0, "예산은 언제 나오나요")
+    utterance(session, "utt_2", 1.0, "A안으로 가기로 했습니다")
+    for uid, kind in (("utt_1", "open_question"), ("utt_2", "decision")):
+        session.add(
+            ExtClassification(
+                utterance_id=uid,
+                meeting_id=MEETING,
+                kind=kind,
+                confidence=0.8,
+                model_version="fake",
+                nli_verified=False,
+            )
+        )
+    session.flush()
+
+    result = ExtractionResult.model_validate(client.get(f"{PREFIX}/results/{MEETING}").json())
+
+    assert [(c.utterance_id, c.kind.value) for c in result.classifications] == [
+        ("utt_2", "decision"),
+        ("utt_1", "open_question"),
+    ]
 
 
 def test_the_result_reflects_a_correction_made_after_extraction(

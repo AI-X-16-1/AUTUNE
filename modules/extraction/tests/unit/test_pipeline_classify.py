@@ -25,7 +25,7 @@ from autune_contracts.transcript import (
     TranscriptSource,
     Utterance,
 )
-from autune_core import Base, Meeting
+from autune_core import Base, Meeting, Participant
 from autune_core import Utterance as StoredUtterance
 from autune_extraction import service, tasks
 from autune_extraction.models import ExtClassification, ExtDecision, ExtDecisionSource
@@ -36,6 +36,7 @@ MEETING = "mtg_1"
 
 TABLES = [
     Meeting.__table__,
+    Participant.__table__,
     StoredUtterance.__table__,
     ExtClassification.__table__,
     ExtDecision.__table__,
@@ -71,13 +72,33 @@ def spoken(lines: list[tuple[str, float, str]] = LINES) -> list[Utterance]:
     ]
 
 
-def stored(session: Session, lines: list[tuple[str, float, str]] = LINES) -> None:
-    """The rows module A wrote. Needed for the spoken-order join, nothing else."""
+def stored(
+    session: Session,
+    lines: list[tuple[str, float, str]] = LINES,
+    *,
+    speaker_of: dict[str, str | None] | None = None,
+) -> None:
+    """The rows module A wrote: the spoken-order join reads them, and so does the
+    consent filter.
+
+    Every line is spoken by the consenting ``par_yes`` unless ``speaker_of`` says
+    otherwise -- ``par_no`` did not consent, and ``None`` is speech with no
+    participant behind it.
+    """
+    if session.get(Participant, "par_yes") is None:
+        session.add_all(
+            [
+                Participant(id="par_yes", meeting_id=MEETING, speaker_label="A", consented=True),
+                Participant(id="par_no", meeting_id=MEETING, speaker_label="B", consented=False),
+            ]
+        )
+    speaker_of = speaker_of or {}
     for uid, start, text in lines:
         session.add(
             StoredUtterance(
                 id=uid,
                 meeting_id=MEETING,
+                participant_id=speaker_of.get(uid, "par_yes"),
                 speaker_label="SPEAKER_00",
                 start_sec=start,
                 end_sec=start + 3.0,
@@ -89,7 +110,11 @@ def stored(session: Session, lines: list[tuple[str, float, str]] = LINES) -> Non
 
 def run(session: Session, classifier: object = None, lines=LINES) -> int:
     classifier = classifier or FakeClassifier()
-    classified = service.classify_utterances(classifier, spoken(lines))  # type: ignore[arg-type]
+    classified = service.classify_utterances(
+        classifier,  # type: ignore[arg-type]
+        spoken(lines),
+        consented={uid for uid, _, _ in lines},
+    )
     count = service.store_classifications(
         session,
         meeting_id=MEETING,
@@ -189,7 +214,9 @@ def test_another_meetings_rows_are_left_alone(session: Session) -> None:
 def test_utterances_are_classified_in_spoken_order_whatever_the_payload_order(
     session: Session,
 ) -> None:
-    classified = service.classify_utterances(FakeClassifier(), list(reversed(spoken())))
+    classified = service.classify_utterances(
+        FakeClassifier(), list(reversed(spoken())), consented={uid for uid, _, _ in LINES}
+    )
 
     assert [u.id for u in classified] == ["utt_1", "utt_2", "utt_3", "utt_4", "utt_5"]
     assert classified[1].kind is None, "none stays in the sequence, as None"
@@ -205,7 +232,11 @@ class _Short:
 def test_a_classifier_that_returns_too_few_answers_is_refused() -> None:
     """Zipping a short list would label the wrong utterances, silently."""
     with pytest.raises(ValueError, match="predictions"):
-        service.classify_utterances(_Short(), spoken())  # type: ignore[arg-type]
+        service.classify_utterances(
+            _Short(),  # type: ignore[arg-type]
+            spoken(),
+            consented={uid for uid, _, _ in LINES},
+        )
 
 
 def test_the_contract_view_is_in_spoken_order(session: Session) -> None:
@@ -242,6 +273,59 @@ def test_none_utterances_count_in_the_decision_gap(session: Session) -> None:
     assert session.query(ExtDecision).count() == 2
 
 
+# --- consent: privacy.md section 5 ----------------------------------------------
+
+
+class _Recording(FakeClassifier):
+    """The fake, remembering every text it was shown."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.seen: list[str] = []
+
+    def classify(self, texts: list[str]) -> list[Prediction]:
+        self.seen.extend(texts)
+        return super().classify(texts)
+
+
+def test_the_consent_filter_reads_participants_not_the_payload(session: Session) -> None:
+    """Consenting speech is in; a speaker who did not consent, and speech with no
+    participant at all, are out -- unknown is not yes."""
+    stored(session, speaker_of={"utt_1": "par_no", "utt_5": None})
+
+    assert service.consented_utterance_ids(session, MEETING) == {"utt_2", "utt_3", "utt_4"}
+
+
+def test_a_non_consenting_turn_still_counts_in_the_decision_gap(session: Session) -> None:
+    """Their words are not read, but someone spoke there.
+
+    Three turns by a speaker who did not consent sit between two decisions. They
+    reach the grouping as turns with no kind and no text, so the gap is still
+    three and the decisions stay two. Dropping the turns instead would close the
+    gap and weld the decisions into one statement.
+    """
+    lines = [
+        ("utt_a", 0.0, "그 부분은 B안으로 가기로 했습니다"),
+        ("utt_b", 2.0, "저는 반대입니다"),
+        ("utt_c", 4.0, "그건 좀 이상한데요"),
+        ("utt_d", 6.0, "다시 생각해 보시죠"),
+        ("utt_e", 8.0, "일정은 다음 주로 하기로 했습니다"),
+    ]
+    classifier = _Recording()
+
+    classified = service.classify_utterances(
+        classifier, spoken(lines), consented={"utt_a", "utt_e"}
+    )
+    service.build_decisions(session, meeting_id=MEETING, utterances=classified)
+
+    assert classifier.seen == [
+        "그 부분은 B안으로 가기로 했습니다",
+        "일정은 다음 주로 하기로 했습니다",
+    ]
+    assert [u.text for u in classified if u.id in {"utt_b", "utt_c", "utt_d"}] == ["", "", ""]
+    assert session.query(ExtDecision).count() == 2
+
+
 # --- the task ------------------------------------------------------------------
 
 
@@ -273,6 +357,8 @@ def wired(session: Session, monkeypatch: pytest.MonkeyPatch) -> Session:
 
 
 def test_the_task_classifies_and_groups_a_meeting(wired: Session) -> None:
+    stored(wired)
+
     tasks.on_transcript_ready(transcript())
 
     assert len(kinds(wired)) == 4
@@ -293,3 +379,24 @@ def test_the_task_refuses_an_unmasked_transcript_before_classifying(
         tasks.on_transcript_ready(transcript(masked=False))
 
     assert kinds(wired) == {}
+
+
+def test_the_task_never_shows_a_non_consenting_speaker_to_the_classifier(
+    wired: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The decision (utt_1) and the commitment (utt_3) are spoken by someone who
+    did not consent, and utt_5 has no participant at all.
+
+    None of the three reaches the classifier, none gets an ``ext_classifications``
+    row, and the decision they would have made is not written either -- its
+    sentence would otherwise sit in ``ext_decisions.statement``.
+    """
+    stored(wired, speaker_of={"utt_1": "par_no", "utt_3": "par_no", "utt_5": None})
+    classifier = _Recording()
+    monkeypatch.setattr(tasks, "get_classifier", lambda: classifier)
+
+    tasks.on_transcript_ready(transcript())
+
+    assert classifier.seen == ["네 좋아요", "예산은 언제 나오나요"]
+    assert kinds(wired) == {"utt_4": "open_question"}
+    assert wired.query(ExtDecision).count() == 0
