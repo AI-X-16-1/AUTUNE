@@ -14,7 +14,7 @@ timeout elapses. The Celery glue that enqueues the aggregate task lives in
 from __future__ import annotations
 
 from collections import Counter
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Final
 
 import sqlalchemy as sa
@@ -397,6 +397,148 @@ def get_dashboard(session: Session, team_id: str) -> DashboardRead:
             for s in scores[:_DASHBOARD_RECENT_LIMIT]
         ],
         gap_distribution={pattern: int(total) for pattern, total in gap_rows},
+    )
+
+
+# --- Weekly report (pipeline step 6) ---------------------------------------
+#
+# A deterministic summary over intel_scores and intel_gap_patterns for one
+# team and one period. Delivery (Slack channel, or skipped without one) lives
+# in tasks.py; nothing here writes outside intel_reports.
+
+
+def _report_body_markdown(
+    *,
+    period_start: date,
+    period_end: date,
+    meeting_count: int,
+    average_value: float | None,
+    grade_distribution: dict[str, int],
+    gap_distribution: dict[str, int],
+    action_item_completion_rate: float | None,
+) -> str:
+    """The report's Slack/markdown body — a template, not an LLM.
+
+    Every value here is already computed in intel_scores/intel_gap_patterns;
+    this only arranges them into readable sentences. `../architecture/privacy.md`
+    is not implicated (no transcript content passes through this function), but
+    an LLM call would still need to go through `autune_integrations`'
+    `check_outbound` rather than a module-local client — module D's `LlmClient`
+    protocol (`modules/context/src/autune_context/pipeline/base.py`) documents
+    why: PR #90 rejected exactly that shortcut. No such client exists yet, so
+    this function is the seam where one replaces the template later.
+    """
+    header = f"*{period_start.isoformat()} ~ {period_end.isoformat()} 주간 리포트*"
+    if meeting_count == 0:
+        return f"{header}\n\n이번 주 분석된 회의가 없습니다."
+
+    lines = [header, "", f"이번 주 분석된 회의 {meeting_count}건."]
+    if average_value is not None:
+        lines.append(f"평균 품질 점수: {_grade_for(average_value)} ({average_value:.0%})")
+    if grade_distribution:
+        dist = " · ".join(f"{g} {c}건" for g, c in sorted(grade_distribution.items()))
+        lines.append(f"등급 분포: {dist}")
+    if gap_distribution:
+        top_type, top_count = max(gap_distribution.items(), key=lambda kv: kv[1])
+        lines.append(f"가장 잦은 갭 유형: {top_type} ({top_count}건)")
+    if action_item_completion_rate is not None:
+        lines.append(f"액션 아이템 완료율: {action_item_completion_rate:.0%}")
+    return "\n".join(lines)
+
+
+def generate_weekly_report(
+    session: Session, team_id: str, period_start: date, period_end: date
+) -> IntelReport:
+    """Aggregate this team's scored meetings in ``[period_start, period_end)``
+    into one ``intel_reports`` row, upserted by ``(team_id, period_start)``.
+
+    The period is anchored to when E scored a meeting (``IntelScore.created_at``)
+    — the same recency signal the dashboard's recent-scores strip already uses.
+    E does not track when a meeting itself happened, only when it was analyzed.
+
+    Returns a transient ``IntelReport`` carrying the values just written — not
+    the tracked row — so the caller (a Celery task, delivering the body to
+    Slack) does not need a second query.
+    """
+    start = datetime.combine(period_start, datetime.min.time(), tzinfo=UTC)
+    end = datetime.combine(period_end, datetime.min.time(), tzinfo=UTC)
+
+    scores = list(
+        session.execute(
+            sa.select(IntelScore).where(
+                IntelScore.team_id == team_id,
+                IntelScore.created_at >= start,
+                IntelScore.created_at < end,
+            )
+        )
+        .scalars()
+        .all()
+    )
+    meeting_ids = [s.meeting_id for s in scores]
+    values = [s.value for s in scores]
+    rates = [
+        s.action_item_completion_rate for s in scores if s.action_item_completion_rate is not None
+    ]
+    grade_distribution = dict(Counter(s.grade for s in scores))
+
+    gap_distribution: dict[str, int] = {}
+    if meeting_ids:
+        gap_rows = session.execute(
+            sa.select(IntelGapPattern.pattern_type, func.sum(IntelGapPattern.count))
+            .where(IntelGapPattern.meeting_id.in_(meeting_ids))
+            .group_by(IntelGapPattern.pattern_type)
+        ).all()
+        gap_distribution = {pattern: int(total) for pattern, total in gap_rows}
+
+    average_value = (sum(values) / len(values)) if values else None
+    action_item_completion_rate = (sum(rates) / len(rates)) if rates else None
+
+    body_markdown = _report_body_markdown(
+        period_start=period_start,
+        period_end=period_end,
+        meeting_count=len(scores),
+        average_value=average_value,
+        grade_distribution=grade_distribution,
+        gap_distribution=gap_distribution,
+        action_item_completion_rate=action_item_completion_rate,
+    )
+    metrics_json = {
+        "meeting_count": len(scores),
+        "average_score": average_value,
+        "grade_distribution": grade_distribution,
+        "gap_distribution": gap_distribution,
+        "action_item_completion_rate": action_item_completion_rate,
+    }
+
+    session.execute(
+        pg_insert(IntelReport)
+        .values(
+            team_id=team_id,
+            period_start=period_start,
+            period_end=period_end,
+            body_markdown=body_markdown,
+            metrics_json=metrics_json,
+            source_meeting_ids=meeting_ids,
+        )
+        .on_conflict_do_update(
+            index_elements=["team_id", "period_start"],
+            set_={
+                "period_end": period_end,
+                "body_markdown": body_markdown,
+                "metrics_json": metrics_json,
+                "source_meeting_ids": meeting_ids,
+                "updated_at": func.now(),
+            },
+        )
+    )
+    session.flush()
+    return IntelReport(
+        team_id=team_id,
+        period_start=period_start,
+        period_end=period_end,
+        body_markdown=body_markdown,
+        metrics_json=metrics_json,
+        source_meeting_ids=meeting_ids,
     )
 
 
