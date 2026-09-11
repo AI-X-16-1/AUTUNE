@@ -188,6 +188,25 @@ def test_a_speaker_split_across_two_rows_gets_exactly_one_dm(
     assert len([m for m in slack.sent if m.channel == alice]) == 1
 
 
+def test_no_dm_when_the_other_speaker_is_unidentified_and_split(
+    db_session: Session, meeting: str
+) -> None:
+    bob = _user(db_session, "bob")
+    p_x1 = _participant(db_session, meeting, user_id=None, label="Speaker 0")
+    p_x2 = _participant(db_session, meeting, user_id=None, label="Speaker 2")
+    p_bob = _participant(db_session, meeting, user_id=bob, label="Speaker 1")
+    _utter(db_session, meeting, p_x1, 0.0, 20.0)
+    _utter(db_session, meeting, p_x2, 20.0, 40.0)
+    _utter(db_session, meeting, p_bob, 40.0, 60.0)
+    db_session.flush()
+    slack = FakeSlack()
+
+    sent = service.send_personal_feedback(db_session, slack, meeting)
+
+    assert sent == 0
+    assert slack.sent == []
+
+
 def test_nothing_is_persisted(db_session: Session, meeting: str) -> None:
     _three_speakers(db_session, meeting)
     db_session.flush()

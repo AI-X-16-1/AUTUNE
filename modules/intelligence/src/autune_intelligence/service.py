@@ -48,7 +48,7 @@ from .models import (
     IntelScore,
 )
 from .schemas import DashboardRead, DashboardScoreEntry, HeatmapCell, SpeakingRatioRead
-from .speaking import SpeakingShare, SpeechSegment, speaking_shares
+from .speaking import SpeakingShare, SpeechSegment, speaker_count_for_gate, speaking_shares
 
 log = get_logger(__name__)
 
@@ -407,7 +407,7 @@ def get_dashboard(session: Session, team_id: str) -> DashboardRead:
 # section 3 is binding here.
 
 _MIN_SPEAKERS_FOR_RATIO: Final = 3
-"""Below this many *consenting participants who spoke*, the ratio is withheld.
+"""Below this many people, per ``speaker_count_for_gate``, the ratio is withheld.
 
 The measured shares sum to 1.0, so when only two people's speech is in the
 denominator a recipient's ``1 - ratio`` is the other person's share exactly —
@@ -417,9 +417,13 @@ does not help: with two, the two are mirror images. So the number does not go
 out at all — ``/me/speaking-ratio`` answers with ``reason="small_meeting"`` and
 no DM is sent.
 
-The gate counts speakers, not the consenting head count: a meeting with three
-consenting participants where one only listened still splits its speech two
-ways, and that is the case this guards."""
+The gate counts people, not the consenting head count and not participant
+rows: a meeting with three consenting participants where one only listened
+still splits its speech two ways, and one real speaker split across two
+participant rows by diarization — identified or not — still counts once.
+``speaker_count_for_gate`` undercounts an unidentified split rather than let it
+inflate the gate: without a ``user_id`` to merge on, several unidentified
+labels might all be one not-yet-confirmed person."""
 
 
 def compute_speaking_shares(session: Session, meeting_id: str) -> list[SpeakingShare]:
@@ -487,32 +491,40 @@ def speaking_ratio_for_user(
     - ``reason="small_meeting"`` — fewer than ``_MIN_SPEAKERS_FOR_RATIO``
       consenting participants actually spoke, so any real number would fix
       another person's.
-    - ``reason="not_measured"`` — the requester did not consent to attribution,
-      so their speech is not in the measured set. Distinct from a consenting
-      participant who was simply silent, who gets ``0.0``.
+    - ``reason="not_measured"`` — the requester did not consent to attribution
+      on every one of their participant rows, so their speech may not be fully
+      in the measured set. Distinct from a consenting participant who was
+      simply silent, who gets ``0.0``.
     """
-    participant = session.scalar(
-        sa.select(Participant).where(
-            Participant.meeting_id == meeting_id,
-            Participant.user_id == user_id,
+    participant_rows = list(
+        session.scalars(
+            sa.select(Participant).where(
+                Participant.meeting_id == meeting_id,
+                Participant.user_id == user_id,
+            )
         )
     )
-    if participant is None:
+    if not participant_rows:
         return None
+    # A split speaker's rows can disagree on consent (confirmed separately);
+    # requiring every row to consent, rather than picking one row arbitrarily,
+    # makes the answer independent of which row a lookup happens to see.
+    fully_consented = all(p.consented for p in participant_rows)
 
     shares = compute_speaking_shares(session, meeting_id)
     # The baseline is 1 / (consenting participants), silent ones included; the
-    # gate counts only the speakers the ratio is actually split between.
+    # gate counts only the people the ratio is actually split between, with
+    # unidentified splits undercounted rather than left to inflate it.
     participant_count = _consented_participant_count(session, meeting_id)
 
-    if len(shares) < _MIN_SPEAKERS_FOR_RATIO:
+    if speaker_count_for_gate(shares) < _MIN_SPEAKERS_FOR_RATIO:
         return SpeakingRatioRead(
             meeting_id=meeting_id,
             ratio=None,
             participant_count=participant_count,
             reason="small_meeting",
         )
-    if not participant.consented:
+    if not fully_consented:
         return SpeakingRatioRead(
             meeting_id=meeting_id,
             ratio=None,
@@ -551,16 +563,17 @@ def send_personal_feedback(session: Session, slack: SlackApi, meeting_id: str) -
 
     A speaker with no linked user account cannot be reached and is skipped. The
     ratio is withheld entirely — no DM at all — when fewer than
-    ``_MIN_SPEAKERS_FOR_RATIO`` consenting participants spoke, for the same
-    reason ``/me/speaking-ratio`` withholds it. The ratio is not stored
-    anywhere; this function writes nothing.
+    ``_MIN_SPEAKERS_FOR_RATIO`` people (``speaker_count_for_gate``) spoke, for
+    the same reason ``/me/speaking-ratio`` withholds it. The ratio is not
+    stored anywhere; this function writes nothing.
     """
     shares = compute_speaking_shares(session, meeting_id)
-    if len(shares) < _MIN_SPEAKERS_FOR_RATIO:
+    gate_count = speaker_count_for_gate(shares)
+    if gate_count < _MIN_SPEAKERS_FOR_RATIO:
         log.info(
             "speaking_ratio_feedback_withheld_small_meeting",
             meeting_id=meeting_id,
-            speakers=len(shares),
+            speakers=gate_count,
         )
         return 0
 

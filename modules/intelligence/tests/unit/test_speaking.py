@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pytest
 
-from autune_intelligence.speaking import SpeechSegment, speaking_shares
+from autune_intelligence.speaking import SpeechSegment, speaker_count_for_gate, speaking_shares
 
 
 def _seg(participant_id: str | None, start: float, end: float, user_id: str | None = None):
@@ -93,3 +93,38 @@ def test_one_person_split_across_two_participant_rows_is_counted_once() -> None:
     by_user = {s.user_id: s for s in shares}
     assert by_user["user_a"].seconds == pytest.approx(40.0)
     assert by_user["user_a"].ratio == pytest.approx(40.0 / 60.0)
+
+
+def test_gate_count_treats_every_unidentified_label_as_at_most_one_person() -> None:
+    """Speaker identification (S16) may not have run yet when the gate is
+    checked, so an unidentified speaker can still be split across two
+    ``participant`` rows the way an identified one can — ``speaking_shares``
+    cannot collapse them (there is no ``user_id`` to key on). Undercounting is
+    the safe direction: several unidentified labels might all be the same
+    person, and treating them as separate people would let a co-attendee
+    derive that person's exact ratio the moment they spoke to only two
+    labels-worth of others. So unidentified labels contribute at most one to
+    the gate's count, however many of them there are.
+    """
+    shares = speaking_shares(
+        [
+            _seg("p_x1", 0.0, 20.0, None),  # same real person, unidentified,
+            _seg("p_x2", 20.0, 40.0, None),  # split across two labels
+            _seg("p_bob", 40.0, 60.0, "user_bob"),
+        ]
+    )
+
+    assert len(shares) == 3  # speaking_shares itself cannot merge these
+    assert speaker_count_for_gate(shares) == 2  # bob + "at most one" unidentified
+
+
+def test_gate_count_is_exact_once_everyone_is_identified() -> None:
+    shares = speaking_shares(
+        [
+            _seg("p_a", 0.0, 20.0, "user_a"),
+            _seg("p_b", 20.0, 40.0, "user_b"),
+            _seg("p_c", 40.0, 60.0, "user_c"),
+        ]
+    )
+
+    assert speaker_count_for_gate(shares) == 3

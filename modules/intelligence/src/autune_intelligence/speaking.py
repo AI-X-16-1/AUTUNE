@@ -92,3 +92,20 @@ def speaking_shares(segments: Iterable[SpeechSegment]) -> list[SpeakingShare]:
         for key, secs in seconds.items()
         if secs > 0
     ]
+
+
+def speaker_count_for_gate(shares: Iterable[SpeakingShare]) -> int:
+    """How many distinct people this meeting should count as, for gating only.
+
+    Identified shares (``user_id`` set) count exactly — ``speaking_shares``
+    already grouped those by person. An unidentified share (``user_id is
+    None``) has no shared identity to collapse onto, so several of them may
+    still be one real speaker not yet confirmed; counting each separately
+    would let the same ``1 - ratio`` leak ``_MIN_SPEAKERS_FOR_RATIO`` exists to
+    prevent, just before identification instead of across it. Undercounting is
+    the safe direction, so every unidentified share together contributes at
+    most one.
+    """
+    identified = sum(1 for s in shares if s.user_id is not None)
+    has_unidentified = any(s.user_id is None for s in shares)
+    return identified + (1 if has_unidentified else 0)

@@ -192,6 +192,51 @@ def test_a_participant_split_across_two_rows_gets_their_full_ratio_not_half(
     assert body["participant_count"] == 3
 
 
+def test_withheld_when_the_other_speaker_is_unidentified_and_split(
+    app_for, db_session: Session, meeting: str
+) -> None:
+    """Real two-person meeting: bob is identified, the other speaker (X) is
+    consented but not yet identified (S16 hasn't run) and diarization split X
+    across two labels. speaking_shares cannot merge X's two rows (no user_id to
+    key on), so the gate must undercount unidentified labels itself, or bob
+    reads X's exact ratio off 1 - his own."""
+    bob = _user(db_session, "bob")
+    p_x1 = _participant(db_session, meeting, user_id=None, label="Speaker 0")
+    p_x2 = _participant(db_session, meeting, user_id=None, label="Speaker 2")
+    p_bob = _participant(db_session, meeting, user_id=bob, label="Speaker 1")
+    _utter(db_session, meeting, p_x1, 0.0, 20.0)
+    _utter(db_session, meeting, p_x2, 20.0, 40.0)
+    _utter(db_session, meeting, p_bob, 40.0, 60.0)
+    db_session.flush()
+
+    body = app_for(bob).get(f"/api/intelligence/me/speaking-ratio/{meeting}").json()
+
+    assert body["ratio"] is None
+    assert body["reason"] == "small_meeting"
+
+
+def test_not_withheld_when_two_identified_and_one_unidentified_speaker_spoke(
+    app_for, db_session: Session, meeting: str
+) -> None:
+    """A genuine three-person meeting (two identified, one not yet) must still
+    release the ratio — undercounting unidentified labels should not punish a
+    meeting that really does have enough people."""
+    alice = _user(db_session, "alice")
+    bob = _user(db_session, "bob")
+    p_alice = _participant(db_session, meeting, user_id=alice, label="Speaker 0")
+    p_bob = _participant(db_session, meeting, user_id=bob, label="Speaker 1")
+    p_x = _participant(db_session, meeting, user_id=None, label="Speaker 2")
+    _utter(db_session, meeting, p_alice, 0.0, 20.0)
+    _utter(db_session, meeting, p_bob, 20.0, 40.0)
+    _utter(db_session, meeting, p_x, 40.0, 60.0)
+    db_session.flush()
+
+    body = app_for(alice).get(f"/api/intelligence/me/speaking-ratio/{meeting}").json()
+
+    assert body["ratio"] == pytest.approx(20.0 / 60.0)
+    assert body["reason"] is None
+
+
 def test_a_non_consenting_participant_is_told_they_are_not_measured(
     app_for, db_session: Session, meeting: str
 ) -> None:
@@ -208,6 +253,28 @@ def test_a_non_consenting_participant_is_told_they_are_not_measured(
 
     assert body["ratio"] is None
     assert body["reason"] == "not_measured"
+
+
+def test_not_measured_when_any_of_the_requesters_split_rows_did_not_consent(
+    app_for, db_session: Session, meeting: str
+) -> None:
+    """A person split across two participant rows must get a deterministic
+    answer regardless of which row a lookup happens to pick — not one that
+    depends on row order. Withholding is the safe default when the rows
+    disagree on consent."""
+    who = _three_consenting(db_session, meeting)
+    dave = _user(db_session, "dave")
+    p_dave_1 = _participant(db_session, meeting, user_id=dave, label="Speaker 3", consented=True)
+    _participant(db_session, meeting, user_id=dave, label="Speaker 4", consented=False)
+    _utter(db_session, meeting, who["p_alice"], 0.0, 20.0)
+    _utter(db_session, meeting, who["p_bob"], 20.0, 40.0)
+    _utter(db_session, meeting, p_dave_1, 40.0, 60.0)
+    db_session.flush()
+
+    body = app_for(dave).get(f"/api/intelligence/me/speaking-ratio/{meeting}").json()
+
+    assert body["reason"] == "not_measured"
+    assert body["ratio"] is None
 
 
 def test_404_when_the_requester_was_not_in_the_meeting(
