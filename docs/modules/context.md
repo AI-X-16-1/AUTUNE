@@ -316,7 +316,8 @@ Meeting deletion itself cascades through `meeting_id` foreign keys and reaches
   that meeting is deleted keeps quoting it forever otherwise. That is the same
   violation as `previous_statement`, on the one field `_rethread` cannot reach
   on its own. `service.sweep_stale_topic_labels(session)` refreshes every
-  thread's `topic_label` to its current visible head.
+  thread's `topic_label` to its current visible head, blanking it (`""`) for a
+  thread every one of whose versions has expired.
 
   None of the three sweeps above is yet registered as an `autune_core.deletion`
   meeting hook. ADR 0008 found that a hook issuing a real `DELETE` breaks

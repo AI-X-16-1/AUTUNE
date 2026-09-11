@@ -604,7 +604,7 @@ def sweep_dangling_previous_statements(session: Session) -> int:
 
 def sweep_stale_topic_labels(session: Session) -> int:
     """Refresh ``ctx_decisions.topic_label`` to each thread's current visible
-    head, returning how many threads changed.
+    head — blanking it if the thread has none — returning how many changed.
 
     ``topic_label`` is set from a decision's own (masked) statement when its
     thread opens, and ``_rethread`` keeps it in sync whenever the thread is
@@ -614,6 +614,13 @@ def sweep_stale_topic_labels(session: Session) -> int:
     a lineage outlives its origin meeting (see the model docstring); this sweep
     is the other half of that promise for the one column ``_rethread`` cannot
     reach on its own.
+
+    A thread every one of whose versions has expired (but not yet been deleted)
+    has no *visible* head either — ``_rethread`` bails out on it the same way,
+    since there is nothing left to chain — so it is blanked (``""``, the column
+    is not nullable) rather than left quoting expired content until the
+    retention sweep eventually deletes the rows and
+    ``sweep_orphan_decision_threads`` removes the thread outright.
 
     Not yet wired into ``autune_core.deletion``, same reason and same place as
     ``sweep_orphan_decision_threads`` (ADR 0008, #87). Global and idempotent.
@@ -629,13 +636,17 @@ def sweep_stale_topic_labels(session: Session) -> int:
     for version in versions:
         latest_statement[version.thread_id] = version.current_statement  # last row wins
 
+    every_thread_with_versions = set(
+        session.scalars(select(CtxDecisionVersion.thread_id).distinct()).all()
+    )
+    fully_expired_thread_ids = every_thread_with_versions - set(latest_statement)
+    target_ids = set(latest_statement) | fully_expired_thread_ids
+
     changed = 0
-    if latest_statement:
-        threads = session.scalars(
-            select(CtxDecision).where(CtxDecision.id.in_(latest_statement))
-        ).all()
+    if target_ids:
+        threads = session.scalars(select(CtxDecision).where(CtxDecision.id.in_(target_ids))).all()
         for thread in threads:
-            label = latest_statement[thread.id][:400]
+            label = latest_statement.get(thread.id, "")[:400]
             if thread.topic_label != label:
                 thread.topic_label = label
                 changed += 1

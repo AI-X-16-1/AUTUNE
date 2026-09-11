@@ -349,6 +349,29 @@ def test_sweep_stale_topic_labels_catches_up_after_a_meeting_is_deleted(
         assert s.get(CtxDecision, thread_id).topic_label == "배포는 금요일에 한다"
 
 
+def test_sweep_stale_topic_labels_blanks_a_thread_whose_every_meeting_expired(team_id: str) -> None:
+    """A thread nobody re-touches after all of its meetings pass `expires_at`
+    has no visible head for `_rethread` to refresh either — it must be blanked,
+    not left quoting expired content until the (not-yet-existing) retention
+    sweep deletes the rows outright."""
+    expired = _meeting(team_id, days_ago=100, expires_at=datetime.now(tz=UTC) - timedelta(days=10))
+    service.build_decision_lineage(_extraction(expired, [("dec_1", _D1, 0.9)]))
+
+    with session_scope() as s:
+        thread_id = s.scalar(
+            select(CtxDecisionVersion.thread_id).where(CtxDecisionVersion.meeting_id == expired)
+        )
+        # Set when the thread opened; build_decision_lineage's own _rethread
+        # already can't reach it, since its only version isn't visible.
+        assert s.get(CtxDecision, thread_id).topic_label == _D1
+
+    with session_scope() as s:
+        assert service.sweep_stale_topic_labels(s) == 1
+
+    with session_scope() as s:
+        assert s.get(CtxDecision, thread_id).topic_label == ""
+
+
 def test_publish_carries_the_decision_lineage(team_id: str, published: _CapturingApp) -> None:
     first = _meeting(team_id, days_ago=10)
     second = _meeting(team_id, days_ago=0)
