@@ -14,6 +14,9 @@ import logging
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
+from autune_extraction.eval.metrics import score
+from autune_extraction.labels import kind_or_none
+
 from .dataset import LABELS, TrainExample, class_weights, label_counts, read_split
 
 log = logging.getLogger(__name__)
@@ -132,25 +135,24 @@ def train(data: Path, out: Path, config: RunConfig | None = None) -> Path:
             return (loss, outputs) if return_outputs else loss
 
     def macro_f1(prediction) -> dict[str, float]:  # noqa: ANN001
-        """Macro F1 -- the unweighted mean over the five classes.
+        """The harness's metric, so the best epoch is chosen on what gets reported.
 
-        Micro would let the common classes carry the score, which is the failure
-        this whole file is arranged against.
+        Macro F1 over the five kinds, with ``none`` scored but not averaged:
+        ``none`` is the majority and the easy class, and averaging it in would
+        pick the epoch that is best at saying nothing. It still counts where it
+        matters -- a none utterance called ``decision`` is a false positive in
+        ``decision``'s precision.
+
+        This used to be its own loop over the label ids, a second statement of
+        the metric that the evaluation harness did not share.
         """
         predicted = np.argmax(prediction.predictions, axis=1)
-        actual = prediction.label_ids
-        scores: list[float] = []
-        for index in range(len(LABELS)):
-            tp = int(((predicted == index) & (actual == index)).sum())
-            fp = int(((predicted == index) & (actual != index)).sum())
-            fn = int(((predicted != index) & (actual == index)).sum())
-            precision = tp / (tp + fp) if tp + fp else 0.0
-            recall = tp / (tp + fn) if tp + fn else 0.0
-            harmonic = 2 * precision * recall / (precision + recall) if precision + recall else 0.0
-            scores.append(harmonic)
-        report = {f"f1_{label}": score for label, score in zip(LABELS, scores, strict=True)}
-        report["macro_f1"] = sum(scores) / len(scores)
-        return report
+        report = score(
+            [kind_or_none(LABELS[int(index)]) for index in prediction.label_ids],
+            [kind_or_none(LABELS[int(index)]) for index in predicted],
+        )
+        per_class = {f"f1_{s.kind.value}": s.f1 for s in report.per_class}
+        return {**per_class, "macro_f1": report.macro_f1}
 
     trainer_class = WeightedTrainer if config.weighted_loss else Trainer
     trainer = trainer_class(

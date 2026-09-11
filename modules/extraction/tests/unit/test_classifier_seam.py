@@ -14,8 +14,10 @@ from pydantic import ValidationError
 
 from autune_contracts.enums import UtteranceKind
 from autune_extraction.config import ExtractionSettings
+from autune_extraction.labels import NONE
 from autune_extraction.pipeline import FakeClassifier, Prediction, registry
 from autune_extraction.pipeline.classifier import (
+    HEAD,
     LABELS,
     LocalDeberta,
     _batches_within_budget,
@@ -24,6 +26,7 @@ from autune_extraction.pipeline.classifier import (
     _truncation_length,
 )
 from autune_extraction.pipeline.registry import _CLASSIFIERS
+from autune_extraction.training.dataset import LABELS as TRAINING_LABELS
 from autune_integrations.privacy import MAX_OUTBOUND_CHARS, check_outbound
 
 K = UtteranceKind
@@ -35,7 +38,7 @@ K = UtteranceKind
 def test_confidence_is_the_probability_of_the_chosen_kind() -> None:
     """ADR 0006 compares this against a threshold, so it has to be the label's
     own probability rather than its margin over the next one."""
-    scores = [0.7, 0.1, 0.1, 0.05, 0.05]
+    scores = [0.7, 0.1, 0.1, 0.05, 0.05, 0.0]
     prediction = _to_prediction(scores)
 
     assert prediction.kind is LABELS[0]
@@ -49,13 +52,13 @@ def test_the_full_distribution_survives() -> None:
     A caller holding only the maximum cannot recover it, and 0.51 against 0.49 is
     a different situation from 0.51 against nothing.
     """
-    prediction = _to_prediction([0.51, 0.49, 0.0, 0.0, 0.0])
+    prediction = _to_prediction([0.51, 0.49, 0.0, 0.0, 0.0, 0.0])
 
     assert prediction.runner_up == (LABELS[1], pytest.approx(0.49))
 
 
 def test_a_confident_prediction_has_a_distant_runner_up() -> None:
-    prediction = _to_prediction([0.96, 0.01, 0.01, 0.01, 0.01])
+    prediction = _to_prediction([0.96, 0.01, 0.01, 0.01, 0.01, 0.0])
     _, second = prediction.runner_up
 
     assert prediction.confidence - second > 0.9
@@ -68,12 +71,42 @@ def test_a_distribution_that_does_not_sum_to_one_raises() -> None:
     reasonable, and every downstream threshold would read them as real.
     """
     with pytest.raises(ValueError, match="do not sum to 1"):
-        _to_prediction([0.5, 0.2, 0.1, 0.05, 0.05])
+        _to_prediction([0.5, 0.2, 0.1, 0.05, 0.05, 0.0])
 
 
 def test_the_wrong_number_of_scores_raises() -> None:
-    with pytest.raises(ValueError, match="expected 5 scores"):
+    with pytest.raises(ValueError, match="expected 6 scores"):
         _to_prediction([0.5, 0.5])
+
+
+def test_none_is_an_answer_and_not_a_kind() -> None:
+    """Most of a meeting is none of the kinds (#149).
+
+    ``kind is None`` rather than a sixth enum member: the contract has five
+    kinds, and a ``Classification`` built from this has to fail to type-check,
+    not quietly carry a label no other module has heard of.
+    """
+    prediction = _to_prediction([0.1, 0.05, 0.05, 0.05, 0.05, 0.7])
+
+    assert prediction.kind is None
+    assert prediction.confidence == pytest.approx(0.7)
+    assert prediction.none_score == pytest.approx(0.7)
+    assert NONE not in {kind.value for kind in prediction.scores}
+
+
+def test_a_kind_that_narrowly_lost_to_none_is_the_runner_up() -> None:
+    """The same "what it nearly said" as between two kinds, from the other side."""
+    prediction = _to_prediction([0.0, 0.45, 0.0, 0.0, 0.0, 0.55])
+
+    assert prediction.kind is None
+    assert prediction.runner_up == (K.DECISION, pytest.approx(0.45))
+
+
+def test_none_can_be_the_runner_up() -> None:
+    prediction = _to_prediction([0.6, 0.0, 0.0, 0.0, 0.0, 0.4])
+
+    assert prediction.kind is K.COMMITMENT
+    assert prediction.runner_up == (None, pytest.approx(0.4))
 
 
 def test_confidence_outside_zero_to_one_raises() -> None:
@@ -99,16 +132,29 @@ def test_label_order_matches_the_contract_enum() -> None:
     assert len(LABELS) == 5
 
 
+def test_the_head_is_the_five_kinds_then_none() -> None:
+    """``none`` is appended, so the five kinds keep the columns they had (#149)."""
+    assert HEAD[:5] == tuple(kind.value for kind in LABELS)
+    assert HEAD[5:] == (NONE,)
+
+
+def test_training_writes_the_head_inference_reads() -> None:
+    """Two literals in two packages, and a checkpoint is only readable when they
+    agree: the training loop writes its order into ``id2label`` and
+    ``_check_label_order`` compares it with ``HEAD``."""
+    assert TRAINING_LABELS == HEAD
+
+
 def test_a_checkpoint_in_label_order_is_accepted() -> None:
     """Integer keys as transformers holds them, string keys as ``config.json``
     stores them. The training loop writes this exact mapping."""
-    _check_label_order({i: label.value for i, label in enumerate(LABELS)})
-    _check_label_order({str(i): label.value for i, label in enumerate(LABELS)})
+    _check_label_order(dict(enumerate(HEAD)))
+    _check_label_order({str(i): label for i, label in enumerate(HEAD)})
 
 
 def test_a_checkpoint_in_another_order_is_refused() -> None:
     """Loading it would relabel every prediction behind plausible confidences."""
-    swapped = [label.value for label in LABELS]
+    swapped = list(HEAD)
     swapped[0], swapped[1] = swapped[1], swapped[0]
 
     with pytest.raises(RuntimeError, match="labelled"):
@@ -119,16 +165,23 @@ def test_a_bare_encoder_is_refused() -> None:
     """An untrained head is labelled ``LABEL_0``... and would load without
     complaint, classifying at random."""
     with pytest.raises(RuntimeError, match="labelled"):
-        _check_label_order({i: f"LABEL_{i}" for i in range(len(LABELS))})
+        _check_label_order({i: f"LABEL_{i}" for i in range(len(HEAD))})
 
 
 def test_a_head_with_an_extra_column_is_refused() -> None:
-    """Five matching names are not enough if a sixth column exists: the softmax
-    would run over six and ``_to_prediction`` would refuse every row mid-meeting."""
-    extra = {i: label.value for i, label in enumerate(LABELS)} | {len(LABELS): "none"}
+    """Six matching names are not enough if a seventh column exists: the softmax
+    would run over seven and ``_to_prediction`` would refuse every row mid-meeting."""
+    extra = dict(enumerate(HEAD)) | {len(HEAD): "other"}
 
     with pytest.raises(RuntimeError, match="labelled"):
         _check_label_order(extra)
+
+
+def test_a_five_column_checkpoint_from_before_none_is_refused() -> None:
+    """Its softmax has nowhere to put "none of these", so every utterance of a
+    meeting would come back as a kind -- the defect #149 measured."""
+    with pytest.raises(RuntimeError, match="labelled"):
+        _check_label_order({i: kind.value for i, kind in enumerate(LABELS)})
 
 
 def test_inference_truncates_where_the_checkpoint_was_trained() -> None:
@@ -165,9 +218,19 @@ def test_the_fake_returns_one_prediction_per_input_in_order() -> None:
     assert [p.kind for p in predictions] == [K.COMMITMENT, K.CONCERN, K.OPEN_QUESTION]
 
 
-def test_the_fake_falls_back_to_ambiguous() -> None:
+def test_the_fake_marks_weak_assent_as_ambiguous() -> None:
     """Weak assent is the case module B exists to be careful about."""
     assert FakeClassifier().classify(["한번 볼게요"])[0].kind is K.AMBIGUOUS
+
+
+def test_the_fake_says_none_when_nothing_matches() -> None:
+    """Most of a meeting is none of the kinds.
+
+    It used to fall back to ``ambiguous``, and ``ambiguous`` is what sends the
+    speaker a DM -- a fake that asked about every unmatched utterance made every
+    downstream fixture look like a meeting full of questions.
+    """
+    assert FakeClassifier().classify(["네 알겠어요 다음 안건으로"])[0].kind is None
 
 
 def test_the_fake_produces_a_real_distribution() -> None:
@@ -175,7 +238,7 @@ def test_the_fake_produces_a_real_distribution() -> None:
     satisfy the same invariants — otherwise tests pass on values the real model
     could never produce."""
     for prediction in FakeClassifier().classify(["제가 하겠습니다", "무슨 말인지"]):
-        assert sum(prediction.scores.values()) == pytest.approx(1.0)
+        assert sum(prediction.scores.values()) + prediction.none_score == pytest.approx(1.0)
         assert set(prediction.scores) == set(LABELS)
         assert 0.0 <= prediction.confidence <= 1.0
 

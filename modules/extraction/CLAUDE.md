@@ -50,7 +50,10 @@ report generation. Target non-LLM share ~60% — classification and verification
 are trained models, not prompts.
 
 The five kinds: `commitment`, `decision`, `open_question`, `concern`,
-`ambiguous`.
+`ambiguous`. The classifier has a sixth answer, `none` — most of a meeting is
+none of the kinds (#149). `none` lives only inside this module
+(`autune_extraction.labels`); the contract has no such kind, and an utterance
+the model calls none is simply not in `ExtractionResult.classifications`.
 
 ## Privacy
 
@@ -69,8 +72,11 @@ The five kinds: `commitment`, `decision`, `open_question`, `concern`,
 
 ## Metric
 
-The classifier's five-way macro F1 (ADR 0006). Action item F1 is derived from it
-and reported beside the best published figure for the task, 43.12 on AMI.
+The classifier's macro F1 over the five kinds (ADR 0006), taken on an evaluation
+set with `none` at its real proportion: `none` is scored — a none utterance
+called `decision` costs `decision` its precision — but never averaged in.
+Action item F1 is derived from it and reported beside the best published figure
+for the task, 43.12 on AMI.
 
 ```bash
 uv run --package autune-extraction python -m autune_extraction.eval \
