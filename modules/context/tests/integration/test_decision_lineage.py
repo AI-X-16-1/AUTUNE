@@ -78,13 +78,20 @@ def _user(email: str) -> str:
         return row.id
 
 
-def _meeting(team_id: str, *, days_ago: int, present: list[str] | None = None) -> str:
+def _meeting(
+    team_id: str,
+    *,
+    days_ago: int,
+    present: list[str] | None = None,
+    expires_at: datetime | None = None,
+) -> str:
     with session_scope() as s:
         row = Meeting(
             team_id=team_id,
             title="회의",
             status="analyzing",
             started_at=datetime.now(tz=UTC) - timedelta(days=days_ago),
+            expires_at=expires_at,
         )
         s.add(row)
         s.flush()
@@ -287,6 +294,59 @@ def test_rerunning_an_earlier_meeting_keeps_the_later_chain_intact(team_id: str)
         assert v2.previous_meeting_id == first
         assert v2.previous_statement == _D1
         assert v2.change_type == "unchanged"
+
+
+def test_an_expired_meeting_is_excluded_from_matching_and_the_chain(team_id: str) -> None:
+    """A meeting past its `expires_at` must not be usable even before the
+    retention sweep deletes its row — the same rule topic linking already
+    applies (`HybridRetriever._visible`)."""
+    expired = _meeting(team_id, days_ago=100, expires_at=datetime.now(tz=UTC) - timedelta(days=10))
+    current = _meeting(team_id, days_ago=0)
+    service.build_decision_lineage(_extraction(expired, [("dec_1", _D1, 0.9)]))
+    service.build_decision_lineage(_extraction(current, [("dec_2", _D1, 0.9)]))
+
+    with session_scope() as s:
+        v_current = s.scalars(
+            select(CtxDecisionVersion).where(CtxDecisionVersion.meeting_id == current)
+        ).one()
+        assert v_current.change_type == "new"  # did not match the expired meeting's thread
+        assert v_current.previous_version_id is None
+        assert v_current.previous_meeting_id is None
+
+
+def test_sweep_stale_topic_labels_catches_up_after_a_meeting_is_deleted(
+    team_id: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`ctx_decisions.topic_label` quotes whichever meeting is currently the
+    thread's head. Deleting that meeting (retention) leaves it stale until
+    something re-touches the thread or `sweep_stale_topic_labels` runs."""
+    monkeypatch.setenv("AUTUNE_CONTEXT_LINEAGE_MATCH_THRESHOLD", "-1")  # force the match
+    get_settings.cache_clear()
+
+    first = _meeting(team_id, days_ago=10)
+    second = _meeting(team_id, days_ago=0)
+    service.build_decision_lineage(_extraction(first, [("dec_1", "배포는 금요일에 한다", 0.9)]))
+    service.build_decision_lineage(_extraction(second, [("dec_2", "배포는 월요일로 미룬다", 0.9)]))
+
+    with session_scope() as s:
+        thread_id = s.scalar(
+            select(CtxDecisionVersion.thread_id).where(CtxDecisionVersion.meeting_id == second)
+        )
+        assert s.get(CtxDecision, thread_id).topic_label == "배포는 월요일로 미룬다"
+
+    with session_scope() as s:
+        s.execute(delete(Meeting).where(Meeting.id == second))  # cascades its version away
+
+    with session_scope() as s:
+        # Stale: still quotes the now-deleted meeting until something sweeps it.
+        assert s.get(CtxDecision, thread_id).topic_label == "배포는 월요일로 미룬다"
+
+    with session_scope() as s:
+        assert service.sweep_stale_topic_labels(s) == 1
+
+    with session_scope() as s:
+        # Caught up to the surviving version.
+        assert s.get(CtxDecision, thread_id).topic_label == "배포는 금요일에 한다"
 
 
 def test_publish_carries_the_decision_lineage(team_id: str, published: _CapturingApp) -> None:

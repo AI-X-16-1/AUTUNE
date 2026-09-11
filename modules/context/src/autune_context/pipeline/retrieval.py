@@ -12,9 +12,9 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import or_, select
+from sqlalchemy import ColumnElement, or_, select
 
 from autune_context.models import CtxEmbedding
 from autune_core import Meeting
@@ -23,6 +23,24 @@ if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
     from autune_context.pipeline.topics import TopicSegment
+
+
+def visible_meeting_clauses(
+    team_id: Any, *, now: datetime | None = None
+) -> tuple[ColumnElement[bool], ColumnElement[bool]]:
+    """A meeting D may still use: this team, still inside its retention window.
+
+    ``team_id`` may be a literal id or another column (e.g. ``CtxDecision.team_id``
+    in a query already joined to it). Shared by topic retrieval (below) and
+    decision lineage (``service._thread_heads`` / ``_rethread``) so the two can't
+    drift the way #93's review caught — a meeting visible to one query and not
+    the other is a retention-window bypass at best and a ``KeyError`` at worst.
+    """
+    now = now or datetime.now(tz=UTC)
+    return (
+        Meeting.team_id == team_id,
+        or_(Meeting.expires_at.is_(None), Meeting.expires_at > now),
+    )
 
 
 @dataclass(frozen=True)
@@ -93,12 +111,10 @@ class HybridRetriever:
         retention-window bypass at worst (see docs/architecture/privacy.md,
         section 4).
         """
-        now = datetime.now(tz=UTC)
         return (
             CtxEmbedding.kind == "topic",
-            Meeting.team_id == team_id,
             Meeting.started_at < before,
-            or_(Meeting.expires_at.is_(None), Meeting.expires_at > now),
+            *visible_meeting_clauses(team_id),
         )
 
     def _dense_ranking(

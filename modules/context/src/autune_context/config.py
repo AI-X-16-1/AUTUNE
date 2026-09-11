@@ -60,14 +60,18 @@ class ContextSettings(BaseSettings):
     rrf_k: int = 60
     link_confidence_threshold: float = 0.6
     """Above: assert the link. Below: store it as ``pending`` and ask the user.
-    Placeholder value; tuned against the evaluation set in Phase 2."""
+    Placeholder value; tuned against the evaluation set once it exists (the
+    eval harness is still owed — see docs/modules/context.md, "Metric")."""
 
     # --- decision lineage ---
     lineage_match_threshold: float = 0.6
     """Cosine similarity between B's decision statement and a thread's latest
     statement, above which the decision is threaded into that existing lineage
     rather than opening a new one. Placeholder; tuned against the evaluation set
-    in Phase 2."""
+    once it exists. Also sensitive to how B's ``Decision.statement`` is built —
+    a last-utterance quote (no reference resolution yet, extraction issue #11)
+    scores closing remarks from unrelated decisions higher than this default
+    tolerates, so don't tune this threshold to today's statements."""
 
     # --- publishing ---
     publish_timeout_s: int = 600

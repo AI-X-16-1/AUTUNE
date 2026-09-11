@@ -26,7 +26,7 @@ from autune_context.models import (
     CtxTopicLink,
 )
 from autune_context.pipeline import get_embedder, get_nli, get_reranker
-from autune_context.pipeline.retrieval import HybridRetriever
+from autune_context.pipeline.retrieval import HybridRetriever, visible_meeting_clauses
 from autune_context.pipeline.topics import extract_topics
 from autune_contracts import ChangeType, ContextLinks, DecisionChange, NliLabel, TopicLink
 from autune_core import Meeting, Participant, get_logger, session_scope
@@ -311,8 +311,13 @@ def _meeting_time():
 
 
 def _thread_heads(session: Session, team_id: str, embedder: Embedder) -> list[_ThreadHead]:
-    """Every non-empty thread for this team, represented by its latest version
-    (by meeting time), embedded.
+    """Every non-empty thread for this team, represented by its latest *visible*
+    version (by meeting time), embedded.
+
+    "Visible" is ``visible_meeting_clauses``: a meeting past its retention
+    window is excluded here exactly as it is from topic retrieval, even before
+    the meeting row itself is deleted — a decision must not match onto, or
+    quote, a meeting that has expired.
 
     One query and one batch embed — threads accumulate per team over the
     retention window, so neither can be per-thread. The returned list is in a
@@ -322,7 +327,7 @@ def _thread_heads(session: Session, team_id: str, embedder: Embedder) -> list[_T
         select(CtxDecisionVersion)
         .join(CtxDecision, CtxDecision.id == CtxDecisionVersion.thread_id)
         .join(Meeting, Meeting.id == CtxDecisionVersion.meeting_id)
-        .where(CtxDecision.team_id == team_id)
+        .where(CtxDecision.team_id == team_id, *visible_meeting_clauses(team_id))
         .order_by(CtxDecisionVersion.thread_id, _meeting_time(), CtxDecisionVersion.id)
     ).all()
     head_by_thread: dict[str, CtxDecisionVersion] = {}
@@ -356,7 +361,8 @@ def _match_thread(
 
 
 def _rethread(session: Session, thread_id: str, nli: NliModel) -> None:
-    """Re-chain every version of one thread in meeting-chronological order.
+    """Re-chain every *visible* version of one thread in meeting-chronological
+    order, and refresh the thread's ``topic_label`` to match.
 
     ``previous_*``, ``change_type``, ``nli_label``, ``confidence`` and
     ``key_stakeholders_absent`` all depend on which meeting a version follows, so
@@ -368,11 +374,20 @@ def _rethread(session: Session, thread_id: str, nli: NliModel) -> None:
     winning label, and it is not recomputed back to B's number if the version
     later becomes the head of its thread (same stance as
     ``sweep_dangling_previous_statements``: what changed survives).
+
+    A version whose meeting has passed its retention window (``expires_at``) is
+    excluded from the chain entirely — it is treated as already gone, the same
+    way ``_thread_heads`` treats it for matching, rather than as a live
+    predecessor whose text keeps getting copied into ``previous_statement``.
     """
     versions = session.scalars(
         select(CtxDecisionVersion)
+        .join(CtxDecision, CtxDecision.id == CtxDecisionVersion.thread_id)
         .join(Meeting, Meeting.id == CtxDecisionVersion.meeting_id)
-        .where(CtxDecisionVersion.thread_id == thread_id)
+        .where(
+            CtxDecisionVersion.thread_id == thread_id,
+            *visible_meeting_clauses(CtxDecision.team_id),
+        )
         .order_by(_meeting_time(), CtxDecisionVersion.id)
     ).all()
     if not versions:
@@ -407,6 +422,10 @@ def _rethread(session: Session, thread_id: str, nli: NliModel) -> None:
             version.key_stakeholders_absent = sorted(known - present)
         version.nli_version = nli.model_version
         prior_meeting_ids.append(version.meeting_id)
+
+    thread = session.get(CtxDecision, thread_id)
+    if thread is not None:
+        thread.topic_label = versions[-1].current_statement[:400]
     session.flush()
 
 
@@ -581,6 +600,46 @@ def sweep_dangling_previous_statements(session: Session) -> int:
             .values(previous_statement=None)
         )
     return len(dangling)
+
+
+def sweep_stale_topic_labels(session: Session) -> int:
+    """Refresh ``ctx_decisions.topic_label`` to each thread's current visible
+    head, returning how many threads changed.
+
+    ``topic_label`` is set from a decision's own (masked) statement when its
+    thread opens, and ``_rethread`` keeps it in sync whenever the thread is
+    next touched by a new meeting — but a thread nobody touches again after the
+    meeting that set the label is deleted keeps quoting that meeting's content
+    forever otherwise. ``ctx_decisions`` is anchored on ``team_id`` precisely so
+    a lineage outlives its origin meeting (see the model docstring); this sweep
+    is the other half of that promise for the one column ``_rethread`` cannot
+    reach on its own.
+
+    Not yet wired into ``autune_core.deletion``, same reason and same place as
+    ``sweep_orphan_decision_threads`` (ADR 0008, #87). Global and idempotent.
+    """
+    versions = session.scalars(
+        select(CtxDecisionVersion)
+        .join(CtxDecision, CtxDecision.id == CtxDecisionVersion.thread_id)
+        .join(Meeting, Meeting.id == CtxDecisionVersion.meeting_id)
+        .where(*visible_meeting_clauses(CtxDecision.team_id))
+        .order_by(CtxDecisionVersion.thread_id, _meeting_time(), CtxDecisionVersion.id)
+    ).all()
+    latest_statement: dict[str, str] = {}
+    for version in versions:
+        latest_statement[version.thread_id] = version.current_statement  # last row wins
+
+    changed = 0
+    if latest_statement:
+        threads = session.scalars(
+            select(CtxDecision).where(CtxDecision.id.in_(latest_statement))
+        ).all()
+        for thread in threads:
+            label = latest_statement[thread.id][:400]
+            if thread.topic_label != label:
+                thread.topic_label = label
+                changed += 1
+    return changed
 
 
 # --------------------------------------------------------------------------- #
