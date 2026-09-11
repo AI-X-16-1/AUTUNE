@@ -55,14 +55,26 @@ type serialized to JSON. See `async-pipeline.md`.
 
 ```python
 # in autune_audio
-publish("autune.transcript.ready", TranscriptReady(...).model_dump())
+from autune_contracts import TRANSCRIPT_READY, TranscriptReady
+from autune_core import publish
+
+publish(TRANSCRIPT_READY, TranscriptReady(...).model_dump(mode="json"))
 
 
 # in autune_extraction
-@app.task(name="autune.extraction.on_transcript_ready")
+from celery import shared_task
+
+
+@shared_task(name="autune.extraction.on_transcript_ready", acks_late=True)
 def on_transcript_ready(payload: dict) -> None:
     transcript = TranscriptReady.model_validate(payload)
 ```
+
+A publishes the event and does not know that B, C and D exist. `publish` finds
+them by name — every registered task called
+`autune.<consumer>.on_transcript_ready` — so subscribing is defining that task
+and nothing in A, and no registration block, changes. The naming rule is in
+`async-pipeline.md`.
 
 Reading another module's tables directly is a third channel, and it is also
 forbidden. If you need data another module owns, it belongs in a contract.
