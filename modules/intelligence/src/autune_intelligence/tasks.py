@@ -13,6 +13,8 @@ reopens the meeting and re-enqueues ``aggregate``.
 
 from __future__ import annotations
 
+from datetime import date, timedelta
+
 import sqlalchemy as sa
 from celery import current_app, shared_task
 
@@ -139,3 +141,40 @@ def send_personal_feedback(meeting_id: str) -> None:
             )
             return
         service.send_personal_feedback(session, SlackClient(config.require_secret()), meeting_id)
+
+
+@shared_task(name="autune.intelligence.generate_weekly_report", acks_late=True)
+def generate_weekly_report(team_id: str, period_end: str | None = None) -> None:
+    """Aggregate the trailing 7 days into one ``intel_reports`` row and post it
+    to the team's Slack channel.
+
+    ``period_end`` is an ISO date string (JSON-safe for a Celery arg), defaulting
+    to today; ``period_start`` is 7 days before it. Unlike
+    ``send_personal_feedback``, the report is generated and persisted whether or
+    not Slack is connected — it is also served by ``GET /reports/{team_id}``, so
+    a team without Slack still sees it on the dashboard. Only the channel post is
+    skipped: without a connected Slack, or without a ``channel`` configured on
+    it. There is no ``apps/worker`` beat schedule calling this yet — see
+    docs/modules/intelligence.md step 6.
+    """
+    end = date.fromisoformat(period_end) if period_end is not None else date.today()
+    start = end - timedelta(days=7)
+
+    with session_scope() as session:
+        report = service.generate_weekly_report(session, team_id, start, end)
+        config = load_integration(session, team_id, "slack")
+
+    if config is None:
+        log.info("intelligence_weekly_report_no_slack", team_id=team_id, period_start=str(start))
+        return
+    channel = config.config.get("channel")
+    if channel is None:
+        log.info("intelligence_weekly_report_no_channel", team_id=team_id, period_start=str(start))
+        return
+    SlackClient(config.require_secret()).post_message(channel, report.body_markdown)
+    log.info(
+        "intelligence_weekly_report_sent",
+        team_id=team_id,
+        period_start=str(start),
+        meeting_count=report.metrics_json["meeting_count"],
+    )
