@@ -9,14 +9,19 @@ Never imports another module.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 from sqlalchemy import delete, func, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from autune_contracts.enums import ActionStatus
-from autune_contracts.extraction import AmbiguousAgreement, Decision
-from autune_core import get_logger, session_scope
+from autune_contracts.extraction import (
+    ActionItem,
+    AmbiguousAgreement,
+    Decision,
+    ExtractionResult,
+)
+from autune_core import Utterance, get_logger, session_scope
 from autune_integrations import SlackApi, assert_personal_delivery
 
 from .config import get_settings
@@ -31,7 +36,13 @@ from .models import (
     ExtDecisionSource,
     ExtEditEvent,
 )
-from .schemas import ActionItemCreate, ActionItemRead, ActionItemUpdate
+from .schemas import (
+    ActionItemCreate,
+    ActionItemDetail,
+    ActionItemRead,
+    ActionItemUpdate,
+    SourceUtterance,
+)
 
 log = get_logger(__name__)
 
@@ -271,6 +282,70 @@ def read_model(item: ExtActionItem) -> ActionItemRead:
     )
 
 
+def list_action_items(
+    session: Session,
+    *,
+    meeting_id: str | None = None,
+    assignee_id: str | None = None,
+    status: ActionStatus | None = None,
+    due_before: date | None = None,
+) -> list[ActionItemRead]:
+    """The items S17 and S05 put on screen. Every filter is optional and they AND.
+
+    ``due_before`` is strict: an item due on that day is not before it. That
+    makes "overdue" one argument -- today's date -- instead of yesterday's, and
+    an item with no due date is never before anything, so it drops out of any
+    date filter rather than reading as overdue.
+
+    Sources are loaded in the same round trip. The card counts them, so a lazy
+    load would be one more query per card.
+    """
+    query = (
+        select(ExtActionItem)
+        .options(selectinload(ExtActionItem.sources))
+        .order_by(ExtActionItem.created_at, ExtActionItem.id)
+    )
+    if meeting_id is not None:
+        query = query.where(ExtActionItem.meeting_id == meeting_id)
+    if assignee_id is not None:
+        query = query.where(ExtActionItem.assignee_id == assignee_id)
+    if status is not None:
+        query = query.where(ExtActionItem.status == status.value)
+    if due_before is not None:
+        query = query.where(ExtActionItem.due_date < due_before)
+
+    return [read_model(item) for item in session.scalars(query)]
+
+
+def read_detail(session: Session, item: ExtActionItem) -> ActionItemDetail:
+    """One item with the text of the utterances it was drawn from.
+
+    The only route in this module that returns transcript text. It is here and
+    not on the list because the drawer is the one screen that shows a quotation,
+    and it shows one item's at a time.
+    """
+    return ActionItemDetail(
+        **read_model(item).model_dump(), sources=source_utterances(session, item.id)
+    )
+
+
+def source_utterances(session: Session, action_item_id: str) -> list[SourceUtterance]:
+    """The item's evidence, in the order it was spoken.
+
+    Reads ``utterances``, which module A owns and this module may only read. An
+    utterance that has been deleted takes its link row with it (the foreign key
+    cascades), so a missing quotation means the speech is gone, not that the
+    join failed.
+    """
+    rows = session.execute(
+        select(Utterance.id, Utterance.text)
+        .join(ExtActionItemSource, ExtActionItemSource.utterance_id == Utterance.id)
+        .where(ExtActionItemSource.action_item_id == action_item_id)
+        .order_by(Utterance.start_sec, Utterance.id)
+    ).all()
+    return [SourceUtterance(id=utterance_id, text=text) for utterance_id, text in rows]
+
+
 def update_action_item(
     session: Session, item: ExtActionItem, payload: ActionItemUpdate
 ) -> ExtActionItem:
@@ -427,3 +502,56 @@ def decisions_for_meeting(session: Session, meeting_id: str) -> list[Decision]:
         )
         for row in rows
     ]
+
+
+# --- the meeting's result ----------------------------------------------------
+
+
+def result_for_meeting(session: Session, meeting_id: str) -> ExtractionResult:
+    """Everything this meeting produced, as the contract D and E read it.
+
+    Built from what is stored rather than kept from the last run, so it includes
+    every correction a person has made since: an item added by hand is in it,
+    one deleted is not. That is also what ``autune.extraction.completed`` should
+    carry when #31 publishes it, and why the builder is here rather than inside a
+    route.
+
+    ``classifications`` is empty because nothing stores one yet.
+    ``ext_classifications`` arrives with the classifier (#10); until then an
+    empty list is the truth about this meeting, not a placeholder for it.
+    """
+    items = session.scalars(
+        select(ExtActionItem)
+        .options(selectinload(ExtActionItem.sources))
+        .where(ExtActionItem.meeting_id == meeting_id)
+        .order_by(ExtActionItem.created_at, ExtActionItem.id)
+    ).all()
+
+    return ExtractionResult(
+        meeting_id=meeting_id,
+        action_items=[contract_action_item(item) for item in items],
+        decisions=decisions_for_meeting(session, meeting_id),
+        ambiguous_agreements=ambiguous_agreements_for_meeting(session, meeting_id),
+    )
+
+
+def contract_action_item(item: ExtActionItem) -> ActionItem:
+    """One row as the contract describes an item to other modules.
+
+    Narrower than ``ActionItemRead``. ``origin`` and ``is_candidate`` are about
+    how this module's own screens present an item and are not in the contract;
+    adding them there would be a contract change (invariant 5), not an edit here.
+
+    ``external_refs`` stays at its default. ``ext_external_refs`` is created by
+    the Notion and Jira sync (#30), and nothing has been synced before it.
+    """
+    return ActionItem(
+        id=item.id,
+        description=item.description,
+        assignee_id=item.assignee_id,
+        assignee_label=item.assignee_label,
+        due_date=item.due_date,
+        source_utterance_ids=[source.utterance_id for source in item.sources],
+        status=ActionStatus(item.status),
+        confidence=item.confidence,
+    )

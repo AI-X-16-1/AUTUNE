@@ -8,17 +8,20 @@ The prefix ``/api/extraction`` is applied by apps/api; declare paths relative to
 
 from __future__ import annotations
 
+from datetime import date
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.orm import Session
 
-from autune_core import get_session
+from autune_contracts.enums import ActionStatus
+from autune_contracts.extraction import ExtractionResult
+from autune_core import Meeting, get_session
 from autune_core.errors import NotFoundError
 
 from . import service
 from .models import ExtActionItem
-from .schemas import ActionItemCreate, ActionItemRead, ActionItemUpdate
+from .schemas import ActionItemCreate, ActionItemDetail, ActionItemRead, ActionItemUpdate
 
 router = APIRouter()
 
@@ -40,6 +43,44 @@ def _load(session: Session, action_item_id: str) -> ExtActionItem:
     if item is None:
         raise NotFoundError("action item", action_item_id)
     return item
+
+
+@router.get("/results/{meeting_id}", response_model=ExtractionResult)
+def get_results(meeting_id: str, session: SessionDep) -> ExtractionResult:
+    """Everything this meeting produced, including every correction since.
+
+    A meeting with nothing extracted yet answers with empty lists, not a 404:
+    the meeting exists and has, so far, produced nothing. Only a meeting that
+    does not exist is not found.
+    """
+    if session.get(Meeting, meeting_id) is None:
+        raise NotFoundError("meeting", meeting_id)
+    return service.result_for_meeting(session, meeting_id)
+
+
+@router.get("/action-items", response_model=list[ActionItemRead])
+def list_action_items(
+    session: SessionDep,
+    meeting_id: str | None = None,
+    assignee_id: str | None = None,
+    # Aliased so the parameter does not shadow ``fastapi.status`` in this module.
+    status_filter: Annotated[ActionStatus | None, Query(alias="status")] = None,
+    due_before: date | None = None,
+) -> list[ActionItemRead]:
+    """Items for the board, by any combination of the four filters."""
+    return service.list_action_items(
+        session,
+        meeting_id=meeting_id,
+        assignee_id=assignee_id,
+        status=status_filter,
+        due_before=due_before,
+    )
+
+
+@router.get("/action-items/{action_item_id}", response_model=ActionItemDetail)
+def get_action_item(action_item_id: str, session: SessionDep) -> ActionItemDetail:
+    """One item and the text of the utterances it came from, for the drawer."""
+    return service.read_detail(session, _load(session, action_item_id))
 
 
 @router.post("/action-items", response_model=ActionItemRead, status_code=status.HTTP_201_CREATED)

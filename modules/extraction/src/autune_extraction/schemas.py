@@ -104,3 +104,32 @@ class ActionItemRead(BaseModel):
     **False for everything while ``candidate_confidence`` is unset**, which is
     its default until #10 measures one.
     """
+
+
+class SourceUtterance(BaseModel):
+    """One utterance an item was drawn from, as the drawer quotes it.
+
+    The text is what module A stored, which is after masking. There is no
+    unmasked string anywhere this could have been read from -- privacy.md
+    section 2 puts the masker before the first write.
+    """
+
+    id: str
+    text: str
+
+
+class ActionItemDetail(ActionItemRead):
+    """One item and its evidence, for S18.
+
+    The list carries ids only. Utterance text leaves the server when the screen
+    that shows it asks, one item at a time, so a board nobody opens a drawer on
+    sends no part of the transcript at all.
+    """
+
+    sources: list[SourceUtterance]
+    """In the order they were spoken, which is the order the argument was made.
+
+    ``source_utterance_ids`` above stays in insertion order: it is built from
+    the row alone. This list is read from ``utterances`` anyway, so the spoken
+    order comes with it at no extra cost.
+    """
