@@ -268,3 +268,22 @@ def test_the_task_drafts_items_from_a_transcript(
     run_task(session, monkeypatch)
 
     assert len(model_items(session)) == 2
+
+
+def test_a_non_consenting_speakers_commitment_never_becomes_a_draft(
+    session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """privacy.md section 5, raised on #151 and #152.
+
+    ``Speaker 2`` did not consent. Their "그건 제가 확인하겠습니다" is a
+    commitment to the classifier, but it never reaches the classifier, so no
+    card is drafted from it -- no description quoting it, no assignee label, no
+    due phrase.
+    """
+    stored(session, consented={"김민경": True, "Speaker 2": False})
+
+    run_task(session, monkeypatch)
+
+    (item,) = model_items(session)
+    assert [source.utterance_id for source in item.sources] == ["utt_1"]
+    assert all("확인하겠습니다" not in i.description for i in model_items(session))
