@@ -8,6 +8,12 @@ Writes ``train.jsonl``, ``validation.jsonl`` and ``test.jsonl`` in the format th
 evaluation harness reads, and prints a summary to stderr so the counts can be
 read without opening the files.
 
+Utterances that are none of the kinds are written as ``none`` (#149): sampled
+into train at ``--none-ratio`` and into validation one to one. ``test.jsonl`` is
+the natural distribution -- every act of the test meetings that carry the
+decision layer -- and ``test_closed.jsonl`` is the labelled-only test split, for
+comparison with scores taken before ``none`` existed. See ``corpus.add_none``.
+
 The summary is the point of running this more than once: a class that collapses
 between corpus versions, or a split that lands lopsided, is visible here and
 invisible once training starts.
@@ -20,7 +26,9 @@ import sys
 from collections import Counter
 from pathlib import Path
 
-from .corpus import SPLITS, AmiReader, split_by_meeting, write_jsonl
+from autune_extraction.labels import NONE
+
+from .corpus import SPLITS, AmiReader, add_none, split_by_meeting, write_jsonl
 
 
 def main() -> None:
@@ -33,7 +41,19 @@ def main() -> None:
         default=1,
         help="drop acts that resolve to fewer words than this (default 1)",
     )
+    parser.add_argument(
+        "--none-ratio",
+        type=float,
+        default=1.0,
+        help=(
+            "none rows in train per labelled row (default 1.0, the setting #149 "
+            "measured). 0 writes no none rows to train, and the training loop "
+            "refuses a split with a class missing"
+        ),
+    )
     args = parser.parse_args()
+    if args.none_ratio < 0:
+        parser.error("--none-ratio must be zero or more")
 
     reader = AmiReader(args.corpus)
     try:
@@ -41,15 +61,29 @@ def main() -> None:
     except ValueError as exc:
         raise SystemExit(str(exc)) from exc
 
-    examples = list(reader.load(min_words=args.min_words))
+    rows = list(reader.load(min_words=args.min_words, include_none=True))
+    examples = [row for row in rows if row.kind != NONE]
     if not examples:
         raise SystemExit(f"no labelled utterances found under {args.corpus}")
 
-    splits = split_by_meeting(examples)
+    labelled = split_by_meeting(examples)
+    splits = add_none(
+        labelled,
+        [row for row in rows if row.kind == NONE],
+        annotated=reader.decision_meetings(),
+        ratio=args.none_ratio,
+    )
     for name in SPLITS:
         write_jsonl(args.out / f"{name}.jsonl", splits[name])
+    # The test split as it was before none existed, so a new score can be put
+    # next to an old one. Not the metric -- test.jsonl is.
+    write_jsonl(args.out / "test_closed.jsonl", labelled["test"])
 
     _report(splits)
+    print(
+        f"  test_closed {len(labelled['test']):>6}  labelled only, all test meetings",
+        file=sys.stderr,
+    )
 
 
 def _report(splits: dict[str, list]) -> None:
@@ -60,7 +94,7 @@ def _report(splits: dict[str, list]) -> None:
     the leak invariant 11 forbids arriving through a convenience.
     """
     total = sum(len(rows) for rows in splits.values())
-    print(f"{total} labelled utterances", file=sys.stderr)
+    print(f"{total} utterances, {NONE} included", file=sys.stderr)
     for name in SPLITS:
         rows = splits[name]
         meetings = len({row.meeting for row in rows})
@@ -88,11 +122,16 @@ def _warn_on_drift(splits: dict[str, list], *, limit: float = 0.1) -> None:
     get. Printing the gap is what keeps it from being discovered as a surprising
     validation score months later.
     """
-    kinds = {row.kind for rows in splits.values() for row in rows}
+    # ``none`` differs between splits by construction -- sampled into train and
+    # validation, all of it into test -- so it is left out of the comparison
+    # entirely: not as a class, and not in the denominator, where it would make
+    # every kind look rarer in test than it is among labelled rows.
+    labelled = {name: [row for row in rows if row.kind != NONE] for name, rows in splits.items()}
+    kinds = {row.kind for rows in labelled.values() for row in rows}
     for kind in sorted(kinds):
         shares = {
             name: sum(1 for row in rows if row.kind == kind) / max(len(rows), 1)
-            for name, rows in splits.items()
+            for name, rows in labelled.items()
         }
         spread = max(shares.values()) - min(shares.values())
         if spread > limit:

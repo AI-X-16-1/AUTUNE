@@ -5,7 +5,7 @@ implementation is chosen by a config string (``AUTUNE_EXTRACTION_*_IMPL``) and i
 never referenced directly outside this package — the same shape module D settled
 on, so the two modules can be read the same way.
 
-**No implementation here sends an utterance to a third party.** The five-way
+**No implementation here sends an utterance to a third party.** The utterance
 classifier is a model we fine-tune, run in process or on our own inference
 server; there is no ``external`` option and adding one would be a privacy
 decision rather than a config string. `privacy.md` section 6 bounds what may
@@ -22,41 +22,54 @@ from autune_contracts.enums import UtteranceKind
 
 @dataclass(frozen=True)
 class Prediction:
-    """One utterance's kind and how sure the model is of it.
+    """One utterance's kind, or none, and how sure the model is of it.
 
-    ``confidence`` is the probability of ``kind`` — the softmax maximum, not the
-    margin over the runner-up. ADR 0006 compares it against a threshold to decide
-    whether an item is asserted or shown as a candidate, so the number has to mean
-    "how likely is this label" rather than "how much better than the next one".
+    ``kind`` is ``None`` when the model's answer is "none of these" -- which is
+    most of a meeting. See ``autune_extraction.labels`` for why that is a label
+    the model can give and not one the contract has. A caller building
+    ``Classification`` rows has to handle it, and the type says so.
 
-    ``scores`` carries the full distribution. The threshold work in #64 needs to
-    look at what the model nearly said, and a caller that only has the maximum
-    cannot recover it.
+    ``confidence`` is the probability of the answer, whichever it was -- the
+    softmax maximum, not the margin over the runner-up. ADR 0006 compares it
+    against a threshold to decide whether an item is asserted or shown as a
+    candidate, so the number has to mean "how likely is this label" rather than
+    "how much better than the next one".
+
+    ``scores`` carries the five kinds' probabilities and ``none_score`` the
+    sixth; together they sum to one. The threshold work in #64 needs to look at
+    what the model nearly said, and a caller that only has the maximum cannot
+    recover it.
     """
 
-    kind: UtteranceKind
+    kind: UtteranceKind | None
     confidence: float
     scores: dict[UtteranceKind, float]
+    none_score: float = 0.0
 
     def __post_init__(self) -> None:
         if not 0.0 <= self.confidence <= 1.0:
             raise ValueError(f"confidence out of range: {self.confidence}")
 
     @property
-    def runner_up(self) -> tuple[UtteranceKind, float]:
-        """The second-most-likely kind and its score.
+    def runner_up(self) -> tuple[UtteranceKind | None, float]:
+        """The second-most-likely answer and its score, ``None`` meaning none.
 
         A commitment at 0.51 with a decision at 0.49 is a different situation
         from one at 0.51 with everything else near zero, and only the first is
-        worth a person's attention.
+        worth a person's attention. A kind that narrowly lost to none is the
+        same situation from the other side.
         """
-        ranked = sorted(self.scores.items(), key=lambda kv: kv[1], reverse=True)
+        answers: list[tuple[UtteranceKind | None, float]] = [
+            *self.scores.items(),
+            (None, self.none_score),
+        ]
+        ranked = sorted(answers, key=lambda kv: kv[1], reverse=True)
         return ranked[1] if len(ranked) > 1 else (self.kind, 0.0)
 
 
 @runtime_checkable
 class Classifier(Protocol):
-    """Five-way utterance classification. Fine-tuned DeBERTa by default.
+    """Five kinds or none, per utterance. Fine-tuned DeBERTa by default.
 
     Takes a batch rather than one utterance: a 45-minute meeting is thousands of
     utterances, and a per-utterance call turns one forward pass into thousands.

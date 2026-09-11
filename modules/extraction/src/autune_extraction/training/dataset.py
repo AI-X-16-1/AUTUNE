@@ -13,7 +13,7 @@ from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 
-from autune_contracts.enums import UtteranceKind
+from autune_extraction.labels import kind_or_none
 
 SPLITS: tuple[str, ...] = ("train", "validation", "test")
 
@@ -23,6 +23,7 @@ LABELS: tuple[str, ...] = (
     "open_question",
     "concern",
     "ambiguous",
+    "none",
 )
 """Label order, written out rather than derived from ``UtteranceKind``.
 
@@ -33,7 +34,9 @@ repoint every id in every checkpoint already trained, and the test that checks
 it would move with it and keep passing.
 
 ``test_label_order_is_pinned`` fails on a change here, which is the point: a new
-label is a new model, not a new constant.
+label is a new model, not a new constant. ``none`` was one (#149), added last so
+the five kinds kept their ids; ``pipeline.classifier.HEAD`` reads the same six in
+the same order.
 """
 
 LABEL_TO_ID: dict[str, int] = {label: index for index, label in enumerate(LABELS)}
@@ -91,7 +94,8 @@ def read_split(directory: Path, name: str) -> list[TrainExample]:
             continue
         try:
             row = json.loads(line)
-            label = UtteranceKind(row["kind"]).value
+            kind = kind_or_none(row["kind"])
+            label = kind.value if kind is not None else row["kind"]
             example = TrainExample(utterance_id=row["utterance_id"], text=row["text"], label=label)
         except (json.JSONDecodeError, KeyError, ValueError) as exc:
             raise DatasetError(f"{path} line {number}: {type(exc).__name__}") from exc

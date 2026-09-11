@@ -15,6 +15,7 @@ import pytest
 
 from autune_contracts.enums import UtteranceKind
 from autune_extraction import training
+from autune_extraction.labels import NONE
 from autune_extraction.training.dataset import (
     LABEL_TO_ID,
     LABELS,
@@ -54,15 +55,24 @@ def test_label_order_is_pinned() -> None:
     and keep passing, which is the shape of assertion that let this through once
     already in the classifier seam.
     """
-    assert LABELS == ("commitment", "decision", "open_question", "concern", "ambiguous")
+    assert LABELS == (
+        "commitment",
+        "decision",
+        "open_question",
+        "concern",
+        "ambiguous",
+        "none",
+    )
     assert LABEL_TO_ID["commitment"] == 0
     assert LABEL_TO_ID["ambiguous"] == 4
+    assert LABEL_TO_ID["none"] == 5, "appended, so the five kinds kept their ids (#149)"
 
 
-def test_every_contract_kind_has_a_label() -> None:
+def test_every_contract_kind_has_a_label_and_none_is_the_only_other() -> None:
     """Pinned order, but not a divergent set: a kind the contract has and this
-    cannot train is a class the model will never predict."""
-    assert set(LABELS) == {kind.value for kind in UtteranceKind}
+    cannot train is a class the model will never predict. ``none`` is the one
+    label the contract does not have, and it stays the only one."""
+    assert set(LABELS) == {kind.value for kind in UtteranceKind} | {NONE}
 
 
 # --- reading a split ---------------------------------------------------------
@@ -75,6 +85,16 @@ def test_a_split_reads_back_with_its_labels(tmp_path: Path) -> None:
 
     assert [e.label for e in examples] == ["decision", "concern"]
     assert [e.label_id for e in examples] == [1, 3]
+
+
+def test_none_reads_back_as_the_sixth_label(tmp_path: Path) -> None:
+    """What the loader writes for an utterance that is none of the kinds."""
+    write(tmp_path, "train", rows("none", "commitment"))
+
+    examples = read_split(tmp_path, "train")
+
+    assert [e.label for e in examples] == ["none", "commitment"]
+    assert [e.label_id for e in examples] == [5, 0]
 
 
 def test_a_missing_split_stops_rather_than_training_on_nothing(tmp_path: Path) -> None:
