@@ -29,6 +29,7 @@ from autune_extraction.models import (
     ExtActionItem,
     ExtActionItemSource,
     ExtClassification,
+    ExtConfirmation,
     ExtDecision,
     ExtDecisionSource,
     ExtEditEvent,
@@ -50,6 +51,7 @@ TABLES = [
     ExtActionItem.__table__,
     ExtActionItemSource.__table__,
     ExtEditEvent.__table__,
+    ExtConfirmation.__table__,
 ]
 
 LINES = [

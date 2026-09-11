@@ -20,7 +20,11 @@ log = get_logger(__name__)
 
 @shared_task(name="autune.extraction.on_transcript_ready", acks_late=True)
 def on_transcript_ready(payload: dict) -> None:
-    """Consume TranscriptReady from module A: classify, group decisions, draft items.
+    """Consume TranscriptReady from module A: classify, then write what it found.
+
+    Decisions grouped, draft items for commitments, and a record of every
+    ambiguous agreement -- not yet asked about, because nothing can send the DM
+    (#70, #30).
 
     ``shared_task`` binds to whichever Celery app is running, so this module
     never imports apps/worker.
@@ -73,6 +77,9 @@ def on_transcript_ready(payload: dict) -> None:
             utterances=transcript.utterances,
             classified=classified,
         )
+        ambiguous = service.record_ambiguous_agreements(
+            session, meeting_id=transcript.meeting_id, classified=classified
+        )
 
     # Counts and ids only. The utterances are meeting content.
     log.info(
@@ -83,10 +90,15 @@ def on_transcript_ready(payload: dict) -> None:
         classified=stored,
         decisions=len(decisions),
         action_items=len(items) if items is not None else "kept",
+        ambiguous=ambiguous,
         model_version=classifier.model_version,
     )
-    # TODO(강민구): steps 4 and 6, NLI and the confirmation DM for ambiguous
-    # agreement (#12); step 7, Notion and Jira (#30); step 8, publish
-    # ExtractionResult with ``autune_core.publish`` (landed in #145; wiring #31).
+    # TODO(강민구): step 4, NLI over commitments and ambiguous agreement (#12,
+    # no model chosen yet). Step 6, the DM: for each of
+    # ``service.unasked_confirmations``, resolve the speaker's Slack account
+    # and call ``service.ask_for_confirmation`` -- blocked on an account mapping
+    # (#70) and a team Slack client (#30). Step 7, Notion and Jira (#30). Step 8,
+    # publish ExtractionResult with ``autune_core.publish`` (landed in #145;
+    # wiring #31).
     # ``build_decisions`` gives fresh dec_ ids on every run, so every run has to
     # publish -- module D's lineage points at the old ids otherwise.
