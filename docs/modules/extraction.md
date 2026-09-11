@@ -361,9 +361,13 @@ versions.
   smallest window that resolves the reference.
 - Confirmation DMs go to the speaker, never to a channel.
 - `GET /action-items/{id}` is the only route in this module that returns
-  transcript text: the drawer asks for one item's quotation when it opens. The
-  list returns utterance ids, so a board nobody opens a drawer on sends no part
-  of the transcript.
+  utterances verbatim: the drawer asks for one item's quotation when it opens,
+  and the list returns utterance ids. The list is still meeting content — an
+  item's `description` is drawn from what was said and `assignee_label` is a
+  person's name — so no response of this module may be forwarded outside our
+  infrastructure on the grounds that it quotes nobody. `check_outbound` catches
+  the shapes of personal data, not a Korean name or the sentence that settled a
+  decision.
 
 ## Open questions
 
