@@ -95,27 +95,46 @@ def test_one_person_split_across_two_participant_rows_is_counted_once() -> None:
     assert by_user["user_a"].ratio == pytest.approx(40.0 / 60.0)
 
 
-def test_gate_count_treats_every_unidentified_label_as_at_most_one_person() -> None:
-    """Speaker identification (S16) may not have run yet when the gate is
-    checked, so an unidentified speaker can still be split across two
-    ``participant`` rows the way an identified one can — ``speaking_shares``
-    cannot collapse them (there is no ``user_id`` to key on). Undercounting is
-    the safe direction: several unidentified labels might all be the same
-    person, and treating them as separate people would let a co-attendee
-    derive that person's exact ratio the moment they spoke to only two
-    labels-worth of others. So unidentified labels contribute at most one to
-    the gate's count, however many of them there are.
+def test_gate_count_ignores_unidentified_shares_entirely() -> None:
+    """An unidentified share (``user_id is None``) might be a new person, or it
+    might be the not-yet-confirmed other half of an *already identified*
+    speaker's split — speaking_shares cannot tell, because there is no
+    ``user_id`` to merge it on. Counting it as a new person (even capped at
+    "one more") is unsound: if bob is identified and the meeting's other real
+    speaker split into one label that resolved to bob and one that did not,
+    "identified + one for the unidentified label" reads as 2 (bob + "the
+    other person") when the true population is 2 people total (bob split, not
+    bob plus someone else) — the same 1-ratio leak _MIN_SPEAKERS_FOR_RATIO
+    guards against, just relabeled. So the gate counts only shares it has
+    actually resolved to a person; unidentified shares count as zero, however
+    many there are.
     """
     shares = speaking_shares(
         [
-            _seg("p_x1", 0.0, 20.0, None),  # same real person, unidentified,
-            _seg("p_x2", 20.0, 40.0, None),  # split across two labels
+            _seg("p_x1", 0.0, 20.0, None),
+            _seg("p_x2", 20.0, 40.0, None),
             _seg("p_bob", 40.0, 60.0, "user_bob"),
         ]
     )
 
     assert len(shares) == 3  # speaking_shares itself cannot merge these
-    assert speaker_count_for_gate(shares) == 2  # bob + "at most one" unidentified
+    assert speaker_count_for_gate(shares) == 1  # bob only
+
+
+def test_gate_count_when_only_one_of_a_split_speakers_two_labels_is_identified() -> None:
+    """The case that broke the earlier "at most one" heuristic: alice is
+    identified, bob's split has one label resolved to him and one still not.
+    The gate must not read this as 2 identified + "one more possible person" —
+    the unidentified label could just as well be the rest of bob."""
+    shares = speaking_shares(
+        [
+            _seg("p_alice", 0.0, 40.0, "user_alice"),
+            _seg("p_bob_1", 40.0, 60.0, "user_bob"),
+            _seg("p_bob_2", 60.0, 80.0, None),  # bob's other label, not yet confirmed
+        ]
+    )
+
+    assert speaker_count_for_gate(shares) == 2  # alice + bob, not 3
 
 
 def test_gate_count_is_exact_once_everyone_is_identified() -> None:

@@ -207,6 +207,26 @@ def test_no_dm_when_the_other_speaker_is_unidentified_and_split(
     assert slack.sent == []
 
 
+def test_no_dm_when_only_one_of_a_split_speakers_labels_is_identified(
+    db_session: Session, meeting: str
+) -> None:
+    alice = _user(db_session, "alice")
+    bob = _user(db_session, "bob")
+    p_alice = _participant(db_session, meeting, user_id=alice, label="Speaker 0")
+    p_bob_identified = _participant(db_session, meeting, user_id=bob, label="Speaker 1")
+    p_bob_unidentified = _participant(db_session, meeting, user_id=None, label="Speaker 2")
+    _utter(db_session, meeting, p_alice, 0.0, 40.0)
+    _utter(db_session, meeting, p_bob_identified, 40.0, 60.0)
+    _utter(db_session, meeting, p_bob_unidentified, 60.0, 80.0)
+    db_session.flush()
+    slack = FakeSlack()
+
+    sent = service.send_personal_feedback(db_session, slack, meeting)
+
+    assert sent == 0
+    assert slack.sent == []
+
+
 def test_nothing_is_persisted(db_session: Session, meeting: str) -> None:
     _three_speakers(db_session, meeting)
     db_session.flush()

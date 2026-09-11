@@ -88,17 +88,21 @@ See `../architecture/async-pipeline.md`.
    would then *contain* another person's speaking ratio, which
    `../architecture/privacy.md` section 3 forbids, and an above/below-baseline
    band does not help because with two the two mirror each other. The gate
-   counts distinct people who spoke, not the consenting head count and not
-   participant rows: three consenting participants where one only listened
-   still splits its speech two ways, and one real speaker split across two
-   participant rows by diarization still counts once *once identified*. Before
-   identification a split cannot be merged by `user_id` — several unidentified
-   labels might be one not-yet-confirmed person — so the gate undercounts them
-   deliberately: every unidentified label together contributes at most one to
-   the count, rather than one each. A meeting is only released once it clears
-   the threshold on that undercount, so the same leak cannot happen through an
-   unidentified speaker either. In that case `GET /me/speaking-ratio` returns
-   `ratio: null` with
+   counts distinct *identified* people who spoke, not the consenting head
+   count and not participant rows: three consenting participants where one
+   only listened still splits its speech two ways, and one real speaker split
+   across two participant rows by diarization counts once *once identified* —
+   one label resolves to the same `user_id` as the other. Before
+   identification a split cannot be merged by `user_id`, and an unidentified
+   label cannot be told apart from "the unconfirmed other half of a speaker
+   who is already identified" either, so an unidentified label counts as
+   **zero**, not one and not "at most one" — any positive count for it can
+   overstate the real population by exactly the amount the N=2 guard exists to
+   catch. The cost: a genuine three-person meeting with one speaker not yet
+   identified reads as too small until identification finishes — since this
+   is recomputed on every request rather than cached, it self-corrects once
+   that happens rather than needing a retry. In that case `GET
+   /me/speaking-ratio` returns `ratio: null` with
    `reason: "small_meeting"` (distinct from the `404` for someone who was not in
    the meeting), and no DM goes out. A participant who did not consent to
    attribution gets `ratio: null` with `reason: "not_measured"` — distinct from

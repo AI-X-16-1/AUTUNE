@@ -95,17 +95,21 @@ def speaking_shares(segments: Iterable[SpeechSegment]) -> list[SpeakingShare]:
 
 
 def speaker_count_for_gate(shares: Iterable[SpeakingShare]) -> int:
-    """How many distinct people this meeting should count as, for gating only.
+    """How many distinct *identified* people this meeting counts as, for gating.
 
-    Identified shares (``user_id`` set) count exactly — ``speaking_shares``
-    already grouped those by person. An unidentified share (``user_id is
-    None``) has no shared identity to collapse onto, so several of them may
-    still be one real speaker not yet confirmed; counting each separately
-    would let the same ``1 - ratio`` leak ``_MIN_SPEAKERS_FOR_RATIO`` exists to
-    prevent, just before identification instead of across it. Undercounting is
-    the safe direction, so every unidentified share together contributes at
-    most one.
+    An unidentified share (``user_id is None``) contributes nothing. It is
+    tempting to count all unidentified shares together as "at most one more
+    person" — but that undercounts the wrong thing: an unidentified label
+    might be a new person, or it might be the not-yet-confirmed other half of
+    a speaker who *is* already identified. Those two cases are
+    indistinguishable before identification finishes, and the second one means
+    "identified count + 1" can overstate the real population by exactly one —
+    which is the whole population the ``_MIN_SPEAKERS_FOR_RATIO`` guard exists
+    to protect at N=2. Only counting shares already resolved to a person is
+    the version that cannot be wrong in that direction; the cost is a real
+    3-person meeting with one still-unidentified speaker reads as too small
+    until identification catches up (idempotent: the caller recomputes this on
+    every request, so it self-corrects — see ``docs/modules/intelligence.md``
+    step 7).
     """
-    identified = sum(1 for s in shares if s.user_id is not None)
-    has_unidentified = any(s.user_id is None for s in shares)
-    return identified + (1 if has_unidentified else 0)
+    return sum(1 for s in shares if s.user_id is not None)

@@ -215,12 +215,14 @@ def test_withheld_when_the_other_speaker_is_unidentified_and_split(
     assert body["reason"] == "small_meeting"
 
 
-def test_not_withheld_when_two_identified_and_one_unidentified_speaker_spoke(
+def test_withheld_when_two_identified_and_one_unidentified_speaker_spoke(
     app_for, db_session: Session, meeting: str
 ) -> None:
-    """A genuine three-person meeting (two identified, one not yet) must still
-    release the ratio — undercounting unidentified labels should not punish a
-    meeting that really does have enough people."""
+    """An unidentified label cannot be told apart from "the unconfirmed other
+    half of a speaker who already has an identified label" — see
+    test_withheld_when_only_one_of_a_split_speakers_labels_is_identified. So
+    two identified speakers plus one unidentified one must still withhold: the
+    unidentified label might not be a third person at all."""
     alice = _user(db_session, "alice")
     bob = _user(db_session, "bob")
     p_alice = _participant(db_session, meeting, user_id=alice, label="Speaker 0")
@@ -229,6 +231,53 @@ def test_not_withheld_when_two_identified_and_one_unidentified_speaker_spoke(
     _utter(db_session, meeting, p_alice, 0.0, 20.0)
     _utter(db_session, meeting, p_bob, 20.0, 40.0)
     _utter(db_session, meeting, p_x, 40.0, 60.0)
+    db_session.flush()
+
+    body = app_for(alice).get(f"/api/intelligence/me/speaking-ratio/{meeting}").json()
+
+    assert body["ratio"] is None
+    assert body["reason"] == "small_meeting"
+
+
+def test_withheld_when_only_one_of_a_split_speakers_labels_is_identified(
+    app_for, db_session: Session, meeting: str
+) -> None:
+    """The case that broke the earlier "unidentified counts as at most one"
+    heuristic: a real two-person meeting, alice identified, bob split into two
+    labels where only one has been confirmed as him so far. Counting "alice +
+    bob + the unidentified label" as 3 people is wrong — the unidentified label
+    is bob's other half, not a third person — and it would let alice read bob's
+    real combined ratio off 1 - her own."""
+    alice = _user(db_session, "alice")
+    bob = _user(db_session, "bob")
+    p_alice = _participant(db_session, meeting, user_id=alice, label="Speaker 0")
+    p_bob_identified = _participant(db_session, meeting, user_id=bob, label="Speaker 1")
+    p_bob_unidentified = _participant(db_session, meeting, user_id=None, label="Speaker 2")
+    _utter(db_session, meeting, p_alice, 0.0, 40.0)
+    _utter(db_session, meeting, p_bob_identified, 40.0, 60.0)
+    _utter(db_session, meeting, p_bob_unidentified, 60.0, 80.0)
+    db_session.flush()
+
+    body = app_for(alice).get(f"/api/intelligence/me/speaking-ratio/{meeting}").json()
+
+    assert body["ratio"] is None
+    assert body["reason"] == "small_meeting"
+
+
+def test_not_withheld_once_all_three_speakers_are_identified(
+    app_for, db_session: Session, meeting: str
+) -> None:
+    """A genuine three-person meeting releases the ratio once the gate can
+    actually resolve three distinct identified people."""
+    alice = _user(db_session, "alice")
+    bob = _user(db_session, "bob")
+    carol = _user(db_session, "carol")
+    p_alice = _participant(db_session, meeting, user_id=alice, label="Speaker 0")
+    p_bob = _participant(db_session, meeting, user_id=bob, label="Speaker 1")
+    p_carol = _participant(db_session, meeting, user_id=carol, label="Speaker 2")
+    _utter(db_session, meeting, p_alice, 0.0, 20.0)
+    _utter(db_session, meeting, p_bob, 20.0, 40.0)
+    _utter(db_session, meeting, p_carol, 40.0, 60.0)
     db_session.flush()
 
     body = app_for(alice).get(f"/api/intelligence/me/speaking-ratio/{meeting}").json()

@@ -419,11 +419,16 @@ no DM is sent.
 
 The gate counts people, not the consenting head count and not participant
 rows: a meeting with three consenting participants where one only listened
-still splits its speech two ways, and one real speaker split across two
-participant rows by diarization — identified or not — still counts once.
-``speaker_count_for_gate`` undercounts an unidentified split rather than let it
-inflate the gate: without a ``user_id`` to merge on, several unidentified
-labels might all be one not-yet-confirmed person."""
+still splits its speech two ways, and a real speaker split across two
+participant rows by diarization counts once *once identified* — one row
+resolves to the same ``user_id`` as the other. Before identification a split
+cannot be merged, and an unidentified label cannot be told apart from "the
+unconfirmed other half of an already-identified speaker" either — so
+``speaker_count_for_gate`` counts unidentified shares as zero rather than
+guess they are new people. The cost is that a real N-person meeting with a
+speaker not yet identified reads as smaller than N until identification
+finishes; since this is recomputed on every request, it self-corrects rather
+than needing a retry."""
 
 
 def compute_speaking_shares(session: Session, meeting_id: str) -> list[SpeakingShare]:
