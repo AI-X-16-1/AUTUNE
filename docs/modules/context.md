@@ -193,25 +193,28 @@ not run a decision classifier.** Duplicating B's would make the two disagree,
 and a decision would then show in the summary tab (S15) while missing from the
 lineage view (S22), which reads to a user as a bug.
 
-1. Each of B's decisions (`dec_` id) gets a thread by one of two rules, in order:
-   - **Identity.** A decision this exact meeting placed on an earlier run (same
-     `dec_` id) keeps that thread. Reprocessing deletes the meeting's old
-     versions before rebuilding them, which would otherwise erase the one clue
-     ("a version with this id used to sit on thread X") that lets a solo
-     thread — one with no other meeting's version to rediscover it by
-     similarity — survive being reprocessed with a stable `thr_` id.
-   - **Similarity.** A decision with no prior placement is embedded and matched
-     to the most similar existing thread's *chronologically latest* statement —
-     by the matched meeting's `started_at`, not by which version was inserted
-     last — cosine ≥ `lineage_match_threshold`
-     (`AUTUNE_CONTEXT_LINEAGE_MATCH_THRESHOLD`, default `0.6`, tuned in eval).
-     Every (decision, thread) pairing in the meeting is scored up front and
-     assigned strongest-first, so a weak match earlier in `result.decisions`
-     can't grab a thread out from under a much stronger match later in the
-     list. No thread above the threshold opens a new one, anchored on the
-     meeting's team. One thread takes at most one of this meeting's decisions
-     either way. A meeting past its retention window is excluded from
-     similarity matching — see "Deletion".
+1. Each of B's decisions (`dec_` id) is embedded and matched to the most
+   similar existing thread's *chronologically latest* statement — by the
+   matched meeting's `started_at`, not by which version was inserted last —
+   cosine ≥ `lineage_match_threshold` (`AUTUNE_CONTEXT_LINEAGE_MATCH_THRESHOLD`,
+   default `0.6`, tuned in eval). Every (decision, thread) pairing in the
+   meeting is scored up front and assigned strongest-first, so a weak match
+   earlier in `result.decisions` can't grab a thread out from under a much
+   stronger match later in the list. No thread above the threshold opens a new
+   one, anchored on the meeting's team. One thread takes at most one of this
+   meeting's decisions. A meeting past its retention window is excluded from
+   matching — see "Deletion".
+
+   **Matching happens before this meeting's own previous versions are
+   deleted.** B always mints a fresh `dec_` id when it rebuilds a meeting's
+   decisions (`autune_extraction.service.build_decisions`), so there is no id
+   to match a reprocessed decision back to its old thread by — and a *solo*
+   thread (no other meeting's version to rediscover it by similarity) has
+   nothing else to compare against. Deleting the meeting's old versions first
+   would erase the one piece of evidence — the meeting's own about-to-be-
+   replaced statement — that lets a rebuild with materially unchanged wording
+   land back on the same thread instead of forking a new one on every
+   reprocess.
 2. Every thread this meeting's decisions touched is then **re-chained end to
    end**, not just appended to: order its versions by meeting time and run NLI
    between each pair's earlier statement (premise) and later one (hypothesis):
@@ -236,9 +239,11 @@ lineage view (S22), which reads to a user as a bug.
    `autune.context.publish_if_ready`.
 
 Idempotent: a re-run replaces the meeting's `ctx_decision_versions` row(s) and
-re-chains every thread that touches, then sweeps any thread left with no
-versions. Re-chaining a thread updates other meetings' versions too (an earlier
-meeting arriving late shifts what a later one's `previous_*` point to); their
+re-chains every thread that touches, then runs all three deletion sweeps (see
+"Deletion") — global and idempotent, so running them on every call closes real
+gaps ahead of #87 rather than leaving them for tests to be the only caller.
+Re-chaining a thread updates other meetings' versions too (an earlier meeting
+arriving late shifts what a later one's `previous_*` point to); their
 already-published `ContextLinks` are not automatically re-emitted — E ends up
 with a stale `decision_lineage` for that meeting until something republishes
 it. No automatic republish exists yet; tracked for a later phase.
@@ -344,11 +349,14 @@ Meeting deletion itself cascades through `meeting_id` foreign keys and reaches
   `packages/core`'s own unit tests, which run before migrations on a clean CI
   database and iterate every registered hook; the fix needs shared-owner
   changes tracked in #87. Module E hit the same wall with `intel_reports` and
-  deferred the same way. Until #87 lands, all three sweeps are called
-  explicitly — by the integration tests now, by the retention sweep once it
-  exists. A thread whose labelling meeting was deleted since the last sweep run
-  still holds that meeting's `topic_label` in the interim; every other exposure
-  above is likewise bounded to "until the next sweep run," not indefinite.
+  deferred the same way. Until #87 lands, `service.build_decision_lineage`
+  calls all three itself at the end of every run (in addition to the
+  integration tests calling them directly) — real cleanup on every meeting
+  processed, not only when a test happens to exercise it. A thread whose
+  labelling meeting was deleted since the last time *any* meeting for its team
+  triggered a lineage build still holds that meeting's `topic_label` in the
+  interim; every other exposure above is likewise bounded to "until the next
+  sweep run," not indefinite.
 
 A test that deletes a meeting and asserts every `ctx_*` row for it is gone —
 threads included, after the sweep — is part of shipping the schema, not an extra.

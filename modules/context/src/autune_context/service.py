@@ -202,21 +202,22 @@ def build_decision_lineage(result: ExtractionResult) -> None:
     """Thread each of B's decisions into a lineage and classify how it moved.
 
     B owns *what counts as a decision in this meeting*; D owns *whether it is the
-    same decision as one from before*. Two rules decide the thread for each of
-    ``result.decisions``, in order:
+    same decision as one from before*. Each of ``result.decisions`` is matched by
+    cosine similarity of its statement to the most similar existing thread's most
+    recent statement — best pairing first across the whole batch, not
+    first-in-``result.decisions``-order, so one weak match earlier in the list
+    can't grab a thread out from under a much stronger match later in it. No
+    match above ``lineage_match_threshold`` opens a new ``thr_`` thread anchored
+    on the meeting's team.
 
-    1. **Identity.** A decision this exact meeting has placed before (same
-       ``source_decision_id``, from an earlier run of this task) keeps that
-       thread — reprocessing must not reassign it just because deleting its old
-       version briefly removes the one piece of evidence that would otherwise
-       rediscover it (see "Concurrency and reprocessing" below).
-    2. **Similarity.** A decision with no prior placement is matched by cosine
-       similarity of its statement to the most similar existing thread's most
-       recent statement — best pairing first across the whole batch, not
-       first-in-``result.decisions``-order, so one weak match earlier in the
-       list can't grab a thread out from under a much stronger match later in
-       it. No match above ``lineage_match_threshold`` opens a new ``thr_``
-       thread anchored on the meeting's team.
+    Matching happens *before* this meeting's own previous versions are deleted:
+    on a rebuild, B always mints fresh ``dec_`` ids (see
+    ``autune_extraction.service.build_decisions``), so there is no id to match
+    on, and a solo thread — one with no *other* meeting's version to rediscover
+    it by — has nothing else to compare against. Deleting first would erase the
+    one piece of evidence (the meeting's own about-to-be-replaced statement)
+    that lets a rebuild with materially unchanged wording land back on the same
+    thread instead of forking a new one every time B reprocesses the meeting.
 
     Every thread this run touches is then re-chained end to end by
     ``_rethread``: ``previous_*``, ``change_type`` and ``nli_label`` are a
@@ -238,13 +239,19 @@ def build_decision_lineage(result: ExtractionResult) -> None:
     long before its 90-day window, so this only matters for a backfill or a
     badly delayed pipeline run — not worth gating on until it does.
 
-    Concurrency and reprocessing: two meetings for the same team can be
-    matching against the same thread heads at once (``cpu_heavy`` is a
-    concurrent queue — docs/architecture/async-pipeline.md). Under READ
-    COMMITTED neither would see the other's uncommitted insert, and both could
-    chain onto the same "latest" version. A ``pg_advisory_xact_lock`` keyed on
-    the team serializes this function per team (held for the transaction, never
-    across teams) so that can't happen.
+    Concurrency: two meetings for the same team can be matching against the
+    same thread heads at once (``cpu_heavy`` is a concurrent queue —
+    docs/architecture/async-pipeline.md). Under READ COMMITTED neither would see
+    the other's uncommitted insert, and both could chain onto the same "latest"
+    version. A ``pg_advisory_xact_lock`` keyed on the team serializes this
+    function per team (held for the transaction, never across teams) so that
+    can't happen.
+
+    Also runs the other two ``ctx_*`` retention sweeps (``sweep_stale_topic_labels``,
+    ``sweep_dangling_previous_statements``) alongside the orphan sweep this
+    function has always run — global and idempotent, so exercising them on
+    every call closes real gaps ahead of #87 rather than leaving them for tests
+    to be the only caller.
     """
     settings = get_settings()
     embedder = get_embedder()
@@ -260,63 +267,43 @@ def build_decision_lineage(result: ExtractionResult) -> None:
             {"team_id": meeting.team_id},
         )
 
-        # Identity: a decision this meeting placed on an earlier run keeps its
-        # thread. Captured before the delete below removes the evidence.
-        reused_thread_by_decision: dict[str, str] = {
-            source_decision_id: thread_id
-            for source_decision_id, thread_id in session.execute(
-                select(CtxDecisionVersion.source_decision_id, CtxDecisionVersion.thread_id).where(
+        # Match before deleting: this meeting's own current versions are still
+        # in the DB here, so a rebuild with unchanged (or similar) wording can
+        # match back onto its own thread even though B gave it a new dec_ id.
+        heads = _thread_heads(session, meeting.team_id, embedder)
+        decisions = list(result.decisions)
+        vectors = embedder.embed([d.statement for d in decisions]) if decisions else []
+        assignment = _assign_decisions_to_threads(vectors, heads, settings.lineage_match_threshold)
+
+        # Idempotency: now drop this meeting's old versions. The threads they
+        # were in still need re-chaining even when this run's decisions land
+        # elsewhere (wording changed enough to move threads, or B dropped a
+        # decision the last run had), so remember them first.
+        affected: set[str] = set(
+            session.scalars(
+                select(CtxDecisionVersion.thread_id).where(
                     CtxDecisionVersion.meeting_id == result.meeting_id
                 )
-            )
-        }
-        affected: set[str] = set(reused_thread_by_decision.values())
+            ).all()
+        )
         session.execute(
             delete(CtxDecisionVersion).where(CtxDecisionVersion.meeting_id == result.meeting_id)
         )
         session.flush()
 
-        decisions = list(result.decisions)
-        to_match = [d for d in decisions if d.id not in reused_thread_by_decision]
-        # A thread one of *this run's* decisions already claims by identity is
-        # not a candidate for similarity matching — two decisions in this
-        # meeting never end up on one thread. Note this is not the same set as
-        # `reused_thread_by_decision.values()`: a decision reprocessed under a
-        # different id (its old row's thread is still in `affected`, so that
-        # thread gets re-chained) is free to similarity-match back onto it.
-        identity_claimed = {
-            reused_thread_by_decision[d.id] for d in decisions if d.id in reused_thread_by_decision
-        }
-        heads = [
-            head
-            for head in _thread_heads(session, meeting.team_id, embedder)
-            if head.thread_id not in identity_claimed
-        ]
-        vectors = embedder.embed([d.statement for d in to_match]) if to_match else []
-        assignment = _assign_decisions_to_threads(vectors, heads, settings.lineage_match_threshold)
-
         new_threads = 0
         matched_count = 0
-        match_index = 0
-        for decision in decisions:
-            reused = reused_thread_by_decision.get(decision.id)
-            if reused is not None:
-                thread_id = reused
+        for index, decision in enumerate(decisions):
+            head = assignment.get(index)
+            if head is not None:
+                thread_id = head.thread_id
                 matched_count += 1
             else:
-                head = assignment.get(match_index)
-                match_index += 1
-                if head is not None:
-                    thread_id = head.thread_id
-                    matched_count += 1
-                else:
-                    thread = CtxDecision(
-                        team_id=meeting.team_id, topic_label=decision.statement[:400]
-                    )
-                    session.add(thread)
-                    session.flush()
-                    thread_id = thread.id
-                    new_threads += 1
+                thread = CtxDecision(team_id=meeting.team_id, topic_label=decision.statement[:400])
+                session.add(thread)
+                session.flush()
+                thread_id = thread.id
+                new_threads += 1
             # A seed row: _rethread fills in every chain-dependent field once the
             # thread's full history is in place.
             session.add(
@@ -341,7 +328,9 @@ def build_decision_lineage(result: ExtractionResult) -> None:
         for thread_id in affected:
             _rethread(session, thread_id, nli)
 
-        swept = sweep_orphan_decision_threads(session)
+        orphans_swept = sweep_orphan_decision_threads(session)
+        labels_swept = sweep_stale_topic_labels(session)
+        statements_swept = sweep_dangling_previous_statements(session)
         _upsert_status(session, result.meeting_id, extraction_seen=True, lineage_done=True)
         log.info(
             "context_decision_lineage_done",
@@ -349,7 +338,9 @@ def build_decision_lineage(result: ExtractionResult) -> None:
             decisions=len(decisions),
             matched=matched_count,
             new_threads=new_threads,
-            threads_swept=swept,
+            threads_swept=orphans_swept,
+            labels_swept=labels_swept,
+            statements_swept=statements_swept,
         )
 
 

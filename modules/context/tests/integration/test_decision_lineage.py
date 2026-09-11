@@ -246,11 +246,13 @@ def test_rebuild_replaces_versions_and_leaves_no_orphan_threads(team_id: str) ->
 
 
 def test_reprocessing_a_solo_thread_meeting_keeps_the_same_thread_id(team_id: str) -> None:
-    """A decision with no other meeting on its thread has nothing left to
-    re-match against once its own (only) version is deleted for the rebuild —
-    reprocessing must reuse the thread by (meeting, source_decision_id)
-    identity, not rediscover it by similarity, or it gets a fresh thread_id
-    and the old one is orphan-swept out from under it."""
+    """A decision with no other meeting on its thread has nothing *else* to
+    re-match against once its own (only) version is deleted for the rebuild.
+    B always mints a fresh ``dec_`` id on a rebuild (``build_decisions``), so
+    the id is deliberately different here too — matching has to happen before
+    the delete, against the meeting's own about-to-be-replaced statement, or
+    the thread gets a new id and the old one is orphan-swept out from under
+    it every single time B reprocesses this meeting."""
     meeting = _meeting(team_id, days_ago=0)
     service.build_decision_lineage(_extraction(meeting, [("dec_1", _D1, 0.9)]))
 
@@ -259,7 +261,8 @@ def test_reprocessing_a_solo_thread_meeting_keeps_the_same_thread_id(team_id: st
             select(CtxDecisionVersion.thread_id).where(CtxDecisionVersion.meeting_id == meeting)
         )
 
-    service.build_decision_lineage(_extraction(meeting, [("dec_1", _D1, 0.9)]))  # reprocess
+    # B rebuilt: same wording, a brand new dec_ id.
+    service.build_decision_lineage(_extraction(meeting, [("dec_1_rebuilt", _D1, 0.9)]))
 
     with session_scope() as s:
         thread_after = s.scalar(
@@ -339,6 +342,44 @@ def test_an_expired_meeting_is_excluded_from_matching_and_the_chain(team_id: str
         assert v_current.previous_meeting_id is None
 
 
+def test_an_expired_predecessor_drops_out_when_the_thread_is_next_touched(team_id: str) -> None:
+    """A version's predecessor can pass its retention window without anything
+    touching the thread again for a while — its `previous_*` still points at
+    the now-invisible meeting in the interim. The next time the thread *is*
+    touched, `_rethread` must recompute the chain from only the still-visible
+    versions, not keep the expired meeting's wording alive through the version
+    that used to follow it."""
+    a = _meeting(team_id, days_ago=20)
+    b = _meeting(team_id, days_ago=10)
+    service.build_decision_lineage(_extraction(a, [("dec_a", _D1, 0.9)]))
+    service.build_decision_lineage(_extraction(b, [("dec_b", _D1, 0.9)]))
+
+    with session_scope() as s:
+        v_b = s.scalars(select(CtxDecisionVersion).where(CtxDecisionVersion.meeting_id == b)).one()
+        assert v_b.previous_meeting_id == a  # chained onto A while A was still visible
+
+    # A passes its retention window; nothing has deleted the row yet.
+    with session_scope() as s:
+        s.execute(
+            sa.update(Meeting)
+            .where(Meeting.id == a)
+            .values(expires_at=datetime.now(tz=UTC) - timedelta(days=1))
+        )
+
+    # A third meeting touches the thread — the only thing that re-triggers
+    # _rethread on it.
+    c = _meeting(team_id, days_ago=0)
+    service.build_decision_lineage(_extraction(c, [("dec_c", _D1, 0.9)]))
+
+    with session_scope() as s:
+        v_b = s.scalars(select(CtxDecisionVersion).where(CtxDecisionVersion.meeting_id == b)).one()
+        v_c = s.scalars(select(CtxDecisionVersion).where(CtxDecisionVersion.meeting_id == c)).one()
+        assert v_b.previous_version_id is None  # A is no longer visible
+        assert v_b.previous_statement is None
+        assert v_b.change_type == "new"
+        assert v_c.previous_meeting_id == b
+
+
 def test_sweep_stale_topic_labels_catches_up_after_a_meeting_is_deleted(
     team_id: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -378,7 +419,11 @@ def test_sweep_stale_topic_labels_blanks_a_thread_whose_every_meeting_expired(te
     """A thread nobody re-touches after all of its meetings pass `expires_at`
     has no visible head for `_rethread` to refresh either — it must be blanked,
     not left quoting expired content until the (not-yet-existing) retention
-    sweep deletes the rows outright."""
+    sweep deletes the rows outright.
+
+    `build_decision_lineage` runs `sweep_stale_topic_labels` itself now, so a
+    thread whose only meeting is already expired at extraction time is blanked
+    within that same call — there is no window where it briefly holds `_D1`."""
     expired = _meeting(team_id, days_ago=100, expires_at=datetime.now(tz=UTC) - timedelta(days=10))
     service.build_decision_lineage(_extraction(expired, [("dec_1", _D1, 0.9)]))
 
@@ -386,15 +431,11 @@ def test_sweep_stale_topic_labels_blanks_a_thread_whose_every_meeting_expired(te
         thread_id = s.scalar(
             select(CtxDecisionVersion.thread_id).where(CtxDecisionVersion.meeting_id == expired)
         )
-        # Set when the thread opened; build_decision_lineage's own _rethread
-        # already can't reach it, since its only version isn't visible.
-        assert s.get(CtxDecision, thread_id).topic_label == _D1
-
-    with session_scope() as s:
-        assert service.sweep_stale_topic_labels(s) == 1
-
-    with session_scope() as s:
         assert s.get(CtxDecision, thread_id).topic_label == ""
+
+    with session_scope() as s:
+        # Idempotent as a standalone call too: nothing left to change.
+        assert service.sweep_stale_topic_labels(s) == 0
 
 
 def test_publish_carries_the_decision_lineage(team_id: str, published: _CapturingApp) -> None:
