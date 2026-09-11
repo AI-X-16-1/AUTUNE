@@ -515,6 +515,7 @@ source = { editable = "modules/intelligence" }
 dependencies = [
     { name = "autune-contracts" },
     { name = "autune-core" },
+    { name = "autune-integrations" },
     { name = "celery" },
     { name = "fastapi" },
 ]
@@ -523,6 +524,7 @@ dependencies = [
 requires-dist = [
     { name = "autune-contracts", editable = "packages/contracts" },
     { name = "autune-core", editable = "packages/core" },
+    { name = "autune-integrations", editable = "packages/integrations" },
     { name = "celery", specifier = ">=5.4" },
     { name = "fastapi", specifier = ">=0.115" },
 ]

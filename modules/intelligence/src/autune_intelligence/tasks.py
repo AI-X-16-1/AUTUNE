@@ -13,6 +13,7 @@ reopens the meeting and re-enqueues ``aggregate``.
 
 from __future__ import annotations
 
+import sqlalchemy as sa
 from celery import current_app, shared_task
 
 from autune_contracts import (
@@ -22,7 +23,8 @@ from autune_contracts import (
     GapReport,
     validate_major_version,
 )
-from autune_core import get_logger, session_scope
+from autune_core import Meeting, get_logger, load_integration, session_scope
+from autune_integrations import SlackClient
 
 from . import service
 from .config import get_settings
@@ -75,7 +77,9 @@ def _record(meeting_id: str, source: str, payload: dict) -> None:
         log.info("intelligence_late_completion", meeting_id=meeting_id, source=source)
         with session_scope() as session:
             service.reopen(session, meeting_id)
-        aggregate.apply_async((meeting_id,))
+        # notify=False: the speaking ratio is A's data and a late B/C/D arrival
+        # did not change it, so a re-aggregation must not re-send the DM.
+        aggregate.apply_async((meeting_id,), {"notify": False})
         return
     if first:
         aggregate.apply_async((meeting_id,), countdown=get_settings().aggregate_timeout_seconds)
@@ -84,12 +88,16 @@ def _record(meeting_id: str, source: str, payload: dict) -> None:
 
 
 @shared_task(name="autune.intelligence.aggregate", acks_late=True)
-def aggregate(meeting_id: str) -> None:
+def aggregate(meeting_id: str, notify: bool = True) -> None:
     """Aggregate the meeting and publish the snapshot.
 
     Fires when B, C and D have all reported or the timeout countdown elapses,
     and again after ``reopen`` when a source arrives late. Idempotent: a
     no-op pass publishes nothing.
+
+    ``notify`` is ``True`` on the first pass and ``False`` on a re-aggregation:
+    the personal speaking-ratio DM goes out once, not again each time a late
+    source reopens the meeting.
     """
     with session_scope() as session:
         snapshot = service.aggregate_meeting(session, meeting_id)
@@ -104,3 +112,30 @@ def aggregate(meeting_id: str) -> None:
         grade=snapshot.quality_score.grade,
         missing_sources=snapshot.missing_sources,
     )
+    if notify:
+        send_personal_feedback.apply_async((meeting_id,))
+
+
+@shared_task(name="autune.intelligence.send_personal_feedback", acks_late=True)
+def send_personal_feedback(meeting_id: str) -> None:
+    """DM each identified participant their own speaking ratio for this meeting.
+
+    Fired once, after the first aggregation. The ratio is computed from A's
+    utterances, delivered by direct message, and not stored. A team that has not
+    connected Slack is skipped rather than failed. See
+    docs/architecture/privacy.md section 3.
+    """
+    with session_scope() as session:
+        team_id = session.scalar(sa.select(Meeting.team_id).where(Meeting.id == meeting_id))
+        if team_id is None:
+            log.info("intelligence_personal_feedback_meeting_gone", meeting_id=meeting_id)
+            return
+        config = load_integration(session, team_id, "slack")
+        if config is None:
+            log.info(
+                "intelligence_personal_feedback_no_slack",
+                meeting_id=meeting_id,
+                team_id=team_id,
+            )
+            return
+        service.send_personal_feedback(session, SlackClient(config.require_secret()), meeting_id)
