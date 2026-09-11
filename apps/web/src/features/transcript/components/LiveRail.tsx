@@ -2,7 +2,8 @@
 
 import { Button } from "@/shared/ui";
 
-import type { RecordingState, UtteranceKind } from "../types";
+import { timecode } from "../format";
+import { KIND_LABELS, type RecordingState, type UtteranceKind } from "../types";
 
 /**
  * The right rail: how long this has been running, what it has found, and the
@@ -17,21 +18,6 @@ import type { RecordingState, UtteranceKind } from "../types";
  * anywhere**, and adding one would turn the rail into a scoreboard of who
  * talked — `privacy.md` section 3.
  */
-const KIND_LABELS: Record<UtteranceKind, string> = {
-  commitment: "약속",
-  decision: "결정",
-  open_question: "질문",
-  concern: "우려",
-  ambiguous: "확인 필요",
-};
-
-function clock(seconds: number): string {
-  const h = Math.floor(seconds / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
-  const s = Math.floor(seconds % 60);
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return h > 0 ? `${pad(h)}:${pad(m)}:${pad(s)}` : `${pad(m)}:${pad(s)}`;
-}
 
 export function LiveRail({
   state,
@@ -49,7 +35,15 @@ export function LiveRail({
   plannedSeconds?: number;
   /** Recent input levels, 0..1, oldest first. */
   levels: number[];
-  counts: Partial<Record<UtteranceKind, number>>;
+  counts?: Partial<Record<UtteranceKind, number>>;
+  /** Undefined until module B has reported.
+   *
+   * B analyses a finished meeting: `TranscriptReady` is published once, when
+   * recording stops, and there is no incremental path into B on purpose
+   * (`audio.md`). So every kind is unknown for the whole recording, and
+   * rendering `counts[kind] ?? 0` turned "we have not looked" into "we looked
+   * and found none" — `확인 필요 0` reads as a claim that nothing ambiguous was
+   * said. This screen says what it knows and nothing else. */
   onPause?: () => void;
   onResume?: () => void;
   onStop?: () => void;
@@ -89,7 +83,7 @@ export function LiveRail({
                 : "var(--color-ink-muted)",
           }}
         >
-          {clock(elapsedSeconds)}
+          {timecode(elapsedSeconds)}
         </span>
       </div>
 
@@ -119,30 +113,41 @@ export function LiveRail({
 
       <Waveform levels={levels} live={state === "recording"} />
 
-      <dl className="flex flex-col gap-1">
-        {(Object.keys(KIND_LABELS) as UtteranceKind[]).map((kind) => (
-          <div key={kind} className="flex items-baseline justify-between">
-            <dt
-              style={{
-                fontSize: "var(--text-status)",
-                color: "var(--color-ink-muted)",
-              }}
-            >
-              {KIND_LABELS[kind]}
-            </dt>
-            <dd
-              className="tabular-nums"
-              style={{
-                fontFamily: "var(--font-mono)",
-                fontSize: "var(--text-data)",
-                color: "var(--color-ink-strong)",
-              }}
-            >
-              {counts[kind] ?? 0}
-            </dd>
-          </div>
-        ))}
-      </dl>
+      {counts === undefined ? (
+        <p
+          style={{
+            fontSize: "var(--text-status)",
+            color: "var(--color-ink-muted)",
+          }}
+        >
+          회의가 끝나면 분류됩니다
+        </p>
+      ) : (
+        <dl className="flex flex-col gap-1">
+          {(Object.keys(KIND_LABELS) as UtteranceKind[]).map((kind) => (
+            <div key={kind} className="flex items-baseline justify-between">
+              <dt
+                style={{
+                  fontSize: "var(--text-status)",
+                  color: "var(--color-ink-muted)",
+                }}
+              >
+                {KIND_LABELS[kind]}
+              </dt>
+              <dd
+                className="tabular-nums"
+                style={{
+                  fontFamily: "var(--font-mono)",
+                  fontSize: "var(--text-data)",
+                  color: "var(--color-ink-strong)",
+                }}
+              >
+                {counts[kind] ?? 0}
+              </dd>
+            </div>
+          ))}
+        </dl>
+      )}
 
       <div className="flex items-center gap-2">
         {state === "recording" ? (

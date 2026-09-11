@@ -36,6 +36,7 @@ export function LiveTranscript({
   onAssignSpeaker,
   onEnterSpeakerName,
   onSendConfirmation,
+  classified = false,
 }: {
   state: RecordingState;
   rows: LiveRow[];
@@ -48,23 +49,32 @@ export function LiveTranscript({
   onAssignSpeaker?: (speaker: string) => void;
   onEnterSpeakerName?: (speaker: string) => void;
   onSendConfirmation?: (speaker: string) => void;
+  /** Whether module B has reported on this meeting.
+   *
+   * Not derived from the rows: a meeting B analysed and found nothing in looks
+   * exactly like one B has not looked at yet, and only the caller knows which.
+   * False keeps the rail's tally off the screen instead of printing zeroes for
+   * every kind. */
+  classified?: boolean;
 }) {
-  const unidentified = countUnidentified(rows);
-  const counts = countKinds(rows);
+  const unidentified = unidentifiedVoices(rows);
+  const counts = classified ? countKinds(rows) : undefined;
 
   return (
     <>
       <RecordingFrame state={state} />
       <div
         className="mx-auto flex gap-8"
-        style={{ maxWidth: "var(--layout-canvasWide)", padding: "var(--space-page)" }}
+        style={{
+          maxWidth: "var(--layout-canvasWide)",
+          padding: "var(--space-page)",
+        }}
       >
         <main className="min-w-0 flex-1">
-          {[...unidentified.entries()].map(([speaker, count]) => (
+          {unidentified.map((speaker) => (
             <UnidentifiedSpeaker
               key={speaker}
               speaker={speaker}
-              utteranceCount={count}
               onAssign={() => onAssignSpeaker?.(speaker)}
               onEnterName={() => onEnterSpeakerName?.(speaker)}
               onSendConfirmation={() => onSendConfirmation?.(speaker)}
@@ -83,7 +93,9 @@ export function LiveTranscript({
                 : "전사된 내용이 없습니다."}
             </p>
           ) : (
-            rows.map((row) => <TranscriptRow key={row.utterance.id} row={row} />)
+            rows.map((row) => (
+              <TranscriptRow key={row.utterance.id} row={row} />
+            ))
           )}
         </main>
 
@@ -103,18 +115,21 @@ export function LiveTranscript({
 }
 
 /**
- * How many utterances each unnamed voice has, in the order they first spoke.
+ * Each unnamed voice once, in the order it first spoke.
  *
- * Counted rather than listed because the prompt asks about a voice, not about a
- * line: confirming one answers all of them.
+ * A list, not a tally. Counting how much each voice said is a per-person speech
+ * volume, and a speaker number is not anonymity when everyone was in the room —
+ * `privacy.md` section 3 forbids exactly this shape. Listing is also all the
+ * prompt needs: it asks who a voice belongs to, and confirming one answers
+ * every line that voice spoke.
  */
-function countUnidentified(rows: LiveRow[]): Map<string, number> {
-  const counts = new Map<string, number>();
+function unidentifiedVoices(rows: LiveRow[]): string[] {
+  const seen: string[] = [];
   for (const { utterance } of rows) {
     if (utterance.speaker_id != null) continue;
-    counts.set(utterance.speaker, (counts.get(utterance.speaker) ?? 0) + 1);
+    if (!seen.includes(utterance.speaker)) seen.push(utterance.speaker);
   }
-  return counts;
+  return seen;
 }
 
 /** Per kind, per meeting. Never per person — `privacy.md` section 3. */

@@ -1,5 +1,6 @@
 import { PiiToken } from "@/shared/ui";
 
+import { timecode } from "../format";
 import type { LiveRow } from "../types";
 import { KindTag } from "./KindTag";
 
@@ -23,12 +24,6 @@ import { KindTag } from "./KindTag";
 // screens can drift into drawing a redaction differently, which is the whole
 // reason the issue exists.
 const MASKED = /(\S*\*{2,}\S*)/g;
-
-function timecode(seconds: number): string {
-  const minutes = Math.floor(seconds / 60);
-  const rest = Math.floor(seconds % 60);
-  return `${String(minutes).padStart(2, "0")}:${String(rest).padStart(2, "0")}`;
-}
 
 export function TranscriptRow({ row }: { row: LiveRow }) {
   const { utterance, kind } = row;
@@ -58,7 +53,9 @@ export function TranscriptRow({ row }: { row: LiveRow }) {
         style={{
           fontSize: "var(--text-status)",
           fontWeight: "var(--text-status-weight)",
-          color: unidentified ? "var(--color-signal-attention)" : "var(--color-ink-strong)",
+          color: unidentified
+            ? "var(--color-signal-attention)"
+            : "var(--color-ink-strong)",
         }}
       >
         {utterance.speaker}

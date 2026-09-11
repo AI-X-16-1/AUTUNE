@@ -1,4 +1,4 @@
-import type { UtteranceKind } from "../types";
+import { KIND_LABELS, type UtteranceKind } from "../types";
 
 /**
  * What module B made of an utterance. Five kinds, and most rows have none.
@@ -8,15 +8,10 @@ import type { UtteranceKind } from "../types";
  * carries a signal colour is `ambiguous` — it is the only kind that asks
  * somebody to do something, and it is ochre because ochre means "needs a
  * person" everywhere else in the product.
+ *
+ * The labels come from `types.ts`, shared with the rail's tally, so a row and
+ * the rail cannot end up calling the same kind two different things.
  */
-const LABELS: Record<UtteranceKind, string> = {
-  commitment: "약속",
-  decision: "결정",
-  open_question: "질문",
-  concern: "우려",
-  ambiguous: "확인 필요",
-};
-
 export function KindTag({ kind }: { kind: UtteranceKind }) {
   return (
     <span
@@ -30,7 +25,7 @@ export function KindTag({ kind }: { kind: UtteranceKind }) {
         whiteSpace: "nowrap",
       }}
     >
-      {LABELS[kind]}
+      {KIND_LABELS[kind]}
     </span>
   );
 }

@@ -4,7 +4,11 @@
  * Anything that crosses the API boundary comes from @autune/contracts, which is
  * generated from the Pydantic models. Never hand-write a mirror of a contract.
  */
-export type { TranscriptReady, Utterance, UtteranceKind } from "@autune/contracts";
+export type {
+  TranscriptReady,
+  Utterance,
+  UtteranceKind,
+} from "@autune/contracts";
 
 /**
  * What S13 renders per row: an utterance, plus the classification module B may
@@ -22,3 +26,21 @@ export type LiveRow = {
 
 /** Recording state, which drives the frame glow and the right-rail controls. */
 export type RecordingState = "recording" | "paused" | "ended";
+
+/**
+ * What module B calls each kind, in the order the rail lists them.
+ *
+ * One map, because a row's tag and the rail's tally name the same thing. They
+ * were two maps and a renamed label would have made the row and the rail
+ * disagree about what B found.
+ */
+export const KIND_LABELS: Record<
+  import("@autune/contracts").UtteranceKind,
+  string
+> = {
+  commitment: "약속",
+  decision: "결정",
+  open_question: "질문",
+  concern: "우려",
+  ambiguous: "확인 필요",
+};
