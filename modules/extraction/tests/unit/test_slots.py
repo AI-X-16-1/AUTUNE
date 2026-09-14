@@ -186,3 +186,56 @@ def test_a_named_day_long_past_is_next_years() -> None:
     assert parse_due("3월 2일까지 하겠습니다", WEDNESDAY) == DueDate(
         text="3월 2일", date=date(2027, 3, 2)
     )
+
+
+# --- what was said of the past (review of #159) ---------------------------------
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # The day data was sent, not a day anything is due.
+        "6월 1일에 이미 전달드렸는데 다시 정리하겠습니다",
+        # The Monday it was talked about, not next Monday.
+        "월요일에 말씀드렸던 거 제가 다시 정리하겠습니다",
+        "월요일에 회의 있었는데 제가 정리하겠습니다",
+        "화요일에 공유했고 제가 다시 보겠습니다",
+        # A day long past with no deadline word is the past, not next year's.
+        "6월 1일 자료 기준으로 정리하겠습니다",
+    ],
+)
+def test_a_date_said_of_the_past_is_not_a_due_date(text: str) -> None:
+    """Said on Wednesday 09-09, each of these would read as a day after the
+    meeting if taken forward -- 2027-06-01, 2026-09-14 -- and none is due."""
+    assert parse_due(text, WEDNESDAY) is None
+
+
+def test_a_past_clause_is_skipped_and_the_next_phrase_taken() -> None:
+    due = parse_due("월요일에 회의 있었는데 금요일까지 하겠습니다", WEDNESDAY)
+
+    assert due == DueDate(text="금요일", date=date(2026, 9, 11))
+
+
+def test_a_deadline_word_makes_a_deadline_whatever_follows() -> None:
+    due = parse_due("금요일까지 지난번에 말씀드렸던 거 드리겠습니다", WEDNESDAY)
+
+    assert due == DueDate(text="금요일", date=date(2026, 9, 11))
+
+
+@pytest.mark.parametrize(
+    ("text", "due"),
+    [
+        ("월요일에 공유드릴게요", date(2026, 9, 14)),
+        ("월요일에 보고드리겠습니다", date(2026, 9, 14)),
+        ("월요일에 발표가 있으니 준비하겠습니다", date(2026, 9, 14)),
+    ],
+)
+def test_the_future_and_being_are_not_the_past(text: str, due: date) -> None:
+    """-겠- and 있다 end in ㅆ too."""
+    assert parse_due(text, WEDNESDAY) == DueDate(text="월요일", date=due)
+
+
+def test_a_day_long_past_named_without_a_deadline_word_gets_no_date() -> None:
+    """The price of not inventing 2027-06-01: a real "3월 2일에" in September is
+    missed. A missing date on a draft card, not a wrong one."""
+    assert parse_due("3월 2일에 드리겠습니다", WEDNESDAY) is None

@@ -127,15 +127,22 @@ RECENT_PAST = timedelta(days=90)
 """How far back a named month/day is read as the past rather than next year."""
 
 
-def _next(day: date, month: int, dom: int) -> date:
-    """This year's month/day; next year's once it is well past.
+def _next(day: date, month: int, dom: int, *, by: str | None) -> date:
+    """This year's month/day; next year's only when it is well past and a
+    deadline word says it is due.
 
     A date a few weeks back -- "9월 1일에 공유드렸고" said on the 9th -- is the
     past, and is returned as such so ``parse_due`` skips it. Six months back
-    -- "3월 2일까지" said in September -- is next year's.
+    with a deadline word -- "3월 2일까지" said in September -- is next year's.
+
+    Six months back **without** one is still the past. "6월 1일 자료 기준으로
+    정리하겠습니다" names the day something happened, and rolling it forward
+    would invent a deadline a year out (review of #159). The cost is the rare
+    "3월 2일에 드리겠습니다" said in September, which gets no date -- a missing
+    date on a draft card rather than a wrong one.
     """
     candidate = date(day.year, month, dom)
-    if candidate >= day or day - candidate <= RECENT_PAST:
+    if candidate >= day or by is None or day - candidate <= RECENT_PAST:
         return candidate
     return date(day.year + 1, month, dom)
 
@@ -150,6 +157,41 @@ def _day_of_month(day: date, dom: int) -> date:
 
 Resolver = Callable[[re.Match[str], date | None], date | None]
 
+_BY = r"전까지|까지|전에|내로|내에|안에|이내|중으로|중에|중(?![가-힣])|쯤"
+"""Words that make the date before them a deadline: 까지, 안에, 중으로, ..."""
+
+_DEADLINE_WORD = re.compile(rf"\s*(?:{_BY})")
+_CLAUSE_END = re.compile(r"[,.?!\n]|(?:고|는데|은데|지만|니까|어서|아서|해서|면서|며)(?=\s|$)")
+_NOT_PAST = frozenset("겠있없")
+"""Syllables ending in ㅆ that are not the past tense: the future -겠-, 있다, 없다."""
+
+
+def _said_of_the_past(text: str, end: int, stop: int) -> bool:
+    """Whether the clause after a date phrase is in the past tense.
+
+    "6월 1일에 이미 전달드렸는데" and "월요일에 말씀드렸던 거" name the day
+    something happened or was talked about, not the day anything is due
+    (review of #159). The clause runs from the phrase to the first clause
+    ending, comma or next date phrase, and it is past when a syllable carries
+    the past tense's final ㅆ (-았/었/였-, 했, 렸) -- other than -겠- and 있/없 --
+    or the retrospective -던.
+
+    A deadline word straight after the phrase settles it the other way:
+    "금요일까지 지난번에 말씀드렸던 거 드리겠습니다" is due Friday.
+
+    Not read: the past adnominal -(으)ㄴ, "월요일에 말씀드린 거". It is spelled
+    like an adjective's present -- "월요일에 필요한 거" -- and a rule that
+    skipped both would drop real deadlines to catch past mentions.
+    """
+    if _DEADLINE_WORD.match(text, end):
+        return False
+    boundary = _CLAUSE_END.search(text, end, stop)
+    clause = text[end : boundary.end() if boundary else stop]
+    return "던" in clause or any(
+        0 <= ord(ch) - 0xAC00 < 11172 and (ord(ch) - 0xAC00) % 28 == 20 and ch not in _NOT_PAST
+        for ch in clause
+    )
+
 
 def _needs_day(resolve: Callable[[re.Match[str], date], date]) -> Resolver:
     """Relative phrases have no date without the meeting's day."""
@@ -162,15 +204,17 @@ _PHRASES: tuple[tuple[re.Pattern[str], Resolver], ...] = (
         re.compile(r"(?<!\d)(?P<y>20\d{2})[-./](?P<m>\d{1,2})[-./](?P<d>\d{1,2})(?!\d)"),
         lambda m, _: date(int(m["y"]), int(m["m"]), int(m["d"])),
     ),
-    # 9월 20일
+    # 9월 20일 -- ``by`` is the deadline word after it, when there is one.
     (
-        re.compile(r"(?<!\d)(?P<m>\d{1,2})\s*월\s*(?P<d>\d{1,2})\s*일"),
-        _needs_day(lambda m, day: _next(day, int(m["m"]), int(m["d"]))),
+        re.compile(rf"(?<!\d)(?P<m>\d{{1,2}})\s*월\s*(?P<d>\d{{1,2}})\s*일(?=\s*(?P<by>{_BY})?)"),
+        _needs_day(lambda m, day: _next(day, int(m["m"]), int(m["d"]), by=m["by"])),
     ),
-    # 9/20까지 -- only with a deadline word after it; "1/3 정도" is a fraction.
+    # 9/20까지 -- only with a deadline word or 에 after it; "1/3 정도" is a fraction.
     (
-        re.compile(r"(?<![\d/])(?P<m>\d{1,2})/(?P<d>\d{1,2})(?![\d/])(?=\s*(?:까지|에|중|쯤))"),
-        _needs_day(lambda m, day: _next(day, int(m["m"]), int(m["d"]))),
+        re.compile(
+            rf"(?<![\d/])(?P<m>\d{{1,2}})/(?P<d>\d{{1,2}})(?![\d/])(?=\s*(?:(?P<by>{_BY})|에))"
+        ),
+        _needs_day(lambda m, day: _next(day, int(m["m"]), int(m["d"]), by=m["by"])),
     ),
     # 다음 달 3일
     (
@@ -252,17 +296,24 @@ _PHRASES: tuple[tuple[re.Pattern[str], Resolver], ...] = (
 
 
 def parse_due(text: str, day: date | None) -> DueDate | None:
-    """The first date phrase in ``text`` that is not in the past.
+    """The first date phrase in ``text`` that is a deadline, not the past.
 
     ``None`` when the utterance names no such date. When it names more than
     one -- "다음 주 금요일까지 하고 월요일에 공유" -- the first is taken: the
     rest is usually what happens after the thing promised.
 
-    **A phrase that resolves before the meeting's day is skipped**, and the next
-    one is tried. "이틀 전에 보냈고" or "이번 주 월요일에 말씀드린" said on a
-    Wednesday is what already happened, not a deadline; so is "이번 주" said on
-    a Saturday, whose working week has ended. A card due before it was promised
-    reads as overdue from the moment it exists.
+    **What is said of the past is skipped**, and the next phrase is tried. A
+    phrase is the past in two ways:
+
+    - It resolves before the meeting's day. "이번 주 월요일에 말씀드린" said on
+      a Wednesday is what already happened; so is "이번 주" said on a Saturday,
+      whose working week has ended. A card due before it was promised reads as
+      overdue from the moment it exists.
+    - The clause after it is in the past tense (``_said_of_the_past``). "6월
+      1일에 이미 전달드렸는데" and "월요일에 말씀드렸던 거" resolve to days
+      after the meeting if read forward, but they name when something was sent
+      or discussed, not when anything is due (review of #159). A deadline word
+      right after the phrase overrides the tense.
 
     Where two patterns match at the same place the longer wins, so "다음 주
     금요일" is one phrase and not "다음 주" followed by a weekday -- and a
@@ -281,6 +332,9 @@ def parse_due(text: str, day: date | None) -> DueDate | None:
         if start < taken_until:
             continue  # part of a longer phrase already considered
         taken_until = match.end()
+        stop = min((other for other, *_ in found if other >= match.end()), default=len(text))
+        if _said_of_the_past(text, match.end(), stop):
+            continue
         try:
             resolved = resolve(match, day)
         except ValueError:
