@@ -462,6 +462,27 @@ def test_a_split_person_is_reported_by_a_participant_id_not_their_user_id(
     assert ids and all(who.startswith("prt_") for who in ids)
 
 
+def test_somebody_who_withdrew_consent_is_not_in_the_report(
+    team_id: str, sent: list[tuple[str, dict]]
+) -> None:
+    """Review of #164. The graph is built while everyone consents, so
+    ``gap_participation`` holds a row for each of them, and those rows outlive
+    a withdrawal until the meeting is processed again. ``build_report`` reads
+    the stored rows, so it has to drop anybody ``_people`` no longer returns —
+    privacy.md section 5."""
+    meeting_id = build(team_id, MEETING)
+    gone = participant_id(meeting_id, "김서연")
+    with session_scope() as s:
+        for person in s.scalars(select(Participant).where(Participant.id == gone)):
+            person.consented = False
+
+    service.publish_report(meeting_id)
+    report = published_report(sent)
+
+    reported = {who for row in report.participation for who in (*row.spoke, *row.silent)}
+    assert reported == {participant_id(meeting_id, "이건우")}
+
+
 def test_the_report_carries_no_utterance_text(team_id: str, sent: list[tuple[str, dict]]) -> None:
     """Topic labels are words the meeting used; whole utterances are not. E
     reads the quotation by id, from ``utterances``, if it needs one."""

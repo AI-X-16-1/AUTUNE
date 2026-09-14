@@ -226,7 +226,15 @@ def build_report(session: Session, meeting_id: str) -> GapReport:
             GapParticipation.topic_id, GapParticipation.participant_id, GapParticipation.spoke
         ).where(GapParticipation.topic_id.in_(topic_ids))
     ).all():
-        who = person.get(participant_id, participant_id)
+        who = person.get(participant_id)
+        if who is None:
+            # Not, or no longer, consenting. `_people` is built from consenting
+            # rows only, but a `gap_participation` row outlives a withdrawal
+            # until the next run — so defaulting to the participant's own id
+            # put somebody who had withdrawn back into the report, and this
+            # function is written to be re-run over stored rows. The default
+            # has to be the closed one. Raised in review of #164.
+            continue
         said[topic_id][who] = said[topic_id].get(who, False) or spoke_here
 
     gaps = list(
