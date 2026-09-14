@@ -14,13 +14,19 @@ Last updated: 2026-09-11.
 ## 1. The pipeline, as it stands
 
 ```
-recording ──> decode ──> transcribe ──> diarize ──> assign speakers ──> mask PII
-                │           (Whisper)   (pyannote)      (word-level)     (regex + rules)
-                │                                                            │
-           delete audio ◀───────────────────────────────────────────────────┘
-                                                                             │
-                                                        persist utterances ──┴──> publish TranscriptReady
+recording ──> decode ──> transcribe ──> diarize ──> delete audio
+                         (Whisper)     (pyannote)        │
+                                                         ▼
+                                            assign speakers ──> mask PII
+                                              (word-level)    (regex + rules)
+                                                                     │
+                                       persist utterances ◀──────────┘
+                                                │
+                                                └──> publish TranscriptReady
 ```
+
+Everything above the deletion needs the audio; nothing below it does. The two
+halves are separated deliberately — see section 3.
 
 | Stage | Module | Status |
 | --- | --- | --- |
@@ -32,7 +38,7 @@ recording ──> decode ──> transcribe ──> diarize ──> assign speak
 | Assign speakers to words | `speakers.py` | merged (#136) |
 | PII masking — patterns | `masking.py` + `autune_integrations.privacy` | open, PR #138 |
 | PII masking — spoken numbers | `recognition.py` | open, PR #158 |
-| Persist + publish | `persistence.py` | open, branch `audio/persist-utterances` |
+| Persist + publish | `persistence.py`, `tasks.py` | open, PR #184 |
 | Event publishing | `autune_core.events` | merged (#145) |
 
 Speaker **identification** (matching a voice to a person, #6) is not built. Every
@@ -197,6 +203,70 @@ rewrite is **length-preserving** — a span found in the rewritten text is the s
 span in the original, and the offset mapping that usually breaks this kind of
 code does not exist.
 
+### Three syllables was a claim about numbers, and the claim was false (#158)
+
+`MIN_SPOKEN_SYLLABLES = 3` was written as "a switch of script never happens for
+one syllable". 박재경 found two transcriptions where it does, and the second is
+the one worth remembering:
+
+```
+010-1234-56칠팔   nine digits, no pattern matched, nothing was masked
+010 1234 567팔    ten digits, read as an account, so the rule kept 4567
+```
+
+The second is masked, `counts` records a masked span, and four digits of a phone
+number are standing in the output — **a leak that looks like a success from every
+direction except reading it.**
+
+Lowering the threshold to one brings back `버전 20260910 이사 갑니다`, measured.
+The distinction that does hold is not the count but the **separator**: Korean
+writes a number's groups without internal spaces and writes the next word with
+one. So the threshold now applies only across a separator, and one syllable is
+enough when it is written hard against a digit. `MIN_RUN_DIGITS` is unchanged and
+is what still keeps `10일 이사` and `2사분기` out.
+
+The residue is **not** in this file: spell the tail off on its own and the
+patterns read `010 1234 567` as a ten-digit account and keep its last four — the
+same output as input with no syllable in it at all. That is `account`'s
+last-four rule, filed as #182.
+
+### The pipeline deletes the audio before it masks (#184)
+
+`docs/modules/audio.md` lists masking (step 6) before deletion (step 7). The
+task does the opposite, and the reason is that **nothing after transcription and
+diarization needs the audio**. Masking, the speaker join, the write and the
+publish all run on text. Holding the recording across those steps buys nothing
+and costs exactly the window invariant 11 exists to close.
+
+The write also has to be after deletion for a second reason:
+`PrivacyFlags.original_audio_deleted` is read from `Recording.deleted`, which is
+read from the filesystem rather than from having reached a line. Written inside
+the `adopt` block, the flag is still False — and a False flag is one every
+consumer refuses on. The order is asserted rather than described: the test
+records whether the file still exists at the moment the session opens.
+
+### The event is built from the rows, not from the transcript (#184)
+
+The obvious implementation assembles `TranscriptReady` from what the pipeline
+just computed. It is wrong for one specific reason, and it is the kind that
+would have shipped quietly:
+
+**`speaker_id` and `role` live on `Participant`, and those rows are reused
+across runs.** A `user_id` somebody confirmed from an earlier meeting's DM is in
+the database and was never in this pipeline's output. Built from the transcript,
+the event publishes `speaker_id=None` for a person the system already knows —
+and every consumer treats null as "diarized but not identified".
+
+Reading it back from the committed rows also makes the event a statement about
+what is *stored*. Publish after the commit and the two cannot disagree.
+
+`metadata.participants` had to be decided here because the contract field has no
+description and **no module reads it** — D's fixture puts a speaker label there,
+B omits it. A fills it with speaker labels, one per diarization label. It is not
+a list of people: one person split across two clusters is two entries, which is
+the property that broke E (#128) and C (#164). Filed as #183 so four consumers
+agree on it rather than inheriting whatever A needed first.
+
 ---
 
 ## 4. What kept going wrong
@@ -256,7 +326,7 @@ Where they are:
 | --- | --- |
 | Raw audio deleted after transcription | `storage.py` — a recording exists only inside a `with`; deletion in `finally`, `deleted` read back from the filesystem |
 | Audio never written somewhere it survives | `storage.py::_reject_persistent` — refuses a temp dir inside a cloud-sync folder or the checkout |
-| Text masked before the first write | `persistence.py` verifies with `mask()` **before** the first delete — **branch `audio/persist-utterances`, not merged** |
+| Text masked before the first write | `tasks.py` masks between diarization and the session; `persistence.py` verifies with `mask()` **before** the first delete and refuses — **PR #184, not merged** |
 | Nothing unmasked leaves | `check_outbound` runs on every outbound channel, but the patterns it runs are **still the broken ones on `main`**: #126 (070 · 080 · 0505 · international) and #131 (a Korean particle ends the match) are both open. PR #138 closes #126; #131 has no PR yet |
 | No per-person speech volume | `LiveTranscript` lists unnamed voices instead of counting them — **PR #140, not merged** |
 
@@ -265,9 +335,16 @@ followed: the masker and the guard disagree about what personal data is (#126,
 open — the fix is in #138), and S13 printed a per-voice utterance count in the
 same PR whose body said it did not (#140).
 
-**The second column is where the rule is enforced, not proof that it is.** Two
+**The second column is where the rule is enforced, not proof that it is.** Three
 of the five rows are on branches. A guarantee that has not merged is a guarantee
 nobody has.
+
+The masking row is two enforcements, not one, and the split is deliberate. The
+task masks; `persistence.py` re-checks and refuses. A guard that is also the only
+masker fails closed on every real meeting, which is how a privacy check gets
+removed — so the check and the doing are separate, and the check uses the same
+patterns that did the masking so the two cannot disagree (#126, from the other
+side).
 
 ---
 
@@ -294,8 +371,11 @@ person" — **open, not merged**, so until it lands the rule is still two local
 fixes and no statement.
 
 `TranscriptMetadata.participants` still has no description in the contract, and
-the same trap reaches B and C through the payload rather than the table. Mine to
-fix.
+the same trap reaches B and C through the payload rather than the table. **#184
+had to pick a meaning to ship** — speaker labels, one per diarization label — and
+#183 asks the four consumers to agree on it rather than inherit whatever A needed
+first. Nothing reads the field today, which is the only reason the choice was
+still free.
 
 ### Detector gaps
 
