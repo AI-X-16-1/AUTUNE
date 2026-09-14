@@ -51,9 +51,11 @@ def on_transcript_ready(payload: dict) -> None:
     way, including an item a person added or kept. It is built inside the write
     transaction and sent only after that transaction has closed: a rollback
     after the event had gone would leave two modules analysing a result that
-    was never stored. Every run publishes, a redelivered one included, because
-    ``build_decisions`` mints fresh ``dec_`` ids each time (#171) and D's lineage
-    has to hear the ids that are now in the table.
+    was never stored. Every run publishes, a redelivered one included: a
+    decision whose source utterances changed has a new ``dec_`` id
+    (``decisions.decision_id``), and module A mints new ``utt_`` ids whenever it
+    reprocesses a recording (#194), so D has to hear the ids that are now in the
+    table.
     """
     transcript = TranscriptReady.model_validate(payload)
     validate_major_version(transcript)

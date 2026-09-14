@@ -468,9 +468,11 @@ def build_decisions(
     **Rebuilding replaces, and keeps the ids that still apply.** The meeting's
     decisions are deleted and rebuilt, and each one's id is derived from the
     meeting and the utterances it was settled in (``decisions.decision_id``). A
-    rebuild over the same labels gives the same ``dec_`` ids, so D's lineage
-    keeps pointing at rows that exist (#171). A decision whose sources changed
-    gets a different id, and a caller that rebuilds still republishes
+    rebuild over the same labels and the same utterance ids gives the same
+    ``dec_`` ids, so D's lineage keeps pointing at rows that exist (#171). A
+    decision whose sources changed gets a different id -- including every
+    decision after module A reprocesses a recording, since that mints new
+    ``utt_`` ids (#194) -- and a caller that rebuilds still republishes
     ``ExtractionResult`` for that case. This is a rebuild rather than a merge
     because matching an old decision to a reworded new one is the same-decision
     question, and #25 gave that to D.

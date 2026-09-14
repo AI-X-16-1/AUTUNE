@@ -72,11 +72,16 @@ def decision_id(meeting_id: str, source_utterance_ids: Sequence[str]) -> str:
     id and the source utterance ids in meeting order -- the same shape
     ``new_id`` gives, so nothing downstream can tell the two apart.
 
-    **The same sources give the same id, however many times the meeting is
-    rebuilt.** A random id changed on every rerun: a redelivery, a new
-    classifier, a reprocess after a correction. Module D keys a lineage on
-    ``(meeting, dec_)``, and an id that moved on every rebuild never matched,
-    so D had to fall back on comparing wording.
+    **The same sources give the same id, however many times B rebuilds the
+    meeting.** A random id changed on every rerun of B -- a redelivery, a new
+    classifier -- and module D stores ``(meeting, dec_)`` with each version, so
+    an id that moved on every rebuild pointed at nothing.
+
+    **Not closed here: a reprocess in module A.** A replaces the meeting's
+    utterances and mints new ``utt_`` ids (#194), so every source id changes and
+    every ``dec_`` id derived from them changes with it. Whether utterance ids
+    survive a reprocess is A's decision; this function only promises that B
+    adds no instability of its own.
 
     **Different sources give a different id.** A decision that now spans other
     utterances is, as far as B can tell, a different decision; whether it is

@@ -139,9 +139,10 @@ last one.
 
 Rebuilding a meeting's decisions replaces them, but a decision's `dec_` id is
 derived from the meeting and the utterances it was settled in, so a rebuild over
-the same labels keeps the same ids (#171). A decision whose sources changed gets
-a different id, which is why a caller that rebuilds still republishes
-`ExtractionResult`. Matching an old decision to a reworded new one is the
+the same labels and the same utterance ids keeps the same ids (#171). A decision
+whose sources changed gets a different id — and module A mints new `utt_` ids
+whenever it reprocesses a recording (#194), which changes every source — so a
+caller that rebuilds still republishes `ExtractionResult`. Matching an old decision to a reworded new one is the
 same-decision question, and #25 gave that to D.
 
 `ext_action_items` references `utterances.id`. It does **not** reference any
