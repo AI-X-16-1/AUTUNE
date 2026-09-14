@@ -132,6 +132,23 @@ def _score(recogniser: object) -> tuple[float, float, list[corpus.Row]]:
     )
 
 
+def test_every_row_comes_out_exactly_as_the_corpus_says() -> None:
+    """The assertion the scores cannot make.
+
+    Token recall counts a token as hidden when it holds any `*`, so
+    `010-****-56789` scores as masked and the digit that leaked is invisible —
+    which is the shape of #158, the bug this corpus was built after. Leaving one
+    more digit in every numeric span moves neither recall nor precision off
+    1.000; it moves this.
+
+    The corpus already carries what the output should be. Comparing against it
+    is the strongest check available here, and the scores are for saying how far
+    off a row is once one differs.
+    """
+    _, _, wrong = _score(SpokenNumberRecogniser())
+    assert wrong == [], [(row.text, row.masked) for row in wrong]
+
+
 def test_the_masker_clears_the_recall_target() -> None:
     recall, _, _ = _score(SpokenNumberRecogniser())
     assert recall >= RECALL_TARGET, f"recall {recall:.3f} against a {RECALL_TARGET} target"
