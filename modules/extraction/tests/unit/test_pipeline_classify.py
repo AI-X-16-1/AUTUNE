@@ -32,6 +32,7 @@ from autune_extraction.models import (
     ExtActionItem,
     ExtActionItemSource,
     ExtClassification,
+    ExtConfirmation,
     ExtDecision,
     ExtDecisionSource,
     ExtEditEvent,
@@ -52,6 +53,7 @@ TABLES = [
     ExtActionItem.__table__,
     ExtActionItemSource.__table__,
     ExtEditEvent.__table__,
+    ExtConfirmation.__table__,
 ]
 
 # Endings the fake reads: 겠습니다 commitment, 기로 했 decision, 나요 question,
@@ -374,6 +376,7 @@ def test_the_task_classifies_and_groups_a_meeting(wired: Session) -> None:
 
     assert len(kinds(wired)) == 4
     assert wired.query(ExtDecision).count() == 1
+    assert wired.query(ExtConfirmation).count() == 1, "한번 볼게요, recorded and not asked"
 
 
 def test_the_task_refuses_an_unmasked_transcript_before_classifying(

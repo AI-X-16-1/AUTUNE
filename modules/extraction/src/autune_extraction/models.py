@@ -51,8 +51,12 @@ dropping the utterance: a speaker declining to commit is itself something the
 meeting said, and module C reads concerns."""
 
 RESOLVED, UNDECIDED, PENDING = "resolved", "undecided", "pending"
-"""The three outcomes of a confirmation. Derived from timestamps, never stored
-— see ``ExtConfirmation``."""
+"""The three outcomes of a question that was asked. Derived from timestamps,
+never stored — see ``ExtConfirmation``."""
+
+NOT_ASKED = "not_asked"
+"""An ambiguous agreement nobody has been asked about yet — the DM could not be
+sent. Derived like the others: ``sent_at`` is empty."""
 
 
 class TimestampMixin:
@@ -301,7 +305,14 @@ def _utc(moment: datetime) -> datetime:
 
 
 class ExtConfirmation(Base, TimestampMixin):
-    """One ambiguous agreement the speaker was asked about.
+    """One ambiguous agreement, and the question to its speaker about it.
+
+    The pipeline writes a row for every utterance it calls ``ambiguous``, before
+    any DM goes out; ``sent_at`` is filled when one does. Until then the row is
+    *not asked*, and ``AmbiguousAgreement.confirmation_sent`` is false -- the
+    state the contract kept that flag for. Today every row is in it: the DM
+    needs the speaker's Slack account, and nothing maps a user to one yet (#70),
+    nor builds a team's Slack client (#30).
 
     Keyed by ``utterance_id`` rather than an id of its own: one utterance gets
     one question. Slack retries a button click it has not heard back from within
@@ -332,6 +343,10 @@ class ExtConfirmation(Base, TimestampMixin):
             "(resolved_kind IS NULL) = (responded_at IS NULL)",
             name="ck_ext_confirmations_answer_is_whole",
         ),
+        CheckConstraint(
+            "resolved_kind IS NULL OR sent_at IS NOT NULL",
+            name="ck_ext_confirmations_answer_needs_a_question",
+        ),
     )
 
     utterance_id: Mapped[str] = mapped_column(
@@ -344,34 +359,36 @@ class ExtConfirmation(Base, TimestampMixin):
     """Why the agreement was called ambiguous. Reaches E as
     ``AmbiguousAgreement.reason``; today always ``WEAK_ASSENT``."""
 
-    sent_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    """When the question reached the speaker. The deadline counts from here, not
-    from when the row was created, so a retried send does not restart it."""
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    """When the question reached the speaker; empty until it has. The deadline
+    counts from here, not from when the row was created, so a retried send does
+    not restart it and a row recorded days before its DM does not arrive already
+    expired."""
 
     resolved_kind: Mapped[str | None] = mapped_column(String(32))
     responded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     def outcome_at(self, now: datetime | None = None) -> str:
-        """``resolved``, ``undecided`` or ``pending`` as of ``now``.
+        """``resolved``, ``undecided``, ``pending`` or ``not_asked`` as of ``now``.
 
         An answer counts whenever it arrives. A late click is still the speaker
         telling us what they meant, and preferring a stale ``undecided`` over it
         would be choosing the clock over the person.
+
+        A question never asked cannot time out. Calling it ``undecided`` would
+        report the speaker as not having answered something nobody put to them.
         """
         if self.resolved_kind is not None:
             return RESOLVED
+        if self.sent_at is None:
+            return NOT_ASKED
         moment = now or datetime.now(UTC)
         return UNDECIDED if moment - _utc(self.sent_at) >= CONFIRMATION_TIMEOUT else PENDING
 
     @property
     def confirmation_sent(self) -> bool:
-        """Always true for a stored row, and named for the contract field.
-
-        A row exists only because a DM went out; ``AmbiguousAgreement`` still
-        carries the flag because an ambiguity found with no DM sent is a state
-        the contract has to be able to express.
-        """
-        return True
+        """Whether the DM went out, named for the contract field."""
+        return self.sent_at is not None
 
 
 class ExtEditEvent(Base):
