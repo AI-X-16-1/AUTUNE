@@ -112,12 +112,18 @@ track is C's unit of analysis — and the report merges rows that share a
 `user_id`, represented by the smallest of their participant ids. Having spoken
 as any of them puts the person in `spoke`: recording speech as silence would
 raise a gap that is a false statement about somebody. The representative is a
-participant id rather than the user id so the report stays unjoinable across
-meetings. Raised in review of #164; it cannot happen until identification (#6)
-fills `user_id`, which is why it is fixed now rather than found then.
+participant id rather than the user id so the report carries no cross-meeting
+identity on its own — `participants` is a shared table every module may read,
+so resolving one back to a person stays possible, and accumulating a person's
+silences across meetings is a `../architecture/privacy.md` section 3 violation
+on the consumer's side rather than something the id format prevents. Raised in
+review of #164; it cannot happen until identification (#6) fills `user_id`,
+which is why it is fixed now rather than found then.
 
-Until template comparison and risk scoring land (#14, #35, both waiting on
-#22), `gaps` is empty and the report carries topics and participation only.
+`gaps` carries whatever `gap_gaps` holds, minus the ones somebody dismissed.
+What does not exist yet is the code that *writes* those rows — template
+comparison and risk scoring (#14, #35) are both waiting on #22 — so the list is
+empty in practice today, not empty by construction.
 
 ## Storage
 
