@@ -12,14 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from .privacy import assert_personal_delivery, check_outbound
-
-
-def _slack_body(channel: str, text: str, blocks: list[dict] | None) -> dict:
-    """The body the real client would send, so the fake checks the same thing."""
-    body: dict = {"channel": channel, "text": text}
-    if blocks:
-        body["blocks"] = blocks
-    return body
+from .slack import SlackClient, slack_body
 
 
 @dataclass
@@ -42,17 +35,29 @@ class FakeSlack:
         return f"{self._ts}.000000"
 
     def post_message(self, channel: str, text: str, blocks: list[dict] | None = None) -> str:
-        check_outbound(_slack_body(channel, text, blocks), destination="slack")
+        check_outbound(
+            slack_body(channel, text, blocks),
+            destination="slack",
+            addressing=SlackClient.addressing,
+        )
         self.sent.append(SentMessage(channel=channel, text=text))
         return self._next_ts()
 
     def reply_in_thread(self, channel: str, thread_ts: str, text: str) -> str:
-        check_outbound(_slack_body(channel, text, None), destination="slack")
+        check_outbound(
+            slack_body(channel, text, None, thread_ts),
+            destination="slack",
+            addressing=SlackClient.addressing,
+        )
         self.sent.append(SentMessage(channel=channel, text=text, thread_ts=thread_ts))
         return self._next_ts()
 
     def send_dm(self, user_id: str, text: str, blocks: list[dict] | None = None) -> str:
-        check_outbound(_slack_body(user_id, text, blocks), destination="slack")
+        check_outbound(
+            slack_body(user_id, text, blocks),
+            destination="slack",
+            addressing=SlackClient.addressing,
+        )
         self.sent.append(SentMessage(channel=user_id, text=text, is_dm=True))
         return self._next_ts()
 
