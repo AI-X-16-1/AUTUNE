@@ -300,8 +300,9 @@ Notes:
   unconstrained so a retention sweep on that meeting does not cascade into an
   unrelated thread's lineage; the reader treats a missing meeting as "gone".
 - A lineage is a chain, not a graph: `ctx_decision_versions.previous_version_id`
-  plus a recursive CTE. The S22 graph visualisation is Phase 2 and is a frontend
-  rendering concern.
+  links each version to its predecessor. The read side orders by meeting time
+  rather than walking that chain — see "API" below for why. The S22 graph
+  visualisation is Phase 2 and is a frontend rendering concern.
 
 ### Why `ctx_decisions` is anchored on `team_id`
 
@@ -383,10 +384,36 @@ one mutation.
 | --- | --- | --- |
 | GET | `/links/{meeting_id}` | Topic links for a meeting, `asserted` and `pending` separated |
 | POST | `/links/{link_id}/confirm` | User confirms or rejects a `pending` link (`status` → `confirmed`/`rejected`) |
-| GET | `/decisions/{thread_id}` | Full lineage timeline, walked with a recursive CTE |
+| GET | `/decisions/{thread_id}` | Full lineage timeline, oldest version first |
 | GET | `/decisions` | Filter by team, topic, change type |
 | POST | `/materials` | Upload material — Phase 2 |
 | GET | `/briefs/{meeting_id}` | Pre-meeting brief — Phase 2 |
+
+`GET /decisions/{thread_id}` orders a thread's versions by meeting time
+(`service._meeting_time`), the same key `_rethread` chains by — not by walking
+`previous_version_id` from the chronologically-first version. A walk from the
+root breaks the moment that version ages past the retention window without a
+later meeting having touched the thread since: nothing re-chains it on a mere
+expiry (see "Deletion" below), so the surviving versions' `previous_version_id`
+still points at a now-invisible row, and a walk requiring a visible root would
+find none and lose the rest of the thread with it. Ordering by meeting time
+only ever drops the row that actually expired.
+
+`GET /decisions` lists each thread by its current head only (the same
+definition `_thread_heads` matches new decisions against) — `change_type`
+filters on the head's own value, not any version in the thread's history; a
+caller after the full drift record opens the thread with the route above.
+
+Both routes' `topic_label` is derived from the head version's own
+`current_statement`, not read off `ctx_decisions.topic_label`: that column is
+a cache `_rethread` sets at write time and `sweep_stale_topic_labels` only
+refreshes when the next lineage build touches the thread — neither runs on a
+mere expiry, so it can still quote a version that just aged out of visibility
+while an earlier, still-visible version is the true current head. `GET
+/decisions`'s `topic` filter matches against that same live value, in Python
+after head selection, for the same reason. `GET /links/{meeting_id}` and
+`POST /links/{link_id}/confirm` apply the same expiry filter to the queried
+meeting itself that the two decision routes already applied.
 
 ## Celery tasks
 
