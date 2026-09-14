@@ -235,6 +235,35 @@ def test_the_future_and_being_are_not_the_past(text: str, due: date) -> None:
     assert parse_due(text, WEDNESDAY) == DueDate(text="월요일", date=due)
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        "금요일에 하기로 했습니다",
+        "금요일에 배포하기로 결정했습니다",
+        "금요일에 드리는 걸로 했습니다",
+        "금요일에 마무리하는 걸로 얘기했었죠",
+        "금요일에 끝내도록 했습니다",
+        "금요일에 하자고 했습니다",
+    ],
+)
+def test_a_past_verb_that_dates_an_agreement_keeps_the_deadline(text: str) -> None:
+    """The 했 is when it was agreed; Friday is when it is due (mkkim68, #159)."""
+    assert parse_due(text, WEDNESDAY) == DueDate(text="금요일", date=date(2026, 9, 11))
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "월요일에 말씀드렸던 걸로 정리하겠습니다",
+        "월요일에 공유했던 거 하기로 했습니다",
+    ],
+)
+def test_an_agreement_after_the_past_verb_does_not_rescue_the_date(text: str) -> None:
+    """The date's own verb comes first and is past; the agreement is about
+    something else."""
+    assert parse_due(text, WEDNESDAY) is None
+
+
 def test_a_day_long_past_named_without_a_deadline_word_gets_no_date() -> None:
     """The price of not inventing 2027-06-01: a real "3월 2일에" in September is
     missed. A missing date on a draft card, not a wrong one."""

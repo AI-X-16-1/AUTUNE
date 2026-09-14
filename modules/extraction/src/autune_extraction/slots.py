@@ -165,6 +165,15 @@ _CLAUSE_END = re.compile(r"[,.?!\n]|(?:고|는데|은데|지만|니까|어서|�
 _NOT_PAST = frozenset("겠있없")
 """Syllables ending in ㅆ that are not the past tense: the future -겠-, 있다, 없다."""
 
+_AGREED = re.compile(r"기로|[는할]\s*걸로|도록|자고")
+"""What turns a past verb into an agreement about the date: 하기로 했다,
+드리는 걸로 했다, 끝내도록 했다, 하자고 했다."""
+
+
+def _past_syllable(ch: str) -> bool:
+    code = ord(ch) - 0xAC00
+    return ch == "던" or (0 <= code < 11172 and code % 28 == 20 and ch not in _NOT_PAST)
+
 
 def _said_of_the_past(text: str, end: int, stop: int) -> bool:
     """Whether the clause after a date phrase is in the past tense.
@@ -176,8 +185,16 @@ def _said_of_the_past(text: str, end: int, stop: int) -> bool:
     the past tense's final ㅆ (-았/었/였-, 했, 렸) -- other than -겠- and 있/없 --
     or the retrospective -던.
 
-    A deadline word straight after the phrase settles it the other way:
-    "금요일까지 지난번에 말씀드렸던 거 드리겠습니다" is due Friday.
+    Two things settle it the other way:
+
+    - A deadline word straight after the phrase: "금요일까지 지난번에
+      말씀드렸던 거 드리겠습니다" is due Friday.
+    - An agreement marker before the first past syllable. In "금요일에
+      하기로 했습니다" the 했 dates the agreement, not the work -- Friday is
+      the deadline. The classifier reads "-기로 했" as a decision for the same
+      reason. Order matters: "월요일에 공유했던 거 하기로 했습니다" and
+      "월요일에 말씀드렸던 걸로" put the past verb first, so Monday is still
+      what happened (review by mkkim68).
 
     Not read: the past adnominal -(으)ㄴ, "월요일에 말씀드린 거". It is spelled
     like an adjective's present -- "월요일에 필요한 거" -- and a rule that
@@ -187,10 +204,11 @@ def _said_of_the_past(text: str, end: int, stop: int) -> bool:
         return False
     boundary = _CLAUSE_END.search(text, end, stop)
     clause = text[end : boundary.end() if boundary else stop]
-    return "던" in clause or any(
-        0 <= ord(ch) - 0xAC00 < 11172 and (ord(ch) - 0xAC00) % 28 == 20 and ch not in _NOT_PAST
-        for ch in clause
-    )
+    past = next((i for i, ch in enumerate(clause) if _past_syllable(ch)), None)
+    if past is None:
+        return False
+    agreed = _AGREED.search(clause)
+    return agreed is None or agreed.start() > past
 
 
 def _needs_day(resolve: Callable[[re.Match[str], date], date]) -> Resolver:
