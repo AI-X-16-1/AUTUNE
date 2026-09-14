@@ -244,6 +244,8 @@ def test_the_future_and_being_are_not_the_past(text: str, due: date) -> None:
         "금요일에 마무리하는 걸로 얘기했었죠",
         "금요일에 끝내도록 했습니다",
         "금요일에 하자고 했습니다",
+        "금요일에 배포하기로 했고 제가 준비하겠습니다",
+        "금요일까지 하기로 했습니다",
     ],
 )
 def test_a_past_verb_that_dates_an_agreement_keeps_the_deadline(text: str) -> None:
