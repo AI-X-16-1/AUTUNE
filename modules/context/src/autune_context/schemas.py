@@ -79,7 +79,12 @@ class DecisionVersionRead(BaseModel):
 
 
 class DecisionLineageRead(BaseModel):
-    """A thread's full timeline, oldest version first."""
+    """A thread's full timeline, oldest version first.
+
+    ``topic_label`` is derived from the latest *visible* version's own
+    statement (by ``router.get_decision_thread``), not read off the thread's
+    cached ``topic_label`` column — see that function's docstring.
+    """
 
     thread_id: str
     topic_label: str
@@ -91,6 +96,7 @@ class DecisionSummaryRead(BaseModel):
 
     Mirrors ``DecisionVersionRead`` for the head version only — a caller after
     the full drift history opens the thread with ``GET /decisions/{thread_id}``.
+    ``topic_label`` is derived the same way as ``DecisionLineageRead``'s.
     """
 
     model_config = ConfigDict(from_attributes=True)

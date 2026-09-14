@@ -1,9 +1,14 @@
-"""Integration tests for the service functions behind ``/api/context``.
+"""Integration tests for the service functions and routes behind
+``/api/context``.
 
 Exercises ``get_topic_links``, ``confirm_topic_link``, ``get_decision_lineage``
 and ``list_decisions`` against a real PostgreSQL — the visibility joins these
 share with the write side (``_thread_heads``, ``_rethread``) are exactly what a
-unit test's fakes can't stand in for.
+unit test's fakes can't stand in for. A handful of tests call the ``router``
+functions directly (they're plain callables — FastAPI's ``Depends``/DI only
+matters when going through the actual ASGI app) to cover response-shaping
+logic that lives in ``router.py`` rather than ``service.py``, since this
+repo has no HTTP test harness for any module yet.
 """
 
 from __future__ import annotations
@@ -14,7 +19,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from sqlalchemy import delete, select
 
-from autune_context import service
+from autune_context import router, service
 from autune_context.config import get_settings
 from autune_context.models import CtxDecision, CtxDecisionVersion, CtxTopicLink
 from autune_context.pipeline import reset_cache
@@ -305,6 +310,96 @@ def test_list_decisions_topic_filter_treats_percent_and_underscore_literally(
     with session_scope() as s:
         matches = service.list_decisions(s, team_id, topic="산_초")
         assert {thread.topic_label for thread, _v in matches} == {"예산_초안"}
+
+
+# --------------------------------------------------------------------------- #
+# topic_label is derived from the live head, not the cached column
+# --------------------------------------------------------------------------- #
+
+
+def _thread_with_a_since_expired_head(
+    team_id: str,
+) -> tuple[str, str, str]:
+    """A -> B thread, built directly (not through build_decision_lineage, so
+    this doesn't depend on the fake embedder actually matching two distinct
+    statements into one thread), with ``topic_label`` cached to B's wording
+    the way ``_rethread`` would set it. B's meeting is then expired, leaving A
+    as the only visible version. Returns (thread_id, a_statement, b_statement).
+    """
+    older = _meeting(team_id, days_ago=10)
+    newer = _meeting(team_id, days_ago=0)
+    a_statement = "예산은 5천만원으로 한다"
+    b_statement = "예산은 6천만원으로 한다"
+    with session_scope() as s:
+        thread = CtxDecision(team_id=team_id, topic_label=b_statement)
+        s.add(thread)
+        s.flush()
+        version_a = CtxDecisionVersion(
+            thread_id=thread.id,
+            source_decision_id="dec_a",
+            meeting_id=older,
+            current_statement=a_statement,
+            change_type="new",
+            confidence=0.9,
+            nli_version="test",
+        )
+        s.add(version_a)
+        s.flush()
+        s.add(
+            CtxDecisionVersion(
+                thread_id=thread.id,
+                source_decision_id="dec_b",
+                meeting_id=newer,
+                previous_version_id=version_a.id,
+                previous_statement=a_statement,
+                previous_meeting_id=older,
+                current_statement=b_statement,
+                change_type="modified",
+                nli_label="neutral",
+                confidence=0.7,
+                nli_version="test",
+            )
+        )
+        thread_id = thread.id
+
+    with session_scope() as s:
+        s.get(Meeting, newer).expires_at = datetime.now(tz=UTC) - timedelta(days=1)
+
+    return thread_id, a_statement, b_statement
+
+
+def test_lineage_topic_label_uses_the_visible_head_not_the_stale_cache(team_id: str) -> None:
+    thread_id, a_statement, b_statement = _thread_with_a_since_expired_head(team_id)
+
+    with session_scope() as s:
+        result = router.get_decision_thread(thread_id, s)
+        assert result.topic_label == a_statement
+        assert result.topic_label != b_statement
+        assert [v.current_statement for v in result.versions] == [a_statement]
+
+
+def test_list_decisions_topic_label_uses_the_visible_head_not_the_stale_cache(
+    team_id: str,
+) -> None:
+    thread_id, a_statement, _b_statement = _thread_with_a_since_expired_head(team_id)
+
+    with session_scope() as s:
+        results = router.list_decision_threads(team_id, s)
+        match = next(r for r in results if r.thread_id == thread_id)
+        assert match.topic_label == a_statement
+
+
+def test_list_decisions_topic_filter_matches_the_visible_head_not_the_stale_cache(
+    team_id: str,
+) -> None:
+    thread_id, a_statement, b_statement = _thread_with_a_since_expired_head(team_id)
+
+    with session_scope() as s:
+        # The now-invisible head's cached wording no longer matches...
+        assert service.list_decisions(s, team_id, topic=b_statement) == []
+        # ...but the still-visible version's own wording does.
+        by_a = service.list_decisions(s, team_id, topic=a_statement)
+        assert {t.id for t, _v in by_a} == {thread_id}
 
 
 # --------------------------------------------------------------------------- #

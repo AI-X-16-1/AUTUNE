@@ -404,6 +404,17 @@ definition `_thread_heads` matches new decisions against) — `change_type`
 filters on the head's own value, not any version in the thread's history; a
 caller after the full drift record opens the thread with the route above.
 
+Both routes' `topic_label` is derived from the head version's own
+`current_statement`, not read off `ctx_decisions.topic_label`: that column is
+a cache `_rethread` sets at write time and `sweep_stale_topic_labels` only
+refreshes when the next lineage build touches the thread — neither runs on a
+mere expiry, so it can still quote a version that just aged out of visibility
+while an earlier, still-visible version is the true current head. `GET
+/decisions`'s `topic` filter matches against that same live value, in Python
+after head selection, for the same reason. `GET /links/{meeting_id}` and
+`POST /links/{link_id}/confirm` apply the same expiry filter to the queried
+meeting itself that the two decision routes already applied.
+
 ## Celery tasks
 
 | Task | Trigger | Queue |

@@ -60,7 +60,12 @@ def get_decision_thread(thread_id: str, session: SessionDep) -> DecisionLineageR
     A version's ``previous_statement``/``previous_meeting_id`` are blanked here
     (not in ``service``) when the predecessor they quote has since expired —
     see ``service.get_decision_lineage`` for why that can't be done by editing
-    the ORM row itself.
+    the ORM row itself. ``topic_label`` comes from the latest *visible*
+    version's own ``current_statement`` (``versions`` is oldest-first and
+    guaranteed non-empty here), not ``thread.topic_label`` — that cached
+    column is only refreshed by ``_rethread``/``sweep_stale_topic_labels``,
+    neither of which runs on a mere expiry, so it can still quote a version
+    that just aged out of visibility while an earlier one is the true head.
     """
     thread, versions, visible_prior_meeting_ids = service.get_decision_lineage(session, thread_id)
     version_reads = []
@@ -76,7 +81,7 @@ def get_decision_thread(thread_id: str, session: SessionDep) -> DecisionLineageR
         version_reads.append(version_read)
     return DecisionLineageRead(
         thread_id=thread.id,
-        topic_label=thread.topic_label,
+        topic_label=versions[-1].current_statement[:400],
         versions=version_reads,
     )
 
@@ -89,12 +94,17 @@ def list_decision_threads(
     change_type: str | None = None,
 ) -> list[DecisionSummaryRead]:
     """A team's decision threads by their current head, filterable by topic
-    and/or change type."""
+    and/or change type.
+
+    ``topic_label`` comes from each head version's own ``current_statement``,
+    not the cached ``thread.topic_label`` column — see
+    ``service.list_decisions`` for why (same reasoning as ``get_decision_thread``).
+    """
     pairs = service.list_decisions(session, team_id, topic=topic, change_type=change_type)
     return [
         DecisionSummaryRead(
             thread_id=thread.id,
-            topic_label=thread.topic_label,
+            topic_label=version.current_statement[:400],
             meeting_id=version.meeting_id,
             change_type=version.change_type,
             confidence=version.confidence,

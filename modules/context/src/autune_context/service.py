@@ -781,20 +781,25 @@ def list_decisions(
     lists is exactly what a new decision would compare against. Filtering
     ``change_type`` reads as "this thread's latest change was X"; a caller
     after the full drift history opens the thread with ``get_decision_lineage``.
-    ``topic`` matches ``ctx_decisions.topic_label`` case-insensitively, as a
-    literal substring — ``%``/``_``/``\\`` in it are escaped so a topic that
-    happens to contain one doesn't act as a wildcard.
+
+    ``topic`` matches the *head version's own* ``current_statement``, as a
+    literal case-insensitive substring — not ``ctx_decisions.topic_label``.
+    That column is a cache ``_rethread`` sets from whichever version is head
+    *at write time*; nothing refreshes it on a mere expiry
+    (``sweep_stale_topic_labels`` only runs when the next lineage build
+    touches the thread), so it can still quote a version that has since aged
+    out of visibility even though an earlier, still-visible version is now the
+    correct head (lsh2217's #185 review). Matching is done in Python after
+    head selection, not pushed into SQL, for the same reason — the head has to
+    be picked first. The router derives the response's own display label the
+    same way (``version.current_statement``), never from the cached column.
     """
-    query = (
+    rows = session.execute(
         select(CtxDecision, CtxDecisionVersion)
         .join(CtxDecisionVersion, CtxDecisionVersion.thread_id == CtxDecision.id)
         .join(Meeting, Meeting.id == CtxDecisionVersion.meeting_id)
         .where(CtxDecision.team_id == team_id, *visible_meeting_clauses(team_id))
-    )
-    if topic is not None:
-        query = query.where(CtxDecision.topic_label.ilike(f"%{_escape_like(topic)}%", escape="\\"))
-    rows = session.execute(
-        query.order_by(CtxDecision.id, _meeting_time(), CtxDecisionVersion.id)
+        .order_by(CtxDecision.id, _meeting_time(), CtxDecisionVersion.id)
     ).all()
 
     heads: dict[str, tuple[CtxDecision, CtxDecisionVersion]] = {}
@@ -803,6 +808,9 @@ def list_decisions(
     result = list(heads.values())
     if change_type is not None:
         result = [pair for pair in result if pair[1].change_type == change_type]
+    if topic is not None:
+        needle = topic.casefold()
+        result = [pair for pair in result if needle in pair[1].current_statement.casefold()]
     result.sort(key=lambda pair: pair[1].updated_at, reverse=True)
     return result
 
@@ -949,9 +957,3 @@ def _as_datetime(value) -> datetime:
 
 def _clamp(value: float) -> float:
     return max(0.0, min(1.0, value))
-
-
-def _escape_like(value: str) -> str:
-    """Escape ``%``/``_``/``\\`` so a caller's substring can't act as a
-    SQL ``LIKE`` wildcard. Pair with ``.ilike(..., escape="\\\\")``."""
-    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
