@@ -651,10 +651,18 @@ def get_topic_links(
     threshold) and ``confirmed`` (a ``pending`` link the user accepted), the
     same "settled" definition ``_build_context_links`` publishes to E.
     ``rejected`` links are dismissed and appear in neither list.
+
+    A meeting past its own retention window is treated as gone the moment it
+    expires (docs/modules/context.md, "Deletion"), not only once it is actually
+    deleted, so its links are filtered out here too — the same join and
+    ``visible_meeting_clauses`` every other lineage read uses, applied to
+    ``meeting_id`` itself rather than to a linked meeting. An expired meeting
+    reads the same as an unknown one: both return two empty lists.
     """
     links = session.scalars(
         select(CtxTopicLink)
-        .where(CtxTopicLink.meeting_id == meeting_id)
+        .join(Meeting, Meeting.id == CtxTopicLink.meeting_id)
+        .where(CtxTopicLink.meeting_id == meeting_id, *visible_meeting_clauses(Meeting.team_id))
         .order_by(CtxTopicLink.confidence.desc())
     ).all()
     asserted = [link for link in links if link.status in _PUBLISHABLE]
@@ -667,10 +675,12 @@ def confirm_topic_link(session: Session, link_id: int, new_status: str) -> CtxTo
 
     Only a ``pending`` link accepts a decision through this route — one already
     settled, whether by an earlier confirm or because it started ``asserted``,
-    does not get a second one.
+    does not get a second one. A link whose meeting has since expired is
+    treated as not found, the same "gone" rule ``get_topic_links`` applies —
+    there is nothing left to confirm a link for.
     """
     link = session.get(CtxTopicLink, link_id)
-    if link is None:
+    if link is None or not _meeting_is_visible(session, link.meeting_id):
         raise NotFoundError("topic link", str(link_id))
     if link.status != "pending":
         raise ConflictError(f"topic link {link_id} is not pending", status=link.status)
@@ -679,10 +689,22 @@ def confirm_topic_link(session: Session, link_id: int, new_status: str) -> CtxTo
     return link
 
 
+def _meeting_is_visible(session: Session, meeting_id: str) -> bool:
+    return (
+        session.execute(
+            select(Meeting.id).where(
+                Meeting.id == meeting_id, *visible_meeting_clauses(Meeting.team_id)
+            )
+        ).first()
+        is not None
+    )
+
+
 def get_decision_lineage(
     session: Session, thread_id: str
-) -> tuple[CtxDecision, list[CtxDecisionVersion]]:
-    """A thread and its full timeline, oldest version first.
+) -> tuple[CtxDecision, list[CtxDecisionVersion], set[str]]:
+    """A thread's visible timeline (oldest first), plus which of those
+    versions' ``previous_meeting_id`` values are themselves still visible.
 
     Ordered by meeting time (``_meeting_time``) — the same key ``_rethread``
     chains by — rather than by walking ``previous_version_id`` from the root.
@@ -694,6 +716,23 @@ def get_decision_lineage(
     that requires a visible root to start from would find none and lose the
     rest of the thread along with it. Ordering by meeting time instead only
     ever drops the row that actually expired.
+
+    Dropping an expired version's own row is not enough on its own: the next
+    version's ``previous_statement``/``previous_meeting_id`` still quote that
+    meeting's wording verbatim, because ``sweep_dangling_previous_statements``
+    only blanks them once the meeting is actually *deleted*, not merely
+    expired. The same "gone the moment it expires" promise has to hold for a
+    quoted predecessor too, so this returns the set of ``previous_meeting_id``
+    values that are still visible — the caller (``router.py``) blanks those two
+    fields on any returned version whose predecessor isn't in it. Done at the
+    schema layer rather than by mutating these rows here: ``get_session``
+    commits every request's session on success, so writing ``None`` onto an
+    ORM object inside a *read* endpoint would silently persist it.
+
+    Raises ``NotFoundError`` if the thread exists but every version is
+    currently invisible — a fully-expired thread is "gone" the same way its
+    content is, rather than surfacing a stale ``topic_label`` over an empty
+    timeline.
     """
     thread = session.get(CtxDecision, thread_id)
     if thread is None:
@@ -710,7 +749,22 @@ def get_decision_lineage(
             .order_by(_meeting_time(), CtxDecisionVersion.id)
         )
     )
-    return thread, versions
+    if not versions:
+        raise NotFoundError("decision thread", thread_id)
+
+    prior_meeting_ids = {v.previous_meeting_id for v in versions if v.previous_meeting_id}
+    visible_prior_meeting_ids = (
+        set(
+            session.scalars(
+                select(Meeting.id).where(
+                    Meeting.id.in_(prior_meeting_ids), *visible_meeting_clauses(thread.team_id)
+                )
+            )
+        )
+        if prior_meeting_ids
+        else set()
+    )
+    return thread, versions, visible_prior_meeting_ids
 
 
 def list_decisions(

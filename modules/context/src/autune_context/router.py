@@ -55,12 +55,29 @@ def confirm_link(link_id: int, payload: LinkConfirmRequest, session: SessionDep)
 
 @router.get("/decisions/{thread_id}", response_model=DecisionLineageRead)
 def get_decision_thread(thread_id: str, session: SessionDep) -> DecisionLineageRead:
-    """A decision thread's full lineage timeline, oldest version first."""
-    thread, versions = service.get_decision_lineage(session, thread_id)
+    """A decision thread's full lineage timeline, oldest version first.
+
+    A version's ``previous_statement``/``previous_meeting_id`` are blanked here
+    (not in ``service``) when the predecessor they quote has since expired —
+    see ``service.get_decision_lineage`` for why that can't be done by editing
+    the ORM row itself.
+    """
+    thread, versions, visible_prior_meeting_ids = service.get_decision_lineage(session, thread_id)
+    version_reads = []
+    for version in versions:
+        version_read = DecisionVersionRead.model_validate(version)
+        if (
+            version_read.previous_meeting_id is not None
+            and version_read.previous_meeting_id not in visible_prior_meeting_ids
+        ):
+            version_read = version_read.model_copy(
+                update={"previous_statement": None, "previous_meeting_id": None}
+            )
+        version_reads.append(version_read)
     return DecisionLineageRead(
         thread_id=thread.id,
         topic_label=thread.topic_label,
-        versions=[DecisionVersionRead.model_validate(version) for version in versions],
+        versions=version_reads,
     )
 
 

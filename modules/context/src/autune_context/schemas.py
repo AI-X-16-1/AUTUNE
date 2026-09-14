@@ -57,7 +57,12 @@ class LinkConfirmRequest(BaseModel):
 
 
 class DecisionVersionRead(BaseModel):
-    """One version of a decision, as seen in one meeting."""
+    """One version of a decision, as seen in one meeting.
+
+    ``previous_statement``/``previous_meeting_id`` are blanked by the router
+    (not read as-is off the row) once the meeting they quote has left the
+    retention window — see ``router.get_decision_thread``.
+    """
 
     model_config = ConfigDict(from_attributes=True)
 

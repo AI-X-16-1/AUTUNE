@@ -300,8 +300,9 @@ Notes:
   unconstrained so a retention sweep on that meeting does not cascade into an
   unrelated thread's lineage; the reader treats a missing meeting as "gone".
 - A lineage is a chain, not a graph: `ctx_decision_versions.previous_version_id`
-  plus a recursive CTE. The S22 graph visualisation is Phase 2 and is a frontend
-  rendering concern.
+  links each version to its predecessor. The read side orders by meeting time
+  rather than walking that chain — see "API" below for why. The S22 graph
+  visualisation is Phase 2 and is a frontend rendering concern.
 
 ### Why `ctx_decisions` is anchored on `team_id`
 

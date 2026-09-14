@@ -163,6 +163,25 @@ def test_confirming_an_unknown_link_404s(team_id: str) -> None:
         service.confirm_topic_link(s, 999_999_999, "confirmed")
 
 
+def test_topic_links_of_an_expired_meeting_are_hidden(team_id: str) -> None:
+    meeting = _meeting(team_id, expires_at=datetime.now(tz=UTC) - timedelta(days=1))
+    _topic_link(meeting, status="asserted")
+    _topic_link(meeting, status="pending")
+
+    with session_scope() as s:
+        asserted, pending = service.get_topic_links(s, meeting)
+        assert asserted == []
+        assert pending == []
+
+
+def test_confirming_a_link_on_an_expired_meeting_404s(team_id: str) -> None:
+    meeting = _meeting(team_id, expires_at=datetime.now(tz=UTC) - timedelta(days=1))
+    link_id = _topic_link(meeting, status="pending")
+
+    with session_scope() as s, pytest.raises(NotFoundError):
+        service.confirm_topic_link(s, link_id, "confirmed")
+
+
 # --------------------------------------------------------------------------- #
 # get_decision_lineage
 # --------------------------------------------------------------------------- #
@@ -176,7 +195,7 @@ def test_lineage_walks_the_chain_oldest_first(team_id: str) -> None:
 
     thread_id = _thread_id_for(first)
     with session_scope() as s:
-        thread, versions = service.get_decision_lineage(s, thread_id)
+        thread, versions, _visible_prior = service.get_decision_lineage(s, thread_id)
         assert thread.id == thread_id
         assert [v.meeting_id for v in versions] == [first, second]
         assert versions[0].change_type == "new"
@@ -204,8 +223,25 @@ def test_lineage_drops_a_since_expired_version_but_keeps_the_rest(team_id: str) 
         s.get(Meeting, first).expires_at = datetime.now(tz=UTC) - timedelta(days=1)
 
     with session_scope() as s:
-        _thread, versions = service.get_decision_lineage(s, thread_id)
+        _thread, versions, visible_prior = service.get_decision_lineage(s, thread_id)
         assert [v.meeting_id for v in versions] == [second]
+        # `second`'s row still quotes `first` in previous_meeting_id/statement
+        # (only an actual deletion, not a mere expiry, blanks it) — the caller
+        # is expected to mask that using this set, since `first` isn't in it.
+        assert versions[0].previous_meeting_id == first
+        assert visible_prior == set()
+
+
+def test_lineage_of_a_fully_expired_thread_404s(team_id: str) -> None:
+    meeting = _meeting(team_id)
+    service.build_decision_lineage(_extraction(meeting, [("dec_1", _D1, 0.9)]))
+    thread_id = _thread_id_for(meeting)
+
+    with session_scope() as s:
+        s.get(Meeting, meeting).expires_at = datetime.now(tz=UTC) - timedelta(days=1)
+
+    with session_scope() as s, pytest.raises(NotFoundError):
+        service.get_decision_lineage(s, thread_id)
 
 
 # --------------------------------------------------------------------------- #
