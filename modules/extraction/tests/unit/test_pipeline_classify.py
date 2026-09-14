@@ -182,6 +182,20 @@ def test_running_twice_leaves_one_set_of_rows(session: Session) -> None:
     assert session.query(ExtDecision).count() == 1
 
 
+def test_a_rerun_keeps_each_decisions_id_and_one_set_of_sources(session: Session) -> None:
+    """#171: D keys a lineage on the ``dec_`` id, so a rebuild over the same
+    labels must hand it the same one. And with ids that repeat, the previous
+    run's source rows must not attach themselves to the rebuilt decision --
+    SQLite, like this suite, enforces no cascade."""
+    run(session)
+    first = [decision.id for decision in session.query(ExtDecision)]
+
+    run(session)
+
+    assert [decision.id for decision in session.query(ExtDecision)] == first
+    assert session.query(ExtDecisionSource).count() == 1
+
+
 class _EverythingIsNone:
     """A retrained model that no longer sees a kind anywhere in this meeting."""
 
