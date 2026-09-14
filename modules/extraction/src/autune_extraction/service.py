@@ -29,7 +29,7 @@ from autune_integrations import SlackApi, assert_personal_delivery
 
 from .config import get_settings
 from .confirmations import WEAK_ASSENT, ConfirmationResponse, build_confirmation_dm
-from .decisions import DEFAULT_MAX_GAP, ClassifiedUtterance, group_decisions
+from .decisions import DEFAULT_MAX_GAP, ClassifiedUtterance, decision_id, group_decisions
 from .edit_cost import EditCost
 from .models import (
     ExtActionItem,
@@ -465,20 +465,30 @@ def build_decisions(
     ``utterances`` is every utterance of the meeting in ``start_sec`` order; see
     ``group_decisions`` for why the non-decision ones have to be there.
 
-    **Rebuilding replaces.** The meeting's existing decisions are deleted and the
-    new ones get fresh ``dec_`` ids, so a caller that rebuilds must republish
-    ``ExtractionResult`` — D's lineage points at ids that no longer exist
-    otherwise. That is why this is a rebuild rather than a merge: matching an old
-    decision to a new one is the same-decision question, and #25 gave that to D.
+    **Rebuilding replaces, and keeps the ids that still apply.** The meeting's
+    decisions are deleted and rebuilt, and each one's id is derived from the
+    meeting and the utterances it was settled in (``decisions.decision_id``). A
+    rebuild over the same labels gives the same ``dec_`` ids, so D's lineage
+    keeps pointing at rows that exist (#171). A decision whose sources changed
+    gets a different id, and a caller that rebuilds still republishes
+    ``ExtractionResult`` for that case. This is a rebuild rather than a merge
+    because matching an old decision to a reworded new one is the same-decision
+    question, and #25 gave that to D.
 
     The delete is a real delete. These rows are derived from utterances that are
     still there, so nothing is lost that cannot be recomputed, and privacy.md
-    leaves no room for a soft one.
+    leaves no room for a soft one. The sources go first, by name, rather than
+    being left to ``ON DELETE CASCADE``: SQLite enforces no foreign keys unless
+    asked, and with ids that repeat, a source row a cascade missed would attach
+    itself to the rebuilt decision.
     """
+    stale = select(ExtDecision.id).where(ExtDecision.meeting_id == meeting_id)
+    session.execute(delete(ExtDecisionSource).where(ExtDecisionSource.decision_id.in_(stale)))
     session.execute(delete(ExtDecision).where(ExtDecision.meeting_id == meeting_id))
 
     decisions = [
         ExtDecision(
+            id=decision_id(meeting_id, group.source_utterance_ids),
             meeting_id=meeting_id,
             statement=group.statement,
             confidence=group.confidence,

@@ -10,6 +10,8 @@ half of it.
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
 from autune_contracts.enums import UtteranceKind
@@ -17,6 +19,7 @@ from autune_extraction.decisions import (
     DEFAULT_MAX_GAP,
     ClassifiedUtterance,
     DecisionGroup,
+    decision_id,
     group_decisions,
 )
 from autune_extraction.models import ExtDecision, ExtDecisionSource
@@ -215,6 +218,32 @@ def test_a_decision_id_is_not_a_thread_id() -> None:
 
 def test_each_decision_gets_its_own_id() -> None:
     assert mint_id() != mint_id()
+
+
+def test_a_decision_id_is_derived_from_where_it_was_settled() -> None:
+    """#171: the same meeting and sources give the same id on every rebuild, in
+    the same shape ``new_id`` mints."""
+    derived = decision_id("mtg_1", ("utt_3", "utt_4"))
+
+    assert derived == decision_id("mtg_1", ("utt_3", "utt_4"))
+    assert re.fullmatch(r"dec_[0-9a-f]{32}", derived)
+    assert len(derived) == len(mint_id())
+
+
+@pytest.mark.parametrize(
+    ("meeting_id", "sources"),
+    [
+        ("mtg_1", ("utt_3",)),  # one source fewer
+        ("mtg_1", ("utt_3", "utt_5")),  # one source different
+        ("mtg_1", ("utt_4", "utt_3")),  # same sources, other order
+        ("mtg_2", ("utt_3", "utt_4")),  # same sources, other meeting
+        ("mtg_1", ("utt_3\x1futt_4",)),  # one id that contains the separator
+    ],
+)
+def test_a_decision_settled_elsewhere_is_a_different_id(
+    meeting_id: str, sources: tuple[str, ...]
+) -> None:
+    assert decision_id(meeting_id, sources) != decision_id("mtg_1", ("utt_3", "utt_4"))
 
 
 # --- what the tables must not hold ------------------------------------------

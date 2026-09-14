@@ -13,10 +13,13 @@ so it lives here rather than in ``pipeline`` (which loads models) or ``service``
 
 from __future__ import annotations
 
+import hashlib
+import json
 from collections.abc import Sequence
 from dataclasses import dataclass
 
 from autune_contracts.enums import UtteranceKind
+from autune_core.ids import DECISION
 
 DEFAULT_MAX_GAP = 2
 """How many non-decision utterances may sit between two decision utterances
@@ -60,6 +63,33 @@ class DecisionGroup:
     statement: str
     source_utterance_ids: tuple[str, ...]
     confidence: float
+
+
+def decision_id(meeting_id: str, source_utterance_ids: Sequence[str]) -> str:
+    """The ``dec_`` id of a decision, derived from where it was settled (#171).
+
+    ``dec_`` followed by the first 32 hex digits of a SHA-256 over the meeting
+    id and the source utterance ids in meeting order -- the same shape
+    ``new_id`` gives, so nothing downstream can tell the two apart.
+
+    **The same sources give the same id, however many times the meeting is
+    rebuilt.** A random id changed on every rerun: a redelivery, a new
+    classifier, a reprocess after a correction. Module D keys a lineage on
+    ``(meeting, dec_)``, and an id that moved on every rebuild never matched,
+    so D had to fall back on comparing wording.
+
+    **Different sources give a different id.** A decision that now spans other
+    utterances is, as far as B can tell, a different decision; whether it is
+    the same one in other words is the question #25 gave to D. The order is
+    meeting order, not sorted: two runs over the same labels produce the same
+    order, and an order that changed would mean the grouping did.
+
+    The meeting id is in the hash because an utterance id is unique on its own
+    but a decision is only ever this meeting's. The ids are hashed as a JSON
+    array rather than joined with a separator, so no id can be read as two.
+    """
+    encoded = json.dumps([meeting_id, *source_utterance_ids], ensure_ascii=False)
+    return f"{DECISION}_{hashlib.sha256(encoded.encode()).hexdigest()[:32]}"
 
 
 def group_decisions(

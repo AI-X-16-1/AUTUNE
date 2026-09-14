@@ -137,10 +137,12 @@ order without a second join. The order carries the argument — the proposal
 first, the sentence that settles it last — and the statement is taken from the
 last one.
 
-Rebuilding a meeting's decisions replaces them, and the new rows get fresh `dec_`
-ids. A caller that rebuilds must republish `ExtractionResult`, because D's
-lineage points at the old ids otherwise. Matching an old decision to a new one is
-the same-decision question, and #25 gave that to D.
+Rebuilding a meeting's decisions replaces them, but a decision's `dec_` id is
+derived from the meeting and the utterances it was settled in, so a rebuild over
+the same labels keeps the same ids (#171). A decision whose sources changed gets
+a different id, which is why a caller that rebuilds still republishes
+`ExtractionResult`. Matching an old decision to a reworded new one is the
+same-decision question, and #25 gave that to D.
 
 `ext_action_items` references `utterances.id`. It does **not** reference any
 other module's tables.
