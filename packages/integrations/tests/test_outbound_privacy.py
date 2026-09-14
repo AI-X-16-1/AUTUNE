@@ -337,8 +337,35 @@ def test_a_generated_id_is_not_personal_data() -> None:
         assert offenders == [], offenders
 
 
+@pytest.mark.parametrize(
+    ("line", "expected"),
+    [
+        ("메일은minkyoung@example.com로 부탁드립니다", (3, 24)),
+        ("주소는minkyoung@example.com입니다", (3, 24)),
+        ("메일 minkyoung@example.com 로", (3, 24)),
+        ("minkyoung@example.co.kr", (0, 23)),
+    ],
+)
+def test_an_address_written_against_korean_is_the_address_only(
+    line: str, expected: tuple[int, int]
+) -> None:
+    r"""`email` was the last pattern on `\b`, and the last with `\w` classes.
+
+    Both are the same Korean bug from opposite ends. Hangul is a word
+    character, so `\b` never fires between 은 and m, and `[\w.+-]+` then eats
+    the Korean in front of the address:
+
+        메일은minkyoung@example.com로  ->  메***@example.com로
+
+    소는 was deleted from the sentence as if it were part of somebody's
+    address. Changing the boundary alone does not fix it -- the greedy class
+    has to stop matching Hangul first.
+    """
+    assert [(s, e) for s, e, c in find_pii(line) if c == "email"] == [expected]
+
+
 def test_the_international_phone_pattern_has_a_left_boundary_too() -> None:
-    """It was the one pattern without one, and hex is full of `82`.
+    r"""It was the one pattern without one, and hex is full of `82`.
 
     Every sibling pattern anchors its start; this one began `\+?82`, so it
     matched inside `utt_0f0a8ce845434317af87928215854283` — `8215854283`, read

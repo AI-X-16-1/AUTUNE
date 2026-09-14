@@ -210,6 +210,32 @@ class TestTheSecondDetector:
         assert result.text == "담당자는 김** 님입니다"
         assert result.counts["name"] == 1
 
+    @pytest.mark.parametrize("category", ["phone", "card", "account", "rrn"])
+    @pytest.mark.parametrize("value", ["1", "12", "123", "1234"])
+    def test_a_short_span_keeps_nothing(self, category: str, value: str) -> None:
+        """Keeping "the last four" of four digits is keeping all of them.
+
+        `range(count - 4, count)` is negative-indexed below four, and at two
+        digits it produced {-2, -1, 0, 1} -- which contains both real positions,
+        so every digit survived while `counts` recorded the span as masked. The
+        mobile-prefix rule was the same mistake three positions further on.
+
+        `find_pii` cannot produce a span this short; `EntityRecogniser` can, and
+        it is a documented, tested seam. A model returns short spans.
+        """
+
+        class Short:
+            def find(self, text: str) -> list[tuple[int, int, str]]:
+                return [(0, len(value), category)]
+
+        result = mask(f"{value} test", recogniser=Short())
+        assert result.text == f"{'*' * len(value)} test"
+        assert result.counts == {category: 1}
+
+    def test_a_mobile_number_still_keeps_its_prefix_and_last_four(self) -> None:
+        """The clamp must not reach the length the rule was written for."""
+        assert mask("010-1234-5678").text == "010-****-5678"
+
     def test_a_numeric_category_from_the_recogniser_hides_words_too(self) -> None:
         """Spoken-out numbers are what the recogniser exists for.
 

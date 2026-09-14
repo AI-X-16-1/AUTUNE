@@ -102,7 +102,19 @@ PII_PATTERNS: Final[tuple[tuple[str, re.Pattern[str]], ...]] = (
     # separators as often as with. See MIN_ACCOUNT_DIGITS for what keeps this
     # from matching every date in a transcript.
     ("account", re.compile(rf"{_L}\d{{2,6}}{_SEP}\d{{2,6}}{_SEP}\d{{2,6}}{_R}")),
-    ("email", re.compile(r"\b[\w.+-]+@[\w-]+\.[\w.-]+\b")),
+    # The only pattern that still used `\b`, and the only one whose character
+    # classes were `\w`. Both are the same Korean bug from opposite ends:
+    # Hangul is a word character, so `\b` never fires between 은 and m, and
+    # `[\w.+-]+` then eats the Korean in front of the address.
+    # `메일은minkyoung@example.com로` came out `메***@example.com로` -- 소는 was
+    # deleted from the sentence as if it were part of somebody's address.
+    # Changing the boundary alone does not fix it: the greedy class has to stop
+    # being able to match Hangul, and then the boundary has to stop being `\b`.
+    # An address is ASCII; a local part in Hangul is not a thing Whisper writes.
+    (
+        "email",
+        re.compile(rf"{_L}[A-Za-z0-9._+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+{_R}"),
+    ),
 )
 
 
