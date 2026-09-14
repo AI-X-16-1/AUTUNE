@@ -79,9 +79,13 @@ and stores what comes back.
   `010-****-5678` keeps its last four digits by design, and as a node it would
   carry them into a report the whole team reads.
 - **Participation is keyed by `participants.id`**, not `users.id`. A
-  participant id exists for an unidentified speaker too, and it is scoped to
-  one meeting, so the matrix cannot be joined across meetings into a record of
-  one person's silences.
+  participant id exists for an unidentified speaker too, and it is scoped to one
+  meeting, so what C publishes carries no cross-meeting identity on its own.
+  That is not the same as the join being impossible: `participants` is a shared
+  table every module may read, so any consumer can resolve a participant id to
+  its `user_id`. Accumulating one person's silences across meetings is a
+  `../architecture/privacy.md` section 3 violation on the consumer's side — the
+  id format does not prevent it, it only declines to hand it over.
 
 `contracts.md` shows `user_…` ids in its `GapReport` example, and the contract
 field has no pattern. The example predates this choice; it is flagged rather
