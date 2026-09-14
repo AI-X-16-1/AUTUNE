@@ -89,6 +89,9 @@ class IntelGapPattern(Base, TimestampMixin):
     team_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     count: Mapped[int] = mapped_column(Integer, nullable=False)
     source_gap_ids: Mapped[list] = mapped_column(JSONB, nullable=False, server_default="[]")
+    # GapClassifier.model_version at classification time — a distribution that
+    # cannot be attributed to a model version cannot be compared to the next one.
+    classifier_version: Mapped[str] = mapped_column(String(200), nullable=False, server_default="")
 
 
 class IntelAlignment(Base, TimestampMixin):

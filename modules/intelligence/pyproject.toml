@@ -11,6 +11,15 @@ dependencies = [
     "celery>=5.4",
 ]
 
+[project.optional-dependencies]
+# SetFit gap-pattern classification (AUTUNE_INTELLIGENCE_GAP_CLASSIFIER_IMPL=local).
+# Mirrors modules/gap's local-models extra: heavy ML deps stay opt-in so
+# apps/api doesn't need torch to serve a health check.
+local-models = [
+    "setfit>=1.1",
+    "sentence-transformers>=3.0",
+]
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"

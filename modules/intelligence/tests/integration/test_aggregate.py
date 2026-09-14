@@ -92,6 +92,7 @@ def test_full_pass_writes_score_and_gap_patterns_and_returns_a_snapshot(
     assert {p.pattern_type: p.count for p in patterns} == {"schedule": 2, "ownership": 1}
     schedule = next(p for p in patterns if p.pattern_type == "schedule")
     assert set(schedule.source_gap_ids) == {"gap_1", "gap_2"}
+    assert schedule.classifier_version == "fake"
 
     assert db_session.get(IntelCompletion, meeting).aggregated_at is not None
 
@@ -218,3 +219,33 @@ def test_aggregate_meeting_with_no_completion_row_returns_none(
     db_session: Session, meeting: str
 ) -> None:
     assert service.aggregate_meeting(db_session, meeting) is None
+
+
+def test_gap_classification_normalizes_a_freeform_category(
+    db_session: Session, meeting: str
+) -> None:
+    """C's ``Gap.category`` is free text (see the contract fixture's
+    ``"technical_spec"``) — the classifier, not the raw category, decides the
+    pattern type."""
+    gap_payload = GapReport(
+        meeting_id=meeting,
+        gaps=[
+            {
+                "id": "gap_1",
+                "category": "technical_spec",
+                "title": "성능 요구사항이 정의되지 않았습니다",
+                "severity": "high",
+                "risk_score": 0.8,
+            }
+        ],
+        participation=[{"topic_id": "t1", "spoke": ["u1", "u2"], "silent": ["u3"]}],
+    ).model_dump(mode="json")
+    _stage(db_session, meeting, "gap", gap_payload)
+    row = db_session.get(IntelCompletion, meeting)
+    row.first_seen_at = row.first_seen_at.replace(year=2020)
+    db_session.flush()
+
+    snapshot = service.aggregate_meeting(db_session, meeting)
+
+    assert snapshot is not None
+    assert snapshot.gap_distribution == {"scope": 1}

@@ -47,6 +47,7 @@ from .models import (
     IntelReport,
     IntelScore,
 )
+from .pipeline import get_gap_classifier
 from .schemas import DashboardRead, DashboardScoreEntry, HeatmapCell, SpeakingRatioRead
 from .speaking import SpeakingShare, SpeechSegment, speaker_count_for_gate, speaking_shares
 
@@ -130,10 +131,6 @@ WEIGHTS: Final = {
 }
 GRADE_CUTOFFS: Final = ((0.9, "A"), (0.8, "B"), (0.7, "C"), (0.6, "D"), (0.5, "E"))
 """Descending; value below the last cutoff is F. First heuristic — P2 tunes these."""
-
-_MAX_PATTERN_TYPE: Final = 100
-"""``Gap.category`` has no length limit but ``intel_gap_patterns.pattern_type`` is
-``String(100)`` and part of the PK; truncate before it reaches the table."""
 
 
 def _decision_density(decision_count: int, duration_minutes: float) -> float | None:
@@ -243,9 +240,16 @@ def aggregate_meeting(session: Session, meeting_id: str) -> IntelligenceSnapshot
     }
     score = _quality_score(components)
 
-    distribution = (
-        dict(Counter(g.category[:_MAX_PATTERN_TYPE] for g in gap.gaps)) if gap is not None else {}
-    )
+    pattern_types: list[str] = []
+    classifier_version = ""
+    if gap is not None and gap.gaps:
+        classifier = get_gap_classifier()
+        pattern_types = [
+            c.pattern_type
+            for c in classifier.classify([f"{g.category} {g.title}" for g in gap.gaps])
+        ]
+        classifier_version = classifier.model_version
+    distribution = dict(Counter(pattern_types))
 
     session.execute(
         pg_insert(IntelScore)
@@ -278,18 +282,18 @@ def aggregate_meeting(session: Session, meeting_id: str) -> IntelligenceSnapshot
 
     session.execute(sa.delete(IntelGapPattern).where(IntelGapPattern.meeting_id == meeting_id))
     if gap is not None:
-        ids_by_category: dict[str, list[str]] = {}
-        for g in gap.gaps:
-            category = g.category[:_MAX_PATTERN_TYPE]
-            ids_by_category.setdefault(category, []).append(g.id)
-        for category, count in distribution.items():
+        ids_by_pattern: dict[str, list[str]] = {}
+        for g, pattern_type in zip(gap.gaps, pattern_types, strict=True):
+            ids_by_pattern.setdefault(pattern_type, []).append(g.id)
+        for pattern_type, count in distribution.items():
             session.add(
                 IntelGapPattern(
                     meeting_id=meeting_id,
-                    pattern_type=category,
+                    pattern_type=pattern_type,
                     team_id=meeting.team_id,
                     count=count,
-                    source_gap_ids=ids_by_category[category],
+                    source_gap_ids=ids_by_pattern[pattern_type],
+                    classifier_version=classifier_version,
                 )
             )
 

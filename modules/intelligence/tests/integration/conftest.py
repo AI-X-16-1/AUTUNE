@@ -17,6 +17,24 @@ from sqlalchemy.orm import Session
 import autune_core.entities  # noqa: F401  (shared tables: meetings, teams, ...)
 import autune_intelligence.models  # noqa: F401  (intel_ tables)
 from autune_core import get_settings
+from autune_intelligence.config import get_settings as get_intelligence_settings
+from autune_intelligence.pipeline import reset_cache
+
+
+@pytest.fixture(autouse=True)
+def _fake_gap_classifier(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """No network, no SetFit training, in a suite that runs against real Postgres.
+
+    Mirrors module D's ``_fake_models`` fixture (test_topic_linking.py):
+    ``local`` is the config default, but a real model here would mean every
+    aggregation test trains SetFit against the seed set.
+    """
+    monkeypatch.setenv("AUTUNE_INTELLIGENCE_GAP_CLASSIFIER_IMPL", "fake")
+    get_intelligence_settings.cache_clear()
+    reset_cache()
+    yield
+    get_intelligence_settings.cache_clear()
+    reset_cache()
 
 
 def _repo_root() -> Path:
