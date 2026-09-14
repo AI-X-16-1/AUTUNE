@@ -473,8 +473,11 @@ def test_the_task_publishes_what_it_stored(
 def test_every_run_publishes_the_ids_now_in_the_table(
     wired: Session, published: list[tuple[str, dict]]
 ) -> None:
-    """``build_decisions`` mints fresh ``dec_`` ids on a rerun (#171); a
-    redelivery that stayed quiet would leave D holding ids that are gone."""
+    """A rerun publishes too, with the ids now in the table. Since #171 a rerun
+    over the same utterances keeps each ``dec_`` id, but a decision whose
+    sources changed gets a new one -- and module A mints new ``utt_`` ids
+    whenever it reprocesses a recording (#194) -- so a rerun that stayed quiet
+    could leave D holding ids that are gone."""
     stored(wired)
 
     tasks.on_transcript_ready(transcript())
