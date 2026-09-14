@@ -17,7 +17,12 @@ import pytest
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
-from autune_contracts import TranscriptReady
+from autune_contracts import (
+    EXTRACTION_COMPLETED,
+    ExtractionResult,
+    TranscriptReady,
+    validate_major_version,
+)
 from autune_contracts.enums import UtteranceKind
 from autune_contracts.transcript import (
     PrivacyFlags,
@@ -414,3 +419,104 @@ def test_the_task_never_shows_a_non_consenting_speaker_to_the_classifier(
     assert classifier.seen == ["네 좋아요", "예산은 언제 나오나요"]
     assert kinds(wired) == {"utt_4": "open_question"}
     assert wired.query(ExtDecision).count() == 0
+
+
+# --- step 8: publishing ExtractionResult (#31) -------------------------------------
+
+
+@pytest.fixture
+def published(wired: Session, monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, dict]]:
+    """Every ``publish`` the task makes, instead of the broker."""
+    sent: list[tuple[str, dict]] = []
+
+    def record(event: str, payload: dict) -> list[str]:
+        sent.append((event, payload))
+        return []
+
+    monkeypatch.setattr(tasks, "publish", record)
+    return sent
+
+
+def test_the_task_publishes_what_it_stored(
+    wired: Session, published: list[tuple[str, dict]]
+) -> None:
+    """What D and E receive is the table, read the way ``GET /results`` reads it."""
+    stored(wired)
+
+    tasks.on_transcript_ready(transcript())
+
+    ((event, payload),) = published
+    assert event == EXTRACTION_COMPLETED
+    result = ExtractionResult.model_validate(payload)
+    validate_major_version(result)  # what D's and E's consumers do first
+    assert result == service.result_for_meeting(wired, MEETING)
+    assert [d.id for d in result.decisions] == [d.id for d in wired.query(ExtDecision)]
+    assert len(result.classifications) == 4
+    assert len(result.action_items) == 1
+    assert [a.utterance_id for a in result.ambiguous_agreements] == ["utt_5"]
+
+
+def test_every_run_publishes_the_ids_now_in_the_table(
+    wired: Session, published: list[tuple[str, dict]]
+) -> None:
+    """``build_decisions`` mints fresh ``dec_`` ids on a rerun (#171); a
+    redelivery that stayed quiet would leave D holding ids that are gone."""
+    stored(wired)
+
+    tasks.on_transcript_ready(transcript())
+    tasks.on_transcript_ready(transcript())
+
+    assert len(published) == 2
+    latest = ExtractionResult.model_validate(published[1][1])
+    assert [d.id for d in latest.decisions] == [d.id for d in wired.query(ExtDecision)]
+
+
+def test_the_result_goes_out_after_the_writes_commit(
+    session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two modules act on this event; a rollback after it had gone would be two
+    modules analysing a result that was never stored. The scope records where it
+    committed, so moving ``publish`` inside the write transaction changes the
+    order this sees."""
+    order: list[str] = []
+
+    @contextmanager
+    def scope() -> Iterator[Session]:
+        yield session
+        session.commit()
+        order.append("commit")
+
+    monkeypatch.setattr(tasks, "session_scope", scope)
+    monkeypatch.setattr(tasks, "get_classifier", FakeClassifier)
+    monkeypatch.setattr(tasks, "publish", lambda event, payload: order.append("publish") or [])
+    stored(session)
+
+    tasks.on_transcript_ready(transcript())
+
+    # The consent read, then the writes, then the event.
+    assert order == ["commit", "commit", "publish"]
+
+
+def test_nothing_is_published_when_the_writes_fail(
+    wired: Session, published: list[tuple[str, dict]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    stored(wired)
+
+    def broken(*args: object, **kwargs: object) -> None:
+        raise RuntimeError("the write failed")
+
+    monkeypatch.setattr(service, "build_decisions", broken)
+
+    with pytest.raises(RuntimeError, match="the write failed"):
+        tasks.on_transcript_ready(transcript())
+
+    assert published == []
+
+
+def test_nothing_is_published_for_a_transcript_it_refuses(
+    wired: Session, published: list[tuple[str, dict]]
+) -> None:
+    with pytest.raises(ValueError, match="not PII-masked"):
+        tasks.on_transcript_ready(transcript(masked=False))
+
+    assert published == []
