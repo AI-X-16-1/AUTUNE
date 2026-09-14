@@ -12,6 +12,7 @@ from collections.abc import Collection, Sequence
 from datetime import UTC, date, datetime
 
 from sqlalchemy import delete, func, select
+from sqlalchemy.dialects import postgresql, sqlite
 from sqlalchemy.orm import Session, selectinload
 
 from autune_contracts.enums import ActionStatus, UtteranceKind
@@ -806,28 +807,56 @@ def record_ambiguous_agreements(
     same rule as the classifications. A row a DM went out for stays: the speaker
     has the question in front of them, and may already have answered it.
 
+    **Both writes are one statement each, decided by the database** -- never by
+    rows this function read a moment earlier. Two things can change a row in
+    between: a sender can put the question to the speaker (``open_confirmation``
+    fills ``sent_at``), and a redelivered task (``acks_late``) can record the
+    same meeting at the same time. A delete chosen from a stale read would
+    remove a question the speaker already has, and their answer would then land
+    on nothing; an insert chosen from one would fail on the primary key. So the
+    delete carries ``sent_at IS NULL`` in its own WHERE, and the insert skips a
+    row that is already there.
+
     Returns how many of this run's utterances were ambiguous.
     """
     ambiguous = [u.id for u in classified if u.kind is UtteranceKind.AMBIGUOUS]
-    wanted = set(ambiguous)
-    existing = {
-        row.utterance_id: row
-        for row in session.scalars(
-            select(ExtConfirmation).where(ExtConfirmation.meeting_id == meeting_id)
+    session.execute(
+        delete(ExtConfirmation)
+        .where(
+            ExtConfirmation.meeting_id == meeting_id,
+            ExtConfirmation.utterance_id.not_in(ambiguous),
+            ExtConfirmation.sent_at.is_(None),
         )
-    }
-    for utterance_id, row in existing.items():
-        if utterance_id not in wanted and row.sent_at is None:
-            session.delete(row)
-    session.add_all(
-        ExtConfirmation(
-            utterance_id=utterance_id, meeting_id=meeting_id, reason=WEAK_ASSENT, sent_at=None
-        )
-        for utterance_id in ambiguous
-        if utterance_id not in existing
+        .execution_options(synchronize_session="fetch")
     )
-    session.flush()
+    if ambiguous:
+        session.execute(
+            _insert_if_absent(session)
+            .values(
+                [
+                    {
+                        "utterance_id": utterance_id,
+                        "meeting_id": meeting_id,
+                        "reason": WEAK_ASSENT,
+                        "sent_at": None,
+                    }
+                    for utterance_id in ambiguous
+                ]
+            )
+            .on_conflict_do_nothing(index_elements=["utterance_id"])
+        )
     return len(ambiguous)
+
+
+def _insert_if_absent(session: Session) -> postgresql.Insert | sqlite.Insert:
+    """An ``ext_confirmations`` insert that can take ``ON CONFLICT DO NOTHING``.
+
+    The clause is spelled the same on both databases but built per dialect:
+    PostgreSQL is every deployment, SQLite is the unit suite.
+    """
+    if session.get_bind().dialect.name == "postgresql":
+        return postgresql.insert(ExtConfirmation)
+    return sqlite.insert(ExtConfirmation)
 
 
 def unasked_confirmations(session: Session, meeting_id: str) -> list[ExtConfirmation]:

@@ -12,8 +12,8 @@ from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import Session
+from sqlalchemy import Result, create_engine, event, insert, update
+from sqlalchemy.orm import ORMExecuteState, Session
 
 from autune_contracts.enums import UtteranceKind
 from autune_core import Base
@@ -118,6 +118,64 @@ def test_a_rerun_keeps_a_row_the_speaker_was_asked_about(session: Session) -> No
 
     record(session, K.COMMITMENT)
 
+    assert set(rows(session)) == {"utt_0"}
+
+
+def test_a_rerun_keeps_a_row_asked_about_after_the_session_last_read_it(
+    session: Session,
+) -> None:
+    """The delete goes by the database's ``sent_at``, not the session's copy.
+
+    Raised on #153: a sender can fill ``sent_at`` in another transaction while
+    this session still holds the row as unasked. Deleting on that copy would
+    remove a question the speaker has, and their answer would land on nothing.
+    """
+    record(session, K.AMBIGUOUS)
+    # Held, because the identity map is weak: a copy nobody references is
+    # dropped, and the next read builds a fresh one from the database -- which
+    # would hide exactly the staleness under test.
+    held = rows(session)["utt_0"]
+    assert held.sent_at is None  # the session's copy: unasked
+    # Straight on the connection, so the session never hears of it -- the way a
+    # sender's own transaction would change the row.
+    table = ExtConfirmation.__table__
+    session.connection().execute(
+        update(table).where(table.c.utterance_id == "utt_0").values(sent_at=datetime.now(UTC))
+    )
+
+    record(session, K.COMMITMENT)
+
+    assert held.sent_at is None  # still stale: the delete must not have trusted it
+    session.expire_all()
+    assert set(rows(session)) == {"utt_0"}
+
+
+def test_a_row_another_run_wrote_in_the_meantime_is_left_alone(session: Session) -> None:
+    """A redelivered task records the same meeting at the same time.
+
+    Raised on #153: the other run's row lands after this run's first statement
+    and before its insert. The insert has to skip it, not fail on the primary
+    key and take the whole meeting's transaction down with it.
+    """
+    other_run_wrote = False
+
+    @event.listens_for(session, "do_orm_execute")
+    def the_other_run(state: ORMExecuteState) -> Result[object] | None:
+        nonlocal other_run_wrote
+        if other_run_wrote:
+            return None
+        other_run_wrote = True
+        result = state.invoke_statement()
+        session.connection().execute(
+            insert(ExtConfirmation.__table__).values(
+                utterance_id="utt_0", meeting_id=MEETING, reason="weak_assent", sent_at=None
+            )
+        )
+        return result
+
+    assert record(session, K.AMBIGUOUS) == 1
+
+    assert other_run_wrote
     assert set(rows(session)) == {"utt_0"}
 
 
