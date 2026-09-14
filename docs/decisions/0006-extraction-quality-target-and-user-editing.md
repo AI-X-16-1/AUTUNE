@@ -44,6 +44,7 @@ it, so the figure can be read by someone who does not know the task.
 
 The metric we train against is the classifier's **five-way macro F1**, because
 that is what the evaluation harness scores and what a training run can move.
+(Taken with `none` present — see Amendments.)
 Action item F1 is derived from it and exists to compare against the literature.
 
 **Extraction output is a draft the user completes.** The action item screen is a
@@ -132,3 +133,23 @@ only a rule nobody checked.
 `docs/modules/extraction.md` was corrected in #66. This document was missed, and
 an ADR is what somebody reads before implementing an endpoint, so the wrong
 instruction outlived the right one by a day.
+
+**The metric sees the rest of the meeting (#149).** "Five-way macro F1" was
+measured on labelled utterances only, and 84.8% of AMI's dialogue acts are
+none of the five kinds. The classifier could not say so, and the metric could
+not see that it could not. On AMI's real distribution the same model that
+scored 0.655 scored 0.225, with 1,888 false labels per 2,400 utterances and
+half of them `decision` — the field module D builds lineage on.
+
+The metric is now **macro F1 over the five kinds, on an evaluation set with
+`none` at its real proportion.** `none` is a label the classifier can give and
+the evaluation set can hold, and it stays inside module B; the contract has no
+such kind. It is scored and never averaged. Averaging the majority class in
+would reward the model for saying nothing; leaving it out of the arithmetic
+entirely would hide exactly the errors that motivated this. A none utterance
+called `decision` counts against `decision`'s precision, and a decision called
+none counts against its recall. On a set with no `none` rows the number is the
+one this ADR originally defined.
+
+The six-week target (0.43 action item F1) is unchanged. It is the commitment
+class's F1, and it is now taken under the same conditions.
