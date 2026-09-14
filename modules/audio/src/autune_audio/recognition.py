@@ -99,7 +99,7 @@ _SYLLABLES: Final = "".join(_DIGIT_SYLLABLES)
 _RUN: Final = re.compile(rf"[{_SYLLABLES}0-9][{_SYLLABLES}0-9\s-]*")
 
 MIN_SPOKEN_SYLLABLES: Final = 3
-"""A run with fewer spoken syllables than this is not a number being read out.
+"""How many spoken syllables a run needs when nothing else vouches for it.
 
 Letting a run contain digits is what makes a mixed transcription reachable, and
 it also lets a number already written as digits reach across a space into
@@ -108,9 +108,23 @@ and a version string plus the word for "moving house" came out masked as an
 account number. Requiring some of the run to actually be spoken separates "a
 number Whisper wrote in two scripts" from "a number standing next to a word".
 
-Three because a switch of script mid-number happens in chunks -- `공일공 1234`,
-`010-1234 오육칠팔` -- never for one syllable. A number written entirely in
-digits needs none of this: the patterns read it directly.
+Three, because a switch of script across a pause happens in chunks --
+`공일공 1234`, `010-1234 오육칠팔` -- never for one syllable. A number written
+entirely in digits needs none of this: the patterns read it directly.
+
+**This threshold applies only across a separator**, which is the second half of
+the rule and the part that was missing. Three was originally written as a claim
+about numbers -- "a script switch never happens for one syllable" -- and that
+claim is false where the switch happens *inside* a group:
+
+    010-1234-56칠팔   nothing matched at all, so nothing was masked
+    010 1234 567팔    read as a ten-digit account, so the rule kept 4567
+
+The second is the worse one. It is masked, `counts` records a masked span, and
+four digits of a phone number are standing in the result -- the same shape #138
+closed on the pattern side by putting `digits` above `account`, arriving here
+from the masker side. `_glued_to_a_digit` is what admits these; see it for why
+the threshold cannot simply be lowered instead.
 """
 
 MIN_RUN_DIGITS: Final = 8
@@ -130,13 +144,43 @@ nonsense.
 """
 
 
+def _glued_to_a_digit(run: str) -> bool:
+    """True when the run switches script with no separator at the switch.
+
+    This is what tells `010 1234 567팔` from `버전 20260910 이사 갑니다`. Both are
+    one run, both are mostly digits, both end in digit syllables; the difference
+    is that the first switches script *inside* a group and the second switches
+    across a space. Korean writes a number's groups without internal spaces and
+    writes a following word with one, so the space is the signal -- and a
+    stronger one than counting syllables. `567팔` has one syllable and is
+    unmistakably part of the number; `20260910 이사` has two and is not.
+
+    Only the admission rule moves. `MIN_RUN_DIGITS` still applies, and it is what
+    keeps ordinary Korean out: `10일 이사 갑니다` and `2사분기` are glued too, at
+    five and three digit positions.
+
+    Both directions, because Whisper switches script in either -- `오1234...` is
+    the same event as `...1234오` seen from the other side.
+
+    The cost is real, and it is the trade `masking.py` states in its first
+    paragraph. A run of ten-plus digits with a digit syllable written hard
+    against it -- `202609101일자로` -- now reads as an account and comes out
+    masked. That is a masked version string; what it buys is an unmasked phone
+    number.
+    """
+    return any(
+        (run[i] in _DIGIT_SYLLABLES and run[i - 1].isdigit())
+        or (run[i].isdigit() and run[i - 1] in _DIGIT_SYLLABLES)
+        for i in range(1, len(run))
+    )
+
+
 def _worth_rewriting(run: str) -> bool:
     """Long enough to be a number, and spoken enough to be one being read out."""
     spoken = sum(1 for c in run if c in _DIGIT_SYLLABLES)
-    return (
-        spoken >= MIN_SPOKEN_SYLLABLES
-        and spoken + sum(1 for c in run if c.isdigit()) >= MIN_RUN_DIGITS
-    )
+    if spoken + sum(1 for c in run if c.isdigit()) < MIN_RUN_DIGITS:
+        return False
+    return spoken >= MIN_SPOKEN_SYLLABLES or (spoken >= 1 and _glued_to_a_digit(run))
 
 
 MAX_PARTICLE_SYLLABLES: Final = 3

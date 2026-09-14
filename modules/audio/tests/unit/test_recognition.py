@@ -243,9 +243,73 @@ def test_digits_beside_a_word_are_not_a_spoken_number(
     digits plus 이사, read as 24, matched the account shape. A run has to be
     spoken to be a spoken number.
     """
-    assert MIN_SPOKEN_SYLLABLES >= 3
-    for line in ("버전 20260910 이사 갑니다", "2026-09-10에 이사 갑니다", "IP 192.168.10.20 이요"):
+    for line in (
+        "버전 20260910 이사 갑니다",
+        "2026-09-10에 이사 갑니다",
+        "IP 192.168.10.20 이요",
+        "IP 192 168 10 20 이요",
+        "주문번호 20260910 이 건은 보류입니다",
+        "티켓 12345 이슈 67890 사항 확인",
+    ):
         assert mask(line, recogniser=recogniser).text == line
+
+
+# The syllables are hard against a digit, so the script switches inside a group.
+GLUED = [
+    ("010-1234-56칠팔", "***-****-****"),
+    ("010 1234 567팔", "*** **** ****"),
+    ("010-1234-5육칠팔", "***-****-****"),
+    ("01012345육칠팔", "***********"),
+]
+
+
+@pytest.mark.parametrize(("line", "expected"), GLUED)
+def test_a_tail_of_one_or_two_syllables_is_still_the_number(
+    line: str, expected: str, recogniser: SpokenNumberRecogniser
+) -> None:
+    """`MIN_SPOKEN_SYLLABLES` was a claim about numbers, and it was false.
+
+    Three syllables was written as "a script switch never happens for one
+    syllable". It does, when the switch is inside a group rather than across a
+    pause, and both ways it failed were bad:
+
+        010-1234-56칠팔   nine digits, so no pattern matched and nothing was
+                          masked -- `mask` and `find_unmasked` both silent
+        010 1234 567팔    ten digits, read as an account, and the account rule
+                          kept the last four: `*** ***4 567팔`
+
+    The second is the one to keep a test on. It is masked, `counts` records a
+    masked span, and four digits of a phone number are standing in the output --
+    a leak that looks like a success from every direction except reading it.
+    """
+    masked = mask(line, recogniser=recogniser)
+    assert masked.text == expected
+    assert masked.counts == {"phone": 1}
+
+
+def test_the_separator_is_what_tells_them_apart(
+    recogniser: SpokenNumberRecogniser,
+) -> None:
+    """The same syllables, glued or spaced, and only one of them is a number.
+
+    The same eight digits, one syllable, and only the glued one is a number.
+    This is why the threshold could not simply be lowered to one: at one
+    syllable across a separator, `버전 20260910 이사` comes back. Korean writes a
+    number's groups without internal spaces and writes the next word with one,
+    so the space carries the answer.
+
+    **What this does not reach.** Spell the tail off on its own --
+    `010 1234 567 팔` -- and the recogniser declines it, correctly, while the
+    patterns still read the remaining `010 1234 567` as a ten-digit account and
+    the account rule keeps `4567`. That is the same output for input with no
+    syllable in it at all, so it is the account rule's last-four, not this
+    threshold, and it lives in `packages/integrations`. Issue #182.
+    """
+    assert mask("010 1234 567팔", recogniser=recogniser).text == "*** **** ****"
+    assert mask("버전 20260910 이사 갑니다", recogniser=recogniser).text == (
+        "버전 20260910 이사 갑니다"
+    )
+    assert MIN_SPOKEN_SYLLABLES >= 3  # still what a run across a separator needs
 
 
 def test_the_more_specific_reading_wins(recogniser: SpokenNumberRecogniser) -> None:
