@@ -60,9 +60,13 @@ class ActionItemUpdate(BaseModel):
 
 
 class ActionItemRead(BaseModel):
-    """One item as this module's own screens read it."""
+    """One item as this module's own screens read it.
 
-    model_config = ConfigDict(from_attributes=True)
+    Not ``from_attributes``: two of these fields are not columns on the row.
+    ``source_utterance_ids`` lives in the link table and ``is_candidate`` is
+    derived from a setting, so an ``ExtActionItem`` alone cannot answer either.
+    Built by ``service.read_model``.
+    """
 
     id: str
     meeting_id: str
@@ -73,3 +77,64 @@ class ActionItemRead(BaseModel):
     status: str
     confidence: float
     origin: str
+
+    source_utterance_ids: list[str]
+    """The utterances this item was drawn from. Empty for a hand-added item.
+
+    This response did not carry them until now, and the gap was not cosmetic:
+    S17's card reads the list to decide between "근거 발화 N건" and "직접 추가",
+    and an absent list is an empty one. Every model-extracted item was therefore
+    labelled as one somebody typed -- the distinction ADR 0006 and the edit-cost
+    metric are built on, printed inverted, with nothing failing.
+
+    Ordered by row id, which is insertion order. ``ext_action_item_sources`` has
+    no position column; when the drawer needs them in spoken order that is the
+    change to make, not a sort here over a field that does not exist.
+    """
+
+    is_candidate: bool
+    """Whether the model was unsure enough that this is shown apart from the
+    board rather than asserted on it.
+
+    Decided here rather than in the browser. The threshold is a property of the
+    classifier, and a client comparing against a number it happens to hold is one
+    deploy away from disagreeing with the server about which items the meeting
+    produced.
+
+    **False for everything while ``candidate_confidence`` is unset**, which is
+    its default until #10 measures one.
+    """
+
+
+class SourceUtterance(BaseModel):
+    """One utterance an item was drawn from, as the drawer quotes it.
+
+    The text is what module A stored, which is after masking. There is no
+    unmasked string anywhere this could have been read from -- privacy.md
+    section 2 puts the masker before the first write.
+    """
+
+    id: str
+    text: str
+
+
+class ActionItemDetail(ActionItemRead):
+    """One item and its evidence, for S18.
+
+    The list carries the source utterances' ids, never their words: a verbatim
+    quotation leaves the server only when the drawer asks for one item's.
+
+    That does not make the list free of meeting content. ``description`` is
+    drawn from what was said and ``assignee_label`` is a person's name, so
+    nothing may forward a list response outside our infrastructure on the
+    grounds that it quotes nobody -- ``check_outbound`` catches the shapes of
+    personal data, not a Korean name or the sentence that settled a decision.
+    """
+
+    sources: list[SourceUtterance]
+    """In the order they were spoken, which is the order the argument was made.
+
+    ``source_utterance_ids`` above stays in insertion order: it is built from
+    the row alone. This list is read from ``utterances`` anyway, so the spoken
+    order comes with it at no extra cost.
+    """

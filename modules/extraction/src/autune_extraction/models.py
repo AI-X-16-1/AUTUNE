@@ -112,6 +112,16 @@ class ExtActionItem(Base, TimestampMixin):
     """The name as spoken, kept when it does not resolve to an account."""
 
     due_date: Mapped[date | None] = mapped_column(Date)
+    due_text: Mapped[str | None] = mapped_column(String(100))
+    """The words the due date was read from -- "다음 주 금요일" -- which S18 shows
+    beside the date so a reader can check the arithmetic. A fragment of the
+    masked utterance.
+
+    Cleared when a person sets the date themselves: the phrase no longer
+    explains the value, and keeping it would be holding on to the version they
+    corrected (#109).
+    """
+
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="needs_confirmation")
     confidence: Mapped[float] = mapped_column(Float, nullable=False)
     """A hand-added item is 1.0: a person typing it is the certainty."""
@@ -119,7 +129,12 @@ class ExtActionItem(Base, TimestampMixin):
     origin: Mapped[str] = mapped_column(String(16), nullable=False, default="model")
 
     sources: Mapped[list[ExtActionItemSource]] = relationship(
-        back_populates="action_item", cascade="all, delete-orphan"
+        back_populates="action_item",
+        cascade="all, delete-orphan",
+        # Insertion order, which is the order they were handed to us. Ordering
+        # here rather than at each read keeps a caller from sorting on ``id``
+        # before the rows are flushed, when every id is still None.
+        order_by="ExtActionItemSource.id",
     )
 
 
@@ -220,6 +235,54 @@ class ExtDecisionSource(Base):
     position: Mapped[int] = mapped_column(Integer, nullable=False)
 
     decision: Mapped[ExtDecision] = relationship(back_populates="sources")
+
+
+class ExtClassification(Base):
+    """What the classifier said one utterance is. Step 1 of the pipeline.
+
+    Keyed by ``utterance_id``: one utterance has one answer, and a meeting that
+    is reprocessed replaces its rows rather than adding a second set -- the
+    idempotency ``async-pipeline.md`` asks for, held by the primary key rather
+    than by care.
+
+    **Only the five kinds are stored.** An utterance the model calls ``none``
+    has no row, which is also how the contract says it: it is absent from
+    ``ExtractionResult.classifications`` (#149). Storing it would be most of a
+    meeting's utterances again, as rows that say nothing happened in them.
+
+    ``model_version`` is on every row because a classification that cannot be
+    attributed to a checkpoint cannot be compared against the next one, and a
+    meeting processed before a retrain keeps the labels the old model gave it
+    until it is processed again.
+    """
+
+    __tablename__ = "ext_classifications"
+    __table_args__ = (
+        CheckConstraint(
+            "kind IN ('commitment','decision','open_question','concern','ambiguous')",
+            name="ck_ext_classifications_kind",
+        ),
+        CheckConstraint(
+            "confidence >= 0 AND confidence <= 1", name="ck_ext_classifications_confidence"
+        ),
+    )
+
+    utterance_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("utterances.id", ondelete="CASCADE"), primary_key=True
+    )
+    meeting_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("meetings.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    confidence: Mapped[float] = mapped_column(Float, nullable=False)
+    model_version: Mapped[str] = mapped_column(String(200), nullable=False)
+    nli_verified: Mapped[bool] = mapped_column(nullable=False, default=False)
+    """Step 4 has not been built. False until it is, which is also what the
+    contract's ``Classification.nli_verified`` defaults to."""
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
 
 
 def _utc(moment: datetime) -> datetime:

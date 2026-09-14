@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import math
 from typing import TYPE_CHECKING
 
 import httpx
@@ -19,8 +20,8 @@ if TYPE_CHECKING:
 
 
 class BgeRerankerKoHttp:
-    """``POST {endpoint}/rerank {"query": str, "passages": [str]}`` ->
-    ``{"scores": [float]}``; ``GET {endpoint}/info`` -> ``{"model_version"}``.
+    """Expects ``POST {endpoint}/rerank {"query": str, "passages": [str]}`` ->
+    ``{"scores": [float]}`` (sigmoid-normalised, ``[0, 1]``) and ``GET {endpoint}/info``.
     """
 
     def __init__(self, settings: ContextSettings) -> None:
@@ -63,7 +64,8 @@ class BgeRerankerKoLocal:
     def score(self, query: str, passages: list[str]) -> list[float]:
         if not passages:
             return []
-        return [float(s) for s in self._model.predict([(query, p) for p in passages])]
+        raw = self._model.predict([(query, p) for p in passages])
+        return [1.0 / (1.0 + math.exp(-float(s))) for s in raw]
 
 
 class FakeReranker:

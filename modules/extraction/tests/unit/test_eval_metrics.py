@@ -319,3 +319,88 @@ def test_a_line_without_text_is_still_rejected(tmp_path: Path) -> None:
 
     with pytest.raises(EvalSetError, match="line 1: KeyError"):
         load_eval_set(path)
+
+
+# --- none: scored, never averaged (#149) --------------------------------------
+
+
+def test_a_none_utterance_called_a_decision_costs_decision_its_precision() -> None:
+    """Where #149's false labels show up: half of the none utterances went to
+    ``decision`` and the closed-world metric never saw one of them."""
+    gold = [K.DECISION, None, None, None]
+    predicted = [K.DECISION, K.DECISION, K.DECISION, K.DECISION]
+
+    report = score(gold, predicted)
+
+    assert report.by_kind(K.DECISION).precision == pytest.approx(0.25)
+    assert report.by_kind(K.DECISION).recall == 1.0
+
+
+def test_a_kind_predicted_as_none_is_a_miss() -> None:
+    report = score([K.COMMITMENT, K.COMMITMENT], [K.COMMITMENT, None])
+
+    assert report.by_kind(K.COMMITMENT).recall == pytest.approx(0.5)
+    assert report.by_kind(K.COMMITMENT).precision == 1.0
+
+
+def test_none_is_not_in_the_average() -> None:
+    """Getting the easy majority right must not lift the metric.
+
+    One commitment right and a hundred none right: macro F1 is commitment's F1
+    over five, exactly as if the hundred were not there. Accuracy counts them.
+    """
+    gold = [K.COMMITMENT] + [None] * 100
+    predicted = list(gold)
+
+    report = score(gold, predicted)
+
+    assert report.macro_f1 == pytest.approx(1 / 5)
+    assert report.accuracy == 1.0
+    assert (report.none_support, report.none_predicted) == (100, 100)
+
+
+def test_a_set_without_none_scores_as_it_always_did() -> None:
+    report = score(ALL_FIVE, list(ALL_FIVE))
+
+    assert report.macro_f1 == 1.0
+    assert report.none_support == 0
+
+
+def eval_file(tmp_path: Path, kinds: list[str]) -> Path:
+    path = tmp_path / "eval.jsonl"
+    path.write_text(
+        "\n".join(
+            json.dumps({"utterance_id": f"utt_{i}", "kind": kind, "text": "..."})
+            for i, kind in enumerate(kinds)
+        ),
+        encoding="utf-8",
+    )
+    return path
+
+
+def test_the_eval_set_and_the_predictions_may_say_none(tmp_path: Path) -> None:
+    eval_set = load_eval_set(eval_file(tmp_path, ["none", "decision"]))
+    predictions = tmp_path / "run.jsonl"
+    predictions.write_text(
+        '{"utterance_id": "utt_0", "kind": "decision"}\n{"utterance_id": "utt_1", "kind": "none"}',
+        encoding="utf-8",
+    )
+
+    assert eval_set.labels == [None, K.DECISION]
+    assert load_predictions(predictions, eval_set) == [K.DECISION, None]
+
+
+def test_a_misspelt_none_is_refused_not_read_as_none(tmp_path: Path) -> None:
+    """``kind_or_none`` accepts exactly ``none``; "nothing" is a typo, and a
+    typo read as none would quietly shrink every kind's support."""
+    with pytest.raises(EvalSetError):
+        load_eval_set(eval_file(tmp_path, ["nothing"]))
+
+
+def test_the_report_shows_none_and_warns_when_there_is_none_of_it() -> None:
+    closed = format_report(score(ALL_FIVE, list(ALL_FIVE)), "abc")
+    natural = format_report(score([K.COMMITMENT, None], [K.COMMITMENT, None]), "abc")
+
+    assert "(none)" in natural
+    assert "no 'none' rows" in closed
+    assert "no 'none' rows" not in natural

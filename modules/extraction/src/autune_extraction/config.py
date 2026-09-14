@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 
-from pydantic import model_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -56,6 +56,39 @@ class ExtractionSettings(BaseSettings):
     inference in the product, so the setting matters more here than in module A,
     which runs its model once per recording.
     """
+
+    candidate_confidence: float | None = Field(default=None, ge=0, le=1)
+    """Below this confidence an item is shown as a candidate rather than asserted.
+
+    ADR 0006 ranks recall above precision -- a wrong item costs a click, a
+    missing one costs re-reading the meeting -- so low-confidence items are kept
+    and marked rather than dropped.
+
+    **Empty by default, and that is the point.** The number has to come from the
+    classifier's confidence distribution over the evaluation set (#10), which
+    does not exist yet. Until it does there is no honest threshold, so nothing is
+    a candidate. A default picked to make the band look populated would be a
+    number nobody measured, printed to the user as though somebody had.
+    """
+
+    @field_validator("candidate_confidence", mode="before")
+    @classmethod
+    def _blank_means_unset(cls, value: object) -> object:
+        """An empty environment variable is "no threshold", not a parse error.
+
+        ``.env.example`` carries the name with no value, because that is how a
+        setting says "deliberately not chosen" to whoever opens the file. Without
+        this, ``cp .env.example .env`` -- the documented first run -- makes
+        ``get_settings()`` raise on every call, and ``read_model`` calls it for
+        every action item read.
+
+        Every other blank in ``.env.example`` happens to be a ``str`` field,
+        where "" parses fine. This is the first one that is not, so nothing
+        caught it before. CI does not either: there is no ``.env`` there.
+        """
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
 
     @model_validator(mode="after")
     def _device_is_known(self) -> ExtractionSettings:

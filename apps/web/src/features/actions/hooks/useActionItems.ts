@@ -10,7 +10,7 @@ import {
   type ActionItemDraft,
   type ActionItemFilter,
 } from "../api";
-import type { ActionItem, ActionStatus } from "../types";
+import type { ActionItemRead, ActionStatus } from "../types";
 
 /**
  * The board's items, and the four things a person can do to them.
@@ -21,7 +21,7 @@ import type { ActionItem, ActionStatus } from "../types";
  * separate call sites.
  */
 export function useActionItems(filter: ActionItemFilter = {}) {
-  const [items, setItems] = useState<ActionItem[]>([]);
+  const [items, setItems] = useState<ActionItemRead[]>([]);
   const [error, setError] = useState<Error | null>(null);
   const [loading, setLoading] = useState(true);
 

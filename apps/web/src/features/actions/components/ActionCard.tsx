@@ -1,7 +1,7 @@
 import { StatusDot } from "@/shared/ui";
 
 import { isCandidate } from "../types";
-import type { ActionItem } from "../types";
+import type { ActionItemRead } from "../types";
 
 /**
  * One card on the action board (S17).
@@ -19,7 +19,7 @@ export function ActionCard({
   selected = false,
   onSelect,
 }: {
-  item: ActionItem;
+  item: ActionItemRead;
   selected?: boolean;
   onSelect?: (id: string) => void;
 }) {
@@ -94,13 +94,16 @@ export function ActionCard({
  * A candidate says so first. The point of showing a low-confidence item at all
  * is that the user can judge it, and a card that looks identical to a confident
  * one asks them to trust something the model did not.
+ *
+ * "직접 추가" is read from `origin`, not inferred from an empty source list. A
+ * model item whose utterances were deleted with the transcript also has none,
+ * and calling it hand-added would print the distinction edit cost is measured
+ * on the wrong way round.
  */
-function reasonFor(item: ActionItem): string {
-  if (isCandidate(item)) {
-    return `후보 · 근거 발화 ${item.source_utterance_ids?.length ?? 0}건`;
-  }
+function reasonFor(item: ActionItemRead): string {
+  if (item.origin === "user") return "직접 추가";
   const sources = item.source_utterance_ids?.length ?? 0;
-  return sources ? `근거 발화 ${sources}건` : "직접 추가";
+  return isCandidate(item) ? `후보 · 근거 발화 ${sources}건` : `근거 발화 ${sources}건`;
 }
 
 function isOverdue(dueDate: string | null | undefined): boolean {

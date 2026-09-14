@@ -327,12 +327,16 @@ delete-then-insert within one transaction, and `publish_if_ready` checks
 
 ### Event publishing
 
-D is the repository's first module to publish a Celery event. A module may not
-import `apps/worker`. The intended mechanism is a thin
-`autune_core.publish_event(name, payload)` helper that owns the
-`contract.model_dump(mode="json") → send_task` convention for every module.
-Because it touches `packages/core` it needs team approval; until it lands, D
-publishes with `celery.current_app.send_task`.
+D is the repository's first module to publish. A module may not import
+`apps/worker`, and the async pipeline has no broker abstraction — a producer
+calls its consumer's task by name (`async-pipeline.md`, "Payloads"). So
+`service` publishes with `celery.current_app.send_task(
+"autune.intelligence.on_context_completed", args=[links.model_dump(mode="json")])`.
+
+The intended longer-term mechanism is a thin `autune_core.publish_event(name,
+payload)` helper that owns the `contract.model_dump → send_task` convention for
+every module; it touches `packages/core`, so it needs team approval. When it
+lands, the one `send_task` call here moves behind it.
 
 ## Slack surface
 
@@ -386,7 +390,7 @@ confirmation flow feed threshold tuning.
 | --- | --- |
 | **0** | Lock the model stack and embedding dimension. Define the self-hosted serving contract with `infra/`. Propose `autune_core.publish_event` in Slack. Land this document. |
 | **1** | Five migrations (`ctx_embeddings`, `ctx_topic_links`, `ctx_decisions`, `ctx_decision_versions`, `ctx_meeting_status`). `models.py`, `config.py`, manifest dependencies. `pipeline/` skeleton: the four Protocols, `Fake*` implementations, `registry.py` with the dimension guard, the warm-up hook. Tests: migration round-trip, meeting-deletion cascade, orphan-thread sweep. |
-| **2** | `KureHttpEmbedder`, `BgeRerankerKoHttp`, `HybridRetriever` (RRF), `topics.py`. Wire `on_transcript_ready` and `publish_if_ready` (including the B-timeout path). Evaluation harness and the first accuracy number. |
+| **2** | `HybridRetriever` (KURE dense + BM25, RRF), `topics.py` (TextTiling + kiwipiepy labels). `service.run_topic_linking`, `publish_if_ready` (B-timeout path), the `send_task` publish. `on_transcript_ready` / `on_extraction_completed` wired. Follow-up: the evaluation harness and the first accuracy number. |
 | **3** | `KlueKorNliHttp` and the KorNLI fine-tuning job. Wire `on_extraction_completed`: thread matching, NLI, version records, absent-stakeholder detection. Publish once both halves are in. |
 | **4** | The four API routes (recursive-CTE lineage, confirmation flow). Frontend: S22 lineage timeline, S15 context tab, link-confirmation UI. |
 | **5** | Slack notice and drift warning. Threshold tuning from dismissals. Push the metric to 0.75+. |

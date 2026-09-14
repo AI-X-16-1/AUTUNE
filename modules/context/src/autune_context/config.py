@@ -46,6 +46,14 @@ class ContextSettings(BaseSettings):
     nli_local_model: str = ""
     """Path or hub id of the in-house checkpoint. Set for ``klue_kornli_local``."""
 
+    # --- topic segmentation (TextTiling) ---
+    topic_window: int = 3
+    """Utterances per block on each side of a candidate boundary."""
+    topic_min_segment: int = 3
+    """Shortest topic segment, in utterances."""
+    topic_depth_threshold: float = 0.1
+    """Minimum TextTiling depth score for a similarity dip to become a boundary."""
+
     # --- retrieval / linking knobs ---
     retrieve_top_k: int = 50
     rerank_top_k: int = 10

@@ -13,11 +13,13 @@ from pathlib import Path
 
 import pytest
 
+from autune_contracts.enums import UtteranceKind
 from autune_extraction.eval.dataset import load_eval_set
 from autune_extraction.labeling.corpus import (
     SPLITS,
     AmiReader,
     Example,
+    add_none,
     split_by_meeting,
     write_jsonl,
 )
@@ -340,3 +342,129 @@ def test_no_two_examples_share_an_id(tmp_path: Path) -> None:
 
     assert ids == list(dict.fromkeys(ids))
     assert all(ids)
+
+
+# --- none: the utterances that are none of the kinds (#149) ------------------
+
+
+def test_the_unlabelled_act_comes_back_as_none_when_asked(tmp_path: Path) -> None:
+    """``Assess`` maps to no kind. By default it is dropped, as before; asked
+    for, it is the ``none`` row the model learns "none of these" from."""
+    write_ami(tmp_path)
+
+    rows = list(AmiReader(tmp_path).load(include_none=True))
+
+    assert [(row.text, row.kind) for row in rows] == [
+        ("I will do it", "commitment"),
+        ("fine", "none"),
+    ]
+
+
+def test_decision_meetings_are_the_ones_with_a_decision_file(tmp_path: Path) -> None:
+    write_ami(tmp_path)
+    (tmp_path / "decision" / "manual").mkdir(parents=True)
+    (tmp_path / "decision" / "manual" / "ES2002a.decision.xml").write_text(
+        '<nite:root nite:id="x" xmlns:nite="http://nite.sourceforge.net/"/>', encoding="utf-8"
+    )
+
+    assert AmiReader(tmp_path).decision_meetings() == {"ES2002a"}
+
+
+def labelled_splits() -> dict[str, list[Example]]:
+    """Two meetings per split, ten labelled rows each."""
+    return {
+        name: [example(f"{name}{m}", "commitment", i) for m in range(2) for i in range(10)]
+        for name in SPLITS
+    }
+
+
+def unlabelled(meetings: list[str], per_meeting: int = 50) -> list[Example]:
+    return [example(m, "none", 100 + i) for m in meetings for i in range(per_meeting)]
+
+
+ALL_MEETINGS = [f"{name}{m}" for name in SPLITS for m in range(2)]
+
+
+def counts(splits: dict[str, list[Example]]) -> dict[str, int]:
+    return {name: sum(1 for row in rows if row.kind == "none") for name, rows in splits.items()}
+
+
+def test_train_gets_ratio_validation_one_to_one_and_test_all() -> None:
+    """Train is what the ratio moves; validation picks the epoch, so it is held
+    at 1:1; test is the natural distribution the metric is taken on."""
+    splits = add_none(
+        labelled_splits(), unlabelled(ALL_MEETINGS), annotated=set(ALL_MEETINGS), ratio=2.0
+    )
+
+    assert counts(splits) == {"train": 40, "validation": 20, "test": 100}
+
+
+def test_none_goes_where_its_meeting_went() -> None:
+    """Placement is decided on labelled rows; adding none moves no meeting."""
+    before = labelled_splits()
+    placement = {row.meeting: name for name, rows in before.items() for row in rows}
+
+    after = add_none(before, unlabelled(ALL_MEETINGS), annotated=set(ALL_MEETINGS), ratio=1.0)
+
+    for name, rows in after.items():
+        assert {placement[row.meeting] for row in rows} == {name}
+
+
+def test_none_comes_only_from_meetings_with_the_decision_layer() -> None:
+    """Elsewhere an unlabelled act may be a decision nobody annotated."""
+    annotated = {"test0"}
+
+    splits = add_none(labelled_splits(), unlabelled(ALL_MEETINGS), annotated=annotated, ratio=1.0)
+
+    assert counts(splits) == {"train": 0, "validation": 0, "test": 50}
+    assert {row.meeting for row in splits["test"] if row.kind == "none"} == {"test0"}
+
+
+def test_the_test_split_is_whole_annotated_meetings_and_nothing_else() -> None:
+    """The natural distribution. An unannotated meeting's labelled rows would
+    put its kinds in and leave its none out -- a mixture no meeting has."""
+    splits = add_none(labelled_splits(), unlabelled(ALL_MEETINGS), annotated={"test0"}, ratio=1.0)
+
+    assert {row.meeting for row in splits["test"]} == {"test0"}
+    assert len(splits["test"]) == 10 + 50
+    assert len(splits["train"]) == 20, "train and validation keep every labelled row"
+
+
+def test_a_meeting_with_no_labelled_row_contributes_nothing() -> None:
+    splits = add_none(
+        labelled_splits(), unlabelled(["elsewhere"]), annotated={"elsewhere"}, ratio=1.0
+    )
+
+    assert counts(splits) == {"train": 0, "validation": 0, "test": 0}
+
+
+def test_the_sample_is_the_same_on_every_run() -> None:
+    pool = unlabelled(ALL_MEETINGS)
+    first = add_none(labelled_splits(), pool, annotated=set(ALL_MEETINGS), ratio=0.5)
+    second = add_none(
+        labelled_splits(), list(reversed(pool)), annotated=set(ALL_MEETINGS), ratio=0.5
+    )
+
+    assert first == second
+
+
+def test_ratio_zero_writes_no_none_to_train() -> None:
+    splits = add_none(
+        labelled_splits(), unlabelled(ALL_MEETINGS), annotated=set(ALL_MEETINGS), ratio=0.0
+    )
+
+    assert counts(splits)["train"] == 0
+
+
+def test_a_negative_ratio_is_refused() -> None:
+    with pytest.raises(ValueError, match="ratio"):
+        add_none(labelled_splits(), [], annotated=set(), ratio=-1.0)
+
+
+def test_a_none_row_is_what_the_harness_reads_as_none(tmp_path: Path) -> None:
+    path = tmp_path / "test.jsonl"
+    write_jsonl(path, [example("ES0001", "none", 0), example("ES0001", "concern", 1)])
+
+    loaded = load_eval_set(path)
+
+    assert [e.kind for e in loaded.examples] == [None, UtteranceKind.CONCERN]

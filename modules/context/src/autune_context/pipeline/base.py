@@ -48,7 +48,8 @@ class Reranker(Protocol):
     def model_version(self) -> str: ...
 
     def score(self, query: str, passages: list[str]) -> list[float]:
-        """One relevance score per passage, aligned to ``passages``. Higher is better."""
+        """Relevance per passage, aligned to ``passages``, in ``[0, 1]`` (the
+        model's logit run through a sigmoid). Higher is more relevant."""
         ...
 
 

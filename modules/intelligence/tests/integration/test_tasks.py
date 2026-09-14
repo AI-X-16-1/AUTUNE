@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import contextlib
 from collections.abc import Iterator
+from datetime import date, timedelta
 from unittest.mock import patch
 
 import pytest
@@ -32,6 +33,25 @@ def use_test_session(db_session: Session, monkeypatch: pytest.MonkeyPatch) -> No
 def mock_aggregate() -> Iterator[object]:
     with patch.object(tasks, "aggregate") as mock:
         yield mock
+
+
+@pytest.fixture
+def mock_personal_feedback() -> Iterator[object]:
+    with patch.object(tasks, "send_personal_feedback") as mock:
+        yield mock
+
+
+@pytest.fixture
+def stub_publish(monkeypatch: pytest.MonkeyPatch) -> list[tuple]:
+    """Capture ``autune_core.publish`` calls instead of reaching a broker."""
+    sent: list[tuple] = []
+
+    def _publish(event: str, payload: dict) -> list[str]:
+        sent.append((event, payload))
+        return []
+
+    monkeypatch.setattr(tasks, "publish", _publish)
+    return sent
 
 
 def _extraction(meeting_id: str) -> dict:
@@ -89,9 +109,9 @@ def test_the_third_completion_enqueues_aggregation_immediately(
     mock_aggregate.apply_async.assert_called_once_with((meeting,))
 
 
-@pytest.mark.usefixtures("use_test_session")
+@pytest.mark.usefixtures("use_test_session", "mock_personal_feedback", "stub_publish")
 def test_aggregate_publishes_a_valid_snapshot(
-    db_session: Session, meeting: str, team: str, monkeypatch: pytest.MonkeyPatch
+    db_session: Session, meeting: str, team: str, stub_publish: list[tuple]
 ) -> None:
     from autune_intelligence import service
 
@@ -103,30 +123,20 @@ def test_aggregate_publishes_a_valid_snapshot(
     )
     db_session.flush()
 
-    sent: list[tuple] = []
-    monkeypatch.setattr(
-        tasks.current_app, "send_task", lambda name, args: sent.append((name, args))
-    )
-
     tasks.aggregate(meeting)
 
-    assert len(sent) == 1
-    name, args = sent[0]
-    assert name == "autune.intelligence.completed"
-    IntelligenceSnapshot.model_validate(args[0])  # contract conformance
+    assert len(stub_publish) == 1
+    event, payload = stub_publish[0]
+    assert event == "autune.intelligence.completed"
+    IntelligenceSnapshot.model_validate(payload)  # contract conformance
 
 
-@pytest.mark.usefixtures("use_test_session")
+@pytest.mark.usefixtures("use_test_session", "mock_personal_feedback", "stub_publish")
 def test_aggregate_publishes_once_and_the_second_pass_is_a_no_op(
-    db_session: Session, meeting: str, monkeypatch: pytest.MonkeyPatch
+    db_session: Session, meeting: str, stub_publish: list[tuple]
 ) -> None:
     _seed(db_session, meeting, "extraction")
     db_session.flush()
-
-    sent: list[tuple] = []
-    monkeypatch.setattr(
-        tasks.current_app, "send_task", lambda name, args: sent.append((name, args))
-    )
 
     tasks.aggregate(meeting)
     db_session.flush()
@@ -136,7 +146,7 @@ def test_aggregate_publishes_once_and_the_second_pass_is_a_no_op(
     tasks.aggregate(meeting)  # second run is a no-op: no row change, no publish
     db_session.flush()
     assert db_session.get(IntelCompletion, meeting).aggregated_at == aggregated_at
-    assert len(sent) == 1
+    assert len(stub_publish) == 1
 
 
 @pytest.mark.usefixtures("use_test_session")
@@ -159,4 +169,122 @@ def test_a_completion_after_the_first_pass_reopens_and_re_enqueues(
     tasks.on_extraction_completed({"meeting_id": meeting, "decisions": [], "action_items": []})
 
     assert db_session.get(service.IntelCompletion, meeting).aggregated_at is None
-    mock_aggregate.apply_async.assert_called_once_with((meeting,))
+    mock_aggregate.apply_async.assert_called_once_with((meeting,), {"notify": False})
+
+
+@pytest.mark.usefixtures("use_test_session", "stub_publish")
+def test_aggregate_enqueues_personal_feedback_after_a_first_pass(
+    mock_personal_feedback: object, db_session: Session, meeting: str, team: str
+) -> None:
+    service.record_completion(db_session, meeting, "extraction", _extraction(meeting))
+    db_session.flush()
+
+    tasks.aggregate(meeting)
+
+    mock_personal_feedback.apply_async.assert_called_once_with((meeting,))
+
+
+@pytest.mark.usefixtures("use_test_session", "stub_publish")
+def test_a_re_aggregation_does_not_enqueue_personal_feedback(
+    mock_personal_feedback: object, db_session: Session, meeting: str, team: str
+) -> None:
+    service.record_completion(db_session, meeting, "extraction", _extraction(meeting))
+    db_session.flush()
+
+    tasks.aggregate(meeting, notify=False)
+
+    mock_personal_feedback.apply_async.assert_not_called()
+
+
+@pytest.mark.usefixtures("use_test_session")
+def test_send_personal_feedback_task_skips_a_team_without_slack(
+    db_session: Session, meeting: str, team: str
+) -> None:
+    with patch.object(tasks.service, "send_personal_feedback") as inner:
+        tasks.send_personal_feedback(meeting)
+
+    inner.assert_not_called()
+
+
+# --- generate_weekly_report -------------------------------------------------
+#
+# Unlike send_personal_feedback (computed, DM'd, discarded — nothing to save
+# without a recipient), the weekly report is a persisted intel_reports row the
+# dashboard's read API can serve on its own. It is generated whether or not
+# Slack is connected; only the channel post is skipped without one.
+
+
+@pytest.fixture
+def fake_encryption_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A real Fernet key, bypassing AUTUNE_ENCRYPTION_KEY for this test.
+
+    autune_core.crypto._fernet() is itself lru_cached from settings, so a test
+    running after any earlier test has already resolved settings cannot fix
+    this by setting the environment variable — the cache would already be
+    populated. Patching the module attribute directly sidesteps that.
+    """
+    from cryptography.fernet import Fernet
+
+    from autune_core import crypto
+
+    key = Fernet(Fernet.generate_key())
+    monkeypatch.setattr(crypto, "_fernet", lambda: key)
+
+
+def _connect_slack(db_session: Session, team_id: str, config: dict) -> None:
+    from autune_core import TeamIntegration
+    from autune_core.crypto import encrypt
+
+    db_session.add(
+        TeamIntegration(
+            team_id=team_id, service="slack", secret=encrypt("xoxb-test"), config=config
+        )
+    )
+    db_session.flush()
+
+
+@pytest.mark.usefixtures("use_test_session")
+def test_generate_weekly_report_writes_the_row_even_without_slack(
+    db_session: Session, team: str
+) -> None:
+    tasks.generate_weekly_report(team, period_end="2026-09-14")
+
+    row = db_session.get(service.IntelReport, (team, date.fromisoformat("2026-09-07")))
+    assert row is not None
+    assert row.metrics_json["meeting_count"] == 0
+
+
+@pytest.mark.usefixtures("use_test_session", "fake_encryption_key")
+def test_generate_weekly_report_skips_delivery_without_a_configured_channel(
+    db_session: Session, team: str
+) -> None:
+    _connect_slack(db_session, team, config={})
+
+    with patch.object(tasks, "SlackClient") as slack_client_cls:
+        tasks.generate_weekly_report(team, period_end="2026-09-14")
+
+    slack_client_cls.assert_not_called()
+
+
+@pytest.mark.usefixtures("use_test_session", "fake_encryption_key")
+def test_generate_weekly_report_posts_to_the_configured_channel(
+    db_session: Session, team: str
+) -> None:
+    _connect_slack(db_session, team, config={"channel": "C123"})
+
+    with patch.object(tasks, "SlackClient") as slack_client_cls:
+        tasks.generate_weekly_report(team, period_end="2026-09-14")
+
+    slack_client_cls.return_value.post_message.assert_called_once()
+    args, _kwargs = slack_client_cls.return_value.post_message.call_args
+    assert args[0] == "C123"
+    assert "분석된 회의가 없습니다" in args[1]
+
+
+@pytest.mark.usefixtures("use_test_session")
+def test_default_period_is_the_trailing_seven_days(db_session: Session, team: str) -> None:
+    with patch.object(tasks.service, "generate_weekly_report") as inner:
+        tasks.generate_weekly_report(team)
+
+    _session, _team_id, period_start, period_end = inner.call_args.args
+    assert period_end - period_start == timedelta(days=7)

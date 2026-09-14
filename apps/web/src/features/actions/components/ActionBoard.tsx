@@ -7,7 +7,7 @@ import { AddActionItem } from "./AddActionItem";
 import { CandidateBand } from "./CandidateBand";
 import { COLUMNS, COLUMN_LABELS, isCandidate } from "../types";
 import type { ActionItemDraft } from "../api";
-import type { ActionItem, ActionStatus } from "../types";
+import type { ActionItemRead, ActionStatus } from "../types";
 
 /**
  * S17. Four columns, left to right, in the order the work moves.
@@ -33,7 +33,7 @@ export function ActionBoard({
   onSelect,
   add,
 }: {
-  items: ActionItem[];
+  items: ActionItemRead[];
   selectedId?: string;
   onSelect?: (id: string) => void;
   add?: { meetingId: string; onAdd: (draft: ActionItemDraft) => Promise<unknown> };
@@ -79,13 +79,13 @@ export function ActionBoard({
   );
 }
 
-function group(items: ActionItem[]): {
-  candidates: ActionItem[];
-  byColumn: Record<ActionStatus, ActionItem[]>;
+function group(items: ActionItemRead[]): {
+  candidates: ActionItemRead[];
+  byColumn: Record<ActionStatus, ActionItemRead[]>;
 } {
-  const byColumn = Object.fromEntries(COLUMNS.map((status) => [status, [] as ActionItem[]])) as
-    Record<ActionStatus, ActionItem[]>;
-  const candidates: ActionItem[] = [];
+  const byColumn = Object.fromEntries(COLUMNS.map((status) => [status, [] as ActionItemRead[]])) as
+    Record<ActionStatus, ActionItemRead[]>;
+  const candidates: ActionItemRead[] = [];
 
   for (const item of items) {
     // A candidate leaves the columns entirely rather than sitting in

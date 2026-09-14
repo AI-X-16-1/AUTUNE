@@ -23,6 +23,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from autune_contracts.enums import UtteranceKind
+from autune_extraction.labels import kind_or_none
 
 
 class EvalSetError(RuntimeError):
@@ -41,7 +42,8 @@ class EvalExample:
     """
 
     utterance_id: str
-    kind: UtteranceKind
+    kind: UtteranceKind | None
+    """``None`` for an utterance that is none of the kinds, stored as ``none``."""
 
 
 @dataclass(frozen=True)
@@ -51,7 +53,7 @@ class EvalSet:
     path: Path
 
     @property
-    def labels(self) -> list[UtteranceKind]:
+    def labels(self) -> list[UtteranceKind | None]:
         return [e.kind for e in self.examples]
 
     def __len__(self) -> int:
@@ -65,7 +67,7 @@ def fingerprint(path: Path) -> str:
 
 def load_eval_set(path: Path) -> EvalSet:
     """Read a JSONL evaluation set: one object per line with ``utterance_id``,
-    ``kind``, and ``text``.
+    ``kind``, and ``text``. ``kind`` is one of the five, or ``none``.
 
     Raises rather than returning an empty set. A harness that reports 0.0 because
     it found no data is worse than one that stops.
@@ -84,7 +86,7 @@ def load_eval_set(path: Path) -> EvalSet:
         try:
             row = json.loads(line)
             row["text"]  # required by the format; read to validate, never kept
-            example = EvalExample(utterance_id=row["utterance_id"], kind=UtteranceKind(row["kind"]))
+            example = EvalExample(utterance_id=row["utterance_id"], kind=kind_or_none(row["kind"]))
         except (json.JSONDecodeError, KeyError, ValueError) as exc:
             # Line number and reason only. The line itself is meeting text.
             raise EvalSetError(f"{path} line {number}: {type(exc).__name__}") from exc
@@ -99,7 +101,7 @@ def load_eval_set(path: Path) -> EvalSet:
     return EvalSet(examples=tuple(examples), fingerprint=fingerprint(path), path=path)
 
 
-def load_predictions(path: Path, eval_set: EvalSet) -> list[UtteranceKind]:
+def load_predictions(path: Path, eval_set: EvalSet) -> list[UtteranceKind | None]:
     """Read predictions as JSONL of ``utterance_id`` and ``kind``, ordered to
     match the evaluation set.
 
@@ -109,13 +111,13 @@ def load_predictions(path: Path, eval_set: EvalSet) -> list[UtteranceKind]:
     if not path.exists():
         raise EvalSetError(f"no predictions at {path}")
 
-    predicted: dict[str, UtteranceKind] = {}
+    predicted: dict[str, UtteranceKind | None] = {}
     for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
         if not line.strip():
             continue
         try:
             row = json.loads(line)
-            utterance_id, kind = row["utterance_id"], UtteranceKind(row["kind"])
+            utterance_id, kind = row["utterance_id"], kind_or_none(row["kind"])
         except (json.JSONDecodeError, KeyError, ValueError) as exc:
             raise EvalSetError(f"{path} line {number}: {type(exc).__name__}") from exc
 
