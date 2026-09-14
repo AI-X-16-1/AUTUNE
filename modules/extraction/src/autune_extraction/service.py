@@ -12,6 +12,7 @@ from collections.abc import Collection, Sequence
 from datetime import UTC, date, datetime
 
 from sqlalchemy import delete, func, select
+from sqlalchemy.dialects import postgresql, sqlite
 from sqlalchemy.orm import Session, selectinload
 
 from autune_contracts.enums import ActionStatus, UtteranceKind
@@ -131,11 +132,18 @@ def open_confirmation(
     had it the whole time — restarting it would give the model another day to
     look undecided for free.
 
+    A row the pipeline recorded without asking (``sent_at`` empty) gets its
+    clock started here, when the question is actually put -- not when the
+    ambiguity was found, or a question sent days later would arrive expired.
+
     Deliberately not a place to reset an answer: someone who has already replied
     keeps their reply if the DM is sent again.
     """
     row = session.get(ExtConfirmation, utterance_id)
     if row is not None:
+        if row.sent_at is None:
+            row.sent_at = datetime.now(UTC)
+            session.flush()
         return row
 
     row = ExtConfirmation(
@@ -179,6 +187,11 @@ def resolve_confirmation(
     if row is None:
         log.info("extraction_confirmation_orphaned", utterance_id=response.utterance_id)
         return None
+    if row.sent_at is None:
+        # A click needs a DM, and this row's never went out. Recording it would
+        # be an answer to a question nobody asked.
+        log.info("extraction_confirmation_unasked", utterance_id=response.utterance_id)
+        return None
 
     row.resolved_kind = response.resolved_kind.value
     row.responded_at = datetime.now(UTC)
@@ -201,10 +214,9 @@ def ambiguous_agreements_for_meeting(
 ) -> list[AmbiguousAgreement]:
     """This meeting's ambiguous agreements as the contract E reads.
 
-    Every stored row is one a DM went out for, so ``confirmation_sent`` is true
-    throughout. The field stays in the contract because an ambiguity found with
-    no DM sent — the workspace app missing, the speaker unmapped — is a state
-    that has to be expressible even though this query cannot produce it.
+    ``confirmation_sent`` is false for a row the pipeline recorded without being
+    able to ask -- the speaker unmapped, the workspace app missing. That is every
+    row until #70 and #30 give the pipeline a way to send.
 
     ``now`` is a parameter so a caller can ask what the outcome was at publish
     time rather than at read time.
@@ -776,3 +788,88 @@ def build_action_items(
     session.add_all(items)
     session.flush()
     return items
+
+
+# --- steps 4 and 6: ambiguous agreement ----------------------------------------
+
+
+def record_ambiguous_agreements(
+    session: Session, *, meeting_id: str, classified: Sequence[ClassifiedUtterance]
+) -> int:
+    """A row in ``ext_confirmations`` for every utterance classified ambiguous.
+
+    Written before any DM, with ``sent_at`` empty: the ambiguity exists whether
+    or not anyone can be asked about it yet, and E counts it either way
+    (``AmbiguousAgreement.confirmation_sent`` is false until one goes out).
+
+    On a rerun, a row whose utterance is no longer ambiguous is removed **only
+    if it was never asked** -- then it is derived data, and replacing it is the
+    same rule as the classifications. A row a DM went out for stays: the speaker
+    has the question in front of them, and may already have answered it.
+
+    **Both writes are one statement each, decided by the database** -- never by
+    rows this function read a moment earlier. Two things can change a row in
+    between: a sender can put the question to the speaker (``open_confirmation``
+    fills ``sent_at``), and a redelivered task (``acks_late``) can record the
+    same meeting at the same time. A delete chosen from a stale read would
+    remove a question the speaker already has, and their answer would then land
+    on nothing; an insert chosen from one would fail on the primary key. So the
+    delete carries ``sent_at IS NULL`` in its own WHERE, and the insert skips a
+    row that is already there.
+
+    Returns how many of this run's utterances were ambiguous.
+    """
+    ambiguous = [u.id for u in classified if u.kind is UtteranceKind.AMBIGUOUS]
+    session.execute(
+        delete(ExtConfirmation)
+        .where(
+            ExtConfirmation.meeting_id == meeting_id,
+            ExtConfirmation.utterance_id.not_in(ambiguous),
+            ExtConfirmation.sent_at.is_(None),
+        )
+        .execution_options(synchronize_session="fetch")
+    )
+    if ambiguous:
+        session.execute(
+            _insert_if_absent(session)
+            .values(
+                [
+                    {
+                        "utterance_id": utterance_id,
+                        "meeting_id": meeting_id,
+                        "reason": WEAK_ASSENT,
+                        "sent_at": None,
+                    }
+                    for utterance_id in ambiguous
+                ]
+            )
+            .on_conflict_do_nothing(index_elements=["utterance_id"])
+        )
+    return len(ambiguous)
+
+
+def _insert_if_absent(session: Session) -> postgresql.Insert | sqlite.Insert:
+    """An ``ext_confirmations`` insert that can take ``ON CONFLICT DO NOTHING``.
+
+    The clause is spelled the same on both databases but built per dialect:
+    PostgreSQL is every deployment, SQLite is the unit suite.
+    """
+    if session.get_bind().dialect.name == "postgresql":
+        return postgresql.insert(ExtConfirmation)
+    return sqlite.insert(ExtConfirmation)
+
+
+def unasked_confirmations(session: Session, meeting_id: str) -> list[ExtConfirmation]:
+    """The meeting's ambiguous agreements no DM has gone out for.
+
+    What a sender walks once there is one: for each row, resolve the speaker's
+    Slack account and call ``ask_for_confirmation``, which starts the clock on
+    this same row. Nothing calls it yet (#70, #30).
+    """
+    return list(
+        session.scalars(
+            select(ExtConfirmation)
+            .where(ExtConfirmation.meeting_id == meeting_id, ExtConfirmation.sent_at.is_(None))
+            .order_by(ExtConfirmation.utterance_id)
+        )
+    )
