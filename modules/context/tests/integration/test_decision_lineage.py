@@ -285,7 +285,8 @@ def test_reprocessing_a_solo_thread_meeting_keeps_the_same_thread_id(team_id: st
         )
 
     # B rebuilt: same wording, a brand new dec_ id (fake here to exercise the
-    # case; in production the id only moves when sources change, #171).
+    # case; in production the id only moves when sources change, #171 —
+    # and on every A reprocess, #194).
     service.build_decision_lineage(_extraction(meeting, [("dec_1_rebuilt", _D1, 0.9)]))
 
     with session_scope() as s:
@@ -390,7 +391,8 @@ def test_reprocessing_a_mid_thread_meeting_still_matches_its_own_thread(
     assert len(_thread_ids()) == 1  # all four chained onto one thread
 
     # B is reprocessed mid-thread: same wording, a fresh dec_ id (fake here;
-    # in production the id only moves when sources change, #171). The team-wide
+    # in production the id only moves when sources change, #171 — and on
+    # every A reprocess, #194). The team-wide
     # head is D by now (cos(B, D) = 0, below threshold) — only B's own
     # about-to-be-replaced version can still rescue the match.
     service.build_decision_lineage(_extraction(m_b, [("dec_b_rebuilt", texts["B"], 0.9)]))

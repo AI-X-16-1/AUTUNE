@@ -214,9 +214,10 @@ def build_decision_lineage(result: ExtractionResult) -> None:
     Matching happens *before* this meeting's own previous versions are deleted.
     B's ``dec_`` id is stable across a rebuild whose sources did not change and
     fresh only when they did (see ``autune_extraction.decisions.decision_id``,
-    #171) — but D never matched on that id in the first place: whether a
-    decision is the same one as before is D's question, not B's (#25), so
-    matching runs by wording regardless of which way B's id moved. A solo
+    #171) — which includes every reprocess in module A, since that mints new
+    ``utt_`` ids (#194) — but D never matched on that id in the first place:
+    whether a decision is the same one as before is D's question, not B's
+    (#25), so matching runs by wording regardless of which way B's id moved. A solo
     thread — one with no *other* meeting's version to rediscover it by — has
     nothing but that wording to compare against. Deleting first would erase the
     one piece of evidence (the meeting's own about-to-be-replaced statement)
