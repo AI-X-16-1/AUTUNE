@@ -184,8 +184,11 @@ default in the UI.
 `spoke` and `silent` hold **participant ids** (`prt_…`), not user ids. An
 unidentified speaker has a participant row and no user id, and silence is the
 evidence a gap is raised on, so a user-id list would drop exactly the people a
-participation gap is about. A participant id also belongs to one meeting, so the
-lists cannot be joined across meetings into a record of one person's silences.
+participation gap is about. A participant id is scoped to one meeting, so the
+payload alone carries no cross-meeting identity. Any module can still resolve it
+to a user through the shared `participants` table, so building a per-person
+record of silences across meetings is a `privacy.md` section 3 violation on the
+consumer's side — the id format does not prevent it.
 When diarization splits one person into several participant rows, C reports
 them once, under the smallest of their participant ids. See
 `../modules/gap.md`, "Step 9 as built".
