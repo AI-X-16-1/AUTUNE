@@ -63,14 +63,29 @@ short file cannot amortise. Neither number is a GPU number; both are CPU int8.
 This is the finding that should drive the next two weeks of work.
 
 ```
-S1  CER 3.5%    same speaker, same microphone, same room
-S2  CER 30.7%   same speaker, same microphone, same room
+S1  CER 3.5%    one recording session, one room, one microphone
+S2  CER 30.7%   the same
 ```
 
-The only difference between the two sessions is that S2 contains English proper
-nouns. Recording quality, speaker, and noise floor are identical. A tenfold CER
-gap across that single variable means the 30% is a lexicon problem, not an
-acoustic one — and lexicon problems are attackable.
+The only difference of substance between the two sessions is that S2 contains
+English proper nouns. Recording quality and noise floor are identical.
+
+**The voice is not the variable either, though the two sessions are not read by
+the same person.** S1 is all four speakers reading one sentence; S2 is one of
+them (§1, "sequential monologues by a known speaker in a known order"). So the
+speaker who read S2 also read S1, and §3.3 measures what a change of voice is
+worth on identical text: **0.024 to 0.049**. S2 is 0.307 — six times outside
+that spread. Whoever read it, the voice cannot account for the gap.
+
+A tenfold CER gap that survives holding the room, the microphone and the noise
+floor fixed, and that is six times wider than the measured speaker variation,
+means the 30% is a lexicon problem rather than an acoustic one — and lexicon
+problems are attackable.
+
+> An earlier draft of this report said "same speaker, same microphone, same
+> room" here, because it also said one person read all four roles. #132
+> corrected the roles and left this line, so the report contradicted its own
+> header and its own per-speaker table for two days. #180.
 
 What the model produced for our own stack:
 
