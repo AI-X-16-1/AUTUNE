@@ -269,11 +269,13 @@ def test_rebuild_replaces_versions_and_leaves_no_orphan_threads(team_id: str) ->
 def test_reprocessing_a_solo_thread_meeting_keeps_the_same_thread_id(team_id: str) -> None:
     """A decision with no other meeting on its thread has nothing *else* to
     re-match against once its own (only) version is deleted for the rebuild.
-    B always mints a fresh ``dec_`` id on a rebuild (``build_decisions``), so
-    the id is deliberately different here too — matching has to happen before
-    the delete, against the meeting's own about-to-be-replaced statement, or
-    the thread gets a new id and the old one is orphan-swept out from under
-    it every single time B reprocesses this meeting."""
+    D never matches on B's ``dec_`` id (whether a decision is the same one as
+    before is D's question, not B's — #25), so the id is deliberately
+    different here too, as it would be for a rebuild whose sources changed
+    (``build_decisions``) — matching has to happen before the delete, against
+    the meeting's own about-to-be-replaced statement, or the thread gets a new
+    id and the old one is orphan-swept out from under it every single time B
+    reprocesses this meeting."""
     meeting = _meeting(team_id, days_ago=0)
     service.build_decision_lineage(_extraction(meeting, [("dec_1", _D1, 0.9)]))
 
@@ -282,7 +284,8 @@ def test_reprocessing_a_solo_thread_meeting_keeps_the_same_thread_id(team_id: st
             select(CtxDecisionVersion.thread_id).where(CtxDecisionVersion.meeting_id == meeting)
         )
 
-    # B rebuilt: same wording, a brand new dec_ id.
+    # B rebuilt: same wording, a brand new dec_ id (fake here to exercise the
+    # case; in production the id only moves when sources change, #171).
     service.build_decision_lineage(_extraction(meeting, [("dec_1_rebuilt", _D1, 0.9)]))
 
     with session_scope() as s:
@@ -352,8 +355,9 @@ def test_reprocessing_a_mid_thread_meeting_still_matches_its_own_thread(
     version. Before this meeting's own about-to-be-replaced version was added
     to ``heads`` alongside the team-wide head, a meeting sitting in the
     *middle* of a thread — not at its head — that B reprocessed (same
-    wording, a fresh ``dec_`` id, per ``build_decisions``) was compared only
-    against a *later* meeting's wording. On a thread where wording drifts
+    wording, a fresh ``dec_`` id — as it would be for a rebuild whose sources
+    changed, per ``build_decisions``, #171) was compared only against a
+    *later* meeting's wording. On a thread where wording drifts
     enough that only adjacent pairs clear the threshold, that forked the
     reprocessed meeting into a brand new thread and skipped it out of the
     real chain every time B reprocessed it.
@@ -385,7 +389,8 @@ def test_reprocessing_a_mid_thread_meeting_still_matches_its_own_thread(
 
     assert len(_thread_ids()) == 1  # all four chained onto one thread
 
-    # B is reprocessed mid-thread: same wording, a fresh dec_ id. The team-wide
+    # B is reprocessed mid-thread: same wording, a fresh dec_ id (fake here;
+    # in production the id only moves when sources change, #171). The team-wide
     # head is D by now (cos(B, D) = 0, below threshold) — only B's own
     # about-to-be-replaced version can still rescue the match.
     service.build_decision_lineage(_extraction(m_b, [("dec_b_rebuilt", texts["B"], 0.9)]))
