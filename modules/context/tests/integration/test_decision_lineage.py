@@ -352,16 +352,15 @@ def test_rerunning_an_earlier_meeting_keeps_the_later_chain_intact(team_id: str)
 def test_reprocessing_a_mid_thread_meeting_still_matches_its_own_thread(
     team_id: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """``_thread_heads`` only ever returns a thread's single most recent
-    version. Before this meeting's own about-to-be-replaced version was added
-    to ``heads`` alongside the team-wide head, a meeting sitting in the
-    *middle* of a thread — not at its head — that B reprocessed (same
-    wording, a fresh ``dec_`` id — as it would be for a rebuild whose sources
-    changed, per ``build_decisions``, #171) was compared only against a
-    *later* meeting's wording. On a thread where wording drifts
-    enough that only adjacent pairs clear the threshold, that forked the
-    reprocessed meeting into a brand new thread and skipped it out of the
-    real chain every time B reprocessed it.
+    """``_thread_heads`` only ever returns a thread's single most recent version.
+    Before this meeting's own about-to-be-replaced version was added to
+    ``heads`` alongside the team-wide head, a meeting sitting in the *middle*
+    of a thread — not at its head — that B reprocessed (same wording, a fresh
+    ``dec_`` id — as it would be for a rebuild whose sources changed, per
+    ``build_decisions``, #171) was compared only against a *later* meeting's
+    wording. On a thread where wording drifts enough that only adjacent pairs
+    clear the threshold, that forked the reprocessed meeting into a brand new
+    thread and skipped it out of the real chain every time B reprocessed it.
 
     A four-meeting chain A-B-C-D, each 45 degrees apart on ``_AngleEmbedder``'s
     circle: adjacent pairs are cos(45) ~= 0.707 (clears the 0.6 threshold),
