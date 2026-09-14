@@ -116,9 +116,12 @@ The rule for a consumer:
   the result leaves your module.** A stored merge cannot be undone when an
   identification is corrected.
 - **Do not let `user_id` stand for the group in anything you publish** unless
-  the consumer needs identity across meetings. A participant id belongs to one
-  meeting and cannot be joined into a cross-meeting record of one person; C
-  represents a merged person by the smallest of their participant ids
+  the consumer needs identity across meetings. A participant id is scoped to one
+  meeting, so a payload carrying one holds no cross-meeting identity on its own
+  — but any module may read the shared `participants` table and resolve it, so
+  accumulating one person's record across meetings is a `privacy.md` section 3
+  violation on the consumer's side rather than something the id format prevents.
+  C represents a merged person by the smallest of their participant ids
   (`contracts.md`, `GapReport`).
 
 Identification can land after your task ran — a speaker confirms their label by
