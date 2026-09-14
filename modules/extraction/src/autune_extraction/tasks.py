@@ -9,8 +9,8 @@ from __future__ import annotations
 
 from celery import shared_task
 
-from autune_contracts import TranscriptReady, validate_major_version
-from autune_core import get_logger, session_scope
+from autune_contracts import EXTRACTION_COMPLETED, TranscriptReady, validate_major_version
+from autune_core import get_logger, publish, session_scope
 
 from . import service
 from .pipeline.registry import get_classifier
@@ -43,6 +43,17 @@ def on_transcript_ready(payload: dict) -> None:
     than adding to them, so a redelivered task ends where the first one did --
     except that draft items are left alone once a person has edited any
     (``service.build_action_items``).
+
+    **Then it publishes ``ExtractionResult`` on ``autune.extraction.completed``**
+    (D and E consume it), built by ``service.result_for_meeting`` from the rows
+    this run just wrote -- the same builder ``GET /results/{meeting_id}`` uses,
+    so what the event carries and what the board reads are one thing read one
+    way, including an item a person added or kept. It is built inside the write
+    transaction and sent only after that transaction has closed: a rollback
+    after the event had gone would leave two modules analysing a result that
+    was never stored. Every run publishes, a redelivered one included, because
+    ``build_decisions`` mints fresh ``dec_`` ids each time (#171) and D's lineage
+    has to hear the ids that are now in the table.
     """
     transcript = TranscriptReady.model_validate(payload)
     validate_major_version(transcript)
@@ -80,6 +91,7 @@ def on_transcript_ready(payload: dict) -> None:
         ambiguous = service.record_ambiguous_agreements(
             session, meeting_id=transcript.meeting_id, classified=classified
         )
+        result = service.result_for_meeting(session, transcript.meeting_id)
 
     # Counts and ids only. The utterances are meeting content.
     log.info(
@@ -97,8 +109,8 @@ def on_transcript_ready(payload: dict) -> None:
     # no model chosen yet). Step 6, the DM: for each of
     # ``service.unasked_confirmations``, resolve the speaker's Slack account
     # and call ``service.ask_for_confirmation`` -- blocked on an account mapping
-    # (#70) and a team Slack client (#30). Step 7, Notion and Jira (#30). Step 8,
-    # publish ExtractionResult with ``autune_core.publish`` (landed in #145;
-    # wiring #31).
-    # ``build_decisions`` gives fresh dec_ ids on every run, so every run has to
-    # publish -- module D's lineage points at the old ids otherwise.
+    # (#70) and a team Slack client (#30). Step 7, Notion and Jira (#30).
+
+    # Step 8, after the writes have committed. The payload is never logged:
+    # decision statements and item descriptions are meeting content.
+    publish(EXTRACTION_COMPLETED, result.model_dump(mode="json"))
