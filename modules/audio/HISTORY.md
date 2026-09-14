@@ -64,10 +64,17 @@ cue sheet, four people, CPU only, no GPU.
 | RTF (11m37s file) | **0.73** | ≤ 0.3 |
 
 **The finding that should drive the next two weeks.** S1 is 3.5% and S2 is 30.7%
-on the *same speaker, same microphone, same room*. A tenfold difference with
-every recording condition held constant is not an audio problem — it is
+in *one recording session, one room, one microphone*. A tenfold difference with
+the acoustic conditions held constant is not an audio problem — it is
 vocabulary. `large-v3` transcribes Korean speech well and has never heard of
 `silero-VAD`, `tabCapture`, `DeBERTa` or `pgvector`.
+
+The report itself says "same speaker" here, and that phrase is left over from a
+draft where one person read all four roles. #132 corrected the roles and did not
+correct this line, so eval-01 now contradicts its own header, its own
+four-speaker CER table and its own DER section. The comparison survives — every
+voice in S2 also read S1, and S1's per-speaker CER spans 0.024 to 0.049, nowhere
+near S2's 0.307 — but the sentence does not, and this file does not repeat it.
 
 Numbers and dates are nearly perfect (98%), which matters: module B parses due
 dates out of this text.
@@ -139,6 +146,12 @@ arrives at 148 seconds, by which time decoded text has pushed it out.
 
 A framing prefix on both channels was measured separately, and is a different
 number from any of the above: 45% term accuracy without it, 62% with.
+
+**That pair has no evaluation report behind it.** It is recorded in two code
+docstrings (`glossary.py`, `test_glossary.py`) and nowhere else, so the terms,
+the mode and the method it was taken under are not written down — and it is not
+reconcilable with the 86% above without them. Treat it as a note, not as a
+measurement, until it is re-run into `docs/modules/audio-evaluations/`.
 
 ### Decoder repetition guard (#133)
 
@@ -245,7 +258,7 @@ Where they are:
 | Audio never written somewhere it survives | `storage.py::_reject_persistent` — refuses a temp dir inside a cloud-sync folder or the checkout |
 | Text masked before the first write | `persistence.py` verifies with `mask()` **before** the first delete — **branch `audio/persist-utterances`, not merged** |
 | Nothing unmasked leaves | `check_outbound` runs on every outbound channel, but the patterns it runs are **still the broken ones on `main`**: #126 (070 · 080 · 0505 · international) and #131 (a Korean particle ends the match) are both open. PR #138 closes #126; #131 has no PR yet |
-| No per-person speech volume | `LiveTranscript` lists unnamed voices instead of counting them (#140) |
+| No per-person speech volume | `LiveTranscript` lists unnamed voices instead of counting them — **PR #140, not merged** |
 
 Two of those exist because a review found the gap, not because the rule was
 followed: the masker and the guard disagree about what personal data is (#126,
@@ -275,8 +288,10 @@ broken two other modules and each fixed it locally:
   statement about somebody who spoke.
 
 Both are latent today because `user_id` is always `NULL`. **They go live the day
-#6 ships.** The rule is now written down once in
-`docs/architecture/data-model.md`, "A participant row is a voice, not a person".
+#6 ships.** #167 writes the rule down once, in
+`docs/architecture/data-model.md` under "A participant row is a voice, not a
+person" — **open, not merged**, so until it lands the rule is still two local
+fixes and no statement.
 
 `TranscriptMetadata.participants` still has no description in the contract, and
 the same trap reaches B and C through the payload rather than the table. Mine to
@@ -310,7 +325,7 @@ exists, not fixed one at a time.**
 Ordered by what the measurements say, not by what is pleasant.
 
 1. **Vocabulary.** S2 at 30.7% against a 5% target is the largest single gap, and
-   `hotwords` already moved term accuracy from 34% to 86% on one drill. A
+   `hotwords` already moved term accuracy from 31% to 86% at meeting length. A
    per-meeting glossary that is actually populated — from the team's past
    meetings, their Notion, their repo — is the highest-value work in this module.
    The mechanism exists (#135); the source of terms does not.
