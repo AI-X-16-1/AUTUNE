@@ -58,10 +58,19 @@ def process_recording(meeting_id: str, upload_path: str) -> None:
     (``transcript_payload``) rather than assembled from what was computed.
 
     Safe to run twice, which ``acks_late`` makes a requirement rather than a
-    nicety: a worker that dies after writing and before acknowledging gets the
-    same recording again. The write replaces this meeting's utterances, so the
-    second run leaves the same database and republishes the same payload — and
-    consuming tasks are required to be idempotent for exactly this reason.
+    nicety -- and ``apps/worker`` sets no ``visibility_timeout``, so Redis uses
+    its default hour and a meeting past about 47 minutes at ~1.27x real time is
+    redelivered *while the first run is still going*. ``persist_transcript``
+    locks the meeting row for that, and consuming tasks are required to be
+    idempotent for the same reason.
+
+    **A redelivery arriving after the first run finished dies at ``adopt``**,
+    because the upload is already deleted: there is nothing to decode and the
+    job fails rather than republishing. That is the honest shape of a rerun
+    here -- the transcript survives in the database, the audio does not, and
+    invariant 11 does not bend to make a retry convenient. What the integration
+    tests exercise is the *write* being safe to repeat, with ``decode`` faked;
+    they do not claim the whole task replays.
     """
     log.info("audio_process_started", meeting_id=meeting_id)
 

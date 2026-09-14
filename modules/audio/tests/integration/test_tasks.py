@@ -73,7 +73,11 @@ def pipeline(
     recording: Path,
 ) -> Iterator[dict]:
     """Everything the task reaches outside its own logic, faked in one place."""
-    state: dict = {"transcription": _transcription(), "audio_present_at_write": None}
+    state: dict = {
+        "transcription": _transcription(),
+        "audio_present_at_write": None,
+        "order": [],
+    }
 
     monkeypatch.setattr(
         tasks, "decode", lambda path: Waveform(samples=np.zeros(160, dtype=np.float32))
@@ -84,12 +88,19 @@ def pipeline(
 
     def fake_publish(event: str, payload: dict) -> list[str]:
         published.append((event, payload))
+        state["order"].append("publish")
         return []
 
     monkeypatch.setattr(tasks, "publish", fake_publish)
 
     class Scope:
-        """The task's own session, bound to the test's rolled-back transaction."""
+        """The task's own session, bound to the test's rolled-back transaction.
+
+        ``__exit__`` records where the real ``session_scope`` would commit, so
+        ``state["order"]`` can say whether the event went out before or after
+        the transaction closed. Flushed rather than committed, because the test
+        rolls the whole thing back.
+        """
 
         def __enter__(self) -> Session:
             state["audio_present_at_write"] = recording.exists()
@@ -97,6 +108,7 @@ def pipeline(
 
         def __exit__(self, *exc: object) -> None:
             db_session.flush()
+            state["order"].append("commit")
 
     monkeypatch.setattr(tasks, "session_scope", Scope)
     yield state
@@ -132,6 +144,23 @@ def test_the_event_carries_what_the_database_holds(
     assert [u.text for u in payload.utterances] == [row.text for row in rows]
     assert payload.metadata.participants == ["SPEAKER_00", "SPEAKER_01"]
     assert payload.metadata.duration == 9.0
+
+
+def test_the_event_goes_out_after_the_transaction_closes(
+    pipeline: dict, meeting: str, recording: Path
+) -> None:
+    """Four modules act on this event; a rollback after it has gone is four
+    modules processing a meeting that does not exist.
+
+    Ordering alone is not enough to catch this -- the publish call sits after
+    the `with` block textually either way. What makes it checkable is the
+    session scope recording where it closed, so moving `publish` inside it
+    changes the order this asserts. Without that, moving the call left all
+    nineteen tests passing (@kjfcvx12 on #184), and the PR description claimed
+    the opposite.
+    """
+    tasks.process_recording(meeting, str(recording))
+    assert pipeline["order"] == ["commit", "publish"]
 
 
 def test_the_recording_is_gone_before_anything_is_written(

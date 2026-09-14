@@ -90,8 +90,28 @@ def persist_transcript(
     from the filesystem rather than from having called ``unlink``. It is what
     ``PrivacyFlags.original_audio_deleted`` is set from, and consumers refuse a
     transcript whose flag is False.
+
+    **A second upload of the same meeting is not a rerun**, and this cannot tell
+    them apart. pyannote's labels are arbitrary per run -- ``SPEAKER_00`` is
+    whichever voice it happened to cluster first -- so a ``user_id`` somebody
+    confirmed against ``SPEAKER_00`` in the first pass can land on a different
+    person's speech in the second. Reprocessing from new audio should clear the
+    identifications with it; nothing does that yet, and #6 is where
+    identification arrives.
     """
-    meeting = session.get(Meeting, meeting_id)
+    # Locked, and locked *first*. `acks_late` is set and `apps/worker` leaves
+    # Redis on its default one-hour visibility timeout, so a meeting longer
+    # than about 47 minutes -- processing runs ~1.27x real time on CPU -- is
+    # redelivered while the first run is still inside this transaction. With
+    # nothing serialising them, both runs delete, both insert, and the meeting
+    # is stored twice: six utterances for a three-utterance recording, two
+    # participant rows per speaker (there is no unique constraint on
+    # `participants`), and **no error anywhere**. Every consumer gets the
+    # meeting doubled and nothing reports it. Found by @kjfcvx12 on #184.
+    #
+    # The lock is on the meeting row because that is the one row both runs are
+    # certain to touch and the one this function already had to read.
+    meeting = session.get(Meeting, meeting_id, with_for_update=True)
     if meeting is None:
         raise NotFoundError("meeting", meeting_id)
 
@@ -153,9 +173,18 @@ def _participants_for(
     a role, and ``consented``. A rerun that dropped the rows would throw away a
     person's answer and ask them again.
 
-    A label the meeting has not seen gets a new row with ``consented=False``.
-    False is the honest default — the pipeline heard a voice, and nobody has
-    said yet whether that voice agreed to be here.
+    A label the meeting has not seen gets a new row with ``consented=False``,
+    and **nothing in the repository ever sets it True** -- so module B's
+    ``consented_utterance_ids`` and module C both come back empty for every real
+    meeting, while ``docs/architecture/privacy.md`` section 5 says an excluded
+    utterance is "not stored, not just hidden" and this function stores it.
+
+    The column carries two meanings at once: "nobody has asked yet" and "this
+    person said no". False is honest about the second and wrong about the first,
+    which is the state every participant is actually in today. Splitting them is
+    a ``packages/core`` change and decides what B, C and D each do, so it is
+    **#190** rather than a line here. This keeps False until that lands: it is
+    the value that analyses nothing, which is the safe direction to be wrong in.
     """
     existing = {
         participant.speaker_label: participant
