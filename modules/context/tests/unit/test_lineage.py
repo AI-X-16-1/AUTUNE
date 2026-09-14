@@ -56,6 +56,22 @@ def test_assign_is_one_to_one() -> None:
     assert {head.thread_id for head in assignment.values()} == {"thr_a", "thr_b"}
 
 
+def test_assign_treats_duplicate_thread_id_entries_as_one_slot() -> None:
+    """``heads`` can list the same ``thread_id`` twice — once as the team-wide
+    head ``_thread_heads`` found, once as a reprocessed meeting's own
+    about-to-be-replaced version for that same thread
+    (``build_decision_lineage``). The two entries are candidates for one slot,
+    not two: two different decisions must not both land on ``thr_a`` just
+    because it appears twice in ``heads``."""
+    heads = [
+        _head("thr_a", [1.0, 0.0]),  # e.g. the team-wide head
+        _head("thr_a", [0.0, 1.0]),  # e.g. this meeting's own old version
+    ]
+    vectors = [[1.0, 0.0], [0.0, 1.0]]  # two decisions, each a perfect match for one entry
+    assignment = _assign_decisions_to_threads(vectors, heads, threshold=0.6)
+    assert len(assignment) == 1  # only one decision can take thr_a, not both
+
+
 def test_assign_prefers_the_stronger_match_regardless_of_input_order() -> None:
     """The bug this replaces: a weak match earlier in the decision list could
     grab a thread out from under a much stronger match later in it. With only

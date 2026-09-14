@@ -8,6 +8,7 @@ negates, ``entailment`` when the two strings are equal, else ``neutral``.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 
@@ -140,6 +141,26 @@ def _transcript(meeting_id: str, lines: list[str]) -> TranscriptReady:
             privacy=PrivacyFlags(original_audio_deleted=True, pii_masked=True),
         ),
     )
+
+
+class _AngleEmbedder:
+    """Places each of a fixed set of statements at a chosen angle on a circle,
+    so cosine similarity between any two is exactly ``cos(angle difference)``
+    — unlike ``FakeEmbedder``, whose hash-derived vectors give unrelated text
+    an unrelated but uncontrolled similarity. Lets a test pin down "adjacent
+    pair above threshold, next-nearest pair not" precisely."""
+
+    model_version = "angle-embedder-test"
+
+    def __init__(self, angle_by_text: dict[str, float]) -> None:
+        self._angle_by_text = angle_by_text
+
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        return [self._one(t) for t in texts]
+
+    def _one(self, text: str) -> list[float]:
+        angle = self._angle_by_text[text]
+        return [math.cos(angle), math.sin(angle)]
 
 
 _D1 = "검색 정렬은 최신순으로 한다"
@@ -322,6 +343,60 @@ def test_rerunning_an_earlier_meeting_keeps_the_later_chain_intact(team_id: str)
         assert v2.previous_meeting_id == first
         assert v2.previous_statement == _D1
         assert v2.change_type == "unchanged"
+
+
+def test_reprocessing_a_mid_thread_meeting_still_matches_its_own_thread(
+    team_id: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``_thread_heads`` only ever returns a thread's single most recent
+    version. Before this meeting's own about-to-be-replaced version was added
+    to ``heads`` alongside the team-wide head, a meeting sitting in the
+    *middle* of a thread — not at its head — that B reprocessed (same
+    wording, a fresh ``dec_`` id, per ``build_decisions``) was compared only
+    against a *later* meeting's wording. On a thread where wording drifts
+    enough that only adjacent pairs clear the threshold, that forked the
+    reprocessed meeting into a brand new thread and skipped it out of the
+    real chain every time B reprocessed it.
+
+    A four-meeting chain A-B-C-D, each 45 degrees apart on ``_AngleEmbedder``'s
+    circle: adjacent pairs are cos(45) ~= 0.707 (clears the 0.6 threshold),
+    but B and D — B's team-wide head once A..D all exist — are cos(90) = 0."""
+    texts = {label: f"결정 문장 {label}" for label in "ABCD"}
+    angles = {texts[label]: index * (math.pi / 4) for index, label in enumerate("ABCD")}
+    monkeypatch.setattr(service, "get_embedder", lambda: _AngleEmbedder(angles))
+
+    m_a = _meeting(team_id, days_ago=40)
+    m_b = _meeting(team_id, days_ago=30)
+    m_c = _meeting(team_id, days_ago=20)
+    m_d = _meeting(team_id, days_ago=10)
+    service.build_decision_lineage(_extraction(m_a, [("dec_a", texts["A"], 0.9)]))
+    service.build_decision_lineage(_extraction(m_b, [("dec_b", texts["B"], 0.9)]))
+    service.build_decision_lineage(_extraction(m_c, [("dec_c", texts["C"], 0.9)]))
+    service.build_decision_lineage(_extraction(m_d, [("dec_d", texts["D"], 0.9)]))
+
+    def _thread_ids() -> set[str]:
+        with session_scope() as s:
+            return {
+                s.scalar(
+                    select(CtxDecisionVersion.thread_id).where(CtxDecisionVersion.meeting_id == m)
+                )
+                for m in (m_a, m_b, m_c, m_d)
+            }
+
+    assert len(_thread_ids()) == 1  # all four chained onto one thread
+
+    # B is reprocessed mid-thread: same wording, a fresh dec_ id. The team-wide
+    # head is D by now (cos(B, D) = 0, below threshold) — only B's own
+    # about-to-be-replaced version can still rescue the match.
+    service.build_decision_lineage(_extraction(m_b, [("dec_b_rebuilt", texts["B"], 0.9)]))
+
+    assert len(_thread_ids()) == 1  # still one thread; B did not fork off
+
+    with session_scope() as s:
+        v_c = s.scalars(
+            select(CtxDecisionVersion).where(CtxDecisionVersion.meeting_id == m_c)
+        ).one()
+        assert v_c.previous_meeting_id == m_b  # chain repaired through B, not skipping it
 
 
 def test_an_expired_meeting_is_excluded_from_matching_and_the_chain(team_id: str) -> None:

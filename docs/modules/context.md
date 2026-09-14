@@ -214,7 +214,15 @@ lineage view (S22), which reads to a user as a bug.
    would erase the one piece of evidence — the meeting's own about-to-be-
    replaced statement — that lets a rebuild with materially unchanged wording
    land back on the same thread instead of forking a new one on every
-   reprocess.
+   reprocess. This meeting's own pre-delete versions are *added* to the
+   matching candidates, not substituted for the thread's team-wide head: a
+   thread's head is always its single chronologically-latest version, so a
+   meeting sitting in the *middle* of a thread compares against a later
+   meeting's (possibly quite different) wording unless its own version is
+   offered as a candidate too. A thread can therefore appear twice among the
+   candidates for one reprocessed meeting — once as the team-wide head, once
+   as the meeting's own version — and still take at most one of this
+   meeting's decisions; the two entries are for the same slot.
 2. Every thread this meeting's decisions touched is then **re-chained end to
    end**, not just appended to: order its versions by meeting time and run NLI
    between each pair's earlier statement (premise) and later one (hypothesis):

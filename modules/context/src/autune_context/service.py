@@ -219,6 +219,18 @@ def build_decision_lineage(result: ExtractionResult) -> None:
     that lets a rebuild with materially unchanged wording land back on the same
     thread instead of forking a new one every time B reprocesses the meeting.
 
+    That evidence is added to ``heads`` alongside every thread's team-wide head,
+    not used in its place: ``_thread_heads`` only ever returns one version per
+    thread (the most recent), so if this meeting sits in the *middle* of a
+    thread rather than at its head, comparing only against the head compares a
+    rebuilt decision to a *later* meeting's wording instead of its own —
+    wording that can easily fall below the adjacent-pair threshold even though
+    the meeting's own statement did not change. Appending this meeting's own
+    pre-delete versions as extra candidates for the same ``thread_id`` closes
+    that gap; ``_assign_decisions_to_threads`` dedupes by ``thread_id`` so a
+    thread offered twice (once as team head, once as this meeting's own
+    version) is still only assigned once.
+
     Every thread this run touches is then re-chained end to end by
     ``_rethread``: ``previous_*``, ``change_type`` and ``nli_label`` are a
     function of *when meetings happened*, not the order B finished them, so a
@@ -270,7 +282,20 @@ def build_decision_lineage(result: ExtractionResult) -> None:
         # Match before deleting: this meeting's own current versions are still
         # in the DB here, so a rebuild with unchanged (or similar) wording can
         # match back onto its own thread even though B gave it a new dec_ id.
+        # Appended, not substituted, for threads whose team-wide head is a
+        # *later* meeting — this meeting may sit mid-thread.
         heads = _thread_heads(session, meeting.team_id, embedder)
+        own_versions = session.execute(
+            select(CtxDecisionVersion.thread_id, CtxDecisionVersion.current_statement)
+            .where(CtxDecisionVersion.meeting_id == result.meeting_id)
+            .order_by(CtxDecisionVersion.id)
+        ).all()
+        if own_versions:
+            own_vectors = embedder.embed([statement for _, statement in own_versions])
+            heads += [
+                _ThreadHead(thread_id, vector)
+                for (thread_id, _statement), vector in zip(own_versions, own_vectors, strict=True)
+            ]
         decisions = list(result.decisions)
         vectors = embedder.embed([d.statement for d in decisions]) if decisions else []
         assignment = _assign_decisions_to_threads(vectors, heads, settings.lineage_match_threshold)
@@ -409,6 +434,13 @@ def _assign_decisions_to_threads(
     almost exactly. ``heads`` is deterministically ordered (``_thread_heads``)
     and ties are broken by (decision index, thread index), so the result does
     not depend on dict/set iteration order.
+
+    ``heads`` can list the same ``thread_id`` twice — once as the team-wide
+    head ``_thread_heads`` found, once as the reprocessed meeting's own
+    about-to-be-replaced version (see ``build_decision_lineage``) — so "a
+    thread used at most once" is tracked by ``thread_id``, not by index into
+    ``heads``: the two entries are candidates for the *same* slot, not two
+    slots.
     """
     candidates = [
         (_cosine(vector, head.vector), d_idx, h_idx)
@@ -419,14 +451,15 @@ def _assign_decisions_to_threads(
     candidates.sort(key=lambda c: (-c[0], c[1], c[2]))
 
     assigned_decisions: set[int] = set()
-    assigned_threads: set[int] = set()
+    assigned_threads: set[str] = set()
     assignment: dict[int, _ThreadHead] = {}
     for _similarity, d_idx, h_idx in candidates:
-        if d_idx in assigned_decisions or h_idx in assigned_threads:
+        head = heads[h_idx]
+        if d_idx in assigned_decisions or head.thread_id in assigned_threads:
             continue
         assigned_decisions.add(d_idx)
-        assigned_threads.add(h_idx)
-        assignment[d_idx] = heads[h_idx]
+        assigned_threads.add(head.thread_id)
+        assignment[d_idx] = head
     return assignment
 
 
