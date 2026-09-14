@@ -54,6 +54,7 @@ cue sheet, four people, CPU only, no GPU.
 | S2 | Domain terminology | **0.307** | fail, 6× over |
 | S3 | Numbers, dates, amounts | **0.080** | near |
 | S4 | Simulated meeting (ad-lib) | **0.158** | upper bound |
+| S5 | Stress drills | **0.19–0.59** | per drill |
 
 | | Result | Target |
 | --- | --- | --- |
@@ -107,21 +108,37 @@ faster-whisper has two bias channels and they behave differently:
 | `hotwords` | re-prepended on every `get_prompt` call | survives the whole file |
 
 Korean is roughly one token per syllable, so an `initial_prompt` survives about
-30–40 seconds of transcript and then is gone. Measured on drill 04:
+30–40 seconds of transcript and then is gone.
+
+**On the 165-second file, `initial_prompt` won.**
+
+| | Drill 04 terms | Drill 04 CER |
+| --- | --- | --- |
+| baseline | 2/11 = 18% | 0.404 |
+| `hotwords` | 4/11 = 36% | 0.347 |
+| **`initial_prompt`** | **9/11 = 82%** | **0.155** |
+
+**On the 11m37s file it loses to doing nothing.** Whole transcript against whole
+reference, so segment-boundary drift cannot flatter any variant:
 
 | | CER | Term accuracy |
 | --- | --- | --- |
-| none | 0.157 | 10/29 = 34% |
-| `initial_prompt` | 0.165 | 18/29 = 62% |
-| **`hotwords`** | **0.170** | **25/29 = 86%** |
+| baseline | **0.157** | 9/29 = 31% |
+| `initial_prompt` | 0.232 | 8/29 = 28% |
+| **`hotwords`** | 0.170 | **25/29 = 86%** |
+| both | 0.220 | 15/29 = 52% |
 
-`hotwords` costs 0.013 CER and buys 52 points of term accuracy. The reversal
-happened twice because the first measurement ran on a short file where eviction
-never occurred. **A bias setting measured on a 165-second file does not predict
-an 11-minute one.**
+`hotwords` costs 0.013 CER against the baseline and buys 55 points of term
+accuracy. `initial_prompt` is **worse than no glossary at all** at meeting
+length, and combining the two is worse than `hotwords` alone.
 
-A framing prefix on both channels was measured separately: 45% term accuracy
-without it, 62% with.
+That reversal is the whole point: **a bias setting measured on a 165-second file
+does not predict an 11-minute one.** On the short file the first technical term
+arrives at 34 seconds, while the prompt is still there; on the long one it
+arrives at 148 seconds, by which time decoded text has pushed it out.
+
+A framing prefix on both channels was measured separately, and is a different
+number from any of the above: 45% term accuracy without it, 62% with.
 
 ### Decoder repetition guard (#133)
 
@@ -171,7 +188,7 @@ code does not exist.
 
 ## 4. What kept going wrong
 
-The same failure shape appeared eight times in three days, in different files and
+The same failure shape appeared six times in three days, in different files and
 by different hands. It is worth naming because the counter-measure is always the
 same.
 
@@ -226,13 +243,18 @@ Where they are:
 | --- | --- |
 | Raw audio deleted after transcription | `storage.py` — a recording exists only inside a `with`; deletion in `finally`, `deleted` read back from the filesystem |
 | Audio never written somewhere it survives | `storage.py::_reject_persistent` — refuses a temp dir inside a cloud-sync folder or the checkout |
-| Text masked before the first write | `persistence.py` verifies with `mask()` **before** the first delete |
-| Nothing unmasked leaves | `autune_integrations.privacy.check_outbound` on every outbound channel |
+| Text masked before the first write | `persistence.py` verifies with `mask()` **before** the first delete — **branch `audio/persist-utterances`, not merged** |
+| Nothing unmasked leaves | `check_outbound` runs on every outbound channel, but the patterns it runs are **still the broken ones on `main`**: #126 (070 · 080 · 0505 · international) and #131 (a Korean particle ends the match) are both open. PR #138 closes #126; #131 has no PR yet |
 | No per-person speech volume | `LiveTranscript` lists unnamed voices instead of counting them (#140) |
 
 Two of those exist because a review found the gap, not because the rule was
-followed: the masker and the guard disagreed for a week (#126), and S13 printed a
-per-voice utterance count in the same PR whose body said it did not (#140).
+followed: the masker and the guard disagree about what personal data is (#126,
+open — the fix is in #138), and S13 printed a per-voice utterance count in the
+same PR whose body said it did not (#140).
+
+**The second column is where the rule is enforced, not proof that it is.** Two
+of the five rows are on branches. A guarantee that has not merged is a guarantee
+nobody has.
 
 ---
 
@@ -294,9 +316,10 @@ Ordered by what the measurements say, not by what is pleasant.
    The mechanism exists (#135); the source of terms does not.
 
 2. **Speed.** RTF 0.73 against a 0.3 target, CPU int8. Options in order of
-   expected return: GPU; `large-v3-turbo` (unmeasured); batching. The metric is
-   1.5× realtime end to end and diarization alone takes 377 s of an 11-minute
-   file, so this is not only Whisper.
+   expected return: GPU; `large-v3-turbo` (unmeasured); batching. The target is
+   1.5× recording length end to end (`docs/modules/audio.md`); measured,
+   transcription is 0.73 and diarization adds 0.54 on top, so this is not only
+   Whisper.
 
 3. **An evaluation set.** Every threshold in this module is a placeholder chosen
    from one recording: the masking thresholds, the repetition guard, the glossary
