@@ -1,4 +1,4 @@
-"""The five-way classifier: in-process weights, our own inference server, a fake.
+"""The utterance classifier: in-process weights, our own inference server, a fake.
 
 Three implementations and deliberately no fourth. There is no external-API option
 because sending a meeting's utterances to somebody else's classifier is a decision
@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 
 from autune_contracts.enums import UtteranceKind
 from autune_core import get_logger
+from autune_extraction.labels import NONE
 from autune_integrations.privacy import MAX_OUTBOUND_CHARS
 
 from .base import Prediction
@@ -33,9 +34,9 @@ LABELS: tuple[UtteranceKind, ...] = (
     UtteranceKind.CONCERN,
     UtteranceKind.AMBIGUOUS,
 )
-"""Label order. The fine-tuned head's output columns are in this order and the
-order is part of the checkpoint — reordering ``UtteranceKind`` without retraining
-would silently relabel every prediction.
+"""The five kinds, in the order of the head's first five columns. The order is
+part of the checkpoint — reordering ``UtteranceKind`` without retraining would
+silently relabel every prediction.
 
 Written out rather than ``tuple(UtteranceKind)``. Deriving it made the test that
 was supposed to catch a divergence read ``x == x``: ``LABELS`` followed any
@@ -44,40 +45,69 @@ onto the new order, every prediction came back mislabelled, and the suite stayed
 green. A literal is the only version of this that can disagree with the contract.
 """
 
+HEAD: tuple[str, ...] = (
+    "commitment",
+    "decision",
+    "open_question",
+    "concern",
+    "ambiguous",
+    "none",
+)
+"""Every output column of the head, as ``id2label`` names them: the five kinds,
+then ``none`` last (#149).
+
+Last, so the five kinds keep the columns they always had. A sixth label is still
+a new model -- a five-column checkpoint is refused by ``_check_label_order`` --
+but nothing already written about the first five moves. Written out for the same
+reason as ``LABELS``, and ``training.dataset.LABELS`` must equal it, which a test
+checks.
+"""
+
 
 def _to_prediction(scores: list[float]) -> Prediction:
-    """One row of probabilities into a Prediction.
+    """One row of probabilities, in ``HEAD`` order, into a Prediction.
 
     Raises rather than normalising a row that does not sum to one: a distribution
     that is off means the head or the label order is wrong, and quietly rescaling
     it would hide that behind plausible-looking confidences.
     """
-    if len(scores) != len(LABELS):
-        raise ValueError(f"expected {len(LABELS)} scores, got {len(scores)}")
+    if len(scores) != len(HEAD):
+        raise ValueError(f"expected {len(HEAD)} scores, got {len(scores)}")
     total = sum(scores)
     if not 0.99 <= total <= 1.01:
         raise ValueError(f"scores do not sum to 1 (got {total:.4f})")
 
-    distribution = dict(zip(LABELS, scores, strict=True))
-    kind = max(distribution, key=lambda k: distribution[k])
-    return Prediction(kind=kind, confidence=distribution[kind], scores=distribution)
+    *kind_scores, none_score = scores
+    distribution = dict(zip(LABELS, kind_scores, strict=True))
+    best = max(distribution, key=lambda k: distribution[k])
+    if none_score > distribution[best]:
+        return Prediction(
+            kind=None, confidence=none_score, scores=distribution, none_score=none_score
+        )
+    return Prediction(
+        kind=best, confidence=distribution[best], scores=distribution, none_score=none_score
+    )
 
 
 def _check_label_order(id2label: Mapping[int | str, str]) -> None:
-    """Refuse a checkpoint whose head is not in ``LABELS`` order.
+    """Refuse a checkpoint whose head is not in ``HEAD`` order.
 
     ``LABELS`` says the order is part of the checkpoint, and the checkpoint says
     what it is: the training loop writes ``id2label`` into ``config.json``. This
     reads it back. Without it, a checkpoint trained in another order -- or a bare
-    encoder, whose untrained head is labelled ``LABEL_0`` to ``LABEL_4`` -- loads
+    encoder, whose untrained head is labelled ``LABEL_0`` to ``LABEL_5`` -- loads
     cleanly and relabels every prediction behind confidences that look fine.
+
+    A five-column checkpoint from before ``none`` existed is refused too. Its
+    softmax has nowhere to put "none of these", so every utterance of a meeting
+    would come back as one of the kinds.
 
     Keys are compared as integers because ``config.json`` stores them as strings
     and transformers converts them on load; either should be accepted here.
     """
     by_index = {int(index): label for index, label in id2label.items()}
-    found = [by_index.get(index) for index in range(max(len(by_index), len(LABELS)))]
-    expected = [label.value for label in LABELS]
+    found = [by_index.get(index) for index in range(max(len(by_index), len(HEAD)))]
+    expected = list(HEAD)
     if found != expected:
         raise RuntimeError(
             f"the checkpoint's head is labelled {found}, but this classifier reads its "
@@ -296,9 +326,11 @@ class FakeClassifier:
     The marker is "-겠-" and "-기로 하-"; the stem in front of it is the verb,
     not the class.
 
-    Deliberately conservative otherwise. A miss lands on ``ambiguous``, which
-    downstream means *ask the speaker* — so under-matching costs a question and
-    over-matching invents a commitment nobody made.
+    **A miss is none**, because most of a meeting is none of the kinds. It used
+    to land on ``ambiguous``, the cautious choice while the model had no way to
+    say none -- but ``ambiguous`` means *ask the speaker*, and a fake that sends
+    every unmatched utterance there asks about most of the meeting. Weak assent
+    has its own ending instead.
     """
 
     model_version = "fake"
@@ -312,6 +344,7 @@ class FakeClassifier:
         ("나요", UtteranceKind.OPEN_QUESTION),
         ("어렵", UtteranceKind.CONCERN),
         ("걱정", UtteranceKind.CONCERN),
+        ("볼게요", UtteranceKind.AMBIGUOUS),
     )
     """Checked in order, first match wins. ``기로 했`` comes before ``겠습니다``
     because "하기로 했겠습니다" is a decision being reported, not a new promise."""
@@ -319,12 +352,12 @@ class FakeClassifier:
     def classify(self, texts: list[str]) -> list[Prediction]:
         predictions = []
         for text in texts:
-            kind = UtteranceKind.AMBIGUOUS
+            kind: UtteranceKind | None = None
             for ending, candidate in self._ENDINGS:
                 if ending in text:
                     kind = candidate
                     break
-            scores = {k: 0.05 for k in LABELS}
-            scores[kind] = 1.0 - 0.05 * (len(LABELS) - 1)
-            predictions.append(Prediction(kind=kind, confidence=scores[kind], scores=scores))
+            row = [0.05] * len(HEAD)
+            row[HEAD.index(kind.value if kind is not None else NONE)] = 1.0 - 0.05 * (len(HEAD) - 1)
+            predictions.append(_to_prediction(row))
         return predictions

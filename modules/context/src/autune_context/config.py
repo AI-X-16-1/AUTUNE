@@ -46,13 +46,32 @@ class ContextSettings(BaseSettings):
     nli_local_model: str = ""
     """Path or hub id of the in-house checkpoint. Set for ``klue_kornli_local``."""
 
+    # --- topic segmentation (TextTiling) ---
+    topic_window: int = 3
+    """Utterances per block on each side of a candidate boundary."""
+    topic_min_segment: int = 3
+    """Shortest topic segment, in utterances."""
+    topic_depth_threshold: float = 0.1
+    """Minimum TextTiling depth score for a similarity dip to become a boundary."""
+
     # --- retrieval / linking knobs ---
     retrieve_top_k: int = 50
     rerank_top_k: int = 10
     rrf_k: int = 60
     link_confidence_threshold: float = 0.6
     """Above: assert the link. Below: store it as ``pending`` and ask the user.
-    Placeholder value; tuned against the evaluation set in Phase 2."""
+    Placeholder value; tuned against the evaluation set once it exists (the
+    eval harness is still owed — see docs/modules/context.md, "Metric")."""
+
+    # --- decision lineage ---
+    lineage_match_threshold: float = 0.6
+    """Cosine similarity between B's decision statement and a thread's latest
+    statement, above which the decision is threaded into that existing lineage
+    rather than opening a new one. Placeholder; tuned against the evaluation set
+    once it exists. Also sensitive to how B's ``Decision.statement`` is built —
+    a last-utterance quote (no reference resolution yet, extraction issue #11)
+    scores closing remarks from unrelated decisions higher than this default
+    tolerates, so don't tune this threshold to today's statements."""
 
     # --- publishing ---
     publish_timeout_s: int = 600

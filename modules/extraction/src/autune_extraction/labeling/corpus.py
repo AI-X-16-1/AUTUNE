@@ -27,12 +27,15 @@ from __future__ import annotations
 
 import hashlib
 import json
+import random
 import re
 from collections import Counter, defaultdict
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from xml.etree import ElementTree as ET
+
+from autune_extraction.labels import NONE
 
 from .ami import DIALOGUE_ACTS, EXCLUDED_ACTS, Evidence, label_for
 
@@ -42,6 +45,9 @@ HREF = re.compile(r"^(?P<file>[^#]+)#id\((?P<a>[^)]+)\)(?:\.\.id\((?P<b>[^)]+)\)
 """A NITE pointer: a file, a first word id, and optionally a last one."""
 
 SPLITS: tuple[str, ...] = ("train", "validation", "test")
+
+NONE_SEED = 20260910
+"""Which ``none`` acts are sampled. Fixed so a rebuilt split is the same split."""
 
 
 @dataclass(frozen=True)
@@ -162,6 +168,19 @@ class AmiReader:
                     out.setdefault(filename, []).append((start, end))
         return out
 
+    def decision_meetings(self) -> set[str]:
+        """The meetings that carry the decision layer at all -- 47 of 139.
+
+        The only meetings where an act the mapping says nothing about can be
+        called ``none``. Elsewhere it may be a decision nobody annotated, and
+        teaching the model that it is none of the kinds would teach it the
+        opposite of the label it lacks.
+        """
+        return {
+            path.name.split(".")[0]
+            for path in (self.root / "decision" / "manual").glob("*.decision.xml")
+        }
+
     # --- resolving a pointer to words ------------------------------------
 
     def _load_words(self, filename: str) -> None:
@@ -251,12 +270,15 @@ class AmiReader:
                     in_decision_span=_overlaps(spans, decisions),
                 )
 
-    def load(self, *, min_words: int = 1) -> Iterator[Example]:
+    def load(self, *, min_words: int = 1, include_none: bool = False) -> Iterator[Example]:
         """Every act the mapping gives a kind, with its text resolved.
 
-        Acts the mapping is silent about are dropped rather than labelled. They
-        are most of the corpus — 100,039 of 117,915 — and a loader that forced a
-        label on them would teach the model that everything is a commitment.
+        Acts the mapping is silent about are most of the corpus — 100,039 of
+        117,915 — and a loader that forced a *kind* on them would teach the model
+        that everything is a commitment. By default they are dropped. With
+        ``include_none`` they come back labelled ``none``, which is not forcing a
+        kind: it is the label that says there is none (#149). What to keep of
+        them, and from which meetings, is ``add_none``'s decision.
 
         ``min_words`` drops acts that resolve to nothing or to a single token. A
         ``<vocalsound>`` with no words resolves to the empty string, and an empty
@@ -264,14 +286,14 @@ class AmiReader:
         """
         for act in self.acts():
             label = label_for(act.evidence)
-            if label is None:
+            if label is None and not include_none:
                 continue
             text = self.text_of(act.spans)
             if len(text.split()) < min_words:
                 continue
             yield Example(
                 utterance_id=act.act_id,
-                kind=label.kind.value,
+                kind=label.kind.value if label is not None else NONE,
                 text=text,
                 meeting=act.meeting,
             )
@@ -319,6 +341,65 @@ def _overlaps(
 
 
 # --- splitting ---------------------------------------------------------------
+
+
+def add_none(
+    splits: dict[str, list[Example]],
+    unlabelled: list[Example],
+    *,
+    annotated: set[str],
+    ratio: float,
+    seed: int = NONE_SEED,
+) -> dict[str, list[Example]]:
+    """Put ``none`` rows into splits that were made from labelled rows only.
+
+    Each meeting's ``none`` rows go to the split its labelled rows went to. The
+    placement is still decided on labelled rows alone, so adding ``none`` moves
+    no meeting, and a meeting with no labelled row contributes nothing.
+
+    Only from ``annotated`` meetings -- see ``AmiReader.decision_meetings``.
+
+    How many, per split, is the setting #149 measured:
+
+    - **train**: ``ratio`` times its labelled count, sampled. 1.0 halved the
+      false labels against the closed five-way model; the real proportion is
+      nearer 3.7 to 1, and the ratio is what an experiment moves.
+    - **validation**: one to one, whatever ``ratio`` is. It picks the best
+      epoch, so holding it fixed means a change of ratio changes what the model
+      learns from and not how it is judged.
+    - **test**: the natural distribution, the evaluation #149 asks the metric to
+      be taken on -- **every** act of the annotated test meetings, and nothing
+      from the others. Keeping the other meetings' labelled rows would score
+      against a mixture no meeting has: their kinds in, their ``none`` out. The
+      labelled-only test split is still worth writing beside this one, for
+      comparison with numbers taken before ``none`` existed; that is the
+      caller's, from the splits it passed in.
+
+    Sampled from the pool sorted by id with a fixed seed, so the same corpus
+    builds the same split on any machine.
+    """
+    if ratio < 0:
+        raise ValueError(f"ratio must be zero or more, got {ratio}")
+
+    placement = {example.meeting: name for name, rows in splits.items() for example in rows}
+    pools: dict[str, list[Example]] = {name: [] for name in SPLITS}
+    for example in sorted(unlabelled, key=lambda e: e.utterance_id):
+        name = placement.get(example.meeting)
+        if name is not None and example.meeting in annotated:
+            pools[name].append(example)
+
+    rng = random.Random(seed)
+    train = rng.sample(
+        pools["train"], min(len(pools["train"]), round(len(splits["train"]) * ratio))
+    )
+    validation = rng.sample(
+        pools["validation"], min(len(pools["validation"]), len(splits["validation"]))
+    )
+    return {
+        "train": splits["train"] + train,
+        "validation": splits["validation"] + validation,
+        "test": [row for row in splits["test"] if row.meeting in annotated] + pools["test"],
+    }
 
 
 def split_by_meeting(

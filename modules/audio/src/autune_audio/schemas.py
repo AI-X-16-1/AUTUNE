@@ -51,6 +51,29 @@ class Word:
 
 
 @dataclass(frozen=True)
+class Turn:
+    """One speaker's stretch of speech.
+
+    The same shape whether it came from a diarizer or from a label file, which
+    is why ``eval.metrics`` scores DER against this type rather than its own — a
+    reference and a hypothesis that are different types cannot be compared
+    without a conversion nobody would think to check.
+
+    ``speaker`` is a local label like ``SPEAKER_00``. It means "the same voice as
+    the other turns with this label in this recording" and nothing more; putting
+    a name to it is identification, which is a separate step.
+    """
+
+    start: float
+    end: float
+    speaker: str
+
+    @property
+    def duration(self) -> float:
+        return max(0.0, self.end - self.start)
+
+
+@dataclass(frozen=True)
 class Segment:
     """A stretch of speech Whisper emitted as one unit."""
 

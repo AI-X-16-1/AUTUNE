@@ -188,10 +188,27 @@ def _digits_to_keep(category: str, digits: list[str]) -> set[int]:
     if category == "digits":
         return set()
     count = len(digits)
-    tail = set(range(count - 4, count))
+    positions = set(range(count))
+    tail = positions & set(range(count - 4, count))
+    keep = tail
     if category == "phone" and "".join(digits[:2]) == "01":
-        return {0, 1, 2} | tail
-    return tail
+        keep = tail | (positions & {0, 1, 2})
+    # A rule that keeps four positions says nothing about a span that has four.
+    #
+    # `range(count - 4, count)` is negative-indexed below four digits, and the
+    # negatives are not the positions they look like: at two digits it produced
+    # {-2, -1, 0, 1}, which contains both real positions, so `_hide` kept the
+    # whole span and `counts` recorded it as masked. A recogniser span of
+    # `(0, 2, "account")` came out in the clear. `find_pii` cannot reach this --
+    # its shortest shape is nine digits -- but `EntityRecogniser` is a
+    # documented, tested seam and short spans are exactly what a model returns.
+    #
+    # Clamping the range alone would leave the other half: the mobile rule adds
+    # three more positions, so a seven-digit span labelled `phone` kept all
+    # seven. Both are the same mistake, which is counting positions without
+    # checking there are more of them than the rule keeps. Where there are not,
+    # this falls back to what `digits` already does and keeps nothing.
+    return set() if keep == positions else keep
 
 
 def _hide(value: str, category: str, *, merged: bool = False) -> str:

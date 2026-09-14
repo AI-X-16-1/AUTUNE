@@ -1,7 +1,7 @@
 /** Calls to /api/extraction. This feature calls no other module's endpoints. */
 import { api } from "@/shared/api/client";
 
-import type { ActionItem, ActionStatus, ExtractionResult } from "./types";
+import type { ActionItemDetail, ActionItemRead, ActionStatus, ExtractionResult } from "./types";
 
 export { api };
 
@@ -9,7 +9,12 @@ export { api };
 export const getResults = (meetingId: string) =>
   api.extraction<ExtractionResult>(`/results/${meetingId}`);
 
+/**
+ * Every field optional; the server ANDs the ones given. `due_before` is strict —
+ * today's date asks for what is overdue, and an undated item never matches it.
+ */
 export interface ActionItemFilter {
+  meeting_id?: string;
   assignee_id?: string;
   status?: ActionStatus;
   due_before?: string;
@@ -19,8 +24,18 @@ export const listActionItems = (filter: ActionItemFilter = {}) => {
   const query = new URLSearchParams(
     Object.entries(filter).filter(([, value]) => value !== undefined) as [string, string][],
   ).toString();
-  return api.extraction<ActionItem[]>(`/action-items${query ? `?${query}` : ""}`);
+  return api.extraction<ActionItemRead[]>(`/action-items${query ? `?${query}` : ""}`);
 };
+
+/**
+ * One item with the words of the utterances it came from, for the drawer.
+ *
+ * The only call in this feature that brings utterances back verbatim, and it
+ * asks for one item's at a time — the list carries their ids only. Call it when
+ * a quotation is about to be shown, not to prefetch a board.
+ */
+export const getActionItem = (id: string) =>
+  api.extraction<ActionItemDetail>(`/action-items/${encodeURIComponent(id)}`);
 
 export interface ActionItemDraft {
   meeting_id: string;
@@ -40,13 +55,13 @@ export interface ActionItemDraft {
  * that lets them fix it, and without it the decision does not hold.
  */
 export const createActionItem = (draft: ActionItemDraft) =>
-  api.extraction<ActionItem>("/action-items", {
+  api.extraction<ActionItemRead>("/action-items", {
     method: "POST",
     body: JSON.stringify(draft),
   });
 
 export const updateActionItem = (id: string, changes: Partial<ActionItemDraft & { status: ActionStatus }>) =>
-  api.extraction<ActionItem>(`/action-items/${id}`, {
+  api.extraction<ActionItemRead>(`/action-items/${id}`, {
     method: "PATCH",
     body: JSON.stringify(changes),
   });

@@ -25,6 +25,7 @@ from .errors import (
     PrivacyViolationError,
     ValidationError,
 )
+from .events import consumer_task_suffix, publish, subscribers
 from .ids import new_id
 from .integrations_config import (
     SERVICES,
@@ -42,6 +43,9 @@ __all__ = [
     "get_settings",
     "configure_logging",
     "get_logger",
+    "publish",
+    "subscribers",
+    "consumer_task_suffix",
     "Base",
     "Meeting",
     "Participant",

@@ -38,8 +38,18 @@ from autune_core.errors import PrivacyViolationError
 # between `5678` and `로`. Korean attaches its particles directly to the number
 # and Whisper writes them that way, which made `010-1234-5678로` match nothing
 # at all.
-_L: Final = r"(?<!\d)"
-_R: Final = r"(?!\d)"
+# The class is wider than digits on purpose. A digit boundary alone reads the
+# middle of an identifier as a number: `new_id()` makes `usr_` plus 32 hex
+# characters, and about one in eleven of those contains a long enough run of
+# digits with hex letters on either side. `\b` did not have this problem and had
+# the opposite one -- it could not see the edge of a Korean particle -- so the
+# fix is neither boundary but a class that names what actually ends a number:
+# not a digit, not an ASCII letter, not an underscore. A Korean syllable is none
+# of those, so `010-1234-5678로` still matches; `usr_a1234567890123b` no longer
+# does, from either side.
+_EDGE: Final = r"0-9A-Za-z_"
+_L: Final = rf"(?<![{_EDGE}])"
+_R: Final = rf"(?![{_EDGE}])"
 
 # Speech, not writing. The same number arrives spaced, hyphenated or run
 # together depending on the sentence around it, and the shape not accepted is
@@ -74,7 +84,7 @@ PII_PATTERNS: Final[tuple[tuple[str, re.Pattern[str]], ...]] = (
     ("phone", re.compile(rf"{_L}0\d{{1,3}}{_SEP}\d{{3,4}}{_SEP}\d{{4}}{_R}")),
     # +82-10-1234-5678. Without this the account pattern takes the first two
     # groups and leaves the last eight digits standing.
-    ("phone", re.compile(rf"\+?82{_SEP}\d{{1,3}}{_SEP}\d{{3,4}}{_SEP}\d{{4}}{_R}")),
+    ("phone", re.compile(rf"{_L}\+?82{_SEP}\d{{1,3}}{_SEP}\d{{3,4}}{_SEP}\d{{4}}{_R}")),
     # Every shaped pattern above is three groups of at most six bounded by
     # non-digits, so none can span a longer run. Two personal numbers
     # transcribed without a break matched nothing at all.
@@ -92,7 +102,19 @@ PII_PATTERNS: Final[tuple[tuple[str, re.Pattern[str]], ...]] = (
     # separators as often as with. See MIN_ACCOUNT_DIGITS for what keeps this
     # from matching every date in a transcript.
     ("account", re.compile(rf"{_L}\d{{2,6}}{_SEP}\d{{2,6}}{_SEP}\d{{2,6}}{_R}")),
-    ("email", re.compile(r"\b[\w.+-]+@[\w-]+\.[\w.-]+\b")),
+    # The only pattern that still used `\b`, and the only one whose character
+    # classes were `\w`. Both are the same Korean bug from opposite ends:
+    # Hangul is a word character, so `\b` never fires between 은 and m, and
+    # `[\w.+-]+` then eats the Korean in front of the address.
+    # `메일은minkyoung@example.com로` came out `메***@example.com로` -- 소는 was
+    # deleted from the sentence as if it were part of somebody's address.
+    # Changing the boundary alone does not fix it: the greedy class has to stop
+    # being able to match Hangul, and then the boundary has to stop being `\b`.
+    # An address is ASCII; a local part in Hangul is not a thing Whisper writes.
+    (
+        "email",
+        re.compile(rf"{_L}[A-Za-z0-9._+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+{_R}"),
+    ),
 )
 
 
@@ -120,14 +142,26 @@ def find_pii(text: str) -> list[tuple[int, int, str]]:
     """
     found: list[tuple[int, int, str]] = []
     for category, pattern in PII_PATTERNS:
-        for match in pattern.finditer(text):
-            if MASK_CHAR in match.group():
-                # Already masked. Not personal data any more.
-                continue
-            if category == "account" and _digit_count(match.group()) < MIN_ACCOUNT_DIGITS:
+        # Not `finditer`. A rejected match has to be retried one character later,
+        # because `finditer` resumes after it and the real value can start
+        # inside what was rejected:
+        #
+        #     금액 50 1002-123-456789
+        #       account first matches `50 1002-123` -- nine digits, a figure,
+        #       correctly rejected -- and finditer then resumes past `123`, so
+        #       `1002-123-456789` was never looked at. It reached neither the
+        #       masker nor the guard.
+        position = 0
+        while (match := pattern.search(text, position)) is not None:
+            rejected = MASK_CHAR in match.group() or (
                 # A date, a version, a figure said in three parts.
+                category == "account" and _digit_count(match.group()) < MIN_ACCOUNT_DIGITS
+            )
+            if rejected:
+                position = match.start() + 1
                 continue
             found.append((match.start(), match.end(), category))
+            position = match.end()
     return sorted(found, key=lambda s: (s[0], -(s[1] - s[0])))
 
 
@@ -254,6 +288,10 @@ def check_outbound(
     nothing to remember — every string in the body is checked.
     """
     parts = strings_in(payload, addressing=addressing)
+    # Size first. Scanning is the expensive half and its cost grows faster than
+    # the input does, so an oversized payload -- which is refused either way --
+    # should be refused before it is scanned rather than after. It also bounds
+    # what the patterns ever see to MAX_OUTBOUND_CHARS.
+    assert_within_size("".join(parts), destination=destination)
     for part in parts:
         assert_masked(part, destination=destination)
-    assert_within_size("".join(parts), destination=destination)

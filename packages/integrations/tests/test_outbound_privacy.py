@@ -316,3 +316,138 @@ def test_each_span_is_reported_as_one_category() -> None:
     number that was never there."""
     assert find_unmasked("제 번호는 010-1234-5678입니다") == ["phone"]
     assert find_unmasked("a@b.com 와 010-1111-2222") == ["phone", "email"]
+
+
+# --- identifiers are not numbers ------------------------------------------
+
+
+def test_a_generated_id_is_not_personal_data() -> None:
+    """`new_id()` is a prefix plus 32 hex characters, and hex is mostly digits.
+
+    A digit boundary reads the middle of one as a number: about one in eleven
+    `usr_` ids contains a long enough run with hex letters on either side, so
+    one request in eleven was refused at random. `\b` never had this problem and
+    had the opposite one — it could not find the edge of a Korean particle — so
+    the boundary is neither, but a class naming what actually ends a number.
+    """
+    from autune_core.ids import new_id
+
+    for prefix in ("usr", "mtg", "act", "thr", "utt", "prt", "gap", "topic", "dec", "job"):
+        offenders = [i for i in (new_id(prefix) for _ in range(2000)) if find_unmasked(i)]
+        assert offenders == [], offenders
+
+
+@pytest.mark.parametrize(
+    ("line", "expected"),
+    [
+        ("메일은minkyoung@example.com로 부탁드립니다", (3, 24)),
+        ("주소는minkyoung@example.com입니다", (3, 24)),
+        ("메일 minkyoung@example.com 로", (3, 24)),
+        ("minkyoung@example.co.kr", (0, 23)),
+    ],
+)
+def test_an_address_written_against_korean_is_the_address_only(
+    line: str, expected: tuple[int, int]
+) -> None:
+    r"""`email` was the last pattern on `\b`, and the last with `\w` classes.
+
+    Both are the same Korean bug from opposite ends. Hangul is a word
+    character, so `\b` never fires between 은 and m, and `[\w.+-]+` then eats
+    the Korean in front of the address:
+
+        메일은minkyoung@example.com로  ->  메***@example.com로
+
+    소는 was deleted from the sentence as if it were part of somebody's
+    address. Changing the boundary alone does not fix it -- the greedy class
+    has to stop matching Hangul first.
+    """
+    assert [(s, e) for s, e, c in find_pii(line) if c == "email"] == [expected]
+
+
+def test_the_international_phone_pattern_has_a_left_boundary_too() -> None:
+    r"""It was the one pattern without one, and hex is full of `82`.
+
+    Every sibling pattern anchors its start; this one began `\+?82`, so it
+    matched inside `utt_0f0a8ce845434317af87928215854283` — `8215854283`, read
+    as a Korean country code and a number. Found by running the id test at
+    thirty thousand samples rather than two hundred.
+    """
+    assert find_unmasked("utt_0f0a8ce845434317af87928215854283") == []
+    assert find_unmasked("+82-10-1234-5678 로 연락") == ["phone"]
+    assert find_unmasked("연락처 +82 10 1234 5678") == ["phone"]
+
+
+def test_a_korean_particle_still_ends_a_number() -> None:
+    """The other half of the same boundary. Widening it must not undo #126."""
+    assert find_unmasked("010-1234-5678로 연락주세요") == ["phone"]
+    assert find_unmasked("주민번호 900101-1234567이고요") == ["rrn"]
+
+
+def test_a_slack_channel_and_thread_id_are_not_content() -> None:
+    """They address the request. Checking them can only refuse a real one.
+
+    `thread_ts` is `1726012345.123456` — three groups of digits, which is a bank
+    account to any pattern reading it as content — and `channel` holds a user id
+    on a DM.
+    """
+    slack = FakeSlack()
+    slack.reply_in_thread("C0123456789", "1726012345.123456", "정리했습니다")
+    slack.send_dm("U01234567890123", "확인 부탁드립니다")
+    assert len(slack.sent) == 2
+
+
+def test_the_fake_checks_the_body_the_client_sends() -> None:
+    """They built the body separately and the fake's was missing `thread_ts`.
+
+    So the fake checked something the client does not send: a test could pass on
+    a payload production refuses, which is the opposite of what a fake is for.
+    One builder now, used by both.
+    """
+    from autune_integrations.slack import slack_body
+
+    assert set(slack_body("C1", "t", thread_ts="1726012345.123456")) == {
+        "channel",
+        "text",
+        "thread_ts",
+    }
+
+
+def test_the_body_is_still_checked_when_addressing_is_exempt() -> None:
+    slack = FakeSlack()
+    with pytest.raises(PrivacyViolationError):
+        slack.post_message("C0123456789", "연락처 010-1234-5678")
+
+
+# --- a rejected match must not swallow the real one ------------------------
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "금액 50 1002-123-456789",
+        "12 110-123-456789",
+        "예산 7 1002-123-456789 로 보내주세요",
+    ],
+)
+def test_a_figure_before_an_account_does_not_hide_it(line: str) -> None:
+    """`finditer` resumes after a match, including one that was thrown away.
+
+    The account shape matched `50 1002-123` first — nine digits, a figure,
+    correctly rejected — and the scan then resumed past it, so the account that
+    starts inside what was rejected was never looked at. It reached neither the
+    masker nor the guard.
+    """
+    assert "account" in find_unmasked(line)
+
+
+def test_an_oversized_payload_is_refused_before_it_is_scanned() -> None:
+    """Scanning costs more than linearly, and an oversized payload is refused
+    either way. `010-` twenty thousand times took 37 seconds to refuse."""
+    import time
+
+    slack = FakeSlack()
+    started = time.monotonic()
+    with pytest.raises(PrivacyViolationError) as caught:
+        slack.post_message("C0123456789", "010-" * 20000)
+    assert "length" in caught.value.details
+    assert time.monotonic() - started < 1.0

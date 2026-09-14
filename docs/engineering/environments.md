@@ -95,7 +95,10 @@ prefix `AUTUNE_<MODULE>_`.
 | `AUTUNE_EXTRACTION_CLASSIFIER_CHECKPOINT` | B | Pinned model, recorded with every classification. Never a floating tag. **Blank by default** — no trained checkpoint is published yet, and `local` / `hosted` refuse to start without one |
 | `AUTUNE_EXTRACTION_CLASSIFIER_ENDPOINT` | B | Our own inference server. Required when `CLASSIFIER_IMPL=hosted` |
 | `AUTUNE_EXTRACTION_CLASSIFIER_DEVICE` | B | `cpu` · `cuda`. Default `cpu`. Mirrors `AUTUNE_AUDIO_DEVICE` |
-| `AUTUNE_GAP_RISK_THRESHOLD` | C | Default `0.7` |
+| `AUTUNE_EXTRACTION_CANDIDATE_CONFIDENCE` | B | Below this, an item is a candidate rather than asserted. **Blank by default** — the number comes from the evaluation set (#10), and blank means nothing is a candidate |
+| `AUTUNE_GAP_RISK_THRESHOLD` | C | Default `0.7`. At or above is `high`, the only severity surfaced |
+| `AUTUNE_GAP_NER_IMPL` | C | `spacy` (default) · `fake`. **No `external`** — see below |
+| `AUTUNE_GAP_NER_MODEL` | C | Default `ko_core_news_lg`. The pipeline **name**; the version comes from the pinned wheel and is recorded per row |
 | `AUTUNE_CONTEXT_EMBEDDER_IMPL` | D | `kure_v1_http` (default), `kure_v1_local`, `fake` |
 | `AUTUNE_CONTEXT_RERANKER_IMPL` | D | `bge_reranker_v2_m3_ko_http` (default), `..._local`, `fake` |
 | `AUTUNE_CONTEXT_NLI_IMPL` | D | `klue_kornli_http` (default), `klue_kornli_local`, `fake` |
@@ -109,10 +112,14 @@ prefix `AUTUNE_<MODULE>_`.
 | `AUTUNE_CONTEXT_EMBEDDER_LOCAL_MODEL` | D | Only for `kure_v1_local`. Default `nlpai-lab/KURE-v1` |
 | `AUTUNE_CONTEXT_RERANKER_LOCAL_MODEL` | D | Only for `bge_reranker_v2_m3_ko_local`. Default `dragonkue/bge-reranker-v2-m3-ko` |
 | `AUTUNE_CONTEXT_NLI_LOCAL_MODEL` | D | Only for `klue_kornli_local`. Path or hub id of the in-house checkpoint |
+| `AUTUNE_CONTEXT_TOPIC_WINDOW` | D | TextTiling block size, in utterances. Default `3` |
+| `AUTUNE_CONTEXT_TOPIC_MIN_SEGMENT` | D | Shortest topic segment. Default `3` |
+| `AUTUNE_CONTEXT_TOPIC_DEPTH_THRESHOLD` | D | Min TextTiling depth for a boundary. Default `0.1` |
 | `AUTUNE_CONTEXT_RETRIEVE_TOP_K` | D | Hybrid retrieval breadth. Default `50` |
 | `AUTUNE_CONTEXT_RERANK_TOP_K` | D | Kept after re-ranking. Default `10` |
 | `AUTUNE_CONTEXT_RRF_K` | D | Reciprocal-rank-fusion constant. Default `60` |
 | `AUTUNE_CONTEXT_LINK_CONFIDENCE_THRESHOLD` | D | Assert vs. ask. Default `0.6`, tuned in eval |
+| `AUTUNE_CONTEXT_LINEAGE_MATCH_THRESHOLD` | D | Decision-to-thread match cutoff (cosine). Default `0.6`, tuned in eval |
 | `AUTUNE_CONTEXT_PUBLISH_TIMEOUT_S` | D | Wait for B before publishing. Default `600` |
 | `AUTUNE_CONTEXT_WARM_MODELS_ON_WORKER_INIT` | D | `true` only on workers consuming `cpu_heavy`. Default `false` |
 
@@ -178,6 +185,31 @@ reads as the model being slow rather than the box being wrong.
 This module classifies every utterance of every meeting, so it is the heaviest
 inference in the product — heavier than module A, which runs its model once per
 recording.
+
+### The entity extractor has no external option
+
+`AUTUNE_GAP_NER_IMPL` accepts `spacy` and `fake`, and nothing else. Module C
+extracts entities from **every** utterance in a meeting, so an external
+implementation would mean sending the whole transcript to somebody else's
+model — which section 6 of `../architecture/privacy.md` makes a design
+conversation rather than a value you can set. The same reasoning module B
+applied to its classifier.
+
+`spacy` needs a library and a model, and both come from the optional extra:
+
+```bash
+uv sync --package autune-gap --extra local-models
+```
+
+The model is in the extra as a wheel URL rather than left to
+`python -m spacy download`, which resolves to whichever version is current on
+the day somebody runs it. `uv.lock` pins the wheel, so two checkouts extract
+with the same model — and `AUTUNE_GAP_NER_MODEL` names the pipeline while the
+version travels with the rows it produced.
+
+Without the extra the extractor raises a `RuntimeError` naming the command —
+the default implementation failing with `No module named 'spacy'` tells the
+reader nothing about the extra existing.
 
 ## Secrets
 

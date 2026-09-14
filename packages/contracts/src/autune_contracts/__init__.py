@@ -21,6 +21,7 @@ from .enums import (
 )
 from .events import (
     CONTEXT_COMPLETED,
+    EVENTS,
     EXTRACTION_COMPLETED,
     GAP_COMPLETED,
     INTELLIGENCE_COMPLETED,
@@ -52,6 +53,7 @@ __all__ = [
     # events
     "TRANSCRIPT_READY",
     "EXTRACTION_COMPLETED",
+    "EVENTS",
     "GAP_COMPLETED",
     "CONTEXT_COMPLETED",
     "INTELLIGENCE_COMPLETED",

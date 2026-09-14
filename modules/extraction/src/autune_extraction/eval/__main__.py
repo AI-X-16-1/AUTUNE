@@ -36,11 +36,14 @@ def format_report(report: Report, eval_set_fingerprint: str) -> str:
             f"{class_score.precision:>8.3f}{class_score.recall:>8.3f}{class_score.f1:>8.3f}"
             f"{class_score.support:>10}{class_score.predicted:>11}"
         )
+    lines.append(
+        f"{'(none)':<16}{'':>8}{'':>8}{'':>8}{report.none_support:>10}{report.none_predicted:>11}"
+    )
 
     derived = action_item_f1(report)
     lines += [
         "",
-        f"macro F1, five-way   {report.macro_f1:.4f}   <- the metric (ADR 0006)",
+        f"macro F1, five kinds {report.macro_f1:.4f}   <- the metric (ADR 0006)",
         f"accuracy             {report.accuracy:.4f}",
         "",
         f"action item F1       {derived:.4f}   derived from the commitment class",
@@ -52,6 +55,14 @@ def format_report(report: Report, eval_set_fingerprint: str) -> str:
         "      actions, on their own split. Read the published figure as the order",
         "      of magnitude the task sits at, never as a bar we cleared.",
     ]
+
+    if report.none_support == 0:
+        lines += [
+            "",
+            "note: no 'none' rows in the evaluation set. This scores the model only on",
+            "      utterances that have a kind, and cannot see what it does with the",
+            "      rest of a meeting, which is most of it (#149).",
+        ]
 
     if report.absent_kinds:
         absent = ", ".join(k.value for k in report.absent_kinds)

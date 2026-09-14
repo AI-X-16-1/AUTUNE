@@ -18,11 +18,12 @@ from typing import Annotated
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
-from autune_core import get_session
+from autune_core import CurrentUser, get_session
+from autune_core.errors import NotFoundError
 
 from . import service
 from .models import IntelReport, IntelScore
-from .schemas import DashboardRead, HeatmapCell, ReportRead, ScoreRead
+from .schemas import DashboardRead, HeatmapCell, ReportRead, ScoreRead, SpeakingRatioRead
 
 router = APIRouter()
 
@@ -56,3 +57,18 @@ def get_heatmap(team_id: str, session: SessionDep) -> list[HeatmapCell]:
 def list_reports(team_id: str, session: SessionDep) -> list[IntelReport]:
     """The team's generated weekly reports, newest period first."""
     return service.list_reports(session, team_id)
+
+
+@router.get("/me/speaking-ratio/{meeting_id}", response_model=SpeakingRatioRead)
+def my_speaking_ratio(meeting_id: str, user: CurrentUser, session: SessionDep) -> SpeakingRatioRead:
+    """This meeting's speaking share for the authenticated user, and nobody else.
+
+    There is deliberately no subject in the path: no form of this endpoint
+    returns another person's ratio, and there is no admin override. The value is
+    computed on demand and never stored. See docs/architecture/privacy.md
+    section 3.
+    """
+    ratio = service.speaking_ratio_for_user(session, meeting_id, user.id)
+    if ratio is None:
+        raise NotFoundError("speaking ratio", meeting_id)
+    return ratio

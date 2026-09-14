@@ -2,25 +2,12 @@
 
 import { useState } from "react";
 
-import { Button, Quote, StatusDot } from "@/shared/ui";
+import { Button, MaskedText, Quote, StatusDot } from "@/shared/ui";
 
 import { ConfirmDelete } from "./ConfirmDelete";
-import { MaskedText } from "./MaskedText";
+import { useSourceUtterances } from "../hooks/useSourceUtterances";
 import { COLUMNS, COLUMN_LABELS, isCandidate } from "../types";
-import type { ActionItem, ActionStatus } from "../types";
-
-/**
- * One source utterance, resolved to text.
- *
- * Not part of `ActionItem`, which carries only `source_utterance_ids`. Nothing
- * on `/api/extraction` returns the text for them yet, so the drawer takes it as
- * a prop rather than fetching — see the note in the pull request. Reading
- * `utterances` directly is module A's, and this feature calls only its own API.
- */
-export interface SourceUtterance {
-  id: string;
-  text: string;
-}
+import type { ActionItemRead, ActionStatus } from "../types";
 
 /**
  * S18. Why this item exists, and the two things a person does about it.
@@ -33,19 +20,20 @@ export interface SourceUtterance {
  */
 export function ActionDetailDrawer({
   item,
-  sources = [],
   onClose,
   onStatusChange,
   onDelete,
 }: {
-  item: ActionItem;
-  sources?: SourceUtterance[];
+  item: ActionItemRead;
   onClose: () => void;
   onStatusChange?: (status: ActionStatus) => void | Promise<void>;
   onDelete?: () => void | Promise<void>;
 }) {
   const [confirming, setConfirming] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  // The quotation is fetched when the drawer opens (GET /action-items/{id});
+  // the list the board holds carries utterance ids, never their words.
+  const quotation = useSourceUtterances(item);
 
   return (
     <aside
@@ -118,9 +106,9 @@ export function ActionDetailDrawer({
 
         <section className="mt-6">
           <SectionTitle>근거 발화</SectionTitle>
-          {sources.length > 0 ? (
+          {quotation.sources && quotation.sources.length > 0 ? (
             <div className="mt-2 grid gap-2">
-              {sources.map((source) => (
+              {quotation.sources.map((source) => (
                 <Quote key={source.id}>
                   <MaskedText>{source.text}</MaskedText>
                 </Quote>
@@ -131,9 +119,7 @@ export function ActionDetailDrawer({
               className="mt-2 text-[var(--color-ink-muted)]"
               style={{ fontSize: "var(--text-metaSmall)" }}
             >
-              {item.source_utterance_ids?.length
-                ? "근거 발화를 불러오지 못했습니다."
-                : "회의에서 뽑은 항목이 아니라 직접 추가한 항목입니다."}
+              {quotationNote(item, quotation)}
             </p>
           )}
         </section>
@@ -207,6 +193,26 @@ export function ActionDetailDrawer({
       ) : null}
     </aside>
   );
+}
+
+/**
+ * What the evidence section says when it has no quotation to show.
+ *
+ * Four different situations, and telling them apart is the point: "직접 추가"
+ * is an answer, "불러오는 중" and "불러오지 못했습니다" are about the
+ * connection, and a model item whose utterances are gone is about the meeting
+ * — its transcript was deleted underneath the item.
+ */
+function quotationNote(
+  item: ActionItemRead,
+  quotation: { loading: boolean; error: Error | null },
+): string {
+  if (!item.source_utterance_ids?.length) {
+    return "회의에서 뽑은 항목이 아니라 직접 추가한 항목입니다.";
+  }
+  if (quotation.loading) return "근거 발화를 불러오는 중입니다.";
+  if (quotation.error) return "근거 발화를 불러오지 못했습니다.";
+  return "근거 발화가 삭제되어 더 이상 볼 수 없습니다.";
 }
 
 function SectionTitle({ children }: { children: string }) {

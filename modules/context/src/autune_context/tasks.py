@@ -1,13 +1,13 @@
-"""Celery tasks for module D.
+"""Celery tasks for the Meeting Context Engine.
 
-D's two jobs have different inputs, so they are two tasks:
+Two entry points with different inputs:
 
 - **Topic linking** needs only the transcript, so it runs in parallel with B
   and C, straight off ``autune.transcript.ready``.
 - **Decision lineage** needs the decisions B extracted, so it runs after
   ``autune.extraction.completed``.
 
-D publishes ``ContextLinks`` once both have run — or, if B never reports, with
+``ContextLinks`` is published once both have run — or, if B never reports, with
 an empty ``decision_lineage`` and ``"extraction"`` in ``missing_sources``. A
 failure in B must not cost the user their topic links.
 
@@ -18,8 +18,9 @@ from __future__ import annotations
 
 from celery import shared_task
 
-# Importing ``pipeline`` registers the worker_process_init warm-up hook.
-from autune_context import pipeline  # noqa: F401
+import autune_context.pipeline  # noqa: F401  (registers the worker_process_init warm-up hook)
+from autune_context import service
+from autune_context.config import get_settings
 from autune_contracts import ExtractionResult, TranscriptReady, validate_major_version
 from autune_core import get_logger
 
@@ -39,17 +40,22 @@ def on_transcript_ready(payload: dict) -> None:
         meeting_id=transcript.meeting_id,
         utterances=len(transcript.utterances),
     )
-    # TODO(문민재): embed topics into ctx_embeddings (pgvector), hybrid-retrieve
-    #   past meetings, re-rank, persist ctx_topic_links, then try to publish.
+    service.run_topic_linking(transcript)
+
+    # Try now (B may already be in); also arm the B-timeout fallback.
+    publish_if_ready.delay(transcript.meeting_id)
+    publish_if_ready.apply_async(
+        (transcript.meeting_id,), countdown=get_settings().publish_timeout_s
+    )
 
 
 @shared_task(name="autune.context.on_extraction_completed", acks_late=True)
 def on_extraction_completed(payload: dict) -> None:
     """Thread B's decisions into lineage. Runs after B.
 
-    ``result.decisions`` carries what B judged to be a decision in this meeting.
-    D decides which existing thread each one belongs to — that matching is D's,
-    and the thread id is D's own (``thr_``).
+    Matches each decision to a thread, runs NLI against the previous statement,
+    and records how the decision moved. Then re-checks whether ``ContextLinks``
+    can be published.
     """
     result = ExtractionResult.model_validate(payload)
     validate_major_version(result)
@@ -59,8 +65,8 @@ def on_extraction_completed(payload: dict) -> None:
         meeting_id=result.meeting_id,
         decisions=len(result.decisions),
     )
-    # TODO(문민재): match each decision to a thread, run NLI against the previous
-    #   statement, record the version, then try to publish.
+    service.build_decision_lineage(result)
+    publish_if_ready.delay(result.meeting_id)
 
 
 @shared_task(name="autune.context.publish_if_ready", acks_late=True)
@@ -70,6 +76,5 @@ def publish_if_ready(meeting_id: str) -> None:
     Never block topic links on a failure in B: publish what exists and name what
     is missing.
     """
-    log.info("context_publish_checked", meeting_id=meeting_id)
-    # TODO(문민재): if topic linking is done and either lineage is done or the
-    #   timeout has passed, publish ContextLinks with missing_sources filled in.
+    published = service.publish_if_ready(meeting_id)
+    log.info("context_publish_checked", meeting_id=meeting_id, published=published)

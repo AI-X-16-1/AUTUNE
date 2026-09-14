@@ -14,7 +14,7 @@ timeout elapses. The Celery glue that enqueues the aggregate task lives in
 from __future__ import annotations
 
 from collections import Counter
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Final
 
 import sqlalchemy as sa
@@ -34,10 +34,12 @@ from autune_contracts import (
     QualityScore,
 )
 from autune_contracts.intelligence import Grade
-from autune_core import Meeting
+from autune_core import Meeting, Participant, Utterance, get_logger
 from autune_core.errors import NotFoundError
+from autune_integrations import SlackApi, assert_personal_delivery
 
 from .config import get_settings
+from .feedback import build_speaking_ratio_dm
 from .models import (
     IntelAlignment,
     IntelCompletion,
@@ -45,7 +47,10 @@ from .models import (
     IntelReport,
     IntelScore,
 )
-from .schemas import DashboardRead, DashboardScoreEntry, HeatmapCell
+from .schemas import DashboardRead, DashboardScoreEntry, HeatmapCell, SpeakingRatioRead
+from .speaking import SpeakingShare, SpeechSegment, speaker_count_for_gate, speaking_shares
+
+log = get_logger(__name__)
 
 SOURCES: tuple[str, ...] = ("extraction", "gap", "context")
 """The three upstream modules E waits on. Each maps to an ``<source>_at`` column
@@ -393,3 +398,347 @@ def get_dashboard(session: Session, team_id: str) -> DashboardRead:
         ],
         gap_distribution={pattern: int(total) for pattern, total in gap_rows},
     )
+
+
+# --- Weekly report (pipeline step 6) ---------------------------------------
+#
+# A deterministic summary over intel_scores and intel_gap_patterns for one
+# team and one period. Delivery (Slack channel, or skipped without one) lives
+# in tasks.py; nothing here writes outside intel_reports.
+
+
+def _report_body_markdown(
+    *,
+    period_start: date,
+    period_end: date,
+    meeting_count: int,
+    average_value: float | None,
+    grade_distribution: dict[str, int],
+    gap_distribution: dict[str, int],
+    action_item_completion_rate: float | None,
+) -> str:
+    """The report's Slack/markdown body — a template, not an LLM.
+
+    Every value here is already computed in intel_scores/intel_gap_patterns;
+    this only arranges them into readable sentences. `../architecture/privacy.md`
+    is not implicated (no transcript content passes through this function), but
+    an LLM call would still need to go through `autune_integrations`'
+    `check_outbound` rather than a module-local client — module D's `LlmClient`
+    protocol (`modules/context/src/autune_context/pipeline/base.py`) documents
+    why: PR #90 rejected exactly that shortcut. No such client exists yet, so
+    this function is the seam where one replaces the template later.
+    """
+    header = f"*{period_start.isoformat()} ~ {period_end.isoformat()} 주간 리포트*"
+    if meeting_count == 0:
+        return f"{header}\n\n이번 주 분석된 회의가 없습니다."
+
+    lines = [header, "", f"이번 주 분석된 회의 {meeting_count}건."]
+    if average_value is not None:
+        lines.append(f"평균 품질 점수: {_grade_for(average_value)} ({average_value:.0%})")
+    if grade_distribution:
+        dist = " · ".join(f"{g} {c}건" for g, c in sorted(grade_distribution.items()))
+        lines.append(f"등급 분포: {dist}")
+    if gap_distribution:
+        top_type, top_count = max(gap_distribution.items(), key=lambda kv: kv[1])
+        lines.append(f"가장 잦은 갭 유형: {top_type} ({top_count}건)")
+    if action_item_completion_rate is not None:
+        lines.append(f"액션 아이템 완료율: {action_item_completion_rate:.0%}")
+    return "\n".join(lines)
+
+
+def generate_weekly_report(
+    session: Session, team_id: str, period_start: date, period_end: date
+) -> IntelReport:
+    """Aggregate this team's scored meetings in ``[period_start, period_end)``
+    into one ``intel_reports`` row, upserted by ``(team_id, period_start)``.
+
+    The period is anchored to when E scored a meeting (``IntelScore.created_at``)
+    — the same recency signal the dashboard's recent-scores strip already uses.
+    E does not track when a meeting itself happened, only when it was analyzed.
+
+    Returns a transient ``IntelReport`` carrying the values just written — not
+    the tracked row — so the caller (a Celery task, delivering the body to
+    Slack) does not need a second query.
+    """
+    start = datetime.combine(period_start, datetime.min.time(), tzinfo=UTC)
+    end = datetime.combine(period_end, datetime.min.time(), tzinfo=UTC)
+
+    scores = list(
+        session.execute(
+            sa.select(IntelScore).where(
+                IntelScore.team_id == team_id,
+                IntelScore.created_at >= start,
+                IntelScore.created_at < end,
+            )
+        )
+        .scalars()
+        .all()
+    )
+    meeting_ids = [s.meeting_id for s in scores]
+    values = [s.value for s in scores]
+    rates = [
+        s.action_item_completion_rate for s in scores if s.action_item_completion_rate is not None
+    ]
+    grade_distribution = dict(Counter(s.grade for s in scores))
+
+    gap_distribution: dict[str, int] = {}
+    if meeting_ids:
+        gap_rows = session.execute(
+            sa.select(IntelGapPattern.pattern_type, func.sum(IntelGapPattern.count))
+            .where(IntelGapPattern.meeting_id.in_(meeting_ids))
+            .group_by(IntelGapPattern.pattern_type)
+        ).all()
+        gap_distribution = {pattern: int(total) for pattern, total in gap_rows}
+
+    average_value = (sum(values) / len(values)) if values else None
+    action_item_completion_rate = (sum(rates) / len(rates)) if rates else None
+
+    body_markdown = _report_body_markdown(
+        period_start=period_start,
+        period_end=period_end,
+        meeting_count=len(scores),
+        average_value=average_value,
+        grade_distribution=grade_distribution,
+        gap_distribution=gap_distribution,
+        action_item_completion_rate=action_item_completion_rate,
+    )
+    metrics_json = {
+        "meeting_count": len(scores),
+        "average_score": average_value,
+        "grade_distribution": grade_distribution,
+        "gap_distribution": gap_distribution,
+        "action_item_completion_rate": action_item_completion_rate,
+    }
+
+    session.execute(
+        pg_insert(IntelReport)
+        .values(
+            team_id=team_id,
+            period_start=period_start,
+            period_end=period_end,
+            body_markdown=body_markdown,
+            metrics_json=metrics_json,
+            source_meeting_ids=meeting_ids,
+        )
+        .on_conflict_do_update(
+            index_elements=["team_id", "period_start"],
+            set_={
+                "period_end": period_end,
+                "body_markdown": body_markdown,
+                "metrics_json": metrics_json,
+                "source_meeting_ids": meeting_ids,
+                "updated_at": func.now(),
+            },
+        )
+    )
+    session.flush()
+    return IntelReport(
+        team_id=team_id,
+        period_start=period_start,
+        period_end=period_end,
+        body_markdown=body_markdown,
+        metrics_json=metrics_json,
+        source_meeting_ids=meeting_ids,
+    )
+
+
+# --- Speaking ratio (pipeline step 7) -----------------------------------
+#
+# Private to the speaker: computed from A's utterances, delivered by DM, never
+# written to a table, never returned for anyone else. docs/architecture/privacy.md
+# section 3 is binding here.
+
+_MIN_SPEAKERS_FOR_RATIO: Final = 3
+"""Below this many people, per ``speaker_count_for_gate``, the ratio is withheld.
+
+The measured shares sum to 1.0, so when only two people's speech is in the
+denominator a recipient's ``1 - ratio`` is the other person's share exactly —
+the response would *contain* someone else's speaking ratio, which
+docs/architecture/privacy.md section 3 forbids. An above/below-baseline band
+does not help: with two, the two are mirror images. So the number does not go
+out at all — ``/me/speaking-ratio`` answers with ``reason="small_meeting"`` and
+no DM is sent.
+
+The gate counts people, not the consenting head count and not participant
+rows: a meeting with three consenting participants where one only listened
+still splits its speech two ways, and a real speaker split across two
+participant rows by diarization counts once *once identified* — one row
+resolves to the same ``user_id`` as the other. Before identification a split
+cannot be merged, and an unidentified label cannot be told apart from "the
+unconfirmed other half of an already-identified speaker" either — so
+``speaker_count_for_gate`` counts unidentified shares as zero rather than
+guess they are new people. The cost is that a real N-person meeting with a
+speaker not yet identified reads as smaller than N until identification
+finishes; since this is recomputed on every request, it self-corrects rather
+than needing a retry."""
+
+
+def compute_speaking_shares(session: Session, meeting_id: str) -> list[SpeakingShare]:
+    """Each identified participant's share of the meeting's *measured* speech.
+
+    Reads only ``utterances`` and ``participants`` (shared, read-only). The
+    denominator is speech attributed to a participant who consented to speaker
+    attribution — the same population the even-share baseline
+    (``_consented_participant_count``) is taken over, so ``ratio`` and that
+    baseline answer the same question. Unattributed speech and speech from a
+    non-consenting participant are both left out.
+    """
+    rows = session.execute(
+        sa.select(
+            Utterance.participant_id,
+            Participant.user_id,
+            Utterance.start_sec,
+            Utterance.end_sec,
+        )
+        .join(Participant, Participant.id == Utterance.participant_id)
+        .where(
+            Utterance.meeting_id == meeting_id,
+            Participant.consented.is_(True),
+        )
+    ).all()
+    segments = [
+        SpeechSegment(participant_id=pid, user_id=uid, start_sec=start, end_sec=end)
+        for pid, uid, start, end in rows
+    ]
+    return speaking_shares(segments)
+
+
+def _consented_participant_count(session: Session, meeting_id: str) -> int:
+    """How many distinct *people* have consented — not how many participant rows.
+
+    Diarization can split one real speaker into two participant rows that are
+    later confirmed to the same ``user_id``; counting rows would inflate the
+    even-share baseline's population past ``compute_speaking_shares``'s, which
+    counts people. An unidentified participant (``user_id`` still ``None``) has
+    no shared identity to collapse onto, so each such row counts as one person,
+    same as ``speaking_shares``' own grouping key.
+    """
+    return (
+        session.scalar(
+            sa.select(func.count(func.distinct(func.coalesce(Participant.user_id, Participant.id))))
+            .select_from(Participant)
+            .where(
+                Participant.meeting_id == meeting_id,
+                Participant.consented.is_(True),
+            )
+        )
+        or 0
+    )
+
+
+def speaking_ratio_for_user(
+    session: Session, meeting_id: str, user_id: str
+) -> SpeakingRatioRead | None:
+    """The user's own share of ``meeting_id``, or ``None`` if they were not in it.
+
+    ``None`` return is only "you were not in this meeting", which the route turns
+    into a 404. Otherwise a ``SpeakingRatioRead`` comes back, and its ``ratio``
+    may still be ``None``:
+
+    - ``reason="small_meeting"`` — fewer than ``_MIN_SPEAKERS_FOR_RATIO``
+      consenting participants actually spoke, so any real number would fix
+      another person's.
+    - ``reason="not_measured"`` — the requester did not consent to attribution
+      on every one of their participant rows, so their speech may not be fully
+      in the measured set. Distinct from a consenting participant who was
+      simply silent, who gets ``0.0``.
+    """
+    participant_rows = list(
+        session.scalars(
+            sa.select(Participant).where(
+                Participant.meeting_id == meeting_id,
+                Participant.user_id == user_id,
+            )
+        )
+    )
+    if not participant_rows:
+        return None
+    # A split speaker's rows can disagree on consent (confirmed separately);
+    # requiring every row to consent, rather than picking one row arbitrarily,
+    # makes the answer independent of which row a lookup happens to see.
+    fully_consented = all(p.consented for p in participant_rows)
+
+    shares = compute_speaking_shares(session, meeting_id)
+    # The baseline is 1 / (consenting participants), silent ones included; the
+    # gate counts only the people the ratio is actually split between, with
+    # unidentified splits undercounted rather than left to inflate it.
+    participant_count = _consented_participant_count(session, meeting_id)
+
+    if speaker_count_for_gate(shares) < _MIN_SPEAKERS_FOR_RATIO:
+        return SpeakingRatioRead(
+            meeting_id=meeting_id,
+            ratio=None,
+            participant_count=participant_count,
+            reason="small_meeting",
+        )
+    if not fully_consented:
+        return SpeakingRatioRead(
+            meeting_id=meeting_id,
+            ratio=None,
+            participant_count=participant_count,
+            reason="not_measured",
+        )
+
+    mine = next((s for s in shares if s.user_id == user_id), None)
+    return SpeakingRatioRead(
+        meeting_id=meeting_id,
+        ratio=mine.ratio if mine is not None else 0.0,
+        participant_count=participant_count,
+        reason=None,
+        stored=False,
+    )
+
+
+def _deliver_personal(
+    slack: SlackApi, recipient_user_id: str, fallback: str, blocks: list[dict]
+) -> None:
+    """Send a DM that describes exactly one person, to that person only.
+
+    Takes a single id and uses it for both the guard's subject and the
+    recipient, so the two cannot drift apart at a call site — the reason
+    ``assert_personal_delivery`` takes them separately (it also refuses a
+    channel) is that in other flows they come from different places.
+    """
+    assert_personal_delivery(
+        subject_id=recipient_user_id, recipient_id=recipient_user_id, is_direct=True
+    )
+    slack.send_dm(recipient_user_id, fallback, blocks)
+
+
+def send_personal_feedback(session: Session, slack: SlackApi, meeting_id: str) -> int:
+    """DM each identified participant their own speaking ratio. Returns the count.
+
+    A speaker with no linked user account cannot be reached and is skipped. The
+    ratio is withheld entirely — no DM at all — when fewer than
+    ``_MIN_SPEAKERS_FOR_RATIO`` people (``speaker_count_for_gate``) spoke, for
+    the same reason ``/me/speaking-ratio`` withholds it. The ratio is not
+    stored anywhere; this function writes nothing.
+    """
+    shares = compute_speaking_shares(session, meeting_id)
+    gate_count = speaker_count_for_gate(shares)
+    if gate_count < _MIN_SPEAKERS_FOR_RATIO:
+        log.info(
+            "speaking_ratio_feedback_withheld_small_meeting",
+            meeting_id=meeting_id,
+            speakers=gate_count,
+        )
+        return 0
+
+    participant_count = _consented_participant_count(session, meeting_id)
+    sent = 0
+    for share in shares:
+        if share.user_id is None:
+            log.info(
+                "speaking_ratio_recipient_unmapped",
+                meeting_id=meeting_id,
+                participant_id=share.participant_id,
+            )
+            continue
+        fallback, blocks = build_speaking_ratio_dm(
+            ratio=share.ratio, participant_count=participant_count
+        )
+        _deliver_personal(slack, share.user_id, fallback, blocks)
+        sent += 1
+
+    log.info("speaking_ratio_feedback_sent", meeting_id=meeting_id, recipients=sent)
+    return sent
