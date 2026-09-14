@@ -249,6 +249,38 @@ def test_lineage_of_a_fully_expired_thread_404s(team_id: str) -> None:
         service.get_decision_lineage(s, thread_id)
 
 
+def test_router_masks_previous_statement_only_for_an_expired_predecessor(team_id: str) -> None:
+    """kjfcvx12's #185 review: disabling router.get_decision_thread's masking
+    branch entirely left every other test passing, since none of them called
+    the router and checked previous_statement/previous_meeting_id on the
+    result. This calls the router directly and checks both branches: a
+    version whose predecessor is still visible keeps quoting it; one whose
+    predecessor has since expired does not."""
+    first = _meeting(team_id, days_ago=20)
+    second = _meeting(team_id, days_ago=10)
+    third = _meeting(team_id, days_ago=0)
+    service.build_decision_lineage(_extraction(first, [("dec_1", _D1, 0.9)]))
+    service.build_decision_lineage(_extraction(second, [("dec_2", _D1, 0.8)]))
+    service.build_decision_lineage(_extraction(third, [("dec_3", _D1, 0.8)]))
+
+    thread_id = _thread_id_for(third)
+    with session_scope() as s:
+        s.get(Meeting, first).expires_at = datetime.now(tz=UTC) - timedelta(days=1)
+
+    with session_scope() as s:
+        result = router.get_decision_thread(thread_id, s)
+        by_meeting = {v.meeting_id: v for v in result.versions}
+        assert set(by_meeting) == {second, third}  # `first`'s own row is gone too
+
+        # `second` quotes `first`, which has since expired -> masked.
+        assert by_meeting[second].previous_statement is None
+        assert by_meeting[second].previous_meeting_id is None
+
+        # `third` quotes `second`, which is still visible -> kept as-is.
+        assert by_meeting[third].previous_statement == _D1
+        assert by_meeting[third].previous_meeting_id == second
+
+
 # --------------------------------------------------------------------------- #
 # list_decisions
 # --------------------------------------------------------------------------- #
