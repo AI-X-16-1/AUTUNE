@@ -383,10 +383,25 @@ one mutation.
 | --- | --- | --- |
 | GET | `/links/{meeting_id}` | Topic links for a meeting, `asserted` and `pending` separated |
 | POST | `/links/{link_id}/confirm` | User confirms or rejects a `pending` link (`status` → `confirmed`/`rejected`) |
-| GET | `/decisions/{thread_id}` | Full lineage timeline, walked with a recursive CTE |
+| GET | `/decisions/{thread_id}` | Full lineage timeline, oldest version first |
 | GET | `/decisions` | Filter by team, topic, change type |
 | POST | `/materials` | Upload material — Phase 2 |
 | GET | `/briefs/{meeting_id}` | Pre-meeting brief — Phase 2 |
+
+`GET /decisions/{thread_id}` orders a thread's versions by meeting time
+(`service._meeting_time`), the same key `_rethread` chains by — not by walking
+`previous_version_id` from the chronologically-first version. A walk from the
+root breaks the moment that version ages past the retention window without a
+later meeting having touched the thread since: nothing re-chains it on a mere
+expiry (see "Deletion" below), so the surviving versions' `previous_version_id`
+still points at a now-invisible row, and a walk requiring a visible root would
+find none and lose the rest of the thread with it. Ordering by meeting time
+only ever drops the row that actually expired.
+
+`GET /decisions` lists each thread by its current head only (the same
+definition `_thread_heads` matches new decisions against) — `change_type`
+filters on the head's own value, not any version in the thread's history; a
+caller after the full drift record opens the thread with the route above.
 
 ## Celery tasks
 

@@ -30,6 +30,7 @@ from autune_context.pipeline.retrieval import HybridRetriever, visible_meeting_c
 from autune_context.pipeline.topics import extract_topics
 from autune_contracts import ChangeType, ContextLinks, DecisionChange, NliLabel, TopicLink
 from autune_core import Meeting, Participant, get_logger, session_scope
+from autune_core.errors import ConflictError, NotFoundError
 
 if TYPE_CHECKING:
     from autune_context.pipeline.base import Embedder, NliModel
@@ -637,6 +638,124 @@ def _build_context_links(
 
 
 # --------------------------------------------------------------------------- #
+# Reads — served by router.py
+# --------------------------------------------------------------------------- #
+
+
+def get_topic_links(
+    session: Session, meeting_id: str
+) -> tuple[list[CtxTopicLink], list[CtxTopicLink]]:
+    """This meeting's topic links, split into (asserted, pending).
+
+    ``asserted`` reuses ``_PUBLISHABLE`` — it covers both ``asserted`` (above
+    threshold) and ``confirmed`` (a ``pending`` link the user accepted), the
+    same "settled" definition ``_build_context_links`` publishes to E.
+    ``rejected`` links are dismissed and appear in neither list.
+    """
+    links = session.scalars(
+        select(CtxTopicLink)
+        .where(CtxTopicLink.meeting_id == meeting_id)
+        .order_by(CtxTopicLink.confidence.desc())
+    ).all()
+    asserted = [link for link in links if link.status in _PUBLISHABLE]
+    pending = [link for link in links if link.status == "pending"]
+    return asserted, pending
+
+
+def confirm_topic_link(session: Session, link_id: int, new_status: str) -> CtxTopicLink:
+    """Record a user's decision on a ``pending`` link.
+
+    Only a ``pending`` link accepts a decision through this route — one already
+    settled, whether by an earlier confirm or because it started ``asserted``,
+    does not get a second one.
+    """
+    link = session.get(CtxTopicLink, link_id)
+    if link is None:
+        raise NotFoundError("topic link", str(link_id))
+    if link.status != "pending":
+        raise ConflictError(f"topic link {link_id} is not pending", status=link.status)
+    link.status = new_status
+    session.flush()
+    return link
+
+
+def get_decision_lineage(
+    session: Session, thread_id: str
+) -> tuple[CtxDecision, list[CtxDecisionVersion]]:
+    """A thread and its full timeline, oldest version first.
+
+    Ordered by meeting time (``_meeting_time``) — the same key ``_rethread``
+    chains by — rather than by walking ``previous_version_id`` from the root.
+    A walk from the root breaks the moment the chain's *first* version ages
+    past the retention window without a later meeting having touched this
+    thread since: nothing re-chains it until then (see docs/modules/context.md,
+    "Deletion" — accepted until #87's hook lands), so ``previous_version_id``
+    on the surviving versions still points at a now-invisible row, and a walk
+    that requires a visible root to start from would find none and lose the
+    rest of the thread along with it. Ordering by meeting time instead only
+    ever drops the row that actually expired.
+    """
+    thread = session.get(CtxDecision, thread_id)
+    if thread is None:
+        raise NotFoundError("decision thread", thread_id)
+
+    versions = list(
+        session.scalars(
+            select(CtxDecisionVersion)
+            .join(Meeting, Meeting.id == CtxDecisionVersion.meeting_id)
+            .where(
+                CtxDecisionVersion.thread_id == thread_id,
+                *visible_meeting_clauses(thread.team_id),
+            )
+            .order_by(_meeting_time(), CtxDecisionVersion.id)
+        )
+    )
+    return thread, versions
+
+
+def list_decisions(
+    session: Session,
+    team_id: str,
+    *,
+    topic: str | None = None,
+    change_type: str | None = None,
+) -> list[tuple[CtxDecision, CtxDecisionVersion]]:
+    """Every thread's current head for a team, most recently touched first.
+
+    A thread's head is its latest *visible* version by meeting time — the same
+    definition ``_thread_heads`` matches new decisions against, so what this
+    lists is exactly what a new decision would compare against. Filtering
+    ``change_type`` reads as "this thread's latest change was X"; a caller
+    after the full drift history opens the thread with ``get_decision_lineage``.
+    ``topic`` matches ``ctx_decisions.topic_label`` case-insensitively, as a
+    literal substring — ``%``/``_``/``\\`` in it are escaped so a topic that
+    happens to contain one doesn't act as a wildcard.
+    """
+    query = (
+        select(CtxDecision, CtxDecisionVersion)
+        .join(CtxDecisionVersion, CtxDecisionVersion.thread_id == CtxDecision.id)
+        .join(Meeting, Meeting.id == CtxDecisionVersion.meeting_id)
+        .where(CtxDecision.team_id == team_id, *visible_meeting_clauses(team_id))
+    )
+    if topic is not None:
+        query = query.where(
+            CtxDecision.topic_label.ilike(f"%{_escape_like(topic)}%", escape="\\")
+        )
+    rows = session.execute(
+        query.order_by(CtxDecision.id, _meeting_time(), CtxDecisionVersion.id)
+    ).all()
+
+    heads: dict[str, tuple[CtxDecision, CtxDecisionVersion]] = {}
+    for thread, version in rows:
+        heads[thread.id] = (thread, version)  # last row per thread = its head
+    result = list(heads.values())
+    if change_type is not None:
+        result = [pair for pair in result if pair[1].change_type == change_type]
+    result.sort(key=lambda pair: pair[1].updated_at, reverse=True)
+    return result
+
+
+# --------------------------------------------------------------------------- #
 # Deletion — orphan decision threads (see docs/modules/context.md, "Deletion")
 # --------------------------------------------------------------------------- #
 
@@ -778,3 +897,9 @@ def _as_datetime(value) -> datetime:
 
 def _clamp(value: float) -> float:
     return max(0.0, min(1.0, value))
+
+
+def _escape_like(value: str) -> str:
+    """Escape ``%``/``_``/``\\`` so a caller's substring can't act as a
+    SQL ``LIKE`` wildcard. Pair with ``.ilike(..., escape="\\\\")``."""
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
