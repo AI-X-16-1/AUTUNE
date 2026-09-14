@@ -738,9 +738,7 @@ def list_decisions(
         .where(CtxDecision.team_id == team_id, *visible_meeting_clauses(team_id))
     )
     if topic is not None:
-        query = query.where(
-            CtxDecision.topic_label.ilike(f"%{_escape_like(topic)}%", escape="\\")
-        )
+        query = query.where(CtxDecision.topic_label.ilike(f"%{_escape_like(topic)}%", escape="\\"))
     rows = session.execute(
         query.order_by(CtxDecision.id, _meeting_time(), CtxDecisionVersion.id)
     ).all()

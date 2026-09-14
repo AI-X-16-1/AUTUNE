@@ -46,9 +46,7 @@ def get_links(meeting_id: str, session: SessionDep) -> TopicLinksRead:
 
 
 @router.post("/links/{link_id}/confirm", response_model=TopicLinkRead)
-def confirm_link(
-    link_id: int, payload: LinkConfirmRequest, session: SessionDep
-) -> TopicLinkRead:
+def confirm_link(link_id: int, payload: LinkConfirmRequest, session: SessionDep) -> TopicLinkRead:
     """A user confirms or rejects a pending link."""
     link = service.confirm_topic_link(session, link_id, payload.status)
     session.commit()
