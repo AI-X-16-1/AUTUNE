@@ -86,7 +86,7 @@ the overlap the question turns on.
 | `ext_action_item_sources` | Which utterances an item came from |
 | `ext_edit_events` | One row per correction. Counts only — no person on it |
 | `ext_external_refs` | Notion and Jira URLs per action item |
-| `ext_confirmations` | Ambiguous-agreement DMs sent and their responses |
+| `ext_confirmations` | One row per ambiguous agreement, recorded when it is found. `sent_at` stays empty until the DM goes out, so `AmbiguousAgreement.confirmation_sent` is false until then; the speaker's answer lands on the same row |
 | `ext_decisions` | Decision entities, their statements and source utterances |
 | `ext_decision_sources` | Which utterances a decision was settled in, in order |
 
