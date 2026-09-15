@@ -87,10 +87,43 @@ and stores what comes back.
   `../architecture/privacy.md` section 3 violation on the consumer's side — the
   id format does not prevent it, it only declines to hand it over.
 
+`contracts.md` shows `user_…` ids in its `GapReport` example, and the contract
+field has no pattern. The example predates this choice; it is flagged rather
+than edited here, because `contracts.md` is shared.
+
 A re-run deletes the meeting's topics and rebuilds them in one transaction;
 edges, evidence and participation cascade. So would the `gap_related_topics`
 rows of a gap already raised — gap generation (#35) has to rebuild those in the
 same run, and decide what a re-run does to a gap somebody dismissed.
+
+### Step 9 as built
+
+`GapReport` is assembled from the stored rows after their transaction commits,
+then published with `autune_core.publish(GAP_COMPLETED, …)` — C names the event,
+never E's task. Topics come most central first, ties in the order the meeting
+reached them, each with its evidence utterance ids in meeting order;
+participation is the `spoke` and `silent` id lists and nothing else. A
+dismissed gap is left out: its row stays for threshold tuning, but E should not
+score a meeting on a gap the team rejected.
+
+**One person is one entry in the report**, however many voices diarization
+split them into. `gap_participation` stays per participant row — the speaker
+track is C's unit of analysis — and the report merges rows that share a
+`user_id`, represented by the smallest of their participant ids. Having spoken
+as any of them puts the person in `spoke`: recording speech as silence would
+raise a gap that is a false statement about somebody. The representative is a
+participant id rather than the user id so the report carries no cross-meeting
+identity on its own — `participants` is a shared table every module may read,
+so resolving one back to a person stays possible, and accumulating a person's
+silences across meetings is a `../architecture/privacy.md` section 3 violation
+on the consumer's side rather than something the id format prevents. Raised in
+review of #164; it cannot happen until identification (#6) fills `user_id`,
+which is why it is fixed now rather than found then.
+
+`gaps` carries whatever `gap_gaps` holds, minus the ones somebody dismissed.
+What does not exist yet is the code that *writes* those rows — template
+comparison and risk scoring (#14, #35) are both waiting on #22 — so the list is
+empty in practice today, not empty by construction.
 
 ## Storage
 
