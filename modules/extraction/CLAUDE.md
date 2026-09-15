@@ -46,9 +46,9 @@ and left "Owns" at the four tables the module had before any of them existed.
 ## AI stack
 
 DeBERTa classifier (`kakaobank/kf-deberta-base`, #112; five kinds plus `none`),
-NLI verification, LLM for reference resolution and
-report generation. Target non-LLM share ~60% — classification and verification
-are trained models, not prompts.
+NLI verification, LLM for reference resolution and report generation. Target
+non-LLM share ~60% — classification and verification are trained models, not
+prompts.
 
 The five kinds: `commitment`, `decision`, `open_question`, `concern`,
 `ambiguous`. The classifier has a sixth answer, `none` — most of a meeting is
