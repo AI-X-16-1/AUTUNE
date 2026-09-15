@@ -451,3 +451,72 @@ def test_an_oversized_payload_is_refused_before_it_is_scanned() -> None:
         slack.post_message("C0123456789", "010-" * 20000)
     assert "length" in caught.value.details
     assert time.monotonic() - started < 1.0
+
+
+# --- separator width (#162) ------------------------------------------------ #
+# One separator character meant these passed the guard entirely. Not
+# over-masking: nothing matched, so `assert_masked` let the text out.
+
+SPACED_AROUND_SEPARATOR = [
+    ("phone", "010 - 1234 - 5678 로 연락 주세요"),
+    ("phone", "02 - 123 - 4567 이요"),
+    ("phone", "+82 - 10 - 1234 - 5678"),
+    ("rrn", "900101 - 1234567 입니다"),
+    ("card", "1234 - 5678 - 9012 - 3456 카드요"),
+]
+
+TYPOGRAPHIC_DASH = [
+    ("phone", "010–1234–5678 입니다"),  # en dash, what an editor makes of a hyphen
+    ("phone", "010 — 1234 — 5678"),  # em dash
+]
+
+PARENTHESISED_AREA_CODE = [("phone", "(02)123-4567 로 전화 주세요")]
+
+
+@pytest.mark.parametrize(
+    ("category", "text"),
+    SPACED_AROUND_SEPARATOR + TYPOGRAPHIC_DASH + PARENTHESISED_AREA_CODE,
+)
+def test_a_wider_separator_is_still_the_same_number(category: str, text: str) -> None:
+    assert category in {cat for _, _, cat in find_pii(text)}
+    with pytest.raises(PrivacyViolationError):
+        assert_masked(text, destination="slack")
+
+
+# What the width cost. A transcript is dense with numbers written this way, and
+# the widening was measured against these before it was made -- see #162.
+NOT_PERSONAL_DATA = [
+    "2024 - 2025 - 2026 로드맵",  # the case that kept `account` on the narrow one
+    "2026 – 2027 예산안",
+    "스프린트 12 - 13 - 14 계획",
+    "10 - 20 - 30 퍼센트",
+    "Q1 - Q2 - Q3 계획",
+    "1 - 2 - 3 순서로",
+    "매출 100 - 200 억 사이",
+    "페이지 100 - 200 사이",
+    "p95 는 120 - 180 ms 입니다",
+    "예산은 1,234,567원입니다",
+    "2026-09-10 회의록",
+    "버전 1.2.3 배포합니다",
+    "IP 는 192.168.10.20 입니다",
+    "티켓 12345 이슈 67890 확인",
+    "회의실 A - 301 호",
+    "커밋 abc1234 - def5678",
+    "온도 36.5 도",
+    "회의는 3시 30분입니다",
+]
+
+
+@pytest.mark.parametrize("text", NOT_PERSONAL_DATA)
+def test_the_wider_separator_does_not_reach_ordinary_meeting_numbers(text: str) -> None:
+    """`2024 - 2025 - 2026` is three groups of two-to-six digits — the shape of
+    `account` exactly. It is why that one pattern keeps the narrow separator."""
+    assert find_pii(text) == []
+    assert_masked(text, destination="slack")
+
+
+def test_a_match_does_not_run_across_a_line_break() -> None:
+    """`\\s` would let the widened separator join two unrelated numbers. Only
+    `account` can still do this, on the narrow separator it kept, and that is
+    pre-existing rather than something the width introduced."""
+    assert {cat for _, _, cat in find_pii("예산\n150000\n200000")} == {"account"}
