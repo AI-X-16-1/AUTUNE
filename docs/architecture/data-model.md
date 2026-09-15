@@ -29,7 +29,7 @@ absence of a prefix is what marks a table as shared.
 | `team_members` | User ↔ team membership and role |
 | `team_integrations` | One team's connection to Notion, Jira, Slack or Calendar |
 | `meetings` | One analysis unit |
-| `participants` | A person present at a meeting, identified or not |
+| `participants` | One voice at a meeting, identified or not — usually one person, not always; see below |
 | `utterances` | One continuous stretch of speech, PII-masked |
 
 ### Write ownership
@@ -81,6 +81,52 @@ users ──< team_members >── teams
 `utterances` columns that downstream modules rely on: `id`, `meeting_id`,
 `participant_id`, `speaker_label`, `start_sec`, `end_sec`, `text` (masked),
 `confidence`. Adding a column here is a shared-entity change: announce it.
+
+### A participant row is a voice, not a person
+
+Module A writes one `participants` row per speaker label diarization produces,
+before anyone is identified. Splitting one voice into two clusters is
+diarization's characteristic failure — it is what module A's DER measures — so
+once identification (#6) fills `user_id`, **one person can own several
+participant rows in the same meeting.** Before identification, two unidentified
+rows may be two people or one, and nothing in the data says which.
+
+Anything that counts people or says something per person has to account for
+this. It has already broken two ways:
+
+- **Counting people** (E, #128). Two rows for one person made a two-person
+  meeting look like three, which passed the small-meeting gate on speaking
+  ratio and let a co-attendee derive the other person's exact share as
+  `1 - own`. E now counts only rows resolved to a `user_id` for the gate
+  (`speaker_count_for_gate` in `autune_intelligence.speaking`): undercounting
+  is the direction that cannot leak.
+- **Per-person verdicts** (C, #164). A person split in two was reported as
+  having spoken on a topic *and* been silent on it, and a gap raised on that
+  silence is a false statement about somebody who spoke. C merges rows sharing
+  a `user_id` when it builds the report, and having spoken as any of them
+  counts as having spoken.
+
+The rule for a consumer:
+
+- **Group by `user_id` where it is set.** A row with no `user_id` stands for
+  itself — and is not assumed to be a *different* person from anyone.
+- **Where a count protects someone** — a gate, a ratio, a small-group
+  statistic — count only identified people.
+- **Store per row if the speaker track is your unit of analysis; merge where
+  the result leaves your module.** A stored merge cannot be undone when an
+  identification is corrected.
+- **Do not let `user_id` stand for the group in anything you publish** unless
+  the consumer needs identity across meetings. A participant id is scoped to one
+  meeting, so a payload carrying one holds no cross-meeting identity on its own
+  — but any module may read the shared `participants` table and resolve it, so
+  accumulating one person's record across meetings is a `privacy.md` section 3
+  violation on the consumer's side rather than something the id format prevents.
+  C represents a merged person by the smallest of their participant ids
+  (`contracts.md`, `GapReport`).
+
+Identification can land after your task ran — a speaker confirms their label by
+Slack DM later. A result computed per request (E's `/me`) corrects itself; one
+computed once at pipeline time (C's report) reflects `user_id` as it was then.
 
 ## Module tables
 
