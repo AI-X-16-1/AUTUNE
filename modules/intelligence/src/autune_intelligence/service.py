@@ -48,6 +48,7 @@ from .models import (
     IntelScore,
 )
 from .pipeline import get_gap_classifier
+from .pipeline.base import Classification
 from .schemas import DashboardRead, DashboardScoreEntry, HeatmapCell, SpeakingRatioRead
 from .speaking import SpeakingShare, SpeechSegment, speaker_count_for_gate, speaking_shares
 
@@ -240,15 +241,18 @@ def aggregate_meeting(session: Session, meeting_id: str) -> IntelligenceSnapshot
     }
     score = _quality_score(components)
 
-    pattern_types: list[str] = []
+    classifications: list[Classification] = []
     classifier_version = ""
     if gap is not None and gap.gaps:
         classifier = get_gap_classifier()
-        pattern_types = [
-            c.pattern_type
-            for c in classifier.classify([f"{g.category} {g.title}" for g in gap.gaps])
-        ]
+        # Title only, not "{category} {title}": the seed set the local classifier
+        # trains on is title-shaped text, and C's category is free text whose
+        # vocabulary is not stable across meetings (the whole reason this
+        # classifier exists) — prepending it measurably drags classification
+        # confidence down on inputs the model never trained on that shape.
+        classifications = classifier.classify([g.title for g in gap.gaps])
         classifier_version = classifier.model_version
+    pattern_types = [c.pattern_type for c in classifications]
     distribution = dict(Counter(pattern_types))
 
     session.execute(
@@ -283,9 +287,14 @@ def aggregate_meeting(session: Session, meeting_id: str) -> IntelligenceSnapshot
     session.execute(sa.delete(IntelGapPattern).where(IntelGapPattern.meeting_id == meeting_id))
     if gap is not None:
         ids_by_pattern: dict[str, list[str]] = {}
-        for g, pattern_type in zip(gap.gaps, pattern_types, strict=True):
-            ids_by_pattern.setdefault(pattern_type, []).append(g.id)
+        confidences_by_pattern: dict[str, list[float]] = {}
+        for g, classification in zip(gap.gaps, classifications, strict=True):
+            ids_by_pattern.setdefault(classification.pattern_type, []).append(g.id)
+            confidences_by_pattern.setdefault(classification.pattern_type, []).append(
+                classification.confidence
+            )
         for pattern_type, count in distribution.items():
+            confidences = confidences_by_pattern[pattern_type]
             session.add(
                 IntelGapPattern(
                     meeting_id=meeting_id,
@@ -294,7 +303,29 @@ def aggregate_meeting(session: Session, meeting_id: str) -> IntelligenceSnapshot
                     count=count,
                     source_gap_ids=ids_by_pattern[pattern_type],
                     classifier_version=classifier_version,
+                    avg_confidence=sum(confidences) / len(confidences),
                 )
+            )
+        if distribution:
+            # Counts and a mean confidence per pattern type — no gap content,
+            # so this carries no transcript text (privacy.md is not implicated)
+            # — the only way to notice from outside a training run that a
+            # distribution has quietly collapsed onto "other".
+            log.info(
+                "intelligence_gap_pattern_distribution",
+                meeting_id=meeting_id,
+                classifier_version=classifier_version,
+                distribution={
+                    pattern_type: {
+                        "count": count,
+                        "avg_confidence": round(
+                            sum(confidences_by_pattern[pattern_type])
+                            / len(confidences_by_pattern[pattern_type]),
+                            4,
+                        ),
+                    }
+                    for pattern_type, count in distribution.items()
+                },
             )
 
     row.aggregated_at = datetime.now(UTC)

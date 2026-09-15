@@ -52,7 +52,7 @@ corpus/
 # autune_contracts to fake B/C/D payloads for local dev, never committed.
 # See modules/intelligence/scripts/mock_payloads.py.
 modules/intelligence/scripts/mock_payloads.py
-mock_payloads/
+/modules/intelligence/scripts/mock_payloads/
 
 # Editors and OS
 .DS_Store

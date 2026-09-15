@@ -43,6 +43,17 @@ class IntelligenceSettings(BaseSettings):
     nothing here is fine-tuned and redistributed; the head is refit from
     ``pipeline.classifier._SEED_EXAMPLES`` every process start."""
 
+    warm_models_on_worker_init: bool = False
+    """Set only on workers that actually consume gap-classification tasks.
+
+    Without this, the first ``aggregate_meeting`` call in a new worker process
+    pays SetFit's fit-the-head cost (seconds, plus a backbone download) inside
+    the transaction that holds the ``intel_completion`` row lock, delaying a
+    concurrent late-source ``reopen`` on the same meeting. Mirrors module D's
+    ``AUTUNE_CONTEXT_WARM_MODELS_ON_WORKER_INIT`` — same reasoning, see
+    ``pipeline.__init__``. Only affects ``gap_classifier_impl=local``;
+    ``fake`` has nothing to warm."""
+
 
 @lru_cache
 def get_settings() -> IntelligenceSettings:

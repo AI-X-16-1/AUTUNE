@@ -524,6 +524,7 @@ dependencies = [
 
 [package.optional-dependencies]
 local-models = [
+    { name = "datasets" },
     { name = "sentence-transformers" },
     { name = "setfit" },
 ]
@@ -534,6 +535,7 @@ requires-dist = [
     { name = "autune-core", editable = "packages/core" },
     { name = "autune-integrations", editable = "packages/integrations" },
     { name = "celery", specifier = ">=5.4" },
+    { name = "datasets", marker = "extra == 'local-models'", specifier = ">=2.14" },
     { name = "fastapi", specifier = ">=0.115" },
     { name = "sentence-transformers", marker = "extra == 'local-models'", specifier = ">=3.0" },
     { name = "setfit", marker = "extra == 'local-models'", specifier = ">=1.1" },

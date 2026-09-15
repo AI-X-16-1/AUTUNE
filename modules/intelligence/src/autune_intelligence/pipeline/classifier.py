@@ -9,6 +9,7 @@ one, the same reasoning module C's ``SpacyNer`` gives for its own lazy import.
 from __future__ import annotations
 
 import re
+import tempfile
 from typing import Any
 
 from autune_core import get_logger
@@ -55,7 +56,12 @@ _OTHER_CONFIDENCE_THRESHOLD = 0.55
 """Below this the top class's probability is treated as "not confident
 enough", and the gap is bucketed into ``other`` instead of forced into one of
 the six trained labels. ``other`` in ``PATTERN_TYPES`` exists for exactly this
-— see ``base.PATTERN_TYPES``."""
+— see ``base.PATTERN_TYPES``.
+
+Not chosen from any evaluation — there are no ``other`` seed examples to
+measure a threshold against (see ``_SEED_EXAMPLES``), so this is a placeholder
+picked without data. Revisit together with the seed set once real
+``GapReport`` traffic exists."""
 
 
 class SetFitGapClassifier:
@@ -100,12 +106,21 @@ class SetFitGapClassifier:
         model = SetFitModel.from_pretrained(self._backbone)
         texts = [text for text, _ in _SEED_EXAMPLES]
         labels = [label for _, label in _SEED_EXAMPLES]
-        trainer = Trainer(
-            model=model,
-            args=TrainingArguments(batch_size=16, num_epochs=1),
-            train_dataset=Dataset.from_dict({"text": texts, "label": labels}),
-        )
-        trainer.train()
+        # setfit's TrainingArguments defaults output_dir to "checkpoints" (relative
+        # to the process cwd) and saves a full optimizer/scheduler checkpoint —
+        # ~1.4GB, written by every worker process on its first classify() and
+        # racing with sibling prefork children over the same path. Inference only
+        # needs the in-memory model, so point the save at a scratch directory and
+        # skip it entirely.
+        with tempfile.TemporaryDirectory(prefix="autune-intelligence-setfit-") as tmp_dir:
+            trainer = Trainer(
+                model=model,
+                args=TrainingArguments(
+                    batch_size=16, num_epochs=1, output_dir=tmp_dir, save_strategy="no"
+                ),
+                train_dataset=Dataset.from_dict({"text": texts, "label": labels}),
+            )
+            trainer.train()
         self._model = model
         log.info("intelligence_gap_classifier_trained", backbone=self._backbone)
 
@@ -119,9 +134,18 @@ class SetFitGapClassifier:
         results: list[Classification] = []
         for row in probs:
             best_index = max(range(len(classes)), key=lambda i: row[i])
-            confidence = float(row[best_index])
-            label = classes[best_index] if confidence >= _OTHER_CONFIDENCE_THRESHOLD else "other"
-            results.append(Classification(pattern_type=label, confidence=confidence))
+            top_probability = float(row[best_index])
+            if top_probability >= _OTHER_CONFIDENCE_THRESHOLD:
+                results.append(
+                    Classification(pattern_type=classes[best_index], confidence=top_probability)
+                )
+            else:
+                # "other" here is never one of the six fitted classes — it is
+                # the threshold miss itself — so there is no probability for it
+                # to report. 0.0 matches FakeGapClassifier's own "other", rather
+                # than leaking the top class's (rejected) probability under a
+                # different label.
+                results.append(Classification(pattern_type="other", confidence=0.0))
         return results
 
 
@@ -146,15 +170,15 @@ _KEYWORD_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
 class FakeGapClassifier:
     """Deterministic, no weights, no network. What the tests run.
 
-    Keys first on ``PATTERN_TYPES`` appearing verbatim in the input — module
-    E's own local-dev mock payloads (``scripts/mock_payloads.py``) and this
-    module's integration tests already pass one of the six names as
-    ``Gap.category``, and this makes that keep meaning what it says rather
-    than being reclassified into something else by a fake model. Falls back to
-    a small keyword table for text that does not already carry the label, so
-    a fake run still produces a non-trivial distribution. Not an approximation
-    of the real classifier's accuracy — see module C's ``FakeNer`` for the
-    same caveat about its own fake.
+    Keys first on ``PATTERN_TYPES`` appearing verbatim in the input — this
+    module's own tests and dev fixtures can put a canonical label directly in
+    ``Gap.title`` (the only field classification reads — see
+    ``service.aggregate_meeting``) and rely on it classifying to exactly that,
+    rather than being reclassified into something else by a fake model. Falls
+    back to a small keyword table for text that does not already carry the
+    label, so a fake run still produces a non-trivial distribution. Not an
+    approximation of the real classifier's accuracy — see module C's
+    ``FakeNer`` for the same caveat about its own fake.
     """
 
     model_version = "fake"

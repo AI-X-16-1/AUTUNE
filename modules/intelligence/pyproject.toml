@@ -18,6 +18,10 @@ dependencies = [
 local-models = [
     "setfit>=1.1",
     "sentence-transformers>=3.0",
+    # Imported directly in pipeline.classifier to build the seed Dataset;
+    # setfit currently pulls it in transitively but that isn't a declared
+    # guarantee, so it is pinned here too.
+    "datasets>=2.14",
 ]
 
 [build-system]

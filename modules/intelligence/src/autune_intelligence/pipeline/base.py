@@ -36,9 +36,11 @@ module C's own CLAUDE.md: "cross-meeting gap patterns are E's job"). This is
 that vocabulary. ``other`` is a real bucket, not an error case — a classifier
 forced to pick one of six is a classifier that cannot say "none of these".
 
-Chosen to match the six categories the module's own local-dev mock payloads
-(``scripts/mock_payloads.py``) already used, rather than inventing a second
-vocabulary for the same six shapes.
+Six buckets, chosen as the recurring reasons a meeting leaves something
+unresolved: when (schedule), who (ownership), how much (budget), who else
+needs to weigh in (stakeholder), what could go wrong (risk), and how big the
+work is (scope) — a small, stable taxonomy a classifier can be fit to, rather
+than one derived from any single module's sample data.
 """
 
 
@@ -46,13 +48,14 @@ vocabulary for the same six shapes.
 class Classification:
     """One gap's pattern type, and how sure the model is of it.
 
-    ``confidence`` is not currently used to gate anything — there is no
-    candidate/asserted split for gap patterns the way ADR 0006 draws one for
-    action items, since these are only ever shown aggregated (counts on the
-    dashboard and in the weekly report), never as a per-gap assertion a person
-    reacts to. It is carried anyway, for the same reason module B's
-    ``Prediction.confidence`` is: a classification that cannot be compared
-    against the next model version cannot be recalibrated.
+    ``confidence`` is not used to gate anything — there is no candidate/asserted
+    split for gap patterns the way ADR 0006 draws one for action items, since
+    these are only ever shown aggregated (counts on the dashboard and in the
+    weekly report), never as a per-gap assertion a person reacts to. It is
+    averaged per pattern type and persisted on ``IntelGapPattern.avg_confidence``
+    anyway, for the same reason module B's ``Prediction.confidence`` is: a
+    classification that cannot be compared against the next model version
+    cannot be recalibrated.
     """
 
     pattern_type: str

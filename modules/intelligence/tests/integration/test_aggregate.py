@@ -29,27 +29,30 @@ def _extraction(meeting_id: str, decisions: int = 3, items: int = 2) -> dict:
 
 
 def _gap(meeting_id: str) -> dict:
+    """Three gaps. ``category`` is deliberately *not* one of the six pattern
+    types — classification reads ``title``, not ``category`` (service.py) — and
+    ``title`` carries the label ``FakeGapClassifier`` matches verbatim."""
     return GapReport(
         meeting_id=meeting_id,
         gaps=[
             {
                 "id": "gap_1",
-                "category": "schedule",
-                "title": "t",
+                "category": "unfiled_note",
+                "title": "schedule slipping",
                 "severity": "high",
                 "risk_score": 0.9,
             },
             {
                 "id": "gap_2",
-                "category": "schedule",
-                "title": "t",
+                "category": "unfiled_note",
+                "title": "schedule unclear",
                 "severity": "low",
                 "risk_score": 0.2,
             },
             {
                 "id": "gap_3",
-                "category": "ownership",
-                "title": "t",
+                "category": "unfiled_note",
+                "title": "ownership unclear",
                 "severity": "medium",
                 "risk_score": 0.6,
             },
@@ -93,6 +96,7 @@ def test_full_pass_writes_score_and_gap_patterns_and_returns_a_snapshot(
     schedule = next(p for p in patterns if p.pattern_type == "schedule")
     assert set(schedule.source_gap_ids) == {"gap_1", "gap_2"}
     assert schedule.classifier_version == "fake"
+    assert schedule.avg_confidence == 1.0  # FakeGapClassifier: verbatim label match
 
     assert db_session.get(IntelCompletion, meeting).aggregated_at is not None
 
@@ -152,19 +156,21 @@ def test_re_aggregation_after_reopen_updates_the_score(db_session: Session, meet
     assert db_session.get(IntelScore, meeting).decision_density > low
 
 
-def _gap_with_categories(meeting_id: str, pairs: list[tuple[str, str]]) -> dict:
-    """A GapReport whose gaps are ``(gap_id, category)`` pairs, all low severity."""
+def _gap_with_labels(meeting_id: str, pairs: list[tuple[str, str]]) -> dict:
+    """A GapReport whose gaps are ``(gap_id, pattern_label)`` pairs, all low
+    severity. ``category`` is a fixed, unrelated free-text value; the label is
+    carried in ``title`` since that is what classification reads."""
     return GapReport(
         meeting_id=meeting_id,
         gaps=[
             {
                 "id": gap_id,
-                "category": category,
-                "title": "t",
+                "category": "unfiled_note",
+                "title": f"{label} unclear",
                 "severity": "low",
                 "risk_score": 0.2,
             }
-            for gap_id, category in pairs
+            for gap_id, label in pairs
         ],
         participation=[{"topic_id": "t1", "spoke": ["u1", "u2"], "silent": ["u3"]}],
     ).model_dump(mode="json")
@@ -176,7 +182,7 @@ def test_re_aggregation_replaces_the_gap_patterns(db_session: Session, meeting: 
         db_session,
         meeting,
         "gap",
-        _gap_with_categories(meeting, [("gap_1", "schedule"), ("gap_2", "ownership")]),
+        _gap_with_labels(meeting, [("gap_1", "schedule"), ("gap_2", "ownership")]),
     )
     _stage(db_session, meeting, "context", _context(meeting))
     assert service.aggregate_meeting(db_session, meeting) is not None
@@ -186,7 +192,7 @@ def test_re_aggregation_replaces_the_gap_patterns(db_session: Session, meeting: 
         db_session,
         meeting,
         "gap",
-        _gap_with_categories(meeting, [("gap_3", "schedule"), ("gap_4", "risk")]),
+        _gap_with_labels(meeting, [("gap_3", "schedule"), ("gap_4", "risk")]),
     )
     service.reopen(db_session, meeting)
     db_session.flush()
@@ -225,8 +231,10 @@ def test_gap_classification_normalizes_a_freeform_category(
     db_session: Session, meeting: str
 ) -> None:
     """C's ``Gap.category`` is free text (see the contract fixture's
-    ``"technical_spec"``) — the classifier, not the raw category, decides the
-    pattern type."""
+    ``"technical_spec"``) and is not even passed to the classifier (service.py
+    reads only ``title``) — this exercises ``FakeGapClassifier``'s keyword
+    fallback on the Korean title, with an arbitrary, non-canonical category
+    alongside it to confirm the category plays no part."""
     gap_payload = GapReport(
         meeting_id=meeting,
         gaps=[
