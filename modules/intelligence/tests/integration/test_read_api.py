@@ -210,3 +210,19 @@ def test_dashboard_rolls_up_scores_and_gap_patterns_for_the_team(
     assert body["action_item_completion_rate"] == pytest.approx(0.4)
     assert [s["grade"] for s in body["recent_scores"]] == ["A", "C"]
     assert body["gap_distribution"] == {"ownership": 3}
+
+
+def test_dashboard_recent_scores_carry_created_at_for_weekly_bucketing(
+    client: TestClient, db_session: Session, team: str
+) -> None:
+    from autune_core import Meeting
+
+    m = Meeting(team_id=team, title="m0")
+    db_session.add(m)
+    db_session.flush()
+    _score(db_session, m.id, team, created_at=datetime(2026, 9, 1, 12, 0, tzinfo=UTC))
+    db_session.flush()
+
+    body = client.get(f"/api/intelligence/dashboard/{team}").json()
+
+    assert body["recent_scores"][0]["created_at"] == "2026-09-01T12:00:00Z"

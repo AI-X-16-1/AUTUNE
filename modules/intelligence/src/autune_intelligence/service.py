@@ -393,7 +393,9 @@ def get_dashboard(session: Session, team_id: str) -> DashboardRead:
         average_score=(sum(values) / len(values)) if values else None,
         action_item_completion_rate=(sum(rates) / len(rates)) if rates else None,
         recent_scores=[
-            DashboardScoreEntry(meeting_id=s.meeting_id, grade=s.grade, value=s.value)
+            DashboardScoreEntry(
+                meeting_id=s.meeting_id, grade=s.grade, value=s.value, created_at=s.created_at
+            )
             for s in scores[:_DASHBOARD_RECENT_LIMIT]
         ],
         gap_distribution={pattern: int(total) for pattern, total in gap_rows},

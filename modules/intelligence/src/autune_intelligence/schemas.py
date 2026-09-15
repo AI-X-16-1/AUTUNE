@@ -8,7 +8,7 @@ other service parses them.
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
@@ -62,15 +62,16 @@ class DashboardScoreEntry(BaseModel):
     meeting_id: str
     grade: str
     value: float
+    created_at: datetime
 
 
 class DashboardRead(BaseModel):
     """The team dashboard rollup. Empty until meetings have been scored.
 
-    ``recent_scores`` is per meeting, newest first; bucketing it into the
-    eight-week bars on S26 is the frontend's job. ``alignment`` and
-    ``predictions`` are not here — they have their own endpoints and are not
-    produced yet.
+    ``recent_scores`` is per meeting, newest first, each carrying
+    ``created_at`` so the frontend can bucket it into the eight-week bars on
+    S26. ``alignment`` and ``predictions`` are not here — they have their own
+    endpoints and are not produced yet.
     """
 
     team_id: str
