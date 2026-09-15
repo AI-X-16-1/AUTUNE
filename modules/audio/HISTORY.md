@@ -7,13 +7,16 @@ Evaluation reports live in `docs/modules/audio-evaluations/` and hold the full
 tables. This file is the thread through them: the decisions, the reversals, and
 what is still open.
 
-Last updated: 2026-09-11.
+Last updated: 2026-09-15.
 
 ---
 
 ## 1. The pipeline, as it stands
 
 ```
+upload ──> stage file ──> open meeting ──> queue task
+                                               │
+                                               ▼
 recording ──> decode ──> transcribe ──> diarize ──> delete audio
                          (Whisper)     (pyannote)        │
                                                          ▼
@@ -30,15 +33,16 @@ halves are separated deliberately — see section 3.
 
 | Stage | Module | Status |
 | --- | --- | --- |
+| Accept an upload, open a meeting, queue the task | `router.py`, `service.py`, `storage.py` | open, PR #209 |
 | Decode | `decoding.py` | merged (#81) |
 | Transcribe | `pipeline.py`, `glossary.py` | merged (#81, #135) |
 | Transcript quality guard | `quality.py` | merged (#133) |
 | Raw-audio deletion | `storage.py` | merged (#117) |
 | Diarize | `diarization.py` | merged (#136) |
 | Assign speakers to words | `speakers.py` | merged (#136) |
-| PII masking — patterns | `masking.py` + `autune_integrations.privacy` | open, PR #138 |
+| PII masking — patterns | `masking.py` + `autune_integrations.privacy` | merged (#138) |
 | PII masking — spoken numbers | `recognition.py` | open, PR #158 |
-| Persist + publish | `persistence.py`, `tasks.py` | open, PR #184 |
+| Persist + publish | `persistence.py`, `tasks.py` | merged (#184) |
 | Event publishing | `autune_core.events` | merged (#145) |
 
 Speaker **identification** (matching a voice to a person, #6) is not built. Every
@@ -81,6 +85,8 @@ correct this line, so eval-01 now contradicts its own header, its own
 four-speaker CER table and its own DER section. The comparison survives — every
 voice in S2 also read S1, and S1's per-speaker CER spans 0.024 to 0.049, nowhere
 near S2's 0.307 — but the sentence does not, and this file does not repeat it.
+#181 fixes it at the source; until that merges, eval-01 still carries the
+sentence this paragraph is warning about.
 
 Numbers and dates are nearly perfect (98%), which matters: module B parses due
 dates out of this text.
@@ -326,18 +332,25 @@ Where they are:
 | --- | --- |
 | Raw audio deleted after transcription | `storage.py` — a recording exists only inside a `with`; deletion in `finally`, `deleted` read back from the filesystem |
 | Audio never written somewhere it survives | `storage.py::_reject_persistent` — refuses a temp dir inside a cloud-sync folder or the checkout |
-| Text masked before the first write | `tasks.py` masks between diarization and the session; `persistence.py` verifies with `mask()` **before** the first delete and refuses — **PR #184, not merged** |
-| Nothing unmasked leaves | `check_outbound` runs on every outbound channel, but the patterns it runs are **still the broken ones on `main`**: #126 (070 · 080 · 0505 · international) and #131 (a Korean particle ends the match) are both open. PR #138 closes #126; #131 has no PR yet |
-| No per-person speech volume | `LiveTranscript` lists unnamed voices instead of counting them — **PR #140, not merged** |
+| Text masked before the first write | `tasks.py` masks between diarization and the session; `persistence.py` verifies with `mask()` **before** the first delete and refuses — #184, merged |
+| Nothing unmasked leaves | `check_outbound` runs on every outbound channel. #126 (070 · 080 · 0505 · international) is closed by #138, merged. **#131 is still open and has no PR** — a Korean particle ends the match, so a number with 은/는/이/가 attached passes the guard |
+| No per-person speech volume | `LiveTranscript` lists unnamed voices instead of counting them — #140, merged |
 
 Two of those exist because a review found the gap, not because the rule was
-followed: the masker and the guard disagree about what personal data is (#126,
-open — the fix is in #138), and S13 printed a per-voice utterance count in the
-same PR whose body said it did not (#140).
+followed: the masker and the guard disagreed about what personal data is (#126,
+closed by #138), and S13 printed a per-voice utterance count in the same PR whose
+body said it did not (#140).
 
-**The second column is where the rule is enforced, not proof that it is.** Three
-of the five rows are on branches. A guarantee that has not merged is a guarantee
-nobody has.
+**The second column is where the rule is enforced, not proof that it is.** When
+this section was first written three of the five rows pointed at branches, and
+the sentence here was "a guarantee that has not merged is a guarantee nobody
+has". All five are on `main` now — but the sentence is kept because the table
+went stale in both directions within a day, and a reader who trusts it without
+checking `main` is making the same mistake either way.
+
+**One rule is still not enforced: #131.** The outbound guard's patterns stop at a
+Korean particle, so a phone number written `010-1234-5678은` passes. It has no PR
+and it is the only row in this table with nothing behind it.
 
 The masking row is two enforcements, not one, and the split is deliberate. The
 task masks; `persistence.py` re-checks and refuses. A guard that is also the only
