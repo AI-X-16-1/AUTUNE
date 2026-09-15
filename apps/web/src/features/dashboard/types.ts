@@ -20,7 +20,9 @@ export interface DashboardRead {
   team_id: string;
   meeting_count: number;
   average_score: number | null;
+  average_grade: Grade | null;
   action_item_completion_rate: number | null;
+  /** Scoped to the trailing eight weeks — not the N most recent meetings. */
   recent_scores: DashboardScoreEntry[];
   gap_distribution: Record<string, number>;
 }

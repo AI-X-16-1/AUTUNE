@@ -68,15 +68,20 @@ class DashboardScoreEntry(BaseModel):
 class DashboardRead(BaseModel):
     """The team dashboard rollup. Empty until meetings have been scored.
 
-    ``recent_scores`` is per meeting, newest first, each carrying
-    ``created_at`` so the frontend can bucket it into the eight-week bars on
-    S26. ``alignment`` and ``predictions`` are not here — they have their own
-    endpoints and are not produced yet.
+    ``meeting_count`` and ``average_score`` are all-time; ``average_grade`` is
+    ``_grade_for(average_score)`` so the big A-F letter on S26 and the number
+    next to it describe the same population (the client must not derive a
+    grade itself — that duplicates the weekly report's thresholds).
+    ``recent_scores`` is scoped to the trailing eight weeks (not a meeting
+    count) so the frontend's weekly bars never silently span a longer window
+    or average a partially-covered week. ``alignment`` and ``predictions`` are
+    not here — they have their own endpoints and are not produced yet.
     """
 
     team_id: str
     meeting_count: int
     average_score: float | None
+    average_grade: str | None
     action_item_completion_rate: float | None
     recent_scores: list[DashboardScoreEntry]
     gap_distribution: dict[str, int]

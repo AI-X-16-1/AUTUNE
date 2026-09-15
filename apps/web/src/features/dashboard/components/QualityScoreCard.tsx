@@ -8,13 +8,12 @@ const WEEKS_SHOWN = 8;
 /**
  * The A–F grade + 8-week bar strip on S26.
  *
- * `DashboardRead` has no aggregate grade — only per-meeting ones and a numeric
- * `average_score` — so the big letter is the most recent meeting's grade, not
- * a synthesized one; computing a letter from the average would duplicate
- * `_grade_for`'s thresholds (service.py) on the client.
+ * The big letter is `average_grade` (server-computed via the same
+ * `_grade_for` thresholds the weekly report uses) so it and the "평균 N%"
+ * text next to it describe the same population — never the most recent
+ * meeting alone, which could show e.g. an "F" beside an 85% average.
  */
 export function QualityScoreCard({ dashboard }: { dashboard: DashboardRead }) {
-  const latest = dashboard.recent_scores[0];
   const weeks = bucketByWeek(dashboard.recent_scores, WEEKS_SHOWN);
 
   return (
@@ -29,7 +28,7 @@ export function QualityScoreCard({ dashboard }: { dashboard: DashboardRead }) {
               lineHeight: 1,
             }}
           >
-            {latest?.grade ?? "–"}
+            {dashboard.average_grade ?? "–"}
           </div>
           <div
             style={{
@@ -39,7 +38,7 @@ export function QualityScoreCard({ dashboard }: { dashboard: DashboardRead }) {
             }}
           >
             {dashboard.average_score != null
-              ? `평균 ${Math.round(dashboard.average_score * 100)}% · 최근 ${dashboard.meeting_count}건`
+              ? `평균 ${Math.round(dashboard.average_score * 100)}% · 전체 ${dashboard.meeting_count}건`
               : "아직 분석된 회의가 없습니다"}
           </div>
         </div>
@@ -48,6 +47,8 @@ export function QualityScoreCard({ dashboard }: { dashboard: DashboardRead }) {
             {weeks.map((week) => (
               <div
                 key={week.weekStart}
+                role="img"
+                aria-label={`${week.weekStart} 주 · 평균 ${Math.round(week.average * 100)}%`}
                 title={`${week.weekStart} 주 · 평균 ${Math.round(week.average * 100)}%`}
                 style={{
                   width: 11,

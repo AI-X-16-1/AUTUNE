@@ -314,9 +314,11 @@ def aggregate_meeting(session: Session, meeting_id: str) -> IntelligenceSnapshot
 # query and its shaping live here so they are testable without HTTP. Every
 # function reads only ``intel_*`` tables.
 
-_DASHBOARD_RECENT_LIMIT: Final = 12
-"""How many recent meeting scores the dashboard returns for the trend strip.
-Bucketing them into the eight-week bars on S26 is the frontend's job."""
+_DASHBOARD_TREND_WEEKS: Final = 8
+"""The window ``recent_scores`` covers, matching S26's eight-week bar strip.
+Date-scoped rather than count-limited, so a busy team's oldest visible week is
+never an undercounted partial and a quiet team's bars never silently span more
+than eight weeks. Bucketing by week is still the frontend's job."""
 
 
 def get_score(session: Session, meeting_id: str) -> IntelScore:
@@ -381,22 +383,26 @@ def get_dashboard(session: Session, team_id: str) -> DashboardRead:
     rates = [
         s.action_item_completion_rate for s in scores if s.action_item_completion_rate is not None
     ]
+    average_score = (sum(values) / len(values)) if values else None
     gap_rows = session.execute(
         sa.select(IntelGapPattern.pattern_type, func.sum(IntelGapPattern.count))
         .where(IntelGapPattern.team_id == team_id)
         .group_by(IntelGapPattern.pattern_type)
     ).all()
+    trend_since = datetime.now(UTC) - timedelta(weeks=_DASHBOARD_TREND_WEEKS)
 
     return DashboardRead(
         team_id=team_id,
         meeting_count=len(scores),
-        average_score=(sum(values) / len(values)) if values else None,
+        average_score=average_score,
+        average_grade=_grade_for(average_score) if average_score is not None else None,
         action_item_completion_rate=(sum(rates) / len(rates)) if rates else None,
         recent_scores=[
             DashboardScoreEntry(
                 meeting_id=s.meeting_id, grade=s.grade, value=s.value, created_at=s.created_at
             )
-            for s in scores[:_DASHBOARD_RECENT_LIMIT]
+            for s in scores
+            if s.created_at >= trend_since
         ],
         gap_distribution={pattern: int(total) for pattern, total in gap_rows},
     )

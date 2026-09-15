@@ -1,8 +1,14 @@
 import { DashboardCard } from "./DashboardCard";
 
 /**
- * `pipeline.base.PATTERN_TYPES` (module E), in the fixed order shown here so
- * the chart's row order does not reshuffle as counts change week to week.
+ * `pipeline.base.PATTERN_TYPES` (module E, #203 — not yet merged into `main`
+ * as of this component), in the fixed order shown here so the chart's row
+ * order does not reshuffle as counts change week to week.
+ *
+ * Until #203 merges, `intel_gap_patterns.pattern_type` holds C's raw
+ * free-text `category` instead, so a key outside this map falls back to its
+ * own text via `PATTERN_LABELS[pattern] ?? pattern` and sorts after the known
+ * patterns rather than before — see `rankOf` below.
  */
 const PATTERN_LABELS: Record<string, string> = {
   schedule: "일정",
@@ -14,6 +20,12 @@ const PATTERN_LABELS: Record<string, string> = {
   other: "기타",
 };
 const PATTERN_ORDER = Object.keys(PATTERN_LABELS);
+
+/** Known patterns sort by `PATTERN_ORDER`; anything else sorts after them. */
+function rankOf(pattern: string): number {
+  const index = PATTERN_ORDER.indexOf(pattern);
+  return index === -1 ? PATTERN_ORDER.length : index;
+}
 
 /** The 2px gap-type distribution bars on S26. */
 export function GapDistributionBars({
@@ -32,9 +44,7 @@ export function GapDistributionBars({
     );
   }
 
-  const ordered = present.sort(
-    ([a], [b]) => PATTERN_ORDER.indexOf(a) - PATTERN_ORDER.indexOf(b),
-  );
+  const ordered = present.sort(([a], [b]) => rankOf(a) - rankOf(b));
   const max = Math.max(...ordered.map(([, count]) => count));
 
   return (

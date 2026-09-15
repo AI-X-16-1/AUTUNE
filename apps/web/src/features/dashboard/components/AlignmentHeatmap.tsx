@@ -20,7 +20,7 @@ export function AlignmentHeatmap({ cells }: { cells: HeatmapCell[] }) {
     return (
       <DashboardCard title="직무 쌍 얼라인먼트">
         <p style={{ margin: 0, fontSize: "var(--text-meta)", color: "var(--color-ink-muted)" }}>
-          아직 데이터가 없습니다 — 발언의 입장(stance)이 모듈 B에 추가된 뒤부터 채워집니다.
+          아직 역할 간 정렬도를 계산하지 않습니다 (#168).
         </p>
       </DashboardCard>
     );
@@ -64,10 +64,13 @@ export function AlignmentHeatmap({ cells }: { cells: HeatmapCell[] }) {
                   return <div key={colRole} style={{ width: CELL, height: CELL }} />;
                 }
                 const value = score(rowRole, colRole);
+                const label = `${rowRole} × ${colRole}${value != null ? ` · ${Math.round(value * 100)}%` : " · 데이터 없음"}`;
                 return (
                   <div
                     key={colRole}
-                    title={`${rowRole} × ${colRole}${value != null ? ` · ${Math.round(value * 100)}%` : " · 데이터 없음"}`}
+                    role="img"
+                    aria-label={label}
+                    title={label}
                     style={{
                       width: CELL,
                       height: CELL,

@@ -21,7 +21,11 @@ export function Dashboard({ teamId }: { teamId: string }) {
   }
 
   if (error) {
-    return <p style={{ ...metaStyle, color: "var(--color-signal-critical)" }}>{error.message}</p>;
+    return (
+      <p style={{ ...metaStyle, color: "var(--color-signal-critical)" }}>
+        불러오지 못했습니다. 잠시 후 다시 시도해주세요.
+      </p>
+    );
   }
 
   if (!dashboard) {
