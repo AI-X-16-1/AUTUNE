@@ -214,9 +214,7 @@ def test_dashboard_rolls_up_scores_and_gap_patterns_for_the_team(
     assert body["gap_distribution"] == {"ownership": 3}
 
 
-def test_dashboard_average_grade_is_none_without_any_scores(
-    client: TestClient, team: str
-) -> None:
+def test_dashboard_average_grade_is_none_without_any_scores(client: TestClient, team: str) -> None:
     assert client.get(f"/api/intelligence/dashboard/{team}").json()["average_grade"] is None
 
 
