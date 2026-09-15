@@ -80,6 +80,20 @@ def upload_recording(
     second place those answers are decided. ``stage_upload`` deletes its own
     partial before raising, so a refused upload leaves nothing to clean up.
 
+    **Two things about the upload this function does not control.** Starlette
+    parses the multipart body before the first line here runs, and it spools a
+    file part to a ``SpooledTemporaryFile`` in the system temp directory with no
+    size limit of its own — so the whole body is already on disk, outside
+    ``AUTUNE_AUDIO_TEMP_DIR`` and outside ``_reject_persistent``'s check, by the
+    time ``MAX_UPLOAD_BYTES`` is counted. Starlette closes it when the request
+    ends, so invariant 11 holds, but "counted while writing" is true of our copy
+    only and a body-size limit belongs in front of the app.
+
+    And ``delay`` hands the worker a **local path**, so the API process and the
+    worker consuming ``gpu`` have to see the same filesystem. Split them across
+    containers or hosts without a shared volume and ``adopt`` gets a path to
+    nothing. See docs/engineering/environments.md.
+
     ``def`` rather than ``async def``: copying an upload to disk blocks, and
     Starlette runs a sync endpoint on a worker thread so it does not stall the
     event loop.
@@ -90,6 +104,7 @@ def upload_recording(
         max_bytes=MAX_UPLOAD_BYTES,
     )
 
+    meeting_id: str | None = None
     try:
         with session_scope() as session:
             meeting = service.create_meeting(session, uploader=user, team_id=team_id, title=title)
@@ -97,6 +112,12 @@ def upload_recording(
         process_recording.delay(meeting_id, str(staged))
     except BaseException:
         staged.unlink(missing_ok=True)
+        if meeting_id is not None:
+            # Committed by the block above, so it outlives this request unless
+            # something says otherwise. A broker that refuses leaves a meeting
+            # with no file and no task — harder to find than the file, because
+            # the sweep covers the file and nothing covers the row.
+            service.abandon_meeting(meeting_id)
         raise
 
     return RecordingAccepted(meeting_id=meeting_id, status=status)

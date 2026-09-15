@@ -37,10 +37,15 @@ class AudioSettings(BaseSettings):
     """How long a staged upload may sit before ``storage.sweep_stale_uploads``
     treats it as orphaned and deletes it.
 
-    Has to exceed the longest legitimate run, because the sweep cannot tell a
-    file still being transcribed from one nobody came back for — it only sees
-    mtime. 24 hours is far above the worst case measured so far (about 1.27x
-    real time) and still bounds how long a recording can outlive its request.
+    Has to exceed **the wait in the queue plus the run**, not just the run: the
+    mtime the sweep reads is when the upload was staged, which is before the
+    task was picked up. A backlog is what makes those two differ, and a backlog
+    is also when the sweep is most likely to meet a file that is still wanted.
+    The sweep cannot tell a recording still being transcribed from one nobody
+    came back for — it only sees mtime — so the threshold is the whole defence.
+
+    24 hours is far above the worst case measured so far (about 1.27x real time)
+    and still bounds how long a recording can outlive its request.
     """
 
     hf_token: str = ""

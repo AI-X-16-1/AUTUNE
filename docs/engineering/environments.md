@@ -293,6 +293,17 @@ is being uploaded, nothing is being swept either. On a developer's machine that
 is the case to know about: a failed upload leaves real audio until the next
 successful one.
 
+**The API and the worker have to share that directory.** `POST /api/audio/recordings`
+writes the file and hands the worker a local path, so an API container and a
+`gpu` worker on different filesystems leave `adopt` pointing at nothing. One
+volume, mounted at the same path in both.
+
+**Starlette keeps its own copy while the request runs.** It spools the multipart
+body to the system temp directory before the endpoint is entered — outside
+`AUTUNE_AUDIO_TEMP_DIR`, so outside the synced-folder check. It is removed when
+the request ends, and a body-size limit belongs in front of the app rather than
+in the route.
+
 Do not point the directory at a synced folder — `storage` refuses one, but the
 check only knows the providers it lists — and do not keep test recordings of
 real meetings on disk. See `../architecture/privacy.md`.

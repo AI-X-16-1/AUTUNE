@@ -17,6 +17,7 @@ from fastapi import UploadFile
 from sqlalchemy.orm import Session
 
 from autune_audio import router as router_module
+from autune_audio import service
 from autune_audio.config import AudioSettings
 from autune_audio.router import upload_recording
 from autune_audio.storage import RecordingTooLargeError
@@ -26,6 +27,28 @@ from autune_core.errors import PermissionDeniedError
 
 def upload(data: bytes = b"audio", filename: str = "meeting.m4a") -> UploadFile:
     return UploadFile(file=io.BytesIO(data), filename=filename)
+
+
+class _Scope:
+    """Bind the route's own `session_scope` to the test's session.
+
+    The route deliberately opens its own transaction — it has to commit before
+    queueing — so a test that wants to see the row has to hand it this one.
+    """
+
+    def __init__(self, session: Session, *, flush: bool = True) -> None:
+        self._session = session
+        self._flush = flush
+
+    def __call__(self) -> _Scope:
+        return self
+
+    def __enter__(self) -> Session:
+        return self._session
+
+    def __exit__(self, *exc: object) -> None:
+        if self._flush:
+            self._session.flush()
 
 
 @pytest.fixture
@@ -59,14 +82,7 @@ def member(db_session: Session, team: str, monkeypatch: pytest.MonkeyPatch) -> U
     db_session.add(TeamMember(team_id=team, user_id=user.id))
     db_session.flush()
 
-    class Scope:
-        def __enter__(self) -> Session:
-            return db_session
-
-        def __exit__(self, *exc: object) -> None:
-            db_session.flush()
-
-    monkeypatch.setattr(router_module, "session_scope", Scope)
+    monkeypatch.setattr(router_module, "session_scope", _Scope(db_session))
     return user
 
 
@@ -103,14 +119,7 @@ def test_nothing_is_staged_for_a_team_the_uploader_is_not_in(
     db_session.add(outsider)
     db_session.flush()
 
-    class Scope:
-        def __enter__(self) -> Session:
-            return db_session
-
-        def __exit__(self, *exc: object) -> None:
-            pass
-
-    monkeypatch.setattr(router_module, "session_scope", Scope)
+    monkeypatch.setattr(router_module, "session_scope", _Scope(db_session, flush=False))
 
     with pytest.raises(PermissionDeniedError):
         upload_recording(user=outsider, file=upload(), team_id=team, title="남의 회의")
@@ -135,6 +144,46 @@ def test_the_staged_file_is_deleted_when_queueing_fails(
         upload_recording(user=member, file=upload(), team_id=team, title="주간 회의")
 
     assert staged_files(temp_dir) == []
+
+
+def test_a_meeting_whose_task_never_queued_is_marked_failed(
+    db_session: Session, team: str, member: User, temp_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The row outlives the request even though nothing will ever process it:
+    `session_scope` committed before `delay` was called. The sweep covers the
+    staged file; nothing covered the meeting, so it sat in `analyzing` with no
+    file and no task — harder to find than the leak the sweep is for."""
+
+    def broken(meeting_id: str, path: str) -> None:
+        raise RuntimeError("the broker is down")
+
+    monkeypatch.setattr(router_module.process_recording, "delay", broken)
+    monkeypatch.setattr(service, "session_scope", _Scope(db_session))
+
+    with pytest.raises(RuntimeError, match="the broker is down"):
+        upload_recording(user=member, file=upload(), team_id=team, title="주간 회의")
+
+    ((meeting,),) = [db_session.query(Meeting).filter(Meeting.team_id == team).all()]
+    assert meeting.status == "failed"
+
+
+def test_marking_it_failed_never_replaces_the_original_error(
+    team: str, member: User, temp_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`abandon_meeting` runs inside an `except`. If it raises, the caller gets a
+    database error instead of the reason the request actually failed."""
+
+    def broken(meeting_id: str, path: str) -> None:
+        raise RuntimeError("the broker is down")
+
+    def also_broken() -> None:
+        raise RuntimeError("and so is the database")
+
+    monkeypatch.setattr(router_module.process_recording, "delay", broken)
+    monkeypatch.setattr(service, "session_scope", also_broken)
+
+    with pytest.raises(RuntimeError, match="the broker is down"):
+        upload_recording(user=member, file=upload(), team_id=team, title="주간 회의")
 
 
 def test_an_oversized_recording_is_refused_before_a_meeting_exists(

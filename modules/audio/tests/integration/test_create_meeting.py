@@ -6,7 +6,7 @@ write a meeting into a team, and when the meeting stops being visible.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy.orm import Session
@@ -77,11 +77,15 @@ def test_the_retention_window_is_set_from_the_team(
     retention-aware read ignores forever (#206)."""
     set_retention(db_session, team, 30)
 
+    before = datetime.now(tz=UTC)
     meeting = create_meeting(db_session, uploader=member, team_id=team, title="주간 회의")
+    after = datetime.now(tz=UTC)
 
+    # Bracketed rather than `.days == 29`, which @lsh2217 reproduced failing one
+    # run in three: that form assumed measurable time passed between the call
+    # and the assertion, and on a coarse clock in a warm suite it does not.
     assert meeting.expires_at is not None
-    days = (meeting.expires_at - datetime.now(tz=UTC)).days
-    assert days == 29  # 30 days out, minus the seconds already elapsed
+    assert before + timedelta(days=30) <= meeting.expires_at <= after + timedelta(days=30)
 
 
 def test_a_later_retention_change_does_not_move_an_existing_meeting(
@@ -98,3 +102,16 @@ def test_a_later_retention_change_does_not_move_an_existing_meeting(
     db_session.refresh(meeting)
 
     assert meeting.expires_at == settled
+
+
+def test_an_uploaded_meeting_has_no_start_time(
+    db_session: Session, team: str, member: User
+) -> None:
+    """The only time this route knows is when the file arrived, and that is not
+    when the meeting happened. Module B resolves every relative deadline against
+    this column and names the case in `slots.meeting_day`: a Friday meeting
+    uploaded on Monday moves every "내일" by three days. `None` makes B keep the
+    phrase for a person to read instead of printing a confident wrong date."""
+    meeting = create_meeting(db_session, uploader=member, team_id=team, title="주간 회의")
+
+    assert meeting.started_at is None
