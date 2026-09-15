@@ -42,12 +42,12 @@
     {
       "topic_id": "topic_003",
       "spoke": [
-        "user_001",
-        "user_002"
+        "prt_001",
+        "prt_002"
       ],
       "silent": [
-        "user_003",
-        "user_004"
+        "prt_003",
+        "prt_004"
       ]
     }
   ]
