@@ -56,8 +56,15 @@ class CtxEmbedding(Base, TimestampMixin):
     __table_args__ = (
         CheckConstraint(f"kind IN {_EMBEDDING_KINDS!r}", name="ck_ctx_embeddings_kind"),
         Index("ix_ctx_embeddings_meeting_id", "meeting_id"),
-        # The HNSW index on `embedding` is created in the migration with raw SQL
-        # (vector_cosine_ops); SQLAlchemy autogenerate does not model it.
+        # Declared to match the raw-SQL index the migration actually creates —
+        # without this, autogenerate sees no model-side index and emits a
+        # drop_index for it. The migration itself is left as raw SQL. See #130.
+        Index(
+            "ix_ctx_embeddings_embedding_hnsw",
+            "embedding",
+            postgresql_using="hnsw",
+            postgresql_ops={"embedding": "vector_cosine_ops"},
+        ),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
