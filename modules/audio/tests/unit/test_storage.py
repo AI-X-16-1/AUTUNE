@@ -8,6 +8,8 @@ something went wrong, because those are the ones a `finally` exists for.
 from __future__ import annotations
 
 import io
+import os
+import time
 from pathlib import Path
 
 import pytest
@@ -18,6 +20,8 @@ from autune_audio.storage import (
     _reject_persistent,
     adopt,
     recording_on_disk,
+    stage_upload,
+    sweep_stale_uploads,
 )
 from autune_core.errors import PrivacyViolationError
 
@@ -259,3 +263,102 @@ class TestSyncedFolderNamesAsTheyActuallyAppear:
 
         with pytest.raises(PrivacyViolationError):
             _reject_persistent(Path("/Users/x/Dropbox (Acme)/tmp"))
+
+
+# --- stage_upload: the one write that is meant to survive ------------------- #
+
+
+def test_a_staged_upload_stays_for_the_worker(settings: AudioSettings) -> None:
+    """The point of the function. Everything else in this file deletes."""
+    staged = stage_upload(io.BytesIO(b"audio"), settings=settings)
+
+    assert staged.exists()
+    assert staged.read_bytes() == b"audio"
+
+
+def test_a_staged_upload_lands_inside_the_temp_dir(settings: AudioSettings) -> None:
+    """Not merely somewhere writable: `_reject_persistent` only guards this one
+    directory, so a file written outside it is a file nothing checked."""
+    staged = stage_upload(io.BytesIO(b"audio"), settings=settings)
+
+    assert staged.parent == Path(settings.temp_dir)
+
+
+def test_a_staged_upload_is_refused_in_a_synced_directory(tmp_path: Path) -> None:
+    """`stage_upload` leaves the file behind, so pointing it at a sync folder is
+    strictly worse than for `recording_on_disk` — the copy is not transient."""
+    settings = AudioSettings(temp_dir=str(tmp_path / "Dropbox" / "scratch"))
+
+    with pytest.raises(PrivacyViolationError, match="Dropbox"):
+        stage_upload(io.BytesIO(b"audio"), settings=settings)
+
+
+def test_an_oversized_upload_leaves_nothing_behind(settings: AudioSettings) -> None:
+    """Nothing will adopt a file whose upload failed, so the partial cannot be
+    left for the sweep to find hours later."""
+    before = set(Path(settings.temp_dir).iterdir()) if Path(settings.temp_dir).is_dir() else set()
+
+    with pytest.raises(RecordingTooLargeError):
+        stage_upload(io.BytesIO(b"audio" * 100), max_bytes=10, settings=settings)
+
+    assert set(Path(settings.temp_dir).iterdir()) == before
+
+
+def test_a_cancelled_upload_leaves_nothing_behind(settings: AudioSettings) -> None:
+    """A hard time limit arrives as BaseException, not Exception."""
+
+    class Cancelled(BaseException):
+        pass
+
+    class Angry(io.BytesIO):
+        def read(self, size: int | None = -1) -> bytes:
+            raise Cancelled
+
+    with pytest.raises(Cancelled):
+        stage_upload(Angry(b"audio"), settings=settings)
+
+    assert list(Path(settings.temp_dir).iterdir()) == []
+
+
+# --- sweep_stale_uploads: the net under the handover ------------------------ #
+
+
+def _aged(path: Path, hours: float) -> None:
+    old = time.time() - hours * 3600
+    os.utime(path, (old, old))
+
+
+def test_the_sweep_deletes_an_upload_nobody_came_back_for(settings: AudioSettings) -> None:
+    orphan = stage_upload(io.BytesIO(b"audio"), settings=settings)
+    _aged(orphan, hours=25)
+
+    assert sweep_stale_uploads(settings=settings) == 1
+    assert not orphan.exists()
+
+
+def test_the_sweep_leaves_a_recording_still_being_transcribed(settings: AudioSettings) -> None:
+    """The failure that would matter: a run of an hour is ordinary, and losing
+    its file mid-transcription is worse than keeping an orphan a while longer."""
+    in_flight = stage_upload(io.BytesIO(b"audio"), settings=settings)
+    _aged(in_flight, hours=2)
+
+    assert sweep_stale_uploads(settings=settings) == 0
+    assert in_flight.exists()
+
+
+def test_the_sweep_is_quiet_when_there_is_no_temp_dir(tmp_path: Path) -> None:
+    """It runs at the head of every task, including the first one on a fresh
+    machine, where nothing has created the directory yet."""
+    settings = AudioSettings(temp_dir=str(tmp_path / "never-made"))
+
+    assert sweep_stale_uploads(settings=settings) == 0
+
+
+def test_the_sweep_never_raises_over_one_bad_entry(settings: AudioSettings) -> None:
+    """It runs in front of a transcription. A sweep that throws would be the
+    reason a recording it was protecting never got processed."""
+    orphan = stage_upload(io.BytesIO(b"audio"), settings=settings)
+    _aged(orphan, hours=25)
+    (Path(settings.temp_dir) / "a-directory").mkdir()
+
+    assert sweep_stale_uploads(settings=settings) == 1

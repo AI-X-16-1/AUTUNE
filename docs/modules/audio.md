@@ -83,6 +83,38 @@ Plus the shared entities in `packages/core`, which A writes.
 | PATCH | `/utterances/{id}` | Correct speaker or text |
 | POST | `/speakers/enroll` | Enroll a voice for identification |
 
+`POST /recordings` is built; the rest of this table is still planned.
+
+### What `POST /recordings` does
+
+Multipart: the file, plus `team_id` and `title`. Requires a bearer token, and
+**checks that the uploader is a member of the team they name** — a token proves
+who is asking, not which teams they may attach a recording to. Answers `202`
+with the `meeting_id`; the caller polls the meeting, because transcription runs
+for minutes.
+
+The order is stage the bytes, commit the meeting, queue the task, and each step
+is where it is because of what its failure leaves behind:
+
+- *Stage first* so a `meetings` row never describes an upload that failed.
+- *Commit before queueing* so the worker is never handed a `meeting_id` a
+  rollback then erased — the same reason `process_recording` publishes after its
+  transaction rather than inside it.
+- *Delete the staged file if anything after staging fails*, because nothing will
+  adopt it and an unowned recording on disk is what invariant 11 exists for.
+
+**This opens the one window in the module where a recording is not inside a
+`with` block**: between the response and the worker calling `storage.adopt`.
+Normally seconds; forever if the task is lost. `storage.sweep_stale_uploads`
+deletes staged files older than `AUTUNE_AUDIO_UPLOAD_SWEEP_HOURS` and runs at
+the head of each transcription — there is no beat schedule to put it on (#207),
+so a system nobody uploads to never sweeps.
+
+The meeting's `expires_at` is set here from `Team.retention_days`, resolved at
+creation: a team that later changes its window does not reach back into meetings
+whose speakers were told something else. Nothing else in the repository writes
+that column (#206).
+
 ## Celery tasks
 
 | Task | Trigger | Queue |

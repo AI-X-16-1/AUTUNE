@@ -1,8 +1,9 @@
 """Internal schemas for module A.
 
 Anything another module needs belongs in ``packages/contracts``, not here. These
-types describe the stages inside this pipeline: a decoded waveform, and what the
-transcriber returns before speakers are attached.
+types describe the stages inside this pipeline — a decoded waveform, and what
+the transcriber returns before speakers are attached — and, at the end of the
+file, what this module's own routes answer with.
 """
 
 from __future__ import annotations
@@ -10,6 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import numpy as np
+from pydantic import BaseModel
 
 SAMPLE_RATE = 16_000
 """What both Whisper and pyannote want. Decoding to it once means neither
@@ -106,3 +108,24 @@ class Transcription:
             f"Transcription({len(self.segments)} segments, {len(self.words)} words, "
             f"{self.duration:.1f}s, lang={self.language})"
         )
+
+
+# --- HTTP ------------------------------------------------------------------ #
+# What the router returns. Everything above describes a stage inside the
+# pipeline; this describes an answer to a request.
+
+
+class RecordingAccepted(BaseModel):
+    """The meeting a recording was queued against.
+
+    Returned with 202, not 200: the recording has been taken and the work has
+    been queued, and nothing about the transcript exists yet. The caller polls
+    the meeting rather than waiting — transcription runs for minutes.
+
+    There is no upload path in here and there never should be. The path is where
+    a recording sits until the worker deletes it, and it is not something a
+    client has any business knowing.
+    """
+
+    meeting_id: str
+    status: str

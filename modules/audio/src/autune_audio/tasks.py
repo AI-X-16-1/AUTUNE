@@ -19,7 +19,7 @@ from autune_audio.persistence import persist_transcript, transcript_payload
 from autune_audio.pipeline import transcribe
 from autune_audio.quality import detect_repetition
 from autune_audio.speakers import Utterance, assign_speakers
-from autune_audio.storage import adopt
+from autune_audio.storage import adopt, sweep_stale_uploads
 from autune_contracts.events import TRANSCRIPT_READY
 from autune_core import get_logger
 from autune_core.db import session_scope
@@ -73,6 +73,11 @@ def process_recording(meeting_id: str, upload_path: str) -> None:
     they do not claim the whole task replays.
     """
     log.info("audio_process_started", meeting_id=meeting_id)
+
+    # Before this run's own file is adopted, so a sweep that throws cannot be
+    # what leaves *this* recording behind. It never throws -- see the function --
+    # and the ordering is belt and braces on top of that.
+    sweep_stale_uploads()
 
     with adopt(Path(upload_path)) as recording:
         waveform = decode(recording.path)

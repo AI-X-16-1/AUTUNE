@@ -33,6 +33,16 @@ class AudioSettings(BaseSettings):
     See docs/architecture/privacy.md section 1.
     """
 
+    upload_sweep_hours: int = 24
+    """How long a staged upload may sit before ``storage.sweep_stale_uploads``
+    treats it as orphaned and deletes it.
+
+    Has to exceed the longest legitimate run, because the sweep cannot tell a
+    file still being transcribed from one nobody came back for — it only sees
+    mtime. 24 hours is far above the worst case measured so far (about 1.27x
+    real time) and still bounds how long a recording can outlive its request.
+    """
+
     hf_token: str = ""
     """Hugging Face token for the gated pyannote models.
 

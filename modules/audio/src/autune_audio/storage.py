@@ -19,9 +19,11 @@ docstring and now says so by failing.
 from __future__ import annotations
 
 import sys
+import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
+from datetime import timedelta
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import IO
@@ -151,6 +153,113 @@ def adopt(path: Path) -> Iterator[Recording]:
         failure = _delete(recording)
         if failure is not None and sys.exc_info()[0] is None:
             raise failure
+
+
+def stage_upload(
+    stream: IO[bytes],
+    *,
+    suffix: str = "",
+    max_bytes: int | None = None,
+    settings: AudioSettings | None = None,
+) -> Path:
+    """Write ``stream`` to the temp directory and **leave it there** for the worker.
+
+    The one path in this module that does not delete what it wrote, and the
+    reason is the process boundary. ``process_recording`` runs in the worker and
+    is handed a path (see ``adopt``); the file has to outlive the HTTP request
+    that produced it or there is nothing to hand over. Transcription takes
+    minutes, so doing it inside the request instead is not an option.
+
+    **This opens a window invariant 11 otherwise closes.** Between the response
+    and the worker calling ``adopt``, the recording is on disk inside no ``with``
+    block. Normally that is seconds. If the broker is down, the task is lost, or
+    the worker never starts, it is forever — so ``sweep_stale_uploads`` exists
+    and ``process_recording`` calls it. The guarantee here is "deleted by the
+    task, with a sweep behind it", which is weaker than ``recording_on_disk``'s
+    and is why the two are separate functions rather than a flag on one.
+
+    Everything before the handover is the same: the directory is checked by
+    ``_reject_persistent``, and ``max_bytes`` is counted **while writing** rather
+    than read from a header the client sent. A stream that runs over is stopped
+    and its partial file deleted, because nothing will adopt a file whose upload
+    failed.
+    """
+    settings = settings or get_settings()
+    directory = Path(settings.temp_dir)
+    _reject_persistent(directory)
+    directory.mkdir(parents=True, exist_ok=True)
+
+    with NamedTemporaryFile(dir=directory, suffix=suffix, delete=False) as handle:
+        recording = Recording(path=Path(handle.name))
+
+    try:
+        with recording.path.open("wb") as out:
+            while chunk := stream.read(CHUNK_BYTES):
+                recording.bytes_written += len(chunk)
+                if max_bytes is not None and recording.bytes_written > max_bytes:
+                    raise RecordingTooLargeError(max_bytes)
+                out.write(chunk)
+    except BaseException:
+        # No handover happens, so this file has no owner. Delete it here rather
+        # than leaving it for the sweep: the sweep is the safety net for the
+        # failures we cannot see, not for the one we are standing in.
+        _delete(recording)
+        raise
+
+    log.info("audio_upload_staged", bytes=recording.bytes_written)
+    return recording.path
+
+
+def sweep_stale_uploads(
+    *, older_than: timedelta | None = None, settings: AudioSettings | None = None
+) -> int:
+    """Delete staged recordings nothing came back for. Returns how many.
+
+    The safety net under ``stage_upload``. A file only reaches here by being
+    orphaned — the task was never queued, the worker died before ``adopt``, the
+    broker lost it — and an orphaned recording is a privacy incident that simply
+    has not been noticed yet.
+
+    **Age, not ownership.** There is no way to ask "is a task still holding
+    this": the worker that adopted it may be on another host. So the threshold
+    has to sit above the longest run a recording can legitimately have, and
+    ``upload_sweep_hours`` defaults to 24 for that. A task running longer than
+    that loses its file mid-run, which is the right way round — the alternative
+    is keeping every orphan forever in case one of them is still in use.
+
+    Called from ``process_recording`` rather than a beat schedule: periodic
+    tasks would have to be registered in ``apps/worker``, and invariant 6 puts
+    that out of a module's reach (#207). Running it at the head of each task
+    means cleanup happens whenever the system is used, and the tradeoff is that
+    a system nobody uploads to never sweeps. Good enough for the failure this
+    guards, not a substitute for scheduling it.
+
+    Never raises. A sweep that cannot clean up must not take down the
+    transcription it runs in front of; failures are logged and counted out.
+    """
+    settings = settings or get_settings()
+    directory = Path(settings.temp_dir)
+    if not directory.is_dir():
+        return 0
+
+    window = older_than or timedelta(hours=settings.upload_sweep_hours)
+    cutoff = time.time() - window.total_seconds()
+    swept = 0
+
+    for path in directory.iterdir():
+        try:
+            if not path.is_file() or path.stat().st_mtime > cutoff:
+                continue
+            path.unlink()
+        except OSError as exc:
+            # Names are never logged: a filename can carry a meeting title.
+            log.warning("audio_sweep_failed", error=type(exc).__name__)
+            continue
+        swept += 1
+
+    if swept:
+        log.warning("audio_uploads_swept", count=swept)
+    return swept
 
 
 @contextmanager

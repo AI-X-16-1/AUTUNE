@@ -89,6 +89,7 @@ prefix `AUTUNE_<MODULE>_`.
 | `AUTUNE_AUDIO_WHISPER_MODEL` | A | e.g. `large-v3` |
 | `AUTUNE_AUDIO_DEVICE` | A | `cuda` or `cpu` |
 | `AUTUNE_AUDIO_TEMP_DIR` | A | Where the recording lives during processing, and only then |
+| `AUTUNE_AUDIO_UPLOAD_SWEEP_HOURS` | A | How long a staged upload may sit before it is swept as orphaned. Default `24` |
 | `AUTUNE_AUDIO_HF_TOKEN` | A | Hugging Face token for the gated pyannote models |
 | `AUTUNE_AUDIO_DIARIZATION_MODEL` | A | Default `pyannote/speaker-diarization-3.1` |
 | `AUTUNE_EXTRACTION_CLASSIFIER_IMPL` | B | `local` · `hosted` · `fake`. Default `local`. **No `external`** — see below |
@@ -279,10 +280,22 @@ them needs it either way.
 
 ## Local privacy hygiene
 
-`AUTUNE_AUDIO_TEMP_DIR` holds real audio while a task runs. It is gitignored and
-cleared at the end of every task. Do not point it at a synced folder, and do not
-keep test recordings of real meetings on disk. See
-`../architecture/privacy.md`.
+`AUTUNE_AUDIO_TEMP_DIR` holds real audio while a task runs. It is gitignored,
+and a task deletes its own recording in a `finally` whatever happens.
+
+**One file in there is not covered by that.** An upload staged by
+`POST /api/audio/recordings` waits in the same directory for the worker to
+collect it, which is normally seconds and is forever if the task is never run.
+`storage.sweep_stale_uploads` deletes anything older than
+`AUTUNE_AUDIO_UPLOAD_SWEEP_HOURS`, and it runs at the head of each
+transcription rather than on a schedule (#207) — so on a machine where nothing
+is being uploaded, nothing is being swept either. On a developer's machine that
+is the case to know about: a failed upload leaves real audio until the next
+successful one.
+
+Do not point the directory at a synced folder — `storage` refuses one, but the
+check only knows the providers it lists — and do not keep test recordings of
+real meetings on disk. See `../architecture/privacy.md`.
 
 ## Environments
 
