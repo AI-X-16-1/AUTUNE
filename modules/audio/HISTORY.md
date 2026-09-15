@@ -333,7 +333,7 @@ Where they are:
 | Raw audio deleted after transcription | `storage.py` — a recording exists only inside a `with`; deletion in `finally`, `deleted` read back from the filesystem |
 | Audio never written somewhere it survives | `storage.py::_reject_persistent` — refuses a temp dir inside a cloud-sync folder or the checkout |
 | Text masked before the first write | `tasks.py` masks between diarization and the session; `persistence.py` verifies with `mask()` **before** the first delete and refuses — #184, merged |
-| Nothing unmasked leaves | `check_outbound` runs on every outbound channel. #126 (070 · 080 · 0505 · international) is closed by #138, merged. **#131 is still open and has no PR** — a Korean particle ends the match, so a number with 은/는/이/가 attached passes the guard |
+| Nothing unmasked leaves | `check_outbound` runs on every outbound channel. #126 (070 · 080 · 0505 · international) and #131 (a Korean particle ended the match) are both closed by #138, merged — the patterns now end on a class that a Korean syllable is not in, so `010-1234-5678로` matches |
 | No per-person speech volume | `LiveTranscript` lists unnamed voices instead of counting them — #140, merged |
 
 Two of those exist because a review found the gap, not because the rule was
@@ -348,9 +348,11 @@ has". All five are on `main` now — but the sentence is kept because the table
 went stale in both directions within a day, and a reader who trusts it without
 checking `main` is making the same mistake either way.
 
-**One rule is still not enforced: #131.** The outbound guard's patterns stop at a
-Korean particle, so a phone number written `010-1234-5678은` passes. It has no PR
-and it is the only row in this table with nothing behind it.
+**#131 is still open on the tracker and is not a live bug.** #138 fixed it along
+with #126 and closed only #126. The paragraph above said otherwise until the
+patterns were actually run: every case in #131's own reproduction is caught on
+`main` today. An issue's state is a claim about the tracker, not about the code,
+and reading one as the other is the failure this section is about.
 
 The masking row is two enforcements, not one, and the split is deliberate. The
 task masks; `persistence.py` re-checks and refuses. A guard that is also the only
