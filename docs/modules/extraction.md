@@ -38,12 +38,23 @@ agreement, and sync the result to Notion and Jira.
 
 ## Pipeline
 
-1. **Classify** — DeBERTa fine-tuned five-way classifier over each utterance:
-   `commitment`, `decision`, `open_question`, `concern`, `ambiguous`.
+1. **Classify** — a fine-tuned DeBERTa classifier over each utterance, in
+   spoken order: `commitment`, `decision`, `open_question`, `concern`,
+   `ambiguous`, or **`none`** — most of a meeting is none of them (#149).
+   `none` never leaves this module: an utterance the model calls none is simply
+   absent from `ExtractionResult.classifications`, and has no row in
+   `ext_classifications`. Inference runs before any database transaction opens;
+   it is minutes of CPU per meeting.
 2. **Resolve references** — LLM resolves pronouns and elided subjects ("그거",
    "저희가") against surrounding utterances.
-3. **Slot fill** — extract assignee, task description, and due date from each
-   commitment. Assignee maps to a `user_id` when possible.
+3. **Slot fill** — one draft action item per commitment. The assignee is the
+   speaker: their `user_id` when identified, otherwise only the transcript's
+   label. The due date is the first Korean date phrase in the utterance
+   ("다음 주 화요일", "월말", "9/20"), resolved against the day the meeting was
+   held in Korea, and the phrase itself is kept in `due_text`. With no meeting
+   start time, a relative phrase keeps its words and gets no date — the upload
+   time is not the meeting time. Anything unsettled is left empty and the item
+   stays in *needs confirmation*.
 4. **NLI verification** — check whether an apparent agreement entails an actual
    commitment. Weak assent ("한번 볼게요") is labeled `ambiguous`.
 5. **Build decision entities** — group the utterances classified as decisions
@@ -51,7 +62,10 @@ agreement, and sync the result to Notion and Jira.
    decision often spans several utterances. **Module D depends on this**: it is
    what a decision lineage is keyed on, and a `Classification` alone is not
    enough. See `../architecture/contracts.md`, "The B → D boundary".
-6. **Confirm** — send a Slack DM to the speaker for each ambiguous agreement.
+6. **Confirm** — every ambiguous agreement is recorded in `ext_confirmations`
+   first, then the speaker gets a Slack DM. Until the DM goes out the row is
+   *not asked* and `AmbiguousAgreement.confirmation_sent` is false; sending
+   needs the speaker's Slack account (#70) and a team Slack client (#30).
 7. **Sync** — create Notion pages and Jira issues, storing the returned URLs.
 8. **Publish** — emit `ExtractionResult`.
 
@@ -81,14 +95,24 @@ the overlap the question turns on.
 
 | Table | Purpose |
 | --- | --- |
-| `ext_classifications` | Per-utterance kind, confidence, NLI result |
+| `ext_classifications` | Per-utterance kind, confidence, model version, NLI result. Kinds only — no row for `none` |
 | `ext_action_items` | Assignee, description, due date, status, origin |
 | `ext_action_item_sources` | Which utterances an item came from |
 | `ext_edit_events` | One row per correction. Counts only — no person on it |
 | `ext_external_refs` | Notion and Jira URLs per action item |
-| `ext_confirmations` | Ambiguous-agreement DMs sent and their responses |
+| `ext_confirmations` | Every ambiguous agreement, the DM once sent, and the response |
 | `ext_decisions` | Decision entities, their statements and source utterances |
 | `ext_decision_sources` | Which utterances a decision was settled in, in order |
+
+A meeting that is processed again replaces its model-made rows —
+classifications, decisions, and draft items — rather than adding a second set,
+which is what makes a redelivered task safe. The one exception is the draft:
+once a person has edited anything in the meeting, a rerun leaves its items
+alone, because ADR 0006 makes the list theirs to finish.
+
+`ext_action_items.due_text` is the phrase a model item's due date was read from,
+for S18. It is cleared when a person sets the date themselves: the phrase no
+longer explains the value (#109).
 
 `ext_action_items.origin` is `model` or `user`. ADR 0006 makes the output a draft
 the user completes, so an item somebody typed is an ordinary row rather than an
@@ -113,10 +137,13 @@ order without a second join. The order carries the argument — the proposal
 first, the sentence that settles it last — and the statement is taken from the
 last one.
 
-Rebuilding a meeting's decisions replaces them, and the new rows get fresh `dec_`
-ids. A caller that rebuilds must republish `ExtractionResult`, because D's
-lineage points at the old ids otherwise. Matching an old decision to a new one is
-the same-decision question, and #25 gave that to D.
+Rebuilding a meeting's decisions replaces them, but a decision's `dec_` id is
+derived from the meeting and the utterances it was settled in, so a rebuild over
+the same labels and the same utterance ids keeps the same ids (#171). A decision
+whose sources changed gets a different id — and module A mints new `utt_` ids
+whenever it reprocesses a recording (#194), which changes every source — so a
+caller that rebuilds still republishes `ExtractionResult`. Matching an old decision to a reworded new one is the
+same-decision question, and #25 gave that to D.
 
 `ext_action_items` references `utterances.id`. It does **not** reference any
 other module's tables.
@@ -125,8 +152,9 @@ other module's tables.
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| GET | `/results/{meeting_id}` | Classifications and action items |
-| GET | `/action-items` | Filter by assignee, status, due date |
+| GET | `/results/{meeting_id}` | The meeting's `ExtractionResult`, built from what is stored |
+| GET | `/action-items` | Filter by `meeting_id`, `assignee_id`, `status`, `due_before` (strict). Source utterance ids, never their text |
+| GET | `/action-items/{id}` | One item and the text of its source utterances, in spoken order |
 | PATCH | `/action-items/{id}` | Edit or close an item |
 | POST | `/action-items` | Add an item the model missed |
 | DELETE | `/action-items/{id}` | Delete an item the model got wrong |
@@ -295,14 +323,26 @@ privacy rules do not grant.
 
 ## Metric
 
-The classifier's five-way macro F1 is what we train against and what the harness
-scores. Action item F1 is derived from it and reported beside the best published
-figure for the task, per ADR 0006.
+The classifier's macro F1 over the five kinds is what we train against and what
+the harness scores, **taken on an evaluation set where utterances that are none
+of the kinds appear at their real proportion**. `none` is scored and never
+averaged: a none utterance called `decision` is a false positive in
+`decision`'s precision, and a decision called none is a miss in its recall.
+Action item F1 is derived from it and reported beside the best published figure
+for the task, per ADR 0006.
+
+A set of labelled utterances only cannot see what the model does with the rest
+of a meeting. On AMI the same model scored 0.655 on one and 0.225 on the
+meeting's real distribution, with 1,888 false labels per 2,400 utterances
+(#149). The harness warns when an evaluation set has no `none` rows. For AMI,
+`python -m autune_extraction.labeling` writes `test.jsonl` as the natural
+distribution and `test_closed.jsonl` as the labelled-only split, kept for
+comparison with numbers taken before `none` existed.
 
 | Metric | Six weeks | Three months |
 | --- | --- | --- |
 | Action item F1 | 0.43 — matching the best published AMI result, 43.12 (ADR 0006) | above it |
-| Classifier macro F1, five-way | set in week 2 from the AMI dialogue-act literature, once the evaluation set exists | above it |
+| Classifier macro F1 over the five kinds, `none` present | set in week 2 from the AMI dialogue-act literature, once the evaluation set exists | above it |
 | Items the user accepts with no edit | the first measurement is the baseline | improve on it |
 
 ```bash
@@ -323,6 +363,14 @@ versions.
 - The LLM used for reference resolution receives masked text only, and the
   smallest window that resolves the reference.
 - Confirmation DMs go to the speaker, never to a channel.
+- `GET /action-items/{id}` is the only route in this module that returns
+  utterances verbatim: the drawer asks for one item's quotation when it opens,
+  and the list returns utterance ids. The list is still meeting content — an
+  item's `description` is drawn from what was said and `assignee_label` is a
+  person's name — so no response of this module may be forwarded outside our
+  infrastructure on the grounds that it quotes nobody. `check_outbound` catches
+  the shapes of personal data, not a Korean name or the sentence that settled a
+  decision.
 
 ## Open questions
 

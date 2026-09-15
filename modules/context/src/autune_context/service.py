@@ -9,11 +9,12 @@ contract on a Celery task, never as a direct call.
 
 from __future__ import annotations
 
+import math
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 from celery import current_app
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, func, select, text, update
 from sqlalchemy.orm import Session
 
 from autune_context.config import get_settings
@@ -24,14 +25,16 @@ from autune_context.models import (
     CtxMeetingStatus,
     CtxTopicLink,
 )
-from autune_context.pipeline import get_embedder, get_reranker
-from autune_context.pipeline.retrieval import HybridRetriever
+from autune_context.pipeline import get_embedder, get_nli, get_reranker
+from autune_context.pipeline.retrieval import HybridRetriever, visible_meeting_clauses
 from autune_context.pipeline.topics import extract_topics
-from autune_contracts import ContextLinks, TopicLink
-from autune_core import Meeting, get_logger, session_scope
+from autune_contracts import ChangeType, ContextLinks, DecisionChange, NliLabel, TopicLink
+from autune_core import Meeting, Participant, get_logger, session_scope
+from autune_core.errors import ConflictError, NotFoundError
 
 if TYPE_CHECKING:
-    from autune_contracts import TranscriptReady
+    from autune_context.pipeline.base import Embedder, NliModel
+    from autune_contracts import ExtractionResult, TranscriptReady
 
 log = get_logger(__name__)
 
@@ -171,14 +174,386 @@ def _link_topic(
 
 
 # --------------------------------------------------------------------------- #
-# Decision lineage entry point — Phase 3 builds the versions here
+# Decision lineage — off autune.extraction.completed, after B
 # --------------------------------------------------------------------------- #
+
+# NLI reads the previous statement as the premise and the current one as the
+# hypothesis: entailment means the decision still holds, contradiction means it
+# was reversed, neutral means it moved without being undone.
+_NLI_TO_CHANGE: dict[NliLabel, ChangeType] = {
+    NliLabel.ENTAILMENT: ChangeType.UNCHANGED,
+    NliLabel.CONTRADICTION: ChangeType.REVERSED,
+    NliLabel.NEUTRAL: ChangeType.MODIFIED,
+}
 
 
 def mark_extraction_seen(meeting_id: str) -> None:
-    """Record that B has reported. Phase 3 replaces this with lineage building."""
+    """Record that B has reported, without building lineage.
+
+    ``tasks.on_extraction_completed`` calls ``build_decision_lineage`` (which
+    sets ``extraction_seen`` itself), not this — there is currently no
+    production caller. Kept for tests that want the publish gate flipped
+    without exercising the matching/NLI machinery.
+    """
     with session_scope() as session:
         _upsert_status(session, meeting_id, extraction_seen=True)
+
+
+def build_decision_lineage(result: ExtractionResult) -> None:
+    """Thread each of B's decisions into a lineage and classify how it moved.
+
+    B owns *what counts as a decision in this meeting*; D owns *whether it is the
+    same decision as one from before*. Each of ``result.decisions`` is matched by
+    cosine similarity of its statement to the most similar existing thread's most
+    recent statement — best pairing first across the whole batch, not
+    first-in-``result.decisions``-order, so one weak match earlier in the list
+    can't grab a thread out from under a much stronger match later in it. No
+    match above ``lineage_match_threshold`` opens a new ``thr_`` thread anchored
+    on the meeting's team.
+
+    Matching happens *before* this meeting's own previous versions are deleted:
+    on a rebuild, B always mints fresh ``dec_`` ids (see
+    ``autune_extraction.service.build_decisions``), so there is no id to match
+    on, and a solo thread — one with no *other* meeting's version to rediscover
+    it by — has nothing else to compare against. Deleting first would erase the
+    one piece of evidence (the meeting's own about-to-be-replaced statement)
+    that lets a rebuild with materially unchanged wording land back on the same
+    thread instead of forking a new one every time B reprocesses the meeting.
+
+    That evidence is added to ``heads`` alongside every thread's team-wide head,
+    not used in its place: ``_thread_heads`` only ever returns one version per
+    thread (the most recent), so if this meeting sits in the *middle* of a
+    thread rather than at its head, comparing only against the head compares a
+    rebuilt decision to a *later* meeting's wording instead of its own —
+    wording that can easily fall below the adjacent-pair threshold even though
+    the meeting's own statement did not change. Appending this meeting's own
+    pre-delete versions as extra candidates for the same ``thread_id`` closes
+    that gap; ``_assign_decisions_to_threads`` dedupes by ``thread_id`` so a
+    thread offered twice (once as team head, once as this meeting's own
+    version) is still only assigned once.
+
+    Every thread this run touches is then re-chained end to end by
+    ``_rethread``: ``previous_*``, ``change_type`` and ``nli_label`` are a
+    function of *when meetings happened*, not the order B finished them, so a
+    meeting that B processes late — a long February meeting landing after
+    January's, a backfill of past recordings — still has to slot into the middle
+    of a thread's history.
+
+    Idempotent: every ``ctx_decision_versions`` row for this meeting is replaced
+    and its threads are re-chained, then any thread left empty is swept. A re-run
+    means the published ``ContextLinks`` should be rebuilt — that is
+    ``publish_if_ready``'s job, not this one.
+
+    Retention is enforced on the *read* side only: ``_thread_heads`` and
+    ``_rethread`` both exclude an expired meeting from matching and chaining
+    (see "Deletion" in docs/modules/context.md), but this function still writes
+    a version for the current meeting even if that meeting is itself already
+    past ``expires_at``. In practice extraction finishes hours after a meeting,
+    long before its 90-day window, so this only matters for a backfill or a
+    badly delayed pipeline run — not worth gating on until it does.
+
+    Concurrency: two meetings for the same team can be matching against the
+    same thread heads at once (``cpu_heavy`` is a concurrent queue —
+    docs/architecture/async-pipeline.md). Under READ COMMITTED neither would see
+    the other's uncommitted insert, and both could chain onto the same "latest"
+    version. A ``pg_advisory_xact_lock`` keyed on the team serializes this
+    function per team (held for the transaction, never across teams) so that
+    can't happen.
+
+    Also runs the other two ``ctx_*`` retention sweeps (``sweep_stale_topic_labels``,
+    ``sweep_dangling_previous_statements``) alongside the orphan sweep this
+    function has always run — global and idempotent, so exercising them on
+    every call closes real gaps ahead of #87 rather than leaving them for tests
+    to be the only caller.
+    """
+    settings = get_settings()
+    embedder = get_embedder()
+    nli = get_nli()
+
+    with session_scope() as session:
+        meeting = session.get(Meeting, result.meeting_id)
+        if meeting is None:
+            raise ValueError(f"{result.meeting_id}: meeting row not found")
+
+        session.execute(
+            text("SELECT pg_advisory_xact_lock(hashtext(:team_id))"),
+            {"team_id": meeting.team_id},
+        )
+
+        # Match before deleting: this meeting's own current versions are still
+        # in the DB here, so a rebuild with unchanged (or similar) wording can
+        # match back onto its own thread even though B gave it a new dec_ id.
+        # Appended, not substituted, for threads whose team-wide head is a
+        # *later* meeting — this meeting may sit mid-thread.
+        heads = _thread_heads(session, meeting.team_id, embedder)
+        own_versions = session.execute(
+            select(CtxDecisionVersion.thread_id, CtxDecisionVersion.current_statement)
+            .where(CtxDecisionVersion.meeting_id == result.meeting_id)
+            .order_by(CtxDecisionVersion.id)
+        ).all()
+        if own_versions:
+            own_vectors = embedder.embed([statement for _, statement in own_versions])
+            heads += [
+                _ThreadHead(thread_id, vector)
+                for (thread_id, _statement), vector in zip(own_versions, own_vectors, strict=True)
+            ]
+        decisions = list(result.decisions)
+        vectors = embedder.embed([d.statement for d in decisions]) if decisions else []
+        assignment = _assign_decisions_to_threads(vectors, heads, settings.lineage_match_threshold)
+
+        # Idempotency: now drop this meeting's old versions. The threads they
+        # were in still need re-chaining even when this run's decisions land
+        # elsewhere (wording changed enough to move threads, or B dropped a
+        # decision the last run had), so remember them first.
+        affected: set[str] = set(
+            session.scalars(
+                select(CtxDecisionVersion.thread_id).where(
+                    CtxDecisionVersion.meeting_id == result.meeting_id
+                )
+            ).all()
+        )
+        session.execute(
+            delete(CtxDecisionVersion).where(CtxDecisionVersion.meeting_id == result.meeting_id)
+        )
+        session.flush()
+
+        new_threads = 0
+        matched_count = 0
+        for index, decision in enumerate(decisions):
+            head = assignment.get(index)
+            if head is not None:
+                thread_id = head.thread_id
+                matched_count += 1
+            else:
+                thread = CtxDecision(team_id=meeting.team_id, topic_label=decision.statement[:400])
+                session.add(thread)
+                session.flush()
+                thread_id = thread.id
+                new_threads += 1
+            # A seed row: _rethread fills in every chain-dependent field once the
+            # thread's full history is in place.
+            session.add(
+                CtxDecisionVersion(
+                    thread_id=thread_id,
+                    source_decision_id=decision.id,
+                    meeting_id=meeting.id,
+                    current_statement=decision.statement,
+                    previous_version_id=None,
+                    previous_statement=None,
+                    previous_meeting_id=None,
+                    change_type=ChangeType.NEW.value,
+                    nli_label=None,
+                    confidence=_clamp(decision.confidence),
+                    key_stakeholders_absent=[],
+                    nli_version=nli.model_version,
+                )
+            )
+            affected.add(thread_id)
+
+        session.flush()
+        for thread_id in affected:
+            _rethread(session, thread_id, nli)
+
+        orphans_swept = sweep_orphan_decision_threads(session)
+        labels_swept = sweep_stale_topic_labels(session)
+        statements_swept = sweep_dangling_previous_statements(session)
+        _upsert_status(session, result.meeting_id, extraction_seen=True, lineage_done=True)
+        log.info(
+            "context_decision_lineage_done",
+            meeting_id=result.meeting_id,
+            decisions=len(decisions),
+            matched=matched_count,
+            new_threads=new_threads,
+            threads_swept=orphans_swept,
+            labels_swept=labels_swept,
+            statements_swept=statements_swept,
+        )
+
+
+class _ThreadHead:
+    """A thread's most recent statement, embedded — the target
+    ``_assign_decisions_to_threads`` scores a new decision against."""
+
+    __slots__ = ("thread_id", "vector")
+
+    def __init__(self, thread_id: str, vector: list[float]) -> None:
+        self.thread_id = thread_id
+        self.vector = vector
+
+
+def _meeting_time():
+    """Order key for a decision version: its meeting's start, falling back to
+    when the meeting row was created for the rare meeting with no ``started_at``."""
+    return func.coalesce(Meeting.started_at, Meeting.created_at)
+
+
+def _thread_heads(session: Session, team_id: str, embedder: Embedder) -> list[_ThreadHead]:
+    """Every non-empty thread for this team, represented by its latest *visible*
+    version (by meeting time), embedded.
+
+    "Visible" is ``visible_meeting_clauses``: a meeting past its retention
+    window is excluded here exactly as it is from topic retrieval, even before
+    the meeting row itself is deleted — a decision must not match onto, or
+    quote, a meeting that has expired.
+
+    One query and one batch embed — threads accumulate per team over the
+    retention window, so neither can be per-thread. The returned list is in a
+    deterministic order so ``_assign_decisions_to_threads``'s tie-break is
+    stable.
+    """
+    versions = session.scalars(
+        select(CtxDecisionVersion)
+        .join(CtxDecision, CtxDecision.id == CtxDecisionVersion.thread_id)
+        .join(Meeting, Meeting.id == CtxDecisionVersion.meeting_id)
+        .where(CtxDecision.team_id == team_id, *visible_meeting_clauses(team_id))
+        .order_by(CtxDecisionVersion.thread_id, _meeting_time(), CtxDecisionVersion.id)
+    ).all()
+    head_by_thread: dict[str, CtxDecisionVersion] = {}
+    for version in versions:
+        head_by_thread[version.thread_id] = version  # last row per thread = its head
+    if not head_by_thread:
+        return []
+    ordered = sorted(head_by_thread.items())
+    vectors = embedder.embed([version.current_statement for _, version in ordered])
+    return [
+        _ThreadHead(thread_id, vector)
+        for (thread_id, _version), vector in zip(ordered, vectors, strict=True)
+    ]
+
+
+def _assign_decisions_to_threads(
+    vectors: list[list[float]], heads: list[_ThreadHead], threshold: float
+) -> dict[int, _ThreadHead]:
+    """Best-similarity-first assignment of decisions (by index into ``vectors``)
+    to threads, each used at most once.
+
+    Every (decision, thread) pair at or above ``threshold`` is scored up front
+    and assignments are made strongest-first — greedy, not the optimal
+    maximum-weight matching, but it fixes the concrete failure that motivated
+    it: a decision earlier in the list matching a thread only weakly can no
+    longer grab it out from under a decision later in the list that matches it
+    almost exactly. ``heads`` is deterministically ordered (``_thread_heads``)
+    and ties are broken by (decision index, thread index), so the result does
+    not depend on dict/set iteration order.
+
+    ``heads`` can list the same ``thread_id`` twice — once as the team-wide
+    head ``_thread_heads`` found, once as the reprocessed meeting's own
+    about-to-be-replaced version (see ``build_decision_lineage``) — so "a
+    thread used at most once" is tracked by ``thread_id``, not by index into
+    ``heads``: the two entries are candidates for the *same* slot, not two
+    slots.
+    """
+    candidates = [
+        (_cosine(vector, head.vector), d_idx, h_idx)
+        for d_idx, vector in enumerate(vectors)
+        for h_idx, head in enumerate(heads)
+    ]
+    candidates = [c for c in candidates if c[0] >= threshold]
+    candidates.sort(key=lambda c: (-c[0], c[1], c[2]))
+
+    assigned_decisions: set[int] = set()
+    assigned_threads: set[str] = set()
+    assignment: dict[int, _ThreadHead] = {}
+    for _similarity, d_idx, h_idx in candidates:
+        head = heads[h_idx]
+        if d_idx in assigned_decisions or head.thread_id in assigned_threads:
+            continue
+        assigned_decisions.add(d_idx)
+        assigned_threads.add(head.thread_id)
+        assignment[d_idx] = head
+    return assignment
+
+
+def _rethread(session: Session, thread_id: str, nli: NliModel) -> None:
+    """Re-chain every *visible* version of one thread in meeting-chronological
+    order, and refresh the thread's ``topic_label`` to match.
+
+    ``previous_*``, ``change_type``, ``nli_label``, ``confidence`` and
+    ``key_stakeholders_absent`` all depend on which meeting a version follows, so
+    a version that arrived out of order can only be placed by rebuilding the
+    chain. NLI is re-run for every adjacent pair (one batched call): it is
+    deterministic given the model, and ``nli_version`` is refreshed, so a
+    re-chain does not drift. ``confidence`` on the first version keeps B's
+    decision confidence; on every later version it is the NLI score of the
+    winning label, and it is not recomputed back to B's number if the version
+    later becomes the head of its thread (same stance as
+    ``sweep_dangling_previous_statements``: what changed survives).
+
+    A version whose meeting has passed its retention window (``expires_at``) is
+    excluded from the chain entirely — it is treated as already gone, the same
+    way ``_thread_heads`` treats it for matching, rather than as a live
+    predecessor whose text keeps getting copied into ``previous_statement``.
+    """
+    versions = session.scalars(
+        select(CtxDecisionVersion)
+        .join(CtxDecision, CtxDecision.id == CtxDecisionVersion.thread_id)
+        .join(Meeting, Meeting.id == CtxDecisionVersion.meeting_id)
+        .where(
+            CtxDecisionVersion.thread_id == thread_id,
+            *visible_meeting_clauses(CtxDecision.team_id),
+        )
+        .order_by(_meeting_time(), CtxDecisionVersion.id)
+    ).all()
+    if not versions:
+        return
+
+    pairs = [
+        (versions[i - 1].current_statement, versions[i].current_statement)
+        for i in range(1, len(versions))
+    ]
+    scored = nli.classify(pairs) if pairs else []
+
+    prior_meeting_ids: list[str] = []
+    for index, version in enumerate(versions):
+        if index == 0:
+            version.previous_version_id = None
+            version.previous_statement = None
+            version.previous_meeting_id = None
+            version.change_type = ChangeType.NEW.value
+            version.nli_label = None
+            version.key_stakeholders_absent = []
+        else:
+            prev = versions[index - 1]
+            label = NliLabel(scored[index - 1].label)
+            version.previous_version_id = prev.id
+            version.previous_statement = prev.current_statement
+            version.previous_meeting_id = prev.meeting_id
+            version.change_type = _NLI_TO_CHANGE[label].value
+            version.nli_label = label.value
+            version.confidence = _clamp(float(getattr(scored[index - 1], label.value)))
+            known = _meeting_user_ids(session, *prior_meeting_ids)
+            present = _meeting_user_ids(session, version.meeting_id)
+            version.key_stakeholders_absent = sorted(known - present)
+        version.nli_version = nli.model_version
+        prior_meeting_ids.append(version.meeting_id)
+
+    thread = session.get(CtxDecision, thread_id)
+    if thread is not None:
+        thread.topic_label = versions[-1].current_statement[:400]
+    session.flush()
+
+
+def _meeting_user_ids(session: Session, *meeting_ids: str) -> set[str]:
+    """Resolved user ids of the participants of the given meetings.
+
+    Reads the shared ``participants`` table — never writes it (invariant 4).
+    Participants who never resolved to an account (``user_id is None``) drop out.
+    """
+    if not meeting_ids:
+        return set()
+    rows = session.scalars(
+        select(Participant.user_id).where(
+            Participant.meeting_id.in_(set(meeting_ids)),
+            Participant.user_id.is_not(None),
+        )
+    ).all()
+    return {user_id for user_id in rows if user_id is not None}
+
+
+def _cosine(a: list[float], b: list[float]) -> float:
+    dot = sum(x * y for x, y in zip(a, b, strict=True))
+    norm = math.sqrt(sum(x * x for x in a)) * math.sqrt(sum(y * y for y in b))
+    return dot / norm if norm else 0.0
 
 
 # --------------------------------------------------------------------------- #
@@ -235,13 +610,209 @@ def _build_context_links(
         for row in rows
         if row.linked_meeting_id is not None and row.linked_meeting_date is not None
     ]
+    version_rows = session.scalars(
+        select(CtxDecisionVersion).where(CtxDecisionVersion.meeting_id == meeting_id)
+    ).all()
+    decision_lineage = [
+        DecisionChange(
+            thread_id=row.thread_id,
+            source_decision_id=row.source_decision_id,
+            current_statement=row.current_statement,
+            previous_statement=row.previous_statement,
+            previous_meeting_id=row.previous_meeting_id,
+            change_type=ChangeType(row.change_type),
+            nli_label=NliLabel(row.nli_label) if row.nli_label is not None else None,
+            confidence=row.confidence,
+            key_stakeholders_absent=list(row.key_stakeholders_absent),
+        )
+        for row in version_rows
+    ]
+
     missing_sources = [] if status.extraction_seen else ["extraction"]
     return ContextLinks(
         meeting_id=meeting_id,
         topic_links=topic_links,
-        decision_lineage=[],  # Phase 3
+        decision_lineage=decision_lineage,
         missing_sources=missing_sources,
     )
+
+
+# --------------------------------------------------------------------------- #
+# Reads — served by router.py
+# --------------------------------------------------------------------------- #
+
+
+def get_topic_links(
+    session: Session, meeting_id: str
+) -> tuple[list[CtxTopicLink], list[CtxTopicLink]]:
+    """This meeting's topic links, split into (asserted, pending).
+
+    ``asserted`` reuses ``_PUBLISHABLE`` — it covers both ``asserted`` (above
+    threshold) and ``confirmed`` (a ``pending`` link the user accepted), the
+    same "settled" definition ``_build_context_links`` publishes to E.
+    ``rejected`` links are dismissed and appear in neither list.
+
+    A meeting past its own retention window is treated as gone the moment it
+    expires (docs/modules/context.md, "Deletion"), not only once it is actually
+    deleted, so its links are filtered out here too — the same join and
+    ``visible_meeting_clauses`` every other lineage read uses, applied to
+    ``meeting_id`` itself rather than to a linked meeting. An expired meeting
+    reads the same as an unknown one: both return two empty lists.
+    """
+    links = session.scalars(
+        select(CtxTopicLink)
+        .join(Meeting, Meeting.id == CtxTopicLink.meeting_id)
+        .where(CtxTopicLink.meeting_id == meeting_id, *visible_meeting_clauses(Meeting.team_id))
+        .order_by(CtxTopicLink.confidence.desc())
+    ).all()
+    asserted = [link for link in links if link.status in _PUBLISHABLE]
+    pending = [link for link in links if link.status == "pending"]
+    return asserted, pending
+
+
+def confirm_topic_link(session: Session, link_id: int, new_status: str) -> CtxTopicLink:
+    """Record a user's decision on a ``pending`` link.
+
+    Only a ``pending`` link accepts a decision through this route — one already
+    settled, whether by an earlier confirm or because it started ``asserted``,
+    does not get a second one. A link whose meeting has since expired is
+    treated as not found, the same "gone" rule ``get_topic_links`` applies —
+    there is nothing left to confirm a link for.
+    """
+    link = session.get(CtxTopicLink, link_id)
+    if link is None or not _meeting_is_visible(session, link.meeting_id):
+        raise NotFoundError("topic link", str(link_id))
+    if link.status != "pending":
+        raise ConflictError(f"topic link {link_id} is not pending", status=link.status)
+    link.status = new_status
+    session.flush()
+    return link
+
+
+def _meeting_is_visible(session: Session, meeting_id: str) -> bool:
+    return (
+        session.execute(
+            select(Meeting.id).where(
+                Meeting.id == meeting_id, *visible_meeting_clauses(Meeting.team_id)
+            )
+        ).first()
+        is not None
+    )
+
+
+def get_decision_lineage(
+    session: Session, thread_id: str
+) -> tuple[CtxDecision, list[CtxDecisionVersion], set[str]]:
+    """A thread's visible timeline (oldest first), plus which of those
+    versions' ``previous_meeting_id`` values are themselves still visible.
+
+    Ordered by meeting time (``_meeting_time``) — the same key ``_rethread``
+    chains by — rather than by walking ``previous_version_id`` from the root.
+    A walk from the root breaks the moment the chain's *first* version ages
+    past the retention window without a later meeting having touched this
+    thread since: nothing re-chains it until then (see docs/modules/context.md,
+    "Deletion" — accepted until #87's hook lands), so ``previous_version_id``
+    on the surviving versions still points at a now-invisible row, and a walk
+    that requires a visible root to start from would find none and lose the
+    rest of the thread along with it. Ordering by meeting time instead only
+    ever drops the row that actually expired.
+
+    Dropping an expired version's own row is not enough on its own: the next
+    version's ``previous_statement``/``previous_meeting_id`` still quote that
+    meeting's wording verbatim, because ``sweep_dangling_previous_statements``
+    only blanks them once the meeting is actually *deleted*, not merely
+    expired. The same "gone the moment it expires" promise has to hold for a
+    quoted predecessor too, so this returns the set of ``previous_meeting_id``
+    values that are still visible — the caller (``router.py``) blanks those two
+    fields on any returned version whose predecessor isn't in it. Done at the
+    schema layer rather than by mutating these rows here: ``get_session``
+    commits every request's session on success, so writing ``None`` onto an
+    ORM object inside a *read* endpoint would silently persist it.
+
+    Raises ``NotFoundError`` if the thread exists but every version is
+    currently invisible — a fully-expired thread is "gone" the same way its
+    content is, rather than surfacing a stale ``topic_label`` over an empty
+    timeline.
+    """
+    thread = session.get(CtxDecision, thread_id)
+    if thread is None:
+        raise NotFoundError("decision thread", thread_id)
+
+    versions = list(
+        session.scalars(
+            select(CtxDecisionVersion)
+            .join(Meeting, Meeting.id == CtxDecisionVersion.meeting_id)
+            .where(
+                CtxDecisionVersion.thread_id == thread_id,
+                *visible_meeting_clauses(thread.team_id),
+            )
+            .order_by(_meeting_time(), CtxDecisionVersion.id)
+        )
+    )
+    if not versions:
+        raise NotFoundError("decision thread", thread_id)
+
+    prior_meeting_ids = {v.previous_meeting_id for v in versions if v.previous_meeting_id}
+    visible_prior_meeting_ids = (
+        set(
+            session.scalars(
+                select(Meeting.id).where(
+                    Meeting.id.in_(prior_meeting_ids), *visible_meeting_clauses(thread.team_id)
+                )
+            )
+        )
+        if prior_meeting_ids
+        else set()
+    )
+    return thread, versions, visible_prior_meeting_ids
+
+
+def list_decisions(
+    session: Session,
+    team_id: str,
+    *,
+    topic: str | None = None,
+    change_type: str | None = None,
+) -> list[tuple[CtxDecision, CtxDecisionVersion]]:
+    """Every thread's current head for a team, most recently touched first.
+
+    A thread's head is its latest *visible* version by meeting time — the same
+    definition ``_thread_heads`` matches new decisions against, so what this
+    lists is exactly what a new decision would compare against. Filtering
+    ``change_type`` reads as "this thread's latest change was X"; a caller
+    after the full drift history opens the thread with ``get_decision_lineage``.
+
+    ``topic`` matches the *head version's own* ``current_statement``, as a
+    literal case-insensitive substring — not ``ctx_decisions.topic_label``.
+    That column is a cache ``_rethread`` sets from whichever version is head
+    *at write time*; nothing refreshes it on a mere expiry
+    (``sweep_stale_topic_labels`` only runs when the next lineage build
+    touches the thread), so it can still quote a version that has since aged
+    out of visibility even though an earlier, still-visible version is now the
+    correct head (lsh2217's #185 review). Matching is done in Python after
+    head selection, not pushed into SQL, for the same reason — the head has to
+    be picked first. The router derives the response's own display label the
+    same way (``version.current_statement``), never from the cached column.
+    """
+    rows = session.execute(
+        select(CtxDecision, CtxDecisionVersion)
+        .join(CtxDecisionVersion, CtxDecisionVersion.thread_id == CtxDecision.id)
+        .join(Meeting, Meeting.id == CtxDecisionVersion.meeting_id)
+        .where(CtxDecision.team_id == team_id, *visible_meeting_clauses(team_id))
+        .order_by(CtxDecision.id, _meeting_time(), CtxDecisionVersion.id)
+    ).all()
+
+    heads: dict[str, tuple[CtxDecision, CtxDecisionVersion]] = {}
+    for thread, version in rows:
+        heads[thread.id] = (thread, version)  # last row per thread = its head
+    result = list(heads.values())
+    if change_type is not None:
+        result = [pair for pair in result if pair[1].change_type == change_type]
+    if topic is not None:
+        needle = topic.casefold()
+        result = [pair for pair in result if needle in pair[1].current_statement.casefold()]
+    result.sort(key=lambda pair: pair[1].updated_at, reverse=True)
+    return result
 
 
 # --------------------------------------------------------------------------- #
@@ -311,6 +882,57 @@ def sweep_dangling_previous_statements(session: Session) -> int:
             .values(previous_statement=None)
         )
     return len(dangling)
+
+
+def sweep_stale_topic_labels(session: Session) -> int:
+    """Refresh ``ctx_decisions.topic_label`` to each thread's current visible
+    head — blanking it if the thread has none — returning how many changed.
+
+    ``topic_label`` is set from a decision's own (masked) statement when its
+    thread opens, and ``_rethread`` keeps it in sync whenever the thread is
+    next touched by a new meeting — but a thread nobody touches again after the
+    meeting that set the label is deleted keeps quoting that meeting's content
+    forever otherwise. ``ctx_decisions`` is anchored on ``team_id`` precisely so
+    a lineage outlives its origin meeting (see the model docstring); this sweep
+    is the other half of that promise for the one column ``_rethread`` cannot
+    reach on its own.
+
+    A thread every one of whose versions has expired (but not yet been deleted)
+    has no *visible* head either — ``_rethread`` bails out on it the same way,
+    since there is nothing left to chain — so it is blanked (``""``, the column
+    is not nullable) rather than left quoting expired content until the
+    retention sweep eventually deletes the rows and
+    ``sweep_orphan_decision_threads`` removes the thread outright.
+
+    Not yet wired into ``autune_core.deletion``, same reason and same place as
+    ``sweep_orphan_decision_threads`` (ADR 0008, #87). Global and idempotent.
+    """
+    versions = session.scalars(
+        select(CtxDecisionVersion)
+        .join(CtxDecision, CtxDecision.id == CtxDecisionVersion.thread_id)
+        .join(Meeting, Meeting.id == CtxDecisionVersion.meeting_id)
+        .where(*visible_meeting_clauses(CtxDecision.team_id))
+        .order_by(CtxDecisionVersion.thread_id, _meeting_time(), CtxDecisionVersion.id)
+    ).all()
+    latest_statement: dict[str, str] = {}
+    for version in versions:
+        latest_statement[version.thread_id] = version.current_statement  # last row wins
+
+    every_thread_with_versions = set(
+        session.scalars(select(CtxDecisionVersion.thread_id).distinct()).all()
+    )
+    fully_expired_thread_ids = every_thread_with_versions - set(latest_statement)
+    target_ids = set(latest_statement) | fully_expired_thread_ids
+
+    changed = 0
+    if target_ids:
+        threads = session.scalars(select(CtxDecision).where(CtxDecision.id.in_(target_ids))).all()
+        for thread in threads:
+            label = latest_statement.get(thread.id, "")[:400]
+            if thread.topic_label != label:
+                thread.topic_label = label
+                changed += 1
+    return changed
 
 
 # --------------------------------------------------------------------------- #

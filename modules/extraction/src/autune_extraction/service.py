@@ -8,34 +8,39 @@ Never imports another module.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from datetime import UTC, date, datetime
 
 from sqlalchemy import delete, func, select
+from sqlalchemy.dialects import postgresql, sqlite
 from sqlalchemy.orm import Session, selectinload
 
-from autune_contracts.enums import ActionStatus
+from autune_contracts.enums import ActionStatus, UtteranceKind
 from autune_contracts.extraction import (
     ActionItem,
     AmbiguousAgreement,
+    Classification,
     Decision,
     ExtractionResult,
 )
-from autune_core import Utterance, get_logger, session_scope
+from autune_contracts.transcript import Utterance as TranscriptUtterance
+from autune_core import Meeting, Participant, User, Utterance, get_logger, session_scope
 from autune_integrations import SlackApi, assert_personal_delivery
 
 from .config import get_settings
 from .confirmations import WEAK_ASSENT, ConfirmationResponse, build_confirmation_dm
-from .decisions import DEFAULT_MAX_GAP, ClassifiedUtterance, group_decisions
+from .decisions import DEFAULT_MAX_GAP, ClassifiedUtterance, decision_id, group_decisions
 from .edit_cost import EditCost
 from .models import (
     ExtActionItem,
     ExtActionItemSource,
+    ExtClassification,
     ExtConfirmation,
     ExtDecision,
     ExtDecisionSource,
     ExtEditEvent,
 )
+from .pipeline.base import Classifier
 from .schemas import (
     ActionItemCreate,
     ActionItemDetail,
@@ -43,6 +48,7 @@ from .schemas import (
     ActionItemUpdate,
     SourceUtterance,
 )
+from .slots import assignee_of, meeting_day, parse_due
 
 log = get_logger(__name__)
 
@@ -126,11 +132,18 @@ def open_confirmation(
     had it the whole time — restarting it would give the model another day to
     look undecided for free.
 
+    A row the pipeline recorded without asking (``sent_at`` empty) gets its
+    clock started here, when the question is actually put -- not when the
+    ambiguity was found, or a question sent days later would arrive expired.
+
     Deliberately not a place to reset an answer: someone who has already replied
     keeps their reply if the DM is sent again.
     """
     row = session.get(ExtConfirmation, utterance_id)
     if row is not None:
+        if row.sent_at is None:
+            row.sent_at = datetime.now(UTC)
+            session.flush()
         return row
 
     row = ExtConfirmation(
@@ -174,6 +187,11 @@ def resolve_confirmation(
     if row is None:
         log.info("extraction_confirmation_orphaned", utterance_id=response.utterance_id)
         return None
+    if row.sent_at is None:
+        # A click needs a DM, and this row's never went out. Recording it would
+        # be an answer to a question nobody asked.
+        log.info("extraction_confirmation_unasked", utterance_id=response.utterance_id)
+        return None
 
     row.resolved_kind = response.resolved_kind.value
     row.responded_at = datetime.now(UTC)
@@ -196,10 +214,9 @@ def ambiguous_agreements_for_meeting(
 ) -> list[AmbiguousAgreement]:
     """This meeting's ambiguous agreements as the contract E reads.
 
-    Every stored row is one a DM went out for, so ``confirmation_sent`` is true
-    throughout. The field stays in the contract because an ambiguity found with
-    no DM sent — the workspace app missing, the speaker unmapped — is a state
-    that has to be expressible even though this query cannot produce it.
+    ``confirmation_sent`` is false for a row the pipeline recorded without being
+    able to ask -- the speaker unmapped, the workspace app missing. That is every
+    row until #70 and #30 give the pipeline a way to send.
 
     ``now`` is a parameter so a caller can ask what the outcome was at publish
     time rather than at read time.
@@ -320,9 +337,10 @@ def list_action_items(
 def read_detail(session: Session, item: ExtActionItem) -> ActionItemDetail:
     """One item with the text of the utterances it was drawn from.
 
-    The only route in this module that returns transcript text. It is here and
-    not on the list because the drawer is the one screen that shows a quotation,
-    and it shows one item's at a time.
+    The only route in this module that returns utterances verbatim. It is here
+    and not on the list because the drawer is the one screen that shows a
+    quotation, and it shows one item's at a time. The list still carries meeting
+    content -- see ``ActionItemDetail``.
     """
     return ActionItemDetail(
         **read_model(item).model_dump(), sources=source_utterances(session, item.id)
@@ -361,6 +379,11 @@ def update_action_item(
 
     for field, value in changes.items():
         setattr(item, field, value.value if isinstance(value, ActionStatus) else value)
+    if "due_date" in changes:
+        # The phrase explained the date the model read. A date a person set is
+        # not explained by it, and keeping it would hold on to what they
+        # corrected (#109).
+        item.due_text = None
 
     _record_edit(session, meeting_id=item.meeting_id, action_item_id=item.id, kind="edited")
     return item
@@ -442,20 +465,32 @@ def build_decisions(
     ``utterances`` is every utterance of the meeting in ``start_sec`` order; see
     ``group_decisions`` for why the non-decision ones have to be there.
 
-    **Rebuilding replaces.** The meeting's existing decisions are deleted and the
-    new ones get fresh ``dec_`` ids, so a caller that rebuilds must republish
-    ``ExtractionResult`` — D's lineage points at ids that no longer exist
-    otherwise. That is why this is a rebuild rather than a merge: matching an old
-    decision to a new one is the same-decision question, and #25 gave that to D.
+    **Rebuilding replaces, and keeps the ids that still apply.** The meeting's
+    decisions are deleted and rebuilt, and each one's id is derived from the
+    meeting and the utterances it was settled in (``decisions.decision_id``). A
+    rebuild over the same labels and the same utterance ids gives the same
+    ``dec_`` ids, so D's lineage keeps pointing at rows that exist (#171). A
+    decision whose sources changed gets a different id -- including every
+    decision after module A reprocesses a recording, since that mints new
+    ``utt_`` ids (#194) -- and a caller that rebuilds still republishes
+    ``ExtractionResult`` for that case. This is a rebuild rather than a merge
+    because matching an old decision to a reworded new one is the same-decision
+    question, and #25 gave that to D.
 
     The delete is a real delete. These rows are derived from utterances that are
     still there, so nothing is lost that cannot be recomputed, and privacy.md
-    leaves no room for a soft one.
+    leaves no room for a soft one. The sources go first, by name, rather than
+    being left to ``ON DELETE CASCADE``: SQLite enforces no foreign keys unless
+    asked, and with ids that repeat, a source row a cascade missed would attach
+    itself to the rebuilt decision.
     """
+    stale = select(ExtDecision.id).where(ExtDecision.meeting_id == meeting_id)
+    session.execute(delete(ExtDecisionSource).where(ExtDecisionSource.decision_id.in_(stale)))
     session.execute(delete(ExtDecision).where(ExtDecision.meeting_id == meeting_id))
 
     decisions = [
         ExtDecision(
+            id=decision_id(meeting_id, group.source_utterance_ids),
             meeting_id=meeting_id,
             statement=group.statement,
             confidence=group.confidence,
@@ -516,9 +551,9 @@ def result_for_meeting(session: Session, meeting_id: str) -> ExtractionResult:
     carry when #31 publishes it, and why the builder is here rather than inside a
     route.
 
-    ``classifications`` is empty because nothing stores one yet.
-    ``ext_classifications`` arrives with the classifier (#10); until then an
-    empty list is the truth about this meeting, not a placeholder for it.
+    ``classifications`` comes from ``ext_classifications``, which the pipeline
+    writes (``store_classifications``); a meeting that has not been classified
+    has none, and an empty list is the truth about it.
     """
     items = session.scalars(
         select(ExtActionItem)
@@ -531,6 +566,7 @@ def result_for_meeting(session: Session, meeting_id: str) -> ExtractionResult:
         meeting_id=meeting_id,
         action_items=[contract_action_item(item) for item in items],
         decisions=decisions_for_meeting(session, meeting_id),
+        classifications=classifications_for_meeting(session, meeting_id),
         ambiguous_agreements=ambiguous_agreements_for_meeting(session, meeting_id),
     )
 
@@ -554,4 +590,306 @@ def contract_action_item(item: ExtActionItem) -> ActionItem:
         source_utterance_ids=[source.utterance_id for source in item.sources],
         status=ActionStatus(item.status),
         confidence=item.confidence,
+    )
+
+
+# --- step 1: classification --------------------------------------------------
+
+
+def consented_utterance_ids(session: Session, meeting_id: str) -> set[str]:
+    """This meeting's utterances whose speaker consented to analysis.
+
+    ``Participant.consented`` is False for a speaker whose speech is excluded
+    from analysis entirely, and privacy.md section 5 says excluded speech is not
+    stored rather than hidden. An utterance with no participant behind it is out
+    as well: whether its speaker consented is unknown, and unknown is not yes.
+    Module C draws the same line (#163).
+
+    A read on a shared table, in a short session of its own, so the classifier
+    never runs inside a transaction.
+    """
+    return set(
+        session.scalars(
+            select(Utterance.id)
+            .join(Participant, Participant.id == Utterance.participant_id)
+            .where(Utterance.meeting_id == meeting_id, Participant.consented.is_(True))
+        ).all()
+    )
+
+
+def classify_utterances(
+    classifier: Classifier,
+    utterances: Sequence[TranscriptUtterance],
+    *,
+    consented: Collection[str],
+) -> list[ClassifiedUtterance]:
+    """Every utterance of a meeting, in spoken order, with the classifier's answer.
+
+    Takes no session, on purpose. Classifying a meeting is the heaviest thing
+    this module does -- about two minutes of CPU for a 45-minute meeting (#112)
+    -- and a transaction held open around it holds its locks and a pooled
+    connection for all of that time. The caller classifies first and opens a
+    session only to write.
+
+    Sorted by ``start`` because everything downstream reads meeting order:
+    ``group_decisions`` counts its gap in utterances, and a payload is not
+    promised to arrive sorted. The id breaks ties so two utterances starting at
+    the same instant come out the same way on every run.
+
+    Every utterance is returned, the ones the model calls none included --
+    ``kind`` is ``None`` for those. They are what the decision gap is counted
+    in; only ``store_classifications`` leaves them out.
+
+    **Only ids in ``consented`` reach the classifier** (see
+    ``consented_utterance_ids``). The rest stay in the sequence as a turn with
+    no kind and no text: someone else spoke there, so the gap between two
+    decisions is still counted in it, but what they said is never read,
+    classified or stored. Dropping them instead would shorten every gap they sat
+    in and weld two decisions into one. Keyword-only and required, so a caller
+    cannot forget to filter by leaving it out.
+    """
+    ordered = sorted(utterances, key=lambda u: (u.start, u.id))
+    analysed = [utterance for utterance in ordered if utterance.id in consented]
+    predictions = classifier.classify([utterance.text for utterance in analysed])
+    if len(predictions) != len(analysed):
+        # The Protocol promises one per input, in order; zipping a short list
+        # would label the wrong utterances without an error.
+        raise ValueError(
+            f"asked for {len(analysed)} predictions, the classifier returned {len(predictions)}"
+        )
+    answer = dict(zip((utterance.id for utterance in analysed), predictions, strict=True))
+    return [
+        ClassifiedUtterance(
+            id=utterance.id,
+            kind=prediction.kind,
+            confidence=prediction.confidence,
+            text=utterance.text,
+        )
+        if (prediction := answer.get(utterance.id)) is not None
+        else ClassifiedUtterance(id=utterance.id, kind=None, confidence=0.0, text="")
+        for utterance in ordered
+    ]
+
+
+def store_classifications(
+    session: Session,
+    *,
+    meeting_id: str,
+    utterances: Sequence[ClassifiedUtterance],
+    model_version: str,
+) -> int:
+    """Replace this meeting's classifications. Returns how many rows it wrote.
+
+    Delete-then-insert in the caller's transaction, which ``async-pipeline.md``
+    allows for derived results: a redelivered task or a reprocessed meeting ends
+    with one set of rows, the last one. A merge would keep a label the new model
+    no longer gives, because the utterance it would be keyed on is now none and
+    has no row to overwrite it with.
+
+    Only the five kinds are written -- see ``ExtClassification``.
+    """
+    session.execute(delete(ExtClassification).where(ExtClassification.meeting_id == meeting_id))
+    rows = [
+        ExtClassification(
+            utterance_id=utterance.id,
+            meeting_id=meeting_id,
+            kind=utterance.kind.value,
+            confidence=utterance.confidence,
+            model_version=model_version,
+            nli_verified=False,
+        )
+        for utterance in utterances
+        if utterance.kind is not None
+    ]
+    session.add_all(rows)
+    session.flush()
+    return len(rows)
+
+
+def classifications_for_meeting(session: Session, meeting_id: str) -> list[Classification]:
+    """This meeting's classifications as the contract describes them, in spoken
+    order.
+
+    Ordered by ``utterances.start_sec`` because the row carries no position and
+    the order is what a reader of a meeting needs. The join is to a table this
+    module may read and never writes.
+    """
+    rows = session.scalars(
+        select(ExtClassification)
+        .join(Utterance, Utterance.id == ExtClassification.utterance_id)
+        .where(ExtClassification.meeting_id == meeting_id)
+        .order_by(Utterance.start_sec, Utterance.id)
+    ).all()
+    return [
+        Classification(
+            utterance_id=row.utterance_id,
+            kind=UtteranceKind(row.kind),
+            confidence=row.confidence,
+            nli_verified=row.nli_verified,
+        )
+        for row in rows
+    ]
+
+
+# --- step 3: action items from commitments ------------------------------------
+
+
+def build_action_items(
+    session: Session,
+    *,
+    meeting_id: str,
+    utterances: Sequence[TranscriptUtterance],
+    classified: Sequence[ClassifiedUtterance],
+) -> list[ExtActionItem] | None:
+    """One draft item per commitment, replacing the model's previous draft.
+
+    Returns ``None``, and changes nothing, once a person has corrected anything
+    in this meeting. ADR 0006 makes the output a draft the user finishes, and a
+    reprocessed meeting that replaced their finished list with a fresh draft
+    would throw their work away -- an edited item reset, a deleted one back.
+    ``ext_edit_events`` is the record that they started, and it is only ever
+    written by a person.
+
+    Otherwise the meeting's ``origin="model"`` items are deleted and rebuilt,
+    the same replace-not-merge rule as the classifications. Items a person
+    typed are never touched.
+
+    Each item is filled by ``slots``: the utterance as its description, its
+    speaker as the assignee, the first date phrase as the due date. Every model
+    item starts in *needs confirmation*.
+    """
+    edited = session.scalar(
+        select(func.count()).select_from(ExtEditEvent).where(ExtEditEvent.meeting_id == meeting_id)
+    )
+    if edited:
+        log.info("extraction_action_items_kept", meeting_id=meeting_id, edits=edited)
+        return None
+
+    meeting = session.get(Meeting, meeting_id)
+    day = meeting_day(meeting.started_at if meeting is not None else None)
+    spoken = {utterance.id: utterance for utterance in utterances}
+    # One read of ``users`` for the whole meeting: an id that is not there
+    # would fail the foreign key and take every item with it.
+    speaker_ids = {u.speaker_id for u in utterances if u.speaker_id is not None}
+    known = (
+        set(session.scalars(select(User.id).where(User.id.in_(speaker_ids))))
+        if speaker_ids
+        else set()
+    )
+
+    for stale in session.scalars(
+        select(ExtActionItem).where(
+            ExtActionItem.meeting_id == meeting_id, ExtActionItem.origin == "model"
+        )
+    ):
+        session.delete(stale)
+
+    items = []
+    for utterance in classified:
+        if utterance.kind is not UtteranceKind.COMMITMENT:
+            continue
+        said = spoken[utterance.id]
+        assignee = assignee_of(said.speaker_id, said.speaker, known=known)
+        due = parse_due(said.text, day)
+        items.append(
+            ExtActionItem(
+                meeting_id=meeting_id,
+                description=said.text,
+                assignee_id=assignee.user_id,
+                assignee_label=assignee.label,
+                due_date=due.date if due is not None else None,
+                due_text=due.text if due is not None else None,
+                status=ActionStatus.NEEDS_CONFIRMATION.value,
+                confidence=utterance.confidence,
+                origin="model",
+                sources=[ExtActionItemSource(utterance_id=utterance.id)],
+            )
+        )
+    session.add_all(items)
+    session.flush()
+    return items
+
+
+# --- steps 4 and 6: ambiguous agreement ----------------------------------------
+
+
+def record_ambiguous_agreements(
+    session: Session, *, meeting_id: str, classified: Sequence[ClassifiedUtterance]
+) -> int:
+    """A row in ``ext_confirmations`` for every utterance classified ambiguous.
+
+    Written before any DM, with ``sent_at`` empty: the ambiguity exists whether
+    or not anyone can be asked about it yet, and E counts it either way
+    (``AmbiguousAgreement.confirmation_sent`` is false until one goes out).
+
+    On a rerun, a row whose utterance is no longer ambiguous is removed **only
+    if it was never asked** -- then it is derived data, and replacing it is the
+    same rule as the classifications. A row a DM went out for stays: the speaker
+    has the question in front of them, and may already have answered it.
+
+    **Both writes are one statement each, decided by the database** -- never by
+    rows this function read a moment earlier. Two things can change a row in
+    between: a sender can put the question to the speaker (``open_confirmation``
+    fills ``sent_at``), and a redelivered task (``acks_late``) can record the
+    same meeting at the same time. A delete chosen from a stale read would
+    remove a question the speaker already has, and their answer would then land
+    on nothing; an insert chosen from one would fail on the primary key. So the
+    delete carries ``sent_at IS NULL`` in its own WHERE, and the insert skips a
+    row that is already there.
+
+    Returns how many of this run's utterances were ambiguous.
+    """
+    ambiguous = [u.id for u in classified if u.kind is UtteranceKind.AMBIGUOUS]
+    session.execute(
+        delete(ExtConfirmation)
+        .where(
+            ExtConfirmation.meeting_id == meeting_id,
+            ExtConfirmation.utterance_id.not_in(ambiguous),
+            ExtConfirmation.sent_at.is_(None),
+        )
+        .execution_options(synchronize_session="fetch")
+    )
+    if ambiguous:
+        session.execute(
+            _insert_if_absent(session)
+            .values(
+                [
+                    {
+                        "utterance_id": utterance_id,
+                        "meeting_id": meeting_id,
+                        "reason": WEAK_ASSENT,
+                        "sent_at": None,
+                    }
+                    for utterance_id in ambiguous
+                ]
+            )
+            .on_conflict_do_nothing(index_elements=["utterance_id"])
+        )
+    return len(ambiguous)
+
+
+def _insert_if_absent(session: Session) -> postgresql.Insert | sqlite.Insert:
+    """An ``ext_confirmations`` insert that can take ``ON CONFLICT DO NOTHING``.
+
+    The clause is spelled the same on both databases but built per dialect:
+    PostgreSQL is every deployment, SQLite is the unit suite.
+    """
+    if session.get_bind().dialect.name == "postgresql":
+        return postgresql.insert(ExtConfirmation)
+    return sqlite.insert(ExtConfirmation)
+
+
+def unasked_confirmations(session: Session, meeting_id: str) -> list[ExtConfirmation]:
+    """The meeting's ambiguous agreements no DM has gone out for.
+
+    What a sender walks once there is one: for each row, resolve the speaker's
+    Slack account and call ``ask_for_confirmation``, which starts the clock on
+    this same row. Nothing calls it yet (#70, #30).
+    """
+    return list(
+        session.scalars(
+            select(ExtConfirmation)
+            .where(ExtConfirmation.meeting_id == meeting_id, ExtConfirmation.sent_at.is_(None))
+            .order_by(ExtConfirmation.utterance_id)
+        )
     )

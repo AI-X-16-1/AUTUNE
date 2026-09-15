@@ -43,11 +43,14 @@ def mock_personal_feedback() -> Iterator[object]:
 
 @pytest.fixture
 def stub_publish(monkeypatch: pytest.MonkeyPatch) -> list[tuple]:
-    """Capture ``current_app.send_task`` instead of reaching a broker."""
+    """Capture ``autune_core.publish`` calls instead of reaching a broker."""
     sent: list[tuple] = []
-    monkeypatch.setattr(
-        tasks.current_app, "send_task", lambda name, args: sent.append((name, args))
-    )
+
+    def _publish(event: str, payload: dict) -> list[str]:
+        sent.append((event, payload))
+        return []
+
+    monkeypatch.setattr(tasks, "publish", _publish)
     return sent
 
 
@@ -106,9 +109,9 @@ def test_the_third_completion_enqueues_aggregation_immediately(
     mock_aggregate.apply_async.assert_called_once_with((meeting,))
 
 
-@pytest.mark.usefixtures("use_test_session", "mock_personal_feedback")
+@pytest.mark.usefixtures("use_test_session", "mock_personal_feedback", "stub_publish")
 def test_aggregate_publishes_a_valid_snapshot(
-    db_session: Session, meeting: str, team: str, monkeypatch: pytest.MonkeyPatch
+    db_session: Session, meeting: str, team: str, stub_publish: list[tuple]
 ) -> None:
     from autune_intelligence import service
 
@@ -120,30 +123,20 @@ def test_aggregate_publishes_a_valid_snapshot(
     )
     db_session.flush()
 
-    sent: list[tuple] = []
-    monkeypatch.setattr(
-        tasks.current_app, "send_task", lambda name, args: sent.append((name, args))
-    )
-
     tasks.aggregate(meeting)
 
-    assert len(sent) == 1
-    name, args = sent[0]
-    assert name == "autune.intelligence.completed"
-    IntelligenceSnapshot.model_validate(args[0])  # contract conformance
+    assert len(stub_publish) == 1
+    event, payload = stub_publish[0]
+    assert event == "autune.intelligence.completed"
+    IntelligenceSnapshot.model_validate(payload)  # contract conformance
 
 
-@pytest.mark.usefixtures("use_test_session", "mock_personal_feedback")
+@pytest.mark.usefixtures("use_test_session", "mock_personal_feedback", "stub_publish")
 def test_aggregate_publishes_once_and_the_second_pass_is_a_no_op(
-    db_session: Session, meeting: str, monkeypatch: pytest.MonkeyPatch
+    db_session: Session, meeting: str, stub_publish: list[tuple]
 ) -> None:
     _seed(db_session, meeting, "extraction")
     db_session.flush()
-
-    sent: list[tuple] = []
-    monkeypatch.setattr(
-        tasks.current_app, "send_task", lambda name, args: sent.append((name, args))
-    )
 
     tasks.aggregate(meeting)
     db_session.flush()
@@ -153,7 +146,7 @@ def test_aggregate_publishes_once_and_the_second_pass_is_a_no_op(
     tasks.aggregate(meeting)  # second run is a no-op: no row change, no publish
     db_session.flush()
     assert db_session.get(IntelCompletion, meeting).aggregated_at == aggregated_at
-    assert len(sent) == 1
+    assert len(stub_publish) == 1
 
 
 @pytest.mark.usefixtures("use_test_session")

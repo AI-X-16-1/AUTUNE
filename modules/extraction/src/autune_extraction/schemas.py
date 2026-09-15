@@ -121,9 +121,14 @@ class SourceUtterance(BaseModel):
 class ActionItemDetail(ActionItemRead):
     """One item and its evidence, for S18.
 
-    The list carries ids only. Utterance text leaves the server when the screen
-    that shows it asks, one item at a time, so a board nobody opens a drawer on
-    sends no part of the transcript at all.
+    The list carries the source utterances' ids, never their words: a verbatim
+    quotation leaves the server only when the drawer asks for one item's.
+
+    That does not make the list free of meeting content. ``description`` is
+    drawn from what was said and ``assignee_label`` is a person's name, so
+    nothing may forward a list response outside our infrastructure on the
+    grounds that it quotes nobody -- ``check_outbound`` catches the shapes of
+    personal data, not a Korean name or the sentence that settled a decision.
     """
 
     sources: list[SourceUtterance]

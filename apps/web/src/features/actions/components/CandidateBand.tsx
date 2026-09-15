@@ -1,5 +1,5 @@
 import { ActionCard } from "./ActionCard";
-import type { ActionItem } from "../types";
+import type { ActionItemRead } from "../types";
 
 /**
  * Items the model was not confident enough to assert (ADR 0006).
@@ -17,7 +17,7 @@ export function CandidateBand({
   selectedId,
   onSelect,
 }: {
-  items: ActionItem[];
+  items: ActionItemRead[];
   selectedId?: string;
   onSelect?: (id: string) => void;
 }) {

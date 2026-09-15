@@ -13,10 +13,13 @@ so it lives here rather than in ``pipeline`` (which loads models) or ``service``
 
 from __future__ import annotations
 
+import hashlib
+import json
 from collections.abc import Sequence
 from dataclasses import dataclass
 
 from autune_contracts.enums import UtteranceKind
+from autune_core.ids import DECISION
 
 DEFAULT_MAX_GAP = 2
 """How many non-decision utterances may sit between two decision utterances
@@ -38,12 +41,17 @@ the argument has somewhere to live.
 class ClassifiedUtterance:
     """One utterance with the label the classifier gave it.
 
+    ``kind`` is ``None`` for an utterance the model calls none of the kinds
+    (#149). Those still belong in the sequence ``group_decisions`` reads: they
+    are most of the utterances between two decisions, and the gap is counted in
+    them.
+
     ``text`` is already PII-masked — module A masks before the first write and
     there is no unmasked column to read (invariant 11, privacy.md section 2).
     """
 
     id: str
-    kind: UtteranceKind
+    kind: UtteranceKind | None
     confidence: float
     text: str
 
@@ -55,6 +63,38 @@ class DecisionGroup:
     statement: str
     source_utterance_ids: tuple[str, ...]
     confidence: float
+
+
+def decision_id(meeting_id: str, source_utterance_ids: Sequence[str]) -> str:
+    """The ``dec_`` id of a decision, derived from where it was settled (#171).
+
+    ``dec_`` followed by the first 32 hex digits of a SHA-256 over the meeting
+    id and the source utterance ids in meeting order -- the same shape
+    ``new_id`` gives, so nothing downstream can tell the two apart.
+
+    **The same sources give the same id, however many times B rebuilds the
+    meeting.** A random id changed on every rerun of B -- a redelivery, a new
+    classifier -- and module D stores ``(meeting, dec_)`` with each version, so
+    an id that moved on every rebuild pointed at nothing.
+
+    **Not closed here: a reprocess in module A.** A replaces the meeting's
+    utterances and mints new ``utt_`` ids (#194), so every source id changes and
+    every ``dec_`` id derived from them changes with it. Whether utterance ids
+    survive a reprocess is A's decision; this function only promises that B
+    adds no instability of its own.
+
+    **Different sources give a different id.** A decision that now spans other
+    utterances is, as far as B can tell, a different decision; whether it is
+    the same one in other words is the question #25 gave to D. The order is
+    meeting order, not sorted: two runs over the same labels produce the same
+    order, and an order that changed would mean the grouping did.
+
+    The meeting id is in the hash because an utterance id is unique on its own
+    but a decision is only ever this meeting's. The ids are hashed as a JSON
+    array rather than joined with a separator, so no id can be read as two.
+    """
+    encoded = json.dumps([meeting_id, *source_utterance_ids], ensure_ascii=False)
+    return f"{DECISION}_{hashlib.sha256(encoded.encode()).hexdigest()[:32]}"
 
 
 def group_decisions(

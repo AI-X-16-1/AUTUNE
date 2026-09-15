@@ -26,8 +26,36 @@ class SlackApi(Protocol):
     def send_dm(self, user_id: str, text: str, blocks: list[dict] | None = ...) -> str: ...
 
 
+def slack_body(
+    channel: str, text: str, blocks: list[dict] | None = None, thread_ts: str | None = None
+) -> dict[str, Any]:
+    """The body every Slack call sends, real or fake.
+
+    One builder because the fake had its own and they drifted: the fake left
+    ``thread_ts`` out, so it checked a body the client does not send and a test
+    could pass on a payload production refuses. A second copy of "what we send"
+    is a second answer to "what is checked".
+    """
+    body: dict[str, Any] = {"channel": channel, "text": text}
+    if blocks:
+        body["blocks"] = blocks
+    if thread_ts is not None:
+        body["thread_ts"] = thread_ts
+    return body
+
+
 class SlackClient(HttpClient):
     service = "slack"
+
+    addressing = frozenset({"channel", "thread_ts"})
+    """Where the message goes, not what it says.
+
+    `channel` is a channel id, or a user id for a DM. `thread_ts` is Slack's own
+    timestamp -- `1726012345.123456` -- which is three groups of digits and is
+    therefore a bank account to any pattern that reads it as content. Both are
+    supplied by the feature and neither came out of a meeting, so checking them
+    can only produce false refusals. `text` and `blocks` are still checked.
+    """
 
     def __init__(self, bot_token: str) -> None:
         super().__init__(
@@ -36,19 +64,15 @@ class SlackClient(HttpClient):
         )
 
     def post_message(self, channel: str, text: str, blocks: list[dict] | None = None) -> str:
-        body: dict[str, Any] = {"channel": channel, "text": text}
-        if blocks:
-            body["blocks"] = blocks
+        body = slack_body(channel, text, blocks)
         return str(self.request("POST", "/chat.postMessage", json=body).get("ts", ""))
 
     def reply_in_thread(self, channel: str, thread_ts: str, text: str) -> str:
-        body = {"channel": channel, "text": text, "thread_ts": thread_ts}
+        body = slack_body(channel, text, thread_ts=thread_ts)
         return str(self.request("POST", "/chat.postMessage", json=body).get("ts", ""))
 
     def send_dm(self, user_id: str, text: str, blocks: list[dict] | None = None) -> str:
-        body: dict[str, Any] = {"channel": user_id, "text": text}
-        if blocks:
-            body["blocks"] = blocks
+        body = slack_body(user_id, text, blocks)
         return str(self.request("POST", "/chat.postMessage", json=body).get("ts", ""))
 
     def send_personal(self, *, subject_id: str, recipient_id: str, text: str) -> str:

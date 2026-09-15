@@ -193,19 +193,77 @@ not run a decision classifier.** Duplicating B's would make the two disagree,
 and a decision would then show in the summary tab (S15) while missing from the
 lineage view (S22), which reads to a user as a bug.
 
-1. For each of B's decisions (`dec_` id), find the matching lineage thread by
-   semantic similarity to existing thread statements, or open a new thread with
-   a fresh `thr_` id.
-2. Run NLI between the previous statement and the current one:
-   `entailment` → `unchanged`, `contradiction` → `reversed`,
-   `neutral` → `modified`; no match → `new`.
-3. Record a `ctx_decision_versions` row: what changed, in which meeting, chained
-   onto the previous version, with the NLI label and confidence.
-4. Compute `key_stakeholders_absent` from the shared `participants` of the
-   current meeting against the thread's known stakeholders. A non-empty list
-   drives the drift warning.
-5. Mark `ctx_meeting_status.lineage_done`, then call
+1. Each of B's decisions (`dec_` id) is embedded and matched to the most
+   similar existing thread's *chronologically latest* statement — by the
+   matched meeting's `started_at`, not by which version was inserted last —
+   cosine ≥ `lineage_match_threshold` (`AUTUNE_CONTEXT_LINEAGE_MATCH_THRESHOLD`,
+   default `0.6`, tuned in eval). Every (decision, thread) pairing in the
+   meeting is scored up front and assigned strongest-first, so a weak match
+   earlier in `result.decisions` can't grab a thread out from under a much
+   stronger match later in the list. No thread above the threshold opens a new
+   one, anchored on the meeting's team. One thread takes at most one of this
+   meeting's decisions. A meeting past its retention window is excluded from
+   matching — see "Deletion".
+
+   **Matching happens before this meeting's own previous versions are
+   deleted.** B always mints a fresh `dec_` id when it rebuilds a meeting's
+   decisions (`autune_extraction.service.build_decisions`), so there is no id
+   to match a reprocessed decision back to its old thread by — and a *solo*
+   thread (no other meeting's version to rediscover it by similarity) has
+   nothing else to compare against. Deleting the meeting's old versions first
+   would erase the one piece of evidence — the meeting's own about-to-be-
+   replaced statement — that lets a rebuild with materially unchanged wording
+   land back on the same thread instead of forking a new one on every
+   reprocess. This meeting's own pre-delete versions are *added* to the
+   matching candidates, not substituted for the thread's team-wide head: a
+   thread's head is always its single chronologically-latest version, so a
+   meeting sitting in the *middle* of a thread compares against a later
+   meeting's (possibly quite different) wording unless its own version is
+   offered as a candidate too. A thread can therefore appear twice among the
+   candidates for one reprocessed meeting — once as the team-wide head, once
+   as the meeting's own version — and still take at most one of this
+   meeting's decisions; the two entries are for the same slot.
+2. Every thread this meeting's decisions touched is then **re-chained end to
+   end**, not just appended to: order its versions by meeting time and run NLI
+   between each pair's earlier statement (premise) and later one (hypothesis):
+   `entailment` → `unchanged`, `contradiction` → `reversed`, `neutral` →
+   `modified`; the chronologically-first version is `new`. Re-chaining (rather
+   than only linking the new version onto whatever was previously "latest") is
+   what keeps the lineage correct when B reports meetings out of order — a
+   longer meeting finishing after a shorter later one, a backfill — and what
+   repairs a later version's chain when an earlier meeting is re-processed.
+3. Each `ctx_decision_versions` row records what changed, in which meeting,
+   chained onto its chronological predecessor via `previous_version_id`.
+   `confidence` is the NLI score of the winning label for a non-first version,
+   and B's own decision confidence for the chronologically-first one; `nli_label`
+   is null for that first version. `confidence` is not recomputed back to B's
+   number if a version later becomes its thread's first version again (e.g. an
+   earlier meeting is deleted) — same stance as `previous_statement` below:
+   what changed survives, only wording tied to a specific meeting is corrected.
+4. Compute `key_stakeholders_absent` from the shared `participants` of each
+   version's meeting against the thread's known stakeholders (users across
+   every earlier version's meeting). A non-empty list drives the drift warning.
+5. Mark `ctx_meeting_status.lineage_done` (and `extraction_seen`), then call
    `autune.context.publish_if_ready`.
+
+Idempotent: a re-run replaces the meeting's `ctx_decision_versions` row(s) and
+re-chains every thread that touches, then runs all three deletion sweeps (see
+"Deletion") — global and idempotent, so running them on every call closes real
+gaps ahead of #87 rather than leaving them for tests to be the only caller.
+Re-chaining a thread updates other meetings' versions too (an earlier meeting
+arriving late shifts what a later one's `previous_*` point to); their
+already-published `ContextLinks` are not automatically re-emitted — E ends up
+with a stale `decision_lineage` for that meeting until something republishes
+it. No automatic republish exists yet; tracked for a later phase.
+
+**Concurrency.** `cpu_heavy` is a concurrent queue (docs/architecture/async-
+pipeline.md): two meetings for the same team can call `build_decision_lineage`
+at once. Under READ COMMITTED, matching against the same thread head without
+coordination lets both meetings chain onto whatever was "latest" before either
+committed, so one meeting's version silently drops out of the chain. D holds a
+`pg_advisory_xact_lock` keyed on the team for the duration of the transaction —
+scoped to one team, so two different teams' meetings still process fully in
+parallel.
 
 ### Publishing — `autune.context.publish_if_ready`
 
@@ -242,8 +300,9 @@ Notes:
   unconstrained so a retention sweep on that meeting does not cascade into an
   unrelated thread's lineage; the reader treats a missing meeting as "gone".
 - A lineage is a chain, not a graph: `ctx_decision_versions.previous_version_id`
-  plus a recursive CTE. The S22 graph visualisation is Phase 2 and is a frontend
-  rendering concern.
+  links each version to its predecessor. The read side orders by meeting time
+  rather than walking that chain — see "API" below for why. The S22 graph
+  visualisation is Phase 2 and is a frontend rendering concern.
 
 ### Why `ctx_decisions` is anchored on `team_id`
 
@@ -256,7 +315,16 @@ is swept by `service.sweep_orphan_decision_threads`.
 
 ## Deletion
 
-Meeting deletion cascades through `meeting_id` foreign keys and reaches
+A meeting past its `expires_at` is treated as gone for lineage purposes
+*before* it is actually deleted: `_thread_heads` and `_rethread` both filter on
+`visible_meeting_clauses` (team + not expired, shared with `HybridRetriever`'s
+own filter — see "AI stack"), so an expired-but-not-yet-deleted meeting is
+excluded from decision matching and drops out of the chain, the same way it
+already drops out of topic retrieval. Its content stops being copied into a
+later version's `previous_statement` or a thread's `topic_label` the moment it
+expires, not only once the retention sweep gets around to deleting the row.
+
+Meeting deletion itself cascades through `meeting_id` foreign keys and reaches
 `ctx_embeddings`, `ctx_topic_links`, `ctx_decision_versions` and
 `ctx_meeting_status`. Three things are **not** covered by cascade:
 
@@ -276,18 +344,28 @@ Meeting deletion cascades through `meeting_id` foreign keys and reaches
   on any version whose `previous_meeting_id` no longer exists — `change_type`,
   `nli_label` and `confidence` are untouched, so "what changed" survives and
   only the deleted meeting's wording goes.
+- **Stale `topic_label`.** `ctx_decisions.topic_label` is set from whichever
+  decision opened the thread and is refreshed to the thread's current head
+  every time `_rethread` touches it — but a thread nobody touches again after
+  that meeting is deleted keeps quoting it forever otherwise. That is the same
+  violation as `previous_statement`, on the one field `_rethread` cannot reach
+  on its own. `service.sweep_stale_topic_labels(session)` refreshes every
+  thread's `topic_label` to its current visible head, blanking it (`""`) for a
+  thread every one of whose versions has expired.
 
-  Neither sweep is yet registered as an `autune_core.deletion` meeting hook.
-  ADR 0008 found that a hook issuing a real `DELETE` breaks `packages/core`'s
-  own unit tests, which run before migrations on a clean CI database and iterate
-  every registered hook; the fix needs shared-owner changes tracked in #87.
-  Module E hit the same wall with `intel_reports` and deferred the same way.
-  Until #87 lands, both sweeps are called explicitly — by the integration test
-  now, by the retention sweep once it exists. A thread orphaned in the meantime
-  holds only a `topic_label` and a `team_id`, no per-person data, and still
-  cascades on team deletion; a version with a dangling `previous_statement`
-  still holds every other field, so the exposure of the gap is small in both
-  cases.
+  None of the three sweeps above is yet registered as an `autune_core.deletion`
+  meeting hook. ADR 0008 found that a hook issuing a real `DELETE` breaks
+  `packages/core`'s own unit tests, which run before migrations on a clean CI
+  database and iterate every registered hook; the fix needs shared-owner
+  changes tracked in #87. Module E hit the same wall with `intel_reports` and
+  deferred the same way. Until #87 lands, `service.build_decision_lineage`
+  calls all three itself at the end of every run (in addition to the
+  integration tests calling them directly) — real cleanup on every meeting
+  processed, not only when a test happens to exercise it. A thread whose
+  labelling meeting was deleted since the last time *any* meeting for its team
+  triggered a lineage build still holds that meeting's `topic_label` in the
+  interim; every other exposure above is likewise bounded to "until the next
+  sweep run," not indefinite.
 
 A test that deletes a meeting and asserts every `ctx_*` row for it is gone —
 threads included, after the sweep — is part of shipping the schema, not an extra.
@@ -306,10 +384,36 @@ one mutation.
 | --- | --- | --- |
 | GET | `/links/{meeting_id}` | Topic links for a meeting, `asserted` and `pending` separated |
 | POST | `/links/{link_id}/confirm` | User confirms or rejects a `pending` link (`status` → `confirmed`/`rejected`) |
-| GET | `/decisions/{thread_id}` | Full lineage timeline, walked with a recursive CTE |
+| GET | `/decisions/{thread_id}` | Full lineage timeline, oldest version first |
 | GET | `/decisions` | Filter by team, topic, change type |
 | POST | `/materials` | Upload material — Phase 2 |
 | GET | `/briefs/{meeting_id}` | Pre-meeting brief — Phase 2 |
+
+`GET /decisions/{thread_id}` orders a thread's versions by meeting time
+(`service._meeting_time`), the same key `_rethread` chains by — not by walking
+`previous_version_id` from the chronologically-first version. A walk from the
+root breaks the moment that version ages past the retention window without a
+later meeting having touched the thread since: nothing re-chains it on a mere
+expiry (see "Deletion" below), so the surviving versions' `previous_version_id`
+still points at a now-invisible row, and a walk requiring a visible root would
+find none and lose the rest of the thread with it. Ordering by meeting time
+only ever drops the row that actually expired.
+
+`GET /decisions` lists each thread by its current head only (the same
+definition `_thread_heads` matches new decisions against) — `change_type`
+filters on the head's own value, not any version in the thread's history; a
+caller after the full drift record opens the thread with the route above.
+
+Both routes' `topic_label` is derived from the head version's own
+`current_statement`, not read off `ctx_decisions.topic_label`: that column is
+a cache `_rethread` sets at write time and `sweep_stale_topic_labels` only
+refreshes when the next lineage build touches the thread — neither runs on a
+mere expiry, so it can still quote a version that just aged out of visibility
+while an earlier, still-visible version is the true current head. `GET
+/decisions`'s `topic` filter matches against that same live value, in Python
+after head selection, for the same reason. `GET /links/{meeting_id}` and
+`POST /links/{link_id}/confirm` apply the same expiry filter to the queried
+meeting itself that the two decision routes already applied.
 
 ## Celery tasks
 

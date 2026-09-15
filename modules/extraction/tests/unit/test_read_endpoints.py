@@ -29,6 +29,7 @@ from autune_extraction.confirmations import WEAK_ASSENT
 from autune_extraction.models import (
     ExtActionItem,
     ExtActionItemSource,
+    ExtClassification,
     ExtConfirmation,
     ExtDecision,
     ExtDecisionSource,
@@ -45,6 +46,7 @@ TABLES = [
     Utterance.__table__,
     ExtActionItem.__table__,
     ExtActionItemSource.__table__,
+    ExtClassification.__table__,
     ExtDecision.__table__,
     ExtDecisionSource.__table__,
     ExtConfirmation.__table__,
@@ -334,6 +336,37 @@ def test_the_result_is_the_contract_and_only_this_meeting(
     assert [a.utterance_id for a in result.ambiguous_agreements] == ["utt_3"]
 
 
+def test_the_result_carries_what_the_pipeline_classified(
+    client: TestClient, session: Session
+) -> None:
+    """``ext_classifications`` is what the pipeline writes (#151), in spoken order.
+
+    Without this the endpoint answered ``classifications: []`` for a meeting
+    that had been classified, and the only test here was of one that had not.
+    """
+    utterance(session, "utt_1", 9.0, "예산은 언제 나오나요")
+    utterance(session, "utt_2", 1.0, "A안으로 가기로 했습니다")
+    for uid, kind in (("utt_1", "open_question"), ("utt_2", "decision")):
+        session.add(
+            ExtClassification(
+                utterance_id=uid,
+                meeting_id=MEETING,
+                kind=kind,
+                confidence=0.8,
+                model_version="fake",
+                nli_verified=False,
+            )
+        )
+    session.flush()
+
+    result = ExtractionResult.model_validate(client.get(f"{PREFIX}/results/{MEETING}").json())
+
+    assert [(c.utterance_id, c.kind.value) for c in result.classifications] == [
+        ("utt_2", "decision"),
+        ("utt_1", "open_question"),
+    ]
+
+
 def test_the_result_reflects_a_correction_made_after_extraction(
     client: TestClient, session: Session
 ) -> None:
@@ -348,3 +381,51 @@ def test_the_result_reflects_a_correction_made_after_extraction(
     result = ExtractionResult.model_validate(client.get(f"{PREFIX}/results/{MEETING}").json())
 
     assert [item.description for item in result.action_items] == ["모델이 놓친 일"]
+
+
+# --- a setting that cannot be read ----------------------------------------------
+
+
+@pytest.mark.parametrize("method", ["post", "patch"])
+def test_a_threshold_that_cannot_be_read_saves_nothing(
+    session: Session, monkeypatch: pytest.MonkeyPatch, method: str
+) -> None:
+    """A 7 in .env fails every request; it must not also have saved the write.
+
+    The response used to be built after the commit, so the item was stored and
+    the client got a 500 -- and a retry made a second one. Here the session is
+    wired the way ``get_session`` wires it: commit on success, roll back on an
+    exception.
+    """
+    action_item(session, "act_1")
+    session.commit()
+
+    def unreadable() -> ExtractionSettings:
+        return ExtractionSettings(_env_file=None, candidate_confidence=7.0)  # type: ignore[call-arg]
+
+    monkeypatch.setattr(service, "get_settings", unreadable)
+
+    def scoped() -> Iterator[Session]:
+        try:
+            yield session
+            session.commit()
+        except Exception:
+            session.rollback()
+            raise
+
+    app = FastAPI()
+    app.include_router(router, prefix=PREFIX)
+    app.dependency_overrides[get_session] = scoped
+    client = TestClient(app, raise_server_exceptions=False)
+
+    if method == "post":
+        response = client.post(
+            f"{PREFIX}/action-items", json={"meeting_id": MEETING, "description": "새 항목"}
+        )
+    else:
+        response = client.patch(f"{PREFIX}/action-items/act_1", json={"description": "고친 항목"})
+
+    assert response.status_code == 500
+    assert session.query(ExtActionItem).count() == 1
+    assert session.get(ExtActionItem, "act_1").description == "act_1 할 일"  # type: ignore[union-attr]
+    assert session.query(ExtEditEvent).count() == 0, "no edit was counted either"
