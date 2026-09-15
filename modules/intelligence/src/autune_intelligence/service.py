@@ -293,8 +293,11 @@ def aggregate_meeting(session: Session, meeting_id: str) -> IntelligenceSnapshot
             confidences_by_pattern.setdefault(classification.pattern_type, []).append(
                 classification.confidence
             )
+        avg_confidence_by_pattern = {
+            pattern_type: sum(confidences) / len(confidences)
+            for pattern_type, confidences in confidences_by_pattern.items()
+        }
         for pattern_type, count in distribution.items():
-            confidences = confidences_by_pattern[pattern_type]
             session.add(
                 IntelGapPattern(
                     meeting_id=meeting_id,
@@ -303,7 +306,7 @@ def aggregate_meeting(session: Session, meeting_id: str) -> IntelligenceSnapshot
                     count=count,
                     source_gap_ids=ids_by_pattern[pattern_type],
                     classifier_version=classifier_version,
-                    avg_confidence=sum(confidences) / len(confidences),
+                    avg_confidence=avg_confidence_by_pattern[pattern_type],
                 )
             )
         if distribution:
@@ -318,11 +321,7 @@ def aggregate_meeting(session: Session, meeting_id: str) -> IntelligenceSnapshot
                 distribution={
                     pattern_type: {
                         "count": count,
-                        "avg_confidence": round(
-                            sum(confidences_by_pattern[pattern_type])
-                            / len(confidences_by_pattern[pattern_type]),
-                            4,
-                        ),
+                        "avg_confidence": round(avg_confidence_by_pattern[pattern_type], 4),
                     }
                     for pattern_type, count in distribution.items()
                 },
