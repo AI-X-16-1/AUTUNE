@@ -38,7 +38,8 @@ agreement, and sync the result to Notion and Jira.
 
 ## Pipeline
 
-1. **Classify** — a fine-tuned DeBERTa classifier over each utterance, in
+1. **Classify** — a fine-tuned DeBERTa classifier (`kakaobank/kf-deberta-base`,
+   see "AI stack") over each utterance, in
    spoken order: `commitment`, `decision`, `open_question`, `concern`,
    `ambiguous`, or **`none`** — most of a meeting is none of them (#149).
    `none` never leaves this module: an utterance the model calls none is simply
@@ -178,13 +179,36 @@ other module's tables.
 
 | Component | Model |
 | --- | --- |
-| Utterance classification | DeBERTa, fine-tuned |
+| Utterance classification | `kakaobank/kf-deberta-base` (DeBERTa, MIT), fine-tuned |
 | Agreement verification | NLI model |
 | Reference resolution, report generation | LLM |
 | Due-date parsing | Rule-based Korean date parser plus LLM fallback |
 
 Target non-LLM share is roughly 60%: classification and verification are models
 we train, not prompts.
+
+### Which encoder, and what is still open
+
+The encoder is `kakaobank/kf-deberta-base`, chosen in #112 over
+`microsoft/mdeberta-v3-base`. The two share an architecture (12 layers, 768
+hidden, 12 heads) but not a cost. Measured on 256 Korean utterances on CPU:
+
+| | kf-deberta-base | mdeberta-v3-base |
+| --- | --- | --- |
+| Forward pass | 1.63 s | 29.9 s |
+| One 45-minute meeting (~2,400 utterances) | 2.0 min | 37.4 min |
+| Tokens per Korean character | 0.485 | 0.673 |
+
+It also trains on the English AMI data despite being a Korean model, so the AMI
+loader and label mapping are not wasted. `training.BASE_CHECKPOINT` holds the
+name, and `--base` overrides it for a comparison run.
+
+**The encoder is decided; the trained checkpoint is not.**
+`AUTUNE_EXTRACTION_CLASSIFIER_CHECKPOINT` stays blank until a Korean-trained
+checkpoint beats the AMI-only baseline on the Korean evaluation set (#10). Where
+that checkpoint is stored, and under which terms, is open on #112. AMI is
+CC BY 4.0 and needs attribution. Rows derived from AI Hub carry AI Hub's own
+terms, which govern providing the data to others and taking it abroad.
 
 ### Classifier training data
 
