@@ -10,6 +10,10 @@ dependencies = [
     "celery>=5.4",
     "sqlalchemy>=2.0",
     "networkx>=3.4",
+    # networkx.pagerank is implemented on scipy.sparse since networkx 3.0 and
+    # raises ImportError without it. It is here in the lockfile only because
+    # another member pulls it in, which `uv sync --package autune-gap` does not.
+    "scipy>=1.13",
 ]
 
 [project.optional-dependencies]
