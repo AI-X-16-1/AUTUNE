@@ -25,12 +25,18 @@ from autune_context.models import (
     CtxMeetingStatus,
     CtxTopicLink,
 )
+from autune_context.notify import (
+    build_decision_drift_channel_notice,
+    build_decision_drift_personal_dm,
+    build_topic_link_notice,
+)
 from autune_context.pipeline import get_embedder, get_nli, get_reranker
 from autune_context.pipeline.retrieval import HybridRetriever, visible_meeting_clauses
 from autune_context.pipeline.topics import extract_topics
 from autune_contracts import ChangeType, ContextLinks, DecisionChange, NliLabel, TopicLink
 from autune_core import Meeting, Participant, get_logger, session_scope
 from autune_core.errors import ConflictError, NotFoundError
+from autune_integrations import SlackApi, assert_personal_delivery
 
 if TYPE_CHECKING:
     from autune_context.pipeline.base import Embedder, NliModel
@@ -639,6 +645,103 @@ def _build_context_links(
         decision_lineage=decision_lineage,
         missing_sources=missing_sources,
     )
+
+
+# --------------------------------------------------------------------------- #
+# Slack notices — fired once, after ``publish_if_ready`` actually publishes
+# --------------------------------------------------------------------------- #
+
+
+def _deliver_personal(
+    slack: SlackApi, recipient_user_id: str, fallback: str, blocks: list[dict]
+) -> None:
+    """Send a DM that describes exactly one person, to that person only.
+
+    Same shape as ``autune_intelligence.service._deliver_personal``: a single
+    id serves as both the guard's subject and the recipient, so the two
+    cannot drift apart at a call site.
+    """
+    assert_personal_delivery(
+        subject_id=recipient_user_id, recipient_id=recipient_user_id, is_direct=True
+    )
+    slack.send_dm(recipient_user_id, fallback, blocks)
+
+
+def notify_topic_links(session: Session, slack: SlackApi, channel: str, meeting_id: str) -> int:
+    """Post one channel notice per topic link this meeting *asserted* on its
+    own. Returns the count.
+
+    Only ``asserted`` links, not ``pending`` ones the user later ``confirmed``
+    -- the notice is for a link the system was confident enough to assert by
+    itself, not for one the user just confirmed. A link with no
+    ``linked_meeting_date`` cannot happen for an ``asserted`` row (see
+    ``_link_topic``, which skips writing one), but the guard is kept here too
+    since this function's contract is "safe to call on whatever is in the
+    table," not "safe to call right after ``_link_topic``."
+    """
+    rows = session.scalars(
+        select(CtxTopicLink).where(
+            CtxTopicLink.meeting_id == meeting_id, CtxTopicLink.status == "asserted"
+        )
+    ).all()
+    sent = 0
+    for link in rows:
+        if link.linked_meeting_date is None:
+            continue
+        fallback, blocks = build_topic_link_notice(
+            topic_label=link.topic_label, linked_meeting_date=link.linked_meeting_date.date()
+        )
+        slack.post_message(channel, fallback, blocks)
+        sent += 1
+    log.info("context_topic_link_notice_sent", meeting_id=meeting_id, count=sent)
+    return sent
+
+
+def notify_decision_drift(session: Session, slack: SlackApi, channel: str, meeting_id: str) -> int:
+    """Post the decision-drift warning for every version this meeting produced
+    that changed a decision while a key stakeholder was absent. Returns the
+    count of drift events notified (not the count of DMs sent).
+
+    One channel notice per event (never names the absentees -- see
+    ``notify.py``), plus one DM per absent stakeholder (does not need to name
+    anyone -- they are the recipient). ``ChangeType.NEW`` never has an absent
+    list (see ``_rethread``) and is not a drift, so it is excluded by the
+    query rather than by an empty-list check on every row.
+    """
+    rows = session.scalars(
+        select(CtxDecisionVersion).where(
+            CtxDecisionVersion.meeting_id == meeting_id,
+            CtxDecisionVersion.change_type != ChangeType.NEW.value,
+        )
+    ).all()
+    sent = 0
+    for version in rows:
+        absent = version.key_stakeholders_absent
+        if not absent:
+            continue
+        thread = session.get(CtxDecision, version.thread_id)
+        thread_label = thread.topic_label if thread is not None else version.current_statement[:400]
+        change_type = ChangeType(version.change_type)
+
+        channel_fallback, channel_blocks = build_decision_drift_channel_notice(
+            thread_label=thread_label,
+            current_statement=version.current_statement,
+            change_type=change_type,
+            absent_count=len(absent),
+        )
+        slack.post_message(channel, channel_fallback, channel_blocks)
+
+        dm_fallback, dm_blocks = build_decision_drift_personal_dm(
+            thread_label=thread_label,
+            current_statement=version.current_statement,
+            change_type=change_type,
+        )
+        for user_id in absent:
+            _deliver_personal(slack, user_id, dm_fallback, dm_blocks)
+        sent += 1
+
+    log.info("context_decision_drift_notice_sent", meeting_id=meeting_id, count=sent)
+    return sent
 
 
 # --------------------------------------------------------------------------- #

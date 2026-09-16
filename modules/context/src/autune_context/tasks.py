@@ -11,18 +11,23 @@ Two entry points with different inputs:
 an empty ``decision_lineage`` and ``"extraction"`` in ``missing_sources``. A
 failure in B must not cost the user their topic links.
 
+A successful publish also fires ``notify_context_events``: the topic-link
+notice and the decision-drift warning, docs/modules/context.md "Slack surface".
+
 See docs/architecture/async-pipeline.md.
 """
 
 from __future__ import annotations
 
+import sqlalchemy as sa
 from celery import shared_task
 
 import autune_context.pipeline  # noqa: F401  (registers the worker_process_init warm-up hook)
 from autune_context import service
 from autune_context.config import get_settings
 from autune_contracts import ExtractionResult, TranscriptReady, validate_major_version
-from autune_core import get_logger
+from autune_core import Meeting, get_logger, load_integration, session_scope
+from autune_integrations import SlackClient
 
 log = get_logger(__name__)
 
@@ -78,3 +83,43 @@ def publish_if_ready(meeting_id: str) -> None:
     """
     published = service.publish_if_ready(meeting_id)
     log.info("context_publish_checked", meeting_id=meeting_id, published=published)
+    if published:
+        # ``service.publish_if_ready`` only returns True once per meeting
+        # (guarded by ``published_at``), so this fires exactly once even
+        # though the task itself is armed twice (an immediate check and a
+        # B-timeout fallback) and can also be retried by Celery.
+        notify_context_events.apply_async((meeting_id,))
+
+
+@shared_task(name="autune.context.notify_context_events", acks_late=True)
+def notify_context_events(meeting_id: str) -> None:
+    """Post this meeting's topic-link notices and decision-drift warnings.
+
+    Fired once, right after ``ContextLinks`` is published. A team that has not
+    connected Slack, or has connected it without a channel, is skipped rather
+    than failed -- same convention as ``autune_intelligence.tasks``.
+    """
+    with session_scope() as session:
+        team_id = session.scalar(sa.select(Meeting.team_id).where(Meeting.id == meeting_id))
+        if team_id is None:
+            log.info("context_notify_meeting_gone", meeting_id=meeting_id)
+            return
+        config = load_integration(session, team_id, "slack")
+        if config is None:
+            log.info("context_notify_no_slack", meeting_id=meeting_id, team_id=team_id)
+            return
+        channel = config.config.get("channel")
+        if channel is None:
+            log.info("context_notify_no_channel", meeting_id=meeting_id, team_id=team_id)
+            return
+
+        slack = SlackClient(config.require_secret())
+        links_sent = service.notify_topic_links(session, slack, channel, meeting_id)
+        drift_sent = service.notify_decision_drift(session, slack, channel, meeting_id)
+
+    log.info(
+        "context_notify_sent",
+        meeting_id=meeting_id,
+        topic_links=links_sent,
+        drift_warnings=drift_sent,
+    )
