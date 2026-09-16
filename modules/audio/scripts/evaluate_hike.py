@@ -16,9 +16,12 @@ same ``transcribe()`` with **no glossary**, because HiKE has no meeting
 vocabulary to build one from. The number therefore describes the model, not
 our prompt; the prompt's effect is measured on the in-house recording.
 
-Prints JSON on stdout, like the other scripts: the summary, never the text.
+The summary — means overall, by CS level and by category, plus the run's
+settings — is written next to the predictions as ``<predictions>.summary.json``
+and printed last on stdout. stdout also carries the pipeline's own log lines
+(``autune_core`` logs there), so the file is the machine-readable copy.
 Predictions go to the ``--predictions`` file, one line per utterance, flushed
-as each finishes. That file is an output and is not committed.
+as each finishes. Both files are outputs and are not committed.
 """
 
 from __future__ import annotations
@@ -28,6 +31,7 @@ import json
 import sys
 import time
 from pathlib import Path
+from typing import Any
 
 from autune_audio.eval.hike import (
     HikeScore,
@@ -45,7 +49,8 @@ from autune_audio.eval.hike import (
 
 def transcribe_corpus(
     corpus: Path, predictions: Path, *, limit: int | None, seed: int, resume: bool, language: str
-) -> None:
+) -> dict[str, Any]:
+    """Transcribe the selected rows into ``predictions``; return the run's settings."""
     # Imported here so --score-only never loads torch or the model.
     from autune_audio.config import get_settings
     from autune_audio.pipeline import _model, transcribe
@@ -57,18 +62,18 @@ def transcribe_corpus(
     chosen = select_sample_ids(corpus, limit=limit, seed=seed)
     done = {p.sample_id for p in read_predictions(predictions)} if resume else set()
     todo = [sample_id for sample_id in chosen if sample_id not in done]
-    print(
-        json.dumps(
-            {
-                "model": settings.whisper_model,
-                "device": settings.device,
-                "language": language,
-                "selected": len(chosen),
-                "already_done": len(chosen) - len(todo),
-            }
-        ),
-        file=sys.stderr,
-    )
+    run = {
+        "model": settings.whisper_model,
+        "device": settings.device,
+        "compute_type": "float16" if settings.device == "cuda" else "int8",
+        "language": language or "detect",
+        "glossary": "",
+        "limit": limit,
+        "seed": seed,
+        "selected": len(chosen),
+        "already_done": len(chosen) - len(todo),
+    }
+    print(json.dumps(run), file=sys.stderr)
 
     with predictions.open("a" if resume else "w", encoding="utf-8") as fh:
         for n, utterance in enumerate(utterances(corpus, sample_ids=todo), start=1):
@@ -96,6 +101,7 @@ def transcribe_corpus(
                     ),
                     file=sys.stderr,
                 )
+    return run
 
 
 def score_predictions(corpus: Path, predictions: Path) -> list[HikeScore]:
@@ -139,13 +145,14 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     corpus = args.corpus or download()
+    run: dict[str, Any] | None = None
     if args.score_only:
         predictions = args.score_only
     else:
         if not args.predictions:
             parser.error("--predictions is required unless --score-only is given")
         predictions = args.predictions
-        transcribe_corpus(
+        run = transcribe_corpus(
             corpus,
             predictions,
             limit=args.limit,
@@ -156,6 +163,10 @@ def main(argv: list[str] | None = None) -> int:
 
     summary = summarise(score_predictions(corpus, predictions))
     summary["predictions"] = str(predictions)
+    if run is not None:
+        summary["run"] = run
+    summary_path = predictions.with_suffix(predictions.suffix + ".summary.json")
+    summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
     print(json.dumps(summary, ensure_ascii=False, indent=2))
     return 0
 
