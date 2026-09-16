@@ -205,16 +205,19 @@ lineage view (S22), which reads to a user as a bug.
    meeting's decisions. A meeting past its retention window is excluded from
    matching — see "Deletion".
 
-   **Matching happens before this meeting's own previous versions are
-   deleted.** B always mints a fresh `dec_` id when it rebuilds a meeting's
-   decisions (`autune_extraction.service.build_decisions`), so there is no id
-   to match a reprocessed decision back to its old thread by — and a *solo*
-   thread (no other meeting's version to rediscover it by similarity) has
-   nothing else to compare against. Deleting the meeting's old versions first
-   would erase the one piece of evidence — the meeting's own about-to-be-
-   replaced statement — that lets a rebuild with materially unchanged wording
-   land back on the same thread instead of forking a new one on every
-   reprocess. This meeting's own pre-delete versions are *added* to the
+   **Matching happens before this meeting's own previous versions are deleted.**
+   B's `dec_` id is stable across a rebuild whose sources did not change and
+   fresh only when they did (`autune_extraction.decisions.decision_id`, #171) —
+   which includes every reprocess in module A, since that mints new `utt_` ids
+   (#194) — but D never matched on that id in the first place: whether a decision
+   is the same one as before is D's question, not B's (#25), so matching runs by
+   wording regardless of which way B's id moved. A *solo* thread (no other
+   meeting's version to rediscover it by similarity) has nothing but that wording
+   to compare against. Deleting the meeting's old versions first would erase the
+   one piece of evidence — the meeting's own about-to-be-replaced statement —
+   that lets a rebuild with materially unchanged wording land back on the same
+   thread instead of forking a new one on every reprocess. This meeting's own
+   pre-delete versions are *added* to the
    matching candidates, not substituted for the thread's team-wide head: a
    thread's head is always its single chronologically-latest version, so a
    meeting sitting in the *middle* of a thread compares against a later
