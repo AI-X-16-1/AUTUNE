@@ -6,6 +6,8 @@ See docs/architecture/privacy.md.
 
 from __future__ import annotations
 
+import time
+
 import pytest
 
 from autune_core.errors import PrivacyViolationError
@@ -443,8 +445,6 @@ def test_a_figure_before_an_account_does_not_hide_it(line: str) -> None:
 def test_an_oversized_payload_is_refused_before_it_is_scanned() -> None:
     """Scanning costs more than linearly, and an oversized payload is refused
     either way. `010-` twenty thousand times took 37 seconds to refuse."""
-    import time
-
     slack = FakeSlack()
     started = time.monotonic()
     with pytest.raises(PrivacyViolationError) as caught:
@@ -504,6 +504,7 @@ NOT_PERSONAL_DATA = [
     "커밋 abc1234 - def5678",
     "온도 36.5 도",
     "회의는 3시 30분입니다",
+    "1234)5678(9012)3456",  # `(` between groups is not a separator; only `)` is
 ]
 
 
@@ -513,6 +514,39 @@ def test_the_wider_separator_does_not_reach_ordinary_meeting_numbers(text: str) 
     `account` exactly. It is why that one pattern keeps the narrow separator."""
     assert find_pii(text) == []
     assert_masked(text, destination="slack")
+
+
+# What the width costs, and that the cost is taken knowingly. Four groups of
+# four is the shape of `card`, and the wider separator reaches it -- these are
+# over-masked, not leaked. A roadmap said as four years disappears from the
+# transcript and B, C and D never see that sentence; the "0 false positives"
+# above was measured on three-group lists and does not cover these. Kept here
+# rather than fixed so the next reader knows the trade exists; a Luhn check on
+# `card` is the one thing that could tell a year list from a card number by
+# something other than shape, and that is a separate decision (#212).
+KNOWN_OVER_MASKING = [
+    ("card", "2024 - 2025 - 2026 - 2027 로드맵"),
+    ("card", "1000 - 2000 - 3000 - 4000 원"),
+    ("phone", "031 - 100 - 2000 명"),
+]
+
+
+@pytest.mark.parametrize(("category", "text"), KNOWN_OVER_MASKING)
+def test_a_four_group_list_is_over_masked_and_we_know_it(category: str, text: str) -> None:
+    assert {cat for _, _, cat in find_pii(text)} == {category}
+
+
+@pytest.mark.parametrize("head", ["010", "1234", "900101", "+82"])
+def test_a_long_run_of_spaces_after_a_digit_is_scanned_once(head: str) -> None:
+    """`[ \\t]*[-.–—)]?[ \\t]*` let the two space runs share one run of spaces,
+    and the engine tried every split before failing: 900 ms at ten thousand
+    spaces, quadratic in the run. Whisper emits exactly this on a silent
+    stretch, and transcript masking has no length cap in front of `find_pii`.
+    Per pattern at fifty thousand spaces the quadratic form takes seven to
+    eleven seconds; the fixed one, about a millisecond."""
+    started = time.monotonic()
+    assert find_pii(head + " " * 50_000 + "x") == []
+    assert time.monotonic() - started < 2.0
 
 
 def test_a_match_does_not_run_across_a_line_break() -> None:
