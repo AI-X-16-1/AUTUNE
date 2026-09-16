@@ -73,9 +73,9 @@ export function DecisionTimeline({ versions }: { versions: DecisionVersionRead[]
                 {version.meeting_id} · {version.created_at.slice(0, 10)}
               </div>
 
-              {!isOriginal && version.previous_statement !== null && (
+              {!isOriginal && (
                 <div className="mt-2 grid gap-2">
-                  <Quote>{version.previous_statement}</Quote>
+                  {version.previous_statement !== null && <Quote>{version.previous_statement}</Quote>}
                   <ReasonBlock version={version} />
                 </div>
               )}
@@ -89,10 +89,14 @@ export function DecisionTimeline({ versions }: { versions: DecisionVersionRead[]
 
 /**
  * Names who was absent when the decision changed and what the NLI model
- * concluded — the block S22 puts on every ochre node. Empty absentee list
- * still renders (nobody missing is itself informative here), but the block
- * disappears entirely once the predecessor expired: the router already
- * blanked `previous_statement` in that case, so this never runs without one.
+ * concluded — the block S22 puts on every ochre node.
+ *
+ * Independent of the quote above it: an expired predecessor blanks
+ * `previous_statement`, but `nli_label` and `key_stakeholders_absent` are
+ * this version's own fields and outlive the meeting they compared against.
+ * The reason a decision changed is exactly what a reader still wants once the
+ * old wording is gone — dropping it there would make S22 quietest at the
+ * moment it matters most.
  */
 function ReasonBlock({ version }: { version: DecisionVersionRead }) {
   const parts: string[] = [];

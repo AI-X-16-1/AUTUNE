@@ -49,7 +49,9 @@ export function TopicLinkRow({
         meta={
           dangling
             ? "연결된 회의가 사라짐"
-            : `${link.linked_meeting_date?.slice(0, 10) ?? ""} · 재순위 ${link.rerank_score.toFixed(2)}`
+            : [link.linked_meeting_date?.slice(0, 10), `재순위 ${link.rerank_score.toFixed(2)}`]
+                .filter(Boolean)
+                .join(" · ")
         }
         actions={
           link.status === "pending" && onDecide ? (

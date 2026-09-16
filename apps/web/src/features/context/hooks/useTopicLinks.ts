@@ -48,9 +48,12 @@ export function useTopicLinks(meetingId: string) {
         }
         return updated;
       } catch (cause) {
-        // Someone else already decided this link (409) — our copy of it is
-        // stale, not the request; refetch instead of leaving a dead row.
-        if (cause instanceof ApiError && cause.status === 409) {
+        // Our copy of the link is stale, not the request: someone else already
+        // decided it (409), or its meeting expired and confirm_topic_link
+        // can no longer find it (404). Either way the row belongs to a state
+        // that no longer exists — refetch instead of leaving a dead row a
+        // retry can never succeed against.
+        if (cause instanceof ApiError && (cause.status === 409 || cause.status === 404)) {
           void reload();
         }
         throw cause;

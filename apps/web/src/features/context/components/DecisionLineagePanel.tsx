@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { Row, StatusDot } from "@/shared/ui";
 
@@ -17,6 +17,12 @@ export function DecisionLineagePanel({ teamId }: { teamId: string }) {
   const { threads, loading, error } = useDecisionThreads({ team_id: teamId });
   const [selected, setSelected] = useState<string | null>(null);
   const { lineage, loading: lineageLoading, error: lineageError } = useDecisionLineage(selected);
+
+  // A thread id is only valid within the team it came from; carrying it across
+  // a team switch would ask useDecisionLineage for a thread that team never had.
+  useEffect(() => {
+    setSelected(null);
+  }, [teamId]);
 
   return (
     <div className="grid gap-6 md:grid-cols-[minmax(0,280px)_1fr]">
