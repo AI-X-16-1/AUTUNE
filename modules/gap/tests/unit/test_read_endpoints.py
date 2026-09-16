@@ -402,6 +402,49 @@ def test_the_graph_holds_only_this_meeting(client: TestClient, session: Session)
     assert body["edges"] == []
 
 
+def test_an_edge_whose_endpoints_this_read_does_not_have_is_left_out(
+    client: TestClient, session: Session
+) -> None:
+    """Not a 500, and not a half-drawn graph.
+
+    The topics and the edges are two statements, and on PostgreSQL a re-run of
+    ``build_topic_graph`` committing between them is visible: the nodes are the
+    deleted set and the edges reference the new one. The endpoint's contract is
+    that an empty graph is a state rather than an error, so an edge this read
+    cannot place is dropped instead of raising. Raised in review of #220.
+    """
+    topic(session, "topic_here")
+    topic(session, "topic_rebuilt_1", meeting_id=OTHER_MEETING)
+    topic(session, "topic_rebuilt_2", meeting_id=OTHER_MEETING)
+    # An edge of *this* meeting pointing at topics this read does not hold —
+    # the shape a mid-read rebuild leaves behind.
+    edge(session, "topic_rebuilt_1", "topic_rebuilt_2")
+
+    response = client.get(f"{PREFIX}/topics/{MEETING}")
+
+    assert response.status_code == 200
+    assert [node["id"] for node in response.json()["nodes"]] == ["topic_here"]
+    assert response.json()["edges"] == []
+
+
+def test_a_topic_with_no_evidence_sorts_after_one_that_has_some(
+    client: TestClient, session: Session
+) -> None:
+    """``NULLS LAST``, spelled out because SQLite and PostgreSQL disagree.
+
+    Ascending order puts NULL first on SQLite and last on PostgreSQL, so the
+    implicit version was a rule these tests could not have caught — they run on
+    SQLite and production runs on PostgreSQL. A topic nobody can be quoted on
+    is the one a reader can check least. Raised in review of #220.
+    """
+    topic(session, "topic_unquoted", label="A", centrality=0.5)
+    topic(session, "topic_quoted", label="Z", centrality=0.5, said_at=(("utt_1", 7),))
+
+    body = client.get(f"{PREFIX}/reports/{MEETING}").json()
+
+    assert [entry["id"] for entry in body["topics"]] == ["topic_quoted", "topic_unquoted"]
+
+
 def test_the_graph_carries_no_participation(client: TestClient, session: Session) -> None:
     """The one surface where a per-person number could arrive attached to a picture."""
     topic(session, "topic_a")

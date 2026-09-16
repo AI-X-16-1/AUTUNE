@@ -11,7 +11,7 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import TYPE_CHECKING
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, nulls_last, select
 
 from autune_contracts.enums import GapSeverity
 from autune_contracts.events import GAP_COMPLETED
@@ -299,11 +299,29 @@ def topic_graph(session: Session, meeting_id: str) -> TopicGraphRead:
     A meeting whose graph has not been built answers with empty lists. The
     caller has already established that the meeting exists; nothing analysed
     yet is a state, not a missing resource.
+
+    **Edges are asked for by the node ids this read already has**, the way
+    ``build_report`` asks for evidence and participation. The two reads are
+    separate statements, and on PostgreSQL's default isolation a re-run of
+    ``build_topic_graph`` committing between them is visible: the topics are
+    the set that was deleted and the edges are the new set, which reference
+    topic ids this read has never seen. Subscripting ``rank`` with one of those
+    raised ``KeyError`` — a 500 from the endpoint whose contract is "empty is a
+    state, not an error" — and the screen polling while the pipeline reprocesses
+    a meeting is exactly who would hit it. Filtering in the query makes that
+    case a consistent older graph with the edges it can still account for, and
+    leaves ``rank`` safe by construction. Raised in review of #220.
     """
     topics = _topics_in_reading_order(session, meeting_id)
     rank = {topic.id: index for index, topic in enumerate(topics)}
     edges = sorted(
-        session.scalars(select(GapTopicEdge).where(GapTopicEdge.meeting_id == meeting_id)),
+        session.scalars(
+            select(GapTopicEdge).where(
+                GapTopicEdge.meeting_id == meeting_id,
+                GapTopicEdge.source_topic_id.in_(rank),
+                GapTopicEdge.target_topic_id.in_(rank),
+            )
+        ),
         key=lambda edge: (
             -edge.weight,
             rank[edge.source_topic_id],
@@ -341,6 +359,14 @@ def _topics_in_reading_order(session: Session, meeting_id: str) -> list[GapTopic
     ids are random, so without the tie-break the same stored graph would come
     back in a different order on every read — and the report E receives and
     the graph the screen draws would disagree about which topic came second.
+
+    ``NULLS LAST`` is spelled out because the two engines disagree by default:
+    ascending order puts NULL first on SQLite and last on PostgreSQL. A topic
+    with no evidence rows sorts last either way now — it is the one a reader
+    can check least, so it does not belong above one the meeting can be quoted
+    on. Worth saying because the unit tests run on SQLite and production runs
+    on PostgreSQL, so the implicit version was a rule no test could have
+    caught. Raised in review of #220.
     """
     first_said = (
         select(
@@ -355,7 +381,11 @@ def _topics_in_reading_order(session: Session, meeting_id: str) -> list[GapTopic
             select(GapTopic)
             .outerjoin(first_said, first_said.c.topic_id == GapTopic.id)
             .where(GapTopic.meeting_id == meeting_id)
-            .order_by(GapTopic.centrality.desc(), first_said.c.position, GapTopic.label)
+            .order_by(
+                GapTopic.centrality.desc(),
+                nulls_last(first_said.c.position),
+                GapTopic.label,
+            )
         )
     )
 
