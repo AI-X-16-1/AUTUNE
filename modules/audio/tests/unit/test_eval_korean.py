@@ -146,3 +146,17 @@ class TestTermAccuracy:
     def test_no_terms_is_refused_rather_than_scored_as_perfect(self) -> None:
         with pytest.raises(ValueError):
             term_accuracy("무언가", [])
+
+    def test_a_listed_alias_spelling_counts_as_the_term(self) -> None:
+        """The HiKE rule, decided 2026-09-16: a loanword in either script is
+        correct. 파이프라인 for pipeline is not a recognition error."""
+        scored = term_accuracy(
+            "그 파이프라인을 다시", ["pipeline"], aliases={"pipeline": ["파이프라인"]}
+        )
+        assert scored.accuracy == 1.0
+
+    def test_an_alias_only_helps_the_term_it_belongs_to(self) -> None:
+        scored = term_accuracy(
+            "그 파이프라인을 다시", ["pipeline", "pyannote"], aliases={"pipeline": ["파이프라인"]}
+        )
+        assert scored.missed == ("pyannote",)
