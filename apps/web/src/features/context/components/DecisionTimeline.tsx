@@ -18,28 +18,30 @@ const NLI_LABEL: Record<NliLabel, string> = {
 /**
  * A thread's versions as vertical nodes, oldest first (S22).
  *
- * Node style follows position, not `change_type` alone: the first version is
- * always a hollow ring ("원본") and the last is always ink ("현재"), even
- * when its own `change_type` is `unchanged` — the ring/ink pair marks where
- * in the timeline you are, not whether that particular version changed
- * anything. Everything between is ochre, with the reason block the spec
- * calls for: who was absent and what the NLI comparison found.
+ * The last version is always ink ("현재"), position telling you where you are
+ * in the timeline regardless of that version's own `change_type`. The first
+ * is not the same kind of marker: retention can sweep the earlier versions of
+ * a thread out from under it, so `versions[0]` is only sometimes the version
+ * that started the thread — `change_type === "new"` is, always (`types.ts`
+ * carries the same warning about `previous_statement`). Using position for
+ * "원본" would draw a swept-in `reversed` version as a blank ring with no
+ * reason block, on the exact thread where a reader most wants one. Raised in
+ * review of #204.
  */
 export function DecisionTimeline({ versions }: { versions: DecisionVersionRead[] }) {
   return (
     <ol className="grid gap-4">
       {versions.map((version, index) => {
-        const isFirst = index === 0;
         const isLast = index === versions.length - 1;
         const isCurrent = isLast;
-        const isOriginal = isFirst && !isLast;
+        const isOriginal = version.change_type === "new";
 
         return (
           <li key={version.id} className="flex gap-3">
             <div className="flex flex-col items-center pt-1">
               <StatusDot
                 variant={isCurrent ? "confirmed" : isOriginal ? "idle" : "attention"}
-                hollow={isOriginal}
+                hollow={isOriginal && !isCurrent}
               />
               {!isLast && (
                 <span
