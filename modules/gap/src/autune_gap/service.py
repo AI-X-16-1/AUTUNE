@@ -28,6 +28,7 @@ from autune_gap.models import (
     GapTopicUtterance,
 )
 from autune_gap.pipeline import get_entity_extractor
+from autune_gap.schemas import TopicEdgeRead, TopicGraphRead, TopicNodeRead
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -193,22 +194,7 @@ def build_report(session: Session, meeting_id: str) -> GapReport:
       the team has said it is wrong, and E counting it would score the meeting
       on a gap nobody believes in.
     """
-    first_said = (
-        select(
-            GapTopicUtterance.topic_id,
-            func.min(GapTopicUtterance.position).label("position"),
-        )
-        .group_by(GapTopicUtterance.topic_id)
-        .subquery()
-    )
-    topics = list(
-        session.scalars(
-            select(GapTopic)
-            .outerjoin(first_said, first_said.c.topic_id == GapTopic.id)
-            .where(GapTopic.meeting_id == meeting_id)
-            .order_by(GapTopic.centrality.desc(), first_said.c.position, GapTopic.label)
-        )
-    )
+    topics = _topics_in_reading_order(session, meeting_id)
     topic_ids = [topic.id for topic in topics]
 
     evidence: dict[str, list[str]] = defaultdict(list)
@@ -284,6 +270,80 @@ def build_report(session: Session, meeting_id: str) -> GapReport:
             )
             for gap in gaps
         ],
+    )
+
+
+def topic_graph(session: Session, meeting_id: str) -> TopicGraphRead:
+    """The meeting's topic graph for drawing: the nodes, and what joins them.
+
+    The report answers "what did this meeting cover and who was silent on it";
+    this answers "what did it look like". They read the same rows, and the
+    nodes come back in the same order, so S20 can put the picture beside the
+    list without reconciling two orderings.
+
+    Edges come back as stored, both directions of a symmetric relation
+    included — ``schemas.TopicEdgeRead`` says why that is not collapsed here.
+    They are ordered strongest first, ties broken by where their endpoints sit
+    in the node order, because ``gap_topic_edges.id`` is an autoincrement that
+    a re-run reassigns: ordering by it would redraw the same graph in a
+    different order every time the meeting was reprocessed.
+
+    A meeting whose graph has not been built answers with empty lists. The
+    caller has already established that the meeting exists; nothing analysed
+    yet is a state, not a missing resource.
+    """
+    topics = _topics_in_reading_order(session, meeting_id)
+    rank = {topic.id: index for index, topic in enumerate(topics)}
+    edges = sorted(
+        session.scalars(select(GapTopicEdge).where(GapTopicEdge.meeting_id == meeting_id)),
+        key=lambda edge: (-edge.weight, rank[edge.source_topic_id], rank[edge.target_topic_id]),
+    )
+    return TopicGraphRead(
+        meeting_id=meeting_id,
+        nodes=[
+            TopicNodeRead(
+                id=topic.id,
+                label=topic.label,
+                centrality=topic.centrality,
+                betweenness=topic.betweenness,
+            )
+            for topic in topics
+        ],
+        edges=[
+            TopicEdgeRead(
+                source_topic_id=edge.source_topic_id,
+                target_topic_id=edge.target_topic_id,
+                relation=edge.relation,
+                weight=edge.weight,
+            )
+            for edge in edges
+        ],
+    )
+
+
+def _topics_in_reading_order(session: Session, meeting_id: str) -> list[GapTopic]:
+    """The meeting's topics, most central first.
+
+    Ties go to the topic the meeting reached first, then to the label. Topic
+    ids are random, so without the tie-break the same stored graph would come
+    back in a different order on every read — and the report E receives and
+    the graph the screen draws would disagree about which topic came second.
+    """
+    first_said = (
+        select(
+            GapTopicUtterance.topic_id,
+            func.min(GapTopicUtterance.position).label("position"),
+        )
+        .group_by(GapTopicUtterance.topic_id)
+        .subquery()
+    )
+    return list(
+        session.scalars(
+            select(GapTopic)
+            .outerjoin(first_said, first_said.c.topic_id == GapTopic.id)
+            .where(GapTopic.meeting_id == meeting_id)
+            .order_by(GapTopic.centrality.desc(), first_said.c.position, GapTopic.label)
+        )
     )
 
 

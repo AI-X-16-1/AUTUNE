@@ -177,6 +177,41 @@ same decision.
 | POST | `/gaps/{id}/dismiss` | Mark a gap as a false positive (feeds threshold tuning) |
 | GET | `/templates` | Available domain templates |
 
+### The read API as built
+
+Two of the four exist. `/reports/{meeting_id}` and `/topics/{meeting_id}` read
+the stored rows; nothing was added to `apps/` to mount them.
+
+- **The report is read, not replayed.** It is assembled from `gap_*` rows by the
+  same `service.build_report` the publish path uses, so a report reopened a week
+  later shows the dismissals made since, and E and the screen never disagree
+  about what the meeting produced.
+- **An unanalysed meeting answers empty, and only an unknown id is a 404.** A
+  screen polling while the pipeline runs has to tell those apart. Module B draws
+  the same line on `/results/{meeting_id}`.
+- **The topic graph is not a contract.** `schemas.TopicGraphRead` is this
+  module's own shape: it carries `betweenness`, which `autune_contracts.Topic`
+  does not, and E neither calls an endpoint nor draws a graph. A visualization
+  shape in `packages/contracts` would be four modules' business for no reason.
+- **Nodes come in the report's order** — most central first, ties to the topic
+  the meeting reached first — so S20 can show the picture beside the list
+  without reconciling two orderings. Edges come strongest first, ties by where
+  their endpoints sit in that order, never by `gap_topic_edges.id`: that is an
+  autoincrement a re-run reassigns, and the same graph would redraw differently
+  every time the meeting was reprocessed.
+- **Both directions of a co-occurrence edge come back.** Collapsing the pair
+  here would assert that `co_occurs` is undirected, and #32 replaces it with
+  triples where the same collapse loses which topic acted on which. A renderer
+  that wants one line per pair drops the direction it does not need.
+- **The graph carries no participation matrix.** Who spoke is in the report,
+  keyed by topic id. A node is the one place a per-person number could arrive
+  attached to a picture, and the report is already read along a topic rather
+  than along a person (see "Privacy notes").
+
+`POST /gaps/{id}/dismiss` and `GET /templates` are not built. Dismissal has
+nothing to act on until something writes `gap_gaps` (#35), and `/templates`
+waits on #22 with the table.
+
 ## Celery tasks
 
 | Task | Trigger | Queue |
