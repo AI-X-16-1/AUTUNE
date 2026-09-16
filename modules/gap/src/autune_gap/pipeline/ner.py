@@ -18,6 +18,7 @@ from typing import Any
 from autune_core import get_logger
 
 from .base import Entity
+from .spoken import Token, is_plausible, noun_terms
 
 log = get_logger(__name__)
 
@@ -127,6 +128,18 @@ class SpacyNer:
         log.info("gap_ner_loaded", model=self._model_name, version=self._version)
 
     def extract(self, utterances: list[tuple[str, str]]) -> list[Entity]:
+        """The model's entities, filtered, plus the noun terms it has no label for.
+
+        Two passes over one parse. The NER pass gives people, dates and
+        quantities; ``spoken.noun_terms`` gives the compounds a written-Korean
+        model has no label for, which on a product meeting is everything the
+        meeting was about. Neither pass is enough alone — see ``spoken`` for
+        what each one finds on the shared fixtures.
+
+        Within an utterance the result is in the order the speaker said things,
+        so the label a topic keeps is the first way the meeting phrased it
+        rather than whichever pass happened to run first.
+        """
         if not utterances:
             return []
         self._load()
@@ -134,12 +147,31 @@ class SpacyNer:
         found: list[Entity] = []
         texts = [text for _, text in utterances]
         for (utterance_id, _), doc in zip(utterances, self._nlp.pipe(texts), strict=True):
+            spans: list[tuple[int, str, str]] = []
+            claimed: list[tuple[int, int]] = []
             for span in doc.ents:
                 label = _SPACY_LABELS.get(span.label_)
                 if label is None:
                     self._note_unaccounted(span.label_)
                     continue
-                found.append(Entity(text=span.text, label=label, utterance_id=utterance_id))
+                # Claimed whether or not it is plausible: a span the model read
+                # as a one-letter person is still spoken for, and letting a
+                # noun run swallow it would put the rejection back in the graph
+                # under another name.
+                claimed.append((span.start_char, span.end_char))
+                if is_plausible(label, span.text):
+                    spans.append((span.start_char, span.text, label))
+
+            tokens = [
+                Token(text=token.text, tag=token.tag_, start=token.idx, end=token.idx + len(token))
+                for token in doc
+            ]
+            spans.extend((start, term, "term") for start, term in noun_terms(tokens, claimed))
+
+            found.extend(
+                Entity(text=text, label=label, utterance_id=utterance_id)
+                for _, text, label in sorted(spans, key=lambda entry: entry[0])
+            )
         return found
 
     def _note_unaccounted(self, label: str) -> None:

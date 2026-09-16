@@ -53,6 +53,53 @@ domain template, and score the risk of each missing item.
    gap.
 9. **Publish** — emit `GapReport`.
 
+### Step 1 as built
+
+**Measured first.** `ko_core_news_lg` 3.8.0 over the two shared fixtures finds
+six entities in `transcript_ready.typical` — 오늘은, 한번, A, B,
+다음 주 화요일까지, `010-****-5678` — and one in `transcript_ready.short`: 네,.
+Everything those meetings are *about* — 실시간 개인화, 인기순 정렬, 콜드스타트,
+검색 개인화 기능, 응답 시간 — is a plain noun the NER never sees, because
+`feature` and `system` are this product's vocabulary and no general model has a
+label for them. A gap report built on that graph would have been about 한번 and
+A. `modules/gap/tests/unit/test_spacy_ner.py` (marked `model`) pins the
+measurement.
+
+Two things came out of it, both in `pipeline.spoken` as pure functions — the
+same reason `graph` is pure: a judgement that can only be exercised by loading
+a 500MB pipeline is a judgement nobody tests.
+
+- **Noun terms.** A maximal run of bare-noun tokens is the compound the speaker
+  said, and that is what the graph needs a node for. The run is read from the
+  morpheme tag (`ncn+jxt`) rather than the coarse part of speech, which calls
+  개인화로 an adverb; a particle, an ending or a stopword breaks the run, so the
+  label is 개인화 and not 개인화로. A span an entity already claimed is not also
+  a term — one character belongs to at most one thing, the rule `FakeNer`
+  already follows.
+- **Two precision filters.** A one-character `person` is not a person: A/B 결과
+  gives A and B as `PS`, and both became connected nodes. A `metric` with no
+  digit in it is not a metric: `QT` on spoken Korean fires on 한번, 네, 좀.
+  Precision is C's metric and a false topic is what a false gap is raised on.
+
+**A term's kind stays undecided.** It carries the label `term`, the sixth in
+`ENTITY_LABELS`, which says "a compound the meeting named" and not which of
+`feature` or `system` it is. Telling those two apart is what #13's trained
+model is for, and a label that guessed would be a guess template comparison
+later reads as fact.
+
+What this does **not** fix, and what #13 still carries:
+
+- **Recall is unmeasured.** There is no annotated set and no eval harness for
+  step 1, so "better than six junk entities" is the whole claim. The number
+  that matters is gap precision, which cannot be read until something writes
+  `gap_gaps` (#35).
+- **A compound the model mis-analyses still splits.** 실시간 개인화로 is tagged
+  실시간 + 개인화로, so the graph gets 실시간 and loses 개인화. Rejoining it
+  means trusting a lemma split that is wrong as often as it is right here.
+- **The stoplist is a judgement.** Every entry is a topic the graph can no
+  longer raise a gap about, so it is short, and dismissals are what tune it
+  (#35) rather than taste.
+
 ### Steps 3 to 5 as built
 
 `autune_gap.graph` holds the decisions as pure functions; `service` feeds it
@@ -244,14 +291,15 @@ The same question module B has open for its classifier checkpoint and AMI
 (#112). If #13 trains from a differently licensed base instead, this note is
 what says why that mattered.
 
-Entities are normalised onto five labels — `feature`, `system`, `metric`,
-`person`, `date` — rather than spaCy's own inventory. A model trained on news
-text emits `ORG` and `LOC`, and a meeting about search ranking has no
+Entities are normalised onto six labels — `feature`, `system`, `metric`,
+`person`, `date`, `term` — rather than spaCy's own inventory. A model trained on
+news text emits `ORG` and `LOC`, and a meeting about search ranking has no
 organisations in it worth graphing. `feature` and `system` have no spaCy
 equivalent at all: they are this product's vocabulary, so a general model
-cannot supply them and #13 is where they come from. Until then the graph is
-built from the three a general model does give, and the mapping in
-`pipeline.ner` shows that limit rather than hiding it behind an empty class.
+cannot supply them and #13 is where they come from. `term` is what the graph
+uses in the meantime — the compound noun without the judgement about which of
+the two it is — and the mapping in `pipeline.ner` still shows the limit rather
+than hiding it behind an empty class. See "Step 1 as built".
 
 There is deliberately **no `worker_process_init` warm-up hook**. `apps/worker`
 imports every module's `tasks.py` into one Celery app, so a hook registered
