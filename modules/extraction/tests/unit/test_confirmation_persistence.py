@@ -65,20 +65,40 @@ def test_re_sending_does_not_restart_the_deadline(session: Session) -> None:
     retried.
     """
     first = open_confirmation(session, meeting_id=MEETING, utterance_id=UTTERANCE)
+    assert first is not None
     original_sent_at = first.sent_at
 
     again = open_confirmation(session, meeting_id=MEETING, utterance_id=UTTERANCE)
 
-    assert again.sent_at == original_sent_at
+    assert again is None, "the clock was already running, so this call claimed nothing"
+    stored = session.get(ExtConfirmation, UTTERANCE)
+    assert stored is not None
+    assert stored.sent_at == original_sent_at
+
+
+def test_the_second_call_claims_nothing_so_no_second_dm_goes_out(session: Session) -> None:
+    """``None`` is the whole signal ``ask_for_confirmation`` sends on.
+
+    Two runs can reach one utterance -- a redelivered task (``acks_late``), or a
+    rerun overlapping a manual send. Both used to read no ``sent_at`` and both
+    used to write one, and the speaker got the same question twice (#198).
+    """
+    claims = [
+        open_confirmation(session, meeting_id=MEETING, utterance_id=UTTERANCE) for _ in range(3)
+    ]
+
+    assert [claim is not None for claim in claims] == [True, False, False]
 
 
 def test_re_sending_does_not_erase_an_answer(session: Session) -> None:
-    """Someone who already replied keeps their reply."""
+    """Someone who already replied keeps their reply, and gets no second DM."""
     open_confirmation(session, meeting_id=MEETING, utterance_id=UTTERANCE)
     resolve_confirmation(session, answer(UtteranceKind.COMMITMENT))
 
-    row = open_confirmation(session, meeting_id=MEETING, utterance_id=UTTERANCE)
+    assert open_confirmation(session, meeting_id=MEETING, utterance_id=UTTERANCE) is None
 
+    row = session.get(ExtConfirmation, UTTERANCE)
+    assert row is not None
     assert row.resolved_kind == "commitment"
     assert row.outcome_at() == RESOLVED
 
@@ -150,6 +170,7 @@ def test_a_stored_question_goes_undecided_on_its_own(session: Session) -> None:
     A timestamp that survives a round trip is the whole mechanism.
     """
     row = open_confirmation(session, meeting_id=MEETING, utterance_id=UTTERANCE)
+    assert row is not None
     session.commit()
     session.expire_all()
 

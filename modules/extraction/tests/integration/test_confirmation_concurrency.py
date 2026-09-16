@@ -1,8 +1,8 @@
 """Two runs recording one meeting's ambiguous agreements at once, on PostgreSQL.
 
-Raised on #153. The task is ``acks_late``, so a worker that dies mid-run gets
-its message redelivered while the first run may still be inside its
-transaction. SQLite cannot show this: it has one writer, and the unit suite
+Raised on #153, extended for #198. The task is ``acks_late``, so a worker that
+dies mid-run gets its message redelivered while the first run may still be
+inside its transaction. SQLite cannot show this: it has one writer, and the unit suite
 can only simulate the interleaving. Here there are two real transactions, and
 the second is held on the first's uncommitted row before the first commits.
 
@@ -25,6 +25,7 @@ from autune_core import Meeting, Team, Utterance
 from autune_extraction import service
 from autune_extraction.decisions import ClassifiedUtterance
 from autune_extraction.models import ExtConfirmation
+from autune_integrations.fakes import FakeSlack
 
 
 @pytest.fixture
@@ -56,6 +57,18 @@ def ambiguous(utterance_id: str) -> list[ClassifiedUtterance]:
             id=utterance_id, kind=UtteranceKind.AMBIGUOUS, confidence=0.8, text="..."
         )
     ]
+
+
+def asking(meeting_id: str, utterance_id: str) -> dict[str, str]:
+    """The keyword arguments of one send. The speaker is also the recipient:
+    ``assert_personal_delivery`` refuses a quotation of someone else's speech."""
+    return {
+        "meeting_id": meeting_id,
+        "speaker_id": "U_SPEAKER",
+        "recipient_id": "U_SPEAKER",
+        "utterance_id": utterance_id,
+        "quoted_text": "...",
+    }
 
 
 def waiting_on_a_lock(engine: sa.Engine, pid: int) -> bool:
@@ -113,3 +126,65 @@ def test_a_second_run_waits_for_the_first_and_then_adds_nothing(
             sa.select(ExtConfirmation).where(ExtConfirmation.meeting_id == meeting_id)
         ).all()
     assert [row.utterance_id for row in rows] == [utterance_id]
+
+
+def test_a_second_sender_waits_for_the_first_and_then_sends_nothing(
+    db_engine: sa.Engine, meeting: tuple[str, str]
+) -> None:
+    """One question, one DM, even when two senders reach it at once (#198).
+
+    The row is already there with ``sent_at`` empty -- the state the pipeline
+    leaves behind. Both senders see it. Before the conditional update both wrote
+    their own timestamp and both sent, so the speaker got the same question
+    twice and the 24-hour deadline ran from the later one.
+    """
+    meeting_id, utterance_id = meeting
+    errors: list[BaseException] = []
+    first_slack, second_slack = FakeSlack(), FakeSlack()
+
+    with Session(db_engine) as setup:
+        service.record_ambiguous_agreements(
+            setup, meeting_id=meeting_id, classified=ambiguous(utterance_id)
+        )
+        setup.commit()
+
+    first = Session(db_engine)
+    claimed = service.ask_for_confirmation(
+        first, first_slack, **asking(meeting_id, utterance_id)
+    )  # claimed and sent, not committed
+    assert claimed is not None
+    claimed_at = claimed.sent_at  # read before the session that owns it closes
+
+    second = Session(db_engine)
+    second_pid = second.connection().exec_driver_sql("SELECT pg_backend_pid()").scalar_one()
+
+    def second_send() -> None:
+        try:
+            service.ask_for_confirmation(second, second_slack, **asking(meeting_id, utterance_id))
+            second.commit()
+        except BaseException as caught:  # surfaced to the test thread below
+            second.rollback()
+            errors.append(caught)
+
+    thread = threading.Thread(target=second_send)
+    thread.start()
+    try:
+        deadline = time.monotonic() + 10
+        while not waiting_on_a_lock(db_engine, second_pid):
+            assert thread.is_alive(), "the second sender finished without waiting on the first"
+            assert time.monotonic() < deadline, "the second sender never reached the first's row"
+            time.sleep(0.05)
+        first.commit()
+        thread.join(timeout=10)
+    finally:
+        first.close()
+        second.close()
+
+    assert not thread.is_alive()
+    assert errors == []
+    assert len(first_slack.sent) == 1
+    assert second_slack.sent == [], "the second sender must not ask the same question again"
+    with Session(db_engine) as check:
+        row = check.get(ExtConfirmation, utterance_id)
+    assert row is not None
+    assert row.sent_at == claimed_at, "the deadline runs from the first send"

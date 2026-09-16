@@ -190,10 +190,28 @@ def test_asking_later_starts_the_clock_then(session: Session) -> None:
 
     row = service.open_confirmation(session, meeting_id=MEETING, utterance_id="utt_0")
 
+    assert row is not None
     assert row.sent_at is not None
     assert row.sent_at.replace(tzinfo=UTC) >= before - timedelta(seconds=1)
     assert row.outcome_at() == PENDING
     assert row.confirmation_sent is True
+
+
+def test_only_one_sender_claims_a_recorded_question(session: Session) -> None:
+    """The row the pipeline wrote is the one two senders race on (#198).
+
+    Both see ``sent_at`` empty. Before the conditional update each wrote its own
+    timestamp and each sent a DM: one question, two messages, and the deadline
+    measured from the later one.
+    """
+    record(session, K.AMBIGUOUS)
+
+    first = service.open_confirmation(session, meeting_id=MEETING, utterance_id="utt_0")
+    second = service.open_confirmation(session, meeting_id=MEETING, utterance_id="utt_0")
+
+    assert first is not None
+    assert second is None
+    assert rows(session)["utt_0"].sent_at == first.sent_at
 
 
 def test_an_answer_to_a_question_never_asked_is_ignored(session: Session) -> None:
