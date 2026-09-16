@@ -18,11 +18,14 @@ import soundfile as sf
 
 from autune_audio.eval.hike import (
     HikeLabels,
+    Prediction,
     labels,
+    read_predictions,
     score,
     select_sample_ids,
     summarise,
     utterances,
+    write_prediction,
 )
 
 
@@ -196,3 +199,22 @@ class TestSummarise:
     def test_an_empty_run_is_refused(self) -> None:
         with pytest.raises(ValueError):
             summarise([])
+
+
+class TestPredictions:
+    def test_a_run_is_appended_one_line_at_a_time_and_read_back(self, tmp_path: Path) -> None:
+        """A 2-hour CPU run must survive a crash at minute 90: every utterance is
+        flushed as it finishes, and --resume skips what is already there."""
+        path = tmp_path / "predictions.jsonl"
+        first = Prediction(sample_id="a", hypothesis="이번 bug는", seconds=1.5, elapsed=2.0)
+        second = Prediction(sample_id="b", hypothesis="session에", seconds=1.0, elapsed=1.0)
+
+        with path.open("a", encoding="utf-8") as fh:
+            write_prediction(fh, first)
+        with path.open("a", encoding="utf-8") as fh:
+            write_prediction(fh, second)
+
+        assert read_predictions(path) == [first, second]
+
+    def test_a_missing_file_reads_as_no_predictions(self, tmp_path: Path) -> None:
+        assert read_predictions(tmp_path / "none.jsonl") == []

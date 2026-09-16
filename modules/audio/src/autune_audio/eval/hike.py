@@ -22,9 +22,9 @@ import io
 import json
 import random
 from collections.abc import Collection, Iterator, Sequence
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, TextIO
 
 import numpy as np
 import pyarrow.parquet as pq
@@ -249,3 +249,30 @@ def summarise(scores: Sequence[HikeScore]) -> dict[str, Any]:
         return {name: group(rows) for name, rows in sorted(buckets.items())}
 
     return {"all": group(scores), "by_cs_level": by("cs_level"), "by_category": by("category")}
+
+
+@dataclass(frozen=True)
+class Prediction:
+    """What the model said for one row, and how long it took.
+
+    HiKE is a public benchmark, so its text may be written to disk — unlike a
+    meeting transcript. The file is still an output and stays uncommitted.
+    """
+
+    sample_id: str
+    hypothesis: str
+    seconds: float
+    elapsed: float
+
+
+def write_prediction(fh: TextIO, prediction: Prediction) -> None:
+    """One JSON line, flushed, so a run interrupted mid-way keeps what it did."""
+    fh.write(json.dumps(asdict(prediction), ensure_ascii=False) + "\n")
+    fh.flush()
+
+
+def read_predictions(path: Path) -> list[Prediction]:
+    if not path.exists():
+        return []
+    with path.open(encoding="utf-8") as fh:
+        return [Prediction(**json.loads(line)) for line in fh if line.strip()]

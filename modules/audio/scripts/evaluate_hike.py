@@ -1,0 +1,164 @@
+"""Run the transcriber over HiKE and score it the way the HiKE paper does.
+
+    # Sixty rows spread across the three CS levels, to check the harness
+    uv run python modules/audio/scripts/evaluate_hike.py --limit 60 --seed 0 \\
+        --predictions hike-large-v3.jsonl
+
+    # The whole corpus; resume after an interruption with the same command
+    uv run python modules/audio/scripts/evaluate_hike.py --predictions hike-large-v3.jsonl --resume
+
+    # Score predictions made elsewhere (a GPU box, another model) without a model here
+    uv run python modules/audio/scripts/evaluate_hike.py --score-only hike-qwen.jsonl
+
+The model is the one the pipeline uses — ``AUTUNE_AUDIO_WHISPER_MODEL`` and
+``AUTUNE_AUDIO_DEVICE`` pick it, exactly as in production — called through the
+same ``transcribe()`` with **no glossary**, because HiKE has no meeting
+vocabulary to build one from. The number therefore describes the model, not
+our prompt; the prompt's effect is measured on the in-house recording.
+
+Prints JSON on stdout, like the other scripts: the summary, never the text.
+Predictions go to the ``--predictions`` file, one line per utterance, flushed
+as each finishes. That file is an output and is not committed.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+import time
+from pathlib import Path
+
+from autune_audio.eval.hike import (
+    HikeScore,
+    Prediction,
+    download,
+    labels,
+    read_predictions,
+    score,
+    select_sample_ids,
+    summarise,
+    utterances,
+    write_prediction,
+)
+
+
+def transcribe_corpus(
+    corpus: Path, predictions: Path, *, limit: int | None, seed: int, resume: bool, language: str
+) -> None:
+    # Imported here so --score-only never loads torch or the model.
+    from autune_audio.config import get_settings
+    from autune_audio.pipeline import _model, transcribe
+
+    settings = get_settings()
+    # Load the weights before the clock starts, or the first row's RTF is the
+    # model load and not the model.
+    _model()
+    chosen = select_sample_ids(corpus, limit=limit, seed=seed)
+    done = {p.sample_id for p in read_predictions(predictions)} if resume else set()
+    todo = [sample_id for sample_id in chosen if sample_id not in done]
+    print(
+        json.dumps(
+            {
+                "model": settings.whisper_model,
+                "device": settings.device,
+                "language": language,
+                "selected": len(chosen),
+                "already_done": len(chosen) - len(todo),
+            }
+        ),
+        file=sys.stderr,
+    )
+
+    with predictions.open("a" if resume else "w", encoding="utf-8") as fh:
+        for n, utterance in enumerate(utterances(corpus, sample_ids=todo), start=1):
+            started = time.perf_counter()
+            transcription = transcribe(utterance.waveform, language=language or None, glossary="")
+            elapsed = time.perf_counter() - started
+            hypothesis = " ".join(segment.text.strip() for segment in transcription.segments)
+            write_prediction(
+                fh,
+                Prediction(
+                    sample_id=utterance.sample_id,
+                    hypothesis=hypothesis.strip(),
+                    seconds=round(utterance.waveform.duration, 3),
+                    elapsed=round(elapsed, 3),
+                ),
+            )
+            if n % 20 == 0 or n == len(todo):
+                print(
+                    json.dumps(
+                        {
+                            "done": n,
+                            "of": len(todo),
+                            "last_rtf": round(elapsed / max(utterance.waveform.duration, 1e-6), 2),
+                        }
+                    ),
+                    file=sys.stderr,
+                )
+
+
+def score_predictions(corpus: Path, predictions: Path) -> list[HikeScore]:
+    by_id = {p.sample_id: p for p in read_predictions(predictions)}
+    if not by_id:
+        raise SystemExit(f"no predictions in {predictions}")
+    return [
+        score(
+            row,
+            by_id[row.sample_id].hypothesis,
+            seconds=by_id[row.sample_id].seconds,
+            elapsed=by_id[row.sample_id].elapsed,
+        )
+        for row in labels(corpus, sample_ids=by_id.keys())
+    ]
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    parser.add_argument(
+        "--predictions", type=Path, help="JSONL to write (and, with --resume, to continue)"
+    )
+    parser.add_argument(
+        "--score-only", type=Path, metavar="PREDICTIONS", help="score this JSONL; load no model"
+    )
+    parser.add_argument(
+        "--limit", type=int, default=None, help="rows to run, spread across CS levels"
+    )
+    parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--resume", action="store_true", help="skip rows already in --predictions")
+    parser.add_argument(
+        "--language",
+        default="ko",
+        help="Whisper language hint, as in production; pass '' to let it detect",
+    )
+    parser.add_argument(
+        "--corpus", type=Path, default=None, help="local parquet; default downloads HiKE"
+    )
+    args = parser.parse_args(argv)
+
+    corpus = args.corpus or download()
+    if args.score_only:
+        predictions = args.score_only
+    else:
+        if not args.predictions:
+            parser.error("--predictions is required unless --score-only is given")
+        predictions = args.predictions
+        transcribe_corpus(
+            corpus,
+            predictions,
+            limit=args.limit,
+            seed=args.seed,
+            resume=args.resume,
+            language=args.language,
+        )
+
+    summary = summarise(score_predictions(corpus, predictions))
+    summary["predictions"] = str(predictions)
+    print(json.dumps(summary, ensure_ascii=False, indent=2))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
