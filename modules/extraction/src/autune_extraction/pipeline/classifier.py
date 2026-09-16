@@ -12,12 +12,14 @@ serve a health check, and would make this module's unit tests need one.
 
 from __future__ import annotations
 
+import time
 from collections.abc import Iterator, Mapping
 from typing import TYPE_CHECKING, Any
 
 from autune_contracts.enums import UtteranceKind
 from autune_core import get_logger
 from autune_extraction.labels import NONE
+from autune_integrations.errors import TransientIntegrationError
 from autune_integrations.privacy import MAX_OUTBOUND_CHARS
 
 from .base import Prediction
@@ -265,6 +267,24 @@ def _batches_within_budget(texts: list[str], budget: int) -> Iterator[list[str]]
         yield batch
 
 
+RETRY_BACKOFF_SEC: tuple[float, ...] = (0.5, 2.0)
+"""How long to wait before each re-attempt of one batch, and how many there are.
+
+Two re-attempts, 2.5 seconds of waiting at worst, per batch. The numbers are
+written here rather than made a setting because nobody has run this against a
+real inference server yet, and a knob whose default nobody measured reads as a
+tuned value. When there is a server and a latency distribution, this becomes
+``AUTUNE_EXTRACTION_CLASSIFIER_RETRIES`` and gets a number somebody took.
+
+Bounded on purpose. A meeting is tens of requests (#113) and the worker thread
+sleeps through every wait, so an unbounded or long backoff turns one sick server
+into a worker that is not processing anything else either. Two short attempts
+cover what they are for -- a restart, a rolling deploy, one 502 -- and a server
+that is down for longer should fail the task and let Celery's own retry, which
+does not hold a worker, decide when to come back.
+"""
+
+
 class HostedDeberta:
     """The same model on our own inference server.
 
@@ -282,6 +302,10 @@ class HostedDeberta:
     length, which is a couple of minutes of talk. The cap is right and the batch
     was wrong: it is aimed at the integrations that carry meeting content
     outward, and the fix is to fit it rather than to widen it for our own host.
+
+    **Each of those requests is re-attempted on a transient failure** -- see
+    ``_post``. Splitting a meeting into tens of requests multiplies its exposure
+    to one bad second, and the split is not optional.
     """
 
     def __init__(self, endpoint: str, model_version: str) -> None:
@@ -292,13 +316,52 @@ class HostedDeberta:
     def model_version(self) -> str:
         return self._model_version
 
+    def _post(self, batch: list[str], *, index: int) -> Any:
+        """One batch, re-attempted while the failure is a transient one.
+
+        A meeting is tens of requests, so without this a single 502 or timeout on
+        the fifteenth of twenty-eight fails the whole meeting, and Celery's retry
+        starts again from the first (#113). The odds compound with the length of
+        the meeting, which is backwards: the longer the recording, the more
+        likely it never gets classified at all.
+
+        **Only ``TransientIntegrationError``.** That is the shared client's word
+        for a timeout, an unreachable host, a 429 or a 5xx -- the failures where
+        the same request later is a different answer. A 4xx arrives as
+        ``PermanentIntegrationError`` and is not retried: the request is wrong,
+        and sending it twice more only says so twice more.
+
+        **Safe to repeat.** ``/classify`` stores nothing and mints nothing; the
+        same texts give the same scores. It is a POST because the body is too
+        large for a URL, not because it changes anything on the server.
+
+        This does not make a long meeting survive a server that is really down --
+        that is what partial progress is for, and it is still open on #113. What
+        it removes is the failure that has nothing to do with the meeting.
+        """
+        for attempt, wait in enumerate(RETRY_BACKOFF_SEC, start=1):
+            try:
+                return self._client.request("POST", "/classify", json={"texts": batch})
+            except TransientIntegrationError as exc:
+                # Counts and a reason only. Every string in the batch is an
+                # utterance, so none of it is loggable.
+                log.info(
+                    "extraction_classifier_retry",
+                    batch=index,
+                    utterances=len(batch),
+                    attempt=attempt,
+                    reason=str(exc),
+                )
+                time.sleep(wait)
+        return self._client.request("POST", "/classify", json={"texts": batch})
+
     def classify(self, texts: list[str]) -> list[Prediction]:
         if not texts:
             return []
 
         predictions: list[Prediction] = []
-        for batch in _batches_within_budget(texts, MAX_OUTBOUND_CHARS):
-            body = self._client.request("POST", "/classify", json={"texts": batch})
+        for index, batch in enumerate(_batches_within_budget(texts, MAX_OUTBOUND_CHARS)):
+            body = self._post(batch, index=index)
             # A server answering with a bare array is wrong but comprehensible;
             # letting it surface as AttributeError on a dict method is not.
             rows = body.get("scores", []) if isinstance(body, dict) else body

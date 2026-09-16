@@ -16,9 +16,12 @@ from autune_contracts.enums import UtteranceKind
 from autune_extraction.config import ExtractionSettings
 from autune_extraction.labels import NONE
 from autune_extraction.pipeline import FakeClassifier, Prediction, registry
+from autune_extraction.pipeline import classifier as classifier_module
 from autune_extraction.pipeline.classifier import (
     HEAD,
     LABELS,
+    RETRY_BACKOFF_SEC,
+    HostedDeberta,
     LocalDeberta,
     _batches_within_budget,
     _check_label_order,
@@ -27,6 +30,7 @@ from autune_extraction.pipeline.classifier import (
 )
 from autune_extraction.pipeline.registry import _CLASSIFIERS
 from autune_extraction.training.dataset import LABELS as TRAINING_LABELS
+from autune_integrations.errors import PermanentIntegrationError, TransientIntegrationError
 from autune_integrations.privacy import MAX_OUTBOUND_CHARS, check_outbound
 
 K = UtteranceKind
@@ -471,3 +475,104 @@ def test_a_missing_extra_is_reported_even_when_a_gpu_was_asked_for() -> None:
 
     with pytest.raises(RuntimeError, match="local-models"):
         LocalDeberta("kakaobank/kf-deberta-base", device="cuda")._load()
+
+
+# --- one bad second does not cost the meeting (#113) --------------------------
+
+
+class Server:
+    """The inference server, as a client that can be told to fail first.
+
+    ``failures`` are raised in order, one per call, before any answer is given.
+    """
+
+    def __init__(self, *failures: Exception) -> None:
+        self.failures = list(failures)
+        self.calls: list[int] = []
+
+    def request(self, method: str, path: str, *, json: dict) -> dict:
+        self.calls.append(len(json["texts"]))
+        if self.failures:
+            raise self.failures.pop(0)
+        return {"scores": [[0.0, 0.0, 0.0, 0.0, 0.0, 1.0]] * len(json["texts"])}
+
+
+@pytest.fixture
+def slept() -> list[float]:
+    return []
+
+
+@pytest.fixture
+def hosted(
+    monkeypatch: pytest.MonkeyPatch, slept: list[float]
+) -> Callable[[Server], HostedDeberta]:
+    """A hosted classifier whose waits are recorded instead of slept."""
+
+    def build(server: Server) -> HostedDeberta:
+        classifier = HostedDeberta("http://inference.invalid", "ckpt")
+        classifier._client = server  # type: ignore[assignment]
+        return classifier
+
+    monkeypatch.setattr(classifier_module.time, "sleep", slept.append)
+    return build
+
+
+def test_a_transient_failure_is_re_attempted_rather_than_failing_the_meeting(
+    hosted: Callable[[Server], HostedDeberta],
+) -> None:
+    """The fifteenth request of twenty-eight gets a 502 and the meeting survives.
+
+    Without this the whole meeting fails and Celery's retry starts again at the
+    first request -- so the longer the recording, the likelier it is never
+    classified at all.
+    """
+    server = Server(TransientIntegrationError("extraction-classifier returned 502"))
+
+    predictions = hosted(server).classify(["네"])
+
+    assert len(predictions) == 1
+    assert server.calls == [1, 1], "the same batch, sent again"
+
+
+def test_a_re_attempt_waits_and_gives_up_after_a_bounded_number(
+    hosted: Callable[[Server], HostedDeberta], slept: list[float]
+) -> None:
+    """A server that is really down fails the task rather than holding a worker.
+
+    The thread sleeps through every wait, so the bound is what keeps one sick
+    server from stopping everything else that worker would have run.
+    """
+    server = Server(*[TransientIntegrationError("timed out") for _ in range(5)])
+
+    with pytest.raises(TransientIntegrationError):
+        hosted(server).classify(["네"])
+
+    assert len(server.calls) == len(RETRY_BACKOFF_SEC) + 1
+    assert slept == list(RETRY_BACKOFF_SEC)
+
+
+def test_a_rejected_request_is_not_sent_again(
+    hosted: Callable[[Server], HostedDeberta], slept: list[float]
+) -> None:
+    """A 4xx is the request being wrong. Sending it twice more says so twice more."""
+    server = Server(PermanentIntegrationError("extraction-classifier rejected the request"))
+
+    with pytest.raises(PermanentIntegrationError):
+        hosted(server).classify(["네"])
+
+    assert len(server.calls) == 1
+    assert slept == []
+
+
+def test_a_meeting_is_still_one_request_per_batch_when_nothing_fails(
+    hosted: Callable[[Server], HostedDeberta], slept: list[float]
+) -> None:
+    """The retry must not add a request to the path where nothing went wrong."""
+    texts = utterances(300)
+    server = Server()
+
+    predictions = hosted(server).classify(texts)
+
+    assert len(predictions) == len(texts)
+    assert len(server.calls) == len(list(_batches_within_budget(texts, MAX_OUTBOUND_CHARS)))
+    assert slept == []
