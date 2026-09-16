@@ -11,7 +11,7 @@ from __future__ import annotations
 from collections.abc import Collection, Sequence
 from datetime import UTC, date, datetime
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.dialects import postgresql, sqlite
 from sqlalchemy.orm import Session, selectinload
 
@@ -98,13 +98,19 @@ def ask_for_confirmation(
     utterance_id: str,
     quoted_text: str,
     reason: str = WEAK_ASSENT,
-) -> ExtConfirmation:
-    """Open a confirmation and send its DM, in that order.
+) -> ExtConfirmation | None:
+    """Open a confirmation and send its DM, in that order — or send nothing.
 
     The row goes in first. Delivery is at-least-once and Slack can fail after
     accepting the call, so a send that is not preceded by a row can leave a
     question asked with no deadline running — the state where nothing ever
-    resolves it. The reverse, a row whose DM failed, is visible and retryable.
+    resolves it. The reverse, a row whose DM failed, is visible and retryable:
+    the send and the claim are in one transaction, so a failed send takes the
+    ``sent_at`` back with it and the next run claims the row again.
+
+    Returns ``None`` when the clock was already running, having sent nothing.
+    The question is out; a second DM for it would be the same question asked
+    twice, which reads to the speaker as the first one not having counted.
 
     ``send_confirmation_dm`` stays callable on its own for the privacy guards it
     carries; this is the entry point that also starts the clock.
@@ -112,6 +118,10 @@ def ask_for_confirmation(
     row = open_confirmation(
         session, meeting_id=meeting_id, utterance_id=utterance_id, reason=reason
     )
+    if row is None:
+        # Ids only, and no send. Another run holds this question.
+        log.info("extraction_confirmation_already_asked", utterance_id=utterance_id)
+        return None
     send_confirmation_dm(
         slack,
         speaker_id=speaker_id,
@@ -124,8 +134,12 @@ def ask_for_confirmation(
 
 def open_confirmation(
     session: Session, *, meeting_id: str, utterance_id: str, reason: str = WEAK_ASSENT
-) -> ExtConfirmation:
-    """Start the clock, once.
+) -> ExtConfirmation | None:
+    """Start the clock, once — and say whether this call is the one that did.
+
+    Returns the row when this call started the clock, and ``None`` when it was
+    already running. ``None`` is not a failure: it means another run has the
+    question, and the caller must not send a second DM for it.
 
     A re-send keeps the original ``sent_at``. The deadline measures how long the
     speaker has had the question in front of them, and a Celery retry means they
@@ -136,25 +150,39 @@ def open_confirmation(
     clock started here, when the question is actually put -- not when the
     ambiguity was found, or a question sent days later would arrive expired.
 
-    Deliberately not a place to reset an answer: someone who has already replied
-    keeps their reply if the DM is sent again.
-    """
-    row = session.get(ExtConfirmation, utterance_id)
-    if row is not None:
-        if row.sent_at is None:
-            row.sent_at = datetime.now(UTC)
-            session.flush()
-        return row
+    **Both statements are decided by the database**, the same rule
+    ``record_ambiguous_agreements`` follows and for the same reason (#153,
+    #198). Reading the row and then deciding was wrong two ways once anything
+    sends: two runs that both read no row raced on the primary key, and two runs
+    that both read ``sent_at`` empty each wrote their own timestamp and each sent
+    a DM — one question, two messages, and the deadline the later of the two. So
+    the insert skips a row that is already there, and the update carries
+    ``sent_at IS NULL`` in its own WHERE. The second run blocks on the first's
+    row, and when it is released the update matches nothing.
 
-    row = ExtConfirmation(
-        utterance_id=utterance_id,
-        meeting_id=meeting_id,
-        reason=reason,
-        sent_at=datetime.now(UTC),
+    Deliberately not a place to reset an answer: someone who has already replied
+    keeps their reply, and gets no second DM.
+    """
+    session.execute(
+        _insert_if_absent(session)
+        .values(
+            utterance_id=utterance_id,
+            meeting_id=meeting_id,
+            reason=reason,
+            sent_at=None,
+        )
+        .on_conflict_do_nothing(index_elements=["utterance_id"])
     )
-    session.add(row)
-    session.flush()
-    return row
+    return session.scalars(
+        update(ExtConfirmation)
+        .where(
+            ExtConfirmation.utterance_id == utterance_id,
+            ExtConfirmation.sent_at.is_(None),
+        )
+        .values(sent_at=datetime.now(UTC))
+        .returning(ExtConfirmation)
+        .execution_options(synchronize_session="fetch")
+    ).one_or_none()
 
 
 def apply_confirmation_response(response: ConfirmationResponse) -> None:
@@ -884,7 +912,12 @@ def unasked_confirmations(session: Session, meeting_id: str) -> list[ExtConfirma
 
     What a sender walks once there is one: for each row, resolve the speaker's
     Slack account and call ``ask_for_confirmation``, which starts the clock on
-    this same row. Nothing calls it yet (#70, #30).
+    this same row — or returns ``None``, having found that another sender got
+    there first and sent nothing. Nothing calls it yet (#70, #30).
+
+    The list is read outside any lock, so a row here can be claimed between this
+    query and the send. That is what the claim is for: the walker does not have
+    to be the only one.
     """
     return list(
         session.scalars(
