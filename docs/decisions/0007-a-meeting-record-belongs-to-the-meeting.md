@@ -22,9 +22,10 @@ member's utterances and every item they committed to loses its evidence. Delete
 The damage is not confined to module B. Module D keys a decision lineage on B's
 `dec_` ids and walks a chain through `ctx_decision_versions`; removing one
 decision breaks the chain at a link rather than at its end, and a lineage with a
-hole reads as complete. `ExtractionResult.action_items[].assignee` resolves to a
-`user_id`, so an open commitment held by a departed member has no representable
-state at all — neither closed nor assigned.
+hole reads as complete. `ExtractionResult.action_items[].assignee_id` holds a
+`user_id`, so under the current rule an open commitment held by a departed member
+is deleted with them instead of being handed to someone else — the team loses
+the task, not just its owner.
 
 And there is the plain fact that *"the team decided to ship on Friday"* does not
 stop being the team's decision when one participant leaves. A record that erases
@@ -59,10 +60,14 @@ The path by which a row is reachable is its owner:
 `participants` is the boundary row: it belongs to a meeting and references a
 user. The row stays and its `user_id` clears.
 
-**The schema already does this.** `participants.user_id` is nullable with
-`ON DELETE SET NULL`, so the boundary behaves as described today, before this ADR
-is adopted. What is decided here is the rule, not a change to the tables — read
-this section as naming existing behaviour rather than requesting a migration.
+**The schema already does half of this.** `participants.user_id` is nullable with
+`ON DELETE SET NULL`, and `utterances.participant_id` references `participants`
+the same way, so deleting a `users` row already leaves the meeting's record
+standing with the identity link cleared. Leaving a *team* is a different event:
+it removes a `team_members` row and touches no participant. Clearing
+`participants.user_id` on departure is therefore an explicit step A takes, not a
+cascade — the one piece of new behaviour this ADR asks of the tables. No column
+or constraint changes.
 
 That is the whole mechanism. There is no de-identification migration and no
 per-module anonymisation path — the earlier draft of this ADR required one in
@@ -80,26 +85,45 @@ Both are needed and they answer different questions.
 
 **2. Display names are kept, and replaceable on request.** A departed member's
 name stays on their utterances, so the record reads as it did on the day. On a
-PIPA 제36조 request, that person's label is replaced with `참석자 N` — scoped to
-one meeting, and deliberately not stable across meetings, since a stable label
-would let anyone rebuild the person by joining their meetings together.
+request under PIPA Article 36 (correction and deletion), that person's label is
+replaced with a placeholder such as `Participant N` — scoped to one meeting, and
+deliberately not stable across meetings, since a stable label would let anyone
+rebuild the person by joining their meetings together.
 
 Statements survive that replacement with their meaning intact, because a decision
-does not depend on who voiced it. *"금요일에 배포하기로 했다"* needs an owner, and
-the owner is a separate field. This is why keeping names by default is affordable:
-the fallback costs readability, not correctness.
+does not depend on who voiced it. *"We agreed to deploy on Friday"* needs an
+owner, and the owner is a separate field. This is why keeping names by default is
+affordable: the fallback costs readability, not correctness.
 
 **3. Speaking ratio is not shared with the room.** Everything else in a meeting
 is visible to its members. This one is not — section 3, ADR 0003 rule 3, and
-`IntelligenceSnapshot`, which says of speaking ratios *"they are not in this
-contract, and never will be"*. Adopting a shared-room model means naming its one
-exception, not quietly widening it.
+the `autune_contracts.intelligence` module docstring, which reads *"Speaking
+ratios are not in this payload and never will be."* Adopting a shared-room
+model means naming its one exception, not quietly widening it.
 
 **4. Joining a team does not grant its past.** A member added today does not see
 meetings held before they joined unless a meeting is explicitly shared with them.
 Access derives from the participant list, not from team membership. Otherwise
 adding a person to a team would be an act of disclosure by everyone already in
 it, performed by whoever clicked invite.
+
+**5. "A user can delete their own data at any time" gets narrower, and says so.**
+Section 4 and invariant 11 in `CLAUDE.md` both carry that sentence, and today it
+reaches everything derived from a person's speech. Under this ADR it reaches
+less, and the difference is stated here rather than left for a reader to infer:
+
+| On a user's own deletion request | Today | Under this ADR |
+| --- | --- | --- |
+| Account, sessions, tokens, `aud_speaker_embeddings` | deleted | deleted |
+| Their name on a meeting's utterances | deleted with the utterances | replaced with a per-meeting placeholder (decision 2) |
+| Their utterances | deleted | deleted when they ask for their speech itself, not only their name |
+| Action items, decisions, gaps and lineage derived from those utterances | deleted | **kept**, marked as having lost their source |
+
+The last row is the narrowing. A decision the team reached, or a task somebody
+else now holds, is the team's record, and deleting the speaker's words does not
+delete it. That is the claim this ADR makes, and it is the claim legal review has
+to accept or reject — so it is written as a table, not implied by an ownership
+rule.
 
 Two rules follow for module B specifically.
 
@@ -110,9 +134,9 @@ the top of the action board (S17) instead of sitting invisibly unowned. A closed
 item keeps `done` and needs nothing.
 
 **Missing attribution is shown, not hidden.** After a label replacement the quote
-stays and is attributed to `참석자 N`. If an utterance is genuinely deleted, the
-item keeps its statement and says the source is gone; it does not render a blank
-and it does not reconstruct text from an embedding. `../modules/context.md`
+stays and is attributed to the placeholder. If an utterance is genuinely deleted,
+the item keeps its statement and says the source is gone; it does not render a
+blank and it does not reconstruct text from an embedding. `../modules/context.md`
 already requires exactly this of dangling topic links, so the pattern exists.
 
 ## Alternatives considered
@@ -125,15 +149,15 @@ record.
 **De-identify each departed member's rows.** This ADR's first draft. Rejected:
 it reached the same retention outcome by a harder road — a per-module
 anonymisation path, surgery on shared rows, and a consent argument resting on
-가명처리 versus 익명처리 rather than on who the record belongs to. PIPA 제28조의2
-permits processing 가명정보 without consent only 「통계작성, 과학적 연구,
-공익적 기록보존」, and running a product feature is none of those, so that road
-also needed an argument it could not make. The ownership rule needs no such
-argument.
+pseudonymisation versus anonymisation rather than on who the record belongs to.
+PIPA Article 28-2 permits processing pseudonymised information without consent
+only for statistics, scientific research, and archiving in the public interest,
+and running a product feature is none of those, so that road also needed an
+argument it could not make. The ownership rule needs no such argument.
 
 **Keep everything, including the voice embedding.** Rejected: an embedding is
-생체인식정보 and the strongest re-identifier we hold, and no part of keeping a
-record needs it. It is on the `user_id` path and it goes.
+biometric information under PIPA and the strongest re-identifier we hold, and no
+part of keeping a record needs it. It is on the `user_id` path and it goes.
 
 **Delete when the last member leaves, and rely on that alone.** Rejected — see
 decision 1. It is a condition that almost never occurs.
@@ -154,9 +178,11 @@ that resets when someone leaves is worthless at the one-year scale it is for.
 
 **Harder.** Access control moves from team membership to the participant list.
 That is a larger change than it sounds: every read path needs it, and it is the
-part of this ADR most likely to be underestimated. `participants.user_id` becomes
-nullable and every consumer handles that. `needs_reassignment` is new UI in
-`features/actions/`.
+part of this ADR most likely to be underestimated. `participants.user_id` is
+already nullable, but today it is null only for an unidentified speaker; after
+this ADR it is also null for a departed one, and every consumer that reads it as
+"not identified yet" has to stop assuming identification may still arrive.
+`needs_reassignment` is new UI in `features/actions/`.
 
 **Contract impact.** `packages/contracts` freezes after W1 and only additions are
 permitted afterwards. Most of what this ADR needs is already there:
@@ -169,9 +195,9 @@ permitted afterwards. Most of what this ADR needs is already there:
 - `ActionItem` needs `needs_reassignment`. **This is the only new field**, and it
   is an optional addition, which invariant 5 permits.
 - **`Participation.spoke` and `Participation.silent` hold `prt_` ids, not
-  `user_`.** The contract constrains neither today while `Topic.id` is pinned to
-  `^topic_`, so this ADR settles it. Three reasons, and the third is the one that
-  matters most:
+  `user_`.** `contracts.md` has said so since #166, but the type still does not
+  constrain either list while `Topic.id` is pinned to `^topic_`. This ADR is
+  where the reasons live. Three, and the third is the one that matters most:
   1. `participants` is the boundary row that survives a departure, so a `prt_`
      list stays valid and C's participation matrix really is *unchanged* — with
      `user_` ids the list would be full of dangling references and the claim
@@ -183,11 +209,22 @@ permitted afterwards. Most of what this ADR needs is already there:
      person's speaking coverage over time, which is the shape of data section 3
      forbids — the same reason decision 2 makes replacement labels deliberately
      unstable between meetings. `prt_` cannot be joined that way.
-- `ContextLinks.decision_lineage[].key_stakeholders_absent` names people and
-  takes the same treatment as a display label.
-- Consumers of `ActionItem.source_utterances` and `Decision` must tolerate a
-  replaced label and, in the deletion case, a missing utterance. That is a
-  documented expectation rather than a field.
+- **`ContextLinks.decision_lineage[].key_stakeholders_absent` is the exception
+  this ADR does not resolve.** Its description reads *"User ids absent when the
+  decision changed"*, and D fills it from `participants.user_id`
+  (`ctx_decision_versions.key_stakeholders_absent`, JSONB). That is a stable,
+  cross-meeting identifier stored on the `meeting_id` path — exactly what reason
+  3 above refuses for `Participation`. Joined across decisions it rebuilds which
+  meetings one person missed. It cannot be treated like a display label, because
+  a label is text and this is a key. What this ADR requires is the minimum that
+  keeps the rule consistent: when a member's `participants.user_id` clears, their
+  id leaves the stored lists at the same time rather than at D's next rebuild.
+  Whether the field should hold user ids at all is D's design question and a
+  contract change (a type or meaning change, not an addition); it is raised with
+  D's owner, not settled here.
+- Consumers of `ActionItem.source_utterance_ids` and
+  `Decision.source_utterance_ids` must tolerate a replaced label and, in the
+  deletion case, an id that no longer resolves to an utterance. That is a documented expectation rather than a field.
 - `TranscriptReady.utterances[].speaker_id` already permits null for a
   diarised-but-unidentified speaker, and `contracts.md` already says *"Handle
   this case — it is common."* Label replacement reuses that path rather than
@@ -195,15 +232,18 @@ permitted afterwards. Most of what this ADR needs is already there:
 
 **Accepted cost.** A retained transcript is not anonymous. Utterance text is
 PII-masked before the first write (section 2), which handles phone numbers and
-주민등록번호; it does not handle content that identifies a person by what it
-describes — *"제가 지난주에 부산 지사에서 확인했는데"* is not anonymous with the
-name removed. We claim the identity link is cleared and the content is masked,
-not that the record is anonymous, and the honest place for that sentence is the
-privacy policy.
+resident registration numbers; it does not handle content that identifies a
+person by what it describes — *"I checked this at the Busan branch last week"*
+is not anonymous with the name removed. We claim the identity link is cleared
+and the content is masked, not that the record is anonymous, and the honest place
+for that sentence is the privacy policy.
 
 **Revisit if** legal review rejects keeping display names by default. The
-fallback is `참석자 N` from the moment of leaving rather than on request, and the
-model supports it without restructuring — decision 2 changes, nothing else does.
+fallback is the placeholder from the moment of leaving rather than on request,
+and the model supports it without restructuring — decision 2 changes, nothing
+else does. **Revisit also if** legal review rejects decision 5's last row: then
+a deletion request takes the derived records with the utterances, and the
+ownership rule still governs departure, which is not a deletion request.
 
 ## On acceptance
 
@@ -211,14 +251,19 @@ model supports it without restructuring — decision 2 changes, nothing else doe
 
 - Replace *"When a user leaves a team, their utterances and everything derived
   from them are deleted"* with the ownership rule.
-- Keep the 90-day retention and *"A user can delete their own data at any
-  time"* — both are unchanged and decision 1 depends on the first.
+- Keep the 90-day retention unchanged; decision 1 depends on it.
+- Keep *"A user can delete their own data at any time"*, and follow it with
+  decision 5's table so the narrowed scope is written where the right is.
+  Invariant 11 in `CLAUDE.md` carries the same sentence and gets a pointer to it.
 - *"Deletion is real. No soft deletes, no tombstones holding content"* stays and
   now also governs a replaced label: the old label is gone, not hidden.
 - Add to the review checklist: which path reaches this table, and does it hold
   the other kind of data?
 - Add: access to a meeting derives from its participant list, not from team
   membership.
+
+`../architecture/data-model.md`, "Retention and deletion": the "User deletion /
+team departure" bullet changes the same way as privacy.md section 4.
 
 ADR 0003 rule 4 gains a pointer to this ADR. It is narrowed, not superseded —
 the other four rules are untouched.

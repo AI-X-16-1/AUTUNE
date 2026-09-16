@@ -92,7 +92,11 @@ distribution — are team-level and contain no per-person speech volume.
 
 - Analysis results are retained **90 days** by default, adjustable per team.
 - A scheduled sweep deletes expired results.
-- A user can delete their own data at any time.
+- A user can delete their own data at any time. **The scope of "their own data"
+  is under review — see ADR 0007, decision 5**, which would keep action items,
+  decisions and lineage derived from a person's speech after that person's
+  utterances are deleted. Until that ADR is accepted or rejected, "their own
+  data" includes everything derived from their speech.
 - When a user leaves a team, their utterances and everything derived from them
   are deleted. **This rule is under review — see ADR 0007**, which argues the
   record belongs to the meeting rather than to its participants, and that
