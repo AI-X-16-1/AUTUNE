@@ -30,9 +30,13 @@ single node no reader recognises. Four is the longest compound the product
 vocabulary actually uses ("검색 개인화 기능 개선")."""
 
 MIN_TERM_CHARS = 2
-"""A one-character noun is a counter — 주, 번, 명 — not a topic. Multi-token
-runs are exempt: "다음 주" is already broken by the stoplist, and a run that
-survived it has a real noun in it."""
+"""A one-character noun is a counter — 주, 번, 명 — not a topic.
+
+A **run** qualifies when at least one of its tokens clears this, which is the
+rationale spelled out: "a run that survived the stoplist has a real noun in
+it". It used to be assumed of any multi-token run, and 주 번 — two counters,
+neither in the stoplist — became a topic on that assumption. Raised in review
+of #222."""
 
 _NOUN_TAG_PREFIXES = ("nc", "nq", "f")
 """Morpheme tags this counts as a noun: the **content** nouns only.
@@ -176,20 +180,23 @@ def noun_terms(
     a noun run, and the graph grows a node nobody can point at in the
     transcript.
 
-    Runs are capped at ``MAX_TERM_TOKENS`` from the left, so an over-long list
-    still yields its first compound instead of nothing.
+    Runs are capped at ``MAX_TERM_TOKENS`` from the left: an over-long run
+    yields its first compound and the rest is dropped, rather than being cut
+    into further chunks. A second chunk's boundary is the fourth token and
+    nowhere the speaker paused, so it would be a node no reader recognises —
+    and a node nobody recognises is what a false gap gets raised on. Raised in
+    review of #222, where the code chunked and this paragraph said it did not.
     """
     ranges = list(claimed)
     terms: list[tuple[int, str]] = []
     run: list[Token] = []
 
     def flush() -> None:
-        while run:
-            take = run[:MAX_TERM_TOKENS]
-            del run[: len(take)]
-            text = " ".join(token.text for token in take)
-            if len(take) > 1 or len(text) >= MIN_TERM_CHARS:
-                terms.append((take[0].start, text))
+        take = run[:MAX_TERM_TOKENS]
+        run.clear()
+        if not take or not any(len(token.text) >= MIN_TERM_CHARS for token in take):
+            return
+        terms.append((take[0].start, " ".join(token.text for token in take)))
 
     for token in tokens:
         overlaps = any(token.start < end and start < token.end for start, end in ranges)

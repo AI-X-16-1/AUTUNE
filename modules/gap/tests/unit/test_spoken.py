@@ -111,15 +111,25 @@ def test_a_one_character_noun_alone_is_not_a_topic() -> None:
     assert labels(("응답", "ncpa"), ("시간", "ncn")) == ["응답 시간"]
 
 
-def test_a_long_list_still_yields_its_first_compound() -> None:
-    """A list read out loud is one unbroken noun run. Capped from the left, so
-    an over-long run is chunked rather than dropped."""
+def test_a_long_run_yields_its_first_compound_and_nothing_after_it() -> None:
+    """A list read out loud is one unbroken noun run, and the tail is dropped.
+
+    Cutting it into further chunks would put a node in the graph whose
+    boundary is the fourth token and nowhere the speaker paused — a label no
+    reader recognises, which is what a false gap gets raised on. Raised in
+    review of #222.
+    """
     spoken = [(f"명사{index}", "ncn") for index in range(MAX_TERM_TOKENS + 2)]
 
-    found = labels(*spoken)
+    assert labels(*spoken) == [" ".join(text for text, _ in spoken[:MAX_TERM_TOKENS])]
 
-    assert found[0] == " ".join(text for text, _ in spoken[:MAX_TERM_TOKENS])
-    assert all(len(label.split(" ")) <= MAX_TERM_TOKENS for label in found)
+
+def test_a_run_of_counters_is_not_a_topic() -> None:
+    """The length floor asks the run for one real noun, rather than assuming a
+    multi-token run has one. 주 and 번 are counters and neither is in the
+    stoplist. Raised in review of #222."""
+    assert labels(("주", "ncn"), ("번", "ncn")) == []
+    assert labels(("주", "ncn"), ("단위", "ncn")) == ["주 단위"]
 
 
 def test_a_span_an_entity_already_claimed_is_not_also_a_term() -> None:

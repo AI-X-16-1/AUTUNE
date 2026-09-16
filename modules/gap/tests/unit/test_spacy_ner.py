@@ -43,10 +43,10 @@ def topics_of(ner: SpacyNer, fixture: str) -> list[str]:
 def test_the_typical_meeting_is_about_what_it_discussed(ner: SpacyNer) -> None:
     """#13's completion criterion, and the reason ``spoken`` exists.
 
-    Before noun terms the five topics here were 실시간 → *nothing*, plus
-    오늘은, 한번, A, B and 다음 주 화요일까지: a graph about a one-letter
-    speaker and an adverb. The meeting is about real-time personalisation,
-    popularity sort and cold start.
+    Before noun terms the topics here were 오늘은, 한번, A, B and
+    다음 주 화요일까지 — a graph about a one-letter speaker, an adverb and
+    three dates, with no node for real-time personalisation, popularity sort or
+    cold start. Those three are what this adds.
     """
     found = topics_of(ner, "transcript_ready.typical")
 
@@ -63,6 +63,22 @@ def test_the_noise_the_model_finds_does_not_become_a_topic(ner: SpacyNer) -> Non
     assert "A" not in found
     assert "B" not in found
     assert "한번" not in found
+
+
+def test_a_date_is_still_a_topic_including_a_bare_one(ner: SpacyNer) -> None:
+    """Stated rather than left to be discovered: this pass does not filter dates.
+
+    오늘은 is a node, particle and all, while 오늘 is in ``STOP_TERMS`` and
+    could never arrive as a term — the same word is refused on one path and
+    taken on the other. That is not fixed here: a rule that drops 오늘은 while
+    keeping 다음 주 화요일까지, which is a deadline the meeting set, is not the
+    one-liner this PR could carry, and precision is worth an issue rather than
+    a guess. Raised in review of #222; the issue is #230.
+    """
+    found = topics_of(ner, "transcript_ready.typical")
+
+    assert "오늘은" in found
+    assert "다음 주 화요일까지" in found
 
 
 def test_a_short_meeting_has_topics_at_all(ner: SpacyNer) -> None:

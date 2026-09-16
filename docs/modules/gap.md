@@ -92,6 +92,11 @@ a 500MB pipeline is a judgement nobody tests.
   gives A and B as `PS`, and both became connected nodes. A `metric` with no
   digit in it is not a metric: `QT` on spoken Korean fires on 한번, 네, 좀.
   Precision is C's metric and a false topic is what a false gap is raised on.
+- **Dates are not filtered, and that is a known hole.** 오늘은 is still a node,
+  particle and all, while 오늘 sits in the noun-run stoplist — the same word
+  refused on one path and taken on the other. A rule that drops it while
+  keeping 다음 주 화요일까지, a deadline the meeting set and a value risk
+  scoring will read, is not a one-liner. Issue #230, raised in review of #222.
 
 **A term's kind stays undecided.** It carries the label `term`, the sixth in
 `ENTITY_LABELS`, which says "a compound the meeting named" and not which of
