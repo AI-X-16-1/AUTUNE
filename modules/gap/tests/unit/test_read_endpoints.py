@@ -369,6 +369,27 @@ def test_both_directions_of_a_symmetric_edge_come_back_strongest_first(
     assert {entry["relation"] for entry in edges} == {"co_occurs"}
 
 
+def test_two_relations_on_one_pair_come_back_in_a_fixed_order(
+    client: TestClient, session: Session
+) -> None:
+    """A pair may carry more than one relation, and equal weights must not fall
+    through to the scan order.
+
+    ``uq_gap_topic_edges`` is on (source, target, relation), so #32's triples
+    can sit beside the ``co_occurs`` edge of the same pair. Without the
+    relation in the sort key the two swap places between reads of one stored
+    graph. Raised in review of #220.
+    """
+    topic(session, "topic_a", label="A", centrality=1.0)
+    topic(session, "topic_b", label="B", centrality=0.6)
+    edge(session, "topic_a", "topic_b", weight=0.5, relation="depends_on")
+    edge(session, "topic_a", "topic_b", weight=0.5, relation="co_occurs")
+
+    edges = client.get(f"{PREFIX}/topics/{MEETING}").json()["edges"]
+
+    assert [entry["relation"] for entry in edges] == ["co_occurs", "depends_on"]
+
+
 def test_the_graph_holds_only_this_meeting(client: TestClient, session: Session) -> None:
     topic(session, "topic_here")
     topic(session, "topic_elsewhere_1", meeting_id=OTHER_MEETING)

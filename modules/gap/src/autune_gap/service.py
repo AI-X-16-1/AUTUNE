@@ -283,10 +283,18 @@ def topic_graph(session: Session, meeting_id: str) -> TopicGraphRead:
 
     Edges come back as stored, both directions of a symmetric relation
     included — ``schemas.TopicEdgeRead`` says why that is not collapsed here.
-    They are ordered strongest first, ties broken by where their endpoints sit
-    in the node order, because ``gap_topic_edges.id`` is an autoincrement that
-    a re-run reassigns: ordering by it would redraw the same graph in a
-    different order every time the meeting was reprocessed.
+    They are ordered strongest first, then by where their endpoints sit in the
+    node order, then by the relation, because ``gap_topic_edges.id`` is an
+    autoincrement that a re-run reassigns: ordering by it would redraw the same
+    graph in a different order every time the meeting was reprocessed.
+
+    The relation is part of the key rather than a leftover tie. Today
+    ``co_occurrence_edges`` writes one relation per direction and the first
+    three fields are already unique, but ``uq_gap_topic_edges`` allows
+    ``(a, b, "depends_on")`` beside ``(a, b, "co_occurs")`` and #32 is about to
+    write exactly that; with equal weights the tie would fall through to the
+    scan order, which is the shuffle this ordering exists to prevent. Raised in
+    review of #220.
 
     A meeting whose graph has not been built answers with empty lists. The
     caller has already established that the meeting exists; nothing analysed
@@ -296,7 +304,12 @@ def topic_graph(session: Session, meeting_id: str) -> TopicGraphRead:
     rank = {topic.id: index for index, topic in enumerate(topics)}
     edges = sorted(
         session.scalars(select(GapTopicEdge).where(GapTopicEdge.meeting_id == meeting_id)),
-        key=lambda edge: (-edge.weight, rank[edge.source_topic_id], rank[edge.target_topic_id]),
+        key=lambda edge: (
+            -edge.weight,
+            rank[edge.source_topic_id],
+            rank[edge.target_topic_id],
+            edge.relation,
+        ),
     )
     return TopicGraphRead(
         meeting_id=meeting_id,
