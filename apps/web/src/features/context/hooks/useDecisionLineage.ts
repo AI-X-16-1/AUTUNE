@@ -24,6 +24,8 @@ export function useDecisionLineage(threadId: string | null) {
     }
     let cancelled = false;
     setLoading(true);
+    setLineage(null);
+    setError(null);
     getDecisionThread(threadId)
       .then((result) => {
         if (!cancelled) {

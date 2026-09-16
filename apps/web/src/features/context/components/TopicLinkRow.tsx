@@ -25,44 +25,58 @@ export function TopicLinkRow({
   onDecide?: (linkId: number, status: "confirmed" | "rejected") => Promise<unknown>;
 }) {
   const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const dangling = link.linked_meeting_id === null;
 
   async function decide(status: "confirmed" | "rejected") {
     if (pending || !onDecide) return;
     setPending(true);
+    setError(null);
     try {
       await onDecide(link.id, status);
+    } catch {
+      setError("처리하지 못했습니다. 다시 시도해 주세요.");
     } finally {
       setPending(false);
     }
   }
 
   return (
-    <Row
-      dot={<StatusDot variant={link.status === "pending" ? "attention" : "confirmed"} hollow={link.status === "pending"} />}
-      title={link.topic_label}
-      meta={
-        dangling
-          ? "연결된 회의가 사라짐"
-          : `${link.linked_meeting_date} · 재순위 ${link.rerank_score.toFixed(2)}`
-      }
-      actions={
-        link.status === "pending" && onDecide ? (
-          <>
-            <Button tone="text" size="compact" disabled={pending} onClick={() => decide("confirmed")}>
-              연결 확인
-            </Button>
-            <Button
-              tone="quiet"
-              size="compact"
-              disabled={pending}
-              onClick={() => decide("rejected")}
-            >
-              아님
-            </Button>
-          </>
-        ) : undefined
-      }
-    />
+    <div>
+      <Row
+        dot={<StatusDot variant={link.status === "pending" ? "attention" : "confirmed"} hollow={link.status === "pending"} />}
+        title={link.topic_label}
+        meta={
+          dangling
+            ? "연결된 회의가 사라짐"
+            : `${link.linked_meeting_date?.slice(0, 10) ?? ""} · 재순위 ${link.rerank_score.toFixed(2)}`
+        }
+        actions={
+          link.status === "pending" && onDecide ? (
+            <>
+              <Button tone="text" size="compact" disabled={pending} onClick={() => decide("confirmed")}>
+                연결 확인
+              </Button>
+              <Button
+                tone="quiet"
+                size="compact"
+                disabled={pending}
+                onClick={() => decide("rejected")}
+              >
+                아님
+              </Button>
+            </>
+          ) : undefined
+        }
+      />
+      {error && (
+        <p
+          className="text-[var(--color-signal-critical)]"
+          style={{ fontSize: "var(--text-metaSmall)" }}
+        >
+          {error}
+        </p>
+      )}
+    </div>
   );
 }

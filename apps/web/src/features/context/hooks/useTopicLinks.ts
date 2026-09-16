@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useState } from "react";
 
+import { ApiError } from "@/shared/api/client";
+
 import { confirmLink, getLinks } from "../api";
 import type { TopicLinkRead } from "../types";
 
@@ -36,14 +38,26 @@ export function useTopicLinks(meetingId: string) {
     void reload();
   }, [reload]);
 
-  const decide = useCallback(async (linkId: number, status: "confirmed" | "rejected") => {
-    const updated = await confirmLink(linkId, status);
-    setPending((current) => current.filter((link) => link.id !== linkId));
-    if (status === "confirmed") {
-      setAsserted((current) => [...current, updated]);
-    }
-    return updated;
-  }, []);
+  const decide = useCallback(
+    async (linkId: number, status: "confirmed" | "rejected") => {
+      try {
+        const updated = await confirmLink(linkId, status);
+        setPending((current) => current.filter((link) => link.id !== linkId));
+        if (status === "confirmed") {
+          setAsserted((current) => [...current, updated]);
+        }
+        return updated;
+      } catch (cause) {
+        // Someone else already decided this link (409) — our copy of it is
+        // stale, not the request; refetch instead of leaving a dead row.
+        if (cause instanceof ApiError && cause.status === 409) {
+          void reload();
+        }
+        throw cause;
+      }
+    },
+    [reload],
+  );
 
   return { asserted, pending, loading, error, reload, decide };
 }

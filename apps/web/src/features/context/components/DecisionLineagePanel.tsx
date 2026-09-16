@@ -16,7 +16,7 @@ import { useDecisionThreads } from "../hooks/useDecisionThreads";
 export function DecisionLineagePanel({ teamId }: { teamId: string }) {
   const { threads, loading, error } = useDecisionThreads({ team_id: teamId });
   const [selected, setSelected] = useState<string | null>(null);
-  const { lineage, loading: lineageLoading } = useDecisionLineage(selected);
+  const { lineage, loading: lineageLoading, error: lineageError } = useDecisionLineage(selected);
 
   return (
     <div className="grid gap-6 md:grid-cols-[minmax(0,280px)_1fr]">
@@ -38,6 +38,7 @@ export function DecisionLineagePanel({ teamId }: { teamId: string }) {
           <button
             key={thread.thread_id}
             type="button"
+            aria-current={thread.thread_id === selected}
             onClick={() => setSelected(thread.thread_id)}
             className="block w-full text-left"
           >
@@ -62,7 +63,15 @@ export function DecisionLineagePanel({ teamId }: { teamId: string }) {
             불러오는 중…
           </p>
         )}
-        {lineage !== null && (
+        {lineageError && !lineageLoading && (
+          <p
+            className="text-[var(--color-signal-critical)]"
+            style={{ fontSize: "var(--text-rowBody)" }}
+          >
+            타임라인을 불러오지 못했습니다.
+          </p>
+        )}
+        {lineage !== null && !lineageLoading && (
           <>
             <header
               className="mb-4 flex items-baseline gap-2 text-[var(--color-ink-strong)]"
