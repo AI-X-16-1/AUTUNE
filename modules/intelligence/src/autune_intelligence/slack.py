@@ -22,11 +22,16 @@ log = get_logger(__name__)
 def register(app: App) -> None:
     """Attach this module's Slack handlers.
 
-    # The speaking-ratio DM goes through SlackClient.send_personal, which
-    # refuses any recipient but the subject and refuses a channel outright.
-    # See docs/architecture/privacy.md section 3.
+    E's Slack surface is outbound-only right now: weekly report, prediction
+    warnings, and the speaking-ratio DM (see docs/modules/intelligence.md).
+    None of them carry an interactive component yet — feedback.py's DM has no
+    buttons on purpose (a working opt-out needs a handler plus stored state,
+    which is a separate change). So there is nothing to attach here.
+
+    The speaking-ratio DM goes through SlackClient.send_personal, which
+    refuses any recipient but the subject and refuses a channel outright. See
+    docs/architecture/privacy.md section 3.
 
     A module with nothing to register leaves this as a no-op; apps/bot calls it
     either way so no one has to edit the app to add a handler later.
     """
-    # TODO(이승환): register commands, actions and views for this module.
