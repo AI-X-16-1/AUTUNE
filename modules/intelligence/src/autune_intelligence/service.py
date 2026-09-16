@@ -47,6 +47,8 @@ from .models import (
     IntelReport,
     IntelScore,
 )
+from .pipeline import get_gap_classifier
+from .pipeline.base import Classification
 from .schemas import DashboardRead, DashboardScoreEntry, HeatmapCell, SpeakingRatioRead
 from .speaking import SpeakingShare, SpeechSegment, speaker_count_for_gate, speaking_shares
 
@@ -130,10 +132,6 @@ WEIGHTS: Final = {
 }
 GRADE_CUTOFFS: Final = ((0.9, "A"), (0.8, "B"), (0.7, "C"), (0.6, "D"), (0.5, "E"))
 """Descending; value below the last cutoff is F. First heuristic — P2 tunes these."""
-
-_MAX_PATTERN_TYPE: Final = 100
-"""``Gap.category`` has no length limit but ``intel_gap_patterns.pattern_type`` is
-``String(100)`` and part of the PK; truncate before it reaches the table."""
 
 
 def _decision_density(decision_count: int, duration_minutes: float) -> float | None:
@@ -243,9 +241,19 @@ def aggregate_meeting(session: Session, meeting_id: str) -> IntelligenceSnapshot
     }
     score = _quality_score(components)
 
-    distribution = (
-        dict(Counter(g.category[:_MAX_PATTERN_TYPE] for g in gap.gaps)) if gap is not None else {}
-    )
+    classifications: list[Classification] = []
+    classifier_version = ""
+    if gap is not None and gap.gaps:
+        classifier = get_gap_classifier()
+        # Title only, not "{category} {title}": the seed set the local classifier
+        # trains on is title-shaped text, and C's category is free text whose
+        # vocabulary is not stable across meetings (the whole reason this
+        # classifier exists) — prepending it measurably drags classification
+        # confidence down on inputs the model never trained on that shape.
+        classifications = classifier.classify([g.title for g in gap.gaps])
+        classifier_version = classifier.model_version
+    pattern_types = [c.pattern_type for c in classifications]
+    distribution = dict(Counter(pattern_types))
 
     session.execute(
         pg_insert(IntelScore)
@@ -278,19 +286,45 @@ def aggregate_meeting(session: Session, meeting_id: str) -> IntelligenceSnapshot
 
     session.execute(sa.delete(IntelGapPattern).where(IntelGapPattern.meeting_id == meeting_id))
     if gap is not None:
-        ids_by_category: dict[str, list[str]] = {}
-        for g in gap.gaps:
-            category = g.category[:_MAX_PATTERN_TYPE]
-            ids_by_category.setdefault(category, []).append(g.id)
-        for category, count in distribution.items():
+        ids_by_pattern: dict[str, list[str]] = {}
+        confidences_by_pattern: dict[str, list[float]] = {}
+        for g, classification in zip(gap.gaps, classifications, strict=True):
+            ids_by_pattern.setdefault(classification.pattern_type, []).append(g.id)
+            confidences_by_pattern.setdefault(classification.pattern_type, []).append(
+                classification.confidence
+            )
+        avg_confidence_by_pattern = {
+            pattern_type: sum(confidences) / len(confidences)
+            for pattern_type, confidences in confidences_by_pattern.items()
+        }
+        for pattern_type, count in distribution.items():
             session.add(
                 IntelGapPattern(
                     meeting_id=meeting_id,
-                    pattern_type=category,
+                    pattern_type=pattern_type,
                     team_id=meeting.team_id,
                     count=count,
-                    source_gap_ids=ids_by_category[category],
+                    source_gap_ids=ids_by_pattern[pattern_type],
+                    classifier_version=classifier_version,
+                    avg_confidence=avg_confidence_by_pattern[pattern_type],
                 )
+            )
+        if distribution:
+            # Counts and a mean confidence per pattern type — no gap content,
+            # so this carries no transcript text (privacy.md is not implicated)
+            # — the only way to notice from outside a training run that a
+            # distribution has quietly collapsed onto "other".
+            log.info(
+                "intelligence_gap_pattern_distribution",
+                meeting_id=meeting_id,
+                classifier_version=classifier_version,
+                distribution={
+                    pattern_type: {
+                        "count": count,
+                        "avg_confidence": round(avg_confidence_by_pattern[pattern_type], 4),
+                    }
+                    for pattern_type, count in distribution.items()
+                },
             )
 
     row.aggregated_at = datetime.now(UTC)

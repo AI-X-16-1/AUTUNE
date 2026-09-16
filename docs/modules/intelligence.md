@@ -58,8 +58,20 @@ See `../architecture/async-pipeline.md`.
    `ContextLinks` has arrived.
 2. **Quality score** — grade A–F from decision density, gap count, action-item
    completion rate, and participation balance.
-3. **Gap classification** — SetFit classifies gaps into recurring pattern types
-   from few labeled examples.
+3. **Gap classification** — SetFit classifies each gap's `Gap.title` (not
+   `Gap.category` — C's category is free text whose vocabulary is not stable
+   across meetings, the reason this step exists at all, and mixing it into the
+   classified text measurably hurts confidence on inputs the seed set never
+   trained on that shape) into one of a fixed pattern-type vocabulary
+   (`pipeline.base.PATTERN_TYPES`). `intel_gap_patterns` records which
+   classifier version produced each row and the mean confidence over that
+   pattern's gaps (`avg_confidence`). Selected by
+   `AUTUNE_INTELLIGENCE_GAP_CLASSIFIER_IMPL` (`local` or `fake`); `local` fits
+   its few-shot head from a seed example set checked into `pipeline.classifier`,
+   not an evaluated corpus — revisit once real `GapReport` traffic exists to
+   check it against. `AUTUNE_INTELLIGENCE_WARM_MODELS_ON_WORKER_INIT` fits that
+   head at worker startup instead of inside a meeting's aggregation lock. See
+   `docs/engineering/environments.md`.
 4. **Alignment** — pairwise cross-role agreement, producing the heatmap.
 5. **Prediction** — XGBoost for misalignment risk, Prophet for trend
    forecasting.

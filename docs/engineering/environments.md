@@ -122,6 +122,10 @@ prefix `AUTUNE_<MODULE>_`.
 | `AUTUNE_CONTEXT_LINEAGE_MATCH_THRESHOLD` | D | Decision-to-thread match cutoff (cosine). Default `0.6`, tuned in eval |
 | `AUTUNE_CONTEXT_PUBLISH_TIMEOUT_S` | D | Wait for B before publishing. Default `600` |
 | `AUTUNE_CONTEXT_WARM_MODELS_ON_WORKER_INIT` | D | `true` only on workers consuming `cpu_heavy`. Default `false` |
+| `AUTUNE_INTELLIGENCE_AGGREGATE_TIMEOUT_SECONDS` | E | Wait for B/C/D before aggregating without the rest. Default `600` |
+| `AUTUNE_INTELLIGENCE_GAP_CLASSIFIER_IMPL` | E | `local` (default) · `fake`. **No `external`, no `hosted`** — see below |
+| `AUTUNE_INTELLIGENCE_GAP_CLASSIFIER_BACKBONE` | E | Sentence-embedding backbone SetFit fits its few-shot head onto. Default `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` |
+| `AUTUNE_INTELLIGENCE_WARM_MODELS_ON_WORKER_INIT` | E | `true` only on workers consuming gap-classification tasks. Default `false` |
 
 Notion, Jira and Calendar credentials are **not** environment variables. Each
 team configures its own on screen S28 and they are stored encrypted in
@@ -210,6 +214,36 @@ version travels with the rows it produced.
 Without the extra the extractor raises a `RuntimeError` naming the command —
 the default implementation failing with `No module named 'spacy'` tells the
 reader nothing about the extra existing.
+
+### The gap classifier has no external or hosted option
+
+`AUTUNE_INTELLIGENCE_GAP_CLASSIFIER_IMPL` accepts `local` and `fake`, and
+nothing else. It classifies gaps across a team's whole meeting history —
+exactly the aggregation section 3 of `../architecture/privacy.md` asks module
+E to be careful with — so an external implementation is a design conversation,
+not a config value. That much is the same reasoning modules B and C give for
+ruling out `external` on their own model-facing settings; it says nothing
+about `hosted`, which B does have (`AUTUNE_EXTRACTION_CLASSIFIER_IMPL` above).
+
+E has no `hosted` for an unrelated reason: unlike B's classifier or C's NER
+model, there is no separate checkpoint to pin and no inference server to point
+at. `local` is SetFit, which fits a small classification head on top of a
+general sentence-embedding backbone (`AUTUNE_INTELLIGENCE_GAP_CLASSIFIER_BACKBONE`)
+from a handful of labeled examples checked into
+`autune_intelligence.pipeline.classifier`, refit once per process on first use.
+There is nothing to host — "the checkpoint" is the backbone name plus that
+seed set, both already in the repo. The examples are a seed set nobody has
+evaluated against real `GapReport` traffic yet — see that module's docstring
+before trusting the distribution it produces.
+
+It needs a library and a backbone download, both from the optional extra:
+
+```bash
+uv sync --package autune-intelligence --extra local-models
+```
+
+Without the extra the classifier raises a `RuntimeError` naming this command,
+the same shape B's and C's local implementations use.
 
 ## Secrets
 

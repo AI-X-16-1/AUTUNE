@@ -24,6 +24,36 @@ class IntelligenceSettings(BaseSettings):
     slowest module gets the least slack — and B is the heaviest (per-utterance
     LLM calls). Revisit this number once B's pipeline has real timings (#10)."""
 
+    gap_classifier_impl: str = "local"
+    """Which gap-pattern classifier to run: ``local`` or ``fake``.
+
+    No ``external`` and no ``hosted``. A cross-meeting classifier is exactly
+    the aggregation ``privacy.md`` section 3 asks this module to be careful
+    with — see ``pipeline.base``."""
+
+    gap_classifier_backbone: str = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+    """The sentence-embedding backbone SetFit fits its few-shot head onto, for
+    ``gap_classifier_impl=local``. Multilingual because meeting titles are
+    Korean (``docs/product/glossary.md``) but ``Gap.category`` in C's fixture
+    is English (`packages/contracts/.../fixtures/gap_report.json`) — nothing
+    guarantees C settles on one language before this is built.
+
+    A name, not a pinned revision — ``SetFitGapClassifier.model_version``
+    doesn't need a hub commit hash the way module B's checkpoint does, because
+    nothing here is fine-tuned and redistributed; the head is refit from
+    ``pipeline.classifier._SEED_EXAMPLES`` every process start."""
+
+    warm_models_on_worker_init: bool = False
+    """Set only on workers that actually consume gap-classification tasks.
+
+    Without this, the first ``aggregate_meeting`` call in a new worker process
+    pays SetFit's fit-the-head cost (seconds, plus a backbone download) inside
+    the transaction that holds the ``intel_completion`` row lock, delaying a
+    concurrent late-source ``reopen`` on the same meeting. Mirrors module D's
+    ``AUTUNE_CONTEXT_WARM_MODELS_ON_WORKER_INIT`` — same reasoning, see
+    ``pipeline.__init__``. Only affects ``gap_classifier_impl=local``;
+    ``fake`` has nothing to warm."""
+
 
 @lru_cache
 def get_settings() -> IntelligenceSettings:
