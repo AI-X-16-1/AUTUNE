@@ -88,6 +88,26 @@ constraint, not a configurable option.
 Module E's aggregate metrics — quality score, alignment heatmap, gap
 distribution — are team-level and contain no per-person speech volume.
 
+**Stance is the same kind of data.** Who backed a decision and who raised a
+concern about it is a per-person record of behaviour in a meeting; visible to a
+manager, it answers "who pushed back", which is the same surveillance shape as
+speaking ratio. So:
+
+- No contract, table, endpoint, dashboard, report or export carries one person's
+  stance on a decision — not by participant id, not by user id, not by name.
+- Stance crosses a module boundary only as counts per role
+  (`Decision.stance_by_role`, added in #232), and a role is included only when
+  at least **three** identified people held it at the meeting. In a small team
+  a role is a person. The contract enforces the three
+  (`STANCE_MIN_IDENTIFIED_PER_ROLE`); do not re-derive a lower number
+  downstream.
+- A consumer that aggregates stance over several meetings leaves a cell empty
+  when its sample is too small, rather than showing a number that identifies the
+  few people behind it.
+
+Three is the same number module E already requires before it delivers speaking
+ratios for a meeting (`_MIN_SPEAKERS_FOR_RATIO`, #128). Decided on #168.
+
 ## 4. Retention and deletion
 
 - Analysis results are retained **90 days** by default, adjustable per team.
@@ -136,6 +156,8 @@ Reject a pull request that does any of the following:
 - [ ] Puts transcript text in an exception message
 - [ ] Returns another person's speaking ratio through any surface
 - [ ] Stores per-person speaking ratios
+- [ ] Records, returns or exports one person's stance on a decision, or reports
+      stance for a role below three identified people
 - [ ] Adds a table with no path to deletion by `meeting_id` or `user_id`
 - [ ] Uses a soft delete for content
 - [ ] Sends more data to a third party than the feature requires
