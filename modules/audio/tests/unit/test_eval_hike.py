@@ -16,7 +16,14 @@ import pyarrow.parquet as pq
 import pytest
 import soundfile as sf
 
-from autune_audio.eval.hike import select_sample_ids, utterances
+from autune_audio.eval.hike import (
+    HikeLabels,
+    labels,
+    score,
+    select_sample_ids,
+    summarise,
+    utterances,
+)
 
 
 def _wav(seconds: float, sample_rate: int = 16_000) -> bytes:
@@ -104,3 +111,88 @@ class TestSelectSampleIds:
         path = _write(tmp_path / "hike.parquet", [_row("a", "word"), _row("b", "phrase")])
 
         assert sorted(select_sample_ids(path, limit=None, seed=0)) == ["a", "b"]
+
+
+class TestLabels:
+    def test_labels_come_without_audio(self, tmp_path: Path) -> None:
+        """Scoring predictions made elsewhere needs the text, not 235 MB of WAV."""
+        path = _write(tmp_path / "hike.parquet", [_row("a", "word")])
+
+        (row,) = labels(path)
+
+        assert isinstance(row, HikeLabels)
+        assert not hasattr(row, "waveform")
+        assert row.loanwords == (("버그", "bug"), ("세션", "session"))
+
+
+def _labels(sample_id: str, cs_level: str = "word", category: str = "business") -> HikeLabels:
+    return HikeLabels(
+        sample_id=sample_id,
+        reference="이번 bug는 session에 문제가 있었어",
+        reference_labeled="<tag 이번> <tag bug> <tag 는> <tag session> <tag 에> 문제가 있었어",
+        cs_level=cs_level,
+        category=category,
+        loanwords=(("버그", "bug"), ("세션", "session")),
+    )
+
+
+class TestScore:
+    def test_a_perfect_hypothesis_scores_zero_everywhere(self) -> None:
+        scored = score(_labels("a"), "이번 bug는 session에 문제가 있었어", seconds=2.0, elapsed=1.0)
+        assert (scored.mer.mer, scored.pier.pier, scored.cer_normalised.cer) == (0.0, 0.0, 0.0)
+        assert scored.sample_id == "a"
+        assert (scored.seconds, scored.elapsed) == (2.0, 1.0)
+
+    def test_the_loanword_list_reaches_mer_and_pier_but_not_cer(self) -> None:
+        """CER is our metric, kept comparable with evaluation 01; MER and PIER are
+        HiKE's, and HiKE forgives the Korean spelling."""
+        scored = score(_labels("a"), "이번 버그는 세션에 문제가 있었어", seconds=2.0, elapsed=1.0)
+        assert (scored.mer.mer, scored.pier.pier) == (0.0, 0.0)
+        assert scored.cer_normalised.cer > 0.0
+
+    def test_raw_cer_sees_the_punctuation_that_normalised_cer_does_not(self) -> None:
+        scored = score(
+            _labels("a"), "이번 Bug는 session에 문제가 있었어.", seconds=2.0, elapsed=1.0
+        )
+        assert scored.cer_raw.cer > 0.0
+        assert scored.cer_normalised.cer == 0.0
+
+
+class TestSummarise:
+    def test_groups_are_means_of_per_utterance_scores_as_hike_reports_them(self) -> None:
+        scores = [
+            score(
+                _labels("a", "word", "business"),
+                "이번 bug는 session에 문제가 있었어",
+                seconds=2.0,
+                elapsed=1.0,
+            ),
+            score(
+                _labels("b", "word", "medical"),
+                "이번 bug는 session에 문제가 있었다",
+                seconds=2.0,
+                elapsed=3.0,
+            ),
+            score(
+                _labels("c", "phrase", "business"),
+                "이번 버그는 세션에 문제가 있었어",
+                seconds=4.0,
+                elapsed=4.0,
+            ),
+        ]
+
+        summary = summarise(scores)
+
+        assert summary["all"]["n"] == 3
+        assert summary["all"]["seconds"] == 8.0
+        assert summary["all"]["rtf"] == pytest.approx(8.0 / 8.0)
+        # b: one syllable wrong out of 12 mixed tokens; a and c are 0 on MER.
+        assert summary["all"]["mer"] == pytest.approx((0 + 1 / 12 + 0) / 3)
+        assert summary["by_cs_level"]["word"]["n"] == 2
+        assert summary["by_cs_level"]["phrase"]["n"] == 1
+        assert summary["by_category"]["business"]["n"] == 2
+        assert summary["by_cs_level"]["word"]["rtf"] == pytest.approx(4.0 / 4.0)
+
+    def test_an_empty_run_is_refused(self) -> None:
+        with pytest.raises(ValueError):
+            summarise([])
