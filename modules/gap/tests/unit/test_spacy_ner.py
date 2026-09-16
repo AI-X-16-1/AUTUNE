@@ -83,6 +83,53 @@ def test_a_masked_span_is_never_a_topic(ner: SpacyNer) -> None:
     assert not any("*" in label for label in found)
 
 
+def test_a_span_the_module_refuses_is_not_re_emitted_as_a_term(ner: SpacyNer) -> None:
+    """``LC`` and ``OG`` are dropped by design, so their characters are spoken
+    for even though no entity comes back.
+
+    Without that, 카카오 API 연동 puts the vendor the module just refused back in
+    the graph as a term, and 강남 회의실 makes a node out of a meeting room.
+    Raised in review of #222.
+    """
+    found = ner.extract(
+        [
+            ("utt_1", "카카오 API 연동 얘기는 다음에 하죠"),
+            ("utt_2", "강남 회의실에서 검색 개인화 기능 리뷰합니다"),
+        ]
+    )
+    labels = [entity.text for entity in found]
+
+    assert labels == ["연동", "검색 개인화 기능"]
+
+
+def test_spacing_does_not_split_a_compound(ner: SpacyNer) -> None:
+    """ASR output and pasted text both carry double spaces, and a space token is
+    not a noun — it would flush the run. Raised in review of #222."""
+    spaced = ner.extract([("utt_1", "검색  개인화 기능 이번 스프린트에서 진행하겠습니다")])
+    single = ner.extract([("utt_1", "검색 개인화 기능 이번 스프린트에서 진행하겠습니다")])
+
+    assert [entity.text for entity in spaced] == [entity.text for entity in single]
+    assert [entity.text for entity in single] == ["검색 개인화 기능"]
+
+
+def test_a_demonstrative_this_model_tags_as_a_common_noun_is_still_broken(
+    ner: SpacyNer,
+) -> None:
+    """``ko_core_news_lg`` tags 그거 ``ncn``, not ``npd``, so the tag rule alone
+    would join it to the compound beside it and split 검색 기능 in two."""
+    found = ner.extract([("utt_1", "그거 검색 기능 다시 볼게요")])
+
+    assert [entity.text for entity in found] == ["검색 기능"]
+
+
+def test_a_quantity_the_model_finds_does_not_also_become_a_term(ner: SpacyNer) -> None:
+    """두 가지 is a ``QT`` span with no digit in it: dropped as a metric, and
+    claimed so the noun run starts after it."""
+    found = ner.extract([("utt_1", "두 가지 방법 중에 고르죠")])
+
+    assert [(entity.label, entity.text) for entity in found] == [("term", "방법")]
+
+
 def test_the_version_is_the_name_and_the_version(ner: SpacyNer) -> None:
     """Recorded on every row as ``gap_topics.extractor_version``; the name alone
     could not tell a graph built with 3.7 from one built with 3.8."""

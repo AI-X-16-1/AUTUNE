@@ -150,21 +150,30 @@ class SpacyNer:
             spans: list[tuple[int, str, str]] = []
             claimed: list[tuple[int, int]] = []
             for span in doc.ents:
+                # Claimed before anything can reject it. A span this module
+                # drops — an implausible one-letter person, a ``LC`` meeting
+                # room, an ``OG`` vendor — is still spoken for, and letting a
+                # noun run swallow it would put the rejection straight back in
+                # the graph under another name: 강남 회의실 and 카카오 API 연동
+                # are exactly the nodes ``_IGNORED_LABELS`` exists to refuse.
+                # Raised in review of #222.
+                claimed.append((span.start_char, span.end_char))
                 label = _SPACY_LABELS.get(span.label_)
                 if label is None:
                     self._note_unaccounted(span.label_)
                     continue
-                # Claimed whether or not it is plausible: a span the model read
-                # as a one-letter person is still spoken for, and letting a
-                # noun run swallow it would put the rejection back in the graph
-                # under another name.
-                claimed.append((span.start_char, span.end_char))
                 if is_plausible(label, span.text):
                     spans.append((span.start_char, span.text, label))
 
+            # Whitespace is skipped rather than passed through: a space token
+            # is not a noun, so it would flush the run, and "검색  개인화 기능"
+            # with a double space — which ASR output and pasted text both
+            # carry — would become two topics where single spacing makes one.
+            # Raised in review of #222.
             tokens = [
                 Token(text=token.text, tag=token.tag_, start=token.idx, end=token.idx + len(token))
                 for token in doc
+                if not token.is_space
             ]
             spans.extend((start, term, "term") for start, term in noun_terms(tokens, claimed))
 

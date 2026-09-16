@@ -38,8 +38,8 @@ def labels(*tagged: tuple[str, str]) -> list[str]:
 # --- which tokens are nouns at all ------------------------------------------
 
 
-@pytest.mark.parametrize("tag", ["ncn", "ncpa", "nq", "nbn", "ncpa+xsn", "ncn+ncn", "f"])
-def test_a_bare_noun_is_a_noun_and_its_noun_forming_suffix(tag: str) -> None:
+@pytest.mark.parametrize("tag", ["ncn", "ncpa", "nq", "ncpa+xsn", "ncn+ncn", "f"])
+def test_a_content_noun_is_a_noun_and_its_noun_forming_suffix(tag: str) -> None:
     assert is_bare_noun(tag)
 
 
@@ -48,6 +48,34 @@ def test_a_token_carrying_grammar_is_not_a_noun(tag: str) -> None:
     """A particle or an ending makes the token a phrase, and joining it into a
     label puts "개인화로" in a report where "개인화" belongs."""
     assert not is_bare_noun(tag)
+
+
+@pytest.mark.parametrize("tag", ["npd", "npp", "nnc", "nno", "nbn"])
+def test_a_pronoun_a_numeral_and_a_bound_noun_are_not_content(tag: str) -> None:
+    """Matching here means *joining* a run, so these have to fail it.
+
+    그거 is two characters and clears the length floor, and it is in most
+    spoken utterances — it would be a node of nearly every meeting. Raised in
+    review of #222.
+    """
+    assert not is_bare_noun(tag)
+
+
+def test_a_demonstrative_does_not_join_the_compound_beside_it() -> None:
+    """ "그거 검색 기능" as one run makes a second ``topic_key`` for the topic
+    the meeting calls 검색 기능 everywhere else.
+
+    Both spellings are covered on purpose. The tag rule stops the pronoun the
+    tagset describes, and the stoplist stops the one this model actually
+    emits — ``ko_core_news_lg`` tags 그거 ``ncn``, so the tag rule alone lets it
+    through. Measured, not assumed.
+    """
+    assert labels(("그거", "npd"), ("검색", "ncpa"), ("기능", "ncn")) == ["검색 기능"]
+    assert labels(("그거", "ncn"), ("검색", "ncpa"), ("기능", "ncn")) == ["검색 기능"]
+
+
+def test_a_quantity_is_not_a_topic() -> None:
+    assert labels(("두", "nnc"), ("가지", "nbn"), ("방법", "ncn")) == ["방법"]
 
 
 # --- the runs that become topics --------------------------------------------
@@ -118,7 +146,7 @@ def test_nothing_is_found_in_a_sentence_with_no_nouns() -> None:
 def test_the_stoplist_holds_only_what_speech_repeats() -> None:
     """Every entry is a topic the graph can no longer raise a gap about, which
     is the expensive direction — so the list stays short and single words."""
-    assert len(STOP_TERMS) < 40
+    assert len(STOP_TERMS) < 50
     assert all(" " not in term for term in STOP_TERMS)
 
 

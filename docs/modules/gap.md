@@ -69,13 +69,25 @@ Two things came out of it, both in `pipeline.spoken` as pure functions — the
 same reason `graph` is pure: a judgement that can only be exercised by loading
 a 500MB pipeline is a judgement nobody tests.
 
-- **Noun terms.** A maximal run of bare-noun tokens is the compound the speaker
-  said, and that is what the graph needs a node for. The run is read from the
-  morpheme tag (`ncn+jxt`) rather than the coarse part of speech, which calls
-  개인화로 an adverb; a particle, an ending or a stopword breaks the run, so the
-  label is 개인화 and not 개인화로. A span an entity already claimed is not also
-  a term — one character belongs to at most one thing, the rule `FakeNer`
-  already follows.
+- **Noun terms.** A maximal run of content-noun tokens is the compound the
+  speaker said, and that is what the graph needs a node for. The run is read
+  from the morpheme tag (`ncn+jxt`) rather than the coarse part of speech,
+  which calls 개인화로 an adverb; a particle, an ending or a stopword breaks the
+  run, so the label is 개인화 and not 개인화로. Content noun means common,
+  proper and foreign (`nc*`, `nq`, `f`) and **not** pronoun, numeral or bound
+  noun: matching joins a run rather than breaking it, so letting 그거 or 두 in
+  would give a node called 그거 검색 기능 and split the topic the meeting calls
+  검색 기능 everywhere else. The tag rule is not enough on its own — this model
+  tags 그거 as a common noun — so the demonstratives sit in the stoplist,
+  measured rather than assumed.
+- **A span the model found is claimed whether or not we keep it.** An
+  implausible one-letter person, an `LC` meeting room, an `OG` vendor: the
+  characters are spoken for, so a refusal cannot come back as a term under
+  another name (강남 회의실, 카카오 API 연동). One character belongs to at most
+  one thing, the rule `FakeNer` already follows. Whitespace tokens are skipped
+  rather than passed through, or a double space — which ASR output carries —
+  would split a compound the same meeting says as one topic elsewhere. Both
+  raised in review of #222.
 - **Two precision filters.** A one-character `person` is not a person: A/B 결과
   gives A and B as `PS`, and both became connected nodes. A `metric` with no
   digit in it is not a metric: `QT` on spoken Korean fires on 한번, 네, 좀.
