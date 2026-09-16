@@ -13,7 +13,7 @@ shapes by inserting rows directly.
 from __future__ import annotations
 
 from collections.abc import Iterator
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 
 import pytest
 from fastapi import FastAPI, Request
@@ -169,6 +169,7 @@ def test_dashboard_is_empty_for_a_team_with_no_scored_meetings(
         "team_id": team,
         "meeting_count": 0,
         "average_score": None,
+        "average_grade": None,
         "action_item_completion_rate": None,
         "recent_scores": [],
         "gap_distribution": {},
@@ -207,6 +208,48 @@ def test_dashboard_rolls_up_scores_and_gap_patterns_for_the_team(
 
     assert body["meeting_count"] == 2
     assert body["average_score"] == pytest.approx(0.75)
+    assert body["average_grade"] == "C"
     assert body["action_item_completion_rate"] == pytest.approx(0.4)
     assert [s["grade"] for s in body["recent_scores"]] == ["A", "C"]
     assert body["gap_distribution"] == {"ownership": 3}
+
+
+def test_dashboard_average_grade_is_none_without_any_scores(client: TestClient, team: str) -> None:
+    assert client.get(f"/api/intelligence/dashboard/{team}").json()["average_grade"] is None
+
+
+def test_dashboard_recent_scores_excludes_meetings_older_than_the_trend_window(
+    client: TestClient, db_session: Session, team: str
+) -> None:
+    from autune_core import Meeting
+
+    old = Meeting(team_id=team, title="old")
+    recent = Meeting(team_id=team, title="recent")
+    db_session.add_all([old, recent])
+    db_session.flush()
+    now = datetime.now(UTC)
+    _score(db_session, old.id, team, value=0.5, created_at=now - timedelta(weeks=9))
+    _score(db_session, recent.id, team, value=0.9, created_at=now - timedelta(weeks=1))
+    db_session.flush()
+
+    body = client.get(f"/api/intelligence/dashboard/{team}").json()
+
+    assert body["meeting_count"] == 2
+    assert body["average_score"] == pytest.approx(0.7)
+    assert [s["meeting_id"] for s in body["recent_scores"]] == [recent.id]
+
+
+def test_dashboard_recent_scores_carry_created_at_for_weekly_bucketing(
+    client: TestClient, db_session: Session, team: str
+) -> None:
+    from autune_core import Meeting
+
+    m = Meeting(team_id=team, title="m0")
+    db_session.add(m)
+    db_session.flush()
+    _score(db_session, m.id, team, created_at=datetime(2026, 9, 1, 12, 0, tzinfo=UTC))
+    db_session.flush()
+
+    body = client.get(f"/api/intelligence/dashboard/{team}").json()
+
+    assert body["recent_scores"][0]["created_at"] == "2026-09-01T12:00:00Z"
