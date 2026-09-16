@@ -61,7 +61,19 @@ _R: Final = rf"(?![{_EDGE}])"
 # so a phone number, a registration number and a card number each passed the
 # guard in an ordinary written form. Horizontal space only -- `\s` would let a
 # match run across a line break and join two unrelated numbers.
-_SEP: Final = r"[ \t]*[-.–—()]?[ \t]*"
+#
+# The shape of the expression matters as much as its characters. Written as
+# `[ \t]*[-.–—)]?[ \t]*`, the two space runs share the same spaces when there
+# is no separator between them, and the engine tries every split of a run of n
+# spaces before giving up: quadratic per start position, between a third of a
+# second and a second for a digit followed by ten thousand spaces, which is
+# what Whisper emits on a silent stretch, and per pattern. The second run is
+# allowed only *after* a separator, so a run of spaces has one parse.
+#
+# `)` alone, not `()`: an opening parenthesis stands before a number
+# (`(02)123-4567` starts matching at the `0`), never between its groups, and a
+# character in this class is one more thing that can join two groups.
+_SEP: Final = r"[ \t]*(?:[-.–—)][ \t]*)?"
 
 # The account catch-all keeps the narrow one, and this is the whole reason the
 # two exist separately. `account` is three groups of two-to-six digits, which is
