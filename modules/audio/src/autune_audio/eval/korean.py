@@ -19,6 +19,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+from .alignment import count, edit_ops
+
 _PUNCT = re.compile(r"[.,!?;:~…·\"'“”‘’()\[\]<>《》「」『』]")
 _SPACE = re.compile(r"\s+")
 # Hesitation forms, listed from what speakers actually produced in the module A
@@ -151,46 +153,12 @@ def character_error_rate(reference: str, hypothesis: str) -> CharacterErrorRate:
     if not ref:
         raise ValueError("reference is empty; character error rate is undefined")
 
-    rows, cols = len(ref) + 1, len(hyp) + 1
-    cost = [[0] * cols for _ in range(rows)]
-    ops: list[list[str]] = [[""] * cols for _ in range(rows)]
-    for i in range(1, rows):
-        cost[i][0], ops[i][0] = i, "D"
-    for j in range(1, cols):
-        cost[0][j], ops[0][j] = j, "I"
-
-    for i in range(1, rows):
-        for j in range(1, cols):
-            if ref[i - 1] == hyp[j - 1]:
-                cost[i][j], ops[i][j] = cost[i - 1][j - 1], "="
-                continue
-            substitute, delete, insert = (
-                cost[i - 1][j - 1] + 1,
-                cost[i - 1][j] + 1,
-                cost[i][j - 1] + 1,
-            )
-            best = min(substitute, delete, insert)
-            cost[i][j] = best
-            ops[i][j] = "S" if best == substitute else ("D" if best == delete else "I")
-
-    counts = {"S": 0, "D": 0, "I": 0}
-    i, j = len(ref), len(hyp)
-    while i or j:
-        op = ops[i][j]
-        if op in counts:
-            counts[op] += 1
-        if op in ("=", "S"):
-            i, j = i - 1, j - 1
-        elif op == "D":
-            i -= 1
-        else:
-            j -= 1
-
+    substitutions, deletions, insertions = count(edit_ops(ref, hyp))
     return CharacterErrorRate(
-        cer=(counts["S"] + counts["D"] + counts["I"]) / len(ref),
-        substitutions=counts["S"],
-        deletions=counts["D"],
-        insertions=counts["I"],
+        cer=(substitutions + deletions + insertions) / len(ref),
+        substitutions=substitutions,
+        deletions=deletions,
+        insertions=insertions,
         reference_characters=len(ref),
     )
 
