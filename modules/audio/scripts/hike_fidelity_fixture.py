@@ -230,7 +230,7 @@ def main(paths: list[str]) -> None:
     fixture = {
         "_about": (
             "Rows from thetaone-ai/HiKE (https://huggingface.co/datasets/thetaone-ai/HiKE, "
-            "Apache-2.0; Lee et al., EACL Findings 2026) with "
+            "Apache-2.0; Paik et al., EACL Findings 2026, arXiv 2509.24613) with "
             "hypotheses produced by faster-whisper large-v3 on CPU. mer and pier were computed "
             "by a line-by-line port of HiKE's own scoring (jiwer transforms + rapidfuzz "
             "editops, src/main.py and src/metrics/pier), not by autune_audio. Regenerate with "
