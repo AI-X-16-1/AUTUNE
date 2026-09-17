@@ -43,7 +43,10 @@ def test_an_unknown_label_is_refused() -> None:
 
 
 def test_the_label_set_is_the_one_the_module_doc_names() -> None:
-    assert set(ENTITY_LABELS) == {"feature", "system", "metric", "person", "date"}
+    """Five from step 1, plus ``term`` for a compound whose kind is undecided —
+    which is every compound until #13 trains a model that can tell a feature
+    from a system. See ``pipeline.spoken``."""
+    assert set(ENTITY_LABELS) == {"feature", "system", "metric", "person", "date", "term"}
 
 
 def test_an_entity_is_comparable_by_value() -> None:
