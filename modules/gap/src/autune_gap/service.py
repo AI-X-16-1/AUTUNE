@@ -11,7 +11,7 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import TYPE_CHECKING
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, nulls_last, select
 
 from autune_contracts.enums import GapSeverity
 from autune_contracts.events import GAP_COMPLETED
@@ -28,6 +28,7 @@ from autune_gap.models import (
     GapTopicUtterance,
 )
 from autune_gap.pipeline import get_entity_extractor
+from autune_gap.schemas import TopicEdgeRead, TopicGraphRead, TopicNodeRead
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -193,22 +194,7 @@ def build_report(session: Session, meeting_id: str) -> GapReport:
       the team has said it is wrong, and E counting it would score the meeting
       on a gap nobody believes in.
     """
-    first_said = (
-        select(
-            GapTopicUtterance.topic_id,
-            func.min(GapTopicUtterance.position).label("position"),
-        )
-        .group_by(GapTopicUtterance.topic_id)
-        .subquery()
-    )
-    topics = list(
-        session.scalars(
-            select(GapTopic)
-            .outerjoin(first_said, first_said.c.topic_id == GapTopic.id)
-            .where(GapTopic.meeting_id == meeting_id)
-            .order_by(GapTopic.centrality.desc(), first_said.c.position, GapTopic.label)
-        )
-    )
+    topics = _topics_in_reading_order(session, meeting_id)
     topic_ids = [topic.id for topic in topics]
 
     evidence: dict[str, list[str]] = defaultdict(list)
@@ -284,6 +270,123 @@ def build_report(session: Session, meeting_id: str) -> GapReport:
             )
             for gap in gaps
         ],
+    )
+
+
+def topic_graph(session: Session, meeting_id: str) -> TopicGraphRead:
+    """The meeting's topic graph for drawing: the nodes, and what joins them.
+
+    The report answers "what did this meeting cover and who was silent on it";
+    this answers "what did it look like". They read the same rows, and the
+    nodes come back in the same order, so S20 can put the picture beside the
+    list without reconciling two orderings.
+
+    Edges come back as stored, both directions of a symmetric relation
+    included — ``schemas.TopicEdgeRead`` says why that is not collapsed here.
+    They are ordered strongest first, then by where their endpoints sit in the
+    node order, then by the relation, because ``gap_topic_edges.id`` is an
+    autoincrement that a re-run reassigns: ordering by it would redraw the same
+    graph in a different order every time the meeting was reprocessed.
+
+    The relation is part of the key rather than a leftover tie. Today
+    ``co_occurrence_edges`` writes one relation per direction and the first
+    three fields are already unique, but ``uq_gap_topic_edges`` allows
+    ``(a, b, "depends_on")`` beside ``(a, b, "co_occurs")`` and #32 is about to
+    write exactly that; with equal weights the tie would fall through to the
+    scan order, which is the shuffle this ordering exists to prevent. Raised in
+    review of #220.
+
+    A meeting whose graph has not been built answers with empty lists. The
+    caller has already established that the meeting exists; nothing analysed
+    yet is a state, not a missing resource.
+
+    **Edges are asked for by the node ids this read already has**, the way
+    ``build_report`` asks for evidence and participation. The two reads are
+    separate statements, and on PostgreSQL's default isolation a re-run of
+    ``build_topic_graph`` committing between them is visible: the topics are
+    the set that was deleted and the edges are the new set, which reference
+    topic ids this read has never seen. Subscripting ``rank`` with one of those
+    raised ``KeyError`` — a 500 from the endpoint whose contract is "empty is a
+    state, not an error" — and the screen polling while the pipeline reprocesses
+    a meeting is exactly who would hit it. Filtering in the query makes that
+    case a consistent older graph with the edges it can still account for, and
+    leaves ``rank`` safe by construction. Raised in review of #220.
+    """
+    topics = _topics_in_reading_order(session, meeting_id)
+    rank = {topic.id: index for index, topic in enumerate(topics)}
+    edges = sorted(
+        session.scalars(
+            select(GapTopicEdge).where(
+                GapTopicEdge.meeting_id == meeting_id,
+                GapTopicEdge.source_topic_id.in_(rank),
+                GapTopicEdge.target_topic_id.in_(rank),
+            )
+        ),
+        key=lambda edge: (
+            -edge.weight,
+            rank[edge.source_topic_id],
+            rank[edge.target_topic_id],
+            edge.relation,
+        ),
+    )
+    return TopicGraphRead(
+        meeting_id=meeting_id,
+        nodes=[
+            TopicNodeRead(
+                id=topic.id,
+                label=topic.label,
+                centrality=topic.centrality,
+                betweenness=topic.betweenness,
+            )
+            for topic in topics
+        ],
+        edges=[
+            TopicEdgeRead(
+                source_topic_id=edge.source_topic_id,
+                target_topic_id=edge.target_topic_id,
+                relation=edge.relation,
+                weight=edge.weight,
+            )
+            for edge in edges
+        ],
+    )
+
+
+def _topics_in_reading_order(session: Session, meeting_id: str) -> list[GapTopic]:
+    """The meeting's topics, most central first.
+
+    Ties go to the topic the meeting reached first, then to the label. Topic
+    ids are random, so without the tie-break the same stored graph would come
+    back in a different order on every read — and the report E receives and
+    the graph the screen draws would disagree about which topic came second.
+
+    ``NULLS LAST`` is spelled out because the two engines disagree by default:
+    ascending order puts NULL first on SQLite and last on PostgreSQL. A topic
+    with no evidence rows sorts last either way now — it is the one a reader
+    can check least, so it does not belong above one the meeting can be quoted
+    on. Worth saying because the unit tests run on SQLite and production runs
+    on PostgreSQL, so the implicit version was a rule no test could have
+    caught. Raised in review of #220.
+    """
+    first_said = (
+        select(
+            GapTopicUtterance.topic_id,
+            func.min(GapTopicUtterance.position).label("position"),
+        )
+        .group_by(GapTopicUtterance.topic_id)
+        .subquery()
+    )
+    return list(
+        session.scalars(
+            select(GapTopic)
+            .outerjoin(first_said, first_said.c.topic_id == GapTopic.id)
+            .where(GapTopic.meeting_id == meeting_id)
+            .order_by(
+                GapTopic.centrality.desc(),
+                nulls_last(first_said.c.position),
+                GapTopic.label,
+            )
+        )
     )
 
 
