@@ -360,12 +360,20 @@ local-models = [
     { name = "torch" },
     { name = "transformers" },
 ]
+training = [
+    { name = "accelerate" },
+    { name = "datasets" },
+    { name = "torch" },
+    { name = "transformers" },
+]
 
 [package.metadata]
 requires-dist = [
+    { name = "accelerate", marker = "extra == 'training'", specifier = ">=0.30" },
     { name = "autune-contracts", editable = "packages/contracts" },
     { name = "autune-core", editable = "packages/core" },
     { name = "celery", specifier = ">=5.4" },
+    { name = "datasets", marker = "extra == 'training'", specifier = ">=2.20" },
     { name = "fastapi", specifier = ">=0.115" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "kiwipiepy", specifier = ">=0.18" },
@@ -375,9 +383,11 @@ requires-dist = [
     { name = "sentence-transformers", marker = "extra == 'local-models'", specifier = ">=3.0" },
     { name = "sqlalchemy", specifier = ">=2.0" },
     { name = "torch", marker = "extra == 'local-models'", specifier = ">=2.2" },
+    { name = "torch", marker = "extra == 'training'", specifier = ">=2.2" },
     { name = "transformers", marker = "extra == 'local-models'", specifier = ">=4.44" },
+    { name = "transformers", marker = "extra == 'training'", specifier = ">=4.44" },
 ]
-provides-extras = ["local-models"]
+provides-extras = ["local-models", "training"]
 
 [[package]]
 name = "autune-contracts"
