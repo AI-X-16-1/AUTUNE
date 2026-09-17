@@ -76,21 +76,14 @@ def build_decision_drift_channel_notice(
     """The team-channel drift warning. Names nobody -- see module docstring."""
     verb = _change_verb(change_type)
     fallback = f"결정이 {verb}되었습니다: {thread_label}"
+    absence_note = f"핵심 이해관계자 {absent_count}명이 자리에 없는 상태에서 {verb}되었습니다."
     blocks: list[dict[str, Any]] = [
         {"type": "section", "text": {"type": "mrkdwn", "text": f"● *결정 {verb}*"}},
         {"type": "section", "text": {"type": "mrkdwn", "text": f"*{thread_label}*"}},
         {"type": "section", "text": {"type": "mrkdwn", "text": current_statement}},
         {
             "type": "context",
-            "elements": [
-                {
-                    "type": "mrkdwn",
-                    "text": (
-                        f"핵심 이해관계자 {absent_count}명이 자리에 없는 상태에서 "
-                        f"{verb}되었습니다."
-                    ),
-                }
-            ],
+            "elements": [{"type": "mrkdwn", "text": absence_note}],
         },
     ]
     return fallback, blocks
