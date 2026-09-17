@@ -4,6 +4,7 @@ import { ActionCompletionRate } from "./ActionCompletionRate";
 import { AlignmentHeatmap } from "./AlignmentHeatmap";
 import { DashboardCard, PlaceholderCard } from "./DashboardCard";
 import { GapDistributionBars } from "./GapDistributionBars";
+import { HoverPreview, InfluenceMapMockup, PredictionMockup } from "./HoverPreview";
 import { QualityScoreCard } from "./QualityScoreCard";
 import { useDashboard } from "../hooks/useDashboard";
 
@@ -14,7 +15,7 @@ import { useDashboard } from "../hooks/useDashboard";
  * `teamId` in once that lands.
  */
 export function Dashboard({ teamId }: { teamId: string }) {
-  const { dashboard, heatmap, loading, error } = useDashboard(teamId);
+  const { dashboard, heatmap, gapTitles, loading, error } = useDashboard(teamId);
 
   if (loading && !dashboard) {
     return <p style={metaStyle}>불러오는 중…</p>;
@@ -41,19 +42,24 @@ export function Dashboard({ teamId }: { teamId: string }) {
   }
 
   return (
-    <div className="flex flex-col" style={{ gap: "var(--space-12)" }}>
+    <div className="grid" style={{ gridTemplateColumns: "1fr 1fr", gap: "var(--space-12)" }}>
       <QualityScoreCard dashboard={dashboard} />
+      <AlignmentHeatmap cells={heatmap} />
 
-      <div className="grid" style={{ gridTemplateColumns: "1.1fr 1fr", gap: "var(--space-12)" }}>
-        <AlignmentHeatmap cells={heatmap} />
-        <GapDistributionBars distribution={dashboard.gap_distribution} />
+      <div style={{ gridColumn: "1 / -1" }}>
+        <GapDistributionBars distribution={dashboard.gap_distribution} titles={gapTitles} />
       </div>
 
-      <div className="grid" style={{ gridTemplateColumns: "1fr 1fr 1fr", gap: "var(--space-12)" }}>
+      <div style={{ gridColumn: "1 / -1" }}>
         <ActionCompletionRate rate={dashboard.action_item_completion_rate} />
-        <PlaceholderCard label="예측" />
-        <PlaceholderCard label="영향력 맵" />
       </div>
+
+      <HoverPreview mockup={<PredictionMockup />} side="left">
+        <PlaceholderCard label="예측" />
+      </HoverPreview>
+      <HoverPreview mockup={<InfluenceMapMockup />}>
+        <PlaceholderCard label="영향력 맵" />
+      </HoverPreview>
     </div>
   );
 }
