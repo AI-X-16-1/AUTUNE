@@ -2,6 +2,16 @@
 
 One Levenshtein implementation, so CER, MER and PIER disagree only in what they
 tokenise and what they count, never in how they align.
+
+The distance is unique; the alignment is not. Where two alignments cost the
+same, the backtrace here prefers a substitution, then a deletion, then an
+insertion, and rapidfuzz — which HiKE scores with — resolves the tie its own
+way. CER and MER are distances, so they cannot tell. PIER counts *where* an
+edit lands, so on a tied alignment it can attribute an edit to a neighbouring
+position: 10 of 1,181 real predictions in the fidelity fixture, moving mean
+PIER by about 0.2 points. That divergence is measured by
+``scripts/hike_fidelity_fixture.py`` rather than closed, because closing it
+means porting rapidfuzz's bit-parallel backtrace.
 """
 
 from __future__ import annotations

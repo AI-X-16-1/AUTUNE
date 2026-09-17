@@ -30,7 +30,10 @@ way is scored against a shape it can never match. Spoken numerals are left as
 the model wrote them, because the paper's numbers were produced that way and a
 score that cannot sit in its table is not worth having.
 
-One deliberate deviation: the reference side is normalised too. HiKE passes
+Fidelity is tested, not assumed: ``tests/unit/fixtures/hike_fidelity.json``
+pins real rows against numbers produced by a port of HiKE's own pipeline.
+Two small, documented divergences remain — tie-breaking between equal-cost
+alignments (see ``alignment``), and this one: the reference side is normalised too. HiKE passes
 its references through untouched, which is harmless for the corpus text (it
 is already normalised) but lets a capitalised loanword spelling (``API``,
 ``Docker``) reach the comparison unlowered on three rows. Lowercasing both
