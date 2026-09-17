@@ -200,7 +200,13 @@ def test_dashboard_rolls_up_scores_and_gap_patterns_for_the_team(
             created_at=created,
         )
         db_session.add(
-            IntelGapPattern(meeting_id=m.id, pattern_type="ownership", team_id=team, count=i + 1)
+            IntelGapPattern(
+                meeting_id=m.id,
+                pattern_type="ownership",
+                team_id=team,
+                count=i + 1,
+                classifier_version="fake",
+            )
         )
     db_session.flush()
 
@@ -212,6 +218,44 @@ def test_dashboard_rolls_up_scores_and_gap_patterns_for_the_team(
     assert body["action_item_completion_rate"] == pytest.approx(0.4)
     assert [s["grade"] for s in body["recent_scores"]] == ["A", "C"]
     assert body["gap_distribution"] == {"ownership": 3}
+
+
+def test_dashboard_excludes_gap_patterns_without_a_classifier_version(
+    client: TestClient, db_session: Session, team: str
+) -> None:
+    """Pre-#203 rows carry the raw category text in ``pattern_type`` and an
+    empty ``classifier_version`` — mixing them into the same distribution as
+    real classifier output means one graph shows two incompatible vocabularies
+    at once. Deferred in PR #210's review pending #203; #203 is on ``main`` now.
+    """
+    from autune_core import Meeting
+
+    m = Meeting(team_id=team, title="legacy")
+    db_session.add(m)
+    db_session.flush()
+    db_session.add(
+        IntelGapPattern(
+            meeting_id=m.id,
+            pattern_type="technical_spec",
+            team_id=team,
+            count=5,
+            classifier_version="",
+        )
+    )
+    db_session.add(
+        IntelGapPattern(
+            meeting_id=m.id,
+            pattern_type="ownership",
+            team_id=team,
+            count=2,
+            classifier_version="fake",
+        )
+    )
+    db_session.flush()
+
+    body = client.get(f"/api/intelligence/dashboard/{team}").json()
+
+    assert body["gap_distribution"] == {"ownership": 2}
 
 
 def test_dashboard_average_grade_is_none_without_any_scores(client: TestClient, team: str) -> None:

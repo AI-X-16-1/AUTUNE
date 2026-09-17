@@ -420,7 +420,7 @@ def get_dashboard(session: Session, team_id: str) -> DashboardRead:
     average_score = (sum(values) / len(values)) if values else None
     gap_rows = session.execute(
         sa.select(IntelGapPattern.pattern_type, func.sum(IntelGapPattern.count))
-        .where(IntelGapPattern.team_id == team_id)
+        .where(IntelGapPattern.team_id == team_id, IntelGapPattern.classifier_version != "")
         .group_by(IntelGapPattern.pattern_type)
     ).all()
     trend_since = datetime.now(UTC) - timedelta(weeks=_DASHBOARD_TREND_WEEKS)
