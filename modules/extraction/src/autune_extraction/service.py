@@ -27,6 +27,7 @@ from autune_contracts.transcript import Utterance as TranscriptUtterance
 from autune_core import Meeting, Participant, User, Utterance, get_logger, session_scope
 from autune_core.errors import NotFoundError, ValidationError
 from autune_integrations import SlackApi, assert_personal_delivery
+from autune_integrations.privacy import find_unmasked
 
 from .config import get_settings
 from .confirmations import WEAK_ASSENT, ConfirmationResponse, build_confirmation_dm
@@ -52,6 +53,7 @@ from .schemas import (
     DecisionReviewUpdate,
     MeetingReview,
     Outbound,
+    OutboundBlocked,
     OutboundDecision,
     ReviewAmbiguous,
     ReviewDecision,
@@ -1078,21 +1080,38 @@ def outbound_for_meeting(session: Session, meeting_id: str) -> Outbound:
     status S17 moves it out of when somebody accepts it. The sync (#30) is to read
     this and nothing else, so the gate is one function rather than a rule every
     sender has to remember.
+
+    **It screens as well as selects.** A rewording and an edited description are
+    typed by a person and never went through module A's masker, so each text is
+    run through ``find_unmasked`` here. One that carries personal data is held back
+    in ``blocked``, by id and category, rather than failing the whole meeting: the
+    other confirmed items can still go, and the screen asks for that one to be
+    reworded. (Suggested in review of #247.)
     """
     review = review_for_meeting(session, meeting_id)
-    return Outbound(
-        meeting_id=meeting_id,
-        decisions=[
-            OutboundDecision(id=decision.id, statement=decision.statement)
-            for decision in review.decisions
-            if decision.status == "confirmed"
-        ],
-        action_items=[
-            item
-            for item in list_action_items(session, meeting_id=meeting_id)
-            if item.status != ActionStatus.NEEDS_CONFIRMATION.value
-        ],
-    )
+    blocked: list[OutboundBlocked] = []
+
+    decisions = []
+    for decision in review.decisions:
+        if decision.status != "confirmed":
+            continue
+        categories = find_unmasked(decision.statement)
+        if categories:
+            blocked.append(OutboundBlocked(id=decision.id, kind="decision", categories=categories))
+        else:
+            decisions.append(OutboundDecision(id=decision.id, statement=decision.statement))
+
+    items = []
+    for item in list_action_items(session, meeting_id=meeting_id):
+        if item.status == ActionStatus.NEEDS_CONFIRMATION.value:
+            continue
+        categories = find_unmasked(item.description)
+        if categories:
+            blocked.append(OutboundBlocked(id=item.id, kind="action_item", categories=categories))
+        else:
+            items.append(item)
+
+    return Outbound(meeting_id=meeting_id, decisions=decisions, action_items=items, blocked=blocked)
 
 
 def create_decision(session: Session, payload: DecisionCreate) -> ReviewDecision:

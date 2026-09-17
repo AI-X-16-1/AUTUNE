@@ -164,7 +164,7 @@ other module's tables.
 | POST | `/decisions` | Add a decision the model missed. Confirmed, and kept through reruns |
 | PATCH | `/decisions/{id}` | Confirm, reject, reword, or put back to pending |
 | DELETE | `/decisions/{id}` | Delete a decision a person added; reject one the model proposed, which a rerun would otherwise bring back |
-| GET | `/reviews/{meeting_id}/outbound` | Exactly what may leave for Notion, Slack or Jira: confirmed decisions and accepted items. The sync reads this and nothing else |
+| GET | `/reviews/{meeting_id}/outbound` | Exactly what may leave for Notion, Slack or Jira: confirmed decisions and accepted items, each screened for personal data (a hit is held back in `blocked`, by id and category). The sync reads this and nothing else |
 
 ## Celery tasks
 

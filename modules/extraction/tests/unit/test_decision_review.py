@@ -457,3 +457,59 @@ def test_a_person_cannot_set_the_confidence_of_what_they_typed(client: TestClien
 
 def test_deleting_an_unknown_decision_is_not_found(client: TestClient) -> None:
     assert client.delete(f"{PREFIX}/decisions/dec_nope").status_code == 404
+
+
+# --- the screen on the way out ----------------------------------------------------
+
+
+def test_a_confirmed_rewording_with_personal_data_is_held_back_by_category(
+    client: TestClient, session: Session
+) -> None:
+    """A rewording is typed by a person and never passed module A's masker."""
+    first_id, second_id = (d.id for d in two_decisions(session))
+    client.patch(
+        f"{PREFIX}/decisions/{first_id}",
+        json={"status": "confirmed", "statement": "담당 연락처 010-1234-5678 로 공유"},
+    )
+    client.patch(f"{PREFIX}/decisions/{second_id}", json={"status": "confirmed"})
+
+    response = client.get(f"{PREFIX}/reviews/{MEETING}/outbound")
+    outbound = response.json()
+
+    assert [d["id"] for d in outbound["decisions"]] == [second_id]
+    assert outbound["blocked"] == [{"id": first_id, "kind": "decision", "categories": ["phone"]}]
+    assert "1234-5678" not in response.text
+
+
+def test_an_accepted_item_whose_description_carries_personal_data_is_held_back(
+    client: TestClient, session: Session
+) -> None:
+    session.add(
+        ExtActionItem(
+            id="act_pii",
+            meeting_id=MEETING,
+            description="고객 010-9876-5432 에게 회신",
+            status="todo",
+            confidence=1.0,
+            origin="user",
+        )
+    )
+    item(session, "act_clean", "todo")
+
+    response = client.get(f"{PREFIX}/reviews/{MEETING}/outbound")
+    outbound = response.json()
+
+    assert [i["id"] for i in outbound["action_items"]] == ["act_clean"]
+    assert outbound["blocked"] == [
+        {"id": "act_pii", "kind": "action_item", "categories": ["phone"]}
+    ]
+    assert "9876-5432" not in response.text
+
+
+def test_nothing_is_blocked_when_nothing_carries_personal_data(
+    client: TestClient, session: Session
+) -> None:
+    first_id = two_decisions(session)[0].id
+    client.patch(f"{PREFIX}/decisions/{first_id}", json={"status": "confirmed"})
+
+    assert client.get(f"{PREFIX}/reviews/{MEETING}/outbound").json()["blocked"] == []

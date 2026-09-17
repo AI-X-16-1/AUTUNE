@@ -224,6 +224,18 @@ class OutboundDecision(BaseModel):
     statement: str
 
 
+class OutboundBlocked(BaseModel):
+    """Something confirmed that still may not leave: its text carries personal data.
+
+    The categories, never the values -- the same rule ``assert_masked`` follows
+    for an exception message. The screen asks the person to reword it.
+    """
+
+    id: str
+    kind: Literal["decision", "action_item"]
+    categories: list[str]
+
+
 class Outbound(BaseModel):
     """What "확정해서 보내기" would send, and nothing else.
 
@@ -235,3 +247,5 @@ class Outbound(BaseModel):
     meeting_id: str
     decisions: list[OutboundDecision]
     action_items: list[ActionItemRead]
+    blocked: list[OutboundBlocked]
+    """Confirmed, but held back by the personal-data screen. Not in the lists above."""
