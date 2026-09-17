@@ -55,8 +55,23 @@ def test_generates_a_report_from_scores_and_gap_patterns_in_the_period(
     assert report.metrics_json["average_score"] == pytest.approx(0.75)
     assert report.metrics_json["grade_distribution"] == {"A": 1, "C": 1}
     assert report.metrics_json["gap_distribution"] == {"ownership": 3}
+    assert report.metrics_json["partial_meeting_count"] == 0
     assert sorted(report.source_meeting_ids) == sorted([m1, m2])
     assert "2건" in report.body_markdown
+
+
+def test_counts_partially_analyzed_meetings_in_the_period(db_session: Session, team: str) -> None:
+    complete = _meeting(db_session, team)
+    partial = _meeting(db_session, team)
+    mid_week = datetime(2026, 9, 10, tzinfo=UTC)
+    _score(db_session, complete, team, created_at=mid_week, missing_sources=[])
+    _score(db_session, partial, team, created_at=mid_week, missing_sources=["gap"])
+    db_session.flush()
+
+    report = service.generate_weekly_report(db_session, team, PERIOD_START, PERIOD_END)
+
+    assert report.metrics_json["partial_meeting_count"] == 1
+    assert "부분 분석 1건" in report.body_markdown
 
 
 def test_excludes_scores_outside_the_period(db_session: Session, team: str) -> None:
