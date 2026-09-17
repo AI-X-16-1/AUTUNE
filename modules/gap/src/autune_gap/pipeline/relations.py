@@ -40,6 +40,22 @@ it is the first number to move when dismissals (#35) say the rules over-fire.
 """
 
 
+_WORD_CHARACTER = re.compile(r"[0-9A-Za-z가-힣]")
+"""What a mention may not begin immediately after.
+
+``실시간`` sits inside ``비실시간``, and without this guard "비실시간 처리가
+필요해서 검색 기능은 미뤘습니다" asserted that 검색 기능 depends on 실시간 — a
+topic whose name the utterance contains and whose meaning it negates.
+
+**Only the left side is guarded.** Korean attaches particles directly to the
+noun, so the character after a mention is grammar more often than not: 실시간은,
+실시간이, 실시간으로. Refusing those would refuse every mention in a sentence
+that says anything about it. What sits on the right and is *not* a particle —
+실시간성 — needs the tagger to tell apart, which is why ``noun_terms`` runs
+there and this does not. Raised in review of #249.
+"""
+
+
 @dataclass(frozen=True)
 class Mention:
     """Where one topic was named inside one utterance."""
@@ -88,8 +104,14 @@ meeting needs, and the graph can carry that without claiming anybody is blocked
 today.
 """
 
-_ALTERNATIVES = ("대신", "말고", "보다는", "아니라", "반면", "vs", "versus")
+_ALTERNATIVES = re.compile(r"대신|말고|보다는|아니라|반면|(?<![A-Za-z])(?:vs|versus)(?![A-Za-z])")
 """Markers that weigh one topic against another.
+
+A pattern rather than a list of strings, because the Latin two need word
+boundaries: "API devs 검색 기능" contains ``vs`` inside ``devs``, and a substring
+match made the two topics alternatives to each other on the strength of a
+plural. The Korean markers are matched as substrings — a particle attaches
+directly and there is no boundary to anchor to. Raised in review of #249.
 
 ``는데`` and ``지만`` are **not** here, and leaving them out is the judgement
 this rule set argued about most. Spoken Korean uses ``는데`` as plain sentence
@@ -142,14 +164,18 @@ clause the sentence just denied. The thing the sentence is about is 정렬 로�
 and it says so with 은. Raised in review of #249.
 """
 
-_GENITIVE = "의"
-"""``A의 B`` — B belongs to A.
-
-The one rule that needs adjacency rather than a distance: the particle has to
-sit in the gap between the two mentions and nothing else may. "검색의 정렬
-로직" is a genitive; "검색 기능은 정렬 로직의 문제입니다" also contains 의 and
-joins a different pair.
-"""
+# ``A의 B`` has no rule, and that is a decision rather than an omission.
+#
+# 의 marks possession and composition with the same character. "검색의 정렬
+# 로직" is a part of a thing; "검색 기능의 담당자 일정" is somebody's calendar,
+# and the rule read it as `담당자 일정 part_of 검색 기능`. Nothing in the
+# surface string tells the two apart — the same argument that keeps ``는데`` out
+# of ``_ALTERNATIVES``, and the same answer: it is a case for the assisted
+# implementation, not for a marker list.
+#
+# ``part_of`` stays in ``base.RELATION_LABELS`` because the graph can carry it
+# and #35 weights it; what is gone is the claim that a rule can read it.
+# Raised in review of #249.
 
 
 def mention_spans(text: str, mentions: Iterable[str]) -> list[Mention]:
@@ -165,12 +191,17 @@ def mention_spans(text: str, mentions: Iterable[str]) -> list[Mention]:
     the rule ``FakeNer`` and the noun-run pass both already follow. Without it
     "검색 기능" inside "검색 기능 개선" is a second mention over the same
     characters, and a rule keyed on distance would relate a topic to itself.
+
+    A mention has to start a word (``_WORD_CHARACTER``): ``실시간`` inside
+    ``비실시간`` is a different thing wearing the same characters.
     """
     claimed: list[Mention] = []
     for mention in sorted({m for m in mentions if m.strip()}, key=len, reverse=True):
         pattern = re.compile(r"\s+".join(re.escape(part) for part in mention.split()))
         for match in pattern.finditer(text):
             start, end = match.span()
+            if start > 0 and _WORD_CHARACTER.match(text[start - 1]):
+                continue
             if any(start < other.end and other.start < end for other in claimed):
                 continue
             claimed.append(Mention(text=mention, start=start, end=end))
@@ -192,9 +223,10 @@ def relations_in(text: str, mentions: Sequence[Mention]) -> list[tuple[str, str,
       so a causal connective (``_CAUSAL``) has to follow it **in the same
       clause**, and the same assertion guard applies: "캐시 이슈는 없어서" is a
       blocker that is not there. Ends are read the same way.
-    - **``part_of``** — ``A의 B``, adjacent, nothing but the particle between.
     - **``alternative_to``** — a contrast marker in the gap between two
       mentions, and nowhere else.
+
+    There is no ``part_of`` rule. See the comment where one used to be.
 
     A pair may come back with more than one relation; ``gap_topic_edges`` is
     unique on ``(source, target, relation)`` and the read API orders by relation
@@ -210,7 +242,6 @@ def relations_in(text: str, mentions: Sequence[Mention]) -> list[tuple[str, str,
         pair = _ends_around(text, mentions, marker)
         if pair is not None:
             found.append((pair[0], pair[1], relation))
-    found.extend(_genitive_pairs(text, mentions))
     found.extend(_contrast_pairs(text, mentions))
 
     seen: set[tuple[str, str, str]] = set()
@@ -324,15 +355,6 @@ def _ends_around(text: str, mentions: Sequence[Mention], marker: int) -> tuple[s
     return before[-2].text, target.text
 
 
-def _genitive_pairs(text: str, mentions: Sequence[Mention]) -> list[tuple[str, str, str]]:
-    """``A의 B`` for every adjacent pair, as ``B part_of A``."""
-    return [
-        (right.text, left.text, "part_of")
-        for left, right in zip(mentions, mentions[1:], strict=False)
-        if text[left.end : right.start].strip() == _GENITIVE
-    ]
-
-
 def _contrast_pairs(text: str, mentions: Sequence[Mention]) -> list[tuple[str, str, str]]:
     """Adjacent mentions with a contrast marker between them, both ways.
 
@@ -343,7 +365,7 @@ def _contrast_pairs(text: str, mentions: Sequence[Mention]) -> list[tuple[str, s
     pairs: list[tuple[str, str, str]] = []
     for left, right in zip(mentions, mentions[1:], strict=False):
         gap = text[left.end : right.start]
-        if len(gap) > MAX_MARKER_DISTANCE or not any(marker in gap for marker in _ALTERNATIVES):
+        if len(gap) > MAX_MARKER_DISTANCE or not _ALTERNATIVES.search(gap):
             continue
         pairs.append((left.text, right.text, "alternative_to"))
         pairs.append((right.text, left.text, "alternative_to"))

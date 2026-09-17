@@ -60,6 +60,27 @@ def test_a_longer_name_claims_the_characters_a_shorter_one_would() -> None:
     assert [span.text for span in spans] == ["인기순 정렬", "캐시"]
 
 
+def test_a_name_inside_a_longer_word_is_not_a_mention() -> None:
+    """``실시간`` sits inside ``비실시간``, and the utterance that contains those
+    characters negates the topic they name: "비실시간 처리가 필요해서 검색
+    기능은 미뤘습니다" asserted 검색 기능 depends_on 실시간.
+
+    Only the left side is guarded — Korean attaches particles directly, so
+    실시간은 and 실시간으로 have to stay mentions. Raised in review of #249.
+    """
+    spans = mention_spans(
+        "비실시간 처리가 필요해서 검색 기능은 미뤘습니다", ["실시간", "검색 기능"]
+    )
+
+    assert [span.text for span in spans] == ["검색 기능"]
+
+
+def test_a_particle_on_the_right_still_leaves_a_mention() -> None:
+    spans = mention_spans("실시간은 실시간으로 하죠", ["실시간"])
+
+    assert [span.start for span in spans] == [0, 5]
+
+
 def test_a_name_said_twice_is_two_mentions() -> None:
     """Proximity decides which mention a marker binds, so both occurrences have
     to be on the map."""
@@ -224,19 +245,20 @@ def test_a_blocker_with_no_reason_given_is_not_a_relation() -> None:
     )
 
 
-# --- part_of ----------------------------------------------------------------
+# --- part_of, which no rule produces ----------------------------------------
 
 
-def test_a_genitive_makes_the_second_topic_part_of_the_first() -> None:
-    assert triples("검색의 정렬 로직을 봤습니다", "검색", "정렬 로직") == [
-        ("정렬 로직", "검색", "part_of")
-    ]
+def test_a_genitive_is_not_read_as_a_part() -> None:
+    """의 marks possession and composition with the same character.
 
-
-def test_a_genitive_somewhere_else_in_the_sentence_joins_nothing() -> None:
-    """의 appears in most Korean sentences. Only the one *between* the two
-    mentions says one belongs to the other."""
-    assert triples("검색 기능은 정렬 로직의 문제입니다", "검색 기능", "정렬 로직") == []
+    "검색의 정렬 로직" is a part of a thing and "검색 기능의 담당자 일정" is
+    somebody's calendar, and nothing in the surface string tells them apart —
+    the argument that keeps ``는데`` out of the contrast markers. The rule used
+    to read both, and the second one put a person's schedule inside a feature.
+    Raised in review of #249.
+    """
+    assert triples("검색의 정렬 로직을 봤습니다", "검색", "정렬 로직") == []
+    assert triples("검색 기능의 담당자 일정을 봤습니다", "검색 기능", "담당자 일정") == []
 
 
 # --- alternative_to ---------------------------------------------------------
@@ -253,6 +275,20 @@ def test_a_contrast_marker_joins_the_pair_both_ways() -> None:
     ]
 
 
+def test_a_latin_marker_needs_a_word_boundary() -> None:
+    """ "API devs 검색 기능" contains ``vs`` inside ``devs``. A substring match
+    made the two topics alternatives to each other on the strength of a plural.
+    Raised in review of #249."""
+    assert triples("API devs 검색 기능 얘기했습니다", "API", "검색 기능") == []
+
+
+def test_a_latin_marker_still_reads_when_it_is_a_word() -> None:
+    assert triples("인기순 정렬 vs 실시간 개인화 논의했습니다", "인기순 정렬", "실시간 개인화") == [
+        ("인기순 정렬", "실시간 개인화", "alternative_to"),
+        ("실시간 개인화", "인기순 정렬", "alternative_to"),
+    ]
+
+
 def test_sentence_glue_is_not_a_contrast() -> None:
     """``는데`` is how spoken Korean joins two clauses about anything at all. A
     marker that fires on every second utterance would make ``alternative_to``
@@ -261,15 +297,6 @@ def test_sentence_glue_is_not_a_contrast() -> None:
 
 
 # --- one utterance, more than one relation ----------------------------------
-
-
-def test_one_pair_can_carry_two_relations() -> None:
-    """The table is unique on ``(source, target, relation)`` and the read API
-    orders by relation for exactly this case."""
-    found = triples("검색의 정렬 로직은 인덱스가 필요합니다", "검색", "정렬 로직", "인덱스")
-
-    assert ("정렬 로직", "인덱스", "depends_on") in found
-    assert ("정렬 로직", "검색", "part_of") in found
 
 
 def test_the_same_relation_is_not_asserted_twice() -> None:

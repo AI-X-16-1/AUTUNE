@@ -73,7 +73,11 @@ risk scoring (#35) should do with the pair:
   relation that is itself a finding: a blocker named out loud and never resolved
   is what the gap report exists to surface.
 - ``part_of`` — B belongs to A. Two topics, one subject, so a template item
-  matched by one of them is matched by the pair.
+  matched by one of them is matched by the pair. **No rule produces it today**:
+  의 marks possession and composition alike, and "검색 기능의 담당자 일정" is
+  not a part of anything. The label stays because the graph can carry it and
+  #35 weights it — the vocabulary is what an edge may say, not what the rules
+  can currently read. Raised in review of #249.
 - ``alternative_to`` — the meeting weighed A against B. Symmetric, and the pair
   is a decision the meeting may or may not have closed.
 

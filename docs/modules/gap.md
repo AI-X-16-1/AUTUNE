@@ -126,18 +126,27 @@ written and measured before anything is sent anywhere. Today the share is 100%
 — there is no assisted implementation — and what the rules cannot read is a
 named list below rather than a shrug.
 
-**Four relations**, each one a thing risk scoring (#35) should treat
-differently: `depends_on`, `blocked_by`, `part_of`, `alternative_to`. Every one
-keys on a **marker** the speaker actually said, and fires only with two topics
-around it in one utterance. Proximity alone stays `co_occurs`, which the graph
-writes without asking the extractor.
+**Four relations** are in the vocabulary, each one a thing risk scoring (#35)
+should treat differently: `depends_on`, `blocked_by`, `part_of`,
+`alternative_to`. **Three of them have a rule.** Every rule keys on a **marker**
+the speaker actually said, and fires only with two topics around it in one
+utterance. Proximity alone stays `co_occurs`, which the graph writes without
+asking the extractor.
 
 | Relation | Marker | Reads |
 | --- | --- | --- |
 | `depends_on` | 필요, 있어야, 되어야, 선행, 전제, 없이는, 없으면 | "정렬 로직은 인덱스가 필요합니다" |
-| `blocked_by` | a blocker word (안 잡, 미정, 막혀, 무리, 이슈, …) **and** a causal connective after it | "실시간은 콜드스타트가 안 잡혀 있어서 무리입니다" |
-| `part_of` | `A의 B`, adjacent | "검색의 정렬 로직" |
-| `alternative_to` | 대신, 말고, 보다는, 아니라, 반면 | "인기순 정렬 대신 실시간 개인화로" |
+| `blocked_by` | a blocker word (안 잡, 미정, 막혀, 무리, 이슈, …) **and** a causal connective in the same clause | "실시간은 콜드스타트가 안 잡혀 있어서 무리입니다" |
+| `alternative_to` | 대신, 말고, 보다는, 아니라, 반면, `vs` | "인기순 정렬 대신 실시간 개인화로" |
+| `part_of` | — **no rule** | |
+
+`part_of` has no rule because 의 marks possession and composition with the same
+character: "검색의 정렬 로직" is a part of a thing, "검색 기능의 담당자 일정" is
+somebody's calendar, and the rule read both. It is the same problem as `는데`
+and gets the same answer — a case for the assisted implementation rather than a
+marker list. The label stays in the vocabulary: the graph can carry it and #35
+weights it, and what a rule can read today is a different question from what an
+edge may say. Raised in review of #249.
 
 **Measured.** Over `transcript_ready.typical` the rules assert exactly one
 relation — `실시간 blocked_by 콜드스타트` — against six co-occurrence edges.
@@ -191,6 +200,25 @@ it):
   clause; otherwise the rule looks back for a mention wearing 은/는, which is
   how Korean marks the thing a sentence is about, and only then falls back to
   the mention before the target.
+
+**A marker has to be a word, and a mention has to start one.** Two more from
+the same review:
+
+- `vs` sits inside `devs`, and "API devs 검색 기능" made the two topics
+  alternatives to each other on the strength of a plural. The Latin markers now
+  need word boundaries; the Korean ones are still substrings, because a particle
+  attaches directly and there is no boundary to anchor to.
+- `실시간` sits inside `비실시간`, and "비실시간 처리가 필요해서 검색 기능은
+  미뤘습니다" asserted that 검색 기능 depends on 실시간 — a topic whose name the
+  utterance contains and whose meaning it negates. A mention now has to begin a
+  word. Only the left side is guarded: Korean attaches particles directly, so
+  실시간은 and 실시간으로 have to stay mentions, and telling 실시간성 from those
+  needs the tagger rather than a boundary.
+
+**The cue words themselves are not topics.** 필요 and 이슈 join 대신, 말고 and
+반면 in `spoken.STOP_TERMS`: the model tags all of them as ordinary nouns, so a
+noun run welds them into a label, and "인덱스가 필요 없습니다" produced a topic
+called 필요.
 
 **A pair the rules typed gets no `co_occurs` row.** The typed relation says
 everything co-occurrence would and more. A pair they said nothing about keeps

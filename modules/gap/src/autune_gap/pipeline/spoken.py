@@ -128,6 +128,13 @@ STOP_TERMS: frozenset[str] = frozenset(
         "대신",
         "말고",
         "반면",
+        # Cue words. The same argument one step further: these are what step 2
+        # keys on, and the model tags them as ordinary nouns. "정렬 로직은
+        # 인덱스가 필요 없습니다" came back with a topic called 필요, and a
+        # graph whose central node is 필요 raises gaps about nothing. Raised in
+        # review of #249.
+        "필요",
+        "이슈",
     }
 )
 """Nouns that break a run rather than joining it.
