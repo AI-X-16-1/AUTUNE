@@ -47,6 +47,12 @@ def get_dashboard(team_id: str, session: SessionDep) -> DashboardRead:
     return service.get_dashboard(session, team_id)
 
 
+@router.get("/gap-titles/{team_id}", response_model=dict[str, list[str]])
+def get_gap_titles(team_id: str, session: SessionDep) -> dict[str, list[str]]:
+    """The gap titles behind each pattern in the dashboard's gap distribution."""
+    return service.gap_titles_by_pattern(session, team_id)
+
+
 @router.get("/heatmap/{team_id}", response_model=list[HeatmapCell])
 def get_heatmap(team_id: str, session: SessionDep) -> list[HeatmapCell]:
     """Cross-role alignment, averaged across the team's meetings."""

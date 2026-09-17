@@ -442,6 +442,54 @@ def get_dashboard(session: Session, team_id: str) -> DashboardRead:
     )
 
 
+def gap_titles_by_pattern(session: Session, team_id: str) -> dict[str, list[str]]:
+    """The gap titles behind each pattern's count in ``get_dashboard``.
+
+    ``IntelGapPattern.source_gap_ids`` names which of C's gaps fed a pattern's
+    count, but not their text — C's title never enters an ``intel_*`` table,
+    only ``IntelCompletion.gap_payload`` (the raw ``GapReport`` C published,
+    kept for aggregation). This joins the two in memory rather than a SQL
+    join: neither table has a foreign key to the other by design (E does not
+    key off another module's rows), and payload matching only needs id
+    equality within one meeting, not a relational join.
+
+    A gap id with no matching title (payload never arrived, or was since
+    cleared) is skipped rather than raising — the count in ``gap_distribution``
+    still includes it; this is a best-effort explanation of that count, not
+    its source of truth.
+    """
+    pattern_rows = session.execute(
+        sa.select(
+            IntelGapPattern.meeting_id, IntelGapPattern.pattern_type, IntelGapPattern.source_gap_ids
+        ).where(IntelGapPattern.team_id == team_id)
+    ).all()
+    if not pattern_rows:
+        return {}
+
+    meeting_ids = {row.meeting_id for row in pattern_rows}
+    completions = session.execute(
+        sa.select(IntelCompletion.meeting_id, IntelCompletion.gap_payload).where(
+            IntelCompletion.meeting_id.in_(meeting_ids)
+        )
+    ).all()
+    titles_by_meeting: dict[str, dict[str, str]] = {}
+    for meeting_id, gap_payload in completions:
+        if not gap_payload:
+            continue
+        titles_by_meeting[meeting_id] = {
+            gap["id"]: gap["title"] for gap in gap_payload.get("gaps", [])
+        }
+
+    result: dict[str, list[str]] = {}
+    for row in pattern_rows:
+        titles = titles_by_meeting.get(row.meeting_id, {})
+        for gap_id in row.source_gap_ids:
+            title = titles.get(gap_id)
+            if title is not None:
+                result.setdefault(row.pattern_type, []).append(title)
+    return result
+
+
 # --- Weekly report (pipeline step 6) ---------------------------------------
 #
 # A deterministic summary over intel_scores and intel_gap_patterns for one
