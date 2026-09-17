@@ -458,6 +458,7 @@ def _report_body_markdown(
     grade_distribution: dict[str, int],
     gap_distribution: dict[str, int],
     action_item_completion_rate: float | None,
+    partial_meeting_count: int,
 ) -> str:
     """The report's Slack/markdown body — a template, not an LLM.
 
@@ -475,6 +476,8 @@ def _report_body_markdown(
         return f"{header}\n\n이번 주 분석된 회의가 없습니다."
 
     lines = [header, "", f"이번 주 분석된 회의 {meeting_count}건."]
+    if partial_meeting_count:
+        lines.append(f"이 중 부분 분석 {partial_meeting_count}건.")
     if average_value is not None:
         lines.append(f"평균 품질 점수: {_grade_for(average_value)} ({average_value:.0%})")
     if grade_distribution:
@@ -522,6 +525,7 @@ def generate_weekly_report(
         s.action_item_completion_rate for s in scores if s.action_item_completion_rate is not None
     ]
     grade_distribution = dict(Counter(s.grade for s in scores))
+    partial_meeting_count = sum(1 for s in scores if s.missing_sources)
 
     gap_distribution: dict[str, int] = {}
     if meeting_ids:
@@ -543,6 +547,7 @@ def generate_weekly_report(
         grade_distribution=grade_distribution,
         gap_distribution=gap_distribution,
         action_item_completion_rate=action_item_completion_rate,
+        partial_meeting_count=partial_meeting_count,
     )
     metrics_json = {
         "meeting_count": len(scores),
@@ -550,6 +555,7 @@ def generate_weekly_report(
         "grade_distribution": grade_distribution,
         "gap_distribution": gap_distribution,
         "action_item_completion_rate": action_item_completion_rate,
+        "partial_meeting_count": partial_meeting_count,
     }
 
     session.execute(
