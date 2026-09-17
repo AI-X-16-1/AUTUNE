@@ -167,6 +167,31 @@ Three things came out of that measurement, and each one changed the design:
   `alternative_to` the most common relation in the graph and every one of them a
   coin flip. This is the clearest case for the LLM assistance step 2 is promised.
 
+**A marker is a string, and the clause decides whether the speaker meant it.**
+Three guards, each one a sentence that produced an edge before it existed
+(raised in review of #249, found by running the extractor rather than reading
+it):
+
+- **Negation and questions.** 필요 with 없 or 않 after it in the same clause is
+  the opposite of a need; 필요한가요 is a question about one. "캐시 이슈는
+  없어서 검색 기능은 바로 진행합니다" is a blocker word, a causal connective and
+  no blocker — and it read as `검색 기능 blocked_by 캐시`, the reverse of what
+  the speaker said, in the one relation the report treats as a finding. 안 is
+  deliberately not a negation marker: "캐시 없이는 안 됩니다" is a need.
+- **One clause, both ways.** The causal connective a `blocked_by` needs has to
+  be in the blocker's own clause. Searching to the end of the utterance paired
+  이슈 with a 없어서 two clauses away and put a date topic on the blocked end.
+  The guard window stops at the boundary for the same reason in reverse:
+  "인덱스가 필요하고 캐시는 문제 없습니다" must not cancel a need the speaker
+  did state.
+- **The source is what the sentence is about.** Korean starts a new subject
+  after a connective ending, so the nearest mention after the marker is usually
+  the next sentence — "정렬 로직은 인덱스가 필요하고 캐시는 다음 주에 봅시다"
+  read as `캐시 depends_on 인덱스`. The far end is taken only inside the same
+  clause; otherwise the rule looks back for a mention wearing 은/는, which is
+  how Korean marks the thing a sentence is about, and only then falls back to
+  the mention before the target.
+
 **A pair the rules typed gets no `co_occurs` row.** The typed relation says
 everything co-occurrence would and more. A pair they said nothing about keeps
 it — that is most pairs, and dropping them would leave a meeting nobody spoke
@@ -181,6 +206,10 @@ and not a number folded into the weight.
 
 What this does **not** do:
 
+- **A wrong edge costs the pair its co-occurrence too**, because a typed pair
+  gets no `co_occurs` row. The guards above are why that trade is acceptable;
+  it is also why the marker lists are short and every addition needs a sentence
+  that fires it. Raised in review of #249.
 - **Recall is unmeasured, and low.** One relation out of a five-utterance
   meeting is the whole claim. There is no annotated set for step 2 either — the
   number that matters is gap precision, which cannot be read until something

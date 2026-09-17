@@ -101,6 +101,47 @@ and every one of them a coin flip. It is the clearest case for the LLM
 assistance step 2 is promised — see ``docs/modules/gap.md``.
 """
 
+_CLAUSE_BREAKS = ("고 ", "고요", "며 ", "지만", "는데", "니까", ".", ",")
+"""Where one spoken clause ends and the next begins.
+
+Every rule reads **one clause**. Korean puts a new subject after a connective
+ending, so a marker binds what is in its own clause and says nothing about the
+next one: in "정렬 로직은 인덱스가 필요하고 캐시는 다음 주에 봅시다" the 필요
+belongs to 인덱스 and 캐시 is a different sentence wearing the same breath.
+Without the boundary the rule read 캐시 as the thing that needs 인덱스.
+
+Surface strings, and a short list. A boundary this misses costs a relation; one
+it invents only shortens a window. Raised in review of #249.
+"""
+
+_NEGATIONS = ("없", "않")
+"""What turns an assertion into its opposite, inside the same clause.
+
+`필요 없습니다` and `필요하지 않아요` both carry the marker 필요 and say the
+reverse of what it means. 안 is deliberately **not** here: "캐시 없이는 안
+됩니다" is a need stated through a negative, and the cue 없이는 already carries
+its own 없. Raised in review of #249.
+"""
+
+_QUESTIONS = ("나요", "가요", "까요", "?")
+"""What turns an assertion into a question.
+
+"인덱스가 필요한가요?" asks whether the dependency exists. The meeting has not
+said that it does, and a graph that records the question as the answer is a
+graph that reports a dependency nobody asserted — the shape of false finding C's
+precision target exists to refuse. Raised in review of #249.
+"""
+
+_TOPIC_MARKERS = ("은", "는")
+"""What Korean puts on the thing a sentence is about.
+
+Used to pick the *source* end when the marker's own clause does not supply one.
+The nearest preceding mention is the wrong default — in "정렬 로직은 인덱스에
+의존하지 않고 캐시 없이는 안 됩니다" that is 인덱스, which sits inside the
+clause the sentence just denied. The thing the sentence is about is 정렬 로직,
+and it says so with 은. Raised in review of #249.
+"""
+
 _GENITIVE = "의"
 """``A의 B`` — B belongs to A.
 
@@ -141,14 +182,16 @@ def relations_in(text: str, mentions: Sequence[Mention]) -> list[tuple[str, str,
 
     Each rule is a marker and a way of reading which mention is which end:
 
-    - **``depends_on``** — a need word (``_NEEDS``). The thing needed is the
+    - **``depends_on``** — a need word (``_NEEDS``) the speaker actually
+      asserted: not negated, not asked (``_asserted``). The thing needed is the
       mention just before it, which is where both Korean word orders put it:
       "정렬 로직은 인덱스가 필요합니다" and "인덱스가 있어야 정렬 로직을
       붙입니다" both name 인덱스 immediately before the marker. The other end is
-      the nearest mention on the far side, and failing that the one before.
+      read by ``_ends_around``.
     - **``blocked_by``** — a blocker word (``_BLOCKERS``) *offered as a reason*,
-      so a causal connective (``_CAUSAL``) has to follow it in the same
-      utterance. Ends are read the same way.
+      so a causal connective (``_CAUSAL``) has to follow it **in the same
+      clause**, and the same assertion guard applies: "캐시 이슈는 없어서" is a
+      blocker that is not there. Ends are read the same way.
     - **``part_of``** — ``A의 B``, adjacent, nothing but the particle between.
     - **``alternative_to``** — a contrast marker in the gap between two
       mentions, and nowhere else.
@@ -164,7 +207,7 @@ def relations_in(text: str, mentions: Sequence[Mention]) -> list[tuple[str, str,
 
     found: list[tuple[str, str, str]] = []
     for marker, relation in _directed_markers(text):
-        pair = _ends_around(mentions, marker)
+        pair = _ends_around(text, mentions, marker)
         if pair is not None:
             found.append((pair[0], pair[1], relation))
     found.extend(_genitive_pairs(text, mentions))
@@ -180,37 +223,102 @@ def relations_in(text: str, mentions: Sequence[Mention]) -> list[tuple[str, str,
     return unique
 
 
+def _clause_after(text: str, index: int) -> str:
+    """What is left of the clause that starts at ``index``.
+
+    Capped at ``MAX_MARKER_DISTANCE`` as well, so a run-on sentence with no
+    connective in it cannot make the window the whole utterance.
+    """
+    window = text[index : index + MAX_MARKER_DISTANCE]
+    cut = len(window)
+    for boundary in _CLAUSE_BREAKS:
+        found = window.find(boundary)
+        if found != -1:
+            cut = min(cut, found + len(boundary))
+    return window[:cut]
+
+
+def _asserted(text: str, cue_end: int) -> bool:
+    """Whether what follows the cue lets it stand as a statement.
+
+    A marker is a string and a clause is what decides whether the speaker meant
+    it: 필요 with 없 after it in the same clause is the opposite of a need, and
+    필요 with 나요 after it is a question about one. Both produced a
+    ``depends_on`` edge before, and ``blocked_by`` has the same hole — "캐시
+    이슈는 없어서 검색 기능은 바로 진행합니다" is a blocker that is not there.
+
+    The window stops at the clause boundary on purpose. Reading to the end of
+    the utterance would let "인덱스가 필요하고 캐시는 문제 없습니다" cancel a
+    need the speaker did state. Raised in review of #249.
+    """
+    clause = _clause_after(text, cue_end)
+    return not any(marker in clause for marker in _NEGATIONS + _QUESTIONS)
+
+
 def _directed_markers(text: str) -> list[tuple[int, str]]:
     """``(offset, relation)`` for every need or blocker marker in ``text``."""
     markers: list[tuple[int, str]] = []
     for cue in _NEEDS:
-        markers.extend((match.start(), "depends_on") for match in _finditer(cue, text))
+        markers.extend(
+            (match.start(), "depends_on")
+            for match in _finditer(cue, text)
+            if _asserted(text, match.end())
+        )
     for cue in _BLOCKERS:
         for match in _finditer(cue, text):
-            # A blocker is a relation only when it is offered as the reason.
-            # Without the connective the speaker described a state, and which
-            # topic that state is about is not something this rule can read.
-            if any(text.find(connective, match.end()) != -1 for connective in _CAUSAL):
+            # A blocker is a relation only when it is offered as the reason, and
+            # only when the reason is in the same clause. Without the connective
+            # the speaker described a state; with one two clauses away, "이슈는
+            # 어제 처리했고요 … 시간이 없어서" paired a blocker with somebody
+            # else's reason and put a date topic on the blocked end. Raised in
+            # review of #249.
+            if not _asserted(text, match.end()):
+                continue
+            clause = _clause_after(text, match.end())
+            if any(connective in clause for connective in _CAUSAL):
                 markers.append((match.start(), "blocked_by"))
     return sorted(markers)
 
 
-def _ends_around(mentions: Sequence[Mention], marker: int) -> tuple[str, str] | None:
+def _ends_around(text: str, mentions: Sequence[Mention], marker: int) -> tuple[str, str] | None:
     """``(source, target)`` for a marker at offset ``marker``, or ``None``.
 
     The target — the thing needed, or the thing in the way — is the mention
-    ending closest before the marker. The source is the mention that clause is
-    about: the nearest one after the marker if the speaker put it there, and
-    otherwise the one before the target.
+    ending closest before the marker. Both Korean word orders put it there.
+
+    The source is what the clause is about, and it is looked for in this order:
+
+    1. **The nearest mention after the marker, if it is still the same clause.**
+       "인덱스가 있어야 정렬 로직을 붙입니다" puts it there. Taking it across a
+       clause boundary is what made "정렬 로직은 인덱스가 필요하고 캐시는 다음
+       주에 봅시다" say that 캐시 needs 인덱스.
+    2. **The nearest preceding mention wearing 은/는**, which is how Korean
+       marks the thing a sentence is about. Without this the default was simply
+       the mention before the target, and in "정렬 로직은 인덱스에 의존하지
+       않고 캐시 없이는 안 됩니다" that is 인덱스 — a topic sitting inside the
+       clause the sentence has just denied.
+    3. **The mention before the target**, when nothing is marked.
+
+    All three raised in review of #249.
     """
     before = [mention for mention in mentions if mention.end <= marker]
     if not before or marker - before[-1].end > MAX_MARKER_DISTANCE:
         return None
     target = before[-1]
 
+    clause = _clause_after(text, marker)
     after = [mention for mention in mentions if mention.start >= marker]
-    if after and after[0].start - marker <= MAX_MARKER_DISTANCE:
+    if after and after[0].start < marker + len(clause):
+        # Strictly inside: a mention that begins exactly where the clause ends
+        # is the next clause's subject, which is the case this rule exists to
+        # refuse.
         return after[0].text, target.text
+
+    marked = [
+        mention for mention in before[:-1] if text[mention.end : mention.end + 1] in _TOPIC_MARKERS
+    ]
+    if marked:
+        return marked[-1].text, target.text
     if len(before) < 2:
         return None
     return before[-2].text, target.text

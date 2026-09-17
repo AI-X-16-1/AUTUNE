@@ -127,6 +127,82 @@ def test_a_topic_does_not_depend_on_itself() -> None:
     assert triples("검색 기능은 검색 기능이 필요해서 미뤘습니다", "검색 기능") == []
 
 
+# --- a marker is a string; the clause decides whether it was meant -----------
+#
+# Every sentence in this section came back with an edge before the guards, and
+# each one was found by running the extractor rather than by reading it. Raised
+# in review of #249.
+
+
+def test_a_need_that_was_denied_is_not_a_dependency() -> None:
+    assert triples("정렬 로직은 인덱스가 필요 없습니다", "정렬 로직", "인덱스") == []
+
+
+def test_a_need_denied_the_long_way_round_is_not_one_either() -> None:
+    assert triples("정렬 로직은 인덱스가 필요하지 않아요", "정렬 로직", "인덱스") == []
+
+
+def test_a_need_that_was_asked_about_is_not_an_answer() -> None:
+    """The meeting has not said the dependency exists. Recording the question as
+    the answer reports a dependency nobody asserted."""
+    assert triples("정렬 로직은 인덱스가 필요한가요?", "정렬 로직", "인덱스") == []
+
+
+def test_a_denial_in_the_next_clause_does_not_cancel_a_need() -> None:
+    """The guard reads one clause, not the utterance. 문제 없습니다 is about
+    캐시 and says nothing about what 정렬 로직 needs."""
+    assert triples(
+        "정렬 로직은 인덱스가 필요하고 캐시는 문제 없습니다", "정렬 로직", "인덱스", "캐시"
+    ) == [("정렬 로직", "인덱스", "depends_on")]
+
+
+def test_a_blocker_that_is_not_there_blocks_nothing() -> None:
+    """ "캐시 이슈는 없어서" is a blocker word, a causal connective, and no
+    blocker. It read as 검색 기능 blocked_by 캐시 — the exact reverse of what the
+    speaker said, in the one relation the report treats as a finding."""
+    assert triples("캐시 이슈는 없어서 검색 기능은 바로 진행합니다", "캐시", "검색 기능") == []
+
+
+def test_a_reason_two_clauses_away_is_somebody_elses_reason() -> None:
+    """The causal connective has to be in the blocker's own clause. Searching to
+    the end of the utterance paired 이슈 with a 없어서 belonging to another
+    sentence, and put a date on the blocked end."""
+    assert (
+        triples(
+            "로그인 모듈 이슈는 어제 처리했고요 결제 모듈 얘기는 시간이 없어서 짧게 할게요",
+            "로그인 모듈",
+            "결제 모듈",
+            "어제",
+        )
+        == []
+    )
+
+
+def test_the_next_clauses_subject_is_not_the_one_that_needs_something() -> None:
+    """Korean puts a new subject after a connective ending, so the nearest
+    mention after the marker is usually the next sentence. It read as 캐시
+    depends_on 인덱스."""
+    assert triples(
+        "정렬 로직은 인덱스가 필요하고 캐시는 다음 주에 봅시다", "정렬 로직", "인덱스", "캐시"
+    ) == [("정렬 로직", "인덱스", "depends_on")]
+
+
+def test_the_source_is_what_the_sentence_is_about() -> None:
+    """Not simply the mention before the target: here that is 인덱스, sitting
+    inside the clause the sentence has just denied. 정렬 로직 wears 은."""
+    assert triples(
+        "정렬 로직은 인덱스에 의존하지 않고 캐시 없이는 안 됩니다", "정렬 로직", "인덱스", "캐시"
+    ) == [("정렬 로직", "캐시", "depends_on")]
+
+
+def test_a_need_stated_through_a_negative_still_counts() -> None:
+    """ "캐시 없이는 안 됩니다" is a need. 안 is not a negation marker here for
+    that reason, and the cue carries its own 없."""
+    assert triples("정렬 로직은 캐시 없이는 안 됩니다", "정렬 로직", "캐시") == [
+        ("정렬 로직", "캐시", "depends_on")
+    ]
+
+
 # --- blocked_by -------------------------------------------------------------
 
 
