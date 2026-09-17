@@ -59,6 +59,14 @@ class GapSettings(BaseSettings):
     sending it to somebody else's model is a decision about where personal data
     goes rather than a config value — see ``pipeline.base``."""
 
+    relation_impl: str = "rule"
+    """Which relation extractor to run. ``rule`` is the only implementation.
+
+    Unlike ``ner_impl`` this one may grow an assisted entry: a relation needs
+    the clause it was said in, not the meeting, so the hard cases can be sent
+    without sending the transcript. What it may not grow is a client of its own
+    — see ``pipeline.base``."""
+
     ner_model: str = "ko_core_news_lg"
     """The pipeline to load. A **name**, not a version.
 

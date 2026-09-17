@@ -135,6 +135,13 @@ class GapTopicEdge(Base):
     ``meeting_id`` is carried here as well as on both endpoints. It is
     redundant, and it is what lets the whole graph be loaded with one indexed
     read instead of a join through ``gap_topics``.
+
+    ``extractor_version`` is NULL exactly when no extractor asserted this edge —
+    a ``co_occurs`` row, which the graph writes for a pair that shared an
+    utterance and no marker. Anything else carries the version of the relation
+    extractor that said so, for the reason ``gap_topics`` carries the entity
+    extractor's: a graph that cannot be attributed cannot be compared against
+    the next version of the thing that built it.
     """
 
     __tablename__ = "gap_topic_edges"
@@ -161,6 +168,7 @@ class GapTopicEdge(Base):
     )
     relation: Mapped[str] = mapped_column(String(100), nullable=False)
     weight: Mapped[float] = mapped_column(Float, nullable=False, default=1.0)
+    extractor_version: Mapped[str | None] = mapped_column(String(100))
 
 
 class GapParticipation(Base):

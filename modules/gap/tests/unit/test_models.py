@@ -250,12 +250,24 @@ def test_every_meeting_id_column_is_indexed() -> None:
 
 
 def migration_tables() -> dict[str, set[str]]:
-    """Table -> column names, read out of this module's migration files.
+    """Table -> column names, as this module's migrations leave them.
 
     Text, not a database. The round-trip test needs Postgres and a person
     without Docker cannot run it, so the failure this catches — a column added
     to a model and not to the migration — would otherwise reach CI. Reading the
-    ``op.create_table`` calls costs nothing and catches it in the unit run.
+    migration files costs nothing and catches it in the unit run.
+
+    Revisions are read in filename order, which is the order they apply: the
+    date prefix is what makes the two the same thing. ``op.add_column`` counts
+    as much as ``op.create_table``, because a column added by a later revision
+    is a column the database has — and reading only ``create_table`` made the
+    first such column (``gap_topic_edges.extractor_version``, #32) look like a
+    model with no migration behind it.
+
+    A column added to a table no model here describes is not silently accepted
+    either: it shows up as a key, and ``test_no_migration_creates_a_table_no_
+    model_describes`` fails on it. Another module's table is another module's
+    to migrate (invariant 10).
     """
     migrations = Path(__file__).resolve().parents[2] / "migrations"
     tables: dict[str, set[str]] = {}

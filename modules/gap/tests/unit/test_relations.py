@@ -1,0 +1,289 @@
+"""What the rules assert, and what they refuse to guess.
+
+No model. ``relations_in`` is handed the mentions directly, which is how a rule
+gets argued with: the entity extractor's recall is #13's problem, and a rule
+that can only be exercised through a 220MB pipeline is a rule nobody tunes.
+
+The measurement over the real pipeline lives in ``test_spacy_ner.py``.
+"""
+
+from __future__ import annotations
+
+import pytest
+
+from autune_gap.pipeline import RELATION_LABELS, SYMMETRIC_RELATIONS, Entity, Relation
+from autune_gap.pipeline.relations import (
+    MAX_MARKER_DISTANCE,
+    RuleRelations,
+    mention_spans,
+    relations_in,
+)
+
+
+def triples(text: str, *mentions: str) -> list[tuple[str, str, str]]:
+    """The relations ``text`` asserts, given the names the meeting uses."""
+    return relations_in(text, mention_spans(text, mentions))
+
+
+# --- where a mention is -----------------------------------------------------
+
+
+def test_a_mention_is_found_where_the_speaker_said_it() -> None:
+    spans = mention_spans("검색 기능은 캐시를 씁니다", ["검색 기능", "캐시"])
+
+    assert [(span.text, span.start) for span in spans] == [("검색 기능", 0), ("캐시", 7)]
+
+
+def test_a_mention_is_found_under_a_particle() -> None:
+    """The utterance that states a relation is the one where the topic wears a
+    particle — 실시간은 — and the bare form is what entity extraction claimed
+    somewhere else. Keyed on exact tokens the rules would see one end of every
+    relation and never the other."""
+    spans = mention_spans("실시간은 콜드스타트가 문제입니다", ["실시간", "콜드스타트"])
+
+    assert [span.text for span in spans] == ["실시간", "콜드스타트"]
+
+
+def test_spacing_does_not_hide_a_mention() -> None:
+    """``noun_terms`` joins a run with single spaces; ASR output carries double
+    ones. A literal search would find neither the mention nor its relation."""
+    spans = mention_spans("검색  개인화 기능은 캐시가 필요합니다", ["검색 개인화 기능", "캐시"])
+
+    assert [span.text for span in spans] == ["검색 개인화 기능", "캐시"]
+
+
+def test_a_longer_name_claims_the_characters_a_shorter_one_would() -> None:
+    """Otherwise 정렬 is a second mention inside 인기순 정렬, and a rule keyed on
+    distance relates a topic to itself."""
+    spans = mention_spans("인기순 정렬은 캐시가 필요합니다", ["인기순 정렬", "정렬", "캐시"])
+
+    assert [span.text for span in spans] == ["인기순 정렬", "캐시"]
+
+
+def test_a_name_said_twice_is_two_mentions() -> None:
+    """Proximity decides which mention a marker binds, so both occurrences have
+    to be on the map."""
+    spans = mention_spans("캐시 얘기를 했는데 캐시가 문제입니다", ["캐시"])
+
+    assert [span.start for span in spans] == [0, 11]
+
+
+# --- depends_on -------------------------------------------------------------
+
+
+def test_a_need_makes_the_thing_needed_the_target() -> None:
+    assert triples("정렬 로직은 인덱스가 필요합니다", "정렬 로직", "인덱스") == [
+        ("정렬 로직", "인덱스", "depends_on")
+    ]
+
+
+def test_the_other_korean_word_order_reads_the_same_way() -> None:
+    """ "인덱스가 있어야 정렬 로직을 붙입니다" puts the needed thing before the
+    marker and the dependent after it. Both orders name what is needed
+    immediately before the marker, which is why the rule anchors there."""
+    assert triples("인덱스가 있어야 정렬 로직을 붙입니다", "정렬 로직", "인덱스") == [
+        ("정렬 로직", "인덱스", "depends_on")
+    ]
+
+
+def test_a_need_with_only_one_topic_asserts_nothing() -> None:
+    """Something is needed and the utterance does not say what for. A rule that
+    guessed would attach the dependency to whatever topic came last."""
+    assert triples("인덱스가 필요합니다", "인덱스") == []
+
+
+def test_the_thing_needed_has_to_be_beside_the_marker() -> None:
+    """A marker in the third clause says nothing about a topic in the first.
+    ``인덱스`` is what 필요 binds, and here it is a whole discussion away."""
+    far = (
+        "인덱스는 "
+        + "여러 가지를 한참 논의했고 결론이 없었습니다만 어쨌든 "
+        + "정렬 로직이 필요합니다"
+    )
+
+    assert len(far) > MAX_MARKER_DISTANCE
+    assert triples(far, "인덱스") == []
+
+
+def test_the_topic_the_sentence_is_about_may_be_further_back() -> None:
+    """Only the *target* — the thing needed — has to sit beside the marker. The
+    other end is what the sentence is about, and Korean marks that at the front
+    with 은/는 and then says everything else: "정렬 로직은 (한참) 인덱스가
+    필요합니다" is one clause about 정렬 로직 however long it runs.
+    """
+    long = (
+        "정렬 로직은 "
+        + "여러 가지를 한참 논의했고 결론이 없었습니다만 어쨌든 "
+        + "인덱스가 필요합니다"
+    )
+
+    assert len(long) > MAX_MARKER_DISTANCE
+    assert triples(long, "정렬 로직", "인덱스") == [("정렬 로직", "인덱스", "depends_on")]
+
+
+def test_a_topic_does_not_depend_on_itself() -> None:
+    """A speaker restarting a sentence is not a dependency, and
+    ``gap_topic_edges`` forbids the self-loop anyway."""
+    assert triples("검색 기능은 검색 기능이 필요해서 미뤘습니다", "검색 기능") == []
+
+
+# --- blocked_by -------------------------------------------------------------
+
+
+def test_a_blocker_offered_as_a_reason_is_a_relation() -> None:
+    """The one relation that is itself a finding: something was named out loud
+    as the thing in the way."""
+    assert triples("실시간은 콜드스타트가 안 잡혀 있어서 무리입니다", "실시간", "콜드스타트") == [
+        ("실시간", "콜드스타트", "blocked_by")
+    ]
+
+
+def test_a_blocker_with_no_reason_given_is_not_a_relation() -> None:
+    """ "콜드스타트가 안 잡혀 있습니다" is a status report. Which topic that
+    state is about is not something a rule can read, and reading it as a blocker
+    would put a blocker in the report nobody said."""
+    assert (
+        triples("실시간 얘기를 했습니다. 콜드스타트가 안 잡혀 있습니다", "실시간", "콜드스타트")
+        == []
+    )
+
+
+# --- part_of ----------------------------------------------------------------
+
+
+def test_a_genitive_makes_the_second_topic_part_of_the_first() -> None:
+    assert triples("검색의 정렬 로직을 봤습니다", "검색", "정렬 로직") == [
+        ("정렬 로직", "검색", "part_of")
+    ]
+
+
+def test_a_genitive_somewhere_else_in_the_sentence_joins_nothing() -> None:
+    """의 appears in most Korean sentences. Only the one *between* the two
+    mentions says one belongs to the other."""
+    assert triples("검색 기능은 정렬 로직의 문제입니다", "검색 기능", "정렬 로직") == []
+
+
+# --- alternative_to ---------------------------------------------------------
+
+
+def test_a_contrast_marker_joins_the_pair_both_ways() -> None:
+    """Symmetric, so it is two rows: "A 대신 B" and "B 대신 A" are the same
+    statement about the pair."""
+    found = triples("인기순 정렬 대신 실시간 개인화로 가시죠", "인기순 정렬", "실시간 개인화")
+
+    assert found == [
+        ("인기순 정렬", "실시간 개인화", "alternative_to"),
+        ("실시간 개인화", "인기순 정렬", "alternative_to"),
+    ]
+
+
+def test_sentence_glue_is_not_a_contrast() -> None:
+    """``는데`` is how spoken Korean joins two clauses about anything at all. A
+    marker that fires on every second utterance would make ``alternative_to``
+    the most common relation in the graph and every one of them a coin flip."""
+    assert triples("검색 기능 보는데 정렬 로직도 봐야 합니다", "검색 기능", "정렬 로직") == []
+
+
+# --- one utterance, more than one relation ----------------------------------
+
+
+def test_one_pair_can_carry_two_relations() -> None:
+    """The table is unique on ``(source, target, relation)`` and the read API
+    orders by relation for exactly this case."""
+    found = triples("검색의 정렬 로직은 인덱스가 필요합니다", "검색", "정렬 로직", "인덱스")
+
+    assert ("정렬 로직", "인덱스", "depends_on") in found
+    assert ("정렬 로직", "검색", "part_of") in found
+
+
+def test_the_same_relation_is_not_asserted_twice() -> None:
+    assert (
+        triples("인덱스가 필요하고 인덱스가 필요합니다", "정렬 로직", "인덱스").count(
+            ("정렬 로직", "인덱스", "depends_on")
+        )
+        <= 1
+    )
+
+
+def test_an_utterance_naming_one_topic_asserts_nothing() -> None:
+    assert triples("캐시가 필요합니다", "캐시") == []
+
+
+# --- the extractor over a meeting -------------------------------------------
+
+
+def test_a_relation_is_attributed_to_the_utterance_that_stated_it() -> None:
+    """A relation extracted from an utterance analysis later drops has to be
+    droppable with it, and a rule that cannot say where it fired cannot be
+    checked."""
+    found = RuleRelations().extract(
+        [
+            ("utt_1", "실시간 개인화 얘기입니다"),
+            ("utt_2", "실시간은 콜드스타트가 안 잡혀 있어서 무리입니다"),
+        ],
+        [
+            Entity(text="실시간", label="term", utterance_id="utt_1"),
+            Entity(text="콜드스타트", label="term", utterance_id="utt_2"),
+        ],
+    )
+
+    assert found == [
+        Relation(source="실시간", target="콜드스타트", relation="blocked_by", utterance_id="utt_2")
+    ]
+
+
+def test_a_name_from_another_utterance_is_still_a_name() -> None:
+    """Entity extraction claims a bare noun run and stops at a particle, so the
+    utterance that states the relation is usually not the one the topic was
+    claimed in. Keyed on this utterance's own entities the rules found nothing
+    at all on the shared fixtures."""
+    found = RuleRelations().extract(
+        [
+            ("utt_1", "정렬 로직 보겠습니다"),
+            ("utt_2", "인덱스 확인했습니다"),
+            ("utt_3", "정렬 로직은 인덱스가 필요합니다"),
+        ],
+        [
+            Entity(text="정렬 로직", label="term", utterance_id="utt_1"),
+            Entity(text="인덱스", label="term", utterance_id="utt_2"),
+        ],
+    )
+
+    assert [(r.source, r.target, r.relation) for r in found] == [
+        ("정렬 로직", "인덱스", "depends_on")
+    ]
+
+
+def test_a_meeting_with_no_entities_yields_no_relations() -> None:
+    assert RuleRelations().extract([("utt_1", "인덱스가 필요합니다")], []) == []
+
+
+def test_the_extractor_names_itself() -> None:
+    """What decides this implementation's output is the marker lists in
+    ``relations.py``, and they change without anything else changing."""
+    assert RuleRelations().model_version == "rules-1"
+
+
+# --- the vocabulary ---------------------------------------------------------
+
+
+def test_every_relation_the_rules_produce_is_in_the_vocabulary() -> None:
+    """A relation label nothing downstream knows how to weight is a relation
+    risk scoring (#35) will read as a finding it cannot rank."""
+    found = triples("검색의 정렬 로직은 인덱스가 필요합니다", "검색", "정렬 로직", "인덱스")
+
+    assert {relation for _, _, relation in found} <= set(RELATION_LABELS)
+
+
+def test_an_unknown_relation_is_refused() -> None:
+    with pytest.raises(ValueError, match="unknown relation"):
+        Relation(source="검색", target="캐시", relation="relates_to", utterance_id="utt_1")
+
+
+def test_a_relation_needs_both_ends() -> None:
+    with pytest.raises(ValueError, match="both ends"):
+        Relation(source="검색", target="", relation="depends_on", utterance_id="utt_1")
+
+
+def test_the_symmetric_relations_are_a_subset_of_the_vocabulary() -> None:
+    assert set(RELATION_LABELS) >= SYMMETRIC_RELATIONS

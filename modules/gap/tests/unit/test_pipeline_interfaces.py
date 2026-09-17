@@ -9,9 +9,23 @@ from __future__ import annotations
 
 import pytest
 
-from autune_gap.pipeline import ENTITY_LABELS, Entity, EntityExtractor, FakeNer
+from autune_gap.config import get_settings
+from autune_gap.pipeline import (
+    ENTITY_LABELS,
+    RELATION_LABELS,
+    Entity,
+    EntityExtractor,
+    FakeNer,
+    RelationExtractor,
+    RuleRelations,
+)
 from autune_gap.pipeline.ner import _IGNORED_LABELS, _SPACY_LABELS, _claim_spans
-from autune_gap.pipeline.registry import _EXTRACTORS
+from autune_gap.pipeline.registry import (
+    _EXTRACTORS,
+    _RELATION_EXTRACTORS,
+    get_relation_extractor,
+    reset_cache,
+)
 
 KO_CORE_NEWS_LG_NER = frozenset({"DT", "LC", "OG", "PS", "QT", "TI"})
 """The NER inventory ``ko_core_news_lg`` 3.8.0 declares in its own ``meta``.
@@ -66,6 +80,46 @@ def test_there_is_no_external_extractor() -> None:
     written down, rather than passing as an ordinary feature.
     """
     assert set(_EXTRACTORS) == {"spacy", "fake"}
+
+
+def test_the_relation_step_has_one_implementation_and_a_seam() -> None:
+    """Step 2 is the step promised LLM assistance for its hard cases (#32), and
+    unlike entity extraction it may have it — a relation needs the clause, not
+    the transcript. The seam is here so the second entry has somewhere to go;
+    the assertion is whole so adding one is a decision somebody made, not a
+    dictionary key that appeared.
+    """
+    assert set(_RELATION_EXTRACTORS) == {"rule"}
+
+
+def test_the_rule_extractor_satisfies_the_protocol() -> None:
+    assert isinstance(RuleRelations(), RelationExtractor)
+
+
+def test_the_configured_relation_extractor_is_the_rule_one() -> None:
+    reset_cache()
+
+    assert isinstance(get_relation_extractor(), RuleRelations)
+
+
+def test_an_unknown_relation_implementation_is_named_in_the_error() -> None:
+    """The first person to mistype the variable reads this message."""
+    reset_cache()
+    settings = get_settings()
+    original = settings.relation_impl
+    settings.relation_impl = "llm"
+    try:
+        with pytest.raises(ValueError, match="AUTUNE_GAP_RELATION_IMPL"):
+            get_relation_extractor()
+    finally:
+        settings.relation_impl = original
+        reset_cache()
+
+
+def test_the_relation_vocabulary_is_the_one_the_module_doc_names() -> None:
+    """Four relations, each of which changes what risk scoring (#35) should do
+    with the pair. ``co_occurs`` is not one of them: nothing extracted it."""
+    assert set(RELATION_LABELS) == {"depends_on", "blocked_by", "part_of", "alternative_to"}
 
 
 # --- every label the model emits is decided about ---------------------------
