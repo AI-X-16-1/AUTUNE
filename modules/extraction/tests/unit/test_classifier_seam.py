@@ -18,13 +18,19 @@ from autune_extraction.labels import NONE
 from autune_extraction.pipeline import FakeClassifier, Prediction, registry
 from autune_extraction.pipeline import classifier as classifier_module
 from autune_extraction.pipeline.classifier import (
+    ESCALATE_BELOW,
     HEAD,
     LABELS,
+    MODEL_VERSION_MAX,
     RETRY_BACKOFF_SEC,
     HostedDeberta,
     LocalDeberta,
     _batches_within_budget,
+    _cascade,
     _check_label_order,
+    _checkpoints,
+    _mean_distribution,
+    _model_version,
     _to_prediction,
     _truncation_length,
 )
@@ -441,6 +447,136 @@ def test_a_checkpoint_is_enough_to_build_the_local_classifier(
 
     assert isinstance(classifier, LocalDeberta)
     assert classifier.model_version == "runs/kf-deberta-v1"
+
+
+# --- several checkpoints: an ensemble --------------------------------------
+
+
+def test_one_checkpoint_is_a_list_of_one() -> None:
+    assert _checkpoints("runs/v2") == ["runs/v2"]
+
+
+def test_checkpoints_are_split_on_commas_in_order_and_trimmed() -> None:
+    assert _checkpoints(" runs/v2 , runs/v2_s16,,runs/v2_s17 ") == [
+        "runs/v2",
+        "runs/v2_s16",
+        "runs/v2_s17",
+    ]
+
+
+def test_a_single_checkpoint_records_itself() -> None:
+    """Every classification already stored names its checkpoint this way."""
+    assert _model_version(["runs/kf-deberta-v1"]) == "runs/kf-deberta-v1"
+
+
+def test_a_short_ensemble_records_its_list() -> None:
+    assert _model_version(["runs/a", "runs/b", "runs/c"]) == "runs/a,runs/b,runs/c"
+
+
+def test_an_ensemble_too_long_for_the_column_records_a_stable_digest() -> None:
+    """Three real run directories overrun String(200), and an overrun fails the
+    write of the meeting's classifications."""
+    run = "F:/experiments/2026-09-15-korean-v1/run_syn_none_probe_s"
+    long = [f"{run}{seed}" * 2 for seed in (10, 16, 17)]
+    version = _model_version(long)
+
+    assert len(version) <= MODEL_VERSION_MAX
+    assert version.startswith("ensemble-3:")
+    assert version == _model_version(list(long))
+    assert version != _model_version(list(reversed(long)))
+
+
+def test_the_ensemble_distribution_is_the_mean_of_its_members() -> None:
+    a = [[0.6, 0.1, 0.1, 0.1, 0.0, 0.1]]
+    b = [[0.2, 0.5, 0.1, 0.1, 0.0, 0.1]]
+
+    (mean,) = _mean_distribution([a, b])
+
+    assert mean == pytest.approx([0.4, 0.3, 0.1, 0.1, 0.0, 0.1])
+    assert _to_prediction(mean).kind is K.COMMITMENT
+
+
+def test_the_ensemble_can_disagree_with_every_member() -> None:
+    """The reason to average probabilities rather than vote: two members that
+    each lean to a different kind by a little can both be outweighed."""
+    a = [[0.40, 0.05, 0.05, 0.05, 0.05, 0.40]]
+    b = [[0.05, 0.40, 0.05, 0.05, 0.05, 0.40]]
+    c = [[0.30, 0.30, 0.00, 0.00, 0.00, 0.40]]
+
+    (mean,) = _mean_distribution([a, b, c])
+
+    assert _to_prediction(mean).kind is None
+
+
+SURE = [0.90, 0.02, 0.02, 0.02, 0.02, 0.02]
+UNSURE = [0.45, 0.35, 0.05, 0.05, 0.05, 0.05]
+
+
+def test_a_confident_primary_asks_nobody_else() -> None:
+    """The saving: the other models cost nothing on an utterance the primary is sure of."""
+    asked: list[list[int]] = []
+
+    rows = _cascade([SURE, SURE], lambda positions: asked.append(positions) or [])
+
+    assert asked == []
+    assert rows == [SURE, SURE]
+
+
+def test_only_unsure_utterances_are_asked_and_averaged() -> None:
+    other = [0.05, 0.85, 0.02, 0.02, 0.02, 0.04]
+    asked: list[list[int]] = []
+
+    def ask(positions: list[int]) -> list[list[list[float]]]:
+        asked.append(positions)
+        return [[other for _ in positions], [other for _ in positions]]
+
+    rows = _cascade([SURE, UNSURE, SURE], ask)
+
+    assert asked == [[1]]
+    assert rows[0] == SURE and rows[2] == SURE
+    assert rows[1] == pytest.approx([0.55 / 3, 2.05 / 3, 0.09 / 3, 0.09 / 3, 0.09 / 3, 0.13 / 3])
+    assert _to_prediction(rows[1]).kind is K.DECISION
+
+
+def test_the_escalation_line_is_strict_and_is_the_measured_one() -> None:
+    at_line = [ESCALATE_BELOW, 0.04, 0.04, 0.04, 0.04, 1 - ESCALATE_BELOW - 0.16]
+    asked: list[list[int]] = []
+
+    _cascade([at_line], lambda positions: asked.append(positions) or [])
+
+    assert ESCALATE_BELOW == 0.8
+    assert asked == []
+
+
+def test_members_that_scored_different_utterances_are_refused() -> None:
+    with pytest.raises(ValueError, match="different numbers"):
+        _mean_distribution([[[1.0, 0, 0, 0, 0, 0]], []])
+
+
+def test_an_empty_checkpoint_list_is_refused() -> None:
+    with pytest.raises(ValueError, match="at least one checkpoint"):
+        LocalDeberta(" , ")
+
+
+def test_a_list_of_checkpoints_builds_the_local_ensemble(configured: Callable[..., None]) -> None:
+    configured(classifier_impl="local", classifier_checkpoint="runs/a,runs/b,runs/c")
+
+    classifier = registry.get_classifier()
+
+    assert isinstance(classifier, LocalDeberta)
+    assert classifier.model_version == "runs/a,runs/b,runs/c"
+
+
+def test_the_hosted_classifier_refuses_a_list(configured: Callable[..., None]) -> None:
+    """The server runs one model; recording a list would name models that never ran."""
+    configured(
+        classifier_impl="hosted",
+        classifier_checkpoint="runs/a,runs/b",
+        classifier_endpoint="https://classifier.internal",
+    )
+
+    with pytest.raises(ValueError, match="only CLASSIFIER_IMPL=local"):
+        registry.get_classifier()
 
 
 def test_asking_for_cuda_without_it_fails_before_the_model_loads() -> None:
