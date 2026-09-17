@@ -337,3 +337,123 @@ def test_a_decision_whose_sources_changed_loses_its_verdict(
     assert first_id not in {decision.id for decision in rebuilt}
     assert session.get(ExtDecisionReview, first_id) is None
     assert client.get(f"{PREFIX}/reviews/{MEETING}/outbound").json()["decisions"] == []
+
+
+# --- a person adds, rewords and deletes -------------------------------------------
+
+
+def add(client: TestClient, statement: str = "회의는 격주로 하기로", **extra: object) -> dict:
+    response = client.post(
+        f"{PREFIX}/decisions", json={"meeting_id": MEETING, "statement": statement, **extra}
+    )
+    assert response.status_code == 201, response.text
+    return response.json()
+
+
+def test_a_person_can_add_a_decision_the_model_missed(client: TestClient, session: Session) -> None:
+    added = add(client, source_utterance_ids=["utt_5", "utt_4"])
+
+    assert added["origin"] == "user"
+    assert added["status"] == "confirmed"
+    assert added["confidence"] == 1.0
+    assert added["source_utterance_ids"] == ["utt_5", "utt_4"]
+    outbound = client.get(f"{PREFIX}/reviews/{MEETING}/outbound").json()
+    assert outbound["decisions"] == [{"id": added["id"], "statement": "회의는 격주로 하기로"}]
+    assert added["id"] in {d.id for d in service.result_for_meeting(session, MEETING).decisions}
+
+
+def test_a_decision_a_person_added_survives_a_rerun(client: TestClient, session: Session) -> None:
+    added = add(client)
+
+    two_decisions(session)
+    two_decisions(session)
+
+    review = client.get(f"{PREFIX}/reviews/{MEETING}").json()
+    assert {d["origin"] for d in review["decisions"]} == {"model", "user"}
+    mine = next(d for d in review["decisions"] if d["id"] == added["id"])
+    assert mine["status"] == "confirmed"
+
+
+def test_rewording_a_persons_own_decision_changes_the_decision_itself(
+    client: TestClient, session: Session
+) -> None:
+    added = add(client)
+
+    response = client.patch(f"{PREFIX}/decisions/{added['id']}", json={"statement": "월 1회로"})
+
+    assert response.json()["statement"] == response.json()["model_statement"] == "월 1회로"
+    review = session.get(ExtDecisionReview, added["id"])
+    assert review is not None
+    assert review.statement is None
+
+
+def test_deleting_a_decision_a_person_added_removes_it(
+    client: TestClient, session: Session
+) -> None:
+    added = add(client)
+
+    assert client.delete(f"{PREFIX}/decisions/{added['id']}").status_code == 204
+
+    assert session.get(ExtDecision, added["id"]) is None
+    assert session.get(ExtDecisionReview, added["id"]) is None
+    assert client.get(f"{PREFIX}/reviews/{MEETING}").json()["decisions"] == []
+
+
+def test_deleting_a_proposed_decision_rejects_it_and_a_rerun_keeps_it_out(
+    client: TestClient, session: Session
+) -> None:
+    """Really deleting it would last until the next run proposed it again."""
+    first_id = two_decisions(session)[0].id
+    client.patch(f"{PREFIX}/decisions/{first_id}", json={"statement": "고친 문장"})
+
+    assert client.delete(f"{PREFIX}/decisions/{first_id}").status_code == 204
+    two_decisions(session)
+
+    listed = next(
+        d
+        for d in client.get(f"{PREFIX}/reviews/{MEETING}").json()["decisions"]
+        if d["id"] == first_id
+    )
+    assert listed["status"] == "rejected"
+    assert listed["statement"] == listed["model_statement"]
+    assert client.get(f"{PREFIX}/reviews/{MEETING}/outbound").json()["decisions"] == []
+
+
+def test_a_source_from_another_meeting_is_refused(client: TestClient, session: Session) -> None:
+    session.add(Meeting(id="mtg_2", team_id="team_1", title="다른 회의"))
+    session.add(
+        Utterance(
+            id="utt_other",
+            meeting_id="mtg_2",
+            speaker_label="SPEAKER_00",
+            start_sec=0.0,
+            end_sec=1.0,
+            text="다른 회의 발화",
+        )
+    )
+    session.flush()
+
+    response = client.post(
+        f"{PREFIX}/decisions",
+        json={"meeting_id": MEETING, "statement": "결정", "source_utterance_ids": ["utt_other"]},
+    )
+
+    assert response.status_code == 422
+    assert "다른 회의 발화" not in response.text
+    assert session.scalars(select(ExtDecision)).all() == []
+
+
+def test_a_decision_cannot_be_added_to_an_unknown_meeting(client: TestClient) -> None:
+    response = client.post(f"{PREFIX}/decisions", json={"meeting_id": "mtg_nope", "statement": "x"})
+    assert response.status_code == 404
+
+
+def test_a_person_cannot_set_the_confidence_of_what_they_typed(client: TestClient) -> None:
+    response = client.post(
+        f"{PREFIX}/decisions", json={"meeting_id": MEETING, "statement": "x", "confidence": 0.3}
+    )
+    assert response.status_code == 422
+
+
+def test_deleting_an_unknown_decision_is_not_found(client: TestClient) -> None:
+    assert client.delete(f"{PREFIX}/decisions/dec_nope").status_code == 404

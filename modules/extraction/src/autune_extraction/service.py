@@ -25,6 +25,7 @@ from autune_contracts.extraction import (
 )
 from autune_contracts.transcript import Utterance as TranscriptUtterance
 from autune_core import Meeting, Participant, User, Utterance, get_logger, session_scope
+from autune_core.errors import NotFoundError, ValidationError
 from autune_integrations import SlackApi, assert_personal_delivery
 
 from .config import get_settings
@@ -47,6 +48,7 @@ from .schemas import (
     ActionItemDetail,
     ActionItemRead,
     ActionItemUpdate,
+    DecisionCreate,
     DecisionReviewUpdate,
     MeetingReview,
     Outbound,
@@ -519,9 +521,12 @@ def build_decisions(
     asked, and with ids that repeat, a source row a cascade missed would attach
     itself to the rebuilt decision.
     """
-    stale = select(ExtDecision.id).where(ExtDecision.meeting_id == meeting_id)
+    # Only the model's decisions are rebuilt. One a person added is not derived
+    # from labels, so no rerun can recompute it (#246).
+    model_made = (ExtDecision.meeting_id == meeting_id, ExtDecision.origin == "model")
+    stale = select(ExtDecision.id).where(*model_made)
     session.execute(delete(ExtDecisionSource).where(ExtDecisionSource.decision_id.in_(stale)))
-    session.execute(delete(ExtDecision).where(ExtDecision.meeting_id == meeting_id))
+    session.execute(delete(ExtDecision).where(*model_made))
 
     decisions = [
         ExtDecision(
@@ -542,7 +547,13 @@ def build_decisions(
     # A review follows its decision's id (#193, #246). A decision whose sources
     # changed is a different decision, and a verdict -- or a rewording -- given
     # about the old one must not quietly apply to it, nor outlive it.
-    kept = [decision.id for decision in decisions]
+    kept = [decision.id for decision in decisions] + list(
+        session.scalars(
+            select(ExtDecision.id).where(
+                ExtDecision.meeting_id == meeting_id, ExtDecision.origin == "user"
+            )
+        )
+    )
     session.execute(
         delete(ExtDecisionReview).where(
             ExtDecisionReview.meeting_id == meeting_id,
@@ -985,6 +996,7 @@ def review_for_meeting(
                 statement=review.statement if review and review.statement else decision.statement,
                 model_statement=decision.statement,
                 confidence=decision.confidence,
+                origin=decision.origin,  # type: ignore[arg-type]
                 status=review.status if review else "pending",  # type: ignore[arg-type]
                 suggested=_suggested(decision.confidence),
                 source_utterance_ids=[
@@ -1041,7 +1053,14 @@ def review_decision(
             review.status = changes["status"]
         if "statement" in changes:
             wording = changes["statement"]
-            review.statement = None if wording in (None, decision.statement) else wording
+            if decision.origin == "user":
+                # A person's own decision has no model wording to keep beside
+                # theirs; the rewording is the statement.
+                if wording is not None:
+                    decision.statement = wording
+                review.statement = None
+            else:
+                review.statement = None if wording in (None, decision.statement) else wording
         session.flush()
 
     return next(
@@ -1074,3 +1093,77 @@ def outbound_for_meeting(session: Session, meeting_id: str) -> Outbound:
             if item.status != ActionStatus.NEEDS_CONFIRMATION.value
         ],
     )
+
+
+def create_decision(session: Session, payload: DecisionCreate) -> ReviewDecision:
+    """Add a decision the model missed. Confirmed from the moment it exists.
+
+    ``origin="user"`` keeps it through a rerun, and the review row says a person
+    stands behind it. Every source must be an utterance of the same meeting: a
+    quotation from another meeting would make this meeting claim a decision it
+    never discussed. The refusal names the field, never the utterance text.
+    """
+    if session.get(Meeting, payload.meeting_id) is None:
+        raise NotFoundError("meeting", payload.meeting_id)
+    source_ids = list(dict.fromkeys(payload.source_utterance_ids))
+    if source_ids:
+        found = set(
+            session.scalars(
+                select(Utterance.id).where(
+                    Utterance.id.in_(source_ids), Utterance.meeting_id == payload.meeting_id
+                )
+            )
+        )
+        if len(found) != len(source_ids):
+            raise ValidationError(
+                "every source utterance must belong to this meeting",
+                field="source_utterance_ids",
+            )
+
+    decision = ExtDecision(
+        meeting_id=payload.meeting_id,
+        statement=payload.statement,
+        confidence=1.0,
+        origin="user",
+        sources=[
+            ExtDecisionSource(utterance_id=utterance_id, position=position)
+            for position, utterance_id in enumerate(source_ids)
+        ],
+    )
+    session.add(decision)
+    session.flush()
+    session.add(
+        ExtDecisionReview(
+            decision_id=decision.id, meeting_id=decision.meeting_id, status="confirmed"
+        )
+    )
+    session.flush()
+    return next(
+        listed
+        for listed in review_for_meeting(session, decision.meeting_id).decisions
+        if listed.id == decision.id
+    )
+
+
+def delete_decision(session: Session, decision: ExtDecision) -> None:
+    """Remove a decision from what the meeting will send.
+
+    A decision a person added is really deleted, with its review -- privacy.md
+    allows no soft deletes of content. A decision the model proposed cannot be:
+    the next run would propose it again from the same utterances, and the person
+    would be deleting it forever. It is rejected instead, which keeps it out of
+    the outbound list across reruns, and its rewording, if any, is dropped.
+    """
+    if decision.origin == "user":
+        session.execute(
+            delete(ExtDecisionReview).where(ExtDecisionReview.decision_id == decision.id)
+        )
+        session.delete(decision)
+    else:
+        review = session.get(ExtDecisionReview, decision.id)
+        if review is None:
+            review = ExtDecisionReview(decision_id=decision.id, meeting_id=decision.meeting_id)
+            session.add(review)
+        review.status = "rejected"
+        review.statement = None
+    session.flush()

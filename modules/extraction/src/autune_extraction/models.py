@@ -195,6 +195,7 @@ class ExtDecision(Base, TimestampMixin):
     __tablename__ = "ext_decisions"
     __table_args__ = (
         CheckConstraint("confidence >= 0 AND confidence <= 1", name="ck_ext_decisions_confidence"),
+        CheckConstraint("origin IN ('model','user')", name="ck_ext_decisions_origin"),
     )
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True, default=lambda: new_id(DECISION))
@@ -206,6 +207,14 @@ class ExtDecision(Base, TimestampMixin):
     it is drawn from — there is no unmasked text to reach this column."""
 
     confidence: Mapped[float] = mapped_column(Float, nullable=False)
+
+    origin: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="model", server_default="model"
+    )
+    """``model`` for a decision the pipeline proposed, ``user`` for one a person
+    added (#246). A rerun rebuilds only the model's: a decision somebody typed is
+    not derived from labels, so no rerun can recompute it, and deleting it would
+    throw their work away. Same distinction as ``ExtActionItem.origin``."""
 
     sources: Mapped[list[ExtDecisionSource]] = relationship(
         back_populates="decision", cascade="all, delete-orphan"

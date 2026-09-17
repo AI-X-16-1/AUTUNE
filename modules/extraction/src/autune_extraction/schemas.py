@@ -158,8 +158,23 @@ class DecisionReviewUpdate(BaseModel):
     statement: str | None = Field(default=None, min_length=1, max_length=2000)
 
 
+class DecisionCreate(BaseModel):
+    """A decision the model missed, typed by a person.
+
+    No ``confidence``: a person typing it is the certainty, as with
+    ``ActionItemCreate``. It is confirmed from the moment it exists.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    meeting_id: str = Field(pattern=r"^mtg_")
+    statement: str = Field(min_length=1, max_length=2000)
+    source_utterance_ids: list[str] = Field(default_factory=list)
+    """Optional, in spoken order. Each must be an utterance of this meeting."""
+
+
 class ReviewDecision(BaseModel):
-    """One proposed decision as S15 lists it."""
+    """One decision as S15 lists it -- proposed by the model or added by a person."""
 
     id: str
     statement: str
@@ -169,6 +184,7 @@ class ReviewDecision(BaseModel):
     """What the model proposed, kept beside the rewording so the screen can show both."""
 
     confidence: float
+    origin: Literal["model", "user"]
     status: Literal["pending", "confirmed", "rejected"]
     suggested: bool | None
     """Whether the screen should pre-check it: the confidence clears

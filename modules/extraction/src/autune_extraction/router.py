@@ -26,6 +26,7 @@ from .schemas import (
     ActionItemDetail,
     ActionItemRead,
     ActionItemUpdate,
+    DecisionCreate,
     DecisionReviewUpdate,
     MeetingReview,
     Outbound,
@@ -168,3 +169,25 @@ def get_outbound(meeting_id: str, session: SessionDep) -> Outbound:
     """Exactly what "확정해서 보내기" would send: confirmed decisions and accepted items."""
     _meeting(session, meeting_id)
     return service.outbound_for_meeting(session, meeting_id)
+
+
+@router.post("/decisions", response_model=ReviewDecision, status_code=status.HTTP_201_CREATED)
+def create_decision(payload: DecisionCreate, session: SessionDep) -> ReviewDecision:
+    """Add a decision the model missed. It is confirmed and survives a rerun."""
+    response = service.create_decision(session, payload)
+    session.commit()
+    return response
+
+
+@router.delete("/decisions/{decision_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_decision(decision_id: str, session: SessionDep) -> None:
+    """Delete a decision a person added; reject one the model proposed.
+
+    The model's would come back on the next run, so rejecting is what keeps it
+    gone. See ``service.delete_decision``.
+    """
+    decision = session.get(ExtDecision, decision_id)
+    if decision is None:
+        raise NotFoundError("decision", decision_id)
+    service.delete_decision(session, decision)
+    session.commit()
