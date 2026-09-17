@@ -14,10 +14,31 @@ import pytest
 from autune_audio.eval.codeswitch import (
     PointOfInterestErrorRate,
     fold_loanwords,
+    hike_normalise,
     mixed_error_rate,
     mixed_tokens,
     point_of_interest_error_rate,
 )
+
+
+class TestHikeNormalise:
+    """HiKE's ``normalize_text`` produced the references, so the hypothesis has
+    to go through the same chain or a perfect transcript scores as wrong."""
+
+    def test_contractions_expand_before_the_apostrophe_is_removed(self) -> None:
+        assert hike_normalise("Here's what we can't do, let's see") == (
+            "here is what we can not do let us see"
+        )
+
+    def test_punctuation_is_deleted_not_turned_into_a_space(self) -> None:
+        assert hike_normalise("cross-validation, k-fold") == "crossvalidation kfold"
+        assert hike_normalise("9.2%") == "92"
+
+    def test_bracketed_non_words_are_dropped(self) -> None:
+        assert hike_normalise("[음악] 회의 <unk> 시작") == "회의 시작"
+
+    def test_whitespace_is_collapsed(self) -> None:
+        assert hike_normalise("  두\t개의   공백 ") == "두 개의 공백"
 
 
 class TestMixedTokens:
@@ -62,6 +83,14 @@ class TestMixedErrorRate:
 
     def test_case_and_punctuation_are_normalised_on_both_sides(self) -> None:
         assert mixed_error_rate("이번 bug는 session에", "이번 Bug는, session에.").mer == 0.0
+
+    def test_a_hyphenated_term_matches_the_reference_that_lost_its_hyphen(self) -> None:
+        """The reviewer's example: a perfect transcript scored MER 0.154 before."""
+        scored = mixed_error_rate(
+            "지금 적용한 eventdriven architecture 구조 괜찮은 듯",
+            "지금 적용한 event-driven architecture 구조 괜찮은 듯",
+        )
+        assert scored.mer == 0.0
 
     def test_a_loanword_in_either_spelling_is_the_same_word(self) -> None:
         loanwords = (("버그", "bug"),)
@@ -113,6 +142,11 @@ class TestPointOfInterestErrorRate:
     def test_a_particle_glued_to_a_latin_word_is_split_before_scoring(self) -> None:
         """The model writes ``bug는``; the annotators tagged ``bug`` and ``는`` apart."""
         scored = scored_against_labeled("이번 bug는 session management logic에 문제가 있었어")
+        assert scored.pier == 0.0
+
+    def test_jamo_count_as_hangul_when_splitting_a_particle_off(self) -> None:
+        """HiKE's ``add_space`` uses ``\\p{Script=Hangul}``, which includes ㅋㅋ."""
+        scored = point_of_interest_error_rate("<tag ok> <tag ㅋㅋ> 진짜", "okㅋㅋ 진짜")
         assert scored.pier == 0.0
 
     def test_an_error_away_from_the_switch_does_not_count(self) -> None:

@@ -21,10 +21,20 @@ item keyed on that word survives.
 English one on both sides before comparing. The same rewrite is applied here;
 ``korean.term_accuracy`` accepts the same equivalence through ``aliases``.
 
-Normalisation follows HiKE, not ``korean.normalise``: lowercase, punctuation
-out, whitespace collapsed, and nothing else. Spoken numerals are left as the
-model wrote them, because the paper's numbers were produced that way and a
+Normalisation follows HiKE's ``normalize_text`` step for step, not
+``korean.normalise``: lowercase, English contractions expanded, bracketed
+non-words dropped, punctuation *deleted*, whitespace collapsed. The references
+in the corpus were produced by that same function — ``text_normalized`` holds
+``crossvalidation`` and ``we are stuck`` — so a hypothesis normalised any other
+way is scored against a shape it can never match. Spoken numerals are left as
+the model wrote them, because the paper's numbers were produced that way and a
 score that cannot sit in its table is not worth having.
+
+One deliberate deviation: the reference side is normalised too. HiKE passes
+its references through untouched, which is harmless for the corpus text (it
+is already normalised) but lets a capitalised loanword spelling (``API``,
+``Docker``) reach the comparison unlowered on three rows. Lowercasing both
+sides is the defensible reading; the difference is not measurable.
 """
 
 from __future__ import annotations
@@ -54,10 +64,38 @@ def fold_loanwords(text: str, loanwords: Loanwords) -> str:
     return text
 
 
-def _normalise(text: str) -> str:
-    """HiKE's normalisation: lowercase, punctuation removed, spaces collapsed."""
-    kept = (c if not unicodedata.category(c).startswith("P") else " " for c in text)
-    return _SPACE.sub(" ", "".join(kept).lower()).strip()
+# jiwer's ExpandCommonEnglishContractions, in its order: the specific words
+# first, then the general attachments. Order matters — ``can't`` must become
+# ``can not`` before ``n't`` gets its turn.
+_CONTRACTIONS = (
+    (re.compile(r"won't"), "will not"),
+    (re.compile(r"can't"), "can not"),
+    (re.compile(r"let's"), "let us"),
+    (re.compile(r"n't"), " not"),
+    (re.compile(r"'re"), " are"),
+    (re.compile(r"'s"), " is"),
+    (re.compile(r"'d"), " would"),
+    (re.compile(r"'ll"), " will"),
+    (re.compile(r"'t"), " not"),
+    (re.compile(r"'ve"), " have"),
+    (re.compile(r"'m"), " am"),
+)
+# jiwer's RemoveKaldiNonWords: anything between [] or <>.
+_NON_WORD = re.compile(r"[<\[][^>\]]*[>\]]")
+
+
+def hike_normalise(text: str) -> str:
+    """HiKE's ``normalize_text``: what both sides of MER and PIER go through.
+
+    Lowercase → contractions expanded → bracketed non-words removed →
+    punctuation (Unicode category P*) deleted → whitespace collapsed.
+    """
+    text = text.lower()
+    for pattern, replacement in _CONTRACTIONS:
+        text = pattern.sub(replacement, text)
+    text = _NON_WORD.sub("", text)
+    text = "".join(c for c in text if not unicodedata.category(c).startswith("P"))
+    return _SPACE.sub(" ", text).strip()
 
 
 def mixed_tokens(text: str) -> list[str]:
@@ -90,8 +128,8 @@ def mixed_error_rate(
 ) -> MixedErrorRate:
     """Levenshtein distance over mixed tokens, divided by the reference length."""
     loanwords = tuple(loanwords)
-    ref = mixed_tokens(_normalise(fold_loanwords(reference, loanwords)))
-    hyp = mixed_tokens(_normalise(fold_loanwords(hypothesis, loanwords)))
+    ref = mixed_tokens(hike_normalise(fold_loanwords(reference, loanwords)))
+    hyp = mixed_tokens(hike_normalise(fold_loanwords(hypothesis, loanwords)))
     if not ref:
         raise ValueError("reference is empty; mixed error rate is undefined")
 
@@ -106,7 +144,9 @@ def mixed_error_rate(
 
 
 _TAG_OR_WORD = re.compile(r"<tag\s+([^>]+?)\s*>|(\S+)")
-_LATIN_BEFORE_HANGUL = re.compile(r"([A-Za-z0-9]+)(?=[\uAC00-\uD7A3])")
+# HiKE's ``add_space`` looks ahead for ``\p{Script=Hangul}``: syllables, and the
+# Jamo blocks that ㅋㅋ and ㅠㅠ are written in.
+_LATIN_BEFORE_HANGUL = re.compile(r"([A-Za-z0-9]+)(?=[\u1100-\u11FF\u3130-\u318F\uAC00-\uD7A3])")
 
 
 @dataclass(frozen=True)
@@ -131,7 +171,7 @@ def _tagged_words(labeled: str) -> tuple[list[str], set[int]]:
     poi: set[int] = set()
     for match in _TAG_OR_WORD.finditer(labeled):
         tagged, plain = match.groups()
-        pieces = _normalise(tagged if tagged is not None else plain).split()
+        pieces = hike_normalise(tagged if tagged is not None else plain).split()
         if tagged is not None:
             poi.update(range(len(words), len(words) + len(pieces)))
         words.extend(pieces)
@@ -155,7 +195,7 @@ def point_of_interest_error_rate(
         raise ValueError("reference has no <tag> words; PIER is undefined")
 
     # The annotators wrote ``bug 는``; the model writes ``bug는``.
-    hyp = _LATIN_BEFORE_HANGUL.sub(r"\1 ", _normalise(fold_loanwords(hypothesis, loanwords)))
+    hyp = _LATIN_BEFORE_HANGUL.sub(r"\1 ", hike_normalise(fold_loanwords(hypothesis, loanwords)))
     substitutions, deletions, insertions = count(
         edit for edit in edit_ops(ref, hyp.split()) if edit[1] in poi
     )
