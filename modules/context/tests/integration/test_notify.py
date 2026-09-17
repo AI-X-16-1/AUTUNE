@@ -80,6 +80,7 @@ def _decision_version(
     *,
     topic_label: str = "검색 정렬 기준",
     change_type: str = "modified",
+    current_statement: str = "최신순으로 정렬한다",
     key_stakeholders_absent: list[str] | None = None,
 ) -> None:
     with session_scope() as s:
@@ -91,7 +92,7 @@ def _decision_version(
                 thread_id=thread.id,
                 source_decision_id="dec_direct",
                 meeting_id=meeting_id,
-                current_statement="최신순으로 정렬한다",
+                current_statement=current_statement,
                 change_type=change_type,
                 confidence=0.9,
                 nli_version="test",
@@ -185,6 +186,23 @@ def test_a_new_decision_is_not_a_drift(team_id: str) -> None:
     assert slack.sent == []
 
 
+def test_an_unchanged_restatement_is_not_a_drift(team_id: str) -> None:
+    """NLI entailment (the statement was re-affirmed, not moved) lands as
+    ``unchanged``. Notifying on it would tell an absent stakeholder a decision
+    changed when it did not."""
+    meeting = _meeting(team_id)
+    _decision_version(
+        team_id, meeting, change_type="unchanged", key_stakeholders_absent=["usr_alice"]
+    )
+    slack = FakeSlack()
+
+    with session_scope() as s:
+        sent = service.notify_decision_drift(s, slack, _CHANNEL, meeting)
+
+    assert sent == 0
+    assert slack.sent == []
+
+
 def test_a_change_with_no_one_absent_sends_nothing(team_id: str) -> None:
     meeting = _meeting(team_id)
     _decision_version(team_id, meeting, change_type="reversed", key_stakeholders_absent=[])
@@ -208,6 +226,29 @@ def test_the_channel_notice_names_no_one(team_id: str) -> None:
         service.notify_decision_drift(s, slack, _CHANNEL, meeting)
 
     assert "usr_alice" not in slack.channel_messages[0].text
+
+
+def test_an_unusually_long_statement_still_sends(team_id: str) -> None:
+    """``current_statement`` is an unbounded ``Text`` column. Left untruncated
+    it can push the outbound payload past ``assert_within_size``'s 4000-char
+    cap and raise ``PrivacyViolationError`` -- and since the caller retries
+    (``acks_late``), an untruncated statement would fail the same meeting's
+    drift warning forever rather than just once."""
+    meeting = _meeting(team_id)
+    _decision_version(
+        team_id,
+        meeting,
+        change_type="modified",
+        current_statement="가" * 5000,
+        key_stakeholders_absent=["usr_alice"],
+    )
+    slack = FakeSlack()
+
+    with session_scope() as s:
+        sent = service.notify_decision_drift(s, slack, _CHANNEL, meeting)
+
+    assert sent == 1
+    assert len(slack.channel_messages) == 1
 
 
 def test_the_dm_carries_no_raw_id_in_its_text(team_id: str) -> None:

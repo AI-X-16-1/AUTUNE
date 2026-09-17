@@ -576,9 +576,17 @@ def publish_if_ready(meeting_id: str) -> bool:
     done, B has reported, or the deadline has passed. Returns whether it published.
 
     A failure in B must never cost the user their topic links.
+
+    ``on_transcript_ready`` enqueues this twice (an immediate check and a
+    B-timeout fallback) and Celery can retry it again on top of that, so two
+    workers can reach here for the same meeting at once. ``with_for_update``
+    makes the ``published_at IS NULL`` read and the publish it guards atomic:
+    the second worker blocks on the row lock until the first commits, then
+    sees ``published_at`` already set and returns ``False`` instead of
+    publishing and notifying a second time.
     """
     with session_scope() as session:
-        status = session.get(CtxMeetingStatus, meeting_id)
+        status = session.get(CtxMeetingStatus, meeting_id, with_for_update=True)
         if status is None or not status.topic_linking_done:
             return False
         if status.published_at is not None:
@@ -704,14 +712,18 @@ def notify_decision_drift(session: Session, slack: SlackApi, channel: str, meeti
 
     One channel notice per event (never names the absentees -- see
     ``notify.py``), plus one DM per absent stakeholder (does not need to name
-    anyone -- they are the recipient). ``ChangeType.NEW`` never has an absent
-    list (see ``_rethread``) and is not a drift, so it is excluded by the
-    query rather than by an empty-list check on every row.
+    anyone -- they are the recipient). Only ``MODIFIED`` and ``REVERSED`` are a
+    drift: ``ChangeType.NEW`` never has an absent list (see ``_rethread``), and
+    ``UNCHANGED`` means the NLI check found the statement re-affirmed, not
+    changed, so notifying on it would tell an absent stakeholder a decision
+    moved when it did not.
     """
     rows = session.scalars(
         select(CtxDecisionVersion).where(
             CtxDecisionVersion.meeting_id == meeting_id,
-            CtxDecisionVersion.change_type != ChangeType.NEW.value,
+            CtxDecisionVersion.change_type.in_(
+                (ChangeType.MODIFIED.value, ChangeType.REVERSED.value)
+            ),
         )
     ).all()
     sent = 0
@@ -722,10 +734,19 @@ def notify_decision_drift(session: Session, slack: SlackApi, channel: str, meeti
         thread = session.get(CtxDecision, version.thread_id)
         thread_label = thread.topic_label if thread is not None else version.current_statement[:400]
         change_type = ChangeType(version.change_type)
+        # ``current_statement`` is a ``Text`` column with no length limit, and
+        # it is quoted in both the channel notice and the DM. An unusually
+        # long statement from B can push the outbound payload past
+        # ``assert_within_size``'s cap, which raises ``PrivacyViolationError``
+        # with no handler around this loop -- and since the task is
+        # ``acks_late``, Celery just redelivers the same failing meeting
+        # forever, so its drift warning never goes out. The same 400-char
+        # preview used for ``thread_label`` keeps this well under the cap.
+        statement_preview = version.current_statement[:400]
 
         channel_fallback, channel_blocks = build_decision_drift_channel_notice(
             thread_label=thread_label,
-            current_statement=version.current_statement,
+            current_statement=statement_preview,
             change_type=change_type,
             absent_count=len(absent),
         )
@@ -733,7 +754,7 @@ def notify_decision_drift(session: Session, slack: SlackApi, channel: str, meeti
 
         dm_fallback, dm_blocks = build_decision_drift_personal_dm(
             thread_label=thread_label,
-            current_statement=version.current_statement,
+            current_statement=statement_preview,
             change_type=change_type,
         )
         for user_id in absent:
