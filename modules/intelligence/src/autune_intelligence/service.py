@@ -130,6 +130,14 @@ WEIGHTS: Final = {
     "action_item_completion_rate": 0.2,
     "participation_balance": 0.2,
 }
+"""First heuristic, fixed by hand — not learned, not validated (#26).
+
+Learning these from user feedback needs a feedback signal that does not exist
+yet (no "was this score fair?" UI anywhere), the same gap that keeps C's gap
+threshold hand-tuned off dismissals rather than fit. Revisit as a P2 once that
+signal exists; until then this is the same kind of P1 heuristic
+``GRADE_CUTOFFS`` already is, just without the label.
+"""
 GRADE_CUTOFFS: Final = ((0.9, "A"), (0.8, "B"), (0.7, "C"), (0.6, "D"), (0.5, "E"))
 """Descending; value below the last cutoff is F. First heuristic — P2 tunes these."""
 
