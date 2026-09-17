@@ -44,6 +44,16 @@ class Settings(BaseSettings):
     """Analysis results are deleted after this many days.
     See docs/architecture/privacy.md section 4."""
 
+    cors_allowed_origins: str = ""
+    """Comma-separated origins apps/api sends Access-Control-Allow-Origin for.
+
+    Empty means no CORS headers at all — the default, and what every
+    environment gets until this is set explicitly. A browser blocks
+    cross-origin responses on its own; only a local dev setup running
+    apps/web and apps/api as separate origins (e.g. :3000 and :8000) needs
+    this, and only for those exact origins, e.g.
+    ``http://localhost:3000``."""
+
     @model_validator(mode="after")
     def _reject_default_secret_outside_local(self) -> Settings:
         """A shipped default signing key forges any user's session.
