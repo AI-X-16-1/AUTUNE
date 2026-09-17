@@ -70,6 +70,7 @@ class TestUtterances:
         assert utterance.waveform.samples.dtype == np.float32
         assert utterance.waveform.samples.shape == (8_000,)
         assert utterance.reference == "이번 bug는 session에 문제가 있었어"
+        assert utterance.reference_raw == "이번 bug는 session에 문제가 있었어."
         assert utterance.reference_labeled.startswith("<tag 이번>")
         assert utterance.cs_level == "word"
         assert utterance.category == "software development"
@@ -110,6 +111,20 @@ class TestSelectSampleIds:
         assert select_sample_ids(path, limit=3, seed=7) == select_sample_ids(path, limit=3, seed=7)
         assert select_sample_ids(path, limit=3, seed=7) != select_sample_ids(path, limit=3, seed=8)
 
+    def test_a_limit_below_the_number_of_levels_still_honours_the_limit(
+        self, tmp_path: Path
+    ) -> None:
+        rows = [_row("w0", "word"), _row("p0", "phrase"), _row("s0", "sentence")]
+        path = _write(tmp_path / "hike.parquet", rows)
+
+        assert len(select_sample_ids(path, limit=2, seed=0)) == 2
+
+    def test_a_limit_below_one_is_refused(self, tmp_path: Path) -> None:
+        path = _write(tmp_path / "hike.parquet", [_row("a", "word")])
+
+        with pytest.raises(ValueError):
+            select_sample_ids(path, limit=0, seed=0)
+
     def test_no_limit_means_every_row(self, tmp_path: Path) -> None:
         path = _write(tmp_path / "hike.parquet", [_row("a", "word"), _row("b", "phrase")])
 
@@ -132,6 +147,7 @@ def _labels(sample_id: str, cs_level: str = "word", category: str = "business") 
     return HikeLabels(
         sample_id=sample_id,
         reference="이번 bug는 session에 문제가 있었어",
+        reference_raw="이번 Bug는 session에 문제가 있었어.",
         reference_labeled="<tag 이번> <tag bug> <tag 는> <tag session> <tag 에> 문제가 있었어",
         cs_level=cs_level,
         category=category,
@@ -153,12 +169,21 @@ class TestScore:
         assert (scored.mer.mer, scored.pier.pier) == (0.0, 0.0)
         assert scored.cer_normalised.cer > 0.0
 
-    def test_raw_cer_sees_the_punctuation_that_normalised_cer_does_not(self) -> None:
-        scored = score(
+    def test_raw_cer_is_scored_against_the_raw_text_as_evaluation_01_did(self) -> None:
+        """``text`` keeps case and punctuation; ``text_normalized`` does not. Raw
+        CER against the normalised column would count every full stop the model
+        writes as an error by construction."""
+        exact_raw = score(
             _labels("a"), "이번 Bug는 session에 문제가 있었어.", seconds=2.0, elapsed=1.0
         )
-        assert scored.cer_raw.cer > 0.0
-        assert scored.cer_normalised.cer == 0.0
+        assert exact_raw.cer_raw.cer == 0.0
+        assert exact_raw.cer_normalised.cer == 0.0
+
+        unpunctuated = score(
+            _labels("a"), "이번 bug는 session에 문제가 있었어", seconds=2.0, elapsed=1.0
+        )
+        assert unpunctuated.cer_raw.cer > 0.0
+        assert unpunctuated.cer_normalised.cer == 0.0
 
 
 class TestSummarise:
@@ -218,3 +243,14 @@ class TestPredictions:
 
     def test_a_missing_file_reads_as_no_predictions(self, tmp_path: Path) -> None:
         assert read_predictions(tmp_path / "none.jsonl") == []
+
+    def test_a_line_cut_short_by_an_interruption_is_dropped_not_fatal(self, tmp_path: Path) -> None:
+        """--resume has to work right after the interruption that made it necessary."""
+        path = tmp_path / "predictions.jsonl"
+        whole = Prediction(sample_id="a", hypothesis="이번 bug는", seconds=1.5, elapsed=2.0)
+        with path.open("a", encoding="utf-8") as fh:
+            write_prediction(fh, whole)
+            fh.write('{"sample_id": "b", "hypo')
+
+        with pytest.warns(RuntimeWarning, match="line 2"):
+            assert read_predictions(path) == [whole]

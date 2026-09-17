@@ -21,6 +21,7 @@ from __future__ import annotations
 import io
 import json
 import random
+import warnings
 from collections.abc import Collection, Iterator, Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -46,6 +47,7 @@ CS_LEVELS = ("word", "phrase", "sentence")
 
 _LABELS = (
     "sample_id",
+    "text",
     "text_normalized",
     "text_pier_labeled",
     "cs_level",
@@ -58,7 +60,9 @@ _LABELS = (
 class HikeLabels:
     sample_id: str
     reference: str
-    """``text_normalized``: what MER and CER are scored against."""
+    """``text_normalized``: what MER, PIER and normalised CER are scored against."""
+    reference_raw: str
+    """``text``: case and punctuation intact, for raw CER as evaluation 01 computed it."""
     reference_labeled: str
     """``text_pier_labeled``: the reference with ``<tag …>`` around each switch."""
     cs_level: str
@@ -92,6 +96,8 @@ def select_sample_ids(path: Path, *, limit: int | None, seed: int) -> list[str]:
     of ``limit`` in proportion, so a short run still says something about
     every level.
     """
+    if limit is not None and limit < 1:
+        raise ValueError(f"limit must be at least 1, got {limit}")
     table = pq.read_table(path, columns=["sample_id", "cs_level"])
     ids_by_level: dict[str, list[str]] = {level: [] for level in CS_LEVELS}
     for sample_id, level in zip(
@@ -118,6 +124,10 @@ def _shares(ids_by_level: dict[str, list[str]], limit: int) -> list[int]:
     """
     sizes = [len(ids) for ids in ids_by_level.values()]
     shares = [min(1, size) for size in sizes]
+    if sum(shares) > limit:
+        # Fewer rows asked for than there are levels: the largest levels get them.
+        largest = sorted(range(len(sizes)), key=lambda i: sizes[i], reverse=True)[:limit]
+        return [1 if i in largest else 0 for i in range(len(sizes))]
     remaining = limit - sum(shares)
     if remaining <= 0:
         return shares
@@ -162,6 +172,7 @@ def _labels(row: dict[str, Any]) -> HikeLabels:
     return HikeLabels(
         sample_id=row["sample_id"],
         reference=row["text_normalized"],
+        reference_raw=row["text"],
         reference_labeled=row["text_pier_labeled"],
         cs_level=row["cs_level"],
         category=row["category"],
@@ -202,9 +213,10 @@ class HikeScore:
 def score(row: HikeLabels, hypothesis: str, *, seconds: float, elapsed: float) -> HikeScore:
     """HiKE's two metrics with its loanword rule, and our CER without it.
 
-    CER is kept as evaluation 01 computed it so the two corpora can be read
-    side by side; MER and PIER are computed as the HiKE paper computed them so
-    the number can sit in its table.
+    CER is kept as evaluation 01 computed it — raw against the raw text, and
+    normalised through ``korean.normalise`` on both sides — so the two corpora
+    can be read side by side; MER and PIER are computed as the HiKE paper
+    computed them so the number can sit in its table.
     """
     return HikeScore(
         sample_id=row.sample_id,
@@ -216,7 +228,7 @@ def score(row: HikeLabels, hypothesis: str, *, seconds: float, elapsed: float) -
         pier=point_of_interest_error_rate(
             row.reference_labeled, hypothesis, loanwords=row.loanwords
         ),
-        cer_raw=character_error_rate(row.reference, hypothesis),
+        cer_raw=character_error_rate(row.reference_raw, hypothesis),
         cer_normalised=character_error_rate(normalise(row.reference), normalise(hypothesis)),
     )
 
@@ -272,7 +284,19 @@ def write_prediction(fh: TextIO, prediction: Prediction) -> None:
 
 
 def read_predictions(path: Path) -> list[Prediction]:
+    """Every complete line. A last line cut short by an interruption is dropped
+    with a warning rather than raised, because --resume is needed exactly then."""
     if not path.exists():
         return []
-    with path.open(encoding="utf-8") as fh:
-        return [Prediction(**json.loads(line)) for line in fh if line.strip()]
+    lines = [line for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    predictions: list[Prediction] = []
+    for number, line in enumerate(lines, start=1):
+        try:
+            predictions.append(Prediction(**json.loads(line)))
+        except (json.JSONDecodeError, TypeError) as exc:
+            if number != len(lines):
+                raise ValueError(f"{path.name} line {number} is not a prediction") from exc
+            warnings.warn(
+                f"{path.name}: dropping incomplete last line {number}", RuntimeWarning, stacklevel=2
+            )
+    return predictions

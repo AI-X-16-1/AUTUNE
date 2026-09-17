@@ -16,6 +16,12 @@ same ``transcribe()`` with **no glossary**, because HiKE has no meeting
 vocabulary to build one from. The number therefore describes the model, not
 our prompt; the prompt's effect is measured on the in-house recording.
 
+Two language modes, and they answer different questions. ``--language ko``
+(the default) is what production does, and on this corpus it makes Whisper
+translate an English-matrix sentence into Korean rather than transcribe it.
+``--language ''`` lets the model detect, which is how HiKE ran Whisper: only
+that run can sit next to the paper's table.
+
 The summary — means overall, by CS level and by category, plus the run's
 settings — is written next to the predictions as ``<predictions>.summary.json``
 and printed last on stdout. stdout also carries the pipeline's own log lines
@@ -48,7 +54,13 @@ from autune_audio.eval.hike import (
 
 
 def transcribe_corpus(
-    corpus: Path, predictions: Path, *, limit: int | None, seed: int, resume: bool, language: str
+    corpus: Path,
+    predictions: Path,
+    *,
+    limit: int | None,
+    seed: int,
+    resume: bool,
+    language: str,
 ) -> dict[str, Any]:
     """Transcribe the selected rows into ``predictions``; return the run's settings."""
     # Imported here so --score-only never loads torch or the model.
@@ -65,7 +77,6 @@ def transcribe_corpus(
     run = {
         "model": settings.whisper_model,
         "device": settings.device,
-        "compute_type": "float16" if settings.device == "cuda" else "int8",
         "language": language or "detect",
         "glossary": "",
         "limit": limit,
@@ -104,11 +115,12 @@ def transcribe_corpus(
     return run
 
 
-def score_predictions(corpus: Path, predictions: Path) -> list[HikeScore]:
+def score_predictions(corpus: Path, predictions: Path) -> tuple[list[HikeScore], int]:
+    """Scores for every prediction that names a corpus row, and how many did not."""
     by_id = {p.sample_id: p for p in read_predictions(predictions)}
     if not by_id:
         raise SystemExit(f"no predictions in {predictions}")
-    return [
+    scores = [
         score(
             row,
             by_id[row.sample_id].hypothesis,
@@ -117,6 +129,7 @@ def score_predictions(corpus: Path, predictions: Path) -> list[HikeScore]:
         )
         for row in labels(corpus, sample_ids=by_id.keys())
     ]
+    return scores, len(by_id) - len(scores)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -135,9 +148,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--resume", action="store_true", help="skip rows already in --predictions")
     parser.add_argument(
+        "--overwrite", action="store_true", help="start --predictions again if it exists"
+    )
+    parser.add_argument(
         "--language",
         default="ko",
-        help="Whisper language hint, as in production; pass '' to let it detect",
+        help="Whisper language hint. 'ko' is the production setting; pass '' to let the "
+        "model detect, which is how HiKE ran Whisper and the only run comparable to its table",
     )
     parser.add_argument(
         "--corpus", type=Path, default=None, help="local parquet; default downloads HiKE"
@@ -152,6 +169,15 @@ def main(argv: list[str] | None = None) -> int:
         if not args.predictions:
             parser.error("--predictions is required unless --score-only is given")
         predictions = args.predictions
+        if (
+            predictions.exists()
+            and predictions.stat().st_size
+            and not (args.resume or args.overwrite)
+        ):
+            parser.error(
+                f"{predictions} already holds predictions; pass --resume to continue it "
+                "or --overwrite to start again"
+            )
         run = transcribe_corpus(
             corpus,
             predictions,
@@ -161,8 +187,10 @@ def main(argv: list[str] | None = None) -> int:
             language=args.language,
         )
 
-    summary = summarise(score_predictions(corpus, predictions))
+    scores, unmatched = score_predictions(corpus, predictions)
+    summary = summarise(scores)
     summary["predictions"] = str(predictions)
+    summary["unmatched_predictions"] = unmatched
     if run is not None:
         summary["run"] = run
     summary_path = predictions.with_suffix(predictions.suffix + ".summary.json")
