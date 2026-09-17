@@ -45,8 +45,16 @@ class RoleStance(ContractModel):
     `STANCE_MIN_IDENTIFIED_PER_ROLE` identified people in it. In a small team a
     role is a person, and a count over one person is that person's stance.
 
-    People are counted by distinct ``user_id``. A person who spoke on the
+    People are counted by distinct ``user_id``, each in at most one of the two
+    counts, so ``supporting + concerns <= identified``. A person who spoke on the
     decision without doing either is in neither count, so this is not coverage.
+
+    **A unanimous role is not representable.** ``supporting == identified`` or
+    ``concerns == identified`` says what every person in the role did, which is
+    each person's stance however many of them there are -- the gap k-anonymity
+    leaves (review on #232). A producer leaves such a role out. A count of zero is
+    still allowed: whether "nobody in the role raised a concern" identifies anyone
+    is open on #232.
     """
 
     role: str
@@ -59,8 +67,12 @@ class RoleStance(ContractModel):
 
     @model_validator(mode="after")
     def _counts_fit_the_role(self) -> RoleStance:
-        if self.supporting > self.identified or self.concerns > self.identified:
-            raise ValueError("a stance count cannot exceed the people identified in the role")
+        if self.supporting + self.concerns > self.identified:
+            raise ValueError(
+                "supporting and concerns together cannot exceed the people identified in the role"
+            )
+        if self.identified in (self.supporting, self.concerns):
+            raise ValueError("a unanimous role reveals every person's stance and is left out")
         return self
 
 

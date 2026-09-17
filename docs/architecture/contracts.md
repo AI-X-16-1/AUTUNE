@@ -144,9 +144,12 @@ several, and it is what D keys a lineage on.
 `stance_by_role` counts people per role, never per person (#168). A role is
 listed only when the meeting had at least `STANCE_MIN_IDENTIFIED_PER_ROLE` (3)
 identified people in it, and `identified` carries that number so the model
-rejects a row below the gate. People are counted by distinct `user_id`; a person
-who spoke without backing the decision or raising a concern is in neither
-count, so the field says nothing about who spoke. An empty list means either
+rejects a row below the gate. People are counted by distinct `user_id`, each in
+at most one count (`supporting + concerns <= identified`); a person who spoke
+without backing the decision or raising a concern is in neither count, so the
+field says nothing about who spoke. A **unanimous** role (`supporting` or
+`concerns` equal to `identified`) is rejected too — it states every member's
+stance — and the producer leaves that role out. An empty list means either
 that no role cleared the gate or that stance was not computed — do not tell the
 two apart. It stays empty until the Korean classifier has a measured quality
 (#10); E shows "not enough data" until then.

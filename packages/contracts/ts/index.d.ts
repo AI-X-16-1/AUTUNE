@@ -337,8 +337,16 @@ export interface Decision {
  * `STANCE_MIN_IDENTIFIED_PER_ROLE` identified people in it. In a small team a
  * role is a person, and a count over one person is that person's stance.
  *
- * People are counted by distinct ``user_id``. A person who spoke on the
+ * People are counted by distinct ``user_id``, each in at most one of the two
+ * counts, so ``supporting + concerns <= identified``. A person who spoke on the
  * decision without doing either is in neither count, so this is not coverage.
+ *
+ * **A unanimous role is not representable.** ``supporting == identified`` or
+ * ``concerns == identified`` says what every person in the role did, which is
+ * each person's stance however many of them there are -- the gap k-anonymity
+ * leaves (review on #232). A producer leaves such a role out. A count of zero is
+ * still allowed: whether "nobody in the role raised a concern" identifies anyone
+ * is open on #232.
  *
  * This interface was referenced by `AutuneContracts`'s JSON-Schema
  * via the `definition` "RoleStance".
