@@ -241,6 +241,56 @@ class ExtDecisionSource(Base):
     decision: Mapped[ExtDecision] = relationship(back_populates="sources")
 
 
+REVIEW_STATUSES = ("pending", "confirmed", "rejected")
+"""What a person said about a decision the model proposed (#246). A decision with
+no review row is ``pending`` too -- the row exists once somebody touched it."""
+
+
+class ExtDecisionReview(Base):
+    """A person's verdict on one proposed decision, before anything leaves Autune.
+
+    The classifier proposes about twenty decisions for a team meeting and two
+    thirds of them are wrong (dummy team meetings, 2026-09-17), so nothing goes to
+    Notion or Slack until somebody confirms it (#246). This is where that answer
+    lives.
+
+    **Keyed by the ``dec_`` id, with no foreign key to ``ext_decisions``.** A rerun
+    deletes and rebuilds the meeting's decisions (``service.build_decisions``),
+    and a foreign key would take every review with them. The id is derived from
+    the meeting and the source utterances (#193), so a rebuilt decision with the
+    same sources gets the same id and keeps its review; one whose sources changed
+    is a different decision and loses it, which ``build_decisions`` enforces by
+    deleting reviews whose id was not rebuilt. The meeting foreign key is what
+    takes the rows when the meeting goes.
+
+    ``statement`` is the person's rewording, empty when they kept the model's. It
+    is typed by a user, like an action item's edited description, so it is not
+    masked on the way in; ``check_outbound`` reads it on the way out.
+
+    **There is no reviewer column.** Who confirmed or rejected which decision is a
+    record of one person's conduct in a meeting -- the shape ADR 0003 refuses, and
+    the reason ``ext_confirmations`` and ``ext_edit_events`` have none either.
+    Whether *anyone* may review is a permission (#246 point 1, #237), not a row.
+    """
+
+    __tablename__ = "ext_decision_reviews"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('pending','confirmed','rejected')", name="ck_ext_decision_reviews_status"
+        ),
+    )
+
+    decision_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    meeting_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("meetings.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    statement: Mapped[str | None] = mapped_column(Text)
+    reviewed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
 class ExtClassification(Base):
     """What the classifier said one utterance is. Step 1 of the pipeline.
 

@@ -103,6 +103,7 @@ the overlap the question turns on.
 | `ext_confirmations` | Every ambiguous agreement, the DM once sent, and the response |
 | `ext_decisions` | Decision entities, their statements and source utterances |
 | `ext_decision_sources` | Which utterances a decision was settled in, in order |
+| `ext_decision_reviews` | A person's verdict on each proposed decision (pending, confirmed, rejected) and an optional rewording, keyed by `dec_` id so a rerun over the same sources keeps it (#246). No reviewer column |
 
 A meeting that is processed again replaces its model-made rows —
 classifications, decisions, and draft items — rather than adding a second set,
@@ -159,6 +160,9 @@ other module's tables.
 | POST | `/action-items` | Add an item the model missed |
 | DELETE | `/action-items/{id}` | Delete an item the model got wrong |
 | POST | `/results/{meeting_id}/sync` | Re-sync to Notion and Jira |
+| GET | `/reviews/{meeting_id}` | What needs a person before anything is sent: decisions with their verdict, weak assents with their DM state, items still `needs_confirmation` or below the candidate line (S15, #246) |
+| PATCH | `/decisions/{id}` | Confirm, reject, reword, or put back to pending one proposed decision |
+| GET | `/reviews/{meeting_id}/outbound` | Exactly what may leave for Notion, Slack or Jira: confirmed decisions and accepted items. The sync reads this and nothing else |
 
 ## Celery tasks
 

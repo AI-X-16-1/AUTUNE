@@ -37,6 +37,7 @@ from .models import (
     ExtClassification,
     ExtConfirmation,
     ExtDecision,
+    ExtDecisionReview,
     ExtDecisionSource,
     ExtEditEvent,
 )
@@ -46,6 +47,12 @@ from .schemas import (
     ActionItemDetail,
     ActionItemRead,
     ActionItemUpdate,
+    DecisionReviewUpdate,
+    MeetingReview,
+    Outbound,
+    OutboundDecision,
+    ReviewAmbiguous,
+    ReviewDecision,
     SourceUtterance,
 )
 from .slots import assignee_of, meeting_day, parse_due
@@ -532,6 +539,17 @@ def build_decisions(
     session.add_all(decisions)
     session.flush()
 
+    # A review follows its decision's id (#193, #246). A decision whose sources
+    # changed is a different decision, and a verdict -- or a rewording -- given
+    # about the old one must not quietly apply to it, nor outlive it.
+    kept = [decision.id for decision in decisions]
+    session.execute(
+        delete(ExtDecisionReview).where(
+            ExtDecisionReview.meeting_id == meeting_id,
+            ExtDecisionReview.decision_id.not_in(kept),
+        )
+    )
+
     # Ids only. A statement is meeting content and a log line is a store.
     log.info("extraction_decisions_built", meeting_id=meeting_id, count=len(decisions))
     return decisions
@@ -925,4 +943,134 @@ def unasked_confirmations(session: Session, meeting_id: str) -> list[ExtConfirma
             .where(ExtConfirmation.meeting_id == meeting_id, ExtConfirmation.sent_at.is_(None))
             .order_by(ExtConfirmation.utterance_id)
         )
+    )
+
+
+# --- review before anything leaves (#246) ------------------------------------
+
+
+def _suggested(confidence: float) -> bool | None:
+    threshold = get_settings().candidate_confidence
+    return None if threshold is None else confidence >= threshold
+
+
+def review_for_meeting(
+    session: Session, meeting_id: str, *, now: datetime | None = None
+) -> MeetingReview:
+    """What S15 puts in front of a person before "확정해서 보내기".
+
+    Decisions come with their verdict so far; ambiguous agreements with where the
+    speaker's DM stands; action items only when they still need somebody -- status
+    ``needs_confirmation``, or below the candidate line.
+    """
+    decisions = session.scalars(
+        select(ExtDecision)
+        .options(selectinload(ExtDecision.sources))
+        .where(ExtDecision.meeting_id == meeting_id)
+        .order_by(ExtDecision.created_at, ExtDecision.id)
+    ).all()
+    reviews = {
+        review.decision_id: review
+        for review in session.scalars(
+            select(ExtDecisionReview).where(ExtDecisionReview.meeting_id == meeting_id)
+        )
+    }
+
+    listed = []
+    for decision in decisions:
+        review = reviews.get(decision.id)
+        listed.append(
+            ReviewDecision(
+                id=decision.id,
+                statement=review.statement if review and review.statement else decision.statement,
+                model_statement=decision.statement,
+                confidence=decision.confidence,
+                status=review.status if review else "pending",  # type: ignore[arg-type]
+                suggested=_suggested(decision.confidence),
+                source_utterance_ids=[
+                    source.utterance_id
+                    for source in sorted(decision.sources, key=lambda s: s.position)
+                ],
+            )
+        )
+
+    confirmations = session.scalars(
+        select(ExtConfirmation)
+        .where(ExtConfirmation.meeting_id == meeting_id)
+        .order_by(ExtConfirmation.utterance_id)
+    ).all()
+    items = [
+        item
+        for item in list_action_items(session, meeting_id=meeting_id)
+        if item.status == ActionStatus.NEEDS_CONFIRMATION.value or item.is_candidate
+    ]
+    return MeetingReview(
+        meeting_id=meeting_id,
+        decisions=listed,
+        ambiguous_agreements=[
+            ReviewAmbiguous(
+                utterance_id=row.utterance_id,
+                outcome=row.outcome_at(now),  # type: ignore[arg-type]
+                resolved_kind=row.resolved_kind,
+            )
+            for row in confirmations
+        ],
+        action_items=items,
+        pending_decisions=sum(1 for decision in listed if decision.status == "pending"),
+    )
+
+
+def review_decision(
+    session: Session, decision: ExtDecision, payload: DecisionReviewUpdate
+) -> ReviewDecision:
+    """Record a verdict and/or a rewording on one decision.
+
+    Sending the model's own wording clears the rewording instead of storing a copy
+    that would stop tracking the model's text after a rerun. A body with neither
+    field changes nothing.
+    """
+    changes = payload.model_dump(exclude_unset=True)
+    if changes:
+        review = session.get(ExtDecisionReview, decision.id)
+        if review is None:
+            review = ExtDecisionReview(
+                decision_id=decision.id, meeting_id=decision.meeting_id, status="pending"
+            )
+            session.add(review)
+        if changes.get("status") is not None:
+            review.status = changes["status"]
+        if "statement" in changes:
+            wording = changes["statement"]
+            review.statement = None if wording in (None, decision.statement) else wording
+        session.flush()
+
+    return next(
+        listed
+        for listed in review_for_meeting(session, decision.meeting_id).decisions
+        if listed.id == decision.id
+    )
+
+
+def outbound_for_meeting(session: Session, meeting_id: str) -> Outbound:
+    """Exactly what may leave for Notion, Slack or Jira: nothing unconfirmed (#246).
+
+    A decision goes only when a person confirmed it, in their wording if they gave
+    one. An action item goes only once it is past ``needs_confirmation`` -- the
+    status S17 moves it out of when somebody accepts it. The sync (#30) is to read
+    this and nothing else, so the gate is one function rather than a rule every
+    sender has to remember.
+    """
+    review = review_for_meeting(session, meeting_id)
+    return Outbound(
+        meeting_id=meeting_id,
+        decisions=[
+            OutboundDecision(id=decision.id, statement=decision.statement)
+            for decision in review.decisions
+            if decision.status == "confirmed"
+        ],
+        action_items=[
+            item
+            for item in list_action_items(session, meeting_id=meeting_id)
+            if item.status != ActionStatus.NEEDS_CONFIRMATION.value
+        ],
     )
