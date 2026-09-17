@@ -4,18 +4,27 @@
 // that's a team call, not a temp-page decision.
 // eslint-disable-next-line no-restricted-imports
 import { Dashboard } from "@/features/dashboard/components/Dashboard";
+import { notFound } from "next/navigation";
 
 /**
  * Temporary preview route for the S26 dashboard. Not a real screen: there is
  * no auth/team context yet (#156, #189) to resolve `team_id` on its own, so
  * this reads it from a query param instead. Delete once a real page replaces
  * this.
+ *
+ * `notFound()` in production makes the "temporary" claim a fact rather than a
+ * promise a stale comment makes — same reasoning as #241's default-off CORS.
+ * This route renders any team's dashboard for a typed id with no auth check.
  */
 export default async function DevDashboardPage({
   searchParams,
 }: {
   searchParams: Promise<{ team_id?: string }>;
 }) {
+  if (process.env.NODE_ENV === "production") {
+    notFound();
+  }
+
   const teamId = (await searchParams).team_id?.trim();
 
   return (
