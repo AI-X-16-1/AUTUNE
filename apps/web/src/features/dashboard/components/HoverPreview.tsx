@@ -30,6 +30,8 @@ export function HoverPreview({
         style={{
           marginLeft: side === "right" ? "var(--space-8)" : undefined,
           marginRight: side === "left" ? "var(--space-8)" : undefined,
+          width: "max-content",
+          maxWidth: 260,
           background: "var(--color-surface-panel)",
           border: "1px solid var(--color-hairline)",
           borderRadius: "var(--radius)",

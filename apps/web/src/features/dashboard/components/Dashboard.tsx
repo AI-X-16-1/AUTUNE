@@ -2,7 +2,7 @@
 
 import { ActionCompletionRate } from "./ActionCompletionRate";
 import { AlignmentHeatmap } from "./AlignmentHeatmap";
-import { DashboardCard, PlaceholderCard } from "./DashboardCard";
+import { PlaceholderCard } from "./DashboardCard";
 import { GapDistributionBars } from "./GapDistributionBars";
 import { HoverPreview, InfluenceMapMockup, PredictionMockup } from "./HoverPreview";
 import { QualityScoreCard } from "./QualityScoreCard";
@@ -31,14 +31,6 @@ export function Dashboard({ teamId }: { teamId: string }) {
 
   if (!dashboard) {
     return null;
-  }
-
-  if (dashboard.meeting_count === 0) {
-    return (
-      <DashboardCard title="품질 점수">
-        <p style={metaStyle}>아직 분석된 회의가 없습니다.</p>
-      </DashboardCard>
-    );
   }
 
   return (
