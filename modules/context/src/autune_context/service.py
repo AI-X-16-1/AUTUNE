@@ -34,7 +34,7 @@ from autune_context.pipeline import get_embedder, get_nli, get_reranker
 from autune_context.pipeline.retrieval import HybridRetriever, visible_meeting_clauses
 from autune_context.pipeline.topics import extract_topics
 from autune_contracts import ChangeType, ContextLinks, DecisionChange, NliLabel, TopicLink
-from autune_core import Meeting, Participant, get_logger, session_scope
+from autune_core import Meeting, Participant, TeamMember, get_logger, session_scope
 from autune_core.errors import ConflictError, NotFoundError
 from autune_integrations import SlackApi, assert_personal_delivery
 
@@ -493,7 +493,19 @@ def _rethread(session: Session, thread_id: str, nli: NliModel) -> None:
     excluded from the chain entirely — it is treated as already gone, the same
     way ``_thread_heads`` treats it for matching, rather than as a live
     predecessor whose text keeps getting copied into ``previous_statement``.
+
+    ``key_stakeholders_absent`` is filtered to *current* ``TeamMember`` rows of
+    ``thread.team_id`` (see ``_current_team_member_ids``). Without that filter,
+    someone who attended an early meeting in the thread and then left the team
+    -- or a guest who was never a member -- would show up as "absent" on every
+    later version, and once ``notify_decision_drift`` learns to resolve a
+    ``user_id`` to a Slack id, that turns into a drift DM to someone who has no
+    reason to get one.
     """
+    thread = session.get(CtxDecision, thread_id)
+    if thread is None:
+        return
+
     versions = session.scalars(
         select(CtxDecisionVersion)
         .join(CtxDecision, CtxDecision.id == CtxDecisionVersion.thread_id)
@@ -533,13 +545,14 @@ def _rethread(session: Session, thread_id: str, nli: NliModel) -> None:
             version.confidence = _clamp(float(getattr(scored[index - 1], label.value)))
             known = _meeting_user_ids(session, *prior_meeting_ids)
             present = _meeting_user_ids(session, version.meeting_id)
-            version.key_stakeholders_absent = sorted(known - present)
+            absent = known - present
+            version.key_stakeholders_absent = sorted(
+                _current_team_member_ids(session, thread.team_id, absent)
+            )
         version.nli_version = nli.model_version
         prior_meeting_ids.append(version.meeting_id)
 
-    thread = session.get(CtxDecision, thread_id)
-    if thread is not None:
-        thread.topic_label = versions[-1].current_statement[:400]
+    thread.topic_label = versions[-1].current_statement[:400]
     session.flush()
 
 
@@ -558,6 +571,21 @@ def _meeting_user_ids(session: Session, *meeting_ids: str) -> set[str]:
         )
     ).all()
     return {user_id for user_id in rows if user_id is not None}
+
+
+def _current_team_member_ids(session: Session, team_id: str, user_ids: set[str]) -> set[str]:
+    """Narrows ``user_ids`` to those still a ``TeamMember`` of ``team_id``.
+
+    Reads the shared ``team_members`` table — never writes it (invariant 4).
+    """
+    if not user_ids:
+        return set()
+    rows = session.scalars(
+        select(TeamMember.user_id).where(
+            TeamMember.team_id == team_id, TeamMember.user_id.in_(user_ids)
+        )
+    ).all()
+    return set(rows)
 
 
 def _cosine(a: list[float], b: list[float]) -> float:
