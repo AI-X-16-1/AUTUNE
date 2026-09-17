@@ -83,7 +83,12 @@ def stub_transcriber(monkeypatch: pytest.MonkeyPatch) -> list[str]:
 
 class TestPredictionsFile:
     def test_an_existing_file_is_not_overwritten_without_resume(
-        self, script: ModuleType, corpus: Path, tmp_path: Path, stub_transcriber: list[str]
+        self,
+        script: ModuleType,
+        corpus: Path,
+        tmp_path: Path,
+        stub_transcriber: list[str],
+        capsys: pytest.CaptureFixture[str],
     ) -> None:
         """The likeliest mistake after an interruption is re-running the same
         command without --resume. That must not cost the hours already run."""
@@ -94,8 +99,52 @@ class TestPredictionsFile:
         with pytest.raises(SystemExit):
             script.main(["--corpus", str(corpus), "--predictions", str(predictions)])
 
+        assert "--resume" in capsys.readouterr().err
         assert len(read_predictions(predictions)) == 1
         assert stub_transcriber == []
+
+    def test_resume_over_a_torn_last_line_leaves_a_readable_file(
+        self, script: ModuleType, corpus: Path, tmp_path: Path, stub_transcriber: list[str]
+    ) -> None:
+        """An interrupted write leaves half a line. Appending after it would glue
+        the next row onto the fragment, and the file would fail at scoring time,
+        hours later."""
+        predictions = tmp_path / "p.jsonl"
+        with predictions.open("w", encoding="utf-8") as fh:
+            write_prediction(fh, Prediction("a", "이번 bug는", 0.5, 0.5))
+            fh.write('{"sample_id": "b", "hypo')
+
+        with pytest.warns(RuntimeWarning):
+            script.main(["--corpus", str(corpus), "--predictions", str(predictions), "--resume"])
+
+        assert [p.sample_id for p in read_predictions(predictions)] == ["a", "b", "c"]
+        summary = json.loads((tmp_path / "p.jsonl.summary.json").read_text(encoding="utf-8"))
+        assert summary["all"]["n"] == 3
+
+    def test_a_limit_below_one_is_refused_before_anything_loads(
+        self,
+        script: ModuleType,
+        corpus: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        import autune_audio.pipeline as pipeline
+
+        monkeypatch.setattr(pipeline, "_model", lambda: pytest.fail("model loaded"))
+
+        with pytest.raises(SystemExit):
+            script.main(
+                [
+                    "--corpus",
+                    str(corpus),
+                    "--predictions",
+                    str(tmp_path / "p.jsonl"),
+                    "--limit",
+                    "0",
+                ]
+            )
+        assert "--limit" in capsys.readouterr().err
 
     def test_resume_skips_rows_already_predicted(
         self, script: ModuleType, corpus: Path, tmp_path: Path, stub_transcriber: list[str]

@@ -43,11 +43,10 @@ def test_the_fixture_covers_what_separates_the_two_normalisers() -> None:
 
 def test_the_divergence_from_hike_is_small_and_accounted_for() -> None:
     """Every candidate that disagreed with the port is one of the two documented
-    kinds. A third kind appearing here means a new fidelity bug."""
+    kinds, admitted on evidence by the generator's ``classify``. An unexplained
+    row means a new fidelity bug."""
     total, agreeing = FIXTURE["candidates_scored"], FIXTURE["candidates_agreeing"]
-    explained = (
-        FIXTURE["candidates_differing_by_tie_break_only"]
-        + FIXTURE["candidates_differing_by_capitalised_loanword_label"]
-    )
-    assert total - agreeing == explained
+    differing = FIXTURE["candidates_differing"]
+    assert differing["unexplained"] == 0
+    assert total - agreeing == sum(differing.values())
     assert agreeing / total > 0.98

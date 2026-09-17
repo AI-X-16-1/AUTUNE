@@ -34,6 +34,11 @@ class TestHikeNormalise:
         assert hike_normalise("cross-validation, k-fold") == "crossvalidation kfold"
         assert hike_normalise("9.2%") == "92"
 
+    def test_an_em_dash_between_words_is_a_space_not_a_join(self) -> None:
+        """jiwer's SubstituteWords({"—": " "}) runs before punctuation deletion,
+        so ``word—word`` keeps two words where ``word-word`` becomes one."""
+        assert hike_normalise("api—gateway, api-gateway") == "api gateway apigateway"
+
     def test_bracketed_non_words_are_dropped(self) -> None:
         assert hike_normalise("[음악] 회의 <unk> 시작") == "회의 시작"
 

@@ -86,6 +86,8 @@ def transcribe_corpus(
     }
     print(json.dumps(run), file=sys.stderr)
 
+    if resume:
+        _drop_torn_last_line(predictions)
     with predictions.open("a" if resume else "w", encoding="utf-8") as fh:
         for n, utterance in enumerate(utterances(corpus, sample_ids=todo), start=1):
             started = time.perf_counter()
@@ -113,6 +115,26 @@ def transcribe_corpus(
                     file=sys.stderr,
                 )
     return run
+
+
+def _drop_torn_last_line(predictions: Path) -> None:
+    """Cut a file that does not end in a newline back to its last complete line.
+
+    read_predictions already ignores the fragment; appending after it would
+    glue the next row onto it, and the file would fail hours later at scoring.
+    """
+    if not predictions.exists():
+        return
+    data = predictions.read_bytes()
+    if data and not data.endswith(b"\n"):
+        predictions.write_bytes(data[: data.rfind(b"\n") + 1])
+
+
+def _positive_int(value: str) -> int:
+    number = int(value)
+    if number < 1:
+        raise argparse.ArgumentTypeError(f"--limit must be at least 1, got {value}")
+    return number
 
 
 def score_predictions(corpus: Path, predictions: Path) -> tuple[list[HikeScore], int]:
@@ -143,7 +165,7 @@ def main(argv: list[str] | None = None) -> int:
         "--score-only", type=Path, metavar="PREDICTIONS", help="score this JSONL; load no model"
     )
     parser.add_argument(
-        "--limit", type=int, default=None, help="rows to run, spread across CS levels"
+        "--limit", type=_positive_int, default=None, help="rows to run, spread across CS levels"
     )
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--resume", action="store_true", help="skip rows already in --predictions")

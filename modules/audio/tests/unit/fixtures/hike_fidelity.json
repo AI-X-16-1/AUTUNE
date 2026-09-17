@@ -1,9 +1,12 @@
 {
-  "_about": "Rows from thetaone-ai/HiKE (Apache-2.0; Lee et al., EACL Findings 2026) with hypotheses produced by faster-whisper large-v3 on CPU. mer and pier were computed by a line-by-line port of HiKE's own scoring (jiwer transforms + rapidfuzz editops, src/main.py and src/metrics/pier), not by autune_audio. Regenerate with make_fixture.py in the evaluation scratchpad; do not edit numbers by hand.",
+  "_about": "Rows from thetaone-ai/HiKE (https://huggingface.co/datasets/thetaone-ai/HiKE, Apache-2.0; Lee et al., EACL Findings 2026) with hypotheses produced by faster-whisper large-v3 on CPU. mer and pier were computed by a line-by-line port of HiKE's own scoring (jiwer transforms + rapidfuzz editops, src/main.py and src/metrics/pier), not by autune_audio. Regenerate with modules/audio/scripts/hike_fidelity_fixture.py; do not edit numbers by hand.",
   "candidates_scored": 1181,
   "candidates_agreeing": 1168,
-  "candidates_differing_by_tie_break_only": 10,
-  "candidates_differing_by_capitalised_loanword_label": 3,
+  "candidates_differing": {
+    "tie_break": 10,
+    "reference_not_renormalised": 3,
+    "unexplained": 0
+  },
   "rows": [
     {
       "sample_id": "cee9f45c-eb40-47ff-96a1-a3a1ccb50927",

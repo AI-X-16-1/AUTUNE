@@ -20,7 +20,11 @@ how many candidates disagreed and why.
 Two known, deliberate divergences are counted in the header rather than fixed:
 tie-breaking between equal-cost alignments (rapidfuzz's backtrace is not
 ours; PIER can attribute an edit to a neighbouring position), and HiKE not
-lowercasing the reference after loanword folding (``YouTuber``), which we do.
+re-normalising the reference after loanword folding (``YouTuber``), which we
+do. ``classify`` admits a row to either class only on evidence — identical
+tokens and distance for a tie, a reference that normalisation would change
+for the other — and counts everything else as unexplained, which the test
+requires to be zero.
 """
 
 from __future__ import annotations
@@ -36,6 +40,7 @@ import regex
 from rapidfuzz.distance import Levenshtein
 
 from autune_audio.eval import codeswitch as cs
+from autune_audio.eval.alignment import edit_ops
 from autune_audio.eval.hike import download
 
 _PUNCT = {chr(i) for i in range(sys.maxunicode + 1) if unicodedata.category(chr(i)).startswith("P")}
@@ -55,6 +60,7 @@ def hike_normalize(s: str) -> str:
     s = re.sub(r"\'ve", " have", s)
     s = re.sub(r"\'m", " am", s)
     s = re.sub(r"[<\[][^>\]]*[>\]]", "", s)
+    s = re.sub(r"\b—\b", " ", s)
     s = "".join(c for c in s if c not in _PUNCT)
     s = re.sub(r"\s", " ", s)
     s = re.sub(r"\s\s+", " ", s).strip()
@@ -84,6 +90,7 @@ def rf_ops(ref, hyp):
 
 
 def hike_pier(ref_labeled, pred):
+    """PIER, plus the token lists and distance the classifier compares."""
     ref = ref_labeled + " 뷁"
     pred = pred + " 뷁"
     poi = []
@@ -91,14 +98,41 @@ def hike_pier(ref_labeled, pred):
         start = len(ref[: m.start()].split()) - tags
         poi.extend(range(start, start + len(m.group(1).split())))
     notag = re.sub(r"<tag (.*?)>", r"\1", ref)
-    ops = rf_ops(notag.split(), pred.split())
-    return sum(1 for t, p in ops if p in poi) / len(poi)
+    r, h = notag.split(), pred.split()
+    ops = rf_ops(r, h)
+    return sum(1 for t, p in ops if p in poi) / len(poi), (r[:-1], h[:-1], len(ops))
 
 
 def hike_mer(ref, pred):
     r = space_korean(ref).split()
     h = space_korean(pred).split()
     return len(rf_ops(r, h)) / len(r)
+
+
+def classify(r, lw, hyp, port_tokens, o_p, f_p) -> str:
+    """Why the port and autune_audio disagree on a row, strictly.
+
+    "tie_break" only when both saw the same tokens and the same distance, so
+    the backtrace is the only thing left to differ. "reference_not_renormalised"
+    when normalising the folded reference changes it, which is the one place
+    our chain touches the reference and HiKE's does not. Anything else is
+    "unexplained", and the test refuses a fixture that has any.
+    """
+    folded_ref = replace_loanword(r["text_normalized"], r["loanwords"])
+    folded_pier = re.sub(
+        r"<tag (.*?)>", r"\1", replace_loanword(r["text_pier_labeled"], r["loanwords"])
+    )
+    if hike_normalize(folded_ref) != folded_ref or hike_normalize(folded_pier) != folded_pier:
+        return "reference_not_renormalised"
+    our_ref, our_poi = cs._tagged_words(cs.fold_loanwords(r["text_pier_labeled"], lw))
+    our_hyp = cs._LATIN_BEFORE_HANGUL.sub(
+        r"\1 ", cs.hike_normalise(cs.fold_loanwords(hyp, lw))
+    ).split()
+    port_ref, port_hyp, port_distance = port_tokens
+    our_distance = len(edit_ops(our_ref, our_hyp))
+    if (our_ref, our_hyp, our_distance) == (port_ref, port_hyp, port_distance):
+        return "tie_break"
+    return "unexplained"
 
 
 def main(paths: list[str]) -> None:
@@ -117,24 +151,26 @@ def main(paths: list[str]) -> None:
                     p = json.loads(line)
                     preds.setdefault(p["sample_id"], []).append(p["hypothesis"])
 
-    candidates, agree, tie_only, case_only = [], 0, 0, 0
+    candidates: list[dict] = []
+    disagreements: dict[str, int] = {
+        "tie_break": 0,
+        "reference_not_renormalised": 0,
+        "unexplained": 0,
+    }
     for sid, hyps in preds.items():
         r = rows[sid]
         lw = tuple((e["Korean"], e["English"]) for e in json.loads(r["loanwords"]))
         for hyp in hyps:
             pred = hike_normalize(replace_loanword(hyp, r["loanwords"]))
             f_m = hike_mer(replace_loanword(r["text_normalized"], r["loanwords"]), pred)
-            f_p = hike_pier(
+            f_p, port_tokens = hike_pier(
                 replace_loanword(r["text_pier_labeled"], r["loanwords"]), add_space(pred)
             )
             o_m = cs.mixed_error_rate(r["text_normalized"], hyp, loanwords=lw).mer
             o_p = cs.point_of_interest_error_rate(r["text_pier_labeled"], hyp, loanwords=lw).pier
             same = abs(o_m - f_m) < 1e-9 and abs(o_p - f_p) < 1e-9
-            agree += same
-            if not same and abs(o_m - f_m) < 1e-9:
-                tie_only += 1
-            elif not same and any(e.lower() != e for _, e in lw):
-                case_only += 1
+            if not same:
+                disagreements[classify(r, lw, hyp, port_tokens, o_p, f_p)] += 1
             features = {
                 "contraction": "'" in hyp,
                 "hyphen": "-" in hyp or "-" in r["text_normalized"],
@@ -160,11 +196,8 @@ def main(paths: list[str]) -> None:
             )
 
     total = len(candidates)
-    print(
-        f"candidates={total} agree={agree} disagree={total - agree} "
-        f"(tie-break only: {tie_only}, capitalised loanword label: {case_only})",
-        file=sys.stderr,
-    )
+    agree = total - sum(disagreements.values())
+    print(f"candidates={total} agree={agree} disagree={disagreements}", file=sys.stderr)
 
     rng = random.Random(3)
     chosen: list[dict] = []
@@ -196,7 +229,8 @@ def main(paths: list[str]) -> None:
         c.pop("_same")
     fixture = {
         "_about": (
-            "Rows from thetaone-ai/HiKE (Apache-2.0; Lee et al., EACL Findings 2026) with "
+            "Rows from thetaone-ai/HiKE (https://huggingface.co/datasets/thetaone-ai/HiKE, "
+            "Apache-2.0; Lee et al., EACL Findings 2026) with "
             "hypotheses produced by faster-whisper large-v3 on CPU. mer and pier were computed "
             "by a line-by-line port of HiKE's own scoring (jiwer transforms + rapidfuzz "
             "editops, src/main.py and src/metrics/pier), not by autune_audio. Regenerate with "
@@ -204,8 +238,7 @@ def main(paths: list[str]) -> None:
         ),
         "candidates_scored": total,
         "candidates_agreeing": agree,
-        "candidates_differing_by_tie_break_only": tie_only,
-        "candidates_differing_by_capitalised_loanword_label": case_only,
+        "candidates_differing": disagreements,
         "rows": chosen,
     }
     json.dump(fixture, sys.stdout, ensure_ascii=False, indent=2)

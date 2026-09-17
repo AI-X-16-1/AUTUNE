@@ -33,11 +33,14 @@ score that cannot sit in its table is not worth having.
 Fidelity is tested, not assumed: ``tests/unit/fixtures/hike_fidelity.json``
 pins real rows against numbers produced by a port of HiKE's own pipeline.
 Two small, documented divergences remain — tie-breaking between equal-cost
-alignments (see ``alignment``), and this one: the reference side is normalised too. HiKE passes
-its references through untouched, which is harmless for the corpus text (it
-is already normalised) but lets a capitalised loanword spelling (``API``,
-``Docker``) reach the comparison unlowered on three rows. Lowercasing both
-sides is the defensible reading; the difference is not measurable.
+alignments (see ``alignment``), and this one: the reference side is normalised
+too, *after* loanword folding. HiKE folds and then compares the reference as
+it is, so a loanword label that is not itself normalised — ``YouTuber`` for
+``유튜버`` is the case that occurs, three rows in 1,181; ``Wi-Fi`` or ``K-pop``
+would be the same kind — reaches the comparison with its case and punctuation
+intact and mismatches the normalised hypothesis. Normalising both sides is the
+defensible reading; ``scripts/hike_fidelity_fixture.py`` counts the rows it
+changes.
 """
 
 from __future__ import annotations
@@ -85,18 +88,23 @@ _CONTRACTIONS = (
 )
 # jiwer's RemoveKaldiNonWords: anything between [] or <>.
 _NON_WORD = re.compile(r"[<\[][^>\]]*[>\]]")
+# HiKE's SubstituteWords({"—": " "}): an em dash between two words is a space,
+# where every other punctuation mark is simply deleted.
+_EM_DASH = re.compile(r"\b—\b")
 
 
 def hike_normalise(text: str) -> str:
     """HiKE's ``normalize_text``: what both sides of MER and PIER go through.
 
-    Lowercase → contractions expanded → bracketed non-words removed →
-    punctuation (Unicode category P*) deleted → whitespace collapsed.
+    Lowercase → contractions expanded → bracketed non-words removed → em dash
+    between words to a space → punctuation (Unicode category P*) deleted →
+    whitespace collapsed.
     """
     text = text.lower()
     for pattern, replacement in _CONTRACTIONS:
         text = pattern.sub(replacement, text)
     text = _NON_WORD.sub("", text)
+    text = _EM_DASH.sub(" ", text)
     text = "".join(c for c in text if not unicodedata.category(c).startswith("P"))
     return _SPACE.sub(" ", text).strip()
 
