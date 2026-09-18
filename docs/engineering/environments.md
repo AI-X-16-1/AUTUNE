@@ -90,6 +90,7 @@ prefix `AUTUNE_<MODULE>_`.
 | `AUTUNE_AUDIO_DEVICE` | A | `cuda` or `cpu` |
 | `AUTUNE_AUDIO_TEMP_DIR` | A | Where the recording lives during processing, and only then |
 | `AUTUNE_AUDIO_HF_TOKEN` | A | Hugging Face token for the gated pyannote models |
+| `NEXT_PUBLIC_AUTUNE_DEV_TOKEN` | A (web) | A bearer token for the browser, local only — see "A token for the browser" below |
 | `AUTUNE_AUDIO_DIARIZATION_MODEL` | A | Default `pyannote/speaker-diarization-3.1` |
 | `AUTUNE_EXTRACTION_CLASSIFIER_IMPL` | B | `local` · `hosted` · `fake`. Default `local`. **No `external`** — see below |
 | `AUTUNE_EXTRACTION_CLASSIFIER_CHECKPOINT` | B | Pinned model, recorded with every classification. Never a floating tag. **Blank by default** — no trained checkpoint is published yet, and `local` / `hosted` refuse to start without one |
@@ -310,6 +311,34 @@ shared libraries. Without them, passing a **file path** to the pipeline fails
 with `Library not loaded: @rpath/libavutil.*`. Passing a waveform already in
 memory works without FFmpeg, but uploads arrive as mp3, wav and m4a, so decoding
 them needs it either way.
+
+## A token for the browser, until there is a sign-in
+
+Every route that matters takes `CurrentUser`, and screen S01 does not exist yet
+(#156, #189). On a developer's machine, module A's dev router issues a token:
+
+```bash
+curl -s -X POST localhost:8000/api/audio/dev/token \
+  -H 'content-type: application/json' \
+  -d '{"email": "you@example.com", "team_name": "Dev Team"}'
+# → {"token": "...", "user_id": "user_…", "team_id": "team_…"}
+```
+
+It creates the user, the team and the membership if they do not exist, and
+returns the same ones on every later call for that email. The route is under
+`/dev`, so it is mounted only when `AUTUNE_ENV=local`; there is no such route
+anywhere else.
+
+Give the token to the browser one of two ways:
+
+- `apps/web/.env.local`: `NEXT_PUBLIC_AUTUNE_DEV_TOKEN=<token>` — inlined at
+  build time, so restart `next dev` after changing it.
+- In the browser console: `localStorage.setItem("autune.token", "<token>")` —
+  takes effect on the next request, and lets you switch users without a
+  rebuild. This wins over the environment variable when both are set.
+
+Tokens last seven days (`autune_core.auth.DEFAULT_TTL`). The `team_id` in the
+response is what `POST /api/audio/meetings` needs.
 
 ## Local privacy hygiene
 
