@@ -108,9 +108,35 @@ The ten terms that survived are all either capitalised acronyms (`RTF`, `CER`,
 `PostgreSQL`, `Tailwind`). Not one of the libraries this project is actually
 built on came through intact.
 
-This is not a cosmetic problem. Module B keys action-item extraction on entity
-names; `pyannote` heard as `파이노트` is a different entity, and the action item
-attached to it is lost.
+What this costs has to be stated by what the consumers actually do, and an
+earlier draft of this paragraph got it wrong: it said module B keys action-item
+extraction on entity names and that the item attached to `파이노트` is lost. It
+is not. B takes the assignee from speaker attribution (`slots.assignee_of`
+reads `speaker_id`, not the text), classifies by verb ending (`기로 했`,
+`겠습니다`, `할게요`), groups decisions by adjacency and parses deadlines from
+date expressions — none of which reads the spelling of a technical term.
+`파이노트 붙이는 거 제가 하겠습니다` is classified, attributed and becomes an
+action item with a misspelt word in it (#196).
+
+The real costs are elsewhere, and one of them is substantial:
+
+- **Module D's lexical search.** `pipeline/retrieval.py` runs BM25 over kiwi
+  tokens, and `파이노트` and `pyannote` are different tokens. Two meetings about
+  the same library do not connect on the lexical half of D's fusion; the dense
+  half may still catch it.
+- **Inconsistency.** One recording produced `파이노트`, `파이어노트` and
+  `하이에노트`. It is not wrong once; it is wrong differently each time, so
+  nothing downstream can even fuzzy-match it.
+- **Readability**, for the person reading the transcript. Real, and a
+  different order of cost from "a downstream action breaks".
+- **Transcript search** — which does not exist yet. An assumed cost, marked as
+  one.
+
+Set against 3.6, where a weekday became a month: that *does* destroy an action
+item, is grammatical, and is undetectable. The two failures are opposite in
+kind — one frequent and visible, one rare and invisible — and the priorities in
+section 5 are weighed on that basis, not on the claim this paragraph used to
+make.
 
 ### 3.2 Confidence does not find these errors
 
@@ -259,7 +285,8 @@ generalise from it, and a 45-minute meeting is the case this pipeline is for.
 
 `hotwords` moves CER from 0.157 to 0.170 — 0.013 worse — while term accuracy
 goes from 31% to 86%. That is the trade this is for: a wrong particle costs
-readability, a wrong entity name costs the action item attached to it.
+readability, a wrong entity name costs the cross-meeting link (3.1) and the
+reader.
 
 Sixteen terms came back and none were lost: `pyannote`, `faster-whisper`,
 `silero-VAD`, `tabCapture`, `large-v3-turbo`, `DeBERTa`, `spaCy`, `NER`,
@@ -276,7 +303,7 @@ correction pass in 5.2.
 | --- | --- | --- |
 | 1 | Build the glossary into `hotwords`, per meeting | 4 — measured, 31% -> 86% at meeting length |
 | 2 | Lexicon-based correction pass over the transcript | 3.2, 4 — what the prompt misses, confidence cannot find |
-| 3 | Seed the glossary from `participants` and `aud_corrections` | 3.6 — two of four names were wrong, and B keys assignees on them |
+| 3 | Seed the glossary from `participants` and `aud_corrections` | Names are the one term class every meeting has and no static list can hold. B does not key on them (3.1); this is for the reader and for D's lexical linking |
 | 4 | Keep `vad_filter=True`; drop the planned `condition_on_previous_text` work | 3.4 — already solved |
 | 5 | Loudness-normalise before transcription | 3.5 — context bleed is a symptom of weak signal |
 | 6 | GPU, or measure `large-v3-turbo` | RTF 0.73 against a 0.3 target |
