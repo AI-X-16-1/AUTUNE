@@ -16,7 +16,7 @@ from unittest.mock import patch
 import pytest
 from sqlalchemy.orm import Session
 
-from autune_context import service, tasks
+from autune_context import tasks
 from autune_context.models import CtxDecision, CtxDecisionVersion, CtxMeetingStatus
 
 
@@ -148,56 +148,14 @@ def test_sends_once_and_a_redelivered_execution_is_a_no_op(
 
 
 # --------------------------------------------------------------------------- #
-# publish_if_ready(force=...) — routing a late lineage's catch-up
-# --------------------------------------------------------------------------- #
-
-
-@pytest.mark.usefixtures("use_test_session")
-def test_a_forced_publish_routes_to_notify_late_drift_not_notify_context_events(
-    db_session: Session, meeting: str, team: str
-) -> None:
-    db_session.add(
-        CtxMeetingStatus(
-            meeting_id=meeting,
-            topic_linking_done=True,
-            lineage_done=True,
-            extraction_seen=True,
-            published_at=datetime.now(tz=UTC),
-        )
-    )
-    db_session.flush()
-
-    with (
-        patch.object(service, "current_app"),
-        patch.object(tasks, "notify_late_drift") as late_drift,
-        patch.object(tasks, "notify_context_events") as regular_notify,
-    ):
-        tasks.publish_if_ready(meeting, force=True)
-
-    late_drift.apply_async.assert_called_once_with((meeting,))
-    regular_notify.apply_async.assert_not_called()
-
-
-@pytest.mark.usefixtures("use_test_session")
-def test_an_unforced_publish_still_routes_to_notify_context_events(
-    db_session: Session, meeting: str, team: str
-) -> None:
-    db_session.add(CtxMeetingStatus(meeting_id=meeting, topic_linking_done=True, lineage_done=True))
-    db_session.flush()
-
-    with (
-        patch.object(service, "current_app"),
-        patch.object(tasks, "notify_late_drift") as late_drift,
-        patch.object(tasks, "notify_context_events") as regular_notify,
-    ):
-        tasks.publish_if_ready(meeting, force=False)
-
-    regular_notify.apply_async.assert_called_once_with((meeting,))
-    late_drift.apply_async.assert_not_called()
-
-
-# --------------------------------------------------------------------------- #
 # notify_late_drift — drift only, its own claim
+#
+# publish_if_ready(force=...)'s routing to notify_late_drift vs.
+# notify_context_events is tested in test_decision_lineage.py instead --
+# service.publish_if_ready opens its own session_scope() rather than taking a
+# session argument, so it can't see this file's transactional db_session; it
+# needs the real, committed rows test_decision_lineage.py's local fixtures
+# already provide.
 # --------------------------------------------------------------------------- #
 
 
