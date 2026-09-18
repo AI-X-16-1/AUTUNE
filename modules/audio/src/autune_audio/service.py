@@ -8,13 +8,13 @@ Never imports another module.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 
 import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
 from autune_contracts.transcript import Utterance as ContractUtterance
-from autune_core import Meeting, TeamMember, User, get_logger
+from autune_core import Meeting, Team, TeamMember, User, get_logger
 from autune_core.errors import ConflictError, NotFoundError, PermissionDeniedError
 
 from .persistence import transcript_payload
@@ -108,10 +108,26 @@ def create_meeting(
     ``status`` starts at ``scheduled`` — the column's default, written out here
     because the lifecycle in this module reads better when every transition is
     visible in one file.
+
+    **``expires_at`` is set here, from the team's retention window.** Nothing
+    else in the repository writes it (#206), and module D reads
+    ``expires_at IS NULL`` as "never expires" — so a meeting created without it
+    is one the retention sweep and every retention-aware read ignore for good.
+    Resolved now rather than at read time: a team that later shortens its
+    retention does not retroactively un-record what was agreed.
     """
     require_team_member(session, user_id=owner.id, team_id=team_id)
+    team = session.get(Team, team_id)
+    if team is None:  # membership just passed, so the team exists; this is a torn read
+        raise NotFoundError("team", team_id)
 
-    meeting = Meeting(team_id=team_id, title=title, started_at=started_at, status="scheduled")
+    meeting = Meeting(
+        team_id=team_id,
+        title=title,
+        started_at=started_at,
+        status="scheduled",
+        expires_at=datetime.now(tz=UTC) + timedelta(days=team.retention_days),
+    )
     session.add(meeting)
     session.flush()
 

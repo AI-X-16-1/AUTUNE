@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import io
 from collections.abc import Iterator
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -25,7 +26,7 @@ from sqlalchemy.orm import Session
 from autune_audio import service
 from autune_audio.config import AudioSettings
 from autune_audio.router import router
-from autune_core import AutuneError, Meeting, TeamMember, User, get_session
+from autune_core import AutuneError, Meeting, Team, TeamMember, User, get_session
 from autune_core.auth import current_user
 from autune_core.errors import ConflictError, NotFoundError, PermissionDeniedError
 
@@ -60,6 +61,32 @@ def test_a_member_creates_a_meeting(db_session: Session, team: str, member: User
     assert meeting.title == "검색 개편 우선순위 논의"
     assert meeting.status == "scheduled"
     assert meeting.source == "file_upload"
+
+
+def test_a_created_meeting_expires_after_the_teams_retention_window(
+    db_session: Session, team: str, member: User
+) -> None:
+    """Nothing else in the repository writes ``expires_at`` (#206).
+
+    Module D reads ``expires_at IS NULL`` as "never expires", so a meeting
+    created without it is one the retention sweep and every retention-aware
+    read ignore for good. The window is the team's, resolved when the meeting
+    is opened: a team that later shortens its retention does not retroactively
+    un-record what was agreed.
+
+    A range, not ``.days == 29``: the clock can tick zero or several times
+    between the call and the assertion, and #209 had exactly that test go
+    flaky on a coarse-resolution clock.
+    """
+    db_session.get(Team, team).retention_days = 30
+    db_session.flush()
+
+    before = datetime.now(tz=UTC)
+    meeting = service.create_meeting(db_session, owner=member, title="회의", team_id=team)
+    after = datetime.now(tz=UTC)
+
+    assert meeting.expires_at is not None
+    assert before + timedelta(days=30) <= meeting.expires_at <= after + timedelta(days=30)
 
 
 def test_creating_a_meeting_for_a_team_you_are_not_on_is_refused(
@@ -356,4 +383,60 @@ def test_an_oversized_recording_is_refused_and_deleted(
 
     assert response.status_code == 413
     assert list(temp_dir.iterdir()) == []
+    assert broker.sent == []
+
+
+def test_an_absurd_file_extension_is_dropped_rather_than_crashing(
+    client: TestClient, team: str, broker: Enqueued, temp_dir: Path
+) -> None:
+    """``"a." + "x" * 300`` as a filename used to take the whole body to disk
+    and then die in ``NamedTemporaryFile`` on NAME_MAX (#209 review).
+
+    ffmpeg sniffs the container from the bytes, not the name — the suffix is
+    only a log field — so a suffix that does not look like one is simply not
+    kept. The upload still goes through.
+    """
+    meeting_id = _create(client, team)
+
+    response = client.post(
+        f"/api/audio/meetings/{meeting_id}/recording",
+        files={"file": ("a." + "x" * 300, io.BytesIO(b"fake audio"), "audio/mp4")},
+    )
+
+    assert response.status_code == 202
+    _, args = broker.sent[0]
+    assert Path(str(args[1])).suffix == ""
+
+
+def test_a_staging_failure_leaves_the_meeting_untouched(
+    client: TestClient,
+    team: str,
+    broker: Enqueued,
+    temp_dir: Path,
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A disk that will not take the bytes is not the meeting's fault.
+
+    Before the claim there is nothing to release: the meeting is still
+    ``scheduled`` and must stay that way, so the person can try again. Only a
+    failure *after* the claim — the enqueue — may move it to ``failed``. The
+    first version of this route did not tell the two apart and would have
+    failed a meeting over a full disk.
+    """
+    import autune_audio.router as router_module
+
+    def refuse(*_: object, **__: object) -> None:
+        raise OSError("no space left on device")
+
+    monkeypatch.setattr(router_module, "handover", refuse)
+    meeting_id = _create(client, team)
+
+    with pytest.raises(OSError):
+        client.post(
+            f"/api/audio/meetings/{meeting_id}/recording",
+            files={"file": ("standup.m4a", io.BytesIO(b"fake audio"), "audio/mp4")},
+        )
+
+    assert db_session.get(Meeting, meeting_id).status == "scheduled"
     assert broker.sent == []

@@ -116,6 +116,28 @@ path; the file therefore outlives the request. That is not a gap in invariant
 fails; `storage.adopt` owns it from then on and deletes it in a `finally`.
 Exactly one of them owns a given file at a time.
 
+**Deployment assumption: the API process and the `gpu` worker share a
+filesystem.** The task is handed a local path, not bytes. If the two run on
+different hosts or in containers without a shared mount, `adopt` receives a
+path to nothing and the job fails. Document the mount in the deployment, or
+this endpoint does not work.
+
+**There is a second copy during the request, outside `AUTUNE_AUDIO_TEMP_DIR`.**
+Starlette's multipart parser spools a file part to the OS temporary directory
+(`tempfile.gettempdir()`) before the route function runs, and only the
+non-file fields are subject to its size limit. So the whole body is on disk
+before `MAX_UPLOAD_BYTES` is checked, and `_reject_persistent` never sees that
+path. Starlette deletes it when the request closes, so invariant 11 holds — but
+a request-body limit belongs at the reverse proxy or in `apps/api`, not here.
+Tracked as a shared issue.
+
+**A file whose task is lost after the enqueue is not collected.** `handover`
+covers every failure inside the request; a task that was queued and never runs
+(broker down, worker never comes back) leaves its file in `AUTUNE_AUDIO_TEMP_DIR`
+with no owner. #209 tried a sweep for this and the sweep could delete a file a
+late task was about to adopt, so it was dropped. The right fix is on the queue
+side and is part of #258.
+
 ## Celery tasks
 
 | Task | Trigger | Queue |

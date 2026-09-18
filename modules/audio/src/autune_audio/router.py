@@ -8,6 +8,7 @@ The prefix ``/api/audio`` is applied by apps/api; declare paths relative to it.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Annotated
 
@@ -24,7 +25,7 @@ from .config import MAX_UPLOAD_BYTES
 from .config import get_settings as get_audio_settings
 from .enqueue import enqueue_process_recording
 from .schemas import MeetingCreate, MeetingState
-from .storage import RecordingTooLargeError, handover
+from .storage import handover
 
 log = get_logger(__name__)
 
@@ -134,32 +135,50 @@ def upload_recording(
     cannot pick the meeting up and find it still ``scheduled``. If the enqueue
     then fails, ``mark_failed`` puts the meeting somewhere a person can see,
     rather than leaving it ``analyzing`` for a task that does not exist.
+
+    **Only the enqueue may fail the meeting.** The ``except`` is around that
+    one call and nothing else, because the three ways to get here mean three
+    different things: a disk that would not take the bytes is not the
+    meeting's fault and leaves it ``scheduled``; a refusal (403, 404, 409, 413)
+    is a meeting already in the state it should be in; and only a broker that
+    would not take the task leaves a claimed meeting with nobody coming for
+    it. The first version of this route wrapped all three in one handler and
+    would have failed a meeting over a full disk.
     """
-    try:
-        with handover(
-            file.file,
-            suffix=Path(file.filename or "").suffix,
-            max_bytes=MAX_UPLOAD_BYTES,
-            settings=get_audio_settings(),
-        ) as recording:
-            meeting = service.start_transcription(session, meeting_id=meeting_id, uploader=user)
-            session.commit()
-            enqueue_process_recording(meeting_id, str(recording.path))
-    except RecordingTooLargeError:
-        raise
-    except AutuneError:
-        # A refusal this module already made: not found, not your team, already
-        # analyzing. The meeting is in the state it should be in and the
-        # recording is deleted; nothing more to do than let it render.
-        raise
-    except Exception as error:
-        # The enqueue is the only thing left that can get here. The meeting has
-        # already been claimed and committed, so it has to be released — a row
-        # stuck at `analyzing` with no task is a screen that spins for ever.
-        log.warning("audio_enqueue_failed", meeting_id=meeting_id, error=type(error).__name__)
-        session.rollback()
-        service.mark_failed(session, meeting_id=meeting_id)
+    with handover(
+        file.file,
+        suffix=_suffix_of(file.filename),
+        max_bytes=MAX_UPLOAD_BYTES,
+        settings=get_audio_settings(),
+    ) as recording:
+        meeting = service.start_transcription(session, meeting_id=meeting_id, uploader=user)
         session.commit()
-        raise EnqueueFailedError() from error
+        try:
+            enqueue_process_recording(meeting_id, str(recording.path))
+        except Exception as error:
+            # Raising inside the block is what makes handover delete the file.
+            log.warning("audio_enqueue_failed", meeting_id=meeting_id, error=type(error).__name__)
+            service.mark_failed(session, meeting_id=meeting_id)
+            session.commit()
+            raise EnqueueFailedError() from error
 
     return MeetingState(meeting_id=meeting.id, status=meeting.status)
+
+
+_SUFFIX = re.compile(r"^\.[A-Za-z0-9]{1,8}$")
+
+
+def _suffix_of(filename: str | None) -> str:
+    """The upload's extension, if it looks like one; otherwise nothing.
+
+    ffmpeg identifies the container from the bytes, not the name, so the suffix
+    is only ever a log field (``decoding.py``). What it must not be is a way to
+    crash the request: ``"a." + "x" * 300`` used to reach ``NamedTemporaryFile``
+    intact and die on NAME_MAX — after the whole body had been read (#209
+    review). A suffix that is not one to eight alphanumerics is dropped rather
+    than refused, because refusing would be a whitelist, and whether ``.webm``
+    from a browser recording is allowed is a product question this helper
+    should not be answering.
+    """
+    suffix = Path(filename or "").suffix
+    return suffix if _SUFFIX.match(suffix) else ""
