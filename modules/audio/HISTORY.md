@@ -429,7 +429,10 @@ Ordered by what the measurements say, not by what is pleasant.
    expected return: GPU; `large-v3-turbo` (unmeasured); batching. The target is
    1.5× recording length end to end (`docs/modules/audio.md`); measured,
    transcription is 0.73 and diarization adds 0.54 on top, so this is not only
-   Whisper.
+   Whisper. Combined that is **1.27×** — inside the six-week target with 18%
+   to spare, outside the three-month 1× target. Eval-02 once read the two
+   targets as one and called this a miss; corrected in #186. The GPU is for
+   the three-month target, not the MVP.
 
 3. **An evaluation set.** Every threshold in this module is a placeholder chosen
    from one recording: the masking thresholds, the repetition guard, the glossary

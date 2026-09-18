@@ -101,5 +101,11 @@ join makes and why.
   voice as the other turns with this label", nothing more. Matching a label to a
   person is the second half of #6.
 - **377 s for 11m37s** is 0.54 real-time on CPU, on top of transcription's 0.73.
-  Together they miss the 1.5× processing-time target for a meeting-length
-  recording, which is a GPU question rather than a model one.
+  Together, 886 s for 697 s of audio: **1.27× real time.** That **passes the
+  six-week target (≤ 1.5×) with 18% to spare and misses the three-month target
+  (≤ 1×) by 27%** — `docs/modules/audio.md` sets the two separately, and an
+  earlier draft of this line read them as one and called the pass a failure
+  (#186). The GPU is for the three-month target and for the 0.3 RTF this
+  report's section 5 asks of transcription alone, not for the MVP. The margin
+  is thin rather than comfortable: a 45-minute meeting at 1.27× is 57 minutes
+  of processing.
