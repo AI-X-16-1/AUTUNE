@@ -149,6 +149,21 @@ class Meeting(Base, TimestampMixin):
     """Set once the recording is gone. Downstream refuses to process while False."""
     pii_masked: Mapped[bool] = mapped_column(nullable=False, default=False)
 
+    is_backfill: Mapped[bool] = mapped_column(nullable=False, default=False)
+    """True for a historical recording uploaded well after the meeting itself
+    happened, as opposed to a normal live-or-near-live upload. Written only by
+    module A, on ingestion -- **schema only in this PR**; no module writes a
+    non-default value here yet.
+
+    Exists so a downstream module can tell "this decision just changed" from
+    "this decision changed months ago and someone bulk-imported the recording
+    today" -- module D hits exactly that ambiguity for its decision-drift
+    Slack notice (see docs/modules/context.md and issue #257). Module A's
+    upload flow still needs to decide *how* this gets set (an explicit
+    upload-time choice? inferred from a large gap between `started_at` and
+    `created_at`?) before it carries a real value -- that is a design
+    conversation for module A's owner, not something this PR settles."""
+
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
     """When the retention sweep deletes this meeting and everything derived."""
 
