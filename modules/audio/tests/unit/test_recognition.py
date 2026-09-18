@@ -55,6 +55,17 @@ SPOKEN = [
     ("카드 1234 5678 구공일이 삼사오육", "카드 **** **** **** ****", "card"),
     # Two numbers with nothing between them that ends the run.
     ("공일공 일이삼사 오육칠팔 공일공 구팔칠육 오사삼이", "*** **** **** *** **** ****", "phone"),
+    # A reading that covers the whole run must beat one that covers part of it
+    # (#158 review, round 4). These are real bank layouts from privacy.py —
+    # 3-2-6 and 3-3-6 — and the first group came out in the clear because a
+    # narrower `phone` reading out-ranked the `account` reading that covered
+    # every digit.
+    ("공삼구 공구 공팔구오팔팔이에요", "*** ** ******이에요", "account"),
+    ("육오이 공칠육 육사칠삼이공이에요", "*** *** ******이에요", "account"),
+    # A full stop is a separator to privacy._SEP and was not one to the run.
+    ("010.1234.오육칠팔", "***.****.****", "phone"),
+    ("공일공.일이삼사.오육칠팔", "***.****.****", "phone"),
+    ("010-1234.오육칠팔", "***-****.****", "phone"),
 ]
 
 
@@ -310,6 +321,49 @@ def test_the_separator_is_what_tells_them_apart(
         "버전 20260910 이사 갑니다"
     )
     assert MIN_SPOKEN_SYLLABLES >= 3  # still what a run across a separator needs
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        # Only 이 can be a particle's first syllable and also a digit; 에 and 요
+        # are not digits and never enter the run. Giving back up to three
+        # syllables handed real digits to the sentence: 일 (=1) and 공삼 (=03)
+        # below. Whether the trailing 이 is masked with the number or left on
+        # the sentence is rank's call for these -- neither is a leak.
+        "공칠삼 육팔칠오 육구칠이일이에요",
+        "공칠공 일팔삼오 칠구사오공삼이에요",
+    ],
+)
+def test_a_trailing_digit_is_not_mistaken_for_a_particle(
+    line: str, recogniser: SpokenNumberRecogniser
+) -> None:
+    result = mask(line, recogniser=recogniser)
+    for syllable in "공일삼사오육칠팔구":
+        assert syllable not in result.text
+    assert result.counts, "nothing was masked"
+
+
+def test_a_run_no_pattern_covers_is_masked_exactly_as_if_written(
+    recogniser: SpokenNumberRecogniser,
+) -> None:
+    """Nineteen digits with a hyphen after the eighth: not a card, not the
+    catch-all (which wants twelve *contiguous*), so `account` takes the tail
+    and the head stays -- **written or spoken alike.** The recogniser's contract
+    is parity with the written form, not more than it; what the patterns cannot
+    cover is #143's and #148's, in `packages/integrations`.
+
+    What must not happen is the old behaviour: three real digits handed back
+    to the sentence as if 육팔일 could begin a particle.
+    """
+    spoken = mask("삼삼구공칠오칠구-팔삼사칠공일칠사육팔일", recogniser=recogniser)
+    written = mask("33907579-83470174681")
+    assert spoken.counts == written.counts == {"account": 1}
+    # The same span in both: the head is what neither can cover, the tail is
+    # what `account` claims. (Spoken masks its tail whole; written keeps four --
+    # the mixed-script rule in masking.py, and the safer of the two.)
+    assert spoken.text == "삼삼구공칠오칠구-***********"
+    assert written.text == "33907579-*******4681"
 
 
 def test_the_more_specific_reading_wins(recogniser: SpokenNumberRecogniser) -> None:

@@ -95,8 +95,14 @@ _DIGIT_SYLLABLES: Final[dict[str, str]] = {
 # real transcriptions, and a run made only of syllables stops at the first digit
 # and leaves the rest of the number out of the count. That made a mixed number
 # too short to rewrite and it came out in the clear.
+#
+# **The separators are `privacy._SEP`'s, not a guess at them.** A full stop is a
+# separator there (`010.1234.5678` masks), and when it was not one here the run
+# broke at it, fell under `MIN_RUN_DIGITS`, and `010.1234.오육칠팔` was never
+# rewritten at all -- a leak the outbound guard cannot see either, because it
+# cannot read spoken digits.
 _SYLLABLES: Final = "".join(_DIGIT_SYLLABLES)
-_RUN: Final = re.compile(rf"[{_SYLLABLES}0-9][{_SYLLABLES}0-9\s-]*")
+_RUN: Final = re.compile(rf"[{_SYLLABLES}0-9][{_SYLLABLES}0-9\s.-]*")
 
 MIN_SPOKEN_SYLLABLES: Final = 3
 """How many spoken syllables a run needs when nothing else vouches for it.
@@ -183,7 +189,10 @@ def _worth_rewriting(run: str) -> bool:
     return spoken >= MIN_SPOKEN_SYLLABLES or (spoken >= 1 and _glued_to_a_digit(run))
 
 
-MAX_PARTICLE_SYLLABLES: Final = 3
+_PARTICLE_ONSETS: Final = frozenset({"이"})
+"""The digit syllables a particle can begin with. One, today."""
+
+MAX_PARTICLE_SYLLABLES: Final = 1
 """How many trailing syllables of a run may turn out to be a particle.
 
 Korean attaches its particles directly to the number, and several of them begin
@@ -194,7 +203,13 @@ comes out one digit too long -- which is the same boundary problem that made the
 patterns themselves blind to Korean (#126), arriving from the other side.
 
 So the end of a run is a guess, and this is how many syllables the guess may be
-wrong by. ``이에요`` is the longest of these at three.
+wrong by. **One, not three.** Of a particle's syllables only its first can be a
+digit: 이 is, and 에 · 요 · 랑 · 로 are not in ``_DIGIT_SYLLABLES`` and never
+enter the run at all. This used to say three, on the reasoning that ``이에요``
+is three syllables long -- but the run stops at 이, so the guess can only ever
+be wrong by that one. Giving back up to three handed real digits to the
+sentence: ``공칠삼 육팔칠오 육구칠이일이에요`` came out ``*** **** ****일이에요``
+with the 일 (=1) in the clear (#158 review, round 4).
 """
 
 # Which pattern claimed a span, as a rank. `PII_PATTERNS` is declared
@@ -249,9 +264,37 @@ def _best_reading(text: str, start: int, end: int) -> list[tuple[int, int, str]]
 
     The run is rewritten repeatedly, each time giving one more trailing syllable
     back to the sentence, and every reading the patterns recognise is collected.
-    The winner is the reading whose most specific span is most specific --
-    ``phone`` over ``account`` for the same digits -- and, among equals, the one
-    that covers the most characters.
+    **The winner is the reading that covers the most of the run**, and among
+    readings that cover the same characters, the one whose most specific span
+    is most specific -- ``phone`` over ``account`` for the same digits.
+
+    Coverage first, because this is a masker. The other order let a narrow
+    ``phone`` reading out-rank an ``account`` reading that covered every digit:
+    ``공삼구 공구 공팔구오팔팔이에요`` -- a 3-2-6 bank layout -- came out
+    ``공삼구 ** *******에요`` with its first group in the clear and ``counts``
+    saying a phone number had been masked. A wrong category is a wrong row in
+    ``aud_masking_events``; a wrong coverage is a leak.
+
+    Coverage is the *union* of the spans' characters, not their sum.
+    ``find_pii`` returns overlapping spans on purpose, so two patterns claiming
+    the same digits would otherwise count them twice and a reading of thirteen
+    characters could out-score one of fifteen.
+
+    **A trailing 이 given back to the sentence does not count as lost
+    coverage.** It is the one syllable that can be either a digit or the start
+    of a particle, so a reading that excludes it is not covering less of the
+    number -- it is making the other guess about the same character. Without
+    this, coverage-first would read ``공일공 일이삼사 오육칠팔이에요`` as twelve
+    digits every time, because twelve characters beat eleven, and the particle
+    would be masked with the number. With it the two readings tie on coverage
+    and specificity decides: ``phone`` over the twelve-digit catch-all, and the
+    이 stays on the sentence.
+
+    Where both readings are specific the tie still goes to rank, and rank can
+    be wrong about the particle: ``공일공일이삼사오육칠팔이에요`` reads as
+    thirteen digits (``rrn`` ranks above ``phone``) and 이 is masked with the
+    number. That is the safe direction and a wrong row in ``aud_masking_events``,
+    not a leak; it is noted rather than special-cased.
 
     **All of that reading's spans are returned, not its best one.** A run is one
     run of digits, not one number: two numbers read back to back have nothing
@@ -282,9 +325,11 @@ def _best_reading(text: str, start: int, end: int) -> list[tuple[int, int, str]]
         ]
         if not spans:
             continue
+        given = text[stop:end]
+        slack = len(given) if given and set(given) <= _PARTICLE_ONSETS else 0
         key = (
+            len({i for s, e, _ in spans for i in range(s, e)}) + slack,
             -min(_SPECIFICITY.get(c, len(_SPECIFICITY)) for _, _, c in spans),
-            sum(e - s for s, e, _ in spans),
         )
         if best_key is None or key > best_key:
             best, best_key = spans, key
