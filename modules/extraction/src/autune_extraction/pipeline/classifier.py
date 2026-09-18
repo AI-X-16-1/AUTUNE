@@ -12,8 +12,9 @@ serve a health check, and would make this module's unit tests need one.
 
 from __future__ import annotations
 
+import hashlib
 import time
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from typing import TYPE_CHECKING, Any
 
 from autune_contracts.enums import UtteranceKind
@@ -131,6 +132,115 @@ def _truncation_length(model_max_length: int, max_position_embeddings: int) -> i
     return min(model_max_length, max_position_embeddings)
 
 
+ENSEMBLE_SEPARATOR = ","
+"""Separates checkpoints in ``AUTUNE_EXTRACTION_CLASSIFIER_CHECKPOINT``.
+
+Several checkpoints are an ensemble. Measured on 2026-09-17 with three seeds of
+the same training run (v2), averaging all three beat the mean of its members on
+every evaluation set -- probe macro F1 0.396 -> 0.412, blind kappa 0.269 -> 0.302,
+dummy team meetings macro 0.509 -> 0.522 -- while one seed alone found anywhere
+from 15 to 35 of the same 61 decisions, so which seed a deployment got was luck.
+Averaging the three models' *weights* into one checkpoint did not hold up on the
+team meetings (macro 0.498).
+
+The first checkpoint is the primary and scores everything; the rest are asked only
+about utterances the primary is unsure of -- see ``ESCALATE_BELOW``.
+"""
+
+ESCALATE_BELOW = 0.8
+"""Below this top probability from the primary, the other checkpoints are asked too
+and the answer is the mean of all of them.
+
+Asking every model every time costs one forward pass per checkpoint -- 0.7 -> 2.3
+CPU minutes for a 45-minute meeting on 6 cores. Simulated from saved per-seed
+probabilities with seed 20260910 as primary, the cost and what it kept:
+
+    top p below    cost        probe macro/kappa   blind macro/kappa   dummy macro/kappa
+    (single)       x1.00       0.369 / 0.212       0.302 / 0.270       0.492 / 0.502
+    0.7            x1.47-1.66  0.391 / 0.246       0.323 / 0.302       0.513 / 0.530
+    0.8            x1.68-1.91  0.401 / 0.260       0.328 / 0.302       0.516 / 0.533
+    (all, x3)      x3.00       0.412 / 0.274       0.328 / 0.302       0.522 / 0.536
+
+0.8 keeps the whole blind-set gain and most of the rest for about 60% of the full
+cost. A constant rather than a setting: the table was measured offline with one
+primary, and a knob invites values nobody has measured with the deployed
+checkpoints.
+"""
+
+MODEL_VERSION_MAX = 200
+"""``ext_classifications.model_version`` is ``String(200)``. Three checkpoint
+directories joined overrun it, and a version that does not fit fails the write of
+a meeting's whole classification."""
+
+
+def _checkpoints(value: str) -> list[str]:
+    """The checkpoints named by the setting, in order, blanks dropped."""
+    return [part.strip() for part in value.split(ENSEMBLE_SEPARATOR) if part.strip()]
+
+
+def _model_version(checkpoints: list[str]) -> str:
+    """What is recorded with every classification.
+
+    The checkpoint -- or, for an ensemble, the comma-joined list -- when it fits
+    the column, as a single checkpoint always has been. Otherwise a digest of it:
+    the same list gives the same version, a different list or order a different
+    one, and the full list is logged when the models load.
+    """
+    joined = ENSEMBLE_SEPARATOR.join(checkpoints)
+    if len(joined) <= MODEL_VERSION_MAX:
+        return joined
+    digest = hashlib.sha256(joined.encode("utf-8")).hexdigest()[:16]
+    return f"ensemble-{len(checkpoints)}:{digest}"
+
+
+def _mean_distribution(per_model: list[list[list[float]]]) -> list[list[float]]:
+    """Average each utterance's probabilities over the models, column by column.
+
+    ``per_model[m][u]`` is model ``m``'s distribution for utterance ``u``. Every
+    model scored the same utterances, so the lengths must agree; a mismatch is a
+    bug in the caller, not something to average around.
+    """
+    if not per_model:
+        raise ValueError("no model distributions to average")
+    count = len(per_model[0])
+    if any(len(rows) != count for rows in per_model):
+        raise ValueError("models scored different numbers of utterances")
+    n = len(per_model)
+    return [
+        [sum(column) / n for column in zip(*rows, strict=True)]
+        for rows in zip(*per_model, strict=True)
+    ]
+
+
+def _unsure(primary: list[list[float]], below: float) -> list[int]:
+    """Positions of the utterances whose primary top probability is below ``below``."""
+    return [i for i, row in enumerate(primary) if max(row) < below]
+
+
+def _cascade(
+    primary: list[list[float]],
+    ask_the_rest: Callable[[list[int]], list[list[list[float]]]],
+    *,
+    below: float = ESCALATE_BELOW,
+) -> list[list[float]]:
+    """The primary's distributions, with each unsure one replaced by the mean of all
+    models' distributions for that utterance.
+
+    ``ask_the_rest(positions)`` returns, per other model, its distributions for
+    exactly those positions in that order. It is not called when nothing is unsure,
+    which is the point: the other models cost nothing on a confident utterance.
+    """
+    positions = _unsure(primary, below)
+    if not positions:
+        return primary
+    others = ask_the_rest(positions)
+    if not others:
+        return primary
+    subset = [primary[i] for i in positions]
+    merged = dict(zip(positions, _mean_distribution([subset, *others]), strict=True))
+    return [merged.get(i, row) for i, row in enumerate(primary)]
+
+
 def _classifier_client(endpoint: str) -> Any:
     """Our inference server, as a client the way every other one is written.
 
@@ -163,19 +273,21 @@ class LocalDeberta:
     """
 
     def __init__(self, checkpoint: str, *, device: str = "cpu", batch_size: int = 32) -> None:
-        self._checkpoint = checkpoint
+        self._checkpoints = _checkpoints(checkpoint)
+        if not self._checkpoints:
+            raise ValueError("LocalDeberta needs at least one checkpoint")
         self._device = device
         self._batch_size = batch_size
-        self._model: Any = None
+        self._models: list[Any] = []
         self._tokenizer: Any = None
         self._max_length = 0
 
     @property
     def model_version(self) -> str:
-        return self._checkpoint
+        return _model_version(self._checkpoints)
 
     def _load(self) -> None:
-        if self._model is not None:
+        if self._models:
             return
         try:
             import torch  # noqa: PLC0415
@@ -205,16 +317,42 @@ class LocalDeberta:
                 "docs/engineering/environments.md."
             )
 
-        self._tokenizer = AutoTokenizer.from_pretrained(self._checkpoint)
-        self._model = AutoModelForSequenceClassification.from_pretrained(self._checkpoint)
-        _check_label_order(self._model.config.id2label)
-        self._max_length = _truncation_length(
-            self._tokenizer.model_max_length,
-            getattr(self._model.config, "max_position_embeddings", 512),
+        # One tokenizer feeds every model, so every checkpoint must have been
+        # trained with the same vocabulary. Checked rather than assumed: an
+        # ensemble member fine-tuned from another encoder would receive token ids
+        # that mean something else to it, and still return a distribution.
+        self._tokenizer = AutoTokenizer.from_pretrained(self._checkpoints[0])
+        vocab = self._tokenizer.get_vocab()
+        lengths = []
+        models = []
+        for checkpoint in self._checkpoints:
+            if (
+                checkpoint != self._checkpoints[0]
+                and AutoTokenizer.from_pretrained(checkpoint).get_vocab() != vocab
+            ):
+                raise ValueError(
+                    f"{checkpoint} does not share {self._checkpoints[0]}'s vocabulary; "
+                    "an ensemble must be seeds or runs of the same encoder"
+                )
+            model = AutoModelForSequenceClassification.from_pretrained(checkpoint)
+            _check_label_order(model.config.id2label)
+            lengths.append(
+                _truncation_length(
+                    self._tokenizer.model_max_length,
+                    getattr(model.config, "max_position_embeddings", 512),
+                )
+            )
+            model.to(self._device)
+            model.eval()
+            models.append(model)
+        self._max_length = min(lengths)
+        self._models = models
+        log.info(
+            "extraction_classifier_loaded",
+            checkpoints=self._checkpoints,
+            model_version=self.model_version,
+            device=self._device,
         )
-        self._model.to(self._device)
-        self._model.eval()
-        log.info("extraction_classifier_loaded", checkpoint=self._checkpoint, device=self._device)
 
     def classify(self, texts: list[str]) -> list[Prediction]:
         if not texts:
@@ -222,9 +360,7 @@ class LocalDeberta:
         self._load()
         torch = self._torch
 
-        predictions: list[Prediction] = []
-        for start in range(0, len(texts), self._batch_size):
-            batch = texts[start : start + self._batch_size]
+        def distributions(model: Any, batch: list[str]) -> list[list[float]]:
             encoded = self._tokenizer(
                 batch,
                 padding=True,
@@ -233,9 +369,29 @@ class LocalDeberta:
                 return_tensors="pt",
             ).to(self._device)
             with torch.no_grad():
-                logits = self._model(**encoded).logits
-            for row in torch.softmax(logits, dim=-1).tolist():
-                predictions.append(_to_prediction(row))
+                rows: list[list[float]] = torch.softmax(model(**encoded).logits, dim=-1).tolist()
+            return rows
+
+        primary, *rest = self._models
+        predictions: list[Prediction] = []
+        escalated = 0
+        for start in range(0, len(texts), self._batch_size):
+            batch = texts[start : start + self._batch_size]
+
+            def ask_the_rest(
+                positions: list[int], batch: list[str] = batch
+            ) -> list[list[list[float]]]:
+                nonlocal escalated
+                escalated += len(positions)
+                subset = [batch[i] for i in positions]
+                return [distributions(model, subset) for model in rest]
+
+            rows = distributions(primary, batch)
+            if rest:
+                rows = _cascade(rows, ask_the_rest)
+            predictions.extend(_to_prediction(row) for row in rows)
+        if rest:
+            log.info("extraction_classifier_escalated", utterances=len(texts), escalated=escalated)
         return predictions
 
 
