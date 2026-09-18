@@ -74,7 +74,7 @@ prefix `AUTUNE_<MODULE>_`.
 | `AUTUNE_ENCRYPTION_KEY` | | Encrypts team integration credentials at rest. Required outside local |
 | `AUTUNE_LOG_LEVEL` | `INFO` | |
 | `AUTUNE_RETENTION_DAYS` | `90` | Default analysis retention |
-| `AUTUNE_CORS_ALLOWED_ORIGINS` | `` | Comma-separated origins `apps/api` allows via CORS. Empty (default) means no CORS headers at all. Set to `http://localhost:3000` for local dev when running `apps/web`'s dev server against `apps/api`'s — a browser blocks the response otherwise, since `:3000` and `:8000` are different origins. Leave unset in staging/production unless a browser genuinely calls the API from a different origin than it's served from |
+| `AUTUNE_CORS_ALLOWED_ORIGINS` | `` | Comma-separated origins `apps/api` allows via CORS. Empty (default) means no CORS headers at all. Set to `http://localhost:3000` for local dev when running `apps/web`'s dev server against `apps/api`'s — a browser blocks the response otherwise, since `:3000` and `:8000` are different origins. Outside `local`, every origin must be an explicit `https://` URL — `*` and plain `http://` are refused at startup |
 
 ### Integrations
 

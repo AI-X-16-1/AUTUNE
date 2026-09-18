@@ -82,6 +82,24 @@ class Settings(BaseSettings):
             )
         return self
 
+    @model_validator(mode="after")
+    def _reject_open_cors_outside_local(self) -> Settings:
+        """A wildcard or plain-http origin outside local defeats the allowlist.
+
+        Local dev is the one case ``http://localhost:3000`` is legitimate; any
+        other environment serving the browser client is expected to be on
+        https, and ``*`` is never a real allowlist entry.
+        """
+        if self.env == "local":
+            return self
+        for origin in (o.strip() for o in self.cors_allowed_origins.split(",") if o.strip()):
+            if origin == "*" or not origin.startswith("https://"):
+                raise ValueError(
+                    f"AUTUNE_CORS_ALLOWED_ORIGINS contains {origin!r} in env={self.env}; "
+                    "outside local, every origin must be an explicit https:// URL, never '*'."
+                )
+        return self
+
     @property
     def is_production(self) -> bool:
         return self.env == "production"
