@@ -14,6 +14,37 @@ from __future__ import annotations
 from pydantic import BaseModel, Field
 
 
+class TemplateRead(BaseModel):
+    """One domain template, as the S20 rail lists it.
+
+    Not the items. Choosing a template is choosing a name, and the items only
+    mean anything next to a meeting — which is what the gap report already is.
+    Shipping ten checklists to a screen that shows one name would also put the
+    whole of every template into a payload nobody reads.
+
+    ``version`` names every file that contributed (``general.1+feature_planning.1``)
+    so a reader comparing two meetings can see they were held to the same
+    checklist. See ``autune_gap.template``.
+    """
+
+    key: str
+    name: str
+    version: str
+    items: int
+
+
+class TemplateSelection(BaseModel):
+    """Which template a meeting is compared against.
+
+    ``PUT`` takes one of these and returns one, so the caller's own state and
+    the server's are the same shape. The key is validated against the loaded
+    templates, and an unknown one is a 422 rather than a 404: what is wrong is
+    the value, not the address.
+    """
+
+    template_key: str
+
+
 class TopicNodeRead(BaseModel):
     """One node of the graph S20 draws.
 

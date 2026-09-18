@@ -485,6 +485,7 @@ dependencies = [
     { name = "celery" },
     { name = "fastapi" },
     { name = "networkx" },
+    { name = "pyyaml" },
     { name = "scipy" },
     { name = "sqlalchemy" },
 ]
@@ -503,6 +504,7 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.115" },
     { name = "ko-core-news-lg", marker = "extra == 'local-models'", url = "https://github.com/explosion/spacy-models/releases/download/ko_core_news_lg-3.8.0/ko_core_news_lg-3.8.0-py3-none-any.whl" },
     { name = "networkx", specifier = ">=3.4" },
+    { name = "pyyaml", specifier = ">=6" },
     { name = "scipy", specifier = ">=1.13" },
     { name = "spacy", marker = "extra == 'local-models'", specifier = ">=3.8" },
     { name = "sqlalchemy", specifier = ">=2.0" },

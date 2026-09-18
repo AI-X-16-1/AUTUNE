@@ -98,6 +98,11 @@ prefix `AUTUNE_<MODULE>_`.
 | `AUTUNE_EXTRACTION_CLASSIFIER_DEVICE` | B | `cpu` · `cuda`. Default `cpu`. Mirrors `AUTUNE_AUDIO_DEVICE` |
 | `AUTUNE_EXTRACTION_CANDIDATE_CONFIDENCE` | B | Below this, an item is a candidate rather than asserted. **Blank by default** — the number comes from the evaluation set (#10), and blank means nothing is a candidate |
 | `AUTUNE_GAP_RISK_THRESHOLD` | C | Default `0.7`. At or above is `high`, the only severity surfaced |
+| `AUTUNE_GAP_MEDIUM_THRESHOLD` | C | Default `0.5`. Down to here is `medium`, below it `low` |
+| `AUTUNE_GAP_DEFAULT_TEMPLATE` | C | Default `general`. Which domain template a meeting nobody chose one for is held to |
+| `AUTUNE_GAP_PARTIAL_CENTRALITY` | C | Default `0.4`. A matched topic below this makes the item *partial* rather than covered |
+| `AUTUNE_GAP_PARTIAL_DAMPING` | C | Default `0.7`. What a partial finding's risk score is multiplied by |
+| `AUTUNE_GAP_WEIGHT_TEMPLATE` · `_COVERAGE` · `_PARTICIPATION` | C | Defaults `0.4` · `0.4` · `0.2`. The three risk inputs, relative; renormalised over whichever could be measured |
 | `AUTUNE_GAP_NER_IMPL` | C | `spacy` (default) · `fake`. **No `external`** — see below |
 | `AUTUNE_GAP_NER_MODEL` | C | Default `ko_core_news_lg`. The pipeline **name**; the version comes from the pinned wheel and is recorded per row |
 | `AUTUNE_CONTEXT_EMBEDDER_IMPL` | D | `kure_v1_http` (default), `kure_v1_local`, `fake` |
