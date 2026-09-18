@@ -163,4 +163,40 @@ A table defined in `packages/core` — `User`, `Team`, `Meeting`, `Participant`,
 
 **Table prefix (테이블 접두사)**
 The mandatory prefix on a module-owned table: `aud_`, `ext_`, `gap_`, `ctx_`,
-`intel_`.
+`intel_`. `agent_` is proposed in #260 for the agent layer, which is not a
+module.
+
+## Agent layer (proposed — #260)
+
+Not built. Vocabulary is listed here so the design discussion uses one set of
+words. See `../architecture/agent-layer.md`.
+
+**Work item (업무 항목)**
+One unit of work being tracked — an action, a gap, an open question, a decision
+or a risk — with a status that outlives the meeting it was born in. Stored in
+`agent_work_items`. Work that never came from a meeting lands in the same table.
+
+**Tool (툴)**
+A module function the agent may call, declared in
+`modules/<name>/src/autune_<name>/tools.py`. Its docstring says **when to use
+it**, which is what the agent reads.
+
+**Orchestrator (오케스트레이터)**
+The loop that decides which tools to call for a given trigger, in what order,
+and what to do with the answers.
+
+**Trigger (트리거)**
+A reason to wake up: a schedule, an event, a due `next_check_at`, or a person
+asking.
+
+**Escalation level (에스컬레이션 단계)**
+How hard the agent is pushing a stalled item: 0 watch, 1 DM the owner, 2 raise
+it on the next agenda, 3 report to the lead.
+
+**Action level (행동 등급)**
+How dangerous an action is, L0 to L3. L2 and above need a person's approval;
+L3 is forbidden. `L0-ext` covers reads that send content outside the system.
+
+**Confidence gate (신뢰도 게이트)**
+Below 0.5, the agent asks a person instead of acting. The design's answer to
+extractors that are not accurate yet.
