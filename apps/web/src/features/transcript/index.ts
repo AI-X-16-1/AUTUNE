@@ -7,3 +7,4 @@
  * design.
  */
 export { LiveMeetingScreen } from "./components/LiveMeetingScreen";
+export { StoredMeetingScreen } from "./components/StoredMeetingScreen";
