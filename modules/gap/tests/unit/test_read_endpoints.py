@@ -1,4 +1,4 @@
-"""The read side of module C's HTTP surface: ``/reports`` and ``/topics``.
+"""Module C's HTTP surface: ``/reports``, ``/topics`` and ``/templates``.
 
 SQLite in memory and the router on a bare app, the way apps/api mounts it —
 the same harness module B's ``test_read_endpoints`` uses, and for the same
@@ -23,8 +23,10 @@ from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
 from autune_core import AutuneError, Base, Meeting, Participant, Utterance, get_session
+from autune_gap import service
 from autune_gap.models import (
     GapGap,
+    GapMeetingTemplate,
     GapParticipation,
     GapRelatedTopic,
     GapTopic,
@@ -47,6 +49,7 @@ TABLES = [
     GapParticipation.__table__,
     GapGap.__table__,
     GapRelatedTopic.__table__,
+    GapMeetingTemplate.__table__,
 ]
 
 
@@ -454,3 +457,80 @@ def test_the_graph_carries_no_participation(client: TestClient, session: Session
 
     assert set(body) == {"meeting_id", "nodes", "edges"}
     assert set(body["nodes"][0]) == {"id", "label", "centrality", "betweenness"}
+
+
+# --- which template a meeting is compared against ---------------------------
+
+
+@pytest.fixture
+def detection(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Records the meetings ``PUT /templates`` re-compared, without running it.
+
+    ``detect_gaps`` opens its own ``session_scope`` against the real database;
+    this harness is SQLite in memory. What the route owes its caller is that it
+    asks for the re-comparison, and that is what is asserted.
+    """
+    called: list[str] = []
+    monkeypatch.setattr(service, "detect_gaps", lambda meeting_id: called.append(meeting_id))
+    return called
+
+
+def test_the_templates_a_meeting_can_be_held_to_are_listed(client: TestClient) -> None:
+    body = client.get(f"{PREFIX}/templates").json()
+
+    assert {entry["key"] for entry in body} == {"general", "feature_planning"}
+    assert all(entry["items"] > 0 for entry in body)
+
+
+def test_the_listing_carries_no_items(client: TestClient) -> None:
+    """Choosing a template is choosing a name. Ten checklists in a payload that
+    shows one of them is every template shipped to a screen nobody opens."""
+    body = client.get(f"{PREFIX}/templates").json()
+
+    assert set(body[0]) == {"key", "name", "version", "items"}
+
+
+def test_a_meeting_nobody_chose_for_answers_with_the_default(client: TestClient) -> None:
+    """Not an empty body: there is always a template in force, and a rail
+    showing nothing selected would misreport that."""
+    body = client.get(f"{PREFIX}/templates/{MEETING}").json()
+
+    assert body == {"template_key": "general"}
+
+
+def test_an_unknown_meeting_is_a_404(client: TestClient) -> None:
+    assert client.get(f"{PREFIX}/templates/mtg_missing").status_code == 404
+
+
+def test_choosing_a_template_stores_it_and_re_compares(
+    client: TestClient, session: Session, detection: list[str]
+) -> None:
+    response = client.put(
+        f"{PREFIX}/templates/{MEETING}", json={"template_key": "feature_planning"}
+    )
+
+    assert response.json() == {"template_key": "feature_planning"}
+    assert session.get(GapMeetingTemplate, MEETING).template_key == "feature_planning"
+    assert detection == [MEETING]
+
+
+def test_choosing_again_replaces_the_choice(
+    client: TestClient, session: Session, detection: list[str]
+) -> None:
+    """One row per meeting — the table stores the exception, not a history."""
+    client.put(f"{PREFIX}/templates/{MEETING}", json={"template_key": "feature_planning"})
+    client.put(f"{PREFIX}/templates/{MEETING}", json={"template_key": "general"})
+
+    assert session.get(GapMeetingTemplate, MEETING).template_key == "general"
+
+
+def test_a_template_no_file_defines_is_a_422(
+    client: TestClient, session: Session, detection: list[str]
+) -> None:
+    """What is wrong is the value, not the address. Nothing is stored and
+    nothing is re-compared."""
+    response = client.put(f"{PREFIX}/templates/{MEETING}", json={"template_key": "retrospective"})
+
+    assert response.status_code == 422
+    assert session.get(GapMeetingTemplate, MEETING) is None
+    assert detection == []
