@@ -21,7 +21,7 @@ branch from the topic-graph revision.
 Owner: 박재경. Apply with `alembic upgrade heads` (plural).
 
 Revision ID: c1f7b0d94e58
-Revises: b8d4fa2c5e31
+Revises: c9e5ab13d742
 Create Date: 2026-09-17 10:15:00.000000
 """
 
@@ -33,7 +33,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "c1f7b0d94e58"
-down_revision: str | None = "b8d4fa2c5e31"
+down_revision: str | None = "c9e5ab13d742"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
