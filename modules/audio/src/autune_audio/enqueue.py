@@ -36,8 +36,12 @@ def enqueue_process_recording(meeting_id: str, upload_path: str) -> None:
     has nobody coming to delete it, and the ``except`` there is what deletes it
     instead.
 
-    The path is logged nowhere. A scratch filename is not meeting content, but
-    it is one ``ls`` away from a recording, and this line would be the map.
+    The path is not logged *here*. A scratch filename is not meeting content,
+    but it is one ``ls`` away from a recording, and this line would be the map.
+    That is a promise module A can keep only for its own log lines: Celery puts
+    task arguments in the broker message and in its own failure output, so the
+    path does travel outside this function — which is one of the things the
+    decision issue on this handover has to settle (privacy.md section 1).
     """
     current_app.send_task(PROCESS_RECORDING, args=[meeting_id, upload_path])
     log.info("audio_process_queued", meeting_id=meeting_id)

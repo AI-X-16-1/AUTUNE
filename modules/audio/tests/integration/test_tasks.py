@@ -295,9 +295,50 @@ def test_a_meeting_whose_task_raised_is_marked_failed(
         raise RuntimeError("pyannote could not load")
 
     monkeypatch.setattr(tasks, "assign_speakers", explode)
+    # The precondition the upload route establishes: a task only ever runs on a
+    # meeting it has claimed. A `scheduled` meeting cannot fail (see mark_failed).
+    db_session.get(Meeting, meeting).status = "analyzing"
+    db_session.flush()
 
     with pytest.raises(RuntimeError, match="pyannote could not load"):
         tasks.process_recording(meeting, str(recording))
 
     assert db_session.get(Meeting, meeting).status == "failed"
     assert published == []
+
+
+def test_a_redelivery_after_completion_does_not_undo_complete(
+    pipeline: dict,
+    db_session: Session,
+    meeting: str,
+    recording: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    published: list[tuple[str, dict]],
+) -> None:
+    """``acks_late``'s other edge: the worker dies *after* the commit and the
+    publish, *before* the ack. The broker redelivers; the redelivered run finds
+    no recording and dies at decode.
+
+    That death is not a failure of the meeting. Its transcript is in the
+    database and four modules have already been told. Moving it to ``failed``
+    would make S12 draw red over a meeting that finished, and would invite a
+    re-upload that replaces a transcript consumers already hold (@PARKJAEKYUNG0525
+    on #259).
+    """
+    decode_anything = tasks.decode
+
+    def decode_only_what_exists(path: Path) -> object:
+        if not Path(path).exists():
+            raise FileNotFoundError(str(path))
+        return decode_anything(path)
+
+    monkeypatch.setattr(tasks, "decode", decode_only_what_exists)
+
+    tasks.process_recording(meeting, str(recording))
+    assert db_session.get(Meeting, meeting).status == "complete"
+
+    with pytest.raises(FileNotFoundError):
+        tasks.process_recording(meeting, str(recording))
+
+    assert db_session.get(Meeting, meeting).status == "complete"
+    assert len(published) == 1

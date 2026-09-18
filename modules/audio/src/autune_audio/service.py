@@ -187,10 +187,23 @@ def mark_failed(session: Session, *, meeting_id: str) -> None:
 
     A meeting that stayed ``analyzing`` forever would be indistinguishable from
     one still being transcribed, and the screen would spin on it for good.
+
+    **Only an ``analyzing`` meeting can fail.** ``failed`` means "was being
+    transcribed and will not finish", and a meeting in any other state was not
+    being transcribed. The case that matters is ``complete``: with
+    ``acks_late`` a worker can die after the commit and the publish and before
+    the ack, and the redelivered run dies at decode because the recording is
+    already gone. That death is not the meeting's — its transcript is in the
+    database and four modules hold it — and turning it red would invite a
+    re-upload that replaces a transcript consumers already have.
     """
     meeting = session.get(Meeting, meeting_id)
     if meeting is None:
         raise NotFoundError("meeting", meeting_id)
+
+    if meeting.status != "analyzing":
+        log.info("audio_meeting_failed_skipped", meeting_id=meeting_id, status=meeting.status)
+        return
 
     meeting.status = "failed"
     session.flush()
