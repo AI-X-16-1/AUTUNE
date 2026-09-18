@@ -35,6 +35,4 @@ def on_transcript_ready(payload: dict) -> None:
     )
     service.build_topic_graph(transcript)
     service.detect_gaps(transcript.meeting_id)
-    # TODO(박재경): the suggested question is the template item's own wording.
-    # #35 makes it specific to the topics the gap was inferred from.
     service.publish_report(transcript.meeting_id)
