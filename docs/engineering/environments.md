@@ -318,6 +318,13 @@ cleared at the end of every task. Do not point it at a synced folder, and do not
 keep test recordings of real meetings on disk. See
 `../architecture/privacy.md`.
 
+While an upload request is in flight there is a second, short-lived copy of the
+recording in the OS temporary directory (`tempfile.gettempdir()`), written by
+Starlette's multipart parser before module A's code runs. It is deleted when
+the request closes. `AUTUNE_AUDIO_TEMP_DIR` is the copy this module owns and
+checks; the other one is the web framework's, and the same "not a synced
+folder" rule applies to `TMPDIR` on a developer machine.
+
 ## Environments
 
 | Environment | Purpose | Data |

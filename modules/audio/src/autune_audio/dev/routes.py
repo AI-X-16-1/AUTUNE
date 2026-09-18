@@ -38,6 +38,7 @@ import structlog
 from fastapi import APIRouter, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse
 
+from autune_audio.config import MAX_UPLOAD_BYTES
 from autune_audio.decoding import DecodeError
 from autune_audio.pipeline import transcribe_file
 from autune_audio.storage import RecordingTooLargeError, recording_on_disk
@@ -48,15 +49,6 @@ from .page import PAGE
 log = structlog.get_logger(__name__)
 
 router = APIRouter()
-
-MAX_UPLOAD_BYTES = 500 * 1024 * 1024
-"""Matches the dropzone limit on design screen S03.
-
-Enforced while the bytes are written, not from ``UploadFile.size``: that is a
-number the client sent, and it is ``None`` on a request without a
-Content-Length. Counting as we write means an over-long body is stopped and its
-partial file deleted whatever the client claimed.
-"""
 
 # Not in the OpenAPI schema. These endpoints exist on a developer's machine and
 # nowhere else, and the generated client should not know about them.

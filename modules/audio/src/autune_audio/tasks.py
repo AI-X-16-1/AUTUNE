@@ -11,6 +11,7 @@ from pathlib import Path
 
 from celery import shared_task
 
+from autune_audio import service
 from autune_audio.decoding import decode
 from autune_audio.diarization import get_diarizer
 from autune_audio.glossary import build_prompt
@@ -74,28 +75,38 @@ def process_recording(meeting_id: str, upload_path: str) -> None:
     """
     log.info("audio_process_started", meeting_id=meeting_id)
 
-    with adopt(Path(upload_path)) as recording:
-        waveform = decode(recording.path)
-        transcription = transcribe(waveform, glossary=build_prompt())
-        turns = get_diarizer().diarize(waveform)
+    try:
+        with adopt(Path(upload_path)) as recording:
+            waveform = decode(recording.path)
+            transcription = transcribe(waveform, glossary=build_prompt())
+            turns = get_diarizer().diarize(waveform)
 
-    # Before the write, not after: a collapsed transcript is not a transcript,
-    # and the recording is already gone so there is nothing to re-run.
-    detect_repetition(transcription).raise_if_collapsed()
+        # Before the write, not after: a collapsed transcript is not a
+        # transcript, and the recording is already gone so there is nothing to
+        # re-run.
+        detect_repetition(transcription).raise_if_collapsed()
 
-    spoken = assign_speakers(transcription, turns)
-    masked = tuple(replace(utterance, text=mask(utterance.text).text) for utterance in spoken)
-    _log_masking(meeting_id, spoken, masked)
+        spoken = assign_speakers(transcription, turns)
+        masked = tuple(replace(utterance, text=mask(utterance.text).text) for utterance in spoken)
+        _log_masking(meeting_id, spoken, masked)
 
-    with session_scope() as session:
-        persist_transcript(
-            session,
-            meeting_id=meeting_id,
-            utterances=masked,
-            duration_seconds=transcription.duration,
-            audio_deleted=recording.deleted,
-        )
-        payload = transcript_payload(session, meeting_id=meeting_id)
+        with session_scope() as session:
+            persist_transcript(
+                session,
+                meeting_id=meeting_id,
+                utterances=masked,
+                duration_seconds=transcription.duration,
+                audio_deleted=recording.deleted,
+            )
+            service.mark_complete(session, meeting_id=meeting_id)
+            payload = transcript_payload(session, meeting_id=meeting_id)
+    except Exception as error:
+        # A fresh session: whatever went wrong may have left the one above
+        # rolled back, and this write has to land regardless.
+        with session_scope() as session:
+            service.mark_failed(session, meeting_id=meeting_id)
+        log.warning("audio_process_failed", meeting_id=meeting_id, error=type(error).__name__)
+        raise
 
     publish(TRANSCRIPT_READY, payload.model_dump(mode="json"))
     log.info(

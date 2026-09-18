@@ -258,3 +258,87 @@ def test_a_collapsed_transcript_is_not_written_and_not_published(
     row = db_session.get(Meeting, meeting)
     assert row is not None
     assert row.pii_masked is False
+
+
+def test_a_finished_meeting_is_marked_complete(
+    pipeline: dict, db_session: Session, meeting: str, recording: Path
+) -> None:
+    """The status is what a screen reads to tell "not yet" from "nothing said".
+
+    ``transcript_for_meeting`` returns an empty list all the way through the
+    task — every utterance is written in one transaction at the end — so a
+    meeting stuck at ``analyzing`` and a meeting where nobody spoke look
+    identical to a reader that does not have this.
+    """
+    tasks.process_recording(meeting, str(recording))
+
+    assert db_session.get(Meeting, meeting).status == "complete"
+
+
+def test_a_meeting_whose_task_raised_is_marked_failed(
+    pipeline: dict,
+    db_session: Session,
+    meeting: str,
+    recording: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    published: list[tuple[str, dict]],
+) -> None:
+    """The recording is gone and it is not coming back — say so.
+
+    ``adopt`` deletes in a ``finally``, so a failed run has already destroyed
+    the only copy of the audio. Leaving the meeting at ``analyzing`` would make
+    the screen wait for a task that is never going to report, and would hide
+    from the uploader that the one thing they could have retried is gone.
+    """
+
+    def explode(*_: object, **__: object) -> None:
+        raise RuntimeError("pyannote could not load")
+
+    monkeypatch.setattr(tasks, "assign_speakers", explode)
+    # The precondition the upload route establishes: a task only ever runs on a
+    # meeting it has claimed. A `scheduled` meeting cannot fail (see mark_failed).
+    db_session.get(Meeting, meeting).status = "analyzing"
+    db_session.flush()
+
+    with pytest.raises(RuntimeError, match="pyannote could not load"):
+        tasks.process_recording(meeting, str(recording))
+
+    assert db_session.get(Meeting, meeting).status == "failed"
+    assert published == []
+
+
+def test_a_redelivery_after_completion_does_not_undo_complete(
+    pipeline: dict,
+    db_session: Session,
+    meeting: str,
+    recording: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    published: list[tuple[str, dict]],
+) -> None:
+    """``acks_late``'s other edge: the worker dies *after* the commit and the
+    publish, *before* the ack. The broker redelivers; the redelivered run finds
+    no recording and dies at decode.
+
+    That death is not a failure of the meeting. Its transcript is in the
+    database and four modules have already been told. Moving it to ``failed``
+    would make S12 draw red over a meeting that finished, and would invite a
+    re-upload that replaces a transcript consumers already hold (@PARKJAEKYUNG0525
+    on #259).
+    """
+    decode_anything = tasks.decode
+
+    def decode_only_what_exists(path: Path) -> object:
+        if not Path(path).exists():
+            raise FileNotFoundError(str(path))
+        return decode_anything(path)
+
+    monkeypatch.setattr(tasks, "decode", decode_only_what_exists)
+
+    tasks.process_recording(meeting, str(recording))
+    assert db_session.get(Meeting, meeting).status == "complete"
+
+    with pytest.raises(FileNotFoundError):
+        tasks.process_recording(meeting, str(recording))
+
+    assert db_session.get(Meeting, meeting).status == "complete"
+    assert len(published) == 1
