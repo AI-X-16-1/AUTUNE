@@ -1,15 +1,25 @@
-"""Slack notices: what they say. Pure, like intelligence's test_feedback.py."""
+"""Slack notices: what they say, and how ``service.send_*`` sends them. Pure --
+no database, a ``FakeSlack`` instead of a real client -- like intelligence's
+test_feedback.py."""
 
 from __future__ import annotations
 
 from datetime import date
 
+import pytest
+
+from autune_context import service
+from autune_context.config import ContextSettings
 from autune_context.notify import (
     build_decision_drift_channel_notice,
     build_decision_drift_personal_dm,
     build_topic_link_notice,
+    build_topic_link_rollup_notice,
 )
 from autune_contracts import ChangeType
+from autune_integrations.fakes import FakeSlack
+
+_CHANNEL = "C0TESTCHANNEL"
 
 
 def _text(blocks: list[dict]) -> str:
@@ -88,3 +98,64 @@ def test_drift_personal_dm_states_the_decision_content() -> None:
     )
 
     assert "최신순으로 정렬한다" in _text(blocks)
+
+
+def test_topic_link_rollup_notice_states_the_count() -> None:
+    fallback, blocks = build_topic_link_rollup_notice(count=4)
+
+    assert "4건" in fallback
+    assert "4건" in _text(blocks)
+
+
+# --------------------------------------------------------------------------- #
+# service.send_topic_link_notices — the per-meeting message cap
+# --------------------------------------------------------------------------- #
+
+
+def _link(label: str) -> service.TopicLinkNotice:
+    return service.TopicLinkNotice(topic_label=label, linked_meeting_date=date(2026, 9, 4))
+
+
+def _capped_settings(monkeypatch: pytest.MonkeyPatch, cap: int) -> None:
+    monkeypatch.setattr(
+        service, "get_settings", lambda: ContextSettings(max_topic_link_notices=cap)
+    )
+
+
+def test_send_topic_link_notices_under_the_cap_sends_one_each(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _capped_settings(monkeypatch, cap=3)
+    slack = FakeSlack()
+
+    sent = service.send_topic_link_notices(slack, _CHANNEL, [_link("a"), _link("b")])
+
+    assert sent == 2
+    assert len(slack.channel_messages) == 2
+
+
+def test_send_topic_link_notices_over_the_cap_rolls_up_the_rest(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _capped_settings(monkeypatch, cap=2)
+    slack = FakeSlack()
+
+    sent = service.send_topic_link_notices(
+        slack, _CHANNEL, [_link("a"), _link("b"), _link("c"), _link("d")]
+    )
+
+    assert sent == 4
+    # 2 individual notices (the cap) + 1 rollup notice for the other 2.
+    assert len(slack.channel_messages) == 3
+    assert "2건" in slack.channel_messages[-1].text
+
+
+def test_send_topic_link_notices_exactly_at_the_cap_has_no_rollup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _capped_settings(monkeypatch, cap=2)
+    slack = FakeSlack()
+
+    service.send_topic_link_notices(slack, _CHANNEL, [_link("a"), _link("b")])
+
+    assert len(slack.channel_messages) == 2

@@ -19,12 +19,15 @@ See docs/architecture/async-pipeline.md.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 import sqlalchemy as sa
 from celery import shared_task
 
 import autune_context.pipeline  # noqa: F401  (registers the worker_process_init warm-up hook)
 from autune_context import service
 from autune_context.config import get_settings
+from autune_context.models import CtxMeetingStatus
 from autune_contracts import ExtractionResult, TranscriptReady, validate_major_version
 from autune_core import Meeting, get_logger, load_integration, session_scope
 from autune_integrations import SlackClient
@@ -85,9 +88,14 @@ def publish_if_ready(meeting_id: str) -> None:
     log.info("context_publish_checked", meeting_id=meeting_id, published=published)
     if published:
         # ``service.publish_if_ready`` only returns True once per meeting
-        # (guarded by ``published_at``), so this fires exactly once even
-        # though the task itself is armed twice (an immediate check and a
-        # B-timeout fallback) and can also be retried by Celery.
+        # (guarded by ``published_at``), so this enqueues ``notify_context_events``
+        # only once even though the task itself is armed twice (an immediate
+        # check and a B-timeout fallback) and can also be retried by Celery.
+        # That covers *enqueueing* once, not *executing* once -- ``acks_late``
+        # is at-least-once delivery, so Celery can still redeliver the queued
+        # notify task itself. ``notify_context_events`` closes that gap on its
+        # own with a ``notified_at`` claim, so a redelivered execution is a
+        # no-op rather than a duplicate post.
         notify_context_events.apply_async((meeting_id,))
 
 
@@ -98,8 +106,25 @@ def notify_context_events(meeting_id: str) -> None:
     Fired once, right after ``ContextLinks`` is published. A team that has not
     connected Slack, or has connected it without a channel, is skipped rather
     than failed -- same convention as ``autune_intelligence.tasks``.
+
+    ``notified_at`` claims the meeting -- atomically, via ``with_for_update``,
+    mirroring ``publish_if_ready``'s ``published_at`` guard -- *before*
+    anything is sent, so a Celery redelivery of this task is a no-op instead of
+    a duplicate post. Collecting the rows to send and claiming both happen
+    inside one session that is closed *before* any Slack HTTP call, the same
+    "gather in session, send after" shape ``autune_intelligence.tasks
+    .generate_weekly_report`` uses -- a slow or rate-limited Slack response
+    then never holds a pooled DB connection open.
     """
     with session_scope() as session:
+        status = session.get(CtxMeetingStatus, meeting_id, with_for_update=True)
+        if status is None:
+            log.info("context_notify_meeting_gone", meeting_id=meeting_id)
+            return
+        if status.notified_at is not None:
+            log.info("context_notify_already_claimed", meeting_id=meeting_id)
+            return
+
         team_id = session.scalar(sa.select(Meeting.team_id).where(Meeting.id == meeting_id))
         if team_id is None:
             log.info("context_notify_meeting_gone", meeting_id=meeting_id)
@@ -113,9 +138,13 @@ def notify_context_events(meeting_id: str) -> None:
             log.info("context_notify_no_channel", meeting_id=meeting_id, team_id=team_id)
             return
 
-        slack = SlackClient(config.require_secret())
-        links_sent = service.notify_topic_links(session, slack, channel, meeting_id)
-        drift_sent = service.notify_decision_drift(session, slack, channel, meeting_id)
+        topic_notices = service.collect_topic_link_notices(session, meeting_id)
+        drift_notices = service.collect_drift_notices(session, meeting_id)
+        status.notified_at = datetime.now(tz=UTC)
+
+    slack = SlackClient(config.require_secret())
+    links_sent = service.send_topic_link_notices(slack, channel, topic_notices)
+    drift_sent = service.send_decision_drift_notices(slack, channel, drift_notices)
 
     log.info(
         "context_notify_sent",

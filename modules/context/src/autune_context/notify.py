@@ -8,6 +8,8 @@ tested without credentials, the same split module E uses for
 docs/modules/context.md "Slack surface" defines two notices:
 
 - **topic-link notice** -- an asserted topic link, posted to the team channel.
+  Capped at ``ContextSettings.max_topic_link_notices``; anything past the cap
+  collapses into one rollup notice instead of one message each.
 - **decision-drift warning** -- a decision changed while a key stakeholder was
   absent, posted to the team channel and by DM to each absent stakeholder.
 
@@ -66,6 +68,23 @@ def build_topic_link_notice(
             "type": "context",
             "elements": [{"type": "mrkdwn", "text": f"{when} 회의에서 논의된 적 있습니다."}],
         },
+    ]
+    return fallback, blocks
+
+
+def build_topic_link_rollup_notice(*, count: int) -> tuple[str, list[dict]]:
+    """The channel notice for topic links past ``max_topic_link_notices``.
+
+    A meeting with many linked topics would otherwise post one message per
+    topic and flood the channel; everything past the cap is folded into this
+    single line instead.
+    """
+    fallback = f"이전에 논의된 안건이 {count}건 더 있습니다."
+    blocks: list[dict[str, Any]] = [
+        {
+            "type": "context",
+            "elements": [{"type": "mrkdwn", "text": fallback}],
+        }
     ]
     return fallback, blocks
 
