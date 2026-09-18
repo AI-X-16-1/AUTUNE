@@ -37,6 +37,7 @@ def item(key: str = "success_criteria", weight: float = 0.9, **kwargs: object) -
         weight=weight,
         keywords=tuple(kwargs.get("keywords", ("지표", "성공"))),  # type: ignore[arg-type]
         question="무엇으로 측정합니까?",
+        question_about="{topic}의 성공 기준은 무엇으로 측정합니까?",
     )
 
 
@@ -259,3 +260,57 @@ def test_a_finding_carries_the_item_question_and_its_display_name(
     assert missing.question == "무엇으로 측정합니까?"
     assert missing.title != partial.title
     assert "논의되지" in missing.title
+
+
+# --- the question a gap carries (#35) ---------------------------------------
+
+
+def test_a_partial_gap_names_the_topic_it_was_inferred_from(
+    thresholds: detect.Thresholds,
+) -> None:
+    """ "검색 개인화 기능의 성공 기준은…" can be answered. The generic wording has
+    to be decoded first, and a reader opening the report a week later no longer
+    knows which "일" it meant."""
+    matched_but_thin = [topic(label="성공 기준", centrality=0.1)]
+
+    findings = detect.compare(one_item_template(item()), matched_but_thin, thresholds)
+
+    assert findings[0].coverage is detect.Coverage.PARTIAL
+    assert findings[0].question.startswith("성공 기준의")
+
+
+def test_a_missing_gap_keeps_the_generic_question(thresholds: detect.Thresholds) -> None:
+    """There is no topic to name, and naming the meeting's most central one
+    instead would be a guess — with extraction where it is, as likely to be
+    "다음 주" as the thing the meeting was about. Same rule as `score`: what was
+    not measured is not substituted for."""
+    findings = detect.compare(one_item_template(item()), [topic(label="콜드스타트")], thresholds)
+
+    assert findings[0].coverage is detect.Coverage.MISSING
+    assert findings[0].question == "무엇으로 측정합니까?"
+
+
+def test_the_topic_named_is_the_one_the_score_was_based_on(
+    thresholds: detect.Thresholds,
+) -> None:
+    """`match` returns most central first and `score` reads `matched[0]`. The
+    question has to point at the same topic, or the number and the sentence
+    describe different things."""
+    findings = detect.compare(
+        one_item_template(item(keywords=("지표",))),
+        [topic("topic_a", "보조 지표", centrality=0.1), topic("topic_b", "핵심 지표", 0.2)],
+        thresholds,
+    )
+
+    assert findings[0].question.startswith("핵심 지표")
+    assert findings[0].topic_ids[0] == "topic_b"
+
+
+def test_question_for_is_callable_on_its_own(thresholds: detect.Thresholds) -> None:
+    """It is the half of this that a template author's copy reaches, so it is
+    exercised directly rather than only through a whole comparison."""
+    assert detect.question_for(item(), []) == "무엇으로 측정합니까?"
+    assert (
+        detect.question_for(item(), [topic(label="캐시")])
+        == "캐시의 성공 기준은 무엇으로 측정합니까?"
+    )
