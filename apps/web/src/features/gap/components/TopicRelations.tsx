@@ -20,46 +20,38 @@ import type { RelationLine, TopicGraph } from "../types";
  * question it is answering so an empty list does not read as "these topics are
  * unrelated".
  *
+ * **This component renders a settled read only.** Whether the graph is still
+ * arriving or failed is the screen's to say, because "no relations" and "not
+ * loaded" are different sentences and `graph === null` cannot tell them apart.
+ * Raised in review of #264.
+ *
  * **No participation, no per-person anything.** Relations are topic-to-topic.
  * Who spoke on a topic is in the report and renders as role density, never per
  * person — `docs/architecture/privacy.md` section 3.
  */
-export function TopicRelations({ graph }: { graph: TopicGraph | null }) {
+export function TopicRelations({ graph }: { graph: TopicGraph }) {
   const lines = relationLines(graph);
   const asserted = lines.filter((line) => line.relation !== CO_OCCURS);
   const proximity = lines.filter((line) => line.relation === CO_OCCURS);
 
   if (lines.length === 0) {
-    return (
-      <p className="text-[var(--color-ink-muted)]" style={{ fontSize: "var(--text-metaSmall)" }}>
-        이 회의에서 토픽 간 관계가 확인되지 않았습니다.
-      </p>
-    );
+    return <Note>이 회의에서 토픽 간 관계가 확인되지 않았습니다.</Note>;
   }
 
   return (
     <div className="flex flex-col gap-6">
-      <section className="flex flex-col">
+      <section>
+        <GroupHeading>발화에서 읽어낸 관계</GroupHeading>
         {asserted.length > 0 ? (
           asserted.map((line) => <RelationRow key={line.key} line={line} />)
         ) : (
-          <p
-            className="text-[var(--color-ink-muted)]"
-            style={{ fontSize: "var(--text-metaSmall)" }}
-          >
-            발화에서 읽어낸 관계가 아직 없습니다. 아래는 함께 언급된 토픽입니다.
-          </p>
+          <Note>아직 발화에서 읽어낸 관계가 없습니다. 아래는 함께 언급된 토픽입니다.</Note>
         )}
       </section>
 
       {proximity.length > 0 ? (
         <section>
-          <h2
-            className="mb-1 text-[var(--color-ink-muted)]"
-            style={{ fontSize: "var(--text-metaSmall)" }}
-          >
-            {RELATION_LABELS[CO_OCCURS]}
-          </h2>
+          <GroupHeading>{RELATION_LABELS[CO_OCCURS] ?? "함께 언급"}</GroupHeading>
           {proximity.map((line) => (
             <RelationRow key={line.key} line={line} />
           ))}
@@ -72,10 +64,12 @@ export function TopicRelations({ graph }: { graph: TopicGraph | null }) {
 /**
  * One relation as a line: source, what joins it, target, weight.
  *
- * The arrow is `aria-hidden` and the relation word carries the meaning, so a
- * screen reader hears "정렬 로직 의존 인덱스" rather than a glyph. A mutual pair
- * is marked on the relation word instead of by drawing a second row, which is
- * what the payload would otherwise produce.
+ * **Whether the pair is mutual is in the words, not in the glyph.** The arrow is
+ * `aria-hidden` — it is there for a reader scanning the column — so anything
+ * carried only by ↔ against → reaches nobody using a screen reader. Marking it
+ * on the relation word instead means "상호 대안" and "의존" read the same way in
+ * both directions, and one-way against both-ways is among the most important
+ * things this screen has to say. Raised in review of #264.
  */
 function RelationRow({ line }: { line: RelationLine }) {
   const label = RELATION_LABELS[line.relation] ?? line.relation;
@@ -96,7 +90,7 @@ function RelationRow({ line }: { line: RelationLine }) {
         className="shrink-0 whitespace-nowrap text-[var(--color-ink-muted)]"
         style={{ fontSize: "var(--text-metaSmall)" }}
       >
-        {label}
+        {line.mutual ? `상호 ${label}` : label}
         <span aria-hidden>{line.mutual ? " ↔ " : " → "}</span>
       </span>
 
@@ -118,5 +112,32 @@ function RelationRow({ line }: { line: RelationLine }) {
         {line.weight.toFixed(2)}
       </span>
     </div>
+  );
+}
+
+/**
+ * A group inside the relations section.
+ *
+ * `h3`, because the screen already titled the section with an `h2` and these are
+ * its two halves. Both halves are titled even though only one used to be: with
+ * a heading on the lower group alone, the asserted rows above it were a run of
+ * lines with nothing saying what they were. Raised in review of #264.
+ */
+function GroupHeading({ children }: { children: string }) {
+  return (
+    <h3
+      className="mb-1 text-[var(--color-ink-muted)]"
+      style={{ fontSize: "var(--text-metaSmall)" }}
+    >
+      {children}
+    </h3>
+  );
+}
+
+function Note({ children }: { children: string }) {
+  return (
+    <p className="text-[var(--color-ink-muted)]" style={{ fontSize: "var(--text-metaSmall)" }}>
+      {children}
+    </p>
   );
 }

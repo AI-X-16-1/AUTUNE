@@ -149,6 +149,14 @@ export interface RelationLine {
  * genuinely one-way keeps its direction, and an asymmetric relation that
  * happens to hold both ways — 실시간 depends_on 캐시 *and* the reverse — still
  * reads correctly as a mutual line, because that is what the graph says.
+ *
+ * That `mutual` cannot be a false positive rests on a server constraint rather
+ * than on anything here: `gap_topic_edges` carries
+ * `UNIQUE(source_topic_id, target_topic_id, relation)` and
+ * `CHECK(source_topic_id <> target_topic_id)`, so the only way one key can be
+ * reached twice is from the two opposite directions. Loosen either constraint
+ * and this collapse starts merging rows that are not a pair. Raised in review
+ * of #264.
  */
 export function relationLines(graph: TopicGraph | null): RelationLine[] {
   if (!graph) return [];
