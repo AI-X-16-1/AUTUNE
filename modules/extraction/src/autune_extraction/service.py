@@ -25,6 +25,7 @@ from autune_contracts.extraction import (
 )
 from autune_contracts.transcript import Utterance as TranscriptUtterance
 from autune_core import Meeting, Participant, User, Utterance, get_logger, session_scope
+from autune_core.errors import NotFoundError, ValidationError
 from autune_integrations import SlackApi, assert_personal_delivery
 
 from .config import get_settings
@@ -274,7 +275,31 @@ def create_action_item(session: Session, payload: ActionItemCreate) -> ExtAction
     Counted as an edit. An item the model missed costs the user more than one it
     got wrong -- they have to notice the absence, which is the failure recall
     makes likely and the one editing cannot fix by itself.
+
+    **Both references are checked before anything is written.** An unknown
+    meeting is a 404 and a source that is not one of *this* meeting's utterances
+    is a 422 naming the field. Without the check the first reached the client as
+    a 500 from the foreign key, found by a local end-to-end run on 2026-09-19, and
+    the second was worse when the utterance did exist: an item on one meeting
+    citing another meeting's utterance, whose words ``GET /action-items/{id}``
+    then quotes on this meeting's board.
     """
+    if session.get(Meeting, payload.meeting_id) is None:
+        raise NotFoundError("meeting", payload.meeting_id)
+    wanted = set(payload.source_utterance_ids)
+    if wanted:
+        found = set(
+            session.scalars(
+                select(Utterance.id).where(
+                    Utterance.meeting_id == payload.meeting_id, Utterance.id.in_(wanted)
+                )
+            )
+        )
+        if found != wanted:
+            raise ValidationError(
+                "source_utterance_ids must be utterances of this meeting",
+                field="source_utterance_ids",
+            )
     item = ExtActionItem(
         meeting_id=payload.meeting_id,
         description=payload.description,
