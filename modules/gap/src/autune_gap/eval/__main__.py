@@ -27,7 +27,7 @@ from autune_gap.eval.metrics import (
     TARGET_PRECISION_THREE_MONTHS,
     Report,
 )
-from autune_gap.eval.runner import run_all
+from autune_gap.eval.runner import HarnessInconsistencyError, run_all
 
 
 def format_report(report: Report, *, extractor: str) -> str:
@@ -154,7 +154,10 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         report = run_all(args.dataset)
-    except EvalSetError as exc:
+    except (EvalSetError, HarnessInconsistencyError) as exc:
+        # Both mean the report would be a number about something other than
+        # what it claims. Exit 2 rather than 1: nothing was measured, so this is
+        # not "below target".
         print(f"error: {exc}", file=sys.stderr)
         return 2
 

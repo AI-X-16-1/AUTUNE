@@ -41,12 +41,12 @@ from autune_contracts import (
     Utterance as UtterancePayload,
 )
 from autune_core import Meeting, Participant, Team, Utterance, session_scope
-from autune_gap import service
+from autune_gap import detect, service
 from autune_gap.eval.dataset import DEFAULT_DATASET, EvalCase, load_cases
 from autune_gap.eval.metrics import CaseScore, Report, classify_false_positive, score
 from autune_gap.graph import topic_key
 from autune_gap.models import GapGap, GapRelatedTopic, GapTopic
-from autune_gap.template import Template, get_template
+from autune_gap.template import Template, TemplateItem, get_template
 
 _SURFACED = "high"
 """The only severity a reader sees by default (modules/gap/CLAUDE.md), and so
@@ -98,6 +98,7 @@ def run_case(case: EvalCase) -> CaseScore:
                     )
                 )
             )
+            _check_coverage_agrees(rows, with_topics, chosen)
             topics = (
                 s.scalar(
                     select(func.count())
@@ -137,6 +138,63 @@ def run_case(case: EvalCase) -> CaseScore:
             s.execute(delete(Team).where(Team.id == team_id))
 
 
+class HarnessInconsistencyError(Exception):
+    """The harness's two readings of the same fact disagree, so the report it
+    would print cannot be trusted. Louder than a wrong number."""
+
+
+def _check_coverage_agrees(rows: list[GapGap], with_topics: set[str], chosen: Template) -> None:
+    """Cross-check the partial/missing split against the stored title.
+
+    The split is derived from ``gap_related_topics`` — a gap with no linked
+    topic was raised on an absent item. That derivation has a failure mode that
+    looks exactly like a real result: ``build_topic_graph`` deletes the
+    meeting's topics before ``detect_gaps`` runs and the cascade takes the link
+    rows with them, so **an empty link table reads as "every gap is missing"**
+    (``service.detect_gaps`` says as much in its own docstring). The headline
+    claim this harness makes — that the centrality threshold is not what costs
+    precision — is exactly that shape, and nothing in the report would tell the
+    two apart.
+
+    ``gap_gaps.title`` is an independent second reading. ``detect`` composes it
+    from the coverage state, the two wordings differ, and the row stores it. If
+    the two disagree, the run stops rather than printing a conclusion built on
+    one of them. Storing the coverage on the row is the real fix and belongs to
+    #266's schema, not here.
+
+    Raised in review of #277.
+    """
+    items = {item.key: item for item in chosen.items}
+
+    for row in rows:
+        item = items.get(row.template_item_key or "")
+        if item is None or row.template_item_key is None:
+            continue
+
+        from_title = _coverage_from_title(row.title, item)
+        if from_title is None:
+            continue
+
+        from_links = "partial" if row.id in with_topics else "missing"
+        if from_title != from_links:
+            raise HarnessInconsistencyError(
+                f"{row.meeting_id}: gap on {row.template_item_key!r} reads {from_links!r} from "
+                f"gap_related_topics and {from_title!r} from its stored title. The cause split "
+                "in this report would be wrong, so it is not printed."
+            )
+
+
+def _coverage_from_title(title: str, item: TemplateItem) -> str | None:
+    """``"partial"``, ``"missing"``, or ``None`` when the title is neither —
+    a gap raised by something other than template comparison, which this
+    harness has nothing to say about."""
+    if title == detect.MISSING_TITLE.format(item=item.item):
+        return "missing"
+    if title == detect.PARTIAL_TITLE.format(item=item.item):
+        return "partial"
+    return None
+
+
 def _causes(
     case: EvalCase,
     chosen: Template,
@@ -167,13 +225,21 @@ def _causes(
 
 
 def _seed(team_id: str, case: EvalCase) -> str:
-    """The meeting as module A would leave it: participants who consented, and
-    utterances already masked.
+    """The meeting as module A will leave it once #190 is settled: participants
+    who consented, and utterances already masked.
 
-    Everybody consents. A participant who did not is excluded from analysis
-    (privacy.md section 5) and the case would then be scoring a different
-    meeting from the one it labeled — whether C may speak about a meeting it
-    only half saw is issue #248, not something to fold into a precision figure.
+    **Not as module A leaves one today.** ``persistence.py:199`` creates every
+    participant with ``consented=False`` and its own docstring says nothing in
+    the repository ever sets it True (#190), so a meeting in this shape is one
+    no real transcript reaches yet. Said plainly because the earlier wording
+    ("as module A would leave it") reads as a description of production and
+    would have somebody expecting real meetings to arrive analysable.
+
+    Everybody consents here on purpose: a participant who did not is excluded
+    from analysis (privacy.md section 5) and the case would then be scoring a
+    different meeting from the one it labeled. Whether C may speak about a
+    meeting it only half saw is #248, and folding it into a precision figure
+    would measure two things at once. Raised in review of #277.
     """
     with session_scope() as s:
         meeting = Meeting(team_id=team_id, title=f"eval {case.id}", status="analyzing")

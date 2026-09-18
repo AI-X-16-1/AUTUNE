@@ -519,6 +519,20 @@ empty are listed separately for the same reason: `detect.compare` raises nothing
 for them on purpose, so they pull recall down for a reason that belongs to step
 1.
 
+**Point it at a disposable database.** The harness creates a team per case and
+deletes it when the case is scored, so every synthetic row it writes reaches
+deletion through `meetings.id` — but it writes to whatever
+`AUTUNE_DATABASE_URL` names, which on a shared development database is somebody
+else's. The docker-compose database in
+`../engineering/environments.md` is the intended target.
+
+The split between `missing` and `partial` is read off `gap_related_topics`, and
+that reading has a failure mode shaped exactly like a result: an empty link
+table says "every gap is missing". The harness cross-checks it against the
+stored `gap_gaps.title`, which `detect` composes from the coverage state, and
+stops with exit 2 if the two disagree rather than printing a cause split built
+on one of them.
+
 The committed set (`eval/fixtures/gap_detection_v1.json`) is **four authored
 meetings, and is not the PRD figure** — that one comes from five to ten real
 team meetings in W5, and four cases cannot carry a statistical claim. It is a
