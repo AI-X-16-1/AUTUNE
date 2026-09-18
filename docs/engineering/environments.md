@@ -26,7 +26,7 @@ pnpm install
 
 uv run alembic -c infra/alembic.ini upgrade heads
 
-uv run uvicorn apps.api.main:app --reload            # API   :8000
+uv run uvicorn autune_api.main:app --reload          # API   :8000
 uv run celery -A autune_worker.celery_app worker -Q default,cpu_heavy,gpu -l info
 pnpm --filter @autune/web dev                        # web   :3000
 uv run python -m autune_bot                          # Slack bot (socket mode)
