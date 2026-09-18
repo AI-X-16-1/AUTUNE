@@ -486,6 +486,29 @@ and dismissals feed threshold tuning.
 uv run --package autune-gap python -m autune_gap.eval
 ```
 
+Precision is measured over the `high` band, because that is what a reader
+actually sees — a `medium` false positive is not a false statement to anybody
+until something surfaces it. The all-severity figure is printed beside it; the
+two moving apart means the bands are doing the work rather than the comparison.
+Recall is printed and is not a target.
+
+**Nothing is scored against a number nobody measured.** Precision over a run
+that raised no gaps is reported as "not measured", not as 0.0 or 1.0 — both
+would be a claim about a pipeline that said nothing. Cases whose graph came out
+empty are listed separately for the same reason: `detect.compare` raises nothing
+for them on purpose, so they pull recall down for a reason that belongs to step
+1.
+
+The committed set (`eval/fixtures/gap_detection_v1.json`) is **four authored
+meetings, and is not the PRD figure** — that one comes from five to ten real
+team meetings in W5, and four cases cannot carry a statistical claim. It is a
+regression gate: a template keyword that starts matching everything, or a
+threshold that moves a band, fails it visibly. The set is closed-world (every
+template item is labeled settled or genuinely missing) and the loader refuses a
+case where it is not, because otherwise a precision figure measures the
+labeler's diligence rather than the pipeline. No real meeting content is
+committed.
+
 ## Privacy notes
 
 - The participation matrix records **whether** a participant spoke on a topic,
