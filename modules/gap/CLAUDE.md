@@ -97,3 +97,11 @@ costs user trust. Dismissals feed threshold tuning.
 ```bash
 uv run --package autune-gap python -m autune_gap.eval
 ```
+
+Needs a migrated Postgres and the `local-models` extra — it runs the real
+extractor, and a run under `AUTUNE_GAP_NER_IMPL=fake` says at the top of its
+report that the number is about the fixtures rather than the pipeline.
+
+The committed set is four authored meetings and is **not** the PRD figure; read
+it as a regression gate. Bump the fixture's version suffix when a label changes
+what counts as correct. See `src/autune_gap/eval/__init__.py`.

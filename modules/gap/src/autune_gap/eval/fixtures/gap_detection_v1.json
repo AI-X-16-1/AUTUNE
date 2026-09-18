@@ -1,0 +1,246 @@
+{
+  "version": 1,
+  "notes": [
+    "Hand-labeled gap-detection evaluation set, v1. Authored meetings, not real ones.",
+    "",
+    "WHAT THIS IS NOT: the PRD's precision number. That one comes from five to ten",
+    "real team meetings in W5 (docs/product/prd.md roadmap, and issue #22's argument",
+    "for two templates rather than five). Four authored cases cannot carry a",
+    "statistical claim, and the harness says so in its own report.",
+    "",
+    "WHAT IT IS FOR: exercising the harness before the real meetings exist, and",
+    "catching a regression in steps 6 and 7 that no unit test would see - a template",
+    "keyword edit that starts matching everything, a threshold change that moves a",
+    "band, an extractor upgrade that renames what a topic is called.",
+    "",
+    "No real meeting content is committed. Every line is written for this file, the",
+    "speakers are invented, and nothing here is masked text from a transcript - so",
+    "there is no personal data in the repository and none in the harness's output.",
+    "",
+    "CLOSED WORLD: every item of a case's template is in real_gaps or in settled.",
+    "The loader refuses a case where it is not, because 'raised and not in real_gaps'",
+    "can only be read as a false positive if the labels are complete.",
+    "",
+    "HOW TO LABEL A NEW CASE: read the lines and ask, for each template item, whether",
+    "a person reading this transcript would say the meeting settled it. Lean towards",
+    "'settled' when it is arguable. The metric is precision, so a label that is",
+    "generous about what counts as covered makes the harness harder on the pipeline,",
+    "which is the direction an evaluation set should err in.",
+    "",
+    "EVIDENCE: for each settled item, the nouns a reader would point at as settling it.",
+    "An empty list is a claim, not a missing label - it says the meeting settled the item",
+    "with no noun that could name it ('이건우님이 맡고 다음 주 금요일까지' settles ownership",
+    "with a verb and a date). That is what separates a false positive a template edit",
+    "could fix from one it could not. Labeled from the transcript, never from what the",
+    "pipeline produced: reading the graph first turns the diagnosis into a description of",
+    "current behaviour."
+  ],
+  "cases": [
+    {
+      "id": "search-personalisation",
+      "template": "feature_planning",
+      "comment": "The PRD's demo meeting. Ranking, ownership and the blocking dependency get settled; nobody asks what it has to be fast enough for, what a new user sees, or what data it touches.",
+      "lines": [
+        {
+          "speaker": "김서연",
+          "text": "검색 개인화 기능을 다음 스프린트에 넣으려고 합니다"
+        },
+        {
+          "speaker": "이건우",
+          "text": "인기순 정렬 대신 실시간 개인화로 가는 거죠"
+        },
+        {
+          "speaker": "김서연",
+          "text": "네. 정렬 로직은 이건우님이 맡고 다음 주 금요일까지 초안을 봅니다"
+        },
+        {
+          "speaker": "박지훈",
+          "text": "성공 기준은 검색 이탈률로 봅니다. 목표는 15% 감소입니다"
+        },
+        {
+          "speaker": "이건우",
+          "text": "인덱스 재색인이 먼저 끝나야 정렬 로직을 붙일 수 있습니다"
+        },
+        {
+          "speaker": "김서연",
+          "text": "재색인 일정은 인프라팀에 확인하고 다음 회의에서 공유하죠"
+        }
+      ],
+      "settled": [
+        "success_criteria",
+        "ownership",
+        "dependency",
+        "next_step"
+      ],
+      "real_gaps": [
+        "risk",
+        "performance",
+        "cold_start",
+        "rollout",
+        "error_handling",
+        "privacy_impact"
+      ],
+      "evidence": {
+        "success_criteria": [
+          "성공 기준",
+          "검색 이탈률",
+          "목표"
+        ],
+        "ownership": [],
+        "dependency": [],
+        "next_step": [
+          "다음 회의"
+        ]
+      }
+    },
+    {
+      "id": "deploy-retro",
+      "template": "general",
+      "comment": "A meeting that settles all five. Any gap raised here is a false positive, which is the most direct thing a precision metric can be handed.",
+      "lines": [
+        {
+          "speaker": "최다은",
+          "text": "지난 스프린트 배포 회고입니다"
+        },
+        {
+          "speaker": "이건우",
+          "text": "배포 실패가 두 번 있었고 원인은 마이그레이션 순서였습니다"
+        },
+        {
+          "speaker": "최다은",
+          "text": "롤백 절차를 문서로 만들고 제가 이번 주까지 맡겠습니다"
+        },
+        {
+          "speaker": "박지훈",
+          "text": "성공 기준은 다음 스프린트 배포 실패 0건입니다"
+        },
+        {
+          "speaker": "이건우",
+          "text": "마이그레이션 검증 스크립트가 먼저 있어야 롤백 절차가 의미가 있습니다"
+        },
+        {
+          "speaker": "최다은",
+          "text": "다음 주 회고에서 진행 상황을 다시 봅니다"
+        }
+      ],
+      "settled": [
+        "success_criteria",
+        "ownership",
+        "risk",
+        "dependency",
+        "next_step"
+      ],
+      "real_gaps": [],
+      "evidence": {
+        "success_criteria": [
+          "성공 기준"
+        ],
+        "ownership": [],
+        "risk": [
+          "배포 실패",
+          "롤백 절차"
+        ],
+        "dependency": [],
+        "next_step": [
+          "다음 주 회고",
+          "진행 상황"
+        ]
+      }
+    },
+    {
+      "id": "status-only",
+      "template": "general",
+      "comment": "A status round with nothing decided in it. Every item is a real gap. Expect the graph to come out nearly empty - spoken Korean with no product nouns in it is where step 1's recall is worst - so this case mostly measures whether the empty-graph rule holds instead of raising five gaps off nothing.",
+      "lines": [
+        {
+          "speaker": "최다은",
+          "text": "이번 주는 상황 공유만 하겠습니다"
+        },
+        {
+          "speaker": "이건우",
+          "text": "저는 그대로입니다"
+        },
+        {
+          "speaker": "박지훈",
+          "text": "조금 밀렸는데 이번 주 안에는 될 것 같습니다"
+        },
+        {
+          "speaker": "최다은",
+          "text": "네 알겠습니다. 그럼 여기서 마치겠습니다"
+        }
+      ],
+      "settled": [],
+      "real_gaps": [
+        "success_criteria",
+        "ownership",
+        "risk",
+        "dependency",
+        "next_step"
+      ]
+    },
+    {
+      "id": "outbound-privacy",
+      "template": "feature_planning",
+      "comment": "A meeting that settles the privacy item thoroughly and never names an owner or a date. The inverse of search-personalisation, so a template whose keywords drifted towards one shape scores visibly worse on one of the two.",
+      "lines": [
+        {
+          "speaker": "박지훈",
+          "text": "회의 전사문을 외부 모델로 보내는 건입니다"
+        },
+        {
+          "speaker": "김서연",
+          "text": "개인정보 마스킹이 먼저 끝나야 전송할 수 있습니다"
+        },
+        {
+          "speaker": "박지훈",
+          "text": "보관 기간은 90일이고 사용자가 직접 삭제할 수 있게 합니다"
+        },
+        {
+          "speaker": "이건우",
+          "text": "응답 시간은 30초 안쪽이어야 합니다. 그보다 느리면 화면이 못 기다립니다"
+        },
+        {
+          "speaker": "김서연",
+          "text": "동의를 받지 않은 참석자 발화는 수집에서 제외합니다"
+        },
+        {
+          "speaker": "이건우",
+          "text": "리스크는 외부 전송 실패인데 재시도 없이 사람에게 넘기는 폴백으로 갑니다"
+        }
+      ],
+      "settled": [
+        "dependency",
+        "risk",
+        "performance",
+        "error_handling",
+        "privacy_impact"
+      ],
+      "real_gaps": [
+        "success_criteria",
+        "ownership",
+        "next_step",
+        "cold_start",
+        "rollout"
+      ],
+      "evidence": {
+        "dependency": [],
+        "risk": [
+          "리스크",
+          "외부 전송 실패"
+        ],
+        "performance": [
+          "응답 시간"
+        ],
+        "error_handling": [
+          "재시도",
+          "폴백"
+        ],
+        "privacy_impact": [
+          "개인정보 마스킹",
+          "보관 기간",
+          "동의"
+        ]
+      }
+    }
+  ]
+}
