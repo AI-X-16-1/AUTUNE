@@ -24,6 +24,7 @@ from autune_contracts.transcript import (
 )
 from autune_core import Base, Meeting, Participant, User
 from autune_core import Utterance as StoredUtterance
+from autune_core.errors import NotFoundError, ValidationError
 from autune_extraction import service, tasks
 from autune_extraction.models import (
     ExtActionItem,
@@ -316,3 +317,69 @@ def test_deleting_alone_is_enough_to_keep_the_draft(session: Session) -> None:
 
     assert again is None
     assert len(model_items(session)) == 1
+
+
+# --- what a hand-added item may point at ----------------------------------------
+
+
+def _stored(session: Session, uid: str, meeting_id: str) -> None:
+    session.add(
+        StoredUtterance(
+            id=uid,
+            meeting_id=meeting_id,
+            speaker_label="Speaker 1",
+            start_sec=0.0,
+            end_sec=1.0,
+            text="회의 내용",
+        )
+    )
+    session.flush()
+
+
+def test_an_item_for_an_unknown_meeting_is_not_found(session: Session) -> None:
+    """A 404, not the foreign key's 500 -- found by a local end-to-end run."""
+    with pytest.raises(NotFoundError):
+        service.create_action_item(
+            session, ActionItemCreate(meeting_id="mtg_nope", description="일")
+        )
+    assert session.scalars(select(ExtActionItem)).all() == []
+
+
+def test_a_source_that_does_not_exist_is_refused_by_name(session: Session) -> None:
+    with pytest.raises(ValidationError) as caught:
+        service.create_action_item(
+            session,
+            ActionItemCreate(meeting_id=MEETING, description="일", source_utterance_ids=["utt_x"]),
+        )
+    assert caught.value.details == {"field": "source_utterance_ids"}
+    assert session.scalars(select(ExtActionItem)).all() == []
+
+
+def test_a_source_from_another_meeting_is_refused(session: Session) -> None:
+    """The utterance exists, but the detail endpoint would quote another
+    meeting's words on this meeting's board."""
+    session.add(Meeting(id="mtg_2", team_id="team_1", title="다른 회의", started_at=STARTED))
+    _stored(session, "utt_other", "mtg_2")
+
+    with pytest.raises(ValidationError):
+        service.create_action_item(
+            session,
+            ActionItemCreate(
+                meeting_id=MEETING, description="일", source_utterance_ids=["utt_other"]
+            ),
+        )
+
+
+def test_a_source_of_this_meeting_is_kept(session: Session) -> None:
+    _stored(session, "utt_here", MEETING)
+
+    item = service.create_action_item(
+        session,
+        ActionItemCreate(
+            meeting_id=MEETING,
+            description="일",
+            source_utterance_ids=["utt_here", "utt_here"],
+        ),
+    )
+
+    assert [source.utterance_id for source in item.sources] == ["utt_here"]
