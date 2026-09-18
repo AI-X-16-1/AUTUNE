@@ -198,7 +198,10 @@ because both must be deletable on request:
   `meeting_id` without a constraint must be cleaned up by the module's own
   deletion hook.
 - **User deletion / team departure** removes that user's utterances and anything
-  derived from them.
+  derived from them. **Under review — see ADR 0007**, which would make departure
+  an access change that clears `participants.user_id` and keeps the meeting's
+  record. Until that ADR is accepted or rejected, this bullet is what the code
+  follows, and `privacy.md` section 4 says the same.
 - **Retention sweep** deletes analysis results past the retention window (90
   days by default).
 
