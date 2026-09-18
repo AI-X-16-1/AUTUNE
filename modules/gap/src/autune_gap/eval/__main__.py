@@ -19,6 +19,10 @@ import sys
 from autune_gap.config import get_settings
 from autune_gap.eval.dataset import DEFAULT_DATASET, EvalSetError
 from autune_gap.eval.metrics import (
+    EXTRACTION,
+    KEYWORD,
+    NO_NOUN,
+    PARTIAL,
     TARGET_PRECISION_SIX_WEEKS,
     TARGET_PRECISION_THREE_MONTHS,
     Report,
@@ -50,19 +54,34 @@ def format_report(report: Report, *, extractor: str) -> str:
             lines.append(f"  missed          {case.case_id}: {sorted(case.missed)}")
 
     by_cause = report.false_positives_by_cause
-    if any(by_cause.values()):
+    if by_cause:
+        lines += ["", "  false positives by cause:"]
+        lines += [
+            f"    {cause:<14}{count:>3}   {_CAUSE_MEANS.get(cause, '')}"
+            for cause, count in by_cause.items()
+        ]
+        fixable = report.fixable_false_positives
+        total = sum(by_cause.values())
         lines += [
             "",
-            f"  false positives by cause: missing {by_cause['missing']}, "
-            f"partial {by_cause['partial']}",
-            "      missing -- the template's keywords could not see an item the meeting",
-            "                settled. A keyword list problem.",
-            "      partial -- AUTUNE_GAP_PARTIAL_CENTRALITY turned a passing mention into",
-            "                a gap. A threshold problem.",
+            f"    {fixable} of {total} are reachable by a change to this module. The rest are"
+            " `no-noun`:",
+            "    the meeting settled the item with a verb or a date and said no noun that could",
+            "    name it, so neither a keyword list nor a better extractor gets to them. That is",
+            "    a ceiling on matching keywords against topic labels, not a mistuning of it.",
         ]
 
     lines += ["", *_notes(report, extractor=extractor)]
     return "\n".join(lines)
+
+
+_CAUSE_MEANS = {
+    PARTIAL: "threshold -- AUTUNE_GAP_PARTIAL_CENTRALITY",
+    EXTRACTION: "step 1 -- the noun was said and never became a topic (#278)",
+    KEYWORD: "template -- the topic exists and the keywords do not name it",
+    NO_NOUN: "out of reach -- no noun names the item in this meeting",
+    "unclassified": "the case labels no evidence, so the split is not claimed",
+}
 
 
 def _headline(report: Report) -> str:

@@ -8,8 +8,13 @@ measured on.
 from __future__ import annotations
 
 from autune_gap.eval.metrics import (
+    EXTRACTION,
+    KEYWORD,
+    NO_NOUN,
+    PARTIAL,
     TARGET_PRECISION_SIX_WEEKS,
     CaseScore,
+    classify_false_positive,
     score,
 )
 
@@ -21,6 +26,7 @@ def case(
     high: set[str] | None = None,
     any_severity: set[str] | None = None,
     partial: set[str] | None = None,
+    causes: dict[str, str] | None = None,
     topics: int = 5,
 ) -> CaseScore:
     raised_high = frozenset(high or ())
@@ -32,6 +38,7 @@ def case(
         raised_any=frozenset(any_severity) if any_severity is not None else raised_high,
         raised_partial=frozenset(partial or ()),
         topics=topics,
+        fp_cause=dict(causes or {}),
     )
 
 
@@ -132,30 +139,98 @@ def test_cases_with_an_empty_graph_are_called_out() -> None:
 # --- which rule a false positive came from ----------------------------------
 
 
-def test_a_false_positive_names_the_rule_that_raised_it() -> None:
-    """The headline says the pipeline is overshooting; this says which half to
-    go and look at. A `missing` false positive means the template's keywords
-    could not see an item the meeting settled; a `partial` one means the
-    centrality threshold turned a passing mention into a gap."""
-    scored = case(real=set(), high={"ownership", "risk"}, partial={"risk"})
+def classify(
+    *,
+    partial: bool = False,
+    expected: tuple[str, ...] = ("리스크",),
+    labels: set[str] | None = None,
+    keywords: tuple[str, ...] = ("위험",),
+) -> str:
+    return classify_false_positive(
+        partial=partial,
+        expected=expected,
+        topic_labels=frozenset(labels if labels is not None else set()),
+        keywords=keywords,
+    )
 
-    assert scored.cause("ownership") == "missing"
-    assert scored.cause("risk") == "partial"
+
+def test_a_threshold_decision_is_answered_before_anything_else() -> None:
+    """A partial finding says nothing about keywords or extraction — the
+    meeting named the thing and the centrality threshold decided that was not
+    enough."""
+    assert classify(partial=True, expected=(), labels=set()) == PARTIAL
 
 
-def test_false_positives_are_counted_by_cause_across_the_run() -> None:
+def test_an_item_no_noun_names_is_out_of_reach() -> None:
+    """Empty evidence is a claim: the meeting settled it with a verb or a date.
+    Matching keywords against topic labels is lexical and what settled the item
+    is grammatical, so neither half of this module gets to it."""
+    assert classify(expected=(), labels={"정렬 로직"}) == NO_NOUN
+
+
+def test_a_noun_that_never_became_a_topic_is_a_step_one_problem() -> None:
+    assert classify(expected=("리스크",), labels={"외부 전송"}) == EXTRACTION
+
+
+def test_a_noun_in_the_graph_the_keywords_do_not_name_is_a_template_problem() -> None:
+    assert classify(expected=("리스크",), labels={"리스크 예외"}) == KEYWORD
+
+
+def test_a_truncated_label_is_extraction_and_not_a_keyword_miss() -> None:
+    """The subtle one, and the reason the match is one-directional.
+
+    The meeting said "외부 전송 실패인데"; extraction dropped the
+    particle-carrying tail and stored "외부 전송". Reading a label *inside* the
+    expected term as a match — which is what ``detect.match`` does — answered
+    ``KEYWORD`` for a step-1 truncation, and would have sent somebody to widen a
+    keyword list over it.
+    """
+    assert classify(expected=("외부 전송 실패",), labels={"외부 전송"}) == EXTRACTION
+
+
+def test_causes_are_counted_across_the_run_and_empty_buckets_are_dropped() -> None:
     report = score(
         [
-            case("a", real=set(), high={"ownership", "risk"}, partial={"risk"}),
-            case("b", real=set(), high={"dependency"}),
+            case(
+                "a",
+                real=set(),
+                high={"ownership", "risk"},
+                causes={"ownership": NO_NOUN, "risk": EXTRACTION},
+            ),
+            case("b", real=set(), high={"dependency"}, causes={"dependency": NO_NOUN}),
         ]
     )
 
-    assert report.false_positives_by_cause == {"missing": 2, "partial": 1}
+    assert report.false_positives_by_cause == {EXTRACTION: 1, NO_NOUN: 2}
+
+
+def test_only_the_reachable_causes_are_counted_as_fixable() -> None:
+    """A precision figure says how far off the target is; this says how much of
+    the distance is even reachable from this module."""
+    report = score(
+        [
+            case(
+                real=set(),
+                high={"a", "b", "c", "d"},
+                causes={"a": EXTRACTION, "b": KEYWORD, "c": PARTIAL, "d": NO_NOUN},
+            )
+        ]
+    )
+
+    assert report.fixable_false_positives == 3
+
+
+def test_a_case_with_no_evidence_labels_reports_unclassified() -> None:
+    """The split is a claim about labeled data and is not inferred for a case
+    nobody labeled."""
+    scored = case(real=set(), high={"ownership"})
+
+    assert scored.cause("ownership") == "unclassified"
+    assert score([scored]).fixable_false_positives == 0
 
 
 def test_a_true_positive_is_not_counted_by_cause() -> None:
     """The split explains what the metric is losing, not what it got right."""
-    report = score([case(real={"risk"}, high={"risk"}, partial={"risk"})])
+    report = score([case(real={"risk"}, high={"risk"}, causes={})])
 
-    assert report.false_positives_by_cause == {"missing": 0, "partial": 0}
+    assert report.false_positives_by_cause == {}

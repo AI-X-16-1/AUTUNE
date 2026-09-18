@@ -492,9 +492,29 @@ until something surfaces it. The all-severity figure is printed beside it; the
 two moving apart means the bands are doing the work rather than the comparison.
 Recall is printed and is not a target.
 
+Each false positive is also attributed to one of four causes, because the
+headline says the pipeline is overshooting and only the split says where to go:
+`partial` (the centrality threshold), `extraction` (the meeting said a noun the
+item's keywords do match and step 1 never turned it into a topic), `keyword`
+(the topic is in the graph and the keywords do not name it), and `no-noun` (the
+meeting settled the item with a verb or a date and said no noun that could name
+it). The last one is counted apart from the other three: matching keywords
+against topic labels is lexical and what settled the item is grammatical, so
+neither a keyword list nor a better extractor reaches it. The report prints how
+many of the false positives are reachable from this module at all.
+
+Attribution reads the case's hand-labeled `evidence` — the nouns a reader would
+point at as settling each item — against the topic labels the run produced. "In
+the graph" means a label contains the whole expected term, deliberately not
+`detect.match`'s containment-either-way: a label carrying half the noun is a
+step-1 truncation, and reading it as a match sends somebody to widen a keyword
+list over an extraction bug.
+
 **Nothing is scored against a number nobody measured.** Precision over a run
 that raised no gaps is reported as "not measured", not as 0.0 or 1.0 — both
-would be a claim about a pipeline that said nothing. Cases whose graph came out
+would be a claim about a pipeline that said nothing. A case that labels no
+`evidence` has its false positives reported as `unclassified` rather than
+guessed into a cause. Cases whose graph came out
 empty are listed separately for the same reason: `detect.compare` raises nothing
 for them on purpose, so they pull recall down for a reason that belongs to step
 1.

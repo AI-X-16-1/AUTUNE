@@ -59,6 +59,21 @@ class EvalCase:
     """The rest of the template, stated rather than inferred, so the closed-world
     check has something to verify against."""
 
+    evidence: dict[str, tuple[str, ...]]
+    """Settled item key -> the nouns a reader would point at as settling it.
+
+    **An empty tuple is a claim, not a missing label.** It says the meeting
+    settled the item without saying any noun that could name it — "이건우님이
+    맡고 다음 주 금요일까지" settles ownership with a verb and a date, and there
+    is no noun in it for a keyword list to match. That distinction is what
+    separates a false positive a template edit could fix from one it could not,
+    so the labeler has to decide it rather than leave the field out.
+
+    Labeled from the transcript, never from what the pipeline produced. Reading
+    the graph first and writing down what is in it turns the diagnosis into a
+    description of current behaviour.
+    """
+
     @property
     def speakers(self) -> list[str]:
         return list(dict.fromkeys(line.speaker for line in self.lines))
@@ -111,10 +126,30 @@ def _parse_case(raw: dict[str, Any], name: str) -> EvalCase:
             "as right or wrong"
         )
 
+    evidence = {key: tuple(terms) for key, terms in raw.get("evidence", {}).items()}
+
+    stray = sorted(set(evidence) - settled)
+    if stray:
+        raise EvalSetError(
+            f"{name}: case {case_id!r} carries evidence for items it did not call settled: "
+            f"{stray}. Evidence explains why a gap raised on a settled item is wrong; for an "
+            "item the meeting really did leave open there is nothing to explain"
+        )
+
+    if evidence:
+        missing_evidence = sorted(settled - set(evidence))
+        if missing_evidence:
+            raise EvalSetError(
+                f"{name}: case {case_id!r} labels evidence for some settled items and not "
+                f"{missing_evidence}. Partial evidence would classify some false positives and "
+                "silently leave the rest out of the split"
+            )
+
     return EvalCase(
         id=case_id,
         template_key=template_key,
         lines=tuple(EvalLine(speaker=line["speaker"], text=line["text"]) for line in raw["lines"]),
         real_gaps=real,
         settled=settled,
+        evidence=evidence,
     )

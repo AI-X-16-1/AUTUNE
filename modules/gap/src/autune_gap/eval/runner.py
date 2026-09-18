@@ -43,8 +43,10 @@ from autune_contracts import (
 from autune_core import Meeting, Participant, Team, Utterance, session_scope
 from autune_gap import service
 from autune_gap.eval.dataset import DEFAULT_DATASET, EvalCase, load_cases
-from autune_gap.eval.metrics import CaseScore, Report, score
+from autune_gap.eval.metrics import CaseScore, Report, classify_false_positive, score
+from autune_gap.graph import topic_key
 from autune_gap.models import GapGap, GapRelatedTopic, GapTopic
+from autune_gap.template import Template, get_template
 
 _SURFACED = "high"
 """The only severity a reader sees by default (modules/gap/CLAUDE.md), and so
@@ -62,7 +64,7 @@ def run_case(case: EvalCase) -> CaseScore:
         meeting_id = _seed(team_id, case)
 
         with session_scope() as s:
-            service.set_template(s, meeting_id, case.template_key)
+            chosen = get_template(service.set_template(s, meeting_id, case.template_key))
 
         transcript = _transcript(meeting_id, case)
         # The same two checks `tasks.on_transcript_ready` makes before it hands
@@ -77,6 +79,14 @@ def run_case(case: EvalCase) -> CaseScore:
 
         with session_scope() as s:
             rows = list(s.scalars(select(GapGap).where(GapGap.meeting_id == meeting_id)))
+            # Labels are transcript-derived, so they are used to classify and
+            # never printed -- see this module's docstring and `__main__`.
+            labels = frozenset(
+                topic_key(label)
+                for label in s.scalars(
+                    select(GapTopic.label).where(GapTopic.meeting_id == meeting_id)
+                )
+            )
             # Which gaps point at a topic. A missing item was inferred from the
             # absence of one and points at none; a partial one points at the
             # topic it was inferred from. The row does not store the coverage
@@ -97,30 +107,63 @@ def run_case(case: EvalCase) -> CaseScore:
                 or 0
             )
 
+        raised_high = frozenset(
+            row.template_item_key
+            for row in rows
+            if row.severity == _SURFACED and row.template_item_key is not None
+        )
+        raised_partial = frozenset(
+            row.template_item_key
+            for row in rows
+            if row.severity == _SURFACED
+            and row.template_item_key is not None
+            and row.id in with_topics
+        )
+
         return CaseScore(
             case_id=case.id,
             template_key=case.template_key,
             real=case.real_gaps,
-            raised_high=frozenset(
-                row.template_item_key
-                for row in rows
-                if row.severity == _SURFACED and row.template_item_key is not None
-            ),
+            raised_high=raised_high,
             raised_any=frozenset(
                 row.template_item_key for row in rows if row.template_item_key is not None
             ),
-            raised_partial=frozenset(
-                row.template_item_key
-                for row in rows
-                if row.severity == _SURFACED
-                and row.template_item_key is not None
-                and row.id in with_topics
-            ),
+            raised_partial=raised_partial,
             topics=topics,
+            fp_cause=_causes(case, chosen, raised_high, raised_partial, labels),
         )
     finally:
         with session_scope() as s:
             s.execute(delete(Team).where(Team.id == team_id))
+
+
+def _causes(
+    case: EvalCase,
+    chosen: Template,
+    raised_high: frozenset[str],
+    raised_partial: frozenset[str],
+    labels: frozenset[str],
+) -> dict[str, str]:
+    """Why each false positive happened, for the ones the case labeled evidence
+    for.
+
+    A case with no ``evidence`` gets an empty map and its false positives are
+    reported as unclassified — the split is a claim about labeled data and
+    should not be inferred for a case nobody labeled.
+    """
+    if not case.evidence:
+        return {}
+
+    keywords = {item.key: item.keywords for item in chosen.items}
+    return {
+        item_key: classify_false_positive(
+            partial=item_key in raised_partial,
+            expected=tuple(topic_key(term) for term in case.evidence.get(item_key, ())),
+            topic_labels=labels,
+            keywords=keywords.get(item_key, ()),
+        )
+        for item_key in raised_high - case.real_gaps
+    }
 
 
 def _seed(team_id: str, case: EvalCase) -> str:

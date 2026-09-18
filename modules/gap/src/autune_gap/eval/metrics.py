@@ -27,11 +27,78 @@ decisions.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 TARGET_PRECISION_SIX_WEEKS = 0.70
 TARGET_PRECISION_THREE_MONTHS = 0.82
 """docs/product/prd.md section 12, and docs/modules/gap.md, "Metric"."""
+
+PARTIAL = "partial"
+"""``AUTUNE_GAP_PARTIAL_CENTRALITY`` turned a passing mention into a gap. A
+threshold problem, and the only cause a config change can fix."""
+
+EXTRACTION = "extraction"
+"""The meeting said a noun that this item's keywords do match, and extraction
+never turned it into a topic. A step-1 problem (#278): fix the extractor and
+the gap stops being raised, with no template edit at all."""
+
+KEYWORD = "keyword"
+"""The noun is in the graph as a topic and the item's keywords do not name it.
+A template problem, and the only cause widening a keyword list can fix."""
+
+NO_NOUN = "no-noun"
+"""The meeting settled the item without saying any noun that could name it —
+"이건우님이 맡고 다음 주까지" settles ownership with a verb and a date.
+
+**Neither a keyword list nor a better extractor reaches this one.** Matching
+keywords against topic labels is lexical, and what settled the item is
+grammatical. A false positive here says the comparison rule has a ceiling, not
+that it is mistuned, so it is counted apart from the two that can be fixed.
+"""
+
+CAUSES: tuple[str, ...] = (PARTIAL, EXTRACTION, KEYWORD, NO_NOUN)
+
+
+def classify_false_positive(
+    *,
+    partial: bool,
+    expected: tuple[str, ...],
+    topic_labels: frozenset[str],
+    keywords: tuple[str, ...],
+) -> str:
+    """Why this gap was raised on an item the meeting had settled.
+
+    ``expected`` is the hand-labeled nouns a reader would point at as settling
+    the item, ``topic_labels`` is what extraction actually produced, and
+    ``keywords`` is the template item's own list. All three already normalised
+    by ``graph.topic_key`` — the caller does it, because that is where the
+    labels come from.
+
+    The order matters. A partial finding is a threshold decision and says
+    nothing about keywords or extraction, so it is answered first. Then: no
+    noun to find at all, a noun nobody extracted, or a noun extracted and not
+    named.
+
+    A noun that is in the graph *and* matched by the keywords cannot be here at
+    all — the item would have been covered rather than raised — so that case is
+    the ``KEYWORD`` answer by construction.
+
+    **"In the graph" means a topic label contains the whole expected term**, and
+    not ``detect.match``'s containment-either-way. The two differ on a truncated
+    label, and that difference is the point: the meeting said "외부 전송
+    실패인데", extraction dropped the particle-carrying tail and stored the topic
+    as "외부 전송", and reading a label *inside* the expected term as a match
+    answered ``KEYWORD`` for what is a step-1 truncation. A topic that carries
+    half the noun a reader pointed at is not that noun, and no keyword list
+    should be widened on its account.
+    """
+    if partial:
+        return PARTIAL
+    if not expected:
+        return NO_NOUN
+    if not any(term in label for label in topic_labels for term in expected):
+        return EXTRACTION
+    return KEYWORD
 
 
 @dataclass(frozen=True)
@@ -72,6 +139,15 @@ class CaseScore:
     """How many topics extraction produced. A case scoring badly with two
     topics is a different problem from one scoring badly with thirty."""
 
+    fp_cause: dict[str, str] = field(default_factory=dict)
+    """Item key -> why its false positive happened, for the ones raised on an
+    item the meeting had settled. One of ``CAUSES``.
+
+    Filled by the runner, which is the only place that has the graph, the
+    template and the labels at once. Empty for a case with no false positives,
+    and for a score built by a test that does not care.
+    """
+
     @property
     def true_positives(self) -> frozenset[str]:
         return self.raised_high & self.real
@@ -87,8 +163,13 @@ class CaseScore:
         return self.real - self.raised_high
 
     def cause(self, item_key: str) -> str:
-        """``partial`` or ``missing`` — which rule raised this one."""
-        return "partial" if item_key in self.raised_partial else "missing"
+        """Why this false positive happened, or ``"unclassified"``.
+
+        Unclassified means the case carries no ``evidence`` labels, so the
+        three-way split cannot be computed for it. Reported as its own bucket
+        rather than folded into one of the real causes.
+        """
+        return self.fp_cause.get(item_key, "unclassified")
 
 
 @dataclass(frozen=True)
@@ -124,11 +205,25 @@ class Report:
         The headline number says the pipeline is over- or under-shooting; this
         says which half to go and look at.
         """
-        counts = {"missing": 0, "partial": 0}
+        counts = dict.fromkeys(CAUSES, 0)
         for case in self.cases:
             for item in case.false_positives:
-                counts[case.cause(item)] += 1
-        return counts
+                cause = case.cause(item)
+                counts[cause] = counts.get(cause, 0) + 1
+        return {cause: count for cause, count in counts.items() if count}
+
+    @property
+    def fixable_false_positives(self) -> int:
+        """False positives a change to this module could remove.
+
+        Everything but ``NO_NOUN`` and ``unclassified``. Worth a number of its
+        own: a precision figure says how far off the target is, and this says
+        how much of the distance is even reachable from here.
+        """
+        by_cause = self.false_positives_by_cause
+        return sum(
+            count for cause, count in by_cause.items() if cause in (PARTIAL, EXTRACTION, KEYWORD)
+        )
 
     @property
     def empty_graph_cases(self) -> tuple[CaseScore, ...]:
