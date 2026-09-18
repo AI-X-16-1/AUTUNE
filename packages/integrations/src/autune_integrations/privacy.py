@@ -54,7 +54,51 @@ _R: Final = rf"(?![{_EDGE}])"
 # Speech, not writing. The same number arrives spaced, hyphenated or run
 # together depending on the sentence around it, and the shape not accepted is
 # the one that leaks.
-_SEP: Final = r"[-.\s]?"
+#
+# One separator character was too few (#162). A transcript writes `010 - 1234 -
+# 5678` with spaces around the hyphen, an editor turns the hyphen into an en
+# dash, and a landline arrives as `(02)123-4567`; none of those matched at all,
+# so a phone number, a registration number and a card number each passed the
+# guard in an ordinary written form. Horizontal space only -- `\s` would let a
+# match run across a line break and join two unrelated numbers.
+#
+# "Horizontal space" is `[^\S\r\n]` -- everything `\s` matches except a line
+# break -- and not `[ \t]`. The narrower class was a regression this change
+# itself introduced: a no-break space (U+00A0, what Word, HWP and Notion put
+# between number groups) and an ideographic space (U+3000, what a Korean IME
+# emits) matched neither, and `02 123 4567` with NBSPs passed the guard whole
+# -- nine digits, too short for `account` to catch as a fallback. Narrower
+# than `main` on the thing this file exists for.
+#
+# The shape of the expression matters as much as its characters. Written as
+# `{_HSPACE}*[-.–—)]?{_HSPACE}*`, the two space runs share the same spaces when there
+# is no separator between them, and the engine tries every split of a run of n
+# spaces before giving up: quadratic per start position, between a third of a
+# second and a second for a digit followed by ten thousand spaces, which is
+# what Whisper emits on a silent stretch, and per pattern. The second run is
+# allowed only *after* a separator, so a run of spaces has one parse.
+#
+# `)` alone, not `()`: an opening parenthesis stands before a number
+# (`(02)123-4567` starts matching at the `0`), never between its groups, and a
+# character in this class is one more thing that can join two groups.
+_HSPACE: Final = r"[^\S\r\n]"
+_SEP: Final = rf"{_HSPACE}*(?:[-.–—)]{_HSPACE}*)?"
+
+# The account catch-all keeps the narrow one, and this is the whole reason the
+# two exist separately. `account` is three groups of two-to-six digits, which is
+# also the shape of `2024 - 2025 - 2026`; widening its separator is what turns a
+# list of years into a bank account, measured as the only false positive the
+# change produced. The structured patterns can afford the spaces because their
+# shapes are specific enough to say no on their own -- a phone number starts
+# with a zero, an RRN is 6+7, a card is four groups of four.
+#
+# It keeps `\s` rather than following `_SEP` to horizontal space, which is not
+# an oversight: `account` already joins numbers across a line break on `main`
+# (`예산\n150000\n200000` comes back as one account), and narrowing it here
+# would be a second decision riding along in a file that needs five approvals.
+# Tracked separately. This change makes that case strictly smaller -- `rrn` no
+# longer spans the break, so the same text matches one pattern instead of two.
+_SEP_TIGHT: Final = r"[-.\s]?"
 
 # A Korean bank account is ten digits or more; a date is eight and a version
 # string is eight. Counting digits is what tells them apart, and it needs no
@@ -101,7 +145,7 @@ PII_PATTERNS: Final[tuple[tuple[str, re.Pattern[str]], ...]] = (
     # Bank layouts vary -- 3-2-6, 6-2-6, 3-3-6 -- and get said without
     # separators as often as with. See MIN_ACCOUNT_DIGITS for what keeps this
     # from matching every date in a transcript.
-    ("account", re.compile(rf"{_L}\d{{2,6}}{_SEP}\d{{2,6}}{_SEP}\d{{2,6}}{_R}")),
+    ("account", re.compile(rf"{_L}\d{{2,6}}{_SEP_TIGHT}\d{{2,6}}{_SEP_TIGHT}\d{{2,6}}{_R}")),
     # The only pattern that still used `\b`, and the only one whose character
     # classes were `\w`. Both are the same Korean bug from opposite ends:
     # Hangul is a word character, so `\b` never fires between 은 and m, and

@@ -38,7 +38,15 @@ from autune_integrations.privacy import MASK_CHAR, find_pii
 
 # Kept inside a numeric span so the value still reads as a phone number or an
 # account. Everything else is content, whoever found the span.
-_SHAPE_CHARS = "-. +"
+#
+# The set follows `privacy._SEP`, and has to: a separator the patterns accept
+# but this masks stops being layout and turns into damage -- `(02)123-4567`
+# came out `(******-4567` with its parenthesis never closed, and `010–1234–5678`
+# lost both dashes. So: the ASCII four, the typographic dashes and the closing
+# parenthesis #211 added, and the two non-ASCII horizontal spaces (no-break,
+# ideographic) that `[^\S\r\n]` matches. Not `(`: a span starts at its first
+# digit, so the opening parenthesis is never inside one.
+_SHAPE_CHARS = "-. +\u2013\u2014)\u00a0\u3000"
 
 # The categories `find_pii` produces from a digit shape, and the only ones with
 # a layout worth preserving. Anything else came from the recogniser and is
