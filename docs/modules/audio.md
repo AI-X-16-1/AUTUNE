@@ -80,6 +80,7 @@ Plus the shared entities in `packages/core`, which A writes.
 | POST | `/recordings` | Upload a recording, start processing |
 | GET | `/jobs/{job_id}` | Job status and progress |
 | GET | `/transcripts/{meeting_id}` | Full transcript, masked, for a member of the meeting's team |
+| WS | `/live/{meeting_id}` | Live transcription, one row per utterance — design in `audio-live-transcription.md` (approved, not built) |
 | PATCH | `/utterances/{id}` | Correct speaker or text |
 | POST | `/speakers/enroll` | Enroll a voice for identification |
 
