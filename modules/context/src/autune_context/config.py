@@ -60,24 +60,15 @@ class ContextSettings(BaseSettings):
     rrf_k: int = 60
     link_confidence_threshold: float = 0.6
     """Above: assert the link. Below: store it as ``pending`` and ask the user.
-    Global fallback for a team ``get_effective_link_threshold`` has no tuned
-    ``ctx_link_thresholds`` row for yet. Also the seed value the offline eval
-    harness tunes (docs/modules/context.md, "Metric") -- a different signal
-    from the per-team production tuning below."""
+    Placeholder value; tuned against the evaluation set once it exists (the
+    eval harness is still owed — see docs/modules/context.md, "Metric").
 
-    # --- per-team link threshold auto-tuning (issue #256) ---
-    link_threshold_min_samples: int = 10
-    """Confirmed+rejected topic links a team needs before
-    ``retune_link_threshold`` trusts its own history over
-    ``link_confidence_threshold``. Below this, ``get_effective_link_threshold``
-    keeps using the global default -- six weeks of usage won't produce much
-    per-team volume, and a threshold fit to 2-3 dismissals is noise."""
-    link_threshold_min: float = 0.3
-    link_threshold_max: float = 0.9
-    """Clip range for a tuned per-team threshold. A small or skewed
-    confirm/reject sample can otherwise push the F1-maximizing search to a
-    degenerate extreme (e.g. every historical link happened to score above
-    0.95, so "maximize F1" is satisfied by any cutoff up to that point)."""
+    A production auto-tuning version of this (issue #256) was tried and
+    reverted: confirm/reject only ever labels a ``pending`` link, which by
+    definition scores *below* the current threshold, so the training sample
+    can never show "the threshold is too low" evidence and a tuner fit to it
+    only ever ratchets the value down. Left for #240's offline eval harness,
+    which isn't subject to that bias, or a redesign that isn't."""
 
     # --- decision lineage ---
     lineage_match_threshold: float = 0.6

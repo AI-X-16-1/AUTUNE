@@ -151,6 +151,13 @@ def notify_context_events(meeting_id: str) -> None:
     "gather in session, send after" shape ``autune_intelligence.tasks
     .generate_weekly_report`` uses -- a slow or rate-limited Slack response
     then never holds a pooled DB connection open.
+
+    Skips drift specifically (not topic links) if ``late_drift_notified_at``
+    is already set: ordinarily this task claims and sends before this
+    meeting's lineage exists at all, so ``collect_drift_notices`` is naturally
+    empty here and ``notify_late_drift`` sends the drift later -- but if the
+    two ever race the other way (``notify_late_drift`` first), this stops the
+    same drift going out a second time from here.
     """
     with session_scope() as session:
         status = session.get(CtxMeetingStatus, meeting_id, with_for_update=True)
@@ -167,7 +174,11 @@ def notify_context_events(meeting_id: str) -> None:
         channel, config = target
 
         topic_notices = service.collect_topic_link_notices(session, meeting_id)
-        drift_notices = service.collect_drift_notices(session, meeting_id)
+        drift_notices = (
+            []
+            if status.late_drift_notified_at is not None
+            else service.collect_drift_notices(session, meeting_id)
+        )
         status.notified_at = datetime.now(tz=UTC)
 
     slack = SlackClient(config.require_secret())
@@ -196,7 +207,9 @@ def notify_late_drift(meeting_id: str) -> None:
     exist at that first pass (B had not reported yet), so sending its drift
     here duplicates nothing from that earlier notify. Guarded by its own
     ``late_drift_notified_at`` claim -- the same shape as ``notified_at``,
-    kept separate because it protects a different, later-firing send.
+    kept separate because it protects a different, later-firing send. Also
+    clears ``late_drift_due_at`` -- see ``service.build_decision_lineage`` --
+    since there is nothing left to catch up on once this claims.
     """
     with session_scope() as session:
         status = session.get(CtxMeetingStatus, meeting_id, with_for_update=True)
@@ -214,6 +227,7 @@ def notify_late_drift(meeting_id: str) -> None:
 
         drift_notices = service.collect_drift_notices(session, meeting_id)
         status.late_drift_notified_at = datetime.now(tz=UTC)
+        status.late_drift_due_at = None
 
     slack = SlackClient(config.require_secret())
     drift_sent = service.send_decision_drift_notices(slack, channel, drift_notices)

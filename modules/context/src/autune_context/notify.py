@@ -90,12 +90,32 @@ def build_topic_link_rollup_notice(*, count: int) -> tuple[str, list[dict]]:
 
 
 def build_decision_drift_channel_notice(
-    *, thread_label: str, current_statement: str, change_type: ChangeType, absent_count: int
+    *,
+    thread_label: str,
+    current_statement: str,
+    change_type: ChangeType,
+    absent_count: int,
+    meeting_date: date | None,
 ) -> tuple[str, list[dict]]:
-    """The team-channel drift warning. Names nobody -- see module docstring."""
+    """The team-channel drift warning. Names nobody -- see module docstring.
+
+    States *which meeting* changed the decision, not just that it "changed" --
+    otherwise the notice reads as "just now" regardless of whether the meeting
+    that actually did it was live or a backfilled recording from months ago
+    (issue #257), and two different meetings' notices for the same thread can
+    read as identical, since ``thread_label`` is always the thread's current
+    head statement. ``meeting_date`` is the *changing* meeting's own date, not
+    the thread's; it is ``None`` when that meeting has no ``started_at`` (true
+    of every real row today -- nothing sets it outside a test fixture, see
+    PR #263), and the notice degrades to omitting the date rather than
+    guessing one.
+    """
     verb = _change_verb(change_type)
-    fallback = f"결정이 {verb}되었습니다: {thread_label}"
-    absence_note = f"핵심 이해관계자 {absent_count}명이 자리에 없는 상태에서 {verb}되었습니다."
+    changed_at = f"{_korean_date(meeting_date)} 회의에서 " if meeting_date is not None else ""
+    fallback = f"{changed_at}결정이 {verb}되었습니다: {thread_label}"
+    absence_note = (
+        f"{changed_at}핵심 이해관계자 {absent_count}명이 자리에 없는 상태에서 {verb}되었습니다."
+    )
     blocks: list[dict[str, Any]] = [
         {"type": "section", "text": {"type": "mrkdwn", "text": f"● *결정 {verb}*"}},
         {"type": "section", "text": {"type": "mrkdwn", "text": f"*{thread_label}*"}},
@@ -109,21 +129,33 @@ def build_decision_drift_channel_notice(
 
 
 def build_decision_drift_personal_dm(
-    *, thread_label: str, current_statement: str, change_type: ChangeType
+    *,
+    thread_label: str,
+    current_statement: str,
+    change_type: ChangeType,
+    meeting_date: date | None,
 ) -> tuple[str, list[dict]]:
     """The DM to one absent stakeholder. No id or name in the text -- the
-    recipient is the subject, so nothing needs to identify them."""
+    recipient is the subject, so nothing needs to identify them.
+
+    States the changing meeting's date for the same reason
+    ``build_decision_drift_channel_notice`` does -- see its docstring.
+    """
     verb = _change_verb(change_type)
-    fallback = "자리를 비운 사이 결정이 바뀌었습니다."
+    changed_at = f"{_korean_date(meeting_date)} 회의에서 " if meeting_date is not None else ""
+    fallback = f"{changed_at}자리를 비운 사이 결정이 바뀌었습니다."
+    absence_note = (
+        f"{changed_at}이 결정이 바뀔 때 회의에 참석하지 않으셨습니다."
+        if changed_at
+        else "이 결정이 바뀔 때 회의에 참석하지 않으셨습니다."
+    )
     blocks: list[dict[str, Any]] = [
         {"type": "section", "text": {"type": "mrkdwn", "text": f"● *부재 중 결정 {verb}*"}},
         {"type": "section", "text": {"type": "mrkdwn", "text": f"*{thread_label}*"}},
         {"type": "section", "text": {"type": "mrkdwn", "text": current_statement}},
         {
             "type": "context",
-            "elements": [
-                {"type": "mrkdwn", "text": "이 결정이 바뀔 때 회의에 참석하지 않으셨습니다."}
-            ],
+            "elements": [{"type": "mrkdwn", "text": absence_note}],
         },
     ]
     return fallback, blocks

@@ -605,15 +605,36 @@ def test_lineage_before_any_publish_is_not_late(team_id: str) -> None:
     assert was_late is False
 
 
-def test_a_second_extraction_reprocess_of_an_already_seen_meeting_is_not_late(
+def test_reprocessing_before_notify_late_drift_ran_still_reports_it_is_owed(
     team_id: str, published: _CapturingApp
 ) -> None:
-    """A late-published meeting that B later reprocesses (extraction_seen is
-    already True) must not re-trigger the catch-up path every time."""
+    """If the catch-up notify hasn't actually claimed yet (the crash-recovery
+    gap the ``late_drift_due_at`` column exists to close -- see
+    ``build_decision_lineage``'s docstring), a Celery-redelivered
+    ``on_extraction_completed`` reprocessing the same meeting must still see
+    "still owed," not a freshly (and wrongly) computed ``False``."""
     meeting = _meeting(team_id, days_ago=0)
     service.run_topic_linking(_transcript(meeting, ["검색 개인화 논의"] * 5))
     service.publish_if_ready(meeting)
     assert service.build_decision_lineage(_extraction(meeting, [("dec_1", _D1, 0.9)])) is True
+
+    still_owed = service.build_decision_lineage(_extraction(meeting, [("dec_1_rebuilt", _D1, 0.9)]))
+
+    assert still_owed is True
+
+
+def test_reprocessing_after_notify_late_drift_ran_is_not_late_again(
+    team_id: str, published: _CapturingApp
+) -> None:
+    """Once the catch-up notify has actually claimed (clearing
+    ``late_drift_due_at``), a later B reprocess of the same meeting must not
+    re-trigger the catch-up path every time."""
+    meeting = _meeting(team_id, days_ago=0)
+    service.run_topic_linking(_transcript(meeting, ["검색 개인화 논의"] * 5))
+    service.publish_if_ready(meeting)
+    assert service.build_decision_lineage(_extraction(meeting, [("dec_1", _D1, 0.9)])) is True
+    with session_scope() as s:
+        s.get(CtxMeetingStatus, meeting).late_drift_due_at = None  # notify_late_drift claimed
 
     was_late_again = service.build_decision_lineage(
         _extraction(meeting, [("dec_1_rebuilt", _D1, 0.9)])

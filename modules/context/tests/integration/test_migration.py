@@ -24,7 +24,6 @@ CTX_TABLES = {
     "ctx_decisions",
     "ctx_decision_versions",
     "ctx_meeting_status",
-    "ctx_link_thresholds",
 }
 
 
@@ -46,7 +45,7 @@ def test_upgrade_creates_then_downgrade_removes_every_ctx_table() -> None:
     assert _ctx_tables_in_db() == CTX_TABLES
 
     # Back to the branch anchor (eight revisions down: five original table
-    # creations plus notified_at, late_drift_notified_at, ctx_link_thresholds),
+    # creations plus notified_at, late_drift_notified_at, late_drift_due_at),
     # then forward again.
     subprocess.run([*ALEMBIC, "downgrade", "context@-8"], check=True, cwd=root)
     assert _ctx_tables_in_db() == set()

@@ -200,29 +200,19 @@ class CtxMeetingStatus(Base, TimestampMixin):
     trade-off ``published_at`` already makes for the publish step."""
     late_drift_notified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     """Set once ``tasks.notify_late_drift`` claims this meeting's catch-up
-    drift notice, *before* it is sent. Only relevant for a meeting whose
-    lineage arrived after ``notified_at`` already fired -- see
-    ``service.build_decision_lineage``'s ``was_late`` return and
+    drift notice, *before* it is sent, and cleared -- there is nothing left to
+    claim -- alongside it. Only relevant for a meeting whose lineage arrived
+    after ``notified_at`` already fired -- see ``late_drift_due_at`` and
     ``publish_if_ready(force=...)``."""
-
-
-class CtxLinkThreshold(Base, TimestampMixin):
-    """A team's own tuned ``link_confidence_threshold``, learned from its
-    topic-link confirm/reject history.
-
-    Written only by ``service.retune_link_threshold``. Absent for a team that
-    hasn't confirmed/rejected ``link_threshold_min_samples`` links yet --
-    ``service.get_effective_link_threshold`` falls back to the global
-    ``ContextSettings.link_confidence_threshold`` in that case, so a team with
-    no row behaves exactly as it did before this table existed.
-    """
-
-    __tablename__ = "ctx_link_thresholds"
-
-    team_id: Mapped[str] = mapped_column(
-        String(64), ForeignKey("teams.id", ondelete="CASCADE"), primary_key=True
-    )
-    threshold: Mapped[float] = mapped_column(Float, nullable=False)
-    sample_size: Mapped[int] = mapped_column(Integer, nullable=False)
-    """Confirmed+rejected links this threshold was computed from -- for
-    display/debugging, not read back by ``get_effective_link_threshold``."""
+    late_drift_due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    """Set by ``service.build_decision_lineage`` in the same transaction as
+    ``extraction_seen`` when this run's lineage is late (arrived after a
+    B-timeout publish). ``extraction_seen`` flips exactly once, so a naive
+    "was this run late" check reads False on a Celery redelivery of
+    ``on_extraction_completed`` that lands after the first run's commit but
+    before its ``publish_if_ready.delay(force=True)`` -- the drift warning
+    that redelivery owes would otherwise be silently lost. This column
+    survives across such a redelivery instead: ``build_decision_lineage``
+    returns ``late_drift_due_at is not None`` rather than a freshly computed
+    boolean, so the "still owed" state persists on the row until
+    ``notify_late_drift`` actually sends and clears it."""

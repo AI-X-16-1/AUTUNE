@@ -38,8 +38,11 @@ celery_app.conf.update(
         "autune.gap.*": {"queue": "cpu_heavy"},
         "autune.context.*": {"queue": "cpu_heavy"},
         # Only the Slack calls -- no embedder/reranker/NLI model work -- so it
-        # does not belong on the worker reserved for that.
+        # does not belong on the worker reserved for that. notify_late_drift is
+        # the same shape (see autune_context.tasks._slack_target, shared by
+        # both) and needs the same override.
         "autune.context.notify_context_events": {"queue": "default"},
+        "autune.context.notify_late_drift": {"queue": "default"},
         "autune.intelligence.aggregate": {"queue": "cpu_heavy"},
         "autune.intelligence.*": {"queue": "default"},
     },
