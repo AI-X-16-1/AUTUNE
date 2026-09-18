@@ -1,4 +1,4 @@
-"""The five ctx_ revisions apply from scratch and reverse cleanly."""
+"""The context branch's ctx_ revisions apply from scratch and reverse cleanly."""
 
 from __future__ import annotations
 
@@ -44,8 +44,9 @@ def test_upgrade_creates_then_downgrade_removes_every_ctx_table() -> None:
     subprocess.run([*ALEMBIC, "upgrade", "heads"], check=True, cwd=root)
     assert _ctx_tables_in_db() == CTX_TABLES
 
-    # Back to the branch anchor (five revisions down), then forward again.
-    subprocess.run([*ALEMBIC, "downgrade", "context@-5"], check=True, cwd=root)
+    # Back to the branch anchor (six revisions down: five original table
+    # creations plus notified_at), then forward again.
+    subprocess.run([*ALEMBIC, "downgrade", "context@-6"], check=True, cwd=root)
     assert _ctx_tables_in_db() == set()
 
     subprocess.run([*ALEMBIC, "upgrade", "heads"], check=True, cwd=root)
