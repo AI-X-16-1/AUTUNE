@@ -75,6 +75,31 @@ prefix `AUTUNE_<MODULE>_`.
 | `AUTUNE_LOG_LEVEL` | `INFO` | |
 | `AUTUNE_RETENTION_DAYS` | `90` | Default analysis retention |
 
+### Web (`apps/web`)
+
+`NEXT_PUBLIC_` variables are inlined into the browser bundle at build time, so
+nothing secret goes here.
+
+| Variable | Example | Notes |
+| --- | --- | --- |
+| `NEXT_PUBLIC_API_URL` | `http://localhost:8000` | Where the browser reaches `apps/api` |
+| `NEXT_PUBLIC_AUTUNE_DEV_TOKEN` | | Bearer token for every call, until sign-in (S01) exists. Build-time fallback for the value below |
+
+**Signing in, until there is a sign-in.** Routes that take `CurrentUser` refuse
+a request without a bearer token, and S01 is not built. Until it is,
+`@/shared/api/client` attaches one to every call, preferring
+`localStorage["autune.token"]` over `NEXT_PUBLIC_AUTUNE_DEV_TOKEN` so a person
+can switch users without a rebuild:
+
+```js
+// In the browser console, on the page you are testing.
+localStorage.setItem("autune.token", "<token>");
+```
+
+Get a token from `POST /api/audio/dev/token`, which exists only when
+`AUTUNE_ENV=local`. With no token the header is omitted and an authorised route
+answers 403 — which is what a screen shows today if you have not set one.
+
 ### Integrations
 
 | Variable | Used by |
