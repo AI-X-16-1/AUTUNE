@@ -442,8 +442,13 @@ def get_dashboard(session: Session, team_id: str) -> DashboardRead:
     )
 
 
+_MAX_GAP_TITLES_PER_PATTERN: Final = 20
+"""A team's history can pile up hundreds of gaps behind one pattern; the
+hover popup this feeds (`maxWidth: 220`) is not built to scroll that."""
+
+
 def gap_titles_by_pattern(session: Session, team_id: str) -> dict[str, list[str]]:
-    """The gap titles behind each pattern's count in ``get_dashboard``.
+    """The **high-severity** gap titles behind each pattern's count in ``get_dashboard``.
 
     ``IntelGapPattern.source_gap_ids`` names which of C's gaps fed a pattern's
     count, but not their text — C's title never enters an ``intel_*`` table,
@@ -453,15 +458,27 @@ def gap_titles_by_pattern(session: Session, team_id: str) -> dict[str, list[str]
     key off another module's rows), and payload matching only needs id
     equality within one meeting, not a relational join.
 
+    ``source_gap_ids`` carries every severity — it feeds the *count*, and
+    filtering it would silently change what ``gap_distribution`` counts. This
+    function filters instead, because unlike the count, gap *title text* is
+    content C's own rule (`docs/architecture/contracts.md`, module C's
+    CLAUDE.md) says only surfaces at `high` severity by default; anything
+    below that is a candidate C itself would not show.
+
     A gap id with no matching title (payload never arrived, or was since
     cleared) is skipped rather than raising — the count in ``gap_distribution``
     still includes it; this is a best-effort explanation of that count, not
-    its source of truth.
+    its source of truth. A malformed payload entry missing ``id`` or
+    ``title`` is skipped the same way, not a 500. Titles are deduplicated and
+    capped per pattern (``_MAX_GAP_TITLES_PER_PATTERN``) — the hover popup
+    this feeds is not built to scroll a team's whole history.
     """
     pattern_rows = session.execute(
         sa.select(
             IntelGapPattern.meeting_id, IntelGapPattern.pattern_type, IntelGapPattern.source_gap_ids
-        ).where(IntelGapPattern.team_id == team_id)
+        )
+        .where(IntelGapPattern.team_id == team_id)
+        .order_by(IntelGapPattern.meeting_id, IntelGapPattern.pattern_type)
     ).all()
     if not pattern_rows:
         return {}
@@ -477,17 +494,23 @@ def gap_titles_by_pattern(session: Session, team_id: str) -> dict[str, list[str]
         if not gap_payload:
             continue
         titles_by_meeting[meeting_id] = {
-            gap["id"]: gap["title"] for gap in gap_payload.get("gaps", [])
+            gap["id"]: gap["title"]
+            for gap in gap_payload.get("gaps", [])
+            if gap.get("severity") == "high" and gap.get("id") is not None and gap.get("title")
         }
 
     result: dict[str, list[str]] = {}
     for row in pattern_rows:
         titles = titles_by_meeting.get(row.meeting_id, {})
+        bucket = result.setdefault(row.pattern_type, [])
         for gap_id in row.source_gap_ids:
             title = titles.get(gap_id)
-            if title is not None:
-                result.setdefault(row.pattern_type, []).append(title)
-    return result
+            if title is None or title in bucket:
+                continue
+            if len(bucket) >= _MAX_GAP_TITLES_PER_PATTERN:
+                continue
+            bucket.append(title)
+    return {pattern: titles for pattern, titles in result.items() if titles}
 
 
 # --- Weekly report (pipeline step 6) ---------------------------------------
