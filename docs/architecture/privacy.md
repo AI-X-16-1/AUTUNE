@@ -97,10 +97,14 @@ speaking ratio. So:
   stance on a decision — not by participant id, not by user id, not by name.
 - Stance crosses a module boundary only as counts per role
   (`Decision.stance_by_role`, added in #232), and a role is included only when
-  at least **three** identified people held it at the meeting. In a small team
-  a role is a person. The contract enforces the three
-  (`STANCE_MIN_IDENTIFIED_PER_ROLE`); do not re-derive a lower number
-  downstream.
+  at least **three** identified people held it at the meeting **and its stance
+  is not unanimous**. In a small team a role is a person. A role in which
+  everyone supported, or everyone raised a concern, says what each person did,
+  so it is left out: `supporting` and `concerns` are each below `identified`,
+  and together at most `identified`. A count of zero is allowed (#232). The
+  contract enforces all of this (`RoleStance`,
+  `STANCE_MIN_IDENTIFIED_PER_ROLE`); do not re-derive a lower number or a
+  looser rule downstream.
 - A consumer that aggregates stance over several meetings leaves a cell empty
   when its sample is too small, rather than showing a number that identifies the
   few people behind it.
@@ -157,7 +161,8 @@ Reject a pull request that does any of the following:
 - [ ] Returns another person's speaking ratio through any surface
 - [ ] Stores per-person speaking ratios
 - [ ] Records, returns or exports one person's stance on a decision, or reports
-      stance for a role below three identified people
+      stance for a role below three identified people, or reports a unanimous
+      role
 - [ ] Adds a table with no path to deletion by `meeting_id` or `user_id`
 - [ ] Uses a soft delete for content
 - [ ] Sends more data to a third party than the feature requires
