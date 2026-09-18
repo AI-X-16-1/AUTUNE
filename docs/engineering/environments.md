@@ -118,7 +118,7 @@ prefix `AUTUNE_<MODULE>_`.
 | `AUTUNE_CONTEXT_RETRIEVE_TOP_K` | D | Hybrid retrieval breadth. Default `50` |
 | `AUTUNE_CONTEXT_RERANK_TOP_K` | D | Kept after re-ranking. Default `10` |
 | `AUTUNE_CONTEXT_RRF_K` | D | Reciprocal-rank-fusion constant. Default `60` |
-| `AUTUNE_CONTEXT_LINK_CONFIDENCE_THRESHOLD` | D | Assert vs. ask. Default `0.6`, tuned in eval |
+| `AUTUNE_CONTEXT_LINK_CONFIDENCE_THRESHOLD` | D | Assert vs. ask, global fallback. Default `0.6`, tuned in eval |
 | `AUTUNE_CONTEXT_LINEAGE_MATCH_THRESHOLD` | D | Decision-to-thread match cutoff (cosine). Default `0.6`, tuned in eval |
 | `AUTUNE_CONTEXT_PUBLISH_TIMEOUT_S` | D | Wait for B before publishing. Default `600` |
 | `AUTUNE_CONTEXT_MAX_TOPIC_LINK_NOTICES` | D | Individual topic-link Slack messages per meeting before the rest roll up into one notice. Default `3` |

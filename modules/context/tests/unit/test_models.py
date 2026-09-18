@@ -23,7 +23,7 @@ _MODEL_CLASSES = (
 )
 
 
-def test_all_five_ctx_tables_are_registered():
+def test_every_ctx_table_is_registered():
     assert set(Base.metadata.tables) >= CTX_TABLES
 
 

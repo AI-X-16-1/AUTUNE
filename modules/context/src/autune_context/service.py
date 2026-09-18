@@ -207,8 +207,31 @@ def mark_extraction_seen(meeting_id: str) -> None:
         _upsert_status(session, meeting_id, extraction_seen=True)
 
 
-def build_decision_lineage(result: ExtractionResult) -> None:
+def build_decision_lineage(result: ExtractionResult) -> bool:
     """Thread each of B's decisions into a lineage and classify how it moved.
+
+    Returns whether a late-lineage catch-up is owed for this meeting --
+    ``ContextLinks`` already published via the B-timeout fallback (that
+    publish's ``missing_sources`` would have included ``"extraction"``, since
+    B hadn't reported yet) before this lineage arrived. ``tasks
+    .on_extraction_completed`` uses this to force a republish (now carrying
+    the completed ``decision_lineage``) and a one-off drift-only notify -- see
+    ``publish_if_ready(force=...)`` and ``tasks.notify_late_drift``. A caller
+    that doesn't need this (tests, ``mark_extraction_seen``) can ignore the
+    return value.
+
+    This is *not* simply "was this run late": that would go back to False on
+    a Celery redelivery of ``on_extraction_completed`` landing after this
+    function's own commit (``extraction_seen`` already flipped to True) but
+    before ``on_extraction_completed`` reaches its
+    ``publish_if_ready.delay(force=True)`` call -- silently losing the drift
+    warning the same way #257 originally did, just with the window narrowed
+    instead of closed. Once a run determines it's late, it sets
+    ``late_drift_due_at`` in the same transaction as ``extraction_seen``; the
+    return value is ``late_drift_due_at is not None`` *after* that write, so
+    the "still owed" state persists on the row across a redelivery instead of
+    being recomputed fresh each time. ``tasks.notify_late_drift`` clears it
+    once it actually claims and sends.
 
     B owns *what counts as a decision in this meeting*; D owns *whether it is the
     same decision as one from before*. Each of ``result.decisions`` is matched by
@@ -286,6 +309,19 @@ def build_decision_lineage(result: ExtractionResult) -> None:
         meeting = session.get(Meeting, result.meeting_id)
         if meeting is None:
             raise ValueError(f"{result.meeting_id}: meeting row not found")
+
+        # Captured before this run's own _upsert_status call below overwrites
+        # extraction_seen -- "already published, but not because of us" is
+        # exactly the B-timeout-fallback-then-late-lineage case, and it only
+        # matches on the one run that flips extraction_seen False -> True, so
+        # a later B reprocess of an already-seen meeting correctly reads False
+        # here instead of re-triggering the late-catch-up path every time.
+        existing_status = session.get(CtxMeetingStatus, result.meeting_id)
+        was_late = (
+            existing_status is not None
+            and existing_status.published_at is not None
+            and not existing_status.extraction_seen
+        )
 
         session.execute(
             text("SELECT pg_advisory_xact_lock(hashtext(:team_id))"),
@@ -370,19 +406,19 @@ def build_decision_lineage(result: ExtractionResult) -> None:
         labels_swept = sweep_stale_topic_labels(session)
         statements_swept = sweep_dangling_previous_statements(session)
         status = _upsert_status(session, result.meeting_id, extraction_seen=True, lineage_done=True)
-        if status.published_at is not None:
+        if was_late and status.late_drift_due_at is None:
             # ``ContextLinks`` already went out for this meeting -- the
-            # B-timeout fallback published before this (late) lineage arrived.
-            # ``publish_if_ready`` never republishes and ``notify_context_events``
-            # never re-fires, so any drift warning this run's rethreading
-            # produced is silently not sent. No fix here (needs a design
-            # decision on whether/how to re-open a published meeting -- see
-            # PR #234 review); this only adds the observability that review
-            # found missing, so the gap is at least visible instead of silent.
+            # B-timeout fallback published before this (late) lineage
+            # arrived, with "extraction" in missing_sources. Recorded on the
+            # row (not just this function's return value) so a Celery
+            # redelivery of the caller still knows a catch-up is owed even
+            # after extraction_seen has already flipped -- see this
+            # function's docstring and ``tasks.notify_late_drift``.
+            status.late_drift_due_at = datetime.now(tz=UTC)
             log.warning(
                 "context_late_lineage_after_publish",
                 meeting_id=result.meeting_id,
-                published_at=status.published_at.isoformat(),
+                published_at=status.published_at.isoformat() if status.published_at else None,
             )
         log.info(
             "context_decision_lineage_done",
@@ -394,6 +430,7 @@ def build_decision_lineage(result: ExtractionResult) -> None:
             labels_swept=labels_swept,
             statements_swept=statements_swept,
         )
+        return status.late_drift_due_at is not None
 
 
 class _ThreadHead:
@@ -615,7 +652,7 @@ def _cosine(a: list[float], b: list[float]) -> float:
 # --------------------------------------------------------------------------- #
 
 
-def publish_if_ready(meeting_id: str) -> bool:
+def publish_if_ready(meeting_id: str, *, force: bool = False) -> bool:
     """Publish ``ContextLinks`` when topic linking is done and either lineage is
     done, B has reported, or the deadline has passed. Returns whether it published.
 
@@ -628,23 +665,39 @@ def publish_if_ready(meeting_id: str) -> bool:
     the second worker blocks on the row lock until the first commits, then
     sees ``published_at`` already set and returns ``False`` instead of
     publishing and notifying a second time.
+
+    ``force=True`` is the one deliberate exception to that guard: it is set
+    only by ``tasks.on_extraction_completed`` when
+    ``build_decision_lineage`` reports its lineage arrived *after* a meeting
+    already published via the B-timeout fallback (``missing_sources =
+    ["extraction"]``). That republish carries the now-complete
+    ``decision_lineage`` to E -- which already knows how to accept a second
+    completion for a meeting it aggregated once (see
+    ``autune_intelligence.tasks``' "a completion after the first pass reopens
+    and re-enqueues") -- and does not re-touch ``published_at`` or re-check
+    the deadline/lineage gate, since we already know why we're here.
     """
     with session_scope() as session:
         status = session.get(CtxMeetingStatus, meeting_id, with_for_update=True)
         if status is None or not status.topic_linking_done:
             return False
-        if status.published_at is not None:
+        if status.published_at is not None and not force:
             return False
 
-        timed_out = status.deadline_at is not None and datetime.now(tz=UTC) >= status.deadline_at
-        if not (status.lineage_done or status.extraction_seen or timed_out):
-            return False
+        if not force:
+            timed_out = (
+                status.deadline_at is not None and datetime.now(tz=UTC) >= status.deadline_at
+            )
+            if not (status.lineage_done or status.extraction_seen or timed_out):
+                return False
 
         links = _build_context_links(session, meeting_id, status)
         current_app.send_task(_CONTEXT_CONSUMER_TASK, args=[links.model_dump(mode="json")])
-        status.published_at = datetime.now(tz=UTC)
+        first_publish = status.published_at is None
+        if first_publish:
+            status.published_at = datetime.now(tz=UTC)
         log.info(
-            "context_published",
+            "context_republished" if force else "context_published",
             meeting_id=meeting_id,
             topic_links=len(links.topic_links),
             missing_sources=links.missing_sources,
@@ -723,6 +776,9 @@ class DriftNotice:
     statement_preview: str
     change_type: ChangeType
     absent_user_ids: tuple[str, ...]
+    meeting_date: date | None
+    """The *changing* meeting's own date (``Meeting.started_at``), not the
+    thread's -- see ``notify.build_decision_drift_channel_notice``."""
 
 
 def _deliver_personal(
@@ -788,6 +844,7 @@ def collect_drift_notices(session: Session, meeting_id: str) -> list[DriftNotice
             continue
         thread = session.get(CtxDecision, version.thread_id)
         thread_label = thread.topic_label if thread is not None else version.current_statement[:400]
+        meeting = session.get(Meeting, version.meeting_id)
         # ``current_statement`` is a ``Text`` column with no length limit, and
         # it is quoted in both the channel notice and the DM. An unusually
         # long statement from B can push the outbound payload past
@@ -802,6 +859,7 @@ def collect_drift_notices(session: Session, meeting_id: str) -> list[DriftNotice
                 statement_preview=version.current_statement[:400],
                 change_type=ChangeType(version.change_type),
                 absent_user_ids=tuple(absent),
+                meeting_date=meeting.started_at.date() if meeting and meeting.started_at else None,
             )
         )
     return notices
@@ -848,6 +906,7 @@ def send_decision_drift_notices(slack: SlackApi, channel: str, notices: list[Dri
             current_statement=notice.statement_preview,
             change_type=notice.change_type,
             absent_count=len(notice.absent_user_ids),
+            meeting_date=notice.meeting_date,
         )
         slack.post_message(channel, channel_fallback, channel_blocks)
 
@@ -855,6 +914,7 @@ def send_decision_drift_notices(slack: SlackApi, channel: str, notices: list[Dri
             thread_label=notice.thread_label,
             current_statement=notice.statement_preview,
             change_type=notice.change_type,
+            meeting_date=notice.meeting_date,
         )
         for user_id in notice.absent_user_ids:
             _deliver_personal(slack, user_id, dm_fallback, dm_blocks)

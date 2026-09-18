@@ -57,6 +57,7 @@ def test_drift_channel_notice_names_no_one() -> None:
         current_statement="최신순으로 정렬한다",
         change_type=ChangeType.REVERSED,
         absent_count=2,
+        meeting_date=date(2026, 9, 4),
     )
 
     text = _text(blocks)
@@ -70,13 +71,44 @@ def test_drift_channel_notice_reflects_reversed_vs_modified() -> None:
         current_statement="s",
         change_type=ChangeType.REVERSED,
         absent_count=1,
+        meeting_date=None,
     )
     _fallback, modified_blocks = build_decision_drift_channel_notice(
-        thread_label="t", current_statement="s", change_type=ChangeType.MODIFIED, absent_count=1
+        thread_label="t",
+        current_statement="s",
+        change_type=ChangeType.MODIFIED,
+        absent_count=1,
+        meeting_date=None,
     )
 
     assert "번복" in _text(reversed_blocks)
     assert "변경" in _text(modified_blocks)
+
+
+def test_drift_channel_notice_states_the_changing_meetings_date() -> None:
+    fallback, blocks = build_decision_drift_channel_notice(
+        thread_label="검색 정렬 기준",
+        current_statement="최신순으로 정렬한다",
+        change_type=ChangeType.MODIFIED,
+        absent_count=1,
+        meeting_date=date(2026, 9, 4),
+    )
+
+    assert "2026년 9월 4일" in fallback
+    assert "2026년 9월 4일" in _text(blocks)
+
+
+def test_drift_channel_notice_omits_the_date_when_the_meeting_has_none() -> None:
+    fallback, blocks = build_decision_drift_channel_notice(
+        thread_label="검색 정렬 기준",
+        current_statement="최신순으로 정렬한다",
+        change_type=ChangeType.MODIFIED,
+        absent_count=1,
+        meeting_date=None,
+    )
+
+    assert "년" not in fallback
+    assert "년" not in _text(blocks)
 
 
 def test_drift_personal_dm_carries_no_id_or_name() -> None:
@@ -84,6 +116,7 @@ def test_drift_personal_dm_carries_no_id_or_name() -> None:
         thread_label="검색 정렬 기준",
         current_statement="최신순으로 정렬한다",
         change_type=ChangeType.MODIFIED,
+        meeting_date=date(2026, 9, 4),
     )
 
     assert "usr_" not in fallback
@@ -95,9 +128,21 @@ def test_drift_personal_dm_states_the_decision_content() -> None:
         thread_label="검색 정렬 기준",
         current_statement="최신순으로 정렬한다",
         change_type=ChangeType.MODIFIED,
+        meeting_date=date(2026, 9, 4),
     )
 
     assert "최신순으로 정렬한다" in _text(blocks)
+
+
+def test_drift_personal_dm_states_the_changing_meetings_date() -> None:
+    fallback, _blocks = build_decision_drift_personal_dm(
+        thread_label="검색 정렬 기준",
+        current_statement="최신순으로 정렬한다",
+        change_type=ChangeType.MODIFIED,
+        meeting_date=date(2026, 9, 4),
+    )
+
+    assert "2026년 9월 4일" in fallback
 
 
 def test_topic_link_rollup_notice_states_the_count() -> None:
