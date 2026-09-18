@@ -36,7 +36,9 @@ Contract: `/docs/architecture/contracts.md`.
 
 - Shared entities `meetings`, `participants`, `utterances` in `packages/core`.
   **A is the only module that writes them.**
-- `aud_jobs`, `aud_speaker_embeddings`, `aud_masking_events`, `aud_corrections`.
+- `aud_jobs`, `aud_speaker_embeddings`, `aud_masking_events`, `aud_corrections`,
+  `aud_consent_attestations` — the only writer of `participants.consented = True`
+  in the repository, per meeting, until S10/S11 make it per person (#190).
 
 ## AI stack
 

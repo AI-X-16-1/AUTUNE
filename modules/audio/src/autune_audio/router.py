@@ -18,6 +18,7 @@ from autune_core import CurrentUser, get_session
 from autune_core.settings import get_settings as get_core_settings
 
 from . import service
+from .schemas import ConsentAttestation, ConsentState
 
 router = APIRouter()
 
@@ -52,3 +53,28 @@ def get_transcript(meeting_id: str, user: CurrentUser, session: SessionDep) -> l
     that looks like the event.
     """
     return service.transcript_for_meeting(session, meeting_id=meeting_id, reader=user)
+
+
+@router.post("/meetings/{meeting_id}/consent", response_model=ConsentState)
+def attest_consent(
+    meeting_id: str, body: ConsentAttestation, user: CurrentUser, session: SessionDep
+) -> ConsentState:
+    """A member states that everyone in this meeting's recording consented.
+
+    Its own route rather than a checkbox on the upload, on purpose. "Everyone
+    consented" is a statement with legal weight, and it is made by pressing one
+    thing that means only that -- not by a box in the corner of a form whose
+    main job is a file. It is also what lets this land independently of the
+    upload route (#259): a meeting exists, somebody attests, and the next
+    transcript written for it carries the consent.
+
+    ``body.attested`` can only be ``true``. See ``ConsentAttestation``.
+
+    This is the only writer of ``participants.consented = True`` in the
+    repository, and it is per meeting because per person is not possible before
+    identification (#6). When S10's per-attendee table exists, this route is
+    derived from it or removed -- #190.
+    """
+    service.attest_consent(session, meeting_id=meeting_id, attested_by=user)
+    session.commit()
+    return ConsentState(meeting_id=meeting_id, attested=True)

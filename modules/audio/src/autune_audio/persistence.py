@@ -43,6 +43,7 @@ from autune_core.entities import Meeting, Participant, Utterance
 from autune_core.errors import NotFoundError, PrivacyViolationError
 
 from .masking import mask
+from .models import AudConsentAttestation
 from .speakers import Utterance as SpokenUtterance
 
 log = get_logger(__name__)
@@ -173,18 +174,22 @@ def _participants_for(
     a role, and ``consented``. A rerun that dropped the rows would throw away a
     person's answer and ask them again.
 
-    A label the meeting has not seen gets a new row with ``consented=False``,
-    and **nothing in the repository ever sets it True** -- so module B's
-    ``consented_utterance_ids`` and module C both come back empty for every real
-    meeting, while ``docs/architecture/privacy.md`` section 5 says an excluded
-    utterance is "not stored, not just hidden" and this function stores it.
+    A label the meeting has not seen gets a new row, and its ``consented`` is
+    **whether the meeting has a consent attestation** (``aud_consent_attestations``,
+    written by ``service.attest_consent``): True if a member of the team has
+    said everyone in the recording consented, False otherwise. Read here, per
+    row, rather than copied from a sibling row, because a rerun can cut the
+    speakers differently and invent a label the first run never saw -- and
+    consent was given for the meeting, not for a set of labels. Module B's
+    condition on #190; ``test_a_rerun_gives_a_new_label_the_same_consent``
+    pins it.
 
-    The column carries two meanings at once: "nobody has asked yet" and "this
-    person said no". False is honest about the second and wrong about the first,
-    which is the state every participant is actually in today. Splitting them is
-    a ``packages/core`` change and decides what B, C and D each do, so it is
-    **#190** rather than a line here. This keeps False until that lands: it is
-    the value that analyses nothing, which is the safe direction to be wrong in.
+    Without an attestation the value is False, and the column still carries two
+    meanings at once: "nobody has asked yet" and "this person said no". False
+    is honest about the second and wrong about the first. Splitting them is a
+    ``packages/core`` change and decides what B, C and D each do, so it is
+    **#190** rather than a line here; until it lands, False is the value that
+    analyses nothing, which is the safe direction to be wrong in.
     """
     existing = {
         participant.speaker_label: participant
@@ -192,11 +197,12 @@ def _participants_for(
             sa.select(Participant).where(Participant.meeting_id == meeting_id)
         )
     }
+    attested = session.get(AudConsentAttestation, meeting_id) is not None
 
     for label in dict.fromkeys(spoken.speaker for spoken in utterances):
         if label in existing:
             continue
-        participant = Participant(meeting_id=meeting_id, speaker_label=label, consented=False)
+        participant = Participant(meeting_id=meeting_id, speaker_label=label, consented=attested)
         session.add(participant)
         existing[label] = participant
 
