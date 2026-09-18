@@ -8,8 +8,10 @@ transcriber returns before speakers are attached.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 
 import numpy as np
+from pydantic import BaseModel, Field
 
 SAMPLE_RATE = 16_000
 """What both Whisper and pyannote want. Decoding to it once means neither
@@ -106,3 +108,32 @@ class Transcription:
             f"Transcription({len(self.segments)} segments, {len(self.words)} words, "
             f"{self.duration:.1f}s, lang={self.language})"
         )
+
+
+# --- API request and response bodies ----------------------------------------
+#
+# The types above describe stages inside the pipeline; these describe the HTTP
+# surface. Neither belongs in ``packages/contracts`` — a contract type is what
+# another *module* consumes, and nothing here crosses that line.
+
+
+class MeetingCreate(BaseModel):
+    """What a client sends to open a meeting."""
+
+    title: str = Field(min_length=1, max_length=400)
+    team_id: str = Field(min_length=1, max_length=64)
+    started_at: datetime | None = None
+    """When the meeting began. Absent for a recording uploaded after the fact."""
+
+
+class MeetingState(BaseModel):
+    """The id and where the meeting has got to. Returned by both write routes.
+
+    Deliberately thin. A meeting carries a title the team wrote and, once the
+    pipeline has run, its transcript — none of which the caller of a write route
+    needs echoed back, and all of which is meeting content. The screen polls or
+    reads the meeting properly when it wants more than this.
+    """
+
+    meeting_id: str
+    status: str

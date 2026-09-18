@@ -258,3 +258,46 @@ def test_a_collapsed_transcript_is_not_written_and_not_published(
     row = db_session.get(Meeting, meeting)
     assert row is not None
     assert row.pii_masked is False
+
+
+def test_a_finished_meeting_is_marked_complete(
+    pipeline: dict, db_session: Session, meeting: str, recording: Path
+) -> None:
+    """The status is what a screen reads to tell "not yet" from "nothing said".
+
+    ``transcript_for_meeting`` returns an empty list all the way through the
+    task — every utterance is written in one transaction at the end — so a
+    meeting stuck at ``analyzing`` and a meeting where nobody spoke look
+    identical to a reader that does not have this.
+    """
+    tasks.process_recording(meeting, str(recording))
+
+    assert db_session.get(Meeting, meeting).status == "complete"
+
+
+def test_a_meeting_whose_task_raised_is_marked_failed(
+    pipeline: dict,
+    db_session: Session,
+    meeting: str,
+    recording: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    published: list[tuple[str, dict]],
+) -> None:
+    """The recording is gone and it is not coming back — say so.
+
+    ``adopt`` deletes in a ``finally``, so a failed run has already destroyed
+    the only copy of the audio. Leaving the meeting at ``analyzing`` would make
+    the screen wait for a task that is never going to report, and would hide
+    from the uploader that the one thing they could have retried is gone.
+    """
+
+    def explode(*_: object, **__: object) -> None:
+        raise RuntimeError("pyannote could not load")
+
+    monkeypatch.setattr(tasks, "assign_speakers", explode)
+
+    with pytest.raises(RuntimeError, match="pyannote could not load"):
+        tasks.process_recording(meeting, str(recording))
+
+    assert db_session.get(Meeting, meeting).status == "failed"
+    assert published == []

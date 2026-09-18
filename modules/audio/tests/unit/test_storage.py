@@ -17,6 +17,7 @@ from autune_audio.storage import (
     RecordingTooLargeError,
     _reject_persistent,
     adopt,
+    handover,
     recording_on_disk,
 )
 from autune_core.errors import PrivacyViolationError
@@ -259,3 +260,75 @@ class TestSyncedFolderNamesAsTheyActuallyAppear:
 
         with pytest.raises(PrivacyViolationError):
             _reject_persistent(Path("/Users/x/Dropbox (Acme)/tmp"))
+
+
+class TestHandingAFileToTheWorker:
+    """``handover`` is the one primitive that leaves a recording on disk.
+
+    That sounds like a hole in invariant 11 and is the opposite of one. The
+    upload endpoint and the worker are different processes, so the file has to
+    outlive the request that wrote it — the question is only who owns deleting
+    it. ``handover`` hands ownership to the worker on success and keeps it on
+    every other path, so a recording is never left behind by a failure and
+    never has two owners at once.
+    """
+
+    def test_the_recording_survives_a_successful_handover(self, settings: AudioSettings) -> None:
+        with handover(io.BytesIO(b"audio"), settings=settings) as recording:
+            held = recording.path
+
+        assert held.exists()
+        assert recording.deleted is False
+        held.unlink()
+
+    def test_the_recording_is_deleted_when_the_handover_raises(
+        self, settings: AudioSettings
+    ) -> None:
+        """Queueing the task is what runs inside the block.
+
+        If the broker is unreachable, nobody is coming to adopt this file, so
+        the primitive that wrote it deletes it. Otherwise every failed enqueue
+        leaves a recording on disk forever — the exact thing invariant 11 is
+        about.
+        """
+        held: Path | None = None
+        with (
+            pytest.raises(RuntimeError, match="broker is down"),
+            handover(io.BytesIO(b"audio"), settings=settings) as recording,
+        ):
+            held = recording.path
+            raise RuntimeError("broker is down")
+
+        assert held is not None
+        assert not held.exists()
+        assert recording.deleted is True
+
+    def test_an_oversized_upload_leaves_nothing_behind(self, settings: AudioSettings) -> None:
+        """The limit is enforced while writing, not from a declared size."""
+        with (
+            pytest.raises(RecordingTooLargeError),
+            handover(io.BytesIO(b"x" * 100), max_bytes=10, settings=settings),
+        ):
+            pass
+
+        assert list(Path(settings.temp_dir).iterdir()) == []
+
+    def test_it_refuses_a_directory_the_recording_would_survive_in(self, tmp_path: Path) -> None:
+        """Same check as ``recording_on_disk``. A second door is still a door."""
+        synced = AudioSettings(temp_dir=str(tmp_path / "Dropbox" / "scratch"))
+
+        with (
+            pytest.raises(PrivacyViolationError, match="Dropbox"),
+            handover(io.BytesIO(b"audio"), settings=synced),
+        ):
+            pass
+
+    def test_the_suffix_reaches_the_file_the_worker_is_handed(
+        self, settings: AudioSettings
+    ) -> None:
+        """The decoder picks a demuxer by extension; losing it breaks m4a."""
+        with handover(io.BytesIO(b"audio"), suffix=".m4a", settings=settings) as recording:
+            held = recording.path
+
+        assert held.suffix == ".m4a"
+        held.unlink()

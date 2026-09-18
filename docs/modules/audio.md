@@ -77,11 +77,44 @@ Plus the shared entities in `packages/core`, which A writes.
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| POST | `/recordings` | Upload a recording, start processing |
+| POST | `/meetings` | Open a meeting for a team, before there is any audio |
+| POST | `/meetings/{meeting_id}/recording` | Upload a recording and queue transcription (202) |
 | GET | `/jobs/{job_id}` | Job status and progress |
 | GET | `/transcripts/{meeting_id}` | Full transcript, masked, for a member of the meeting's team |
 | PATCH | `/utterances/{id}` | Correct speaker or text |
 | POST | `/speakers/enroll` | Enroll a voice for identification |
+
+Creating the meeting is a separate call from uploading to it, rather than the
+single `POST /recordings` this table used to plan. The live-microphone path
+(S10/S13) has a meeting well before it has a recording, and `meetings` is a
+shared entity only module A may write — one writer, one place, reached the same
+way by both paths.
+
+### Meeting status, and who moves it
+
+`meetings.status` had no writer at all before the upload endpoint existed. A
+owns these four transitions; the rest belong to B and E, later in the meeting's
+life.
+
+| From | To | When |
+| --- | --- | --- |
+| — | `scheduled` | `POST /meetings` |
+| `scheduled`, `failed` | `analyzing` | a recording is accepted and queued |
+| `analyzing` | `complete` | `process_recording` wrote the transcript |
+| `analyzing` | `failed` | the task raised, or the enqueue never reached the broker |
+
+`failed` is the only status other than `scheduled` that accepts a recording. A
+`complete` meeting refuses one: its transcript has already gone out to four
+modules, and replacing it underneath them is the rerun problem in #194.
+
+### The recording between the two processes
+
+The endpoint writes the upload to `AUTUNE_AUDIO_TEMP_DIR` and hands the worker a
+path; the file therefore outlives the request. That is not a gap in invariant
+11, which forbids a recording with *no* owner rather than a recording on disk.
+`storage.handover` owns it until the task is queued and deletes it if that
+fails; `storage.adopt` owns it from then on and deletes it in a `finally`.
+Exactly one of them owns a given file at a time.
 
 ## Celery tasks
 

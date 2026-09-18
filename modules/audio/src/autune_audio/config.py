@@ -11,6 +11,19 @@ from functools import lru_cache
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+MAX_UPLOAD_BYTES = 500 * 1024 * 1024
+"""The largest recording an upload endpoint accepts. Matches the dropzone on
+design screen S03.
+
+Enforced while the bytes are written rather than from ``UploadFile.size``: that
+is a number the client sent, and it is ``None`` on a request with no
+Content-Length.
+
+Here rather than beside either endpoint because both of them enforce it — the
+real upload route and the local dev page — and a limit that is written twice is
+a limit that ends up meaning two things.
+"""
+
 
 class AudioSettings(BaseSettings):
     # env_file mirrors autune_core.Settings: without it a module reads only
