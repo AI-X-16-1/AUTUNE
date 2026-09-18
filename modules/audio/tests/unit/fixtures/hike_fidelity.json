@@ -1,0 +1,457 @@
+{
+  "_about": "Rows from thetaone-ai/HiKE (https://huggingface.co/datasets/thetaone-ai/HiKE, Apache-2.0; Paik et al., EACL Findings 2026, arXiv 2509.24613) with hypotheses produced by faster-whisper large-v3 on CPU. mer and pier were computed by a line-by-line port of HiKE's own scoring (jiwer transforms + rapidfuzz editops, src/main.py and src/metrics/pier), not by autune_audio. Regenerate with modules/audio/scripts/hike_fidelity_fixture.py; do not edit numbers by hand.",
+  "candidates_scored": 1181,
+  "candidates_agreeing": 1168,
+  "candidates_differing": {
+    "tie_break": 10,
+    "reference_not_renormalised": 3,
+    "unexplained": 0
+  },
+  "rows": [
+    {
+      "sample_id": "cee9f45c-eb40-47ff-96a1-a3a1ccb50927",
+      "cs_level": "phrase",
+      "text_normalized": "let us proceed 눈치 보지 않고 확실하게 this time",
+      "text_pier_labeled": "let us <tag proceed> <tag 눈치> 보지 않고 <tag 확실하게> <tag this> time",
+      "loanwords": [],
+      "hypothesis": "Let's proceed. 눈치 보지 말고 확실하게 this time.",
+      "mer": 0.06666666666666667,
+      "pier": 0.0,
+      "features": [
+        "contraction"
+      ]
+    },
+    {
+      "sample_id": "14d61685-5df8-4831-bd7e-cf25c6918902",
+      "cs_level": "phrase",
+      "text_normalized": "let me check the database connection first 계속 timeout error가 발생하고 있거든",
+      "text_pier_labeled": "let me check the database connection <tag first> <tag 계속> <tag timeout> <tag error> <tag 가> 발생하고 있거든",
+      "loanwords": [
+        [
+          "데이터베이스",
+          "database"
+        ],
+        [
+          "타임아웃",
+          "timeout"
+        ],
+        [
+          "에러",
+          "error"
+        ]
+      ],
+      "hypothesis": "Let me check the database connection first, because we'll timeout at all of our 발생하고 있거든.",
+      "mer": 0.3684210526315789,
+      "pier": 1.4,
+      "features": [
+        "contraction",
+        "loanword"
+      ]
+    },
+    {
+      "sample_id": "9aeb70f8-5e89-4aea-b87c-322e555a9f42",
+      "cs_level": "phrase",
+      "text_normalized": "the model is interpretability was enhanced 특성 중요도 시각화하기 위해 through shap value analysis and attention heatmaps",
+      "text_pier_labeled": "the model is interpretability was <tag enhanced> <tag 특성> 중요도 시각화하기 <tag 위해> <tag through> shap value analysis and attention heatmaps",
+      "loanwords": [],
+      "hypothesis": "The model's interpretability was an enhanced 특성 중요도 지각화하기 위해 through SHAP value analysis and attention heat maps.",
+      "mer": 0.16,
+      "pier": 0.25,
+      "features": [
+        "contraction"
+      ]
+    },
+    {
+      "sample_id": "d7e6bee5-700e-4b80-b80c-227c97e06f1d",
+      "cs_level": "word",
+      "text_normalized": "실험군과 대조군 간의 통계적 차이를 검증하기 위해 ttest를 적용하였다",
+      "text_pier_labeled": "실험군과 대조군 간의 통계적 차이를 검증하기 <tag 위해> <tag ttest> <tag 를> 적용하였다",
+      "loanwords": [],
+      "hypothesis": "실험군과 대중군 간의 통계적 차이를 검증하기 위해 T-테스트를 적용하였다.",
+      "mer": 0.17857142857142858,
+      "pier": 0.6666666666666666,
+      "features": [
+        "hyphen"
+      ]
+    },
+    {
+      "sample_id": "51ec583a-800e-4b91-be7f-2c10639bec35",
+      "cs_level": "phrase",
+      "text_normalized": "the research methodology employed a longitudinal study design to examine 한국 kpop 산업의 global marketing 전략 변화 and its impact on international market penetration",
+      "text_pier_labeled": "the research methodology employed a longitudinal study design to <tag examine> <tag 한국> <tag kpop> <tag 산업의> <tag global> <tag marketing> <tag 전략> <tag 변화> <tag and> its impact on international market penetration",
+      "loanwords": [
+        [
+          "디자인",
+          "design"
+        ],
+        [
+          "케이팝",
+          "K-pop"
+        ],
+        [
+          "글로벌",
+          "global"
+        ],
+        [
+          "마케팅",
+          "marketing"
+        ]
+      ],
+      "hypothesis": "이 기술은 한국 K-POP 산업의 글로벌 마케팅 전략 변화와 인터내셔널 마켓 페네트레이션에 대한 영향을 미쳤습니다.",
+      "mer": 1.206896551724138,
+      "pier": 0.3333333333333333,
+      "features": [
+        "hyphen",
+        "loanword"
+      ]
+    },
+    {
+      "sample_id": "30e1c7df-a824-4299-a5ab-cef9a09cbfcd",
+      "cs_level": "phrase",
+      "text_normalized": "pneumothorax 의심 환자가 들어왔습니다 chest xray 촬영했는데 lung collapse가 확인되었고 oxygen saturation이 급격히 떨어지고 있어요",
+      "text_pier_labeled": "<tag pneumothorax> <tag 의심> 환자가 <tag 들어왔습니다> <tag chest> <tag xray> <tag 촬영했는데> <tag lung> <tag collapse> <tag 가> <tag 확인되었고> <tag oxygen> <tag saturation> <tag 이> 급격히 떨어지고 있어요",
+      "loanwords": [
+        [
+          "엑스레이",
+          "X-ray"
+        ]
+      ],
+      "hypothesis": "너모토렉스 의심 환자가 들어왔습니다. 체스트 X-ray 착용했는데 런 콜랍스가 확인되었고 옥수진 사츄레이션이 급격히 떨어지고 있어요.",
+      "mer": 0.55,
+      "pier": 0.6923076923076923,
+      "features": [
+        "hyphen",
+        "loanword"
+      ]
+    },
+    {
+      "sample_id": "c71090af-ca6e-4bcf-ac7a-724f502b85e1",
+      "cs_level": "phrase",
+      "text_normalized": "제안된 algorithm은 largescale dataset에서 기존 방법보다 약 15 향상된 accuracy를 보여주었다",
+      "text_pier_labeled": "<tag 제안된> <tag algorithm> <tag 은> <tag largescale> <tag dataset> <tag 에서> 기존 방법보다 <tag 약> <tag 15> <tag 향상된> <tag accuracy> <tag 를> 보여주었다",
+      "loanwords": [
+        [
+          "알고리즘",
+          "algorithm"
+        ],
+        [
+          "데이터셋",
+          "dataset"
+        ]
+      ],
+      "hypothesis": "제한된 알고리즘은 large-scale dataset에서 기존 방법보다 약 15% 향상된 accuracy를 보여주었다.",
+      "mer": 0.037037037037037035,
+      "pier": 0.09090909090909091,
+      "features": [
+        "hyphen",
+        "digit",
+        "loanword"
+      ]
+    },
+    {
+      "sample_id": "40faea4d-22ab-4a28-9f89-1ab805afc078",
+      "cs_level": "phrase",
+      "text_normalized": "본 논문에서는 기존의 euclidean distance 대신 임의의 lp norm을 적용하여 성능을 비교하였고 결과적으로 l2 norm이 최적의 convergence rate를 보였다",
+      "text_pier_labeled": "본 논문에서는 <tag 기존의> <tag euclidean> <tag distance> <tag 대신> <tag 임의의> <tag lp> <tag norm> <tag 을> 적용하여 성능을 비교하였고 <tag 결과적으로> <tag l2> <tag norm> <tag 이> <tag 최적의> <tag convergence> <tag rate> <tag 를> 보였다",
+      "loanwords": [
+        [
+          "노름",
+          "norm"
+        ]
+      ],
+      "hypothesis": "본 논문에서는 기존의 Euclidean Distance 대신 이미의 LP Norm을 적용하여 성능을 비교했고, 결과적으로 L2 Norm이 최적의 Convergence Race를 보였다.",
+      "mer": 0.10416666666666667,
+      "pier": 0.125,
+      "features": [
+        "digit",
+        "loanword"
+      ]
+    },
+    {
+      "sample_id": "c924b1ac-0a90-4df7-be5b-6f8b93c55999",
+      "cs_level": "phrase",
+      "text_normalized": "we trained the model for 100 epochs with a batch size of 32 on a single gpu model architecture와 관련된 자세한 hyperparameter들은 table 2에서 확인할 수 있다",
+      "text_pier_labeled": "we trained the model <tag for> <tag 100> <tag epochs> with a batch size <tag of> <tag 32> <tag on> a single gpu model <tag architecture> <tag 와> 관련된 <tag 자세한> <tag hyperparameter> <tag 들은> <tag table> <tag 2> <tag 에서> 확인할 수 있다",
+      "loanwords": [
+        [
+          "모델",
+          "model"
+        ],
+        [
+          "아키텍처",
+          "architecture"
+        ],
+        [
+          "아키텍쳐",
+          "architecture"
+        ],
+        [
+          "하이퍼파라미터",
+          "hyperparameter"
+        ],
+        [
+          "테이블",
+          "Table"
+        ]
+      ],
+      "hypothesis": "We trained a model for 100 epochs with a batch size of 32 on a single GPU. 모델 아키텍처와 관련된 자세한 하이퍼 파라미터들은 테이블 2에서 확인할 수 있다.",
+      "mer": 0.20512820512820512,
+      "pier": 0.14285714285714285,
+      "features": [
+        "digit",
+        "loanword"
+      ]
+    },
+    {
+      "sample_id": "76cdcadc-b530-42bd-95cf-10b70b042c94",
+      "cs_level": "phrase",
+      "text_normalized": "we are dealing with a 겉만 번지르르한 marketing deck",
+      "text_pier_labeled": "we are dealing with <tag a> <tag 겉만> <tag 번지르르한> <tag marketing> deck",
+      "loanwords": [
+        [
+          "마케팅",
+          "marketing"
+        ]
+      ],
+      "hypothesis": "We're dealing with a 건만 번지를 하는 마케팅 테크.",
+      "mer": 0.42857142857142855,
+      "pier": 0.75,
+      "features": [
+        "contraction",
+        "loanword"
+      ]
+    },
+    {
+      "sample_id": "bc577643-1496-43a7-914e-dc157bbe6aee",
+      "cs_level": "phrase",
+      "text_normalized": "이번 quarter report는 powerpoint template을 새로 만들어서 overseas client들에게 더 professional하게 보여주자",
+      "text_pier_labeled": "<tag 이번> <tag quarter> <tag report> <tag 는> <tag powerpoint> <tag template> <tag 을> 새로 <tag 만들어서> <tag overseas> <tag client> <tag 들에게> <tag 더> <tag professional> <tag 하게> 보여주자",
+      "loanwords": [
+        [
+          "리포트",
+          "report"
+        ],
+        [
+          "파워포인트",
+          "PowerPoint"
+        ],
+        [
+          "템플릿",
+          "template"
+        ],
+        [
+          "클라이언트",
+          "client"
+        ],
+        [
+          "프로페셔널",
+          "professional"
+        ]
+      ],
+      "hypothesis": "이번 Quarter Report는 PowerPoint 템플릿을 새로 만들어서 overseas 클라이언트들에게 더 프로페셔널하게 보여주자.",
+      "mer": 0.0,
+      "pier": 0.0,
+      "features": [
+        "loanword",
+        "perfect"
+      ]
+    },
+    {
+      "sample_id": "05cc6998-1fea-44ea-9dd2-3b4b2faebad0",
+      "cs_level": "phrase",
+      "text_normalized": "training speed enhancement를 위해 learning rate scheduler를 design하였다",
+      "text_pier_labeled": "training speed <tag enhancement> <tag 를> <tag 위해> <tag learning> rate <tag scheduler> <tag 를> <tag design> <tag 하였다>",
+      "loanwords": [
+        [
+          "스케줄러",
+          "scheduler"
+        ],
+        [
+          "디자인",
+          "design"
+        ]
+      ],
+      "hypothesis": "트레이닝 스피드 인헨스먼트를 위해 러닝 웨이트 스케줄러를 디자인하였다.",
+      "mer": 1.2142857142857142,
+      "pier": 0.375,
+      "features": [
+        "loanword"
+      ]
+    },
+    {
+      "sample_id": "6c5d06cc-fc24-4598-9bf3-ae4ac62ab00c",
+      "cs_level": "word",
+      "text_normalized": "is 진짜요 used more for really or are you serious",
+      "text_pier_labeled": "<tag is> <tag 진짜요> <tag used> more for really or are you serious",
+      "loanwords": [],
+      "hypothesis": "Is 진짜요 used more for really or are you serious?",
+      "mer": 0.0,
+      "pier": 0.0,
+      "features": [
+        "perfect"
+      ]
+    },
+    {
+      "sample_id": "d91c776b-e304-4a67-9d8b-b789342c478a",
+      "cs_level": "word",
+      "text_normalized": "when people say 고생했어요 does it mean more like good job or you have been through a lot",
+      "text_pier_labeled": "when people <tag say> <tag 고생했어요> <tag does> it mean more like good job or you have been through a lot",
+      "loanwords": [],
+      "hypothesis": "When people say 고생했어요, does it mean more like good job or you've been through a lot?",
+      "mer": 0.0,
+      "pier": 0.0,
+      "features": [
+        "contraction",
+        "perfect"
+      ]
+    },
+    {
+      "sample_id": "ca91968a-83ea-446d-a3d4-2b8a30315509",
+      "cs_level": "word",
+      "text_normalized": "what does 별로야 mean exactly",
+      "text_pier_labeled": "what <tag does> <tag 별로야> <tag mean> exactly",
+      "loanwords": [],
+      "hypothesis": "What does 별로야 mean exactly?",
+      "mer": 0.0,
+      "pier": 0.0,
+      "features": [
+        "perfect"
+      ]
+    },
+    {
+      "sample_id": "c99fc04d-ce06-42fe-ba42-a28c19ca4600",
+      "cs_level": "word",
+      "text_normalized": "during 추석 korean families gather together to make 송편 and perform 차례 for their ancestors",
+      "text_pier_labeled": "<tag during> <tag 추석> <tag korean> families gather together to <tag make> <tag 송편> <tag and> <tag perform> <tag 차례> <tag for> their ancestors",
+      "loanwords": [],
+      "hypothesis": "추석 동안 한국 가족들은 송편을 만들고 엔세스터들의 차례를 연주합니다.",
+      "mer": 1.3888888888888888,
+      "pier": 0.8888888888888888,
+      "features": []
+    },
+    {
+      "sample_id": "ddb52a1b-4015-410b-a09a-e04164c57f64",
+      "cs_level": "word",
+      "text_normalized": "can i use 수고하셨습니다 when my coworker is leaving the office",
+      "text_pier_labeled": "can i <tag use> <tag 수고하셨습니다> <tag when> my coworker is leaving the office",
+      "loanwords": [],
+      "hypothesis": "Can I use 수고하셨습니다. When my co-worker is leaving the office?",
+      "mer": 0.0,
+      "pier": 0.0,
+      "features": [
+        "hyphen",
+        "perfect"
+      ]
+    },
+    {
+      "sample_id": "f33fa9eb-7532-45d4-a653-0284aa25f282",
+      "cs_level": "phrase",
+      "text_normalized": "우리 팀장은 매번 quick fix만 하고 끝내려고 해 scalability는 전혀 고려하지 않더라고",
+      "text_pier_labeled": "우리 팀장은 <tag 매번> <tag quick> <tag fix> <tag 만> 하고 끝내려고 <tag 해> <tag scalability> <tag 는> 전혀 고려하지 않더라고",
+      "loanwords": [],
+      "hypothesis": "우리 팀장은 매번 퀵픽스만 하고 끝내려고 해 스케일러빌리티는 전혀 고려하지 않더라고 어",
+      "mer": 0.3793103448275862,
+      "pier": 0.7142857142857143,
+      "features": []
+    },
+    {
+      "sample_id": "d6f0dad3-abbc-4c42-af98-ba2a5f8f45d0",
+      "cs_level": "phrase",
+      "text_normalized": "내일 있을 budget allocation meeting 때 예산안 확정될 거야",
+      "text_pier_labeled": "내일 <tag 있을> <tag budget> allocation <tag meeting> <tag 때> 예산안 확정될 거야",
+      "loanwords": [
+        [
+          "미팅",
+          "meeting"
+        ]
+      ],
+      "hypothesis": "내일 있을 버젓 알로케이션 미팅 때 예산은 확정될 거야",
+      "mer": 0.5,
+      "pier": 0.25,
+      "features": [
+        "loanword"
+      ]
+    },
+    {
+      "sample_id": "190d0566-c2f6-4d48-a558-eb18de7e207d",
+      "cs_level": "sentence",
+      "text_normalized": "예산이 애매하게 나와서 확정이 어려워요 maybe we can propose a phased approach instead",
+      "text_pier_labeled": "예산이 애매하게 나와서 확정이 <tag 어려워요> <tag maybe> we can propose a phased approach instead",
+      "loanwords": [],
+      "hypothesis": "예산이 애매하게 나와서 확정이 어려워요.",
+      "mer": 0.32,
+      "pier": 0.5,
+      "features": []
+    },
+    {
+      "sample_id": "1dab4f25-3465-4e2f-9531-3ae13ea5c7cc",
+      "cs_level": "sentence",
+      "text_normalized": "i love this 김치찌개 it is so spicy and delicious 정말 따뜻하고 맛있어요",
+      "text_pier_labeled": "i love <tag this> <tag 김치찌개> <tag it> is so spicy and <tag delicious> <tag 정말> 따뜻하고 맛있어요",
+      "loanwords": [],
+      "hypothesis": "I love this kimchi jjigae. So spicy and delicious. 정말 따뜻하고 맛있어요.",
+      "mer": 0.2608695652173913,
+      "pier": 0.4,
+      "features": []
+    },
+    {
+      "sample_id": "1f9cac58-0ed3-4c3b-bccc-248cd999584f",
+      "cs_level": "phrase",
+      "text_normalized": "think outside the box 하라는 건 좋은데 현실성도 꼭 고려해야지",
+      "text_pier_labeled": "think outside the <tag box> <tag 하라는> 건 좋은데 현실성도 꼭 고려해야지",
+      "loanwords": [
+        [
+          "박스",
+          "box"
+        ]
+      ],
+      "hypothesis": "하라는 거는 좋은데 현실성도 꼭 고려해야지",
+      "mer": 0.2857142857142857,
+      "pier": 0.5,
+      "features": [
+        "loanword"
+      ]
+    },
+    {
+      "sample_id": "0f2514d3-aebc-4762-80ea-d9c9b3b439a7",
+      "cs_level": "phrase",
+      "text_normalized": "이번 project deadline이 너무 tight해서 team members들이 다 burn out될 것 같아",
+      "text_pier_labeled": "<tag 이번> <tag project> <tag deadline> <tag 이> <tag 너무> <tag tight> <tag 해서> <tag team> <tag members> <tag 들이> <tag 다> <tag burn> <tag out> <tag 될> 것 같아",
+      "loanwords": [
+        [
+          "프로젝트",
+          "project"
+        ],
+        [
+          "데드라인",
+          "deadline"
+        ],
+        [
+          "팀",
+          "team"
+        ],
+        [
+          "번아웃",
+          "burn out"
+        ]
+      ],
+      "hypothesis": "이번 프로젝트 데드라인이 너무 타이트해서 팀 멤버들 둘이 다 버나웃 될 것 같아.",
+      "mer": 0.42857142857142855,
+      "pier": 0.42857142857142855,
+      "features": [
+        "loanword"
+      ]
+    },
+    {
+      "sample_id": "5df29757-bded-4757-b6e2-5e6d6543a768",
+      "cs_level": "word",
+      "text_normalized": "this 삼겹살 is really awesome 진짜 맛있어요",
+      "text_pier_labeled": "<tag this> <tag 삼겹살> <tag is> really <tag awesome> <tag 진짜> 맛있어요",
+      "loanwords": [],
+      "hypothesis": "이 삼겹살 진짜 맛있다.",
+      "mer": 0.46153846153846156,
+      "pier": 0.6,
+      "features": []
+    }
+  ]
+}
