@@ -62,8 +62,16 @@ _R: Final = rf"(?![{_EDGE}])"
 # guard in an ordinary written form. Horizontal space only -- `\s` would let a
 # match run across a line break and join two unrelated numbers.
 #
+# "Horizontal space" is `[^\S\r\n]` -- everything `\s` matches except a line
+# break -- and not `[ \t]`. The narrower class was a regression this change
+# itself introduced: a no-break space (U+00A0, what Word, HWP and Notion put
+# between number groups) and an ideographic space (U+3000, what a Korean IME
+# emits) matched neither, and `02 123 4567` with NBSPs passed the guard whole
+# -- nine digits, too short for `account` to catch as a fallback. Narrower
+# than `main` on the thing this file exists for.
+#
 # The shape of the expression matters as much as its characters. Written as
-# `[ \t]*[-.–—)]?[ \t]*`, the two space runs share the same spaces when there
+# `{_HSPACE}*[-.–—)]?{_HSPACE}*`, the two space runs share the same spaces when there
 # is no separator between them, and the engine tries every split of a run of n
 # spaces before giving up: quadratic per start position, between a third of a
 # second and a second for a digit followed by ten thousand spaces, which is
@@ -73,7 +81,8 @@ _R: Final = rf"(?![{_EDGE}])"
 # `)` alone, not `()`: an opening parenthesis stands before a number
 # (`(02)123-4567` starts matching at the `0`), never between its groups, and a
 # character in this class is one more thing that can join two groups.
-_SEP: Final = r"[ \t]*(?:[-.–—)][ \t]*)?"
+_HSPACE: Final = r"[^\S\r\n]"
+_SEP: Final = rf"{_HSPACE}*(?:[-.–—)]{_HSPACE}*)?"
 
 # The account catch-all keeps the narrow one, and this is the whole reason the
 # two exist separately. `account` is three groups of two-to-six digits, which is
