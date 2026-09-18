@@ -79,7 +79,7 @@ Plus the shared entities in `packages/core`, which A writes.
 | --- | --- | --- |
 | POST | `/recordings` | Upload a recording, start processing |
 | GET | `/jobs/{job_id}` | Job status and progress |
-| GET | `/transcripts/{meeting_id}` | Full transcript |
+| GET | `/transcripts/{meeting_id}` | Full transcript, masked, for a member of the meeting's team |
 | PATCH | `/utterances/{id}` | Correct speaker or text |
 | POST | `/speakers/enroll` | Enroll a voice for identification |
 
