@@ -202,14 +202,30 @@ three side by side.
   meeting discussed nothing — and with NER recall on spoken Korean where "Step 1
   as built" measures it, that case happens.
 
-**The participation half of *partial* is inert.** An item may name the roles
-that had to be in the conversation, and a topic every one of them was silent on
-is partial rather than covered. No production code writes `participants.role`
-today, so `detect.classify` is told whether roles are known at all and declines
-to read the rule when they are not: an unwritten column read as "no engineer
-spoke" would raise that gap in every meeting of every template. It starts
-working the day module A fills the column, with no code change here. Asked in
-#22, still open.
+**There is no rule about which job roles spoke, and that is deliberate.** #14's
+headline signal is "a topic no engineer said anything on is riskier", and it is
+absent rather than half-built, because **two** things are missing and the first
+one arriving does not make the second appear:
+
+- `participants.role` is written by no production code (#22). Module A creates
+  every participant with the column unset.
+- A topic every consenting participant was silent on **cannot occur.** The graph
+  builds topics from entities found in consenting speech, so whoever said the
+  utterance a topic came from is recorded as having spoken on it — the share can
+  never reach 1.
+
+An earlier draft carried a `roles` field on the template item and a
+`roles_known` flag through `detect.classify`. It read only whether the field was
+*empty*, so `roles: [Dev]` and `roles: [Design]` behaved identically, and the
+condition it gated was the unreachable one above. A rule that looks implemented
+is worse than one that is missing: it invites a template author to state
+something nothing enforces, and it sends whoever fills the column later looking
+for the bug in the wrong half. Raised in review of #266 by the person who will
+fill it.
+
+Participation still feeds the **risk score** as a continuous share, which is
+measurable: a topic most of the room stayed silent on scores higher than one
+they all spoke on.
 
 **A re-run keeps the gaps it already raised.** They are recognised by
 `(meeting_id, template_key, template_item_key)` and updated in place, so a gap's

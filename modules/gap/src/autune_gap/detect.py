@@ -28,8 +28,7 @@ class Coverage(StrEnum):
     """A topic matched and the meeting gave it real weight. No gap."""
 
     PARTIAL = "partial"
-    """Named, but barely — a topic on the edge of the graph, or one the roles
-    that had to be in the conversation said nothing on."""
+    """Named, but barely — a topic the graph put at the edge of the meeting."""
 
     MISSING = "missing"
     """Nothing in the meeting matched it.
@@ -101,8 +100,6 @@ def compare(
     template: Template,
     topics: list[TopicView],
     thresholds: Thresholds,
-    *,
-    roles_known: bool,
 ) -> list[Finding]:
     """Findings for one meeting, riskiest first.
 
@@ -126,7 +123,7 @@ def compare(
 
     for position, item in enumerate(template.items):
         matched = match(item, topics)
-        coverage = classify(item, matched, thresholds, roles_known=roles_known)
+        coverage = classify(matched, thresholds)
         if coverage is Coverage.COVERED:
             continue
 
@@ -175,29 +172,27 @@ def _looks_like(item: TemplateItem, topic: TopicView) -> bool:
     return any(word in label or label in word for word in item.keywords)
 
 
-def classify(
-    item: TemplateItem,
-    matched: list[TopicView],
-    thresholds: Thresholds,
-    *,
-    roles_known: bool,
-) -> Coverage:
+def classify(matched: list[TopicView], thresholds: Thresholds) -> Coverage:
     """Covered, partial, or missing — the three states S20 shows.
 
-    Partial is the meeting having named the thing without settling it: a topic
-    the graph put at the edge, or one that the roles who had to weigh in said
-    nothing on. The second half is inert today — ``participants.role`` is never
-    written (#22, awaiting A) — and ``roles_known`` says so explicitly rather
-    than letting an unwritten column read as "no engineer spoke", which would
-    raise that partial gap in every meeting of every template.
+    Partial is the meeting having named the thing and leaving it at the edge of
+    the graph: a topic below ``partial_centrality`` carried too little of the
+    meeting to count the item as settled.
+
+    **There is deliberately no rule about which job roles spoke.** "A topic no
+    engineer said anything on is riskier" is #14's own headline signal and it is
+    not here, because nothing can implement it yet and a rule that reads as
+    implemented is worse than one that is missing. ``participants.role`` is
+    written by no production code (#22), and a topic every consenting
+    participant was silent on cannot occur at all — the graph builds topics out
+    of entities found in consenting speech, so whoever said the utterance a
+    topic came from is recorded as having spoken on it. Both halves of the
+    signal are absent, and the one that arrives first does not make the other
+    appear. See docs/modules/gap.md, "Steps 6 and 7 as built".
     """
     if not matched:
         return Coverage.MISSING
-
-    best = matched[0]
-    if best.centrality < thresholds.partial_centrality:
-        return Coverage.PARTIAL
-    if roles_known and item.roles and best.silent_share == 1.0:
+    if matched[0].centrality < thresholds.partial_centrality:
         return Coverage.PARTIAL
     return Coverage.COVERED
 

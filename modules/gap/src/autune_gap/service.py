@@ -183,12 +183,7 @@ def detect_gaps(meeting_id: str) -> int:
 
         chosen = template.get_template(selected_template_key(session, meeting_id))
         topics = _topic_views(session, meeting_id)
-        findings = detect.compare(
-            chosen,
-            topics,
-            _thresholds(settings),
-            roles_known=_roles_known(session, meeting_id),
-        )
+        findings = detect.compare(chosen, topics, _thresholds(settings))
         _store_gaps(session, meeting_id, chosen, findings)
 
     # Counts and keys only. A gap title is composed from a template file and a
@@ -308,30 +303,6 @@ def _topic_views(session: Session, meeting_id: str) -> list[detect.TopicView]:
             )
         )
     return views
-
-
-def _roles_known(session: Session, meeting_id: str) -> bool:
-    """Whether anybody in this meeting has a job role recorded.
-
-    ``participants.role`` is not written by any production code today (#22,
-    awaiting module A), so this is ``False`` everywhere and the participation
-    half of ``detect.classify`` stays inert. It is read rather than assumed
-    because the day A fills the column the signal should start working without
-    a code change — and until then an unwritten column must not read as "no
-    engineer spoke", which would raise a partial gap in every meeting.
-    """
-    return (
-        session.scalar(
-            select(func.count())
-            .select_from(Participant)
-            .where(
-                Participant.meeting_id == meeting_id,
-                Participant.consented.is_(True),
-                Participant.role.is_not(None),
-            )
-        )
-        or 0
-    ) > 0
 
 
 def _store_gaps(

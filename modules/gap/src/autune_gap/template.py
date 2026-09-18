@@ -43,11 +43,11 @@ class TemplateItem:
     how much its absence matters, and it is the only risk input a template
     author controls.
 
-    ``roles`` names the job roles that had to be in the conversation for the
-    item to count as covered. It is read only when the roles are actually known:
-    ``participants.role`` is never written today (#22, awaiting A), so the
-    participation signal is dropped and the remaining weights renormalised
-    rather than scored as if everybody were silent.
+    **There is no ``roles`` field.** #14 wants "a topic no engineer spoke on is
+    riskier" and the data for it does not exist: ``participants.role`` is
+    written by no production code (#22). A field template authors could fill
+    would invite them to state a rule nothing enforces, so it arrives with the
+    rule rather than before it.
     """
 
     key: str
@@ -56,7 +56,6 @@ class TemplateItem:
     weight: float
     keywords: tuple[str, ...]
     question: str
-    roles: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -186,5 +185,4 @@ def _item(entry: dict[str, Any], template_key: str) -> TemplateItem:
         weight=weight,
         keywords=keywords,
         question=str(entry["question"]),
-        roles=tuple(str(role) for role in entry.get("roles", ())),
     )

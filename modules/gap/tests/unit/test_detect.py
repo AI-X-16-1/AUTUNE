@@ -37,7 +37,6 @@ def item(key: str = "success_criteria", weight: float = 0.9, **kwargs: object) -
         weight=weight,
         keywords=tuple(kwargs.get("keywords", ("지표", "성공"))),  # type: ignore[arg-type]
         question="무엇으로 측정합니까?",
-        roles=tuple(kwargs.get("roles", ())),  # type: ignore[arg-type]
     )
 
 
@@ -60,7 +59,7 @@ def topic(
 
 
 def test_a_central_matched_topic_raises_nothing(thresholds: detect.Thresholds) -> None:
-    findings = detect.compare(one_item_template(item()), [topic()], thresholds, roles_known=False)
+    findings = detect.compare(one_item_template(item()), [topic()], thresholds)
 
     assert findings == []
 
@@ -70,7 +69,6 @@ def test_nothing_matching_is_missing(thresholds: detect.Thresholds) -> None:
         one_item_template(item()),
         [topic(label="콜드스타트")],
         thresholds,
-        roles_known=False,
     )
 
     assert [finding.coverage for finding in findings] == [detect.Coverage.MISSING]
@@ -81,9 +79,7 @@ def test_a_matched_topic_on_the_edge_of_the_graph_is_partial(
 ) -> None:
     """The meeting named it without settling it. A weaker claim than never
     having come up, and scored as one."""
-    findings = detect.compare(
-        one_item_template(item()), [topic(centrality=0.1)], thresholds, roles_known=False
-    )
+    findings = detect.compare(one_item_template(item()), [topic(centrality=0.1)], thresholds)
 
     assert [finding.coverage for finding in findings] == [detect.Coverage.PARTIAL]
 
@@ -109,37 +105,24 @@ def test_matches_come_most_central_first(thresholds: detect.Thresholds) -> None:
     assert [found.id for found in matched] == ["topic_b", "topic_a"]
 
 
-# --- the role signal stays inert until A writes the column ------------------
+# --- what is deliberately not a rule ----------------------------------------
 
 
-def test_role_silence_is_not_read_while_roles_are_unknown(
-    thresholds: detect.Thresholds,
-) -> None:
-    """``participants.role`` is written by no production code today (#22).
+def test_no_rule_reads_which_job_roles_spoke(thresholds: detect.Thresholds) -> None:
+    """#14's headline signal — "a topic no engineer spoke on is riskier" — is
+    not implemented, and this pins that it is not half-implemented either.
 
-    Reading an unwritten column as "no engineer spoke" would raise the partial
-    gap in every meeting of every template — a false gap in each one, against a
-    metric that is precision.
+    Two things are missing, not one. `participants.role` is written by no
+    production code (#22), *and* a topic every consenting participant was
+    silent on cannot occur: the graph builds topics from entities found in
+    consenting speech, so whoever said the utterance a topic came from is
+    recorded as having spoken on it. A rule that looked implemented would send
+    somebody looking for the bug in the wrong half.
     """
-    needs_dev = item(roles=("Dev",))
-    silent_on_it = [topic(silent_share=1.0)]
+    everybody_silent = [topic(silent_share=1.0)]
 
-    assert (
-        detect.compare(one_item_template(needs_dev), silent_on_it, thresholds, roles_known=False)
-        == []
-    )
-
-
-def test_role_silence_is_read_once_roles_are_known(thresholds: detect.Thresholds) -> None:
-    """And the day A fills the column it starts working without a code change."""
-    findings = detect.compare(
-        one_item_template(item(roles=("Dev",))),
-        [topic(silent_share=1.0)],
-        thresholds,
-        roles_known=True,
-    )
-
-    assert [finding.coverage for finding in findings] == [detect.Coverage.PARTIAL]
+    assert detect.compare(one_item_template(item()), everybody_silent, thresholds) == []
+    assert detect.classify(everybody_silent, thresholds) is detect.Coverage.COVERED
 
 
 # --- scoring ----------------------------------------------------------------
@@ -229,9 +212,7 @@ def test_an_empty_graph_raises_no_gaps(thresholds: detect.Thresholds) -> None:
     """Every item would be missing, and the report would be a whole checklist
     about a meeting the pipeline failed to read. Extraction finding nothing is
     not the meeting having discussed nothing."""
-    findings = detect.compare(
-        one_item_template(item(), item(key="ownership")), [], thresholds, roles_known=False
-    )
+    findings = detect.compare(one_item_template(item(), item(key="ownership")), [], thresholds)
 
     assert findings == []
 
@@ -247,9 +228,7 @@ def test_findings_come_riskiest_first_and_ties_hold_template_order(
         item(key="second", weight=0.6, keywords=("없는말",)),
     )
 
-    findings = detect.compare(
-        template_with_ties, [topic(label="콜드스타트")], thresholds, roles_known=False
-    )
+    findings = detect.compare(template_with_ties, [topic(label="콜드스타트")], thresholds)
 
     assert [finding.item_key for finding in findings] == ["heaviest", "first", "second"]
 
@@ -262,7 +241,6 @@ def test_a_finding_carries_the_topics_it_was_inferred_from(
         one_item_template(item(keywords=("지표",))),
         [topic("topic_a", "핵심 지표", centrality=0.1)],
         thresholds,
-        roles_known=False,
     )
 
     assert findings[0].topic_ids == ("topic_a",)
@@ -274,12 +252,8 @@ def test_a_finding_carries_the_item_question_and_its_display_name(
     """S20 shows both, and ``gap_gaps`` stores both. The title is composed from
     the coverage state, so a partial gap and a missing one do not claim the same
     thing about the meeting."""
-    missing = detect.compare(
-        one_item_template(item()), [topic(label="콜드스타트")], thresholds, roles_known=False
-    )[0]
-    partial = detect.compare(
-        one_item_template(item()), [topic(centrality=0.1)], thresholds, roles_known=False
-    )[0]
+    missing = detect.compare(one_item_template(item()), [topic(label="콜드스타트")], thresholds)[0]
+    partial = detect.compare(one_item_template(item()), [topic(centrality=0.1)], thresholds)[0]
 
     assert missing.template_item == "성공 기준·측정 지표"
     assert missing.question == "무엇으로 측정합니까?"
