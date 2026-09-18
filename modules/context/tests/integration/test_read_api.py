@@ -21,7 +21,7 @@ from sqlalchemy import delete, select
 
 from autune_context import router, service
 from autune_context.config import get_settings
-from autune_context.models import CtxDecision, CtxDecisionVersion, CtxTopicLink
+from autune_context.models import CtxDecision, CtxDecisionVersion, CtxLinkThreshold, CtxTopicLink
 from autune_context.pipeline import reset_cache
 from autune_contracts.extraction import Decision, ExtractionResult
 from autune_core import Meeting, Team, session_scope
@@ -77,13 +77,15 @@ def _extraction(meeting_id: str, decisions: list[tuple[str, str, float]]) -> Ext
     )
 
 
-def _topic_link(meeting_id: str, *, status: str, confidence: float = 0.5) -> int:
+def _topic_link(
+    meeting_id: str, *, status: str, confidence: float = 0.5, rerank_score: float = 0.7
+) -> int:
     with session_scope() as s:
         row = CtxTopicLink(
             meeting_id=meeting_id,
             topic_label="검색 정렬",
             similarity=0.7,
-            rerank_score=0.7,
+            rerank_score=rerank_score,
             confidence=confidence,
             status=status,
             retriever_version="test",
@@ -185,6 +187,99 @@ def test_confirming_a_link_on_an_expired_meeting_404s(team_id: str) -> None:
 
     with session_scope() as s, pytest.raises(NotFoundError):
         service.confirm_topic_link(s, link_id, "confirmed")
+
+
+# --------------------------------------------------------------------------- #
+# Per-team link threshold auto-tuning (issue #256)
+# --------------------------------------------------------------------------- #
+
+
+@pytest.fixture
+def _low_sample_threshold(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """A team's tuned threshold kicks in after 4 labeled links instead of the
+    real default (10) -- keeps these tests from needing 10 fixture rows."""
+    monkeypatch.setenv("AUTUNE_CONTEXT_LINK_THRESHOLD_MIN_SAMPLES", "4")
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
+
+
+def test_get_effective_link_threshold_falls_back_to_the_global_default(team_id: str) -> None:
+    with session_scope() as s:
+        assert (
+            service.get_effective_link_threshold(s, team_id)
+            == get_settings().link_confidence_threshold
+        )
+
+
+def test_get_effective_link_threshold_uses_a_tuned_value_once_present(team_id: str) -> None:
+    with session_scope() as s:
+        s.add(CtxLinkThreshold(team_id=team_id, threshold=0.75, sample_size=12))
+
+    with session_scope() as s:
+        assert service.get_effective_link_threshold(s, team_id) == 0.75
+
+
+@pytest.mark.usefixtures("_low_sample_threshold")
+def test_confirming_below_the_minimum_sample_size_does_not_tune_yet(team_id: str) -> None:
+    meeting = _meeting(team_id)
+    link_id = _topic_link(meeting, status="pending", rerank_score=0.8)
+
+    with session_scope() as s:
+        service.confirm_topic_link(s, link_id, "confirmed")
+
+    with session_scope() as s:
+        assert s.get(CtxLinkThreshold, team_id) is None
+
+
+@pytest.mark.usefixtures("_low_sample_threshold")
+def test_reaching_the_minimum_sample_size_tunes_a_threshold_between_the_clusters(
+    team_id: str,
+) -> None:
+    meeting = _meeting(team_id)
+    confirmed_ids = [
+        _topic_link(meeting, status="pending", rerank_score=score) for score in (0.9, 0.85)
+    ]
+    rejected_ids = [
+        _topic_link(meeting, status="pending", rerank_score=score) for score in (0.4, 0.35)
+    ]
+
+    with session_scope() as s:
+        for link_id in confirmed_ids:
+            service.confirm_topic_link(s, link_id, "confirmed")
+        for link_id in rejected_ids:
+            service.confirm_topic_link(s, link_id, "rejected")
+
+    with session_scope() as s:
+        row = s.get(CtxLinkThreshold, team_id)
+        assert row is not None
+        assert row.sample_size == 4
+        assert 0.4 < row.threshold <= 0.85
+        assert service.get_effective_link_threshold(s, team_id) == row.threshold
+
+
+@pytest.mark.usefixtures("_low_sample_threshold")
+def test_a_later_confirm_reject_retunes_the_existing_row_in_place(team_id: str) -> None:
+    meeting = _meeting(team_id)
+    first_batch = [
+        _topic_link(meeting, status="pending", rerank_score=score)
+        for score in (0.9, 0.85, 0.4, 0.35)
+    ]
+    with session_scope() as s:
+        service.confirm_topic_link(s, first_batch[0], "confirmed")
+        service.confirm_topic_link(s, first_batch[1], "confirmed")
+        service.confirm_topic_link(s, first_batch[2], "rejected")
+        service.confirm_topic_link(s, first_batch[3], "rejected")
+    with session_scope() as s:
+        first_sample_size = s.get(CtxLinkThreshold, team_id).sample_size
+
+    fifth = _topic_link(meeting, status="pending", rerank_score=0.6)
+    with session_scope() as s:
+        service.confirm_topic_link(s, fifth, "rejected")
+
+    with session_scope() as s:
+        # Still one row per team -- retuned, not duplicated.
+        assert s.get(CtxLinkThreshold, team_id).sample_size == first_sample_size + 1
 
 
 # --------------------------------------------------------------------------- #

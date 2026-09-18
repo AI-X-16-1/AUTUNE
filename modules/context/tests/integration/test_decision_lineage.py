@@ -572,6 +572,98 @@ def test_publish_carries_the_decision_lineage(team_id: str, published: _Capturin
     assert change.change_type == "unchanged"
 
 
+# --------------------------------------------------------------------------- #
+# Late lineage — the B-timeout fallback published before extraction arrived
+# --------------------------------------------------------------------------- #
+
+
+def test_lineage_after_a_timeout_publish_is_reported_as_late(
+    team_id: str, published: _CapturingApp
+) -> None:
+    meeting = _meeting(team_id, days_ago=0)
+    service.run_topic_linking(_transcript(meeting, ["검색 개인화 논의"] * 5))
+
+    # AUTUNE_CONTEXT_PUBLISH_TIMEOUT_S=0 (the _fake_models fixture) means the
+    # deadline is already past, so this publishes via the timeout path with
+    # no lineage yet -- exactly the race build_decision_lineage's "late"
+    # return exists to catch.
+    assert service.publish_if_ready(meeting) is True
+    _name, args = published.sent[0]
+    assert ContextLinks.model_validate(args[0]).missing_sources == ["extraction"]
+
+    was_late = service.build_decision_lineage(_extraction(meeting, [("dec_1", _D1, 0.9)]))
+
+    assert was_late is True
+
+
+def test_lineage_before_any_publish_is_not_late(team_id: str) -> None:
+    meeting = _meeting(team_id, days_ago=0)
+
+    was_late = service.build_decision_lineage(_extraction(meeting, [("dec_1", _D1, 0.9)]))
+
+    assert was_late is False
+
+
+def test_a_second_extraction_reprocess_of_an_already_seen_meeting_is_not_late(
+    team_id: str, published: _CapturingApp
+) -> None:
+    """A late-published meeting that B later reprocesses (extraction_seen is
+    already True) must not re-trigger the catch-up path every time."""
+    meeting = _meeting(team_id, days_ago=0)
+    service.run_topic_linking(_transcript(meeting, ["검색 개인화 논의"] * 5))
+    service.publish_if_ready(meeting)
+    assert service.build_decision_lineage(_extraction(meeting, [("dec_1", _D1, 0.9)])) is True
+
+    was_late_again = service.build_decision_lineage(
+        _extraction(meeting, [("dec_1_rebuilt", _D1, 0.9)])
+    )
+
+    assert was_late_again is False
+
+
+def test_force_republish_carries_the_completed_lineage_and_clears_missing_sources(
+    team_id: str, published: _CapturingApp
+) -> None:
+    meeting = _meeting(team_id, days_ago=0)
+    service.run_topic_linking(_transcript(meeting, ["검색 개인화 논의"] * 5))
+    service.publish_if_ready(meeting)  # first publish: no lineage yet
+    service.build_decision_lineage(_extraction(meeting, [("dec_1", _D1, 0.9)]))
+
+    assert service.publish_if_ready(meeting, force=True) is True
+
+    assert len(published.sent) == 2
+    links = ContextLinks.model_validate(published.sent[1][1][0])
+    assert links.missing_sources == []
+    assert len(links.decision_lineage) == 1
+
+
+def test_force_republish_does_not_move_the_original_published_at(team_id: str) -> None:
+    meeting = _meeting(team_id, days_ago=0)
+    service.run_topic_linking(_transcript(meeting, ["검색 개인화 논의"] * 5))
+    service.publish_if_ready(meeting)
+    with session_scope() as s:
+        first_published_at = s.get(CtxMeetingStatus, meeting).published_at
+    service.build_decision_lineage(_extraction(meeting, [("dec_1", _D1, 0.9)]))
+
+    service.publish_if_ready(meeting, force=True)
+
+    with session_scope() as s:
+        assert s.get(CtxMeetingStatus, meeting).published_at == first_published_at
+
+
+def test_a_non_forced_call_still_refuses_to_republish(
+    team_id: str, published: _CapturingApp
+) -> None:
+    meeting = _meeting(team_id, days_ago=0)
+    service.run_topic_linking(_transcript(meeting, ["검색 개인화 논의"] * 5))
+    service.publish_if_ready(meeting)
+    service.build_decision_lineage(_extraction(meeting, [("dec_1", _D1, 0.9)]))
+
+    assert service.publish_if_ready(meeting) is False  # force defaults to False
+
+    assert len(published.sent) == 1
+
+
 def test_advisory_lock_serializes_lineage_building_per_team(db_engine: sa.Engine) -> None:
     """The mechanism `build_decision_lineage` relies on to keep two meetings for
     the same team from matching against each other's uncommitted thread heads:

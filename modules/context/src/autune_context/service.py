@@ -23,6 +23,7 @@ from autune_context.models import (
     CtxDecision,
     CtxDecisionVersion,
     CtxEmbedding,
+    CtxLinkThreshold,
     CtxMeetingStatus,
     CtxTopicLink,
 )
@@ -113,6 +114,7 @@ def run_topic_linking(transcript: TranscriptReady) -> None:
         retriever = HybridRetriever(
             session, retrieve_top_k=settings.retrieve_top_k, rrf_k=settings.rrf_k
         )
+        link_threshold = get_effective_link_threshold(session, meeting.team_id)
         before = meeting.started_at or datetime.now(tz=UTC)
         links_written = 0
         for topic in topics:
@@ -123,7 +125,14 @@ def run_topic_linking(transcript: TranscriptReady) -> None:
                 exclude_meeting_id=transcript.meeting_id,
             )
             links_written += _link_topic(
-                session, transcript.meeting_id, topic, candidates, reranker, settings, embedder
+                session,
+                transcript.meeting_id,
+                topic,
+                candidates,
+                reranker,
+                settings,
+                embedder,
+                link_threshold,
             )
 
         _upsert_status(
@@ -147,6 +156,7 @@ def _link_topic(
     reranker,
     settings,
     embedder,
+    link_threshold: float,
 ) -> int:
     if not candidates:
         return 0
@@ -162,7 +172,7 @@ def _link_topic(
                 linked_meeting_id=candidate.linked_meeting_id,
             )
             continue
-        status = "asserted" if rerank_score >= settings.link_confidence_threshold else "pending"
+        status = "asserted" if rerank_score >= link_threshold else "pending"
         session.add(
             CtxTopicLink(
                 meeting_id=meeting_id,
@@ -207,8 +217,17 @@ def mark_extraction_seen(meeting_id: str) -> None:
         _upsert_status(session, meeting_id, extraction_seen=True)
 
 
-def build_decision_lineage(result: ExtractionResult) -> None:
+def build_decision_lineage(result: ExtractionResult) -> bool:
     """Thread each of B's decisions into a lineage and classify how it moved.
+
+    Returns whether this run's lineage arrived *late* -- after
+    ``ContextLinks`` had already published via the B-timeout fallback (that
+    publish's ``missing_sources`` would have included ``"extraction"``,
+    since B hadn't reported yet). ``tasks.on_extraction_completed`` uses this
+    to force a republish (now carrying the completed ``decision_lineage``)
+    and a one-off drift-only notify -- see ``publish_if_ready(force=...)``
+    and ``tasks.notify_late_drift``. A caller that doesn't need this (tests,
+    ``mark_extraction_seen``) can ignore the return value.
 
     B owns *what counts as a decision in this meeting*; D owns *whether it is the
     same decision as one from before*. Each of ``result.decisions`` is matched by
@@ -286,6 +305,19 @@ def build_decision_lineage(result: ExtractionResult) -> None:
         meeting = session.get(Meeting, result.meeting_id)
         if meeting is None:
             raise ValueError(f"{result.meeting_id}: meeting row not found")
+
+        # Captured before this run's own _upsert_status call below overwrites
+        # extraction_seen -- "already published, but not because of us" is
+        # exactly the B-timeout-fallback-then-late-lineage case, and it only
+        # matches on the one run that flips extraction_seen False -> True, so
+        # a later B reprocess of an already-seen meeting correctly reads False
+        # here instead of re-triggering the late-catch-up path every time.
+        existing_status = session.get(CtxMeetingStatus, result.meeting_id)
+        was_late = (
+            existing_status is not None
+            and existing_status.published_at is not None
+            and not existing_status.extraction_seen
+        )
 
         session.execute(
             text("SELECT pg_advisory_xact_lock(hashtext(:team_id))"),
@@ -370,19 +402,18 @@ def build_decision_lineage(result: ExtractionResult) -> None:
         labels_swept = sweep_stale_topic_labels(session)
         statements_swept = sweep_dangling_previous_statements(session)
         status = _upsert_status(session, result.meeting_id, extraction_seen=True, lineage_done=True)
-        if status.published_at is not None:
+        if was_late:
             # ``ContextLinks`` already went out for this meeting -- the
-            # B-timeout fallback published before this (late) lineage arrived.
-            # ``publish_if_ready`` never republishes and ``notify_context_events``
-            # never re-fires, so any drift warning this run's rethreading
-            # produced is silently not sent. No fix here (needs a design
-            # decision on whether/how to re-open a published meeting -- see
-            # PR #234 review); this only adds the observability that review
-            # found missing, so the gap is at least visible instead of silent.
+            # B-timeout fallback published before this (late) lineage
+            # arrived, with "extraction" in missing_sources. The caller
+            # (``tasks.on_extraction_completed``) uses this return value to
+            # force a republish carrying the now-complete decision_lineage,
+            # plus a one-off drift-only notify -- see
+            # ``publish_if_ready(force=...)`` and ``tasks.notify_late_drift``.
             log.warning(
                 "context_late_lineage_after_publish",
                 meeting_id=result.meeting_id,
-                published_at=status.published_at.isoformat(),
+                published_at=status.published_at.isoformat() if status.published_at else None,
             )
         log.info(
             "context_decision_lineage_done",
@@ -394,6 +425,7 @@ def build_decision_lineage(result: ExtractionResult) -> None:
             labels_swept=labels_swept,
             statements_swept=statements_swept,
         )
+        return was_late
 
 
 class _ThreadHead:
@@ -615,7 +647,7 @@ def _cosine(a: list[float], b: list[float]) -> float:
 # --------------------------------------------------------------------------- #
 
 
-def publish_if_ready(meeting_id: str) -> bool:
+def publish_if_ready(meeting_id: str, *, force: bool = False) -> bool:
     """Publish ``ContextLinks`` when topic linking is done and either lineage is
     done, B has reported, or the deadline has passed. Returns whether it published.
 
@@ -628,23 +660,39 @@ def publish_if_ready(meeting_id: str) -> bool:
     the second worker blocks on the row lock until the first commits, then
     sees ``published_at`` already set and returns ``False`` instead of
     publishing and notifying a second time.
+
+    ``force=True`` is the one deliberate exception to that guard: it is set
+    only by ``tasks.on_extraction_completed`` when
+    ``build_decision_lineage`` reports its lineage arrived *after* a meeting
+    already published via the B-timeout fallback (``missing_sources =
+    ["extraction"]``). That republish carries the now-complete
+    ``decision_lineage`` to E -- which already knows how to accept a second
+    completion for a meeting it aggregated once (see
+    ``autune_intelligence.tasks``' "a completion after the first pass reopens
+    and re-enqueues") -- and does not re-touch ``published_at`` or re-check
+    the deadline/lineage gate, since we already know why we're here.
     """
     with session_scope() as session:
         status = session.get(CtxMeetingStatus, meeting_id, with_for_update=True)
         if status is None or not status.topic_linking_done:
             return False
-        if status.published_at is not None:
+        if status.published_at is not None and not force:
             return False
 
-        timed_out = status.deadline_at is not None and datetime.now(tz=UTC) >= status.deadline_at
-        if not (status.lineage_done or status.extraction_seen or timed_out):
-            return False
+        if not force:
+            timed_out = (
+                status.deadline_at is not None and datetime.now(tz=UTC) >= status.deadline_at
+            )
+            if not (status.lineage_done or status.extraction_seen or timed_out):
+                return False
 
         links = _build_context_links(session, meeting_id, status)
         current_app.send_task(_CONTEXT_CONSUMER_TASK, args=[links.model_dump(mode="json")])
-        status.published_at = datetime.now(tz=UTC)
+        first_publish = status.published_at is None
+        if first_publish:
+            status.published_at = datetime.now(tz=UTC)
         log.info(
-            "context_published",
+            "context_republished" if force else "context_published",
             meeting_id=meeting_id,
             topic_links=len(links.topic_links),
             missing_sources=links.missing_sources,
@@ -934,6 +982,10 @@ def confirm_topic_link(session: Session, link_id: int, new_status: str) -> CtxTo
         raise ConflictError(f"topic link {link_id} is not pending", status=link.status)
     link.status = new_status
     session.flush()
+
+    team_id = session.scalar(select(Meeting.team_id).where(Meeting.id == link.meeting_id))
+    if team_id is not None:
+        retune_link_threshold(session, team_id)
     return link
 
 
@@ -946,6 +998,101 @@ def _meeting_is_visible(session: Session, meeting_id: str) -> bool:
         ).first()
         is not None
     )
+
+
+# --------------------------------------------------------------------------- #
+# Per-team link threshold auto-tuning (issue #256) — learned from confirm/reject
+# --------------------------------------------------------------------------- #
+
+
+def get_effective_link_threshold(session: Session, team_id: str) -> float:
+    """This team's tuned ``link_confidence_threshold``, or the global default.
+
+    A team with no ``ctx_link_thresholds`` row -- none confirmed/rejected yet,
+    or fewer than ``link_threshold_min_samples`` -- behaves exactly as it did
+    before this table existed.
+    """
+    row = session.get(CtxLinkThreshold, team_id)
+    return row.threshold if row is not None else get_settings().link_confidence_threshold
+
+
+def retune_link_threshold(session: Session, team_id: str) -> None:
+    """Recompute and store this team's tuned threshold from its topic-link
+    confirm/reject history so far.
+
+    Called by ``confirm_topic_link`` after each new confirm/reject -- there is
+    no scheduled retuning job, so the threshold a team sees is always as fresh
+    as its own last decision. Below ``link_threshold_min_samples`` total
+    labeled links, this leaves ``ctx_link_thresholds`` untouched (no row, or
+    the last tuned value) rather than fitting a threshold to a handful of
+    dismissals.
+    """
+    settings = get_settings()
+    rows = session.execute(
+        select(CtxTopicLink.rerank_score, CtxTopicLink.status)
+        .join(Meeting, Meeting.id == CtxTopicLink.meeting_id)
+        .where(Meeting.team_id == team_id, CtxTopicLink.status.in_(("confirmed", "rejected")))
+    ).all()
+    if len(rows) < settings.link_threshold_min_samples:
+        return
+
+    positive_scores = [score for score, status in rows if status == "confirmed"]
+    negative_scores = [score for score, status in rows if status == "rejected"]
+    threshold = _best_f1_threshold(
+        positive_scores,
+        negative_scores,
+        low=settings.link_threshold_min,
+        high=settings.link_threshold_max,
+    )
+
+    existing = session.get(CtxLinkThreshold, team_id)
+    if existing is None:
+        session.add(CtxLinkThreshold(team_id=team_id, threshold=threshold, sample_size=len(rows)))
+    else:
+        existing.threshold = threshold
+        existing.sample_size = len(rows)
+    session.flush()
+    log.info(
+        "context_link_threshold_retuned",
+        team_id=team_id,
+        threshold=threshold,
+        sample_size=len(rows),
+    )
+
+
+def _best_f1_threshold(
+    positive_scores: list[float], negative_scores: list[float], *, low: float, high: float
+) -> float:
+    """The score cutoff maximizing F1 over labeled topic-link scores
+    (``confirmed`` = positive, ``rejected`` = negative), clipped to
+    ``[low, high]``.
+
+    Candidate cutoffs are the observed scores themselves, plus ``high`` --  a
+    cutoff strictly between two observed scores never changes which side of it
+    either one falls on, so nothing is gained by checking a value that isn't
+    one of them (or the "assert nothing" ceiling). Ties keep the *highest*
+    cutoff: more conservative, and closer to today's behavior when the signal
+    is weak.
+    """
+    candidates = sorted({*positive_scores, *negative_scores, high})
+    total_positive = len(positive_scores)
+
+    best_threshold = high
+    best_f1 = -1.0
+    for cutoff in candidates:
+        true_positive = sum(1 for s in positive_scores if s >= cutoff)
+        false_positive = sum(1 for s in negative_scores if s >= cutoff)
+        predicted_positive = true_positive + false_positive
+        if predicted_positive == 0 or total_positive == 0:
+            f1 = 0.0
+        else:
+            precision = true_positive / predicted_positive
+            recall = true_positive / total_positive
+            f1 = 0.0 if precision + recall == 0 else 2 * precision * recall / (precision + recall)
+        if f1 >= best_f1:
+            best_f1 = f1
+            best_threshold = cutoff
+    return max(low, min(high, best_threshold))
 
 
 def get_decision_lineage(

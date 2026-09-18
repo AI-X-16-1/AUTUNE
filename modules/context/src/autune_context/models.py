@@ -193,9 +193,36 @@ class CtxMeetingStatus(Base, TimestampMixin):
     deadline_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     notified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    """Set once ``notify_context_events`` claims this meeting's Slack notices,
-    *before* any are sent -- see ``service.claim_notifications``. Guards
-    against a duplicate post if the task is redelivered, at the cost of a
-    notice going unsent (never retried) if the worker dies between the claim
-    and the send. Same trade-off ``published_at`` already makes for the
-    publish step."""
+    """Set once ``tasks.notify_context_events`` claims this meeting's topic-link
+    and drift notices, *before* any are sent. Guards against a duplicate post
+    if the task is redelivered, at the cost of a notice going unsent (never
+    retried) if the worker dies between the claim and the send. Same
+    trade-off ``published_at`` already makes for the publish step."""
+    late_drift_notified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    """Set once ``tasks.notify_late_drift`` claims this meeting's catch-up
+    drift notice, *before* it is sent. Only relevant for a meeting whose
+    lineage arrived after ``notified_at`` already fired -- see
+    ``service.build_decision_lineage``'s ``was_late`` return and
+    ``publish_if_ready(force=...)``."""
+
+
+class CtxLinkThreshold(Base, TimestampMixin):
+    """A team's own tuned ``link_confidence_threshold``, learned from its
+    topic-link confirm/reject history.
+
+    Written only by ``service.retune_link_threshold``. Absent for a team that
+    hasn't confirmed/rejected ``link_threshold_min_samples`` links yet --
+    ``service.get_effective_link_threshold`` falls back to the global
+    ``ContextSettings.link_confidence_threshold`` in that case, so a team with
+    no row behaves exactly as it did before this table existed.
+    """
+
+    __tablename__ = "ctx_link_thresholds"
+
+    team_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("teams.id", ondelete="CASCADE"), primary_key=True
+    )
+    threshold: Mapped[float] = mapped_column(Float, nullable=False)
+    sample_size: Mapped[int] = mapped_column(Integer, nullable=False)
+    """Confirmed+rejected links this threshold was computed from -- for
+    display/debugging, not read back by ``get_effective_link_threshold``."""

@@ -13,6 +13,7 @@ CTX_TABLES = {
     "ctx_decisions",
     "ctx_decision_versions",
     "ctx_meeting_status",
+    "ctx_link_thresholds",
 }
 _MODEL_CLASSES = (
     models.CtxEmbedding,
@@ -20,10 +21,11 @@ _MODEL_CLASSES = (
     models.CtxDecision,
     models.CtxDecisionVersion,
     models.CtxMeetingStatus,
+    models.CtxLinkThreshold,
 )
 
 
-def test_all_five_ctx_tables_are_registered():
+def test_every_ctx_table_is_registered():
     assert set(Base.metadata.tables) >= CTX_TABLES
 
 

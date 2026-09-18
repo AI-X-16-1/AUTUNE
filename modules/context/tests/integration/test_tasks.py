@@ -10,12 +10,13 @@ from __future__ import annotations
 
 import contextlib
 from collections.abc import Iterator
+from datetime import UTC, datetime
 from unittest.mock import patch
 
 import pytest
 from sqlalchemy.orm import Session
 
-from autune_context import tasks
+from autune_context import service, tasks
 from autune_context.models import CtxDecision, CtxDecisionVersion, CtxMeetingStatus
 
 
@@ -144,3 +145,116 @@ def test_sends_once_and_a_redelivered_execution_is_a_no_op(
     slack_client_cls.assert_called_once()
     assert slack_client_cls.return_value.post_message.call_count == 1  # channel notice
     assert slack_client_cls.return_value.send_dm.call_count == 1  # one absent stakeholder
+
+
+# --------------------------------------------------------------------------- #
+# publish_if_ready(force=...) — routing a late lineage's catch-up
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.usefixtures("use_test_session")
+def test_a_forced_publish_routes_to_notify_late_drift_not_notify_context_events(
+    db_session: Session, meeting: str, team: str
+) -> None:
+    db_session.add(
+        CtxMeetingStatus(
+            meeting_id=meeting,
+            topic_linking_done=True,
+            lineage_done=True,
+            extraction_seen=True,
+            published_at=datetime.now(tz=UTC),
+        )
+    )
+    db_session.flush()
+
+    with (
+        patch.object(service, "current_app"),
+        patch.object(tasks, "notify_late_drift") as late_drift,
+        patch.object(tasks, "notify_context_events") as regular_notify,
+    ):
+        tasks.publish_if_ready(meeting, force=True)
+
+    late_drift.apply_async.assert_called_once_with((meeting,))
+    regular_notify.apply_async.assert_not_called()
+
+
+@pytest.mark.usefixtures("use_test_session")
+def test_an_unforced_publish_still_routes_to_notify_context_events(
+    db_session: Session, meeting: str, team: str
+) -> None:
+    db_session.add(CtxMeetingStatus(meeting_id=meeting, topic_linking_done=True, lineage_done=True))
+    db_session.flush()
+
+    with (
+        patch.object(service, "current_app"),
+        patch.object(tasks, "notify_late_drift") as late_drift,
+        patch.object(tasks, "notify_context_events") as regular_notify,
+    ):
+        tasks.publish_if_ready(meeting, force=False)
+
+    regular_notify.apply_async.assert_called_once_with((meeting,))
+    late_drift.apply_async.assert_not_called()
+
+
+# --------------------------------------------------------------------------- #
+# notify_late_drift — drift only, its own claim
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.usefixtures("use_test_session", "fake_encryption_key")
+def test_notify_late_drift_sends_only_drift_and_claims_separately_from_notified_at(
+    db_session: Session, meeting: str, team: str
+) -> None:
+    status = CtxMeetingStatus(
+        meeting_id=meeting,
+        topic_linking_done=True,
+        lineage_done=True,
+        extraction_seen=True,
+        published_at=datetime.now(tz=UTC),
+        notified_at=datetime.now(tz=UTC),  # topic links already went out once
+    )
+    db_session.add(status)
+    _connect_slack(db_session, team, config={"channel": "C123"})
+    thread = CtxDecision(team_id=team, topic_label="검색 정렬 기준")
+    db_session.add(thread)
+    db_session.flush()
+    db_session.add(
+        CtxDecisionVersion(
+            thread_id=thread.id,
+            source_decision_id="dec_direct",
+            meeting_id=meeting,
+            current_statement="최신순으로 정렬한다",
+            change_type="modified",
+            confidence=0.9,
+            nli_version="test",
+            key_stakeholders_absent=["usr_alice"],
+        )
+    )
+    db_session.flush()
+
+    with patch.object(tasks, "SlackClient") as slack_client_cls:
+        tasks.notify_late_drift(meeting)
+
+    assert slack_client_cls.return_value.post_message.call_count == 1
+    assert slack_client_cls.return_value.send_dm.call_count == 1
+    assert db_session.get(CtxMeetingStatus, meeting).late_drift_notified_at is not None
+
+
+@pytest.mark.usefixtures("use_test_session", "fake_encryption_key")
+def test_notify_late_drift_redelivery_is_a_no_op(
+    db_session: Session, meeting: str, team: str
+) -> None:
+    db_session.add(
+        CtxMeetingStatus(
+            meeting_id=meeting,
+            topic_linking_done=True,
+            late_drift_notified_at=datetime.now(tz=UTC),
+        )
+    )
+    _connect_slack(db_session, team, config={"channel": "C123"})
+    db_session.flush()
+
+    with patch.object(tasks, "SlackClient") as slack_client_cls:
+        tasks.notify_late_drift(meeting)
+
+    slack_client_cls.assert_not_called()
