@@ -139,6 +139,13 @@ Every table a module owns is named `<prefix>_<name>`.
 | C. gap | `gap_` | `gap_topics`, `gap_gaps`, `gap_participation` |
 | D. context | `ctx_` | `ctx_materials`, `ctx_topic_links`, `ctx_decisions`, `ctx_decision_versions` |
 | E. intelligence | `intel_` | `intel_scores`, `intel_predictions`, `intel_reports` |
+| *(proposed #260)* agent layer | `agent_` | `agent_work_items`, `agent_runs` |
+
+`agent_` is proposed in #260 and is the one prefix that does not belong to a
+module. A prefix marks an owner; under that proposal an owner is a module *or*
+the agent layer (ADR 0009). Everything else about the rule is the same — the
+tables are owned by one party, nobody else writes them, and they need a
+deletion path by `meeting_id` or `user_id` like any other derived table.
 
 A table without a prefix is a shared entity. If you are creating one, you are
 either mistaken or you need team approval.

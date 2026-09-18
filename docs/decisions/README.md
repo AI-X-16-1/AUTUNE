@@ -58,3 +58,4 @@ Written in English, like every document here.
 | [0005](0005-no-graph-database.md) | No graph database — graphs are PostgreSQL rows | Accepted |
 | [0006](0006-extraction-quality-target-and-user-editing.md) | Extraction aims at the published ceiling, and the user finishes the list | Accepted |
 | [0008](0008-intel-schema.md) | Module E's `intel_` tables: natural keys, and `intel_reports` deletion is deferred | Accepted |
+| [0009](0009-agent-layer-placement.md) | The agent layer is a top-level peer of `modules/` and `apps/` | Proposed |
