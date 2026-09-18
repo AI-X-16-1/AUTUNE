@@ -200,3 +200,22 @@ L3 is forbidden. `L0-ext` covers reads that send content outside the system.
 **Confidence gate (신뢰도 게이트)**
 Below 0.5, the agent asks a person instead of acting. The design's answer to
 extractors that are not accurate yet.
+
+**Team charter (팀 규약)**
+A document the team writes in prose — what a meeting must settle, who must be
+in the room, what the team tends to skip — read into every run as the checklist
+for gap detection and as policy for the agent. It can tighten behaviour and
+never loosen it.
+
+**Plan mode (계획 모드)**
+Before any L2 action, the agent runs with its write tools removed, submits a
+plan, and waits for per-item approval. Approved items become work items.
+
+**Return contract (반환 계약)**
+What every tool hands back: a summary, at most five ranked items, evidence as
+ids, a confidence and a `truncated` flag. It is what keeps a tool's work out of
+the orchestrator's context.
+
+**Context budget (컨텍스트 예산)**
+The fixed caps on what a run may load and do — work items, past meetings, tool
+calls, tokens, time. A run that hits one stops and says so.

@@ -3,7 +3,7 @@
 > **Status: Proposed.** Nothing described here is built. The direction is under
 > discussion in issue #260 and the layer's location is ADR 0009, still
 > `Proposed`. Read this as a design under review, not as how the system works.
-> Three questions in section 10 block the first line of code.
+> Four questions in section 13 block the first line of code.
 
 Modules A–E are exposed as **tools**. An agent layer above them decides which
 tools to call, when to wake up, and what it is allowed to do with the answer.
@@ -44,7 +44,7 @@ permitted actions — and no new machine learning.
 - The fixed pipeline. `autune.transcript.ready` → B, C, D → `…completed` → E
   keeps running exactly as it does now. **The agent layer is an optional path
   on top; if it is switched off or broken, the product still works.** That is
-  the primary risk control in section 9.
+  the primary risk control in section 12.
 - Invariant 2. Modules still may not import one another.
 
 **Changes:**
@@ -80,11 +80,22 @@ permitted actions — and no new machine learning.
 ```
 
 Note what is *not* in the diagram: a per-module subagent. An earlier draft had
-six subagents, one wrapping each module. Four of them would have had no
-behaviour of their own — they would call one module and return. The
-orchestrator calls those tools directly, and only **Research** exists as a
-separate agent, because it is the one that reasons over several sources and is
-the one that talks to the outside world.
+six subagents, one wrapping each module, and gave the right reason for them —
+**context isolation**: a gap detector that reads three hundred utterances and
+finds forty-seven gaps must not hand all forty-seven to the orchestrator, or the
+orchestrator has no room left to think. That reason is right and the mechanism
+is wrong. Isolation is a property of what a tool *returns*, not of whether an
+LLM loop sits in front of it. A tool that returns a three-sentence summary,
+five ranked items and evidence ids (section 4, the return contract) isolates
+exactly as well as a subagent would, at zero extra model calls and with nothing
+to debug in between.
+
+A subagent — its own reasoning loop — earns its cost only when the sub-task
+needs several tool calls *and a judgement between them*. "Detect gaps for this
+meeting" is one call. "Find out what a stuck decision is missing" is a search,
+a read, another search and a comparison, and that is **Research**: the one
+subagent, the one that reasons over several sources, and the one that talks to
+the outside world.
 
 ## 4. Tools — how a module becomes callable
 
@@ -120,25 +131,65 @@ for name in MODULES:
         REGISTRY[tool.name] = tool
 ```
 
+### The return contract — what every tool hands back
+
+```python
+class ToolResult(BaseModel):
+    ok: bool
+    reason: str | None = None        # when ok is False: why, in one line
+    summary: str                     # three sentences at most; the orchestrator reads this
+    items: list[Finding]             # at most five, ranked by importance
+    evidence: list[str]              # utterance ids only, never text
+    confidence: float
+    truncated: bool                  # True when the cap cut something off
+```
+
+This is the whole of context isolation (section 3). Three things are enforced
+by the decorator, not requested:
+
+- **`items` is capped at five.** A tool that found forty-seven ranks them and
+  keeps five; the rest go to that module's own tables, where a screen can show
+  them. Not in the context and not shown are different things.
+- **`evidence` is ids.** The orchestrator fetches text when it needs it, which
+  is rarely. Ids are also what keeps a transcript out of a prompt by accident.
+- **`truncated` is honest.** The orchestrator may decide to call again with a
+  narrower question; it must never decide the meeting had five gaps.
+
+`Finding` carries a title, a body and a score. Its body is masked text like
+everything read back from the database (privacy.md section 2); the contract
+does not make it more or less so.
+
 ### Rules for a tool
 
-1. **Synchronous, with type hints.** Arguments and return values are
-   `packages/contracts` models. *Not* `async` — this repository is synchronous
-   SQLAlchemy and synchronous routes throughout, and an `async def` wrapping a
-   blocking call is a lie that costs a thread.
+1. **Synchronous, with type hints.** Arguments are `packages/contracts` models
+   or ids; the return is `ToolResult`. *Not* `async` — this repository is
+   synchronous SQLAlchemy and synchronous routes throughout, and an `async def`
+   wrapping a blocking call is a lie that costs a thread.
 2. **The docstring is the prompt.** Say **when to use it**, and when not to,
    before saying what it does. Half of an agent's accuracy is decided here.
-3. **Safe to call twice**, with one recorded exception:
+3. **One high-level tool and two or three primitives.** Only the high-level
+   tool and the agent cannot compose; only primitives and it gets lost. Three
+   to five per module.
+4. **Safe to call twice**, with one recorded exception:
    `autune.audio.process_recording` is not, and cannot be. It deletes the
    recording in a `finally` (invariant 11), so a second call has nothing left
    to decode. Module A exposes reads and the transcript, not a re-transcribe.
-4. **Thirty-second budget.** Past it, return partial results with
-   `partial=True` rather than blocking the loop.
-5. **Never raise for an expected failure.** Return `ToolResult(ok=False,
-   reason=...)` so the agent can read it and take another route. Reserve
-   exceptions for bugs.
+5. **Thirty-second budget.** Past it, return what there is with
+   `truncated=True` rather than blocking the loop.
+6. **Never raise for an expected failure.** `ok=False` with a reason, so the
+   agent can read it and take another route. Reserve exceptions for bugs.
 
-Three to five tools per module. Finer than that and the agent gets lost.
+### Two asks that are specific to a module
+
+- **C — `detect_gaps` takes a `checklist: list[str] | None`.** When given, the
+  meeting is checked against it; when absent, the built-in domain template
+  applies. The team charter (section 7) arrives through this argument, and it
+  is what lets gap detection be tuned by a person rather than retrained.
+- **D — search is two tools, not one.** `search_exact` (BM25) and
+  `search_semantic` (embeddings), exposed separately, because the agent has to
+  choose: a person's name or a Jira key wants exact match, "that performance
+  discussion" wants meaning. One merged tool takes the choice away from the
+  only party that can make it.
 
 ## 5. State — the two tables that make it proactive
 
@@ -157,7 +208,7 @@ CREATE TABLE agent_work_items (
   owner_id          UUID,
   due_date          DATE,
   status            TEXT,       -- open | in_progress | blocked | resolved | dropped
-  confidence        FLOAT,      -- see section 8
+  confidence        FLOAT,      -- see section 10
   external_ref      JSONB,      -- {"jira": "PROJ-123", "notion": "..."}
   last_signal_at    TIMESTAMP,
   escalation_lv     INT,        -- 0 watch · 1 DM · 2 raise on agenda · 3 report to lead
@@ -165,16 +216,33 @@ CREATE TABLE agent_work_items (
 );
 
 CREATE TABLE agent_runs (
-  id          UUID PRIMARY KEY,
+  id          TEXT PRIMARY KEY,
   trigger     JSONB,   -- why it woke up
   plan        JSONB,   -- what it meant to do
   steps       JSONB,   -- which tools it called, in order
-  actions     JSONB,   -- what it did, or is waiting for approval to do
+  proposed    JSONB,   -- the plan it submitted for approval (section 8)
+  decisions   JSONB,   -- per item: approved | edited | rejected, and the reason
+  actions     JSONB,   -- what it actually did
   outcome     TEXT,
   latency_ms  INT,
   token_cost  INT
 );
 ```
+
+Ids are prefixed strings (`run_…`, `wi_…`) from `autune_core.ids.new_id`, not
+UUIDs — every other table in the repository does it that way
+(`data-model.md`), and an id that says what it is has been worth it every
+time one showed up in a log.
+
+`proposed` and `decisions` are the record of the approval gate. They are also
+the closest thing this product has to labels that cost nobody anything: a
+person approving, editing or rejecting a proposed action is saying something
+about whether the agent's judgement was right. What they say is about the
+*action* — was this DM worth sending, was this deadline right — and not about
+module B's classifier, whose question is whether an utterance was a commitment.
+So `decisions` feeds the agent's own ranking and policy (section 8), and it is
+a starting point for a labelling session, not a training set. Saying more
+would be overclaiming.
 
 **`next_check_at` is the whole of "wakes up by itself".** The scheduler selects
 `WHERE next_check_at <= now()` and calls the orchestrator. There is nothing
@@ -215,10 +283,85 @@ without that path (#86); this must not repeat it.
 | Request | "Summarise last week's decisions" | Slash command |
 
 For the first release, **event + state** is enough. Both depend on the
-question in section 10.2: there is no Celery beat in this repository yet, and
+question in section 13.2: there is no Celery beat in this repository yet, and
 a module cannot add one.
 
-## 7. What the agent is allowed to do
+## 7. The team charter — judgement the team writes down
+
+Gap detection compares a meeting against a domain template, and the template
+is code. That is the wrong place for it twice over: every team gets the same
+one, and when it is wrong the only person who can fix it is the module's
+owner, by retraining or editing source.
+
+Coding agents solve the same problem with a file at the root of the project —
+a document the team writes in prose, read into the prompt on every run. It is
+the cheapest way there is to change behaviour without training, and it moves
+the judgement of "what counts as a problem" to the people whose problem it is.
+
+```markdown
+# Team charter
+
+## A meeting must settle
+- A performance requirement is a number (p95 < 300ms), never "good enough"
+- Adopting an external API means naming a cost ceiling and a fallback
+- A date is a date with an owner
+
+## Who must be in the room
+- Technical spec → the backend lead
+- Pricing → the PO
+
+## What we tend to skip
+- Error-handling scenarios
+- Migration plans
+
+## For the agent
+- If an owner is unclear, ask; do not guess
+- At most two channel posts a day
+```
+
+### How it is used
+
+1. **As the checklist for gap detection.** Each line under *A meeting must
+   settle* becomes an item in `detect_gaps(checklist=…)` (section 4). The
+   domain template becomes the default that the charter overrides.
+2. **In the orchestrator's system prompt, on every run.** The judgement is
+   present each time a plan is made.
+3. **As policy for the action model** (section 8). "At most two posts a day"
+   is enforced, not suggested.
+4. **As the tuning knob.** When gap detection is wrong for a team, the team
+   edits a paragraph. No retraining, no issue to another module's owner.
+
+### Three constraints, because a prompt that drives actions is an attack surface
+
+- **A charter can only tighten.** It may add checklist items, lower a post
+  limit, demand an owner. It can never grant a permission level, unblock L3,
+  or name a destination. Anything in a charter that reads as an instruction to
+  a tool is data for judgement, not an instruction — the same rule the
+  orchestrator applies to transcript text.
+- **"Who must be in the room" is checked at the role level, never the
+  person.** "The backend lead was silent on the spec discussion" is a
+  per-person speaking-pattern statement about somebody other than the reader,
+  which privacy.md section 3 forbids. The check is "no one with the backend
+  role spoke on this topic", which is what S20 draws (topic × role, never per
+  person), and it is C's per-role participation matrix that answers it.
+- **The charter is stored, versioned and per team.** An `agent_charters` row
+  with the text and a version, not a file on a disk somewhere. A run records
+  which version it read, because "why did it say that last week" has to be
+  answerable.
+
+### Why this matters more than its size
+
+It is a day or two of work — read a document, split it, pass it as a
+checklist, prepend it to a prompt — and it changes what the product is. The
+onboarding story becomes "write three lines about how your team decides
+things". The differentiation becomes concrete: every other meeting tool applies
+one template to every team. And it turns low extraction accuracy from an
+excuse into a design: the team holds the standard, the system applies it, and
+where the standard is unmet the system asks.
+
+It also changes the feasibility of the first scenario (section 10).
+
+## 8. What the agent is allowed to do
 
 An agent that acts will eventually act wrongly. The grades exist before the
 first action does.
@@ -226,20 +369,126 @@ first action does.
 | Level | Nature | Example | Handling |
 | --- | --- | --- | --- |
 | L0 | Internal read or draft | Search, summarise, draft, write to `agent_*` | Automatic |
-| **L0-ext** | **Read that leaves the building** | **Web search, LLM provider call** | **Section 10.3 — unresolved** |
+| **L0-ext** | **Read that leaves the building** | **Web search, LLM provider call** | **Section 13.3 — unresolved** |
 | L1 | Reversible write | Thread comment, agenda draft | Automatic, notify after |
-| L2 | Write that moves a person | DM, channel post, Jira create or re-date | Approval, then execute |
+| L2 | Write that moves a person | DM, channel post, Jira create or re-date | **Plan mode**, then execute |
 | L3 | Destructive | Close an issue, delete an event, send externally | Forbidden |
 
-Approvals arrive as buttons. **Refusals are recorded in `agent_runs.actions`
-and fed back into the next decision** — the cheapest possible version of an
-assistant that learns from its team.
+### Plan mode — a plan is submitted before anything at L2 happens
+
+Borrowed whole from coding agents. It is not a second model or a planning
+algorithm; it is the same loop with three differences:
+
+1. **The write tools are not in the tool list.** While planning, `Comms` does
+   not exist. The agent can only read.
+2. **One paragraph is added to the system prompt**: you are planning; when the
+   plan is complete, submit it with `submit_work_plan`.
+3. **Submitting the plan is itself a tool call**, and it is how the planning
+   phase ends.
+
+```python
+mode = "plan"
+while True:
+    tools = READ_ONLY + [submit_work_plan] if mode == "plan" else ALL
+    response = llm(messages, tools=tools, system=base + charter + (PLAN if mode == "plan" else ""))
+    for call in response.tool_calls:
+        if call.name == "submit_work_plan":
+            decisions = ask_person(call.args["actions"])      # per item: approve / edit / reject
+            approved = [a for a, d in zip(call.args["actions"], decisions) if d.ok]
+            if approved:
+                mode = "execute"                              # same messages, tools unlocked
+            messages.append(tool_result(approved=approved, rejected=[…]))
+            continue
+        messages.append(execute(call))
+```
+
+Twenty or thirty lines around a `mode` variable. Three things it buys, and the
+third is the one that matters:
+
+- **A gate before the irreversible.** Obvious, and the least of it.
+- **The plan becomes context.** A plan the agent wrote itself sits in the
+  messages and every later turn refers to it. Without one, the third action
+  has forgotten the first intention.
+- **Without write tools the agent does not rush.** With a write tool available
+  the agent acts at sixty percent understanding, and that action stays in the
+  context as a premise for everything after. Take the write path away and
+  reading is all there is, so it reads more. Removing the ability to act
+  raises the quality of the investigation.
+
+**The plan is the work-item draft.** `submit_work_plan` takes a list of
+`ProposedAction` — kind, title, body, owner, due date, the tool call to make,
+the level, the rationale, the evidence — and an approved action is inserted
+into `agent_work_items` as it is. The approval gate and the state store are
+one mechanism seen from two sides.
+
+**Per-item approval is required.** A coding agent approves a plan whole; a
+team approves three of five actions and rejects two with a reason. The reason
+goes to `agent_runs.decisions` and is in the prompt the next time the same
+kind of situation comes up.
+
+### Waiting for a person — without a Celery task waiting
+
+The approval can take hours. A Celery task cannot sit blocked for hours, and
+must not: `acks_late` redelivers it, a worker restart loses it, and a queue
+that holds suspended work is a queue nobody can drain. So the wait is not
+inside the task. On `submit_work_plan` the run **persists its messages and the
+proposal to `agent_runs` and ends**. The decision arrives as an event
+(webhook, button, web form), and a new task **loads the messages back and
+resumes in `execute` mode**. The context the plan was made in is the messages;
+the messages are rows; nothing is lost by the task ending. This is the same
+question as #258 and #207 — how the layer reaches Celery from outside a worker
+— and is decided with them.
+
+### When it asks, and when it does not
+
+**Plan mode runs only when the plan contains at least one L2 action.** A run
+that ends at L0 and L1 — research, a summary, a thread comment, an internal
+write — executes and notifies afterwards. An assistant that asks about
+everything is an approval workflow, not an assistant, and the morning briefing
+(section 10) is the demonstration that it does not ask.
+
+Two rules soften the gate without removing it:
+
+- **Repeated approval proposes demotion.** The same `(team, kind, action_type)`
+  approved five times in a row proposes moving that type to L1, and a person
+  confirms. It is per team, reversible, and **never applies to a direct
+  message**: a DM moves a person by definition, and an assistant that starts
+  DMing without asking after five yeses is the notification bot this design
+  exists to not be.
+- **The charter's limits are policy** — "two posts a day" is checked before
+  the plan is submitted, not after.
+
+There is no urgent exception. L3 is never executed.
+
+Approvals arrive as buttons, on a web screen first and in Slack second: every
+module's Slack handler is still a TODO and #80 has not decided whether Slack
+is required at all, so a web approval page in `features/` is the path that
+does not wait on anyone.
 
 `L0-ext` is separated from `L0` deliberately. A web search built from meeting
 content *is* an outbound transfer, and invariant 11 does not distinguish
 between a transfer made to be helpful and any other.
 
-## 8. Acting on tools that are not reliable yet
+## 9. The context budget
+
+Most of the time spent building an agent goes to deciding what goes into the
+context and what stays out — not to the model. The numbers are fixed here so
+they are a decision and not a discovery.
+
+| What | Cap | Order |
+| --- | --- | --- |
+| Open work items loaded per run | 30 | deadline soonest, then escalation highest, then most recent signal |
+| Past meetings | 3 | chosen by D's search tools, not by recency |
+| Each tool result | `summary` + 5 `items` | the return contract, section 4 |
+| Tool calls per run | 15 | past it, stop and hand over with the partial trace kept |
+| Tokens per run | a ceiling, then observed in `agent_runs.token_cost` | cost has to be predictable before it can be reduced |
+| Wall clock per run | 2 minutes | |
+
+When a cap is hit the run stops and says so. It does not summarise its way
+past the cap, because a summary of a truncated context is a confident answer
+to a question that was not fully read.
+
+## 10. Acting on tools that are not reliable yet
 
 This is the part of the design worth defending, and it is not a caveat.
 
@@ -261,10 +510,64 @@ behind a confident assistant. It is one that knows which of its own senses to
 trust and says so — and that is a better story than "we built an agent",
 because it is a harder thing to build.
 
-## 9. Deliberately not in this
+### What the charter does to the first scenario
 
-- **A per-module subagent for A, B, C, D and E.** They would be wrappers with
-  no behaviour. Section 3.
+The scenario an earlier draft led with — an ambiguous agreement ("that
+performance is probably fine") caught after the meeting, researched, and put
+to the owner as a choice — stood on the two weakest points in the repository:
+the ambiguous-agreement classifier catches 17% (#115), and C's risk scoring
+does not exist. The morning briefing was recommended instead because E's
+aggregation and D's read API actually work.
+
+The charter changes that arithmetic. "A performance requirement is a number"
+is a checklist line, and checking a transcript against a checklist line is a
+prompt over masked utterances, not a topic graph with PageRank on it. It does
+not need `verify_agreement` and it does not need C's pipeline — it needs
+`detect_gaps(checklist=…)` to accept the argument and, until C's real
+implementation lands behind it, an LLM to answer the question. That is the
+"T2" track of section 11 doing real work, and it is the first thing in this
+design that lets the flagship scenario run against a real meeting in W4.
+
+So the recommendation is now: **both scenarios, in this order.** The morning
+briefing first, because it runs on modules that exist and it demonstrates the
+loop *not* asking. The charter-driven ambiguous-agreement scenario second,
+because it demonstrates plan mode and the charter together, and it is the one
+that shows what the product is for. The W4 gate cuts the second, never the
+first.
+
+## 11. Two experiments that the structure makes cheap
+
+Tools are swappable behind one interface, so the same evaluation set can be
+run through more than one implementation of the same tool.
+
+| Track | The tool behind `classify_utterances` | Measured |
+| --- | --- | --- |
+| T1 | Module B's classifier (DeBERTa) | macro F1, latency, cost |
+| T2 | An LLM with a prompt | same |
+| T3 | B's classifier as a first pass, LLM on the uncertain band | same |
+
+**One task, not three.** Utterance classification has a measured baseline
+(#149, macro F1 0.225 on a real distribution) and an evaluation set. Gap
+detection has neither — there is no implementation to measure and no labelled
+gaps. Topic linking has D's `context/eval-harness` branch and is the second
+task when that harness merges. Writing a three-by-three table before two of
+its rows can be filled is a promise the numbers may not keep.
+
+The second experiment is cheaper and more telling: **the same gap check with
+and without the charter.** If a paragraph a team wrote moves the F1 of gap
+detection more than a retraining would, that is the product argument in one
+row.
+
+A failed combination is recorded like a successful one. The point of the
+table is what was measured, not what worked.
+
+## 12. Deliberately not in this
+
+- **A per-module subagent for A, B, C, D and E.** Context isolation is the
+  return contract; a loop in front of a single tool call is cost without
+  benefit. Section 3.
+- **Web search in Research, for now.** Section 13.3.
+- **A charter that can grant anything.** It tightens only. Section 7.
 - **A framework.** A hand-written loop plus function calling, on the order of
   200 lines. A graph library makes this harder to debug and harder to explain,
   and explaining it is half the value.
@@ -274,26 +577,26 @@ because it is a harder thing to build.
 
 ### Limits the loop enforces on itself
 
-Fifteen tool calls per run, a token ceiling, and a two-minute timeout. Past any
-of them the run stops and hands over to a person, with the partial trace kept
-in `agent_runs`.
+The context budget, section 9. Past any cap the run stops and hands over to a
+person, with the partial trace kept in `agent_runs`.
 
-## 10. Open questions — these block the work
+## 13. Open questions — these block the work
 
-### 10.1 Where does the layer live? — ADR 0009
+### 13.1 Where does the layer live? — ADR 0009
 
 `packages/agent/` breaks the import-linter contract *Packages do not depend on
 modules*. `apps/agent/` breaks invariant 6, *apps is assembly only*. A new
 top-level `agent/` breaks neither but adds a layer. Proposed: the third.
 
-### 10.2 How is Celery reached outside the worker? — #258, #207, #227
+### 13.2 How is Celery reached outside the worker? — #258, #207, #227
 
 There is no beat schedule, the API process has no Celery app at all, and
 modules may not edit `apps/worker`. Every trigger in section 6 stands on this,
-and so does the upload endpoint that already shipped. Three issues, one
-question; they should be decided together.
+so does plan mode's suspend-and-resume (section 8), and so does the upload
+endpoint that already shipped. Three issues, one question; they should be
+decided together.
 
-### 10.3 May meeting content leave the building? — #92
+### 13.3 May meeting content leave the building? — #92
 
 The Research agent searches the web and calls an LLM provider. Both are
 outbound transfers of content derived from a transcript. `privacy.md` and
@@ -301,7 +604,30 @@ outbound transfers of content derived from a transcript. `privacy.md` and
 masked, has not been decided. Until it is, Research runs against uploaded
 material only, never the open web.
 
+### 13.4 Where the charter lives, and who may edit it
+
+A charter drives judgement and policy, so who can change it is a permission
+question: a team admin, any member, a reviewer? `agent_charters` needs an
+owner column and a version, and the answer decides whether a charter edit is
+an L1 or an L2 action of the person making it. Not decided.
+
 ---
+
+## Appendix — where each pattern comes from
+
+Every mechanism above is one that a working coding agent already uses. That is
+the design's justification: nothing here is invented for the demo.
+
+| In a coding agent | Here | Why it transfers |
+| --- | --- | --- |
+| A `while` loop and function calling | The orchestrator, section 3 | There is no planner module; the model reads a result and decides the next call |
+| `grep` and `read`, not an index | `search_exact` and `search_semantic`, section 4 | Some questions want exact match and the agent has to be able to choose |
+| A rules file at the project root | The team charter, section 7 | The cheapest way to change behaviour without training |
+| Reading intent (issues, docs) against reality (code, tests) | Charter against transcript = gap detection | "What should happen next" is the difference between the two |
+| Subagents for context isolation | The return contract, section 4 | The point is protecting the parent's context, not dividing labour |
+| Plan mode | `submit_work_plan` and the gate, section 8 | Removing write tools raises the quality of the investigation |
+| A todo-list tool | `agent_work_items`, section 5 | In a domain with no codebase, the state has to be built |
+| An execution trace | `agent_runs`, section 5 | Without observability there is no debugging and no trust |
 
 Related: `module-boundaries.md`, `async-pipeline.md`, `data-model.md`,
 `privacy.md`, `../decisions/0009-agent-layer-placement.md`, `../product/prd.md`.

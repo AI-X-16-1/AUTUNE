@@ -155,9 +155,13 @@ weeks, in the reduced form agreed in #260:
 - **Research.** When a decision is blocked for want of information, gather it
   from uploaded material and present the options. Web search waits on the
   privacy question in ADR 0007 / #92.
+- **The team writes the standard.** A short charter — what a meeting must
+  settle, who must be in the room — is the checklist gap detection runs
+  against and the policy the agent follows. Tuning is editing a paragraph.
 - **Nothing acts on a person without approval.** Grades L0–L3 in
-  `../architecture/agent-layer.md` section 7; everything at L2 and above waits
-  for a button.
+  `../architecture/agent-layer.md` section 8; an L2 action goes through plan
+  mode — the agent investigates with its write tools removed, submits a plan,
+  and a person approves it item by item. L0 and L1 do not ask.
 - **Nothing acts on a low-confidence signal.** Below 0.5 the agent asks rather
   than acts. Module B's classifier is weak today (#149, #115) and the design
   routes around it rather than hiding it.
