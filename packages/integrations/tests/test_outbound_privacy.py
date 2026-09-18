@@ -472,10 +472,23 @@ TYPOGRAPHIC_DASH = [
 
 PARENTHESISED_AREA_CODE = [("phone", "(02)123-4567 로 전화 주세요")]
 
+# Horizontal whitespace that is not U+0020. `[ \t]` was narrower than the
+# `\s` it replaced *and* narrower than "horizontal space": a no-break space is
+# what Word, HWP and Notion put between number groups, and a full-width space is
+# what a Korean IME emits. Both let a complete landline through untouched -- nine
+# digits, so `account` could not catch it either (#211 review).
+UNUSUAL_HORIZONTAL_SPACE = [
+    ("phone", "02\u00a0123\u00a04567"),  # no-break space
+    ("phone", "010\u30001234\u30005678"),  # ideographic (full-width) space
+    ("phone", "010\u00a0-\u00a01234\u00a0-\u00a05678"),  # NBSP around the dash
+    ("rrn", "900101\u3000-\u30001234567"),
+    ("card", "1234\u00a05678\u00a09012\u00a03456"),
+]
+
 
 @pytest.mark.parametrize(
     ("category", "text"),
-    SPACED_AROUND_SEPARATOR + TYPOGRAPHIC_DASH + PARENTHESISED_AREA_CODE,
+    SPACED_AROUND_SEPARATOR + TYPOGRAPHIC_DASH + PARENTHESISED_AREA_CODE + UNUSUAL_HORIZONTAL_SPACE,
 )
 def test_a_wider_separator_is_still_the_same_number(category: str, text: str) -> None:
     assert category in {cat for _, _, cat in find_pii(text)}

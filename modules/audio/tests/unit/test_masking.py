@@ -37,6 +37,25 @@ class TestTheDocumentedFormat:
     def test_a_card_keeps_its_last_four(self) -> None:
         assert mask("1234-5678-9012-3456").text == "****-****-****-3456"
 
+    @pytest.mark.parametrize(
+        ("line", "masked"),
+        [
+            # The separators #211 taught the patterns. Each is layout, not
+            # content, and masking it defeats what `_SHAPE_CHARS` is for: an
+            # unclosed parenthesis and a dash that vanished are not "a phone
+            # number with its middle hidden" (@PARKJAEKYUNG0525 on #211).
+            ("(02)123-4567 로 전화 주세요", "(**)***-4567 로 전화 주세요"),
+            ("010–1234–5678 입니다", "010–****–5678 입니다"),  # en dash
+            ("010 — 1234 — 5678", "010 — **** — 5678"),  # em dash
+            ("02\u00a0123\u00a04567", "**\u00a0***\u00a04567"),  # no-break space
+            ("010\u30001234\u30005678", "010\u3000****\u30005678"),  # full-width space
+        ],
+    )
+    def test_every_separator_the_patterns_accept_survives_masking(
+        self, line: str, masked: str
+    ) -> None:
+        assert mask(line).text == masked
+
 
 class TestSpeechNotWriting:
     """A transcript is what somebody said, punctuated by whichever model heard it.
