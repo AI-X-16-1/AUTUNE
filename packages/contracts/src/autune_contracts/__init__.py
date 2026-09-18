@@ -32,6 +32,7 @@ from .extraction import (
     ActionItem,
     AmbiguousAgreement,
     Classification,
+    Decision,
     ExternalRef,
     ExtractionResult,
 )
