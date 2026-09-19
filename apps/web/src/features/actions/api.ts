@@ -75,8 +75,24 @@ export const updateActionItem = (id: string, changes: Partial<ActionItemDraft & 
  * The server records that a deletion happened, which is all the edit-cost metric
  * asks for.
  */
-export const deleteActionItem = (id: string) =>
-  api.extraction<void>(`/action-items/${id}`, { method: "DELETE" });
+/**
+ * Delete one item. The server answers 204 with no body.
+ *
+ * `request` parses every 2xx body as JSON, so an empty 204 throws a
+ * `SyntaxError` after the row is already gone — the board then kept the card
+ * and, once the drawer reported failures, said the delete had failed. An error
+ * status still arrives as `ApiError`; only the parse of an empty success is
+ * dropped here. The shared client is the better place for this (all five own
+ * it); until then it stays in this feature.
+ */
+export const deleteActionItem = async (id: string): Promise<void> => {
+  try {
+    await api.extraction<void>(`/action-items/${id}`, { method: "DELETE" });
+  } catch (cause) {
+    if (cause instanceof SyntaxError) return;
+    throw cause;
+  }
+};
 
 /** Re-push this meeting's items to Notion and Jira. */
 export const syncResults = (meetingId: string) =>
