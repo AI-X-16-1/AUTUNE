@@ -52,9 +52,15 @@ class RoleStance(ContractModel):
     **A unanimous role is not representable.** ``supporting == identified`` or
     ``concerns == identified`` says what every person in the role did, which is
     each person's stance however many of them there are -- the gap k-anonymity
-    leaves (review on #232). A producer leaves such a role out. A count of zero is
-    still allowed: whether "nobody in the role raised a concern" identifies anyone
-    is open on #232.
+    leaves. A producer leaves such a role out. A count of zero is allowed: "nobody in
+    the role raised a concern" is how most roles look after most decisions, and
+    refusing it would drop nearly every row.
+
+    What remains is a lopsided split -- four of five supporting, one concern. It
+    says one person dissented, not which; anyone who knows the other four's
+    stances can still tell. Accepted as the residual risk of a count, and not
+    gated further here, because every stricter rule empties most roles in a team
+    meeting.
     """
 
     role: str

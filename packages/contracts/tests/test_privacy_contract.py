@@ -84,17 +84,19 @@ def test_one_person_is_not_counted_on_both_sides() -> None:
     ("supporting", "concerns"), [(3, 0), (0, 3)], ids=["all supporting", "all concerned"]
 )
 def test_a_unanimous_role_is_not_representable(supporting: int, concerns: int) -> None:
-    """Three Devs who all raised a concern is each Dev's stance (review on #232)."""
+    """Three Devs who all raised a concern is each Dev's stance."""
     with pytest.raises(ValueError, match="unanimous"):
         RoleStance.model_validate(_stance(identified=3, supporting=supporting, concerns=concerns))
 
 
 @pytest.mark.parametrize(("supporting", "concerns"), [(2, 1), (1, 1), (0, 1), (0, 0)])
 def test_a_split_or_partial_role_is_representable(supporting: int, concerns: int) -> None:
-    """Zero is allowed for now; whether it identifies anyone is open on #232."""
+    """Zero is allowed: it is how most roles look, decided on #232."""
     RoleStance.model_validate(_stance(identified=3, supporting=supporting, concerns=concerns))
 
 
 def test_a_decision_without_stance_is_still_valid() -> None:
+    """The fixture is a producer from before 2.1, with no ``stance_by_role``.
+    Kept that way on purpose: it is what shows the field is additive."""
     decision = ExtractionResult.model_validate(fixtures.load("extraction_result")).decisions[0]
     assert decision.stance_by_role == []
