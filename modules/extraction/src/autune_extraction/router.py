@@ -11,7 +11,7 @@ from __future__ import annotations
 from datetime import date
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Query, status
 from sqlalchemy.orm import Session
 
 from autune_contracts.enums import ActionStatus
@@ -19,8 +19,8 @@ from autune_contracts.extraction import ExtractionResult
 from autune_core import Meeting, get_session
 from autune_core.errors import NotFoundError
 
-from . import service
-from .models import ExtActionItem, ExtDecision
+from . import service, tasks
+from .models import ExtActionItem, ExtDecision, ExtDecisionReview
 from .schemas import (
     ActionItemCreate,
     ActionItemDetail,
@@ -114,15 +114,25 @@ def create_action_item(payload: ActionItemCreate, session: SessionDep) -> Action
 
 @router.patch("/action-items/{action_item_id}", response_model=ActionItemRead)
 def update_action_item(
-    action_item_id: str, payload: ActionItemUpdate, session: SessionDep
+    action_item_id: str,
+    payload: ActionItemUpdate,
+    session: SessionDep,
+    background: BackgroundTasks,
 ) -> ActionItemRead:
-    """Edit or close an item."""
-    item = service.update_action_item(session, _load(session, action_item_id), payload)
+    """Edit or close an item. Confirming it queues its Notion page (#30)."""
+    item = _load(session, action_item_id)
+    previous_status = item.status
+    item = service.update_action_item(session, item, payload)
     # Before the commit, for the reason ``create_action_item`` gives: an edit
     # answered with a 500 must not also have been saved, or it counts twice
     # in edit cost when the client retries.
     response = service.read_model(item)
     session.commit()
+    # After the response, so the sync reads the committed row and the board is
+    # not held on Notion. Only the edit that confirms starts one; the sync
+    # itself sends a page once.
+    if service.became_confirmed(previous_status, item):
+        background.add_task(tasks.sync_after_confirmation, item.id)
     return response
 
 
@@ -152,15 +162,24 @@ def get_review(meeting_id: str, session: SessionDep) -> MeetingReview:
 
 @router.patch("/decisions/{decision_id}", response_model=ReviewDecision)
 def review_decision(
-    decision_id: str, payload: DecisionReviewUpdate, session: SessionDep
+    decision_id: str,
+    payload: DecisionReviewUpdate,
+    session: SessionDep,
+    background: BackgroundTasks,
 ) -> ReviewDecision:
-    """Confirm, reject or reword a proposed decision, or put it back to pending."""
+    """Confirm, reject or reword a proposed decision, or put it back to pending.
+
+    Confirming it sends its Notion page once, after the response (#30)."""
     decision = session.get(ExtDecision, decision_id)
     if decision is None:
         raise NotFoundError("decision", decision_id)
+    review = session.get(ExtDecisionReview, decision_id)
+    previous_status = review.status if review is not None else None
     # Built before the commit, for the reason ``create_action_item`` gives.
     response = service.review_decision(session, decision, payload)
     session.commit()
+    if service.decision_became_confirmed(previous_status, response.status):
+        background.add_task(tasks.sync_decision_after_confirmation, decision_id)
     return response
 
 
@@ -172,10 +191,14 @@ def get_outbound(meeting_id: str, session: SessionDep) -> Outbound:
 
 
 @router.post("/decisions", response_model=ReviewDecision, status_code=status.HTTP_201_CREATED)
-def create_decision(payload: DecisionCreate, session: SessionDep) -> ReviewDecision:
-    """Add a decision the model missed. It is confirmed and survives a rerun."""
+def create_decision(
+    payload: DecisionCreate, session: SessionDep, background: BackgroundTasks
+) -> ReviewDecision:
+    """Add a decision the model missed. It is confirmed and survives a rerun, so
+    its Notion page goes out as for any confirmed decision."""
     response = service.create_decision(session, payload)
     session.commit()
+    background.add_task(tasks.sync_decision_after_confirmation, response.id)
     return response
 
 

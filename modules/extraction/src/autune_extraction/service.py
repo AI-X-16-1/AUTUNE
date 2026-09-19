@@ -8,8 +8,9 @@ Never imports another module.
 
 from __future__ import annotations
 
-from collections.abc import Collection, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from datetime import UTC, date, datetime
+from typing import Any, Protocol
 
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.dialects import postgresql, sqlite
@@ -39,9 +40,11 @@ from .models import (
     ExtClassification,
     ExtConfirmation,
     ExtDecision,
+    ExtDecisionRef,
     ExtDecisionReview,
     ExtDecisionSource,
     ExtEditEvent,
+    ExtExternalRef,
 )
 from .pipeline.base import Classifier
 from .schemas import (
@@ -426,6 +429,18 @@ def update_action_item(
 
     _record_edit(session, meeting_id=item.meeting_id, action_item_id=item.id, kind="edited")
     return item
+
+
+def became_confirmed(previous_status: str, item: ExtActionItem) -> bool:
+    """Whether this edit is the one that confirmed the item.
+
+    Confirming is leaving ``needs_confirmation`` for any column a person works in
+    -- the board has no separate "confirm" button, moving the card is the answer.
+    A later move between ``todo``, ``in_progress`` and ``done`` is not a second
+    confirmation, which is half of what keeps the Notion page to one.
+    """
+    confirming = ActionStatus.NEEDS_CONFIRMATION.value
+    return previous_status == confirming and item.status != confirming
 
 
 def delete_action_item(session: Session, item: ExtActionItem) -> None:
@@ -1199,3 +1214,214 @@ def delete_decision(session: Session, decision: ExtDecision) -> None:
         review.status = "rejected"
         review.statement = None
     session.flush()
+
+
+# --- step 7: sync to Notion -----------------------------------------------------
+
+NOTION = "notion"
+
+NOTION_PROPERTIES: Mapping[str, str] = {
+    "title": "작업",
+    "assignee": "담당자",
+    "due": "마감일",
+    "status": "상태",
+    "confidence": "신뢰도",
+    "meeting": "회의",
+}
+"""Which Notion property each field goes to, by the property's name.
+
+These are the names in the team database the extraction owner set up. A team
+whose database names them differently puts its own map under
+``action_properties`` in its Notion integration config (screen S28); any field it
+leaves out keeps the name here, and a map naming only ``title`` sends a title and
+nothing else.
+"""
+
+
+class NotionPages(Protocol):
+    """The one call the sync makes. ``NotionClient`` and ``fakes.FakeNotion`` both fit."""
+
+    def create_page(self, database_id: str, properties: dict[str, Any]) -> str: ...
+
+
+def notion_url(page_id: str) -> str:
+    """The page's address. Notion accepts the id without its dashes."""
+    return f"https://www.notion.so/{page_id.replace('-', '')}"
+
+
+def notion_properties(
+    item: ExtActionItem, meeting_title: str | None, names: Mapping[str, str]
+) -> dict[str, Any]:
+    """The page for one item: what an issue needs, and nothing from the transcript.
+
+    Description, assignee, due date and status are the item itself; confidence
+    tells the team which ones the model was unsure of; the meeting title says where
+    it came from. Source utterances stay in Autune -- ``privacy.md`` and this
+    module's CLAUDE.md both keep the transcript out of Notion, and the client's
+    ``check_outbound`` refuses an unmasked value in any of these anyway.
+    """
+
+    def text(value: str) -> dict[str, Any]:
+        return {"rich_text": [{"type": "text", "text": {"content": value[:2000]}}]}
+
+    fields: dict[str, Any] = {
+        "title": {"title": [{"type": "text", "text": {"content": item.description[:2000]}}]},
+        "status": {"select": {"name": item.status}},
+        "confidence": {"number": round(item.confidence, 3)},
+    }
+    assignee = item.assignee_label
+    if assignee:
+        fields["assignee"] = text(assignee)
+    if item.due_date is not None:
+        fields["due"] = {"date": {"start": item.due_date.isoformat()}}
+    if meeting_title:
+        fields["meeting"] = text(meeting_title)
+    return {names[key]: value for key, value in fields.items() if key in names}
+
+
+def sync_action_item_to_notion(
+    session: Session,
+    notion: NotionPages,
+    *,
+    action_item_id: str,
+    database_id: str,
+    property_names: Mapping[str, str] | None = None,
+) -> ExtExternalRef | None:
+    """Create the item's Notion page, once. ``None`` when there is nothing to send.
+
+    Nothing is sent for an item that is gone, one still waiting for confirmation,
+    or one that already has its page. The last is decided by the database: the
+    claim is an insert that skips an existing row, so a confirmation delivered
+    twice, or two workers holding it at once, send one page -- the second blocks on
+    the first's row and then finds it. Claim and call share the caller's
+    transaction, so a failed call takes the claim back and a later run can try
+    again.
+    """
+    item = session.get(ExtActionItem, action_item_id)
+    if item is None or item.status == ActionStatus.NEEDS_CONFIRMATION.value:
+        return None
+
+    claimed = session.scalars(
+        _insert_if_absent_into(session, ExtExternalRef)
+        .values(action_item_id=item.id, system=NOTION, meeting_id=item.meeting_id)
+        .on_conflict_do_nothing(index_elements=["action_item_id", "system"])
+        .returning(ExtExternalRef.action_item_id)
+    ).one_or_none()
+    if claimed is None:
+        # Ids only. The page exists, or another run is creating it.
+        log.info("extraction_notion_already_synced", action_item_id=item.id)
+        return None
+
+    meeting = session.get(Meeting, item.meeting_id)
+    names = {**NOTION_PROPERTIES, **(property_names or {})}
+    page_id = notion.create_page(
+        database_id, notion_properties(item, meeting.title if meeting else None, names)
+    )
+
+    ref = session.get(ExtExternalRef, (item.id, NOTION))
+    assert ref is not None
+    ref.external_id = page_id
+    ref.url = notion_url(page_id)
+    log.info("extraction_notion_synced", action_item_id=item.id, meeting_id=item.meeting_id)
+    return ref
+
+
+DECISION_NOTION_PROPERTIES: Mapping[str, str] = {
+    "title": "결정",
+    "confidence": "신뢰도",
+    "sources": "근거 발화 수",
+    "meeting": "회의",
+}
+"""The decision database's property names, remappable per team under
+``decision_properties`` -- the rule ``NOTION_PROPERTIES`` follows for items."""
+
+
+def decision_became_confirmed(previous_status: str | None, current_status: str) -> bool:
+    """Whether this review is the one that confirmed the decision.
+
+    ``previous_status`` is ``None`` when the decision had no review row yet,
+    which is how every model decision starts. Confirming twice, or rewording a
+    confirmed decision, is not a second confirmation -- the page is sent once.
+    """
+    return previous_status != "confirmed" and current_status == "confirmed"
+
+
+def decision_notion_properties(
+    statement: str,
+    decision: ExtDecision,
+    meeting_title: str | None,
+    names: Mapping[str, str],
+) -> dict[str, Any]:
+    """The page for one decision: the statement as confirmed, and nothing quoted.
+
+    ``statement`` is the person's rewording when there is one -- what they
+    confirmed -- and the model's sentence otherwise. The source utterances stay in
+    Autune; the page carries only how many there were.
+    """
+    fields: dict[str, Any] = {
+        "title": {"title": [{"type": "text", "text": {"content": statement[:2000]}}]},
+        "confidence": {"number": round(decision.confidence, 3)},
+        "sources": {"number": len(decision.sources)},
+    }
+    if meeting_title:
+        fields["meeting"] = {
+            "rich_text": [{"type": "text", "text": {"content": meeting_title[:2000]}}]
+        }
+    return {names[key]: value for key, value in fields.items() if key in names}
+
+
+def sync_decision_to_notion(
+    session: Session,
+    notion: NotionPages,
+    *,
+    decision_id: str,
+    database_id: str,
+    property_names: Mapping[str, str] | None = None,
+) -> ExtDecisionRef | None:
+    """Create a confirmed decision's Notion page, once. ``None`` when nothing is sent.
+
+    Nothing goes for a decision that is gone or is not confirmed (#246). The
+    claim-then-call shape and its reasons are ``sync_action_item_to_notion``'s.
+    """
+    decision = session.get(ExtDecision, decision_id)
+    review = session.get(ExtDecisionReview, decision_id)
+    if decision is None or review is None or review.status != "confirmed":
+        return None
+
+    claimed = session.scalars(
+        _insert_if_absent_into(session, ExtDecisionRef)
+        .values(decision_id=decision.id, system=NOTION, meeting_id=decision.meeting_id)
+        .on_conflict_do_nothing(index_elements=["decision_id", "system"])
+        .returning(ExtDecisionRef.decision_id)
+    ).one_or_none()
+    if claimed is None:
+        log.info("extraction_notion_decision_already_synced", decision_id=decision.id)
+        return None
+
+    meeting = session.get(Meeting, decision.meeting_id)
+    names = {**DECISION_NOTION_PROPERTIES, **(property_names or {})}
+    statement = review.statement or decision.statement
+    page_id = notion.create_page(
+        database_id,
+        decision_notion_properties(statement, decision, meeting.title if meeting else None, names),
+    )
+
+    ref = session.get(ExtDecisionRef, (decision.id, NOTION))
+    assert ref is not None
+    ref.external_id = page_id
+    ref.url = notion_url(page_id)
+    log.info(
+        "extraction_notion_decision_synced", decision_id=decision.id, meeting_id=decision.meeting_id
+    )
+    return ref
+
+
+def _insert_if_absent_into(session: Session, model: type[Any]) -> postgresql.Insert | sqlite.Insert:
+    """``INSERT ... ON CONFLICT DO NOTHING`` in the session's own dialect.
+
+    The same two-dialect choice ``_insert_if_absent`` makes for confirmations,
+    for any table: Postgres in the app, SQLite in the unit tests.
+    """
+    if session.get_bind().dialect.name == "postgresql":
+        return postgresql.insert(model)
+    return sqlite.insert(model)
