@@ -172,6 +172,43 @@ class ExtActionItemSource(Base):
     action_item: Mapped[ExtActionItem] = relationship(back_populates="sources")
 
 
+class ExtExternalRef(Base):
+    """The page an action item became in an outside tool, once.
+
+    **The primary key is the item and the system**, so an item has at most one
+    Notion page. That is the "send once" rule, kept by the database rather than by
+    a read-then-write in the sender: a confirmation that reaches two workers, or a
+    redelivered task, finds the row there and sends nothing (#30). The same shape
+    ``ext_confirmations`` uses for its DM.
+
+    The row is claimed before the call and filled in after it. ``external_id``
+    and ``url`` stay empty only inside the sending transaction; a failed call
+    rolls the claim back with it, so the next confirmation can try again.
+
+    Deleting the item deletes this row and leaves the Notion page where it is.
+    Autune cannot reach into a workspace it only writes to, and a page a team has
+    started working in is theirs.
+    """
+
+    __tablename__ = "ext_external_refs"
+    __table_args__ = (
+        CheckConstraint("system IN ('notion','jira')", name="ck_ext_external_refs_system"),
+    )
+
+    action_item_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("ext_action_items.id", ondelete="CASCADE"), primary_key=True
+    )
+    system: Mapped[str] = mapped_column(String(16), primary_key=True)
+    meeting_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("meetings.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    external_id: Mapped[str | None] = mapped_column(String(64))
+    url: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
 class ExtDecision(Base, TimestampMixin):
     """A decision the meeting settled, as an entity rather than a label.
 

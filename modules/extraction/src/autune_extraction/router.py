@@ -11,7 +11,7 @@ from __future__ import annotations
 from datetime import date
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Query, status
 from sqlalchemy.orm import Session
 
 from autune_contracts.enums import ActionStatus
@@ -19,7 +19,7 @@ from autune_contracts.extraction import ExtractionResult
 from autune_core import Meeting, get_session
 from autune_core.errors import NotFoundError
 
-from . import service
+from . import service, tasks
 from .models import ExtActionItem, ExtDecision
 from .schemas import (
     ActionItemCreate,
@@ -114,15 +114,25 @@ def create_action_item(payload: ActionItemCreate, session: SessionDep) -> Action
 
 @router.patch("/action-items/{action_item_id}", response_model=ActionItemRead)
 def update_action_item(
-    action_item_id: str, payload: ActionItemUpdate, session: SessionDep
+    action_item_id: str,
+    payload: ActionItemUpdate,
+    session: SessionDep,
+    background: BackgroundTasks,
 ) -> ActionItemRead:
-    """Edit or close an item."""
-    item = service.update_action_item(session, _load(session, action_item_id), payload)
+    """Edit or close an item. Confirming it queues its Notion page (#30)."""
+    item = _load(session, action_item_id)
+    previous_status = item.status
+    item = service.update_action_item(session, item, payload)
     # Before the commit, for the reason ``create_action_item`` gives: an edit
     # answered with a 500 must not also have been saved, or it counts twice
     # in edit cost when the client retries.
     response = service.read_model(item)
     session.commit()
+    # After the response, so the sync reads the committed row and the board is
+    # not held on Notion. Only the edit that confirms starts one; the sync
+    # itself sends a page once.
+    if service.became_confirmed(previous_status, item):
+        background.add_task(tasks.sync_after_confirmation, item.id)
     return response
 
 
