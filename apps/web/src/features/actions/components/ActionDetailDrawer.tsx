@@ -31,6 +31,12 @@ export function ActionDetailDrawer({
 }) {
   const [confirming, setConfirming] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  // What the last change the drawer sent failed with. Both changes say so here,
+  // the way AddActionItem does for an add: the status select is controlled by
+  // `item.status`, so a failed change otherwise just springs back with no
+  // reason, and a failed delete otherwise closes the dialog and leaves the
+  // drawer open saying nothing. Raised in review of #292.
+  const [failure, setFailure] = useState<string | null>(null);
   // The quotation is fetched when the drawer opens (GET /action-items/{id});
   // the list the board holds carries utterance ids, never their words.
   const quotation = useSourceUtterances(item);
@@ -85,7 +91,14 @@ export function ActionDetailDrawer({
         <Field label="상태">
           <select
             value={item.status ?? "needs_confirmation"}
-            onChange={(event) => void onStatusChange?.(event.target.value as ActionStatus)}
+            onChange={async (event) => {
+              setFailure(null);
+              try {
+                await onStatusChange?.(event.target.value as ActionStatus);
+              } catch {
+                setFailure("상태를 바꾸지 못했습니다. 잠시 후 다시 시도해 주세요.");
+              }
+            }}
             className="w-full border bg-transparent"
             style={{
               height: "var(--control-h-default)",
@@ -163,6 +176,20 @@ export function ActionDetailDrawer({
         ) : null}
       </div>
 
+      {failure !== null && (
+        <p
+          role="alert"
+          className="text-[var(--color-signal-critical)]"
+          style={{
+            paddingInline: "var(--space-card)",
+            fontSize: "var(--text-rowBody)",
+            lineHeight: "var(--text-rowBody-leading)",
+          }}
+        >
+          {failure}
+        </p>
+      )}
+
       <footer
         className="flex justify-end border-t border-[var(--color-hairline)]"
         style={{ padding: "var(--space-card)" }}
@@ -181,9 +208,12 @@ export function ActionDetailDrawer({
           onCancel={() => setConfirming(false)}
           onConfirm={async () => {
             setDeleting(true);
+            setFailure(null);
             try {
               await onDelete?.();
               onClose();
+            } catch {
+              setFailure("삭제하지 못했습니다. 잠시 후 다시 시도해 주세요.");
             } finally {
               setDeleting(false);
               setConfirming(false);

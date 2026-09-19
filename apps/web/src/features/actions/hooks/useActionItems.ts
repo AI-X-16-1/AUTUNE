@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
   createActionItem,
@@ -12,6 +12,14 @@ import {
 } from "../api";
 import type { ActionItemRead, ActionStatus } from "../types";
 
+/** What the last settled request for one filter left behind. */
+interface State {
+  key: string;
+  items: ActionItemRead[];
+  error: Error | null;
+  loading: boolean;
+}
+
 /**
  * The board's items, and the four things a person can do to them.
  *
@@ -19,23 +27,43 @@ import type { ActionItemRead, ActionStatus } from "../types";
  * secondary path bolted onto a read view — add, edit and delete are why the
  * screen exists, and they live here beside the fetch rather than in three
  * separate call sites.
+ *
+ * **Every piece of state carries the filter it belongs to**, the rule
+ * `useGapReport` follows for the same reason. App Router keeps this component
+ * mounted when only the meeting id in the URL changes, so without it the board
+ * drew the previous meeting's items under the new meeting's heading, and of two
+ * requests in flight the slower, older one won. Raised in review of #292.
  */
 export function useActionItems(filter: ActionItemFilter = {}) {
-  const [items, setItems] = useState<ActionItemRead[]>([]);
-  const [error, setError] = useState<Error | null>(null);
-  const [loading, setLoading] = useState(true);
-
   const key = JSON.stringify(filter);
+  const [state, setState] = useState<State>({ key, items: [], error: null, loading: true });
+  // A response lands only if no later request has started, for this filter or
+  // another.
+  const latest = useRef(0);
 
   const reload = useCallback(async () => {
-    setLoading(true);
+    const ticket = latest.current + 1;
+    latest.current = ticket;
+    setState((previous) =>
+      previous.key === key
+        ? { ...previous, error: null, loading: true }
+        : { key, items: [], error: null, loading: true },
+    );
     try {
-      setItems(await listActionItems(JSON.parse(key) as ActionItemFilter));
-      setError(null);
+      const items = await listActionItems(JSON.parse(key) as ActionItemFilter);
+      if (ticket === latest.current) setState({ key, items, error: null, loading: false });
     } catch (cause) {
-      setError(cause instanceof Error ? cause : new Error(String(cause)));
-    } finally {
-      setLoading(false);
+      const error = cause instanceof Error ? cause : new Error(String(cause));
+      if (ticket === latest.current) {
+        // A refresh that failed keeps this filter's items on screen, and only
+        // ever this filter's.
+        setState((previous) => ({
+          key,
+          items: previous.key === key ? previous.items : [],
+          error,
+          loading: false,
+        }));
+      }
     }
   }, [key]);
 
@@ -43,19 +71,31 @@ export function useActionItems(filter: ActionItemFilter = {}) {
     void reload();
   }, [reload]);
 
-  const add = useCallback(async (draft: ActionItemDraft) => {
-    const created = await createActionItem(draft);
-    setItems((current) => [...current, created]);
-    return created;
-  }, []);
+  /** Apply a change to the list, but only while it is still this filter's list. */
+  const update = useCallback(
+    (change: (items: ActionItemRead[]) => ActionItemRead[]) =>
+      setState((previous) =>
+        previous.key === key ? { ...previous, items: change(previous.items) } : previous,
+      ),
+    [key],
+  );
+
+  const add = useCallback(
+    async (draft: ActionItemDraft) => {
+      const created = await createActionItem(draft);
+      update((items) => [...items, created]);
+      return created;
+    },
+    [update],
+  );
 
   const edit = useCallback(
     async (id: string, changes: Partial<ActionItemDraft & { status: ActionStatus }>) => {
       const updated = await updateActionItem(id, changes);
-      setItems((current) => current.map((item) => (item.id === id ? updated : item)));
+      update((items) => items.map((item) => (item.id === id ? updated : item)));
       return updated;
     },
-    [],
+    [update],
   );
 
   /**
@@ -67,10 +107,16 @@ export function useActionItems(filter: ActionItemFilter = {}) {
    * and an undo that silently re-creates the text would be a second copy of
    * deleted meeting content living in a browser tab.
    */
-  const remove = useCallback(async (id: string) => {
-    await deleteActionItem(id);
-    setItems((current) => current.filter((item) => item.id !== id));
-  }, []);
+  const remove = useCallback(
+    async (id: string) => {
+      await deleteActionItem(id);
+      update((items) => items.filter((item) => item.id !== id));
+    },
+    [update],
+  );
 
-  return { items, loading, error, reload, add, edit, remove };
+  // The reset in `reload` runs in an effect, so the render that first sees a
+  // new filter still holds the previous one's state. It reads as loading.
+  if (state.key !== key) return { items: [], loading: true, error: null, reload, add, edit, remove };
+  return { ...state, reload, add, edit, remove };
 }
