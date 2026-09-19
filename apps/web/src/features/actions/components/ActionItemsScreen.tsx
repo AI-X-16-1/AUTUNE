@@ -4,10 +4,12 @@ import { useState } from "react";
 
 import { ActionBoard } from "./ActionBoard";
 import { ActionDetailDrawer } from "./ActionDetailDrawer";
+import { DecisionReview } from "./DecisionReview";
 import { useActionItems } from "../hooks/useActionItems";
 
 /**
- * S17 for one meeting: the board, and the drawer for the item a person opens.
+ * One meeting's review: its decisions to confirm (S15, #246) above the action
+ * board (S17), and the drawer for the item a person opens.
  *
  * The screen lives in the feature rather than in the route file: `apps/` is
  * assembly, and a page that knew how the board and the drawer fit together would
@@ -46,7 +48,7 @@ export function ActionItemsScreen({ meetingId }: { meetingId: string }) {
             letterSpacing: "var(--text-title-tracking)",
           }}
         >
-          액션 아이템
+          회의 검토
         </h1>
         <p
           className="mt-2 text-[var(--color-ink-muted)]"
@@ -59,6 +61,16 @@ export function ActionItemsScreen({ meetingId }: { meetingId: string }) {
         </p>
 
         <div className="mt-6">
+          <DecisionReview meetingId={meetingId} />
+        </div>
+
+        <div className="mt-8">
+          <h2
+            className="mb-3 border-b border-[var(--color-hairline)] pb-2 text-[var(--color-ink-strong)]"
+            style={{ fontSize: "var(--text-status)", fontWeight: "var(--text-status-weight)" }}
+          >
+            액션 아이템
+          </h2>
           {items.length > 0 || (!loading && error === null) ? (
             <>
               {error ? (
