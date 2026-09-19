@@ -166,7 +166,7 @@ def review_decision(
 
 @router.get("/reviews/{meeting_id}/outbound", response_model=Outbound)
 def get_outbound(meeting_id: str, session: SessionDep) -> Outbound:
-    """Exactly what "확정해서 보내기" would send: confirmed decisions and accepted items."""
+    """Exactly what confirm-and-send would send: confirmed decisions and accepted items."""
     _meeting(session, meeting_id)
     return service.outbound_for_meeting(session, meeting_id)
 

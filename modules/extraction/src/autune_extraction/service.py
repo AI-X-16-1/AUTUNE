@@ -578,10 +578,23 @@ def decisions_for_meeting(session: Session, meeting_id: str) -> list[Decision]:
 
     Sources come back in meeting order because the order carries the argument --
     the proposal first, the sentence that settles it last.
+
+    **A decision a person rejected is not in it.** ``delete_decision`` keeps a
+    model decision's row and marks its review rejected, so a rerun cannot bring
+    the same ``dec_`` id back; without this filter that row still reached D's
+    lineage and E's report as a decision, through ``ExtractionResult`` and ``GET
+    /results`` -- a person said "this was not decided" and every module but the
+    outbound list kept counting it. Raised in review of #247.
+
+    Pending decisions stay: whether D and E hear a decision before anybody has
+    looked at it is the open question 2 on #246, not something this read decides.
     """
+    rejected = select(ExtDecisionReview.decision_id).where(
+        ExtDecisionReview.meeting_id == meeting_id, ExtDecisionReview.status == "rejected"
+    )
     rows = session.scalars(
         select(ExtDecision)
-        .where(ExtDecision.meeting_id == meeting_id)
+        .where(ExtDecision.meeting_id == meeting_id, ExtDecision.id.not_in(rejected))
         .order_by(ExtDecision.created_at, ExtDecision.id)
     ).all()
 
@@ -970,7 +983,7 @@ def _suggested(confidence: float) -> bool | None:
 def review_for_meeting(
     session: Session, meeting_id: str, *, now: datetime | None = None
 ) -> MeetingReview:
-    """What S15 puts in front of a person before "확정해서 보내기".
+    """What S15 puts in front of a person before they confirm and send.
 
     Decisions come with their verdict so far; ambiguous agreements with where the
     speaker's DM stands; action items only when they still need somebody -- status

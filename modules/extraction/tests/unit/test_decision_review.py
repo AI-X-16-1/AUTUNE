@@ -222,6 +222,33 @@ def test_a_rejected_decision_does_not_go_out_and_is_no_longer_pending(
     assert outbound["decisions"] == []
 
 
+def test_a_rejected_decision_leaves_what_d_and_e_read(client: TestClient, session: Session) -> None:
+    """``ExtractionResult`` is what D and E consume and ``GET /results`` returns;
+    a decision a person rejected is in neither. A pending one still is -- when D
+    and E hear an unreviewed decision is #246's question 2. Raised in review of
+    #247."""
+    first, second = two_decisions(session)
+
+    client.patch(f"{PREFIX}/decisions/{first.id}", json={"status": "rejected"})
+
+    assert [d.id for d in service.result_for_meeting(session, MEETING).decisions] == [second.id]
+    assert [d["id"] for d in client.get(f"{PREFIX}/results/{MEETING}").json()["decisions"]] == [
+        second.id
+    ]
+
+
+def test_a_rejection_taken_back_returns_the_decision(client: TestClient, session: Session) -> None:
+    first, second = two_decisions(session)
+
+    client.patch(f"{PREFIX}/decisions/{first.id}", json={"status": "rejected"})
+    client.patch(f"{PREFIX}/decisions/{first.id}", json={"status": "pending"})
+
+    assert {d.id for d in service.result_for_meeting(session, MEETING).decisions} == {
+        first.id,
+        second.id,
+    }
+
+
 def test_a_mis_click_can_be_put_back_to_pending(client: TestClient, session: Session) -> None:
     first, _ = two_decisions(session)
 
@@ -417,6 +444,7 @@ def test_deleting_a_proposed_decision_rejects_it_and_a_rerun_keeps_it_out(
     assert listed["status"] == "rejected"
     assert listed["statement"] == listed["model_statement"]
     assert client.get(f"{PREFIX}/reviews/{MEETING}/outbound").json()["decisions"] == []
+    assert first_id not in {d.id for d in service.result_for_meeting(session, MEETING).decisions}
 
 
 def test_a_source_from_another_meeting_is_refused(client: TestClient, session: Session) -> None:
