@@ -32,6 +32,7 @@ from autune_extraction.models import (
     ExtClassification,
     ExtConfirmation,
     ExtDecision,
+    ExtDecisionReview,
     ExtDecisionSource,
     ExtEditEvent,
 )
@@ -49,6 +50,8 @@ TABLES = [
     ExtClassification.__table__,
     ExtDecision.__table__,
     ExtDecisionSource.__table__,
+    # The result leaves out decisions a person rejected (#247), so it reads this.
+    ExtDecisionReview.__table__,
     ExtConfirmation.__table__,
     ExtEditEvent.__table__,
 ]
