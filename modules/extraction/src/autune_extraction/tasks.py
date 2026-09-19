@@ -14,7 +14,7 @@ from autune_core import Meeting, get_logger, load_integration, publish, session_
 from autune_integrations import IntegrationError, NotionClient, TransientIntegrationError
 
 from . import service
-from .models import ExtActionItem
+from .models import ExtActionItem, ExtDecision
 from .pipeline.registry import get_classifier
 
 log = get_logger(__name__)
@@ -185,3 +185,50 @@ def sync_after_confirmation(action_item_id: str) -> None:
         sync_action_item(action_item_id)
     except IntegrationError:
         log.warning("extraction_notion_sync_failed", action_item_id=action_item_id)
+
+
+@shared_task(
+    name="autune.extraction.sync_decision",
+    acks_late=True,
+    autoretry_for=(TransientIntegrationError,),
+    retry_backoff=True,
+    max_retries=3,
+)
+def sync_decision(decision_id: str) -> None:
+    """Step 7 for one decision a person just confirmed: its Notion page, once.
+
+    ``sync_action_item``'s rules, for the team's decision database
+    (``decision_db_id`` in its Notion config). A team that connected Notion for
+    action items only has no ``decision_db_id``, and is skipped rather than failed.
+    """
+    with session_scope() as session:
+        decision = session.get(ExtDecision, decision_id)
+        meeting = session.get(Meeting, decision.meeting_id) if decision is not None else None
+        if decision is None or meeting is None:
+            log.info("extraction_notion_decision_gone", decision_id=decision_id)
+            return
+        config = load_integration(session, meeting.team_id, "notion")
+        database_id = config.config.get("decision_db_id") if config is not None else None
+        if config is None or not database_id:
+            log.info(
+                "extraction_notion_decisions_not_connected",
+                decision_id=decision_id,
+                team_id=meeting.team_id,
+            )
+            return
+        service.sync_decision_to_notion(
+            session,
+            NotionClient(config.require_secret()),
+            decision_id=decision_id,
+            database_id=database_id,
+            property_names=config.config.get("decision_properties"),
+        )
+
+
+def sync_decision_after_confirmation(decision_id: str) -> None:
+    """``sync_after_confirmation`` for a decision: in the API process, never
+    failing the confirmation that started it."""
+    try:
+        sync_decision(decision_id)
+    except IntegrationError:
+        log.warning("extraction_notion_decision_sync_failed", decision_id=decision_id)

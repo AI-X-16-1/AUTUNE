@@ -71,7 +71,9 @@ agreement, and sync the result to Notion and Jira.
    and store the URL in `ext_external_refs` (#30). One page per item, whatever
    happens to it afterwards; a team without Notion connected is skipped. Not
    part of the extraction run: nothing the model drafted is confirmed yet (#246).
-   Decisions and Jira are not synced yet.
+   A decision goes the same way when a person confirms it (or adds it), to the
+   team's decision database, in the wording they confirmed
+   (`ext_decision_refs`). Jira is not synced yet.
 8. **Publish** — emit `ExtractionResult`.
 
 Classification runs before reference resolution, which is worth stating because
@@ -105,6 +107,7 @@ the overlap the question turns on.
 | `ext_action_item_sources` | Which utterances an item came from |
 | `ext_edit_events` | One row per correction. Counts only — no person on it |
 | `ext_external_refs` | The Notion page an action item became, one per item and system |
+| `ext_decision_refs` | The Notion page a confirmed decision became, one per decision and system |
 | `ext_confirmations` | Every ambiguous agreement, the DM once sent, and the response |
 | `ext_decisions` | Decision entities, their statements and source utterances. `origin` is `model` or `user`; a rerun rebuilds only the model's |
 | `ext_decision_sources` | Which utterances a decision was settled in, in order |
@@ -177,6 +180,7 @@ other module's tables.
 | --- | --- | --- |
 | `autune.extraction.on_transcript_ready` | `autune.transcript.ready` | `cpu_heavy` |
 | `autune.extraction.sync_action_item` | A person confirms an action item (`PATCH /action-items/{id}` out of `needs_confirmation`). Today it runs in the API process right after the response, as a FastAPI background task — apps/api builds no Celery app to queue it on | `default` |
+| `autune.extraction.sync_decision` | A person confirms a decision (`PATCH /decisions/{id}` to `confirmed`) or adds one (`POST /decisions`). Runs in the API process after the response, like `sync_action_item` | `default` |
 | `autune.extraction.send_confirmations` | After extraction | `default` |
 
 ## Slack surface

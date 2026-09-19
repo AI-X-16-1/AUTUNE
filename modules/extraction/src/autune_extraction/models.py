@@ -209,6 +209,34 @@ class ExtExternalRef(Base):
     )
 
 
+class ExtDecisionRef(Base):
+    """The page a confirmed decision became in an outside tool, once.
+
+    The same rule as ``ExtExternalRef`` for action items: keyed by the decision and
+    the system, claimed before the call, filled in after it. A separate table
+    rather than a second key on that one, because a decision row has no stable
+    foreign key to point at -- a rerun deletes and rebuilds ``ext_decisions``
+    (``service.build_decisions``). Keyed by the ``dec_`` id like
+    ``ext_decision_reviews``, for the same reason, and taken with the meeting.
+    """
+
+    __tablename__ = "ext_decision_refs"
+    __table_args__ = (
+        CheckConstraint("system IN ('notion','jira')", name="ck_ext_decision_refs_system"),
+    )
+
+    decision_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    system: Mapped[str] = mapped_column(String(16), primary_key=True)
+    meeting_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("meetings.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    external_id: Mapped[str | None] = mapped_column(String(64))
+    url: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
 class ExtDecision(Base, TimestampMixin):
     """A decision the meeting settled, as an entity rather than a label.
 

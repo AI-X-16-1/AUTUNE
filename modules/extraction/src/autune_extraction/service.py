@@ -40,6 +40,7 @@ from .models import (
     ExtClassification,
     ExtConfirmation,
     ExtDecision,
+    ExtDecisionRef,
     ExtDecisionReview,
     ExtDecisionSource,
     ExtEditEvent,
@@ -1322,6 +1323,96 @@ def sync_action_item_to_notion(
     ref.external_id = page_id
     ref.url = notion_url(page_id)
     log.info("extraction_notion_synced", action_item_id=item.id, meeting_id=item.meeting_id)
+    return ref
+
+
+DECISION_NOTION_PROPERTIES: Mapping[str, str] = {
+    "title": "결정",
+    "confidence": "신뢰도",
+    "sources": "근거 발화 수",
+    "meeting": "회의",
+}
+"""The decision database's property names, remappable per team under
+``decision_properties`` -- the rule ``NOTION_PROPERTIES`` follows for items."""
+
+
+def decision_became_confirmed(previous_status: str | None, current_status: str) -> bool:
+    """Whether this review is the one that confirmed the decision.
+
+    ``previous_status`` is ``None`` when the decision had no review row yet,
+    which is how every model decision starts. Confirming twice, or rewording a
+    confirmed decision, is not a second confirmation -- the page is sent once.
+    """
+    return previous_status != "confirmed" and current_status == "confirmed"
+
+
+def decision_notion_properties(
+    statement: str,
+    decision: ExtDecision,
+    meeting_title: str | None,
+    names: Mapping[str, str],
+) -> dict[str, Any]:
+    """The page for one decision: the statement as confirmed, and nothing quoted.
+
+    ``statement`` is the person's rewording when there is one -- what they
+    confirmed -- and the model's sentence otherwise. The source utterances stay in
+    Autune; the page carries only how many there were.
+    """
+    fields: dict[str, Any] = {
+        "title": {"title": [{"type": "text", "text": {"content": statement[:2000]}}]},
+        "confidence": {"number": round(decision.confidence, 3)},
+        "sources": {"number": len(decision.sources)},
+    }
+    if meeting_title:
+        fields["meeting"] = {
+            "rich_text": [{"type": "text", "text": {"content": meeting_title[:2000]}}]
+        }
+    return {names[key]: value for key, value in fields.items() if key in names}
+
+
+def sync_decision_to_notion(
+    session: Session,
+    notion: NotionPages,
+    *,
+    decision_id: str,
+    database_id: str,
+    property_names: Mapping[str, str] | None = None,
+) -> ExtDecisionRef | None:
+    """Create a confirmed decision's Notion page, once. ``None`` when nothing is sent.
+
+    Nothing goes for a decision that is gone or is not confirmed (#246). The
+    claim-then-call shape and its reasons are ``sync_action_item_to_notion``'s.
+    """
+    decision = session.get(ExtDecision, decision_id)
+    review = session.get(ExtDecisionReview, decision_id)
+    if decision is None or review is None or review.status != "confirmed":
+        return None
+
+    claimed = session.scalars(
+        _insert_if_absent_into(session, ExtDecisionRef)
+        .values(decision_id=decision.id, system=NOTION, meeting_id=decision.meeting_id)
+        .on_conflict_do_nothing(index_elements=["decision_id", "system"])
+        .returning(ExtDecisionRef.decision_id)
+    ).one_or_none()
+    if claimed is None:
+        log.info("extraction_notion_decision_already_synced", decision_id=decision.id)
+        return None
+
+    meeting = session.get(Meeting, decision.meeting_id)
+    names = {**DECISION_NOTION_PROPERTIES, **(property_names or {})}
+    statement = review.statement or decision.statement
+    page_id = notion.create_page(
+        database_id,
+        decision_notion_properties(statement, decision, meeting.title if meeting else None, names),
+    )
+
+    ref = session.get(ExtDecisionRef, (decision.id, NOTION))
+    assert ref is not None
+    ref.external_id = page_id
+    ref.url = notion_url(page_id)
+    log.info(
+        "extraction_notion_decision_synced", decision_id=decision.id, meeting_id=decision.meeting_id
+    )
     return ref
 
 
