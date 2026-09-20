@@ -142,19 +142,16 @@ def test_a_field_the_item_does_not_have_is_left_off_the_page(session: Session) -
     assert set(notion.pages[0][1]) == {"작업", "상태", "신뢰도", "회의"}
 
 
-def test_a_team_map_renames_properties_and_can_send_only_a_title(session: Session) -> None:
+def test_a_team_map_replaces_the_defaults_and_can_send_only_a_title(session: Session) -> None:
+    """A team whose database has two columns gets a page with two. Merged with
+    the defaults it got none: Notion refuses a page naming a property the
+    database does not have. Raised in review of #294."""
     notion = FakeNotion()
     row = item(session)
 
-    sync(
-        session,
-        notion,
-        row.id,
-        property_names={"title": "Name", "assignee": "Owner"},
-    )
+    sync(session, notion, row.id, property_names={"title": "Name", "assignee": "Owner"})
 
-    assert {"Name", "Owner"} <= set(notion.pages[0][1])
-    assert "작업" not in notion.pages[0][1]
+    assert set(notion.pages[0][1]) == {"Name", "Owner"}
 
 
 # --- when a page is sent --------------------------------------------------------
@@ -283,6 +280,31 @@ def wired(session: Session, monkeypatch: pytest.MonkeyPatch) -> Session:
 
     monkeypatch.setattr(tasks, "session_scope", scope)
     return session
+
+
+def test_a_team_whose_notion_has_no_action_database_is_skipped(
+    wired: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Connected for decisions only, or a token that is gone: skipped, not a 422
+    out of the request that confirmed the item. Raised in review of #294."""
+    row = item(wired)
+    for config in (
+        IntegrationConfig(service="notion", team_id="team_1", secret="t", config={}),
+        IntegrationConfig(
+            service="notion", team_id="team_1", secret=None, config={"action_db_id": "db"}
+        ),
+    ):
+        monkeypatch.setattr(tasks, "load_integration", lambda _s, _t, _n, c=config: c)
+        tasks.sync_action_item(row.id)
+
+    assert wired.scalars(select(ExtExternalRef)).all() == []
+
+
+def test_the_sync_task_does_not_retry_itself() -> None:
+    """A timeout can mean the page was made and the answer lost; a retry then
+    makes a second one. Raised in review of #294."""
+    assert not getattr(tasks.sync_action_item, "autoretry_for", ())
+    assert not getattr(tasks.sync_decision, "autoretry_for", ())
 
 
 def test_a_team_without_notion_is_skipped_not_failed(

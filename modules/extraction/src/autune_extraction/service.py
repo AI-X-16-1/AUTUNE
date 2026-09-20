@@ -1232,9 +1232,13 @@ NOTION_PROPERTIES: Mapping[str, str] = {
 
 These are the names in the team database the extraction owner set up. A team
 whose database names them differently puts its own map under
-``action_properties`` in its Notion integration config (screen S28); any field it
-leaves out keeps the name here, and a map naming only ``title`` sends a title and
-nothing else.
+``action_properties`` in its Notion integration config (screen S28), and **its map
+replaces this one**: a map naming only ``title`` sends a title and nothing else.
+
+Replacing rather than merging is what lets a team whose database has four columns
+receive pages at all -- merged, every default name came along and Notion refused
+the whole page for the properties that database does not have, so that team got
+none. Raised in review of #294.
 """
 
 
@@ -1313,7 +1317,7 @@ def sync_action_item_to_notion(
         return None
 
     meeting = session.get(Meeting, item.meeting_id)
-    names = {**NOTION_PROPERTIES, **(property_names or {})}
+    names = property_names or NOTION_PROPERTIES
     page_id = notion.create_page(
         database_id, notion_properties(item, meeting.title if meeting else None, names)
     )
@@ -1332,8 +1336,8 @@ DECISION_NOTION_PROPERTIES: Mapping[str, str] = {
     "sources": "근거 발화 수",
     "meeting": "회의",
 }
-"""The decision database's property names, remappable per team under
-``decision_properties`` -- the rule ``NOTION_PROPERTIES`` follows for items."""
+"""The decision database's property names. A team's ``decision_properties`` map
+replaces this one, the rule ``NOTION_PROPERTIES`` explains for items."""
 
 
 def decision_became_confirmed(previous_status: str | None, current_status: str) -> bool:
@@ -1399,7 +1403,7 @@ def sync_decision_to_notion(
         return None
 
     meeting = session.get(Meeting, decision.meeting_id)
-    names = {**DECISION_NOTION_PROPERTIES, **(property_names or {})}
+    names = property_names or DECISION_NOTION_PROPERTIES
     statement = review.statement or decision.statement
     page_id = notion.create_page(
         database_id,

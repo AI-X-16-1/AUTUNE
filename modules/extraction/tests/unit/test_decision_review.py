@@ -584,10 +584,11 @@ def test_a_decision_a_person_adds_is_queued_because_it_is_confirmed(
 
 
 def test_the_page_carries_the_confirmed_wording_and_no_quotation(session: Session) -> None:
-    first, _ = two_decisions(session)
+    first, second = two_decisions(session)
     service.review_decision(
         session, first, DecisionReviewUpdate(status="confirmed", statement="출시는 금요일로 확정")
     )
+    service.review_decision(session, second, DecisionReviewUpdate(status="confirmed"))
     notion = FakeNotion()
 
     ref = service.sync_decision_to_notion(
@@ -602,6 +603,16 @@ def test_the_page_carries_the_confirmed_wording_and_no_quotation(session: Sessio
     }
     assert properties["근거 발화 수"] == {"number": len(first.sources)}
     assert set(properties) == {"결정", "신뢰도", "근거 발화 수", "회의"}
+
+    only_title = FakeNotion()
+    service.sync_decision_to_notion(
+        session,
+        only_title,
+        decision_id=second.id,
+        database_id="db_decisions",
+        property_names={"title": "Name"},
+    )
+    assert set(only_title.pages[0][1]) == {"Name"}
 
 
 def test_an_unconfirmed_decision_sends_nothing_and_a_second_sync_neither(
