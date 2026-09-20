@@ -2,6 +2,7 @@ import { Fragment } from "react";
 
 import { CHART_STEPS, stepFor } from "./chartScale";
 import { DashboardCard } from "./DashboardCard";
+import { HeatmapMockup, HoverPreview } from "./HoverPreview";
 import type { HeatmapCell } from "../types";
 
 const CELL = 30;
@@ -18,11 +19,13 @@ const CELL = 30;
 export function AlignmentHeatmap({ cells }: { cells: HeatmapCell[] }) {
   if (cells.length === 0) {
     return (
-      <DashboardCard title="직무 쌍 얼라인먼트">
-        <p style={{ margin: 0, fontSize: "var(--text-meta)", color: "var(--color-ink-muted)" }}>
-          아직 역할 간 정렬도를 계산하지 않습니다 (#168).
-        </p>
-      </DashboardCard>
+      <HoverPreview mockup={<HeatmapMockup />}>
+        <DashboardCard title="직무 쌍 얼라인먼트">
+          <p style={{ margin: 0, fontSize: "var(--text-meta)", color: "var(--color-ink-muted)" }}>
+            아직 역할 간 정렬도를 계산하지 않습니다 (#168).
+          </p>
+        </DashboardCard>
+      </HoverPreview>
     );
   }
 

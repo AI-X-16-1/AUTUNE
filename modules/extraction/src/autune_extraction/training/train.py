@@ -22,13 +22,15 @@ from .dataset import LABELS, TrainExample, class_weights, label_counts, read_spl
 log = logging.getLogger(__name__)
 
 BASE_CHECKPOINT = "kakaobank/kf-deberta-base"
-"""The encoder to fine-tune. MIT licensed, so commercial use is settled.
+"""The encoder to fine-tune. MIT licensed (model card at
+https://huggingface.co/kakaobank/kf-deberta-base), so commercial use is settled.
 
 Chosen on inference cost, measured rather than assumed (#112). Both candidates
-are 12 layers / 768 hidden / 12 heads, so the difference was not capacity:
+are 12 layers / 768 hidden / 12 heads, so the difference was not capacity. CPU,
+256 Korean utterances in batches of 32; the forward time is per batch:
 
-    kakaobank/kf-deberta-base     forward 1.63s   ->  2.0 min per meeting
-    microsoft/mdeberta-v3-base    forward 29.9s   -> 37.4 min per meeting
+    kakaobank/kf-deberta-base     1.63s per batch  19.6 utt/s  ->  2.0 min per meeting
+    microsoft/mdeberta-v3-base    29.9s per batch   1.1 utt/s  -> 37.4 min per meeting
 
 A 45-minute meeting is about 2,400 utterances and module B classifies every one
 of them, on every meeting. mdeberta spends most of a meeting's own length

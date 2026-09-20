@@ -205,16 +205,19 @@ lineage view (S22), which reads to a user as a bug.
    meeting's decisions. A meeting past its retention window is excluded from
    matching — see "Deletion".
 
-   **Matching happens before this meeting's own previous versions are
-   deleted.** B always mints a fresh `dec_` id when it rebuilds a meeting's
-   decisions (`autune_extraction.service.build_decisions`), so there is no id
-   to match a reprocessed decision back to its old thread by — and a *solo*
-   thread (no other meeting's version to rediscover it by similarity) has
-   nothing else to compare against. Deleting the meeting's old versions first
-   would erase the one piece of evidence — the meeting's own about-to-be-
-   replaced statement — that lets a rebuild with materially unchanged wording
-   land back on the same thread instead of forking a new one on every
-   reprocess. This meeting's own pre-delete versions are *added* to the
+   **Matching happens before this meeting's own previous versions are deleted.**
+   B's `dec_` id is stable across a rebuild whose sources did not change and
+   fresh only when they did (`autune_extraction.decisions.decision_id`, #171) —
+   which includes every reprocess in module A, since that mints new `utt_` ids
+   (#194) — but D never matched on that id in the first place: whether a decision
+   is the same one as before is D's question, not B's (#25), so matching runs by
+   wording regardless of which way B's id moved. A *solo* thread (no other
+   meeting's version to rediscover it by similarity) has nothing but that wording
+   to compare against. Deleting the meeting's old versions first would erase the
+   one piece of evidence — the meeting's own about-to-be-replaced statement —
+   that lets a rebuild with materially unchanged wording land back on the same
+   thread instead of forking a new one on every reprocess. This meeting's own
+   pre-delete versions are *added* to the
    matching candidates, not substituted for the thread's team-wide head: a
    thread's head is always its single chronologically-latest version, so a
    meeting sitting in the *middle* of a thread compares against a later
@@ -481,12 +484,19 @@ confirmation flow feed threshold tuning.
   per-person speaking ratio. This module does not compute one.
 - `ctx_decision_versions.key_stakeholders_absent` records who was *not* present
   when a decision changed. Attendance is already shared data (`participants`),
-  so this is a precomputation, not a new disclosure. It exists only to fire the
-  decision-drift warning to the team and to the absent person — never a
-  per-person aggregate ("how often is X absent from decisions"), never a
-  dashboard column, never a ranking. Treated the same as `privacy.md` §3's
-  logic about small-meeting distributions: the raw event is fine, an aggregate
-  over a person is not. (Raised by the PR #90 reviewers; settled here.)
+  so this is a precomputation, not a new disclosure — but only inside the
+  channels that already know who is asking: the `ContextLinks` event to E and
+  the decision-drift Slack DM to the absent person themself, via
+  `SlackClient.send_personal`. **`DecisionVersionRead` (the `GET
+  /api/context/decisions*` read API) does not carry this field.** No route
+  under `/api/context` checks the requester's team membership yet (#156), and
+  a thread's whole point is spanning meetings, so an unauthenticated GET would
+  let anyone walk every thread and build exactly the per-person aggregate this
+  module has otherwise avoided ("how often is X absent from decisions"). Raised
+  by the PR #90 reviewers, thought settled for #144, reopened once #204 (S22)
+  showed the field rendered on screen from an unauthenticated route — see
+  #188. Re-add it to the read API once #156 ships route auth; nothing else
+  about the field changes.
 
 ## Phased delivery
 

@@ -38,7 +38,14 @@ class ExtractionSettings(BaseSettings):
     Blank makes ``local`` and ``hosted`` refuse in the registry instead, naming
     this variable. Point it at a directory ``python -m
     autune_extraction.training`` wrote, or at a hub revision once one is
-    published. ``fake`` needs none."""
+    published. ``fake`` needs none.
+
+    Several checkpoints separated by commas make ``local`` an ensemble -- seeds of
+    one training run, sharing a vocabulary (checked on load). The first scores
+    every utterance; the others are asked only where it is unsure, and those
+    answers are averaged. ``hosted`` refuses a list. See
+    ``pipeline.classifier.ENSEMBLE_SEPARATOR`` and ``ESCALATE_BELOW`` for why and
+    at what cost."""
 
     classifier_endpoint: str = ""
     """Our own inference server, required when ``classifier_impl=hosted``."""

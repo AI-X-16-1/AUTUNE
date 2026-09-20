@@ -10,7 +10,12 @@ from enum import StrEnum
 
 
 class UtteranceKind(StrEnum):
-    """The five-way classification module B applies to every utterance."""
+    """The kinds module B reports for an utterance.
+
+    B's classifier also answers ``none`` — most of a meeting is none of these —
+    and a ``none`` utterance never leaves the module: it is absent from
+    ``ExtractionResult.classifications`` rather than listed with a sixth kind.
+    """
 
     COMMITMENT = "commitment"
     DECISION = "decision"

@@ -220,8 +220,12 @@ See `privacy.md`. These are enforced in code review and in tests.
 
 ```bash
 docker compose up -d          # postgres (pgvector), redis
-uv run celery -A apps.worker.celery_app worker -Q default,cpu_heavy -l info
+uv run celery -A autune_worker.celery_app worker -Q default,cpu_heavy,gpu -l info
 ```
 
-Run the `gpu` queue only if you have a GPU; otherwise A falls back to
-whisper.cpp on CPU. See `../engineering/environments.md`.
+`gpu` is a queue name, not a hardware requirement — `task_routes` sends every
+`autune.audio.*` task there regardless of `AUTUNE_AUDIO_DEVICE`. A worker that
+doesn't service it never runs an audio task at all; it just sits in Redis with
+no error. Set `AUTUNE_AUDIO_DEVICE=cpu` for whisper.cpp on CPU — that picks
+what Whisper runs on, not which queue the task lands in. See
+`../engineering/environments.md`.

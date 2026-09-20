@@ -79,7 +79,7 @@ Plus the shared entities in `packages/core`, which A writes.
 | --- | --- | --- |
 | POST | `/recordings` | Upload a recording, start processing |
 | GET | `/jobs/{job_id}` | Job status and progress |
-| GET | `/transcripts/{meeting_id}` | Full transcript |
+| GET | `/transcripts/{meeting_id}` | Full transcript, masked, for a member of the meeting's team |
 | PATCH | `/utterances/{id}` | Correct speaker or text |
 | POST | `/speakers/enroll` | Enroll a voice for identification |
 
@@ -144,6 +144,16 @@ overlapping speech than ours will.
 `original_form` is unmasked personal data. Read it in memory to produce a
 masking hypothesis and never write it, log it, or commit anything derived from
 it.
+
+The second corpus is HiKE (`thetaone-ai/HiKE`, Apache-2.0): 1,121 Korean-English
+code-switched utterances with a published table to read against. It measures
+one thing the in-house recording cannot — how the model survives a language
+switch — and nothing the recording can: no glossary, one speaker per row, no
+personal data. Its metrics, MER and PIER, are reimplemented in
+`autune_audio.eval.codeswitch` and pinned against HiKE's own scoring by a
+fixture; the run is `modules/audio/scripts/evaluate_hike.py`. Loanwords in
+either script are correct there, and since 2026-09-16 in `term_accuracy` too.
+Results: `audio-evaluations/03-hike-large-v3.md`.
 
 ## Privacy notes
 

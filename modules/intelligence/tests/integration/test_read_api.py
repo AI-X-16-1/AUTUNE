@@ -22,7 +22,13 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from autune_core import AutuneError, get_session
-from autune_intelligence.models import IntelAlignment, IntelGapPattern, IntelReport, IntelScore
+from autune_intelligence.models import (
+    IntelAlignment,
+    IntelCompletion,
+    IntelGapPattern,
+    IntelReport,
+    IntelScore,
+)
 from autune_intelligence.router import router
 
 
@@ -200,7 +206,13 @@ def test_dashboard_rolls_up_scores_and_gap_patterns_for_the_team(
             created_at=created,
         )
         db_session.add(
-            IntelGapPattern(meeting_id=m.id, pattern_type="ownership", team_id=team, count=i + 1)
+            IntelGapPattern(
+                meeting_id=m.id,
+                pattern_type="ownership",
+                team_id=team,
+                count=i + 1,
+                classifier_version="fake",
+            )
         )
     db_session.flush()
 
@@ -212,6 +224,44 @@ def test_dashboard_rolls_up_scores_and_gap_patterns_for_the_team(
     assert body["action_item_completion_rate"] == pytest.approx(0.4)
     assert [s["grade"] for s in body["recent_scores"]] == ["A", "C"]
     assert body["gap_distribution"] == {"ownership": 3}
+
+
+def test_dashboard_excludes_gap_patterns_without_a_classifier_version(
+    client: TestClient, db_session: Session, team: str
+) -> None:
+    """Pre-#203 rows carry the raw category text in ``pattern_type`` and an
+    empty ``classifier_version`` — mixing them into the same distribution as
+    real classifier output means one graph shows two incompatible vocabularies
+    at once. Deferred in PR #210's review pending #203; #203 is on ``main`` now.
+    """
+    from autune_core import Meeting
+
+    m = Meeting(team_id=team, title="legacy")
+    db_session.add(m)
+    db_session.flush()
+    db_session.add(
+        IntelGapPattern(
+            meeting_id=m.id,
+            pattern_type="technical_spec",
+            team_id=team,
+            count=5,
+            classifier_version="",
+        )
+    )
+    db_session.add(
+        IntelGapPattern(
+            meeting_id=m.id,
+            pattern_type="ownership",
+            team_id=team,
+            count=2,
+            classifier_version="fake",
+        )
+    )
+    db_session.flush()
+
+    body = client.get(f"/api/intelligence/dashboard/{team}").json()
+
+    assert body["gap_distribution"] == {"ownership": 2}
 
 
 def test_dashboard_average_grade_is_none_without_any_scores(client: TestClient, team: str) -> None:
@@ -253,3 +303,227 @@ def test_dashboard_recent_scores_carry_created_at_for_weekly_bucketing(
     body = client.get(f"/api/intelligence/dashboard/{team}").json()
 
     assert body["recent_scores"][0]["created_at"] == "2026-09-01T12:00:00Z"
+
+
+# --- /gap-titles/{team_id} ---------------------------------------------------
+
+
+def test_gap_titles_is_empty_for_a_team_with_no_gap_patterns(client: TestClient, team: str) -> None:
+    assert client.get(f"/api/intelligence/gap-titles/{team}").json() == {}
+
+
+def test_gap_titles_matches_source_gap_ids_against_the_meeting_gap_payload(
+    client: TestClient, db_session: Session, team: str
+) -> None:
+    from autune_core import Meeting
+
+    m = Meeting(team_id=team, title="m")
+    db_session.add(m)
+    db_session.flush()
+    db_session.add(
+        IntelCompletion(
+            meeting_id=m.id,
+            first_seen_at=datetime.now(UTC),
+            gap_payload={
+                "gaps": [
+                    {"id": "gap_1", "title": "예산 담당자 미정", "severity": "high"},
+                    {"id": "gap_2", "title": "일정 재확인 필요", "severity": "high"},
+                ]
+            },
+        )
+    )
+    db_session.add(
+        IntelGapPattern(
+            meeting_id=m.id,
+            pattern_type="budget",
+            team_id=team,
+            count=1,
+            source_gap_ids=["gap_1"],
+        )
+    )
+    db_session.add(
+        IntelGapPattern(
+            meeting_id=m.id,
+            pattern_type="schedule",
+            team_id=team,
+            count=1,
+            source_gap_ids=["gap_2"],
+        )
+    )
+    db_session.flush()
+
+    body = client.get(f"/api/intelligence/gap-titles/{team}").json()
+
+    assert body == {
+        "budget": ["예산 담당자 미정"],
+        "schedule": ["일정 재확인 필요"],
+    }
+
+
+def test_gap_titles_skips_a_meeting_whose_gap_payload_never_arrived(
+    client: TestClient, db_session: Session, team: str
+) -> None:
+    """A pattern row can outlive its completion row's payload (retention,
+    re-aggregation) — the id simply finds no title rather than erroring."""
+    from autune_core import Meeting
+
+    m = Meeting(team_id=team, title="m")
+    db_session.add(m)
+    db_session.flush()
+    db_session.add(
+        IntelGapPattern(
+            meeting_id=m.id,
+            pattern_type="risk",
+            team_id=team,
+            count=1,
+            source_gap_ids=["gap_missing"],
+        )
+    )
+    db_session.flush()
+
+    body = client.get(f"/api/intelligence/gap-titles/{team}").json()
+
+    assert body == {}
+
+
+def test_gap_titles_excludes_gaps_below_high_severity(
+    client: TestClient, db_session: Session, team: str
+) -> None:
+    """`docs/architecture/contracts.md`: only `high` is surfaced in the UI by
+    default. `source_gap_ids` carries every severity (it feeds the count, not
+    the UI), so the title lookup has to filter on its own."""
+    from autune_core import Meeting
+
+    m = Meeting(team_id=team, title="m")
+    db_session.add(m)
+    db_session.flush()
+    db_session.add(
+        IntelCompletion(
+            meeting_id=m.id,
+            first_seen_at=datetime.now(UTC),
+            gap_payload={
+                "gaps": [
+                    {"id": "gap_high", "title": "예산 담당자 미정", "severity": "high"},
+                    {"id": "gap_medium", "title": "회의실 예약 미정", "severity": "medium"},
+                    {"id": "gap_low", "title": "다과 준비 여부", "severity": "low"},
+                ]
+            },
+        )
+    )
+    db_session.add(
+        IntelGapPattern(
+            meeting_id=m.id,
+            pattern_type="budget",
+            team_id=team,
+            count=3,
+            source_gap_ids=["gap_high", "gap_medium", "gap_low"],
+        )
+    )
+    db_session.flush()
+
+    body = client.get(f"/api/intelligence/gap-titles/{team}").json()
+
+    assert body == {"budget": ["예산 담당자 미정"]}
+
+
+def test_gap_titles_skips_a_gap_missing_id_or_title(
+    client: TestClient, db_session: Session, team: str
+) -> None:
+    """A malformed payload entry is skipped, matching the docstring's
+    "skipped rather than raising" promise — not a 500."""
+    from autune_core import Meeting
+
+    m = Meeting(team_id=team, title="m")
+    db_session.add(m)
+    db_session.flush()
+    db_session.add(
+        IntelCompletion(
+            meeting_id=m.id,
+            first_seen_at=datetime.now(UTC),
+            gap_payload={
+                "gaps": [
+                    {"id": "gap_ok", "title": "예산 담당자 미정", "severity": "high"},
+                    {"id": "gap_no_title", "severity": "high"},
+                    {"title": "id 없는 갭", "severity": "high"},
+                ]
+            },
+        )
+    )
+    db_session.add(
+        IntelGapPattern(
+            meeting_id=m.id,
+            pattern_type="budget",
+            team_id=team,
+            count=3,
+            source_gap_ids=["gap_ok", "gap_no_title"],
+        )
+    )
+    db_session.flush()
+
+    body = client.get(f"/api/intelligence/gap-titles/{team}").json()
+
+    assert body == {"budget": ["예산 담당자 미정"]}
+
+
+def test_gap_titles_deduplicates_repeated_titles(
+    client: TestClient, db_session: Session, team: str
+) -> None:
+    from autune_core import Meeting
+
+    m = Meeting(team_id=team, title="m")
+    db_session.add(m)
+    db_session.flush()
+    gaps = [
+        {"id": "gap_1", "title": "예산 담당자 미정", "severity": "high"},
+        {"id": "gap_2", "title": "예산 담당자 미정", "severity": "high"},
+        {"id": "gap_3", "title": "일정 재확인 필요", "severity": "high"},
+    ]
+    db_session.add(
+        IntelCompletion(
+            meeting_id=m.id, first_seen_at=datetime.now(UTC), gap_payload={"gaps": gaps}
+        )
+    )
+    db_session.add(
+        IntelGapPattern(
+            meeting_id=m.id,
+            pattern_type="budget",
+            team_id=team,
+            count=3,
+            source_gap_ids=["gap_1", "gap_2", "gap_3"],
+        )
+    )
+    db_session.flush()
+
+    body = client.get(f"/api/intelligence/gap-titles/{team}").json()
+
+    assert body == {"budget": ["예산 담당자 미정", "일정 재확인 필요"]}
+
+
+def test_gap_titles_caps_the_list_per_pattern(
+    client: TestClient, db_session: Session, team: str
+) -> None:
+    from autune_core import Meeting
+
+    m = Meeting(team_id=team, title="m")
+    db_session.add(m)
+    db_session.flush()
+    gaps = [{"id": f"gap_{i}", "title": f"제목 {i}", "severity": "high"} for i in range(25)]
+    db_session.add(
+        IntelCompletion(
+            meeting_id=m.id, first_seen_at=datetime.now(UTC), gap_payload={"gaps": gaps}
+        )
+    )
+    db_session.add(
+        IntelGapPattern(
+            meeting_id=m.id,
+            pattern_type="budget",
+            team_id=team,
+            count=25,
+            source_gap_ids=[g["id"] for g in gaps],
+        )
+    )
+    db_session.flush()
+
+    body = client.get(f"/api/intelligence/gap-titles/{team}").json()
+
+    assert len(body["budget"]) == 20

@@ -44,6 +44,16 @@ class Settings(BaseSettings):
     """Analysis results are deleted after this many days.
     See docs/architecture/privacy.md section 4."""
 
+    cors_allowed_origins: str = ""
+    """Comma-separated origins apps/api sends Access-Control-Allow-Origin for.
+
+    Empty means no CORS headers at all — the default, and what every
+    environment gets until this is set explicitly. A browser blocks
+    cross-origin responses on its own; only a local dev setup running
+    apps/web and apps/api as separate origins (e.g. :3000 and :8000) needs
+    this, and only for those exact origins, e.g.
+    ``http://localhost:3000``."""
+
     @model_validator(mode="after")
     def _reject_default_secret_outside_local(self) -> Settings:
         """A shipped default signing key forges any user's session.
@@ -70,6 +80,24 @@ class Settings(BaseSettings):
                 "credentials cannot be stored. Generate one: python -c "
                 '"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"'
             )
+        return self
+
+    @model_validator(mode="after")
+    def _reject_open_cors_outside_local(self) -> Settings:
+        """A wildcard or plain-http origin outside local defeats the allowlist.
+
+        Local dev is the one case ``http://localhost:3000`` is legitimate; any
+        other environment serving the browser client is expected to be on
+        https, and ``*`` is never a real allowlist entry.
+        """
+        if self.env == "local":
+            return self
+        for origin in (o.strip() for o in self.cors_allowed_origins.split(",") if o.strip()):
+            if origin == "*" or not origin.startswith("https://"):
+                raise ValueError(
+                    f"AUTUNE_CORS_ALLOWED_ORIGINS contains {origin!r} in env={self.env}; "
+                    "outside local, every origin must be an explicit https:// URL, never '*'."
+                )
         return self
 
     @property

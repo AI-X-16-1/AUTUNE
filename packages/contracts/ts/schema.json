@@ -1009,7 +1009,7 @@
       "type": "object"
     },
     "UtteranceKind": {
-      "description": "The five-way classification module B applies to every utterance.",
+      "description": "The kinds module B reports for an utterance.\n\nB's classifier also answers ``none`` — most of a meeting is none of these —\nand a ``none`` utterance never leaves the module: it is absent from\n``ExtractionResult.classifications`` rather than listed with a sixth kind.",
       "enum": [
         "commitment",
         "decision",

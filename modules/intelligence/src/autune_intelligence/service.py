@@ -130,6 +130,14 @@ WEIGHTS: Final = {
     "action_item_completion_rate": 0.2,
     "participation_balance": 0.2,
 }
+"""First heuristic, fixed by hand — not learned, not validated (#26).
+
+Learning these from user feedback needs a feedback signal that does not exist
+yet (no "was this score fair?" UI anywhere), the same gap that keeps C's gap
+threshold hand-tuned off dismissals rather than fit. Revisit as a P2 once that
+signal exists; until then this is the same kind of P1 heuristic
+``GRADE_CUTOFFS`` already is, just without the label.
+"""
 GRADE_CUTOFFS: Final = ((0.9, "A"), (0.8, "B"), (0.7, "C"), (0.6, "D"), (0.5, "E"))
 """Descending; value below the last cutoff is F. First heuristic — P2 tunes these."""
 
@@ -420,7 +428,7 @@ def get_dashboard(session: Session, team_id: str) -> DashboardRead:
     average_score = (sum(values) / len(values)) if values else None
     gap_rows = session.execute(
         sa.select(IntelGapPattern.pattern_type, func.sum(IntelGapPattern.count))
-        .where(IntelGapPattern.team_id == team_id)
+        .where(IntelGapPattern.team_id == team_id, IntelGapPattern.classifier_version != "")
         .group_by(IntelGapPattern.pattern_type)
     ).all()
     trend_since = datetime.now(UTC) - timedelta(weeks=_DASHBOARD_TREND_WEEKS)
@@ -442,6 +450,77 @@ def get_dashboard(session: Session, team_id: str) -> DashboardRead:
     )
 
 
+_MAX_GAP_TITLES_PER_PATTERN: Final = 20
+"""A team's history can pile up hundreds of gaps behind one pattern; the
+hover popup this feeds (`maxWidth: 220`) is not built to scroll that."""
+
+
+def gap_titles_by_pattern(session: Session, team_id: str) -> dict[str, list[str]]:
+    """The **high-severity** gap titles behind each pattern's count in ``get_dashboard``.
+
+    ``IntelGapPattern.source_gap_ids`` names which of C's gaps fed a pattern's
+    count, but not their text — C's title never enters an ``intel_*`` table,
+    only ``IntelCompletion.gap_payload`` (the raw ``GapReport`` C published,
+    kept for aggregation). This joins the two in memory rather than a SQL
+    join: neither table has a foreign key to the other by design (E does not
+    key off another module's rows), and payload matching only needs id
+    equality within one meeting, not a relational join.
+
+    ``source_gap_ids`` carries every severity — it feeds the *count*, and
+    filtering it would silently change what ``gap_distribution`` counts. This
+    function filters instead, because unlike the count, gap *title text* is
+    content C's own rule (`docs/architecture/contracts.md`, module C's
+    CLAUDE.md) says only surfaces at `high` severity by default; anything
+    below that is a candidate C itself would not show.
+
+    A gap id with no matching title (payload never arrived, or was since
+    cleared) is skipped rather than raising — the count in ``gap_distribution``
+    still includes it; this is a best-effort explanation of that count, not
+    its source of truth. A malformed payload entry missing ``id`` or
+    ``title`` is skipped the same way, not a 500. Titles are deduplicated and
+    capped per pattern (``_MAX_GAP_TITLES_PER_PATTERN``) — the hover popup
+    this feeds is not built to scroll a team's whole history.
+    """
+    pattern_rows = session.execute(
+        sa.select(
+            IntelGapPattern.meeting_id, IntelGapPattern.pattern_type, IntelGapPattern.source_gap_ids
+        )
+        .where(IntelGapPattern.team_id == team_id)
+        .order_by(IntelGapPattern.meeting_id, IntelGapPattern.pattern_type)
+    ).all()
+    if not pattern_rows:
+        return {}
+
+    meeting_ids = {row.meeting_id for row in pattern_rows}
+    completions = session.execute(
+        sa.select(IntelCompletion.meeting_id, IntelCompletion.gap_payload).where(
+            IntelCompletion.meeting_id.in_(meeting_ids)
+        )
+    ).all()
+    titles_by_meeting: dict[str, dict[str, str]] = {}
+    for meeting_id, gap_payload in completions:
+        if not gap_payload:
+            continue
+        titles_by_meeting[meeting_id] = {
+            gap["id"]: gap["title"]
+            for gap in gap_payload.get("gaps", [])
+            if gap.get("severity") == "high" and gap.get("id") is not None and gap.get("title")
+        }
+
+    result: dict[str, list[str]] = {}
+    for row in pattern_rows:
+        titles = titles_by_meeting.get(row.meeting_id, {})
+        bucket = result.setdefault(row.pattern_type, [])
+        for gap_id in row.source_gap_ids:
+            title = titles.get(gap_id)
+            if title is None or title in bucket:
+                continue
+            if len(bucket) >= _MAX_GAP_TITLES_PER_PATTERN:
+                continue
+            bucket.append(title)
+    return {pattern: titles for pattern, titles in result.items() if titles}
+
+
 # --- Weekly report (pipeline step 6) ---------------------------------------
 #
 # A deterministic summary over intel_scores and intel_gap_patterns for one
@@ -458,6 +537,7 @@ def _report_body_markdown(
     grade_distribution: dict[str, int],
     gap_distribution: dict[str, int],
     action_item_completion_rate: float | None,
+    partial_meeting_count: int,
 ) -> str:
     """The report's Slack/markdown body — a template, not an LLM.
 
@@ -475,6 +555,8 @@ def _report_body_markdown(
         return f"{header}\n\n이번 주 분석된 회의가 없습니다."
 
     lines = [header, "", f"이번 주 분석된 회의 {meeting_count}건."]
+    if partial_meeting_count:
+        lines.append(f"이 중 부분 분석 {partial_meeting_count}건.")
     if average_value is not None:
         lines.append(f"평균 품질 점수: {_grade_for(average_value)} ({average_value:.0%})")
     if grade_distribution:
@@ -522,6 +604,7 @@ def generate_weekly_report(
         s.action_item_completion_rate for s in scores if s.action_item_completion_rate is not None
     ]
     grade_distribution = dict(Counter(s.grade for s in scores))
+    partial_meeting_count = sum(1 for s in scores if s.missing_sources)
 
     gap_distribution: dict[str, int] = {}
     if meeting_ids:
@@ -543,6 +626,7 @@ def generate_weekly_report(
         grade_distribution=grade_distribution,
         gap_distribution=gap_distribution,
         action_item_completion_rate=action_item_completion_rate,
+        partial_meeting_count=partial_meeting_count,
     )
     metrics_json = {
         "meeting_count": len(scores),
@@ -550,6 +634,7 @@ def generate_weekly_report(
         "grade_distribution": grade_distribution,
         "gap_distribution": gap_distribution,
         "action_item_completion_rate": action_item_completion_rate,
+        "partial_meeting_count": partial_meeting_count,
     }
 
     session.execute(

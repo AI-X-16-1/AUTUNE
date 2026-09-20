@@ -69,11 +69,19 @@ recording length.
 ```bash
 # What a corpus can measure, before committing to downloading it
 uv run python modules/audio/scripts/inspect_corpus.py <corpus-root>
+
+# Code-switching: the pipeline's transcribe() over HiKE, scored as the paper scores it
+uv run python modules/audio/scripts/evaluate_hike.py --limit 60 --predictions out.jsonl
+uv run python modules/audio/scripts/evaluate_hike.py --score-only out.jsonl   # no model needed
 ```
 
 Scoring lives in `autune_audio.eval` and takes structures, not a model, so it
-runs without a GPU. There is no `__main__` yet — the CLI arrives with the corpus
-loader, once the label format is known.
+runs without a GPU. Two corpora, two jobs: the in-house recording measures the
+glossary prompt, DER and masking; HiKE (`thetaone-ai/HiKE`, 1,121 Korean-English
+utterances) measures only how the model survives a language switch, with no
+glossary, against a published table. Reports go in
+`docs/modules/audio-evaluations/` and the thread between them in `HISTORY.md`
+(which lands with #174).
 
 A is the critical path — B, C, and D cannot integrate until `TranscriptReady`
 is real. Ship it first.
