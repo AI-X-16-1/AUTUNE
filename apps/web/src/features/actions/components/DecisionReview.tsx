@@ -356,20 +356,38 @@ const OUTCOME: Record<ReviewAmbiguous["outcome"], string> = {
 };
 
 /**
+ * How many the breakdown has to cover before it is shown.
+ *
+ * The same three the contract requires of a role's stance
+ * (`STANCE_MIN_IDENTIFIED_PER_ROLE`, #232/#233) and module E requires before it
+ * delivers a speaking ratio — one small-group line in the product, not three.
+ */
+const MIN_FOR_BREAKDOWN = 3;
+
+/**
  * The weak assents, as counts. Read-only: the speaker answers by DM, and who else
  * may answer for them is #246 point 1. No utterance text — the review carries
  * ids only, and quoting someone's hesitation on a shared screen is what the DM
  * to the speaker exists to avoid.
+ *
+ * **Below three, the counts are the quotation.** "애매한 동의 1건 — 답이 없음 1",
+ * next to a transcript screen that carries the utterance and its speaker label,
+ * says that one person did not answer their DM: a per-person record of behaviour
+ * in a meeting, which `privacy.md` section 3 refuses. The total on its own singles
+ * nobody out, so that is what a small meeting gets. Raised in review of #298.
  */
 function AmbiguousSummary({ items }: { items: ReviewAmbiguous[] }) {
   if (items.length === 0) return null;
   const counts = new Map<ReviewAmbiguous["outcome"], number>();
   for (const item of items) counts.set(item.outcome, (counts.get(item.outcome) ?? 0) + 1);
+  const breakdown = [...counts]
+    .map(([outcome, count]) => `${OUTCOME[outcome]} ${count}`)
+    .join(" · ");
 
   return (
     <p className="mt-3 text-[var(--color-ink-muted)]" style={{ fontSize: "var(--text-metaSmall)" }}>
-      애매한 동의 {items.length}건 — 발화자 확인:{" "}
-      {[...counts].map(([outcome, count]) => `${OUTCOME[outcome]} ${count}`).join(" · ")}
+      애매한 동의 {items.length}건
+      {items.length >= MIN_FOR_BREAKDOWN ? ` — 발화자 확인: ${breakdown}` : " — 발화자에게 확인 중"}
     </p>
   );
 }

@@ -76,6 +76,10 @@ export function useDecisionReview(meetingId: string) {
           review: {
             ...previous.review,
             decisions,
+            // The server's own definition (`MeetingReview.pending_decisions`),
+            // recomputed so the header moves with the click. If the server ever
+            // counts differently, this is the line to delete rather than the
+            // place to guess. Raised in review of #298.
             pending_decisions: decisions.filter((d) => d.status === "pending").length,
           },
         };
