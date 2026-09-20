@@ -235,6 +235,22 @@ def _hide(value: str, category: str, *, merged: bool = False) -> str:
         # in it passed through untouched.
         return value[:1] + MASK_CHAR * (len(value) - 1)
 
+    if any(not char.isdigit() and char not in _SHAPE_CHARS for char in value):
+        # Written in two scripts, so there is no digit layout to preserve.
+        #
+        # `_digits_to_keep` counts the characters that are digits, and in a
+        # mixed span those are only the half already written as digits. On
+        # `010-1234 오육칠팔` it counted seven and the phone rule keeps a mobile
+        # prefix and the last four -- which is all seven. Every digit stayed:
+        #
+        #     010-1234 오육칠팔  ->  010-1234 ****
+        #
+        # Keeping "the last four" is also unachievable here when those four are
+        # syllables: leaving them is leaving the number spelled out. So a mixed
+        # span is hidden whole, for the same reason a merged one is -- the
+        # positions the rules count no longer mean what the rules assume.
+        return "".join(char if char in _SHAPE_CHARS else MASK_CHAR for char in value)
+
     digits = [c for c in value if c.isdigit()]
     keep = _digits_to_keep(category, digits)
 
