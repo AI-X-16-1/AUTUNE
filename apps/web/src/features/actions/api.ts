@@ -74,20 +74,17 @@ export const updateActionItem = (id: string, changes: Partial<ActionItemDraft & 
  * text, or a trash view, or a "deleted" filter — there is nothing left to show.
  * The server records that a deletion happened, which is all the edit-cost metric
  * asks for.
- */
-/**
- * Delete one item. The server answers 204 with no body.
  *
- * `request` parses every 2xx body as JSON, so an empty 204 throws a
- * `SyntaxError` after the row is already gone — the board then kept the card
- * and, once the drawer reported failures, said the delete had failed. An error
- * status still arrives as `ApiError`; only the parse of an empty success is
- * dropped here. The shared client is the better place for this (all five own
- * it); until then it stays in this feature.
+ * The server answers 204 with no body, and `request` parses every 2xx body as
+ * JSON, so an empty 204 threw a `SyntaxError` after the row was already gone —
+ * the board kept the card, and once the drawer reported failures it said the
+ * delete had failed. An error status still arrives as `ApiError`; only the parse
+ * of an empty success is dropped. The shared client is the better place for this
+ * (all five own it); until then it stays in this feature.
  */
 export const deleteActionItem = async (id: string): Promise<void> => {
   try {
-    await api.extraction<void>(`/action-items/${id}`, { method: "DELETE" });
+    await api.extraction<void>(`/action-items/${encodeURIComponent(id)}`, { method: "DELETE" });
   } catch (cause) {
     if (cause instanceof SyntaxError) return;
     throw cause;

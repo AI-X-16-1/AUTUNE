@@ -37,6 +37,10 @@ export function ActionDetailDrawer({
   // reason, and a failed delete otherwise closes the dialog and leaves the
   // drawer open saying nothing. Raised in review of #292.
   const [failure, setFailure] = useState<string | null>(null);
+  // The select is controlled by `item.status`, so while a PATCH is in flight it
+  // still shows the old value. Left enabled, a second pick sends a second PATCH
+  // and the board ends on whichever response lands last. Raised in review of #292.
+  const [changing, setChanging] = useState(false);
   // The quotation is fetched when the drawer opens (GET /action-items/{id});
   // the list the board holds carries utterance ids, never their words.
   const quotation = useSourceUtterances(item);
@@ -91,12 +95,17 @@ export function ActionDetailDrawer({
         <Field label="상태">
           <select
             value={item.status ?? "needs_confirmation"}
+            disabled={changing}
+            aria-busy={changing || undefined}
             onChange={async (event) => {
               setFailure(null);
+              setChanging(true);
               try {
                 await onStatusChange?.(event.target.value as ActionStatus);
               } catch {
                 setFailure("상태를 바꾸지 못했습니다. 잠시 후 다시 시도해 주세요.");
+              } finally {
+                setChanging(false);
               }
             }}
             className="w-full border bg-transparent"

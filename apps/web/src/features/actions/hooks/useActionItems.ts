@@ -18,6 +18,8 @@ interface State {
   items: ActionItemRead[];
   error: Error | null;
   loading: boolean;
+  /** Whether a request for this filter has finished at least once. */
+  settled: boolean;
 }
 
 /**
@@ -36,7 +38,13 @@ interface State {
  */
 export function useActionItems(filter: ActionItemFilter = {}) {
   const key = JSON.stringify(filter);
-  const [state, setState] = useState<State>({ key, items: [], error: null, loading: true });
+  const [state, setState] = useState<State>({
+    key,
+    items: [],
+    error: null,
+    loading: true,
+    settled: false,
+  });
   // A response lands only if no later request has started, for this filter or
   // another.
   const latest = useRef(0);
@@ -47,11 +55,20 @@ export function useActionItems(filter: ActionItemFilter = {}) {
     setState((previous) =>
       previous.key === key
         ? { ...previous, error: null, loading: true }
-        : { key, items: [], error: null, loading: true },
+        : { key, items: [], error: null, loading: true, settled: false },
     );
     try {
       const items = await listActionItems(JSON.parse(key) as ActionItemFilter);
-      if (ticket === latest.current) setState({ key, items, error: null, loading: false });
+      // Replaced through the previous state, not over it: an add, edit or delete
+      // that landed while this read was in flight would otherwise be undone by a
+      // list fetched before it. Raised in review of #292.
+      if (ticket === latest.current) {
+        setState((previous) =>
+          previous.key === key
+            ? { ...previous, items, error: null, loading: false, settled: true }
+            : previous,
+        );
+      }
     } catch (cause) {
       const error = cause instanceof Error ? cause : new Error(String(cause));
       if (ticket === latest.current) {
@@ -62,6 +79,7 @@ export function useActionItems(filter: ActionItemFilter = {}) {
           items: previous.key === key ? previous.items : [],
           error,
           loading: false,
+          settled: true,
         }));
       }
     }
@@ -117,6 +135,8 @@ export function useActionItems(filter: ActionItemFilter = {}) {
 
   // The reset in `reload` runs in an effect, so the render that first sees a
   // new filter still holds the previous one's state. It reads as loading.
-  if (state.key !== key) return { items: [], loading: true, error: null, reload, add, edit, remove };
+  if (state.key !== key) {
+    return { items: [], loading: true, settled: false, error: null, reload, add, edit, remove };
+  }
   return { ...state, reload, add, edit, remove };
 }
