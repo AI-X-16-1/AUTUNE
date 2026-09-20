@@ -237,6 +237,26 @@ def test_a_rejected_decision_leaves_what_d_and_e_read(client: TestClient, sessio
     ]
 
 
+def test_the_wording_a_person_confirmed_is_what_d_and_e_read(
+    client: TestClient, session: Session
+) -> None:
+    """The rewording goes to Notion through ``outbound_for_meeting``; it has to
+    reach D and E the same way, or one decision has two texts. Raised in review
+    of #247."""
+    first, _ = two_decisions(session)
+
+    client.patch(
+        f"{PREFIX}/decisions/{first.id}",
+        json={"status": "confirmed", "statement": "출시는 금요일로 확정"},
+    )
+
+    result = service.result_for_meeting(session, MEETING)
+    sent = next(d for d in result.decisions if d.id == first.id)
+    assert sent.statement == "출시는 금요일로 확정"
+    outbound = client.get(f"{PREFIX}/reviews/{MEETING}/outbound").json()
+    assert [d["statement"] for d in outbound["decisions"]] == ["출시는 금요일로 확정"]
+
+
 def test_a_rejection_taken_back_returns_the_decision(client: TestClient, session: Session) -> None:
     first, second = two_decisions(session)
 

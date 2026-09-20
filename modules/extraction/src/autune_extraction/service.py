@@ -588,27 +588,44 @@ def decisions_for_meeting(session: Session, meeting_id: str) -> list[Decision]:
 
     Pending decisions stay: whether D and E hear a decision before anybody has
     looked at it is the open question 2 on #246, not something this read decides.
+
+    **A person's rewording is what goes out**, here as in
+    ``review_for_meeting`` and ``outbound_for_meeting``. Reading the review for
+    the status and not for the sentence sent the model's wording to D and E while
+    Notion and Slack got the corrected one -- one decision, two texts, and the
+    one the person rejected as wrong is the one a lineage would be built on.
+    Raised in review of #247.
     """
-    rejected = select(ExtDecisionReview.decision_id).where(
-        ExtDecisionReview.meeting_id == meeting_id, ExtDecisionReview.status == "rejected"
-    )
+    reviews = {
+        review.decision_id: review
+        for review in session.scalars(
+            select(ExtDecisionReview).where(ExtDecisionReview.meeting_id == meeting_id)
+        )
+    }
     rows = session.scalars(
         select(ExtDecision)
-        .where(ExtDecision.meeting_id == meeting_id, ExtDecision.id.not_in(rejected))
+        .where(ExtDecision.meeting_id == meeting_id)
         .order_by(ExtDecision.created_at, ExtDecision.id)
     ).all()
 
     return [
         Decision(
             id=row.id,
-            statement=row.statement,
+            statement=_confirmed_statement(row, reviews.get(row.id)),
             source_utterance_ids=[
                 source.utterance_id for source in sorted(row.sources, key=lambda s: s.position)
             ],
             confidence=row.confidence,
         )
         for row in rows
+        if (review := reviews.get(row.id)) is None or review.status != "rejected"
     ]
+
+
+def _confirmed_statement(decision: ExtDecision, review: ExtDecisionReview | None) -> str:
+    """What the meeting settled, in the wording that stands: the person's if they
+    reworded it, the model's otherwise. One definition, read by every surface."""
+    return review.statement if review is not None and review.statement else decision.statement
 
 
 # --- the meeting's result ----------------------------------------------------
@@ -1008,7 +1025,7 @@ def review_for_meeting(
         listed.append(
             ReviewDecision(
                 id=decision.id,
-                statement=review.statement if review and review.statement else decision.statement,
+                statement=_confirmed_statement(decision, review),
                 model_statement=decision.statement,
                 confidence=decision.confidence,
                 origin=decision.origin,  # type: ignore[arg-type]
