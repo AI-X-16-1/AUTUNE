@@ -38,8 +38,21 @@ export function ActionDetailDrawer({
   return (
     <aside
       aria-label="액션 아이템 상세"
-      className="flex h-full w-full max-w-[420px] flex-col border-l border-[var(--color-hairline)]"
-      style={{ background: "var(--color-surface-panel)" }}
+      className="flex w-full max-w-[420px] flex-col border-l border-[var(--color-hairline)]"
+      style={{
+        background: "var(--color-surface-panel)",
+        // `h-full` matched the left column's height, which is the whole page
+        // once the decisions list and every card are on it -- so the drawer
+        // opened wherever the page happened to be tall, usually well above the
+        // card that was clicked. Sticky keeps it in the viewport at whatever
+        // scroll position the click happened at instead: it travels with the
+        // page up to this offset, then holds. Raised by a user reviewing a
+        // 25-item board -- opening a card near the bottom put the drawer a
+        // full page-height away.
+        position: "sticky",
+        top: "var(--space-page)",
+        maxHeight: "calc(100vh - 2 * var(--space-page))",
+      }}
     >
       <header
         className="flex items-start gap-3 border-b border-[var(--color-hairline)]"
