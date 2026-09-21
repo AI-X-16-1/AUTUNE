@@ -282,6 +282,7 @@ name = "autune-audio"
 version = "0.1.0"
 source = { editable = "modules/audio" }
 dependencies = [
+    { name = "anyio" },
     { name = "autune-contracts" },
     { name = "autune-core" },
     { name = "celery" },
@@ -298,6 +299,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "anyio", specifier = ">=4" },
     { name = "autune-contracts", editable = "packages/contracts" },
     { name = "autune-core", editable = "packages/core" },
     { name = "celery", specifier = ">=5.4" },
