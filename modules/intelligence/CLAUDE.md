@@ -59,9 +59,9 @@ section 3 is binding.
   identifies everyone; anonymization does not help.
 - `/api/intelligence/me/speaking-ratio` authorizes on
   `requester_id == subject_id`, with no admin override.
-- The influence map (Phase 2) is per-person behavioral data under the same
-  constraint. Settle its visibility model before building it; assume "the person
-  themselves" until decided.
+- **The influence map (Phase 2) goes to the person themselves and nobody
+  else — decided on #28.** Same delivery as speaking ratio (subject-only,
+  by DM); it must never land on the shared dashboard, and no admin override.
 
 ## Do not do here
 
