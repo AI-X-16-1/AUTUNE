@@ -269,6 +269,26 @@ def test_a_rejection_taken_back_returns_the_decision(client: TestClient, session
     }
 
 
+def test_rejecting_by_patch_drops_the_rewording_the_way_delete_does(
+    client: TestClient, session: Session
+) -> None:
+    """A status-only PATCH used to leave the old rewording in the row, so undoing
+    the rejection brought back wording nobody typed this time. Raised in review
+    of #247."""
+    first, _ = two_decisions(session)
+    model_wording = first.statement
+
+    client.patch(
+        f"{PREFIX}/decisions/{first.id}",
+        json={"status": "confirmed", "statement": "출시는 금요일로 확정"},
+    )
+    client.patch(f"{PREFIX}/decisions/{first.id}", json={"status": "rejected"})
+    client.patch(f"{PREFIX}/decisions/{first.id}", json={"status": "pending"})
+
+    result = service.result_for_meeting(session, MEETING)
+    assert next(d for d in result.decisions if d.id == first.id).statement == model_wording
+
+
 def test_a_mis_click_can_be_put_back_to_pending(client: TestClient, session: Session) -> None:
     first, _ = two_decisions(session)
 

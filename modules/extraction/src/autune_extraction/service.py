@@ -1093,6 +1093,12 @@ def review_decision(
                 review.statement = None
             else:
                 review.statement = None if wording in (None, decision.statement) else wording
+        if review.status == "rejected":
+            # Rejecting drops the rewording whichever way it was asked for, as
+            # ``delete_decision`` does. Left behind, it would come back with the
+            # decision when the rejection is undone -- wording nobody typed this
+            # time, sent to D, E and outbound as if confirmed.
+            review.statement = None
         session.flush()
 
     return next(
