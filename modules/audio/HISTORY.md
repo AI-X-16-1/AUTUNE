@@ -113,6 +113,26 @@ Two caveats that the number does not carry on its own:
 to detect that it happened in a given meeting.** Production has no reference.
 That property has since broken two other modules (section 6).
 
+### Live channel — per-row lag (`docs/modules/audio-live-transcription.md` §9)
+
+One synthetic run against the real WebSocket route with `large-v3` on an
+Apple-silicon CPU: a 46.6 s two-speaker recording streamed as PCM16 at
+real-time pace.
+
+| Measure | Value |
+| --- | --- |
+| Rows | 5 of 5 utterances, one phone number masked, `speaker_id` null |
+| Lag from utterance end to row | **7–10 s** (each ~10 s utterance takes ~9 s to transcribe) |
+| Same recording faster than real time | wall ≈ audio length: the transcriber is the bottleneck, RTF ≈ 0.95 |
+| Log | counts and ids only; no text, no traceback |
+
+**The lag is one utterance, not a fixed delay, and nothing is dropped.** When
+transcription falls behind, frames queue at the socket and the lag grows for
+the rest of the meeting. Two live meetings on one process therefore do not
+"double the delay" — past RTF 1 the delay stops converging. A bounded
+segment queue with drop-oldest is the follow-up; the browser microphone path
+(worklet, `MediaRecorder`) has not been measured by anyone yet.
+
 ---
 
 ## 3. Decisions, and the ones that reversed

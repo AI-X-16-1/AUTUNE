@@ -98,7 +98,8 @@ Wraps `pipeline.transcribe(waveform, glossary=build_prompt())`. Two properties:
 
 - **One lock per process.** CPU RTF is 0.73, so segments that arrive while one
   is being transcribed wait their turn. Two meetings live at once share the
-  lock and each sees roughly double the delay. An MVP limit, stated in
+  lock; once their combined load passes real time the delay grows for the
+  rest of the meeting rather than doubling (§9). An MVP limit, stated in
   `docs/modules/audio.md`.
 - **Runs in a thread** (`anyio.to_thread.run_sync`) so the event loop keeps
   serving frames and other connections.
@@ -340,8 +341,8 @@ The runbook section for the live path (§3.7 in the plan) is deferred until
 Measured per-row lag at real-time pacing on an Apple-silicon CPU with
 `large-v3` was 7–10 s: each utterance of about 10 s takes about 9 s to
 transcribe, so a row lands roughly one utterance after the one it belongs to
-ends. That is above the 2–8 s estimate in §5.4, which assumed the 0.73 RTF
-of the batch path.
+ends. That is above the 2–8 s the plan's smoke test expected, which assumed
+the 0.73 RTF of the batch path (§3.2); the measured RTF was closer to 0.95.
 
 When transcription falls behind, nothing is dropped. The segmenter awaits
 each row inline, so frames that arrive while a segment is being transcribed

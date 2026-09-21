@@ -8,8 +8,9 @@ and nothing else in ``live/`` changes.
 Two properties, both about a CPU that transcribes at 0.73x real time:
 
 - **One lock per process.** Segments that arrive while one is being
-  transcribed wait their turn. Two meetings live at once share the lock and
-  each sees roughly double the delay -- an MVP limit, stated in audio.md.
+  transcribed wait their turn. Two meetings live at once share the lock; once
+  their combined load passes real time the delay grows for the rest of the
+  meeting rather than doubling -- an MVP limit, stated in audio.md.
 - **A thread, not the loop.** ``anyio.to_thread`` keeps the socket handler
   reading frames and other connections served while Whisper works.
 """
