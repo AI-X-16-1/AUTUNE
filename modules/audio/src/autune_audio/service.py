@@ -78,6 +78,39 @@ def transcript_for_meeting(
     return transcript_payload(session, meeting_id=meeting_id).utterances
 
 
+def meeting_for(session: Session, *, meeting_id: str, reader: User) -> Meeting:
+    """One meeting's own row, for a member of its team.
+
+    What screen S12 polls. ``/transcripts/{id}`` returns an empty list all the
+    way through the task, so without the status a screen cannot tell "not
+    yet" from "nobody spoke" (``transcript_for_meeting``). Same check as the
+    transcript read: a token says who is asking, membership says whether they
+    may.
+    """
+    meeting = session.get(Meeting, meeting_id)
+    if meeting is None:
+        raise NotFoundError("meeting", meeting_id)
+    require_team_member(session, user_id=reader.id, team_id=meeting.team_id)
+    return meeting
+
+
+def teams_for(session: Session, *, member: User) -> list[Team]:
+    """The teams ``member`` belongs to, by name.
+
+    ``MeetingCreate`` takes a ``team_id`` and a browser holding only a token has
+    no way to learn one; this is that way. Read-only over shared entities,
+    which invariant 4 allows every module.
+    """
+    return list(
+        session.scalars(
+            sa.select(Team)
+            .join(TeamMember, TeamMember.team_id == Team.id)
+            .where(TeamMember.user_id == member.id)
+            .order_by(Team.name)
+        )
+    )
+
+
 _ACCEPTS_A_RECORDING = frozenset({"scheduled", "failed"})
 """Meeting statuses a recording may be submitted for.
 

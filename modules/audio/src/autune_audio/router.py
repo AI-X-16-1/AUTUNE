@@ -22,7 +22,14 @@ from . import service
 from .config import MAX_UPLOAD_BYTES
 from .config import get_settings as get_audio_settings
 from .enqueue import enqueue_process_recording
-from .schemas import ConsentAttestation, ConsentState, MeetingCreate, MeetingState
+from .schemas import (
+    ConsentAttestation,
+    ConsentState,
+    MeetingCreate,
+    MeetingDetail,
+    MeetingState,
+    TeamSummary,
+)
 from .storage import assign, handover
 
 log = get_logger(__name__)
@@ -80,6 +87,29 @@ def get_transcript(meeting_id: str, user: CurrentUser, session: SessionDep) -> l
     that looks like the event.
     """
     return service.transcript_for_meeting(session, meeting_id=meeting_id, reader=user)
+
+
+@router.get("/teams", response_model=list[TeamSummary])
+def list_teams(user: CurrentUser, session: SessionDep) -> list[TeamSummary]:
+    """The teams this person may open a meeting for. Feeds ``POST /meetings``."""
+    return [
+        TeamSummary(team_id=team.id, name=team.name)
+        for team in service.teams_for(session, member=user)
+    ]
+
+
+@router.get("/meetings/{meeting_id}", response_model=MeetingDetail)
+def get_meeting(meeting_id: str, user: CurrentUser, session: SessionDep) -> MeetingDetail:
+    """Where the meeting is in its life. Screen S12 polls this until it is
+    ``complete`` or ``failed``, then reads the transcript."""
+    meeting = service.meeting_for(session, meeting_id=meeting_id, reader=user)
+    return MeetingDetail(
+        meeting_id=meeting.id,
+        title=meeting.title,
+        status=meeting.status,
+        original_audio_deleted=meeting.original_audio_deleted,
+        pii_masked=meeting.pii_masked,
+    )
 
 
 @router.post("/meetings", response_model=MeetingState, status_code=status.HTTP_201_CREATED)

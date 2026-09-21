@@ -77,9 +77,11 @@ Plus the shared entities in `packages/core`, which A writes.
 
 | Method | Path | Purpose |
 | --- | --- | --- |
+| GET | `/teams` | The teams the caller may open a meeting for; feeds `POST /meetings` |
 | POST | `/meetings` | Open a meeting for a team, before there is any audio |
+| GET | `/meetings/{meeting_id}` | Title, status and the two privacy flags. What S12 polls |
 | POST | `/meetings/{meeting_id}/recording` | Upload a recording and queue transcription (202) |
-| GET | `/jobs/{job_id}` | Job status and progress |
+| GET | `/jobs/{job_id}` | Job status and progress (planned) |
 | GET | `/transcripts/{meeting_id}` | Full transcript, masked, for a member of the meeting's team |
 | POST | `/meetings/{meeting_id}/consent` | A member attests that everyone in the recording consented (#190) |
 | PATCH | `/utterances/{id}` | Correct speaker or text |

@@ -140,6 +140,29 @@ class MeetingState(BaseModel):
     status: str
 
 
+class MeetingDetail(MeetingState):
+    """A meeting's own row, for the screen that follows it (S12, S15).
+
+    The two flags are what the pipeline actually wrote: ``persist_transcript``
+    sets them in the same transaction as the utterances, so a screen can say
+    "original deleted" and "masked" from stored state rather than from having
+    reached a stage in a diagram. Nothing derived from the transcript is here;
+    that is ``/transcripts/{id}``.
+    """
+
+    title: str
+    original_audio_deleted: bool
+    pii_masked: bool
+
+
+class TeamSummary(BaseModel):
+    """A team the caller may open a meeting for. Id and name; nothing else a
+    browser needs to fill ``MeetingCreate.team_id``."""
+
+    team_id: str
+    name: str
+
+
 class ConsentAttestation(BaseModel):
     """What a member sends to say everyone in the recording consented.
 
