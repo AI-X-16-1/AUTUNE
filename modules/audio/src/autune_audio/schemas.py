@@ -8,8 +8,10 @@ transcriber returns before speakers are attached.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Literal
 
 import numpy as np
+from pydantic import BaseModel
 
 SAMPLE_RATE = 16_000
 """What both Whisper and pyannote want. Decoding to it once means neither
@@ -106,3 +108,26 @@ class Transcription:
             f"Transcription({len(self.segments)} segments, {len(self.words)} words, "
             f"{self.duration:.1f}s, lang={self.language})"
         )
+
+
+# --- API request and response bodies ----------------------------------------
+#
+# The types above describe stages inside the pipeline; these describe the HTTP
+# surface. Neither belongs in ``packages/contracts`` — a contract type is what
+# another *module* consumes, and nothing here crosses that line.
+
+
+class ConsentAttestation(BaseModel):
+    """What a member sends to say everyone in the recording consented.
+
+    ``Literal[True]`` rather than ``bool``: ``false`` is not a revocation and
+    not a no-op, it is a request this route has no meaning for, and 422 says so.
+    Revocation is S10/S11 (#190).
+    """
+
+    attested: Literal[True]
+
+
+class ConsentState(BaseModel):
+    meeting_id: str
+    attested: bool

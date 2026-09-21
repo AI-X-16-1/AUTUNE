@@ -80,8 +80,36 @@ Plus the shared entities in `packages/core`, which A writes.
 | POST | `/recordings` | Upload a recording, start processing |
 | GET | `/jobs/{job_id}` | Job status and progress |
 | GET | `/transcripts/{meeting_id}` | Full transcript, masked, for a member of the meeting's team |
+| POST | `/meetings/{meeting_id}/consent` | A member attests that everyone in the recording consented (#190) |
 | PATCH | `/utterances/{id}` | Correct speaker or text |
 | POST | `/speakers/enroll` | Enroll a voice for identification |
+
+### Consent, until there is a per-person consent flow
+
+`participants.consented` had no writer at all (#190): every real meeting came
+out of B and C empty, because both analyse only consented utterances. Screen
+S10's per-attendee consent table cannot exist before identification (#6) gives
+a voice a person, so the one honest statement available is a team member's
+about the whole meeting. Any member of the team may make it — not only the
+uploader, and not only someone who was in the room; `meetings` has no
+`created_by` to narrow it further.
+
+`POST /meetings/{id}/consent` records that statement in
+`aud_consent_attestations` (who, when; one row per meeting) and sets every
+participant row of the meeting to `True` — the rows that exist now, and, through
+`persistence._participants_for`, every row a later run creates, so a rerun that
+invents a new speaker label gets the same value. The row is the provenance: when
+S11 lands and consent can also arrive per person, a `True` from here and a
+`True` from there stay distinguishable.
+
+What it is not: per person, revocable, or a re-publish. Deleting the
+attestation row does not un-attest — nothing sets a participant back to
+`False` — so there is no route that deletes it. Nor is there a way to withdraw
+what B, C and E derived once the meeting was analysed, short of deleting the
+meeting; before identification (#6) there is no per-person unit to withdraw
+for. A meeting with no attestation is exactly as before — stored, not
+analysed. When the per-attendee table exists this route is derived from it or
+removed, and revocation is defined there.
 
 ## Celery tasks
 
