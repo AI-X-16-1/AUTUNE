@@ -100,12 +100,21 @@ join makes and why.
 - **Identification.** Turns carry a local label — `SPEAKER_00` means "the same
   voice as the other turns with this label", nothing more. Matching a label to a
   person is the second half of #6.
-- **377 s for 11m37s** is 0.54 real-time on CPU, on top of transcription's 0.73.
-  Together, 886 s for 697 s of audio: **1.27× real time.** That **passes the
-  six-week target (≤ 1.5×) with 18% to spare and misses the three-month target
-  (≤ 1×) by 27%** — `docs/modules/audio.md` sets the two separately, and an
-  earlier draft of this line read them as one and called the pass a failure
-  (#186). The GPU is for the three-month target and for the 0.3 RTF this
-  report's section 5 asks of transcription alone, not for the MVP. The margin
-  is thin rather than comfortable: a 45-minute meeting at 1.27× is 57 minutes
-  of processing.
+- **377 s for 11m37s** is 0.54 real-time on CPU, on top of transcription's
+  0.73: **RTF 0.73 + 0.54 = 1.27 for the two model stages.** (Not "886 s" —
+  the transcription second count was never recorded, only its rounded RTF,
+  and 0.725–0.735 × 697 spans 882–889.) `docs/modules/audio.md` sets two
+  targets, ≤ 1.5× at six weeks and ≤ 1× at three months, and an earlier draft
+  of this line read them as one and called the pass a failure (#186).
+  Against the target as the denominator: **1.27 leaves 15% of the six-week
+  budget and exceeds the three-month one by 27%.** Two things that pass
+  leaves out. **The target is end to end** and 1.27 is not: decode,
+  repetition check, speaker join, masking (patterns and a recogniser) and the
+  database write are outside it, and whether they fit in the remaining
+  0.23× — about 160 s on this file — has not been measured. And **this is one
+  11-minute file**: the 2m45s file already sits at RTF 1.19 for transcription
+  alone (01, section 2), because model loading is a fixed cost, so a short
+  meeting does not pass. The GPU is for the three-month target and for the
+  0.3 transcription RTF that 01-baseline's section 2 table and section 5
+  (row 6) ask for, not for the MVP. The margin is thin: a 45-minute meeting
+  at 1.27× is 57 minutes of model time before anything else runs.

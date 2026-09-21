@@ -112,10 +112,14 @@ What this costs has to be stated by what the consumers actually do, and an
 earlier draft of this paragraph got it wrong: it said module B keys action-item
 extraction on entity names and that the item attached to `파이노트` is lost. It
 is not. B takes the assignee from speaker attribution (`slots.assignee_of`
-reads `speaker_id`, not the text), classifies by verb ending (`기로 했`,
-`겠습니다`, `할게요`), groups decisions by adjacency and parses deadlines from
-date expressions — none of which reads the spelling of a technical term.
-`파이노트 붙이는 거 제가 하겠습니다` is classified, attributed and becomes an
+reads `speaker_id`, not the text), groups decisions by adjacency and parses
+deadlines from date expressions — none of which reads the spelling of a
+technical term. Classification is a fine-tuned model that reads the whole
+sentence, sub-words of `파이노트` included, and reads the kind mostly from
+how the sentence ends (`docs/modules/extraction.md`, Pipeline); what a
+misspelt term does to it has not been measured. (An earlier draft listed
+verb endings here — that list is `FakeClassifier`'s, the test stand-in, not
+the model's.) `파이노트 붙이는 거 제가 하겠습니다` is attributed and becomes an
 action item with a misspelt word in it (#196).
 
 The real costs are elsewhere, and one of them is substantial:
@@ -132,9 +136,15 @@ The real costs are elsewhere, and one of them is substantial:
 - **Transcript search** — which does not exist yet. An assumed cost, marked as
   one.
 
-Set against 3.6, where a weekday became a month: that *does* destroy an action
-item, is grammatical, and is undetectable. The two failures are opposite in
-kind — one frequent and visible, one rare and invisible — and the priorities in
+Set against 3.6, where a weekday became a month: that one reaches an action
+item's *deadline*, and is grammatical, so the transcript itself carries no
+signal. Measured rather than assumed (B, on #289): `parse_due` reads "다음 주"
+out of `다음 주 10월까지` and lands two days from the right date, the item is
+created with that date rather than lost, and it waits for a person to confirm
+it with the sentence quoted on the card (#246) — B sends nothing outside
+before that. So: a wrong date a reader can catch from the quotation, not a
+silent five-week miss. The two failures are still opposite in kind — one
+frequent and cosmetic, one rare and consequential — and the priorities in
 section 5 are weighed on that basis, not on the claim this paragraph used to
 make.
 
@@ -222,9 +232,14 @@ One did not:
 > Reference: `다음 주 **수요일**까지 하겠습니다`
 > Transcript: `다음 주 **10월**까지 하겠습니다`
 
-A weekday became a month. B would create an issue with a deadline five weeks
-wrong, and nothing downstream could detect it — the sentence is grammatical and
-the transcript carries no signal that anything went missing.
+A weekday became a month. An earlier draft said B would create an issue five
+weeks wrong and nothing could detect it; B measured it (on #289): `parse_due`
+keeps "다음 주" and gives 2026-09-18 for a meeting on 09-09 where 09-16 was
+meant — two days out, not five weeks — the item is created with that date,
+and it is not sent anywhere until a person confirms it with the utterance
+quoted beside it (#246). The transcript still carries no signal; the card
+does. The failure is real and the fix is upstream (a glossary cannot help
+with a weekday), but its cost is a reviewer's attention, not a wrong issue.
 
 Numbers and dates were otherwise near-perfect (42/43). The one other failure was
 `ARPU 144달러` heard as `AIPU 99달러 … 1144달러`, in the same quiet passage as
@@ -303,7 +318,7 @@ correction pass in 5.2.
 | --- | --- | --- |
 | 1 | Build the glossary into `hotwords`, per meeting | 4 — measured, 31% -> 86% at meeting length |
 | 2 | Lexicon-based correction pass over the transcript | 3.2, 4 — what the prompt misses, confidence cannot find |
-| 3 | Seed the glossary from `participants` and `aud_corrections` | Names are the one term class every meeting has and no static list can hold. B does not key on them (3.1); this is for the reader and for D's lexical linking |
+| 3 | Seed the glossary from `participants` and `aud_corrections` | Names are the one term class every meeting has and no static list can hold. B does not key on them (3.1); this is for the reader and for D's lexical linking — both see the spelling, since names are not among the five masked categories (privacy.md §2) |
 | 4 | Keep `vad_filter=True`; drop the planned `condition_on_previous_text` work | 3.4 — already solved |
 | 5 | Loudness-normalise before transcription | 3.5 — context bleed is a symptom of weak signal |
 | 6 | GPU, or measure `large-v3-turbo` | RTF 0.73 against a 0.3 target |
