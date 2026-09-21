@@ -44,3 +44,32 @@ export const KIND_LABELS: Record<
   concern: "우려",
   ambiguous: "확인 필요",
 };
+
+/**
+ * Module A's own API bodies — `/api/audio/meetings/{id}` and `/api/audio/teams`.
+ *
+ * Hand-written, and that is not a violation of the rule above: a contract is
+ * what another *module* consumes, and nothing here crosses that line. These
+ * mirror `modules/audio/src/autune_audio/schemas.py`, which is the one place
+ * they may change; `pnpm run gen:contracts` does not generate them.
+ */
+export type MeetingStatus =
+  | "scheduled"
+  | "recording"
+  | "analyzing"
+  | "awaiting_confirmation"
+  | "complete"
+  | "delivered"
+  | "failed";
+
+export type MeetingDetail = {
+  meeting_id: string;
+  title: string;
+  status: MeetingStatus;
+  /** Set by the pipeline once the recording is confirmed gone from disk. */
+  original_audio_deleted: boolean;
+  /** Set in the same transaction as the utterances; false until then. */
+  pii_masked: boolean;
+};
+
+export type TeamSummary = { team_id: string; name: string };
