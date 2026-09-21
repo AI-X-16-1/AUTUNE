@@ -29,7 +29,7 @@ from autune_contracts import (
     Utterance,
 )
 from autune_contracts.extraction import Decision, ExtractionResult
-from autune_core import Meeting, Participant, Team, User, session_scope
+from autune_core import Meeting, Participant, Team, TeamMember, User, session_scope
 
 
 @pytest.fixture(autouse=True)
@@ -72,7 +72,19 @@ def team_id(db_engine: object) -> Iterator[str]:  # db_engine ensures migrations
         s.execute(delete(User).where(User.email.like("lineage-%")))
 
 
-def _user(email: str) -> str:
+def _user(team_id: str, email: str) -> str:
+    """A user who is a current member of ``team_id``."""
+    with session_scope() as s:
+        row = User(email=email, display_name=email)
+        s.add(row)
+        s.flush()
+        s.add(TeamMember(team_id=team_id, user_id=row.id))
+        return row.id
+
+
+def _user_without_membership(email: str) -> str:
+    """A user with no ``TeamMember`` row anywhere -- a departed member or a
+    guest who was only ever a meeting ``Participant``."""
     with session_scope() as s:
         row = User(email=email, display_name=email)
         s.add(row)
@@ -228,7 +240,7 @@ def test_a_negated_restatement_is_reversed(team_id: str, monkeypatch: pytest.Mon
 
 
 def test_absent_stakeholders_are_recorded(team_id: str) -> None:
-    alice, bob = _user("lineage-alice@x"), _user("lineage-bob@x")
+    alice, bob = _user(team_id, "lineage-alice@x"), _user(team_id, "lineage-bob@x")
     first = _meeting(team_id, days_ago=10, present=[alice, bob])
     second = _meeting(team_id, days_ago=0, present=[alice])  # bob missed it
 
@@ -240,6 +252,26 @@ def test_absent_stakeholders_are_recorded(team_id: str) -> None:
             select(CtxDecisionVersion).where(CtxDecisionVersion.meeting_id == second)
         ).one()
         assert v2.key_stakeholders_absent == [bob]
+
+
+def test_a_departed_team_member_is_not_recorded_as_absent(team_id: str) -> None:
+    """A participant with no ``TeamMember`` row -- someone who has since left
+    the team, or a guest who was never on it -- must not show up as "absent"
+    on a later version. Left in, this becomes a drift DM to someone with no
+    reason to get one the moment a ``user_id`` resolves to a Slack id."""
+    alice = _user(team_id, "lineage-alice@x")
+    guest = _user_without_membership("lineage-guest@x")
+    first = _meeting(team_id, days_ago=10, present=[alice, guest])
+    second = _meeting(team_id, days_ago=0, present=[alice])  # guest did not return
+
+    service.build_decision_lineage(_extraction(first, [("dec_1", _D1, 0.9)]))
+    service.build_decision_lineage(_extraction(second, [("dec_2", _D1, 0.9)]))
+
+    with session_scope() as s:
+        v2 = s.scalars(
+            select(CtxDecisionVersion).where(CtxDecisionVersion.meeting_id == second)
+        ).one()
+        assert v2.key_stakeholders_absent == []
 
 
 def test_rebuild_replaces_versions_and_leaves_no_orphan_threads(team_id: str) -> None:

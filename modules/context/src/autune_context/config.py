@@ -78,6 +78,12 @@ class ContextSettings(BaseSettings):
     """How long topic linking waits for B before publishing ``ContextLinks`` with
     ``missing_sources=["extraction"]``. Matches E's own aggregation timeout."""
 
+    # --- notifications ---
+    max_topic_link_notices: int = 3
+    """Individual topic-link Slack messages posted per meeting before the rest
+    collapse into one rollup notice. A meeting with many linked topics would
+    otherwise post one message per topic and flood the channel."""
+
     # --- worker bootstrap ---
     warm_models_on_worker_init: bool = False
     """Set only on workers that actually consume the ``cpu_heavy`` queue.

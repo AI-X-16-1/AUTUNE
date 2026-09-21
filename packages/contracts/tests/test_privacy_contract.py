@@ -7,7 +7,14 @@ from __future__ import annotations
 
 import pytest
 
-from autune_contracts import IntelligenceSnapshot, TranscriptReady, fixtures
+from autune_contracts import (
+    STANCE_MIN_IDENTIFIED_PER_ROLE,
+    ExtractionResult,
+    IntelligenceSnapshot,
+    RoleStance,
+    TranscriptReady,
+    fixtures,
+)
 
 
 def _transcript(**privacy: bool) -> dict:
@@ -40,3 +47,56 @@ def test_snapshot_carries_no_speaking_ratio() -> None:
     """
     banned = {"speaking_ratio", "speaking_ratios", "talk_time", "speech_volume", "speaker_share"}
     assert banned.isdisjoint(IntelligenceSnapshot.model_fields)
+
+
+def _stance(**overrides: object) -> dict:
+    return {"role": "PM", "identified": 3, "supporting": 2, "concerns": 1, **overrides}
+
+
+def test_role_stance_carries_no_identity() -> None:
+    """Stance is counted per role and never tied to a person.
+
+    If this test fails, someone gave `RoleStance` a way to say who backed or
+    opposed a decision. That is a per-person behaviour record, not a feature.
+    """
+    assert set(RoleStance.model_fields) == {"role", "identified", "supporting", "concerns"}
+
+
+def test_a_role_below_the_gate_is_not_representable() -> None:
+    """In a small team a role is a person, so a count over it is that person's stance."""
+    below = STANCE_MIN_IDENTIFIED_PER_ROLE - 1
+    with pytest.raises(ValueError, match="greater than or equal"):
+        RoleStance.model_validate(_stance(identified=below, supporting=0, concerns=0))
+
+
+@pytest.mark.parametrize("field", ["supporting", "concerns"])
+def test_a_stance_count_cannot_exceed_the_role(field: str) -> None:
+    with pytest.raises(ValueError, match="cannot exceed"):
+        RoleStance.model_validate(_stance(**{field: 4}))
+
+
+def test_one_person_is_not_counted_on_both_sides() -> None:
+    with pytest.raises(ValueError, match="together cannot exceed"):
+        RoleStance.model_validate(_stance(identified=3, supporting=2, concerns=2))
+
+
+@pytest.mark.parametrize(
+    ("supporting", "concerns"), [(3, 0), (0, 3)], ids=["all supporting", "all concerned"]
+)
+def test_a_unanimous_role_is_not_representable(supporting: int, concerns: int) -> None:
+    """Three Devs who all raised a concern is each Dev's stance."""
+    with pytest.raises(ValueError, match="unanimous"):
+        RoleStance.model_validate(_stance(identified=3, supporting=supporting, concerns=concerns))
+
+
+@pytest.mark.parametrize(("supporting", "concerns"), [(2, 1), (1, 1), (0, 1), (0, 0)])
+def test_a_split_or_partial_role_is_representable(supporting: int, concerns: int) -> None:
+    """Zero is allowed: it is how most roles look, decided on #232."""
+    RoleStance.model_validate(_stance(identified=3, supporting=supporting, concerns=concerns))
+
+
+def test_a_decision_without_stance_is_still_valid() -> None:
+    """The fixture is a producer from before 2.1, with no ``stance_by_role``.
+    Kept that way on purpose: it is what shows the field is additive."""
+    decision = ExtractionResult.model_validate(fixtures.load("extraction_result")).decisions[0]
+    assert decision.stance_by_role == []

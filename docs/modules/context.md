@@ -287,7 +287,7 @@ cleaned up by a deletion hook (see "Deletion").
 | `ctx_topic_links` | Meeting-to-meeting topic links with scores | `topic_label`, `linked_meeting_date`, `similarity`, `rerank_score`, `confidence`, `status` (`asserted`/`pending`/`confirmed`/`rejected`), `retriever_version`, `reranker_version` | `meeting_id` FK `CASCADE`; `linked_meeting_id` FK `ON DELETE SET NULL` |
 | `ctx_decisions` | Decision threads (lineage identity, spans meetings) | `id` (`thr_`), `topic_label` | `team_id` FK `CASCADE`; orphan sweep deferred (#87) |
 | `ctx_decision_versions` | Each version of a decision | `source_decision_id` (`dec_`, no FK), `previous_version_id` (self-FK), `current_statement`, `previous_statement`, `previous_meeting_id` (no FK), `change_type`, `nli_label`, `confidence`, `key_stakeholders_absent` (JSONB), `nli_version` | `thread_id` FK `CASCADE`, `meeting_id` FK `CASCADE` |
-| `ctx_meeting_status` | Completion tracking for the two halves | `topic_linking_done`, `lineage_done`, `extraction_seen`, `deadline_at`, `published_at` | `meeting_id` FK `CASCADE` |
+| `ctx_meeting_status` | Completion tracking for the two halves | `topic_linking_done`, `lineage_done`, `extraction_seen`, `deadline_at`, `published_at`, `notified_at` | `meeting_id` FK `CASCADE` |
 | `ctx_materials` | Uploaded documents and chunk metadata | — | Phase 2 — not created in the MVP |
 
 Notes:
@@ -448,7 +448,9 @@ lands, the one `send_task` call here moves behind it.
 ## Slack surface
 
 - **Topic-link notice** — "이 안건은 2026년 9월 4일 회의에서 논의된 적 있습니다",
-  with a link to the minutes.
+  with a link to the minutes. Capped at `AUTUNE_CONTEXT_MAX_TOPIC_LINK_NOTICES`
+  per meeting (default 3); anything past the cap collapses into one rollup
+  notice instead of one message per topic.
 - **Decision-drift warning** — when a decision changed while a key stakeholder
   was absent.
 - **Pre-meeting brief** — 30 minutes before the meeting. Phase 2. Contains

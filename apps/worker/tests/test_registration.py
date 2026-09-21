@@ -28,6 +28,15 @@ def test_audio_runs_on_the_gpu_queue(task_names: set[str]) -> None:
     assert routes["autune.audio.*"]["queue"] == "gpu"
 
 
+def test_context_notify_does_not_wait_behind_cpu_heavy_work() -> None:
+    """The Slack-only task overrides the module's ``cpu_heavy`` wildcard, the
+    same way ``autune.intelligence.aggregate`` overrides its module's default --
+    exact task names win over a glob in Celery's router regardless of dict
+    order, so this checks the resolved route, not just the raw config."""
+    route = celery_app.amqp.router.route({}, "autune.context.notify_context_events")
+    assert route["queue"].name == "default"
+
+
 def test_intelligence_consumes_all_three_upstream_modules(task_names: set[str]) -> None:
     for upstream in ("extraction", "gap", "context"):
         assert f"autune.intelligence.on_{upstream}_completed" in task_names

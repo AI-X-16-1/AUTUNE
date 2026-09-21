@@ -25,7 +25,9 @@ from autune_contracts.extraction import (
 )
 from autune_contracts.transcript import Utterance as TranscriptUtterance
 from autune_core import Meeting, Participant, User, Utterance, get_logger, session_scope
+from autune_core.errors import NotFoundError, ValidationError
 from autune_integrations import SlackApi, assert_personal_delivery
+from autune_integrations.privacy import find_unmasked
 
 from .config import get_settings
 from .confirmations import WEAK_ASSENT, ConfirmationResponse, build_confirmation_dm
@@ -37,6 +39,7 @@ from .models import (
     ExtClassification,
     ExtConfirmation,
     ExtDecision,
+    ExtDecisionReview,
     ExtDecisionSource,
     ExtEditEvent,
 )
@@ -46,6 +49,14 @@ from .schemas import (
     ActionItemDetail,
     ActionItemRead,
     ActionItemUpdate,
+    DecisionCreate,
+    DecisionReviewUpdate,
+    MeetingReview,
+    Outbound,
+    OutboundBlocked,
+    OutboundDecision,
+    ReviewAmbiguous,
+    ReviewDecision,
     SourceUtterance,
 )
 from .slots import assignee_of, meeting_day, parse_due
@@ -493,6 +504,11 @@ def build_decisions(
     ``utterances`` is every utterance of the meeting in ``start_sec`` order; see
     ``group_decisions`` for why the non-decision ones have to be there.
 
+    The meeting's own row is read for its date, the way ``build_action_items``
+    does: a statement carries the deadline the meeting set, and "이번 주 금요일"
+    is a different Friday every week. A meeting with no start time keeps the
+    phrase as said rather than resolving it against today.
+
     **Rebuilding replaces, and keeps the ids that still apply.** The meeting's
     decisions are deleted and rebuilt, and each one's id is derived from the
     meeting and the utterances it was settled in (``decisions.decision_id``). A
@@ -512,9 +528,15 @@ def build_decisions(
     asked, and with ids that repeat, a source row a cascade missed would attach
     itself to the rebuilt decision.
     """
-    stale = select(ExtDecision.id).where(ExtDecision.meeting_id == meeting_id)
+    meeting = session.get(Meeting, meeting_id)
+    day = meeting_day(meeting.started_at if meeting is not None else None)
+
+    # Only the model's decisions are rebuilt. One a person added is not derived
+    # from labels, so no rerun can recompute it (#246).
+    model_made = (ExtDecision.meeting_id == meeting_id, ExtDecision.origin == "model")
+    stale = select(ExtDecision.id).where(*model_made)
     session.execute(delete(ExtDecisionSource).where(ExtDecisionSource.decision_id.in_(stale)))
-    session.execute(delete(ExtDecision).where(ExtDecision.meeting_id == meeting_id))
+    session.execute(delete(ExtDecision).where(*model_made))
 
     decisions = [
         ExtDecision(
@@ -527,10 +549,27 @@ def build_decisions(
                 for position, utterance_id in enumerate(group.source_utterance_ids)
             ],
         )
-        for group in group_decisions(utterances, max_gap=max_gap)
+        for group in group_decisions(utterances, max_gap=max_gap, day=day)
     ]
     session.add_all(decisions)
     session.flush()
+
+    # A review follows its decision's id (#193, #246). A decision whose sources
+    # changed is a different decision, and a verdict -- or a rewording -- given
+    # about the old one must not quietly apply to it, nor outlive it.
+    kept = [decision.id for decision in decisions] + list(
+        session.scalars(
+            select(ExtDecision.id).where(
+                ExtDecision.meeting_id == meeting_id, ExtDecision.origin == "user"
+            )
+        )
+    )
+    session.execute(
+        delete(ExtDecisionReview).where(
+            ExtDecisionReview.meeting_id == meeting_id,
+            ExtDecisionReview.decision_id.not_in(kept),
+        )
+    )
 
     # Ids only. A statement is meeting content and a log line is a store.
     log.info("extraction_decisions_built", meeting_id=meeting_id, count=len(decisions))
@@ -547,7 +586,30 @@ def decisions_for_meeting(session: Session, meeting_id: str) -> list[Decision]:
 
     Sources come back in meeting order because the order carries the argument --
     the proposal first, the sentence that settles it last.
+
+    **A decision a person rejected is not in it.** ``delete_decision`` keeps a
+    model decision's row and marks its review rejected, so a rerun cannot bring
+    the same ``dec_`` id back; without this filter that row still reached D's
+    lineage and E's report as a decision, through ``ExtractionResult`` and ``GET
+    /results`` -- a person said "this was not decided" and every module but the
+    outbound list kept counting it. Raised in review of #247.
+
+    Pending decisions stay: whether D and E hear a decision before anybody has
+    looked at it is the open question 2 on #246, not something this read decides.
+
+    **A person's rewording is what goes out**, here as in
+    ``review_for_meeting`` and ``outbound_for_meeting``. Reading the review for
+    the status and not for the sentence sent the model's wording to D and E while
+    Notion and Slack got the corrected one -- one decision, two texts, and the
+    one the person rejected as wrong is the one a lineage would be built on.
+    Raised in review of #247.
     """
+    reviews = {
+        review.decision_id: review
+        for review in session.scalars(
+            select(ExtDecisionReview).where(ExtDecisionReview.meeting_id == meeting_id)
+        )
+    }
     rows = session.scalars(
         select(ExtDecision)
         .where(ExtDecision.meeting_id == meeting_id)
@@ -557,14 +619,21 @@ def decisions_for_meeting(session: Session, meeting_id: str) -> list[Decision]:
     return [
         Decision(
             id=row.id,
-            statement=row.statement,
+            statement=_confirmed_statement(row, reviews.get(row.id)),
             source_utterance_ids=[
                 source.utterance_id for source in sorted(row.sources, key=lambda s: s.position)
             ],
             confidence=row.confidence,
         )
         for row in rows
+        if (review := reviews.get(row.id)) is None or review.status != "rejected"
     ]
+
+
+def _confirmed_statement(decision: ExtDecision, review: ExtDecisionReview | None) -> str:
+    """What the meeting settled, in the wording that stands: the person's if they
+    reworded it, the model's otherwise. One definition, read by every surface."""
+    return review.statement if review is not None and review.statement else decision.statement
 
 
 # --- the meeting's result ----------------------------------------------------
@@ -692,8 +761,11 @@ def classify_utterances(
             kind=prediction.kind,
             confidence=prediction.confidence,
             text=utterance.text,
+            speaker=utterance.speaker,
         )
         if (prediction := answer.get(utterance.id)) is not None
+        # No consent, so nothing of theirs is read -- not the text, and not who
+        # they are. The turn is a gap of the right length and nothing more.
         else ClassifiedUtterance(id=utterance.id, kind=None, confidence=0.0, text="")
         for utterance in ordered
     ]
@@ -926,3 +998,238 @@ def unasked_confirmations(session: Session, meeting_id: str) -> list[ExtConfirma
             .order_by(ExtConfirmation.utterance_id)
         )
     )
+
+
+# --- review before anything leaves (#246) ------------------------------------
+
+
+def _suggested(confidence: float) -> bool | None:
+    threshold = get_settings().candidate_confidence
+    return None if threshold is None else confidence >= threshold
+
+
+def review_for_meeting(
+    session: Session, meeting_id: str, *, now: datetime | None = None
+) -> MeetingReview:
+    """What S15 puts in front of a person before they confirm and send.
+
+    Decisions come with their verdict so far; ambiguous agreements with where the
+    speaker's DM stands; action items only when they still need somebody -- status
+    ``needs_confirmation``, or below the candidate line.
+    """
+    decisions = session.scalars(
+        select(ExtDecision)
+        .options(selectinload(ExtDecision.sources))
+        .where(ExtDecision.meeting_id == meeting_id)
+        .order_by(ExtDecision.created_at, ExtDecision.id)
+    ).all()
+    reviews = {
+        review.decision_id: review
+        for review in session.scalars(
+            select(ExtDecisionReview).where(ExtDecisionReview.meeting_id == meeting_id)
+        )
+    }
+
+    listed = []
+    for decision in decisions:
+        review = reviews.get(decision.id)
+        listed.append(
+            ReviewDecision(
+                id=decision.id,
+                statement=_confirmed_statement(decision, review),
+                model_statement=decision.statement,
+                confidence=decision.confidence,
+                origin=decision.origin,  # type: ignore[arg-type]
+                status=review.status if review else "pending",  # type: ignore[arg-type]
+                suggested=_suggested(decision.confidence),
+                source_utterance_ids=[
+                    source.utterance_id
+                    for source in sorted(decision.sources, key=lambda s: s.position)
+                ],
+            )
+        )
+
+    confirmations = session.scalars(
+        select(ExtConfirmation)
+        .where(ExtConfirmation.meeting_id == meeting_id)
+        .order_by(ExtConfirmation.utterance_id)
+    ).all()
+    items = [
+        item
+        for item in list_action_items(session, meeting_id=meeting_id)
+        if item.status == ActionStatus.NEEDS_CONFIRMATION.value or item.is_candidate
+    ]
+    return MeetingReview(
+        meeting_id=meeting_id,
+        decisions=listed,
+        ambiguous_agreements=[
+            ReviewAmbiguous(
+                utterance_id=row.utterance_id,
+                outcome=row.outcome_at(now),  # type: ignore[arg-type]
+                resolved_kind=row.resolved_kind,
+            )
+            for row in confirmations
+        ],
+        action_items=items,
+        pending_decisions=sum(1 for decision in listed if decision.status == "pending"),
+    )
+
+
+def review_decision(
+    session: Session, decision: ExtDecision, payload: DecisionReviewUpdate
+) -> ReviewDecision:
+    """Record a verdict and/or a rewording on one decision.
+
+    Sending the model's own wording clears the rewording instead of storing a copy
+    that would stop tracking the model's text after a rerun. A body with neither
+    field changes nothing.
+    """
+    changes = payload.model_dump(exclude_unset=True)
+    if changes:
+        review = session.get(ExtDecisionReview, decision.id)
+        if review is None:
+            review = ExtDecisionReview(
+                decision_id=decision.id, meeting_id=decision.meeting_id, status="pending"
+            )
+            session.add(review)
+        if changes.get("status") is not None:
+            review.status = changes["status"]
+        if "statement" in changes:
+            wording = changes["statement"]
+            if decision.origin == "user":
+                # A person's own decision has no model wording to keep beside
+                # theirs; the rewording is the statement.
+                if wording is not None:
+                    decision.statement = wording
+                review.statement = None
+            else:
+                review.statement = None if wording in (None, decision.statement) else wording
+        if review.status == "rejected":
+            # Rejecting drops the rewording whichever way it was asked for, as
+            # ``delete_decision`` does. Left behind, it would come back with the
+            # decision when the rejection is undone -- wording nobody typed this
+            # time, sent to D, E and outbound as if confirmed.
+            review.statement = None
+        session.flush()
+
+    return next(
+        listed
+        for listed in review_for_meeting(session, decision.meeting_id).decisions
+        if listed.id == decision.id
+    )
+
+
+def outbound_for_meeting(session: Session, meeting_id: str) -> Outbound:
+    """Exactly what may leave for Notion, Slack or Jira: nothing unconfirmed (#246).
+
+    A decision goes only when a person confirmed it, in their wording if they gave
+    one. An action item goes only once it is past ``needs_confirmation`` -- the
+    status S17 moves it out of when somebody accepts it. The sync (#30) is to read
+    this and nothing else, so the gate is one function rather than a rule every
+    sender has to remember.
+
+    **It screens as well as selects.** A rewording and an edited description are
+    typed by a person and never went through module A's masker, so each text is
+    run through ``find_unmasked`` here. One that carries personal data is held back
+    in ``blocked``, by id and category, rather than failing the whole meeting: the
+    other confirmed items can still go, and the screen asks for that one to be
+    reworded. (Suggested in review of #247.)
+    """
+    review = review_for_meeting(session, meeting_id)
+    blocked: list[OutboundBlocked] = []
+
+    decisions = []
+    for decision in review.decisions:
+        if decision.status != "confirmed":
+            continue
+        categories = find_unmasked(decision.statement)
+        if categories:
+            blocked.append(OutboundBlocked(id=decision.id, kind="decision", categories=categories))
+        else:
+            decisions.append(OutboundDecision(id=decision.id, statement=decision.statement))
+
+    items = []
+    for item in list_action_items(session, meeting_id=meeting_id):
+        if item.status == ActionStatus.NEEDS_CONFIRMATION.value:
+            continue
+        categories = find_unmasked(item.description)
+        if categories:
+            blocked.append(OutboundBlocked(id=item.id, kind="action_item", categories=categories))
+        else:
+            items.append(item)
+
+    return Outbound(meeting_id=meeting_id, decisions=decisions, action_items=items, blocked=blocked)
+
+
+def create_decision(session: Session, payload: DecisionCreate) -> ReviewDecision:
+    """Add a decision the model missed. Confirmed from the moment it exists.
+
+    ``origin="user"`` keeps it through a rerun, and the review row says a person
+    stands behind it. Every source must be an utterance of the same meeting: a
+    quotation from another meeting would make this meeting claim a decision it
+    never discussed. The refusal names the field, never the utterance text.
+    """
+    if session.get(Meeting, payload.meeting_id) is None:
+        raise NotFoundError("meeting", payload.meeting_id)
+    source_ids = list(dict.fromkeys(payload.source_utterance_ids))
+    if source_ids:
+        found = set(
+            session.scalars(
+                select(Utterance.id).where(
+                    Utterance.id.in_(source_ids), Utterance.meeting_id == payload.meeting_id
+                )
+            )
+        )
+        if len(found) != len(source_ids):
+            raise ValidationError(
+                "every source utterance must belong to this meeting",
+                field="source_utterance_ids",
+            )
+
+    decision = ExtDecision(
+        meeting_id=payload.meeting_id,
+        statement=payload.statement,
+        confidence=1.0,
+        origin="user",
+        sources=[
+            ExtDecisionSource(utterance_id=utterance_id, position=position)
+            for position, utterance_id in enumerate(source_ids)
+        ],
+    )
+    session.add(decision)
+    session.flush()
+    session.add(
+        ExtDecisionReview(
+            decision_id=decision.id, meeting_id=decision.meeting_id, status="confirmed"
+        )
+    )
+    session.flush()
+    return next(
+        listed
+        for listed in review_for_meeting(session, decision.meeting_id).decisions
+        if listed.id == decision.id
+    )
+
+
+def delete_decision(session: Session, decision: ExtDecision) -> None:
+    """Remove a decision from what the meeting will send.
+
+    A decision a person added is really deleted, with its review -- privacy.md
+    allows no soft deletes of content. A decision the model proposed cannot be:
+    the next run would propose it again from the same utterances, and the person
+    would be deleting it forever. It is rejected instead, which keeps it out of
+    the outbound list across reruns, and its rewording, if any, is dropped.
+    """
+    if decision.origin == "user":
+        session.execute(
+            delete(ExtDecisionReview).where(ExtDecisionReview.decision_id == decision.id)
+        )
+        session.delete(decision)
+    else:
+        review = session.get(ExtDecisionReview, decision.id)
+        if review is None:
+            review = ExtDecisionReview(decision_id=decision.id, meeting_id=decision.meeting_id)
+            session.add(review)
+        review.status = "rejected"
+        review.statement = None
+    session.flush()

@@ -26,7 +26,7 @@ pnpm install
 
 uv run alembic -c infra/alembic.ini upgrade heads
 
-uv run uvicorn apps.api.main:app --reload            # API   :8000
+uv run uvicorn autune_api.main:app --reload          # API   :8000
 uv run celery -A autune_worker.celery_app worker -Q default,cpu_heavy,gpu -l info
 pnpm --filter @autune/web dev                        # web   :3000
 uv run python -m autune_bot                          # Slack bot (socket mode)
@@ -90,6 +90,7 @@ prefix `AUTUNE_<MODULE>_`.
 | `AUTUNE_AUDIO_WHISPER_MODEL` | A | e.g. `large-v3` |
 | `AUTUNE_AUDIO_DEVICE` | A | `cuda` or `cpu` |
 | `AUTUNE_AUDIO_TEMP_DIR` | A | Where the recording lives during processing, and only then |
+| `AUTUNE_AUDIO_ORPHAN_AFTER_HOURS` | A | A job still `queued`/`running` after this long has no worker; the sweep fails it and deletes its file. Default `6` |
 | `AUTUNE_AUDIO_HF_TOKEN` | A | Hugging Face token for the gated pyannote models |
 | `NEXT_PUBLIC_AUTUNE_DEV_TOKEN` | A (web) | A bearer token for the browser, local only — see "A token for the browser" below |
 | `AUTUNE_AUDIO_DIARIZATION_MODEL` | A | Default `pyannote/speaker-diarization-3.1` |
@@ -128,6 +129,7 @@ prefix `AUTUNE_<MODULE>_`.
 | `AUTUNE_CONTEXT_LINK_CONFIDENCE_THRESHOLD` | D | Assert vs. ask. Default `0.6`, tuned in eval |
 | `AUTUNE_CONTEXT_LINEAGE_MATCH_THRESHOLD` | D | Decision-to-thread match cutoff (cosine). Default `0.6`, tuned in eval |
 | `AUTUNE_CONTEXT_PUBLISH_TIMEOUT_S` | D | Wait for B before publishing. Default `600` |
+| `AUTUNE_CONTEXT_MAX_TOPIC_LINK_NOTICES` | D | Individual topic-link Slack messages per meeting before the rest roll up into one notice. Default `3` |
 | `AUTUNE_CONTEXT_WARM_MODELS_ON_WORKER_INIT` | D | `true` only on workers consuming `cpu_heavy`. Default `false` |
 | `AUTUNE_INTELLIGENCE_AGGREGATE_TIMEOUT_SECONDS` | E | Wait for B/C/D before aggregating without the rest. Default `600` |
 | `AUTUNE_INTELLIGENCE_GAP_CLASSIFIER_IMPL` | E | `local` (default) · `fake`. **No `external`, no `hosted`** — see below |
@@ -352,6 +354,13 @@ response is what `POST /api/audio/meetings` needs.
 cleared at the end of every task. Do not point it at a synced folder, and do not
 keep test recordings of real meetings on disk. See
 `../architecture/privacy.md`.
+
+While an upload request is in flight there is a second, short-lived copy of the
+recording in the OS temporary directory (`tempfile.gettempdir()`), written by
+Starlette's multipart parser before module A's code runs. It is deleted when
+the request closes. `AUTUNE_AUDIO_TEMP_DIR` is the copy this module owns and
+checks; the other one is the web framework's, and the same "not a synced
+folder" rule applies to `TMPDIR` on a developer machine.
 
 ## Environments
 

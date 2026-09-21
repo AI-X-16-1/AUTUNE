@@ -77,14 +77,14 @@ Modules: A Audio · B Extraction · C Gap · D Context · E Intelligence.
 | S20 | Gap report | MVP | HIGH expanded (title · level as text + score + 2px bar · description · resolving-question block · 3 buttons) · MEDIUM collapsed · LOW listed separately · right rail template comparison (covered / partial / missing) · topic × role density (never per person) |
 | S21 | Gap question thread | MVP | Slack thread · answer → classified by B → decision recorded automatically + confirmation reply · "결정 아님" reverts it |
 | S22 | Decision lineage | MVP (graph P2) | Topic list on the left (with revision count) · timeline nodes (hollow ring = original · ochre = changed, with a reason block naming absentees and the NLI label · ink = current) · linked materials · Notion page links |
-| S23 | Speaking-ratio DM | MVP | Subject only · large percentage + 2px bar · even-share baseline · notice that it is not stored server-side · recent trend (local) · turn off |
+| S23 | Speaking-ratio DM | MVP | Subject only · large percentage + 2px bar · even-share baseline · notice that it is not stored server-side · recent trend (local) · turn off · (P2, once built) influence map delivered the same way — subject only, never a shared card (#28) |
 | S24 | Role-specific summary | P2 | Slack tabs (developer / business / design) · 4 rows (decisions · undecided · my actions · materials) · one source, different renderings |
 | S25 | Next agenda · scheduling | P2 | Proposal modal · title and time (when everyone is free) · draft agenda (gaps · actions · carried-over) · Calendar invite and Notion page checkboxes · room booking (P2) |
 
 ### Analytics · settings · Phase 2 (Spec 04)
 | ID | Screen | Stage | Key elements and states |
 |---|---|---|---|
-| S26 | Dashboard | MVP basic | Quality score (A–F + 8-week bars) · role-pair heatmap (5-step greyscale) · gap-type distribution (2px bars) · prediction (P2, probability in mono) · topic recurrence (red/ochre figures) · action completion rate · influence map (P2, dashed card, role level only) |
+| S26 | Dashboard | MVP basic | Quality score (A–F + 8-week bars) · role-pair heatmap (5-step greyscale) · gap-type distribution (2px bars) · prediction (P2, probability in mono) · topic recurrence (red/ochre figures) · action completion rate. No influence map here — subject-only, delivered like S23 (#28) |
 | S27 | Weekly report | MVP basic | Slack, Mondays 09:00 · 3-metric grid · 3 rows (carried over · PM–Data gap · decision change) |
 | S28 | Settings › Integrations | MVP | Slack (channel · DM items · slash command) · **Notion** (minutes DB · property mapping · action DB · decision DB · material source P2 · PII masking always applied) · **Jira** (project and type · one of 3 creation timings · assignee mapping · status mapping · description format) · Calendar (not connected = hollow ring + accent button) · sync-log drawer |
 | S29 | Settings › Privacy and retention | MVP | 7 policy rows (delete original · masking · extra categories · retention 30/90/180/365 days · speaking ratio · consent every meeting or first only · account deletion) — rows that cannot be changed show an "항상 켬" dot · my data (meeting count · embeddings · consents · DMs) · download / delete embeddings / delete everything (red text → modal) |
