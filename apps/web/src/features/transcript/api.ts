@@ -35,29 +35,76 @@ export const getTranscript = (meetingId: string) =>
 const TOKEN_KEY = "autune.token";
 
 /**
- * The bearer token for this browser, until there is a sign-in.
+ * The bearer token this browser holds, or null.
  *
- * `/transcripts/{id}` takes `CurrentUser` and refuses a request without one
- * (#213). Screen S01 does not exist and the shared client sends no
- * `Authorization` header (#156, #189), so until those land this feature attaches
- * the header itself. Two sources, in order:
- *
- * 1. `localStorage["autune.token"]` — pasted in by hand, so a person can switch
- *    users without a rebuild.
- * 2. `NEXT_PUBLIC_AUTUNE_DEV_TOKEN` — inlined at build time from `.env.local`.
- *
- * Both come from `POST /api/audio/dev/token`, which exists only when
- * `AUTUNE_ENV=local`. Nothing here is the sign-in design: when #189 puts the
- * header in `@/shared/api/client`, this function is deleted and `getTranscript`
- * goes back to one argument.
+ * Two sources, in order: `localStorage["autune.token"]`, pasted in by hand,
+ * then `NEXT_PUBLIC_AUTUNE_DEV_TOKEN`, inlined at build time. Both come from
+ * `POST /api/audio/dev/token` (local only). This is not the sign-in design
+ * (#156, #189); when the shared client carries the header, this goes.
  */
-function authHeaders(): HeadersInit {
+export function getToken(): string | null {
   let token: string | null = null;
   try {
     if (typeof window !== "undefined") token = window.localStorage.getItem(TOKEN_KEY);
   } catch {
     // Private mode or blocked storage. Fall through to the build-time value.
   }
-  token ??= process.env.NEXT_PUBLIC_AUTUNE_DEV_TOKEN ?? null;
+  return token ?? process.env.NEXT_PUBLIC_AUTUNE_DEV_TOKEN ?? null;
+}
+
+function authHeaders(): HeadersInit {
+  const token = getToken();
   return token ? { authorization: `Bearer ${token}` } : {};
+}
+
+/**
+ * The API's origin. Duplicates the shared client's default because that
+ * constant is not exported and a socket URL cannot go through `request()`.
+ * A one-line follow-up for `@/shared/api/client` (#189 territory).
+ */
+export function apiBase(): string {
+  return process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+}
+
+/** `ws://` or `wss://` for the live channel, from the same origin as the API. */
+export function liveSocketUrl(meetingId: string): string {
+  return `${apiBase().replace(/^http/, "ws")}/api/audio/live/${meetingId}`;
+}
+
+/** "Everyone in this recording consented", on the word of a team member (#283). */
+export const attestConsent = (meetingId: string) =>
+  api.audio<{ meeting_id: string; attested: boolean }>(`/meetings/${meetingId}/consent`, {
+    method: "POST",
+    headers: authHeaders(),
+    body: JSON.stringify({ attested: true }),
+  });
+
+/**
+ * The whole recording, once, when the meeting stops (#259).
+ *
+ * Plain `fetch`, not `request()`: that helper sets `content-type:
+ * application/json` and a multipart body needs the browser to set its own
+ * boundary. Errors come back in the same shape `request()` would raise.
+ */
+export async function uploadRecording(
+  meetingId: string,
+  blob: Blob,
+): Promise<{ meeting_id: string; status: string }> {
+  const form = new FormData();
+  form.append("file", blob, "recording.webm");
+  const response = await fetch(`${apiBase()}/api/audio/meetings/${meetingId}/recording`, {
+    method: "POST",
+    headers: authHeaders(),
+    body: form,
+  });
+  if (!response.ok) {
+    let message = response.statusText;
+    try {
+      message = ((await response.json()) as { error?: { message?: string } }).error?.message ?? message;
+    } catch {
+      // Not JSON; keep the status text.
+    }
+    throw new Error(message);
+  }
+  return (await response.json()) as { meeting_id: string; status: string };
 }
