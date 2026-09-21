@@ -337,11 +337,14 @@ def test_a_decision_belongs_to_the_meeting_and_carries_no_owner() -> None:
     """
     columns = {column.name for column in ExtDecision.__table__.columns}
 
+    # ``origin`` says *whether* a person added the decision (``user``) or the
+    # model proposed it, never *which* person -- the same flag action items carry.
     assert columns == {
         "id",
         "meeting_id",
         "statement",
         "confidence",
+        "origin",
         "created_at",
         "updated_at",
     }
