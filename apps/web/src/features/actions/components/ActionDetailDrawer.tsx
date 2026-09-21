@@ -159,17 +159,17 @@ export function ActionDetailDrawer({
           )}
         </section>
 
-        {item.external_refs?.length ? (
+        {item.sync_refs?.length ? (
           <section className="mt-6">
             <SectionTitle>연동</SectionTitle>
             <div className="mt-2 grid gap-2">
-              {item.external_refs.map((ref) => (
+              {item.sync_refs.map((ref) => (
                 <div
-                  key={`${ref.system}-${ref.url}`}
+                  key={ref.system}
                   className="flex items-center gap-2 border-b border-[var(--color-hairline)] pb-2"
                   style={{ fontSize: "var(--text-metaSmall)" }}
                 >
-                  <StatusDot variant={ref.url ? "confirmed" : "critical"} />
+                  <StatusDot variant={ref.url ? "confirmed" : "progress"} />
                   <span className="text-[var(--color-ink-body)]">{ref.system}</span>
                   {ref.external_id ? (
                     <span
@@ -189,7 +189,7 @@ export function ActionDetailDrawer({
                       열기
                     </a>
                   ) : (
-                    <span className="ml-auto text-[var(--color-signal-critical)]">연결 끊김</span>
+                    <span className="ml-auto text-[var(--color-ink-muted)]">동기화 확인 중</span>
                   )}
                 </div>
               ))}

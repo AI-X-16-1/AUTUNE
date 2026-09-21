@@ -13,7 +13,12 @@ import re
 from pathlib import Path
 
 from autune_contracts.extraction import ActionItem
-from autune_extraction.schemas import ActionItemDetail, ActionItemRead, SourceUtterance
+from autune_extraction.schemas import (
+    ActionItemDetail,
+    ActionItemRead,
+    ExternalRefRead,
+    SourceUtterance,
+)
 
 TYPES_TS = Path(__file__).resolve().parents[4] / "apps/web/src/features/actions/types.ts"
 
@@ -31,11 +36,21 @@ def test_the_web_read_model_mirror_is_current() -> None:
     """What ``ActionItemRead`` adds to the contract is what the web declares."""
     added = set(ActionItemRead.model_fields) - set(ActionItem.model_fields)
 
-    assert added == {"meeting_id", "origin", "is_candidate", "summary", "assignee_name"}
+    assert added == {
+        "meeting_id",
+        "origin",
+        "is_candidate",
+        "sync_refs",
+        "summary",
+        "assignee_name",
+    }
     assert ts_fields("ActionItemRead") == added, f"update {TYPES_TS}"
+    assert ts_fields("ExternalRefRead") == set(ExternalRefRead.model_fields), f"update {TYPES_TS}"
 
 
 def test_the_web_detail_mirror_is_current() -> None:
-    assert set(ActionItemDetail.model_fields) - set(ActionItemRead.model_fields) == {"sources"}
-    assert ts_fields("ActionItemDetail") == {"sources"}, f"update {TYPES_TS}"
+    added = set(ActionItemDetail.model_fields) - set(ActionItemRead.model_fields)
+
+    assert added == {"sources"}
+    assert ts_fields("ActionItemDetail") == added, f"update {TYPES_TS}"
     assert ts_fields("SourceUtterance") == set(SourceUtterance.model_fields), f"update {TYPES_TS}"

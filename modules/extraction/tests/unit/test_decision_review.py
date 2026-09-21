@@ -20,7 +20,7 @@ from sqlalchemy.pool import StaticPool
 
 from autune_contracts.enums import UtteranceKind
 from autune_core import AutuneError, Base, Meeting, Utterance, get_session
-from autune_extraction import service
+from autune_extraction import service, tasks
 from autune_extraction.config import ExtractionSettings
 from autune_extraction.confirmations import WEAK_ASSENT
 from autune_extraction.decisions import ClassifiedUtterance
@@ -30,11 +30,15 @@ from autune_extraction.models import (
     ExtClassification,
     ExtConfirmation,
     ExtDecision,
+    ExtDecisionRef,
     ExtDecisionReview,
     ExtDecisionSource,
     ExtEditEvent,
+    ExtExternalRef,
 )
 from autune_extraction.router import router
+from autune_extraction.schemas import DecisionReviewUpdate
+from autune_integrations.fakes import FakeNotion
 
 MEETING = "mtg_1"
 PREFIX = "/api/extraction"
@@ -47,11 +51,23 @@ TABLES = [
     ExtActionItemSource.__table__,
     ExtClassification.__table__,
     ExtDecision.__table__,
+    ExtDecisionRef.__table__,
     ExtDecisionSource.__table__,
     ExtDecisionReview.__table__,
     ExtConfirmation.__table__,
     ExtEditEvent.__table__,
+    ExtExternalRef.__table__,
 ]
+
+
+@pytest.fixture(autouse=True)
+def notion_syncs(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Confirming a decision starts its Notion sync after the response (#30).
+    Here that is recorded, not run: the sync opens its own session on the real
+    database, and ``test_notion_sync.py`` is where it is tested."""
+    calls: list[str] = []
+    monkeypatch.setattr(tasks, "sync_decision_after_confirmation", calls.append)
+    return calls
 
 
 def settings_with(threshold: float | None) -> ExtractionSettings:
@@ -140,6 +156,32 @@ def test_every_proposed_decision_starts_pending(client: TestClient, session: Ses
     assert [d["status"] for d in body["decisions"]] == ["pending", "pending"]
     assert body["pending_decisions"] == 2
     assert all(d["statement"] == d["model_statement"] for d in body["decisions"])
+
+
+def test_a_confirmed_decisions_notion_status_reaches_the_review_screen(
+    client: TestClient, session: Session
+) -> None:
+    """S15 has no drawer, so `sync_refs` rides the list here too -- the same
+    call `ActionItemRead.sync_refs` makes."""
+    first, second = two_decisions(session)
+    session.add(
+        ExtDecisionRef(
+            decision_id=first.id,
+            system="notion",
+            meeting_id=MEETING,
+            url="https://www.notion.so/page1",
+            external_id="page1",
+        )
+    )
+    session.flush()
+
+    body = client.get(f"{PREFIX}/reviews/{MEETING}").json()
+
+    by_id = {d["id"]: d for d in body["decisions"]}
+    assert by_id[first.id]["sync_refs"] == [
+        {"system": "notion", "url": "https://www.notion.so/page1", "external_id": "page1"}
+    ]
+    assert by_id[second.id]["sync_refs"] == []
 
 
 def test_a_decisions_summary_is_its_longest_source_utterance(
@@ -621,3 +663,93 @@ def test_nothing_is_blocked_when_nothing_carries_personal_data(
     client.patch(f"{PREFIX}/decisions/{first_id}", json={"status": "confirmed"})
 
     assert client.get(f"{PREFIX}/reviews/{MEETING}/outbound").json()["blocked"] == []
+
+
+# --- a confirmed decision's Notion page (#30) ------------------------------------
+
+
+def test_confirming_a_decision_queues_its_page_once(
+    client: TestClient, session: Session, notion_syncs: list[str]
+) -> None:
+    first, second = two_decisions(session)
+
+    client.patch(f"{PREFIX}/decisions/{first.id}", json={"status": "confirmed"})
+    client.patch(f"{PREFIX}/decisions/{first.id}", json={"status": "confirmed"})
+    client.patch(f"{PREFIX}/decisions/{first.id}", json={"statement": "고친 문장"})
+    client.patch(f"{PREFIX}/decisions/{second.id}", json={"status": "rejected"})
+
+    assert notion_syncs == [first.id]
+
+
+def test_a_decision_a_person_adds_is_queued_because_it_is_confirmed(
+    client: TestClient, session: Session, notion_syncs: list[str]
+) -> None:
+    added = client.post(
+        f"{PREFIX}/decisions", json={"meeting_id": MEETING, "statement": "회고는 격주로"}
+    ).json()
+
+    assert notion_syncs == [added["id"]]
+
+
+def test_the_page_carries_the_confirmed_wording_and_no_quotation(session: Session) -> None:
+    first, second = two_decisions(session)
+    service.review_decision(
+        session, first, DecisionReviewUpdate(status="confirmed", statement="출시는 금요일로 확정")
+    )
+    service.review_decision(session, second, DecisionReviewUpdate(status="confirmed"))
+    notion = FakeNotion()
+
+    ref = service.sync_decision_to_notion(
+        session, notion, decision_id=first.id, database_id="db_decisions"
+    )
+
+    assert ref is not None and ref.url == "https://www.notion.so/page_1"
+    database, properties = notion.pages[0]
+    assert database == "db_decisions"
+    assert properties["결정"] == {
+        "title": [{"type": "text", "text": {"content": "출시는 금요일로 확정"}}]
+    }
+    assert properties["근거 발화 수"] == {"number": len(first.sources)}
+    assert set(properties) == {"결정", "신뢰도", "근거 발화 수", "회의"}
+
+    only_title = FakeNotion()
+    service.sync_decision_to_notion(
+        session,
+        only_title,
+        decision_id=second.id,
+        database_id="db_decisions",
+        property_names={"title": "Name"},
+    )
+    assert set(only_title.pages[0][1]) == {"Name"}
+
+
+def test_an_unconfirmed_decision_sends_nothing_and_a_second_sync_neither(
+    session: Session,
+) -> None:
+    first, second = two_decisions(session)
+    notion = FakeNotion()
+
+    assert (
+        service.sync_decision_to_notion(session, notion, decision_id=first.id, database_id="db")
+        is None
+    )
+    service.review_decision(session, second, DecisionReviewUpdate(status="rejected"))
+    assert (
+        service.sync_decision_to_notion(session, notion, decision_id=second.id, database_id="db")
+        is None
+    )
+
+    service.review_decision(session, first, DecisionReviewUpdate(status="confirmed"))
+    service.sync_decision_to_notion(session, notion, decision_id=first.id, database_id="db")
+    assert (
+        service.sync_decision_to_notion(session, notion, decision_id=first.id, database_id="db")
+        is None
+    )
+    assert len(notion.pages) == 1
+
+
+def test_only_reaching_confirmed_is_a_confirmation() -> None:
+    assert service.decision_became_confirmed(None, "confirmed")
+    assert service.decision_became_confirmed("pending", "confirmed")
+    assert not service.decision_became_confirmed("confirmed", "confirmed")
+    assert not service.decision_became_confirmed("pending", "rejected")
