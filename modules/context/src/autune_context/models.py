@@ -215,4 +215,13 @@ class CtxMeetingStatus(Base, TimestampMixin):
     survives across such a redelivery instead: ``build_decision_lineage``
     returns ``late_drift_due_at is not None`` rather than a freshly computed
     boolean, so the "still owed" state persists on the row until
-    ``notify_late_drift`` actually sends and clears it."""
+    ``notify_late_drift`` clears it -- because it claimed the send, or because
+    the team has no Slack channel to send to.
+
+    That protects the window between ``build_decision_lineage``'s commit and
+    ``notify_late_drift``'s claim. It does not protect the send itself:
+    ``notify_late_drift`` sets ``late_drift_notified_at`` and clears this
+    column in one commit *before* posting, so a worker that dies after that
+    commit and before the post loses the notice for good. That is the
+    accept-a-lost-notice-over-a-duplicate trade ``notified_at`` already
+    makes, kept here on purpose."""

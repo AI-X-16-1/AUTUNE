@@ -198,6 +198,33 @@ def test_notify_late_drift_sends_only_drift_and_claims_separately_from_notified_
     assert db_session.get(CtxMeetingStatus, meeting).late_drift_notified_at is not None
 
 
+@pytest.mark.usefixtures("use_test_session")
+def test_notify_late_drift_for_a_team_without_slack_clears_what_is_owed(
+    db_session: Session, meeting: str
+) -> None:
+    """Nothing to send to means nothing is owed. Left set, every later B reprocess
+    would read "still owed" and force a republish to E, and a team that connects
+    Slack later would get a notice for a meeting long past."""
+    db_session.add(
+        CtxMeetingStatus(
+            meeting_id=meeting,
+            topic_linking_done=True,
+            extraction_seen=True,
+            published_at=datetime.now(tz=UTC),
+            late_drift_due_at=datetime.now(tz=UTC),
+        )
+    )
+    db_session.flush()
+
+    with patch.object(tasks, "SlackClient") as slack_client_cls:
+        tasks.notify_late_drift(meeting)
+
+    slack_client_cls.assert_not_called()
+    status = db_session.get(CtxMeetingStatus, meeting)
+    assert status.late_drift_due_at is None
+    assert status.late_drift_notified_at is None
+
+
 @pytest.mark.usefixtures("use_test_session", "fake_encryption_key")
 def test_notify_late_drift_redelivery_is_a_no_op(
     db_session: Session, meeting: str, team: str

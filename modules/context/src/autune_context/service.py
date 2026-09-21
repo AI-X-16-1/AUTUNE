@@ -19,6 +19,7 @@ from sqlalchemy import delete, func, select, text, update
 from sqlalchemy.orm import Session
 
 from autune_context.config import get_settings
+from autune_context.dates import meeting_day
 from autune_context.models import (
     CtxDecision,
     CtxDecisionVersion,
@@ -310,19 +311,6 @@ def build_decision_lineage(result: ExtractionResult) -> bool:
         if meeting is None:
             raise ValueError(f"{result.meeting_id}: meeting row not found")
 
-        # Captured before this run's own _upsert_status call below overwrites
-        # extraction_seen -- "already published, but not because of us" is
-        # exactly the B-timeout-fallback-then-late-lineage case, and it only
-        # matches on the one run that flips extraction_seen False -> True, so
-        # a later B reprocess of an already-seen meeting correctly reads False
-        # here instead of re-triggering the late-catch-up path every time.
-        existing_status = session.get(CtxMeetingStatus, result.meeting_id)
-        was_late = (
-            existing_status is not None
-            and existing_status.published_at is not None
-            and not existing_status.extraction_seen
-        )
-
         session.execute(
             text("SELECT pg_advisory_xact_lock(hashtext(:team_id))"),
             {"team_id": meeting.team_id},
@@ -405,6 +393,27 @@ def build_decision_lineage(result: ExtractionResult) -> bool:
         orphans_swept = sweep_orphan_decision_threads(session)
         labels_swept = sweep_stale_topic_labels(session)
         statements_swept = sweep_dangling_previous_statements(session)
+
+        # Read here, under the row lock, right before this run's own
+        # _upsert_status overwrites extraction_seen -- not at the top of the
+        # function. Embedding, NLI and the sweeps above take long enough for
+        # ``publish_if_ready``'s B-timeout fallback to commit in between; a
+        # read from before them would still say "not published", this run
+        # would commit as an ordinary one, and the fallback's ``published_at``
+        # would then turn the ordinary publish away: no drift warning, and E
+        # never gets the lineage. With the lock held, either the fallback
+        # committed first (we see ``published_at`` and take the late path) or
+        # it waits behind us and publishes with this lineage. "Already
+        # published, but not because of us" only matches on the one run that
+        # flips extraction_seen False -> True, so a later B reprocess of an
+        # already-seen meeting reads False and does not re-trigger the late
+        # path every time.
+        before = session.get(
+            CtxMeetingStatus, result.meeting_id, with_for_update=True, populate_existing=True
+        )
+        was_late = (
+            before is not None and before.published_at is not None and not before.extraction_seen
+        )
         status = _upsert_status(session, result.meeting_id, extraction_seen=True, lineage_done=True)
         if was_late and status.late_drift_due_at is None:
             # ``ContextLinks`` already went out for this meeting -- the
@@ -859,7 +868,9 @@ def collect_drift_notices(session: Session, meeting_id: str) -> list[DriftNotice
                 statement_preview=version.current_statement[:400],
                 change_type=ChangeType(version.change_type),
                 absent_user_ids=tuple(absent),
-                meeting_date=meeting.started_at.date() if meeting and meeting.started_at else None,
+                meeting_date=(
+                    meeting_day(meeting.started_at) if meeting and meeting.started_at else None
+                ),
             )
         )
     return notices

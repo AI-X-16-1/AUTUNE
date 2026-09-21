@@ -222,6 +222,12 @@ def notify_late_drift(meeting_id: str) -> None:
 
         target = _slack_target(session, meeting_id, event_prefix="context_late_drift")
         if target is None:
+            # Nowhere to send, so nothing is owed. Left set, every later B
+            # reprocess of this meeting would read "still owed" and force a
+            # republish to E, and a team that connects Slack weeks from now
+            # would get a drift notice for a meeting long past. Not marked
+            # notified either -- nothing was sent.
+            status.late_drift_due_at = None
             return
         channel, config = target
 
