@@ -98,8 +98,8 @@ Wraps `pipeline.transcribe_live(waveform, glossary=build_prompt())`, which loads
 its own model, thread count, and beam width (`live_*` settings,
 `autune_audio.config`) rather than the stored path's — see §9. Two properties:
 
-- **One lock per process.** CPU RTF is 0.73, so segments that arrive while one
-  is being transcribed wait their turn. Two meetings live at once share the
+- **One lock per process.** A row costs a few seconds of CPU (§9), so segments
+  that arrive while one is being transcribed wait their turn. Two meetings live at once share the
   lock; once their combined load passes real time the delay grows for the
   rest of the meeting rather than doubling (§9). An MVP limit, stated in
   `docs/modules/audio.md`.
@@ -360,8 +360,13 @@ on the same 14-core Apple-silicon CPU:
 A 5.4 s utterance costs almost the same (turbo/10: 2.2 s) — the encoder
 always processes a padded 30 s window, so there is a ~2 s floor per segment
 regardless of how short it is. Decision: the live path gets its own model
-(`large-v3-turbo`), its own thread count, and beam 1; the stored path
-(`pipeline.transcribe`, worker) is unchanged.
+(`large-v3-turbo`), its own thread count, and beam 5 — width 5 costs turbo
+only 0.3 s more than width 1 (2.7 s vs 2.4 s) and keeps a live row reading
+like the stored one; the stored path (`pipeline.transcribe`, worker) is
+unchanged. The first browser run also showed the worklet's sample-dropping
+resampler aliasing everything above 8 kHz into the speech band; the
+`AudioContext` is now opened at 16 kHz so the browser resamples with a real
+filter, and the worklet only converts.
 
 Re-measured against the real route, same recording, same real-time pacing,
 `large-v3-turbo` with 10 threads and beam 1: per-row lag went from

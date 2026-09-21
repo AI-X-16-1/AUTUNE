@@ -268,9 +268,11 @@ def transcribe_live(
     No repetition retry: a live segment is at most thirty seconds, a
     collapse inside it costs one row, and the stored path remakes every row
     after the upload. ``transcribe`` above is the one with the second pass.
+    The same counts-only log line is written, tagged ``attempt="live"``, so
+    a collapse on the live path is still visible in the log.
     """
     settings = get_settings()
-    return _decode(
+    transcription = _decode(
         waveform,
         language=language,
         settings=settings,
@@ -278,3 +280,5 @@ def transcribe_live(
         beam_size=settings.live_beam_size,
         **_glossary_kwargs(glossary, settings.glossary_mode),
     )
+    _log_transcription(transcription, detect_repetition(transcription), attempt="live")
+    return transcription

@@ -276,7 +276,11 @@ export function useLiveSession(meetingId: string, stream: MediaStream | null): L
 
     let ctx: AudioContext | null = null;
     try {
-      ctx = new AudioContext();
+      // Opened at the pipeline's own rate: the browser then resamples the
+      // microphone with a real low-pass before the worklet sees a sample.
+      // Decimating in the worklet folded everything above 8 kHz into the
+      // speech band and cost accuracy on a real microphone.
+      ctx = new AudioContext({ sampleRate: 16_000 });
       await ctx.audioWorklet.addModule("/pcm-worklet.js");
       // addModule fetches the worklet. A stop() or unmount in that window
       // must not let this continuation wire the microphone into a session

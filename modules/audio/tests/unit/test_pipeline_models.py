@@ -84,7 +84,7 @@ def test_transcribe_live_uses_the_live_beam_and_transcribe_the_stored_beam(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     settings = AudioSettings(
-        live_whisper_model="large-v3-turbo", live_cpu_threads=10, live_beam_size=1, beam_size=5
+        live_whisper_model="large-v3-turbo", live_cpu_threads=10, live_beam_size=2, beam_size=5
     )
     monkeypatch.setattr(pipeline, "get_settings", lambda: settings)
 

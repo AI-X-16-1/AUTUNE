@@ -101,14 +101,16 @@ class AudioSettings(BaseSettings):
     Korean that reads the same. The stored path keeps ``whisper_model``."""
 
     live_cpu_threads: int = 0
-    """CTranslate2 threads for the live model. 0 is CTranslate2's default
-    (4). One transcription runs at a time on the live path, so the count can
-    be the machine's performance cores -- 10 on the laptop that measured
-    this -- without contending with anything but itself."""
+    """CTranslate2 threads for the live model. 0 leaves the choice to
+    CTranslate2 (four on the laptop that measured this). One transcription
+    runs at a time on the live path, so the count can be the machine's
+    performance cores -- 10 on that laptop, which halved the decode time --
+    without contending with anything but itself."""
 
-    live_beam_size: int = 1
-    """Beam width on the live path. A row is display, remade by the stored
-    path after the upload; width 1 is the cheapest decode."""
+    live_beam_size: int = 5
+    """Beam width on the live path. Width 5 costs turbo about 0.3 s more per
+    utterance than width 1 and is what the stored path uses, so a live row
+    and the row that replaces it after the upload read the same."""
 
     @model_validator(mode="after")
     def _warn_on_cuda_without_token(self) -> AudioSettings:

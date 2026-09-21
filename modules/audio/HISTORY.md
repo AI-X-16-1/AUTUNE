@@ -146,8 +146,8 @@ Isolated decode time for one 11.4 s Korean utterance, int8, beam 1, on a
 A 5.4 s utterance costs almost the same (turbo/10: 2.2 s) — the encoder pads
 every segment to a 30 s window, so there is a ~2 s floor regardless of
 utterance length. Decision: the live path gets `large-v3-turbo`
-(`live_whisper_model`), its own thread count (`live_cpu_threads`), and beam 1
-(`live_beam_size`); the stored path (`pipeline.transcribe`, worker) keeps
+(`live_whisper_model`), its own thread count (`live_cpu_threads`), and beam 5
+(`live_beam_size` — width 5 costs turbo 0.3 s more than width 1, 2.7 s vs 2.4 s); the stored path (`pipeline.transcribe`, worker) keeps
 `large-v3`, beam 5, and its retry. Models are cached per `(name, threads)`,
 so the two paths each build one instance and neither reloads.
 
