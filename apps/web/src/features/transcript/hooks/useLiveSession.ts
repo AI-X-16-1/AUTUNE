@@ -110,6 +110,28 @@ export function useLiveSession(meetingId: string, stream: MediaStream | null): L
     timer.current = null;
   }, []);
 
+  /**
+   * Give up on whatever recording is in flight: stop the `MediaRecorder` if
+   * it is running, discard the audio collected so far, and drop the socket
+   * reference. Used where there is nobody left to upload to -- a refused
+   * session (no live view is ever coming) and an unmount (the component is
+   * gone, so there is no `stop()` call coming either).
+   *
+   * Sets `stopping` too: whatever socket this abandoned still has an
+   * `onclose` in flight (unmount closes it but does not wait for the event),
+   * and that late rejection must read as stale, the same as one produced by
+   * `stop()`.
+   */
+  const abandon = useCallback(() => {
+    stopping.current = true;
+    if (timer.current !== null) window.clearInterval(timer.current);
+    timer.current = null;
+    if (recorder.current && recorder.current.state !== "inactive") recorder.current.stop();
+    recorder.current = null;
+    chunks.current = [];
+    socket.current = null;
+  }, []);
+
   const upload = useCallback(async () => {
     if (!blob.current) return;
     setPhase("uploading");
@@ -170,7 +192,10 @@ export function useLiveSession(meetingId: string, stream: MediaStream | null): L
           const message = CLOSE_MESSAGES[event.code] ?? `실시간 전사 연결이 끊겼습니다 (${event.code}).`;
           reject(Object.assign(new Error(message), { code: event.code }));
         }
-        socket.current = null;
+        // Only clear the ref if it is still ours -- a newer session may
+        // already have replaced it, and this socket's own close must not
+        // clear that one out from under it.
+        if (socket.current === ws) socket.current = null;
         // Any drop once the session is live -- except one we asked for --
         // leaves the recording running without the live view.
         if (readyResolved && !stopping.current) setLiveLost(true);
@@ -191,22 +216,19 @@ export function useLiveSession(meetingId: string, stream: MediaStream | null): L
     try {
       await ready;
     } catch (caught) {
-      // A concurrent stop() (or a fresh start()) may already have closed or
-      // replaced this socket -- e.g. stop() closing a still-connecting
-      // socket rejects this same `ready`. A stale rejection must not
-      // overwrite state something else already set.
-      if (socket.current !== ws) return;
+      // A rejection is stale only if a concurrent stop() produced it --
+      // `onclose` already nulls `socket.current` before this handler runs
+      // (it is a microtask, scheduled after the synchronous `onclose` body),
+      // so `socket.current` can never distinguish "this socket closed" from
+      // "a different call already moved on". `stopping.current` is the one
+      // flag `stop()` sets before it touches the socket at all.
+      if (stopping.current) return;
       const code = closeCodeOf(caught);
       const message = caught instanceof Error ? caught.message : String(caught);
       if (code !== undefined && REFUSAL_CODES.has(code)) {
         // Not authorised, or the meeting refused this session outright: stop
         // the recording rather than keep one nobody will ever see.
-        if (timer.current !== null) window.clearInterval(timer.current);
-        timer.current = null;
-        if (rec.state !== "inactive") rec.stop();
-        recorder.current = null;
-        chunks.current = [];
-        socket.current = null;
+        abandon();
         setError(message);
         setPhase("error");
         return;
@@ -233,7 +255,7 @@ export function useLiveSession(meetingId: string, stream: MediaStream | null): L
     context.current = ctx;
     worklet.current = node;
     setPhase("recording");
-  }, [meetingId, stream]);
+  }, [meetingId, stream, abandon]);
 
   const pause = useCallback(() => {
     if (socket.current?.readyState === WebSocket.OPEN) {
@@ -255,6 +277,9 @@ export function useLiveSession(meetingId: string, stream: MediaStream | null): L
   }, []);
 
   const stop = useCallback(async () => {
+    // Already stopping (or stopped): a second call must not send a second
+    // `stop`, wait a second time, or upload an already-emptied blob.
+    if (stopping.current) return;
     stopping.current = true;
 
     // 1. If connected, tell the server and wait for `ended` (the last row
@@ -299,8 +324,13 @@ export function useLiveSession(meetingId: string, stream: MediaStream | null): L
     return () => {
       teardownAudio();
       socket.current?.close();
+      // Nobody is left to call stop(): stop the recorder and drop both
+      // refs so a StrictMode remount's start() is not blocked by the
+      // re-entry guard, and so a recorder from an unmounted session is
+      // never left running.
+      abandon();
     };
-  }, [teardownAudio]);
+  }, [teardownAudio, abandon]);
 
   return { phase, rows, elapsedSeconds, liveLost, error, start, pause, resume, stop, retryUpload: upload };
 }
