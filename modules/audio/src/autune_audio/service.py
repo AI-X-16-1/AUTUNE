@@ -21,6 +21,16 @@ from .persistence import transcript_payload
 log = get_logger(__name__)
 
 
+class NotATeamMemberError(PermissionDeniedError):
+    """A real user who is not on this team.
+
+    A subclass so every HTTP route keeps answering 403 exactly as before,
+    while the live socket -- which cannot answer with a status -- can tell
+    this apart from a token that never resolved to anyone and close with
+    its own code.
+    """
+
+
 def require_team_member(session: Session, *, user_id: str, team_id: str) -> None:
     """Raise unless ``user_id`` belongs to ``team_id``.
 
@@ -33,10 +43,7 @@ def require_team_member(session: Session, *, user_id: str, team_id: str) -> None
         sa.select(TeamMember.id).where(TeamMember.team_id == team_id, TeamMember.user_id == user_id)
     )
     if member is None:
-        # ``team_id`` in the details distinguishes this from a token that never
-        # resolved to a user at all: the live socket closes each with a
-        # different code, and both are ``PermissionDeniedError``.
-        raise PermissionDeniedError("you are not a member of this team", team_id=team_id)
+        raise NotATeamMemberError("you are not a member of this team")
 
 
 def transcript_for_meeting(

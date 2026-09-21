@@ -56,23 +56,18 @@ async def live(websocket: WebSocket, meeting_id: str) -> None:
             if meeting_id in _live:
                 raise ConflictError("a live session is already open for this meeting")
             service.begin_live(db, meeting_id=meeting_id)
-    except (TimeoutError, protocol.ProtocolError) as exc:
-        # A stalled hello and an unparsable first message close the same way:
-        # the client never told us who it is. The reason is logged by type
-        # only.
+    except service.NotATeamMemberError as exc:
+        # A real user, just not one this meeting's team recognises --
+        # authenticated, not let in.
+        log.info("live_refused", meeting_id=meeting_id, reason=type(exc).__name__)
+        await websocket.close(code=protocol.NOT_A_MEMBER)
+        return
+    except (TimeoutError, protocol.ProtocolError, PermissionDeniedError) as exc:
+        # A stalled hello, an unparsable first message, and a token naming
+        # nobody all close the same way: the client never told us who it is.
+        # The reason is logged by type only.
         log.info("live_refused", meeting_id=meeting_id, reason=type(exc).__name__)
         await websocket.close(code=protocol.UNAUTHENTICATED)
-        return
-    except PermissionDeniedError as exc:
-        # A bad token names nobody -- 4401, the client was never
-        # authenticated. A good token can still name someone who is not on
-        # this meeting's team -- 4403, authenticated but not let in. Both
-        # raise the same ``PermissionDeniedError`` from ``service``; the
-        # ``team_id`` detail is only ever attached by the membership check,
-        # so its presence is what tells the two apart.
-        log.info("live_refused", meeting_id=meeting_id, reason=type(exc).__name__)
-        code = protocol.NOT_A_MEMBER if "team_id" in exc.details else protocol.UNAUTHENTICATED
-        await websocket.close(code=code)
         return
     except NotFoundError:
         await websocket.close(code=protocol.NO_SUCH_MEETING)
