@@ -79,8 +79,11 @@ def attest_consent(session: Session, *, meeting_id: str, attested_by: User) -> N
     **The only path in the repository to ``participants.consented = True``**
     (#190). Consent is a statement about people, and before identification (#6)
     a participant row is a voice, not a person -- so there is nowhere to write
-    a per-person answer, and the one honest statement available is the
-    uploader's about the whole meeting. This records that statement and applies
+    a per-person answer, and the one honest statement available is a team
+    member's about the whole meeting. Any member of the team, not necessarily
+    the one who uploaded and not necessarily one who was there: ``meetings``
+    has no ``created_by`` to narrow it, so the check is membership and the
+    limit is documented. This records that statement and applies
     it: every participant row the meeting has *now* is set True, and
     ``persistence._participants_for`` reads the attestation for every row it
     creates *later*, so a rerun that invents a label the first run never saw
@@ -93,8 +96,11 @@ def attest_consent(session: Session, *, meeting_id: str, attested_by: User) -> N
 
     Not per person, not revocable, and it does not tell B and C that a meeting
     they already analysed has changed. Those are S10, S11 and #190's republish
-    question. The default is not loosened by any of this: a meeting with no
-    attestation is exactly as it was.
+    question. Nor does anything here undo what B, C and E derived once the
+    meeting was analysed -- today the only way that data goes is with the
+    meeting itself (CASCADE), and before identification (#6) there is no
+    per-person unit to revoke for. The default is not loosened by any of
+    this: a meeting with no attestation is exactly as it was.
     """
     meeting = session.get(Meeting, meeting_id)
     if meeting is None:
@@ -113,7 +119,7 @@ def attest_consent(session: Session, *, meeting_id: str, attested_by: User) -> N
     session.flush()
     # Counts and ids only. Who attested is in the row; the log says it happened.
     log.info(
-        "consent_attested_by_uploader",
+        "consent_attested_by_member",
         meeting_id=meeting_id,
         attested_by=attested_by.id,
         participants_updated=updated,

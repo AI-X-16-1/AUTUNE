@@ -190,6 +190,13 @@ def _participants_for(
     ``packages/core`` change and decides what B, C and D each do, so it is
     **#190** rather than a line here; until it lands, False is the value that
     analyses nothing, which is the safe direction to be wrong in.
+
+    And the storing itself is still at odds with ``docs/architecture/privacy.md``
+    section 5, which says an excluded utterance is "not stored, not just
+    hidden" -- this function stores every utterance of an unattested meeting
+    and leaves the rows unconsented. The three-state column #190 proposes is
+    what reconciles the two; until then the disagreement is real and this is
+    where it is.
     """
     existing = {
         participant.speaker_label: participant

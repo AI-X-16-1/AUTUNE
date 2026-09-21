@@ -3,9 +3,9 @@
 Nothing in the repository sets ``participants.consented`` to True (#190), so
 every real meeting comes out of B and C empty. Screen S10's per-attendee
 consent table cannot exist before identification (#6) gives a voice a person;
-until then the one honest statement available is the uploader's: "everyone in
-this recording consented". This is where that statement is recorded, and what
-it does to the participant rows.
+until then the one honest statement available is a team member's: "everyone
+in this recording consented". This is where that statement is recorded, and
+what it does to the participant rows.
 
 Two things module B asked for on #190 are pinned here: every label in an
 attested meeting gets the same value, including labels a rerun invents
@@ -193,6 +193,35 @@ def test_an_attestation_after_the_transcript_reaches_the_rows_already_there(
     assert consent_of(db_session, meeting) == {"SPEAKER_00": False, "SPEAKER_01": False}
 
     service.attest_consent(db_session, meeting_id=meeting, attested_by=member)
+
+    assert consent_of(db_session, meeting) == {"SPEAKER_00": True, "SPEAKER_01": True}
+
+
+def test_deleting_the_attestation_is_not_a_revocation(
+    db_session: Session, meeting: str, member: User
+) -> None:
+    """There is no path from True back to False, and this pins that honestly.
+
+    An earlier description of this PR said "un-attesting is deleting from one
+    table". It is not (@PARKJAEKYUNG0525 on #283): the participant rows already
+    set True stay True, and only labels a later rerun invents would come out
+    False -- a meeting whose labels disagree about consent, which is the state
+    module B's first condition on #190 forbids. So the row is not to be deleted
+    by hand, and there is no route that deletes it. Revocation, when it exists,
+    is S10/S11's, and it will have to reset the participant rows as well as
+    remove this one.
+    """
+    service.attest_consent(db_session, meeting_id=meeting, attested_by=member)
+    persist_transcript(
+        db_session,
+        meeting_id=meeting,
+        utterances=TWO_VOICES,
+        duration_seconds=5.0,
+        audio_deleted=True,
+    )
+
+    db_session.delete(db_session.get(AudConsentAttestation, meeting))
+    db_session.flush()
 
     assert consent_of(db_session, meeting) == {"SPEAKER_00": True, "SPEAKER_01": True}
 
