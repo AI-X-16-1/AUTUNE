@@ -85,5 +85,28 @@ glossary, against a published table. Reports go in
 `docs/modules/audio-evaluations/` and the thread between them in `HISTORY.md`
 (which lands with #174).
 
+```bash
+# Score the masker against the corpus. Both directions, one second, no model.
+uv run --package autune-audio python -m autune_audio.eval
+uv run --package autune-audio python -m autune_audio.eval --no-recogniser --verbose
+```
+
+**Recall is the target; precision is what says what the recall cost.** Recall
+cannot fall when the masker covers more, so every widening looks free until
+somebody runs real text — which is how the account pattern came to eat every ISO
+date. Run this before and after any change to a pattern.
+
+The corpus is `src/autune_audio/eval/fixtures/masking.jsonl` — `fixtures/`
+because `.gitignore` reserves `corpus/` for downloaded training data. A row whose `masked`
+equals its `text` is an example of something to leave alone, and counts the
+same. Growing it means running the corpus over a transcript, not inventing rows.
+
+A row the masker is known to get wrong in a safe direction carries
+`known_inexact` with the reason. It still says the right answer; the run
+reports it and does not fail on it — and fails the day it comes out right
+while the declaration stands, so the list cannot go stale. The exit code is
+otherwise honest: an undeclared difference is 1. Output names rows by
+`source#line`, never by text.
+
 A is the critical path — B, C, and D cannot integrate until `TranscriptReady`
 is real. Ship it first.
