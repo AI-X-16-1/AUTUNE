@@ -11,6 +11,7 @@ half of it.
 from __future__ import annotations
 
 import re
+from datetime import date
 
 import pytest
 
@@ -30,9 +31,9 @@ between" rather than as a claim about concerns."""
 
 
 def utterance(
-    id_: str, kind: UtteranceKind, *, confidence: float = 0.9, text: str = "..."
+    id_: str, kind: UtteranceKind, *, confidence: float = 0.9, text: str = "...", speaker: str = ""
 ) -> ClassifiedUtterance:
-    return ClassifiedUtterance(id=id_, kind=kind, confidence=confidence, text=text)
+    return ClassifiedUtterance(id=id_, kind=kind, confidence=confidence, text=text, speaker=speaker)
 
 
 # --- what a decision is -----------------------------------------------------
@@ -145,6 +146,83 @@ def test_the_statement_is_where_the_decision_settled() -> None:
     )
 
     assert groups[0].statement == "검색 정렬은 인기순으로 진행"
+
+
+def test_a_settling_row_that_only_agrees_takes_its_substance_from_the_proposal() -> None:
+    """ "그럼 그렇게 하죠" is true and says nothing. The record needs the turn it agreed to.
+
+    This is the shape the register work found in real meetings: the decision is
+    reached by assent, so the row carrying ``settles`` is the shortest one in the
+    region.
+    """
+    groups = group_decisions(
+        [
+            utterance("utt_1", UtteranceKind.DECISION, text="검색 정렬은 인기순으로 바꾸시죠"),
+            utterance("utt_2", UtteranceKind.DECISION, text="그럼 그렇게 하죠"),
+        ]
+    )
+
+    assert groups[0].statement == "검색 정렬은 인기순으로 바꾸시죠"
+    assert groups[0].source_utterance_ids == ("utt_1", "utt_2")
+
+
+def test_the_statement_carries_the_owner_who_took_it_on() -> None:
+    """The person is named in a commitment between the decision rows, not in them."""
+    groups = group_decisions(
+        [
+            utterance("utt_1", UtteranceKind.DECISION, text="검색 정렬은 인기순으로 바꾸시죠"),
+            utterance("utt_2", UtteranceKind.COMMITMENT, text="제가 볼게요", speaker="박지영"),
+            utterance("utt_3", UtteranceKind.DECISION, text="그럼 그렇게 하죠"),
+        ]
+    )
+
+    assert groups[0].statement == "검색 정렬은 인기순으로 바꾸시죠 (담당 박지영)"
+
+
+def test_somebody_handed_the_work_by_name_is_the_owner() -> None:
+    """Nobody said "I will"; the decision itself names who does it."""
+    groups = group_decisions(
+        [utterance("utt_1", UtteranceKind.DECISION, text="배너 시안은 지영 씨가 저번처럼 해주세요")]
+    )
+
+    assert groups[0].statement == "배너 시안은 지영 씨가 저번처럼 해주세요 (담당 지영)"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "날씨가 안 좋으니 행사는 실내로 옮겨 주세요",
+        "고객님이 원하시니 환불 정책은 그대로 두시죠",
+    ],
+)
+def test_a_word_that_only_looks_like_a_name_is_not_an_owner(text: str) -> None:
+    """ "날씨가" is not a person, and a customer who is mentioned was not handed anything."""
+    groups = group_decisions([utterance("utt_1", UtteranceKind.DECISION, text=text)])
+
+    assert groups[0].statement == text
+
+
+def test_a_deadline_said_between_the_decision_rows_reaches_the_statement() -> None:
+    """ "다음 주 금요일" is only a date once the meeting's own day is known."""
+    groups = group_decisions(
+        [
+            utterance("utt_1", UtteranceKind.DECISION, text="검색 정렬은 인기순으로 바꾸시죠"),
+            utterance("utt_2", CHAT, text="다음 주 금요일까지 하면 될까요"),
+            utterance("utt_3", UtteranceKind.DECISION, text="그럼 그렇게 하죠"),
+        ],
+        day=date(2026, 9, 21),
+    )
+
+    assert groups[0].statement == "검색 정렬은 인기순으로 바꾸시죠 (기한 2026-10-02)"
+
+
+def test_a_decision_nobody_was_given_and_nobody_dated_stays_a_plain_sentence() -> None:
+    """Most decisions are this. An owner invented to fill the field would be a lie."""
+    groups = group_decisions(
+        [utterance("utt_1", UtteranceKind.DECISION, text="검색 정렬은 인기순으로 바꾸시죠")]
+    )
+
+    assert groups[0].statement == "검색 정렬은 인기순으로 바꾸시죠"
 
 
 def test_a_decision_is_not_penalised_for_taking_several_turns() -> None:
