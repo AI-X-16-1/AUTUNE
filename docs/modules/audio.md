@@ -87,7 +87,9 @@ Plus the shared entities in `packages/core`, which A writes.
 ### Live transcription runs in the API process
 
 One `Transcriber` lock per process (`live/transcriber.py`). Two meetings live
-at once share it and each sees roughly double the delay. An MVP limit: the
+at once share it, and once their combined load exceeds real time the delay
+grows for the rest of the meeting rather than doubling — nothing is dropped,
+so every row is late by everything queued before it. An MVP limit: the
 condition for moving transcription to a worker is concurrent meetings
 actually happening and #258 resolved, and the move is that one class.
 

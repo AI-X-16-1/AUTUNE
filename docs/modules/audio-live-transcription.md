@@ -186,8 +186,11 @@ idle ──start()──▶ connecting ──ready──▶ recording ⇄ paused
 S10's per-attendee consent table does not exist. The minimum that keeps
 consent honest: a checkbox — "everyone in this meeting has agreed to be
 recorded and analysed" — which on tick calls `POST /meetings/{id}/consent`
-(#283) and enables `start()` only on success. Without it recording still
-works and B and C analyse nothing; the screen says so in those words.
+(#283) and records the consent. It does not block `start()`: recording
+works without it and B and C analyse nothing, and the copy under the
+checkbox tells the user that this is what skipping it costs. The button
+waits only while a consent request is in flight, so a tick is not lost to a
+start that races it.
 
 ### 4.3 Memory
 
@@ -333,3 +336,27 @@ structlog logger prints and never reaches `caplog`.
 
 The runbook section for the live path (§3.7 in the plan) is deferred until
 `docs/engineering/demo-runbook.md` lands on `main`.
+
+Measured per-row lag at real-time pacing on an Apple-silicon CPU with
+`large-v3` was 7–10 s: each utterance of about 10 s takes about 9 s to
+transcribe, so a row lands roughly one utterance after the one it belongs to
+ends. That is above the 2–8 s estimate in §5.4, which assumed the 0.73 RTF
+of the batch path.
+
+When transcription falls behind, nothing is dropped. The segmenter awaits
+each row inline, so frames that arrive while a segment is being transcribed
+queue in the server's socket buffer and then in the browser's
+`bufferedAmount`, and the lag grows for the rest of the meeting rather than
+settling. §5.2's "audio is what is lost" does not hold — with no ring buffer
+there is nothing to discard from. The follow-up is a bounded segment queue
+that drops its oldest segment, so that a busy CPU costs a stretch of the
+live view rather than the rest of it.
+
+The `MediaRecorder` starts before `ready`, not together with the worklet as
+§4.1 says: it is started as soon as the socket is opened, so a refused or
+slow hello never costs audio. Only the worklet waits for `ready`.
+
+`anyio` was declared in `modules/audio/pyproject.toml`. It was already
+installed transitively through `starlette`, so §1's "no new dependencies" is
+true of the lockfile but not of the manifest; the module now names what it
+imports.
