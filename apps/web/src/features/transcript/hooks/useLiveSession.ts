@@ -44,16 +44,40 @@ const CLOSE_MESSAGES: Record<number, string> = {
   4503: "서버의 전사 모델을 불러올 수 없습니다. 녹음은 계속됩니다.",
 };
 
+/** Authorisation/precondition failures: no live view will ever arrive for
+ * this session, so the recording is stopped rather than kept blind. */
+const REFUSAL_CODES = new Set<number>([4401, 4403, 4404, 4409]);
+
+/** The close code on a `ready`-rejection, if the rejection came from a close
+ * event rather than a transport error (which carries none). */
+function closeCodeOf(error: unknown): number | undefined {
+  if (error instanceof Error && "code" in error) {
+    const code = (error as Error & { code?: unknown }).code;
+    if (typeof code === "number") return code;
+  }
+  return undefined;
+}
+
 /**
  * The live channel, the recording, and the hand-off between them.
  *
  * Two things listen to the same `stream`: an `AudioWorklet` that sends PCM
  * frames over the socket for display, and a `MediaRecorder` that keeps the
- * whole recording for the upload. **They do not depend on each other.** If
- * the socket drops, `liveLost` goes true, the rows stop, and the recorder
- * keeps going; `stop()` still uploads. Losing the live view for a while and
- * losing the recording are different orders of failure, and only the second
- * is prevented here (design, section 4.1).
+ * whole recording for the upload. **They do not depend on each other** once
+ * the session is live: if the socket drops after `ready`, `liveLost` goes
+ * true, the rows stop, and the recorder keeps going; `stop()` still uploads.
+ * Losing the live view for a while and losing the recording are different
+ * orders of failure, and only the second is prevented here (design, section
+ * 4.1).
+ *
+ * A failure *before* `ready` is not that case. A refusal -- no token, not a
+ * team member, no such meeting, or someone else already recording this
+ * meeting (4401/4403/4404/4409) -- means no live view is ever coming, so the
+ * recorder is stopped and the session lands on `phase: "error"` instead of
+ * recording something nobody asked for. A transport failure (the socket
+ * never connects at all) or the model being unavailable (4503) leaves the
+ * person still authorised, so those degrade to `liveLost` + recording-only,
+ * the same as a mid-session drop.
  *
  * `stop()` waits for the server's `ended` -- the last utterance's row arrives
  * before it -- then stops the recorder, uploads the blob, and resolves. The
@@ -75,9 +99,9 @@ export function useLiveSession(meetingId: string, stream: MediaStream | null): L
   const timer = useRef<number | null>(null);
   const ended = useRef<(() => void) | null>(null);
   const blob = useRef<Blob | null>(null);
+  const stopping = useRef(false);
 
   const teardownAudio = useCallback(() => {
-    worklet.current?.port.postMessage("stop");
     worklet.current?.disconnect();
     worklet.current = null;
     void context.current?.close();
@@ -100,6 +124,9 @@ export function useLiveSession(meetingId: string, stream: MediaStream | null): L
   }, [meetingId]);
 
   const start = useCallback(async () => {
+    // Already connecting or connected: never open a second socket/recorder
+    // on the same stream (e.g. a double-invoke in dev).
+    if (socket.current || recorder.current) return;
     if (!stream) return;
     const token = getToken();
     if (!token) {
@@ -111,33 +138,42 @@ export function useLiveSession(meetingId: string, stream: MediaStream | null): L
     setError(null);
     setLiveLost(false);
     setRows([]);
+    setElapsed(0);
     chunks.current = [];
+    stopping.current = false;
 
     const ws = new WebSocket(liveSocketUrl(meetingId));
     ws.binaryType = "arraybuffer";
     socket.current = ws;
 
+    let readyResolved = false;
     const ready = new Promise<void>((resolve, reject) => {
       ws.onopen = () => ws.send(JSON.stringify({ type: "hello", token }));
       ws.onmessage = (event: MessageEvent<string>) => {
         const message = JSON.parse(event.data) as ServerMessage;
-        if (message.type === "ready") resolve();
-        else if (message.type === "row") {
+        if (message.type === "ready") {
+          readyResolved = true;
+          resolve();
+        } else if (message.type === "row") {
           setRows((prev) => [...prev, { utterance: message.utterance }]);
         } else if (message.type === "ended") {
           ended.current?.();
         } else if (message.type === "error" && message.code === "model_unavailable") {
-          reject(new Error(CLOSE_MESSAGES[4503]));
+          reject(Object.assign(new Error(CLOSE_MESSAGES[4503]), { code: 4503 }));
         }
       };
       ws.onclose = (event) => {
-        const message = CLOSE_MESSAGES[event.code];
-        if (message && event.code !== 4503) {
-          reject(new Error(message));
+        // A server that drops the connection mid-`stop()` will never send
+        // `ended` afterward -- do not make the wait run out the clock.
+        ended.current?.();
+        if (!readyResolved && event.code !== 4503) {
+          const message = CLOSE_MESSAGES[event.code] ?? `실시간 전사 연결이 끊겼습니다 (${event.code}).`;
+          reject(Object.assign(new Error(message), { code: event.code }));
         }
         socket.current = null;
-        // Dropped after ready: the recording continues without the live view.
-        setLiveLost((lost) => lost || event.code !== 1000);
+        // Any drop once the session is live -- except one we asked for --
+        // leaves the recording running without the live view.
+        if (readyResolved && !stopping.current) setLiveLost(true);
       };
       ws.onerror = () => reject(new Error("라이브 전사 서버에 연결할 수 없습니다. 녹음은 계속됩니다."));
     });
@@ -155,11 +191,37 @@ export function useLiveSession(meetingId: string, stream: MediaStream | null): L
     try {
       await ready;
     } catch (caught) {
+      // A concurrent stop() (or a fresh start()) may already have closed or
+      // replaced this socket -- e.g. stop() closing a still-connecting
+      // socket rejects this same `ready`. A stale rejection must not
+      // overwrite state something else already set.
+      if (socket.current !== ws) return;
+      const code = closeCodeOf(caught);
+      const message = caught instanceof Error ? caught.message : String(caught);
+      if (code !== undefined && REFUSAL_CODES.has(code)) {
+        // Not authorised, or the meeting refused this session outright: stop
+        // the recording rather than keep one nobody will ever see.
+        if (timer.current !== null) window.clearInterval(timer.current);
+        timer.current = null;
+        if (rec.state !== "inactive") rec.stop();
+        recorder.current = null;
+        chunks.current = [];
+        socket.current = null;
+        setError(message);
+        setPhase("error");
+        return;
+      }
+      // A transport failure, or the model is down (4503): the person is
+      // still authorised, so the recording continues without the live view.
       setLiveLost(true);
-      setError(caught instanceof Error ? caught.message : String(caught));
+      setError(message);
       setPhase("recording"); // recording without the live view
       return;
     }
+
+    // A stop() -- or a fresh start() -- may already have run while this one
+    // was still connecting. Do not resurrect a session nobody is waiting for.
+    if (socket.current !== ws) return;
 
     const ctx = new AudioContext();
     await ctx.audioWorklet.addModule("/pcm-worklet.js");
@@ -174,7 +236,9 @@ export function useLiveSession(meetingId: string, stream: MediaStream | null): L
   }, [meetingId, stream]);
 
   const pause = useCallback(() => {
-    socket.current?.send(JSON.stringify({ type: "pause" }));
+    if (socket.current?.readyState === WebSocket.OPEN) {
+      socket.current.send(JSON.stringify({ type: "pause" }));
+    }
     recorder.current?.pause();
     if (timer.current !== null) window.clearInterval(timer.current);
     timer.current = null;
@@ -182,23 +246,37 @@ export function useLiveSession(meetingId: string, stream: MediaStream | null): L
   }, []);
 
   const resume = useCallback(() => {
-    socket.current?.send(JSON.stringify({ type: "resume" }));
+    if (socket.current?.readyState === WebSocket.OPEN) {
+      socket.current.send(JSON.stringify({ type: "resume" }));
+    }
     recorder.current?.resume();
     timer.current = window.setInterval(() => setElapsed((s) => s + 1), 1000);
     setPhase("recording");
   }, []);
 
   const stop = useCallback(async () => {
-    // 1. Tell the server, and wait for `ended` (the last row comes first).
+    stopping.current = true;
+
+    // 1. If connected, tell the server and wait for `ended` (the last row
+    //    comes first). Close the socket in whatever state it is afterward --
+    //    one left open mid-handshake must not let a late `ready` resurrect a
+    //    session that has already been told to stop.
     if (socket.current?.readyState === WebSocket.OPEN) {
       const finished = new Promise<void>((resolve) => {
-        ended.current = resolve;
-        window.setTimeout(resolve, 15_000); // a server that never answers must not hold the upload
+        let timeoutId: number | null = null;
+        const done = () => {
+          if (timeoutId !== null) window.clearTimeout(timeoutId);
+          ended.current = null;
+          resolve();
+        };
+        ended.current = done;
+        timeoutId = window.setTimeout(done, 15_000); // a server that never answers must not hold the upload
       });
       socket.current.send(JSON.stringify({ type: "stop" }));
       await finished;
-      socket.current?.close(1000);
     }
+    socket.current?.close(1000);
+    socket.current = null;
     teardownAudio();
 
     // 2. Stop the recorder and assemble the blob.
@@ -209,6 +287,7 @@ export function useLiveSession(meetingId: string, stream: MediaStream | null): L
         rec.stop();
       });
     }
+    recorder.current = null;
     blob.current = new Blob(chunks.current, { type: "audio/webm" });
     chunks.current = [];
 
