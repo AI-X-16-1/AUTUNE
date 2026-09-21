@@ -70,6 +70,53 @@ export interface TopicGraph {
 }
 
 /**
+ * One checklist item of the domain template, beside what the meeting did with
+ * it — `TemplateItemRead` in `modules/gap/src/autune_gap/schemas.py`.
+ *
+ * **Not a contract**, for the same reason `TopicGraph` is not: the rail is
+ * module C's own screen and no other module reads a checklist.
+ *
+ * `coverage` is `null` when the meeting has no topic graph yet. That is not
+ * "covered" and must never render as it — see `TemplateComparison.analysed`.
+ */
+export interface TemplateChecklistItem {
+  key: string;
+  category: string;
+  item: string;
+  coverage: Coverage | null;
+  /** The gap on the left of the screen this item raised, if it raised one. */
+  gap_id: string | null;
+  /** Somebody called that gap a false positive. The item is still not covered. */
+  dismissed: boolean;
+}
+
+/**
+ * The template-comparison rail — `TemplateComparison` in the same file.
+ *
+ * `analysed` is the field that keeps the rail honest. A meeting with no topic
+ * graph raises no gaps by design (an empty graph says extraction found nothing,
+ * not that the meeting discussed nothing), so every item would otherwise read
+ * as covered — a full checklist of green dots for a meeting nobody has
+ * processed.
+ */
+export interface TemplateComparison {
+  template_key: string;
+  name: string;
+  version: string;
+  analysed: boolean;
+  items: TemplateChecklistItem[];
+}
+
+/** How far the meeting got with one checklist item. */
+export type Coverage = "covered" | "partial" | "missing";
+
+export const COVERAGE_LABELS: Record<Coverage, string> = {
+  covered: "다룸",
+  partial: "부분",
+  missing: "누락",
+};
+
+/**
  * The order S20 lists severities in: HIGH expanded, MEDIUM collapsed, LOW
  * separate.
  *

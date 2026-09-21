@@ -450,7 +450,7 @@ gaps off a transcript nothing was read out of.
 | PostgreSQL `gap_topic_utterances` | Which utterances a topic was built from, in order |
 | PostgreSQL `gap_topic_edges` | Relations between topics, directed, per meeting, with which extractor asserted each |
 | PostgreSQL `gap_participation` | Topic × participant speech presence |
-| PostgreSQL `gap_gaps` | Detected gaps, category, severity, risk score, question |
+| PostgreSQL `gap_gaps` | Detected gaps, category, coverage, severity, risk score, question |
 | PostgreSQL `gap_related_topics` | Which topics a gap was inferred from |
 | PostgreSQL `gap_meeting_template` | Which template one meeting is compared against, when somebody chose one |
 | PostgreSQL `gap_templates` | Domain templates and their items — **not built, and not needed**, see below |
@@ -504,13 +504,14 @@ here, so the no-deletion-hook sentence above still holds.
 | GET | `/topics/{meeting_id}` | Topic graph for visualization |
 | POST | `/gaps/{id}/dismiss` | Mark a gap as a false positive (feeds threshold tuning) |
 | GET | `/templates` | Available domain templates |
-| GET | `/templates/{meeting_id}` | Which template this meeting is compared against |
+| GET | `/templates/{meeting_id}` | Which template this meeting is held to, and how far it got with each item |
 | PUT | `/templates/{meeting_id}` | Point this meeting at a template and re-compare |
 
 ### The read API as built
 
-Two of the four exist. `/reports/{meeting_id}` and `/topics/{meeting_id}` read
-the stored rows; nothing was added to `apps/` to mount them.
+Everything above is built except `POST /gaps/{id}/dismiss`.
+`/reports/{meeting_id}` and `/topics/{meeting_id}` read the stored rows; nothing
+was added to `apps/` to mount them.
 
 - **The report is read, not replayed.** It is assembled from `gap_*` rows by the
   same `service.build_report` the publish path uses, so a report reopened a week
@@ -545,6 +546,38 @@ that shows one of them is a payload nobody reads. `GET /templates/{meeting_id}`
 answers with the configured default rather than an empty body when nobody has
 chosen, because there is always a template in force and a rail showing nothing
 selected would misreport that.
+
+`GET /templates/{meeting_id}` also carries the comparison itself — every item of
+the template beside `covered`, `partial` or `missing`, and the id of the gap it
+raised. That is the rail on the right of S20, and it is the gap list read from
+the other end: the list says what is missing, the rail says what the missing
+items were measured against, which is what makes a gap a claim rather than an
+opinion. The response is a superset of the selection, so a caller that only
+wanted the key still reads it off the same field; `PUT` keeps taking and
+returning the selection alone, because a request body carrying a read-only
+comparison invites a caller to send one back.
+
+Two things keep it honest, and both are failures it would otherwise make
+silently:
+
+- **Coverage is stored, not recomputed.** `gap_gaps.coverage` records what
+  `detect.classify` decided when the pipeline ran. A rail that re-ran the
+  comparison at read time would disagree with the gap rows beside it the moment
+  `AUTUNE_GAP_PARTIAL_CENTRALITY` moved — and the rows are what E was published
+  and what a dismissal was made against. The report is read, not replayed; so is
+  the checklist behind it. `covered` is never stored, because a covered item
+  raises no gap: the server reads the *absence* of a row back as covered.
+- **An unanalysed meeting reports no coverage at all.** `analysed` is false and
+  every item's coverage is null. Without it, "no gap row" would read as
+  "covered" for a meeting nobody has processed — a full checklist of green dots
+  for a meeting the pipeline never reached, which is the same false statement
+  `compare` refuses to make when it declines to raise a checklist of gaps
+  against an empty graph.
+
+A dismissed item keeps its coverage and is marked dismissed rather than promoted
+to covered. Somebody pressing "해당 없음" is a judgement about the gap, not
+evidence the meeting covered the item, and the row is what threshold tuning
+reads.
 
 `PUT /templates/{meeting_id}` stores the choice **and re-runs detection**, so the
 gaps on `/reports/{meeting_id}` reflect the new template as soon as it returns —

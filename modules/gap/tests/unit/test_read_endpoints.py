@@ -34,7 +34,7 @@ from autune_core import (
     get_session,
     issue_token,
 )
-from autune_gap import service
+from autune_gap import service, template
 from autune_gap.models import (
     GapGap,
     GapMeetingTemplate,
@@ -235,6 +235,9 @@ def gap(
     risk_score: float = 0.9,
     dismissed: bool = False,
     related: tuple[str, ...] = (),
+    template_key: str | None = None,
+    item_key: str | None = None,
+    coverage: str | None = None,
 ) -> str:
     session.add(
         GapGap(
@@ -244,6 +247,9 @@ def gap(
             title="성능 요구사항이 정해지지 않았습니다",
             severity="high",
             risk_score=risk_score,
+            template_key=template_key,
+            template_item_key=item_key,
+            coverage=coverage,
             dismissed_at=datetime.now(tz=UTC) if dismissed else None,
         )
     )
@@ -550,7 +556,107 @@ def test_a_meeting_nobody_chose_for_answers_with_the_default(client: TestClient)
     showing nothing selected would misreport that."""
     body = client.get(f"{PREFIX}/templates/{MEETING}").json()
 
-    assert body == {"template_key": "general"}
+    assert body["template_key"] == "general"
+    assert body["name"]
+    assert body["version"].startswith("general.")
+
+
+def test_the_comparison_lists_every_item_of_the_template_in_order(client: TestClient) -> None:
+    """The rail is the checklist, not the findings: a covered item has no gap
+    row and still has to appear, because "다룸" is the thing it says."""
+    body = client.get(f"{PREFIX}/templates/{MEETING}").json()
+    keys = [entry["key"] for entry in body["items"]]
+
+    assert keys == [item.key for item in template.get_template("general").items]
+    assert set(body["items"][0]) == {"key", "category", "item", "coverage", "gap_id", "dismissed"}
+
+
+def test_an_unanalysed_meeting_reports_no_coverage_rather_than_a_covered_checklist(
+    client: TestClient,
+) -> None:
+    """The failure this prevents: a meeting nobody has processed rendering as a
+    full checklist of green dots, because no gap row exists for any item.
+
+    `detect.compare` raises nothing for a meeting with no topics on purpose —
+    an empty graph says extraction found nothing, not that the meeting
+    discussed nothing — so absence of a row means "not compared" here.
+    """
+    body = client.get(f"{PREFIX}/templates/{MEETING}").json()
+
+    assert body["analysed"] is False
+    assert all(entry["coverage"] is None for entry in body["items"])
+
+
+def test_an_item_with_no_gap_is_covered_once_the_meeting_has_a_graph(
+    client: TestClient, session: Session
+) -> None:
+    topic(session, "topic_a")
+    item_key = template.get_template("general").items[0].key
+    gap(session, "gap_1", template_key="general", item_key=item_key, coverage="missing")
+
+    body = client.get(f"{PREFIX}/templates/{MEETING}").json()
+    states = {entry["key"]: entry["coverage"] for entry in body["items"]}
+
+    assert body["analysed"] is True
+    assert states.pop(item_key) == "missing"
+    assert set(states.values()) == {"covered"}
+
+
+def test_an_item_carries_the_id_of_the_gap_it_raised(client: TestClient, session: Session) -> None:
+    """The rail and the gap list beside it are one finding seen twice."""
+    topic(session, "topic_a")
+    item_key = template.get_template("general").items[0].key
+    gap(session, "gap_1", template_key="general", item_key=item_key, coverage="partial")
+
+    body = client.get(f"{PREFIX}/templates/{MEETING}").json()
+    entry = next(one for one in body["items"] if one["key"] == item_key)
+
+    assert entry["gap_id"] == "gap_1"
+    assert entry["coverage"] == "partial"
+
+
+def test_a_dismissed_gap_keeps_its_coverage_and_is_marked(
+    client: TestClient, session: Session
+) -> None:
+    """Calling a gap a false positive is a judgement about the gap. It is not
+    evidence the meeting covered the item, so the rail does not promote it."""
+    topic(session, "topic_a")
+    item_key = template.get_template("general").items[0].key
+    gap(
+        session,
+        "gap_1",
+        template_key="general",
+        item_key=item_key,
+        coverage="missing",
+        dismissed=True,
+    )
+
+    body = client.get(f"{PREFIX}/templates/{MEETING}").json()
+    entry = next(one for one in body["items"] if one["key"] == item_key)
+
+    assert entry["coverage"] == "missing"
+    assert entry["dismissed"] is True
+
+
+def test_a_gap_from_another_template_does_not_reach_the_rail(
+    client: TestClient, session: Session
+) -> None:
+    """Switching templates leaves the old rows until the next detection pass;
+    the rail shows the checklist in force, not whatever is in the table."""
+    topic(session, "topic_a")
+    other = template.get_template("feature_planning").items[-1]
+    gap(
+        session,
+        "gap_1",
+        template_key="feature_planning",
+        item_key=other.key,
+        coverage="missing",
+    )
+
+    body = client.get(f"{PREFIX}/templates/{MEETING}").json()
+
+    assert body["template_key"] == "general"
+    assert all(entry["gap_id"] is None for entry in body["items"])
 
 
 def test_an_unknown_meeting_is_a_404(client: TestClient) -> None:

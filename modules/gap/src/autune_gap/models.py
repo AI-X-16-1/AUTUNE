@@ -37,6 +37,12 @@ _SEVERITIES = ("high", "medium", "low")
 constraint rather than a PostgreSQL enum — adding a value to a PG enum takes a
 migration lock (data-model.md, "Conventions")."""
 
+_COVERAGES = ("partial", "missing")
+"""The two states of ``detect.Coverage`` that raise a gap. ``covered`` is
+absent on purpose: a covered item produces no finding, so a row carrying it
+could only ever be a bug. The S20 rail reads a covered item as the *absence* of
+a gap for that item key — see ``service.template_comparison``."""
+
 
 class TimestampMixin:
     created_at: Mapped[datetime] = mapped_column(
@@ -225,6 +231,9 @@ class GapGap(Base, TimestampMixin):
     __table_args__ = (
         CheckConstraint(f"severity IN {_SEVERITIES!r}", name="ck_gap_gaps_severity"),
         CheckConstraint("risk_score >= 0 AND risk_score <= 1", name="ck_gap_gaps_risk_score"),
+        CheckConstraint(
+            f"coverage IS NULL OR coverage IN {_COVERAGES!r}", name="ck_gap_gaps_coverage"
+        ),
         UniqueConstraint(
             "meeting_id", "template_key", "template_item_key", name="uq_gap_gaps_template_item"
         ),
@@ -271,6 +280,19 @@ class GapGap(Base, TimestampMixin):
     A template item carries the question that closes it, so a template gap has
     one from the moment it is raised. #35 makes it specific to the topics the
     gap was inferred from; until then it is the item's own wording."""
+
+    coverage: Mapped[str | None] = mapped_column(String(16))
+    """How far the meeting got with the item — ``partial`` or ``missing``.
+
+    Stored rather than recomputed on read. The S20 rail shows the checklist
+    beside the gap list, and a rail that re-ran ``detect.classify`` against
+    today's thresholds would disagree with the gap rows beside it whenever
+    ``AUTUNE_GAP_PARTIAL_CENTRALITY`` had moved since the meeting was analysed.
+    The report is read, not replayed (docs/modules/gap.md); this is the same
+    rule applied to the checklist behind it.
+
+    Null for a gap found from the graph alone, which was never compared against
+    an item."""
 
     dismissed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 

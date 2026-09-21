@@ -1,7 +1,7 @@
 /** Calls to /api/gap. This feature calls no other module's endpoints. */
 import { api } from "@/shared/api/client";
 
-import type { GapReport, TopicGraph } from "./types";
+import type { GapReport, TemplateComparison, TopicGraph } from "./types";
 
 export { api };
 
@@ -14,9 +14,11 @@ export { api };
  * an unknown meeting id is a 404, which is what lets a screen poll while the
  * pipeline is still running.
  *
- * `gaps` is empty for every meeting today, and empty in practice rather than by
- * construction: template comparison and risk scoring (#14, #35) are the code
- * that writes those rows and they wait on the decision in #22.
+ * `gaps` carries what template comparison and risk scoring (#14, #35) stored.
+ * An empty list still does not mean the meeting covered everything: a meeting
+ * whose topic graph came out empty raises nothing at all, because that says
+ * extraction found nothing rather than that the meeting discussed nothing.
+ * `getTemplateComparison` is what tells those two apart.
  */
 export const getReport = (meetingId: string) => api.gap<GapReport>(`/reports/${meetingId}`);
 
@@ -29,3 +31,14 @@ export const getReport = (meetingId: string) => api.gap<GapReport>(`/reports/${m
  * could arrive attached to a picture.
  */
 export const getTopicGraph = (meetingId: string) => api.gap<TopicGraph>(`/topics/${meetingId}`);
+
+/**
+ * The checklist this meeting is held to, item by item — the S20 rail.
+ *
+ * Read from the stored gap rows rather than recomputed, so the rail and the
+ * gap list beside it cannot disagree about a finding. A meeting nobody has
+ * analysed answers `analysed: false` with no coverage on any item; rendering
+ * that as a covered checklist is the mistake the flag exists to prevent.
+ */
+export const getTemplateComparison = (meetingId: string) =>
+  api.gap<TemplateComparison>(`/templates/${meetingId}`);
