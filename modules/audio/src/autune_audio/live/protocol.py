@@ -42,18 +42,21 @@ ClientMessage = Hello | Control
 def parse_client(text: str) -> ClientMessage:
     """One message from the browser. Anything unrecognisable is one error code
     -- the browser sent something this server does not speak."""
+    # Both raises cut the cause: a JSONDecodeError quotes the document and a
+    # pydantic ValidationError carries ``input_value`` -- either would put the
+    # token into a traceback.
     try:
         data = json.loads(text)
-    except json.JSONDecodeError as exc:
-        raise ProtocolError("bad_message") from exc
+    except json.JSONDecodeError:
+        raise ProtocolError("bad_message") from None
     if not isinstance(data, dict):
         raise ProtocolError("bad_message")
     try:
         if data.get("type") == "hello":
             return Hello.model_validate(data)
         return Control.model_validate(data)
-    except ValidationError as exc:
-        raise ProtocolError("bad_message") from exc
+    except ValidationError:
+        raise ProtocolError("bad_message") from None
 
 
 def ready() -> dict[str, Any]:

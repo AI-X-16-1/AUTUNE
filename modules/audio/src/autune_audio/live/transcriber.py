@@ -45,11 +45,22 @@ class Transcriber:
 
     async def warm_up(self) -> None:
         """Load the model. A failure propagates and leaves ``warm`` False, so
-        the next connection tries again rather than assuming."""
+        the next connection tries again rather than assuming.
+
+        Under the same lock as ``run``: two cold connections arriving
+        together must not each build a model, so the second waits for the
+        first and then finds the work done."""
         if self._warm:
             return
-        await anyio.to_thread.run_sync(self._warm_up)
-        self._warm = True
+
+        def guarded() -> None:
+            with _LOCK:
+                if self._warm:
+                    return
+                self._warm_up()
+                self._warm = True
+
+        await anyio.to_thread.run_sync(guarded)
 
     async def run(self, waveform: Waveform) -> Transcription:
         def guarded() -> Transcription:

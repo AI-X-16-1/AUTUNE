@@ -63,7 +63,9 @@ class LiveSession:
         frame = np.frombuffer(pcm16, dtype="<i2").astype(np.float32) / 32768.0
         rows = []
         for segment in self._segmenter.feed(frame):
-            rows.append(await self._row(segment))
+            row = await self._row(segment)
+            if row is not None:
+                rows.append(row)
         return rows
 
     def pause(self) -> None:
@@ -78,13 +80,18 @@ class LiveSession:
         """Close the open utterance, if any, and end."""
         self.state = "ended"
         last = self._segmenter.flush()
-        return [await self._row(last)] if last is not None else []
+        if last is None:
+            return []
+        row = await self._row(last)
+        return [row] if row is not None else []
 
     async def warm_up(self) -> None:
         """Load the model before the browser is told the channel is ready."""
         await self._transcriber.warm_up()
 
-    async def _row(self, segment: Segment) -> Utterance:
+    async def _row(self, segment: Segment) -> Utterance | None:
+        """One segment through the model and the mask. ``None`` when the model
+        heard nothing in it -- a breath the VAD took for speech is not a row."""
         try:
             transcription = await self._transcriber.run(segment.waveform)
         except Exception as exc:
@@ -96,6 +103,8 @@ class LiveSession:
         confidence = float(np.mean([w.probability for w in words])) if words else 0.0
         masked = mask(spoken, recogniser=self._recogniser).text
         del spoken  # the unmasked string ends here
+        if not masked.strip():
+            return None
 
         self.rows_sent += 1
         log.info(

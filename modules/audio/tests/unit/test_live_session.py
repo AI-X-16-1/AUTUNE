@@ -89,6 +89,30 @@ async def test_an_utterance_becomes_one_masked_row() -> None:
 
 
 @pytest.mark.asyncio
+async def test_an_empty_transcription_is_not_a_row() -> None:
+    """The VAD can take a breath for speech; the model then hears nothing.
+    That is no row, and it is not counted as one."""
+
+    def nothing(waveform: Waveform) -> Transcription:
+        return Transcription(
+            segments=(WhisperSegment(start=0.0, end=waveform.duration, text="  ", words=()),),
+            language="ko",
+            language_probability=1.0,
+            duration=waveform.duration,
+        )
+
+    live = session(Transcriber(transcribe=nothing, warm_up=lambda: None))
+
+    rows = await feed(live, np.concatenate([tone(1000), silence(1000)]))
+    assert await feed(live, tone(1000)) == []  # an open utterance for stop()
+    flushed = await live.stop()
+
+    assert rows == []
+    assert flushed == []
+    assert live.rows_sent == 0
+
+
+@pytest.mark.asyncio
 async def test_paused_frames_are_dropped() -> None:
     live = session(saying("무시"))
     live.pause()

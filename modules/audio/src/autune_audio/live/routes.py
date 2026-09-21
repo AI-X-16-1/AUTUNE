@@ -12,6 +12,8 @@ it is finally used. Each database touch here is short and scoped.
 
 from __future__ import annotations
 
+from contextlib import suppress
+
 import anyio
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
@@ -45,16 +47,23 @@ async def live(websocket: WebSocket, meeting_id: str) -> None:
     await websocket.accept()
 
     # --- hello: authenticate, begin, claim --------------------------------
-    # The claim (``_live[meeting_id] = session``) happens right after
-    # ``begin_live`` succeeds, with no ``await`` anywhere between the
-    # membership check and the claim: this whole block is synchronous, so no
-    # other connection's hello can interleave and see a stale "not live yet".
-    # Claiming only once ``begin_live`` has succeeded also means a meeting
-    # that ``begin_live`` itself refuses (wrong status) was never claimed and
-    # needs no rollback.
+    # The claim (``_live[meeting_id] = session``) happens right after the
+    # database scope has committed, with no ``await`` anywhere between the
+    # "already live" check and the claim: this whole block is synchronous, so
+    # no other connection's hello can interleave and see a stale "not live
+    # yet". Claiming only once the scope has closed also means a meeting that
+    # ``begin_live`` refuses (wrong status), or whose commit fails, was never
+    # claimed and needs no rollback -- a claim taken inside the scope would
+    # outlive a commit failure, which raises past every handler below.
     try:
         with anyio.fail_after(settings.live_hello_timeout_s):
-            first = await websocket.receive_text()
+            event = await websocket.receive()
+        if event["type"] == "websocket.disconnect":
+            return
+        first = event.get("text")
+        if first is None:
+            # Audio before hello. The bytes are not looked at.
+            raise protocol.ProtocolError("hello_expected")
         message = protocol.parse_client(first)
         if not isinstance(message, protocol.Hello):
             raise protocol.ProtocolError("hello_expected")
@@ -63,28 +72,32 @@ async def live(websocket: WebSocket, meeting_id: str) -> None:
             if meeting_id in _live:
                 raise ConflictError("a live session is already open for this meeting")
             service.begin_live(db, meeting_id=meeting_id)
-            session = build_session()
-            _live[meeting_id] = session
+        session = build_session()
+        _live[meeting_id] = session
     except service.NotATeamMemberError as exc:
         # A real user, just not one this meeting's team recognises --
         # authenticated, not let in.
-        log.info("live_refused", meeting_id=meeting_id, reason=type(exc).__name__)
-        await websocket.close(code=protocol.NOT_A_MEMBER)
+        await _refuse(
+            websocket, protocol.NOT_A_MEMBER, meeting_id=meeting_id, reason=type(exc).__name__
+        )
         return
     except (TimeoutError, protocol.ProtocolError, PermissionDeniedError) as exc:
         # A stalled hello, an unparsable first message, and a token naming
         # nobody all close the same way: the client never told us who it is.
         # The reason is logged by type only.
-        log.info("live_refused", meeting_id=meeting_id, reason=type(exc).__name__)
-        await websocket.close(code=protocol.UNAUTHENTICATED)
+        await _refuse(
+            websocket, protocol.UNAUTHENTICATED, meeting_id=meeting_id, reason=type(exc).__name__
+        )
         return
     except NotFoundError as exc:
-        log.info("live_refused", meeting_id=meeting_id, reason=type(exc).__name__)
-        await websocket.close(code=protocol.NO_SUCH_MEETING)
+        await _refuse(
+            websocket, protocol.NO_SUCH_MEETING, meeting_id=meeting_id, reason=type(exc).__name__
+        )
         return
     except ConflictError as exc:
-        log.info("live_refused", meeting_id=meeting_id, reason=type(exc).__name__)
-        await websocket.close(code=protocol.ALREADY_LIVE)
+        await _refuse(
+            websocket, protocol.ALREADY_LIVE, meeting_id=meeting_id, reason=type(exc).__name__
+        )
         return
     except WebSocketDisconnect:
         return
@@ -100,9 +113,11 @@ async def live(websocket: WebSocket, meeting_id: str) -> None:
             await session.warm_up()
         except Exception as exc:
             log.warning("live_model_unavailable", error=type(exc).__name__)
-            await websocket.send_json(protocol.error("model_unavailable"))
-            await websocket.close(code=protocol.MODEL_UNAVAILABLE)
             reason = "model_unavailable"
+            await websocket.send_json(protocol.error("model_unavailable"))
+            await _refuse(
+                websocket, protocol.MODEL_UNAVAILABLE, meeting_id=meeting_id, reason=reason
+            )
             return
 
         log.info("live_session_opened", meeting_id=meeting_id)
@@ -144,6 +159,14 @@ async def live(websocket: WebSocket, meeting_id: str) -> None:
         log.info(
             "live_session_closed", meeting_id=meeting_id, rows=session.rows_sent, reason=reason
         )
+
+
+async def _refuse(websocket: WebSocket, code: int, *, meeting_id: str, reason: str) -> None:
+    """Log why and close with ``code``. A client that has already gone is not
+    an error: there is nobody left to refuse."""
+    log.info("live_refused", meeting_id=meeting_id, reason=reason)
+    with suppress(WebSocketDisconnect):
+        await websocket.close(code=code)
 
 
 async def _emit(websocket: WebSocket, session: LiveSession, data: bytes) -> None:

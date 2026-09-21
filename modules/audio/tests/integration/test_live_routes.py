@@ -7,6 +7,7 @@ with the session dependency pointed at the test transaction.
 from __future__ import annotations
 
 import json
+import time
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -305,4 +306,63 @@ def test_a_model_that_cannot_load_is_4503_and_leaves_no_registry_entry(
         hello(ws, issue_token(member.id))
         assert ws.receive_json() == {"type": "error", "code": "model_unavailable"}
         assert close_code(ws) == 4503
+    assert live_routes._live == {}
+
+
+def test_no_hello_within_the_timeout_is_4401(
+    client: TestClient, meeting: str, monkeypatch: pytest.MonkeyPatch, temp_dir: Path
+) -> None:
+    monkeypatch.setattr(
+        live_routes,
+        "get_settings",
+        lambda: AudioSettings(temp_dir=str(temp_dir), live_hello_timeout_s=0.2),
+    )
+    with connect(client, meeting) as ws:
+        assert close_code(ws) == 4401
+    assert live_routes._live == {}
+
+
+def test_a_binary_first_frame_is_4401(client: TestClient, meeting: str) -> None:
+    with connect(client, meeting) as ws:
+        ws.send_bytes(b"\x00" * 64)
+        assert close_code(ws) == 4401
+
+
+def test_the_session_ends_at_the_limit_and_releases_the_meeting(
+    client: TestClient, meeting: str, member: User, monkeypatch: pytest.MonkeyPatch, temp_dir: Path
+) -> None:
+    monkeypatch.setattr(
+        live_routes,
+        "get_settings",
+        lambda: AudioSettings(temp_dir=str(temp_dir), live_max_session_s=0.5),
+    )
+    with connect(client, meeting) as ws:
+        hello(ws, issue_token(member.id))
+        assert ws.receive_json() == {"type": "ready"}
+        audio = tone(600)
+        for i in range(0, len(audio) - len(audio) % FRAME, FRAME):
+            ws.send_bytes(pcm(audio[i : i + FRAME]))
+
+        # The open utterance is flushed as a row before ``ended``; whether it
+        # is depends on how much the segmenter held when the limit struck.
+        message = ws.receive_json()
+        while message["type"] == "row":
+            message = ws.receive_json()
+        assert message == {"type": "ended"}
+        assert close_code(ws) == 1000
+    assert live_routes._live == {}
+
+
+def test_a_client_that_disconnects_mid_session_releases_the_meeting(
+    client: TestClient, meeting: str, member: User
+) -> None:
+    with connect(client, meeting) as ws:
+        hello(ws, issue_token(member.id))
+        assert ws.receive_json() == {"type": "ready"}
+        assert meeting in live_routes._live
+    # The handler runs on the test client's portal; give it a tick to see
+    # the disconnect if it has not already.
+    deadline = time.monotonic() + 2.0
+    while live_routes._live and time.monotonic() < deadline:
+        time.sleep(0.01)
     assert live_routes._live == {}
