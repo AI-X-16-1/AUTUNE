@@ -100,6 +100,12 @@ export function useLiveSession(meetingId: string, stream: MediaStream | null): L
   const ended = useRef<(() => void) | null>(null);
   const blob = useRef<Blob | null>(null);
   const stopping = useRef(false);
+  /** Bumped by every `start()`, `stop()`, and `abandon()`. A handler closed
+   * over in `start()` compares its own generation against this ref to tell
+   * whether it still belongs to the session everyone else is looking at --
+   * unlike a boolean, a monotonic counter cannot be reset out from under an
+   * old session by whatever runs next. */
+  const generation = useRef(0);
 
   const teardownAudio = useCallback(() => {
     worklet.current?.disconnect();
@@ -117,16 +123,21 @@ export function useLiveSession(meetingId: string, stream: MediaStream | null): L
    * session (no live view is ever coming) and an unmount (the component is
    * gone, so there is no `stop()` call coming either).
    *
-   * Sets `stopping` too: whatever socket this abandoned still has an
-   * `onclose` in flight (unmount closes it but does not wait for the event),
-   * and that late rejection must read as stale, the same as one produced by
-   * `stop()`.
+   * Bumps `generation` too: whatever socket this abandoned still has an
+   * `onclose`/`onerror` in flight (unmount closes it but does not wait for
+   * the event), and that late rejection -- and any stray final chunk from
+   * the recorder this just stopped -- must read as belonging to a session
+   * nobody is looking at anymore, even once a fresh `start()` has taken over
+   * both refs.
    */
   const abandon = useCallback(() => {
-    stopping.current = true;
+    generation.current++;
     if (timer.current !== null) window.clearInterval(timer.current);
     timer.current = null;
-    if (recorder.current && recorder.current.state !== "inactive") recorder.current.stop();
+    if (recorder.current && recorder.current.state !== "inactive") {
+      recorder.current.ondataavailable = null;
+      recorder.current.stop();
+    }
     recorder.current = null;
     chunks.current = [];
     socket.current = null;
@@ -149,6 +160,12 @@ export function useLiveSession(meetingId: string, stream: MediaStream | null): L
     // Already connecting or connected: never open a second socket/recorder
     // on the same stream (e.g. a double-invoke in dev).
     if (socket.current || recorder.current) return;
+    // This call's identity. Every handler below, and both continuations
+    // after `await ready`, check this against `generation.current` before
+    // doing anything -- if a `stop()` or `abandon()` (or a newer `start()`)
+    // has run since, it is no longer current, no matter what socket-level
+    // event triggers it.
+    const mine = ++generation.current;
     if (!stream) return;
     const token = getToken();
     if (!token) {
@@ -172,6 +189,7 @@ export function useLiveSession(meetingId: string, stream: MediaStream | null): L
     const ready = new Promise<void>((resolve, reject) => {
       ws.onopen = () => ws.send(JSON.stringify({ type: "hello", token }));
       ws.onmessage = (event: MessageEvent<string>) => {
+        if (generation.current !== mine) return;
         const message = JSON.parse(event.data) as ServerMessage;
         if (message.type === "ready") {
           readyResolved = true;
@@ -185,28 +203,37 @@ export function useLiveSession(meetingId: string, stream: MediaStream | null): L
         }
       };
       ws.onclose = (event) => {
-        // A server that drops the connection mid-`stop()` will never send
-        // `ended` afterward -- do not make the wait run out the clock.
-        ended.current?.();
+        // The `ended` wait belongs to whichever socket is still current,
+        // not to a generation: `stop()` awaits it while this is still
+        // `socket.current` and only bumps `generation` afterward, so a
+        // server that drops the connection mid-`stop()` (never sending
+        // `ended`) must still release the wait for *this* socket. Checking
+        // `socket.current === ws` here, before the generation check below,
+        // is also what keeps a long-abandoned socket's late close from
+        // resolving a completely different, newer session's own wait --
+        // that ref no longer points at this `ws` once anything has moved on.
+        if (socket.current === ws) ended.current?.();
+        if (generation.current !== mine) return;
         if (!readyResolved && event.code !== 4503) {
           const message = CLOSE_MESSAGES[event.code] ?? `실시간 전사 연결이 끊겼습니다 (${event.code}).`;
           reject(Object.assign(new Error(message), { code: event.code }));
         }
-        // Only clear the ref if it is still ours -- a newer session may
-        // already have replaced it, and this socket's own close must not
-        // clear that one out from under it.
-        if (socket.current === ws) socket.current = null;
+        socket.current = null;
         // Any drop once the session is live -- except one we asked for --
         // leaves the recording running without the live view.
         if (readyResolved && !stopping.current) setLiveLost(true);
       };
-      ws.onerror = () => reject(new Error("라이브 전사 서버에 연결할 수 없습니다. 녹음은 계속됩니다."));
+      ws.onerror = () => {
+        if (generation.current !== mine) return;
+        reject(new Error("라이브 전사 서버에 연결할 수 없습니다. 녹음은 계속됩니다."));
+      };
     });
 
     // The recorder starts regardless of what the socket does: the recording
     // must not depend on the live view.
     const rec = new MediaRecorder(stream, { mimeType: "audio/webm;codecs=opus" });
     rec.ondataavailable = (event) => {
+      if (generation.current !== mine) return;
       if (event.data.size > 0) chunks.current.push(event.data);
     };
     recorder.current = rec;
@@ -216,13 +243,12 @@ export function useLiveSession(meetingId: string, stream: MediaStream | null): L
     try {
       await ready;
     } catch (caught) {
-      // A rejection is stale only if a concurrent stop() produced it --
-      // `onclose` already nulls `socket.current` before this handler runs
-      // (it is a microtask, scheduled after the synchronous `onclose` body),
-      // so `socket.current` can never distinguish "this socket closed" from
-      // "a different call already moved on". `stopping.current` is the one
-      // flag `stop()` sets before it touches the socket at all.
-      if (stopping.current) return;
+      // Stale if a newer `start()`, or this session's own `stop()`/
+      // `abandon()`, has already bumped the generation -- `socket.current`
+      // cannot tell us that: `onclose` nulls it before this handler's
+      // microtask runs, so it is `null` (not `=== ws`) for every
+      // close-originated rejection, stale or not.
+      if (generation.current !== mine) return;
       const code = closeCodeOf(caught);
       const message = caught instanceof Error ? caught.message : String(caught);
       if (code !== undefined && REFUSAL_CODES.has(code)) {
@@ -243,7 +269,7 @@ export function useLiveSession(meetingId: string, stream: MediaStream | null): L
 
     // A stop() -- or a fresh start() -- may already have run while this one
     // was still connecting. Do not resurrect a session nobody is waiting for.
-    if (socket.current !== ws) return;
+    if (generation.current !== mine) return;
 
     const ctx = new AudioContext();
     await ctx.audioWorklet.addModule("/pcm-worklet.js");
@@ -302,12 +328,23 @@ export function useLiveSession(meetingId: string, stream: MediaStream | null): L
     }
     socket.current?.close(1000);
     socket.current = null;
+    // This session's socket is done; anything it or a stray late event
+    // still emits from here on belongs to nobody.
+    generation.current++;
     teardownAudio();
 
     // 2. Stop the recorder and assemble the blob.
     const rec = recorder.current;
     if (rec && rec.state !== "inactive") {
       await new Promise<void>((resolve) => {
+        // Reassign rather than reuse start()'s closure: MediaRecorder.stop()
+        // always flushes one last `dataavailable`, and the generation bump
+        // just above would make that closure -- gated on the generation --
+        // reject it as stale. This final chunk is still ours; only a
+        // *different* session's leftovers should be discarded that way.
+        rec.ondataavailable = (event) => {
+          if (event.data.size > 0) chunks.current.push(event.data);
+        };
         rec.onstop = () => resolve();
         rec.stop();
       });
