@@ -73,6 +73,15 @@ class ActionItemRead(BaseModel):
     description: str
     assignee_id: str | None
     assignee_label: str | None
+    assignee_name: str | None = None
+    """The assignee's current display name, read fresh from ``users`` -- never
+    stored. ``assignee_label`` is "the name as spoken, kept when it does not
+    resolve to an account" (``ExtActionItem.assignee_label``'s own docstring);
+    an identified assignee has no label at all, so a card showing only
+    ``assignee_label`` reads an assigned item as unassigned. This is the other
+    half: set only when ``assignee_id`` resolves to an account that still
+    exists, so a screen can show *somebody's name* without caring which half
+    filled it in."""
     due_date: date | None
     status: str
     confidence: float

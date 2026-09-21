@@ -296,13 +296,15 @@ def create_action_item(session: Session, payload: ActionItemCreate) -> ExtAction
     return item
 
 
-def read_model(item: ExtActionItem) -> ActionItemRead:
+def read_model(item: ExtActionItem, *, assignee_name: str | None = None) -> ActionItemRead:
     """One item as this module's own screens read it.
 
-    Built here rather than by ``from_attributes`` on the schema because two of
-    its fields are not columns: the source ids live in the link table, and
-    whether the item is a candidate depends on a setting the row knows nothing
-    about.
+    Built here rather than by ``from_attributes`` on the schema because three of
+    its fields are not columns: the source ids live in the link table, whether
+    the item is a candidate depends on a setting the row knows nothing about,
+    and the assignee's name is not stored at all -- see ``assignee_name`` on
+    ``ActionItemRead``. Callers with more than one item look it up in a batch
+    (``list_action_items``) rather than let this query per row.
 
     Deciding *candidate* on the server is the point of this function. The
     threshold belongs to the classifier that produced the confidence, and a
@@ -318,6 +320,7 @@ def read_model(item: ExtActionItem) -> ActionItemRead:
         description=item.description,
         assignee_id=item.assignee_id,
         assignee_label=item.assignee_label,
+        assignee_name=assignee_name,
         due_date=item.due_date,
         status=item.status,
         confidence=item.confidence,
@@ -325,6 +328,22 @@ def read_model(item: ExtActionItem) -> ActionItemRead:
         source_utterance_ids=[source.utterance_id for source in item.sources],
         is_candidate=threshold is not None and item.confidence < threshold,
     )
+
+
+def assignee_names(session: Session, items: Sequence[ExtActionItem]) -> dict[str, str]:
+    """Display names for every assignee in ``items``, read fresh -- never stored.
+
+    A name is the one piece of a person's identity this module is allowed to
+    show (invariant 11 restricts speaking ratio, not who a task is for), and it
+    changes with the account, not with the item -- storing it would go stale
+    the first time somebody's display name did. One query for the whole list,
+    not one per row.
+    """
+    ids = {item.assignee_id for item in items if item.assignee_id is not None}
+    if not ids:
+        return {}
+    rows = session.execute(select(User.id, User.display_name).where(User.id.in_(ids)))
+    return {user_id: display_name for user_id, display_name in rows}
 
 
 def list_action_items(
@@ -359,7 +378,12 @@ def list_action_items(
     if due_before is not None:
         query = query.where(ExtActionItem.due_date < due_before)
 
-    return [read_model(item) for item in session.scalars(query)]
+    items = list(session.scalars(query))
+    names = assignee_names(session, items)
+    return [
+        read_model(item, assignee_name=names.get(item.assignee_id) if item.assignee_id else None)
+        for item in items
+    ]
 
 
 def read_detail(session: Session, item: ExtActionItem) -> ActionItemDetail:
@@ -370,8 +394,11 @@ def read_detail(session: Session, item: ExtActionItem) -> ActionItemDetail:
     quotation, and it shows one item's at a time. The list still carries meeting
     content -- see ``ActionItemDetail``.
     """
+    names = assignee_names(session, [item])
+    name = names.get(item.assignee_id) if item.assignee_id else None
     return ActionItemDetail(
-        **read_model(item).model_dump(), sources=source_utterances(session, item.id)
+        **read_model(item, assignee_name=name).model_dump(),
+        sources=source_utterances(session, item.id),
     )
 
 

@@ -58,6 +58,14 @@ export interface ActionItemRead extends ActionItem {
    * against; false for everything while that threshold is unset (#122).
    */
   is_candidate: boolean;
+  /**
+   * The assignee's current display name, read fresh — never stored.
+   * `assignee_label` is only "the name as spoken, kept when it does not
+   * resolve to an account"; an identified assignee has no label at all, so a
+   * card reading only `assignee_label` shows an assigned item as unassigned.
+   * `null` until `assignee_id` resolves to an account that still exists.
+   */
+  assignee_name: string | null;
 }
 
 /** One source utterance's words, already masked by module A. */
