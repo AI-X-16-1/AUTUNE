@@ -90,3 +90,106 @@ export const SEVERITY_LABELS: Record<GapSeverity, string> = {
 export function bySeverity(gaps: readonly Gap[], severity: GapSeverity): Gap[] {
   return gaps.filter((gap) => gap.severity === severity);
 }
+
+/**
+ * What proximity alone produces, as the graph writes it.
+ *
+ * Every other relation is something a rule read off a marker the speaker said,
+ * which is why this one is separated in the UI rather than ranked beside them:
+ * "these two topics were mentioned near each other" is a much weaker claim than
+ * "this topic is blocked by that one". See `docs/modules/gap.md`.
+ */
+export const CO_OCCURS = "co_occurs";
+
+/**
+ * Korean for each relation the graph can carry.
+ *
+ * Deliberately **not** typed as an exhaustive `Record` over a union: `relation`
+ * arrives as a plain `string` because the server's vocabulary grows without a
+ * contract change (the topic graph is module C's own response body, not a
+ * contract — see `TopicGraph` above). A relation with no entry here renders its
+ * raw name rather than disappearing, which is the failure a reader can report.
+ */
+export const RELATION_LABELS: Readonly<Record<string, string>> = {
+  depends_on: "의존",
+  blocked_by: "막힘",
+  part_of: "부분",
+  alternative_to: "대안",
+  [CO_OCCURS]: "함께 언급",
+};
+
+/** One relation, ready to render: ends named, direction resolved. */
+export interface RelationLine {
+  key: string;
+  sourceLabel: string;
+  targetLabel: string;
+  relation: string;
+  weight: number;
+  /** Both directions were in the payload, so the pair reads as one line. */
+  mutual: boolean;
+}
+
+/**
+ * The graph's edges as lines to read, most strongly weighted first.
+ *
+ * Two things happen here, and both are the renderer's call rather than the
+ * server's — `TopicEdgeRead` says so outright.
+ *
+ * **Ends are named.** An edge carries topic ids; a reader needs the labels the
+ * nodes carry. An edge whose end is not among the nodes is dropped: the server
+ * already refuses to write one (`graph.relation_edges`), so a line reading
+ * "topic_7 → 캐시" would mean the payload disagreed with itself, and a half-named
+ * relation is worse than a missing one.
+ *
+ * **A pair the payload states both ways collapses to one line.** A symmetric
+ * relation is stored as two rows and both come back. Which relations are
+ * symmetric is the server's business and it may add more, so this reads the
+ * data rather than a hard-coded list of names: if A→B and B→A are both present
+ * for the same relation, they are one fact said twice. A relation that is
+ * genuinely one-way keeps its direction, and an asymmetric relation that
+ * happens to hold both ways — 실시간 depends_on 캐시 *and* the reverse — still
+ * reads correctly as a mutual line, because that is what the graph says.
+ *
+ * That `mutual` cannot be a false positive rests on a server constraint rather
+ * than on anything here: `gap_topic_edges` carries
+ * `UNIQUE(source_topic_id, target_topic_id, relation)` and
+ * `CHECK(source_topic_id <> target_topic_id)`, so the only way one key can be
+ * reached twice is from the two opposite directions. Loosen either constraint
+ * and this collapse starts merging rows that are not a pair. Raised in review
+ * of #264.
+ */
+export function relationLines(graph: TopicGraph | null): RelationLine[] {
+  if (!graph) return [];
+
+  const labels = new Map(graph.nodes.map((node) => [node.id, node.label]));
+  const seen = new Map<string, RelationLine>();
+
+  for (const edge of graph.edges) {
+    const sourceLabel = labels.get(edge.source_topic_id);
+    const targetLabel = labels.get(edge.target_topic_id);
+    if (sourceLabel === undefined || targetLabel === undefined) continue;
+
+    const [low, high] = [edge.source_topic_id, edge.target_topic_id].sort();
+    const key = `${edge.relation}|${low}|${high}`;
+    const existing = seen.get(key);
+    if (existing) {
+      // The same pair from the other side. Keep the stronger weight so the
+      // ordering below does not depend on which direction arrived first.
+      existing.mutual = true;
+      existing.weight = Math.max(existing.weight, edge.weight);
+      continue;
+    }
+    seen.set(key, {
+      key,
+      sourceLabel,
+      targetLabel,
+      relation: edge.relation,
+      weight: edge.weight,
+      mutual: false,
+    });
+  }
+
+  return [...seen.values()].sort(
+    (a, b) => b.weight - a.weight || a.sourceLabel.localeCompare(b.sourceLabel),
+  );
+}

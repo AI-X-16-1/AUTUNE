@@ -160,6 +160,90 @@ edges, evidence and participation cascade. So would the `gap_related_topics`
 rows of a gap already raised — gap generation (#35) has to rebuild those in the
 same run, and decide what a re-run does to a gap somebody dismissed.
 
+### Steps 6 and 7 as built
+
+`autune_gap.template` loads the checklists, `autune_gap.detect` compares a
+meeting against one and scores what it finds, and `service.detect_gaps` writes
+the rows. The comparison is pure — no database, no model, no network — so what
+counts as a gap can be argued with without starting Postgres.
+
+**Two templates, per #22.** `general` is five items any cross-functional
+decision meeting has to settle; `feature_planning` extends it with five more a
+feature meeting has to settle on top. The reason for two rather than five is the
+metric: precision 0.70+ measured over five to ten real meetings in W5, and more
+templates split that sample one or two meetings deep, where precision cannot be
+measured at all. `general` is applied to every meeting unless one is overridden
+— a template inferred from the title or the topics makes its whole checklist
+false when it guesses wrong.
+
+**Three states, and only two of them raise a gap.** An item is *covered* when a
+matched topic carried real weight, *partial* when the meeting named it and left
+it at the edge of the graph, and *missing* when nothing matched. S20 shows the
+three side by side.
+
+- **Matching is containment either way**, over `graph.topic_key`'s
+  normalisation: a keyword inside a longer label, and a label inside a longer
+  keyword. Deliberately dumb, and the rule v1 measures precision against — what
+  replaces it (embeddings over the items) is then a change with a number
+  attached rather than a better idea.
+- **A missing item scores exactly its template weight.** There is no topic to
+  read a centrality off and none to read a silence off, so the weight is the
+  only measured input and the score is it. Charging it a full 1.0 for "no
+  coverage" instead added the same constant to every missing item and pushed the
+  whole checklist into `high` — a score that looks measured and is not.
+- **A signal that cannot be measured is dropped and the weights renormalised.**
+  Module E does the same with `_decision_density` when a meeting reached no
+  decisions.
+- **A partial finding is damped** (`AUTUNE_GAP_PARTIAL_DAMPING`). "Named but
+  thin" is a weaker claim than "never came up", and the metric is precision.
+- **A meeting with no topics raises no gaps at all.** Every item would be
+  missing and the report would be a whole checklist about a meeting the pipeline
+  failed to read. An empty graph says extraction found nothing, not that the
+  meeting discussed nothing — and with NER recall on spoken Korean where "Step 1
+  as built" measures it, that case happens.
+
+**There is no rule about which job roles spoke, and that is deliberate.** #14's
+headline signal is "a topic no engineer said anything on is riskier", and it is
+absent rather than half-built, because **two** things are missing and the first
+one arriving does not make the second appear:
+
+- `participants.role` is written by no production code (#22). Module A creates
+  every participant with the column unset.
+- A topic every consenting participant was silent on **cannot occur.** The graph
+  builds topics from entities found in consenting speech, so whoever said the
+  utterance a topic came from is recorded as having spoken on it — the share can
+  never reach 1.
+
+An earlier draft carried a `roles` field on the template item and a
+`roles_known` flag through `detect.classify`. It read only whether the field was
+*empty*, so `roles: [Dev]` and `roles: [Design]` behaved identically, and the
+condition it gated was the unreachable one above. A rule that looks implemented
+is worse than one that is missing: it invites a template author to state
+something nothing enforces, and it sends whoever fills the column later looking
+for the bug in the wrong half. Raised in review of #266 by the person who will
+fill it.
+
+Participation still feeds the **risk score** as a continuous share, which is
+measurable: a topic most of the room stayed silent on scores higher than one
+they all spoke on.
+
+**A re-run keeps the gaps it already raised.** They are recognised by
+`(meeting_id, template_key, template_item_key)` and updated in place, so a gap's
+id survives — a link somebody sent still opens it — and so does `dismissed_at`,
+which is a person's judgement and the input threshold tuning reads (ADR 0006). A
+row this run did not produce is deleted: the meeting covers that item now. Only
+template rows are touched, so a gap found from the graph alone would be left
+alone. `gap_related_topics` is rewritten every run, because `build_topic_graph`
+deletes the meeting's topics first and the cascade takes those rows with them.
+
+Every threshold and weight is in `config.py` (#35): the two severity bands, the
+centrality below which a match is partial, the damping, and the three risk
+weights.
+
+**What is not built:** the question a gap carries is the template item's own
+wording, not one generated from the topics the gap was inferred from. That is
+the rest of #35.
+
 ### Step 9 as built
 
 `GapReport` is assembled from the stored rows after their transaction commits,
@@ -185,9 +269,11 @@ review of #164; it cannot happen until identification (#6) fills `user_id`,
 which is why it is fixed now rather than found then.
 
 `gaps` carries whatever `gap_gaps` holds, minus the ones somebody dismissed.
-What does not exist yet is the code that *writes* those rows — template
-comparison and risk scoring (#14, #35) are both waiting on #22 — so the list is
-empty in practice today, not empty by construction.
+Template comparison now writes those rows (see "Steps 6 and 7 as built"), so the
+list is what the meeting was held to and did not settle. It is empty for a
+meeting whose graph came out empty, which is a statement about extraction rather
+than about the meeting — the comparison declines to raise a checklist's worth of
+gaps off a transcript nothing was read out of.
 
 ## Storage
 
@@ -199,7 +285,8 @@ empty in practice today, not empty by construction.
 | PostgreSQL `gap_participation` | Topic × participant speech presence |
 | PostgreSQL `gap_gaps` | Detected gaps, category, severity, risk score, question |
 | PostgreSQL `gap_related_topics` | Which topics a gap was inferred from |
-| PostgreSQL `gap_templates` | Domain templates and their items — **not built yet**, see below |
+| PostgreSQL `gap_meeting_template` | Which template one meeting is compared against, when somebody chose one |
+| PostgreSQL `gap_templates` | Domain templates and their items — **not built, and not needed**, see below |
 
 Everything that exists cascades from `meetings.id`, so no deletion hook is
 needed.
@@ -221,16 +308,26 @@ threshold tuning has to read what was dismissed, and soft deletes are forbidden
 pressed the button is not something tuning needs, and storing it would be a
 per-person record of conduct that ADR 0003 refuses.
 
-### `gap_templates` is deferred, not forgotten
+### Templates are files, so `gap_templates` never had to be built
 
 A domain template is reference data — it is not derived from any meeting, so it
-is the one table this module owns that cannot cascade from `meetings.id`. What
-it *does* hang off, a team or nothing at all, follows from who writes templates
-and how many there are, which is open as issue #22. Creating it now means
-guessing an anchor and migrating away from it later.
+is the one thing this module owns that cannot cascade from `meetings.id`. What a
+table would *have* hung off, a team or nothing at all, follows from who writes
+templates and how many there are, which is issue #22. Creating it meant guessing
+an anchor and migrating away from it later.
 
-It blocks nothing in the meantime: template comparison (#14) is waiting on the
-same decision.
+So the templates live in the package instead —
+`modules/gap/src/autune_gap/templates/*.yaml` — and the question does not arise.
+Git holds their history, an edit goes through PR review, which is the right
+control for content that decides gap precision, and nothing has to be anchored
+anywhere. `gap_templates` gets built when a team writes its own template
+(Phase 2): a real user flow names the anchor then.
+
+What is stored per meeting is only the **exception**. `gap_meeting_template`
+holds one row for a meeting somebody pointed at a non-default template, so
+changing `AUTUNE_GAP_DEFAULT_TEMPLATE` reaches every meeting that never
+expressed a preference. It cascades from `meetings.id` like everything else
+here, so the no-deletion-hook sentence above still holds.
 
 ## API
 
@@ -240,6 +337,8 @@ same decision.
 | GET | `/topics/{meeting_id}` | Topic graph for visualization |
 | POST | `/gaps/{id}/dismiss` | Mark a gap as a false positive (feeds threshold tuning) |
 | GET | `/templates` | Available domain templates |
+| GET | `/templates/{meeting_id}` | Which template this meeting is compared against |
+| PUT | `/templates/{meeting_id}` | Point this meeting at a template and re-compare |
 
 ### The read API as built
 
@@ -272,9 +371,24 @@ the stored rows; nothing was added to `apps/` to mount them.
   attached to a picture, and the report is already read along a topic rather
   than along a person (see "Privacy notes").
 
-`POST /gaps/{id}/dismiss` and `GET /templates` are not built. Dismissal has
-nothing to act on until something writes `gap_gaps` (#35), and `/templates`
-waits on #22 with the table.
+The three template routes are built. `GET /templates` lists what a meeting can
+be held to — key, name, version and item count, and deliberately not the items:
+choosing a template is choosing a name, and shipping every checklist to a screen
+that shows one of them is a payload nobody reads. `GET /templates/{meeting_id}`
+answers with the configured default rather than an empty body when nobody has
+chosen, because there is always a template in force and a rail showing nothing
+selected would misreport that.
+
+`PUT /templates/{meeting_id}` stores the choice **and re-runs detection**, so the
+gaps on `/reports/{meeting_id}` reflect the new template as soon as it returns —
+the alternative is a control that appears to do nothing until the meeting is
+reprocessed. It does not republish `autune.gap.completed`: E scores the meeting
+the pipeline produced, and a template somebody is trying out on S20 should not
+silently rewrite that. A key no template file defines is a 422, not a 404 — what
+is wrong is the value, not the address.
+
+`POST /gaps/{id}/dismiss` is still not built. It now has rows to act on, and
+what it needs is the screen that calls it (#48).
 
 ## Celery tasks
 
@@ -417,4 +531,11 @@ The dashboard's topic-recurrence figure (S26) does not need it either: D's
 
 ## Open questions
 
-- How many domain templates for the MVP, and who authors them.
+- Whether `participants.role` will be filled by identification (#6) from
+  `team_members.role`, or by some other path. Nothing writes it today, so the
+  participation half of the partial-coverage rule is inert — see "Steps 6 and 7
+  as built". Asked of module A in #22.
+- Whether a meeting with low consent coverage may be told it did not discuss
+  something (#248). Detection today compares the topics of whoever consented
+  against the whole checklist, and says nothing about how much of the meeting
+  that was.

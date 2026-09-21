@@ -12,8 +12,15 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+from structlog.testing import capture_logs
 
-from autune_contracts import EVENTS, EXTRACTION_COMPLETED, TRANSCRIPT_READY
+from autune_contracts import (
+    EVENTS,
+    EXTRACTION_COMPLETED,
+    INTELLIGENCE_COMPLETED,
+    TERMINAL_EVENTS,
+    TRANSCRIPT_READY,
+)
 from autune_core import consumer_task_suffix, events, publish, subscribers
 
 
@@ -105,11 +112,62 @@ def test_unrelated_tasks_are_not_subscribers(app: FakeApp) -> None:
 def test_nobody_listening_is_a_warning_not_a_failure(app: FakeApp) -> None:
     """C not being deployed yet must not fail B.
 
-    "A failed module does not fail the others" — async-pipeline.md. The last
-    event in the pipeline has no subscribers by design, and it publishes fine.
+    "A failed module does not fail the others" — async-pipeline.md.
     """
-    assert publish("autune.intelligence.completed", {"meeting_id": "m1"}) == []
+    app.tasks.pop("autune.context.on_extraction_completed")
+    app.tasks.pop("autune.intelligence.on_extraction_completed")
+    assert publish(EXTRACTION_COMPLETED, {"meeting_id": "m1"}) == []
     assert app.sent == []
+
+
+def test_the_end_of_the_pipeline_is_not_a_warning(app: FakeApp) -> None:
+    """`autune.intelligence.completed` reaches nobody on every meeting.
+
+    Warning about it made the normal path noisy, and a warning that fires
+    normally is one nobody reads — which was the only signal a mis-named
+    consumer had (#170).
+
+    **The log line is what changed, so the log line is what is asserted.** The
+    return value and the empty send list are the same either way, and a test on
+    those passes whether or not the two cases are told apart.
+    """
+    assert INTELLIGENCE_COMPLETED in TERMINAL_EVENTS
+
+    with capture_logs() as logs:
+        assert publish(INTELLIGENCE_COMPLETED, {"meeting_id": "m1"}) == []
+    assert app.sent == []
+    assert [(entry["event"], entry["log_level"]) for entry in logs] == [("event_terminal", "info")]
+
+
+def test_an_event_nobody_subscribes_to_is_still_a_warning(app: FakeApp) -> None:
+    """The case the terminal list exists to be distinguishable from.
+
+    A consumer whose task name has a typo in it leaves its event unsubscribed,
+    and that has to stay loud.
+    """
+    app.tasks.pop("autune.context.on_extraction_completed")
+    app.tasks.pop("autune.intelligence.on_extraction_completed")
+
+    with capture_logs() as logs:
+        assert publish(EXTRACTION_COMPLETED, {"meeting_id": "m1"}) == []
+    assert [(entry["event"], entry["log_level"]) for entry in logs] == [
+        ("event_no_subscribers", "warning")
+    ]
+
+
+def test_a_process_with_no_module_tasks_refuses_to_publish(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Not "nobody subscribes" — "this process was never going to deliver".
+
+    A process that did not import `autune_<module>.tasks` answers no to every
+    event, so the meeting is not analysed at all. That is a deployment mistake,
+    it does not fix itself, and before #170 it looked exactly like the end of a
+    pipeline.
+    """
+    monkeypatch.setattr(events, "current_app", FakeApp("celery.backend_cleanup"))
+    with pytest.raises(RuntimeError, match="no autune task is registered"):
+        publish(TRANSCRIPT_READY, {"meeting_id": "m1"})
 
 
 def test_an_undeclared_event_raises_rather_than_going_nowhere(app: FakeApp) -> None:

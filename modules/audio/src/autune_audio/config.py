@@ -7,6 +7,7 @@ Document every new variable in docs/engineering/environments.md and add it to
 from __future__ import annotations
 
 from functools import lru_cache
+from typing import Literal
 
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -75,6 +76,19 @@ class AudioSettings(BaseSettings):
     without a glossary, 86% with ``hotwords``, 28% with ``prompt``, 52% with
     both. A setting rather than a constant so the comparison can be re-run on a
     new model without editing code. See ``pipeline._glossary_kwargs``.
+    """
+
+    recogniser: Literal["spoken_numbers", "none"] = "spoken_numbers"
+    """The second PII detector, behind ``masking.EntityRecogniser``.
+
+    ``spoken_numbers`` finds the five categories in numbers a person read out
+    one digit at a time -- the shapes a pattern cannot describe. ``none``
+    switches it off, which is how the evaluation harness measures the patterns
+    alone and how a leak is attributed to one detector or the other.
+
+    There is no hosted value and there will not be one. This runs over the
+    unmasked transcript, and invariant 11 says that string does not leave the
+    process it was made in.
     """
 
     diarization_model: str = "pyannote/speaker-diarization-3.1"

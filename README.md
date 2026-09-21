@@ -177,13 +177,16 @@ uv run alembic -c infra/alembic.ini upgrade heads
 
 # 실행
 uv run uvicorn apps.api.main:app --reload                              # API :8000
-uv run celery -A apps.worker.celery_app worker -Q default,cpu_heavy    # 워커
+uv run celery -A autune_worker.celery_app worker -Q default,cpu_heavy,gpu    # 워커
 pnpm --filter @autune/web dev                                          # 웹 :3000
 ```
 
 `--all-packages`는 생략하면 안 됩니다. 워크스페이스 루트는 가상 패키지라
 (`package = false`) 그냥 `uv sync`만 하면 개발 도구만 깔리고 `autune_core`
 import이 바로 실패합니다.
+
+Windows에서는 Celery 기본 `prefork` 풀이 `billiard`/Windows 핸들 문제로 자식
+프로세스를 계속 죽입니다. 워커 명령 뒤에 `--pool=solo`를 붙이세요.
 
 자기 모듈만 작업한다면 `uv sync --package autune-gap`으로 해당 모듈 의존성만
 설치할 수 있습니다 (A의 수 GB짜리 ML 휠을 안 받아도 됩니다). 단 이 경우 다른
