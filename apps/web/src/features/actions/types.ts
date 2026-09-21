@@ -102,3 +102,69 @@ export interface ActionItemDetail extends ActionItemRead {
 export function isCandidate(item: ActionItemRead): boolean {
   return item.is_candidate;
 }
+
+/** Where a proposed decision stands with the people reviewing it (#246). */
+export type DecisionStatus = "pending" | "confirmed" | "rejected";
+
+/**
+ * One decision as the review screen lists it — `ReviewDecision` in
+ * `modules/extraction/src/autune_extraction/schemas.py` (#247).
+ *
+ * Module B's own response body, not a contract, so it is written here like
+ * `ActionItemRead`. Unlike that one it is not pinned by a Python test yet: the
+ * schema lives in #247, and the pin belongs in the same place once it is on
+ * `main`.
+ */
+/**
+ * Where one item or decision stands with one outside system —
+ * `ExternalRefRead` in `modules/extraction/src/autune_extraction/schemas.py`.
+ *
+ * Not the generated `ExternalRef` from `@autune/contracts`: that type is the
+ * outbound event to D and E and requires `url` because it is only ever built
+ * for a ref that finished. This reads the other two states a sync can be in:
+ * `url` is `null` while claimed but not yet sent, or failed; no entry at all
+ * (this system absent from the array) means nothing has tried yet.
+ */
+export interface ExternalRefRead {
+  system: "notion" | "jira";
+  url: string | null;
+  external_id: string | null;
+}
+
+export interface ReviewDecision {
+  id: string;
+  /** What will be sent: the person's rewording when there is one. */
+  statement: string;
+  /** What the model proposed, kept so the screen can show both. */
+  model_statement: string;
+  confidence: number;
+  origin: "model" | "user";
+  status: DecisionStatus;
+  /** Pre-check it? `null` while the candidate line is unset. */
+  suggested: boolean | null;
+  source_utterance_ids: string[];
+  /**
+   * A one-line preview of the sources, distinct from `statement` (which is
+   * assembled or reworded). Rule-based, not a model: the longest source
+   * utterance, truncated. `null` only when there are no sources at all.
+   */
+  summary: string | null;
+  /** At most `notion` today (#30); `jira` is designed, not built. */
+  sync_refs: ExternalRefRead[];
+}
+
+/** One weak assent and where the speaker's DM stands. Read-only here. */
+export interface ReviewAmbiguous {
+  utterance_id: string;
+  outcome: "not_asked" | "pending" | "undecided" | "resolved";
+  resolved_kind: string | null;
+}
+
+/** `GET /reviews/{meeting_id}` — everything that needs a person first. */
+export interface MeetingReview {
+  meeting_id: string;
+  decisions: ReviewDecision[];
+  ambiguous_agreements: ReviewAmbiguous[];
+  action_items: ActionItemRead[];
+  pending_decisions: number;
+}
