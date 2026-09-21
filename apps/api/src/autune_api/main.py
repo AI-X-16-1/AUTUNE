@@ -15,9 +15,15 @@ from fastapi.responses import JSONResponse
 
 from autune_contracts import MODULES
 from autune_core import AutuneError, configure_logging, get_logger, get_settings
+from autune_core.celery_app import make_celery_app
 
 configure_logging()
 log = get_logger(__name__)
+
+# A client, not a worker: routes send by task name through ``celery.current_app``,
+# and without an app of our own that is Celery's built-in default with a broker
+# nobody runs (#258). No task module is imported here.
+celery_app = make_celery_app(include_tasks=False)
 
 
 def _cors_origins(raw: str) -> list[str]:
