@@ -184,6 +184,73 @@ def test_a_blocker_that_is_not_there_blocks_nothing() -> None:
     assert triples("캐시 이슈는 없어서 검색 기능은 바로 진행합니다", "캐시", "검색 기능") == []
 
 
+def test_a_blocker_that_was_resolved_blocks_nothing() -> None:
+    """ "해결되어서" is a blocker word, a causal connective, and the opposite of
+    a blocker. It is the positively phrased twin of "이슈는 없어서", and it put
+    the reverse of what the speaker said into the one relation C treats as a
+    finding. Raised in review of #249."""
+    assert triples("캐시 이슈가 해결되어서 검색 기능은 바로 진행합니다", "캐시", "검색 기능") == []
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "캐시 이슈가 해소되어서 검색 기능은 바로 진행합니다",
+        "캐시 이슈가 정리되어서 검색 기능은 이번 주에 붙입니다",
+        "캐시 이슈는 어제 처리해서 검색 기능은 바로 진행합니다",
+        "캐시 이슈가 풀려서 검색 기능은 바로 진행합니다",
+    ],
+)
+def test_the_other_ways_of_saying_it_is_gone(text: str) -> None:
+    assert triples(text, "캐시", "검색 기능") == []
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "검색 기능은 캐시 이슈 해결이 안 되어서 막혀 있습니다",
+        "검색 기능은 캐시 이슈 처리가 안 되어서 막혀 있습니다",
+    ],
+)
+def test_a_resolution_that_did_not_happen_leaves_the_blocker_standing(text: str) -> None:
+    """해결 and 처리 are the words for doing the thing and for failing to. A
+    resolution list matched as bare substrings would throw away the blockers
+    that matter most — the ones somebody just said are not fixed."""
+    assert triples(text, "캐시", "검색 기능") == [("검색 기능", "캐시", "blocked_by")]
+
+
+def test_a_need_quoted_in_a_question_is_still_a_question() -> None:
+    """``-다고`` puts a 고 inside one clause. Read as a clause break it cut the
+    window before the 나요, and the question came back as an asserted
+    dependency. Raised in review of #249."""
+    assert triples("정렬 로직은 인덱스가 필요하다고 보시나요", "정렬 로직", "인덱스") == []
+
+
+def test_a_plain_connective_still_ends_a_clause() -> None:
+    """The quotative exception is 다고 and nothing wider: 필요하고 still ends the
+    clause, which is what keeps the next subject out of the relation."""
+    assert triples(
+        "정렬 로직은 인덱스가 필요하고 캐시는 다음 주에 봅시다",
+        "정렬 로직",
+        "인덱스",
+        "캐시",
+    ) == [("정렬 로직", "인덱스", "depends_on")]
+
+
+def test_the_same_utterance_claims_the_same_mentions_every_run() -> None:
+    """Ties used to fall back to set iteration order, which `PYTHONHASHSEED`
+    randomises per process, so a worker restart changed the graph a re-processed
+    meeting came back with. Both names are five characters and both match over
+    overlapping spans, which is the case that varied. Raised in review of #249.
+    """
+    text = "검색 기능 개선 이야기입니다"
+    first = mention_spans(text, ["검색 기능", "기능 개선"])
+    for _ in range(50):
+        assert [(m.text, m.start) for m in mention_spans(text, ["기능 개선", "검색 기능"])] == [
+            (m.text, m.start) for m in first
+        ]
+
+
 def test_a_reason_two_clauses_away_is_somebody_elses_reason() -> None:
     """The causal connective has to be in the blocker's own clause. Searching to
     the end of the utterance paired 이슈 with a 없어서 belonging to another

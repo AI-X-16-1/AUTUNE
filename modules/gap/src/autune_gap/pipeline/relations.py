@@ -95,6 +95,31 @@ because the tag of 안 잡혀 is a verb phrase like any other — what makes it 
 blocker is the word, not the grammar.
 """
 
+_RESOLVED = ("해결", "해소", "풀렸", "풀려", "정리되", "정리했", "처리")
+"""What a speaker says when the thing in the way is gone.
+
+A blocker word in a causal clause is a relation only while the blocker stands.
+"캐시 이슈가 해결되어서 검색 기능은 바로 진행합니다" carries 이슈 and a causal
+어서 and asserts the reverse of a blocker — the same shape as "이슈는 없어서",
+which is what ``_NEGATIONS`` already catches, except that this one is phrased
+positively. Both put a ``blocked_by`` in the report that says the opposite of
+what the meeting said, and ``blocked_by`` is the relation C treats as a finding
+in its own right. Raised in review of #249 by @kjfcvx12.
+
+Read together with ``_UNDONE``: 해결 and 처리 are the words for doing the thing
+*and* for failing to. "이슈 처리가 안 돼서" and "해결이 안 되어서" are blockers,
+and a list matched as bare substrings would have thrown both away.
+"""
+
+_UNDONE = ("안 ", "안되", "안돼", "못 ", "못하", "못했", "않")
+"""What takes a resolution back, for ``_resolved``.
+
+Wider than ``_NEGATIONS`` on purpose. 안 is excluded there because "캐시
+없이는 안 됩니다" is a need stated through a negative; here there is no such
+reading — a resolution word with 안 after it is a resolution that did not
+happen, and nothing else.
+"""
+
 _NEEDS = ("필요", "있어야", "되어야", "돼야", "선행", "전제", "없이는", "없으면")
 """What a speaker says when one thing waits on another.
 
@@ -196,7 +221,14 @@ def mention_spans(text: str, mentions: Iterable[str]) -> list[Mention]:
     ``비실시간`` is a different thing wearing the same characters.
     """
     claimed: list[Mention] = []
-    for mention in sorted({m for m in mentions if m.strip()}, key=len, reverse=True):
+    # `(len, text)`, not `len`. Ties fell back to set iteration order, which
+    # Python derives from the string hash and `PYTHONHASHSEED` randomises per
+    # process: two equally long mentions overlapping in one utterance claimed
+    # the span in whichever order that run happened to produce, so a worker
+    # restart changed the graph a re-processed meeting came back with. This
+    # function's own docstring says deterministic. Raised in review of #249 by
+    # @lsh2217.
+    for mention in sorted({m for m in mentions if m.strip()}, key=_claim_order, reverse=True):
         pattern = re.compile(r"\s+".join(re.escape(part) for part in mention.split()))
         for match in pattern.finditer(text):
             start, end = match.span()
@@ -206,6 +238,11 @@ def mention_spans(text: str, mentions: Iterable[str]) -> list[Mention]:
                 continue
             claimed.append(Mention(text=mention, start=start, end=end))
     return sorted(claimed, key=lambda mention: mention.start)
+
+
+def _claim_order(mention: str) -> tuple[int, str]:
+    """Longest first, and ties broken by the text itself so a re-run agrees."""
+    return len(mention), mention
 
 
 def relations_in(text: str, mentions: Sequence[Mention]) -> list[tuple[str, str, str]]:
@@ -263,10 +300,31 @@ def _clause_after(text: str, index: int) -> str:
     window = text[index : index + MAX_MARKER_DISTANCE]
     cut = len(window)
     for boundary in _CLAUSE_BREAKS:
-        found = window.find(boundary)
+        found = _find_boundary(window, boundary)
         if found != -1:
             cut = min(cut, found + len(boundary))
     return window[:cut]
+
+
+def _find_boundary(window: str, boundary: str) -> int:
+    """Where ``boundary`` first ends a clause in ``window``, or ``-1``.
+
+    Not ``str.find``, because of ``-다고``. The quotative ending puts a 고 in
+    the middle of one clause — "인덱스가 필요하다고 보시나요" is a single
+    question — and reading it as a boundary cut the window before the 나요, so
+    the question came back as an asserted dependency. A 고 preceded by 다 is
+    skipped and the search goes on; every other 고 still ends a clause, which is
+    what "필요하고 캐시는" needs. Raised in review of #249 by @kjfcvx12.
+    """
+    start = 0
+    while True:
+        found = window.find(boundary, start)
+        if found == -1:
+            return -1
+        if boundary.startswith("고") and found > 0 and window[found - 1] == "다":
+            start = found + 1
+            continue
+        return found
 
 
 def _asserted(text: str, cue_end: int) -> bool:
@@ -284,6 +342,21 @@ def _asserted(text: str, cue_end: int) -> bool:
     """
     clause = _clause_after(text, cue_end)
     return not any(marker in clause for marker in _NEGATIONS + _QUESTIONS)
+
+
+def _resolved(clause: str) -> bool:
+    """Whether the blocker in this clause was said to be gone.
+
+    The resolution has to stand on its own: "해결이 안 되어서" contains 해결 and
+    resolves nothing, so anything in ``_UNDONE`` after the word takes it back.
+    Looking only after it is deliberate — what comes before belongs to the
+    blocker ("이슈 해결" is the thing, "해결이 안 되어서" is the state).
+    """
+    for word in _RESOLVED:
+        at = clause.find(word)
+        if at != -1 and not any(undone in clause[at:] for undone in _UNDONE):
+            return True
+    return False
 
 
 def _directed_markers(text: str) -> list[tuple[int, str]]:
@@ -306,6 +379,8 @@ def _directed_markers(text: str) -> list[tuple[int, str]]:
             if not _asserted(text, match.end()):
                 continue
             clause = _clause_after(text, match.end())
+            if _resolved(clause):
+                continue
             if any(connective in clause for connective in _CAUSAL):
                 markers.append((match.start(), "blocked_by"))
     return sorted(markers)
