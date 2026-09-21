@@ -172,13 +172,20 @@ async def test_transcribe_failed_does_not_carry_the_causes_message() -> None:
 
 
 @pytest.mark.asyncio
-async def test_the_unmasked_text_does_not_reach_the_log(caplog: pytest.LogCaptureFixture) -> None:
+async def test_the_unmasked_text_does_not_reach_the_log(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # ``autune_core.get_logger`` is structlog with ``PrintLoggerFactory``,
+    # which writes straight to stdout -- not through stdlib ``logging``, so
+    # ``caplog`` never sees it. ``capsys`` reads the same stream the process
+    # actually writes to.
     live = session(saying("주민번호 900101-1234567입니다"))
 
     await feed(live, np.concatenate([tone(1000), silence(1000)]))
 
-    assert "900101-1234567" not in caplog.text
-    assert "1234567" not in caplog.text
+    out = capsys.readouterr().out
+    assert "900101-1234567" not in out
+    assert "1234567" not in out
 
 
 @pytest.mark.asyncio

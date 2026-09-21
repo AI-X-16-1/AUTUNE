@@ -225,8 +225,12 @@ def test_nothing_touches_the_disk(
 
 
 def test_the_text_is_not_in_the_log(
-    client: TestClient, meeting: str, member: User, caplog: pytest.LogCaptureFixture
+    client: TestClient, meeting: str, member: User, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    # ``autune_core.get_logger`` is structlog with ``PrintLoggerFactory``,
+    # which writes straight to stdout -- not through stdlib ``logging``, so
+    # ``caplog`` never sees it. ``capsys`` reads the same stream the process
+    # actually writes to.
     with connect(client, meeting) as ws:
         hello(ws, issue_token(member.id))
         ws.receive_json()
@@ -234,8 +238,9 @@ def test_the_text_is_not_in_the_log(
         for i in range(0, len(audio) - len(audio) % FRAME, FRAME):
             ws.send_bytes(pcm(audio[i : i + FRAME]))
         ws.receive_json()
-    assert "1234" not in caplog.text
-    assert "연락처" not in caplog.text
+    out = capsys.readouterr().out
+    assert "1234" not in out
+    assert "연락처" not in out
 
 
 def test_a_failed_segment_is_one_error_and_the_next_is_normal(
@@ -271,3 +276,33 @@ def test_an_oversized_frame_is_refused_and_the_session_continues(
         assert ws.receive_json() == {"type": "error", "code": "frame_too_large"}
         ws.send_text(json.dumps({"type": "stop"}))
         assert ws.receive_json() == {"type": "ended"}
+
+
+def test_the_registry_is_empty_after_stop(client: TestClient, meeting: str, member: User) -> None:
+    with connect(client, meeting) as ws:
+        hello(ws, issue_token(member.id))
+        ws.receive_json()
+        ws.send_text(json.dumps({"type": "stop"}))
+        ws.receive_json()
+    assert live_routes._live == {}
+
+
+def test_a_model_that_cannot_load_is_4503_and_leaves_no_registry_entry(
+    client: TestClient, meeting: str, member: User, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def broken_warm_up() -> None:
+        raise RuntimeError("no token")
+
+    monkeypatch.setattr(
+        live_routes,
+        "build_session",
+        lambda: LiveSession(
+            segmenter=Segmenter(speech_probability=energy),
+            transcriber=Transcriber(warm_up=broken_warm_up),
+        ),
+    )
+    with connect(client, meeting) as ws:
+        hello(ws, issue_token(member.id))
+        assert ws.receive_json() == {"type": "error", "code": "model_unavailable"}
+        assert close_code(ws) == 4503
+    assert live_routes._live == {}
