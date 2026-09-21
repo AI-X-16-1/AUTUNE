@@ -78,11 +78,25 @@ _R: Final = rf"(?![{_EDGE}])"
 # what Whisper emits on a silent stretch, and per pattern. The second run is
 # allowed only *after* a separator, so a run of spaces has one parse.
 #
-# `)` alone, not `()`: an opening parenthesis stands before a number
-# (`(02)123-4567` starts matching at the `0`), never between its groups, and a
-# character in this class is one more thing that can join two groups.
+# `)` alone, not `()`: in domestic notation an opening parenthesis stands
+# before a number (`(02)123-4567` starts matching at the `0`), never between
+# its groups, and a character in this class is one more thing that can join
+# two groups. International notation does put one between groups --
+# `+82 (10) 1234-5678` -- and that form is not caught; it is pinned as a known
+# miss rather than widened here, because `(` between groups is also what
+# `(1) 2024-2025` looks like.
 _HSPACE: Final = r"[^\S\r\n]"
 _SEP: Final = rf"{_HSPACE}*(?:[-.–—)]{_HSPACE}*)?"
+
+# The card pattern alone may cross a line break. Four groups of four is a
+# shape nothing else in a transcript has, and a card number read aloud
+# arrives from Whisper with the groups on separate lines often enough that
+# `main` matched it that way. Keeping `_SEP` here would have left the last
+# eight digits in the clear instead of four -- the `account` fallback takes
+# three groups and keeps its tail, and the fourth group falls outside every
+# span (@PARKJAEKYUNG0525 on #211). The same one-parse shape as `_SEP`, so
+# the quadratic case does not come back with the wider class.
+_SEP_CARD: Final = r"\s*(?:[-.–—)]\s*)?"
 
 # The account catch-all keeps the narrow one, and this is the whole reason the
 # two exist separately. `account` is three groups of two-to-six digits, which is
@@ -121,7 +135,7 @@ PII_PATTERNS: Final[tuple[tuple[str, re.Pattern[str]], ...]] = (
     # that way keeps one digit rather than none. One digit of an account for
     # four digits of a national ID is the trade this file makes everywhere.
     ("rrn", re.compile(rf"{_L}\d{{6}}{_SEP}[0-9]\d{{5,7}}{_R}")),
-    ("card", re.compile(rf"{_L}(?:\d{{4}}{_SEP}){{3}}\d{{4}}{_R}")),
+    ("card", re.compile(rf"{_L}(?:\d{{4}}{_SEP_CARD}){{3}}\d{{4}}{_R}")),
     # Any leading-zero prefix rather than an enumerated list. Enumerating is how
     # a regex goes stale: 070 is a common Korean VoIP range, 0505 is a safe
     # number and 080 is freephone, and none of them were in the old list.

@@ -583,3 +583,21 @@ def test_a_match_does_not_run_across_a_line_break() -> None:
     `account` can still do this, on the narrow separator it kept, and that is
     pre-existing rather than something the width introduced."""
     assert {cat for _, _, cat in find_pii("예산\n150000\n200000")} == {"account"}
+
+
+def test_a_card_number_split_across_lines_is_still_one_card() -> None:
+    """The one shape allowed to cross a line break, and why: without it the
+    text below matched `account` (0, 14) and left `9012` *and* `3456` in the
+    clear -- eight digits where `main` left four (@PARKJAEKYUNG0525 on #211).
+    Four groups of four is nothing but a card."""
+    text = "1234\n5678\n9012\n3456"
+    # `find_pii` keeps every match; the `account` span underneath is the same
+    # overlap `main` reports, and `_most_specific` is what drops it.
+    assert (0, len(text), "card") in find_pii(text)
+
+
+def test_an_international_number_with_a_bracketed_area_code_is_a_known_miss() -> None:
+    """`(` between groups is not a separator this file accepts, because
+    `(1) 2024-2025` has the same shape. Pinned so the miss is a decision,
+    not a surprise."""
+    assert find_pii("+82 (10) 1234-5678") == []
