@@ -192,3 +192,10 @@ class CtxMeetingStatus(Base, TimestampMixin):
     extraction_seen: Mapped[bool] = mapped_column(nullable=False, default=False)
     deadline_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    notified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    """Set once ``notify_context_events`` claims this meeting's Slack notices,
+    *before* any are sent -- see ``service.claim_notifications``. Guards
+    against a duplicate post if the task is redelivered, at the cost of a
+    notice going unsent (never retried) if the worker dies between the claim
+    and the send. Same trade-off ``published_at`` already makes for the
+    publish step."""

@@ -31,6 +31,9 @@ TASK_ROUTES: dict[str, dict[str, str]] = {
     "autune.extraction.*": {"queue": "cpu_heavy"},
     "autune.gap.*": {"queue": "cpu_heavy"},
     "autune.context.*": {"queue": "cpu_heavy"},
+    # Only the Slack calls -- no embedder/reranker/NLI model work -- so it does
+    # not belong on the worker reserved for that.
+    "autune.context.notify_context_events": {"queue": "default"},
     "autune.intelligence.aggregate": {"queue": "cpu_heavy"},
     "autune.intelligence.*": {"queue": "default"},
 }
