@@ -51,6 +51,11 @@ def test_a_missing_meeting_is_not_found(db_session: Session, member: User) -> No
         service.authenticate_live(db_session, token=issue_token(member.id), meeting_id="mtg_nope")
 
 
+def test_a_token_naming_a_deleted_user_is_refused(db_session: Session, meeting: str) -> None:
+    with pytest.raises(PermissionDeniedError):
+        service.authenticate_live(db_session, token=issue_token("usr_nobody"), meeting_id=meeting)
+
+
 def test_beginning_moves_the_meeting_to_recording(db_session: Session, meeting: str) -> None:
     service.begin_live(db_session, meeting_id=meeting)
     assert db_session.get(Meeting, meeting).status == "recording"

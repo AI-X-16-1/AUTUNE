@@ -79,6 +79,11 @@ def authenticate_live(session: Session, *, token: str, meeting_id: str) -> User:
     same two checks the HTTP routes make -- decode the token, confirm the
     membership -- are one function here, and the socket and the routes cannot
     come to different conclusions about the same token.
+
+    One deliberate divergence from ``current_user``: a well-signed token whose
+    user row is gone raises ``PermissionDeniedError`` here, not
+    ``NotFoundError``. The socket maps ``NotFoundError`` to a close code
+    meaning "no such meeting", and a deleted user must not be reported as that.
     """
     user_id = decode_token(token).get("sub")
     if not user_id:
