@@ -80,9 +80,16 @@ Plus the shared entities in `packages/core`, which A writes.
 | POST | `/recordings` | Upload a recording, start processing |
 | GET | `/jobs/{job_id}` | Job status and progress |
 | GET | `/transcripts/{meeting_id}` | Full transcript, masked, for a member of the meeting's team |
-| WS | `/live/{meeting_id}` | Live transcription, one row per utterance — design in `audio-live-transcription.md` (approved, not built) |
+| WS | `/live/{meeting_id}` | Live transcription: one masked row per utterance, no speaker, nothing stored — `audio-live-transcription.md` |
 | PATCH | `/utterances/{id}` | Correct speaker or text |
 | POST | `/speakers/enroll` | Enroll a voice for identification |
+
+### Live transcription runs in the API process
+
+One `Transcriber` lock per process (`live/transcriber.py`). Two meetings live
+at once share it and each sees roughly double the delay. An MVP limit: the
+condition for moving transcription to a worker is concurrent meetings
+actually happening and #258 resolved, and the move is that one class.
 
 ## Celery tasks
 

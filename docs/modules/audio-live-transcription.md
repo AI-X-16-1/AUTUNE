@@ -1,7 +1,8 @@
 # Live transcription — design
 
-**Date:** 2026-09-18 · **Owner:** 김민경 · **Module:** A · **Status:** Approved,
-not built
+**Date:** 2026-09-18 · **Owner:** 김민경 · **Module:** A · **Status:** Built
+(`audio/live-transcription`); what differed from this document is in the
+last section
 
 Browser microphone in, one transcript row per utterance on screen S13 while the
 meeting is happening, the whole recording through the existing upload path
@@ -297,3 +298,38 @@ look for it — the screen, `audio.md`, or this file.
 | #283 | `POST /meetings/{id}/consent` for the gate |
 | #258 · #275 | **Not depended on.** Both concern the upload → worker leg. The live channel does not touch a queue |
 | #155 | Consistent with its default: no classification during recording |
+
+## 9. What differed when it was built
+
+§5.2's 60-second ring buffer was not implemented. The segmenter holds at most
+one open utterance (≤ 30 s) and drops silent frames as they arrive, which
+bounds memory more tightly than a ring buffer would.
+
+The route claims the per-meeting registry immediately after the "already
+live" check, before the model warm-up, under one `try`/`finally` — a client
+that leaves during a cold model load cannot lock the meeting at 4409.
+
+A real user who is not on the team raises `NotATeamMemberError` (a
+`PermissionDeniedError` subclass) from `require_team_member`, so the socket
+can close 4403 while every HTTP route still answers 403. A well-signed token
+whose user row is gone is refused as 4401 on the socket (the HTTP path says
+404), because the socket's 4404 means "no such meeting".
+
+`TranscribeFailed` is raised `from None`: the cause's message can quote what
+the model was reading, and the exception chain must not carry it into a
+traceback log.
+
+In the browser, a refusal before `ready` (4401/4403/4404/4409) stops the
+recorder and lands on an error state rather than "recording without the live
+view"; only a transport failure or a model that cannot load (4503) degrade to
+recording-only. §4.1's independence of recorder and socket holds for those.
+
+Each browser `start()` takes a generation number; late events from an
+abandoned socket or recorder (React StrictMode remounts) are ignored by the
+session that replaced it.
+
+The "text is not in the log" tests read stdout, because the project's
+structlog logger prints and never reaches `caplog`.
+
+The runbook section for the live path (§3.7 in the plan) is deferred until
+`docs/engineering/demo-runbook.md` lands on `main`.
