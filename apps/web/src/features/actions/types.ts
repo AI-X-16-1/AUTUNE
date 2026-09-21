@@ -111,6 +111,12 @@ export interface ReviewDecision {
   /** Pre-check it? `null` while the candidate line is unset. */
   suggested: boolean | null;
   source_utterance_ids: string[];
+  /**
+   * A one-line preview of the sources, distinct from `statement` (which is
+   * assembled or reworded). Rule-based, not a model: the longest source
+   * utterance, truncated. `null` only when there are no sources at all.
+   */
+  summary: string | null;
 }
 
 /** One weak assent and where the speaker's DM stands. Read-only here. */

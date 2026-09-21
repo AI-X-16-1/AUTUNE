@@ -158,7 +158,7 @@ function DecisionRow({
             {status.label} ·{" "}
             {decision.origin === "user"
               ? "직접 추가"
-              : `근거 발화 ${decision.source_utterance_ids.length}건 · 신뢰도 ${Math.round(decision.confidence * 100)}%`}
+              : `${decision.summary ?? `근거 발화 ${decision.source_utterance_ids.length}건`} · 신뢰도 ${Math.round(decision.confidence * 100)}%`}
           </p>
         </div>
       </div>
