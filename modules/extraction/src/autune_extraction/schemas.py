@@ -106,6 +106,13 @@ class ActionItemRead(BaseModel):
     its default until #10 measures one.
     """
 
+    summary: str | None = None
+    """A one-line preview of the item's sources beyond ``description`` itself.
+    Rule-based (the longest of them, truncated), and only when there is more
+    than one -- with a single source ``description`` already is that sentence,
+    and a second copy of it would say nothing ``description`` does not. See
+    ``ReviewDecision.summary`` for why a chosen line belongs on the list."""
+
 
 class SourceUtterance(BaseModel):
     """One utterance an item was drawn from, as the drawer quotes it.
@@ -193,6 +200,19 @@ class ReviewDecision(BaseModel):
     claim the numbers do not support."""
 
     source_utterance_ids: list[str]
+
+    summary: str | None = None
+    """A one-line preview of what the source utterances said, so the list says
+    more than a count. Rule-based, not a model: the longest of them, truncated
+    -- see ``service.decision_summaries``. ``None`` when there is nothing to
+    summarise (a decision with no sources -- a data problem, not a normal
+    state).
+
+    **Still a quotation, on the list, on purpose.** ``ActionItemDetail`` draws
+    the line at the *set* of sources -- the drawer's whole evidence, never
+    forwarded whole -- not at any single derived line; ``description`` and
+    ``assignee_label`` already put content on this same list. One chosen
+    sentence is that kind of line, not the other."""
 
 
 class ReviewAmbiguous(BaseModel):

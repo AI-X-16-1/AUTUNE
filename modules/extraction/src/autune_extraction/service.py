@@ -307,13 +307,14 @@ def create_action_item(session: Session, payload: ActionItemCreate) -> ExtAction
     return item
 
 
-def read_model(item: ExtActionItem) -> ActionItemRead:
+def read_model(item: ExtActionItem, *, summary: str | None = None) -> ActionItemRead:
     """One item as this module's own screens read it.
 
-    Built here rather than by ``from_attributes`` on the schema because two of
-    its fields are not columns: the source ids live in the link table, and
+    Built here rather than by ``from_attributes`` on the schema because three
+    of its fields are not columns: the source ids live in the link table,
     whether the item is a candidate depends on a setting the row knows nothing
-    about.
+    about, and the summary is computed from utterances this row does not carry
+    -- see ``action_item_summaries``.
 
     Deciding *candidate* on the server is the point of this function. The
     threshold belongs to the classifier that produced the confidence, and a
@@ -335,6 +336,7 @@ def read_model(item: ExtActionItem) -> ActionItemRead:
         origin=item.origin,
         source_utterance_ids=[source.utterance_id for source in item.sources],
         is_candidate=threshold is not None and item.confidence < threshold,
+        summary=summary,
     )
 
 
@@ -370,20 +372,98 @@ def list_action_items(
     if due_before is not None:
         query = query.where(ExtActionItem.due_date < due_before)
 
-    return [read_model(item) for item in session.scalars(query)]
+    items = list(session.scalars(query))
+    summaries = action_item_summaries(session, items)
+    return [read_model(item, summary=summaries.get(item.id)) for item in items]
 
 
 def read_detail(session: Session, item: ExtActionItem) -> ActionItemDetail:
     """One item with the text of the utterances it was drawn from.
 
-    The only route in this module that returns utterances verbatim. It is here
-    and not on the list because the drawer is the one screen that shows a
-    quotation, and it shows one item's at a time. The list still carries meeting
-    content -- see ``ActionItemDetail``.
+    The only route in this module that returns the full *set* of sources
+    verbatim. It is here and not on the list because the drawer is the one
+    screen that shows every quotation, and it shows one item's at a time --
+    ``summary`` is the exception already allowed onto the list, one chosen
+    line rather than the whole evidence. See ``ActionItemDetail``.
     """
+    summary = action_item_summaries(session, [item]).get(item.id)
     return ActionItemDetail(
-        **read_model(item).model_dump(), sources=source_utterances(session, item.id)
+        **read_model(item, summary=summary).model_dump(),
+        sources=source_utterances(session, item.id),
     )
+
+
+SUMMARY_MAX_CHARS = 80
+"""How much of the longest source utterance ``_summary_of`` keeps. Long enough
+to read as a sentence, short enough that a card of them does not become the
+transcript it is standing in for."""
+
+
+def _truncate(text: str, limit: int = SUMMARY_MAX_CHARS) -> str:
+    stripped = text.strip()
+    return stripped if len(stripped) <= limit else stripped[: limit - 1].rstrip() + "…"
+
+
+def _summary_texts(session: Session, utterance_ids: Collection[str]) -> dict[str, str]:
+    """``Utterance.text`` for a batch of ids, read once for a whole list."""
+    if not utterance_ids:
+        return {}
+    rows = session.execute(
+        select(Utterance.id, Utterance.text).where(Utterance.id.in_(utterance_ids))
+    )
+    return {utterance_id: text for utterance_id, text in rows}
+
+
+def action_item_summaries(session: Session, items: Sequence[ExtActionItem]) -> dict[str, str]:
+    """A one-line preview of each item's sources, for the ones ``description``
+    alone does not already say.
+
+    **Rule-based, not a model.** The longest source utterance, truncated --
+    which utterance actually carries the point is a real question (#325), and
+    this is the cheap first answer while that is unbuilt: exactly the same
+    reasoning ``decisions._substance`` already uses for the settling row.
+    Wrong here is visible and checked against the drawer's full quotation, not
+    generated prose a reader has no way to verify.
+
+    **Only when there is more than one source.** With a single source
+    ``description`` already is that utterance's text (``slots`` builds it that
+    way), and repeating it as ``summary`` would be a second copy of the same
+    line, not a new one.
+    """
+    multi = [item for item in items if len(item.sources) > 1]
+    texts = _summary_texts(
+        session, {source.utterance_id for item in multi for source in item.sources}
+    )
+    summaries: dict[str, str] = {}
+    for item in multi:
+        candidates = [texts[s.utterance_id] for s in item.sources if s.utterance_id in texts]
+        if candidates:
+            summaries[item.id] = _truncate(max(candidates, key=len))
+    return summaries
+
+
+def decision_summaries(session: Session, decisions: Sequence[ExtDecision]) -> dict[str, str]:
+    """A one-line preview of what a decision's source utterances said.
+
+    Same rule as ``action_item_summaries``: the longest source, truncated, and
+    for the same reason. Computed for every decision with at least one source,
+    unlike action items -- a decision's ``statement`` is assembled or reworded
+    (#305), so even a single-source decision benefits from seeing what was
+    literally said beside it.
+    """
+    texts = _summary_texts(
+        session, {source.utterance_id for decision in decisions for source in decision.sources}
+    )
+    summaries: dict[str, str] = {}
+    for decision in decisions:
+        candidates = [
+            texts[source.utterance_id]
+            for source in decision.sources
+            if source.utterance_id in texts
+        ]
+        if candidates:
+            summaries[decision.id] = _truncate(max(candidates, key=len))
+    return summaries
 
 
 def source_utterances(session: Session, action_item_id: str) -> list[SourceUtterance]:
@@ -1029,6 +1109,7 @@ def review_for_meeting(
             select(ExtDecisionReview).where(ExtDecisionReview.meeting_id == meeting_id)
         )
     }
+    summaries = decision_summaries(session, decisions)
 
     listed = []
     for decision in decisions:
@@ -1046,6 +1127,7 @@ def review_for_meeting(
                     source.utterance_id
                     for source in sorted(decision.sources, key=lambda s: s.position)
                 ],
+                summary=summaries.get(decision.id),
             )
         )
 

@@ -142,6 +142,46 @@ def test_every_proposed_decision_starts_pending(client: TestClient, session: Ses
     assert all(d["statement"] == d["model_statement"] for d in body["decisions"])
 
 
+def test_a_decisions_summary_is_its_longest_source_utterance(
+    client: TestClient, session: Session
+) -> None:
+    """Rule-based prototype (not a model): the point of a summary here is a
+    preview of the *sources*, distinct from the assembled ``statement`` --
+    checked against the drawer's full evidence, never generated prose."""
+    for uid, text in [
+        ("utt_1", "네"),
+        ("utt_2", "일정이 밀리면 다음 주 화요일로 옮기는 게 낫겠어요"),
+        ("utt_3", "좋아요 그렇게 하죠"),
+    ]:
+        session.execute(Utterance.__table__.update().where(Utterance.id == uid).values(text=text))
+    session.commit()
+    service.build_decisions(
+        session,
+        meeting_id=MEETING,
+        utterances=[
+            ClassifiedUtterance(id="utt_1", kind=K.DECISION, confidence=0.9, text="네"),
+            ClassifiedUtterance(
+                id="utt_2",
+                kind=K.DECISION,
+                confidence=0.9,
+                text="일정이 밀리면 다음 주 화요일로 옮기는 게 낫겠어요",
+            ),
+            ClassifiedUtterance(
+                id="utt_3", kind=K.DECISION, confidence=0.9, text="좋아요 그렇게 하죠"
+            ),
+            *(
+                ClassifiedUtterance(id=f"utt_{i}", kind=None, confidence=0.0, text="")
+                for i in range(4, 9)
+            ),
+        ],
+    )
+
+    body = client.get(f"{PREFIX}/reviews/{MEETING}").json()
+
+    (decision,) = body["decisions"]
+    assert decision["summary"] == "일정이 밀리면 다음 주 화요일로 옮기는 게 낫겠어요"
+
+
 def test_nothing_is_pre_checked_while_there_is_no_measured_line(
     client: TestClient, session: Session
 ) -> None:

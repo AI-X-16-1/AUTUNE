@@ -58,6 +58,14 @@ export interface ActionItemRead extends ActionItem {
    * against; false for everything while that threshold is unset (#122).
    */
   is_candidate: boolean;
+  /**
+   * A one-line preview of the item's sources beyond `description` itself.
+   * Rule-based, not a model: the longest source utterance, truncated, and only
+   * when there is more than one source — with a single one `description`
+   * already is that sentence. `null` otherwise; the card falls back to the
+   * source count.
+   */
+  summary: string | null;
 }
 
 /** One source utterance's words, already masked by module A. */
