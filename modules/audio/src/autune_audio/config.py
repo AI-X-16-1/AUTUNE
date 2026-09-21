@@ -81,6 +81,20 @@ class AudioSettings(BaseSettings):
     diarization_model: str = "pyannote/speaker-diarization-3.1"
     """Pinned explicitly. Never load a floating "latest"."""
 
+    live_hello_timeout_s: float = 5.0
+    """How long a live connection may sit without sending ``hello``."""
+
+    live_max_session_s: float = 3 * 60 * 60
+    """The longest live session, matching the 3-hour ceiling on S03. Past it
+    the session ends normally; the recording is in the browser."""
+
+    live_max_frame_bytes: int = 32 * 1024
+    """One second of PCM16 at 16 kHz. A bigger frame is dropped, not buffered."""
+
+    live_frame_ms: int = 200
+    """What the browser is asked to send. Informational; the server accepts
+    any frame under ``live_max_frame_bytes``."""
+
     @model_validator(mode="after")
     def _warn_on_cuda_without_token(self) -> AudioSettings:
         """A GPU with no token is a configuration someone meant to finish."""
