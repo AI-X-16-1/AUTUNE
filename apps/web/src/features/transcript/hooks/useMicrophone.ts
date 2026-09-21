@@ -20,6 +20,9 @@ export type Microphone = {
  * sends PCM to the server, the `MediaRecorder` that keeps the recording, and
  * the analyser here that feeds the waveform. Opening it twice would ask the
  * person for permission twice.
+ *
+ * Cleanup runs on unmount only, because a cleanup keyed on stop's identity
+ * would run on the very state change that start() causes.
  */
 export function useMicrophone(): Microphone {
   const [stream, setStream] = useState<MediaStream | null>(null);
@@ -27,14 +30,15 @@ export function useMicrophone(): Microphone {
   const [error, setError] = useState<string | null>(null);
   const context = useRef<AudioContext | null>(null);
   const timer = useRef<number | null>(null);
+  const media = useRef<MediaStream | null>(null);
 
   const start = useCallback(async () => {
     try {
-      const media = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+      const opened = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
       const ctx = new AudioContext();
       const analyser = ctx.createAnalyser();
       analyser.fftSize = 1024;
-      ctx.createMediaStreamSource(media).connect(analyser);
+      ctx.createMediaStreamSource(opened).connect(analyser);
       const buffer = new Float32Array(analyser.fftSize);
       timer.current = window.setInterval(() => {
         analyser.getFloatTimeDomainData(buffer);
@@ -44,7 +48,8 @@ export function useMicrophone(): Microphone {
         setLevels((prev) => [...prev.slice(1), rms]);
       }, 100);
       context.current = ctx;
-      setStream(media);
+      media.current = opened;
+      setStream(opened);
       setError(null);
     } catch {
       setError("마이크를 열 수 없습니다. 브라우저의 마이크 권한을 확인해 주세요.");
@@ -54,13 +59,16 @@ export function useMicrophone(): Microphone {
   const stop = useCallback(() => {
     if (timer.current !== null) window.clearInterval(timer.current);
     timer.current = null;
-    stream?.getTracks().forEach((track) => track.stop());
-    void context.current?.close();
+    media.current?.getTracks().forEach((track) => track.stop());
+    void context.current?.close().catch(() => {});
     context.current = null;
+    media.current = null;
     setStream(null);
-  }, [stream]);
+  }, []);
 
-  useEffect(() => stop, [stop]);
+  const stopRef = useRef(stop);
+  stopRef.current = stop;
+  useEffect(() => () => stopRef.current(), []);
 
   return { stream, levels, error, start, stop };
 }
