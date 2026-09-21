@@ -87,7 +87,7 @@ export function ActionDetailDrawer({
       </header>
 
       <div className="flex-1 overflow-y-auto" style={{ padding: "var(--space-card)" }}>
-        <Field label="담당">{item.assignee_label ?? "미지정"}</Field>
+        <Field label="담당">{item.assignee_name ?? item.assignee_label ?? "미지정"}</Field>
         <Field label="기한" mono>
           {item.due_date ?? "없음"}
         </Field>
