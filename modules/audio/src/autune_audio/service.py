@@ -33,7 +33,10 @@ def require_team_member(session: Session, *, user_id: str, team_id: str) -> None
         sa.select(TeamMember.id).where(TeamMember.team_id == team_id, TeamMember.user_id == user_id)
     )
     if member is None:
-        raise PermissionDeniedError("you are not a member of this team")
+        # ``team_id`` in the details distinguishes this from a token that never
+        # resolved to a user at all: the live socket closes each with a
+        # different code, and both are ``PermissionDeniedError``.
+        raise PermissionDeniedError("you are not a member of this team", team_id=team_id)
 
 
 def transcript_for_meeting(

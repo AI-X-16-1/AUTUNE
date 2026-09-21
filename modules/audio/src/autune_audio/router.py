@@ -18,6 +18,7 @@ from autune_core import CurrentUser, get_session
 from autune_core.settings import get_settings as get_core_settings
 
 from . import service
+from .live import router as live_router
 
 router = APIRouter()
 
@@ -29,6 +30,8 @@ if get_core_settings().env == "local":
     from .dev import router as dev_router
 
     router.include_router(dev_router, prefix="/dev")
+
+router.include_router(live_router)
 
 
 @router.get("/health")

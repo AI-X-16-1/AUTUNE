@@ -16,3 +16,7 @@ are not claimed to be the same utterance.
 
 Design: docs/modules/audio-live-transcription.md.
 """
+
+from .routes import router
+
+__all__ = ["router"]
