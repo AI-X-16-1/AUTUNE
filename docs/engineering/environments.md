@@ -94,6 +94,9 @@ prefix `AUTUNE_<MODULE>_`.
 | `AUTUNE_AUDIO_LIVE_MAX_SESSION_S` | A | The longest live session, 3 h; the recording is in the browser |
 | `AUTUNE_AUDIO_LIVE_MAX_FRAME_BYTES` | A | One second of PCM16; a bigger frame is refused, not buffered |
 | `AUTUNE_AUDIO_LIVE_FRAME_MS` | A | What the browser is asked to send (200) |
+| `AUTUNE_AUDIO_LIVE_WHISPER_MODEL` | A | The live channel's own model, default `large-v3-turbo`; the stored path keeps `AUTUNE_AUDIO_WHISPER_MODEL` |
+| `AUTUNE_AUDIO_LIVE_CPU_THREADS` | A | CTranslate2 threads for the live model; 0 = CTranslate2 default, set to the machine's performance-core count |
+| `AUTUNE_AUDIO_LIVE_BEAM_SIZE` | A | Beam width on the live path (1) |
 | `AUTUNE_AUDIO_HF_TOKEN` | A | Hugging Face token for the gated pyannote models |
 | `NEXT_PUBLIC_AUTUNE_DEV_TOKEN` | A (web) | A bearer token for the browser, local only — see "A token for the browser" below |
 | `AUTUNE_AUDIO_DIARIZATION_MODEL` | A | Default `pyannote/speaker-diarization-3.1` |

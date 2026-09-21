@@ -5,7 +5,12 @@ The seam. Live transcription runs in the API process today (design, section
 exist -- the body of ``run`` becomes "send to the worker and await the result"
 and nothing else in ``live/`` changes.
 
-Two properties, both about a CPU that transcribes at 0.73x real time:
+The live path loads its own model and its own thread count (the ``live_*``
+settings, `autune_audio.config`) rather than the stored path's: on the
+reference laptop a row costs about 2.5 s regardless of utterance length,
+because the encoder pads every segment to a thirty-second window.
+
+Two properties:
 
 - **One lock per process.** Segments that arrive while one is being
   transcribed wait their turn. Two meetings live at once share the lock; once
@@ -30,7 +35,7 @@ _LOCK = threading.Lock()
 
 
 def _default_transcribe(waveform: Waveform) -> Transcription:
-    return pipeline.transcribe(waveform, glossary=build_prompt())
+    return pipeline.transcribe_live(waveform, glossary=build_prompt())
 
 
 class Transcriber:
@@ -41,7 +46,7 @@ class Transcriber:
         warm_up: Callable[[], None] | None = None,
     ) -> None:
         self._transcribe = transcribe or _default_transcribe
-        self._warm_up = warm_up or pipeline.warm_up
+        self._warm_up = warm_up or pipeline.warm_up_live
         self._warm = False
 
     async def warm_up(self) -> None:

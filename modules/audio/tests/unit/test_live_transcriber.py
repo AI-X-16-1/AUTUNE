@@ -13,6 +13,7 @@ import time
 import numpy as np
 import pytest
 
+from autune_audio import pipeline
 from autune_audio.live.transcriber import Transcriber
 from autune_audio.schemas import SAMPLE_RATE, Transcription, Waveform
 
@@ -132,3 +133,32 @@ async def test_warm_up_runs_once_and_its_failure_is_the_callers() -> None:
     await transcriber.warm_up()
 
     assert calls == 2
+
+
+@pytest.mark.asyncio
+async def test_no_arguments_uses_the_live_pipeline_functions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``Transcriber()`` with no overrides wires to the live model, not the
+    stored one -- never loading a real model here."""
+    warm_up_calls = 0
+    transcribe_calls: list[Waveform] = []
+
+    def fake_warm_up_live() -> None:
+        nonlocal warm_up_calls
+        warm_up_calls += 1
+
+    def fake_transcribe_live(waveform_: Waveform, *, glossary: str = "") -> Transcription:
+        transcribe_calls.append(waveform_)
+        return empty()
+
+    monkeypatch.setattr(pipeline, "warm_up_live", fake_warm_up_live)
+    monkeypatch.setattr(pipeline, "transcribe_live", fake_transcribe_live)
+
+    transcriber = Transcriber()
+    await transcriber.warm_up()
+    result = await transcriber.run(waveform())
+
+    assert warm_up_calls == 1
+    assert len(transcribe_calls) == 1
+    assert result == empty()

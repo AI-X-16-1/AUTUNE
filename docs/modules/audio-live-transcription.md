@@ -94,7 +94,9 @@ tested without a model.
 
 ### 3.2 `Transcriber`
 
-Wraps `pipeline.transcribe(waveform, glossary=build_prompt())`. Two properties:
+Wraps `pipeline.transcribe_live(waveform, glossary=build_prompt())`, which loads
+its own model, thread count, and beam width (`live_*` settings,
+`autune_audio.config`) rather than the stored path's — see §9. Two properties:
 
 - **One lock per process.** CPU RTF is 0.73, so segments that arrive while one
   is being transcribed wait their turn. Two meetings live at once share the
@@ -343,6 +345,31 @@ Measured per-row lag at real-time pacing on an Apple-silicon CPU with
 transcribe, so a row lands roughly one utterance after the one it belongs to
 ends. That is above the 2–8 s the plan's smoke test expected, which assumed
 the 0.73 RTF of the batch path (§3.2); the measured RTF was closer to 0.95.
+
+**The live path now loads its own model, thread count, and beam width** (the
+`live_*` settings in `autune_audio.config`) instead of the stored path's
+defaults. Isolated decode time for one 11.4 s Korean utterance, int8, beam 1,
+on the same 14-core Apple-silicon CPU:
+
+| model | 4 threads | 10 threads | Korean quality |
+| --- | --- | --- | --- |
+| large-v3 | 6.2 s | 4.6 s | reference |
+| large-v3-turbo | 4.3 s | **2.4 s** | practically the same (both miss the same domain word) |
+| small | 1.0 s | 0.8 s | unusable |
+
+A 5.4 s utterance costs almost the same (turbo/10: 2.2 s) — the encoder
+always processes a padded 30 s window, so there is a ~2 s floor per segment
+regardless of how short it is. Decision: the live path gets its own model
+(`large-v3-turbo`), its own thread count, and beam 1; the stored path
+(`pipeline.transcribe`, worker) is unchanged.
+
+Re-measured against the real route, same recording, same real-time pacing,
+`large-v3-turbo` with 10 threads and beam 1: per-row lag went from
+9.5 / 8.6 / 8.6 / 8.8 / 9.4 s (`large-v3`, 4 threads, beam 5) to
+4.1 / 4.0 / 4.1 / 4.1 / 4.6 s — roughly half. The end-to-end lag stays above
+the 2.4 s isolated-decode number because it also carries the segmenter's
+0.7 s silence wait, VAD, masking, and the socket round trip; the isolated
+benchmark measures decode time alone.
 
 When transcription falls behind, nothing is dropped. The segmenter awaits
 each row inline, so frames that arrive while a segment is being transcribed

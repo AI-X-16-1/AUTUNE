@@ -133,6 +133,31 @@ the rest of the meeting. Two live meetings on one process therefore do not
 segment queue with drop-oldest is the follow-up; the browser microphone path
 (worklet, `MediaRecorder`) has not been measured by anyone yet.
 
+**The live path now has its own model, thread count, and beam width.**
+Isolated decode time for one 11.4 s Korean utterance, int8, beam 1, on a
+14-core Apple-silicon CPU:
+
+| model | 4 threads | 10 threads | Korean quality |
+| --- | --- | --- | --- |
+| large-v3 | 6.2 s | 4.6 s | reference |
+| large-v3-turbo | 4.3 s | **2.4 s** | practically the same (both miss the same domain word) |
+| small | 1.0 s | 0.8 s | unusable |
+
+A 5.4 s utterance costs almost the same (turbo/10: 2.2 s) — the encoder pads
+every segment to a 30 s window, so there is a ~2 s floor regardless of
+utterance length. Decision: the live path gets `large-v3-turbo`
+(`live_whisper_model`), its own thread count (`live_cpu_threads`), and beam 1
+(`live_beam_size`); the stored path (`pipeline.transcribe`, worker) keeps
+`large-v3`, beam 5, and its retry. Models are cached per `(name, threads)`,
+so the two paths each build one instance and neither reloads.
+
+Re-measured against the real route, same 46.6 s recording, same real-time
+pacing, `large-v3-turbo` with 10 threads and beam 1: per-row lag went from
+9.5 / 8.6 / 8.6 / 8.8 / 9.4 s (`large-v3`, 4 threads, beam 5) to
+4.1 / 4.0 / 4.1 / 4.1 / 4.6 s. The end-to-end number stays above the 2.4 s
+isolated-decode figure because it also carries the segmenter's 0.7 s silence
+wait, VAD, masking, and the socket round trip.
+
 ---
 
 ## 3. Decisions, and the ones that reversed

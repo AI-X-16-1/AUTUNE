@@ -95,6 +95,21 @@ class AudioSettings(BaseSettings):
     """What the browser is asked to send. Informational; the server accepts
     any frame under ``live_max_frame_bytes``."""
 
+    live_whisper_model: str = "large-v3-turbo"
+    """The live channel's model. Turbo keeps large-v3's encoder and cuts the
+    decoder to four layers: on CPU a row costs about half of large-v3 for
+    Korean that reads the same. The stored path keeps ``whisper_model``."""
+
+    live_cpu_threads: int = 0
+    """CTranslate2 threads for the live model. 0 is CTranslate2's default
+    (4). One transcription runs at a time on the live path, so the count can
+    be the machine's performance cores -- 10 on the laptop that measured
+    this -- without contending with anything but itself."""
+
+    live_beam_size: int = 1
+    """Beam width on the live path. A row is display, remade by the stored
+    path after the upload; width 1 is the cheapest decode."""
+
     @model_validator(mode="after")
     def _warn_on_cuda_without_token(self) -> AudioSettings:
         """A GPU with no token is a configuration someone meant to finish."""
