@@ -383,3 +383,47 @@ def test_a_source_of_this_meeting_is_kept(session: Session) -> None:
     )
 
     assert [source.utterance_id for source in item.sources] == ["utt_here"]
+
+
+def test_an_unknown_assignee_is_refused_by_name(session: Session) -> None:
+    """``user_ghost`` passes the schema's ``^user_`` pattern -- the same gap
+    ``slots.assignee_of`` already closed for the model's own path -- so only
+    this existence check stands between it and the foreign key's 500."""
+    with pytest.raises(ValidationError) as caught:
+        service.create_action_item(
+            session,
+            ActionItemCreate(meeting_id=MEETING, description="일", assignee_id="user_ghost"),
+        )
+    assert caught.value.details == {"field": "assignee_id"}
+    assert session.scalars(select(ExtActionItem)).all() == []
+
+
+def test_a_known_assignee_is_kept(session: Session) -> None:
+    item = service.create_action_item(
+        session,
+        ActionItemCreate(meeting_id=MEETING, description="일", assignee_id="user_001"),
+    )
+
+    assert item.assignee_id == "user_001"
+
+
+def test_updating_to_an_unknown_assignee_is_refused_and_changes_nothing(session: Session) -> None:
+    item = service.create_action_item(
+        session, ActionItemCreate(meeting_id=MEETING, description="일")
+    )
+
+    with pytest.raises(ValidationError) as caught:
+        service.update_action_item(session, item, ActionItemUpdate(assignee_id="user_ghost"))
+    assert caught.value.details == {"field": "assignee_id"}
+    assert item.assignee_id is None
+
+
+def test_updating_can_still_clear_an_assignee(session: Session) -> None:
+    item = service.create_action_item(
+        session,
+        ActionItemCreate(meeting_id=MEETING, description="일", assignee_id="user_001"),
+    )
+
+    service.update_action_item(session, item, ActionItemUpdate(assignee_id=None))
+
+    assert item.assignee_id is None
