@@ -167,3 +167,54 @@ def masking_recall(reference_masked: str, ours: str) -> MaskingRecall:
         spans_in_reference=len(expected),
         spans_we_caught=caught,
     )
+
+
+@dataclass(frozen=True)
+class MaskingPrecision:
+    precision: float
+    spans_we_masked: int
+    spans_correctly_masked: int
+
+    def __repr__(self) -> str:
+        return (
+            f"MaskingPrecision(precision={self.precision:.4f}, "
+            f"masked={self.spans_we_masked}, correct={self.spans_correctly_masked})"
+        )
+
+
+def masking_precision(reference_masked: str, ours: str) -> MaskingPrecision:
+    """Of what we masked, how much should have been masked.
+
+    The mirror of ``masking_recall``, and the number this module did not have.
+    Recall alone cannot fall when the masker covers more, so every widening
+    looked free: the account pattern was widened and ate every ISO date, the
+    national-ID group was widened and ate two six-digit figures, and runs were
+    allowed to contain digits and ate a version string beside the word 이사.
+    None of those changed recall by a point.
+
+    Recall stays the number that gates a release -- a leaked national ID is an
+    incident and an over-masked date is an annoyance, and
+    ``docs/modules/audio.md`` sets a target for one of them and not the other.
+    Precision is what says what the recall cost.
+
+    Defined as 1.0 when we masked nothing: a run that hides nothing has not
+    hidden anything wrongly, and the recall number is where that shows up.
+    """
+    reference_tokens = _TOKEN.findall(reference_masked)
+    our_tokens = _TOKEN.findall(ours)
+    if len(reference_tokens) != len(our_tokens):
+        raise ValueError(
+            f"the two texts do not describe the same utterance: "
+            f"{len(reference_tokens)} tokens against {len(our_tokens)}"
+        )
+
+    ours_masked = [i for i, token in enumerate(our_tokens) if _MASK.fullmatch(token)]
+    if not ours_masked:
+        return MaskingPrecision(precision=1.0, spans_we_masked=0, spans_correctly_masked=0)
+
+    correct = sum(1 for i in ours_masked if _MASK.fullmatch(reference_tokens[i]))
+    return MaskingPrecision(
+        precision=correct / len(ours_masked),
+        spans_we_masked=len(ours_masked),
+        spans_correctly_masked=correct,
+    )
