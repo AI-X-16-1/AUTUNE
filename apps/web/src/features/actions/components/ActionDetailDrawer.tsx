@@ -146,11 +146,11 @@ export function ActionDetailDrawer({
           )}
         </section>
 
-        {item.external_refs?.length ? (
+        {item.sync_refs?.length ? (
           <section className="mt-6">
             <SectionTitle>연동</SectionTitle>
             <div className="mt-2 grid gap-2">
-              {item.external_refs.map((ref) => (
+              {item.sync_refs.map((ref) => (
                 <div
                   key={`${ref.system}-${ref.url}`}
                   className="flex items-center gap-2 border-b border-[var(--color-hairline)] pb-2"

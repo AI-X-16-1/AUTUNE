@@ -92,6 +92,7 @@ def test_the_response_carries_every_field_the_board_reads() -> None:
         "origin",
         "source_utterance_ids",
         "is_candidate",
+        "sync_refs",
     }
 
 

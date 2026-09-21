@@ -60,6 +60,27 @@ class ActionItemUpdate(BaseModel):
         return self.model_dump(exclude_unset=True)
 
 
+class ExternalRefRead(BaseModel):
+    """Where one confirmed item or decision stands with one outside system.
+
+    Not ``autune_contracts.extraction.ExternalRef``: that type is the outbound
+    event to D and E, and it requires ``url`` because it is only ever built for
+    a ref that finished. This is this module's own read, so it has to say the
+    other two states a sync can be in -- ``url`` is ``None`` while the row is
+    claimed but the call has not returned (in flight) or did not survive it
+    (failed); no row at all means nothing has tried yet, and neither list nor
+    drawer constructs one for that case.
+
+    On the list, not gated behind the drawer the way ``sources`` is: a system
+    name, a url and an id are not meeting content, so ``description`` and
+    ``assignee_label``'s reasoning for being on the list already covers this.
+    """
+
+    system: Literal["notion", "jira"]
+    url: str | None
+    external_id: str | None
+
+
 class ActionItemRead(BaseModel):
     """One item as this module's own screens read it.
 
@@ -105,6 +126,20 @@ class ActionItemRead(BaseModel):
     **False for everything while ``candidate_confidence`` is unset**, which is
     its default until #10 measures one.
     """
+
+    sync_refs: list[ExternalRefRead]
+    """One entry per system this item has been claimed for -- today, at most
+    ``notion`` (#30); ``jira`` is designed (ui-spec S18, S28) but unbuilt, so it
+    never appears rather than being shown always-empty. Ordered by
+    ``created_at``, which for one system is also insertion order.
+
+    Not ``external_refs``: ``ActionItem`` (the contract this extends) already
+    has a field by that name -- the outbound one, ``list[ExternalRef]``, which
+    requires ``url`` -- and TypeScript's `extends` cannot narrow an optional,
+    stricter-typed inherited field to this one, which also reports the
+    in-flight and failed states. Same name collision, same fix, as
+    ``ReviewDecision.sync_refs`` below would have hit if ``Decision`` carried
+    the field too."""
 
 
 class SourceUtterance(BaseModel):
@@ -193,6 +228,14 @@ class ReviewDecision(BaseModel):
     claim the numbers do not support."""
 
     source_utterance_ids: list[str]
+
+    sync_refs: list[ExternalRefRead]
+    """One entry per system this decision has been claimed for -- today, at
+    most ``notion`` (#30). No drawer exists for a decision (S15 is the whole
+    screen), so this rides on the list the way ``ActionItemRead.sync_refs``
+    does; a URL is not meeting content. Named ``sync_refs`` rather than
+    ``external_refs`` for the same reason as that one -- consistency, though
+    ``Decision`` (the contract) carries no field of that name to collide with."""
 
 
 class ReviewAmbiguous(BaseModel):

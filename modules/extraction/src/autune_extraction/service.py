@@ -54,6 +54,7 @@ from .schemas import (
     ActionItemUpdate,
     DecisionCreate,
     DecisionReviewUpdate,
+    ExternalRefRead,
     MeetingReview,
     Outbound,
     OutboundBlocked,
@@ -310,13 +311,19 @@ def create_action_item(session: Session, payload: ActionItemCreate) -> ExtAction
     return item
 
 
-def read_model(item: ExtActionItem) -> ActionItemRead:
+def read_model(
+    item: ExtActionItem, *, sync_refs: list[ExternalRefRead] | None = None
+) -> ActionItemRead:
     """One item as this module's own screens read it.
 
-    Built here rather than by ``from_attributes`` on the schema because two of
-    its fields are not columns: the source ids live in the link table, and
+    Built here rather than by ``from_attributes`` on the schema because three
+    of its fields are not columns: the source ids live in the link table,
     whether the item is a candidate depends on a setting the row knows nothing
-    about.
+    about, and where it stands with an outside system is read from a table
+    keyed on it rather than owned by it -- see ``action_item_external_refs``.
+    Callers with more than one item look that up in a batch rather than let
+    this query per row; ``None`` means the same as empty, a caller that has
+    not synced anything can leave it out.
 
     Deciding *candidate* on the server is the point of this function. The
     threshold belongs to the classifier that produced the confidence, and a
@@ -338,6 +345,7 @@ def read_model(item: ExtActionItem) -> ActionItemRead:
         origin=item.origin,
         source_utterance_ids=[source.utterance_id for source in item.sources],
         is_candidate=threshold is not None and item.confidence < threshold,
+        sync_refs=sync_refs or [],
     )
 
 
@@ -373,7 +381,9 @@ def list_action_items(
     if due_before is not None:
         query = query.where(ExtActionItem.due_date < due_before)
 
-    return [read_model(item) for item in session.scalars(query)]
+    items = list(session.scalars(query))
+    refs = action_item_external_refs(session, [item.id for item in items])
+    return [read_model(item, sync_refs=refs.get(item.id, [])) for item in items]
 
 
 def read_detail(session: Session, item: ExtActionItem) -> ActionItemDetail:
@@ -384,9 +394,35 @@ def read_detail(session: Session, item: ExtActionItem) -> ActionItemDetail:
     quotation, and it shows one item's at a time. The list still carries meeting
     content -- see ``ActionItemDetail``.
     """
+    refs = action_item_external_refs(session, [item.id]).get(item.id, [])
     return ActionItemDetail(
-        **read_model(item).model_dump(), sources=source_utterances(session, item.id)
+        **read_model(item, sync_refs=refs).model_dump(),
+        sources=source_utterances(session, item.id),
     )
+
+
+def action_item_external_refs(
+    session: Session, action_item_ids: Collection[str]
+) -> dict[str, list[ExternalRefRead]]:
+    """Where each item stands with each outside system it has been claimed for.
+
+    A claimed-but-unfinished row (``url is None``) is still reported: S18 needs
+    to be able to say "sending" or "failed" rather than only "sent" or nothing.
+    One query for the whole list, not one per row.
+    """
+    if not action_item_ids:
+        return {}
+    refs = session.scalars(
+        select(ExtExternalRef)
+        .where(ExtExternalRef.action_item_id.in_(action_item_ids))
+        .order_by(ExtExternalRef.created_at)
+    )
+    by_item: dict[str, list[ExternalRefRead]] = {}
+    for ref in refs:
+        by_item.setdefault(ref.action_item_id, []).append(
+            ExternalRefRead(system=ref.system, url=ref.url, external_id=ref.external_id)  # type: ignore[arg-type]
+        )
+    return by_item
 
 
 def source_utterances(session: Session, action_item_id: str) -> list[SourceUtterance]:
@@ -1044,6 +1080,15 @@ def review_for_meeting(
             select(ExtDecisionReview).where(ExtDecisionReview.meeting_id == meeting_id)
         )
     }
+    refs_by_decision: dict[str, list[ExternalRefRead]] = {}
+    for ref in session.scalars(
+        select(ExtDecisionRef)
+        .where(ExtDecisionRef.meeting_id == meeting_id)
+        .order_by(ExtDecisionRef.created_at)
+    ):
+        refs_by_decision.setdefault(ref.decision_id, []).append(
+            ExternalRefRead(system=ref.system, url=ref.url, external_id=ref.external_id)  # type: ignore[arg-type]
+        )
 
     listed = []
     for decision in decisions:
@@ -1061,6 +1106,7 @@ def review_for_meeting(
                     source.utterance_id
                     for source in sorted(decision.sources, key=lambda s: s.position)
                 ],
+                sync_refs=refs_by_decision.get(decision.id, []),
             )
         )
 

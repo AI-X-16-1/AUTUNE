@@ -34,6 +34,7 @@ from autune_extraction.models import (
     ExtDecisionReview,
     ExtDecisionSource,
     ExtEditEvent,
+    ExtExternalRef,
 )
 from autune_extraction.router import router
 from autune_extraction.schemas import DecisionReviewUpdate
@@ -55,6 +56,7 @@ TABLES = [
     ExtDecisionReview.__table__,
     ExtConfirmation.__table__,
     ExtEditEvent.__table__,
+    ExtExternalRef.__table__,
 ]
 
 
@@ -154,6 +156,32 @@ def test_every_proposed_decision_starts_pending(client: TestClient, session: Ses
     assert [d["status"] for d in body["decisions"]] == ["pending", "pending"]
     assert body["pending_decisions"] == 2
     assert all(d["statement"] == d["model_statement"] for d in body["decisions"])
+
+
+def test_a_confirmed_decisions_notion_status_reaches_the_review_screen(
+    client: TestClient, session: Session
+) -> None:
+    """S15 has no drawer, so `sync_refs` rides the list here too -- the same
+    call `ActionItemRead.sync_refs` makes."""
+    first, second = two_decisions(session)
+    session.add(
+        ExtDecisionRef(
+            decision_id=first.id,
+            system="notion",
+            meeting_id=MEETING,
+            url="https://www.notion.so/page1",
+            external_id="page1",
+        )
+    )
+    session.flush()
+
+    body = client.get(f"{PREFIX}/reviews/{MEETING}").json()
+
+    by_id = {d["id"]: d for d in body["decisions"]}
+    assert by_id[first.id]["sync_refs"] == [
+        {"system": "notion", "url": "https://www.notion.so/page1", "external_id": "page1"}
+    ]
+    assert by_id[second.id]["sync_refs"] == []
 
 
 def test_nothing_is_pre_checked_while_there_is_no_measured_line(

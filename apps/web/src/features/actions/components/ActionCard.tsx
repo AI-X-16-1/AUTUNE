@@ -69,12 +69,12 @@ export function ActionCard({
         ) : null}
       </div>
 
-      {item.external_refs?.length ? (
+      {item.sync_refs?.length ? (
         <div
           className="mt-2 flex items-center gap-2 text-[var(--color-ink-muted)]"
           style={{ fontSize: "var(--text-metaSmall)" }}
         >
-          {item.external_refs.map((ref) => (
+          {item.sync_refs.map((ref) => (
             <span key={`${ref.system}-${ref.url}`} className="flex items-center gap-1">
               <StatusDot variant={ref.url ? "confirmed" : "critical"} />
               <span style={{ fontFamily: "var(--font-mono)" }}>

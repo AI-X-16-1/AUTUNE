@@ -37,6 +37,21 @@ export const COLUMN_LABELS: Record<ActionStatus, string> = {
 };
 
 /**
+ * Where one item stands with one outside system — `ExternalRefRead`.
+ *
+ * Not the generated `ExternalRef` from `@autune/contracts`: that type is the
+ * outbound event to D and E and requires `url` because it is only ever built
+ * for a ref that finished. This reads the other two states a sync can be in:
+ * `url` is `null` while claimed but not yet sent, or failed; no entry at all
+ * (this system absent from the array) means nothing has tried yet.
+ */
+export interface ExternalRefRead {
+  system: "notion" | "jira";
+  url: string | null;
+  external_id: string | null;
+}
+
+/**
  * One item as `/api/extraction` returns it — `ActionItemRead` in
  * `modules/extraction/src/autune_extraction/schemas.py`.
  *
@@ -58,6 +73,13 @@ export interface ActionItemRead extends ActionItem {
    * against; false for everything while that threshold is unset (#122).
    */
   is_candidate: boolean;
+  /**
+   * At most `notion` today (#30); `jira` is designed, not built. Not
+   * `external_refs`: the generated `ActionItem` already has a field by that
+   * name (`ExternalRef[]`, `url` required, the outbound-only shape), and
+   * `extends` cannot narrow it to this stricter one.
+   */
+  sync_refs: ExternalRefRead[];
 }
 
 /** One source utterance's words, already masked by module A. */
