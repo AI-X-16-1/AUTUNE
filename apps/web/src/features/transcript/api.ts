@@ -71,13 +71,29 @@ export function liveSocketUrl(meetingId: string): string {
   return `${apiBase().replace(/^http/, "ws")}/api/audio/live/${meetingId}`;
 }
 
-/** "Everyone in this recording consented", on the word of a team member (#283). */
-export const attestConsent = (meetingId: string) =>
-  api.audio<{ meeting_id: string; attested: boolean }>(`/meetings/${meetingId}/consent`, {
-    method: "POST",
-    headers: authHeaders(),
-    body: JSON.stringify({ attested: true }),
-  });
+/**
+ * "Everyone in this recording consented", on the word of a team member (#283).
+ *
+ * Until #283 lands the route does not exist, and the shared client turns
+ * FastAPI's own 404 body into a TypeError (#308). The gate shows whatever
+ * message it gets, so that one case is named here in the user's language
+ * rather than as "Cannot read properties of undefined".
+ */
+export async function attestConsent(
+  meetingId: string,
+): Promise<{ meeting_id: string; attested: boolean }> {
+  try {
+    return await api.audio<{ meeting_id: string; attested: boolean }>(
+      `/meetings/${meetingId}/consent`,
+      { method: "POST", headers: authHeaders(), body: JSON.stringify({ attested: true }) },
+    );
+  } catch (caught) {
+    if (caught instanceof TypeError) {
+      throw new Error("동의 기록 API가 아직 없습니다 (#283). 녹음은 그대로 시작할 수 있습니다.");
+    }
+    throw caught;
+  }
+}
 
 /**
  * The whole recording, once, when the meeting stops (#259).
