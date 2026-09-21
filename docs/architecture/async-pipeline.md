@@ -105,8 +105,25 @@ hand.
 | `cpu_heavy` | B, C, D model inference | Higher concurrency |
 | `default` | Integrations, notifications, aggregation | Fast, chatty |
 
-Route with `task_routes` in `apps/worker`. A long task on `default` blocks
-Slack notifications; a short task on `gpu` wastes an expensive worker.
+Route with `TASK_ROUTES` in `autune_core.celery_app`, the one place the routes
+exist. A long task on `default` blocks Slack notifications; a short task on
+`gpu` wastes an expensive worker.
+
+## One app, every process
+
+`autune_core.celery_app.make_celery_app` builds the app and makes it the one
+`celery.current_app` returns — in the calling thread and, via `set_default`, in
+every other thread. `apps/worker` calls it with `include_tasks=True` and gets
+the full registry; `apps/api` calls it with `include_tasks=False` and gets a
+client that sends by task name with the same broker and routes, without
+importing a single `tasks.py` (#258).
+
+Before this, the API process had no app, `current_app` was Celery's built-in
+default with a broker nobody runs, and an upload returned 202 into nothing.
+
+A client's registry is empty, so `publish` from the API process finds no
+subscribers. Publishing from a request is not a supported path today; the
+request enqueues its own module's task by name, and the worker publishes.
 
 ## Payloads
 
@@ -220,8 +237,12 @@ See `privacy.md`. These are enforced in code review and in tests.
 
 ```bash
 docker compose up -d          # postgres (pgvector), redis
-uv run celery -A apps.worker.celery_app worker -Q default,cpu_heavy -l info
+uv run celery -A autune_worker.celery_app worker -Q default,cpu_heavy,gpu -l info
 ```
 
-Run the `gpu` queue only if you have a GPU; otherwise A falls back to
-whisper.cpp on CPU. See `../engineering/environments.md`.
+`gpu` is a queue name, not a hardware requirement — `task_routes` sends every
+`autune.audio.*` task there regardless of `AUTUNE_AUDIO_DEVICE`. A worker that
+doesn't service it never runs an audio task at all; it just sits in Redis with
+no error. Set `AUTUNE_AUDIO_DEVICE=cpu` for whisper.cpp on CPU — that picks
+what Whisper runs on, not which queue the task lands in. See
+`../engineering/environments.md`.

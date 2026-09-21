@@ -109,3 +109,22 @@ def test_utterance_kinds_are_exactly_five() -> None:
         "concern",
         "ambiguous",
     }
+
+
+def test_every_exported_name_is_actually_there() -> None:
+    """``__all__`` is a promise, and a promise nothing checks is a list.
+
+    Raised on #98. ``Decision`` sat in ``__all__`` without being imported for a
+    week: the module still loads, ``import *`` still succeeds for every other
+    name, and only ``from autune_contracts import Decision`` fails -- which
+    nobody wrote, because ``Decision`` is the one type B produces and D consumes
+    and neither end existed yet. The failure waits for the first caller.
+
+    Checking the whole list rather than that one name: the next omission will be
+    a different name, and it will be just as quiet.
+    """
+    import autune_contracts
+
+    missing = [name for name in autune_contracts.__all__ if not hasattr(autune_contracts, name)]
+
+    assert missing == []

@@ -33,14 +33,21 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
+from typing import Annotated
 
+import sqlalchemy as sa
 import structlog
-from fastapi import APIRouter, UploadFile
+from fastapi import APIRouter, Depends, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse
+from pydantic import BaseModel, Field
+from sqlalchemy.orm import Session
 
+from autune_audio.config import MAX_UPLOAD_BYTES
 from autune_audio.decoding import DecodeError
 from autune_audio.pipeline import transcribe_file
 from autune_audio.storage import RecordingTooLargeError, recording_on_disk
+from autune_core import Team, TeamMember, User, get_session
+from autune_core.auth import issue_token
 from autune_core.errors import PrivacyViolationError
 
 from .page import PAGE
@@ -48,15 +55,6 @@ from .page import PAGE
 log = structlog.get_logger(__name__)
 
 router = APIRouter()
-
-MAX_UPLOAD_BYTES = 500 * 1024 * 1024
-"""Matches the dropzone limit on design screen S03.
-
-Enforced while the bytes are written, not from ``UploadFile.size``: that is a
-number the client sent, and it is ``None`` on a request without a
-Content-Length. Counting as we write means an over-long body is stopped and its
-partial file deleted whatever the client claimed.
-"""
 
 # Not in the OpenAPI schema. These endpoints exist on a developer's machine and
 # nowhere else, and the generated client should not know about them.
@@ -125,3 +123,72 @@ def transcribe_upload(file: UploadFile) -> JSONResponse:
             ],
         }
     )
+
+
+# --- a token for the browser, until there is a sign-in ----------------------
+
+
+class TokenRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=320, pattern=r"^[^@\s]+@[^@\s]+$")
+    """Shape-checked only. ``EmailStr`` would pull in ``email-validator`` for a
+    route that exists on one machine; ``users.email`` is ``String(320)``."""
+    display_name: str = Field(default="", max_length=200)
+    team_name: str = Field(default="Dev Team", min_length=1, max_length=200)
+
+
+class TokenIssued(BaseModel):
+    token: str
+    user_id: str
+    team_id: str
+
+
+SessionDep = Annotated[Session, Depends(get_session)]
+
+
+@router.post("/token", response_model=TokenIssued, include_in_schema=False)
+def dev_token(body: TokenRequest, session: SessionDep) -> TokenIssued:
+    """Name an email, get a person, a team, a membership and a bearer token.
+
+    **The bridge between "every route takes ``CurrentUser``" and "there is no
+    sign-in".** ``autune_core.auth`` has issued and verified JWTs since W1 so
+    that routes could depend on ``current_user`` before screen S01 exists; what
+    it never had was a caller. This is the caller, for a developer's machine.
+    Real sign-in is #156 and #189, and this route is deleted the day it lands.
+
+    Under ``/dev``, so mounted only when ``AUTUNE_ENV=local`` — the same gate as
+    the upload page above. Off a developer's machine it does not exist, which
+    is the whole of its security model, and why it must never move.
+
+    **Idempotent on the email.** A second call returns the same user and the
+    same team, so a page reload or a second developer does not fork the demo
+    into two teams that cannot see each other's meetings. The team is looked up
+    by the user's first membership, not by name: two developers naming the
+    same team must land in the same one.
+
+    Module A writes ``users`` and ``teams`` here. Invariant 4 lists both as
+    A's to write, and nothing else in the repository creates either — the
+    tests do, by hand, which is what this route replaces for a browser.
+    """
+    user = session.scalar(sa.select(User).where(User.email == body.email))
+    if user is None:
+        user = User(email=body.email, display_name=body.display_name or body.email.split("@")[0])
+        session.add(user)
+        session.flush()
+
+    membership = session.scalar(
+        sa.select(TeamMember).where(TeamMember.user_id == user.id).order_by(TeamMember.id)
+    )
+    if membership is None:
+        team = session.scalar(sa.select(Team).where(Team.name == body.team_name))
+        if team is None:
+            team = Team(name=body.team_name)
+            session.add(team)
+            session.flush()
+        membership = TeamMember(team_id=team.id, user_id=user.id)
+        session.add(membership)
+        session.flush()
+
+    session.commit()
+    # Ids only. An email is a person and a log line is a store.
+    log.info("dev_token_issued", user_id=user.id, team_id=membership.team_id)
+    return TokenIssued(token=issue_token(user.id), user_id=user.id, team_id=membership.team_id)

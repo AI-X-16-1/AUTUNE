@@ -48,6 +48,10 @@ export interface TopicLinksRead {
  * version itself is still visible — never treat a `null` pair as "this was the
  * original version" without checking whether it is also the first in the
  * `versions` array.
+ *
+ * Has no `key_stakeholders_absent` — the backend withholds it here until
+ * route auth exists (#156, see #188). It still reaches the absent person
+ * directly, by Slack DM.
  */
 export interface DecisionVersionRead {
   id: number;
@@ -58,7 +62,6 @@ export interface DecisionVersionRead {
   change_type: ChangeType;
   nli_label: NliLabel | null;
   confidence: number;
-  key_stakeholders_absent: string[];
   created_at: string;
 }
 

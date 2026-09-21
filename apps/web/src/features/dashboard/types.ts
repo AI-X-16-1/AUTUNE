@@ -41,3 +41,10 @@ export interface HeatmapCell {
   score: number;
   meeting_count: number;
 }
+
+/**
+ * As `/api/intelligence/gap-titles/{team_id}` returns it — the gap titles
+ * behind each `gap_distribution` pattern's count. Best-effort: a gap whose
+ * meeting's payload never arrived is simply absent, not an error.
+ */
+export type GapTitlesByPattern = Record<string, string[]>;

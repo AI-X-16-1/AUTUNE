@@ -15,6 +15,7 @@ from sqlalchemy import Table
 from autune_contracts.enums import GapSeverity
 from autune_gap.models import (
     GapGap,
+    GapMeetingTemplate,
     GapParticipation,
     GapRelatedTopic,
     GapTopic,
@@ -29,6 +30,7 @@ ALL_TABLES: tuple[Table, ...] = (
     GapParticipation.__table__,
     GapGap.__table__,
     GapRelatedTopic.__table__,
+    GapMeetingTemplate.__table__,
 )
 
 
@@ -234,6 +236,12 @@ def test_every_meeting_id_column_is_indexed() -> None:
     for table in ALL_TABLES:
         if "meeting_id" not in table.c:
             continue
+        if table.c.meeting_id.primary_key:
+            # Already indexed, by being the key. `gap_meeting_template` is one
+            # row per meeting, so the lookup this rule is about is the primary
+            # key lookup; a second index on the same column would be a write
+            # every insert pays for and no read uses.
+            continue
         indexed = {tuple(c.name for c in index.columns) for index in table.indexes}
         assert ("meeting_id",) in indexed, table.name
 
@@ -257,6 +265,16 @@ def migration_tables() -> dict[str, set[str]]:
             tables[match.group(1)] = set(
                 re.findall(r'sa\.Column\(\s*\n?\s*"(\w+)"', match.group(2))
             )
+        # A column added to an existing table is as real as one the create
+        # statement declared, and adding one is the normal way a table grows
+        # after its first revision. Reading only `create_table` let a model grow
+        # a column with no migration behind it at all, which is the single thing
+        # this test exists to catch. `downgrade` drops rather than adds, so
+        # scanning the whole file picks up no reversal.
+        for table, column in re.findall(
+            r'op\.add_column\(\s*\n?\s*"(\w+)",\s*\n?\s*sa\.Column\(\s*\n?\s*"(\w+)"', source
+        ):
+            tables.setdefault(table, set()).add(column)
     return tables
 
 

@@ -26,8 +26,8 @@ pnpm install
 
 uv run alembic -c infra/alembic.ini upgrade heads
 
-uv run uvicorn apps.api.main:app --reload            # API   :8000
-uv run celery -A apps.worker.celery_app worker -Q default,cpu_heavy -l info
+uv run uvicorn autune_api.main:app --reload          # API   :8000
+uv run celery -A autune_worker.celery_app worker -Q default,cpu_heavy,gpu -l info
 pnpm --filter @autune/web dev                        # web   :3000
 uv run python -m autune_bot                          # Slack bot (socket mode)
 ```
@@ -74,6 +74,7 @@ prefix `AUTUNE_<MODULE>_`.
 | `AUTUNE_ENCRYPTION_KEY` | | Encrypts team integration credentials at rest. Required outside local |
 | `AUTUNE_LOG_LEVEL` | `INFO` | |
 | `AUTUNE_RETENTION_DAYS` | `90` | Default analysis retention |
+| `AUTUNE_CORS_ALLOWED_ORIGINS` | `` | Comma-separated origins `apps/api` allows via CORS. Empty (default) means no CORS headers at all. Set to `http://localhost:3000` for local dev when running `apps/web`'s dev server against `apps/api`'s — a browser blocks the response otherwise, since `:3000` and `:8000` are different origins. Outside `local`, every origin must be an explicit `https://` URL — `*` and plain `http://` are refused at startup |
 
 ### Integrations
 
@@ -89,7 +90,9 @@ prefix `AUTUNE_<MODULE>_`.
 | `AUTUNE_AUDIO_WHISPER_MODEL` | A | e.g. `large-v3` |
 | `AUTUNE_AUDIO_DEVICE` | A | `cuda` or `cpu` |
 | `AUTUNE_AUDIO_TEMP_DIR` | A | Where the recording lives during processing, and only then |
+| `AUTUNE_AUDIO_ORPHAN_AFTER_HOURS` | A | A job still `queued`/`running` after this long has no worker; the sweep fails it and deletes its file. Default `6` |
 | `AUTUNE_AUDIO_HF_TOKEN` | A | Hugging Face token for the gated pyannote models |
+| `NEXT_PUBLIC_AUTUNE_DEV_TOKEN` | A (web) | A bearer token for the browser, local only — see "A token for the browser" below |
 | `AUTUNE_AUDIO_DIARIZATION_MODEL` | A | Default `pyannote/speaker-diarization-3.1` |
 | `AUTUNE_EXTRACTION_CLASSIFIER_IMPL` | B | `local` · `hosted` · `fake`. Default `local`. **No `external`** — see below |
 | `AUTUNE_EXTRACTION_CLASSIFIER_CHECKPOINT` | B | Pinned model, recorded with every classification. Never a floating tag. **Blank by default** — no trained checkpoint is published yet, and `local` / `hosted` refuse to start without one |
@@ -97,6 +100,11 @@ prefix `AUTUNE_<MODULE>_`.
 | `AUTUNE_EXTRACTION_CLASSIFIER_DEVICE` | B | `cpu` · `cuda`. Default `cpu`. Mirrors `AUTUNE_AUDIO_DEVICE` |
 | `AUTUNE_EXTRACTION_CANDIDATE_CONFIDENCE` | B | Below this, an item is a candidate rather than asserted. **Blank by default** — the number comes from the evaluation set (#10), and blank means nothing is a candidate |
 | `AUTUNE_GAP_RISK_THRESHOLD` | C | Default `0.7`. At or above is `high`, the only severity surfaced |
+| `AUTUNE_GAP_MEDIUM_THRESHOLD` | C | Default `0.5`. Down to here is `medium`, below it `low` |
+| `AUTUNE_GAP_DEFAULT_TEMPLATE` | C | Default `general`. Which domain template a meeting nobody chose one for is held to |
+| `AUTUNE_GAP_PARTIAL_CENTRALITY` | C | Default `0.4`. A matched topic below this makes the item *partial* rather than covered |
+| `AUTUNE_GAP_PARTIAL_DAMPING` | C | Default `0.7`. What a partial finding's risk score is multiplied by |
+| `AUTUNE_GAP_WEIGHT_TEMPLATE` · `_COVERAGE` · `_PARTICIPATION` | C | Defaults `0.4` · `0.4` · `0.2`. The three risk inputs, relative; renormalised over whichever could be measured |
 | `AUTUNE_GAP_NER_IMPL` | C | `spacy` (default) · `fake`. **No `external`** — see below |
 | `AUTUNE_GAP_NER_MODEL` | C | Default `ko_core_news_lg`. The pipeline **name**; the version comes from the pinned wheel and is recorded per row |
 | `AUTUNE_CONTEXT_EMBEDDER_IMPL` | D | `kure_v1_http` (default), `kure_v1_local`, `fake` |
@@ -312,12 +320,47 @@ with `Library not loaded: @rpath/libavutil.*`. Passing a waveform already in
 memory works without FFmpeg, but uploads arrive as mp3, wav and m4a, so decoding
 them needs it either way.
 
+## A token for the browser, until there is a sign-in
+
+Every route that matters takes `CurrentUser`, and screen S01 does not exist yet
+(#156, #189). On a developer's machine, module A's dev router issues a token:
+
+```bash
+curl -s -X POST localhost:8000/api/audio/dev/token \
+  -H 'content-type: application/json' \
+  -d '{"email": "you@example.com", "team_name": "Dev Team"}'
+# → {"token": "...", "user_id": "user_…", "team_id": "team_…"}
+```
+
+It creates the user, the team and the membership if they do not exist, and
+returns the same ones on every later call for that email. The route is under
+`/dev`, so it is mounted only when `AUTUNE_ENV=local`; there is no such route
+anywhere else.
+
+Give the token to the browser one of two ways:
+
+- `apps/web/.env.local`: `NEXT_PUBLIC_AUTUNE_DEV_TOKEN=<token>` — inlined at
+  build time, so restart `next dev` after changing it.
+- In the browser console: `localStorage.setItem("autune.token", "<token>")` —
+  takes effect on the next request, and lets you switch users without a
+  rebuild. This wins over the environment variable when both are set.
+
+Tokens last seven days (`autune_core.auth.DEFAULT_TTL`). The `team_id` in the
+response is what `POST /api/audio/meetings` needs.
+
 ## Local privacy hygiene
 
 `AUTUNE_AUDIO_TEMP_DIR` holds real audio while a task runs. It is gitignored and
 cleared at the end of every task. Do not point it at a synced folder, and do not
 keep test recordings of real meetings on disk. See
 `../architecture/privacy.md`.
+
+While an upload request is in flight there is a second, short-lived copy of the
+recording in the OS temporary directory (`tempfile.gettempdir()`), written by
+Starlette's multipart parser before module A's code runs. It is deleted when
+the request closes. `AUTUNE_AUDIO_TEMP_DIR` is the copy this module owns and
+checks; the other one is the web framework's, and the same "not a synced
+folder" rule applies to `TMPDIR` on a developer machine.
 
 ## Environments
 

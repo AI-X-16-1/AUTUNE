@@ -25,6 +25,16 @@ local-models = [
     "torch>=2.2",
     "transformers>=4.44",
 ]
+# The KorNLI fine-tuning job (autune_context.training). Not installed by the
+# worker image or local-models — training needs a GPU and is run on demand by
+# the module owner, never in CI. See docs/modules/context.md, "Phased
+# delivery" (Phase 3).
+training = [
+    "torch>=2.2",
+    "transformers>=4.44",
+    "datasets>=2.20",
+    "accelerate>=0.30",
+]
 
 [build-system]
 requires = ["hatchling"]

@@ -21,13 +21,21 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
-ENTITY_LABELS: tuple[str, ...] = ("feature", "system", "metric", "person", "date")
-"""What module C looks for. ``docs/modules/gap.md`` step 1 names these five.
+ENTITY_LABELS: tuple[str, ...] = ("feature", "system", "metric", "person", "date", "term")
+"""What module C looks for. ``docs/modules/gap.md`` step 1 names the first five.
 
 Deliberately not spaCy's own inventory: a model trained on news text emits
 ``ORG``, ``LOC`` and ``DATE``, and a meeting about a search ranking has no
 "organisations" in it worth graphing. Each implementation maps its own labels
 onto these, so the topic graph does not change shape when the model does.
+
+``term`` is the sixth and says *undecided*: a compound noun the meeting named,
+which is a ``feature`` or a ``system`` but which no general model can tell
+apart — those two are this product's vocabulary. It exists because without it
+the graph of a product meeting has no node for what the meeting was about
+(``pipeline.spoken`` carries the measurement). Deciding a term's kind is what
+#13's trained model is for, and until then a label that guesses would be a
+guess the template comparison later reads as fact.
 """
 
 
