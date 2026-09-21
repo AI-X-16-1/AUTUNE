@@ -48,6 +48,7 @@ documents cover how it is built.
 | Document | Contents |
 | --- | --- |
 | `workflow.md` | Branching, PRs, CODEOWNERS, commit format, language rule |
+| `demo-runbook.md` | The upload-to-screen path one command at a time, what to expect, where it breaks |
 | `conventions.md` | Naming, module file layout, API shape, errors, logging, frontend layout |
 | `migrations.md` | Alembic branch-per-module runbook |
 | `dependencies.md` | uv and pnpm workspaces, lockfile conflict policy |
