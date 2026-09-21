@@ -160,7 +160,7 @@ function DecisionRow({
               ? "직접 추가"
               : `${decision.summary ?? `근거 발화 ${decision.source_utterance_ids.length}건`} · 신뢰도 ${Math.round(decision.confidence * 100)}%`}
           </p>
-          {decision.sync_refs.length > 0 ? (
+          {decision.sync_refs?.length ? (
             <div
               className="mt-1 flex items-center gap-2 text-[var(--color-ink-muted)]"
               style={{ fontSize: "var(--text-metaSmall)" }}
