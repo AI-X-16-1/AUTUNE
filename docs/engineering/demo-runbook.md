@@ -1,21 +1,20 @@
 # Demo runbook — a recording in, a transcript on a screen
 
 The whole path, one command at a time, with what to expect at each step and
-what to look at when it does not happen. Written so the first end-to-end run
-after the pending decisions land is a checklist rather than an afternoon.
+what to look at when it does not happen. Written so an end-to-end run is a
+checklist rather than an afternoon.
 
 ```
 token ──> meeting ──> consent ──> upload ──> queue ──> worker ──> /meetings/{id}
- main      #259        #283        #259      #258      main        main
 ```
 
-The row under each step says where the code is. **Steps whose code is not on
-`main` are marked, and the fallback in section 5 skips them.** Everything on
-`main` in this document was run against `main` on 2026-09-18, and **the whole
-path was run end to end on 2026-09-21** on a local branch that merged #259 and
-#283 and stood in for #258 — a synthetic two-voice recording went from the
-upload to five rows on `/meetings/{id}` in a browser. What broke on that run is
-in section 6, marked *seen*.
+**Everything in this path is on `main`** as of 2026-09-21 (#300 gave the API a
+Celery app, #283 the consent route, #259 the upload and the job handover, #301
+the browser screens). Two ways through it: **section 3 is the browser** — one
+page, no `curl` — and **section 3b is the same path over HTTP**, for when a
+step needs isolating. The whole path was run end to end from the browser on
+2026-09-21 with a synthesized two-voice recording. What broke on the way is in
+section 6, marked *seen*.
 
 ## 1. Before anything
 
@@ -64,9 +63,37 @@ Expect from terminal 1:
 
 and `curl -s localhost:8000/health` returns `"env": "local"` and five modules.
 
-## 3. The steps
+## 3. The steps, from the browser
 
-### 3.1 A token — `main`
+Do 3b.1 once (a token, into the browser), then:
+
+1. Open `http://localhost:3000/meetings/new`.
+2. Title. The team is picked for you — the page reads `/api/audio/teams` for
+   the token's teams; if it says "속한 팀이 없습니다", the token is wrong or
+   terminal 1 is not up.
+3. Pick the recording (mp3 / wav / m4a, 500 MB). A wrong extension or size is
+   refused under the dropzone before anything is sent.
+4. **Tick the consent line.** The button stays disabled until you do, and that
+   is the design: the page sends `POST /consent` *before* the upload, because
+   B and C analyse only consented utterances (#190). Skip it and the demo shows
+   a transcript and no action items.
+5. "업로드하고 분석 시작". The page opens the meeting, attests, uploads, and
+   lands on `/meetings/{id}` — screen S12, six stages, "분석 중".
+6. Wait. The page polls the meeting every 3 s. Stages it cannot see say so
+   ("단계별 진행률은 아직 제공되지 않아 회의 상태로 표시합니다"); per-stage
+   progress needs a feed that does not exist. Terminal 2 is where the real
+   progress is (3b.5).
+7. When the worker finishes the page switches to the transcript on its own —
+   no reload. Rows with a time code, a speaker label (`SPEAKER_00`, …) and
+   masked text.
+
+If the run fails, S12 goes red and offers "다시 업로드", which goes back to
+`/meetings/new?meeting={id}`: same meeting, new recording. A meeting that
+finished refuses another upload (409), and the page shows the reason as-is.
+
+## 3b. The same steps over HTTP
+
+### 3b.1 A token
 
 ```bash
 curl -s -X POST localhost:8000/api/audio/dev/token \
@@ -95,7 +122,7 @@ echo "NEXT_PUBLIC_AUTUNE_DEV_TOKEN=$TOKEN" >> apps/web/.env.local
 (Or, later, in the browser console: `localStorage.setItem("autune.token", "…")`
 — that one wins, and needs no restart.)
 
-### 3.2 A meeting — **#259, not on `main`**
+### 3b.2 A meeting
 
 ```bash
 curl -s -X POST localhost:8000/api/audio/meetings -H "$AUTH" \
@@ -111,9 +138,10 @@ curl -s -X POST localhost:8000/api/audio/meetings -H "$AUTH" \
 export MEETING=mtg_…
 ```
 
-Until #259 merges, section 5.
+`GET /api/audio/meetings/$MEETING` (same header) returns the title, the status
+and the two privacy flags — what the page polls.
 
-### 3.3 Consent — **#283, not on `main`**
+### 3b.3 Consent
 
 ```bash
 curl -s -X POST localhost:8000/api/audio/meetings/$MEETING/consent -H "$AUTH" \
@@ -129,7 +157,7 @@ B and C analyse nothing — every participant row is `consented = false` and
 both filter on `true`. That is the design, not a bug (#190); it is also the
 most likely reason a demo shows a transcript and no action items.
 
-### 3.4 The upload — **#259, not on `main`**
+### 3b.4 The upload
 
 ```bash
 curl -s -X POST localhost:8000/api/audio/meetings/$MEETING/recording -H "$AUTH" \
@@ -141,22 +169,17 @@ curl -s -X POST localhost:8000/api/audio/meetings/$MEETING/recording -H "$AUTH" 
 ```
 
 202, and the response comes back before anything is transcribed. The file is
-now in `AUTUNE_AUDIO_TEMP_DIR` waiting for the worker.
+now in `AUTUNE_AUDIO_TEMP_DIR` as `{job_id}.upload`, and the queue carries the
+job id — never the path (`privacy.md` section 1, decision #275). Terminal 1
+shows `audio_transcription_started` then `audio_process_queued`.
 
-### 3.5 The queue — **#258, undecided; #275, undecided**
+### 3b.5 The queue and the worker
 
-This is the step that does not work yet, and the reason is not module A's
-code: the API process has no Celery app, so the enqueue goes to Celery's
-default broker and not to Redis (#258). Separately, handing the worker a path
-is the pattern `privacy.md` section 1 forbids by name, and #275 decides how
-that is allowed. **Until both are resolved, 3.4 returns 202 and the worker
-never hears about it.** Section 5.
-
-When it does work, terminal 2 shows, in this order:
+Terminal 2 shows, in this order:
 
 ```
-audio_process_started     meeting_id=mtg_…
-audio_decoded             seconds=…  source_format=.m4a
+audio_process_started     meeting_id=mtg_…  job_id=job_…
+audio_decoded             seconds=…  source_format=.upload
 transcript_masked         utterances=N  changed=M
 audio_deleted             bytes=…
 audio_process_finished    meeting_id=mtg_…  deleted=True  utterances=N  participants=K
@@ -164,17 +187,19 @@ event_published           event_name=autune.transcript.ready  subscribers=3
 ```
 
 `deleted=True` before `event_published` is invariant 11 being kept; if the
-order is ever different, stop.
+order is ever different, stop. `source_format=.upload` is expected: the file
+is named after the job and ffmpeg identifies the container from the bytes.
 
-### 3.6 The screen — `main`
+Before all that you may see `audio_orphan_deleted` lines — the sweep that runs
+at the start of every task, collecting uploads whose attempt is over. Normal.
+
+### 3b.6 The screen
 
 Open `http://localhost:3000/meetings/$MEETING`.
 
-- While the worker runs: "아직 전사된 내용이 없습니다". Utterances are written in
-  one transaction at the end, so there is nothing to show part-way. Honest, not
-  broken.
-- After: rows with a time code, a speaker label (`SPEAKER_00`, …) and masked
-  text. Phone numbers read `010-****-5678`.
+- While the worker runs: S12, "분석 중". After: the transcript. Section 3, steps
+  6–7.
+- Phone numbers read `010-****-5678`.
 - "실시간 보기" links to `/meetings/$MEETING/live` — S13 on fixture data, not a
   microphone. Say so if it is on screen.
 
@@ -184,7 +209,7 @@ The same thing over HTTP, for a terminal:
 curl -s -H "$AUTH" localhost:8000/api/audio/transcripts/$MEETING | head -c 600
 ```
 
-Without the header it is 403; that is the point of 3.1.
+Without the header it is 403; that is the point of 3b.1.
 
 ## 4. What the other modules should show
 
@@ -198,7 +223,7 @@ modules:
 | D | `autune.context.on_transcript_ready` … `autune.context.completed` | `GET /api/context/links/$MEETING` |
 | E | records B and D, waits for C, aggregates on timeout | `GET /api/intelligence/scores/$MEETING` after the timeout |
 
-If B's result is empty and 3.3 was skipped, that is why.
+If B's result is empty and the consent step (3, step 4 or 3b.3) was skipped, that is why.
 
 ### 4.1 Each of them needs configuration before it runs at all — seen
 
@@ -219,39 +244,38 @@ this table, which is what the run showed:
 pipeline complete and the screens fill; they do not make the results mean
 anything. Say which one the demo is using.
 
-## 5. The fallback — until #258 and #275 land
+## 5. Running the task by hand
 
-Everything on `main` works if the meeting row exists and the task is called
-directly in the worker's process. This is the demo that can be given today.
+Not needed for the demo any more. Kept because it is the fastest way to put a
+recording through the pipeline without the API, the queue or a browser — a
+model change, a masking check.
 
 ```bash
-# The meeting row, by hand (POST /meetings is #259)
+# A meeting and a job, by hand
 docker exec autune-postgres-1 psql -U autune -d autune -c \
   "INSERT INTO meetings (id, team_id, title, status, source, language,
    original_audio_deleted, pii_masked, created_at, updated_at)
    VALUES ('mtg_demo', '$TEAM', '데모 회의', 'analyzing', 'file_upload', 'ko',
-   false, false, now(), now());"
+   false, false, now(), now());
+   INSERT INTO aud_jobs (id, meeting_id, status) VALUES ('job_demo', 'mtg_demo', 'queued');"
 
-# Consent, by hand (POST /consent is #283) — after the transcript is written,
-# or every participant stays unconsented:
-#   UPDATE participants SET consented = true WHERE meeting_id = 'mtg_demo';
+# The file where the worker will look for it
+cp /path/to/recording.m4a "$AUTUNE_AUDIO_TEMP_DIR/job_demo.upload"
 
 # The task, in the same process the worker would run it in
 uv run python -c "
 from autune_audio.tasks import process_recording
-process_recording('mtg_demo', '/path/to/recording.m4a')
+process_recording('job_demo')
 "
 ```
 
-Two things about that call:
-
-- **It deletes the file.** That is what the task does (invariant 11). Point it
-  at a copy.
+- **It deletes the file.** That is what the task does (invariant 11). Copy,
+  do not move.
 - It loads Whisper and pyannote into the current process, so the first run is
   slow and the `HF_TOKEN` requirements above apply.
-
-Then `http://localhost:3000/meetings/mtg_demo`, and the `UPDATE` above before
-looking for B's results.
+- Consent, if you want B and C to produce anything: `POST /consent` (3b.3)
+  before the run, or `UPDATE participants SET consented = true WHERE
+  meeting_id = 'mtg_demo'` after it.
 
 ## 6. Where the first real run will break
 
@@ -264,15 +288,18 @@ Written down so the debugging starts from a list, not from nothing.
 | **Worker: B, C and D each raise on the first utterance; E never aggregates** — *seen* | Section 4.1. Not a bug; each needs a model it cannot find by default |
 | Worker raises an `IntegrityError` on a meeting id you never created, seconds after starting — *seen* | A message left in the shared Redis by somebody else's earlier run. Harmless; `redis-cli FLUSHDB` on a dev box if it annoys |
 | Worker log says `audio_deleted bytes=0` for a file that was not empty — *seen* | The adopted-file path does not count bytes. Cosmetic; the file is gone |
-| 3.1 works, 3.2 is 403 | The token's `team_id` is not the one in the body. Use the one the token route returned |
-| 3.4 is 409 | The meeting is already `analyzing` — a previous upload, or the SQL insert in section 5 set it. Only `scheduled` and `failed` accept a recording |
-| 3.4 is 413 after a long wait | 500 MB limit, enforced *after* Starlette has spooled the body (#265) |
-| 3.4 is 202, terminal 2 is silent | #258. The enqueue did not reach Redis. Section 5 |
-| Worker: `adopt` gets a path that does not exist | API and worker are on different filesystems. The task is handed a path (#275); they must share `AUTUNE_AUDIO_TEMP_DIR` |
+| 3b.1 works, 3b.2 is 403 | The token's `team_id` is not the one in the body. Use the one the token route returned |
+| 3b.4 is 409 | The meeting is already `analyzing` — a previous upload, or the SQL insert in section 5 set it. Only `scheduled` and `failed` accept a recording |
+| 3b.4 is 413 after a long wait | 500 MB limit, enforced *after* Starlette has spooled the body (#265) |
+| 3b.4 is 500 "could not be queued", meeting `failed`, file gone — *seen* | The API could not reach the broker. Before #300 this was every upload; now it means Redis is down or `AUTUNE_REDIS_URL` differs between terminal 1 and 2. The file is deleted on purpose: a recording whose task does not exist has nobody to delete it |
+| 3b.4 is 202, terminal 2 is silent | Terminal 2 is not listening on `gpu`, or is on a different Redis db than terminal 1 |
+| Worker: `decode` fails on a file that does not exist | API and worker are on different filesystems. The worker rebuilds the path from the job id; both must share `AUTUNE_AUDIO_TEMP_DIR` |
 | Worker: pyannote error naming `segmentation-3.0` | Licence accepted on one repo, not three |
 | Worker: `ffmpeg is not installed` | It is not, in the worker's environment |
-| Worker finishes, page shows rows, B's result is empty | 3.3 was skipped, or done after the run without the `UPDATE`. Consent is per meeting and must be there when participant rows are written |
-| Worker finishes twice for one upload | `acks_late` redelivery after a long run. The second run dies at `adopt` and the meeting stays `complete` — expected |
+| Worker finishes, page shows rows, B's result is empty | 3b.3 was skipped (the consent line in the browser was not ticked), or done after the run without the `UPDATE`. Consent is per meeting and must be there when participant rows are written |
+| Worker logs `audio_process_declined` for a job | `acks_late` redelivery after a long run. The second delivery is turned away at `claim_job` and the meeting stays `complete` — expected |
+| Page says "속한 팀이 없습니다" | The browser's token is for a user on no team, or is stale. Redo 3b.1 |
+| Page: transcript is one long row, one speaker — *seen* | The recording was synthesized (`say`); pyannote groups TTS voices as one speaker. Use a real recording for the demo |
 | Page shows an error state | The browser has no token. `.env.local` needs a restart of terminal 3; `localStorage` does not |
 
 ## 7. Afterwards
