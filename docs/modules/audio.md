@@ -170,9 +170,11 @@ Tracked as a shared issue.
 
 **A file whose task is lost after the enqueue is collected by the sweep.**
 `service.sweep_orphans` compares every file in `AUTUNE_AUDIO_TEMP_DIR` against
-`aud_jobs`: a file whose job is `done`, `failed` or `superseded`, or that no
-job knows, is deleted; a `queued` or `running` job older than
-`AUTUNE_AUDIO_ORPHAN_AFTER_HOURS` is failed and its file deleted. #209 swept on
+`aud_jobs`: a file whose job is `done`, `failed` or `superseded` is deleted;
+a `queued` or `running` job older than `AUTUNE_AUDIO_ORPHAN_AFTER_HOURS` is
+failed and its file deleted. A file no job knows — written but not yet
+claimed, or renamed but not yet committed — is deleted only once it is older
+than that threshold, since a request may still be inside it. #209 swept on
 mtime and could delete a file a late task was about to adopt; deciding against
 the database is what makes this one safe. It runs at the start of every
 `process_recording` until there is a periodic trigger (#207).

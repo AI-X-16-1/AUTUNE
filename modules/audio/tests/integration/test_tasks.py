@@ -22,7 +22,7 @@ import pytest
 import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
-from autune_audio import tasks
+from autune_audio import service, tasks
 from autune_audio.config import AudioSettings
 from autune_audio.diarization import FakeDiarizer
 from autune_audio.models import TranscriptionJob
@@ -414,12 +414,9 @@ def test_the_sweep_collects_uploads_whose_attempt_is_over(
         status: _upload(settings, _job(db_session, meeting, status))
         for status in ("done", "failed", "superseded")
     }
-    unknown = _upload(settings, "job_nobody_knows")
-
     tasks.process_recording(job)
 
     assert all(not path.exists() for path in leftovers.values())
-    assert not unknown.exists()
 
 
 def test_the_sweep_leaves_a_live_attempt_alone(
@@ -521,3 +518,55 @@ def test_a_failed_publish_fails_the_meeting_so_it_can_be_re_uploaded(
         sa.select(sa.func.count()).select_from(Utterance).where(Utterance.meeting_id == meeting)
     ).one()
     assert stored == len(SPOKEN), "the transcript is kept; only the announcement failed"
+
+
+def test_a_failure_after_the_publish_does_not_undo_complete(
+    pipeline: dict,
+    db_session: Session,
+    job: str,
+    meeting: str,
+    recording: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    published: list[tuple[str, dict]],
+) -> None:
+    """The publish went out; the one-line commit after it died (@lsh2217 on
+    #259). Four modules hold the event, so the meeting must stay
+    ``complete`` -- turning it red would invite a re-upload that announces
+    it twice. The job is left ``running`` for the sweep, which will fail
+    the job and leave the meeting alone."""
+
+    def dies(*_: object, **__: object) -> None:
+        raise RuntimeError("connection dropped after publish")
+
+    monkeypatch.setattr(service, "mark_published", dies)
+
+    with pytest.raises(RuntimeError, match="after publish"):
+        tasks.process_recording(job)
+
+    assert len(published) == 1
+    assert db_session.get(Meeting, meeting).status == "complete"
+    assert db_session.get(TranscriptionJob, job).status == "running"
+
+
+def test_the_sweep_spares_a_job_file_whose_row_is_not_committed_yet(
+    pipeline: dict,
+    db_session: Session,
+    job: str,
+    meeting: str,
+    recording: Path,
+    settings: AudioSettings,
+) -> None:
+    """Between ``assign`` and the upload request's commit the file has a job's
+    name and no visible row (@lsh2217 on #259). A fresh one is left alone;
+    one older than the threshold is a request that died, and goes."""
+    import os
+
+    fresh = _upload(settings, "job_not_committed_yet")
+    dead = _upload(settings, "job_request_died")
+    ago = (datetime.now(tz=UTC) - timedelta(hours=settings.orphan_after_hours + 1)).timestamp()
+    os.utime(dead, (ago, ago))
+
+    tasks.process_recording(job)
+
+    assert fresh.exists()
+    assert not dead.exists()

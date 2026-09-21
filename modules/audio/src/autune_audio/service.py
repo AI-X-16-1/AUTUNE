@@ -239,8 +239,14 @@ def claim_job(session: Session, *, job_id: str) -> Claim:
     ``mark_failed`` is not called for a declined job because nothing about the
     *meeting* failed. Raises ``NotFoundError`` for an id nobody queued: a
     broker carrying a message this database has no record of should be loud.
+
+    **The row is locked for the read**, for the same reason the meeting row
+    is at the claim: two deliveries of one message arriving together would
+    both read ``queued`` and both run, and the second's ``finally`` would
+    delete the file under the first's decode (@lsh2217 on #259). The second
+    waits, reads ``running``, and is declined.
     """
-    job = session.get(TranscriptionJob, job_id)
+    job = session.get(TranscriptionJob, job_id, with_for_update=True)
     if job is None:
         raise NotFoundError("job", job_id)
     if job.status != "queued":
@@ -270,15 +276,14 @@ def mark_failed(session: Session, *, job_id: str) -> None:
     the race #275 was opened over; keying failure on the job rather than the
     meeting is what closes it.
 
-    **Only the current attempt can fail the meeting, and only from
-    ``analyzing`` -- or from ``complete`` when its own publish failed.**
-    ``failed`` means "will not reach the four consumers". A redelivery of a
-    finished job never gets here: ``claim_job`` declines it, so the case
-    that used to matter -- a worker dying after the commit and the publish,
-    the redelivered run failing at decode, the meeting turning red over a
-    transcript four modules already hold -- cannot reach this function. What
-    can is a publish that failed after the commit, and that meeting *should*
-    go red: nobody was told, and ``failed`` is what lets a re-upload in.
+    **Only an ``analyzing`` meeting can fail here.** ``failed`` means "will
+    not reach the four consumers", and once the meeting is ``complete`` this
+    function cannot tell whether they were told: the sweep calls it for a
+    job that sat ``running`` too long, and that job may have published and
+    died one line later. Flipping ``complete`` here would invite a
+    re-upload that announces the meeting twice (#194; @lsh2217 on #259). The
+    one caller that *knows* the publish did not happen -- the task, from the
+    ``except`` around ``publish`` itself -- calls ``mark_unannounced``.
     """
     job = session.get(TranscriptionJob, job_id)
     if job is None:
@@ -292,11 +297,7 @@ def mark_failed(session: Session, *, job_id: str) -> None:
     job.finished_at = datetime.now(tz=UTC)
 
     meeting = session.get(Meeting, job.meeting_id)
-    if meeting is not None and meeting.status in ("analyzing", "complete"):
-        # ``complete`` only reaches here from a publish that failed after the
-        # commit: this job is still ``running`` (a redelivery of a done job
-        # never gets this far -- ``claim_job`` declines it), so the meeting
-        # was completed by *this* attempt and nobody was told.
+    if meeting is not None and meeting.status == "analyzing":
         meeting.status = "failed"
         log.info("audio_meeting_failed", meeting_id=meeting.id, job_id=job_id)
     else:
@@ -307,6 +308,34 @@ def mark_failed(session: Session, *, job_id: str) -> None:
             status=None if meeting is None else meeting.status,
         )
     session.flush()
+
+
+def mark_unannounced(session: Session, *, job_id: str) -> None:
+    """The transcript is committed and the meeting ``complete``, and the
+    event did not go out. Fail both so a re-upload can.
+
+    Called from exactly one place: the ``except`` around ``publish`` in the
+    task, which is the only code that knows the publish itself raised --
+    as opposed to the bookkeeping after it (``mark_published``), whose
+    failure must *not* turn a delivered meeting red. Without this a broker
+    that refuses the event leaves a ``complete`` meeting no consumer has
+    heard of and that refuses another upload (@kjfcvx12 on #259).
+
+    The rows stay: they are masked and correct. The re-run replaces them,
+    which is #194's ``utt_`` churn -- worse than a republish, better than a
+    meeting nobody can reach.
+    """
+    job = session.get(TranscriptionJob, job_id)
+    if job is None:
+        raise NotFoundError("job", job_id)
+    meeting = session.get(Meeting, job.meeting_id)
+    if meeting is None:
+        raise NotFoundError("meeting", job.meeting_id)
+    job.status = "failed"
+    job.finished_at = datetime.now(tz=UTC)
+    meeting.status = "failed"
+    session.flush()
+    log.warning("audio_meeting_unannounced", meeting_id=meeting.id, job_id=job_id)
 
 
 def mark_complete(session: Session, *, job_id: str) -> None:
@@ -374,11 +403,17 @@ def sweep_orphans(
     the file and the job are failed -- a job that old has no worker.
 
     A file without the ``.upload`` suffix is one ``handover`` wrote and never
-    got to ``assign``: the request died between the write and the claim. There
-    is no job to consult, and the write-to-assign window is one request, so
-    one older than the threshold is deleted on mtime. That is the one place
-    the clock decides, and it decides about a file no task can be about to
-    adopt.
+    got to ``assign``: the request died between the write and the claim. A
+    file *with* a job's name that the database does not know is the next
+    window along -- renamed, not yet committed. Neither has a row to
+    consult, and both windows are one request long, so both are deleted on
+    mtime only past the threshold. Those are the two places the clock
+    decides, and it decides about files no task can be about to adopt.
+
+    One query for all the job files, not one per file: this runs at the
+    start of every task and its cost grows with the backlog. Concurrent
+    sweeps are not serialised; they can both delete the same already-gone
+    file (``missing_ok``) and both log it, which is redundant, not wrong.
 
     Runs at the start of every ``process_recording``, skipping ``keep`` -- the
     caller's own job -- until there is a periodic trigger for it (#207, #258).
@@ -389,21 +424,40 @@ def sweep_orphans(
         return []
 
     cutoff = datetime.now(tz=UTC) - timedelta(hours=settings.orphan_after_hours)
+
+    def stale(path: Path) -> bool:
+        return datetime.fromtimestamp(path.stat().st_mtime, tz=UTC) < cutoff
+
+    files = [path for path in directory.iterdir() if path.is_file()]
+    by_job = {jid: path for path in files if (jid := storage.job_id_of(path)) is not None}
+    if keep is not None:
+        by_job.pop(keep, None)
+    jobs = {
+        job.id: job
+        for job in session.scalars(
+            sa.select(TranscriptionJob).where(TranscriptionJob.id.in_(list(by_job)))
+        )
+    }
+
     swept: list[str] = []
-    for path in directory.iterdir():
-        if not path.is_file():
-            continue
-        job_id = storage.job_id_of(path)
-        if job_id is None:
-            if datetime.fromtimestamp(path.stat().st_mtime, tz=UTC) < cutoff:
+    for path in files:
+        if storage.job_id_of(path) is None:
+            if stale(path):
                 storage.delete_orphan(path)
                 log.info("audio_orphan_unassigned_deleted")
             continue
-        if job_id == keep:
-            continue
 
-        job = session.get(TranscriptionJob, job_id)
-        if job is not None and job.status in ("queued", "running"):
+    for job_id, path in by_job.items():
+        job = jobs.get(job_id)
+        if job is None:
+            # A file with a job's name and no row yet is a request between
+            # ``assign`` and its commit -- milliseconds, but a concurrent
+            # sweep lands in them (@lsh2217 on #259). Same grace as an
+            # unassigned file: the clock decides, about a file no task can be
+            # about to adopt yet.
+            if not stale(path):
+                continue
+        elif job.status in ("queued", "running"):
             if job.created_at >= cutoff:
                 continue
             mark_failed(session, job_id=job_id)

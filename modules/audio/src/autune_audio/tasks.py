@@ -20,7 +20,7 @@ from autune_audio.persistence import persist_transcript, transcript_payload
 from autune_audio.pipeline import transcribe
 from autune_audio.quality import detect_repetition
 from autune_audio.speakers import Utterance, assign_speakers
-from autune_audio.storage import adopt, upload_path
+from autune_audio.storage import adopt, delete_orphan, upload_path
 from autune_contracts.events import TRANSCRIPT_READY
 from autune_core import get_logger
 from autune_core.db import session_scope
@@ -75,11 +75,11 @@ def process_recording(job_id: str) -> None:
     committed and ``complete`` by then; if the broker then refuses the event,
     B, C, D and E never hear of the meeting, and a ``complete`` meeting
     refuses another upload -- a dead end (@kjfcvx12 on #259, item 4). So the
-    publish is inside the ``except`` that calls ``mark_failed``: the rows
+    publish has its own ``except``, calling ``mark_unannounced``: the rows
     stay (they are masked and correct), the meeting goes to ``failed``, and a
-    re-upload is the recovery. The re-run replaces the utterances, which is
-    the ``utt_`` id churn of #194 -- worse than a republish, better than a
-    meeting nobody can reach.
+    re-upload is the recovery. Only the publish gets that treatment -- a
+    failure in the bookkeeping *after* it means the consumers were told, and
+    the meeting stays ``complete`` (@lsh2217 on #259).
 
     Safe to run twice, which ``acks_late`` makes a requirement rather than a
     nicety -- and ``apps/worker`` sets no ``visibility_timeout``, so Redis uses
@@ -105,8 +105,7 @@ def process_recording(job_id: str) -> None:
         if claim.owns_file:
             # Superseded or finished: nobody else will delete this attempt's
             # upload. A running first delivery keeps its own.
-            with adopt(upload_path(job_id, settings)):
-                pass
+            delete_orphan(upload_path(job_id, settings))
         log.info("audio_process_declined", job_id=job_id, meeting_id=meeting_id)
         return
 
@@ -137,10 +136,6 @@ def process_recording(job_id: str) -> None:
             )
             service.mark_complete(session, job_id=job_id)
             payload = transcript_payload(session, meeting_id=meeting_id)
-
-        publish(TRANSCRIPT_READY, payload.model_dump(mode="json"))
-        with session_scope() as session:
-            service.mark_published(session, job_id=job_id)
     except Exception as error:
         # A fresh session: whatever went wrong may have left the one above
         # rolled back, and this write has to land regardless.
@@ -153,6 +148,21 @@ def process_recording(job_id: str) -> None:
             error=type(error).__name__,
         )
         raise
+
+    # Three steps, three outcomes, and only the middle one may fail the
+    # meeting. The publish is the moment the four consumers learn of it: if
+    # *it* raises, nobody was told and the meeting must go back to failed so
+    # a re-upload can. If the bookkeeping after it raises, they *were* told,
+    # and turning the meeting red would invite a second announcement (#194).
+    try:
+        publish(TRANSCRIPT_READY, payload.model_dump(mode="json"))
+    except Exception as error:
+        with session_scope() as session:
+            service.mark_unannounced(session, job_id=job_id)
+        log.warning("audio_publish_failed", meeting_id=meeting_id, error=type(error).__name__)
+        raise
+    with session_scope() as session:
+        service.mark_published(session, job_id=job_id)
 
     log.info(
         "audio_process_finished",
