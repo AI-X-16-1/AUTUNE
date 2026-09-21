@@ -44,6 +44,16 @@ def _model() -> WhisperModel:
     )
 
 
+def warm_up() -> None:
+    """Load the model now rather than on the first transcription.
+
+    The live channel calls this before it tells the browser it is ready, so a
+    missing model or an unaccepted licence surfaces as a refused connection
+    rather than as a stall on the first utterance.
+    """
+    _model()
+
+
 def _glossary_kwargs(glossary: str, mode: str) -> dict[str, str]:
     """Which of Whisper's two prompt channels carries the glossary.
 
