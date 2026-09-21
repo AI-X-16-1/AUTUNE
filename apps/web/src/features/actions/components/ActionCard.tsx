@@ -75,11 +75,13 @@ export function ActionCard({
           style={{ fontSize: "var(--text-metaSmall)" }}
         >
           {item.sync_refs.map((ref) => (
-            <span key={`${ref.system}-${ref.url}`} className="flex items-center gap-1">
-              <StatusDot variant={ref.url ? "confirmed" : "critical"} />
-              <span style={{ fontFamily: "var(--font-mono)" }}>
-                {ref.external_id ?? ref.system}
-              </span>
+            <span
+              key={ref.system}
+              className="flex items-center gap-1"
+              title={ref.url ? undefined : "동기화 확인 중"}
+            >
+              <StatusDot variant={ref.url ? "confirmed" : "progress"} />
+              <span>{ref.system}</span>
             </span>
           ))}
         </div>
