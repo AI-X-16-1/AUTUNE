@@ -44,6 +44,7 @@ uv run uvicorn autune_api.main:app --reload
 
 # 2 — worker, on every queue; audio tasks route to `gpu`
 uv run celery -A autune_worker.celery_app worker -Q default,cpu_heavy,gpu -l info
+#   Windows: add --pool=solo (README.md); the prefork pool keeps killing its children there
 
 # 3 — web                                                                :3000
 pnpm --filter @autune/web dev
@@ -54,10 +55,11 @@ pnpm --filter @autune/web dev
 `autune_api.main:app`, not `apps.api.main:app`: the `apps/` directories are not
 importable names, the packages inside them are (#228).
 
-Expect from terminal 1:
+Expect from terminal 1 (console format under `AUTUNE_ENV=local`; JSON is the
+non-local renderer):
 
 ```
-{"event": "router_registered", "module": "audio", "prefix": "/api/audio"}
+[info     ] router_registered  module=audio  prefix=/api/audio
 … five of those …
 ```
 
@@ -175,20 +177,25 @@ shows `audio_transcription_started` then `audio_process_queued`.
 
 ### 3b.5 The queue and the worker
 
-Terminal 2 shows, in this order:
+Terminal 2 shows, in this order (copied from a real run, not from the code):
 
 ```
-audio_process_started     meeting_id=mtg_…  job_id=job_…
+audio_process_started     job_id=job_…  meeting_id=mtg_…
 audio_decoded             seconds=…  source_format=.upload
-transcript_masked         utterances=N  changed=M
-audio_deleted             bytes=…
-audio_process_finished    meeting_id=mtg_…  deleted=True  utterances=N  participants=K
+diarized                  speakers=K  turns=T
+audio_deleted             bytes=0
+transcript_masked         changed=M  meeting_id=mtg_…  utterances=N
+transcript_persisted      audio_deleted=True  meeting_id=mtg_…  participants=K
 event_published           event_name=autune.transcript.ready  subscribers=3
+audio_process_finished    deleted=True  meeting_id=mtg_…  participants=K  utterances=N
 ```
 
-`deleted=True` before `event_published` is invariant 11 being kept; if the
-order is ever different, stop. `source_format=.upload` is expected: the file
-is named after the job and ffmpeg identifies the container from the bytes.
+**`audio_deleted` before `transcript_persisted`** is invariant 11 being kept:
+the recording is gone before the first row is written. If that pair is ever
+the other way round, stop. `bytes=0` is expected on this path — the adopted
+file is not counted, only confirmed gone. `source_format=.upload` is expected
+too: the file is named after the job and ffmpeg identifies the container from
+the bytes.
 
 Before all that you may see `audio_orphan_deleted` lines — the sweep that runs
 at the start of every task, collecting uploads whose attempt is over. Normal.
@@ -236,7 +243,7 @@ this table, which is what the run showed:
 
 | Module | Failed with | For a demo of the shape | For real output |
 | --- | --- | --- | --- |
-| B | `CLASSIFIER_IMPL=local needs AUTUNE_EXTRACTION_CLASSIFIER_CHECKPOINT` — no trained checkpoint is published | `AUTUNE_EXTRACTION_CLASSIFIER_IMPL=fake` | a checkpoint from `python -m autune_extraction.training`, or `hosted` with an endpoint |
+| B | `CLASSIFIER_IMPL=local needs AUTUNE_EXTRACTION_CLASSIFIER_CHECKPOINT` — no trained checkpoint is published | `AUTUNE_EXTRACTION_CLASSIFIER_IMPL=fake` | `…_IMPL=local`, `…_CHECKPOINT=<ckpt1>,<ckpt2>` (comma = ensemble, #245; the checkpoints are on B's machine, #112), `…_DEVICE=cpu`. Needs transformers, which `uv sync --all-packages` does not install: `uv run --with transformers celery …` or the `local-models` extra. First load ~60 s |
 | C | `No module named 'spacy'` | `AUTUNE_GAP_NER_IMPL=fake` | `uv sync --package autune-gap --extra local-models` then `python -m spacy download ko_core_news_lg` |
 | D | `embedder inference endpoint http://autune-embed.internal:8080 is not reachable` | `AUTUNE_CONTEXT_EMBEDDER_IMPL=fake`, `…_RERANKER_IMPL=fake`, `…_NLI_IMPL=fake` | `kure_v1_local` etc. with the `local-models` extra, or the `_ENDPOINT`s pointed at a running inference server |
 
@@ -274,8 +281,15 @@ process_recording('job_demo')
 - It loads Whisper and pyannote into the current process, so the first run is
   slow and the `HF_TOKEN` requirements above apply.
 - Consent, if you want B and C to produce anything: `POST /consent` (3b.3)
-  before the run, or `UPDATE participants SET consented = true WHERE
+  before the run — since #283 the attestation is read for every participant
+  row written later — or `UPDATE participants SET consented = true WHERE
   meeting_id = 'mtg_demo'` after it.
+- **This runs module A and nothing else.** The process has only A's tasks
+  registered, so `publish` finds no subscribers, logs
+  `event_no_subscribers`, and B, C, D, E never hear of the meeting. That is
+  the difference between this and terminal 2, which imports all five. For
+  the other modules, use the queue.
+- Section 7's cleanup uses `$MEETING`; here the meeting is `mtg_demo`.
 
 ## 6. Where the first real run will break
 
