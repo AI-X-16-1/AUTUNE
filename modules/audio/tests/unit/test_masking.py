@@ -49,6 +49,9 @@ class TestTheDocumentedFormat:
             ("010 — 1234 — 5678", "010 — **** — 5678"),  # em dash
             ("02\u00a0123\u00a04567", "**\u00a0***\u00a04567"),  # no-break space
             ("010\u30001234\u30005678", "010\u3000****\u30005678"),  # full-width space
+            # The shape Whisper wrote on the first end-to-end run, which `main`
+            # stored in the clear (demo runbook, 2026-09-21).
+            ("연락처는 010 -12345678이니까", "연락처는 010 -****5678이니까"),
         ],
     )
     def test_every_separator_the_patterns_accept_survives_masking(

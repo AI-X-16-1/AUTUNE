@@ -477,6 +477,18 @@ PARENTHESISED_AREA_CODE = [("phone", "(02)123-4567 로 전화 주세요")]
 # what Word, HWP and Notion put between number groups, and a full-width space is
 # what a Korean IME emits. Both let a complete landline through untouched -- nine
 # digits, so `account` could not catch it either (#211 review).
+# What Whisper actually wrote, on the first end-to-end run (2026-09-21, the demo
+# runbook). A phone number read aloud as 공일공 일이삼사 오육칠팔 came back as
+# `010 -12345678`: a space, a hyphen, then eight digits run together. On `main`
+# the one-character separator could not cross " -" and eight contiguous digits
+# are short of the twelve the catch-all wants, so no pattern matched, the
+# storage guard -- the same patterns -- passed it, and it was stored in the
+# clear with `pii_masked = true`. The wide separator matches it as a phone
+# number. Not invented: the row is the shape a real transcript had.
+AS_WHISPER_WROTE_IT = [
+    ("phone", "외부 협력사 연락처는 010 -12345678이니까 필요하면 연락 주세요."),
+]
+
 UNUSUAL_HORIZONTAL_SPACE = [
     ("phone", "02\u00a0123\u00a04567"),  # no-break space
     ("phone", "010\u30001234\u30005678"),  # ideographic (full-width) space
@@ -488,7 +500,11 @@ UNUSUAL_HORIZONTAL_SPACE = [
 
 @pytest.mark.parametrize(
     ("category", "text"),
-    SPACED_AROUND_SEPARATOR + TYPOGRAPHIC_DASH + PARENTHESISED_AREA_CODE + UNUSUAL_HORIZONTAL_SPACE,
+    SPACED_AROUND_SEPARATOR
+    + TYPOGRAPHIC_DASH
+    + PARENTHESISED_AREA_CODE
+    + UNUSUAL_HORIZONTAL_SPACE
+    + AS_WHISPER_WROTE_IT,
 )
 def test_a_wider_separator_is_still_the_same_number(category: str, text: str) -> None:
     assert category in {cat for _, _, cat in find_pii(text)}
