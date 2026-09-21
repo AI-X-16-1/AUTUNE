@@ -8,13 +8,10 @@ Owner: 김민경.
 ``depends_on`` pins the core revision that creates ``meetings``, so
 ``downgrade core@base`` drops this table first (docs/engineering/migrations.md).
 
-This revision chains onto the branch anchor, as does the consent revision on
-#283; whichever of the two lands second moves its ``down_revision`` onto the
-other. Two heads on one branch label apply cleanly under ``upgrade heads``
-in the meantime.
+Chains onto the consent revision (#283), so the audio branch has one head.
 
 Revision ID: 5e7a1c9b2d40
-Revises: 997549fc0e39
+Revises: 3c9d2e1f0a4b
 Create Date: 2026-09-21 15:00:00.000000
 """
 
@@ -26,7 +23,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "5e7a1c9b2d40"
-down_revision: str | None = "997549fc0e39"
+down_revision: str | None = "3c9d2e1f0a4b"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = "d34994600a9a"  # core: shared_entities
 

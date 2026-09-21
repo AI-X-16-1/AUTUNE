@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Literal
 
 import numpy as np
 from pydantic import BaseModel, Field
@@ -137,3 +138,19 @@ class MeetingState(BaseModel):
 
     meeting_id: str
     status: str
+
+
+class ConsentAttestation(BaseModel):
+    """What a member sends to say everyone in the recording consented.
+
+    ``Literal[True]`` rather than ``bool``: ``false`` is not a revocation and
+    not a no-op, it is a request this route has no meaning for, and 422 says so.
+    Revocation is S10/S11 (#190).
+    """
+
+    attested: Literal[True]
+
+
+class ConsentState(BaseModel):
+    meeting_id: str
+    attested: bool
