@@ -25,11 +25,13 @@ The uploaded recording exists only for the duration of transcription.
   the file after the job (`{job_id}.upload`) and the worker derives the path
   from the id it was queued with (`storage.upload_path`). The two ends never
   exchange a path.
-- Collect orphans. A task can be lost after the enqueue; a periodic sweep
-  compares every file in the temp directory against its job's status in the
-  database and deletes the ones whose attempt is over or has been running
-  longer than a job can (`service.sweep_orphans`). Never on mtime alone — that
-  deletes a file a late task is about to adopt.
+- Collect orphans. A task can be lost after the enqueue; a sweep compares
+  every file in the temp directory against its job's status in the database
+  and deletes the ones whose attempt is over or has been running longer than
+  a job can (`service.sweep_orphans`). Never on mtime alone — that deletes a
+  file a late task is about to adopt. Today it runs at the start of every
+  transcription task, so an orphan waits for the next upload; a periodic
+  trigger is #207.
 - Set `privacy.original_audio_deleted = true` in `TranscriptReady` only after
   the file is actually gone.
 
