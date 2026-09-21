@@ -100,10 +100,18 @@ export function ActionCard({
  * and calling it hand-added would print the distinction edit cost is measured
  * on the wrong way round.
  */
+/**
+ * The line under the title: what to read to decide if the item is real.
+ *
+ * `summary` -- a preview of the sources beyond the title itself -- stands in
+ * for the count when there is one; the full quotations stay drawer-only
+ * either way, so this is never more than the one line was.
+ */
 function reasonFor(item: ActionItemRead): string {
   if (item.origin === "user") return "직접 추가";
   const sources = item.source_utterance_ids?.length ?? 0;
-  return isCandidate(item) ? `후보 · 근거 발화 ${sources}건` : `근거 발화 ${sources}건`;
+  const base = item.summary ?? `근거 발화 ${sources}건`;
+  return isCandidate(item) ? `후보 · ${base}` : base;
 }
 
 function isOverdue(dueDate: string | null | undefined): boolean {
