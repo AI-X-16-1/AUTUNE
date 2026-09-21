@@ -7,9 +7,23 @@ Document every new variable in docs/engineering/environments.md and add it to
 from __future__ import annotations
 
 from functools import lru_cache
+from typing import Literal
 
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+MAX_UPLOAD_BYTES = 500 * 1024 * 1024
+"""The largest recording an upload endpoint accepts. Matches the dropzone on
+design screen S03.
+
+Enforced while the bytes are written rather than from ``UploadFile.size``: that
+is a number the client sent, and it is ``None`` on a request with no
+Content-Length.
+
+Here rather than beside either endpoint because both of them enforce it — the
+real upload route and the local dev page — and a limit that is written twice is
+a limit that ends up meaning two things.
+"""
 
 
 class AudioSettings(BaseSettings):
@@ -31,6 +45,16 @@ class AudioSettings(BaseSettings):
     at a synced folder" is now enforced rather than requested.
 
     See docs/architecture/privacy.md section 1.
+    """
+
+    orphan_after_hours: int = 6
+    """How long a queued or running job may hold a recording before the sweep
+    treats it as abandoned, fails it, and deletes the file.
+
+    Six hours is three times the longest meeting the pipeline is sized for at
+    the measured ~1.27x real time, plus a queue wait. A job older than that has
+    no worker; its file is a recording with no owner (privacy.md section 1).
+    See ``service.sweep_orphans``.
     """
 
     hf_token: str = ""
@@ -62,6 +86,19 @@ class AudioSettings(BaseSettings):
     without a glossary, 86% with ``hotwords``, 28% with ``prompt``, 52% with
     both. A setting rather than a constant so the comparison can be re-run on a
     new model without editing code. See ``pipeline._glossary_kwargs``.
+    """
+
+    recogniser: Literal["spoken_numbers", "none"] = "spoken_numbers"
+    """The second PII detector, behind ``masking.EntityRecogniser``.
+
+    ``spoken_numbers`` finds the five categories in numbers a person read out
+    one digit at a time -- the shapes a pattern cannot describe. ``none``
+    switches it off, which is how the evaluation harness measures the patterns
+    alone and how a leak is attributed to one detector or the other.
+
+    There is no hosted value and there will not be one. This runs over the
+    unmasked transcript, and invariant 11 says that string does not leave the
+    process it was made in.
     """
 
     diarization_model: str = "pyannote/speaker-diarization-3.1"

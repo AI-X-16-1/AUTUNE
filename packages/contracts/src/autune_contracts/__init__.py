@@ -26,12 +26,14 @@ from .events import (
     GAP_COMPLETED,
     INTELLIGENCE_COMPLETED,
     MODULES,
+    TERMINAL_EVENTS,
     TRANSCRIPT_READY,
 )
 from .extraction import (
     ActionItem,
     AmbiguousAgreement,
     Classification,
+    Decision,
     ExternalRef,
     ExtractionResult,
 )
@@ -52,6 +54,7 @@ __all__ = [
     "validate_major_version",
     # events
     "TRANSCRIPT_READY",
+    "TERMINAL_EVENTS",
     "EXTRACTION_COMPLETED",
     "EVENTS",
     "GAP_COMPLETED",

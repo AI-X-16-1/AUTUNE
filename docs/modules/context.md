@@ -486,12 +486,19 @@ confirmation flow feed threshold tuning.
   per-person speaking ratio. This module does not compute one.
 - `ctx_decision_versions.key_stakeholders_absent` records who was *not* present
   when a decision changed. Attendance is already shared data (`participants`),
-  so this is a precomputation, not a new disclosure. It exists only to fire the
-  decision-drift warning to the team and to the absent person — never a
-  per-person aggregate ("how often is X absent from decisions"), never a
-  dashboard column, never a ranking. Treated the same as `privacy.md` §3's
-  logic about small-meeting distributions: the raw event is fine, an aggregate
-  over a person is not. (Raised by the PR #90 reviewers; settled here.)
+  so this is a precomputation, not a new disclosure — but only inside the
+  channels that already know who is asking: the `ContextLinks` event to E and
+  the decision-drift Slack DM to the absent person themself, via
+  `SlackClient.send_personal`. **`DecisionVersionRead` (the `GET
+  /api/context/decisions*` read API) does not carry this field.** No route
+  under `/api/context` checks the requester's team membership yet (#156), and
+  a thread's whole point is spanning meetings, so an unauthenticated GET would
+  let anyone walk every thread and build exactly the per-person aggregate this
+  module has otherwise avoided ("how often is X absent from decisions"). Raised
+  by the PR #90 reviewers, thought settled for #144, reopened once #204 (S22)
+  showed the field rendered on screen from an unauthenticated route — see
+  #188. Re-add it to the read API once #156 ships route auth; nothing else
+  about the field changes.
 
 ## Phased delivery
 

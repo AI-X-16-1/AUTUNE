@@ -39,7 +39,7 @@ from typing import Any
 
 from celery import current_app
 
-from autune_contracts import EVENTS
+from autune_contracts import EVENTS, TERMINAL_EVENTS
 
 from .logging import get_logger
 
@@ -79,6 +79,17 @@ def subscribers(event: str) -> list[str]:
     )
 
 
+def _any_module_tasks() -> bool:
+    """Whether this process has any of our tasks registered at all.
+
+    The question is not "does this event have consumers" but "was this process
+    built to have any": a worker that never imported `autune_<module>.tasks`
+    answers no to every event, and that is not the same as an event nobody
+    subscribes to.
+    """
+    return any(name.startswith(EVENT_PREFIX) for name in current_app.tasks)
+
+
 def publish(event: str, payload: dict[str, Any]) -> list[str]:
     """Send ``payload`` to every task subscribed to ``event``. Returns their names.
 
@@ -113,11 +124,27 @@ def publish(event: str, payload: dict[str, Any]) -> list[str]:
 
     targets = subscribers(event)
     if not targets:
-        # Warning rather than silence: a terminal event looks exactly like a
-        # consumer whose task name has a typo in it, and only one of those is
-        # fine. apps/worker/tests/test_registration.py tells them apart.
-        # `event_name`, not `event`: structlog takes the first positional as
-        # the field it calls `event`, and passing both is a TypeError.
+        # Three different things looked identical here, and the harmless one
+        # happens on every meeting -- which is how the other two got buried.
+        #
+        # `event_name`, not `event`: structlog takes the first positional as the
+        # field it calls `event`, and passing both is a TypeError.
+        if not _any_module_tasks():
+            # Nothing of ours is registered at all, so this process never
+            # imported the module tasks. Every event published from here reaches
+            # nobody and the meeting is not analysed. Raising rather than
+            # logging for the same reason the undeclared-event check above
+            # raises: it is a deployment mistake, it will not fix itself, and a
+            # log line is what it had before this was reported (#170).
+            raise RuntimeError(
+                f"{event!r} reached no task because no autune task is registered in "
+                "this process. publish() needs the module tasks imported -- run it "
+                "from apps/worker, or import autune_<module>.tasks first."
+            )
+        if event in TERMINAL_EVENTS:
+            # The pipeline ended. Recorded, not warned about.
+            log.info("event_terminal", event_name=event)
+            return []
         log.warning("event_no_subscribers", event_name=event)
         return []
 

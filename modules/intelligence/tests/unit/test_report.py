@@ -23,6 +23,7 @@ def test_body_is_a_no_meetings_message_when_nothing_was_scored() -> None:
         grade_distribution={},
         gap_distribution={},
         action_item_completion_rate=None,
+        partial_meeting_count=0,
     )
 
     assert "2026-09-07" in body
@@ -39,6 +40,7 @@ def test_body_reports_meeting_count_and_average_grade() -> None:
         grade_distribution={"A": 2, "B": 2},
         gap_distribution={},
         action_item_completion_rate=None,
+        partial_meeting_count=0,
     )
 
     assert "4건" in body
@@ -54,6 +56,7 @@ def test_body_names_the_most_common_gap_type() -> None:
         grade_distribution={"B": 3},
         gap_distribution={"ownership": 5, "schedule": 2},
         action_item_completion_rate=None,
+        partial_meeting_count=0,
     )
 
     assert "ownership" in body
@@ -69,6 +72,7 @@ def test_body_omits_the_gap_line_when_no_gaps_were_found() -> None:
         grade_distribution={"A": 2},
         gap_distribution={},
         action_item_completion_rate=None,
+        partial_meeting_count=0,
     )
 
     assert "갭" not in body
@@ -83,6 +87,7 @@ def test_body_includes_action_item_completion_rate_when_measured() -> None:
         grade_distribution={"A": 2},
         gap_distribution={},
         action_item_completion_rate=0.5,
+        partial_meeting_count=0,
     )
 
     assert "50%" in body
@@ -97,6 +102,37 @@ def test_body_omits_the_completion_line_when_not_measured() -> None:
         grade_distribution={"A": 2},
         gap_distribution={},
         action_item_completion_rate=None,
+        partial_meeting_count=0,
     )
 
     assert "완료율" not in body
+
+
+def test_body_includes_partial_analysis_count_when_some_meetings_were_partial() -> None:
+    body = service._report_body_markdown(
+        period_start=date(2026, 9, 7),
+        period_end=date(2026, 9, 14),
+        meeting_count=4,
+        average_value=0.8,
+        grade_distribution={"A": 4},
+        gap_distribution={},
+        action_item_completion_rate=None,
+        partial_meeting_count=1,
+    )
+
+    assert "부분 분석 1건" in body
+
+
+def test_body_omits_the_partial_analysis_line_when_none_were_partial() -> None:
+    body = service._report_body_markdown(
+        period_start=date(2026, 9, 7),
+        period_end=date(2026, 9, 14),
+        meeting_count=2,
+        average_value=0.9,
+        grade_distribution={"A": 2},
+        gap_distribution={},
+        action_item_completion_rate=None,
+        partial_meeting_count=0,
+    )
+
+    assert "부분 분석" not in body

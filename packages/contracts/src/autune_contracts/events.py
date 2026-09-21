@@ -33,5 +33,19 @@ Additive only, like everything in this package: appending an event is fine,
 renaming one changes a task name in somebody else's module.
 """
 
+TERMINAL_EVENTS: Final = (INTELLIGENCE_COMPLETED,)
+"""Events nothing consumes, on purpose.
+
+The pipeline ends at E, so `autune.intelligence.completed` reaches no task and
+that is the design rather than a mistake. `publish` needs to know which is which:
+without this list, "nobody is listening" is one message for a normal end of a
+meeting and for a consumer whose task name has a typo in it, and the first one
+happens on every meeting. A warning that fires on the normal path is a warning
+nobody reads, and it was the only signal the second case had.
+
+Declared here rather than in the worker's tests, which is where it started: a
+list that decides a log level in production cannot live in a test.
+"""
+
 MODULES: Final = ("audio", "extraction", "gap", "context", "intelligence")
 """Registration order for apps/api and apps/worker. Nothing else reads this."""

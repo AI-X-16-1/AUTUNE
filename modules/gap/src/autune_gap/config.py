@@ -20,6 +20,38 @@ class GapSettings(BaseSettings):
     """A gap at or above this scores ``high``, and only ``high`` is surfaced by
     default. Precision, not recall — see docs/modules/gap.md, "Metric"."""
 
+    medium_threshold: float = 0.5
+    """Down to here is ``medium``; below it ``low``. #35 puts the band at
+    0.5–0.7 and says the numbers live here rather than in the code."""
+
+    default_template: str = "general"
+    """Which domain template applies to a meeting nobody chose one for.
+
+    Always applied rather than inferred: a template picked from the title or
+    from the topics would, when wrong, make every one of its items a false gap,
+    and the metric is precision (#22). A meeting overrides it explicitly through
+    ``PUT /api/gap/templates/{meeting_id}``, stored in ``gap_meeting_template``."""
+
+    partial_centrality: float = 0.4
+    """A matched topic below this carried too little of the meeting to count the
+    item as settled, so the gap is raised as ``partial`` rather than dropped.
+    Centrality is PageRank normalised so the meeting's top topic is 1."""
+
+    partial_damping: float = 0.7
+    """What a ``partial`` finding's score is multiplied by. "Named but thin" is
+    a weaker claim than "never came up", and a false gap costs more than a
+    missed one."""
+
+    weight_template: float = 0.4
+    weight_coverage: float = 0.4
+    weight_participation: float = 0.2
+    """The three risk inputs (#35): how much the item's absence matters, how
+    thinly the meeting covered it, and how much of the room was silent on it.
+
+    Relative, not absolute — ``detect.score`` renormalises over the signals it
+    could actually measure, so a missing item scores on the first two alone
+    instead of being charged a zero for participation it has no topic to read."""
+
     ner_impl: str = "spacy"
     """Which entity extractor to run: ``spacy`` or ``fake``.
 

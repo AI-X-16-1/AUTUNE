@@ -90,22 +90,19 @@ export function DecisionTimeline({ versions }: { versions: DecisionVersionRead[]
 }
 
 /**
- * Names who was absent when the decision changed and what the NLI model
- * concluded — the block S22 puts on every ochre node.
+ * Names what the NLI model concluded about the decision change — the block
+ * S22 puts on every ochre node.
  *
  * Independent of the quote above it: an expired predecessor blanks
- * `previous_statement`, but `nli_label` and `key_stakeholders_absent` are
- * this version's own fields and outlive the meeting they compared against.
- * The reason a decision changed is exactly what a reader still wants once the
- * old wording is gone — dropping it there would make S22 quietest at the
- * moment it matters most.
+ * `previous_statement`, but `nli_label` is this version's own field and
+ * outlives the meeting it compared against. Who was absent is not rendered
+ * here — `DecisionVersionRead` carries no `key_stakeholders_absent` until
+ * route auth exists (#156, see #188); the absent person hears about it by
+ * Slack DM instead.
  */
 function ReasonBlock({ version }: { version: DecisionVersionRead }) {
   const parts: string[] = [];
   if (version.nli_label !== null) parts.push(`NLI: ${NLI_LABEL[version.nli_label]}`);
-  if (version.key_stakeholders_absent.length > 0) {
-    parts.push(`불참: ${version.key_stakeholders_absent.join(", ")}`);
-  }
   if (parts.length === 0) return null;
 
   return (

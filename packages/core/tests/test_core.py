@@ -59,6 +59,33 @@ def test_local_tolerates_the_default_secret() -> None:
     assert Settings(env="local").secret_key.startswith("local-development-only")
 
 
+_NON_LOCAL_KWARGS = {"secret_key": "a-real-generated-secret", "encryption_key": "a-real-fernet-key"}
+
+
+def test_open_cors_is_refused_outside_local() -> None:
+    """A wildcard origin outside local defeats the point of an allowlist."""
+    with pytest.raises(ValueError, match="AUTUNE_CORS_ALLOWED_ORIGINS"):
+        Settings(env="production", cors_allowed_origins="*", **_NON_LOCAL_KWARGS)
+
+
+def test_insecure_cors_origin_is_refused_outside_local() -> None:
+    with pytest.raises(ValueError, match="AUTUNE_CORS_ALLOWED_ORIGINS"):
+        Settings(
+            env="production", cors_allowed_origins="http://app.autune.com", **_NON_LOCAL_KWARGS
+        )
+
+
+def test_https_cors_origin_is_accepted_outside_local() -> None:
+    origins = "https://app.autune.com"
+    settings = Settings(env="production", cors_allowed_origins=origins, **_NON_LOCAL_KWARGS)
+    assert settings.cors_allowed_origins == origins
+
+
+def test_local_tolerates_any_cors_origin() -> None:
+    origins = "http://localhost:3000"
+    assert Settings(env="local", cors_allowed_origins=origins).cors_allowed_origins == origins
+
+
 def test_errors_render_a_consistent_body() -> None:
     for error in (NotFoundError("meeting", "mtg_1"), PrivacyViolationError("nope")):
         body = error.to_dict()["error"]
