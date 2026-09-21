@@ -71,6 +71,16 @@ def process_recording(job_id: str) -> None:
     erased. The payload is read back from the committed rows
     (``transcript_payload``) rather than assembled from what was computed.
 
+    **But a publish that fails still fails the meeting.** The transcript is
+    committed and ``complete`` by then; if the broker then refuses the event,
+    B, C, D and E never hear of the meeting, and a ``complete`` meeting
+    refuses another upload -- a dead end (@kjfcvx12 on #259, item 4). So the
+    publish is inside the ``except`` that calls ``mark_failed``: the rows
+    stay (they are masked and correct), the meeting goes to ``failed``, and a
+    re-upload is the recovery. The re-run replaces the utterances, which is
+    the ``utt_`` id churn of #194 -- worse than a republish, better than a
+    meeting nobody can reach.
+
     Safe to run twice, which ``acks_late`` makes a requirement rather than a
     nicety -- and ``apps/worker`` sets no ``visibility_timeout``, so Redis uses
     its default hour and a meeting past about 47 minutes at ~1.27x real time is
@@ -127,6 +137,10 @@ def process_recording(job_id: str) -> None:
             )
             service.mark_complete(session, job_id=job_id)
             payload = transcript_payload(session, meeting_id=meeting_id)
+
+        publish(TRANSCRIPT_READY, payload.model_dump(mode="json"))
+        with session_scope() as session:
+            service.mark_published(session, job_id=job_id)
     except Exception as error:
         # A fresh session: whatever went wrong may have left the one above
         # rolled back, and this write has to land regardless.
@@ -140,7 +154,6 @@ def process_recording(job_id: str) -> None:
         )
         raise
 
-    publish(TRANSCRIPT_READY, payload.model_dump(mode="json"))
     log.info(
         "audio_process_finished",
         meeting_id=meeting_id,

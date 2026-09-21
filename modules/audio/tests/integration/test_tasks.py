@@ -189,8 +189,9 @@ def test_the_event_goes_out_after_the_transaction_closes(
     the opposite.
     """
     tasks.process_recording(job)
-    # The claim's transaction, the write's transaction, then the event.
-    assert pipeline["order"] == ["commit", "commit", "publish"]
+    # The claim's transaction, the write's transaction, the event, then the
+    # one-line transaction that marks the job done.
+    assert pipeline["order"] == ["commit", "commit", "publish", "commit"]
 
 
 def test_the_recording_is_gone_before_anything_is_written(
@@ -487,3 +488,36 @@ def test_the_sweep_collects_a_write_that_never_reached_a_claim(
 
     assert fresh.exists()
     assert not old.exists()
+
+
+def test_a_failed_publish_fails_the_meeting_so_it_can_be_re_uploaded(
+    pipeline: dict,
+    db_session: Session,
+    job: str,
+    meeting: str,
+    recording: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The dead end @kjfcvx12 found on #259: transcript committed, meeting
+    ``complete``, then the broker refuses the event -- four modules never
+    hear of the meeting and a ``complete`` meeting refuses another upload.
+
+    The rows stay (they are masked and correct); the meeting goes to
+    ``failed`` and accepts a re-upload. That re-run replaces the utterances,
+    which is #194's id churn -- accepted here as the lesser cost.
+    """
+
+    def broker_down(*_: object, **__: object) -> list[str]:
+        raise ConnectionError("broker refused the event")
+
+    monkeypatch.setattr(tasks, "publish", broker_down)
+
+    with pytest.raises(ConnectionError):
+        tasks.process_recording(job)
+
+    assert db_session.get(Meeting, meeting).status == "failed"
+    assert db_session.get(TranscriptionJob, job).status == "failed"
+    stored = db_session.scalars(
+        sa.select(sa.func.count()).select_from(Utterance).where(Utterance.meeting_id == meeting)
+    ).one()
+    assert stored == len(SPOKEN), "the transcript is kept; only the announcement failed"

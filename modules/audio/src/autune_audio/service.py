@@ -168,8 +168,14 @@ def start_transcription(session: Session, *, meeting_id: str, uploader: User) ->
     the recording is named after. Any earlier attempt for this meeting still
     ``queued`` or ``running`` is marked ``superseded`` so that, should it turn
     up late, the worker declines it rather than racing this one.
+
+    **The row is locked for the read.** Two uploads finishing together -- a
+    double click, a retry -- would both read ``scheduled`` and both queue, and
+    the meeting would be transcribed twice and announced twice with different
+    ``utt_`` ids, which breaks D's lineage (@kjfcvx12 on #259, #194). With the
+    lock the second waits, reads ``analyzing``, and gets the 409 it should.
     """
-    meeting = session.get(Meeting, meeting_id)
+    meeting = session.get(Meeting, meeting_id, with_for_update=True)
     if meeting is None:
         raise NotFoundError("meeting", meeting_id)
     require_team_member(session, user_id=uploader.id, team_id=meeting.team_id)
@@ -264,14 +270,15 @@ def mark_failed(session: Session, *, job_id: str) -> None:
     the race #275 was opened over; keying failure on the job rather than the
     meeting is what closes it.
 
-    **Only an ``analyzing`` meeting can fail.** ``failed`` means "was being
-    transcribed and will not finish", and a meeting in any other state was not
-    being transcribed. The case that matters is ``complete``: with
-    ``acks_late`` a worker can die after the commit and the publish and before
-    the ack, and the redelivered run dies at decode because the recording is
-    already gone. That death is not the meeting's — its transcript is in the
-    database and four modules hold it — and turning it red would invite a
-    re-upload that replaces a transcript consumers already have.
+    **Only the current attempt can fail the meeting, and only from
+    ``analyzing`` -- or from ``complete`` when its own publish failed.**
+    ``failed`` means "will not reach the four consumers". A redelivery of a
+    finished job never gets here: ``claim_job`` declines it, so the case
+    that used to matter -- a worker dying after the commit and the publish,
+    the redelivered run failing at decode, the meeting turning red over a
+    transcript four modules already hold -- cannot reach this function. What
+    can is a publish that failed after the commit, and that meeting *should*
+    go red: nobody was told, and ``failed`` is what lets a re-upload in.
     """
     job = session.get(TranscriptionJob, job_id)
     if job is None:
@@ -285,7 +292,11 @@ def mark_failed(session: Session, *, job_id: str) -> None:
     job.finished_at = datetime.now(tz=UTC)
 
     meeting = session.get(Meeting, job.meeting_id)
-    if meeting is not None and meeting.status == "analyzing":
+    if meeting is not None and meeting.status in ("analyzing", "complete"):
+        # ``complete`` only reaches here from a publish that failed after the
+        # commit: this job is still ``running`` (a redelivery of a done job
+        # never gets this far -- ``claim_job`` declines it), so the meeting
+        # was completed by *this* attempt and nobody was told.
         meeting.status = "failed"
         log.info("audio_meeting_failed", meeting_id=meeting.id, job_id=job_id)
     else:
@@ -310,6 +321,11 @@ def mark_complete(session: Session, *, job_id: str) -> None:
     Not ``delivered`` and not ``awaiting_confirmation``: those are B's and E's
     to decide, later in the meeting's life. A only says that its own step
     finished.
+
+    **The job stays ``running``.** ``done`` means the four consumers were
+    told, and they are told after this commits (``mark_published``). A job
+    marked done here would make a failed publish unrecoverable:
+    ``mark_failed`` rightly refuses to touch a finished job.
     """
     job = session.get(TranscriptionJob, job_id)
     if job is None:
@@ -318,9 +334,23 @@ def mark_complete(session: Session, *, job_id: str) -> None:
     if meeting is None:
         raise NotFoundError("meeting", job.meeting_id)
 
+    meeting.status = "complete"
+    session.flush()
+
+
+def mark_published(session: Session, *, job_id: str) -> None:
+    """The event went out; this attempt is over.
+
+    The last write of a successful run, in its own small transaction after
+    ``publish``. From here a redelivery is declined at ``claim_job`` as a
+    finished job; between ``mark_complete`` and this line it is declined as
+    ``running``, which leaves the file to this run -- the same outcome.
+    """
+    job = session.get(TranscriptionJob, job_id)
+    if job is None:
+        raise NotFoundError("job", job_id)
     job.status = "done"
     job.finished_at = datetime.now(tz=UTC)
-    meeting.status = "complete"
     session.flush()
 
 
