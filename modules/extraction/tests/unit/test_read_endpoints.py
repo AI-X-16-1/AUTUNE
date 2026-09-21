@@ -260,6 +260,43 @@ def test_the_list_carries_source_ids_but_never_their_text(
     assert "금요일까지" not in response.text
 
 
+def test_a_single_source_has_no_summary_because_description_already_is_it(
+    client: TestClient, session: Session
+) -> None:
+    utterance(session, "utt_1", 1.0, "제가 금요일까지 정리할게요")
+    action_item(session, "act_1", sources=("utt_1",))
+
+    (entry,) = client.get(f"{PREFIX}/action-items").json()
+
+    assert entry["summary"] is None
+
+
+def test_several_sources_get_a_summary_of_the_longest_one(
+    client: TestClient, session: Session
+) -> None:
+    """Rule-based prototype: the longest source, truncated. Not a model --
+    checked against the drawer's full quotation, not generated prose."""
+    utterance(session, "utt_1", 1.0, "네")
+    utterance(session, "utt_2", 2.0, "일정이 밀리면 다음 주 화요일로 옮기는 게 낫겠어요")
+    utterance(session, "utt_3", 3.0, "좋아요")
+    action_item(session, "act_1", sources=("utt_1", "utt_2", "utt_3"))
+
+    (entry,) = client.get(f"{PREFIX}/action-items").json()
+
+    assert entry["summary"] == "일정이 밀리면 다음 주 화요일로 옮기는 게 낫겠어요"
+
+
+def test_a_long_source_is_truncated() -> None:
+    from autune_extraction.service import SUMMARY_MAX_CHARS, _truncate
+
+    text = "가" * (SUMMARY_MAX_CHARS + 20)
+
+    truncated = _truncate(text)
+
+    assert len(truncated) == SUMMARY_MAX_CHARS
+    assert truncated.endswith("…")
+
+
 # --- GET /action-items/{id} -------------------------------------------------
 
 

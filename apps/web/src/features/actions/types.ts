@@ -59,6 +59,14 @@ export interface ActionItemRead extends ActionItem {
    */
   is_candidate: boolean;
   /**
+   * A one-line preview of the item's sources beyond `description` itself.
+   * Rule-based, not a model: the longest source utterance, truncated, and only
+   * when there is more than one source — with a single one `description`
+   * already is that sentence. `null` otherwise; the card falls back to the
+   * source count.
+   */
+  summary: string | null;
+  /**
    * The assignee's current display name, read fresh — never stored.
    * `assignee_label` is only "the name as spoken, kept when it does not
    * resolve to an account"; an identified assignee has no label at all, so a
