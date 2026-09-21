@@ -11,7 +11,11 @@ token ──> meeting ──> consent ──> upload ──> queue ──> worke
 
 The row under each step says where the code is. **Steps whose code is not on
 `main` are marked, and the fallback in section 5 skips them.** Everything on
-`main` in this document was run against `main` on 2026-09-18.
+`main` in this document was run against `main` on 2026-09-18, and **the whole
+path was run end to end on 2026-09-21** on a local branch that merged #259 and
+#283 and stood in for #258 — a synthetic two-voice recording went from the
+upload to five rows on `/meetings/{id}` in a browser. What broke on that run is
+in section 6, marked *seen*.
 
 ## 1. Before anything
 
@@ -23,6 +27,7 @@ The row under each step says where the code is. **Steps whose code is not on
 | Whisper weights | `large-v3` downloads on first use, several GB | run the worker once, early, and wait |
 | A recording | mp3 / wav / m4a, a few minutes, **people who have agreed to be the demo** | you have the file |
 | `AUTUNE_ENV=local` | the token route and the dev page exist only under it | `.env` (it is the default) |
+| `AUTUNE_CORS_ALLOWED_ORIGINS=http://localhost:3000` | the page sends `Authorization`, so the browser preflights, and the API answers a preflight only for listed origins (#241, opt-in) | `.env`. **Without it the page says "Failed to fetch"** and `curl` works fine — seen |
 
 ```bash
 cp .env.example .env                                   # once; fill AUTUNE_AUDIO_HF_TOKEN
@@ -195,6 +200,25 @@ modules:
 
 If B's result is empty and 3.3 was skipped, that is why.
 
+### 4.1 Each of them needs configuration before it runs at all — seen
+
+On the first end-to-end run every downstream task raised on its first
+utterance, and E — which aggregates only after a first completion — therefore
+did nothing. **With `.env.example` as-is, a real meeting produces module A's
+output and nothing else.** None of it is a code bug; each module ships a model
+it cannot find by default. The module owner's word on the right setting beats
+this table, which is what the run showed:
+
+| Module | Failed with | For a demo of the shape | For real output |
+| --- | --- | --- | --- |
+| B | `CLASSIFIER_IMPL=local needs AUTUNE_EXTRACTION_CLASSIFIER_CHECKPOINT` — no trained checkpoint is published | `AUTUNE_EXTRACTION_CLASSIFIER_IMPL=fake` | a checkpoint from `python -m autune_extraction.training`, or `hosted` with an endpoint |
+| C | `No module named 'spacy'` | `AUTUNE_GAP_NER_IMPL=fake` | `uv sync --package autune-gap --extra local-models` then `python -m spacy download ko_core_news_lg` |
+| D | `embedder inference endpoint http://autune-embed.internal:8080 is not reachable` | `AUTUNE_CONTEXT_EMBEDDER_IMPL=fake`, `…_RERANKER_IMPL=fake`, `…_NLI_IMPL=fake` | `kure_v1_local` etc. with the `local-models` extra, or the `_ENDPOINT`s pointed at a running inference server |
+
+`fake` implementations are deterministic stand-ins for tests. They make the
+pipeline complete and the screens fill; they do not make the results mean
+anything. Say which one the demo is using.
+
 ## 5. The fallback — until #258 and #275 land
 
 Everything on `main` works if the meeting row exists and the task is called
@@ -235,6 +259,11 @@ Written down so the debugging starts from a list, not from nothing.
 
 | Symptom | Likely cause |
 | --- | --- |
+| **Page says "Failed to fetch"; `curl` with the token works** — *seen* | CORS. The browser preflights because of `Authorization`, and the API answers `OPTIONS` with 405 unless `AUTUNE_CORS_ALLOWED_ORIGINS` lists the page's origin (section 1) |
+| **A phone number is in the transcript in the clear** — *seen* | Whisper wrote `공일공 일이삼사 오육칠팔` as `010 -12345678`: a space and a hyphen, then eight digits run together. On `main` the separator class is one character, so no pattern matches and the storage guard — same patterns — passes it too. **#211 catches it.** Until #211 merges, treat any spoken number in a demo recording as unmasked |
+| **Worker: B, C and D each raise on the first utterance; E never aggregates** — *seen* | Section 4.1. Not a bug; each needs a model it cannot find by default |
+| Worker raises an `IntegrityError` on a meeting id you never created, seconds after starting — *seen* | A message left in the shared Redis by somebody else's earlier run. Harmless; `redis-cli FLUSHDB` on a dev box if it annoys |
+| Worker log says `audio_deleted bytes=0` for a file that was not empty — *seen* | The adopted-file path does not count bytes. Cosmetic; the file is gone |
 | 3.1 works, 3.2 is 403 | The token's `team_id` is not the one in the body. Use the one the token route returned |
 | 3.4 is 409 | The meeting is already `analyzing` — a previous upload, or the SQL insert in section 5 set it. Only `scheduled` and `failed` accept a recording |
 | 3.4 is 413 after a long wait | 500 MB limit, enforced *after* Starlette has spooled the body (#265) |
