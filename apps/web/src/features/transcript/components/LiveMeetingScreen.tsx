@@ -6,10 +6,19 @@ import { useEffect, useState } from "react";
 import { Button } from "@/shared/ui/Button";
 
 import { attestConsent } from "../api";
-import { useLiveSession } from "../hooks/useLiveSession";
+import { useLiveSession, type LivePhase } from "../hooks/useLiveSession";
 import { useMicrophone } from "../hooks/useMicrophone";
 import type { RecordingState } from "../types";
 import { LiveTranscript } from "./LiveTranscript";
+
+/** The phases in which closing the tab loses audio that is not yet uploaded. */
+const LEAVING_LOSES_AUDIO = new Set<LivePhase>([
+  "connecting",
+  "recording",
+  "paused",
+  "uploading",
+  "upload_failed",
+]);
 
 /**
  * S13 with a microphone behind it: the container the route mounts.
@@ -20,9 +29,11 @@ import { LiveTranscript } from "./LiveTranscript";
  * (`useLiveSession`), and the gate before any of it starts.
  *
  * The gate is the minimum that keeps consent honest before S10's per-attendee
- * table exists: one checkbox, which calls `POST /meetings/{id}/consent`, and
- * `start` is disabled until it succeeds. Without it recording still works and
- * modules B and C analyse nothing — the screen says so in those words.
+ * table exists: one checkbox, which calls `POST /meetings/{id}/consent`. It
+ * does not block `start` — recording works without it and modules B and C
+ * analyse nothing — and the screen says so in those words. The button waits
+ * only while a consent request is in flight, so a tick is not lost to a
+ * start that races it.
  *
  * Speaker actions still log. Assigning a speaker writes `speaker_id` on a
  * shared entity, which only module A does and only through `/api/audio`; the
@@ -33,6 +44,7 @@ export function LiveMeetingScreen({ meetingId }: { meetingId: string }) {
   const microphone = useMicrophone();
   const live = useLiveSession(meetingId, microphone.stream);
   const [consented, setConsented] = useState(false);
+  const [consentPending, setConsentPending] = useState(false);
   const [consentError, setConsentError] = useState<string | null>(null);
 
   // Once the microphone is open and the session is idle, hand it to the
@@ -54,10 +66,11 @@ export function LiveMeetingScreen({ meetingId }: { meetingId: string }) {
     if (livePhase === "error") microphoneStop();
   }, [livePhase, microphoneStop]);
 
-  // A dropped tab mid-recording loses whatever the recorder has not
-  // uploaded yet; ask before that happens.
+  // A dropped tab loses whatever the recorder has not uploaded yet -- while
+  // it is connecting, recording, paused, or the upload is still in flight or
+  // waiting for a retry; ask before that happens.
   useEffect(() => {
-    if (live.phase !== "recording" && live.phase !== "paused") return;
+    if (!LEAVING_LOSES_AUDIO.has(live.phase)) return;
     const warn = (event: BeforeUnloadEvent) => {
       event.preventDefault();
     };
@@ -74,11 +87,14 @@ export function LiveMeetingScreen({ meetingId }: { meetingId: string }) {
     setConsented(false);
     setConsentError(null);
     if (!checked) return;
+    setConsentPending(true);
     try {
       await attestConsent(meetingId);
       setConsented(true);
     } catch (caught) {
       setConsentError(caught instanceof Error ? caught.message : "동의를 기록하지 못했습니다.");
+    } finally {
+      setConsentPending(false);
     }
   };
 
@@ -133,7 +149,7 @@ export function LiveMeetingScreen({ meetingId }: { meetingId: string }) {
           </p>
         )}
         <div className="mt-6">
-          <Button tone="primary" disabled={!consented} onClick={() => void onStart()}>
+          <Button tone="primary" disabled={consentPending} onClick={() => void onStart()}>
             녹음 시작
           </Button>
         </div>

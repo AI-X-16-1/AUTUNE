@@ -265,7 +265,8 @@ export function useLiveSession(meetingId: string, stream: MediaStream | null): L
       // still authorised, so the recording continues without the live view.
       setLiveLost(true);
       setError(message);
-      setPhase("recording"); // recording without the live view
+      // Recording without the live view -- unless a pause() already ran.
+      setPhase((p) => (p === "connecting" ? "recording" : p));
       return;
     }
 
@@ -273,16 +274,34 @@ export function useLiveSession(meetingId: string, stream: MediaStream | null): L
     // was still connecting. Do not resurrect a session nobody is waiting for.
     if (generation.current !== mine) return;
 
-    const ctx = new AudioContext();
-    await ctx.audioWorklet.addModule("/pcm-worklet.js");
-    const node = new AudioWorkletNode(ctx, "pcm-16k");
-    node.port.onmessage = (event: MessageEvent<ArrayBuffer>) => {
-      if (socket.current?.readyState === WebSocket.OPEN) socket.current.send(event.data);
-    };
-    ctx.createMediaStreamSource(stream).connect(node);
-    context.current = ctx;
-    worklet.current = node;
-    setPhase("recording");
+    let ctx: AudioContext | null = null;
+    try {
+      ctx = new AudioContext();
+      await ctx.audioWorklet.addModule("/pcm-worklet.js");
+      // addModule fetches the worklet. A stop() or unmount in that window
+      // must not let this continuation wire the microphone into a session
+      // nobody is running.
+      if (generation.current !== mine) {
+        void ctx.close();
+        return;
+      }
+      const node = new AudioWorkletNode(ctx, "pcm-16k");
+      node.port.onmessage = (event: MessageEvent<ArrayBuffer>) => {
+        if (socket.current?.readyState === WebSocket.OPEN) socket.current.send(event.data);
+      };
+      ctx.createMediaStreamSource(stream).connect(node);
+      context.current = ctx;
+      worklet.current = node;
+    } catch {
+      void ctx?.close();
+      if (generation.current !== mine) return;
+      // The worklet could not be loaded or wired: no PCM will reach the
+      // server, so no rows are coming. The recorder does not need it.
+      setLiveLost(true);
+      setError("라이브 전사 오디오를 준비하지 못했습니다. 녹음은 계속됩니다.");
+    }
+    // A pause() that ran while this was still connecting is not undone.
+    setPhase((p) => (p === "connecting" ? "recording" : p));
   }, [meetingId, stream, abandon]);
 
   const pause = useCallback(() => {
@@ -352,6 +371,14 @@ export function useLiveSession(meetingId: string, stream: MediaStream | null): L
       });
     }
     recorder.current = null;
+    if (chunks.current.length === 0) {
+      // Nothing was recorded (the recorder never produced a chunk): there is
+      // no upload to make, and an empty blob is not a recording.
+      blob.current = null;
+      setError("업로드할 녹음이 없습니다.");
+      setPhase("error");
+      return;
+    }
     blob.current = new Blob(chunks.current, { type: "audio/webm" });
     chunks.current = [];
 
