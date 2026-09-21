@@ -4,7 +4,9 @@ The unmasked transcription is a local variable in ``_row`` and is dead by the
 time the row exists. It is not logged, not kept on the object and not in any
 exception: ``TranscribeFailed`` carries the exception *type* of what went
 wrong and nothing else, because ffmpeg-style errors can quote what they were
-reading.
+reading. It is raised with its ``__cause__`` cut (``from None``), so nothing
+downstream -- a traceback, ``logger.exception``, an error tracker -- prints
+the original exception's message either.
 """
 
 from __future__ import annotations
@@ -55,6 +57,9 @@ class LiveSession:
         """One binary frame from the browser: PCM16, mono, 16 kHz."""
         if self.state != "recording":
             return []
+        # A stray odd-length frame is truncated, not raised on: one bad frame
+        # from the browser must not take the socket down.
+        pcm16 = pcm16[: len(pcm16) - len(pcm16) % 2]
         frame = np.frombuffer(pcm16, dtype="<i2").astype(np.float32) / 32768.0
         rows = []
         for segment in self._segmenter.feed(frame):
@@ -84,7 +89,7 @@ class LiveSession:
             transcription = await self._transcriber.run(segment.waveform)
         except Exception as exc:
             log.warning("live_segment_failed", error=type(exc).__name__)
-            raise TranscribeFailed(exc) from exc
+            raise TranscribeFailed(exc) from None
 
         spoken = " ".join(s.text.strip() for s in transcription.segments).strip()
         words = transcription.words

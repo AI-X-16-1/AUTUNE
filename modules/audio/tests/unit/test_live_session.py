@@ -6,6 +6,8 @@ say something about the session and nothing about Whisper.
 
 from __future__ import annotations
 
+import traceback
+
 import numpy as np
 import pytest
 
@@ -109,6 +111,27 @@ async def test_stop_flushes_the_open_utterance() -> None:
 
 
 @pytest.mark.asyncio
+async def test_stop_twice_is_idempotent() -> None:
+    live = session(saying("마지막"))
+    assert await feed(live, tone(1000)) == []  # no silence yet
+    await live.stop()
+
+    rows = await live.stop()
+
+    assert rows == []
+    assert live.state == "ended"
+
+
+@pytest.mark.asyncio
+async def test_an_odd_length_frame_is_truncated_not_raised_on() -> None:
+    live = session(saying("무관"))
+
+    rows = await live.on_frame(pcm(silence(200)) + b"\x00")
+
+    assert rows == []
+
+
+@pytest.mark.asyncio
 async def test_a_transcribe_failure_is_the_routes_to_report_and_the_session_continues() -> None:
     calls = 0
 
@@ -128,6 +151,24 @@ async def test_a_transcribe_failure_is_the_routes_to_report_and_the_session_cont
 
     assert [row.text for row in rows] == ["두 번째"]
     assert live.state == "recording"
+
+
+@pytest.mark.asyncio
+async def test_transcribe_failed_does_not_carry_the_causes_message() -> None:
+    """The cause is quotable (an ffmpeg-style error can echo what it read);
+    TranscribeFailed must not let it print through the traceback chain."""
+
+    def blows_up(waveform: Waveform) -> Transcription:
+        raise RuntimeError("quoting: 900101-1234567")
+
+    live = session(Transcriber(transcribe=blows_up, warm_up=lambda: None))
+
+    with pytest.raises(TranscribeFailed) as excinfo:
+        await feed(live, np.concatenate([tone(1000), silence(1000)]))
+
+    caught = excinfo.value
+    assert "1234567" not in "".join(traceback.format_exception(caught))
+    assert caught.kind == "RuntimeError"
 
 
 @pytest.mark.asyncio
