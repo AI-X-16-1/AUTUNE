@@ -211,13 +211,16 @@ exactly what a surveillance feature looks like. Read
   four-person meeting identifies everyone in it; anonymization does not help.
 - Team-level metrics — quality score, alignment, gap distribution — are
   aggregate by construction and contain no per-person speech volume.
-- The influence map (Phase 2) has the same constraint. Proposal adoption rate
-  and interruption patterns are per-person behavioral metrics; before building
-  it, settle who may see it. Assume "the person themselves" until decided
-  otherwise.
+- **The influence map (Phase 2) goes to the person themselves and nobody
+  else — decided on #28.** Proposal adoption rate, decision dominance, and
+  interruption patterns are per-person behavioral metrics, and unlike
+  `stance_by_role` they accumulate across meetings: a role-level rollup would
+  keep exposing the same people's patterns for as long as the role's roster
+  holds, getting easier to re-identify over time rather than harder. Deliver
+  it the way S23 delivers speaking ratio (subject only); it does not appear on
+  the shared dashboard (S26).
 
 ## Open questions
 
 - Quality score weighting: fixed weights or learned from user feedback.
 - Minimum meeting count before predictions are shown at all.
-- Influence map visibility model (Phase 2) — must be decided before build.

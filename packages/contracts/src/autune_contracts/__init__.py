@@ -30,12 +30,14 @@ from .events import (
     TRANSCRIPT_READY,
 )
 from .extraction import (
+    STANCE_MIN_IDENTIFIED_PER_ROLE,
     ActionItem,
     AmbiguousAgreement,
     Classification,
     Decision,
     ExternalRef,
     ExtractionResult,
+    RoleStance,
 )
 from .gap import Gap, GapReport, Participation, Topic
 from .intelligence import (
@@ -79,6 +81,8 @@ __all__ = [
     "ActionItem",
     "Classification",
     "Decision",
+    "RoleStance",
+    "STANCE_MIN_IDENTIFIED_PER_ROLE",
     "AmbiguousAgreement",
     "ExternalRef",
     # C -> E

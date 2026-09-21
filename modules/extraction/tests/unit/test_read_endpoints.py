@@ -22,7 +22,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
 from autune_contracts.extraction import ExtractionResult
-from autune_core import AutuneError, Base, Meeting, Utterance, get_session
+from autune_core import AutuneError, Base, Meeting, User, Utterance, get_session
 from autune_extraction import service
 from autune_extraction.config import ExtractionSettings
 from autune_extraction.confirmations import WEAK_ASSENT
@@ -32,6 +32,7 @@ from autune_extraction.models import (
     ExtClassification,
     ExtConfirmation,
     ExtDecision,
+    ExtDecisionReview,
     ExtDecisionSource,
     ExtEditEvent,
 )
@@ -43,12 +44,15 @@ PREFIX = "/api/extraction"
 
 TABLES = [
     Meeting.__table__,
+    User.__table__,
     Utterance.__table__,
     ExtActionItem.__table__,
     ExtActionItemSource.__table__,
     ExtClassification.__table__,
     ExtDecision.__table__,
     ExtDecisionSource.__table__,
+    # The result leaves out decisions a person rejected (#247), so it reads this.
+    ExtDecisionReview.__table__,
     ExtConfirmation.__table__,
     ExtEditEvent.__table__,
 ]
@@ -172,6 +176,44 @@ def test_filters_narrow_the_list_and_combine(client: TestClient, session: Sessio
     assert listed(assignee_id="user_a") == ["act_1", "act_3", "act_4"]
     assert listed(status="todo") == ["act_1", "act_2", "act_4"]
     assert listed(meeting_id=MEETING, assignee_id="user_a", status="todo") == ["act_1"]
+
+
+def test_an_identified_assignee_carries_their_current_name(
+    client: TestClient, session: Session
+) -> None:
+    """``assignee_label`` is only ever the unresolved fallback text -- an item
+    whose speaker *was* identified has no label, and a card reading only that
+    field shows an assigned item as unassigned. ``assignee_name`` is read fresh
+    from ``users`` for exactly this case, so a display name change reaches the
+    board on the next request rather than needing the item rewritten."""
+    session.add(User(id="user_a", email="a@example.com", display_name="박지영"))
+    session.flush()
+    action_item(session, "act_1", assignee_id="user_a")
+    action_item(session, "act_2")  # no assignee at all
+
+    body = client.get(f"{PREFIX}/action-items", params={"meeting_id": MEETING}).json()
+
+    by_id = {item["id"]: item for item in body}
+    assert by_id["act_1"]["assignee_name"] == "박지영"
+    assert by_id["act_2"]["assignee_name"] is None
+
+    detail = client.get(f"{PREFIX}/action-items/act_1").json()
+    assert detail["assignee_name"] == "박지영"
+
+
+def test_an_assignee_whose_account_is_gone_reports_no_name(
+    client: TestClient, session: Session
+) -> None:
+    """``assignee_id`` is ``SET NULL`` on account deletion in Postgres; this
+    unit suite's SQLite tables enforce no such foreign key, so the dangling id
+    this test writes is the shape a deleted-account row is left in. Reads
+    nothing, rather than raising on a user that used to exist."""
+    action_item(session, "act_1", assignee_id="user_ghost")
+
+    body = client.get(f"{PREFIX}/action-items", params={"meeting_id": MEETING}).json()
+
+    assert body[0]["assignee_id"] == "user_ghost"
+    assert body[0]["assignee_name"] is None
 
 
 def test_due_before_is_strict_and_drops_items_with_no_date(

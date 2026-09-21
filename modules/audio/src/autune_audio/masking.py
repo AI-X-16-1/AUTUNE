@@ -213,9 +213,22 @@ def _digits_to_keep(category: str, digits: list[str]) -> set[int]:
 
 def _hide(value: str, category: str, *, merged: bool = False) -> str:
     """Keep the shape a reader needs, remove the part they must not have."""
-    if merged:
+    if merged and category in _NUMERIC_CATEGORIES:
         # See _resolve_overlaps: a merged span's digit positions no longer line
-        # up with any one value's layout.
+        # up with any one value's layout, so nothing is kept for its position.
+        # Separators still are, for the two reasons the mixed-script branch
+        # below keeps them: the line has to go on reading as a number having
+        # been said, and `autune_audio.eval` scores masked against unmasked text
+        # token by token, which a span that swallows its own spaces cannot take
+        # part in.
+        #
+        # This used to keep `value[:1]`, which left the first digit of a
+        # run-together value standing — raised in #125 review as minor, and one
+        # digit less minor than it looked.
+        return "".join(char if char in _SHAPE_CHARS else MASK_CHAR for char in value)
+    if merged:
+        # A merged span the recogniser led: a name running into an address, and
+        # the first character stays the way a Korean document redacts a name.
         return value[:1] + MASK_CHAR * (len(value) - 1)
     if category == "email":
         # The first character and the domain: enough to tell two people apart in

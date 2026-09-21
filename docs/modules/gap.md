@@ -486,6 +486,63 @@ and dismissals feed threshold tuning.
 uv run --package autune-gap python -m autune_gap.eval
 ```
 
+Precision is measured over the `high` band, because that is what a reader
+actually sees — a `medium` false positive is not a false statement to anybody
+until something surfaces it. The all-severity figure is printed beside it; the
+two moving apart means the bands are doing the work rather than the comparison.
+Recall is printed and is not a target.
+
+Each false positive is also attributed to one of four causes, because the
+headline says the pipeline is overshooting and only the split says where to go:
+`partial` (the centrality threshold), `extraction` (the meeting said a noun the
+item's keywords do match and step 1 never turned it into a topic), `keyword`
+(the topic is in the graph and the keywords do not name it), and `no-noun` (the
+meeting settled the item with a verb or a date and said no noun that could name
+it). The last one is counted apart from the other three: matching keywords
+against topic labels is lexical and what settled the item is grammatical, so
+neither a keyword list nor a better extractor reaches it. The report prints how
+many of the false positives are reachable from this module at all.
+
+Attribution reads the case's hand-labeled `evidence` — the nouns a reader would
+point at as settling each item — against the topic labels the run produced. "In
+the graph" means a label contains the whole expected term, deliberately not
+`detect.match`'s containment-either-way: a label carrying half the noun is a
+step-1 truncation, and reading it as a match sends somebody to widen a keyword
+list over an extraction bug.
+
+**Nothing is scored against a number nobody measured.** Precision over a run
+that raised no gaps is reported as "not measured", not as 0.0 or 1.0 — both
+would be a claim about a pipeline that said nothing. A case that labels no
+`evidence` has its false positives reported as `unclassified` rather than
+guessed into a cause. Cases whose graph came out
+empty are listed separately for the same reason: `detect.compare` raises nothing
+for them on purpose, so they pull recall down for a reason that belongs to step
+1.
+
+**Point it at a disposable database.** The harness creates a team per case and
+deletes it when the case is scored, so every synthetic row it writes reaches
+deletion through `meetings.id` — but it writes to whatever
+`AUTUNE_DATABASE_URL` names, which on a shared development database is somebody
+else's. The docker-compose database in
+`../engineering/environments.md` is the intended target.
+
+The split between `missing` and `partial` is read off `gap_related_topics`, and
+that reading has a failure mode shaped exactly like a result: an empty link
+table says "every gap is missing". The harness cross-checks it against the
+stored `gap_gaps.title`, which `detect` composes from the coverage state, and
+stops with exit 2 if the two disagree rather than printing a cause split built
+on one of them.
+
+The committed set (`eval/fixtures/gap_detection_v1.json`) is **four authored
+meetings, and is not the PRD figure** — that one comes from five to ten real
+team meetings in W5, and four cases cannot carry a statistical claim. It is a
+regression gate: a template keyword that starts matching everything, or a
+threshold that moves a band, fails it visibly. The set is closed-world (every
+template item is labeled settled or genuinely missing) and the loader refuses a
+case where it is not, because otherwise a precision figure measures the
+labeler's diligence rather than the pipeline. No real meeting content is
+committed.
+
 ## Privacy notes
 
 - The participation matrix records **whether** a participant spoke on a topic,

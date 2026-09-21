@@ -105,8 +105,25 @@ hand.
 | `cpu_heavy` | B, C, D model inference | Higher concurrency |
 | `default` | Integrations, notifications, aggregation | Fast, chatty |
 
-Route with `task_routes` in `apps/worker`. A long task on `default` blocks
-Slack notifications; a short task on `gpu` wastes an expensive worker.
+Route with `TASK_ROUTES` in `autune_core.celery_app`, the one place the routes
+exist. A long task on `default` blocks Slack notifications; a short task on
+`gpu` wastes an expensive worker.
+
+## One app, every process
+
+`autune_core.celery_app.make_celery_app` builds the app and makes it the one
+`celery.current_app` returns — in the calling thread and, via `set_default`, in
+every other thread. `apps/worker` calls it with `include_tasks=True` and gets
+the full registry; `apps/api` calls it with `include_tasks=False` and gets a
+client that sends by task name with the same broker and routes, without
+importing a single `tasks.py` (#258).
+
+Before this, the API process had no app, `current_app` was Celery's built-in
+default with a broker nobody runs, and an upload returned 202 into nothing.
+
+A client's registry is empty, so `publish` from the API process finds no
+subscribers. Publishing from a request is not a supported path today; the
+request enqueues its own module's task by name, and the worker publishes.
 
 ## Payloads
 

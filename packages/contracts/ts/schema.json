@@ -191,7 +191,7 @@
       "description": "D's output. Topic linking and decision lineage have different inputs.\n\nTopic linking needs only the transcript, so it runs in parallel with B and C.\nDecision lineage needs B's decisions, so it runs after B. D publishes once\nboth are in — or, if B never reports, with an empty ``decision_lineage`` and\n``\"extraction\"`` in ``missing_sources``. A failure in B must not cost the\nuser their topic links.",
       "properties": {
         "contract_version": {
-          "default": "2.0",
+          "default": "2.1",
           "title": "Contract Version",
           "type": "string"
         },
@@ -255,6 +255,14 @@
           "minimum": 0,
           "title": "Confidence",
           "type": "number"
+        },
+        "stance_by_role": {
+          "description": "Per role, never per person. Empty when no role cleared the gate or stance was not computed; the two are not distinguished.",
+          "items": {
+            "$ref": "#/$defs/RoleStance"
+          },
+          "title": "Stance By Role",
+          "type": "array"
         }
       },
       "required": [
@@ -388,7 +396,7 @@
     "ExtractionResult": {
       "properties": {
         "contract_version": {
-          "default": "2.0",
+          "default": "2.1",
           "title": "Contract Version",
           "type": "string"
         },
@@ -502,7 +510,7 @@
     "GapReport": {
       "properties": {
         "contract_version": {
-          "default": "2.0",
+          "default": "2.1",
           "title": "Contract Version",
           "type": "string"
         },
@@ -551,7 +559,7 @@
     "IntelligenceSnapshot": {
       "properties": {
         "contract_version": {
-          "default": "2.0",
+          "default": "2.1",
           "title": "Contract Version",
           "type": "string"
         },
@@ -742,6 +750,41 @@
       "title": "RoleAlignment",
       "type": "object"
     },
+    "RoleStance": {
+      "description": "How many people in one role backed a decision or raised a concern on it.\n\nCounts, never identities. There is no participant id, user id or speaker\nlabel here, and adding one is a privacy violation rather than an additive\nchange: who opposed a decision is a per-person record of behaviour in a\nmeeting, the same shape docs/architecture/privacy.md section 3 forbids for\nspeaking ratios.\n\nA role appears only when the meeting had at least\n`STANCE_MIN_IDENTIFIED_PER_ROLE` identified people in it. In a small team a\nrole is a person, and a count over one person is that person's stance.\n\nPeople are counted by distinct ``user_id``, each in at most one of the two\ncounts, so ``supporting + concerns <= identified``. A person who spoke on the\ndecision without doing either is in neither count, so this is not coverage.\n\n**A unanimous role is not representable.** ``supporting == identified`` or\n``concerns == identified`` says what every person in the role did, which is\neach person's stance however many of them there are -- the gap k-anonymity\nleaves. A producer leaves such a role out. A count of zero is allowed: \"nobody in\nthe role raised a concern\" is how most roles look after most decisions, and\nrefusing it would drop nearly every row.\n\nWhat remains is a lopsided split -- four of five supporting, one concern. It\nsays one person dissented, not which; anyone who knows the other four's\nstances can still tell. Accepted as the residual risk of a count, and not\ngated further here, because every stricter rule empties most roles in a team\nmeeting.",
+      "properties": {
+        "role": {
+          "title": "Role",
+          "type": "string"
+        },
+        "identified": {
+          "description": "Identified people in the role at the meeting, carried so the gate is checked.",
+          "minimum": 3,
+          "title": "Identified",
+          "type": "integer"
+        },
+        "supporting": {
+          "description": "People in this role who voiced support.",
+          "minimum": 0,
+          "title": "Supporting",
+          "type": "integer"
+        },
+        "concerns": {
+          "description": "People in this role who raised a concern.",
+          "minimum": 0,
+          "title": "Concerns",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "role",
+        "identified",
+        "supporting",
+        "concerns"
+      ],
+      "title": "RoleStance",
+      "type": "object"
+    },
     "Topic": {
       "properties": {
         "id": {
@@ -854,7 +897,7 @@
     "TranscriptReady": {
       "properties": {
         "contract_version": {
-          "default": "2.0",
+          "default": "2.1",
           "title": "Contract Version",
           "type": "string"
         },

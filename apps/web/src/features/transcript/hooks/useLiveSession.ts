@@ -100,7 +100,7 @@ export function useLiveSession(meetingId: string, stream: MediaStream | null): L
   const context = useRef<AudioContext | null>(null);
   const timer = useRef<number | null>(null);
   const ended = useRef<(() => void) | null>(null);
-  const blob = useRef<Blob | null>(null);
+  const blob = useRef<File | null>(null);
   const stopping = useRef(false);
   /** Bumped by every `start()`, `stop()`, and `abandon()`. A handler closed
    * over in `start()` compares its own generation against this ref to tell
@@ -383,7 +383,8 @@ export function useLiveSession(meetingId: string, stream: MediaStream | null): L
       setPhase("error");
       return;
     }
-    blob.current = new Blob(chunks.current, { type: "audio/webm" });
+    // A File, not a Blob: the upload route names the part after it (#259).
+    blob.current = new File(chunks.current, "recording.webm", { type: "audio/webm" });
     chunks.current = [];
 
     // 3. Upload.

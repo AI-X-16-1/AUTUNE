@@ -55,7 +55,7 @@ export function ActionCard({
 
       <div className="mt-2 flex items-center gap-2" style={{ fontSize: "var(--text-metaSmall)" }}>
         <span className="text-[var(--color-ink-body)]">
-          {item.assignee_label ?? "담당 미지정"}
+          {item.assignee_name ?? item.assignee_label ?? "담당 미지정"}
         </span>
         {item.due_date ? (
           <span

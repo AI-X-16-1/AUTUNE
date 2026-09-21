@@ -8,6 +8,7 @@ nobody else parses.
 from __future__ import annotations
 
 from datetime import date
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -73,6 +74,15 @@ class ActionItemRead(BaseModel):
     description: str
     assignee_id: str | None
     assignee_label: str | None
+    assignee_name: str | None = None
+    """The assignee's current display name, read fresh from ``users`` -- never
+    stored. ``assignee_label`` is "the name as spoken, kept when it does not
+    resolve to an account" (``ExtActionItem.assignee_label``'s own docstring);
+    an identified assignee has no label at all, so a card showing only
+    ``assignee_label`` reads an assigned item as unassigned. This is the other
+    half: set only when ``assignee_id`` resolves to an account that still
+    exists, so a screen can show *somebody's name* without caring which half
+    filled it in."""
     due_date: date | None
     status: str
     confidence: float
@@ -138,3 +148,113 @@ class ActionItemDetail(ActionItemRead):
     the row alone. This list is read from ``utterances`` anyway, so the spoken
     order comes with it at no extra cost.
     """
+
+
+# --- review before anything leaves (#246) ------------------------------------
+
+
+class DecisionReviewUpdate(BaseModel):
+    """A person's verdict on one proposed decision. Both fields optional.
+
+    ``pending`` is allowed so a mis-click can be undone. ``statement`` rewords the
+    decision; sending the model's own wording back clears the rewording rather than
+    storing a copy of it.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["pending", "confirmed", "rejected"] | None = None
+    statement: str | None = Field(default=None, min_length=1, max_length=2000)
+
+
+class DecisionCreate(BaseModel):
+    """A decision the model missed, typed by a person.
+
+    No ``confidence``: a person typing it is the certainty, as with
+    ``ActionItemCreate``. It is confirmed from the moment it exists.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    meeting_id: str = Field(pattern=r"^mtg_")
+    statement: str = Field(min_length=1, max_length=2000)
+    source_utterance_ids: list[str] = Field(default_factory=list)
+    """Optional, in spoken order. Each must be an utterance of this meeting."""
+
+
+class ReviewDecision(BaseModel):
+    """One decision as S15 lists it -- proposed by the model or added by a person."""
+
+    id: str
+    statement: str
+    """What will be sent: the person's rewording when there is one, else the model's."""
+
+    model_statement: str
+    """What the model proposed, kept beside the rewording so the screen can show both."""
+
+    confidence: float
+    origin: Literal["model", "user"]
+    status: Literal["pending", "confirmed", "rejected"]
+    suggested: bool | None
+    """Whether the screen should pre-check it: the confidence clears
+    ``candidate_confidence``. ``None`` while that setting is unset -- there is no
+    measured line yet, and pre-checking everything or nothing would both be a
+    claim the numbers do not support."""
+
+    source_utterance_ids: list[str]
+
+
+class ReviewAmbiguous(BaseModel):
+    """One weak assent and where its question to the speaker stands.
+
+    Read-only here. The speaker answers by DM (``ext_confirmations``); who else may
+    answer on their behalf is #246 point 1.
+    """
+
+    utterance_id: str
+    outcome: Literal["not_asked", "pending", "undecided", "resolved"]
+    resolved_kind: str | None
+
+
+class MeetingReview(BaseModel):
+    """Everything in one meeting that needs a person before it goes anywhere."""
+
+    meeting_id: str
+    decisions: list[ReviewDecision]
+    ambiguous_agreements: list[ReviewAmbiguous]
+    action_items: list[ActionItemRead]
+    """Items still ``needs_confirmation``, or below the candidate line."""
+
+    pending_decisions: int
+
+
+class OutboundDecision(BaseModel):
+    id: str
+    statement: str
+
+
+class OutboundBlocked(BaseModel):
+    """Something confirmed that still may not leave: its text carries personal data.
+
+    The categories, never the values -- the same rule ``assert_masked`` follows
+    for an exception message. The screen asks the person to reword it.
+    """
+
+    id: str
+    kind: Literal["decision", "action_item"]
+    categories: list[str]
+
+
+class Outbound(BaseModel):
+    """What confirm-and-send would send, and nothing else.
+
+    The Notion, Slack and Jira sync (#30) is to read this and only this. A decision
+    nobody confirmed is not in it, and neither is an item still waiting for
+    confirmation.
+    """
+
+    meeting_id: str
+    decisions: list[OutboundDecision]
+    action_items: list[ActionItemRead]
+    blocked: list[OutboundBlocked]
+    """Confirmed, but held back by the personal-data screen. Not in the lists above."""

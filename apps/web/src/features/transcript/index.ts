@@ -8,3 +8,4 @@
  */
 export { LiveMeetingScreen } from "./components/LiveMeetingScreen";
 export { StoredMeetingScreen } from "./components/StoredMeetingScreen";
+export { NewMeetingScreen } from "./components/NewMeetingScreen";

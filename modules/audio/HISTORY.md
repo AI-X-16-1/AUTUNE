@@ -318,6 +318,45 @@ a list of people: one person split across two clusters is two entries, which is
 the property that broke E (#128) and C (#164). Filed as #183 so four consumers
 agree on it rather than inheriting whatever A needed first.
 
+### The worker is told the job, never the path (#259, #275)
+
+The first upload endpoint handed the worker a path: `send_task(name,
+args=[meeting_id, upload_path])`. `privacy.md` section 1 forbids exactly that
+sentence — "passing a path to raw audio in a Celery payload" — and the PR
+argued around it in `docs/modules/audio.md` instead of raising it, which
+CLAUDE.md section 6 says not to do. The review caught it (@PARKJAEKYUNG0525),
+and the reason it matters is not the log line module A controls: Celery writes
+task arguments to the broker message and to its own failure output, so a path
+in the payload is a path in two stores nobody in this module can scrub.
+
+The fix is a table this module was always supposed to have. `aud_jobs` holds
+one row per *attempt*; the file is renamed to `{job_id}.upload` at the claim,
+the queue carries the id, and the worker asks `storage.upload_path` where that
+is. The client's extension is not kept — ffmpeg probes the container from the
+bytes, checked by decoding an `.m4a` renamed to `.upload` — which also closes
+the NAME_MAX crash from #209's review without a regex.
+
+**Per attempt, not per meeting, because of a race @lsh2217 named.** A `failed`
+meeting accepts another recording. With one filename per meeting, a first
+attempt turning up late would adopt the second attempt's file, and when it died
+`mark_failed` would fail the meeting the second attempt was busy with. With one
+row per attempt the earlier one is `superseded` and the worker declines it at
+the door; `mark_failed` is keyed on the job and a superseded job cannot touch
+the meeting. The same door declines a redelivery of a `done` job (the
+`acks_late` case from #259's third fix) and, separately, one whose first
+delivery is still `running` — that one must not delete the file, which the
+first cut of this code did.
+
+The sweep #209 had was dropped because it decided on mtime and could delete a
+file a late task was about to adopt. It is back, deciding against `aud_jobs`
+instead: an attempt that is over, or a job unknown to the database, has no
+owner; a live job is left alone until `orphan_after_hours`. It runs at the
+start of every `process_recording` until there is a periodic trigger (#207).
+
+`privacy.md` section 1 was rewritten in the same PR (decision #275). "Scoped
+to the task" never described a two-process handover; "owned by exactly one
+party at a time" does, and names the two primitives.
+
 ---
 
 ## 4. What kept going wrong
