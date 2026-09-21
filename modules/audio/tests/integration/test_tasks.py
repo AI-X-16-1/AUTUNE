@@ -14,6 +14,7 @@ checkpoint would not run in CI.
 from __future__ import annotations
 
 from collections.abc import Iterator
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import numpy as np
@@ -22,7 +23,9 @@ import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
 from autune_audio import tasks
+from autune_audio.config import AudioSettings
 from autune_audio.diarization import FakeDiarizer
+from autune_audio.models import TranscriptionJob
 from autune_audio.quality import TranscriptCollapsedError
 from autune_audio.schemas import Segment, Transcription, Turn, Waveform, Word
 from autune_contracts.events import TRANSCRIPT_READY
@@ -54,8 +57,33 @@ def _turns() -> tuple[Turn, ...]:
 
 
 @pytest.fixture
-def recording(tmp_path: Path) -> Path:
-    path = tmp_path / "meeting.m4a"
+def settings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> AudioSettings:
+    """The worker's scratch directory, owned by this test."""
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    fake = AudioSettings(temp_dir=str(scratch))
+    monkeypatch.setattr(tasks, "get_settings", lambda: fake)
+    return fake
+
+
+@pytest.fixture
+def job(db_session: Session, meeting: str) -> str:
+    """A queued attempt on a claimed meeting -- what the upload route leaves.
+
+    The route sets the meeting ``analyzing`` and creates the job in one
+    transaction; a task only ever runs on a meeting in that state.
+    """
+    db_session.get(Meeting, meeting).status = "analyzing"
+    row = TranscriptionJob(meeting_id=meeting, status="queued")
+    db_session.add(row)
+    db_session.flush()
+    return row.id
+
+
+@pytest.fixture
+def recording(job: str, settings: AudioSettings) -> Path:
+    """The file where the worker will look for it: ``{job_id}.upload``."""
+    path = Path(settings.temp_dir) / f"{job}.upload"
     path.write_bytes(b"not really audio; decode is faked")
     return path
 
@@ -117,6 +145,7 @@ def pipeline(
 def test_the_event_carries_what_the_database_holds(
     pipeline: dict,
     db_session: Session,
+    job: str,
     meeting: str,
     recording: Path,
     published: list[tuple[str, dict]],
@@ -127,7 +156,7 @@ def test_the_event_carries_what_the_database_holds(
     that went on the wire, then through `require_privacy_guarantees`, which is
     the first thing B, C and D each call.
     """
-    tasks.process_recording(meeting, str(recording))
+    tasks.process_recording(job)
 
     assert [event for event, _ in published] == [TRANSCRIPT_READY]
     payload = TranscriptReady.model_validate(published[0][1])
@@ -147,7 +176,7 @@ def test_the_event_carries_what_the_database_holds(
 
 
 def test_the_event_goes_out_after_the_transaction_closes(
-    pipeline: dict, meeting: str, recording: Path
+    pipeline: dict, job: str, meeting: str, recording: Path
 ) -> None:
     """Four modules act on this event; a rollback after it has gone is four
     modules processing a meeting that does not exist.
@@ -159,17 +188,18 @@ def test_the_event_goes_out_after_the_transaction_closes(
     nineteen tests passing (@kjfcvx12 on #184), and the PR description claimed
     the opposite.
     """
-    tasks.process_recording(meeting, str(recording))
-    assert pipeline["order"] == ["commit", "publish"]
+    tasks.process_recording(job)
+    # The claim's transaction, the write's transaction, then the event.
+    assert pipeline["order"] == ["commit", "commit", "publish"]
 
 
 def test_the_recording_is_gone_before_anything_is_written(
-    pipeline: dict, meeting: str, recording: Path, published: list[tuple[str, dict]]
+    pipeline: dict, job: str, meeting: str, recording: Path, published: list[tuple[str, dict]]
 ) -> None:
     """`original_audio_deleted` is read from the filesystem, so the order is the
     proof. Written inside the `adopt` block, the flag would be False -- and a
     False flag is one every consumer refuses on."""
-    tasks.process_recording(meeting, str(recording))
+    tasks.process_recording(job)
 
     assert pipeline["audio_present_at_write"] is False
     assert not recording.exists()
@@ -177,14 +207,14 @@ def test_the_recording_is_gone_before_anything_is_written(
 
 
 def test_personal_data_is_masked_before_the_first_insert(
-    pipeline: dict, db_session: Session, meeting: str, recording: Path
+    pipeline: dict, db_session: Session, job: str, meeting: str, recording: Path
 ) -> None:
     """privacy.md section 2's line, checked at the place it is drawn.
 
     `persist_transcript` also refuses unmasked text, so the row existing at all
     is half the assertion; the other half is that the number is not in it.
     """
-    tasks.process_recording(meeting, str(recording))
+    tasks.process_recording(job)
 
     texts = list(
         db_session.scalars(sa.select(Utterance.text).where(Utterance.meeting_id == meeting))
@@ -193,37 +223,10 @@ def test_personal_data_is_masked_before_the_first_insert(
     assert "010-****-5678" in " ".join(texts)
 
 
-def test_running_it_twice_leaves_one_meeting_and_republishes_it(
-    pipeline: dict,
-    db_session: Session,
-    meeting: str,
-    recording: Path,
-    published: list[tuple[str, dict]],
-) -> None:
-    """What `acks_late` makes a requirement rather than a nicety.
-
-    The second run gets a deleted recording, so `adopt` is given a path that no
-    longer exists -- the shape a redelivery actually takes. Utterance ids are
-    generated at the write, so they differ; everything a consumer keys on does
-    not.
-    """
-    tasks.process_recording(meeting, str(recording))
-    recording.write_bytes(b"redelivered")
-    tasks.process_recording(meeting, str(recording))
-
-    rows = db_session.scalars(
-        sa.select(sa.func.count()).select_from(Utterance).where(Utterance.meeting_id == meeting)
-    ).one()
-    assert rows == len(SPOKEN)
-
-    first, second = (TranscriptReady.model_validate(p) for _, p in published)
-    assert [u.text for u in first.utterances] == [u.text for u in second.utterances]
-    assert first.metadata == second.metadata
-
-
 def test_a_collapsed_transcript_is_not_written_and_not_published(
     pipeline: dict,
     db_session: Session,
+    job: str,
     meeting: str,
     recording: Path,
     published: list[tuple[str, dict]],
@@ -251,7 +254,7 @@ def test_a_collapsed_transcript_is_not_written_and_not_published(
     )
 
     with pytest.raises(TranscriptCollapsedError):
-        tasks.process_recording(meeting, str(recording))
+        tasks.process_recording(job)
 
     assert published == []
     assert not recording.exists()
@@ -261,7 +264,7 @@ def test_a_collapsed_transcript_is_not_written_and_not_published(
 
 
 def test_a_finished_meeting_is_marked_complete(
-    pipeline: dict, db_session: Session, meeting: str, recording: Path
+    pipeline: dict, db_session: Session, job: str, meeting: str, recording: Path
 ) -> None:
     """The status is what a screen reads to tell "not yet" from "nothing said".
 
@@ -270,7 +273,7 @@ def test_a_finished_meeting_is_marked_complete(
     meeting stuck at ``analyzing`` and a meeting where nobody spoke look
     identical to a reader that does not have this.
     """
-    tasks.process_recording(meeting, str(recording))
+    tasks.process_recording(job)
 
     assert db_session.get(Meeting, meeting).status == "complete"
 
@@ -278,6 +281,7 @@ def test_a_finished_meeting_is_marked_complete(
 def test_a_meeting_whose_task_raised_is_marked_failed(
     pipeline: dict,
     db_session: Session,
+    job: str,
     meeting: str,
     recording: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -295,50 +299,191 @@ def test_a_meeting_whose_task_raised_is_marked_failed(
         raise RuntimeError("pyannote could not load")
 
     monkeypatch.setattr(tasks, "assign_speakers", explode)
-    # The precondition the upload route establishes: a task only ever runs on a
-    # meeting it has claimed. A `scheduled` meeting cannot fail (see mark_failed).
-    db_session.get(Meeting, meeting).status = "analyzing"
-    db_session.flush()
 
     with pytest.raises(RuntimeError, match="pyannote could not load"):
-        tasks.process_recording(meeting, str(recording))
+        tasks.process_recording(job)
 
     assert db_session.get(Meeting, meeting).status == "failed"
+    assert db_session.get(TranscriptionJob, job).status == "failed"
     assert published == []
 
 
-def test_a_redelivery_after_completion_does_not_undo_complete(
+def test_a_finished_job_records_it(
+    pipeline: dict, db_session: Session, job: str, meeting: str, recording: Path
+) -> None:
+    tasks.process_recording(job)
+
+    row = db_session.get(TranscriptionJob, job)
+    assert row.status == "done"
+    assert row.finished_at is not None
+
+
+def test_a_redelivery_after_completion_is_declined_and_does_not_undo_complete(
     pipeline: dict,
     db_session: Session,
+    job: str,
     meeting: str,
     recording: Path,
-    monkeypatch: pytest.MonkeyPatch,
     published: list[tuple[str, dict]],
 ) -> None:
     """``acks_late``'s other edge: the worker dies *after* the commit and the
-    publish, *before* the ack. The broker redelivers; the redelivered run finds
-    no recording and dies at decode.
+    publish, *before* the ack. The broker redelivers.
 
-    That death is not a failure of the meeting. Its transcript is in the
-    database and four modules have already been told. Moving it to ``failed``
-    would make S12 draw red over a meeting that finished, and would invite a
-    re-upload that replaces a transcript consumers already hold (@PARKJAEKYUNG0525
-    on #259).
+    The redelivered run finds its job ``done`` and stops at the door. Its
+    transcript is in the database and four modules have already been told;
+    running again would republish, and failing would make S12 draw red over
+    a meeting that finished (@PARKJAEKYUNG0525 on #259). Whatever is at the
+    job's path -- nothing, normally -- is deleted, because this attempt owns
+    it and nobody else will.
     """
-    decode_anything = tasks.decode
-
-    def decode_only_what_exists(path: Path) -> object:
-        if not Path(path).exists():
-            raise FileNotFoundError(str(path))
-        return decode_anything(path)
-
-    monkeypatch.setattr(tasks, "decode", decode_only_what_exists)
-
-    tasks.process_recording(meeting, str(recording))
+    tasks.process_recording(job)
     assert db_session.get(Meeting, meeting).status == "complete"
 
-    with pytest.raises(FileNotFoundError):
-        tasks.process_recording(meeting, str(recording))
+    recording.write_bytes(b"redelivered")
+    tasks.process_recording(job)
 
     assert db_session.get(Meeting, meeting).status == "complete"
+    assert db_session.get(TranscriptionJob, job).status == "done"
+    assert not recording.exists()
     assert len(published) == 1
+
+
+def test_a_superseded_attempt_deletes_its_file_and_touches_nothing(
+    pipeline: dict,
+    db_session: Session,
+    job: str,
+    meeting: str,
+    recording: Path,
+    published: list[tuple[str, dict]],
+) -> None:
+    """The late first attempt from #275, arriving after a second was accepted.
+
+    The meeting belongs to the second attempt now. This one must not
+    transcribe (it would race), must not fail the meeting (nothing about the
+    current attempt failed), and must delete the file it was queued for
+    (nobody else will).
+    """
+    db_session.get(TranscriptionJob, job).status = "superseded"
+    db_session.flush()
+
+    tasks.process_recording(job)
+
+    assert recording.exists() is False
+    assert db_session.get(Meeting, meeting).status == "analyzing"
+    assert db_session.get(TranscriptionJob, job).status == "superseded"
+    assert published == []
+
+
+def test_a_job_nobody_queued_is_loud(pipeline: dict, settings: AudioSettings) -> None:
+    from autune_core.errors import NotFoundError
+
+    with pytest.raises(NotFoundError):
+        tasks.process_recording("job_nobody_queued_this")
+
+
+# --- the sweep ----------------------------------------------------------------
+
+
+def _upload(settings: AudioSettings, job_id: str) -> Path:
+    path = Path(settings.temp_dir) / f"{job_id}.upload"
+    path.write_bytes(b"left behind")
+    return path
+
+
+def _job(db_session: Session, meeting: str, status: str, *, age: timedelta = timedelta()) -> str:
+    row = TranscriptionJob(meeting_id=meeting, status=status, created_at=datetime.now(tz=UTC) - age)
+    db_session.add(row)
+    db_session.flush()
+    return row.id
+
+
+def test_the_sweep_collects_uploads_whose_attempt_is_over(
+    pipeline: dict,
+    db_session: Session,
+    job: str,
+    meeting: str,
+    recording: Path,
+    settings: AudioSettings,
+) -> None:
+    """A file for a ``done``, ``failed`` or ``superseded`` job is a recording
+    nobody owns -- the case #259's review said had no collector. Decided
+    against the database, not the clock, so a file a late task is about to
+    adopt is never in this set."""
+    leftovers = {
+        status: _upload(settings, _job(db_session, meeting, status))
+        for status in ("done", "failed", "superseded")
+    }
+    unknown = _upload(settings, "job_nobody_knows")
+
+    tasks.process_recording(job)
+
+    assert all(not path.exists() for path in leftovers.values())
+    assert not unknown.exists()
+
+
+def test_the_sweep_leaves_a_live_attempt_alone(
+    pipeline: dict,
+    db_session: Session,
+    job: str,
+    meeting: str,
+    recording: Path,
+    settings: AudioSettings,
+) -> None:
+    """#209's sweep could delete a file a late task was about to adopt. A
+    ``queued`` job younger than the threshold is exactly that file."""
+    other = _job(db_session, meeting, "queued")
+    waiting = _upload(settings, other)
+
+    tasks.process_recording(job)
+
+    assert waiting.exists()
+    assert db_session.get(TranscriptionJob, other).status == "queued"
+
+
+def test_the_sweep_fails_an_attempt_that_has_been_running_too_long(
+    pipeline: dict,
+    db_session: Session,
+    job: str,
+    meeting: str,
+    recording: Path,
+    settings: AudioSettings,
+) -> None:
+    """A job older than ``orphan_after_hours`` has no worker. Its file is
+    deleted and the job failed; the meeting is not, because it is now the
+    current attempt's (the one running this test)."""
+    stale = _job(
+        db_session, meeting, "running", age=timedelta(hours=settings.orphan_after_hours + 1)
+    )
+    abandoned = _upload(settings, stale)
+
+    tasks.process_recording(job)
+
+    assert not abandoned.exists()
+    assert db_session.get(TranscriptionJob, stale).status == "failed"
+    assert db_session.get(Meeting, meeting).status == "complete"
+
+
+def test_the_sweep_collects_a_write_that_never_reached_a_claim(
+    pipeline: dict,
+    db_session: Session,
+    job: str,
+    meeting: str,
+    recording: Path,
+    settings: AudioSettings,
+) -> None:
+    """``handover`` writes under a throwaway name and renames at the claim. A
+    request that died in between leaves a file with no job to consult; the
+    write-to-claim window is one request, so age is the only question."""
+    import os
+
+    fresh = Path(settings.temp_dir) / "tmpfresh"
+    fresh.write_bytes(b"still being uploaded")
+    old = Path(settings.temp_dir) / "tmpold"
+    old.write_bytes(b"request died here")
+    ago = (datetime.now(tz=UTC) - timedelta(hours=settings.orphan_after_hours + 1)).timestamp()
+    os.utime(old, (ago, ago))
+
+    tasks.process_recording(job)
+
+    assert fresh.exists()
+    assert not old.exists()

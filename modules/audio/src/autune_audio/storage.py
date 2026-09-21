@@ -17,6 +17,12 @@ deletes it.
 - ``adopt`` — takes a file someone else wrote and deletes it. The worker end of
   a ``handover``.
 
+The two ends never exchange a path. The endpoint renames the file to
+``{job_id}.upload`` (``assign``) and queues the job id; the worker rebuilds the
+same path from the id (``upload_path``). privacy.md section 1 forbids a path to
+raw audio in a Celery payload, and this is how the handover keeps that rule
+rather than reads around it (#275).
+
 Exactly one of them owns a given file at a time, which is the property that
 matters: a recording with two owners gets deleted twice and a recording with
 none never gets deleted at all.
@@ -45,6 +51,14 @@ from .config import AudioSettings, get_settings
 log = get_logger(__name__)
 
 CHUNK_BYTES = 1024 * 1024
+
+UPLOAD_SUFFIX = ".upload"
+"""The one suffix an uploaded recording is stored under.
+
+Not the client's extension: ffmpeg sniffs the container from the bytes, and a
+name that repeats what the client sent is the NAME_MAX crash from #209's
+review waiting to happen again. The stem is the job id and nothing else.
+"""
 
 
 class RecordingTooLargeError(AutuneError):
@@ -142,14 +156,62 @@ def _reject_persistent(directory: Path) -> None:
         )
 
 
+def upload_path(job_id: str, settings: AudioSettings | None = None) -> Path:
+    """Where the recording for ``job_id`` is, on both sides of the handover.
+
+    The worker calls this with the id it was queued with and gets the file the
+    endpoint left. One function, two callers, so the two cannot disagree on
+    the name -- a disagreement would be a recording nobody deletes.
+    """
+    settings = settings or get_settings()
+    return Path(settings.temp_dir) / f"{job_id}{UPLOAD_SUFFIX}"
+
+
+def job_id_of(path: Path) -> str | None:
+    """The job an upload file belongs to, or None if it is not one of ours."""
+    if path.suffix != UPLOAD_SUFFIX:
+        return None
+    return path.stem
+
+
+def assign(recording: Recording, job_id: str) -> None:
+    """Give a handed-over recording the name the worker will look for.
+
+    A rename inside the same directory: atomic on every filesystem we run on,
+    and it cannot leave a second copy. ``recording.path`` is updated only
+    once the rename succeeded, so a failure here leaves ``handover``'s
+    ``except`` pointing at the file that actually exists.
+    """
+    target = recording.path.with_name(f"{job_id}{UPLOAD_SUFFIX}")
+    recording.path.rename(target)
+    recording.path = target
+
+
+def delete_orphan(path: Path) -> None:
+    """Delete a recording no task owns, and confirm it is gone.
+
+    The sweep's primitive. Same ``_delete`` as every other path out of this
+    module, so a deletion that did not happen raises here too rather than
+    being counted as done.
+    """
+    failure = _delete(Recording(path=path))
+    if failure is not None:
+        raise failure
+
+
 @contextmanager
 def adopt(path: Path) -> Iterator[Recording]:
     """Take ownership of a recording already on disk and delete it.
 
-    The worker is handed a path by the upload endpoint rather than a stream, and
-    that file is the durable copy invariant 11 cares about. Passing it through
-    ``recording_on_disk`` would copy it, delete the copy, and leave the original
-    exactly where it was — so the worker adopts it instead.
+    The worker is queued a job id, not a stream, and rebuilds the path with
+    ``upload_path``; that file is the durable copy invariant 11 cares about.
+    Passing it through ``recording_on_disk`` would copy it, delete the copy,
+    and leave the original exactly where it was — so the worker adopts it
+    instead.
+
+    A missing file is not an error here: ``_delete`` uses ``missing_ok``, and
+    a redelivered task whose first run already deleted the upload fails at
+    decode with a message that says what is missing, not here.
 
     No directory check here. The location was chosen by whoever wrote the file,
     and refusing it would mean declining to delete a recording that is already
@@ -202,7 +264,6 @@ def _fill(recording: Recording, stream: IO[bytes], *, max_bytes: int | None) -> 
 def handover(
     stream: IO[bytes],
     *,
-    suffix: str = "",
     max_bytes: int | None = None,
     settings: AudioSettings | None = None,
 ) -> Iterator[Recording]:
@@ -235,8 +296,13 @@ def handover(
     ``max_bytes`` is enforced while the bytes are written rather than from a
     declared size, and an over-long body is deleted by the same path as any
     other failure.
+
+    The file is written under a throwaway name and takes its real one --
+    ``{job_id}.upload`` -- through ``assign`` once the caller has a job. The
+    body is on disk before the claim can be made (it streams in with the
+    request), so the name cannot be known when the file is created.
     """
-    recording = _new_temp_file(suffix=suffix, settings=settings)
+    recording = _new_temp_file(suffix="", settings=settings)
 
     try:
         _fill(recording, stream, max_bytes=max_bytes)

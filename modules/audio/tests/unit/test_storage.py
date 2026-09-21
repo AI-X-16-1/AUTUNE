@@ -17,8 +17,11 @@ from autune_audio.storage import (
     RecordingTooLargeError,
     _reject_persistent,
     adopt,
+    assign,
     handover,
+    job_id_of,
     recording_on_disk,
+    upload_path,
 )
 from autune_core.errors import PrivacyViolationError
 
@@ -323,12 +326,34 @@ class TestHandingAFileToTheWorker:
         ):
             pass
 
-    def test_the_suffix_reaches_the_file_the_worker_is_handed(
-        self, settings: AudioSettings
-    ) -> None:
-        """The decoder picks a demuxer by extension; losing it breaks m4a."""
-        with handover(io.BytesIO(b"audio"), suffix=".m4a", settings=settings) as recording:
+    def test_the_worker_finds_the_file_from_the_job_id_alone(self, settings: AudioSettings) -> None:
+        """The two ends of the handover never exchange a path (#275).
+
+        The endpoint renames to ``{job_id}.upload`` and queues the id; the
+        worker rebuilds the path with ``upload_path``. This is the round trip,
+        and it is the only thing that has to agree. The client's extension is
+        not kept: ffmpeg probes the container from the bytes, and an ``.m4a``
+        renamed to ``.upload`` was checked to decode.
+        """
+        with handover(io.BytesIO(b"audio"), settings=settings) as recording:
+            assign(recording, "job_abc")
             held = recording.path
 
-        assert held.suffix == ".m4a"
+        assert held == upload_path("job_abc", settings)
+        assert held.name == "job_abc.upload"
+        assert held.read_bytes() == b"audio"
+        assert job_id_of(held) == "job_abc"
         held.unlink()
+
+    def test_a_failed_rename_still_deletes_the_file_that_exists(
+        self, settings: AudioSettings, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``assign`` updates ``recording.path`` only after the rename succeeded,
+        so ``handover``'s ``except`` deletes the file that is actually there."""
+        monkeypatch.setattr(Path, "rename", lambda *_: (_ for _ in ()).throw(OSError("read-only")))
+        with pytest.raises(OSError), handover(io.BytesIO(b"audio"), settings=settings) as rec:
+            written = rec.path
+            assign(rec, "job_abc")
+
+        assert not written.exists()
+        assert not upload_path("job_abc", settings).exists()

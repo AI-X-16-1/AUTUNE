@@ -13,9 +13,23 @@ Product-level rationale: `../product/prd.md` section 6.
 The uploaded recording exists only for the duration of transcription.
 
 **Required:**
-- Write the upload to a temp path scoped to the task.
+- Write the upload to a temp path **owned by exactly one party at a time**.
+  The upload request owns it until the task is queued and deletes it if that
+  fails (`storage.handover`); the task owns it from the moment it starts and
+  deletes it in a `finally` (`storage.adopt`). A recording with two owners is
+  deleted twice; one with none is never deleted, and that is the durable copy
+  this rule exists to prevent.
 - Delete it in a `finally` block, so it is removed on success, on exception, and
   on cancellation.
+- Hand the file across processes **by job id, not by path**: the endpoint names
+  the file after the job (`{job_id}.upload`) and the worker derives the path
+  from the id it was queued with (`storage.upload_path`). The two ends never
+  exchange a path.
+- Collect orphans. A task can be lost after the enqueue; a periodic sweep
+  compares every file in the temp directory against its job's status in the
+  database and deletes the ones whose attempt is over or has been running
+  longer than a job can (`service.sweep_orphans`). Never on mtime alone — that
+  deletes a file a late task is about to adopt.
 - Set `privacy.original_audio_deleted = true` in `TranscriptReady` only after
   the file is actually gone.
 
@@ -24,10 +38,16 @@ The uploaded recording exists only for the duration of transcription.
   column — including "temporarily, for debugging".
 - Logging the file path in a way that survives the task, or attaching the audio
   to an error report.
-- Passing a path to raw audio in a Celery payload. If a second task needs the
-  audio, it belongs in the same task.
+- Passing a path to raw audio in a Celery payload. Celery writes task arguments
+  to the broker and to its own failure output; a path there is a path in a
+  store. If a second task needs the audio, it belongs in the same task.
 - Keeping a copy for model retraining. Training data collection is a separate
   product decision with its own consent flow, and it does not exist yet.
+
+The wording above is decision #275. The original text said "scoped to the
+task", which did not describe the upload → worker handover at all: the API and
+the worker are different processes, and a file scoped to the request is one the
+worker never receives.
 
 Downstream modules must fail loudly if `original_audio_deleted` is not `true` —
 that flag being false means the pipeline is broken.

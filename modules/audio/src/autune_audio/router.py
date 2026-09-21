@@ -8,8 +8,6 @@ The prefix ``/api/audio`` is applied by apps/api; declare paths relative to it.
 
 from __future__ import annotations
 
-import re
-from pathlib import Path
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, UploadFile, status
@@ -25,7 +23,7 @@ from .config import MAX_UPLOAD_BYTES
 from .config import get_settings as get_audio_settings
 from .enqueue import enqueue_process_recording
 from .schemas import MeetingCreate, MeetingState
-from .storage import handover
+from .storage import assign, handover
 
 log = get_logger(__name__)
 
@@ -118,10 +116,15 @@ def upload_recording(
 
     **The file is still on disk when this returns, and that is the design.**
     ``handover`` writes it and deletes it only if this block fails; on success
-    the worker adopts the path and deletion becomes its ``finally``. Exactly one
-    of the two owns the file at any moment, which is what invariant 11 actually
-    requires — not that a recording never touches disk, but that it is never
-    left with nobody to delete it.
+    the worker adopts it and deletion becomes its ``finally``. Exactly one of
+    the two owns the file at any moment (privacy.md section 1: owned by exactly
+    one party at a time).
+
+    **The worker is told the job, never the path.** The file is renamed to
+    ``{job_id}.upload`` once the claim has produced a job, and the queue
+    carries the id; the worker rebuilds the path from it. A path in a Celery
+    payload is the thing section 1 forbids by name, because Celery writes task
+    arguments to the broker and to its failure output (#275).
 
     **Everything that can refuse the upload runs inside that block.** The
     authorisation check and the status claim look like they belong before the
@@ -147,38 +150,21 @@ def upload_recording(
     """
     with handover(
         file.file,
-        suffix=_suffix_of(file.filename),
         max_bytes=MAX_UPLOAD_BYTES,
         settings=get_audio_settings(),
     ) as recording:
-        meeting = service.start_transcription(session, meeting_id=meeting_id, uploader=user)
+        job = service.start_transcription(session, meeting_id=meeting_id, uploader=user)
+        # The file takes the job's name and the queue takes the job's id. No
+        # path leaves this process (privacy.md section 1).
+        assign(recording, job.id)
         session.commit()
         try:
-            enqueue_process_recording(meeting_id, str(recording.path))
+            enqueue_process_recording(job.id)
         except Exception as error:
             # Raising inside the block is what makes handover delete the file.
-            log.warning("audio_enqueue_failed", meeting_id=meeting_id, error=type(error).__name__)
-            service.mark_failed(session, meeting_id=meeting_id)
+            log.warning("audio_enqueue_failed", job_id=job.id, error=type(error).__name__)
+            service.mark_failed(session, job_id=job.id)
             session.commit()
             raise EnqueueFailedError() from error
 
-    return MeetingState(meeting_id=meeting.id, status=meeting.status)
-
-
-_SUFFIX = re.compile(r"^\.[A-Za-z0-9]{1,8}$")
-
-
-def _suffix_of(filename: str | None) -> str:
-    """The upload's extension, if it looks like one; otherwise nothing.
-
-    ffmpeg identifies the container from the bytes, not the name, so the suffix
-    is only ever a log field (``decoding.py``). What it must not be is a way to
-    crash the request: ``"a." + "x" * 300`` used to reach ``NamedTemporaryFile``
-    intact and die on NAME_MAX — after the whole body had been read (#209
-    review). A suffix that is not one to eight alphanumerics is dropped rather
-    than refused, because refusing would be a whitelist, and whether ``.webm``
-    from a browser recording is allowed is a product question this helper
-    should not be answering.
-    """
-    suffix = Path(filename or "").suffix
-    return suffix if _SUFFIX.match(suffix) else ""
+    return MeetingState(meeting_id=job.meeting_id, status=job.meeting.status)

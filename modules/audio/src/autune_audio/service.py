@@ -9,6 +9,8 @@ Never imports another module.
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from typing import NamedTuple
 
 import sqlalchemy as sa
 from sqlalchemy.orm import Session
@@ -17,6 +19,9 @@ from autune_contracts.transcript import Utterance as ContractUtterance
 from autune_core import Meeting, Team, TeamMember, User, get_logger
 from autune_core.errors import ConflictError, NotFoundError, PermissionDeniedError
 
+from . import storage
+from .config import AudioSettings
+from .models import TranscriptionJob
 from .persistence import transcript_payload
 
 log = get_logger(__name__)
@@ -137,7 +142,7 @@ def create_meeting(
     return meeting
 
 
-def start_transcription(session: Session, *, meeting_id: str, uploader: User) -> Meeting:
+def start_transcription(session: Session, *, meeting_id: str, uploader: User) -> TranscriptionJob:
     """Claim the meeting for a recording that is about to be queued.
 
     **The status flip is the claim, and it has to happen before the enqueue.**
@@ -157,6 +162,12 @@ def start_transcription(session: Session, *, meeting_id: str, uploader: User) ->
     attached to it. ``complete`` is not accepted: that transcript has already
     gone out to four modules, and replacing it underneath them is the rerun
     problem in #194 rather than something an upload decides on its own.
+
+    **Returns the attempt, not the meeting.** The job row is what the worker
+    is queued -- an opaque id, never a path (privacy.md section 1) -- and what
+    the recording is named after. Any earlier attempt for this meeting still
+    ``queued`` or ``running`` is marked ``superseded`` so that, should it turn
+    up late, the worker declines it rather than racing this one.
     """
     meeting = session.get(Meeting, meeting_id)
     if meeting is None:
@@ -169,14 +180,73 @@ def start_transcription(session: Session, *, meeting_id: str, uploader: User) ->
             f"submitted for a meeting that is {' or '.join(sorted(_ACCEPTS_A_RECORDING))}"
         )
 
+    now = datetime.now(tz=UTC)
+    for stale in session.scalars(
+        sa.select(TranscriptionJob).where(
+            TranscriptionJob.meeting_id == meeting_id,
+            TranscriptionJob.status.in_(("queued", "running")),
+        )
+    ):
+        stale.status = "superseded"
+        stale.finished_at = now
+        log.info("audio_job_superseded", job_id=stale.id, meeting_id=meeting_id)
+
+    job = TranscriptionJob(meeting_id=meeting_id, status="queued")
+    session.add(job)
     meeting.status = "analyzing"
     session.flush()
-    log.info("audio_transcription_started", meeting_id=meeting_id, uploader_id=uploader.id)
-    return meeting
+    log.info(
+        "audio_transcription_started",
+        meeting_id=meeting_id,
+        job_id=job.id,
+        uploader_id=uploader.id,
+    )
+    return job
 
 
-def mark_failed(session: Session, *, meeting_id: str) -> None:
-    """Record that this meeting's transcription will not finish.
+class Claim(NamedTuple):
+    """What the worker learned at the door. See ``claim_job``."""
+
+    meeting_id: str
+    run: bool
+    """This attempt is current and now ``running``; go ahead."""
+    owns_file: bool
+    """Nobody else will delete this attempt's upload; the caller must."""
+
+
+def claim_job(session: Session, *, job_id: str) -> Claim:
+    """The worker's first line: which meeting, whether to run, and who has the file.
+
+    A ``queued`` job becomes ``running`` and is run. Anything else is declined:
+
+    - ``running`` -- a redelivery while the first delivery is still going
+      (``acks_late`` and Redis' one-hour visibility timeout make that a long
+      meeting, not a fault). The first delivery owns the file and will delete
+      it in its ``finally``; this one must not touch it.
+    - ``done`` / ``failed`` -- a redelivery after the attempt finished. The
+      file is already gone; ``owns_file`` is True so the caller's delete is a
+      no-op that confirms it.
+    - ``superseded`` -- a later upload for the same meeting was accepted
+      first. This attempt's file is still there and nobody else will delete
+      it, so the caller does. Running it would race the current attempt.
+
+    ``mark_failed`` is not called for a declined job because nothing about the
+    *meeting* failed. Raises ``NotFoundError`` for an id nobody queued: a
+    broker carrying a message this database has no record of should be loud.
+    """
+    job = session.get(TranscriptionJob, job_id)
+    if job is None:
+        raise NotFoundError("job", job_id)
+    if job.status != "queued":
+        log.info("audio_job_declined", job_id=job_id, status=job.status)
+        return Claim(job.meeting_id, run=False, owns_file=job.status != "running")
+    job.status = "running"
+    session.flush()
+    return Claim(job.meeting_id, run=True, owns_file=True)
+
+
+def mark_failed(session: Session, *, job_id: str) -> None:
+    """Record that this attempt will not finish, and the meeting with it.
 
     Takes no user. Both callers are places where there is nobody to authorise
     against: the worker, whose task has just raised, and the endpoint, whose
@@ -188,6 +258,12 @@ def mark_failed(session: Session, *, meeting_id: str) -> None:
     A meeting that stayed ``analyzing`` forever would be indistinguishable from
     one still being transcribed, and the screen would spin on it for good.
 
+    **A superseded or finished job does not touch the meeting.** The meeting's
+    status belongs to its current attempt. A first attempt that turns up late,
+    dies, and marks ``failed`` the meeting a second attempt is busy with was
+    the race #275 was opened over; keying failure on the job rather than the
+    meeting is what closes it.
+
     **Only an ``analyzing`` meeting can fail.** ``failed`` means "was being
     transcribed and will not finish", and a meeting in any other state was not
     being transcribed. The case that matters is ``complete``: with
@@ -197,20 +273,32 @@ def mark_failed(session: Session, *, meeting_id: str) -> None:
     database and four modules hold it — and turning it red would invite a
     re-upload that replaces a transcript consumers already have.
     """
-    meeting = session.get(Meeting, meeting_id)
-    if meeting is None:
-        raise NotFoundError("meeting", meeting_id)
+    job = session.get(TranscriptionJob, job_id)
+    if job is None:
+        raise NotFoundError("job", job_id)
 
-    if meeting.status != "analyzing":
-        log.info("audio_meeting_failed_skipped", meeting_id=meeting_id, status=meeting.status)
+    if job.status not in ("queued", "running"):
+        log.info("audio_job_failed_skipped", job_id=job_id, status=job.status)
         return
 
-    meeting.status = "failed"
+    job.status = "failed"
+    job.finished_at = datetime.now(tz=UTC)
+
+    meeting = session.get(Meeting, job.meeting_id)
+    if meeting is not None and meeting.status == "analyzing":
+        meeting.status = "failed"
+        log.info("audio_meeting_failed", meeting_id=meeting.id, job_id=job_id)
+    else:
+        log.info(
+            "audio_meeting_failed_skipped",
+            meeting_id=job.meeting_id,
+            job_id=job_id,
+            status=None if meeting is None else meeting.status,
+        )
     session.flush()
-    log.info("audio_meeting_failed", meeting_id=meeting_id)
 
 
-def mark_complete(session: Session, *, meeting_id: str) -> None:
+def mark_complete(session: Session, *, job_id: str) -> None:
     """The transcript is written and the meeting is done being transcribed.
 
     Called inside the same transaction as ``persist_transcript``, so the status
@@ -223,9 +311,76 @@ def mark_complete(session: Session, *, meeting_id: str) -> None:
     to decide, later in the meeting's life. A only says that its own step
     finished.
     """
-    meeting = session.get(Meeting, meeting_id)
+    job = session.get(TranscriptionJob, job_id)
+    if job is None:
+        raise NotFoundError("job", job_id)
+    meeting = session.get(Meeting, job.meeting_id)
     if meeting is None:
-        raise NotFoundError("meeting", meeting_id)
+        raise NotFoundError("meeting", job.meeting_id)
 
+    job.status = "done"
+    job.finished_at = datetime.now(tz=UTC)
     meeting.status = "complete"
     session.flush()
+
+
+def sweep_orphans(
+    session: Session, *, settings: AudioSettings, keep: str | None = None
+) -> list[str]:
+    """Delete uploads nobody is coming for. Returns the job ids swept.
+
+    The handover leaves a file for a task; a task can be lost after the
+    enqueue -- broker purged, worker never came back, a route that no longer
+    matches -- and then the file sits in ``temp_dir`` with no owner, which is
+    the durable copy invariant 11 exists to prevent (@PARKJAEKYUNG0525 on
+    #259, item 3).
+
+    **Decided against the database, not the clock.** #209 swept on mtime and
+    could delete a file a late task was about to adopt. Here a file is an
+    orphan when its job says so: ``done``, ``failed`` or ``superseded`` means
+    the attempt is over and the file should already be gone; no job at all
+    means nothing will ever look for it. A ``queued`` or ``running`` job is
+    left alone until it is older than ``orphan_after_hours``, and then both
+    the file and the job are failed -- a job that old has no worker.
+
+    A file without the ``.upload`` suffix is one ``handover`` wrote and never
+    got to ``assign``: the request died between the write and the claim. There
+    is no job to consult, and the write-to-assign window is one request, so
+    one older than the threshold is deleted on mtime. That is the one place
+    the clock decides, and it decides about a file no task can be about to
+    adopt.
+
+    Runs at the start of every ``process_recording``, skipping ``keep`` -- the
+    caller's own job -- until there is a periodic trigger for it (#207, #258).
+    Ids only in the log; the filenames are ids.
+    """
+    directory = Path(settings.temp_dir)
+    if not directory.is_dir():
+        return []
+
+    cutoff = datetime.now(tz=UTC) - timedelta(hours=settings.orphan_after_hours)
+    swept: list[str] = []
+    for path in directory.iterdir():
+        if not path.is_file():
+            continue
+        job_id = storage.job_id_of(path)
+        if job_id is None:
+            if datetime.fromtimestamp(path.stat().st_mtime, tz=UTC) < cutoff:
+                storage.delete_orphan(path)
+                log.info("audio_orphan_unassigned_deleted")
+            continue
+        if job_id == keep:
+            continue
+
+        job = session.get(TranscriptionJob, job_id)
+        if job is not None and job.status in ("queued", "running"):
+            if job.created_at >= cutoff:
+                continue
+            mark_failed(session, job_id=job_id)
+            log.warning("audio_job_abandoned", job_id=job_id)
+
+        storage.delete_orphan(path)
+        swept.append(job_id)
+        log.info("audio_orphan_deleted", job_id=job_id, job_known=job is not None)
+
+    return swept

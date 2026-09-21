@@ -18,6 +18,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
+import sqlalchemy as sa
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
@@ -25,6 +26,7 @@ from sqlalchemy.orm import Session
 
 from autune_audio import service
 from autune_audio.config import AudioSettings
+from autune_audio.models import TranscriptionJob
 from autune_audio.router import router
 from autune_core import AutuneError, Meeting, Team, TeamMember, User, get_session
 from autune_core.auth import current_user
@@ -102,9 +104,11 @@ def test_starting_transcription_moves_the_meeting_to_analyzing(
 ) -> None:
     meeting = service.create_meeting(db_session, owner=member, title="회의", team_id=team)
 
-    started = service.start_transcription(db_session, meeting_id=meeting.id, uploader=member)
+    job = service.start_transcription(db_session, meeting_id=meeting.id, uploader=member)
 
-    assert started.status == "analyzing"
+    assert job.meeting.status == "analyzing"
+    assert job.status == "queued"
+    assert job.id.startswith("job_")
 
 
 def test_a_meeting_already_analyzing_refuses_a_second_recording(
@@ -135,12 +139,61 @@ def test_a_failed_meeting_accepts_another_recording(
     throws away whatever else is already attached to this one.
     """
     meeting = service.create_meeting(db_session, owner=member, title="회의", team_id=team)
-    service.start_transcription(db_session, meeting_id=meeting.id, uploader=member)
-    service.mark_failed(db_session, meeting_id=meeting.id)
+    first = service.start_transcription(db_session, meeting_id=meeting.id, uploader=member)
+    service.mark_failed(db_session, job_id=first.id)
 
     retried = service.start_transcription(db_session, meeting_id=meeting.id, uploader=member)
 
-    assert retried.status == "analyzing"
+    assert retried.meeting.status == "analyzing"
+    assert retried.id != first.id
+
+
+def test_a_second_attempt_supersedes_a_stale_one(
+    db_session: Session, team: str, member: User
+) -> None:
+    """The race #275 was opened over, closed at the claim.
+
+    A ``failed`` meeting accepts a new recording. If the first attempt's task
+    then turns up late -- a purged queue restored, a worker back from the
+    dead -- it must not run against the second attempt's meeting, and it must
+    not fail that meeting when it dies. Each attempt is its own row; the old
+    one is marked ``superseded`` here so the worker can decline it at the door.
+    """
+    meeting = service.create_meeting(db_session, owner=member, title="회의", team_id=team)
+    first = service.start_transcription(db_session, meeting_id=meeting.id, uploader=member)
+    meeting.status = "failed"  # a decoder that fell over, without the job ever reporting
+    db_session.flush()
+
+    second = service.start_transcription(db_session, meeting_id=meeting.id, uploader=member)
+
+    assert db_session.get(TranscriptionJob, first.id).status == "superseded"
+    assert second.status == "queued"
+    # The late first attempt: declined, and the meeting stays the second's.
+    claim = service.claim_job(db_session, job_id=first.id)
+    assert claim.run is False and claim.owns_file is True
+    service.mark_failed(db_session, job_id=first.id)
+    assert db_session.get(Meeting, meeting.id).status == "analyzing"
+
+
+def test_a_redelivery_while_the_first_run_is_going_leaves_its_file_alone(
+    db_session: Session, team: str, member: User
+) -> None:
+    """``acks_late`` plus Redis' one-hour visibility timeout: a long meeting
+    is redelivered while the first delivery is still decoding it. The first
+    owns the file and deletes it in its ``finally``; the second must not."""
+    meeting = service.create_meeting(db_session, owner=member, title="회의", team_id=team)
+    job = service.start_transcription(db_session, meeting_id=meeting.id, uploader=member)
+
+    first = service.claim_job(db_session, job_id=job.id)
+    second = service.claim_job(db_session, job_id=job.id)
+
+    assert first.run is True
+    assert second.run is False and second.owns_file is False
+
+
+def test_claiming_a_job_nobody_queued_is_loud(db_session: Session) -> None:
+    with pytest.raises(NotFoundError):
+        service.claim_job(db_session, job_id="job_nope")
 
 
 def test_a_completed_meeting_refuses_another_recording(
@@ -186,11 +239,13 @@ def test_a_failed_meeting_can_be_marked_without_a_reader(
     no one to satisfy.
     """
     meeting = service.create_meeting(db_session, owner=member, title="회의", team_id=team)
-    service.start_transcription(db_session, meeting_id=meeting.id, uploader=member)
+    job = service.start_transcription(db_session, meeting_id=meeting.id, uploader=member)
 
-    service.mark_failed(db_session, meeting_id=meeting.id)
+    service.mark_failed(db_session, job_id=job.id)
 
     assert db_session.get(Meeting, meeting.id).status == "failed"
+    assert job.status == "failed"
+    assert job.finished_at is not None
 
 
 # --- routes -----------------------------------------------------------------
@@ -300,12 +355,30 @@ def test_uploading_a_recording_queues_the_task_and_leaves_the_file(
 
     name, args = broker.sent[0]
     assert name == "autune.audio.process_recording"
-    assert args[0] == meeting_id
-    queued = Path(str(args[1]))
-    assert queued.exists()
-    assert queued.read_bytes() == b"fake audio"
-    assert queued.suffix == ".m4a"
+    (job_id,) = args
+    assert str(job_id).startswith("job_"), "the payload carries the job id and nothing else"
+    assert db_session.get(TranscriptionJob, job_id).meeting_id == meeting_id
+    assert [p.name for p in temp_dir.iterdir()] == [f"{job_id}.upload"]
+    assert (temp_dir / f"{job_id}.upload").read_bytes() == b"fake audio"
     assert db_session.get(Meeting, meeting_id).status == "analyzing"
+
+
+def test_the_payload_never_carries_a_path(
+    client: TestClient, team: str, broker: Enqueued, temp_dir: Path
+) -> None:
+    """privacy.md section 1, Forbidden, third line -- checked on the message
+    that actually leaves the process, since that is where Celery would write
+    it to the broker and to its failure output."""
+    meeting_id = _create(client, team)
+
+    client.post(
+        f"/api/audio/meetings/{meeting_id}/recording",
+        files={"file": ("standup.m4a", io.BytesIO(b"fake audio"), "audio/mp4")},
+    )
+
+    _, args = broker.sent[0]
+    for arg in args:
+        assert "/" not in str(arg) and str(temp_dir) not in str(arg)
 
 
 def test_a_failed_enqueue_deletes_the_recording_and_fails_the_meeting(
@@ -328,6 +401,10 @@ def test_a_failed_enqueue_deletes_the_recording_and_fails_the_meeting(
     assert response.status_code == 500
     assert list(temp_dir.iterdir()) == []
     assert db_session.get(Meeting, meeting_id).status == "failed"
+    (job,) = db_session.scalars(
+        sa.select(TranscriptionJob).where(TranscriptionJob.meeting_id == meeting_id)
+    )
+    assert job.status == "failed"
 
 
 def test_uploading_to_a_meeting_already_analyzing_is_refused(
@@ -386,15 +463,15 @@ def test_an_oversized_recording_is_refused_and_deleted(
     assert broker.sent == []
 
 
-def test_an_absurd_file_extension_is_dropped_rather_than_crashing(
+def test_the_clients_filename_never_reaches_the_disk(
     client: TestClient, team: str, broker: Enqueued, temp_dir: Path
 ) -> None:
     """``"a." + "x" * 300`` as a filename used to take the whole body to disk
     and then die in ``NamedTemporaryFile`` on NAME_MAX (#209 review).
 
-    ffmpeg sniffs the container from the bytes, not the name — the suffix is
-    only a log field — so a suffix that does not look like one is simply not
-    kept. The upload still goes through.
+    The file is named after the job now and the client's name is not read at
+    all: ffmpeg sniffs the container from the bytes, and a filename is one
+    more thing a person typed that could carry a meeting's title.
     """
     meeting_id = _create(client, team)
 
@@ -404,8 +481,8 @@ def test_an_absurd_file_extension_is_dropped_rather_than_crashing(
     )
 
     assert response.status_code == 202
-    _, args = broker.sent[0]
-    assert Path(str(args[1])).suffix == ""
+    (job_id,) = broker.sent[0][1]
+    assert [p.name for p in temp_dir.iterdir()] == [f"{job_id}.upload"]
 
 
 def test_a_staging_failure_leaves_the_meeting_untouched(

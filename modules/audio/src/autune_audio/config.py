@@ -47,6 +47,16 @@ class AudioSettings(BaseSettings):
     See docs/architecture/privacy.md section 1.
     """
 
+    orphan_after_hours: int = 6
+    """How long a queued or running job may hold a recording before the sweep
+    treats it as abandoned, fails it, and deletes the file.
+
+    Six hours is three times the longest meeting the pipeline is sized for at
+    the measured ~1.27x real time, plus a queue wait. A job older than that has
+    no worker; its file is a recording with no owner (privacy.md section 1).
+    See ``service.sweep_orphans``.
+    """
+
     hf_token: str = ""
     """Hugging Face token for the gated pyannote models.
 

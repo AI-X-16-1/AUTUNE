@@ -66,7 +66,7 @@ to the live transcript view.
 
 | Table | Purpose |
 | --- | --- |
-| `aud_jobs` | Processing job state and progress |
+| `aud_jobs` | One row per transcription attempt: `queued` → `running` → `done` / `failed`, or `superseded` by a later attempt. What the worker is queued instead of a path |
 | `aud_speaker_embeddings` | Enrolled voice embeddings per user |
 | `aud_masking_events` | Counts of masked spans by category, for the recall metric. **Never the masked content** |
 | `aud_corrections` | User corrections to speaker attribution and text, for accuracy improvement |
@@ -109,12 +109,21 @@ modules, and replacing it underneath them is the rerun problem in #194.
 
 ### The recording between the two processes
 
-The endpoint writes the upload to `AUTUNE_AUDIO_TEMP_DIR` and hands the worker a
-path; the file therefore outlives the request. That is not a gap in invariant
-11, which forbids a recording with *no* owner rather than a recording on disk.
-`storage.handover` owns it until the task is queued and deletes it if that
-fails; `storage.adopt` owns it from then on and deletes it in a `finally`.
-Exactly one of them owns a given file at a time.
+The endpoint writes the upload to `AUTUNE_AUDIO_TEMP_DIR`; the file therefore
+outlives the request. privacy.md section 1 now says how that is allowed
+(decision #275): the file is **owned by exactly one party at a time** —
+`storage.handover` until the task is queued, `storage.adopt` from then on —
+and the two ends **never exchange a path**. The endpoint creates an `aud_jobs`
+row, renames the file to `{job_id}.upload`, and queues the job id; the worker
+rebuilds the path with `storage.upload_path`. The Celery message, the broker
+and Celery's failure output carry an opaque id.
+
+`aud_jobs` is one row per *attempt*, not per meeting. A `failed` meeting
+accepts another recording; the earlier attempt is marked `superseded` and the
+worker declines it at the door (`service.claim_job`), so a task that turns up
+late cannot race the current one or fail its meeting. A redelivery of a job
+already `done` is declined the same way; one arriving while the first delivery
+is still `running` is declined and leaves the file to its owner.
 
 **Deployment assumption: the API process and the `gpu` worker share a
 filesystem.** The task is handed a local path, not bytes. If the two run on
@@ -131,12 +140,14 @@ path. Starlette deletes it when the request closes, so invariant 11 holds — bu
 a request-body limit belongs at the reverse proxy or in `apps/api`, not here.
 Tracked as a shared issue.
 
-**A file whose task is lost after the enqueue is not collected.** `handover`
-covers every failure inside the request; a task that was queued and never runs
-(broker down, worker never comes back) leaves its file in `AUTUNE_AUDIO_TEMP_DIR`
-with no owner. #209 tried a sweep for this and the sweep could delete a file a
-late task was about to adopt, so it was dropped. The right fix is on the queue
-side and is part of #258.
+**A file whose task is lost after the enqueue is collected by the sweep.**
+`service.sweep_orphans` compares every file in `AUTUNE_AUDIO_TEMP_DIR` against
+`aud_jobs`: a file whose job is `done`, `failed` or `superseded`, or that no
+job knows, is deleted; a `queued` or `running` job older than
+`AUTUNE_AUDIO_ORPHAN_AFTER_HOURS` is failed and its file deleted. #209 swept on
+mtime and could delete a file a late task was about to adopt; deciding against
+the database is what makes this one safe. It runs at the start of every
+`process_recording` until there is a periodic trigger (#207).
 
 ## Celery tasks
 

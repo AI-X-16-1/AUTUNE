@@ -90,6 +90,7 @@ prefix `AUTUNE_<MODULE>_`.
 | `AUTUNE_AUDIO_WHISPER_MODEL` | A | e.g. `large-v3` |
 | `AUTUNE_AUDIO_DEVICE` | A | `cuda` or `cpu` |
 | `AUTUNE_AUDIO_TEMP_DIR` | A | Where the recording lives during processing, and only then |
+| `AUTUNE_AUDIO_ORPHAN_AFTER_HOURS` | A | A job still `queued`/`running` after this long has no worker; the sweep fails it and deletes its file. Default `6` |
 | `AUTUNE_AUDIO_HF_TOKEN` | A | Hugging Face token for the gated pyannote models |
 | `NEXT_PUBLIC_AUTUNE_DEV_TOKEN` | A (web) | A bearer token for the browser, local only — see "A token for the browser" below |
 | `AUTUNE_AUDIO_DIARIZATION_MODEL` | A | Default `pyannote/speaker-diarization-3.1` |
