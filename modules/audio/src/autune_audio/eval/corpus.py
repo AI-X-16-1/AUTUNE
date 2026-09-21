@@ -68,20 +68,35 @@ class Row:
     source: Source
     categories: tuple[str, ...]
     note: str | None = None
+    index: int = 0
+    """Line number in the corpus file, from 1. How a row is named in a message."""
+    known_inexact: str | None = None
+    """Set when the masker is known to get this row wrong in a safe direction.
+
+    The reason, usually an issue and an item -- ``"#158 item 5"``. A declared
+    cost, not a skip: the row still says the right answer, ``score`` still
+    scores it, and the run still fails if the row ever comes out *right*
+    while the declaration stands, so the list cannot go stale. Lives on the
+    row rather than in a test constant because the CLI and the tests both
+    read the corpus and used to disagree about which rows were expected to
+    differ (#179 review).
+    """
 
     @property
     def is_positive(self) -> bool:
         return self.masked != self.text
 
     def __repr__(self) -> str:
-        """Text only, never the masked form, so a log line cannot carry both.
+        """Neither the text nor the masked form, so a log line cannot carry
+        either -- and a failure message cannot carry the pair.
 
         The pair is what makes a value recoverable — one side shows the shape and
         the other shows what was under it. The corpus holds invented values, but
-        this object is one `print` away from holding a real one.
+        this object is one `print` away from holding a real one; the file says
+        real transcripts are how it grows.
         """
         kind = "positive" if self.is_positive else "negative"
-        return f"Row({kind}, source={self.source!r}, categories={list(self.categories)})"
+        return f"Row({kind}, {self.source}#{self.index}, categories={list(self.categories)})"
 
 
 @lru_cache(maxsize=1)
@@ -103,6 +118,8 @@ def load() -> tuple[Row, ...]:
                 source=entry["source"],
                 categories=tuple(entry.get("categories", ())),
                 note=entry.get("note"),
+                index=number,
+                known_inexact=entry.get("known_inexact"),
             )
         )
     if not rows:

@@ -11,114 +11,100 @@ number that says what the recall cost.
 
 No GPU, no model, no network — the masker is patterns and a rule, so this runs
 in a second and can sit in front of any change to either.
+
+The scoring itself is `autune_audio.eval.score`, which the tests use too. This
+file only argues, prints and exits.
 """
 
 from __future__ import annotations
 
 import argparse
-from collections import Counter
+from collections.abc import Sequence
 
-from autune_audio.eval import corpus
-from autune_audio.eval.metrics import masking_precision, masking_recall
-from autune_audio.masking import mask
+from autune_audio.eval import corpus, score
 from autune_audio.recognition import FakeRecogniser, SpokenNumberRecogniser
 
-RECALL_TARGET = 0.95
 
-
-def main() -> int:
+def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="autune_audio.eval", description=__doc__)
     parser.add_argument(
         "--no-recogniser",
         action="store_true",
         help="score the patterns alone — how a leak is attributed to one detector or the other",
     )
-    parser.add_argument("--verbose", action="store_true", help="print every row that fails")
-    args = parser.parse_args()
+    parser.add_argument("--verbose", action="store_true", help="name every row that differs")
+    args = parser.parse_args(argv)
 
     recogniser = FakeRecogniser() if args.no_recogniser else SpokenNumberRecogniser()
     rows = corpus.load()
-
-    differs: list[tuple[corpus.Row, str]] = []
-    missed_categories: Counter[str] = Counter()
-    caught = expected = correct = produced = 0
-
-    for row in rows:
-        ours = mask(row.text, recogniser=recogniser).text
-
-        # **The exact string first.** Token recall counts a token as hidden when
-        # it holds any `*` at all, so `010-****-56789` scores as masked and the
-        # digit that leaked is invisible — which is the shape of the bug in #158
-        # this harness exists to find. The corpus already carries what the
-        # output should be; comparing against it is the strongest signal here
-        # and the scores are what say *how far off* a row that differs is.
-        if ours != row.masked:
-            differs.append((row, ours))
-            if row.is_positive:
-                missed_categories.update(row.categories)
-
-        if row.is_positive:
-            recall = masking_recall(row.masked, ours)
-            caught += recall.spans_we_caught
-            expected += recall.spans_in_reference
-
-        try:
-            precision = masking_precision(row.masked, ours)
-        except ValueError:
-            # The masker changed the token count, so positions no longer line
-            # up. That is a row we got wrong, not a reason to stop scoring the
-            # other thirty-four.
-            continue
-        correct += precision.spans_that_should_be
-        produced += precision.spans_we_masked
-
-    recall_score = caught / expected if expected else 1.0
-    precision_score = correct / produced if produced else 1.0
-    exact = len(rows) - len(differs)
+    report = score.score(rows, recogniser=recogniser, declarations_apply=not args.no_recogniser)
 
     print(
-        f"corpus      {len(corpus.load())} rows - {len(corpus.positives())} positive, "
+        f"corpus      {report.rows} rows - {len(corpus.positives())} positive, "
         f"{len(corpus.negatives())} negative"
     )
     print(f"recogniser  {'off' if args.no_recogniser else 'spoken_numbers'}")
     print()
-    print(f"exact       {exact}/{len(rows)} rows match the corpus character for character")
-    print(f"recall      {recall_score:.3f}   ({caught}/{expected} spans)   target {RECALL_TARGET}")
-    print(f"precision   {precision_score:.3f}   ({correct}/{produced} spans masked correctly)")
+    print(f"exact       {report.exact}/{report.rows} rows match the corpus character for character")
+    print(
+        f"recall      {report.recall:.3f}   ({report.spans_caught}/{report.spans_expected} spans)"
+        f"   target {score.RECALL_TARGET}"
+    )
+    print(
+        f"precision   {report.precision:.3f}   "
+        f"({report.spans_correct}/{report.spans_produced} spans masked correctly)"
+    )
     print()
-    if differs:
-        positives = [row for row, _ in differs if row.is_positive]
-        negatives = [row for row, _ in differs if not row.is_positive]
-        if positives:
-            print(
-                f"missed      {len(positives)} rows - "
-                + ", ".join(
-                    f"{category} {count}" for category, count in sorted(missed_categories.items())
-                )
+
+    positives = [row for row in report.unexplained if row.is_positive]
+    negatives = [row for row in report.unexplained if not row.is_positive]
+    if positives:
+        print(
+            f"missed      {len(positives)} rows - "
+            + ", ".join(
+                f"{category} {count}"
+                for category, count in sorted(report.missed_categories.items())
             )
-        if negatives:
-            print(f"over-masked {len(negatives)} rows")
-    else:
+        )
+    if negatives:
+        print(f"over-masked {len(negatives)} rows")
+    if report.declared:
+        print(f"declared    {len(report.declared)} rows differ and say why (known_inexact)")
+    if report.fixed:
+        print(
+            f"fixed       {len(report.fixed)} rows carry known_inexact and now match — "
+            "remove the declaration"
+        )
+    if not report.unexplained and not report.declared and not report.fixed:
         print("every row matches the corpus character for character")
 
+    # **Identification only.** Source, line and category are enough to open
+    # the corpus file at the row. The text and the masked form are not printed,
+    # in either direction: the corpus is invented values today and real
+    # transcripts tomorrow, and a terminal is a log (privacy.md section 2).
     if args.verbose:
-        for row, ours in differs:
-            label = "MISSED" if row.is_positive else "OVER-MASKED"
-            print(f"\n{label}  [{row.source}] {row.note or ''}")
-            print(f"  expected  {row.masked}")
-            print(f"  got       {ours}")
+        for label, group in (
+            ("UNEXPLAINED", report.unexplained),
+            ("DECLARED", report.declared),
+            ("FIXED", report.fixed),
+        ):
+            for row in group:
+                reason = f"  {row.known_inexact}" if row.known_inexact else ""
+                note = f"  ({row.note})" if row.note else ""
+                print(f"{label:12s}{score.identify(row)}{reason}{note}")
 
-    # **A row that differs fails the run**, not only one that drags recall under
-    # the target. A single digit left standing moves recall by nothing — the
-    # token is still masked — and that is exactly the failure this corpus was
-    # built after (#158). The recall target stays a gate too, for when the
-    # corpus grows past what the masker can do and exact match stops being
-    # reachable.
+    # **A row that differs without saying why fails the run**, not only one
+    # that drags recall under the target. A single digit left standing moves
+    # recall by nothing — the token is still masked — and that is exactly the
+    # failure this corpus was built after (#158). A declared row does not
+    # fail it; a declared row that has come right does, until the declaration
+    # goes. The recall target stays a gate too, for when the corpus grows past
+    # what the masker can do.
     #
     # Precision is reported and does not gate: a leaked national ID and an
     # over-masked date are not the same kind of wrong, and that trade is a
     # judgement the team makes with the number in front of it.
-    return 0 if not differs and recall_score >= RECALL_TARGET else 1
+    return 0 if report.ok else 1
 
 
 if __name__ == "__main__":

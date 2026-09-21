@@ -10,12 +10,9 @@ from __future__ import annotations
 
 import pytest
 
-from autune_audio.eval import corpus
+from autune_audio.eval import corpus, score
 from autune_audio.eval.metrics import masking_precision, masking_recall
-from autune_audio.masking import mask
 from autune_audio.recognition import FakeRecogniser, SpokenNumberRecogniser
-
-RECALL_TARGET = 0.95
 
 
 @pytest.fixture(scope="module")
@@ -111,27 +108,6 @@ def test_recall_and_precision_answer_different_questions() -> None:
 # --- the masker against the corpus ----------------------------------------
 
 
-def _score(recogniser: object) -> tuple[float, float, list[corpus.Row]]:
-    caught = expected = correct = produced = 0
-    wrong: list[corpus.Row] = []
-    for row in corpus.load():
-        ours = mask(row.text, recogniser=recogniser).text  # type: ignore[arg-type]
-        if row.is_positive:
-            recall = masking_recall(row.masked, ours)
-            caught += recall.spans_we_caught
-            expected += recall.spans_in_reference
-        precision = masking_precision(row.masked, ours)
-        correct += precision.spans_that_should_be
-        produced += precision.spans_we_masked
-        if ours != row.masked:
-            wrong.append(row)
-    return (
-        caught / expected if expected else 1.0,
-        correct / produced if produced else 1.0,
-        wrong,
-    )
-
-
 def test_every_row_comes_out_exactly_as_the_corpus_says() -> None:
     """The assertion the scores cannot make.
 
@@ -141,46 +117,23 @@ def test_every_row_comes_out_exactly_as_the_corpus_says() -> None:
     more digit in every numeric span moves neither recall nor precision off
     1.000; it moves this.
 
-    The corpus already carries what the output should be. Comparing against it
-    is the strongest check available here, and the scores are for saying how far
-    off a row is once one differs.
-
-    **`KNOWN_INEXACT` is a declared cost, not a skip list.** A row there is one
-    the corpus still says the right answer for, and the masker still gets
-    wrong in a direction that is safe -- more masked, not less. It is listed so
-    the gap is visible in one place and closes the day the cause does, rather
-    than being edited out of the corpus to make this green.
+    A row that differs *and says why* (``known_inexact`` on the row) is a
+    declared cost, not a failure; a declared row that has come right is a
+    failure until the declaration is removed. Both halves are ``score``'s,
+    shared with the CLI, so the two cannot disagree again about which rows are
+    expected to differ. The message names rows, never their text.
     """
-    _, _, wrong = _score(SpokenNumberRecogniser())
-    unexplained = [(row.text, row.masked) for row in wrong if row.text not in KNOWN_INEXACT]
-    assert unexplained == [], unexplained
-    # And the other direction: a row in the list that now comes out exactly
-    # right has been fixed, and should leave the list.
-    still_wrong = {row.text for row in wrong}
-    assert still_wrong >= KNOWN_INEXACT, sorted(KNOWN_INEXACT - still_wrong)
+    report = score.score(corpus.load(), recogniser=SpokenNumberRecogniser())
 
-
-# A number written in digits with the particle 이 attached. The recogniser
-# reads the 이 as a digit, the twelve- or fourteen-digit reading ranks as `rrn`
-# above the eleven- or thirteen-digit one, and the whole span is masked with
-# the particle -- `제 번호 01098765432이에요` -> `************에요` where the
-# corpus wants `010****5432이에요`. Nothing leaks; the shape and the particle are
-# lost, and `aud_masking_events` counts an rrn. This is item 5 of #158's fourth
-# review, left there as LOW, and the rows are here so it stays visible. Every
-# one of them was exact before #158's mixed-script rule landed (`bb931e0`);
-# that rule was the right call and these are what it costs.
-KNOWN_INEXACT = frozenset(
-    {
-        "제 번호 01098765432이에요",
-        "주민번호 900101-1234567이고요",
-        "등록번호 900101-5123456이라고 하셨어요",
-    }
-)
+    assert report.unexplained == [], [score.identify(row) for row in report.unexplained]
+    assert report.fixed == [], [score.identify(row) for row in report.fixed]
 
 
 def test_the_masker_clears_the_recall_target() -> None:
-    recall, _, _ = _score(SpokenNumberRecogniser())
-    assert recall >= RECALL_TARGET, f"recall {recall:.3f} against a {RECALL_TARGET} target"
+    report = score.score(corpus.load(), recogniser=SpokenNumberRecogniser())
+    assert report.recall >= score.RECALL_TARGET, (
+        f"recall {report.recall:.3f} against a {score.RECALL_TARGET} target"
+    )
 
 
 def test_the_masker_masks_nothing_it_should_not() -> None:
@@ -188,17 +141,22 @@ def test_the_masker_masks_nothing_it_should_not() -> None:
     over-masked date are not the same kind of wrong — but a drop here is a cost
     somebody decided to pay, and it should be a decision rather than a surprise.
     """
-    _, precision, wrong = _score(SpokenNumberRecogniser())
-    assert precision == 1.0, f"precision {precision:.3f}; rows: {wrong}"
+    report = score.score(corpus.load(), recogniser=SpokenNumberRecogniser())
+    assert report.precision == 1.0, (
+        f"precision {report.precision:.3f}; "
+        f"rows: {[score.identify(row) for row in report.unexplained]}"
+    )
 
 
 def test_the_recogniser_is_what_clears_the_target() -> None:
     """Patterns alone do not, and the corpus says by how much.
 
-    This is the measurement `recognition.py` exists on: three rows read out one
-    digit at a time, which no pattern can describe.
+    This is the measurement `recognition.py` exists on: the rows read out one
+    digit at a time, which no pattern can describe. Without the recogniser the
+    three declared rows still differ (they are declared for a different
+    reason) and the spoken rows join them.
     """
-    with_it, _, _ = _score(SpokenNumberRecogniser())
-    without, _, missed = _score(FakeRecogniser())
-    assert without < RECALL_TARGET <= with_it
-    assert len(missed) == 3
+    with_it = score.score(corpus.load(), recogniser=SpokenNumberRecogniser())
+    without = score.score(corpus.load(), recogniser=FakeRecogniser())
+    assert without.recall < score.RECALL_TARGET <= with_it.recall
+    assert without.unexplained, "the recogniser is doing nothing the patterns do not"

@@ -173,12 +173,12 @@ def masking_recall(reference_masked: str, ours: str) -> MaskingRecall:
 class MaskingPrecision:
     precision: float
     spans_we_masked: int
-    spans_that_should_be: int
+    spans_correctly_masked: int
 
     def __repr__(self) -> str:
         return (
             f"MaskingPrecision(precision={self.precision:.4f}, "
-            f"masked={self.spans_we_masked}, correct={self.spans_that_should_be})"
+            f"masked={self.spans_we_masked}, correct={self.spans_correctly_masked})"
         )
 
 
@@ -210,11 +210,11 @@ def masking_precision(reference_masked: str, ours: str) -> MaskingPrecision:
 
     ours_masked = [i for i, token in enumerate(our_tokens) if _MASK.fullmatch(token)]
     if not ours_masked:
-        return MaskingPrecision(precision=1.0, spans_we_masked=0, spans_that_should_be=0)
+        return MaskingPrecision(precision=1.0, spans_we_masked=0, spans_correctly_masked=0)
 
     correct = sum(1 for i in ours_masked if _MASK.fullmatch(reference_tokens[i]))
     return MaskingPrecision(
         precision=correct / len(ours_masked),
         spans_we_masked=len(ours_masked),
-        spans_that_should_be=correct,
+        spans_correctly_masked=correct,
     )
