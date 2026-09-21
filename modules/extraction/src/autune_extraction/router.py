@@ -107,7 +107,9 @@ def create_action_item(payload: ActionItemCreate, session: SessionDep) -> Action
     # used to fail here after the item was already saved: the client got a 500
     # for a write that had happened, and a retry made a second item. Failing
     # first lets ``get_session`` roll it back.
-    response = service.read_model(item)
+    names = service.assignee_names(session, [item])
+    name = names.get(item.assignee_id) if item.assignee_id else None
+    response = service.read_model(item, assignee_name=name)
     session.commit()
     return response
 
@@ -126,7 +128,9 @@ def update_action_item(
     # Before the commit, for the reason ``create_action_item`` gives: an edit
     # answered with a 500 must not also have been saved, or it counts twice
     # in edit cost when the client retries.
-    response = service.read_model(item)
+    names = service.assignee_names(session, [item])
+    name = names.get(item.assignee_id) if item.assignee_id else None
+    response = service.read_model(item, assignee_name=name)
     session.commit()
     # After the response, so the sync reads the committed row and the board is
     # not held on Notion. Only the edit that confirms starts one; the sync

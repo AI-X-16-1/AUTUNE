@@ -312,18 +312,22 @@ def create_action_item(session: Session, payload: ActionItemCreate) -> ExtAction
 
 
 def read_model(
-    item: ExtActionItem, *, sync_refs: list[ExternalRefRead] | None = None
+    item: ExtActionItem,
+    *,
+    assignee_name: str | None = None,
+    sync_refs: list[ExternalRefRead] | None = None,
 ) -> ActionItemRead:
     """One item as this module's own screens read it.
 
-    Built here rather than by ``from_attributes`` on the schema because three
-    of its fields are not columns: the source ids live in the link table,
-    whether the item is a candidate depends on a setting the row knows nothing
-    about, and where it stands with an outside system is read from a table
-    keyed on it rather than owned by it -- see ``action_item_external_refs``.
-    Callers with more than one item look that up in a batch rather than let
-    this query per row; ``None`` means the same as empty, a caller that has
-    not synced anything can leave it out.
+    Built here rather than by ``from_attributes`` on the schema because four of
+    its fields are not columns: the source ids live in the link table, whether
+    the item is a candidate depends on a setting the row knows nothing about,
+    the assignee's name is not stored at all -- see ``assignee_name`` on
+    ``ActionItemRead`` -- and where the item stands with an outside system is
+    read from a table keyed on it rather than owned by it -- see
+    ``action_item_external_refs``. Callers with more than one item look both up
+    in a batch rather than let this query per row; ``None`` means the same as
+    empty for either one.
 
     Deciding *candidate* on the server is the point of this function. The
     threshold belongs to the classifier that produced the confidence, and a
@@ -339,6 +343,7 @@ def read_model(
         description=item.description,
         assignee_id=item.assignee_id,
         assignee_label=item.assignee_label,
+        assignee_name=assignee_name,
         due_date=item.due_date,
         status=item.status,
         confidence=item.confidence,
@@ -347,6 +352,22 @@ def read_model(
         is_candidate=threshold is not None and item.confidence < threshold,
         sync_refs=sync_refs or [],
     )
+
+
+def assignee_names(session: Session, items: Sequence[ExtActionItem]) -> dict[str, str]:
+    """Display names for every assignee in ``items``, read fresh -- never stored.
+
+    A name is the one piece of a person's identity this module is allowed to
+    show (invariant 11 restricts speaking ratio, not who a task is for), and it
+    changes with the account, not with the item -- storing it would go stale
+    the first time somebody's display name did. One query for the whole list,
+    not one per row.
+    """
+    ids = {item.assignee_id for item in items if item.assignee_id is not None}
+    if not ids:
+        return {}
+    rows = session.execute(select(User.id, User.display_name).where(User.id.in_(ids)))
+    return {user_id: display_name for user_id, display_name in rows}
 
 
 def list_action_items(
@@ -382,8 +403,16 @@ def list_action_items(
         query = query.where(ExtActionItem.due_date < due_before)
 
     items = list(session.scalars(query))
+    names = assignee_names(session, items)
     refs = action_item_external_refs(session, [item.id for item in items])
-    return [read_model(item, sync_refs=refs.get(item.id, [])) for item in items]
+    return [
+        read_model(
+            item,
+            assignee_name=names.get(item.assignee_id) if item.assignee_id else None,
+            sync_refs=refs.get(item.id, []),
+        )
+        for item in items
+    ]
 
 
 def read_detail(session: Session, item: ExtActionItem) -> ActionItemDetail:
@@ -394,9 +423,11 @@ def read_detail(session: Session, item: ExtActionItem) -> ActionItemDetail:
     quotation, and it shows one item's at a time. The list still carries meeting
     content -- see ``ActionItemDetail``.
     """
+    names = assignee_names(session, [item])
+    name = names.get(item.assignee_id) if item.assignee_id else None
     refs = action_item_external_refs(session, [item.id]).get(item.id, [])
     return ActionItemDetail(
-        **read_model(item, sync_refs=refs).model_dump(),
+        **read_model(item, assignee_name=name, sync_refs=refs).model_dump(),
         sources=source_utterances(session, item.id),
     )
 
