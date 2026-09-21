@@ -171,8 +171,13 @@ export interface ReviewDecision {
    * utterance, truncated. `null` only when there are no sources at all.
    */
   summary: string | null;
-  /** At most `notion` today (#30); `jira` is designed, not built. */
-  sync_refs: ExternalRefRead[];
+  /**
+   * At most `notion` today (#30); `jira` is designed, not built.
+   * Optional rather than required: the backend only started sending this key
+   * once #312 merged, and #314 (which declares this interface) landed first.
+   * Absent means the same thing as `[]` -- the render side must not assume it.
+   */
+  sync_refs?: ExternalRefRead[];
 }
 
 /** One weak assent and where the speaker's DM stands. Read-only here. */
