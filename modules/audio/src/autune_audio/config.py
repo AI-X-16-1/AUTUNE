@@ -12,6 +12,19 @@ from typing import Literal
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+MAX_UPLOAD_BYTES = 500 * 1024 * 1024
+"""The largest recording an upload endpoint accepts. Matches the dropzone on
+design screen S03.
+
+Enforced while the bytes are written rather than from ``UploadFile.size``: that
+is a number the client sent, and it is ``None`` on a request with no
+Content-Length.
+
+Here rather than beside either endpoint because both of them enforce it — the
+real upload route and the local dev page — and a limit that is written twice is
+a limit that ends up meaning two things.
+"""
+
 
 class AudioSettings(BaseSettings):
     # env_file mirrors autune_core.Settings: without it a module reads only
@@ -32,6 +45,16 @@ class AudioSettings(BaseSettings):
     at a synced folder" is now enforced rather than requested.
 
     See docs/architecture/privacy.md section 1.
+    """
+
+    orphan_after_hours: int = 6
+    """How long a queued or running job may hold a recording before the sweep
+    treats it as abandoned, fails it, and deletes the file.
+
+    Six hours is three times the longest meeting the pipeline is sized for at
+    the measured ~1.27x real time, plus a queue wait. A job older than that has
+    no worker; its file is a recording with no owner (privacy.md section 1).
+    See ``service.sweep_orphans``.
     """
 
     hf_token: str = ""
