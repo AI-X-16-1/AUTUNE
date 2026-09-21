@@ -93,6 +93,25 @@ If the run fails, S12 goes red and offers "다시 업로드", which goes back to
 `/meetings/new?meeting={id}`: same meeting, new recording. A meeting that
 finished refuses another upload (409), and the page shows the reason as-is.
 
+### 3a. The live path, by hand
+
+Open `http://localhost:3000/meetings/$MEETING/live` for a meeting that is
+`scheduled` (3b.2 makes one). Tick the consent line — the button does not
+wait for it; the spec says recording works without consent, and B and C then
+analyse nothing — press 녹음 시작, allow the microphone. Speak, pause: a row
+appears about four seconds after you stop talking (`large-v3-turbo`, ten CPU
+threads — `docs/modules/audio-live-transcription.md` §9 has the numbers),
+with a time code and no speaker — speakers come from the stored pipeline
+after the upload. A phone number said aloud appears masked. 정지 sends the
+last row, then uploads the whole recording through 3b.4 as a File and lands on
+`/meetings/$MEETING`, where the worker's run replaces the live rows.
+
+If the API is down when you press start, the screen says so and records
+anyway; 정지 still uploads. If nothing happens after 녹음 시작, check
+`AUTUNE_CORS_ALLOWED_ORIGINS` (section 1) — a socket is subject to the same
+origin check as a fetch. The meeting stays at `recording` between 정지 and
+the upload, and `start_transcription` accepts it there for that reason.
+
 ## 3b. The same steps over HTTP
 
 ### 3b.1 A token
@@ -236,7 +255,8 @@ If B's result is empty and the consent step (3, step 4 or 3b.3) was skipped, tha
 
 On the first end-to-end run every downstream task raised on its first
 utterance, and E — which aggregates only after a first completion — therefore
-did nothing. **With `.env.example` as-is, a real meeting produces module A's
+did nothing. On the second, with B, C and D faked, E raised inside `aggregate`
+itself. **With `.env.example` as-is, a real meeting produces module A's
 output and nothing else.** None of it is a code bug; each module ships a model
 it cannot find by default. The module owner's word on the right setting beats
 this table, which is what the run showed:
@@ -246,6 +266,7 @@ this table, which is what the run showed:
 | B | `CLASSIFIER_IMPL=local needs AUTUNE_EXTRACTION_CLASSIFIER_CHECKPOINT` — no trained checkpoint is published | `AUTUNE_EXTRACTION_CLASSIFIER_IMPL=fake` | `…_IMPL=local`, `…_CHECKPOINT=<ckpt1>,<ckpt2>` (comma = ensemble, #245; the checkpoints are on B's machine, #112), `…_DEVICE=cpu`. Needs transformers, which `uv sync --all-packages` does not install: `uv run --with transformers celery …` or the `local-models` extra. First load ~60 s |
 | C | `No module named 'spacy'` | `AUTUNE_GAP_NER_IMPL=fake` | `uv sync --package autune-gap --extra local-models` then `python -m spacy download ko_core_news_lg` |
 | D | `embedder inference endpoint http://autune-embed.internal:8080 is not reachable` | `AUTUNE_CONTEXT_EMBEDDER_IMPL=fake`, `…_RERANKER_IMPL=fake`, `…_NLI_IMPL=fake` | `kure_v1_local` etc. with the `local-models` extra, or the `_ENDPOINT`s pointed at a running inference server |
+| E | `the SetFit gap classifier needs the 'local-models' extra` — `aggregate` raises after B, C and D reported, so `/scores/{id}` is 404 and the dashboard counts nothing | `AUTUNE_INTELLIGENCE_GAP_CLASSIFIER_IMPL=fake` | `uv sync --package autune-intelligence --extra local-models`; the SetFit head fits on first use |
 
 `fake` implementations are deterministic stand-ins for tests. They make the
 pipeline complete and the screens fill; they do not make the results mean

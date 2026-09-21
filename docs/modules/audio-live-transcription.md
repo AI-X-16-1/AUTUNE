@@ -337,8 +337,11 @@ session that replaced it.
 The "text is not in the log" tests read stdout, because the project's
 structlog logger prints and never reaches `caplog`.
 
-The runbook section for the live path (§3.7 in the plan) is deferred until
-`docs/engineering/demo-runbook.md` lands on `main`.
+The runbook's live section is `docs/engineering/demo-runbook.md` §3a. The
+first run of the whole stack after #259/#283 landed (2026-09-21, fakes for
+B/C/D/E) went live → 정지 → upload → A → B/C/D → E with every read endpoint
+answering 200; the one surprise was E's classifier needing its own `fake`
+setting, now in the runbook's §4.1 table.
 
 Measured per-row lag at real-time pacing on an Apple-silicon CPU with
 `large-v3` was 7–10 s: each utterance of about 10 s takes about 9 s to
