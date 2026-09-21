@@ -287,7 +287,9 @@ dependencies = [
     { name = "celery" },
     { name = "fastapi" },
     { name = "faster-whisper" },
+    { name = "huggingface-hub" },
     { name = "pyannote-audio" },
+    { name = "pyarrow" },
     { name = "python-multipart" },
     { name = "soundfile" },
     { name = "torch" },
@@ -301,7 +303,9 @@ requires-dist = [
     { name = "celery", specifier = ">=5.4" },
     { name = "fastapi", specifier = ">=0.115" },
     { name = "faster-whisper", specifier = ">=1.1" },
+    { name = "huggingface-hub", specifier = ">=0.25" },
     { name = "pyannote-audio", specifier = ">=3.3" },
+    { name = "pyarrow", specifier = ">=18" },
     { name = "python-multipart", specifier = ">=0.0.20" },
     { name = "soundfile", specifier = ">=0.12" },
     { name = "torch", specifier = ">=2.5" },
@@ -360,12 +364,20 @@ local-models = [
     { name = "torch" },
     { name = "transformers" },
 ]
+training = [
+    { name = "accelerate" },
+    { name = "datasets" },
+    { name = "torch" },
+    { name = "transformers" },
+]
 
 [package.metadata]
 requires-dist = [
+    { name = "accelerate", marker = "extra == 'training'", specifier = ">=0.30" },
     { name = "autune-contracts", editable = "packages/contracts" },
     { name = "autune-core", editable = "packages/core" },
     { name = "celery", specifier = ">=5.4" },
+    { name = "datasets", marker = "extra == 'training'", specifier = ">=2.20" },
     { name = "fastapi", specifier = ">=0.115" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "kiwipiepy", specifier = ">=0.18" },
@@ -375,9 +387,11 @@ requires-dist = [
     { name = "sentence-transformers", marker = "extra == 'local-models'", specifier = ">=3.0" },
     { name = "sqlalchemy", specifier = ">=2.0" },
     { name = "torch", marker = "extra == 'local-models'", specifier = ">=2.2" },
+    { name = "torch", marker = "extra == 'training'", specifier = ">=2.2" },
     { name = "transformers", marker = "extra == 'local-models'", specifier = ">=4.44" },
+    { name = "transformers", marker = "extra == 'training'", specifier = ">=4.44" },
 ]
-provides-extras = ["local-models"]
+provides-extras = ["local-models", "training"]
 
 [[package]]
 name = "autune-contracts"
@@ -471,6 +485,7 @@ dependencies = [
     { name = "celery" },
     { name = "fastapi" },
     { name = "networkx" },
+    { name = "pyyaml" },
     { name = "scipy" },
     { name = "sqlalchemy" },
 ]
@@ -489,6 +504,7 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.115" },
     { name = "ko-core-news-lg", marker = "extra == 'local-models'", url = "https://github.com/explosion/spacy-models/releases/download/ko_core_news_lg-3.8.0/ko_core_news_lg-3.8.0-py3-none-any.whl" },
     { name = "networkx", specifier = ">=3.4" },
+    { name = "pyyaml", specifier = ">=6" },
     { name = "scipy", specifier = ">=1.13" },
     { name = "spacy", marker = "extra == 'local-models'", specifier = ">=3.8" },
     { name = "sqlalchemy", specifier = ">=2.0" },

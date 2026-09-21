@@ -50,16 +50,12 @@ TABLES = [
     ExtActionItemSource.__table__,
     ExtClassification.__table__,
     ExtDecision.__table__,
+    ExtDecisionRef.__table__,
     ExtDecisionSource.__table__,
     ExtDecisionReview.__table__,
-    ExtDecisionRef.__table__,
     ExtConfirmation.__table__,
     ExtEditEvent.__table__,
 ]
-
-
-def settings_with(threshold: float | None) -> ExtractionSettings:
-    return ExtractionSettings(_env_file=None, candidate_confidence=threshold)  # type: ignore[call-arg]
 
 
 @pytest.fixture(autouse=True)
@@ -70,6 +66,10 @@ def notion_syncs(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     calls: list[str] = []
     monkeypatch.setattr(tasks, "sync_decision_after_confirmation", calls.append)
     return calls
+
+
+def settings_with(threshold: float | None) -> ExtractionSettings:
+    return ExtractionSettings(_env_file=None, candidate_confidence=threshold)  # type: ignore[call-arg]
 
 
 @pytest.fixture(autouse=True)
@@ -251,6 +251,26 @@ def test_a_rejected_decision_leaves_what_d_and_e_read(client: TestClient, sessio
     ]
 
 
+def test_the_wording_a_person_confirmed_is_what_d_and_e_read(
+    client: TestClient, session: Session
+) -> None:
+    """The rewording goes to Notion through ``outbound_for_meeting``; it has to
+    reach D and E the same way, or one decision has two texts. Raised in review
+    of #247."""
+    first, _ = two_decisions(session)
+
+    client.patch(
+        f"{PREFIX}/decisions/{first.id}",
+        json={"status": "confirmed", "statement": "출시는 금요일로 확정"},
+    )
+
+    result = service.result_for_meeting(session, MEETING)
+    sent = next(d for d in result.decisions if d.id == first.id)
+    assert sent.statement == "출시는 금요일로 확정"
+    outbound = client.get(f"{PREFIX}/reviews/{MEETING}/outbound").json()
+    assert [d["statement"] for d in outbound["decisions"]] == ["출시는 금요일로 확정"]
+
+
 def test_a_rejection_taken_back_returns_the_decision(client: TestClient, session: Session) -> None:
     first, second = two_decisions(session)
 
@@ -261,6 +281,26 @@ def test_a_rejection_taken_back_returns_the_decision(client: TestClient, session
         first.id,
         second.id,
     }
+
+
+def test_rejecting_by_patch_drops_the_rewording_the_way_delete_does(
+    client: TestClient, session: Session
+) -> None:
+    """A status-only PATCH used to leave the old rewording in the row, so undoing
+    the rejection brought back wording nobody typed this time. Raised in review
+    of #247."""
+    first, _ = two_decisions(session)
+    model_wording = first.statement
+
+    client.patch(
+        f"{PREFIX}/decisions/{first.id}",
+        json={"status": "confirmed", "statement": "출시는 금요일로 확정"},
+    )
+    client.patch(f"{PREFIX}/decisions/{first.id}", json={"status": "rejected"})
+    client.patch(f"{PREFIX}/decisions/{first.id}", json={"status": "pending"})
+
+    result = service.result_for_meeting(session, MEETING)
+    assert next(d for d in result.decisions if d.id == first.id).statement == model_wording
 
 
 def test_a_mis_click_can_be_put_back_to_pending(client: TestClient, session: Session) -> None:

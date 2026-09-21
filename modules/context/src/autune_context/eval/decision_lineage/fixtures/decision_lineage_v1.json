@@ -1,0 +1,53 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "decision_unchanged_restated",
+      "past_meetings": [
+        { "days_ago": 14, "decision": "다음 릴리스는 베타로 먼저 출시하기로 했다." }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "이전에 정한 대로 베타로 먼저 출시하기로 했다."
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "unchanged"
+    },
+    {
+      "id": "decision_reversed",
+      "past_meetings": [
+        { "days_ago": 14, "decision": "다음 릴리스는 베타로 먼저 출시하기로 했다." }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "역시 베타 없이 바로 정식 출시하기로 했다."
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "reversed"
+    },
+    {
+      "id": "decision_modified",
+      "past_meetings": [
+        { "days_ago": 10, "decision": "신규 기능은 전체 사용자에게 한 번에 배포하기로 했다." }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "신규 기능은 우선 10%의 사용자에게만 단계적으로 배포하기로 했다."
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "modified"
+    },
+    {
+      "id": "unrelated_decision_opens_new_thread",
+      "past_meetings": [
+        { "days_ago": 7, "decision": "마케팅 예산을 20% 늘리기로 했다." }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "사무실 좌석 배치를 새로 정하기로 했다."
+      },
+      "expected_thread_source": null,
+      "expected_change_type": "new"
+    }
+  ]
+}

@@ -10,7 +10,8 @@ contract on a Celery task, never as a direct call.
 from __future__ import annotations
 
 import math
-from datetime import UTC, datetime, timedelta
+from dataclasses import dataclass
+from datetime import UTC, date, datetime, timedelta
 from typing import TYPE_CHECKING
 
 from celery import current_app
@@ -25,12 +26,19 @@ from autune_context.models import (
     CtxMeetingStatus,
     CtxTopicLink,
 )
+from autune_context.notify import (
+    build_decision_drift_channel_notice,
+    build_decision_drift_personal_dm,
+    build_topic_link_notice,
+    build_topic_link_rollup_notice,
+)
 from autune_context.pipeline import get_embedder, get_nli, get_reranker
 from autune_context.pipeline.retrieval import HybridRetriever, visible_meeting_clauses
 from autune_context.pipeline.topics import extract_topics
 from autune_contracts import ChangeType, ContextLinks, DecisionChange, NliLabel, TopicLink
-from autune_core import Meeting, Participant, get_logger, session_scope
+from autune_core import Meeting, Participant, TeamMember, get_logger, session_scope
 from autune_core.errors import ConflictError, NotFoundError
+from autune_integrations import SlackApi, assert_personal_delivery
 
 if TYPE_CHECKING:
     from autune_context.pipeline.base import Embedder, NliModel
@@ -361,7 +369,21 @@ def build_decision_lineage(result: ExtractionResult) -> None:
         orphans_swept = sweep_orphan_decision_threads(session)
         labels_swept = sweep_stale_topic_labels(session)
         statements_swept = sweep_dangling_previous_statements(session)
-        _upsert_status(session, result.meeting_id, extraction_seen=True, lineage_done=True)
+        status = _upsert_status(session, result.meeting_id, extraction_seen=True, lineage_done=True)
+        if status.published_at is not None:
+            # ``ContextLinks`` already went out for this meeting -- the
+            # B-timeout fallback published before this (late) lineage arrived.
+            # ``publish_if_ready`` never republishes and ``notify_context_events``
+            # never re-fires, so any drift warning this run's rethreading
+            # produced is silently not sent. No fix here (needs a design
+            # decision on whether/how to re-open a published meeting -- see
+            # PR #234 review); this only adds the observability that review
+            # found missing, so the gap is at least visible instead of silent.
+            log.warning(
+                "context_late_lineage_after_publish",
+                meeting_id=result.meeting_id,
+                published_at=status.published_at.isoformat(),
+            )
         log.info(
             "context_decision_lineage_done",
             meeting_id=result.meeting_id,
@@ -487,7 +509,19 @@ def _rethread(session: Session, thread_id: str, nli: NliModel) -> None:
     excluded from the chain entirely — it is treated as already gone, the same
     way ``_thread_heads`` treats it for matching, rather than as a live
     predecessor whose text keeps getting copied into ``previous_statement``.
+
+    ``key_stakeholders_absent`` is filtered to *current* ``TeamMember`` rows of
+    ``thread.team_id`` (see ``_current_team_member_ids``). Without that filter,
+    someone who attended an early meeting in the thread and then left the team
+    -- or a guest who was never a member -- would show up as "absent" on every
+    later version, and once ``notify_decision_drift`` learns to resolve a
+    ``user_id`` to a Slack id, that turns into a drift DM to someone who has no
+    reason to get one.
     """
+    thread = session.get(CtxDecision, thread_id)
+    if thread is None:
+        return
+
     versions = session.scalars(
         select(CtxDecisionVersion)
         .join(CtxDecision, CtxDecision.id == CtxDecisionVersion.thread_id)
@@ -527,13 +561,14 @@ def _rethread(session: Session, thread_id: str, nli: NliModel) -> None:
             version.confidence = _clamp(float(getattr(scored[index - 1], label.value)))
             known = _meeting_user_ids(session, *prior_meeting_ids)
             present = _meeting_user_ids(session, version.meeting_id)
-            version.key_stakeholders_absent = sorted(known - present)
+            absent = known - present
+            version.key_stakeholders_absent = sorted(
+                _current_team_member_ids(session, thread.team_id, absent)
+            )
         version.nli_version = nli.model_version
         prior_meeting_ids.append(version.meeting_id)
 
-    thread = session.get(CtxDecision, thread_id)
-    if thread is not None:
-        thread.topic_label = versions[-1].current_statement[:400]
+    thread.topic_label = versions[-1].current_statement[:400]
     session.flush()
 
 
@@ -554,6 +589,21 @@ def _meeting_user_ids(session: Session, *meeting_ids: str) -> set[str]:
     return {user_id for user_id in rows if user_id is not None}
 
 
+def _current_team_member_ids(session: Session, team_id: str, user_ids: set[str]) -> set[str]:
+    """Narrows ``user_ids`` to those still a ``TeamMember`` of ``team_id``.
+
+    Reads the shared ``team_members`` table — never writes it (invariant 4).
+    """
+    if not user_ids:
+        return set()
+    rows = session.scalars(
+        select(TeamMember.user_id).where(
+            TeamMember.team_id == team_id, TeamMember.user_id.in_(user_ids)
+        )
+    ).all()
+    return set(rows)
+
+
 def _cosine(a: list[float], b: list[float]) -> float:
     dot = sum(x * y for x, y in zip(a, b, strict=True))
     norm = math.sqrt(sum(x * x for x in a)) * math.sqrt(sum(y * y for y in b))
@@ -570,9 +620,17 @@ def publish_if_ready(meeting_id: str) -> bool:
     done, B has reported, or the deadline has passed. Returns whether it published.
 
     A failure in B must never cost the user their topic links.
+
+    ``on_transcript_ready`` enqueues this twice (an immediate check and a
+    B-timeout fallback) and Celery can retry it again on top of that, so two
+    workers can reach here for the same meeting at once. ``with_for_update``
+    makes the ``published_at IS NULL`` read and the publish it guards atomic:
+    the second worker blocks on the row lock until the first commits, then
+    sees ``published_at`` already set and returns ``False`` instead of
+    publishing and notifying a second time.
     """
     with session_scope() as session:
-        status = session.get(CtxMeetingStatus, meeting_id)
+        status = session.get(CtxMeetingStatus, meeting_id, with_for_update=True)
         if status is None or not status.topic_linking_done:
             return False
         if status.published_at is not None:
@@ -639,6 +697,192 @@ def _build_context_links(
         decision_lineage=decision_lineage,
         missing_sources=missing_sources,
     )
+
+
+# --------------------------------------------------------------------------- #
+# Slack notices — fired once, after ``publish_if_ready`` actually publishes
+#
+# Split into "collect" (reads ``ctx_*`` rows, needs a session) and "send"
+# (pure Slack I/O, no session) so a caller can close its session — and free
+# the pooled connection — before making any Slack HTTP call. See
+# ``tasks.notify_context_events``, which does exactly that; the combined
+# ``notify_topic_links``/``notify_decision_drift`` below stay for callers (and
+# tests) that don't need the split.
+# --------------------------------------------------------------------------- #
+
+
+@dataclass(frozen=True)
+class TopicLinkNotice:
+    topic_label: str
+    linked_meeting_date: date
+
+
+@dataclass(frozen=True)
+class DriftNotice:
+    thread_label: str
+    statement_preview: str
+    change_type: ChangeType
+    absent_user_ids: tuple[str, ...]
+
+
+def _deliver_personal(
+    slack: SlackApi, recipient_user_id: str, fallback: str, blocks: list[dict]
+) -> None:
+    """Send a DM that describes exactly one person, to that person only.
+
+    Same shape as ``autune_intelligence.service._deliver_personal``: a single
+    id serves as both the guard's subject and the recipient, so the two
+    cannot drift apart at a call site.
+    """
+    assert_personal_delivery(
+        subject_id=recipient_user_id, recipient_id=recipient_user_id, is_direct=True
+    )
+    slack.send_dm(recipient_user_id, fallback, blocks)
+
+
+def collect_topic_link_notices(session: Session, meeting_id: str) -> list[TopicLinkNotice]:
+    """This meeting's *asserted* topic links, as notice-ready values.
+
+    Only ``asserted`` links, not ``pending`` ones the user later ``confirmed``
+    -- the notice is for a link the system was confident enough to assert by
+    itself, not for one the user just confirmed. A link with no
+    ``linked_meeting_date`` cannot happen for an ``asserted`` row (see
+    ``_link_topic``, which skips writing one), but the guard is kept here too
+    since this function's contract is "safe to call on whatever is in the
+    table," not "safe to call right after ``_link_topic``."
+    """
+    rows = session.scalars(
+        select(CtxTopicLink).where(
+            CtxTopicLink.meeting_id == meeting_id, CtxTopicLink.status == "asserted"
+        )
+    ).all()
+    return [
+        TopicLinkNotice(
+            topic_label=row.topic_label, linked_meeting_date=row.linked_meeting_date.date()
+        )
+        for row in rows
+        if row.linked_meeting_date is not None
+    ]
+
+
+def collect_drift_notices(session: Session, meeting_id: str) -> list[DriftNotice]:
+    """This meeting's decision-drift events, as notice-ready values.
+
+    Only ``MODIFIED`` and ``REVERSED`` are a drift: ``ChangeType.NEW`` never
+    has an absent list (see ``_rethread``), and ``UNCHANGED`` means the NLI
+    check found the statement re-affirmed, not changed, so notifying on it
+    would tell an absent stakeholder a decision moved when it did not.
+    """
+    rows = session.scalars(
+        select(CtxDecisionVersion).where(
+            CtxDecisionVersion.meeting_id == meeting_id,
+            CtxDecisionVersion.change_type.in_(
+                (ChangeType.MODIFIED.value, ChangeType.REVERSED.value)
+            ),
+        )
+    ).all()
+    notices = []
+    for version in rows:
+        absent = version.key_stakeholders_absent
+        if not absent:
+            continue
+        thread = session.get(CtxDecision, version.thread_id)
+        thread_label = thread.topic_label if thread is not None else version.current_statement[:400]
+        # ``current_statement`` is a ``Text`` column with no length limit, and
+        # it is quoted in both the channel notice and the DM. An unusually
+        # long statement from B can push the outbound payload past
+        # ``assert_within_size``'s cap, which raises ``PrivacyViolationError``
+        # with no handler around the send loop -- and since the caller is
+        # ``acks_late``, Celery just redelivers the same failing meeting
+        # forever, so its drift warning never goes out. The same 400-char
+        # preview used for ``thread_label`` keeps this well under the cap.
+        notices.append(
+            DriftNotice(
+                thread_label=thread_label,
+                statement_preview=version.current_statement[:400],
+                change_type=ChangeType(version.change_type),
+                absent_user_ids=tuple(absent),
+            )
+        )
+    return notices
+
+
+def send_topic_link_notices(slack: SlackApi, channel: str, notices: list[TopicLinkNotice]) -> int:
+    """Post the channel notices for already-collected topic links.
+
+    Capped at ``ContextSettings.max_topic_link_notices`` individual messages;
+    anything past the cap collapses into one rollup notice instead of posting
+    one message per topic, so a meeting with many linked topics does not flood
+    the channel. Returns the total notice count (shown plus rolled up).
+    """
+    cap = get_settings().max_topic_link_notices
+    shown, overflow = notices[:cap], notices[cap:]
+    for notice in shown:
+        fallback, blocks = build_topic_link_notice(
+            topic_label=notice.topic_label, linked_meeting_date=notice.linked_meeting_date
+        )
+        slack.post_message(channel, fallback, blocks)
+    if overflow:
+        fallback, blocks = build_topic_link_rollup_notice(count=len(overflow))
+        slack.post_message(channel, fallback, blocks)
+    log.info(
+        "context_topic_link_notice_sent",
+        count=len(notices),
+        shown=len(shown),
+        rolled_up=len(overflow),
+    )
+    return len(notices)
+
+
+def send_decision_drift_notices(slack: SlackApi, channel: str, notices: list[DriftNotice]) -> int:
+    """Post the decision-drift warnings for already-collected drift events.
+
+    One channel notice per event (never names the absentees -- see
+    ``notify.py``), plus one DM per absent stakeholder (does not need to name
+    anyone -- they are the recipient). Returns the count of drift events sent
+    (not the count of DMs sent).
+    """
+    for notice in notices:
+        channel_fallback, channel_blocks = build_decision_drift_channel_notice(
+            thread_label=notice.thread_label,
+            current_statement=notice.statement_preview,
+            change_type=notice.change_type,
+            absent_count=len(notice.absent_user_ids),
+        )
+        slack.post_message(channel, channel_fallback, channel_blocks)
+
+        dm_fallback, dm_blocks = build_decision_drift_personal_dm(
+            thread_label=notice.thread_label,
+            current_statement=notice.statement_preview,
+            change_type=notice.change_type,
+        )
+        for user_id in notice.absent_user_ids:
+            _deliver_personal(slack, user_id, dm_fallback, dm_blocks)
+
+    log.info("context_decision_drift_notice_sent", count=len(notices))
+    return len(notices)
+
+
+def notify_topic_links(session: Session, slack: SlackApi, channel: str, meeting_id: str) -> int:
+    """Collect and send this meeting's topic-link notices in one call.
+
+    For callers that don't need to release their session before the Slack
+    calls below -- ``tasks.notify_context_events`` does, and calls
+    ``collect_topic_link_notices``/``send_topic_link_notices`` separately
+    instead.
+    """
+    return send_topic_link_notices(slack, channel, collect_topic_link_notices(session, meeting_id))
+
+
+def notify_decision_drift(session: Session, slack: SlackApi, channel: str, meeting_id: str) -> int:
+    """Collect and send this meeting's decision-drift warnings in one call.
+
+    For callers that don't need to release their session before the Slack
+    calls below -- ``tasks.notify_context_events`` does, and calls
+    ``collect_drift_notices``/``send_decision_drift_notices`` separately
+    instead.
+    """
+    return send_decision_drift_notices(slack, channel, collect_drift_notices(session, meeting_id))
 
 
 # --------------------------------------------------------------------------- #

@@ -62,6 +62,13 @@ class DecisionVersionRead(BaseModel):
     ``previous_statement``/``previous_meeting_id`` are blanked by the router
     (not read as-is off the row) once the meeting they quote has left the
     retention window — see ``router.get_decision_thread``.
+
+    Deliberately omits ``CtxDecisionVersion.key_stakeholders_absent``. That
+    field still goes out on the ``ContextLinks`` event to E and in the
+    decision-drift Slack DM to the absent person, but no route under
+    ``/api/context`` checks who is asking (#156), so a human-facing GET would
+    hand any caller a cross-meeting roster of one person's absences — see
+    #188. Re-add it here once #156 ships route auth.
     """
 
     model_config = ConfigDict(from_attributes=True)
@@ -74,7 +81,6 @@ class DecisionVersionRead(BaseModel):
     change_type: str
     nli_label: str | None
     confidence: float
-    key_stakeholders_absent: list[str]
     created_at: datetime
 
 

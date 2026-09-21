@@ -134,7 +134,7 @@ Every table a module owns is named `<prefix>_<name>`.
 
 | Module | Prefix | Examples |
 | --- | --- | --- |
-| A. audio | `aud_` | `aud_jobs`, `aud_speaker_embeddings`, `aud_masking_events` |
+| A. audio | `aud_` | `aud_jobs`, `aud_speaker_embeddings`, `aud_masking_events`, `aud_consent_attestations` |
 | B. extraction | `ext_` | `ext_classifications`, `ext_action_items`, `ext_external_refs` |
 | C. gap | `gap_` | `gap_topics`, `gap_gaps`, `gap_participation` |
 | D. context | `ctx_` | `ctx_materials`, `ctx_topic_links`, `ctx_decisions`, `ctx_decision_versions` |

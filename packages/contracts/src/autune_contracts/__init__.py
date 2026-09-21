@@ -26,14 +26,18 @@ from .events import (
     GAP_COMPLETED,
     INTELLIGENCE_COMPLETED,
     MODULES,
+    TERMINAL_EVENTS,
     TRANSCRIPT_READY,
 )
 from .extraction import (
+    STANCE_MIN_IDENTIFIED_PER_ROLE,
     ActionItem,
     AmbiguousAgreement,
     Classification,
+    Decision,
     ExternalRef,
     ExtractionResult,
+    RoleStance,
 )
 from .gap import Gap, GapReport, Participation, Topic
 from .intelligence import (
@@ -52,6 +56,7 @@ __all__ = [
     "validate_major_version",
     # events
     "TRANSCRIPT_READY",
+    "TERMINAL_EVENTS",
     "EXTRACTION_COMPLETED",
     "EVENTS",
     "GAP_COMPLETED",
@@ -76,6 +81,8 @@ __all__ = [
     "ActionItem",
     "Classification",
     "Decision",
+    "RoleStance",
+    "STANCE_MIN_IDENTIFIED_PER_ROLE",
     "AmbiguousAgreement",
     "ExternalRef",
     # C -> E

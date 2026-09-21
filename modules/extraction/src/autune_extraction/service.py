@@ -519,6 +519,11 @@ def build_decisions(
     ``utterances`` is every utterance of the meeting in ``start_sec`` order; see
     ``group_decisions`` for why the non-decision ones have to be there.
 
+    The meeting's own row is read for its date, the way ``build_action_items``
+    does: a statement carries the deadline the meeting set, and "이번 주 금요일"
+    is a different Friday every week. A meeting with no start time keeps the
+    phrase as said rather than resolving it against today.
+
     **Rebuilding replaces, and keeps the ids that still apply.** The meeting's
     decisions are deleted and rebuilt, and each one's id is derived from the
     meeting and the utterances it was settled in (``decisions.decision_id``). A
@@ -538,6 +543,9 @@ def build_decisions(
     asked, and with ids that repeat, a source row a cascade missed would attach
     itself to the rebuilt decision.
     """
+    meeting = session.get(Meeting, meeting_id)
+    day = meeting_day(meeting.started_at if meeting is not None else None)
+
     # Only the model's decisions are rebuilt. One a person added is not derived
     # from labels, so no rerun can recompute it (#246).
     model_made = (ExtDecision.meeting_id == meeting_id, ExtDecision.origin == "model")
@@ -556,7 +564,7 @@ def build_decisions(
                 for position, utterance_id in enumerate(group.source_utterance_ids)
             ],
         )
-        for group in group_decisions(utterances, max_gap=max_gap)
+        for group in group_decisions(utterances, max_gap=max_gap, day=day)
     ]
     session.add_all(decisions)
     session.flush()
@@ -603,27 +611,44 @@ def decisions_for_meeting(session: Session, meeting_id: str) -> list[Decision]:
 
     Pending decisions stay: whether D and E hear a decision before anybody has
     looked at it is the open question 2 on #246, not something this read decides.
+
+    **A person's rewording is what goes out**, here as in
+    ``review_for_meeting`` and ``outbound_for_meeting``. Reading the review for
+    the status and not for the sentence sent the model's wording to D and E while
+    Notion and Slack got the corrected one -- one decision, two texts, and the
+    one the person rejected as wrong is the one a lineage would be built on.
+    Raised in review of #247.
     """
-    rejected = select(ExtDecisionReview.decision_id).where(
-        ExtDecisionReview.meeting_id == meeting_id, ExtDecisionReview.status == "rejected"
-    )
+    reviews = {
+        review.decision_id: review
+        for review in session.scalars(
+            select(ExtDecisionReview).where(ExtDecisionReview.meeting_id == meeting_id)
+        )
+    }
     rows = session.scalars(
         select(ExtDecision)
-        .where(ExtDecision.meeting_id == meeting_id, ExtDecision.id.not_in(rejected))
+        .where(ExtDecision.meeting_id == meeting_id)
         .order_by(ExtDecision.created_at, ExtDecision.id)
     ).all()
 
     return [
         Decision(
             id=row.id,
-            statement=row.statement,
+            statement=_confirmed_statement(row, reviews.get(row.id)),
             source_utterance_ids=[
                 source.utterance_id for source in sorted(row.sources, key=lambda s: s.position)
             ],
             confidence=row.confidence,
         )
         for row in rows
+        if (review := reviews.get(row.id)) is None or review.status != "rejected"
     ]
+
+
+def _confirmed_statement(decision: ExtDecision, review: ExtDecisionReview | None) -> str:
+    """What the meeting settled, in the wording that stands: the person's if they
+    reworded it, the model's otherwise. One definition, read by every surface."""
+    return review.statement if review is not None and review.statement else decision.statement
 
 
 # --- the meeting's result ----------------------------------------------------
@@ -751,8 +776,11 @@ def classify_utterances(
             kind=prediction.kind,
             confidence=prediction.confidence,
             text=utterance.text,
+            speaker=utterance.speaker,
         )
         if (prediction := answer.get(utterance.id)) is not None
+        # No consent, so nothing of theirs is read -- not the text, and not who
+        # they are. The turn is a gap of the right length and nothing more.
         else ClassifiedUtterance(id=utterance.id, kind=None, confidence=0.0, text="")
         for utterance in ordered
     ]
@@ -1023,7 +1051,7 @@ def review_for_meeting(
         listed.append(
             ReviewDecision(
                 id=decision.id,
-                statement=review.statement if review and review.statement else decision.statement,
+                statement=_confirmed_statement(decision, review),
                 model_statement=decision.statement,
                 confidence=decision.confidence,
                 origin=decision.origin,  # type: ignore[arg-type]
@@ -1091,6 +1119,12 @@ def review_decision(
                 review.statement = None
             else:
                 review.statement = None if wording in (None, decision.statement) else wording
+        if review.status == "rejected":
+            # Rejecting drops the rewording whichever way it was asked for, as
+            # ``delete_decision`` does. Left behind, it would come back with the
+            # decision when the rejection is undone -- wording nobody typed this
+            # time, sent to D, E and outbound as if confirmed.
+            review.statement = None
         session.flush()
 
     return next(

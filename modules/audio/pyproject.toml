@@ -20,6 +20,11 @@ dependencies = [
     # splits segments where two people overlap.
     "faster-whisper>=1.1",
     "python-multipart>=0.0.20",  # file uploads on the dev endpoint
+    # The HiKE evaluation corpus is one parquet file on the Hugging Face hub.
+    # huggingface-hub is already here through faster-whisper and pyannote; it
+    # is named because autune_audio.eval.hike imports it directly.
+    "pyarrow>=18",
+    "huggingface-hub>=0.25",
 ]
 
 [build-system]
