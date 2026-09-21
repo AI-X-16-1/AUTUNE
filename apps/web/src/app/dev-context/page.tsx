@@ -5,8 +5,9 @@ import { notFound } from "next/navigation";
  * Temporary preview route for the S15 context tab and S22 lineage panel.
  * Not a real screen: there is no auth/team context yet (#156, #189) to
  * resolve `meeting_id`/`team_id` on their own, so this reads them from query
- * params instead. Delete once a real page replaces this. Same pattern as
- * module E's `dev-dashboard` (#210).
+ * params instead. Delete once a real page replaces this. The routes under
+ * `meetings/[meetingId]/` take the meeting id from the path; this one cannot,
+ * because the S22 panel needs a `team_id` that no path can supply yet.
  *
  * `notFound()` in production makes the "temporary" claim a fact rather than a
  * promise a stale comment makes — same reasoning as #241's default-off CORS.
