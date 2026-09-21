@@ -86,6 +86,7 @@ def test_the_response_carries_every_field_the_board_reads() -> None:
         "description",
         "assignee_id",
         "assignee_label",
+        "assignee_name",
         "due_date",
         "status",
         "confidence",

@@ -307,14 +307,22 @@ def create_action_item(session: Session, payload: ActionItemCreate) -> ExtAction
     return item
 
 
-def read_model(item: ExtActionItem, *, summary: str | None = None) -> ActionItemRead:
+def read_model(
+    item: ExtActionItem,
+    *,
+    assignee_name: str | None = None,
+    summary: str | None = None,
+) -> ActionItemRead:
     """One item as this module's own screens read it.
 
-    Built here rather than by ``from_attributes`` on the schema because three
-    of its fields are not columns: the source ids live in the link table,
-    whether the item is a candidate depends on a setting the row knows nothing
-    about, and the summary is computed from utterances this row does not carry
-    -- see ``action_item_summaries``.
+    Built here rather than by ``from_attributes`` on the schema because four of
+    its fields are not columns: the source ids live in the link table, whether
+    the item is a candidate depends on a setting the row knows nothing about,
+    the assignee's name is not stored at all -- see ``assignee_name`` on
+    ``ActionItemRead`` -- and the summary is computed from utterances this row
+    does not carry -- see ``action_item_summaries``. Callers with more than one
+    item look both up in a batch (``list_action_items``) rather than let this
+    query per row.
 
     Deciding *candidate* on the server is the point of this function. The
     threshold belongs to the classifier that produced the confidence, and a
@@ -330,6 +338,7 @@ def read_model(item: ExtActionItem, *, summary: str | None = None) -> ActionItem
         description=item.description,
         assignee_id=item.assignee_id,
         assignee_label=item.assignee_label,
+        assignee_name=assignee_name,
         due_date=item.due_date,
         status=item.status,
         confidence=item.confidence,
@@ -338,6 +347,22 @@ def read_model(item: ExtActionItem, *, summary: str | None = None) -> ActionItem
         is_candidate=threshold is not None and item.confidence < threshold,
         summary=summary,
     )
+
+
+def assignee_names(session: Session, items: Sequence[ExtActionItem]) -> dict[str, str]:
+    """Display names for every assignee in ``items``, read fresh -- never stored.
+
+    A name is the one piece of a person's identity this module is allowed to
+    show (invariant 11 restricts speaking ratio, not who a task is for), and it
+    changes with the account, not with the item -- storing it would go stale
+    the first time somebody's display name did. One query for the whole list,
+    not one per row.
+    """
+    ids = {item.assignee_id for item in items if item.assignee_id is not None}
+    if not ids:
+        return {}
+    rows = session.execute(select(User.id, User.display_name).where(User.id.in_(ids)))
+    return {user_id: display_name for user_id, display_name in rows}
 
 
 def list_action_items(
@@ -373,8 +398,16 @@ def list_action_items(
         query = query.where(ExtActionItem.due_date < due_before)
 
     items = list(session.scalars(query))
+    names = assignee_names(session, items)
     summaries = action_item_summaries(session, items)
-    return [read_model(item, summary=summaries.get(item.id)) for item in items]
+    return [
+        read_model(
+            item,
+            assignee_name=names.get(item.assignee_id) if item.assignee_id else None,
+            summary=summaries.get(item.id),
+        )
+        for item in items
+    ]
 
 
 def read_detail(session: Session, item: ExtActionItem) -> ActionItemDetail:
@@ -386,9 +419,11 @@ def read_detail(session: Session, item: ExtActionItem) -> ActionItemDetail:
     ``summary`` is the exception already allowed onto the list, one chosen
     line rather than the whole evidence. See ``ActionItemDetail``.
     """
+    names = assignee_names(session, [item])
+    name = names.get(item.assignee_id) if item.assignee_id else None
     summary = action_item_summaries(session, [item]).get(item.id)
     return ActionItemDetail(
-        **read_model(item, summary=summary).model_dump(),
+        **read_model(item, assignee_name=name, summary=summary).model_dump(),
         sources=source_utterances(session, item.id),
     )
 
