@@ -33,6 +33,10 @@ export function useMicrophone(): Microphone {
   const media = useRef<MediaStream | null>(null);
 
   const start = useCallback(async () => {
+    // Already open: never ask for a second stream while one is live, which
+    // would leak the first (a caller re-entering start() after an error that
+    // did not stop the microphone, for instance).
+    if (media.current) return;
     try {
       const opened = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
       const ctx = new AudioContext();

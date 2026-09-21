@@ -42,9 +42,17 @@ export function LiveMeetingScreen({ meetingId }: { meetingId: string }) {
   // re-entry guard makes a StrictMode double-invoke harmless.
   const livePhase = live.phase;
   const liveStart = live.start;
+  const microphoneStop = microphone.stop;
   useEffect(() => {
     if (microphone.stream && livePhase === "idle") void liveStart();
   }, [microphone.stream, livePhase, liveStart]);
+
+  // A refusal (no live view is ever coming, per useLiveSession) means the
+  // recording was already abandoned; the microphone is the one thing left
+  // for the screen itself to release, since `onStop` is not coming.
+  useEffect(() => {
+    if (livePhase === "error") microphoneStop();
+  }, [livePhase, microphoneStop]);
 
   // A dropped tab mid-recording loses whatever the recorder has not
   // uploaded yet; ask before that happens.
@@ -75,6 +83,7 @@ export function LiveMeetingScreen({ meetingId }: { meetingId: string }) {
   };
 
   const onStart = async () => {
+    if (live.phase === "error") live.reset();
     await microphone.start();
   };
 
@@ -132,8 +141,7 @@ export function LiveMeetingScreen({ meetingId }: { meetingId: string }) {
     );
   }
 
-  if (microphone.stream && live.phase !== "connecting" && live.phase !== "recording" && live.phase !== "paused") {
-    // uploading / upload_failed
+  if (live.phase === "uploading" || live.phase === "upload_failed") {
     return (
       <main className="mx-auto max-w-[720px] p-[var(--space-page)]">
         <p style={{ fontSize: "var(--text-body)" }}>
@@ -153,7 +161,8 @@ export function LiveMeetingScreen({ meetingId }: { meetingId: string }) {
     );
   }
 
-  // The stream is open but the session has not reached ready yet, or it is live.
+  // Only "connecting" / "recording" / "paused" remain: the session has not
+  // reached ready yet, or it is live.
   const state: RecordingState = live.phase === "paused" ? "paused" : "recording";
 
   return (

@@ -28,6 +28,8 @@ export type LiveSession = {
   resume: () => void;
   stop: () => Promise<void>;
   retryUpload: () => Promise<void>;
+  /** Clears a refusal so the gate can try `start()` again. Only valid from `"error"`. */
+  reset: () => void;
 };
 
 type ServerMessage =
@@ -369,5 +371,18 @@ export function useLiveSession(meetingId: string, stream: MediaStream | null): L
     };
   }, [teardownAudio, abandon]);
 
-  return { phase, rows, elapsedSeconds, liveLost, error, start, pause, resume, stop, retryUpload: upload };
+  // Only a refusal (phase "error") leaves nothing running -- abandon() already
+  // cleared every ref when start() rejected -- so this only needs to clear the
+  // state a fresh start() will not otherwise reset before it, letting the gate
+  // try again.
+  const reset = useCallback(() => {
+    if (phase !== "error") return;
+    setPhase("idle");
+    setError(null);
+    setLiveLost(false);
+    setRows([]);
+    setElapsed(0);
+  }, [phase]);
+
+  return { phase, rows, elapsedSeconds, liveLost, error, start, pause, resume, stop, retryUpload: upload, reset };
 }
