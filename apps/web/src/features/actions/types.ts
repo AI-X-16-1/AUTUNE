@@ -99,6 +99,22 @@ export type DecisionStatus = "pending" | "confirmed" | "rejected";
  * schema lives in #247, and the pin belongs in the same place once it is on
  * `main`.
  */
+/**
+ * Where one item or decision stands with one outside system —
+ * `ExternalRefRead` in `modules/extraction/src/autune_extraction/schemas.py`.
+ *
+ * Not the generated `ExternalRef` from `@autune/contracts`: that type is the
+ * outbound event to D and E and requires `url` because it is only ever built
+ * for a ref that finished. This reads the other two states a sync can be in:
+ * `url` is `null` while claimed but not yet sent, or failed; no entry at all
+ * (this system absent from the array) means nothing has tried yet.
+ */
+export interface ExternalRefRead {
+  system: "notion" | "jira";
+  url: string | null;
+  external_id: string | null;
+}
+
 export interface ReviewDecision {
   id: string;
   /** What will be sent: the person's rewording when there is one. */
@@ -117,6 +133,8 @@ export interface ReviewDecision {
    * utterance, truncated. `null` only when there are no sources at all.
    */
   summary: string | null;
+  /** At most `notion` today (#30); `jira` is designed, not built. */
+  sync_refs: ExternalRefRead[];
 }
 
 /** One weak assent and where the speaker's DM stands. Read-only here. */
