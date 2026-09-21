@@ -284,7 +284,8 @@ def detect_gaps(meeting_id: str) -> int:
 
         chosen = template.get_template(selected_template_key(session, meeting_id))
         topics = _topic_views(session, meeting_id)
-        findings = detect.compare(chosen, topics, _thresholds(settings))
+        speech = _speech(session, meeting_id)
+        findings = detect.compare(chosen, topics, speech, _thresholds(settings))
         _store_gaps(session, meeting_id, chosen, findings)
 
     # Counts and keys only. A gap title is composed from a template file and a
@@ -465,6 +466,35 @@ def _topic_views(session: Session, meeting_id: str) -> list[detect.TopicView]:
             )
         )
     return views
+
+
+def _speech(session: Session, meeting_id: str) -> list[str]:
+    """What the consenting room said, one string per utterance.
+
+    The second evidence source ``detect.compare`` reads. Text rather than ids:
+    comparison asks whether a word was said, and nothing it produces points back
+    at an utterance — ``gap_related_topics`` links a gap to topics, which is the
+    evidence a reader can follow on screen.
+
+    **Consent is filtered here the same way ``build_topic_graph`` filters it.**
+    An utterance whose speaker did not consent, or has no participant row behind
+    it at all, is not analysed (docs/architecture/privacy.md section 5); unknown
+    consent is not consent. Reading the meeting's ``utterances`` rows without the
+    join would quietly re-admit exactly the speech the graph was built to leave
+    out, and a gap would then rest on a person who declined.
+
+    The text is already masked — module A masks before it writes and there is no
+    unmasked form to reach. Nothing read here is stored or logged: it decides a
+    coverage state and is dropped.
+    """
+    return list(
+        session.scalars(
+            select(Utterance.text)
+            .join(Participant, Participant.id == Utterance.participant_id)
+            .where(Utterance.meeting_id == meeting_id, Participant.consented.is_(True))
+            .order_by(Utterance.start_sec, Utterance.id)
+        )
+    )
 
 
 def _store_gaps(

@@ -317,8 +317,8 @@ measured at all. `general` is applied to every meeting unless one is overridden
 false when it guesses wrong.
 
 **Three states, and only two of them raise a gap.** An item is *covered* when a
-matched topic carried real weight, *partial* when the meeting named it and left
-it at the edge of the graph, and *missing* when nothing matched. S20 shows the
+matched topic carried real weight, *partial* when it came up and was not
+settled, and *missing* when nobody said anything of the kind. S20 shows the
 three side by side.
 
 - **Matching is containment either way**, over `graph.topic_key`'s
@@ -326,6 +326,33 @@ three side by side.
   keyword. Deliberately dumb, and the rule v1 measures precision against — what
   replaces it (embeddings over the items) is then a change with a number
   attached rather than a better idea.
+- **Two sources of evidence, ranked: the graph, then the speech.** A topic match
+  carries a centrality, so it decides between covered and partial. A keyword
+  that appears in an utterance with no topic behind it is weaker — the words
+  were said and the extractor never raised them to a topic — so it is *partial*
+  and never covered.
+
+  Without the second source the comparison could only ever be as good as entity
+  extraction, and NER recall was silently deciding gap precision. A meeting that
+  settles an owner and a deadline in plain Korean — "API 업그레이드는 한개발님이
+  10월 2일까지 맡아주시고요" — yields no topic carrying the word 담당 or 기한, so
+  the item came back `missing` and put a full-weight gap on the screen about
+  something the meeting had done. Measured over the three labelled fixtures, the
+  change cut `high`-severity gaps from 8 to 5 without losing a true one at
+  `high`.
+
+  Speech alone never covers an item, because one passing "다음에 얘기해요" would
+  otherwise close an item the meeting never settled. Only consenting speech is
+  read, filtered by the same join `build_topic_graph` uses — unknown consent is
+  not consent, and a gap resting on a person who declined is the failure that
+  matters here.
+
+  **A question counts as having raised the subject.** "소셜 로그인 API가
+  필요한가요?" makes the dependency item partial rather than missing, which
+  demotes a gap somebody might have wanted at `high`. Interrogatives and
+  negations are not detected, and detecting them is its own judgement rather
+  than a one-liner; the fixture labels disagree with the code on exactly this
+  case and it is the open question of the rule.
 - **A missing item scores exactly its template weight.** There is no topic to
   read a centrality off and none to read a silence off, so the weight is the
   only measured input and the score is it. Charging it a full 1.0 for "no
