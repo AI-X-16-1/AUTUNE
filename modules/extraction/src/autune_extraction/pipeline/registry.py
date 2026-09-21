@@ -12,7 +12,7 @@ from functools import lru_cache
 from autune_extraction.config import get_settings
 
 from .base import Classifier
-from .classifier import FakeClassifier, HostedDeberta, LocalDeberta
+from .classifier import ENSEMBLE_SEPARATOR, FakeClassifier, HostedDeberta, LocalDeberta
 
 _CLASSIFIERS: dict[str, str] = {
     "local": "weights in this process",
@@ -43,6 +43,13 @@ def get_classifier() -> Classifier:
     if impl == "local":
         return LocalDeberta(settings.classifier_checkpoint, device=settings.classifier_device)
     if impl == "hosted":
+        if ENSEMBLE_SEPARATOR in settings.classifier_checkpoint:
+            # The inference server runs one model and is told its version; a list
+            # here would be recorded as the version of a model that never ran.
+            raise ValueError(
+                "AUTUNE_EXTRACTION_CLASSIFIER_CHECKPOINT lists several checkpoints, "
+                "which only CLASSIFIER_IMPL=local can ensemble"
+            )
         if not settings.classifier_endpoint:
             raise ValueError(
                 "AUTUNE_EXTRACTION_CLASSIFIER_IMPL=hosted needs "

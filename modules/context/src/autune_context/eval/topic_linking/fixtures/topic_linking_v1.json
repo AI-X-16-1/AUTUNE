@@ -1,0 +1,183 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "repeated_topic_links",
+      "past_meetings": [
+        {
+          "days_ago": 10,
+          "lines": [
+            "검색 결과 개인화 로직을 어떻게 적용할지 논의했다.",
+            "사용자 행동 데이터를 반영하는 방향으로 정리했다.",
+            "다음 스프린트에 프로토타입을 만들기로 했다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "lines": [
+          "지난번 논의했던 검색 결과 개인화 로직 진행 상황을 공유했다.",
+          "사용자 행동 데이터 반영 작업이 예상보다 오래 걸리고 있다.",
+          "다음 주까지 프로토타입을 마무리하기로 했다."
+        ]
+      },
+      "expected_linked_indices": [0]
+    },
+    {
+      "id": "unrelated_topic_no_link",
+      "past_meetings": [
+        {
+          "days_ago": 7,
+          "lines": [
+            "다음 분기 예산안을 검토했다.",
+            "마케팅 예산을 늘리는 쪽으로 의견이 모였다.",
+            "재무팀 승인을 받기로 했다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "lines": [
+          "디자인 시스템의 컬러 팔레트를 정리했다.",
+          "다크 모드 대비 색상을 추가하기로 했다.",
+          "컴포넌트 문서에 반영하기로 했다."
+        ]
+      },
+      "expected_linked_indices": []
+    },
+    {
+      "id": "two_past_meetings_links_the_right_one",
+      "past_meetings": [
+        {
+          "days_ago": 14,
+          "lines": [
+            "온보딩 이메일 문구를 다시 작성했다.",
+            "신규 가입자 전환율을 높이는 게 목표다.",
+            "A/B 테스트를 진행하기로 했다."
+          ]
+        },
+        {
+          "days_ago": 5,
+          "lines": [
+            "정렬 알고리즘의 성능 저하 원인을 분석했다.",
+            "인덱스를 다시 설계하기로 했다.",
+            "다음 주에 벤치마크를 돌리기로 했다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "lines": [
+          "지난 벤치마크 결과를 공유했다.",
+          "정렬 인덱스 재설계로 성능이 개선됐다.",
+          "운영 환경에 배포하기로 했다."
+        ]
+      },
+      "expected_linked_indices": [1]
+    },
+    {
+      "id": "semantic_paraphrase_no_lexical_overlap",
+      "past_meetings": [
+        {
+          "days_ago": 20,
+          "lines": [
+            "다음 달 팀 회식 날짜를 확정했다.",
+            "장소는 근처 이자카야로 예약하기로 했다.",
+            "참석 여부는 이번 주 금요일까지 회신받기로 했다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "lines": [
+          "다음 달 저녁 모임 일정이 잡혀서 공유한다.",
+          "예약해둔 식당 위치를 다시 안내했다.",
+          "참석 회신 마감은 이번 주 금요일이다."
+        ]
+      },
+      "expected_linked_indices": [0]
+    },
+    {
+      "id": "shared_keyword_different_meaning_no_link",
+      "past_meetings": [
+        {
+          "days_ago": 12,
+          "lines": [
+            "3월 15일에 신규 기능을 배포하기로 했다.",
+            "배포 후 모니터링 담당자를 정했다.",
+            "문제가 생기면 즉시 롤백하기로 했다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "lines": [
+          "3월 15일에 사무실 이전 작업을 진행하기로 했다.",
+          "이사 업체와 일정을 조율했다.",
+          "짐 포장은 각자 담당하기로 했다."
+        ]
+      },
+      "expected_linked_indices": []
+    },
+    {
+      "id": "recurring_topic_three_occurrences",
+      "past_meetings": [
+        {
+          "days_ago": 30,
+          "lines": [
+            "결제 시스템 리팩토링 범위를 정리했다.",
+            "레거시 결제 모듈부터 걷어내기로 했다.",
+            "다음 스프린트부터 착수하기로 했다."
+          ]
+        },
+        {
+          "days_ago": 20,
+          "lines": [
+            "결제 시스템 리팩토링 진행 상황을 공유했다.",
+            "레거시 결제 모듈 제거가 절반쯤 끝났다.",
+            "테스트 커버리지를 더 늘리기로 했다."
+          ]
+        },
+        {
+          "days_ago": 10,
+          "lines": [
+            "결제 시스템 리팩토링이 막바지에 이르렀다.",
+            "레거시 결제 모듈은 완전히 제거됐다.",
+            "다음 주 배포 일정을 잡기로 했다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "lines": [
+          "결제 시스템 리팩토링 배포 결과를 공유했다.",
+          "레거시 모듈 제거 이후 장애가 없었다.",
+          "리팩토링 프로젝트를 공식적으로 종료하기로 했다."
+        ]
+      },
+      "expected_linked_indices": [0, 1, 2]
+    },
+    {
+      "id": "same_domain_different_subtopic_no_link",
+      "past_meetings": [
+        {
+          "days_ago": 9,
+          "lines": [
+            "인증 API의 토큰 만료 정책을 논의했다.",
+            "리프레시 토큰 유효 기간을 7일로 정했다.",
+            "만료 시 자동 로그아웃 처리를 하기로 했다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "lines": [
+          "결제 API의 콜백 재시도 정책을 논의했다.",
+          "실패 시 최대 3회까지 재시도하기로 했다.",
+          "재시도 간격은 지수 백오프로 정했다."
+        ]
+      },
+      "expected_linked_indices": []
+    }
+  ]
+}

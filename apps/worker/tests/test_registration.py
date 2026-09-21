@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from autune_contracts import EVENTS, INTELLIGENCE_COMPLETED, MODULES
+from autune_contracts import EVENTS, MODULES, TERMINAL_EVENTS
 from autune_core import consumer_task_suffix
 from autune_worker import celery_app
 
@@ -31,14 +31,6 @@ def test_audio_runs_on_the_gpu_queue(task_names: set[str]) -> None:
 def test_intelligence_consumes_all_three_upstream_modules(task_names: set[str]) -> None:
     for upstream in ("extraction", "gap", "context"):
         assert f"autune.intelligence.on_{upstream}_completed" in task_names
-
-
-# The pipeline's last stage. Nothing consumes it today -- E is where the chain
-# ends -- and `publish` treats no subscribers as a warning rather than an error
-# so that C not being deployed cannot fail B. That leniency is also what makes a
-# typo in a consumer's task name silent, so the two cases are separated here:
-# an event is subscribed, or it is listed below on purpose.
-TERMINAL_EVENTS = {INTELLIGENCE_COMPLETED}
 
 
 @pytest.mark.parametrize("event", [e for e in EVENTS if e not in TERMINAL_EVENTS])

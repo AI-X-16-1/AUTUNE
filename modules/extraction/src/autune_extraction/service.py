@@ -504,6 +504,11 @@ def build_decisions(
     ``utterances`` is every utterance of the meeting in ``start_sec`` order; see
     ``group_decisions`` for why the non-decision ones have to be there.
 
+    The meeting's own row is read for its date, the way ``build_action_items``
+    does: a statement carries the deadline the meeting set, and "이번 주 금요일"
+    is a different Friday every week. A meeting with no start time keeps the
+    phrase as said rather than resolving it against today.
+
     **Rebuilding replaces, and keeps the ids that still apply.** The meeting's
     decisions are deleted and rebuilt, and each one's id is derived from the
     meeting and the utterances it was settled in (``decisions.decision_id``). A
@@ -523,6 +528,9 @@ def build_decisions(
     asked, and with ids that repeat, a source row a cascade missed would attach
     itself to the rebuilt decision.
     """
+    meeting = session.get(Meeting, meeting_id)
+    day = meeting_day(meeting.started_at if meeting is not None else None)
+
     # Only the model's decisions are rebuilt. One a person added is not derived
     # from labels, so no rerun can recompute it (#246).
     model_made = (ExtDecision.meeting_id == meeting_id, ExtDecision.origin == "model")
@@ -541,7 +549,7 @@ def build_decisions(
                 for position, utterance_id in enumerate(group.source_utterance_ids)
             ],
         )
-        for group in group_decisions(utterances, max_gap=max_gap)
+        for group in group_decisions(utterances, max_gap=max_gap, day=day)
     ]
     session.add_all(decisions)
     session.flush()
@@ -753,8 +761,11 @@ def classify_utterances(
             kind=prediction.kind,
             confidence=prediction.confidence,
             text=utterance.text,
+            speaker=utterance.speaker,
         )
         if (prediction := answer.get(utterance.id)) is not None
+        # No consent, so nothing of theirs is read -- not the text, and not who
+        # they are. The turn is a gap of the right length and nothing more.
         else ClassifiedUtterance(id=utterance.id, kind=None, confidence=0.0, text="")
         for utterance in ordered
     ]

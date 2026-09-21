@@ -17,7 +17,10 @@ is the model. Reporting only one of them hides which is which.
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+
+from .alignment import count, edit_ops
 
 _PUNCT = re.compile(r"[.,!?;:~…·\"'“”‘’()\[\]<>《》「」『』]")
 _SPACE = re.compile(r"\s+")
@@ -151,46 +154,12 @@ def character_error_rate(reference: str, hypothesis: str) -> CharacterErrorRate:
     if not ref:
         raise ValueError("reference is empty; character error rate is undefined")
 
-    rows, cols = len(ref) + 1, len(hyp) + 1
-    cost = [[0] * cols for _ in range(rows)]
-    ops: list[list[str]] = [[""] * cols for _ in range(rows)]
-    for i in range(1, rows):
-        cost[i][0], ops[i][0] = i, "D"
-    for j in range(1, cols):
-        cost[0][j], ops[0][j] = j, "I"
-
-    for i in range(1, rows):
-        for j in range(1, cols):
-            if ref[i - 1] == hyp[j - 1]:
-                cost[i][j], ops[i][j] = cost[i - 1][j - 1], "="
-                continue
-            substitute, delete, insert = (
-                cost[i - 1][j - 1] + 1,
-                cost[i - 1][j] + 1,
-                cost[i][j - 1] + 1,
-            )
-            best = min(substitute, delete, insert)
-            cost[i][j] = best
-            ops[i][j] = "S" if best == substitute else ("D" if best == delete else "I")
-
-    counts = {"S": 0, "D": 0, "I": 0}
-    i, j = len(ref), len(hyp)
-    while i or j:
-        op = ops[i][j]
-        if op in counts:
-            counts[op] += 1
-        if op in ("=", "S"):
-            i, j = i - 1, j - 1
-        elif op == "D":
-            i -= 1
-        else:
-            j -= 1
-
+    substitutions, deletions, insertions = count(edit_ops(ref, hyp))
     return CharacterErrorRate(
-        cer=(counts["S"] + counts["D"] + counts["I"]) / len(ref),
-        substitutions=counts["S"],
-        deletions=counts["D"],
-        insertions=counts["I"],
+        cer=(substitutions + deletions + insertions) / len(ref),
+        substitutions=substitutions,
+        deletions=deletions,
+        insertions=insertions,
         reference_characters=len(ref),
     )
 
@@ -234,7 +203,12 @@ class TermAccuracy:
         )
 
 
-def term_accuracy(hypothesis: str, expected_terms: list[str]) -> TermAccuracy:
+def term_accuracy(
+    hypothesis: str,
+    expected_terms: list[str],
+    *,
+    aliases: Mapping[str, Sequence[str]] | None = None,
+) -> TermAccuracy:
     """How many domain terms survived transcription, spelled as we spell them.
 
     Separate from CER because the cost is different in kind. A wrong particle
@@ -243,7 +217,10 @@ def term_accuracy(hypothesis: str, expected_terms: list[str]) -> TermAccuracy:
     CER and be unusable here.
 
     Matching ignores case and spacing — `Next.js` and `next js` are the same
-    term said aloud — but not spelling.
+    term said aloud — but not spelling. ``aliases`` lists the other spellings a
+    term may legitimately take, ``{"pipeline": ["파이프라인"]}``: a loanword in
+    either script is correct, which is HiKE's rule and, since 2026-09-16, ours.
+    A transliteration that is not listed is still a miss.
     """
     if not expected_terms:
         raise ValueError("no terms given; accuracy is undefined")
@@ -252,7 +229,12 @@ def term_accuracy(hypothesis: str, expected_terms: list[str]) -> TermAccuracy:
         return _SPACE.sub("", text.lower().replace(".", "").replace("-", ""))
 
     haystack = flatten(hypothesis)
-    missed = tuple(term for term in expected_terms if flatten(term) not in haystack)
+
+    def present(term: str) -> bool:
+        spellings = (term, *(aliases or {}).get(term, ()))
+        return any(flatten(spelling) in haystack for spelling in spellings)
+
+    missed = tuple(term for term in expected_terms if not present(term))
     correct = len(expected_terms) - len(missed)
     return TermAccuracy(
         accuracy=correct / len(expected_terms),

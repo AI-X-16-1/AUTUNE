@@ -36,7 +36,9 @@ Contract: `/docs/architecture/contracts.md`.
 
 - Shared entities `meetings`, `participants`, `utterances` in `packages/core`.
   **A is the only module that writes them.**
-- `aud_jobs`, `aud_speaker_embeddings`, `aud_masking_events`, `aud_corrections`.
+- `aud_jobs`, `aud_speaker_embeddings`, `aud_masking_events`, `aud_corrections`,
+  `aud_consent_attestations` — the only writer of `participants.consented = True`
+  in the repository, per meeting, until S10/S11 make it per person (#190).
 
 ## AI stack
 
@@ -69,11 +71,42 @@ recording length.
 ```bash
 # What a corpus can measure, before committing to downloading it
 uv run python modules/audio/scripts/inspect_corpus.py <corpus-root>
+
+# Code-switching: the pipeline's transcribe() over HiKE, scored as the paper scores it
+uv run python modules/audio/scripts/evaluate_hike.py --limit 60 --predictions out.jsonl
+uv run python modules/audio/scripts/evaluate_hike.py --score-only out.jsonl   # no model needed
 ```
 
 Scoring lives in `autune_audio.eval` and takes structures, not a model, so it
-runs without a GPU. There is no `__main__` yet — the CLI arrives with the corpus
-loader, once the label format is known.
+runs without a GPU. Two corpora, two jobs: the in-house recording measures the
+glossary prompt, DER and masking; HiKE (`thetaone-ai/HiKE`, 1,121 Korean-English
+utterances) measures only how the model survives a language switch, with no
+glossary, against a published table. Reports go in
+`docs/modules/audio-evaluations/` and the thread between them in `HISTORY.md`
+(which lands with #174).
+
+```bash
+# Score the masker against the corpus. Both directions, one second, no model.
+uv run --package autune-audio python -m autune_audio.eval
+uv run --package autune-audio python -m autune_audio.eval --no-recogniser --verbose
+```
+
+**Recall is the target; precision is what says what the recall cost.** Recall
+cannot fall when the masker covers more, so every widening looks free until
+somebody runs real text — which is how the account pattern came to eat every ISO
+date. Run this before and after any change to a pattern.
+
+The corpus is `src/autune_audio/eval/fixtures/masking.jsonl` — `fixtures/`
+because `.gitignore` reserves `corpus/` for downloaded training data. A row whose `masked`
+equals its `text` is an example of something to leave alone, and counts the
+same. Growing it means running the corpus over a transcript, not inventing rows.
+
+A row the masker is known to get wrong in a safe direction carries
+`known_inexact` with the reason. It still says the right answer; the run
+reports it and does not fail on it — and fails the day it comes out right
+while the declaration stands, so the list cannot go stale. The exit code is
+otherwise honest: an undeclared difference is 1. Output names rows by
+`source#line`, never by text.
 
 A is the critical path — B, C, and D cannot integrate until `TranscriptReady`
 is real. Ship it first.

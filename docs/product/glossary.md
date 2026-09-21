@@ -34,8 +34,12 @@ The ordered list of utterances for a meeting. The canonical A → B/C/D payload.
 ## Module B — extraction
 
 **Utterance kind (발화 유형)**
-The five-way classification B applies to every utterance:
+The kinds B reports for an utterance:
 `commitment`, `decision`, `open_question`, `concern`, `ambiguous`.
+
+B's classifier also answers `none` — most of a meeting is none of these — and a
+`none` utterance never leaves the module: it is absent from
+`ExtractionResult.classifications` rather than listed with a sixth kind.
 
 **Commitment (약속)**
 Someone stated they will do something. The raw material of an action item.
