@@ -16,7 +16,18 @@ from sqlalchemy import delete, func, nulls_last, select
 from autune_contracts.enums import GapSeverity
 from autune_contracts.events import GAP_COMPLETED
 from autune_contracts.gap import Gap, GapReport, Participation, Topic
-from autune_core import Meeting, Participant, Utterance, get_logger, ids, new_id, session_scope
+from autune_core import (
+    Meeting,
+    Participant,
+    TeamMember,
+    User,
+    Utterance,
+    get_logger,
+    ids,
+    new_id,
+    session_scope,
+)
+from autune_core.errors import NotFoundError
 from autune_core.events import publish
 from autune_gap import detect, graph, template
 from autune_gap.config import GapSettings, get_settings
@@ -29,7 +40,7 @@ from autune_gap.models import (
     GapTopicEdge,
     GapTopicUtterance,
 )
-from autune_gap.pipeline import get_entity_extractor
+from autune_gap.pipeline import get_entity_extractor, get_relation_extractor
 from autune_gap.schemas import TemplateRead, TopicEdgeRead, TopicGraphRead, TopicNodeRead
 
 if TYPE_CHECKING:
@@ -38,6 +49,67 @@ if TYPE_CHECKING:
     from autune_contracts import TranscriptReady
 
 log = get_logger(__name__)
+
+
+def require_readable_meeting(session: Session, meeting_id: str, reader: User) -> None:
+    """Raise unless ``reader`` may read this meeting. Everything under
+    ``/api/gap`` that names a meeting calls this first.
+
+    A token proves who is asking, not whose meetings they may read.
+
+    **An unknown meeting and somebody else's meeting get the same answer.** Both
+    are ``NotFoundError``, never a 403 — a 403 confirms that the id exists, and
+    the ids are the only thing a caller needs to walk the table. Module A checks
+    existence before membership and therefore tells a non-member which meeting
+    ids are real (``modules/audio/.../service.py:64``); #276 asks for that to
+    change there too, and C does not copy it in the meantime.
+
+    Not a 404 for a meeting that exists, is readable, and has not been analysed:
+    the resource is there and has produced nothing, which is what an empty
+    report says. A screen polling while the pipeline runs needs that difference,
+    and module B draws the same line on ``/results/{meeting_id}``.
+
+    The refusal is logged with the reason, because "no such meeting" and "not
+    your team" are the same answer to a caller and different answers to whoever
+    is reading the logs. Ids only — a meeting title is meeting content.
+    """
+    meeting = session.get(Meeting, meeting_id)
+    if meeting is None:
+        log.info(
+            "gap_read_refused", meeting_id=meeting_id, reader_id=reader.id, reason="no_such_meeting"
+        )
+        raise NotFoundError("meeting", meeting_id)
+
+    if not _is_team_member(session, user_id=reader.id, team_id=meeting.team_id):
+        log.info(
+            "gap_read_refused", meeting_id=meeting_id, reader_id=reader.id, reason="not_a_member"
+        )
+        raise NotFoundError("meeting", meeting_id)
+
+
+def _is_team_member(session: Session, *, user_id: str, team_id: str) -> bool:
+    """Whether this user belongs to this team.
+
+    A predicate rather than a raising helper, because the caller above answers
+    both of its cases the same way and a helper that raised its own error would
+    have to be caught and translated.
+
+    **This duplicates four lines of module A** (``require_team_member``), and
+    that is what #276 is deciding: the same check living in two modules is one
+    that can come to mean two things — A's own docstring says so about two
+    copies inside one module. If it moves to ``packages/core`` where
+    ``require_self`` already lives, this function becomes a call to it and the
+    behaviour above does not change. Until that decision, invariant 2 forbids
+    importing A's copy, and a C-local predicate is the only thing available.
+    """
+    return (
+        session.scalar(
+            select(TeamMember.id).where(
+                TeamMember.team_id == team_id, TeamMember.user_id == user_id
+            )
+        )
+        is not None
+    )
 
 
 def build_topic_graph(transcript: TranscriptReady) -> int:
@@ -50,6 +122,10 @@ def build_topic_graph(transcript: TranscriptReady) -> int:
     the ``gap_related_topics`` rows of any gap already raised — nothing raises
     one yet (#35), and when something does it has to be rebuilt in the same
     run.
+
+    Steps 1 to 5 of docs/modules/gap.md: entities, the relations between them,
+    topics, edges, centrality and the participation matrix. A relation the rules
+    could not read leaves its pair on ``co_occurs``; see ``graph.build_edges``.
 
     Only a consenting participant's speech is analysed (privacy.md section 5),
     and only they appear in the matrix. Speech with no participant behind it is
@@ -90,8 +166,12 @@ def build_topic_graph(transcript: TranscriptReady) -> int:
     entities = extractor.extract(analysed)
     extractor_version = extractor.model_version
 
+    relation_extractor = get_relation_extractor()
+    relations = relation_extractor.extract(analysed, entities)
+    relation_version = relation_extractor.model_version
+
     topics = graph.build_topics(entities, [utterance_id for utterance_id, _ in analysed])
-    edges = graph.co_occurrence_edges(topics)
+    edges = graph.build_edges(topics, relations)
     scores = graph.centrality(topics, edges)
     position = {u.id: index for index, u in enumerate(transcript.utterances)}
 
@@ -130,6 +210,9 @@ def build_topic_graph(transcript: TranscriptReady) -> int:
                 target_topic_id=topic_ids[edge.target],
                 relation=edge.relation,
                 weight=edge.weight,
+                # NULL for co-occurrence: nothing asserted it, the two topics
+                # merely shared an utterance. See the model docstring.
+                extractor_version=None if edge.relation == graph.CO_OCCURS else relation_version,
             )
             for edge in edges
         )
@@ -147,7 +230,13 @@ def build_topic_graph(transcript: TranscriptReady) -> int:
         excluded=len(transcript.utterances) - len(analysed),
         topics=len(topics),
         edges=len(edges),
+        # How many edges the meeting's own words explain, against how many
+        # are there because two topics happened to share an utterance. It is
+        # the number that says whether the rules are earning their precision
+        # risk, and the one to watch when a marker list changes.
+        relations=sum(1 for edge in edges if edge.relation != graph.CO_OCCURS),
         extractor=extractor_version,
+        relation_extractor=relation_version,
     )
     return len(topics)
 

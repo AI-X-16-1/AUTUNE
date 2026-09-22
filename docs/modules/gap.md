@@ -38,8 +38,9 @@ domain template, and score the risk of each missing item.
 ## Pipeline
 
 1. **NER** — spaCy extracts entities: features, systems, metrics, people, dates.
-2. **Relation extraction** — build subject–relation–object triples, with LLM
-   assistance for hard cases.
+2. **Relation extraction** — build subject–relation–object triples. Marker
+   rules today; LLM assistance for the hard cases is the seam, not the
+   implementation.
 3. **Topic graph** — persist nodes and edges as rows (`gap_topics`,
    `gap_topic_edges`), then load them into NetworkX.
 4. **Centrality** — PageRank and betweenness identify which topics carried the
@@ -117,6 +118,144 @@ What this does **not** fix, and what #13 still carries:
   longer raise a gap about, so it is short, and dismissals are what tune it
   (#35) rather than taste.
 
+### Step 2 as built
+
+Rules only, no model, no network: `pipeline/relations.py`. Issue #32 puts the
+non-LLM share at about 70% and says to exhaust the rules first, so they are
+written and measured before anything is sent anywhere. Today the share is 100%
+— there is no assisted implementation — and what the rules cannot read is a
+named list below rather than a shrug.
+
+**Four relations** are in the vocabulary, each one a thing risk scoring (#35)
+should treat differently: `depends_on`, `blocked_by`, `part_of`,
+`alternative_to`. **Three of them have a rule.** Every rule keys on a **marker**
+the speaker actually said, and fires only with two topics around it in one
+utterance. Proximity alone stays `co_occurs`, which the graph writes without
+asking the extractor.
+
+| Relation | Marker | Reads |
+| --- | --- | --- |
+| `depends_on` | 필요, 있어야, 되어야, 선행, 전제, 없이는, 없으면 | "정렬 로직은 인덱스가 필요합니다" |
+| `blocked_by` | a blocker word (안 잡, 미정, 막혀, 무리, 이슈, …) **and** a causal connective in the same clause | "실시간은 콜드스타트가 안 잡혀 있어서 무리입니다" |
+| `alternative_to` | 대신, 말고, 보다는, 아니라, 반면, `vs` | "인기순 정렬 대신 실시간 개인화로" |
+| `part_of` | — **no rule** | |
+
+`part_of` has no rule because 의 marks possession and composition with the same
+character: "검색의 정렬 로직" is a part of a thing, "검색 기능의 담당자 일정" is
+somebody's calendar, and the rule read both. It is the same problem as `는데`
+and gets the same answer — a case for the assisted implementation rather than a
+marker list. The label stays in the vocabulary: the graph can carry it and #35
+weights it, and what a rule can read today is a different question from what an
+edge may say. Raised in review of #249.
+
+**Measured.** Over `transcript_ready.typical` the rules assert exactly one
+relation — `실시간 blocked_by 콜드스타트` — against six co-occurrence edges.
+`transcript_ready.short` asserts none: it names two topics in two utterances and
+never says how they stand to each other. Both numbers are pinned in
+`modules/gap/tests/unit/test_spacy_ner.py` (marked `model`).
+
+Three things came out of that measurement, and each one changed the design:
+
+- **The rules read every name the meeting used, not this utterance's own
+  entities.** Entity extraction claims a bare noun run and stops at a particle,
+  so the utterance that *states* a relation is the one where the topic wears
+  one: 실시간 개인화 is claimed in utterance 1, and 실시간은 in utterance 2 is
+  what says it is blocked. Keyed per utterance the rules found **nothing at all**
+  on either fixture. It widens which utterances can state a relation and not
+  what a topic is — `graph.relation_edges` drops any relation whose ends are not
+  both topics, so nothing enters the graph this way.
+- **A marker swallowed by a label is a relation nobody can see.**
+  `ko_core_news_lg` tags 대신 and 말고 as ordinary common nouns, so a noun run
+  joined them: "인기순 정렬 대신 실시간 개인화로" came back as one topic called
+  인기순 정렬 대신 실시간. The three contrast markers are now in
+  `spoken.STOP_TERMS`, which fixes a junk node and an invisible relation at once.
+- **`는데` and `지만` are not contrast markers here.** "실시간 개인화로
+  합의했는데 오늘은 인기순 정렬 얘기가 나왔네요" is a real contrast and "자료
+  공유드리는데 확인 부탁드려요" is not, and no surface string tells them apart.
+  Spoken Korean uses `는데` as sentence glue, so taking it would make
+  `alternative_to` the most common relation in the graph and every one of them a
+  coin flip. This is the clearest case for the LLM assistance step 2 is promised.
+
+**A marker is a string, and the clause decides whether the speaker meant it.**
+Three guards, each one a sentence that produced an edge before it existed
+(raised in review of #249, found by running the extractor rather than reading
+it):
+
+- **Negation and questions.** 필요 with 없 or 않 after it in the same clause is
+  the opposite of a need; 필요한가요 is a question about one. "캐시 이슈는
+  없어서 검색 기능은 바로 진행합니다" is a blocker word, a causal connective and
+  no blocker — and it read as `검색 기능 blocked_by 캐시`, the reverse of what
+  the speaker said, in the one relation the report treats as a finding. 안 is
+  deliberately not a negation marker: "캐시 없이는 안 됩니다" is a need.
+- **One clause, both ways.** The causal connective a `blocked_by` needs has to
+  be in the blocker's own clause. Searching to the end of the utterance paired
+  이슈 with a 없어서 two clauses away and put a date topic on the blocked end.
+  The guard window stops at the boundary for the same reason in reverse:
+  "인덱스가 필요하고 캐시는 문제 없습니다" must not cancel a need the speaker
+  did state.
+- **The source is what the sentence is about.** Korean starts a new subject
+  after a connective ending, so the nearest mention after the marker is usually
+  the next sentence — "정렬 로직은 인덱스가 필요하고 캐시는 다음 주에 봅시다"
+  read as `캐시 depends_on 인덱스`. The far end is taken only inside the same
+  clause; otherwise the rule looks back for a mention wearing 은/는, which is
+  how Korean marks the thing a sentence is about, and only then falls back to
+  the mention before the target.
+
+**A marker has to be a word, and a mention has to start one.** Two more from
+the same review:
+
+- `vs` sits inside `devs`, and "API devs 검색 기능" made the two topics
+  alternatives to each other on the strength of a plural. The Latin markers now
+  need word boundaries; the Korean ones are still substrings, because a particle
+  attaches directly and there is no boundary to anchor to.
+- `실시간` sits inside `비실시간`, and "비실시간 처리가 필요해서 검색 기능은
+  미뤘습니다" asserted that 검색 기능 depends on 실시간 — a topic whose name the
+  utterance contains and whose meaning it negates. A mention now has to begin a
+  word. Only the left side is guarded: Korean attaches particles directly, so
+  실시간은 and 실시간으로 have to stay mentions, and telling 실시간성 from those
+  needs the tagger rather than a boundary.
+
+**The cue words themselves are not topics.** 필요 and 이슈 join 대신, 말고 and
+반면 in `spoken.STOP_TERMS`: the model tags all of them as ordinary nouns, so a
+noun run welds them into a label, and "인덱스가 필요 없습니다" produced a topic
+called 필요.
+
+**A pair the rules typed gets no `co_occurs` row.** The typed relation says
+everything co-occurrence would and more. A pair they said nothing about keeps
+it — that is most pairs, and dropping them would leave a meeting nobody spoke
+carefully in with no edges at all.
+
+**Every extracted edge weighs 1.** An assertion is not a frequency: a speaker
+who says it twice has not made it twice as true, and the table is unique on
+`(source, target, relation)` so a repetition could not reach a second row
+anyway. Co-occurrence is still counted, because frequency is the only evidence
+it has. If #35 wants to know how often a relation was restated, that is a column
+and not a number folded into the weight.
+
+What this does **not** do:
+
+- **A wrong edge costs the pair its co-occurrence too**, because a typed pair
+  gets no `co_occurs` row. The guards above are why that trade is acceptable;
+  it is also why the marker lists are short and every addition needs a sentence
+  that fires it. Raised in review of #249.
+- **Recall is unmeasured, and low.** One relation out of a five-utterance
+  meeting is the whole claim. There is no annotated set for step 2 either — the
+  number that matters is gap precision, which cannot be read until something
+  writes `gap_gaps` (#35).
+- **Nothing crosses an utterance.** "응답 시간 목표는 정해진 게 있나요" is about
+  the feature named in the utterance before it, and no rule here reaches back.
+- **A relation needs both topics to exist.** A topic only exists if the meeting
+  said it bare at least once, because that is what entity extraction claims. A
+  thing referred to only as 그거 is in no relation.
+- **No LLM path exists.** The seam is `RelationExtractor` and
+  `AUTUNE_GAP_RELATION_IMPL`; when one lands it goes through
+  `autune_integrations` so `check_outbound` sees the request body. Unlike step 1
+  an assisted implementation here is *allowed* — a relation needs the clause,
+  not the transcript.
+
+`gap_topic_edges.extractor_version` records which extractor asserted an edge,
+and is NULL exactly when none did — that is the `co_occurs` row.
+
 ### Steps 3 to 5 as built
 
 `autune_gap.graph` holds the decisions as pure functions; `service` feeds it
@@ -126,10 +265,11 @@ and stores what comes back.
   collapsing whitespace and folding case are one topic, labelled the way the
   meeting first said it. Nothing merges "검색" into "검색 기능": that is a
   judgement about meaning, and a wrong merge hides one topic inside another.
-- **Edges are co-occurrence until #32.** Two topics named in the same utterance
-  get an edge, `relation = "co_occurs"`, weighted by how many utterances named
-  both and scaled so the strongest pair is 1. Written in both directions,
-  because `gap_topic_edges` is directed for the triples #32 will produce.
+- **An edge is what step 2 asserted, or co-occurrence.** A pair the rules typed
+  carries that relation, directed, weight 1. Every other pair named in the same
+  utterance gets `relation = "co_occurs"`, weighted by how many utterances named
+  both and scaled so the strongest pair is 1, written both ways because
+  co-occurrence itself is symmetric. See "Step 2 as built".
 - **PageRank is personalised by mention count**, then divided by the top score
   so the topic that carried the meeting is 1. Without the personalisation a
   meeting whose topics share no utterance ranks every topic level.
@@ -240,9 +380,36 @@ Every threshold and weight is in `config.py` (#35): the two severity bands, the
 centrality below which a match is partial, the damping, and the three risk
 weights.
 
-**What is not built:** the question a gap carries is the template item's own
-wording, not one generated from the topics the gap was inferred from. That is
-the rest of #35.
+### Step 8 as built
+
+A gap carries the question that would close it, and a template item holds two
+wordings for it (#35).
+
+- **A partial finding names its topic.** "검색 개인화 기능의 성공 기준은 무엇으로
+  측정합니까?" can be answered; the generic wording has to be decoded first, and
+  a reader opening the report a week later no longer knows which "일" it meant.
+  The topic named is `matched[0]` — the one the risk score was computed against,
+  so the number and the sentence describe the same thing.
+- **A missing finding keeps the generic wording.** There is no topic to name.
+  Naming the meeting's most central topic instead would be a guess, and with
+  step 1's recall where it is that guess is as likely to be "다음 주" as the
+  thing the meeting was about — a question about the wrong subject reads worse
+  than a general one. Same rule as the risk score: what was not measured is not
+  substituted for.
+- **`{topic}` must be followed by an invariant particle** — 의, 에, 에서, 에 대해.
+  은/는, 이/가 and 을/를 change form with the last syllable of the noun before
+  them, and a topic label is a noun read out of a meeting, so the right form is
+  not knowable when the copy is written. The loader refuses the variable ones;
+  the failure it prevents is a screen showing "캐시은".
+
+Putting a topic label in a question is safe for the same reason it is safe as a
+node: `graph.build_topics` drops any entity carrying the mask character, so no
+topic label has ever contained a masked span. #250 is about what that costs in
+recall, and confirms the guarantee itself holds through both extraction paths.
+
+**What is still not built:** a question that reads the *relation* between topics
+rather than naming one — "정렬 로직이 인덱스 재색인에 의존한다면, 재색인은 언제
+끝납니까?" needs #32's triples.
 
 ### Step 9 as built
 
@@ -281,7 +448,7 @@ gaps off a transcript nothing was read out of.
 | --- | --- |
 | PostgreSQL `gap_topics` | Topic nodes with PageRank and betweenness, per meeting |
 | PostgreSQL `gap_topic_utterances` | Which utterances a topic was built from, in order |
-| PostgreSQL `gap_topic_edges` | Relations between topics, directed, per meeting |
+| PostgreSQL `gap_topic_edges` | Relations between topics, directed, per meeting, with which extractor asserted each |
 | PostgreSQL `gap_participation` | Topic × participant speech presence |
 | PostgreSQL `gap_gaps` | Detected gaps, category, severity, risk score, question |
 | PostgreSQL `gap_related_topics` | Which topics a gap was inferred from |

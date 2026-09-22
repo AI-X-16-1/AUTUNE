@@ -76,6 +76,26 @@ prefix `AUTUNE_<MODULE>_`.
 | `AUTUNE_RETENTION_DAYS` | `90` | Default analysis retention |
 | `AUTUNE_CORS_ALLOWED_ORIGINS` | `` | Comma-separated origins `apps/api` allows via CORS. Empty (default) means no CORS headers at all. Set to `http://localhost:3000` for local dev when running `apps/web`'s dev server against `apps/api`'s — a browser blocks the response otherwise, since `:3000` and `:8000` are different origins. Outside `local`, every origin must be an explicit `https://` URL — `*` and plain `http://` are refused at startup |
 
+### Web (`apps/web`)
+
+`NEXT_PUBLIC_` variables are inlined into the browser bundle at build time, so
+nothing secret goes here.
+
+| Variable | Example | Notes |
+| --- | --- | --- |
+| `NEXT_PUBLIC_API_URL` | `http://localhost:8000` | Where the browser reaches `apps/api` |
+| `NEXT_PUBLIC_AUTUNE_DEV_TOKEN` | | Bearer token for every call, until sign-in (S01) exists. Build-time fallback for the value below |
+
+**Signing in, until there is a sign-in.** Routes that take `CurrentUser` refuse
+a request without a bearer token, and S01 is not built. Until it is,
+`@/shared/api/client` attaches one to every call it makes, preferring
+`localStorage["autune.token"]` over `NEXT_PUBLIC_AUTUNE_DEV_TOKEN`. With no
+token the header is omitted and an authorised route answers 403 — which is what
+a screen shows today if you have not set one.
+
+Where that token comes from, and the two ways to give it to the browser:
+"A token for the browser, until there is a sign-in" below.
+
 ### Integrations
 
 | Variable | Used by |
@@ -121,6 +141,7 @@ prefix `AUTUNE_<MODULE>_`.
 | `AUTUNE_GAP_WEIGHT_TEMPLATE` · `_COVERAGE` · `_PARTICIPATION` | C | Defaults `0.4` · `0.4` · `0.2`. The three risk inputs, relative; renormalised over whichever could be measured |
 | `AUTUNE_GAP_NER_IMPL` | C | `spacy` (default) · `fake`. **No `external`** — see below |
 | `AUTUNE_GAP_NER_MODEL` | C | Default `ko_core_news_lg`. The pipeline **name**; the version comes from the pinned wheel and is recorded per row |
+| `AUTUNE_GAP_RELATION_IMPL` | C | `rule` (default), and nothing else yet. Unlike the entity extractor this step **may** grow an assisted option — see below |
 | `AUTUNE_CONTEXT_EMBEDDER_IMPL` | D | `kure_v1_http` (default), `kure_v1_local`, `fake` |
 | `AUTUNE_CONTEXT_RERANKER_IMPL` | D | `bge_reranker_v2_m3_ko_http` (default), `..._local`, `fake` |
 | `AUTUNE_CONTEXT_NLI_IMPL` | D | `klue_kornli_http` (default), `klue_kornli_local`, `fake` |
@@ -221,6 +242,13 @@ implementation would mean sending the whole transcript to somebody else's
 model — which section 6 of `../architecture/privacy.md` makes a design
 conversation rather than a value you can set. The same reasoning module B
 applied to its classifier.
+
+Relation extraction is the exception, and `AUTUNE_GAP_RELATION_IMPL` is where
+it would go. A relation is read off one clause, so the hard cases can be sent
+without sending the meeting — and an implementation that did would go through
+`packages/integrations` so `check_outbound` sees the request body, never a
+client of its own. Today there is one value, `rule`: marker rules in process,
+no network. See "Step 2 as built" in `../modules/gap.md`.
 
 `spacy` needs a library and a model, and both come from the optional extra:
 

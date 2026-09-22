@@ -91,6 +91,7 @@ def test_a_keyword_shorter_than_two_characters_is_refused() -> None:
                 "item": "i",
                 "weight": 0.5,
                 "question": "q?",
+                "question_about": "{topic}의 q?",
                 "keywords": ["성능", "A"],
             },
             "test",
@@ -108,6 +109,7 @@ def test_an_item_with_no_keywords_is_refused() -> None:
                 "item": "i",
                 "weight": 0.5,
                 "question": "q?",
+                "question_about": "{topic}의 q?",
                 "keywords": [],
             },
             "test",
@@ -125,6 +127,7 @@ def test_a_weight_outside_the_unit_range_is_refused() -> None:
                 "item": "i",
                 "weight": 1.5,
                 "question": "q?",
+                "question_about": "{topic}의 q?",
                 "keywords": ["성능"],
             },
             "test",
@@ -174,5 +177,61 @@ def _raw(key: str) -> dict[str, object]:
         "item": "항목",
         "weight": 0.5,
         "question": "질문?",
+        "question_about": "{topic}의 질문?",
         "keywords": ["성능"],
     }
+
+
+# --- the topic-naming question (#35) ----------------------------------------
+
+
+def test_every_shipped_item_names_the_topic_in_its_second_question() -> None:
+    for one in template.available():
+        for shipped in one.items:
+            assert "{topic}" in shipped.question_about, f"{one.key}.{shipped.key}"
+
+
+def test_a_question_about_with_no_placeholder_is_refused() -> None:
+    """It would read exactly like the generic question and name nothing, so the
+    feature would be off for that item and nothing would say so."""
+    with pytest.raises(ConfigurationError, match="no \{topic\}"):
+        template._item(raw_item(question_about="성공 기준은 무엇입니까?"), "test")
+
+
+@pytest.mark.parametrize("particle", ["은", "는", "이", "가", "을", "를", "과", "와"])
+def test_a_variable_particle_after_the_topic_is_refused(particle: str) -> None:
+    """은/는, 이/가, 을/를 change form with the last syllable of the noun before
+    them. A topic label is a noun read out of a meeting, so the right form is
+    not knowable when the copy is written — the screen would show "캐시은".
+    """
+    with pytest.raises(ConfigurationError, match="particle"):
+        template._item(raw_item(question_about=f"{{topic}}{particle} 무엇입니까?"), "test")
+
+
+@pytest.mark.parametrize("particle", ["의", "에", "에서"])
+def test_an_invariant_particle_is_accepted(particle: str) -> None:
+    assert template._item(raw_item(question_about=f"{{topic}}{particle} 무엇입니까?"), "test")
+
+
+def test_every_shipped_question_survives_both_shapes_of_noun() -> None:
+    """A topic ending in a consonant and one ending in a vowel. If a wording
+    ever grows a variable particle past the loader's check, formatting both
+    shows it as unreadable Korean in one of the two."""
+    for one in template.available():
+        for shipped in one.items:
+            for noun in ("검색 기능", "캐시"):
+                rendered = shipped.question_about.format(topic=noun)
+                assert noun in rendered
+                assert "{topic}" not in rendered
+
+
+def raw_item(**overrides: object) -> dict[str, object]:
+    return {
+        "key": "k",
+        "category": "measurement",
+        "item": "항목",
+        "weight": 0.5,
+        "question": "질문?",
+        "question_about": "{topic}의 질문?",
+        "keywords": ["성능"],
+    } | overrides

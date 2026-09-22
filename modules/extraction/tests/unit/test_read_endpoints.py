@@ -32,9 +32,11 @@ from autune_extraction.models import (
     ExtClassification,
     ExtConfirmation,
     ExtDecision,
+    ExtDecisionRef,
     ExtDecisionReview,
     ExtDecisionSource,
     ExtEditEvent,
+    ExtExternalRef,
 )
 from autune_extraction.router import router
 
@@ -53,8 +55,10 @@ TABLES = [
     ExtDecisionSource.__table__,
     # The result leaves out decisions a person rejected (#247), so it reads this.
     ExtDecisionReview.__table__,
+    ExtDecisionRef.__table__,
     ExtConfirmation.__table__,
     ExtEditEvent.__table__,
+    ExtExternalRef.__table__,
 ]
 
 
@@ -260,6 +264,43 @@ def test_the_list_carries_source_ids_but_never_their_text(
     assert "금요일까지" not in response.text
 
 
+def test_a_single_source_has_no_summary_because_description_already_is_it(
+    client: TestClient, session: Session
+) -> None:
+    utterance(session, "utt_1", 1.0, "제가 금요일까지 정리할게요")
+    action_item(session, "act_1", sources=("utt_1",))
+
+    (entry,) = client.get(f"{PREFIX}/action-items").json()
+
+    assert entry["summary"] is None
+
+
+def test_several_sources_get_a_summary_of_the_longest_one(
+    client: TestClient, session: Session
+) -> None:
+    """Rule-based prototype: the longest source, truncated. Not a model --
+    checked against the drawer's full quotation, not generated prose."""
+    utterance(session, "utt_1", 1.0, "네")
+    utterance(session, "utt_2", 2.0, "일정이 밀리면 다음 주 화요일로 옮기는 게 낫겠어요")
+    utterance(session, "utt_3", 3.0, "좋아요")
+    action_item(session, "act_1", sources=("utt_1", "utt_2", "utt_3"))
+
+    (entry,) = client.get(f"{PREFIX}/action-items").json()
+
+    assert entry["summary"] == "일정이 밀리면 다음 주 화요일로 옮기는 게 낫겠어요"
+
+
+def test_a_long_source_is_truncated() -> None:
+    from autune_extraction.service import SUMMARY_MAX_CHARS, _truncate
+
+    text = "가" * (SUMMARY_MAX_CHARS + 20)
+
+    truncated = _truncate(text)
+
+    assert len(truncated) == SUMMARY_MAX_CHARS
+    assert truncated.endswith("…")
+
+
 # --- GET /action-items/{id} -------------------------------------------------
 
 
@@ -309,6 +350,46 @@ def test_the_detail_carries_everything_the_list_does(client: TestClient, session
     detail = client.get(f"{PREFIX}/action-items/act_1").json()
 
     assert {k: v for k, v in detail.items() if k != "sources"} == listed
+
+
+def test_a_confirmed_items_notion_status_reaches_both_the_card_and_the_drawer(
+    client: TestClient, session: Session
+) -> None:
+    """Unlike `sources`, `sync_refs` is not meeting content -- a system
+    name, a url and an id -- so it rides the list the way `description` and
+    `assignee_label` already do (a separate concern from #313's `summary`,
+    which stays a curated line rather than the raw fact). Not named
+    `external_refs`: the contract's `ActionItem` already has a field by that
+    name (the outbound one, stricter-typed), and this module's own response
+    extends it."""
+    action_item(session, "act_1")
+    session.add(
+        ExtExternalRef(
+            action_item_id="act_1",
+            system="notion",
+            meeting_id=MEETING,
+            url="https://www.notion.so/page1",
+            external_id="page1",
+        )
+    )
+    session.flush()
+
+    listed = client.get(f"{PREFIX}/action-items").json()[0]
+    detail = client.get(f"{PREFIX}/action-items/act_1").json()
+
+    want = [{"system": "notion", "url": "https://www.notion.so/page1", "external_id": "page1"}]
+    assert listed["sync_refs"] == want
+    assert detail["sync_refs"] == [
+        {"system": "notion", "url": "https://www.notion.so/page1", "external_id": "page1"}
+    ]
+
+
+def test_an_item_never_synced_has_no_sync_refs(client: TestClient, session: Session) -> None:
+    action_item(session, "act_1")
+
+    detail = client.get(f"{PREFIX}/action-items/act_1").json()
+
+    assert detail["sync_refs"] == []
 
 
 def test_an_unknown_item_is_a_404_that_names_only_the_id(client: TestClient) -> None:

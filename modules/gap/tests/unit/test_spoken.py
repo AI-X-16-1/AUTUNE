@@ -153,6 +153,20 @@ def test_nothing_is_found_in_a_sentence_with_no_nouns() -> None:
     assert labels(("그건", "npd+jxt"), ("안", "mag"), ("됩니다", "pvg+ef")) == []
 
 
+def test_a_marker_step_two_keys_on_is_not_a_topic() -> None:
+    """A cue word the relation rules read — 대신, 필요, 이슈 — is tagged as an
+    ordinary noun by this model, so a run welds it into a label: "인기순 정렬
+    대신 실시간" became one topic, and "인덱스가 필요 없습니다" produced a topic
+    called 필요. A marker inside a label is a junk node and an invisible
+    relation at once. Raised in review of #222 and #249.
+    """
+    assert labels(("인기순", "ncn"), ("정렬", "ncn"), ("대신", "ncn"), ("실시간", "ncpa+xsn")) == [
+        "인기순 정렬",
+        "실시간",
+    ]
+    assert labels(("인덱스", "ncn"), ("필요", "ncpa")) == ["인덱스"]
+
+
 def test_the_stoplist_holds_only_what_speech_repeats() -> None:
     """Every entry is a topic the graph can no longer raise a gap about, which
     is the expensive direction — so the list stays short and single words."""

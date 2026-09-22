@@ -1,7 +1,15 @@
 /** Calls to /api/extraction. This feature calls no other module's endpoints. */
 import { api } from "@/shared/api/client";
 
-import type { ActionItemDetail, ActionItemRead, ActionStatus, ExtractionResult } from "./types";
+import type {
+  ActionItemDetail,
+  ActionItemRead,
+  ActionStatus,
+  DecisionStatus,
+  ExtractionResult,
+  MeetingReview,
+  ReviewDecision,
+} from "./types";
 
 export { api };
 
@@ -79,17 +87,51 @@ export const updateActionItem = (id: string, changes: Partial<ActionItemDraft & 
  * JSON, so an empty 204 threw a `SyntaxError` after the row was already gone —
  * the board kept the card, and once the drawer reported failures it said the
  * delete had failed. An error status still arrives as `ApiError`; only the parse
- * of an empty success is dropped. The shared client is the better place for this
- * (all five own it); until then it stays in this feature.
+ * of an empty success is dropped (`withoutBody`). The shared client is the
+ * better place for this (all five own it); until then it stays in this feature.
  */
-export const deleteActionItem = async (id: string): Promise<void> => {
+export const deleteActionItem = (id: string) =>
+  withoutBody(`/action-items/${encodeURIComponent(id)}`);
+
+/** A `DELETE` answered 204: an empty success is not a parse failure. */
+async function withoutBody(path: string): Promise<void> {
   try {
-    await api.extraction<void>(`/action-items/${encodeURIComponent(id)}`, { method: "DELETE" });
+    await api.extraction<void>(path, { method: "DELETE" });
   } catch (cause) {
     if (cause instanceof SyntaxError) return;
     throw cause;
   }
-};
+}
+
+/** Everything in one meeting that needs a person before it goes anywhere (#246). */
+export const getReview = (meetingId: string) =>
+  api.extraction<MeetingReview>(`/reviews/${encodeURIComponent(meetingId)}`);
+
+/**
+ * Confirm, reject or reword one decision. `pending` undoes a mis-click; sending
+ * the model's own wording back clears a rewording.
+ */
+export const reviewDecision = (
+  id: string,
+  changes: { status?: DecisionStatus; statement?: string },
+) =>
+  api.extraction<ReviewDecision>(`/decisions/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    body: JSON.stringify(changes),
+  });
+
+/** A decision the model missed. Confirmed from the moment it exists. */
+export const createDecision = (meetingId: string, statement: string) =>
+  api.extraction<ReviewDecision>("/decisions", {
+    method: "POST",
+    body: JSON.stringify({ meeting_id: meetingId, statement }),
+  });
+
+/**
+ * Delete a decision. A person's is gone; a model's is rejected instead, so the
+ * next run cannot propose it again — the server decides which.
+ */
+export const deleteDecision = (id: string) => withoutBody(`/decisions/${encodeURIComponent(id)}`);
 
 /** Re-push this meeting's items to Notion and Jira. */
 export const syncResults = (meetingId: string) =>

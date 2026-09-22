@@ -18,17 +18,20 @@ export function ConfirmDelete({
   onCancel,
   onConfirm,
   pending = false,
+  noun = "액션 아이템",
 }: {
   description: string;
   onCancel: () => void;
   onConfirm: () => void;
   pending?: boolean;
+  /** What is being deleted. Both current nouns end in a consonant, so 을. */
+  noun?: "액션 아이템" | "결정";
 }) {
   return (
     <div
       role="dialog"
       aria-modal
-      aria-label="액션 아이템 삭제"
+      aria-label={`${noun} 삭제`}
       className="fixed inset-0 z-50 flex items-center justify-center"
       style={{ background: "rgba(22,25,31,.35)" }}
       onClick={onCancel}
@@ -47,7 +50,7 @@ export function ConfirmDelete({
           className="text-[var(--color-ink-strong)]"
           style={{ fontSize: "var(--text-title)", fontWeight: "var(--text-title-weight)" }}
         >
-          이 액션 아이템을 삭제할까요?
+          이 {noun}을 삭제할까요?
         </h2>
 
         <p

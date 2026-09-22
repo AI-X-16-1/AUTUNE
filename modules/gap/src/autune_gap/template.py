@@ -27,6 +27,20 @@ from autune_core.errors import ConfigurationError, ValidationError
 
 TEMPLATE_DIR = Path(__file__).parent / "templates"
 
+TOPIC_PLACEHOLDER = "{topic}"
+
+VARIABLE_PARTICLES: tuple[str, ...] = ("은", "는", "이", "가", "을", "를", "과", "와")
+"""Korean particles whose form depends on whether the noun before them ends in
+a consonant — 캐시**는** but 검색 기능**은**.
+
+A topic label is a noun this module read out of a meeting, so which form is
+correct is not knowable when the question is written. Rather than pick the
+particle at runtime, ``question_about`` is required to follow ``{topic}`` with
+something invariant: ``의``, ``에``, ``에서``, ``에 대해``. The rule is enforced
+at load because the failure is a product screen showing "캐시은", and copy is
+the kind of thing somebody improves without knowing why it was phrased that
+way."""
+
 KEYWORD_MIN = 2
 """Shorter than this matches by accident. Enforced at load so a bad template
 fails on the first call rather than by quietly raising a gap in every meeting."""
@@ -43,6 +57,11 @@ class TemplateItem:
     how much its absence matters, and it is the only risk input a template
     author controls.
 
+    Two questions, because a gap raised on a topic the meeting named and a gap
+    raised on nothing are different questions to ask. ``question`` is the
+    generic one; ``question_about`` names the topic and is used only when there
+    is one to name (#35). See ``detect.Finding``.
+
     **There is no ``roles`` field.** #14 wants "a topic no engineer spoke on is
     riskier" and the data for it does not exist: ``participants.role`` is
     written by no production code (#22). A field template authors could fill
@@ -56,6 +75,8 @@ class TemplateItem:
     weight: float
     keywords: tuple[str, ...]
     question: str
+    question_about: str
+    """The same question with ``{topic}`` in it, for a partial finding."""
 
 
 @dataclass(frozen=True)
@@ -157,6 +178,26 @@ def _resolve(key: str, raw: dict[str, dict[str, Any]], seen: tuple[str, ...]) ->
     )
 
 
+def _question_about(entry: dict[str, Any], template_key: str) -> str:
+    """The topic-naming question, checked for the two ways it silently fails."""
+    where = f"template {template_key!r} item {entry.get('key')!r}"
+    question = str(entry["question_about"])
+
+    if TOPIC_PLACEHOLDER not in question:
+        raise ConfigurationError(
+            f"{where} has a question_about with no {TOPIC_PLACEHOLDER} in it, so it would "
+            "read exactly like the generic question and name nothing"
+        )
+
+    after = question.split(TOPIC_PLACEHOLDER, 1)[1][:1]
+    if after in VARIABLE_PARTICLES:
+        raise ConfigurationError(
+            f"{where} follows {TOPIC_PLACEHOLDER} with {after!r}, a particle whose form "
+            f"depends on the topic's last syllable. Use an invariant one: 의, 에, 에서, 에 대해"
+        )
+    return question
+
+
 def _item(entry: dict[str, Any], template_key: str) -> TemplateItem:
     keywords = tuple(str(word).strip().casefold() for word in entry.get("keywords", ()))
     short = sorted(word for word in keywords if len(word) < KEYWORD_MIN)
@@ -185,4 +226,5 @@ def _item(entry: dict[str, Any], template_key: str) -> TemplateItem:
         weight=weight,
         keywords=keywords,
         question=str(entry["question"]),
+        question_about=_question_about(entry, template_key),
     )
