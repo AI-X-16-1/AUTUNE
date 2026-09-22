@@ -99,6 +99,8 @@ prefix `AUTUNE_<MODULE>_`.
 | `AUTUNE_AUDIO_LIVE_BEAM_SIZE` | A | Beam width on the live path (5) |
 | `AUTUNE_AUDIO_LIVE_MIN_SILENCE_MS` | A | Silence that ends a live utterance (1000). Longer keeps sentences whole and adds that much lag to every row |
 | `AUTUNE_AUDIO_LIVE_MIN_CONFIDENCE` | A | A live row below this mean word probability is not sent (0.35); the stored transcript is the final form |
+| `AUTUNE_AUDIO_LIVE_SPEAKER_THRESHOLD` | A | Cosine similarity at or above which a live utterance joins an existing `화자 N`; below it a new one opens (0.55, provisional until the evaluation in `docs/modules/audio-live-speakers.md` §6 runs). The head count comes from `AUTUNE_AUDIO_DIARIZATION_NUM_SPEAKERS` / `_MAX_SPEAKERS`, the same hint the stored path uses |
+| `AUTUNE_AUDIO_LIVE_SPEAKER_MIN_S` | A | A live utterance shorter than this takes the nearest label and may not open a speaker (1.0) |
 | `AUTUNE_AUDIO_LIVE_TRANSCRIBER_IMPL` | A | `auto` (default) · `faster_whisper` · `mlx`. `mlx` is the live path on Apple silicon's GPU and needs `uv sync --all-packages --extra mlx`; `faster_whisper` follows `AUTUNE_AUDIO_DEVICE`, so an NVIDIA machine sets that to `cuda`. `auto` picks `mlx` where it can run |
 | (uvicorn `--workers`) | A | **Leave at 1.** The live channel's one-session-per-meeting claim (`live/registry.py`) is per process: a second worker lets a second session onto the same meeting, and accepts an upload the other worker's open socket should have refused (409) |
 | `AUTUNE_AUDIO_LIVE_MLX_MODEL` | A | The mlx-whisper weights, a Hugging Face repo. Default `mlx-community/whisper-large-v3-turbo` |
