@@ -57,6 +57,18 @@ The path by which a row is reachable is its owner:
 | `meeting_id` — `utterances`, `ext_*`, `gap_*`, `ctx_*`, `intel_*` | the meeting | **unchanged** |
 | `user_id` — `aud_speaker_embeddings`, account, sessions, tokens | the person | **deleted** |
 
+**"Unchanged" on the `gap_*` row is the report already computed for a
+meeting, not a promise that computing it again gives the same answer.**
+Module C's participation matrix is built by merging participant rows that
+share a `user_id` (`autune_gap.service._people`, raised in review of #164) —
+the same key this ADR clears on departure. Once a participant in a meeting
+has left, C must not rebuild that meeting's matrix: the merge key is gone, a
+voice diarisation split into two participant rows reports each half
+separately, and a person who spoke on one half is recorded as silent on the
+other. A report already stored before the departure is unaffected and stays
+reachable from `meeting_id` exactly as the row says; only recomputing a past
+meeting's matrix after a departure is the hazard, and C must not do that.
+
 `participants` is the boundary row: it belongs to a meeting and references a
 user. The row stays and its `user_id` clears.
 
