@@ -8,7 +8,7 @@ Never imports another module.
 
 from __future__ import annotations
 
-from collections.abc import Collection, Mapping, Sequence
+from collections.abc import Collection, Iterable, Mapping, Sequence
 from datetime import UTC, date, datetime
 from typing import Any, Protocol
 
@@ -705,14 +705,28 @@ def build_decisions(
     and ``confidence`` can differ between two rebuilds of the same sources.
 
     Deleting a decision that is genuinely gone is a real delete, and its
-    sources and its review both go with it -- by name, not left to
-    ``ON DELETE CASCADE`` even though ``ext_decision_reviews.decision_id`` now
-    has that foreign key (#297): SQLite enforces no foreign key unless asked,
-    the unit suite runs there, and an id that can repeat across an unrelated
-    meeting's rebuild means a row a cascade missed could attach itself to a
-    different decision reusing that id. The foreign key still holds in
-    Postgres, as a backstop for any path that deletes a decision without
-    going through here.
+    sources, review and any external ref all go with it -- by name, not left
+    to ``ON DELETE CASCADE`` even though ``ext_decision_reviews.decision_id``
+    now has that foreign key (#297): SQLite enforces no foreign key unless
+    asked, the unit suite runs there, and an id that can repeat across an
+    unrelated meeting's rebuild means a row a cascade missed could attach
+    itself to a different decision reusing that id. The foreign key still
+    holds in Postgres, as a backstop for any path that deletes a decision
+    without going through here. ``ExtDecisionRef`` has no foreign key at all
+    (its own docstring), so it needs the same explicit delete or a decision
+    whose id comes back after a gap would inherit a stale "already sent to
+    Notion" claim and the resync it needs would silently never happen.
+
+    **The insert half is one statement, not a loop of ORM adds, because two
+    reprocesses of the same meeting can be in flight at once** -- a redelivered
+    Celery task, a retry after a slow ack, both true to "every task must be
+    safe to run twice" (``docs/architecture/async-pipeline.md``). Both would
+    compute the same new ``dec_`` id from the same sources and both would see
+    it absent from ``existing``; a plain ``session.add`` for each would let the
+    second one's flush hit this table's primary key. ``INSERT ... ON CONFLICT
+    (id) DO UPDATE`` makes whichever transaction commits second update the
+    row the first one just created rather than collide with it, in the same
+    statement that inserts the ones that are genuinely new.
     """
     meeting = session.get(Meeting, meeting_id)
     day = meeting_day(meeting.started_at if meeting is not None else None)
@@ -725,37 +739,69 @@ def build_decisions(
     # Only the model's decisions are rebuilt. One a person added is not derived
     # from labels, so no rerun can recompute it (#246).
     model_made = (ExtDecision.meeting_id == meeting_id, ExtDecision.origin == "model")
-    existing = {row.id: row for row in session.scalars(select(ExtDecision).where(*model_made))}
+    existing_ids = set(session.scalars(select(ExtDecision.id).where(*model_made)))
 
-    gone = existing.keys() - fresh.keys()
+    gone = existing_ids - fresh.keys()
     if gone:
-        # The foreign key (#297) would take these with the decision in Postgres,
-        # which always enforces it; SQLite does not unless asked, and the unit
-        # suite runs there (tests/integration/conftest.py). Deleted explicitly
-        # so the behaviour does not depend on which database is under it.
         session.execute(delete(ExtDecisionReview).where(ExtDecisionReview.decision_id.in_(gone)))
+        session.execute(delete(ExtDecisionRef).where(ExtDecisionRef.decision_id.in_(gone)))
         session.execute(delete(ExtDecisionSource).where(ExtDecisionSource.decision_id.in_(gone)))
         session.execute(delete(ExtDecision).where(ExtDecision.id.in_(gone)))
 
-    decisions = []
-    for id_, group in fresh.items():
-        row = existing.get(id_)
-        if row is not None:
-            row.statement = group.statement
-            row.confidence = group.confidence
-        else:
-            row = ExtDecision(
-                id=id_,
-                meeting_id=meeting_id,
-                statement=group.statement,
-                confidence=group.confidence,
-                sources=[
-                    ExtDecisionSource(utterance_id=utterance_id, position=position)
-                    for position, utterance_id in enumerate(group.source_utterance_ids)
-                ],
+    if fresh:
+        upsert = _insert_if_absent_into(session, ExtDecision).values(
+            [
+                {
+                    "id": id_,
+                    "meeting_id": meeting_id,
+                    "statement": group.statement,
+                    "confidence": group.confidence,
+                    "origin": "model",
+                }
+                for id_, group in fresh.items()
+            ]
+        )
+        session.execute(
+            upsert.on_conflict_do_update(
+                index_elements=["id"],
+                set_={
+                    "statement": upsert.excluded.statement,
+                    "confidence": upsert.excluded.confidence,
+                },
             )
-            session.add(row)
-        decisions.append(row)
+        )
+
+        # Sources are only written once, for a row this statement actually
+        # inserted -- a surviving id's sources are the same set that produced
+        # it, so there is nothing to write there. ``ON CONFLICT DO NOTHING``
+        # on the same race this function's whole upsert exists for: a second
+        # concurrent insert of the same new decision would otherwise collide
+        # on ``uq_ext_decision_sources`` instead of the primary key.
+        new_ids = fresh.keys() - existing_ids
+        if new_ids:
+            session.execute(
+                _insert_if_absent_into(session, ExtDecisionSource)
+                .values(
+                    [
+                        {"decision_id": id_, "utterance_id": utterance_id, "position": position}
+                        for id_ in new_ids
+                        for position, utterance_id in enumerate(fresh[id_].source_utterance_ids)
+                    ]
+                )
+                .on_conflict_do_nothing(index_elements=["decision_id", "utterance_id"])
+            )
+
+    # Ordered by ``fresh``, not a fresh query's ``created_at`` -- a batch
+    # upsert gives every row in it the same server-side timestamp, so an
+    # order-by on that column would settle ties by id instead of the
+    # utterance position the caller actually cares about.
+    rows = {
+        row.id: row
+        for row in session.scalars(
+            select(ExtDecision).options(selectinload(ExtDecision.sources)).where(*model_made)
+        )
+    }
+    decisions = [rows[id_] for id_ in fresh]
     session.flush()
 
     # Ids only. A statement is meeting content and a log line is a store.
@@ -1195,23 +1241,18 @@ def _suggested(confidence: float) -> bool | None:
     return None if threshold is None else confidence >= threshold
 
 
-def _read_decision(session: Session, decision: ExtDecision) -> ReviewDecision:
-    """One decision, built the way ``review_for_meeting`` builds each of its rows.
+def _review_decision_row(
+    decision: ExtDecision,
+    review: ExtDecisionReview | None,
+    refs: Iterable[ExtDecisionRef],
+    summary: str | None,
+) -> ReviewDecision:
+    """Assemble one row from already-fetched pieces.
 
-    For a caller that already has the one decision it needs -- confirming it,
-    or just having created it -- rather than for listing a meeting's decisions.
-    ``review_for_meeting`` keeps its own batched version of this construction
-    for that case: querying reviews, refs and summaries once for every decision
-    in the meeting is the efficient shape there, and calling this helper once
-    per decision from inside that loop would turn one query into N (#296).
+    Pure and query-free so both call shapes -- one decision fetched by itself,
+    or a meeting's worth fetched in batches -- build the same row the same way
+    without either one re-running the other's queries (#296).
     """
-    review = session.get(ExtDecisionReview, decision.id)
-    refs = session.scalars(
-        select(ExtDecisionRef)
-        .where(ExtDecisionRef.decision_id == decision.id)
-        .order_by(ExtDecisionRef.created_at)
-    )
-    summary = decision_summaries(session, [decision]).get(decision.id)
     return ReviewDecision(
         id=decision.id,
         statement=_confirmed_statement(decision, review),
@@ -1229,6 +1270,35 @@ def _read_decision(session: Session, decision: ExtDecision) -> ReviewDecision:
         ],
         summary=summary,
     )
+
+
+def _read_decision(
+    session: Session, decision: ExtDecision, *, refs: Sequence[ExtDecisionRef] | None = None
+) -> ReviewDecision:
+    """One decision, built the way ``review_for_meeting`` builds each of its rows.
+
+    For a caller that already has the one decision it needs -- confirming it,
+    or just having created it -- rather than for listing a meeting's decisions.
+    ``review_for_meeting`` keeps its own batched version of this construction
+    for that case: querying reviews, refs and summaries once for every decision
+    in the meeting is the efficient shape there, and calling this helper once
+    per decision from inside that loop would turn one query into N (#296).
+
+    ``refs`` lets a caller that already knows the answer -- ``create_decision``,
+    whose row cannot have any sync refs yet -- skip that query; left out, it is
+    fetched here.
+    """
+    review = session.get(ExtDecisionReview, decision.id)
+    if refs is None:
+        refs = list(
+            session.scalars(
+                select(ExtDecisionRef)
+                .where(ExtDecisionRef.decision_id == decision.id)
+                .order_by(ExtDecisionRef.created_at)
+            )
+        )
+    summary = decision_summaries(session, [decision]).get(decision.id)
+    return _review_decision_row(decision, review, refs, summary)
 
 
 def review_for_meeting(
@@ -1252,37 +1322,24 @@ def review_for_meeting(
             select(ExtDecisionReview).where(ExtDecisionReview.meeting_id == meeting_id)
         )
     }
-    refs_by_decision: dict[str, list[ExternalRefRead]] = {}
+    refs_by_decision: dict[str, list[ExtDecisionRef]] = {}
     for ref in session.scalars(
         select(ExtDecisionRef)
         .where(ExtDecisionRef.meeting_id == meeting_id)
         .order_by(ExtDecisionRef.created_at)
     ):
-        refs_by_decision.setdefault(ref.decision_id, []).append(
-            ExternalRefRead(system=ref.system, url=ref.url, external_id=ref.external_id)  # type: ignore[arg-type]
-        )
+        refs_by_decision.setdefault(ref.decision_id, []).append(ref)
     summaries = decision_summaries(session, decisions)
 
-    listed = []
-    for decision in decisions:
-        review = reviews.get(decision.id)
-        listed.append(
-            ReviewDecision(
-                id=decision.id,
-                statement=_confirmed_statement(decision, review),
-                model_statement=decision.statement,
-                confidence=decision.confidence,
-                origin=decision.origin,  # type: ignore[arg-type]
-                status=review.status if review else "pending",  # type: ignore[arg-type]
-                suggested=_suggested(decision.confidence),
-                source_utterance_ids=[
-                    source.utterance_id
-                    for source in sorted(decision.sources, key=lambda s: s.position)
-                ],
-                sync_refs=refs_by_decision.get(decision.id, []),
-                summary=summaries.get(decision.id),
-            )
+    listed = [
+        _review_decision_row(
+            decision,
+            reviews.get(decision.id),
+            refs_by_decision.get(decision.id, []),
+            summaries.get(decision.id),
         )
+        for decision in decisions
+    ]
 
     confirmations = session.scalars(
         select(ExtConfirmation)
@@ -1292,7 +1349,7 @@ def review_for_meeting(
     items = [
         item
         for item in list_action_items(session, meeting_id=meeting_id)
-        if item.status == ActionStatus.NEEDS_CONFIRMATION.value or item.is_candidate
+        if item.status == ActionStatus.NEEDS_CONFIRMATION.value
     ]
     return MeetingReview(
         meeting_id=meeting_id,
@@ -1379,6 +1436,7 @@ def outbound_for_meeting(session: Session, meeting_id: str) -> Outbound:
         select(ExtDecision, ExtDecisionReview)
         .join(ExtDecisionReview, ExtDecisionReview.decision_id == ExtDecision.id)
         .where(ExtDecision.meeting_id == meeting_id, ExtDecisionReview.status == "confirmed")
+        .order_by(ExtDecision.created_at, ExtDecision.id)
     )
     for decision, review in confirmed:
         statement = _confirmed_statement(decision, review)
@@ -1444,7 +1502,7 @@ def create_decision(session: Session, payload: DecisionCreate) -> ReviewDecision
         )
     )
     session.flush()
-    return _read_decision(session, decision)
+    return _read_decision(session, decision, refs=())
 
 
 def delete_decision(session: Session, decision: ExtDecision) -> None:

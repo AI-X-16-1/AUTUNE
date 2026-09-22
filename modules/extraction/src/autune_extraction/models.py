@@ -216,10 +216,11 @@ class ExtDecisionRef(Base):
     the system, claimed before the call, filled in after it. A separate table
     rather than a second key on that one, kept without a foreign key to
     ``ext_decisions`` even though ``build_decisions`` no longer deletes and
-    rebuilds every row on a rerun (#297) -- adding one here is a follow-up this
-    table's own review did not ask for, not a claim that one would be wrong.
-    Keyed by the ``dec_`` id like ``ext_decision_reviews``, and taken with the
-    meeting.
+    rebuilds every row on a rerun (#297) -- a decision whose id genuinely goes
+    away still has its rows here deleted by name, the same explicit way as its
+    sources and its review, since a later id that comes back would otherwise
+    inherit a stale "already sent to Notion" claim it never earned. Keyed by
+    the ``dec_`` id like ``ext_decision_reviews``, and taken with the meeting.
     """
 
     __tablename__ = "ext_decision_refs"
