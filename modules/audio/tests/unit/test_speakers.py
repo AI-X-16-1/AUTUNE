@@ -157,6 +157,17 @@ class TestSegmentsWhisperDidNotTime:
         )
         assert [u.speaker for u in utterances] == ["B"]
 
+    def test_the_untimed_fallback_uses_the_renamed_label(self) -> None:
+        """The mapping ``rename_speakers`` builds applies here too: the turn
+        that starts first, ``SPEAKER_01``, is ``화자 1`` regardless of the
+        pyannote label attached to the turn the untimed segment lands in."""
+        untimed = Segment(start=1.0, end=2.0, text="타이밍이 없는 세그먼트", words=())
+        turns = (Turn(0.0, 3.0, "SPEAKER_01"), Turn(3.0, 6.0, "SPEAKER_00"))
+
+        utterances = assign_speakers(transcript(untimed), rename_speakers(turns))
+
+        assert [u.speaker for u in utterances] == ["화자 1"]
+
 
 class TestNoDiarization:
     """A one-person recording is a real case, not an error.
