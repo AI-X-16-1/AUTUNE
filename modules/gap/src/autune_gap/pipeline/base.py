@@ -61,6 +61,66 @@ class Entity:
             raise ValueError(f"unknown entity label {self.label!r}; known: {ENTITY_LABELS}")
 
 
+RELATION_LABELS: tuple[str, ...] = ("depends_on", "blocked_by", "part_of", "alternative_to")
+"""The relations step 2 produces between two topics of one meeting.
+
+Four, and deliberately not more. Every entry is a relation a rule can find in
+spoken Korean from a marker the speaker actually said, and each one changes what
+risk scoring (#35) should do with the pair:
+
+- ``depends_on`` — the meeting said A needs B. A gap on B is a gap on A too.
+- ``blocked_by`` — the meeting said B is why A cannot proceed. This is the one
+  relation that is itself a finding: a blocker named out loud and never resolved
+  is what the gap report exists to surface.
+- ``part_of`` — B belongs to A. Two topics, one subject, so a template item
+  matched by one of them is matched by the pair. **No rule produces it today**:
+  의 marks possession and composition alike, and "검색 기능의 담당자 일정" is
+  not a part of anything. The label stays because the graph can carry it and
+  #35 weights it — the vocabulary is what an edge may say, not what the rules
+  can currently read. Raised in review of #249.
+- ``alternative_to`` — the meeting weighed A against B. Symmetric, and the pair
+  is a decision the meeting may or may not have closed.
+
+``co_occurs`` is **not** here. It is not extracted from anything a speaker said;
+it is what ``graph`` falls back to for a pair that shares an utterance and no
+marker, and it stays in ``graph`` for that reason.
+"""
+
+SYMMETRIC_RELATIONS: frozenset[str] = frozenset({"alternative_to"})
+"""Relations that hold in both directions, written as two rows.
+
+``gap_topic_edges`` is directed and a symmetric relation is two rows rather than
+a flag, so the loader never has to know which relations are which. "A 대신 B"
+and "B 대신 A" are the same statement about the pair; "A는 B가 필요하다" is not.
+"""
+
+
+@dataclass(frozen=True)
+class Relation:
+    """One directed triple: ``source`` --relation--> ``target``, and where it was said.
+
+    The two ends are the **mention texts**, not topic keys — this is the shape
+    the rules produce, and mapping a mention onto the topic it belongs to is
+    ``graph``'s job. Keeping it that way means a relation can be argued about
+    without knowing how topics were merged.
+
+    ``utterance_id`` is the evidence. A relation extracted from an utterance
+    that analysis later drops has to be droppable with it, and a rule that
+    cannot say where it fired is a rule nobody can check.
+    """
+
+    source: str
+    target: str
+    relation: str
+    utterance_id: str
+
+    def __post_init__(self) -> None:
+        if self.relation not in RELATION_LABELS:
+            raise ValueError(f"unknown relation {self.relation!r}; known: {RELATION_LABELS}")
+        if not self.source or not self.target:
+            raise ValueError("a relation needs both ends")
+
+
 @runtime_checkable
 class EntityExtractor(Protocol):
     """Named-entity extraction over a meeting's utterances.
@@ -87,5 +147,42 @@ class EntityExtractor(Protocol):
         entity rather than by utterance. Returning a nested list would make the
         common case — "every feature mentioned in this meeting" — a flatten at
         every call site.
+        """
+        ...
+
+
+@runtime_checkable
+class RelationExtractor(Protocol):
+    """Relations between the entities already found in a meeting.
+
+    Takes the entities rather than finding its own. A relation is between two
+    things the graph has nodes for, so an implementation that extracted its own
+    ends could assert a relation between two topics that do not exist — and the
+    graph would either grow a node with no evidence or drop the relation
+    silently.
+
+    **This is the step ``docs/modules/gap.md`` plans to give LLM assistance**,
+    and the only one: a relation needs a clause, not a whole transcript, so the
+    hard cases can be sent without sending the meeting. Nothing sends anything
+    today — ``relations.RuleRelations`` is the only implementation and it runs in
+    this process. When an assisted one lands it goes through
+    ``autune_integrations`` so ``check_outbound`` sees the request body, which
+    is the rule this module's header states and PR #74 put there.
+    """
+
+    @property
+    def model_version(self) -> str:
+        """Pinned, and recorded with the rows this produces — as with
+        ``EntityExtractor``, so a graph can be compared against the next
+        version of whatever built it."""
+        ...
+
+    def extract(self, utterances: list[tuple[str, str]], entities: list[Entity]) -> list[Relation]:
+        """Relations found in ``(utterance_id, text)`` pairs, given ``entities``.
+
+        Both arguments are the whole meeting, for the reason ``extract`` on
+        ``EntityExtractor`` takes a batch: a per-utterance call turns one pass
+        into thousands, and an assisted implementation would make thousands of
+        requests out of one.
         """
         ...

@@ -10,9 +10,11 @@ from __future__ import annotations
 from celery import shared_task
 
 from autune_contracts import EXTRACTION_COMPLETED, TranscriptReady, validate_major_version
-from autune_core import get_logger, publish, session_scope
+from autune_core import Meeting, get_logger, load_integration, publish, session_scope
+from autune_integrations import IntegrationError, NotionClient
 
 from . import service
+from .models import ExtActionItem, ExtDecision
 from .pipeline.registry import get_classifier
 
 log = get_logger(__name__)
@@ -116,3 +118,116 @@ def on_transcript_ready(payload: dict) -> None:
     # Step 8, after the writes have committed. The payload is never logged:
     # decision statements and item descriptions are meeting content.
     publish(EXTRACTION_COMPLETED, result.model_dump(mode="json"))
+
+
+@shared_task(name="autune.extraction.sync_action_item", acks_late=True)
+def sync_action_item(action_item_id: str) -> None:
+    """Step 7 for one item a person just confirmed: its Notion page, once (#30).
+
+    Runs when the board moves an item out of ``needs_confirmation``
+    (``sync_after_confirmation``), never after extraction: nothing the model drafted
+    is confirmed at that point, and #246 keeps unconfirmed items in Autune.
+
+    A team that has not connected Notion is skipped, not failed -- the ordinary
+    answer from ``load_integration`` (``autune_core.integrations_config``). The
+    client is built from the team's own credential and dropped when the task
+    ends, the way module E builds its Slack client.
+
+    Safe to run twice: the page is claimed in ``ext_external_refs`` before the
+    call, and the claim is the primary key (``service.sync_action_item_to_notion``).
+    A failed call rolls the claim back, so a later confirmation can send.
+
+    **It does not retry itself.** A timeout is raised as a transient error, and the
+    common shape of one is a POST that reached Notion and made the page while the
+    response was lost: retrying then claims again and makes a second page, with
+    only the last one recorded. Losing a page to a timeout is the cheaper failure —
+    the person can confirm again. Raised in review of #294.
+    """
+    with session_scope() as session:
+        item = session.get(ExtActionItem, action_item_id)
+        meeting = session.get(Meeting, item.meeting_id) if item is not None else None
+        if item is None or meeting is None:
+            log.info("extraction_notion_item_gone", action_item_id=action_item_id)
+            return
+        config = load_integration(session, meeting.team_id, "notion")
+        database_id = config.config.get("action_db_id") if config is not None else None
+        if config is None or not config.secret or not database_id:
+            # Asked for, not required: a team that connected Notion for decisions
+            # only, or whose token is gone, is skipped. ``require_secret()`` and
+            # ``require()`` raise ValidationError, which is not an
+            # IntegrationError -- it came out of the confirming request as a 422
+            # rather than a skipped page. Raised in review of #294.
+            log.info(
+                "extraction_notion_not_connected",
+                action_item_id=action_item_id,
+                team_id=meeting.team_id,
+            )
+            return
+        service.sync_action_item_to_notion(
+            session,
+            NotionClient(config.secret),
+            action_item_id=action_item_id,
+            database_id=database_id,
+            property_names=config.config.get("action_properties"),
+        )
+
+
+def sync_after_confirmation(action_item_id: str) -> None:
+    """Run the sync in the API process, right after the confirming response.
+
+    The router hands this to FastAPI's background tasks rather than queueing
+    ``sync_action_item`` on the broker: apps/api builds no Celery app, so a
+    ``delay`` from a request has nowhere to go, and wiring one in is a change to
+    the team's shared assembly. The claim in ``ext_external_refs`` makes the page
+    once either way.
+
+    The person's edit is already committed when this runs, so a Notion failure
+    must not surface as an error on the board. It is logged by id and the claim
+    is rolled back, which lets the next confirmation of that item send.
+    """
+    try:
+        sync_action_item(action_item_id)
+    except IntegrationError:
+        log.warning("extraction_notion_sync_failed", action_item_id=action_item_id)
+
+
+@shared_task(name="autune.extraction.sync_decision", acks_late=True)
+def sync_decision(decision_id: str) -> None:
+    """Step 7 for one decision a person just confirmed: its Notion page, once.
+
+    ``sync_action_item``'s rules, for the team's decision database
+    (``decision_db_id`` in its Notion config). A team that connected Notion for
+    action items only has no ``decision_db_id``, and is skipped rather than failed.
+    No self-retry, for the reason ``sync_action_item`` gives.
+    """
+    with session_scope() as session:
+        decision = session.get(ExtDecision, decision_id)
+        meeting = session.get(Meeting, decision.meeting_id) if decision is not None else None
+        if decision is None or meeting is None:
+            log.info("extraction_notion_decision_gone", decision_id=decision_id)
+            return
+        config = load_integration(session, meeting.team_id, "notion")
+        database_id = config.config.get("decision_db_id") if config is not None else None
+        if config is None or not config.secret or not database_id:
+            log.info(
+                "extraction_notion_decisions_not_connected",
+                decision_id=decision_id,
+                team_id=meeting.team_id,
+            )
+            return
+        service.sync_decision_to_notion(
+            session,
+            NotionClient(config.secret),
+            decision_id=decision_id,
+            database_id=database_id,
+            property_names=config.config.get("decision_properties"),
+        )
+
+
+def sync_decision_after_confirmation(decision_id: str) -> None:
+    """``sync_after_confirmation`` for a decision: in the API process, never
+    failing the confirmation that started it."""
+    try:
+        sync_decision(decision_id)
+    except IntegrationError:
+        log.warning("extraction_notion_decision_sync_failed", decision_id=decision_id)

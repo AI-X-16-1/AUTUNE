@@ -15,6 +15,7 @@ from sqlalchemy import Table
 from autune_contracts.enums import GapSeverity
 from autune_gap.models import (
     GapGap,
+    GapMeetingTemplate,
     GapParticipation,
     GapRelatedTopic,
     GapTopic,
@@ -29,6 +30,7 @@ ALL_TABLES: tuple[Table, ...] = (
     GapParticipation.__table__,
     GapGap.__table__,
     GapRelatedTopic.__table__,
+    GapMeetingTemplate.__table__,
 )
 
 
@@ -234,6 +236,12 @@ def test_every_meeting_id_column_is_indexed() -> None:
     for table in ALL_TABLES:
         if "meeting_id" not in table.c:
             continue
+        if table.c.meeting_id.primary_key:
+            # Already indexed, by being the key. `gap_meeting_template` is one
+            # row per meeting, so the lookup this rule is about is the primary
+            # key lookup; a second index on the same column would be a write
+            # every insert pays for and no read uses.
+            continue
         indexed = {tuple(c.name for c in index.columns) for index in table.indexes}
         assert ("meeting_id",) in indexed, table.name
 
@@ -242,12 +250,24 @@ def test_every_meeting_id_column_is_indexed() -> None:
 
 
 def migration_tables() -> dict[str, set[str]]:
-    """Table -> column names, read out of this module's migration files.
+    """Table -> column names, as this module's migrations leave them.
 
     Text, not a database. The round-trip test needs Postgres and a person
     without Docker cannot run it, so the failure this catches — a column added
     to a model and not to the migration — would otherwise reach CI. Reading the
-    ``op.create_table`` calls costs nothing and catches it in the unit run.
+    migration files costs nothing and catches it in the unit run.
+
+    Revisions are read in filename order, which is the order they apply: the
+    date prefix is what makes the two the same thing. ``op.add_column`` counts
+    as much as ``op.create_table``, because a column added by a later revision
+    is a column the database has — and reading only ``create_table`` made the
+    first such column (``gap_topic_edges.extractor_version``, #32) look like a
+    model with no migration behind it.
+
+    A column added to a table no model here describes is not silently accepted
+    either: it shows up as a key, and ``test_no_migration_creates_a_table_no_
+    model_describes`` fails on it. Another module's table is another module's
+    to migrate (invariant 10).
     """
     migrations = Path(__file__).resolve().parents[2] / "migrations"
     tables: dict[str, set[str]] = {}
@@ -257,6 +277,16 @@ def migration_tables() -> dict[str, set[str]]:
             tables[match.group(1)] = set(
                 re.findall(r'sa\.Column\(\s*\n?\s*"(\w+)"', match.group(2))
             )
+        # A column added to an existing table is as real as one the create
+        # statement declared, and adding one is the normal way a table grows
+        # after its first revision. Reading only `create_table` let a model grow
+        # a column with no migration behind it at all, which is the single thing
+        # this test exists to catch. `downgrade` drops rather than adds, so
+        # scanning the whole file picks up no reversal.
+        for table, column in re.findall(
+            r'op\.add_column\(\s*\n?\s*"(\w+)",\s*\n?\s*sa\.Column\(\s*\n?\s*"(\w+)"', source
+        ):
+            tables.setdefault(table, set()).add(column)
     return tables
 
 

@@ -132,6 +132,14 @@ MEETING = [
     Line("김서연", "검색 결과는 다음 주에 다시 보죠"),
 ]
 
+BLOCKED = [
+    Line("김서연", "검색 기능은 캐시가 안 잡혀 있어서 이번 스프린트엔 무리입니다"),
+    Line("이건우", "캐시 얘기는 다음 주에 다시 보죠"),
+]
+"""A meeting that says out loud what is in the way. ``MEETING`` never does —
+"캐시 때문에 느립니다" is a cause with no blocker word in it — so the two
+fixtures cover both sides of step 2."""
+
 
 def build(team_id: str, lines: list[Line], **seed_options: frozenset[str]) -> str:
     meeting_id = seed(team_id, lines, **seed_options)
@@ -232,6 +240,57 @@ def test_a_topic_names_the_extractor_that_built_it(team_id: str) -> None:
         )
 
     assert versions == {"fake"}
+
+
+# --- what step 2 asserted, and what nothing asserted -------------------------
+
+
+def test_a_relation_the_meeting_stated_is_stored_with_its_direction(team_id: str) -> None:
+    """ "검색 기능은 캐시가 안 잡혀 있어서 무리입니다" is a blocker offered as a
+    reason, and it points one way. The reverse is not stored, and co-occurrence
+    does not put it back."""
+    meeting_id = build(team_id, BLOCKED)
+
+    with session_scope() as s:
+        label = dict(
+            s.execute(
+                select(GapTopic.id, GapTopic.label).where(GapTopic.meeting_id == meeting_id)
+            ).all()
+        )
+        edges = {
+            (label[source], relation, label[target])
+            for source, relation, target in s.execute(
+                select(
+                    GapTopicEdge.source_topic_id,
+                    GapTopicEdge.relation,
+                    GapTopicEdge.target_topic_id,
+                ).where(GapTopicEdge.meeting_id == meeting_id)
+            ).tuples()
+        }
+
+    assert ("검색 기능", "blocked_by", "캐시") in edges
+    assert ("캐시", "blocked_by", "검색 기능") not in edges
+    assert ("캐시", "co_occurs", "검색 기능") not in edges
+
+
+def test_an_edge_says_what_asserted_it_and_co_occurrence_says_nothing(team_id: str) -> None:
+    """The NULL is the point: nothing extracted a co-occurrence edge, the two
+    topics merely shared an utterance. Gap precision is compared across versions
+    of whatever built the graph, and after #32 two different things build it."""
+    blocked = build(team_id, BLOCKED)
+    plain = build(team_id, MEETING)
+
+    with session_scope() as s:
+        versions = {
+            relation: version
+            for relation, version in s.execute(
+                select(GapTopicEdge.relation, GapTopicEdge.extractor_version).where(
+                    GapTopicEdge.meeting_id.in_([blocked, plain])
+                )
+            ).tuples()
+        }
+
+    assert versions == {"blocked_by": "rules-1", "co_occurs": None}
 
 
 # --- consent ----------------------------------------------------------------

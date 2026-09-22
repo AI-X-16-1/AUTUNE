@@ -1,0 +1,35 @@
+{"text": "연락처는 010-1234-5678입니다", "masked": "연락처는 010-****-5678입니다", "source": "planted", "categories": ["phone"], "note": "a particle attached to the value; the shape #131 was about"}
+{"text": "제 번호 01098765432이에요", "masked": "제 번호 010****5432이에요", "source": "planted", "categories": ["phone"], "note": "no separators", "known_inexact": "#158 item 5: the trailing particle 이 reads as a digit, the longer reading ranks as rrn, and the span is masked whole with the particle. Safe direction; shape and particle lost."}
+{"text": "사무실은 02-123-4567입니다", "masked": "사무실은 **-***-4567입니다", "source": "planted", "categories": ["phone"], "note": "area code is not kept; 02 says where somebody is"}
+{"text": "대표번호는 070-1234-5678입니다", "masked": "대표번호는 ***-****-5678입니다", "source": "planted", "categories": ["phone"], "note": "070 VoIP; the old enumerated prefix list missed it (#126)"}
+{"text": "수신자부담 0800012345로 문의주세요", "masked": "수신자부담 ******2345로 문의주세요", "source": "planted", "categories": ["phone"], "note": "080 freephone"}
+{"text": "해외에서는 +82-10-9876-5432로 걸어주세요", "masked": "해외에서는 +**-**-****-5432로 걸어주세요", "source": "planted", "categories": ["phone"], "note": "international form"}
+{"text": "메일은 minkyoung@example.com로 부탁드립니다", "masked": "메일은 m***@example.com로 부탁드립니다", "source": "planted", "categories": ["email"], "note": null}
+{"text": "hong.gil-dong+tag@sub.example.co.kr로 보냈어요", "masked": "h***@sub.example.co.kr로 보냈어요", "source": "planted", "categories": ["email"], "note": "dots, hyphens and a plus tag in the local part"}
+{"text": "주민번호 900101-1234567이고요", "masked": "주민번호 ******-1******이고요", "source": "planted", "categories": ["rrn"], "note": "only the century-and-sex digit survives", "known_inexact": "#158 item 5: the trailing particle 이 reads as a digit, the longer reading ranks as rrn, and the span is masked whole with the particle. Safe direction; shape and particle lost."}
+{"text": "등록번호 900101-5123456이라고 하셨어요", "masked": "등록번호 ******-5******이라고 하셨어요", "source": "planted", "categories": ["rrn"], "note": "registered foreign national; the seventh digit is 5-8 and an earlier pattern accepted only 1-4", "known_inexact": "#158 item 5: the trailing particle 이 reads as a digit, the longer reading ranks as rrn, and the span is masked whole with the particle. Safe direction; shape and particle lost."}
+{"text": "주민번호 9001011234567", "masked": "주민번호 ******1******", "source": "planted", "categories": ["rrn"], "note": "no separator"}
+{"text": "계좌는 110-123-456789로 보내주세요", "masked": "계좌는 ***-***-**6789로 보내주세요", "source": "planted", "categories": ["account"], "note": "3-3-6 layout"}
+{"text": "계좌 123456-12-123456로 보내주시면 됩니다", "masked": "계좌 ******-**-**3456로 보내주시면 됩니다", "source": "planted", "categories": ["account"], "note": "6-2-6 layout"}
+{"text": "법인카드 1234-5678-9012-3456으로 결제했습니다", "masked": "법인카드 ****-****-****-3456으로 결제했습니다", "source": "planted", "categories": ["card"], "note": null}
+{"text": "카드 1234 5678 9012 3456 입니다", "masked": "카드 **** **** **** 3456 입니다", "source": "planted", "categories": ["card"], "note": "spaces instead of hyphens"}
+{"text": "사무실 02 1234 5678 9012 3456 이요", "masked": "사무실 ** **** **** **** **** 이요", "source": "planted", "categories": ["phone", "card"], "note": "two values with nothing between them; find_pii returned overlapping spans and the masker merges them (#138)"}
+{"text": "제 번호는 공일공 일이삼사 오육칠팔이에요", "masked": "제 번호는 *** **** ****이에요", "source": "planted", "categories": ["phone"], "note": "read out one digit at a time; no pattern can see it without the recogniser (#143)"}
+{"text": "계좌는 국민 삼일이 이사 오육칠팔구공이요", "masked": "계좌는 국민 *** ** ******이요", "source": "planted", "categories": ["account"], "note": "read out; #143"}
+{"text": "010-1234 오육칠팔이요", "masked": "***-**** ****이요", "source": "planted", "categories": ["phone"], "note": "one number in two scripts; keeping the last four is not achievable when those four are syllables"}
+{"text": "다음 주 10월까지 하겠습니다", "masked": "다음 주 10월까지 하겠습니다", "source": "transcript", "categories": [], "note": "01-baseline-large-v3.md section 3.3 — a mis-transcription of 수요일, and a date the masker must leave alone"}
+{"text": "다음 주 수요일까지 하겠습니다", "masked": "다음 주 수요일까지 하겠습니다", "source": "transcript", "categories": [], "note": "the reference for the line above"}
+{"text": "화요일에— 아니 아니, 수요일에", "masked": "화요일에— 아니 아니, 수요일에", "source": "transcript", "categories": [], "note": "01-baseline-large-v3.md — a self-correction, which B needs intact"}
+{"text": "다음 회의는 9월 18일", "masked": "다음 회의는 9월 18일", "source": "transcript", "categories": [], "note": "01-baseline-large-v3.md section 3 — a date"}
+{"text": "인텔리전스를 맡은 김서연입니다", "masked": "인텔리전스를 맡은 김서연입니다", "source": "transcript", "categories": [], "note": "02-diarization.md section 3 — a name, which privacy.md section 2 does not list as a masked category"}
+{"text": "오디오 파이프라인을 맡은 박준우입니다", "masked": "오디오 파이프라인을 맡은 박준우입니다", "source": "transcript", "categories": [], "note": "02-diarization.md section 3"}
+{"text": "PM이면서 인텔리전스 대시보드를 담당합니다", "masked": "PM이면서 인텔리전스 대시보드를 담당합니다", "source": "transcript", "categories": [], "note": "02-diarization.md section 3"}
+{"text": "2026-09-18까지 배포하겠습니다", "masked": "2026-09-18까지 배포하겠습니다", "source": "written", "categories": [], "note": "ISO date; widening the account pattern once ate every one of these (#125 review)"}
+{"text": "2024.01.15 회의록 확인해주세요", "masked": "2024.01.15 회의록 확인해주세요", "source": "written", "categories": [], "note": "dotted date"}
+{"text": "버전 20260910 이사 갑니다", "masked": "버전 20260910 이사 갑니다", "source": "written", "categories": [], "note": "eight-digit version string beside a word whose syllables are digits; letting runs contain digits once masked this (#158)"}
+{"text": "IP는 192.168.10.20입니다", "masked": "IP는 192.168.10.20입니다", "source": "written", "categories": [], "note": null}
+{"text": "예산 100 200 300 만원 정도입니다", "masked": "예산 100 200 300 만원 정도입니다", "source": "written", "categories": [], "note": "three number groups; the account pattern matches this shape and the digit count rejects it"}
+{"text": "일이 있어서 못 갔어요", "masked": "일이 있어서 못 갔어요", "source": "written", "categories": [], "note": "일이 is work, not 12"}
+{"text": "이사 준비 중입니다", "masked": "이사 준비 중입니다", "source": "written", "categories": [], "note": "이사 is moving house, not 24"}
+{"text": "예산은 십오만 정도입니다", "masked": "예산은 십오만 정도입니다", "source": "written", "categories": [], "note": "a scale word is not a digit (#148)"}
+{"text": "usr_b2ca07691433429f84a6564f1aea0c43", "masked": "usr_b2ca07691433429f84a6564f1aea0c43", "source": "written", "categories": [], "note": "a generated id; hex is mostly digits and a digit boundary read the middle of one as a number (#138 review)"}

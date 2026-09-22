@@ -1,5 +1,5 @@
 /**
- * Generated from packages/contracts (contract version 2.0).
+ * Generated from packages/contracts (contract version 2.1).
  * Do not edit. Run `pnpm run gen:contracts` and commit the result.
  */
 
@@ -79,6 +79,23 @@ export type Statement = string;
  */
 export type SourceUtteranceIds1 = string[];
 export type Confidence2 = number;
+export type Role1 = string;
+/**
+ * Identified people in the role at the meeting, carried so the gate is checked.
+ */
+export type Identified = number;
+/**
+ * People in this role who voiced support.
+ */
+export type Supporting = number;
+/**
+ * People in this role who raised a concern.
+ */
+export type Concerns = number;
+/**
+ * Per role, never per person. Empty when no role cleared the gate or stance was not computed; the two are not distinguished.
+ */
+export type StanceByRole = RoleStance[];
 /**
  * Consumed by D to build decision lineage across meetings.
  */
@@ -309,6 +326,46 @@ export interface Decision {
   statement: Statement;
   source_utterance_ids?: SourceUtteranceIds1;
   confidence: Confidence2;
+  stance_by_role?: StanceByRole;
+}
+/**
+ * How many people in one role backed a decision or raised a concern on it.
+ *
+ * Counts, never identities. There is no participant id, user id or speaker
+ * label here, and adding one is a privacy violation rather than an additive
+ * change: who opposed a decision is a per-person record of behaviour in a
+ * meeting, the same shape docs/architecture/privacy.md section 3 forbids for
+ * speaking ratios.
+ *
+ * A role appears only when the meeting had at least
+ * `STANCE_MIN_IDENTIFIED_PER_ROLE` identified people in it. In a small team a
+ * role is a person, and a count over one person is that person's stance.
+ *
+ * People are counted by distinct ``user_id``, each in at most one of the two
+ * counts, so ``supporting + concerns <= identified``. A person who spoke on the
+ * decision without doing either is in neither count, so this is not coverage.
+ *
+ * **A unanimous role is not representable.** ``supporting == identified`` or
+ * ``concerns == identified`` says what every person in the role did, which is
+ * each person's stance however many of them there are -- the gap k-anonymity
+ * leaves. A producer leaves such a role out. A count of zero is allowed: "nobody in
+ * the role raised a concern" is how most roles look after most decisions, and
+ * refusing it would drop nearly every row.
+ *
+ * What remains is a lopsided split -- four of five supporting, one concern. It
+ * says one person dissented, not which; anyone who knows the other four's
+ * stances can still tell. Accepted as the residual risk of a count, and not
+ * gated further here, because every stricter rule empties most roles in a team
+ * meeting.
+ *
+ * This interface was referenced by `AutuneContracts`'s JSON-Schema
+ * via the `definition` "RoleStance".
+ */
+export interface RoleStance {
+  role: Role1;
+  identified: Identified;
+  supporting: Supporting;
+  concerns: Concerns;
 }
 /**
  * This interface was referenced by `AutuneContracts`'s JSON-Schema

@@ -16,19 +16,32 @@ from sqlalchemy import delete, func, nulls_last, select
 from autune_contracts.enums import GapSeverity
 from autune_contracts.events import GAP_COMPLETED
 from autune_contracts.gap import Gap, GapReport, Participation, Topic
-from autune_core import Meeting, Participant, Utterance, get_logger, ids, new_id, session_scope
+from autune_core import (
+    Meeting,
+    Participant,
+    TeamMember,
+    User,
+    Utterance,
+    get_logger,
+    ids,
+    new_id,
+    session_scope,
+)
+from autune_core.errors import NotFoundError
 from autune_core.events import publish
-from autune_gap import graph
+from autune_gap import detect, graph, template
+from autune_gap.config import GapSettings, get_settings
 from autune_gap.models import (
     GapGap,
+    GapMeetingTemplate,
     GapParticipation,
     GapRelatedTopic,
     GapTopic,
     GapTopicEdge,
     GapTopicUtterance,
 )
-from autune_gap.pipeline import get_entity_extractor
-from autune_gap.schemas import TopicEdgeRead, TopicGraphRead, TopicNodeRead
+from autune_gap.pipeline import get_entity_extractor, get_relation_extractor
+from autune_gap.schemas import TemplateRead, TopicEdgeRead, TopicGraphRead, TopicNodeRead
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -36,6 +49,67 @@ if TYPE_CHECKING:
     from autune_contracts import TranscriptReady
 
 log = get_logger(__name__)
+
+
+def require_readable_meeting(session: Session, meeting_id: str, reader: User) -> None:
+    """Raise unless ``reader`` may read this meeting. Everything under
+    ``/api/gap`` that names a meeting calls this first.
+
+    A token proves who is asking, not whose meetings they may read.
+
+    **An unknown meeting and somebody else's meeting get the same answer.** Both
+    are ``NotFoundError``, never a 403 — a 403 confirms that the id exists, and
+    the ids are the only thing a caller needs to walk the table. Module A checks
+    existence before membership and therefore tells a non-member which meeting
+    ids are real (``modules/audio/.../service.py:64``); #276 asks for that to
+    change there too, and C does not copy it in the meantime.
+
+    Not a 404 for a meeting that exists, is readable, and has not been analysed:
+    the resource is there and has produced nothing, which is what an empty
+    report says. A screen polling while the pipeline runs needs that difference,
+    and module B draws the same line on ``/results/{meeting_id}``.
+
+    The refusal is logged with the reason, because "no such meeting" and "not
+    your team" are the same answer to a caller and different answers to whoever
+    is reading the logs. Ids only — a meeting title is meeting content.
+    """
+    meeting = session.get(Meeting, meeting_id)
+    if meeting is None:
+        log.info(
+            "gap_read_refused", meeting_id=meeting_id, reader_id=reader.id, reason="no_such_meeting"
+        )
+        raise NotFoundError("meeting", meeting_id)
+
+    if not _is_team_member(session, user_id=reader.id, team_id=meeting.team_id):
+        log.info(
+            "gap_read_refused", meeting_id=meeting_id, reader_id=reader.id, reason="not_a_member"
+        )
+        raise NotFoundError("meeting", meeting_id)
+
+
+def _is_team_member(session: Session, *, user_id: str, team_id: str) -> bool:
+    """Whether this user belongs to this team.
+
+    A predicate rather than a raising helper, because the caller above answers
+    both of its cases the same way and a helper that raised its own error would
+    have to be caught and translated.
+
+    **This duplicates four lines of module A** (``require_team_member``), and
+    that is what #276 is deciding: the same check living in two modules is one
+    that can come to mean two things — A's own docstring says so about two
+    copies inside one module. If it moves to ``packages/core`` where
+    ``require_self`` already lives, this function becomes a call to it and the
+    behaviour above does not change. Until that decision, invariant 2 forbids
+    importing A's copy, and a C-local predicate is the only thing available.
+    """
+    return (
+        session.scalar(
+            select(TeamMember.id).where(
+                TeamMember.team_id == team_id, TeamMember.user_id == user_id
+            )
+        )
+        is not None
+    )
 
 
 def build_topic_graph(transcript: TranscriptReady) -> int:
@@ -48,6 +122,10 @@ def build_topic_graph(transcript: TranscriptReady) -> int:
     the ``gap_related_topics`` rows of any gap already raised — nothing raises
     one yet (#35), and when something does it has to be rebuilt in the same
     run.
+
+    Steps 1 to 5 of docs/modules/gap.md: entities, the relations between them,
+    topics, edges, centrality and the participation matrix. A relation the rules
+    could not read leaves its pair on ``co_occurs``; see ``graph.build_edges``.
 
     Only a consenting participant's speech is analysed (privacy.md section 5),
     and only they appear in the matrix. Speech with no participant behind it is
@@ -88,8 +166,12 @@ def build_topic_graph(transcript: TranscriptReady) -> int:
     entities = extractor.extract(analysed)
     extractor_version = extractor.model_version
 
+    relation_extractor = get_relation_extractor()
+    relations = relation_extractor.extract(analysed, entities)
+    relation_version = relation_extractor.model_version
+
     topics = graph.build_topics(entities, [utterance_id for utterance_id, _ in analysed])
-    edges = graph.co_occurrence_edges(topics)
+    edges = graph.build_edges(topics, relations)
     scores = graph.centrality(topics, edges)
     position = {u.id: index for index, u in enumerate(transcript.utterances)}
 
@@ -128,6 +210,9 @@ def build_topic_graph(transcript: TranscriptReady) -> int:
                 target_topic_id=topic_ids[edge.target],
                 relation=edge.relation,
                 weight=edge.weight,
+                # NULL for co-occurrence: nothing asserted it, the two topics
+                # merely shared an utterance. See the model docstring.
+                extractor_version=None if edge.relation == graph.CO_OCCURS else relation_version,
             )
             for edge in edges
         )
@@ -145,9 +230,222 @@ def build_topic_graph(transcript: TranscriptReady) -> int:
         excluded=len(transcript.utterances) - len(analysed),
         topics=len(topics),
         edges=len(edges),
+        # How many edges the meeting's own words explain, against how many
+        # are there because two topics happened to share an utterance. It is
+        # the number that says whether the rules are earning their precision
+        # risk, and the one to watch when a marker list changes.
+        relations=sum(1 for edge in edges if edge.relation != graph.CO_OCCURS),
         extractor=extractor_version,
+        relation_extractor=relation_version,
     )
     return len(topics)
+
+
+def detect_gaps(meeting_id: str) -> int:
+    """Compare the stored topic graph against the meeting's domain template and
+    store what the meeting did not settle. Returns how many gaps stand.
+
+    Steps 6 and 7 of docs/modules/gap.md. Reads rows rather than the transcript:
+    everything comparison needs is already in ``gap_topics`` and
+    ``gap_participation``, so this runs without the extractor and can be run
+    again on its own when somebody changes the template.
+
+    **A re-run keeps the gap rows it already raised.** They are recognised by
+    ``(meeting_id, template_key, template_item_key)`` and updated in place, so
+    ``id`` survives — a link somebody sent to a gap still opens it — and so does
+    ``dismissed_at``, which is a person's judgement and the input ADR 0006's
+    threshold tuning reads. A row this run did not produce is deleted: the
+    meeting covers that item now, and a gap that is no longer a gap should not
+    sit in the table waiting to be counted. Only template rows are touched;
+    a gap found from the graph alone carries no template key and is left alone.
+
+    Call it after ``build_topic_graph``, which deletes and rebuilds the topics —
+    the cascade takes ``gap_related_topics`` with them, and this puts them back.
+    Between the two a report read shows its gaps with no related topics, which
+    is why the pipeline runs them back to back and the publish comes after.
+    """
+    settings = get_settings()
+
+    with session_scope() as session:
+        if session.get(Meeting, meeting_id) is None:
+            raise ValueError(f"{meeting_id}: meeting row not found")
+
+        chosen = template.get_template(selected_template_key(session, meeting_id))
+        topics = _topic_views(session, meeting_id)
+        findings = detect.compare(chosen, topics, _thresholds(settings))
+        _store_gaps(session, meeting_id, chosen, findings)
+
+    # Counts and keys only. A gap title is composed from a template file and a
+    # topic label is transcript text; neither goes in a log line.
+    log.info(
+        "gap_detection_complete",
+        meeting_id=meeting_id,
+        template=chosen.key,
+        template_version=chosen.version,
+        topics=len(topics),
+        gaps=len(findings),
+        high=sum(1 for finding in findings if finding.severity == "high"),
+    )
+    return len(findings)
+
+
+def selected_template_key(session: Session, meeting_id: str) -> str:
+    """Which template this meeting is compared against.
+
+    The stored override if there is one, otherwise ``default_template``. An
+    override naming a template file that no longer exists falls back to the
+    default rather than failing the meeting's pipeline — a deleted template is
+    the deployment's problem, and refusing to analyse the meeting does not make
+    it less so. The warning names the key, which is a template name and not
+    meeting content.
+    """
+    settings = get_settings()
+    override = session.get(GapMeetingTemplate, meeting_id)
+    if override is None:
+        return settings.default_template
+
+    if override.template_key not in template.load_templates():
+        log.warning(
+            "gap_template_override_unknown",
+            meeting_id=meeting_id,
+            template=override.template_key,
+            falling_back_to=settings.default_template,
+        )
+        return settings.default_template
+    return override.template_key
+
+
+def set_template(session: Session, meeting_id: str, template_key: str) -> str:
+    """Point this meeting at a template and re-compare against it.
+
+    ``get_template`` rejects a key no file defines, so the row that lands is
+    always resolvable. Detection runs again immediately — the alternative is a
+    screen where choosing a template appears to do nothing until the meeting is
+    reprocessed.
+
+    It does **not** republish ``autune.gap.completed``. E scores the meeting the
+    pipeline produced, and a template somebody is trying out on S20 should not
+    silently rewrite that; the endpoint returns the key and the report endpoint
+    shows the new gaps.
+    """
+    chosen = template.get_template(template_key)
+
+    row = session.get(GapMeetingTemplate, meeting_id)
+    if row is None:
+        session.add(GapMeetingTemplate(meeting_id=meeting_id, template_key=chosen.key))
+    else:
+        row.template_key = chosen.key
+    session.flush()
+
+    return chosen.key
+
+
+def available_templates() -> list[TemplateRead]:
+    """Every template a meeting can be compared against, for the S20 rail."""
+    return [
+        TemplateRead(key=one.key, name=one.name, version=one.version, items=len(one.items))
+        for one in template.available()
+    ]
+
+
+def _thresholds(settings: GapSettings) -> detect.Thresholds:
+    """``config`` values as the shape ``detect`` takes.
+
+    Kept here so ``detect`` stays a pure function of its arguments — a test can
+    score a finding against numbers it names, without a settings object and
+    without the environment deciding the answer.
+    """
+    return detect.Thresholds(
+        high=settings.risk_threshold,
+        medium=settings.medium_threshold,
+        partial_centrality=settings.partial_centrality,
+        partial_damping=settings.partial_damping,
+        weight_template=settings.weight_template,
+        weight_coverage=settings.weight_coverage,
+        weight_participation=settings.weight_participation,
+    )
+
+
+def _topic_views(session: Session, meeting_id: str) -> list[detect.TopicView]:
+    """The meeting's topics with the one aggregate comparison reads off each:
+    how much of the consenting room was silent on it.
+
+    A share over a topic, not a total along a person — the distinction
+    docs/architecture/privacy.md section 3 turns on. A topic nobody was
+    considered for carries ``None``, which ``detect.score`` drops rather than
+    reading as "everybody spoke".
+    """
+    topics = _topics_in_reading_order(session, meeting_id)
+    said = _spoke_by_person(session, meeting_id, [topic.id for topic in topics])
+
+    views = []
+    for topic in topics:
+        people = said.get(topic.id, {})
+        silent = (
+            None
+            if not people
+            else sum(1 for spoke_here in people.values() if not spoke_here) / len(people)
+        )
+        views.append(
+            detect.TopicView(
+                id=topic.id, label=topic.label, centrality=topic.centrality, silent_share=silent
+            )
+        )
+    return views
+
+
+def _store_gaps(
+    session: Session,
+    meeting_id: str,
+    chosen: template.Template,
+    findings: list[detect.Finding],
+) -> None:
+    """Write the findings, keeping the identity of gaps already raised.
+
+    See ``detect_gaps`` for why the row is updated rather than replaced. Related
+    topics are rewritten every run: ``build_topic_graph`` deletes the meeting's
+    topics before this runs, and the rows pointing at them went with the
+    cascade.
+    """
+    stored = {
+        (row.template_key, row.template_item_key): row
+        for row in session.scalars(
+            select(GapGap).where(GapGap.meeting_id == meeting_id, GapGap.template_key.is_not(None))
+        )
+    }
+    produced: set[tuple[str | None, str | None]] = set()
+
+    for finding in findings:
+        identity = (chosen.key, finding.item_key)
+        produced.add(identity)
+
+        gap = stored.get(identity)
+        if gap is None:
+            gap = GapGap(
+                id=new_id(ids.GAP),
+                meeting_id=meeting_id,
+                template_key=chosen.key,
+                template_item_key=finding.item_key,
+            )
+            session.add(gap)
+
+        gap.category = finding.category
+        gap.title = finding.title
+        gap.severity = finding.severity
+        gap.risk_score = finding.risk_score
+        gap.template_item = finding.template_item
+        gap.template_version = chosen.version
+        gap.suggested_question = finding.question
+        session.flush()
+
+        session.execute(delete(GapRelatedTopic).where(GapRelatedTopic.gap_id == gap.id))
+        session.add_all(
+            GapRelatedTopic(gap_id=gap.id, topic_id=topic_id) for topic_id in finding.topic_ids
+        )
+
+    for stale, gap in stored.items():
+        if stale not in produced:
+            session.delete(gap)
 
 
 def publish_report(meeting_id: str) -> GapReport:
@@ -205,23 +503,7 @@ def build_report(session: Session, meeting_id: str) -> GapReport:
     ).all():
         evidence[topic_id].append(utterance_id)
 
-    person = _people(session, meeting_id)
-    said: dict[str, dict[str, bool]] = defaultdict(dict)
-    for topic_id, participant_id, spoke_here in session.execute(
-        select(
-            GapParticipation.topic_id, GapParticipation.participant_id, GapParticipation.spoke
-        ).where(GapParticipation.topic_id.in_(topic_ids))
-    ).all():
-        who = person.get(participant_id)
-        if who is None:
-            # Not, or no longer, consenting. `_people` is built from consenting
-            # rows only, but a `gap_participation` row outlives a withdrawal
-            # until the next run — so defaulting to the participant's own id
-            # put somebody who had withdrawn back into the report, and this
-            # function is written to be re-run over stored rows. The default
-            # has to be the closed one. Raised in review of #164.
-            continue
-        said[topic_id][who] = said[topic_id].get(who, False) or spoke_here
+    said = _spoke_by_person(session, meeting_id, topic_ids)
 
     gaps = list(
         session.scalars(
@@ -350,6 +632,44 @@ def topic_graph(session: Session, meeting_id: str) -> TopicGraphRead:
             for edge in edges
         ],
     )
+
+
+def _spoke_by_person(
+    session: Session, meeting_id: str, topic_ids: list[str]
+) -> dict[str, dict[str, bool]]:
+    """Topic id -> person -> whether they spoke on it.
+
+    One person is one entry however many participant rows diarization split
+    them into; ``_people`` decides who that is, and having spoken as any of
+    them counts as having spoken. Read by the report, which shows the two sides
+    per topic, and by ``detect_gaps``, which reads how much of the room stayed
+    silent on one. Both need the same merge, and a second copy of it would be a
+    second chance to get the withdrawal case below wrong.
+
+    Coverage, never volume: the value is a boolean and totalling it along a
+    person rather than along a topic is the speaking ratio that
+    docs/architecture/privacy.md section 3 keeps private to its subject.
+    """
+    person = _people(session, meeting_id)
+    said: dict[str, dict[str, bool]] = defaultdict(dict)
+
+    for topic_id, participant_id, spoke_here in session.execute(
+        select(
+            GapParticipation.topic_id, GapParticipation.participant_id, GapParticipation.spoke
+        ).where(GapParticipation.topic_id.in_(topic_ids))
+    ).all():
+        who = person.get(participant_id)
+        if who is None:
+            # Not, or no longer, consenting. `_people` is built from consenting
+            # rows only, but a `gap_participation` row outlives a withdrawal
+            # until the next run — so defaulting to the participant's own id
+            # put somebody who had withdrawn back into the report, and this
+            # function is written to be re-run over stored rows. The default
+            # has to be the closed one. Raised in review of #164.
+            continue
+        said[topic_id][who] = said[topic_id].get(who, False) or spoke_here
+
+    return said
 
 
 def _topics_in_reading_order(session: Session, meeting_id: str) -> list[GapTopic]:

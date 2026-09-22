@@ -15,11 +15,15 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import date
 
 from autune_contracts.enums import UtteranceKind
 from autune_core.ids import DECISION
+
+from .slots import parse_due
 
 DEFAULT_MAX_GAP = 2
 """How many non-decision utterances may sit between two decision utterances
@@ -54,6 +58,10 @@ class ClassifiedUtterance:
     kind: UtteranceKind | None
     confidence: float
     text: str
+    speaker: str = ""
+    """The label the transcript had for whoever said this, for the owner of a
+    decision. Defaults to empty so a caller that does not know it still builds
+    one; the statement then carries no owner rather than a wrong one."""
 
 
 @dataclass(frozen=True)
@@ -98,14 +106,23 @@ def decision_id(meeting_id: str, source_utterance_ids: Sequence[str]) -> str:
 
 
 def group_decisions(
-    utterances: Sequence[ClassifiedUtterance], *, max_gap: int = DEFAULT_MAX_GAP
+    utterances: Sequence[ClassifiedUtterance],
+    *,
+    max_gap: int = DEFAULT_MAX_GAP,
+    day: date | None = None,
 ) -> list[DecisionGroup]:
     """Group decision-labelled utterances into decisions, in meeting order.
 
     ``utterances`` is *every* utterance of the meeting, ordered by ``start_sec``
     — not only the decision-labelled ones. The utterances in between are what
     the gap is measured in, so filtering them out first would merge every
-    decision in the meeting into one.
+    decision in the meeting into one. They are also where the owner and the
+    deadline are said, so each decision keeps the slice it spans and ``_build``
+    reads the whole of it.
+
+    ``day`` is the meeting's date in Korea (``slots.meeting_day``), and only
+    relative deadlines need it — "이번 주 금요일" is a different Friday every
+    week. Without it a decision keeps the phrase instead of a date.
 
     Raises ``ValueError`` on a negative ``max_gap``: a caller reaching for one is
     asking for behaviour this has none of, and silently clamping it to zero would
@@ -115,12 +132,17 @@ def group_decisions(
         raise ValueError(f"max_gap must not be negative, got {max_gap}")
 
     groups: list[DecisionGroup] = []
-    current: list[ClassifiedUtterance] = []
+    current: list[int] = []
     since_last = 0
 
-    for utterance in utterances:
+    def close() -> None:
+        members = [utterances[i] for i in current]
+        region = utterances[current[0] : current[-1] + 1]
+        groups.append(_build(members, region, day=day))
+
+    for position, utterance in enumerate(utterances):
         if utterance.kind is UtteranceKind.DECISION:
-            current.append(utterance)
+            current.append(position)
             since_last = 0
             continue
 
@@ -129,35 +151,114 @@ def group_decisions(
 
         since_last += 1
         if since_last > max_gap:
-            groups.append(_build(current))
+            close()
             current = []
 
     if current:
-        groups.append(_build(current))
+        close()
     return groups
 
 
-def _build(members: Sequence[ClassifiedUtterance]) -> DecisionGroup:
+MIN_SUBSTANCE = 12
+"""Below this many characters a settling utterance is treated as assent, not as
+the decision. "그렇게 하죠", "네 그 방향으로" — true of the decision and useless as
+a record of it. Measured on the team meetings written for the register work: the
+row carrying ``settles`` is a median 38 characters, but the ones that settle by
+agreeing rather than by restating are nearly all under twelve."""
+
+_POINTS_AT = re.compile(r"(그거|그건|그걸|그게|저거|그 부분|그 건|그대로|그 방향|그렇게|이대로)")
+"""Words that stand in for something said earlier. A settling row made only of
+these says nothing on its own however long it is."""
+
+_ASKS = re.compile(r"([가-힣]{2,4})\s?(?:씨|님)(?:가|께서|이)?\s.*(?:주세요|주시|부탁|맡아)")
+"""Naming somebody while handing them the work: "지영 씨가 저번처럼 해주세요".
+
+Both halves are required. The name is at least two syllables, so "날씨가" and
+"손님이" are not people; and the sentence has to ask for something, so "고객님이
+원하시니" names nobody as the owner."""
+
+
+def _substance(members: Sequence[ClassifiedUtterance]) -> ClassifiedUtterance:
+    """The member that says *what* was decided, not the one that says yes.
+
+    A decision usually ends in assent — the substance is in the turn being
+    assented to. So: the settling member when it stands on its own, otherwise the
+    longest earlier member, which is the proposal it agreed to.
+    """
+    settling = members[-1]
+    stripped = _POINTS_AT.sub("", settling.text)
+    if len(stripped.strip()) >= MIN_SUBSTANCE:
+        return settling
+    earlier = members[:-1]
+    return max(earlier, key=lambda m: len(m.text)) if earlier else settling
+
+
+def _owner(region: Sequence[ClassifiedUtterance], substance: ClassifiedUtterance) -> str | None:
+    """Who is on the hook, when the meeting made that recoverable.
+
+    Two ways it is said, in the order they are trusted:
+
+    1. Somebody took it on — the last ``commitment`` in the region is the person
+       who said they would do it.
+    2. Somebody was handed it by name — "지영 씨가 저번처럼 해주세요" in the
+       decision itself.
+
+    ``None`` when neither happened, which is most of the time and is the honest
+    answer: a decision with nobody attached is a real outcome of a real meeting.
+    """
+    for utterance in reversed(region):
+        if utterance.kind is UtteranceKind.COMMITMENT and utterance.speaker:
+            return utterance.speaker
+    named = _ASKS.search(substance.text)
+    return named.group(1) if named else None
+
+
+def _build(
+    members: Sequence[ClassifiedUtterance],
+    region: Sequence[ClassifiedUtterance] = (),
+    *,
+    day: date | None = None,
+) -> DecisionGroup:
     """Turn one run of decision utterances into a decision.
 
-    **Statement** is the last member. The contract asks for "the decision as
-    settled", and a run settles at its end — the earlier members are the proposal
-    being converged on, and quoting one of those would publish a version of the
-    decision the meeting moved past. Taking the most confident member instead is
-    the other defensible reading; the evaluation set decides, not this comment.
+    **Statement is what a person would write in the minutes**, assembled from the
+    meeting rather than generated: the turn that carries the substance, plus the
+    owner and the deadline when the talk made them recoverable. Before 2026-09-21
+    it was the last member quoted verbatim, which in these meetings reads "그럼
+    그 방향으로 가시죠" — true, and unusable as a record. The owner is usually
+    three turns away and the deadline is relative to another date, so neither is
+    in the quoted row.
 
-    This is a quotation, and the contract asks for one sentence of prose. Step 2
-    (reference resolution) is what turns "그럼 그걸로 가시죠" into a statement that
-    reads on its own, and it is not built yet (#11). Quoting is wrong in a way a
-    reader can see; a generated sentence would be wrong in a way they could not.
+    It is still assembled from what was said, never written anew. A generated
+    sentence would be wrong in a way the reader could not see; this is wrong in a
+    way they can, and ``source_utterance_ids`` is what they check it against.
+
+    ``region`` is every utterance from the first member to the last, the
+    non-decision ones included — that is where the commitment naming the owner
+    and the phrase naming the deadline actually sit. It defaults to empty, which
+    gives the old behaviour of reading the members alone.
 
     **Confidence** is the highest member's, not the mean. Averaging would score a
     decision lower the more turns it took to reach, which is backwards — spanning
     several utterances is the case this entity exists for, and the extra turns
     are corroboration, not doubt.
     """
+    scope = list(region) or list(members)
+    substance = _substance(members)
+    parts = [substance.text.strip()]
+
+    owner = _owner(scope, substance)
+    if owner:
+        parts.append(f"담당 {owner}")
+
+    for utterance in scope:
+        if (due := parse_due(utterance.text, day)) is not None:
+            parts.append(f"기한 {due.date.isoformat()}" if due.date else f"기한 {due.text}")
+            break
+
+    statement = parts[0] if len(parts) == 1 else f"{parts[0]} ({', '.join(parts[1:])})"
     return DecisionGroup(
-        statement=members[-1].text,
+        statement=statement,
         source_utterance_ids=tuple(member.id for member in members),
         confidence=max(member.confidence for member in members),
     )

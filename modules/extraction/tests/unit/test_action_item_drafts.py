@@ -31,6 +31,7 @@ from autune_extraction.models import (
     ExtClassification,
     ExtConfirmation,
     ExtDecision,
+    ExtDecisionReview,
     ExtDecisionSource,
     ExtEditEvent,
 )
@@ -49,6 +50,7 @@ TABLES = [
     ExtClassification.__table__,
     ExtDecision.__table__,
     ExtDecisionSource.__table__,
+    ExtDecisionReview.__table__,
     ExtActionItem.__table__,
     ExtActionItemSource.__table__,
     ExtEditEvent.__table__,

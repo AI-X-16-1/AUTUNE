@@ -26,7 +26,7 @@ pnpm install
 
 uv run alembic -c infra/alembic.ini upgrade heads
 
-uv run uvicorn apps.api.main:app --reload            # API   :8000
+uv run uvicorn autune_api.main:app --reload          # API   :8000
 uv run celery -A autune_worker.celery_app worker -Q default,cpu_heavy,gpu -l info
 pnpm --filter @autune/web dev                        # web   :3000
 uv run python -m autune_bot                          # Slack bot (socket mode)
@@ -74,6 +74,7 @@ prefix `AUTUNE_<MODULE>_`.
 | `AUTUNE_ENCRYPTION_KEY` | | Encrypts team integration credentials at rest. Required outside local |
 | `AUTUNE_LOG_LEVEL` | `INFO` | |
 | `AUTUNE_RETENTION_DAYS` | `90` | Default analysis retention |
+| `AUTUNE_CORS_ALLOWED_ORIGINS` | `` | Comma-separated origins `apps/api` allows via CORS. Empty (default) means no CORS headers at all. Set to `http://localhost:3000` for local dev when running `apps/web`'s dev server against `apps/api`'s — a browser blocks the response otherwise, since `:3000` and `:8000` are different origins. Outside `local`, every origin must be an explicit `https://` URL — `*` and plain `http://` are refused at startup |
 
 ### Web (`apps/web`)
 
@@ -87,18 +88,13 @@ nothing secret goes here.
 
 **Signing in, until there is a sign-in.** Routes that take `CurrentUser` refuse
 a request without a bearer token, and S01 is not built. Until it is,
-`@/shared/api/client` attaches one to every call, preferring
-`localStorage["autune.token"]` over `NEXT_PUBLIC_AUTUNE_DEV_TOKEN` so a person
-can switch users without a rebuild:
+`@/shared/api/client` attaches one to every call it makes, preferring
+`localStorage["autune.token"]` over `NEXT_PUBLIC_AUTUNE_DEV_TOKEN`. With no
+token the header is omitted and an authorised route answers 403 — which is what
+a screen shows today if you have not set one.
 
-```js
-// In the browser console, on the page you are testing.
-localStorage.setItem("autune.token", "<token>");
-```
-
-Get a token from `POST /api/audio/dev/token`, which exists only when
-`AUTUNE_ENV=local`. With no token the header is omitted and an authorised route
-answers 403 — which is what a screen shows today if you have not set one.
+Where that token comes from, and the two ways to give it to the browser:
+"A token for the browser, until there is a sign-in" below.
 
 ### Integrations
 
@@ -114,6 +110,7 @@ answers 403 — which is what a screen shows today if you have not set one.
 | `AUTUNE_AUDIO_WHISPER_MODEL` | A | e.g. `large-v3` |
 | `AUTUNE_AUDIO_DEVICE` | A | `cuda` or `cpu` |
 | `AUTUNE_AUDIO_TEMP_DIR` | A | Where the recording lives during processing, and only then |
+| `AUTUNE_AUDIO_ORPHAN_AFTER_HOURS` | A | A job still `queued`/`running` after this long has no worker; the sweep fails it and deletes its file. Default `6` |
 | `AUTUNE_AUDIO_HF_TOKEN` | A | Hugging Face token for the gated pyannote models |
 | `NEXT_PUBLIC_AUTUNE_DEV_TOKEN` | A (web) | A bearer token for the browser, local only — see "A token for the browser" below |
 | `AUTUNE_AUDIO_DIARIZATION_MODEL` | A | Default `pyannote/speaker-diarization-3.1` |
@@ -123,8 +120,14 @@ answers 403 — which is what a screen shows today if you have not set one.
 | `AUTUNE_EXTRACTION_CLASSIFIER_DEVICE` | B | `cpu` · `cuda`. Default `cpu`. Mirrors `AUTUNE_AUDIO_DEVICE` |
 | `AUTUNE_EXTRACTION_CANDIDATE_CONFIDENCE` | B | Below this, an item is a candidate rather than asserted. **Blank by default** — the number comes from the evaluation set (#10), and blank means nothing is a candidate |
 | `AUTUNE_GAP_RISK_THRESHOLD` | C | Default `0.7`. At or above is `high`, the only severity surfaced |
+| `AUTUNE_GAP_MEDIUM_THRESHOLD` | C | Default `0.5`. Down to here is `medium`, below it `low` |
+| `AUTUNE_GAP_DEFAULT_TEMPLATE` | C | Default `general`. Which domain template a meeting nobody chose one for is held to |
+| `AUTUNE_GAP_PARTIAL_CENTRALITY` | C | Default `0.4`. A matched topic below this makes the item *partial* rather than covered |
+| `AUTUNE_GAP_PARTIAL_DAMPING` | C | Default `0.7`. What a partial finding's risk score is multiplied by |
+| `AUTUNE_GAP_WEIGHT_TEMPLATE` · `_COVERAGE` · `_PARTICIPATION` | C | Defaults `0.4` · `0.4` · `0.2`. The three risk inputs, relative; renormalised over whichever could be measured |
 | `AUTUNE_GAP_NER_IMPL` | C | `spacy` (default) · `fake`. **No `external`** — see below |
 | `AUTUNE_GAP_NER_MODEL` | C | Default `ko_core_news_lg`. The pipeline **name**; the version comes from the pinned wheel and is recorded per row |
+| `AUTUNE_GAP_RELATION_IMPL` | C | `rule` (default), and nothing else yet. Unlike the entity extractor this step **may** grow an assisted option — see below |
 | `AUTUNE_CONTEXT_EMBEDDER_IMPL` | D | `kure_v1_http` (default), `kure_v1_local`, `fake` |
 | `AUTUNE_CONTEXT_RERANKER_IMPL` | D | `bge_reranker_v2_m3_ko_http` (default), `..._local`, `fake` |
 | `AUTUNE_CONTEXT_NLI_IMPL` | D | `klue_kornli_http` (default), `klue_kornli_local`, `fake` |
@@ -147,6 +150,7 @@ answers 403 — which is what a screen shows today if you have not set one.
 | `AUTUNE_CONTEXT_LINK_CONFIDENCE_THRESHOLD` | D | Assert vs. ask. Default `0.6`, tuned in eval |
 | `AUTUNE_CONTEXT_LINEAGE_MATCH_THRESHOLD` | D | Decision-to-thread match cutoff (cosine). Default `0.6`, tuned in eval |
 | `AUTUNE_CONTEXT_PUBLISH_TIMEOUT_S` | D | Wait for B before publishing. Default `600` |
+| `AUTUNE_CONTEXT_MAX_TOPIC_LINK_NOTICES` | D | Individual topic-link Slack messages per meeting before the rest roll up into one notice. Default `3` |
 | `AUTUNE_CONTEXT_WARM_MODELS_ON_WORKER_INIT` | D | `true` only on workers consuming `cpu_heavy`. Default `false` |
 | `AUTUNE_INTELLIGENCE_AGGREGATE_TIMEOUT_SECONDS` | E | Wait for B/C/D before aggregating without the rest. Default `600` |
 | `AUTUNE_INTELLIGENCE_GAP_CLASSIFIER_IMPL` | E | `local` (default) · `fake`. **No `external`, no `hosted`** — see below |
@@ -224,6 +228,13 @@ implementation would mean sending the whole transcript to somebody else's
 model — which section 6 of `../architecture/privacy.md` makes a design
 conversation rather than a value you can set. The same reasoning module B
 applied to its classifier.
+
+Relation extraction is the exception, and `AUTUNE_GAP_RELATION_IMPL` is where
+it would go. A relation is read off one clause, so the hard cases can be sent
+without sending the meeting — and an implementation that did would go through
+`packages/integrations` so `check_outbound` sees the request body, never a
+client of its own. Today there is one value, `rule`: marker rules in process,
+no network. See "Step 2 as built" in `../modules/gap.md`.
 
 `spacy` needs a library and a model, and both come from the optional extra:
 
@@ -371,6 +382,13 @@ response is what `POST /api/audio/meetings` needs.
 cleared at the end of every task. Do not point it at a synced folder, and do not
 keep test recordings of real meetings on disk. See
 `../architecture/privacy.md`.
+
+While an upload request is in flight there is a second, short-lived copy of the
+recording in the OS temporary directory (`tempfile.gettempdir()`), written by
+Starlette's multipart parser before module A's code runs. It is deleted when
+the request closes. `AUTUNE_AUDIO_TEMP_DIR` is the copy this module owns and
+checks; the other one is the web framework's, and the same "not a synced
+folder" rule applies to `TMPDIR` on a developer machine.
 
 ## Environments
 

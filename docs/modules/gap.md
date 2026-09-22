@@ -38,8 +38,9 @@ domain template, and score the risk of each missing item.
 ## Pipeline
 
 1. **NER** — spaCy extracts entities: features, systems, metrics, people, dates.
-2. **Relation extraction** — build subject–relation–object triples, with LLM
-   assistance for hard cases.
+2. **Relation extraction** — build subject–relation–object triples. Marker
+   rules today; LLM assistance for the hard cases is the seam, not the
+   implementation.
 3. **Topic graph** — persist nodes and edges as rows (`gap_topics`,
    `gap_topic_edges`), then load them into NetworkX.
 4. **Centrality** — PageRank and betweenness identify which topics carried the
@@ -117,6 +118,144 @@ What this does **not** fix, and what #13 still carries:
   longer raise a gap about, so it is short, and dismissals are what tune it
   (#35) rather than taste.
 
+### Step 2 as built
+
+Rules only, no model, no network: `pipeline/relations.py`. Issue #32 puts the
+non-LLM share at about 70% and says to exhaust the rules first, so they are
+written and measured before anything is sent anywhere. Today the share is 100%
+— there is no assisted implementation — and what the rules cannot read is a
+named list below rather than a shrug.
+
+**Four relations** are in the vocabulary, each one a thing risk scoring (#35)
+should treat differently: `depends_on`, `blocked_by`, `part_of`,
+`alternative_to`. **Three of them have a rule.** Every rule keys on a **marker**
+the speaker actually said, and fires only with two topics around it in one
+utterance. Proximity alone stays `co_occurs`, which the graph writes without
+asking the extractor.
+
+| Relation | Marker | Reads |
+| --- | --- | --- |
+| `depends_on` | 필요, 있어야, 되어야, 선행, 전제, 없이는, 없으면 | "정렬 로직은 인덱스가 필요합니다" |
+| `blocked_by` | a blocker word (안 잡, 미정, 막혀, 무리, 이슈, …) **and** a causal connective in the same clause | "실시간은 콜드스타트가 안 잡혀 있어서 무리입니다" |
+| `alternative_to` | 대신, 말고, 보다는, 아니라, 반면, `vs` | "인기순 정렬 대신 실시간 개인화로" |
+| `part_of` | — **no rule** | |
+
+`part_of` has no rule because 의 marks possession and composition with the same
+character: "검색의 정렬 로직" is a part of a thing, "검색 기능의 담당자 일정" is
+somebody's calendar, and the rule read both. It is the same problem as `는데`
+and gets the same answer — a case for the assisted implementation rather than a
+marker list. The label stays in the vocabulary: the graph can carry it and #35
+weights it, and what a rule can read today is a different question from what an
+edge may say. Raised in review of #249.
+
+**Measured.** Over `transcript_ready.typical` the rules assert exactly one
+relation — `실시간 blocked_by 콜드스타트` — against six co-occurrence edges.
+`transcript_ready.short` asserts none: it names two topics in two utterances and
+never says how they stand to each other. Both numbers are pinned in
+`modules/gap/tests/unit/test_spacy_ner.py` (marked `model`).
+
+Three things came out of that measurement, and each one changed the design:
+
+- **The rules read every name the meeting used, not this utterance's own
+  entities.** Entity extraction claims a bare noun run and stops at a particle,
+  so the utterance that *states* a relation is the one where the topic wears
+  one: 실시간 개인화 is claimed in utterance 1, and 실시간은 in utterance 2 is
+  what says it is blocked. Keyed per utterance the rules found **nothing at all**
+  on either fixture. It widens which utterances can state a relation and not
+  what a topic is — `graph.relation_edges` drops any relation whose ends are not
+  both topics, so nothing enters the graph this way.
+- **A marker swallowed by a label is a relation nobody can see.**
+  `ko_core_news_lg` tags 대신 and 말고 as ordinary common nouns, so a noun run
+  joined them: "인기순 정렬 대신 실시간 개인화로" came back as one topic called
+  인기순 정렬 대신 실시간. The three contrast markers are now in
+  `spoken.STOP_TERMS`, which fixes a junk node and an invisible relation at once.
+- **`는데` and `지만` are not contrast markers here.** "실시간 개인화로
+  합의했는데 오늘은 인기순 정렬 얘기가 나왔네요" is a real contrast and "자료
+  공유드리는데 확인 부탁드려요" is not, and no surface string tells them apart.
+  Spoken Korean uses `는데` as sentence glue, so taking it would make
+  `alternative_to` the most common relation in the graph and every one of them a
+  coin flip. This is the clearest case for the LLM assistance step 2 is promised.
+
+**A marker is a string, and the clause decides whether the speaker meant it.**
+Three guards, each one a sentence that produced an edge before it existed
+(raised in review of #249, found by running the extractor rather than reading
+it):
+
+- **Negation and questions.** 필요 with 없 or 않 after it in the same clause is
+  the opposite of a need; 필요한가요 is a question about one. "캐시 이슈는
+  없어서 검색 기능은 바로 진행합니다" is a blocker word, a causal connective and
+  no blocker — and it read as `검색 기능 blocked_by 캐시`, the reverse of what
+  the speaker said, in the one relation the report treats as a finding. 안 is
+  deliberately not a negation marker: "캐시 없이는 안 됩니다" is a need.
+- **One clause, both ways.** The causal connective a `blocked_by` needs has to
+  be in the blocker's own clause. Searching to the end of the utterance paired
+  이슈 with a 없어서 two clauses away and put a date topic on the blocked end.
+  The guard window stops at the boundary for the same reason in reverse:
+  "인덱스가 필요하고 캐시는 문제 없습니다" must not cancel a need the speaker
+  did state.
+- **The source is what the sentence is about.** Korean starts a new subject
+  after a connective ending, so the nearest mention after the marker is usually
+  the next sentence — "정렬 로직은 인덱스가 필요하고 캐시는 다음 주에 봅시다"
+  read as `캐시 depends_on 인덱스`. The far end is taken only inside the same
+  clause; otherwise the rule looks back for a mention wearing 은/는, which is
+  how Korean marks the thing a sentence is about, and only then falls back to
+  the mention before the target.
+
+**A marker has to be a word, and a mention has to start one.** Two more from
+the same review:
+
+- `vs` sits inside `devs`, and "API devs 검색 기능" made the two topics
+  alternatives to each other on the strength of a plural. The Latin markers now
+  need word boundaries; the Korean ones are still substrings, because a particle
+  attaches directly and there is no boundary to anchor to.
+- `실시간` sits inside `비실시간`, and "비실시간 처리가 필요해서 검색 기능은
+  미뤘습니다" asserted that 검색 기능 depends on 실시간 — a topic whose name the
+  utterance contains and whose meaning it negates. A mention now has to begin a
+  word. Only the left side is guarded: Korean attaches particles directly, so
+  실시간은 and 실시간으로 have to stay mentions, and telling 실시간성 from those
+  needs the tagger rather than a boundary.
+
+**The cue words themselves are not topics.** 필요 and 이슈 join 대신, 말고 and
+반면 in `spoken.STOP_TERMS`: the model tags all of them as ordinary nouns, so a
+noun run welds them into a label, and "인덱스가 필요 없습니다" produced a topic
+called 필요.
+
+**A pair the rules typed gets no `co_occurs` row.** The typed relation says
+everything co-occurrence would and more. A pair they said nothing about keeps
+it — that is most pairs, and dropping them would leave a meeting nobody spoke
+carefully in with no edges at all.
+
+**Every extracted edge weighs 1.** An assertion is not a frequency: a speaker
+who says it twice has not made it twice as true, and the table is unique on
+`(source, target, relation)` so a repetition could not reach a second row
+anyway. Co-occurrence is still counted, because frequency is the only evidence
+it has. If #35 wants to know how often a relation was restated, that is a column
+and not a number folded into the weight.
+
+What this does **not** do:
+
+- **A wrong edge costs the pair its co-occurrence too**, because a typed pair
+  gets no `co_occurs` row. The guards above are why that trade is acceptable;
+  it is also why the marker lists are short and every addition needs a sentence
+  that fires it. Raised in review of #249.
+- **Recall is unmeasured, and low.** One relation out of a five-utterance
+  meeting is the whole claim. There is no annotated set for step 2 either — the
+  number that matters is gap precision, which cannot be read until something
+  writes `gap_gaps` (#35).
+- **Nothing crosses an utterance.** "응답 시간 목표는 정해진 게 있나요" is about
+  the feature named in the utterance before it, and no rule here reaches back.
+- **A relation needs both topics to exist.** A topic only exists if the meeting
+  said it bare at least once, because that is what entity extraction claims. A
+  thing referred to only as 그거 is in no relation.
+- **No LLM path exists.** The seam is `RelationExtractor` and
+  `AUTUNE_GAP_RELATION_IMPL`; when one lands it goes through
+  `autune_integrations` so `check_outbound` sees the request body. Unlike step 1
+  an assisted implementation here is *allowed* — a relation needs the clause,
+  not the transcript.
+
+`gap_topic_edges.extractor_version` records which extractor asserted an edge,
+and is NULL exactly when none did — that is the `co_occurs` row.
+
 ### Steps 3 to 5 as built
 
 `autune_gap.graph` holds the decisions as pure functions; `service` feeds it
@@ -126,10 +265,11 @@ and stores what comes back.
   collapsing whitespace and folding case are one topic, labelled the way the
   meeting first said it. Nothing merges "검색" into "검색 기능": that is a
   judgement about meaning, and a wrong merge hides one topic inside another.
-- **Edges are co-occurrence until #32.** Two topics named in the same utterance
-  get an edge, `relation = "co_occurs"`, weighted by how many utterances named
-  both and scaled so the strongest pair is 1. Written in both directions,
-  because `gap_topic_edges` is directed for the triples #32 will produce.
+- **An edge is what step 2 asserted, or co-occurrence.** A pair the rules typed
+  carries that relation, directed, weight 1. Every other pair named in the same
+  utterance gets `relation = "co_occurs"`, weighted by how many utterances named
+  both and scaled so the strongest pair is 1, written both ways because
+  co-occurrence itself is symmetric. See "Step 2 as built".
 - **PageRank is personalised by mention count**, then divided by the top score
   so the topic that carried the meeting is 1. Without the personalisation a
   meeting whose topics share no utterance ranks every topic level.
@@ -160,6 +300,117 @@ edges, evidence and participation cascade. So would the `gap_related_topics`
 rows of a gap already raised — gap generation (#35) has to rebuild those in the
 same run, and decide what a re-run does to a gap somebody dismissed.
 
+### Steps 6 and 7 as built
+
+`autune_gap.template` loads the checklists, `autune_gap.detect` compares a
+meeting against one and scores what it finds, and `service.detect_gaps` writes
+the rows. The comparison is pure — no database, no model, no network — so what
+counts as a gap can be argued with without starting Postgres.
+
+**Two templates, per #22.** `general` is five items any cross-functional
+decision meeting has to settle; `feature_planning` extends it with five more a
+feature meeting has to settle on top. The reason for two rather than five is the
+metric: precision 0.70+ measured over five to ten real meetings in W5, and more
+templates split that sample one or two meetings deep, where precision cannot be
+measured at all. `general` is applied to every meeting unless one is overridden
+— a template inferred from the title or the topics makes its whole checklist
+false when it guesses wrong.
+
+**Three states, and only two of them raise a gap.** An item is *covered* when a
+matched topic carried real weight, *partial* when the meeting named it and left
+it at the edge of the graph, and *missing* when nothing matched. S20 shows the
+three side by side.
+
+- **Matching is containment either way**, over `graph.topic_key`'s
+  normalisation: a keyword inside a longer label, and a label inside a longer
+  keyword. Deliberately dumb, and the rule v1 measures precision against — what
+  replaces it (embeddings over the items) is then a change with a number
+  attached rather than a better idea.
+- **A missing item scores exactly its template weight.** There is no topic to
+  read a centrality off and none to read a silence off, so the weight is the
+  only measured input and the score is it. Charging it a full 1.0 for "no
+  coverage" instead added the same constant to every missing item and pushed the
+  whole checklist into `high` — a score that looks measured and is not.
+- **A signal that cannot be measured is dropped and the weights renormalised.**
+  Module E does the same with `_decision_density` when a meeting reached no
+  decisions.
+- **A partial finding is damped** (`AUTUNE_GAP_PARTIAL_DAMPING`). "Named but
+  thin" is a weaker claim than "never came up", and the metric is precision.
+- **A meeting with no topics raises no gaps at all.** Every item would be
+  missing and the report would be a whole checklist about a meeting the pipeline
+  failed to read. An empty graph says extraction found nothing, not that the
+  meeting discussed nothing — and with NER recall on spoken Korean where "Step 1
+  as built" measures it, that case happens.
+
+**There is no rule about which job roles spoke, and that is deliberate.** #14's
+headline signal is "a topic no engineer said anything on is riskier", and it is
+absent rather than half-built, because **two** things are missing and the first
+one arriving does not make the second appear:
+
+- `participants.role` is written by no production code (#22). Module A creates
+  every participant with the column unset.
+- A topic every consenting participant was silent on **cannot occur.** The graph
+  builds topics from entities found in consenting speech, so whoever said the
+  utterance a topic came from is recorded as having spoken on it — the share can
+  never reach 1.
+
+An earlier draft carried a `roles` field on the template item and a
+`roles_known` flag through `detect.classify`. It read only whether the field was
+*empty*, so `roles: [Dev]` and `roles: [Design]` behaved identically, and the
+condition it gated was the unreachable one above. A rule that looks implemented
+is worse than one that is missing: it invites a template author to state
+something nothing enforces, and it sends whoever fills the column later looking
+for the bug in the wrong half. Raised in review of #266 by the person who will
+fill it.
+
+Participation still feeds the **risk score** as a continuous share, which is
+measurable: a topic most of the room stayed silent on scores higher than one
+they all spoke on.
+
+**A re-run keeps the gaps it already raised.** They are recognised by
+`(meeting_id, template_key, template_item_key)` and updated in place, so a gap's
+id survives — a link somebody sent still opens it — and so does `dismissed_at`,
+which is a person's judgement and the input threshold tuning reads (ADR 0006). A
+row this run did not produce is deleted: the meeting covers that item now. Only
+template rows are touched, so a gap found from the graph alone would be left
+alone. `gap_related_topics` is rewritten every run, because `build_topic_graph`
+deletes the meeting's topics first and the cascade takes those rows with them.
+
+Every threshold and weight is in `config.py` (#35): the two severity bands, the
+centrality below which a match is partial, the damping, and the three risk
+weights.
+
+### Step 8 as built
+
+A gap carries the question that would close it, and a template item holds two
+wordings for it (#35).
+
+- **A partial finding names its topic.** "검색 개인화 기능의 성공 기준은 무엇으로
+  측정합니까?" can be answered; the generic wording has to be decoded first, and
+  a reader opening the report a week later no longer knows which "일" it meant.
+  The topic named is `matched[0]` — the one the risk score was computed against,
+  so the number and the sentence describe the same thing.
+- **A missing finding keeps the generic wording.** There is no topic to name.
+  Naming the meeting's most central topic instead would be a guess, and with
+  step 1's recall where it is that guess is as likely to be "다음 주" as the
+  thing the meeting was about — a question about the wrong subject reads worse
+  than a general one. Same rule as the risk score: what was not measured is not
+  substituted for.
+- **`{topic}` must be followed by an invariant particle** — 의, 에, 에서, 에 대해.
+  은/는, 이/가 and 을/를 change form with the last syllable of the noun before
+  them, and a topic label is a noun read out of a meeting, so the right form is
+  not knowable when the copy is written. The loader refuses the variable ones;
+  the failure it prevents is a screen showing "캐시은".
+
+Putting a topic label in a question is safe for the same reason it is safe as a
+node: `graph.build_topics` drops any entity carrying the mask character, so no
+topic label has ever contained a masked span. #250 is about what that costs in
+recall, and confirms the guarantee itself holds through both extraction paths.
+
+**What is still not built:** a question that reads the *relation* between topics
+rather than naming one — "정렬 로직이 인덱스 재색인에 의존한다면, 재색인은 언제
+끝납니까?" needs #32's triples.
+
 ### Step 9 as built
 
 `GapReport` is assembled from the stored rows after their transaction commits,
@@ -185,9 +436,11 @@ review of #164; it cannot happen until identification (#6) fills `user_id`,
 which is why it is fixed now rather than found then.
 
 `gaps` carries whatever `gap_gaps` holds, minus the ones somebody dismissed.
-What does not exist yet is the code that *writes* those rows — template
-comparison and risk scoring (#14, #35) are both waiting on #22 — so the list is
-empty in practice today, not empty by construction.
+Template comparison now writes those rows (see "Steps 6 and 7 as built"), so the
+list is what the meeting was held to and did not settle. It is empty for a
+meeting whose graph came out empty, which is a statement about extraction rather
+than about the meeting — the comparison declines to raise a checklist's worth of
+gaps off a transcript nothing was read out of.
 
 ## Storage
 
@@ -195,11 +448,12 @@ empty in practice today, not empty by construction.
 | --- | --- |
 | PostgreSQL `gap_topics` | Topic nodes with PageRank and betweenness, per meeting |
 | PostgreSQL `gap_topic_utterances` | Which utterances a topic was built from, in order |
-| PostgreSQL `gap_topic_edges` | Relations between topics, directed, per meeting |
+| PostgreSQL `gap_topic_edges` | Relations between topics, directed, per meeting, with which extractor asserted each |
 | PostgreSQL `gap_participation` | Topic × participant speech presence |
 | PostgreSQL `gap_gaps` | Detected gaps, category, severity, risk score, question |
 | PostgreSQL `gap_related_topics` | Which topics a gap was inferred from |
-| PostgreSQL `gap_templates` | Domain templates and their items — **not built yet**, see below |
+| PostgreSQL `gap_meeting_template` | Which template one meeting is compared against, when somebody chose one |
+| PostgreSQL `gap_templates` | Domain templates and their items — **not built, and not needed**, see below |
 
 Everything that exists cascades from `meetings.id`, so no deletion hook is
 needed.
@@ -221,16 +475,26 @@ threshold tuning has to read what was dismissed, and soft deletes are forbidden
 pressed the button is not something tuning needs, and storing it would be a
 per-person record of conduct that ADR 0003 refuses.
 
-### `gap_templates` is deferred, not forgotten
+### Templates are files, so `gap_templates` never had to be built
 
 A domain template is reference data — it is not derived from any meeting, so it
-is the one table this module owns that cannot cascade from `meetings.id`. What
-it *does* hang off, a team or nothing at all, follows from who writes templates
-and how many there are, which is open as issue #22. Creating it now means
-guessing an anchor and migrating away from it later.
+is the one thing this module owns that cannot cascade from `meetings.id`. What a
+table would *have* hung off, a team or nothing at all, follows from who writes
+templates and how many there are, which is issue #22. Creating it meant guessing
+an anchor and migrating away from it later.
 
-It blocks nothing in the meantime: template comparison (#14) is waiting on the
-same decision.
+So the templates live in the package instead —
+`modules/gap/src/autune_gap/templates/*.yaml` — and the question does not arise.
+Git holds their history, an edit goes through PR review, which is the right
+control for content that decides gap precision, and nothing has to be anchored
+anywhere. `gap_templates` gets built when a team writes its own template
+(Phase 2): a real user flow names the anchor then.
+
+What is stored per meeting is only the **exception**. `gap_meeting_template`
+holds one row for a meeting somebody pointed at a non-default template, so
+changing `AUTUNE_GAP_DEFAULT_TEMPLATE` reaches every meeting that never
+expressed a preference. It cascades from `meetings.id` like everything else
+here, so the no-deletion-hook sentence above still holds.
 
 ## API
 
@@ -240,6 +504,8 @@ same decision.
 | GET | `/topics/{meeting_id}` | Topic graph for visualization |
 | POST | `/gaps/{id}/dismiss` | Mark a gap as a false positive (feeds threshold tuning) |
 | GET | `/templates` | Available domain templates |
+| GET | `/templates/{meeting_id}` | Which template this meeting is compared against |
+| PUT | `/templates/{meeting_id}` | Point this meeting at a template and re-compare |
 
 ### The read API as built
 
@@ -272,9 +538,24 @@ the stored rows; nothing was added to `apps/` to mount them.
   attached to a picture, and the report is already read along a topic rather
   than along a person (see "Privacy notes").
 
-`POST /gaps/{id}/dismiss` and `GET /templates` are not built. Dismissal has
-nothing to act on until something writes `gap_gaps` (#35), and `/templates`
-waits on #22 with the table.
+The three template routes are built. `GET /templates` lists what a meeting can
+be held to — key, name, version and item count, and deliberately not the items:
+choosing a template is choosing a name, and shipping every checklist to a screen
+that shows one of them is a payload nobody reads. `GET /templates/{meeting_id}`
+answers with the configured default rather than an empty body when nobody has
+chosen, because there is always a template in force and a rail showing nothing
+selected would misreport that.
+
+`PUT /templates/{meeting_id}` stores the choice **and re-runs detection**, so the
+gaps on `/reports/{meeting_id}` reflect the new template as soon as it returns —
+the alternative is a control that appears to do nothing until the meeting is
+reprocessed. It does not republish `autune.gap.completed`: E scores the meeting
+the pipeline produced, and a template somebody is trying out on S20 should not
+silently rewrite that. A key no template file defines is a 422, not a 404 — what
+is wrong is the value, not the address.
+
+`POST /gaps/{id}/dismiss` is still not built. It now has rows to act on, and
+what it needs is the screen that calls it (#48).
 
 ## Celery tasks
 
@@ -372,6 +653,63 @@ and dismissals feed threshold tuning.
 uv run --package autune-gap python -m autune_gap.eval
 ```
 
+Precision is measured over the `high` band, because that is what a reader
+actually sees — a `medium` false positive is not a false statement to anybody
+until something surfaces it. The all-severity figure is printed beside it; the
+two moving apart means the bands are doing the work rather than the comparison.
+Recall is printed and is not a target.
+
+Each false positive is also attributed to one of four causes, because the
+headline says the pipeline is overshooting and only the split says where to go:
+`partial` (the centrality threshold), `extraction` (the meeting said a noun the
+item's keywords do match and step 1 never turned it into a topic), `keyword`
+(the topic is in the graph and the keywords do not name it), and `no-noun` (the
+meeting settled the item with a verb or a date and said no noun that could name
+it). The last one is counted apart from the other three: matching keywords
+against topic labels is lexical and what settled the item is grammatical, so
+neither a keyword list nor a better extractor reaches it. The report prints how
+many of the false positives are reachable from this module at all.
+
+Attribution reads the case's hand-labeled `evidence` — the nouns a reader would
+point at as settling each item — against the topic labels the run produced. "In
+the graph" means a label contains the whole expected term, deliberately not
+`detect.match`'s containment-either-way: a label carrying half the noun is a
+step-1 truncation, and reading it as a match sends somebody to widen a keyword
+list over an extraction bug.
+
+**Nothing is scored against a number nobody measured.** Precision over a run
+that raised no gaps is reported as "not measured", not as 0.0 or 1.0 — both
+would be a claim about a pipeline that said nothing. A case that labels no
+`evidence` has its false positives reported as `unclassified` rather than
+guessed into a cause. Cases whose graph came out
+empty are listed separately for the same reason: `detect.compare` raises nothing
+for them on purpose, so they pull recall down for a reason that belongs to step
+1.
+
+**Point it at a disposable database.** The harness creates a team per case and
+deletes it when the case is scored, so every synthetic row it writes reaches
+deletion through `meetings.id` — but it writes to whatever
+`AUTUNE_DATABASE_URL` names, which on a shared development database is somebody
+else's. The docker-compose database in
+`../engineering/environments.md` is the intended target.
+
+The split between `missing` and `partial` is read off `gap_related_topics`, and
+that reading has a failure mode shaped exactly like a result: an empty link
+table says "every gap is missing". The harness cross-checks it against the
+stored `gap_gaps.title`, which `detect` composes from the coverage state, and
+stops with exit 2 if the two disagree rather than printing a cause split built
+on one of them.
+
+The committed set (`eval/fixtures/gap_detection_v1.json`) is **four authored
+meetings, and is not the PRD figure** — that one comes from five to ten real
+team meetings in W5, and four cases cannot carry a statistical claim. It is a
+regression gate: a template keyword that starts matching everything, or a
+threshold that moves a band, fails it visibly. The set is closed-world (every
+template item is labeled settled or genuinely missing) and the loader refuses a
+case where it is not, because otherwise a precision figure measures the
+labeler's diligence rather than the pipeline. No real meeting content is
+committed.
+
 ## Privacy notes
 
 - The participation matrix records **whether** a participant spoke on a topic,
@@ -417,4 +755,11 @@ The dashboard's topic-recurrence figure (S26) does not need it either: D's
 
 ## Open questions
 
-- How many domain templates for the MVP, and who authors them.
+- Whether `participants.role` will be filled by identification (#6) from
+  `team_members.role`, or by some other path. Nothing writes it today, so the
+  participation half of the partial-coverage rule is inert — see "Steps 6 and 7
+  as built". Asked of module A in #22.
+- Whether a meeting with low consent coverage may be told it did not discuss
+  something (#248). Detection today compares the topics of whoever consented
+  against the whole checklist, and says nothing about how much of the meeting
+  that was.

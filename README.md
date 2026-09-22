@@ -176,7 +176,7 @@ pnpm install
 uv run alembic -c infra/alembic.ini upgrade heads
 
 # 실행
-uv run uvicorn apps.api.main:app --reload                              # API :8000
+uv run uvicorn autune_api.main:app --reload                           # API :8000
 uv run celery -A autune_worker.celery_app worker -Q default,cpu_heavy,gpu    # 워커
 pnpm --filter @autune/web dev                                          # 웹 :3000
 ```

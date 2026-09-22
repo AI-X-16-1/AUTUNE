@@ -135,6 +135,13 @@ class GapTopicEdge(Base):
     ``meeting_id`` is carried here as well as on both endpoints. It is
     redundant, and it is what lets the whole graph be loaded with one indexed
     read instead of a join through ``gap_topics``.
+
+    ``extractor_version`` is NULL exactly when no extractor asserted this edge —
+    a ``co_occurs`` row, which the graph writes for a pair that shared an
+    utterance and no marker. Anything else carries the version of the relation
+    extractor that said so, for the reason ``gap_topics`` carries the entity
+    extractor's: a graph that cannot be attributed cannot be compared against
+    the next version of the thing that built it.
     """
 
     __tablename__ = "gap_topic_edges"
@@ -161,6 +168,7 @@ class GapTopicEdge(Base):
     )
     relation: Mapped[str] = mapped_column(String(100), nullable=False)
     weight: Mapped[float] = mapped_column(Float, nullable=False, default=1.0)
+    extractor_version: Mapped[str | None] = mapped_column(String(100))
 
 
 class GapParticipation(Base):
@@ -217,6 +225,9 @@ class GapGap(Base, TimestampMixin):
     __table_args__ = (
         CheckConstraint(f"severity IN {_SEVERITIES!r}", name="ck_gap_gaps_severity"),
         CheckConstraint("risk_score >= 0 AND risk_score <= 1", name="ck_gap_gaps_risk_score"),
+        UniqueConstraint(
+            "meeting_id", "template_key", "template_item_key", name="uq_gap_gaps_template_item"
+        ),
         Index("ix_gap_gaps_meeting_id", "meeting_id"),
     )
 
@@ -230,12 +241,66 @@ class GapGap(Base, TimestampMixin):
     risk_score: Mapped[float] = mapped_column(Float, nullable=False)
     template_item: Mapped[str | None] = mapped_column(String(400))
     """Which template item went unfilled, when the gap came from a template.
-    Null for a gap found from the graph alone."""
+    Null for a gap found from the graph alone.
+
+    Display copy — it is what S20 shows and what ``autune_contracts.Gap``
+    carries. Rewording it is an edit to a template file, so it is not what a
+    re-run recognises this row by; ``template_item_key`` is."""
+
+    template_key: Mapped[str | None] = mapped_column(String(100))
+    """Which domain template raised this — ``general``, ``feature_planning``."""
+
+    template_version: Mapped[str | None] = mapped_column(String(100))
+    """Every template file that contributed, with its version:
+    ``general.1+feature_planning.1``.
+
+    Recorded for the same reason ``gap_topics.extractor_version`` is. C's metric
+    is precision measured over time and dismissals feed threshold tuning; both
+    read across template edits, and a row that cannot say which checklist raised
+    it averages two different ones together."""
+
+    template_item_key: Mapped[str | None] = mapped_column(String(100))
+    """The item's stable key. With ``meeting_id`` and ``template_key`` it is
+    this row's natural identity, which is how a re-run finds the gap it already
+    raised and leaves ``id`` and ``dismissed_at`` alone — see
+    ``service.detect_gaps``. Null for a gap found from the graph alone."""
 
     suggested_question: Mapped[str | None] = mapped_column(Text)
-    """The question that would close this gap. Null until step 8 has run."""
+    """The question that would close this gap.
+
+    A template item carries the question that closes it, so a template gap has
+    one from the moment it is raised. #35 makes it specific to the topics the
+    gap was inferred from; until then it is the item's own wording."""
 
     dismissed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class GapMeetingTemplate(Base, TimestampMixin):
+    """Which domain template this meeting is compared against, when somebody
+    chose one.
+
+    An override and nothing else: a meeting with no row here gets
+    ``config.default_template``. Storing only the exception means changing the
+    default changes every meeting that never expressed a preference, which is
+    what a default is for.
+
+    **Not** the template itself. Templates are files in this package, versioned
+    by git (see ``autune_gap.template`` and #22); this table holds one meeting's
+    pointer at one of them, so it cascades from ``meetings.id`` like everything
+    else module C owns and needs no deletion hook.
+
+    ``template_key`` carries no foreign key, because the thing it names is a
+    file. ``service`` validates it against the loaded templates before writing,
+    and a key whose file is later deleted falls back to the default with a
+    warning rather than failing the meeting's pipeline.
+    """
+
+    __tablename__ = "gap_meeting_template"
+
+    meeting_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("meetings.id", ondelete="CASCADE"), primary_key=True
+    )
+    template_key: Mapped[str] = mapped_column(String(100), nullable=False)
 
 
 class GapRelatedTopic(Base):

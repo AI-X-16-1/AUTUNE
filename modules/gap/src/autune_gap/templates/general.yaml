@@ -1,0 +1,76 @@
+# Domain template: any cross-functional decision meeting.
+#
+# Reference data, versioned by git rather than by a table (#22). A template is
+# not derived from a meeting, so it is the one thing module C holds that cannot
+# hang off `meetings.id` — and as a file it needs no anchor at all.
+#
+# `item` and `question` are product copy a reader sees on S20, so they are
+# Korean. Every field name and every comment is English (/CLAUDE.md section 0).
+#
+# **Bump `version` whenever an item changes.** It is recorded on every gap this
+# template raises, so precision measured before an edit and after one can be
+# read apart instead of averaged together — the same reason `gap_topics` carries
+# `extractor_version`.
+#
+# `weight` is how much the item's absence matters, in 0..1. It is one of three
+# inputs to the risk score and the only one an author controls; see
+# `autune_gap.detect`.
+#
+# `question` is asked when nothing in the meeting matched the item, and
+# `question_about` when something did — it names the topic with `{topic}`.
+#
+# **Follow `{topic}` with an invariant particle** — 의, 에, 에서, 에 대해. 은/는,
+# 이/가, 을/를 change form with the last syllable of the noun before them, and a
+# topic label is a noun read out of a meeting, so the right form is not knowable
+# here. The loader refuses the variable ones; the failure it prevents is a screen
+# showing "캐시은".
+#
+# `keywords` decide whether the meeting touched the item at all. Keep them to
+# words a meeting would actually say — a keyword that matches everything raises
+# no gap, and one that matches nothing raises a gap in every meeting. Two
+# characters is the minimum; shorter than that matches by accident.
+
+key: general
+name: "기본"
+version: 1
+
+items:
+  - key: success_criteria
+    category: measurement
+    item: "성공 기준·측정 지표"
+    weight: 0.9
+    keywords: ["성공", "기준", "지표", "목표", "측정", "정확도", "정밀도", "kpi"]
+    question: "이 일이 성공했다고 판단할 기준은 무엇이고, 무엇으로 측정합니까?"
+    question_about: "{topic}의 성공 기준은 무엇이고, 무엇으로 측정합니까?"
+
+  - key: ownership
+    category: ownership
+    item: "담당자와 기한"
+    weight: 0.9
+    keywords: ["담당", "책임", "기한", "마감", "일정", "언제까지", "데드라인"]
+    question: "이 일은 누가 맡고, 언제까지 끝내기로 합니까?"
+    question_about: "{topic}의 담당자와 기한은 어떻게 정합니까?"
+
+  - key: risk
+    category: risk
+    item: "리스크·예외 처리"
+    weight: 0.8
+    keywords: ["리스크", "위험", "예외", "실패", "장애", "롤백", "대비"]
+    question: "이 방향이 실패하거나 예외 상황이 생기면 무엇을 합니까?"
+    question_about: "{topic}에서 문제가 생기거나 예외 상황이 오면 무엇을 합니까?"
+
+  - key: dependency
+    category: dependency
+    item: "의존성·선행 조건"
+    weight: 0.7
+    keywords: ["의존", "선행", "전제", "필요", "블로커", "대기", "연동"]
+    question: "이 일을 시작하기 전에 먼저 끝나 있어야 하는 것은 무엇입니까?"
+    question_about: "{topic}에 앞서 먼저 끝나 있어야 하는 것은 무엇입니까?"
+
+  - key: next_step
+    category: next_step
+    item: "다음 단계"
+    weight: 0.6
+    keywords: ["다음", "후속", "이후", "계획", "단계", "진행"]
+    question: "이 회의 다음에 실제로 일어나는 일은 무엇입니까?"
+    question_about: "{topic}에 대해 이 회의 다음에 실제로 일어나는 일은 무엇입니까?"

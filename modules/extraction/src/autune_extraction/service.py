@@ -8,8 +8,9 @@ Never imports another module.
 
 from __future__ import annotations
 
-from collections.abc import Collection, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from datetime import UTC, date, datetime
+from typing import Any, Protocol
 
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.dialects import postgresql, sqlite
@@ -25,7 +26,9 @@ from autune_contracts.extraction import (
 )
 from autune_contracts.transcript import Utterance as TranscriptUtterance
 from autune_core import Meeting, Participant, User, Utterance, get_logger, session_scope
+from autune_core.errors import NotFoundError, ValidationError
 from autune_integrations import SlackApi, assert_personal_delivery
+from autune_integrations.privacy import find_unmasked
 
 from .config import get_settings
 from .confirmations import WEAK_ASSENT, ConfirmationResponse, build_confirmation_dm
@@ -37,8 +40,11 @@ from .models import (
     ExtClassification,
     ExtConfirmation,
     ExtDecision,
+    ExtDecisionRef,
+    ExtDecisionReview,
     ExtDecisionSource,
     ExtEditEvent,
+    ExtExternalRef,
 )
 from .pipeline.base import Classifier
 from .schemas import (
@@ -46,6 +52,15 @@ from .schemas import (
     ActionItemDetail,
     ActionItemRead,
     ActionItemUpdate,
+    DecisionCreate,
+    DecisionReviewUpdate,
+    ExternalRefRead,
+    MeetingReview,
+    Outbound,
+    OutboundBlocked,
+    OutboundDecision,
+    ReviewAmbiguous,
+    ReviewDecision,
     SourceUtterance,
 )
 from .slots import assignee_of, meeting_day, parse_due
@@ -296,13 +311,25 @@ def create_action_item(session: Session, payload: ActionItemCreate) -> ExtAction
     return item
 
 
-def read_model(item: ExtActionItem) -> ActionItemRead:
+def read_model(
+    item: ExtActionItem,
+    *,
+    assignee_name: str | None = None,
+    summary: str | None = None,
+    sync_refs: list[ExternalRefRead] | None = None,
+) -> ActionItemRead:
     """One item as this module's own screens read it.
 
-    Built here rather than by ``from_attributes`` on the schema because two of
-    its fields are not columns: the source ids live in the link table, and
-    whether the item is a candidate depends on a setting the row knows nothing
-    about.
+    Built here rather than by ``from_attributes`` on the schema because five of
+    its fields are not columns: the source ids live in the link table, whether
+    the item is a candidate depends on a setting the row knows nothing about,
+    the assignee's name is not stored at all -- see ``assignee_name`` on
+    ``ActionItemRead`` -- the summary is computed from utterances this row does
+    not carry -- see ``action_item_summaries`` -- and where the item stands
+    with an outside system is read from a table keyed on it rather than owned
+    by it -- see ``action_item_external_refs``. Callers with more than one item
+    look all three up in a batch (``list_action_items``) rather than let this
+    query per row; ``None`` means the same as empty for any of them.
 
     Deciding *candidate* on the server is the point of this function. The
     threshold belongs to the classifier that produced the confidence, and a
@@ -318,13 +345,32 @@ def read_model(item: ExtActionItem) -> ActionItemRead:
         description=item.description,
         assignee_id=item.assignee_id,
         assignee_label=item.assignee_label,
+        assignee_name=assignee_name,
         due_date=item.due_date,
         status=item.status,
         confidence=item.confidence,
         origin=item.origin,
         source_utterance_ids=[source.utterance_id for source in item.sources],
         is_candidate=threshold is not None and item.confidence < threshold,
+        summary=summary,
+        sync_refs=sync_refs or [],
     )
+
+
+def assignee_names(session: Session, items: Sequence[ExtActionItem]) -> dict[str, str]:
+    """Display names for every assignee in ``items``, read fresh -- never stored.
+
+    A name is the one piece of a person's identity this module is allowed to
+    show (invariant 11 restricts speaking ratio, not who a task is for), and it
+    changes with the account, not with the item -- storing it would go stale
+    the first time somebody's display name did. One query for the whole list,
+    not one per row.
+    """
+    ids = {item.assignee_id for item in items if item.assignee_id is not None}
+    if not ids:
+        return {}
+    rows = session.execute(select(User.id, User.display_name).where(User.id.in_(ids)))
+    return {user_id: display_name for user_id, display_name in rows}
 
 
 def list_action_items(
@@ -359,20 +405,135 @@ def list_action_items(
     if due_before is not None:
         query = query.where(ExtActionItem.due_date < due_before)
 
-    return [read_model(item) for item in session.scalars(query)]
+    items = list(session.scalars(query))
+    names = assignee_names(session, items)
+    summaries = action_item_summaries(session, items)
+    refs = action_item_external_refs(session, [item.id for item in items])
+    return [
+        read_model(
+            item,
+            assignee_name=names.get(item.assignee_id) if item.assignee_id else None,
+            summary=summaries.get(item.id),
+            sync_refs=refs.get(item.id, []),
+        )
+        for item in items
+    ]
 
 
 def read_detail(session: Session, item: ExtActionItem) -> ActionItemDetail:
     """One item with the text of the utterances it was drawn from.
 
-    The only route in this module that returns utterances verbatim. It is here
-    and not on the list because the drawer is the one screen that shows a
-    quotation, and it shows one item's at a time. The list still carries meeting
-    content -- see ``ActionItemDetail``.
+    The only route in this module that returns the full *set* of sources
+    verbatim. It is here and not on the list because the drawer is the one
+    screen that shows every quotation, and it shows one item's at a time --
+    ``summary`` is the exception already allowed onto the list, one chosen
+    line rather than the whole evidence. See ``ActionItemDetail``.
     """
+    names = assignee_names(session, [item])
+    name = names.get(item.assignee_id) if item.assignee_id else None
+    summary = action_item_summaries(session, [item]).get(item.id)
+    refs = action_item_external_refs(session, [item.id]).get(item.id, [])
     return ActionItemDetail(
-        **read_model(item).model_dump(), sources=source_utterances(session, item.id)
+        **read_model(item, assignee_name=name, summary=summary, sync_refs=refs).model_dump(),
+        sources=source_utterances(session, item.id),
     )
+
+
+def action_item_external_refs(
+    session: Session, action_item_ids: Collection[str]
+) -> dict[str, list[ExternalRefRead]]:
+    """Where each item stands with each outside system it has been claimed for.
+
+    A claimed-but-unfinished row (``url is None``) is still reported: S18 needs
+    to be able to say "sending" or "failed" rather than only "sent" or nothing.
+    One query for the whole list, not one per row.
+    """
+    if not action_item_ids:
+        return {}
+    refs = session.scalars(
+        select(ExtExternalRef)
+        .where(ExtExternalRef.action_item_id.in_(action_item_ids))
+        .order_by(ExtExternalRef.created_at)
+    )
+    by_item: dict[str, list[ExternalRefRead]] = {}
+    for ref in refs:
+        by_item.setdefault(ref.action_item_id, []).append(
+            ExternalRefRead(system=ref.system, url=ref.url, external_id=ref.external_id)  # type: ignore[arg-type]
+        )
+    return by_item
+
+
+SUMMARY_MAX_CHARS = 80
+"""How much of the longest source utterance ``_summary_of`` keeps. Long enough
+to read as a sentence, short enough that a card of them does not become the
+transcript it is standing in for."""
+
+
+def _truncate(text: str, limit: int = SUMMARY_MAX_CHARS) -> str:
+    stripped = text.strip()
+    return stripped if len(stripped) <= limit else stripped[: limit - 1].rstrip() + "…"
+
+
+def _summary_texts(session: Session, utterance_ids: Collection[str]) -> dict[str, str]:
+    """``Utterance.text`` for a batch of ids, read once for a whole list."""
+    if not utterance_ids:
+        return {}
+    rows = session.execute(
+        select(Utterance.id, Utterance.text).where(Utterance.id.in_(utterance_ids))
+    )
+    return {utterance_id: text for utterance_id, text in rows}
+
+
+def action_item_summaries(session: Session, items: Sequence[ExtActionItem]) -> dict[str, str]:
+    """A one-line preview of each item's sources, for the ones ``description``
+    alone does not already say.
+
+    **Rule-based, not a model.** The longest source utterance, truncated --
+    which utterance actually carries the point is a real question (#325), and
+    this is the cheap first answer while that is unbuilt: exactly the same
+    reasoning ``decisions._substance`` already uses for the settling row.
+    Wrong here is visible and checked against the drawer's full quotation, not
+    generated prose a reader has no way to verify.
+
+    **Only when there is more than one source.** With a single source
+    ``description`` already is that utterance's text (``slots`` builds it that
+    way), and repeating it as ``summary`` would be a second copy of the same
+    line, not a new one.
+    """
+    multi = [item for item in items if len(item.sources) > 1]
+    texts = _summary_texts(
+        session, {source.utterance_id for item in multi for source in item.sources}
+    )
+    summaries: dict[str, str] = {}
+    for item in multi:
+        candidates = [texts[s.utterance_id] for s in item.sources if s.utterance_id in texts]
+        if candidates:
+            summaries[item.id] = _truncate(max(candidates, key=len))
+    return summaries
+
+
+def decision_summaries(session: Session, decisions: Sequence[ExtDecision]) -> dict[str, str]:
+    """A one-line preview of what a decision's source utterances said.
+
+    Same rule as ``action_item_summaries``: the longest source, truncated, and
+    for the same reason. Computed for every decision with at least one source,
+    unlike action items -- a decision's ``statement`` is assembled or reworded
+    (#305), so even a single-source decision benefits from seeing what was
+    literally said beside it.
+    """
+    texts = _summary_texts(
+        session, {source.utterance_id for decision in decisions for source in decision.sources}
+    )
+    summaries: dict[str, str] = {}
+    for decision in decisions:
+        candidates = [
+            texts[source.utterance_id]
+            for source in decision.sources
+            if source.utterance_id in texts
+        ]
+        if candidates:
+            summaries[decision.id] = _truncate(max(candidates, key=len))
+    return summaries
 
 
 def source_utterances(session: Session, action_item_id: str) -> list[SourceUtterance]:
@@ -415,6 +576,18 @@ def update_action_item(
 
     _record_edit(session, meeting_id=item.meeting_id, action_item_id=item.id, kind="edited")
     return item
+
+
+def became_confirmed(previous_status: str, item: ExtActionItem) -> bool:
+    """Whether this edit is the one that confirmed the item.
+
+    Confirming is leaving ``needs_confirmation`` for any column a person works in
+    -- the board has no separate "confirm" button, moving the card is the answer.
+    A later move between ``todo``, ``in_progress`` and ``done`` is not a second
+    confirmation, which is half of what keeps the Notion page to one.
+    """
+    confirming = ActionStatus.NEEDS_CONFIRMATION.value
+    return previous_status == confirming and item.status != confirming
 
 
 def delete_action_item(session: Session, item: ExtActionItem) -> None:
@@ -493,6 +666,11 @@ def build_decisions(
     ``utterances`` is every utterance of the meeting in ``start_sec`` order; see
     ``group_decisions`` for why the non-decision ones have to be there.
 
+    The meeting's own row is read for its date, the way ``build_action_items``
+    does: a statement carries the deadline the meeting set, and "이번 주 금요일"
+    is a different Friday every week. A meeting with no start time keeps the
+    phrase as said rather than resolving it against today.
+
     **Rebuilding replaces, and keeps the ids that still apply.** The meeting's
     decisions are deleted and rebuilt, and each one's id is derived from the
     meeting and the utterances it was settled in (``decisions.decision_id``). A
@@ -512,9 +690,15 @@ def build_decisions(
     asked, and with ids that repeat, a source row a cascade missed would attach
     itself to the rebuilt decision.
     """
-    stale = select(ExtDecision.id).where(ExtDecision.meeting_id == meeting_id)
+    meeting = session.get(Meeting, meeting_id)
+    day = meeting_day(meeting.started_at if meeting is not None else None)
+
+    # Only the model's decisions are rebuilt. One a person added is not derived
+    # from labels, so no rerun can recompute it (#246).
+    model_made = (ExtDecision.meeting_id == meeting_id, ExtDecision.origin == "model")
+    stale = select(ExtDecision.id).where(*model_made)
     session.execute(delete(ExtDecisionSource).where(ExtDecisionSource.decision_id.in_(stale)))
-    session.execute(delete(ExtDecision).where(ExtDecision.meeting_id == meeting_id))
+    session.execute(delete(ExtDecision).where(*model_made))
 
     decisions = [
         ExtDecision(
@@ -527,10 +711,27 @@ def build_decisions(
                 for position, utterance_id in enumerate(group.source_utterance_ids)
             ],
         )
-        for group in group_decisions(utterances, max_gap=max_gap)
+        for group in group_decisions(utterances, max_gap=max_gap, day=day)
     ]
     session.add_all(decisions)
     session.flush()
+
+    # A review follows its decision's id (#193, #246). A decision whose sources
+    # changed is a different decision, and a verdict -- or a rewording -- given
+    # about the old one must not quietly apply to it, nor outlive it.
+    kept = [decision.id for decision in decisions] + list(
+        session.scalars(
+            select(ExtDecision.id).where(
+                ExtDecision.meeting_id == meeting_id, ExtDecision.origin == "user"
+            )
+        )
+    )
+    session.execute(
+        delete(ExtDecisionReview).where(
+            ExtDecisionReview.meeting_id == meeting_id,
+            ExtDecisionReview.decision_id.not_in(kept),
+        )
+    )
 
     # Ids only. A statement is meeting content and a log line is a store.
     log.info("extraction_decisions_built", meeting_id=meeting_id, count=len(decisions))
@@ -547,7 +748,30 @@ def decisions_for_meeting(session: Session, meeting_id: str) -> list[Decision]:
 
     Sources come back in meeting order because the order carries the argument --
     the proposal first, the sentence that settles it last.
+
+    **A decision a person rejected is not in it.** ``delete_decision`` keeps a
+    model decision's row and marks its review rejected, so a rerun cannot bring
+    the same ``dec_`` id back; without this filter that row still reached D's
+    lineage and E's report as a decision, through ``ExtractionResult`` and ``GET
+    /results`` -- a person said "this was not decided" and every module but the
+    outbound list kept counting it. Raised in review of #247.
+
+    Pending decisions stay: whether D and E hear a decision before anybody has
+    looked at it is the open question 2 on #246, not something this read decides.
+
+    **A person's rewording is what goes out**, here as in
+    ``review_for_meeting`` and ``outbound_for_meeting``. Reading the review for
+    the status and not for the sentence sent the model's wording to D and E while
+    Notion and Slack got the corrected one -- one decision, two texts, and the
+    one the person rejected as wrong is the one a lineage would be built on.
+    Raised in review of #247.
     """
+    reviews = {
+        review.decision_id: review
+        for review in session.scalars(
+            select(ExtDecisionReview).where(ExtDecisionReview.meeting_id == meeting_id)
+        )
+    }
     rows = session.scalars(
         select(ExtDecision)
         .where(ExtDecision.meeting_id == meeting_id)
@@ -557,14 +781,21 @@ def decisions_for_meeting(session: Session, meeting_id: str) -> list[Decision]:
     return [
         Decision(
             id=row.id,
-            statement=row.statement,
+            statement=_confirmed_statement(row, reviews.get(row.id)),
             source_utterance_ids=[
                 source.utterance_id for source in sorted(row.sources, key=lambda s: s.position)
             ],
             confidence=row.confidence,
         )
         for row in rows
+        if (review := reviews.get(row.id)) is None or review.status != "rejected"
     ]
+
+
+def _confirmed_statement(decision: ExtDecision, review: ExtDecisionReview | None) -> str:
+    """What the meeting settled, in the wording that stands: the person's if they
+    reworded it, the model's otherwise. One definition, read by every surface."""
+    return review.statement if review is not None and review.statement else decision.statement
 
 
 # --- the meeting's result ----------------------------------------------------
@@ -692,8 +923,11 @@ def classify_utterances(
             kind=prediction.kind,
             confidence=prediction.confidence,
             text=utterance.text,
+            speaker=utterance.speaker,
         )
         if (prediction := answer.get(utterance.id)) is not None
+        # No consent, so nothing of theirs is read -- not the text, and not who
+        # they are. The turn is a gap of the right length and nothing more.
         else ClassifiedUtterance(id=utterance.id, kind=None, confidence=0.0, text="")
         for utterance in ordered
     ]
@@ -926,3 +1160,465 @@ def unasked_confirmations(session: Session, meeting_id: str) -> list[ExtConfirma
             .order_by(ExtConfirmation.utterance_id)
         )
     )
+
+
+# --- review before anything leaves (#246) ------------------------------------
+
+
+def _suggested(confidence: float) -> bool | None:
+    threshold = get_settings().candidate_confidence
+    return None if threshold is None else confidence >= threshold
+
+
+def review_for_meeting(
+    session: Session, meeting_id: str, *, now: datetime | None = None
+) -> MeetingReview:
+    """What S15 puts in front of a person before they confirm and send.
+
+    Decisions come with their verdict so far; ambiguous agreements with where the
+    speaker's DM stands; action items only when they still need somebody -- status
+    ``needs_confirmation``, or below the candidate line.
+    """
+    decisions = session.scalars(
+        select(ExtDecision)
+        .options(selectinload(ExtDecision.sources))
+        .where(ExtDecision.meeting_id == meeting_id)
+        .order_by(ExtDecision.created_at, ExtDecision.id)
+    ).all()
+    reviews = {
+        review.decision_id: review
+        for review in session.scalars(
+            select(ExtDecisionReview).where(ExtDecisionReview.meeting_id == meeting_id)
+        )
+    }
+    refs_by_decision: dict[str, list[ExternalRefRead]] = {}
+    for ref in session.scalars(
+        select(ExtDecisionRef)
+        .where(ExtDecisionRef.meeting_id == meeting_id)
+        .order_by(ExtDecisionRef.created_at)
+    ):
+        refs_by_decision.setdefault(ref.decision_id, []).append(
+            ExternalRefRead(system=ref.system, url=ref.url, external_id=ref.external_id)  # type: ignore[arg-type]
+        )
+    summaries = decision_summaries(session, decisions)
+
+    listed = []
+    for decision in decisions:
+        review = reviews.get(decision.id)
+        listed.append(
+            ReviewDecision(
+                id=decision.id,
+                statement=_confirmed_statement(decision, review),
+                model_statement=decision.statement,
+                confidence=decision.confidence,
+                origin=decision.origin,  # type: ignore[arg-type]
+                status=review.status if review else "pending",  # type: ignore[arg-type]
+                suggested=_suggested(decision.confidence),
+                source_utterance_ids=[
+                    source.utterance_id
+                    for source in sorted(decision.sources, key=lambda s: s.position)
+                ],
+                sync_refs=refs_by_decision.get(decision.id, []),
+                summary=summaries.get(decision.id),
+            )
+        )
+
+    confirmations = session.scalars(
+        select(ExtConfirmation)
+        .where(ExtConfirmation.meeting_id == meeting_id)
+        .order_by(ExtConfirmation.utterance_id)
+    ).all()
+    items = [
+        item
+        for item in list_action_items(session, meeting_id=meeting_id)
+        if item.status == ActionStatus.NEEDS_CONFIRMATION.value or item.is_candidate
+    ]
+    return MeetingReview(
+        meeting_id=meeting_id,
+        decisions=listed,
+        ambiguous_agreements=[
+            ReviewAmbiguous(
+                utterance_id=row.utterance_id,
+                outcome=row.outcome_at(now),  # type: ignore[arg-type]
+                resolved_kind=row.resolved_kind,
+            )
+            for row in confirmations
+        ],
+        action_items=items,
+        pending_decisions=sum(1 for decision in listed if decision.status == "pending"),
+    )
+
+
+def review_decision(
+    session: Session, decision: ExtDecision, payload: DecisionReviewUpdate
+) -> ReviewDecision:
+    """Record a verdict and/or a rewording on one decision.
+
+    Sending the model's own wording clears the rewording instead of storing a copy
+    that would stop tracking the model's text after a rerun. A body with neither
+    field changes nothing.
+    """
+    changes = payload.model_dump(exclude_unset=True)
+    if changes:
+        review = session.get(ExtDecisionReview, decision.id)
+        if review is None:
+            review = ExtDecisionReview(
+                decision_id=decision.id, meeting_id=decision.meeting_id, status="pending"
+            )
+            session.add(review)
+        if changes.get("status") is not None:
+            review.status = changes["status"]
+        if "statement" in changes:
+            wording = changes["statement"]
+            if decision.origin == "user":
+                # A person's own decision has no model wording to keep beside
+                # theirs; the rewording is the statement.
+                if wording is not None:
+                    decision.statement = wording
+                review.statement = None
+            else:
+                review.statement = None if wording in (None, decision.statement) else wording
+        if review.status == "rejected":
+            # Rejecting drops the rewording whichever way it was asked for, as
+            # ``delete_decision`` does. Left behind, it would come back with the
+            # decision when the rejection is undone -- wording nobody typed this
+            # time, sent to D, E and outbound as if confirmed.
+            review.statement = None
+        session.flush()
+
+    return next(
+        listed
+        for listed in review_for_meeting(session, decision.meeting_id).decisions
+        if listed.id == decision.id
+    )
+
+
+def outbound_for_meeting(session: Session, meeting_id: str) -> Outbound:
+    """Exactly what may leave for Notion, Slack or Jira: nothing unconfirmed (#246).
+
+    A decision goes only when a person confirmed it, in their wording if they gave
+    one. An action item goes only once it is past ``needs_confirmation`` -- the
+    status S17 moves it out of when somebody accepts it. The sync (#30) is to read
+    this and nothing else, so the gate is one function rather than a rule every
+    sender has to remember.
+
+    **It screens as well as selects.** A rewording and an edited description are
+    typed by a person and never went through module A's masker, so each text is
+    run through ``find_unmasked`` here. One that carries personal data is held back
+    in ``blocked``, by id and category, rather than failing the whole meeting: the
+    other confirmed items can still go, and the screen asks for that one to be
+    reworded. (Suggested in review of #247.)
+    """
+    review = review_for_meeting(session, meeting_id)
+    blocked: list[OutboundBlocked] = []
+
+    decisions = []
+    for decision in review.decisions:
+        if decision.status != "confirmed":
+            continue
+        categories = find_unmasked(decision.statement)
+        if categories:
+            blocked.append(OutboundBlocked(id=decision.id, kind="decision", categories=categories))
+        else:
+            decisions.append(OutboundDecision(id=decision.id, statement=decision.statement))
+
+    items = []
+    for item in list_action_items(session, meeting_id=meeting_id):
+        if item.status == ActionStatus.NEEDS_CONFIRMATION.value:
+            continue
+        categories = find_unmasked(item.description)
+        if categories:
+            blocked.append(OutboundBlocked(id=item.id, kind="action_item", categories=categories))
+        else:
+            items.append(item)
+
+    return Outbound(meeting_id=meeting_id, decisions=decisions, action_items=items, blocked=blocked)
+
+
+def create_decision(session: Session, payload: DecisionCreate) -> ReviewDecision:
+    """Add a decision the model missed. Confirmed from the moment it exists.
+
+    ``origin="user"`` keeps it through a rerun, and the review row says a person
+    stands behind it. Every source must be an utterance of the same meeting: a
+    quotation from another meeting would make this meeting claim a decision it
+    never discussed. The refusal names the field, never the utterance text.
+    """
+    if session.get(Meeting, payload.meeting_id) is None:
+        raise NotFoundError("meeting", payload.meeting_id)
+    source_ids = list(dict.fromkeys(payload.source_utterance_ids))
+    if source_ids:
+        found = set(
+            session.scalars(
+                select(Utterance.id).where(
+                    Utterance.id.in_(source_ids), Utterance.meeting_id == payload.meeting_id
+                )
+            )
+        )
+        if len(found) != len(source_ids):
+            raise ValidationError(
+                "every source utterance must belong to this meeting",
+                field="source_utterance_ids",
+            )
+
+    decision = ExtDecision(
+        meeting_id=payload.meeting_id,
+        statement=payload.statement,
+        confidence=1.0,
+        origin="user",
+        sources=[
+            ExtDecisionSource(utterance_id=utterance_id, position=position)
+            for position, utterance_id in enumerate(source_ids)
+        ],
+    )
+    session.add(decision)
+    session.flush()
+    session.add(
+        ExtDecisionReview(
+            decision_id=decision.id, meeting_id=decision.meeting_id, status="confirmed"
+        )
+    )
+    session.flush()
+    return next(
+        listed
+        for listed in review_for_meeting(session, decision.meeting_id).decisions
+        if listed.id == decision.id
+    )
+
+
+def delete_decision(session: Session, decision: ExtDecision) -> None:
+    """Remove a decision from what the meeting will send.
+
+    A decision a person added is really deleted, with its review -- privacy.md
+    allows no soft deletes of content. A decision the model proposed cannot be:
+    the next run would propose it again from the same utterances, and the person
+    would be deleting it forever. It is rejected instead, which keeps it out of
+    the outbound list across reruns, and its rewording, if any, is dropped.
+    """
+    if decision.origin == "user":
+        session.execute(
+            delete(ExtDecisionReview).where(ExtDecisionReview.decision_id == decision.id)
+        )
+        session.delete(decision)
+    else:
+        review = session.get(ExtDecisionReview, decision.id)
+        if review is None:
+            review = ExtDecisionReview(decision_id=decision.id, meeting_id=decision.meeting_id)
+            session.add(review)
+        review.status = "rejected"
+        review.statement = None
+    session.flush()
+
+
+# --- step 7: sync to Notion -----------------------------------------------------
+
+NOTION = "notion"
+
+NOTION_PROPERTIES: Mapping[str, str] = {
+    "title": "작업",
+    "assignee": "담당자",
+    "due": "마감일",
+    "status": "상태",
+    "confidence": "신뢰도",
+    "meeting": "회의",
+}
+"""Which Notion property each field goes to, by the property's name.
+
+These are the names in the team database the extraction owner set up. A team
+whose database names them differently puts its own map under
+``action_properties`` in its Notion integration config (screen S28), and **its map
+replaces this one**: a map naming only ``title`` sends a title and nothing else.
+
+Replacing rather than merging is what lets a team whose database has four columns
+receive pages at all -- merged, every default name came along and Notion refused
+the whole page for the properties that database does not have, so that team got
+none. Raised in review of #294.
+"""
+
+
+class NotionPages(Protocol):
+    """The one call the sync makes. ``NotionClient`` and ``fakes.FakeNotion`` both fit."""
+
+    def create_page(self, database_id: str, properties: dict[str, Any]) -> str: ...
+
+
+def notion_url(page_id: str) -> str:
+    """The page's address. Notion accepts the id without its dashes."""
+    return f"https://www.notion.so/{page_id.replace('-', '')}"
+
+
+def notion_properties(
+    item: ExtActionItem, meeting_title: str | None, names: Mapping[str, str]
+) -> dict[str, Any]:
+    """The page for one item: what an issue needs, and nothing from the transcript.
+
+    Description, assignee, due date and status are the item itself; confidence
+    tells the team which ones the model was unsure of; the meeting title says where
+    it came from. Source utterances stay in Autune -- ``privacy.md`` and this
+    module's CLAUDE.md both keep the transcript out of Notion, and the client's
+    ``check_outbound`` refuses an unmasked value in any of these anyway.
+    """
+
+    def text(value: str) -> dict[str, Any]:
+        return {"rich_text": [{"type": "text", "text": {"content": value[:2000]}}]}
+
+    fields: dict[str, Any] = {
+        "title": {"title": [{"type": "text", "text": {"content": item.description[:2000]}}]},
+        "status": {"select": {"name": item.status}},
+        "confidence": {"number": round(item.confidence, 3)},
+    }
+    assignee = item.assignee_label
+    if assignee:
+        fields["assignee"] = text(assignee)
+    if item.due_date is not None:
+        fields["due"] = {"date": {"start": item.due_date.isoformat()}}
+    if meeting_title:
+        fields["meeting"] = text(meeting_title)
+    return {names[key]: value for key, value in fields.items() if key in names}
+
+
+def sync_action_item_to_notion(
+    session: Session,
+    notion: NotionPages,
+    *,
+    action_item_id: str,
+    database_id: str,
+    property_names: Mapping[str, str] | None = None,
+) -> ExtExternalRef | None:
+    """Create the item's Notion page, once. ``None`` when there is nothing to send.
+
+    Nothing is sent for an item that is gone, one still waiting for confirmation,
+    or one that already has its page. The last is decided by the database: the
+    claim is an insert that skips an existing row, so a confirmation delivered
+    twice, or two workers holding it at once, send one page -- the second blocks on
+    the first's row and then finds it. Claim and call share the caller's
+    transaction, so a failed call takes the claim back and a later run can try
+    again.
+    """
+    item = session.get(ExtActionItem, action_item_id)
+    if item is None or item.status == ActionStatus.NEEDS_CONFIRMATION.value:
+        return None
+
+    claimed = session.scalars(
+        _insert_if_absent_into(session, ExtExternalRef)
+        .values(action_item_id=item.id, system=NOTION, meeting_id=item.meeting_id)
+        .on_conflict_do_nothing(index_elements=["action_item_id", "system"])
+        .returning(ExtExternalRef.action_item_id)
+    ).one_or_none()
+    if claimed is None:
+        # Ids only. The page exists, or another run is creating it.
+        log.info("extraction_notion_already_synced", action_item_id=item.id)
+        return None
+
+    meeting = session.get(Meeting, item.meeting_id)
+    names = property_names or NOTION_PROPERTIES
+    page_id = notion.create_page(
+        database_id, notion_properties(item, meeting.title if meeting else None, names)
+    )
+
+    ref = session.get(ExtExternalRef, (item.id, NOTION))
+    assert ref is not None
+    ref.external_id = page_id
+    ref.url = notion_url(page_id)
+    log.info("extraction_notion_synced", action_item_id=item.id, meeting_id=item.meeting_id)
+    return ref
+
+
+DECISION_NOTION_PROPERTIES: Mapping[str, str] = {
+    "title": "결정",
+    "confidence": "신뢰도",
+    "sources": "근거 발화 수",
+    "meeting": "회의",
+}
+"""The decision database's property names. A team's ``decision_properties`` map
+replaces this one, the rule ``NOTION_PROPERTIES`` explains for items."""
+
+
+def decision_became_confirmed(previous_status: str | None, current_status: str) -> bool:
+    """Whether this review is the one that confirmed the decision.
+
+    ``previous_status`` is ``None`` when the decision had no review row yet,
+    which is how every model decision starts. Confirming twice, or rewording a
+    confirmed decision, is not a second confirmation -- the page is sent once.
+    """
+    return previous_status != "confirmed" and current_status == "confirmed"
+
+
+def decision_notion_properties(
+    statement: str,
+    decision: ExtDecision,
+    meeting_title: str | None,
+    names: Mapping[str, str],
+) -> dict[str, Any]:
+    """The page for one decision: the statement as confirmed, and nothing quoted.
+
+    ``statement`` is the person's rewording when there is one -- what they
+    confirmed -- and the model's sentence otherwise. The source utterances stay in
+    Autune; the page carries only how many there were.
+    """
+    fields: dict[str, Any] = {
+        "title": {"title": [{"type": "text", "text": {"content": statement[:2000]}}]},
+        "confidence": {"number": round(decision.confidence, 3)},
+        "sources": {"number": len(decision.sources)},
+    }
+    if meeting_title:
+        fields["meeting"] = {
+            "rich_text": [{"type": "text", "text": {"content": meeting_title[:2000]}}]
+        }
+    return {names[key]: value for key, value in fields.items() if key in names}
+
+
+def sync_decision_to_notion(
+    session: Session,
+    notion: NotionPages,
+    *,
+    decision_id: str,
+    database_id: str,
+    property_names: Mapping[str, str] | None = None,
+) -> ExtDecisionRef | None:
+    """Create a confirmed decision's Notion page, once. ``None`` when nothing is sent.
+
+    Nothing goes for a decision that is gone or is not confirmed (#246). The
+    claim-then-call shape and its reasons are ``sync_action_item_to_notion``'s.
+    """
+    decision = session.get(ExtDecision, decision_id)
+    review = session.get(ExtDecisionReview, decision_id)
+    if decision is None or review is None or review.status != "confirmed":
+        return None
+
+    claimed = session.scalars(
+        _insert_if_absent_into(session, ExtDecisionRef)
+        .values(decision_id=decision.id, system=NOTION, meeting_id=decision.meeting_id)
+        .on_conflict_do_nothing(index_elements=["decision_id", "system"])
+        .returning(ExtDecisionRef.decision_id)
+    ).one_or_none()
+    if claimed is None:
+        log.info("extraction_notion_decision_already_synced", decision_id=decision.id)
+        return None
+
+    meeting = session.get(Meeting, decision.meeting_id)
+    names = property_names or DECISION_NOTION_PROPERTIES
+    statement = review.statement or decision.statement
+    page_id = notion.create_page(
+        database_id,
+        decision_notion_properties(statement, decision, meeting.title if meeting else None, names),
+    )
+
+    ref = session.get(ExtDecisionRef, (decision.id, NOTION))
+    assert ref is not None
+    ref.external_id = page_id
+    ref.url = notion_url(page_id)
+    log.info(
+        "extraction_notion_decision_synced", decision_id=decision.id, meeting_id=decision.meeting_id
+    )
+    return ref
+
+
+def _insert_if_absent_into(session: Session, model: type[Any]) -> postgresql.Insert | sqlite.Insert:
+    """``INSERT ... ON CONFLICT DO NOTHING`` in the session's own dialect.
+
+    The same two-dialect choice ``_insert_if_absent`` makes for confirmations,
+    for any table: Postgres in the app, SQLite in the unit tests.
+    """
+    if session.get_bind().dialect.name == "postgresql":
+        return postgresql.insert(model)
+    return sqlite.insert(model)
