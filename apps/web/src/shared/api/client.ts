@@ -51,8 +51,15 @@ const TOKEN_KEY = "autune.token";
  *
  * Nothing here is the sign-in design. When #189 lands, this function is where
  * a real token goes, and the 401 handling it needs goes beside it.
+ *
+ * **Exported for the one call that cannot go through `request`.**
+ * `transcript.uploadRecording` sends a multipart body, and `request` sets
+ * `content-type: application/json` on everything, so that call reaches `fetch`
+ * directly (#301). It asks this function for the header rather than carrying
+ * its own copy — the copy is what this file exists to remove. Nothing else
+ * imports it: a call going through `api.*` already has the header.
  */
-function authHeaders(): HeadersInit {
+export function authHeaders(): HeadersInit {
   let token: string | null = null;
   try {
     if (typeof window !== "undefined") token = window.localStorage.getItem(TOKEN_KEY);
