@@ -244,6 +244,7 @@ this table, which is what the run showed:
 | Module | Failed with | For a demo of the shape | For real output |
 | --- | --- | --- | --- |
 | B | `CLASSIFIER_IMPL=local needs AUTUNE_EXTRACTION_CLASSIFIER_CHECKPOINT` — no trained checkpoint is published | `AUTUNE_EXTRACTION_CLASSIFIER_IMPL=fake` | `…_IMPL=local`, `…_CHECKPOINT=<ckpt1>,<ckpt2>` (comma = ensemble, #245; the checkpoints are on B's machine, #112), `…_DEVICE=cpu`. Needs transformers, which `uv sync --all-packages` does not install: `uv run --with transformers celery …` or the `local-models` extra. First load ~60 s |
+| B (step 4, #12) | `NLI_IMPL=local needs AUTUNE_EXTRACTION_NLI_CHECKPOINT`, or a 401/404 from a private HF Hub repo | `AUTUNE_EXTRACTION_NLI_IMPL=fake` | `.env.example`'s `…_NLI_CHECKPOINT` is #172's private checkpoint (`mminjae97/autune-context-kornli-klue-roberta`) — needs `hf auth login` with an invited account, or ask 문민재 for access. Same `local-models` extra as the classifier, no second install |
 | C | `No module named 'spacy'` | `AUTUNE_GAP_NER_IMPL=fake` | `uv sync --package autune-gap --extra local-models` then `python -m spacy download ko_core_news_lg` |
 | D | `embedder inference endpoint http://autune-embed.internal:8080 is not reachable` | `AUTUNE_CONTEXT_EMBEDDER_IMPL=fake`, `…_RERANKER_IMPL=fake`, `…_NLI_IMPL=fake` | `kure_v1_local` etc. with the `local-models` extra, or the `_ENDPOINT`s pointed at a running inference server |
 
