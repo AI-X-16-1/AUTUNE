@@ -289,7 +289,40 @@ def create_action_item(session: Session, payload: ActionItemCreate) -> ExtAction
     Counted as an edit. An item the model missed costs the user more than one it
     got wrong -- they have to notice the absence, which is the failure recall
     makes likely and the one editing cannot fix by itself.
+
+    **Every foreign key on this row is checked before anything is written.** An
+    unknown meeting is a 404 and a source that is not one of *this* meeting's
+    utterances is a 422 naming the field. Without the check the first reached
+    the client as a 500 from the foreign key, found by a local end-to-end run on
+    2026-09-19, and the second was worse when the utterance did exist: an item
+    on one meeting citing another meeting's utterance, whose words
+    ``GET /action-items/{id}`` then quotes on this meeting's board.
+
+    ``assignee_id`` gets the same treatment as the other two, for the reason
+    ``slots.assignee_of`` already gives for the model's own path: the
+    ``user_`` prefix a well-formed id carries does not promise the row is still
+    there, and the field is a foreign key, so a deleted account or a typo would
+    otherwise reach ``session.flush()`` as a 500 rather than a 422 naming the
+    field.
     """
+    if session.get(Meeting, payload.meeting_id) is None:
+        raise NotFoundError("meeting", payload.meeting_id)
+    if payload.assignee_id is not None and session.get(User, payload.assignee_id) is None:
+        raise ValidationError("assignee_id does not name an existing user", field="assignee_id")
+    wanted = set(payload.source_utterance_ids)
+    if wanted:
+        found = set(
+            session.scalars(
+                select(Utterance.id).where(
+                    Utterance.meeting_id == payload.meeting_id, Utterance.id.in_(wanted)
+                )
+            )
+        )
+        if found != wanted:
+            raise ValidationError(
+                "source_utterance_ids must be utterances of this meeting",
+                field="source_utterance_ids",
+            )
     item = ExtActionItem(
         meeting_id=payload.meeting_id,
         description=payload.description,
@@ -561,10 +594,18 @@ def update_action_item(
     An empty body records no edit rather than one, because edit cost counts what
     the user had to fix and a no-op is not that. A double-submitted form would
     otherwise inflate the metric the product is trying to lower.
+
+    A new ``assignee_id`` gets the same existence check ``create_action_item``
+    gives it -- the field is the same foreign key either way, and clearing it
+    (``None``) needs no check at all.
     """
     changes = payload.changes()
     if not changes:
         return item
+
+    new_assignee = changes.get("assignee_id")
+    if new_assignee is not None and session.get(User, new_assignee) is None:
+        raise ValidationError("assignee_id does not name an existing user", field="assignee_id")
 
     for field, value in changes.items():
         setattr(item, field, value.value if isinstance(value, ActionStatus) else value)
