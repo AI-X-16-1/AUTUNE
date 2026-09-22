@@ -15,7 +15,8 @@ import pytest
 
 from autune_audio import pipeline
 from autune_audio.live import backends
-from autune_audio.live.transcriber import Transcriber
+from autune_audio.live import transcriber as transcriber_module
+from autune_audio.live.transcriber import Transcriber, off_loop
 from autune_audio.schemas import SAMPLE_RATE, Transcription, Waveform
 
 
@@ -134,6 +135,32 @@ async def test_warm_up_runs_once_and_its_failure_is_the_callers() -> None:
     await transcriber.warm_up()
 
     assert calls == 2
+
+
+@pytest.mark.asyncio
+async def test_off_loop_with_its_own_lock_does_not_wait_for_the_module_lock() -> None:
+    """The embedder passes its own lock: a call holding the transcriber's
+    ``_LOCK`` (as a slow decode would) must not block one that names a
+    different lock -- the two models must not share this."""
+    holding = threading.Event()
+    released = threading.Event()
+
+    def hold() -> None:
+        with transcriber_module._LOCK:  # noqa: SLF001 - the seam the test exercises
+            holding.set()
+            released.wait(2.0)
+
+    holder = threading.Thread(target=hold)
+    holder.start()
+    try:
+        assert holding.wait(2.0)
+        started = time.monotonic()
+        result = await off_loop(lambda: "done", lock=threading.Lock())
+        assert result == "done"
+        assert time.monotonic() - started < 1.0
+    finally:
+        released.set()
+        holder.join(2.0)
 
 
 @pytest.mark.asyncio

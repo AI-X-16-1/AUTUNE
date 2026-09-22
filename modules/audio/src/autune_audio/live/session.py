@@ -7,8 +7,9 @@ wrong and nothing else, because ffmpeg-style errors can quote what they were
 reading. It is raised with its ``__cause__`` cut (``from None``), so nothing
 downstream -- a traceback, ``logger.exception``, an error tracker -- prints
 the original exception's message either. The speaker embedding is taken from
-the audio before masking and never from the text; the vector is a local here
-and a running mean in the tracker, nothing more.
+the raw audio, never from the text -- masking runs on the transcript, the
+embedder runs on ``segment.waveform``, and neither reads the other's output;
+the vector is a local here and a running mean in the tracker, nothing more.
 """
 
 from __future__ import annotations
@@ -45,6 +46,11 @@ class TranscribeFailed(RuntimeError):  # noqa: N818 - name fixed by the design d
 
 
 class LiveSession:
+    MAX_CONSECUTIVE_LABEL_FAILURES = 3
+    """Three failures in a row is the model, not one bad utterance; switches
+    labelling off for the rest of the session. Fewer than that costs only the
+    row it happened on."""
+
     def __init__(
         self,
         *,
@@ -78,6 +84,7 @@ class LiveSession:
         )
         self.state: Literal["recording", "paused", "ended"] = "recording"
         self.rows_sent = 0
+        self._label_failures = 0
 
     @property
     def tracker(self) -> SpeakerTracker:
@@ -125,7 +132,7 @@ class LiveSession:
         if self._embedder is None:
             return
         try:
-            await off_loop(self._embedder.warm_up)
+            await off_loop(self._embedder.warm_up, lock=self._embedder.lock)
         except Exception as exc:
             log.warning("live_speaker_unavailable", reason=type(exc).__name__)
             self._embedder = None
@@ -142,15 +149,17 @@ class LiveSession:
         spoken = " ".join(s.text.strip() for s in transcription.segments).strip()
         words = transcription.words
         confidence = float(np.mean([w.probability for w in words])) if words else 0.0
-        if not spoken:
-            del spoken
+        masked = mask(spoken, recogniser=self._recogniser).text
+        del spoken  # the unmasked string ends here; everything below sees the masked one
+        if not masked.strip():
+            # Nothing heard, or nothing left once masked: not a row, and not
+            # a voice that may open a cluster.
             return None
         if confidence < self._min_confidence:
             # A fragment Whisper was guessing at -- the hallucinated rows of
             # the first microphone runs sat at 0.1-0.25 while real speech sat
             # above 0.5. Nothing is lost: the stored path remakes every row.
             # Dropped before labelling: a guess must not open a cluster.
-            del spoken
             log.info(
                 "live_segment_below_confidence",
                 seconds=round(segment.end - segment.start, 1),
@@ -159,8 +168,6 @@ class LiveSession:
             return None
 
         speaker = await self._label(segment)
-        masked = mask(spoken, recogniser=self._recogniser).text
-        del spoken  # the unmasked string ends here
 
         self.rows_sent += 1
         log.info(
@@ -180,12 +187,13 @@ class LiveSession:
         )
 
     async def _label(self, segment: Segment) -> str:
-        """``화자 N`` from the voice, or ``NO_SPEAKER`` when there is no
-        embedder. The first failure -- the embedding or the tracker's own
-        clustering, e.g. a zero vector or a dimension mismatch -- switches
-        the embedder off for the session: paying the cost on every row would
-        buy the same answer, and the exception type is all the log gets --
-        pyannote errors can quote paths."""
+        """``화자 N`` from the voice, or ``NO_SPEAKER``.
+
+        One failure costs one row: a NaN from the model or a vector the
+        tracker refuses is that utterance's problem, not the session's.
+        Three in a row is the model, not the audio, and switches labelling
+        off for the rest of the session. The log gets exception types only.
+        """
         if self._embedder is None:
             return NO_SPEAKER
         embedder = self._embedder
@@ -194,9 +202,16 @@ class LiveSession:
             return embedder.embed(segment.waveform)
 
         try:
-            vector = await off_loop(embed)
-            return self._tracker.label(vector, segment.end - segment.start)
+            vector = await off_loop(embed, lock=embedder.lock)
+            label = self._tracker.label(vector, segment.end - segment.start)
         except Exception as exc:
-            log.warning("live_speaker_failed", error=type(exc).__name__)
-            self._embedder = None
+            self._label_failures += 1
+            log.warning(
+                "live_speaker_failed", error=type(exc).__name__, streak=self._label_failures
+            )
+            if self._label_failures >= self.MAX_CONSECUTIVE_LABEL_FAILURES:
+                log.warning("live_speaker_unavailable", reason="repeated_failures")
+                self._embedder = None
             return NO_SPEAKER
+        self._label_failures = 0
+        return label

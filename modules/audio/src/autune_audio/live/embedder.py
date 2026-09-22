@@ -17,6 +17,7 @@ section 3.1.
 
 from __future__ import annotations
 
+import threading
 from typing import Any
 
 import numpy as np
@@ -30,23 +31,49 @@ MIN_SECONDS = 0.5
 tracker, not the embedder, decides what a short utterance may do."""
 
 
+class EmbedderUnavailable(RuntimeError):  # noqa: N818 - name fixed by the task interface
+    """The model failed to load once; every later call answers this at once.
+    Carries the original exception's type only."""
+
+    def __init__(self, kind: str) -> None:
+        super().__init__(kind)
+        self.kind = kind
+
+
 class Embedder:
     def __init__(self, checkpoint: str = CHECKPOINT, token: str = "") -> None:
         self._checkpoint = checkpoint
         self._token = token
         self._inference: Any = None
+        self._unavailable: str | None = None
+        self.lock = threading.Lock()
+        """Serialises calls into the model. Separate from the transcriber's
+        lock on purpose (see ``transcriber.off_loop``)."""
 
     def warm_up(self) -> None:
         """Load the model. Raises when it cannot; the session decides what a
-        channel without speaker labels does (it goes on)."""
+        channel without speaker labels does (it goes on).
+
+        A failed load is remembered: every call after the first raises
+        ``EmbedderUnavailable`` at once rather than retrying a download or an
+        import that will not succeed on this machine this process."""
         if self._inference is not None:
             return
-        from pyannote.audio import Inference, Model  # noqa: PLC0415
+        if self._unavailable is not None:
+            raise EmbedderUnavailable(self._unavailable)
+        try:
+            from pyannote.audio import Inference, Model  # noqa: PLC0415
 
-        model = Model.from_pretrained(self._checkpoint, token=self._token or None)
-        if model is None:
-            raise RuntimeError(f"failed to load {self._checkpoint}")
-        self._inference = Inference(model, window="whole")
+            model = Model.from_pretrained(self._checkpoint, token=self._token or None)
+            if model is None:
+                raise RuntimeError(f"failed to load {self._checkpoint}")
+            self._inference = Inference(model, window="whole")
+        except Exception as exc:
+            # Remembered per process: a machine with no extra, no token or
+            # no network does not re-discover that on every connection,
+            # holding a lock through a download timeout each time.
+            self._unavailable = type(exc).__name__
+            raise
 
     def embed(self, waveform: Waveform) -> np.ndarray:
         """A unit-length float32 vector for the voice in ``waveform``."""

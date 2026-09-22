@@ -6,7 +6,9 @@ say something about the session and nothing about Whisper.
 
 from __future__ import annotations
 
+import threading
 import traceback
+import types
 
 import numpy as np
 import pytest
@@ -259,6 +261,7 @@ class FakeEmbedder:
         self.seen: list[object] = []
         self.warmed = 0
         self.fail_after = fail_after
+        self.lock = threading.Lock()
 
     def warm_up(self) -> None:
         self.warmed += 1
@@ -354,39 +357,59 @@ async def test_no_embedder_means_the_degraded_label() -> None:
 
 
 @pytest.mark.asyncio
-async def test_an_embedding_failure_degrades_the_rest_of_the_session(
+async def test_one_bad_embedding_costs_one_row_only(capsys: pytest.CaptureFixture[str]) -> None:
+    """A NaN or a zero vector from one utterance is that utterance's problem:
+    the row that hit it degrades, and the next one is labelled normally --
+    switching the whole session off on the first bad row was the finding."""
+    embedder = FakeEmbedder(basis(0), np.zeros(4, dtype=np.float32), basis(0))
+    live = labelled(saying("안녕하세요"), embedder)
+    rows = await feed(live, np.concatenate([two_utterances(), tone(1000), silence(1000)]))
+    assert [r.speaker for r in rows] == ["화자 1", "?", "화자 1"]
+    assert len(embedder.seen) == 3
+    assert capsys.readouterr().out.count("live_speaker_failed") == 1
+
+
+@pytest.mark.asyncio
+async def test_three_consecutive_failures_switch_labelling_off(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
+    """Three failures in a row -- the model, not the audio -- switches
+    labelling off for the rest of the session; the earlier "first failure
+    disables labels" test encoded a policy this replaces."""
     embedder = FakeEmbedder(basis(0), fail_after=1)
     live = labelled(saying("안녕하세요"), embedder)
-
-    rows = await feed(live, np.concatenate([two_utterances(), tone(1000), silence(1000)]))
-
-    assert [r.speaker for r in rows] == ["화자 1", "?", "?"]
-    assert len(embedder.seen) == 2  # switched off after the failure, not retried
+    audio = np.concatenate([two_utterances(), two_utterances(), tone(1000), silence(1000)])
+    rows = await feed(live, audio)
+    assert [r.speaker for r in rows] == ["화자 1", "?", "?", "?", "?"]
+    assert len(embedder.seen) == 4  # 1 success + 3 failures, then off
     out = capsys.readouterr().out
-    assert out.count("live_speaker_failed") == 1
+    assert out.count("live_speaker_failed") == 3
+    assert out.count("live_speaker_unavailable") == 1
+    # The log gets the exception type only -- the fake's failure message
+    # quotes a path on purpose, and it must not survive into the log.
     assert "RuntimeError" in out
     assert "secret" not in out and "/tmp" not in out
 
 
 @pytest.mark.asyncio
-async def test_a_bad_vector_from_the_tracker_also_degrades_the_session(
-    capsys: pytest.CaptureFixture[str],
+async def test_a_row_that_masks_to_nothing_is_dropped_before_labelling(
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """``SpeakerTracker.label`` can raise too -- a zero vector has no
-    direction. That failure must be caught by the same handler as an embedder
-    failure, not escape ``_row`` as an unhandled exception."""
-    embedder = FakeEmbedder(np.zeros(4, dtype=np.float32))
-    live = labelled(saying("안녕하세요"), embedder)
+    """A masker that erases a PII-only utterance must not leave an empty row
+    or let that voice open a cluster."""
+    from autune_audio.live import session as session_module
 
-    rows = await feed(live, two_utterances())
+    monkeypatch.setattr(
+        session_module, "mask", lambda text, *, recogniser=None: types.SimpleNamespace(text="")
+    )
+    embedder = FakeEmbedder(basis(0))
+    live = labelled(saying("010-1234-5678"), embedder)
 
-    assert [r.speaker for r in rows] == ["?", "?"]
-    assert len(embedder.seen) == 1  # switched off after the tracker's failure
-    out = capsys.readouterr().out
-    assert out.count("live_speaker_failed") == 1
-    assert "ValueError" in out
+    rows = await feed(live, np.concatenate([tone(1000), silence(1000)]))
+
+    assert rows == []
+    assert embedder.seen == []
+    assert live.tracker.clusters == 0
 
 
 @pytest.mark.asyncio

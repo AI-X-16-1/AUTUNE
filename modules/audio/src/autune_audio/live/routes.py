@@ -149,10 +149,12 @@ async def live(websocket: WebSocket, meeting_id: str) -> None:
             websocket, protocol.NOT_RECORDABLE, meeting_id=meeting_id, reason=type(exc).__name__
         )
         return
-    except ConfigurationError as exc:
-        # The engine this deployment asked for cannot run here. The status
-        # flip was rolled back with the scope; refuse like a model that
-        # failed to load, and say so in the log by type.
+    except (ConfigurationError, ValueError) as exc:
+        # The engine this deployment asked for cannot run here, or a value
+        # the session's own construction refuses (a ``ValueError`` from the
+        # tracker) -- either way the status flip is rolled back with the
+        # scope; refuse like a model that failed to load, and say so in the
+        # log by type.
         log.warning("live_model_unavailable", error=type(exc).__name__)
         with suppress(WebSocketDisconnect):
             await websocket.send_json(protocol.error("model_unavailable"))

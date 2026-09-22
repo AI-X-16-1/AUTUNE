@@ -14,7 +14,7 @@ import numpy as np
 import pytest
 
 from autune_audio.live import embedder as embedder_module
-from autune_audio.live.embedder import CHECKPOINT, MIN_SECONDS, Embedder
+from autune_audio.live.embedder import CHECKPOINT, MIN_SECONDS, Embedder, EmbedderUnavailable
 from autune_audio.schemas import SAMPLE_RATE, Waveform
 
 Seen = list[dict[str, object]]
@@ -122,6 +122,29 @@ def test_a_missing_model_raises_instead_of_reaching_inference(
     )
     with pytest.raises(RuntimeError):
         Embedder().warm_up()
+
+
+def test_a_failed_load_is_remembered_and_not_retried(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = 0
+
+    def from_pretrained(checkpoint: str, **kwargs: object) -> object:
+        nonlocal calls
+        calls += 1
+        raise OSError("offline")
+
+    fake = types.SimpleNamespace(
+        Inference=object, Model=types.SimpleNamespace(from_pretrained=from_pretrained)
+    )
+    monkeypatch.setitem(sys.modules, "pyannote", types.SimpleNamespace(audio=fake))
+    monkeypatch.setitem(sys.modules, "pyannote.audio", fake)
+    e = Embedder()
+    with pytest.raises(OSError):
+        e.warm_up()
+    with pytest.raises(EmbedderUnavailable) as caught:
+        e.warm_up()
+    assert calls == 1
+    assert caught.value.kind == "OSError"
+    assert "offline" not in str(caught.value)
 
 
 def test_torch_is_not_imported_at_module_scope() -> None:

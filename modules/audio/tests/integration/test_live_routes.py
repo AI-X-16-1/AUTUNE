@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import numpy as np
@@ -331,16 +331,25 @@ def test_a_model_that_cannot_load_is_4503_and_leaves_no_registry_entry(
     assert registry.open_count() == 0
 
 
+def _configuration_error() -> LiveSession:
+    raise ConfigurationError("AUTUNE_AUDIO_LIVE_TRANSCRIBER_IMPL")
+
+
+def _value_error() -> LiveSession:
+    # What the tracker's own guard raises -- e.g. a negative or zero head
+    # count that slipped past settings validation into ``build_session``.
+    raise ValueError("max_speakers must be at least 1")
+
+
+@pytest.mark.parametrize("broken", [_configuration_error, _value_error])
 def test_a_session_that_cannot_be_built_is_4503_and_the_meeting_stays_scheduled(
     client: TestClient,
     meeting: str,
     member: User,
     monkeypatch: pytest.MonkeyPatch,
     db_session: Session,
+    broken: Callable[[], LiveSession],
 ) -> None:
-    def broken() -> LiveSession:
-        raise ConfigurationError("AUTUNE_AUDIO_LIVE_TRANSCRIBER_IMPL")
-
     monkeypatch.setattr(live_routes, "build_session", broken)
     with connect(client, meeting) as ws:
         hello(ws, issue_token(member.id))
