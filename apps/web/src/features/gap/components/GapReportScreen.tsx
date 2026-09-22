@@ -20,6 +20,12 @@ type Tab = "gaps" | "topics";
  * `docs/design/AUTUNE Spec 03 회의 후.dc.html` draws it: a 1280 canvas, a top
  * bar, and the findings beside the checklist they were measured against.
  *
+ * The design is drawn on one canvas width and the screen is not: the rail
+ * stacks under the findings below `lg`. A fixed 400px column beside a
+ * flexible one has no width at which both fit on a phone, and every other
+ * screen in the product already stacks rather than shrink one side to
+ * nothing.
+ *
  * The screen lives in the feature rather than in the route file: `apps/` is
  * assembly, and a page that knew which sections a gap report has and in which
  * order would be module C's screen kept in the team's shared tree. The route
@@ -82,9 +88,15 @@ export function GapReportScreen({ meetingId }: { meetingId: string }) {
         />
       </div>
 
-      <div className="grid min-h-0 flex-1" style={{ gridTemplateColumns: "minmax(0, 1fr) 400px" }}>
+      {/* The rail is 400px wide and does not shrink, so below the `lg`
+          breakpoint it is stacked under the findings rather than beside
+          them. Held side by side it takes the whole viewport at phone
+          width and the findings column collapses to a few dozen pixels —
+          `minmax(0, 1fr)` yields the space instead of overflowing. Same
+          shape as `context/DecisionLineagePanel`. Raised in review of #303. */}
+      <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[minmax(0,1fr)_400px]">
         <div
-          className="border-r border-[var(--color-hairline)]"
+          className="border-b border-[var(--color-hairline)] lg:border-b-0 lg:border-r"
           style={{ padding: "var(--space-24) var(--space-page)" }}
         >
           {tab === "gaps" ? (
@@ -151,12 +163,20 @@ function TopBar({ meetingId, children }: { meetingId: string; children: ReactNod
         paddingInline: "var(--space-page)",
       }}
     >
-      <span className="text-[var(--color-ink-muted)]" style={{ fontSize: "var(--text-meta)" }}>
+      {/* Below `sm` the actions need the whole bar, and a flex row with nothing
+          allowed to shrink just clips every label to a few pixels. What the
+          breadcrumb says is recoverable — the words around the id are constant
+          on this screen — so they are dropped and the id, which is not, keeps
+          the room and truncates. */}
+      <span
+        className="hidden shrink-0 whitespace-nowrap text-[var(--color-ink-muted)] sm:inline"
+        style={{ fontSize: "var(--text-meta)" }}
+      >
         회의
       </span>
-      <span className="text-[var(--color-signal-idle)]">/</span>
+      <span className="hidden shrink-0 text-[var(--color-signal-idle)] sm:inline">/</span>
       <span
-        className="text-[var(--color-ink-strong)]"
+        className="min-w-0 truncate text-[var(--color-ink-strong)]"
         style={{
           fontFamily: "var(--font-mono)",
           fontSize: "var(--text-dataSmall)",
@@ -164,11 +184,16 @@ function TopBar({ meetingId, children }: { meetingId: string; children: ReactNod
       >
         {meetingId}
       </span>
-      <span className="text-[var(--color-ink-muted)]" style={{ fontSize: "var(--text-metaSmall)" }}>
+      <span
+        className="hidden shrink-0 whitespace-nowrap text-[var(--color-ink-muted)] sm:inline"
+        style={{ fontSize: "var(--text-metaSmall)" }}
+      >
         · 갭 리포트
       </span>
       <div className="flex-1" />
-      {children}
+      <div className="flex shrink-0 items-center" style={{ gap: "var(--space-12)" }}>
+        {children}
+      </div>
     </header>
   );
 }
