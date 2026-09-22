@@ -118,6 +118,6 @@ def test_sessions_share_one_embedder(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(routes, "get_settings", lambda: AudioSettings())
     a = routes.build_session()
     b = routes.build_session()
-    assert isinstance(routes._embedder, Embedder)
-    assert a._embedder is b._embedder is routes._embedder
+    assert isinstance(routes._embedder, Embedder)  # noqa: SLF001 - the seam under test
+    assert a._embedder is b._embedder is routes._embedder  # noqa: SLF001
     assert a.tracker is not b.tracker
