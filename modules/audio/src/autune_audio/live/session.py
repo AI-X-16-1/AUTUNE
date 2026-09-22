@@ -20,7 +20,7 @@ import numpy as np
 from autune_audio.config import get_settings
 from autune_audio.live.embedder import Embedder
 from autune_audio.live.segmenter import Segment, Segmenter
-from autune_audio.live.speakers import SpeakerTracker
+from autune_audio.live.speakers import SpeakerTracker, speaker_cap
 from autune_audio.live.transcriber import Transcriber, off_loop
 from autune_audio.masking import EntityRecogniser, mask
 from autune_audio.recognition import get_recogniser
@@ -73,6 +73,7 @@ class LiveSession:
             else SpeakerTracker(
                 threshold=settings.live_speaker_threshold,
                 min_seconds=settings.live_speaker_min_s,
+                max_speakers=speaker_cap(settings),
             )
         )
         self.state: Literal["recording", "paused", "ended"] = "recording"

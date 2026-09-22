@@ -426,11 +426,13 @@ def test_the_default_tracker_reads_the_settings(monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setattr(
         session_module,
         "get_settings",
-        lambda: AudioSettings(live_speaker_threshold=0.42, live_speaker_min_s=2.0),
+        lambda: AudioSettings(
+            live_speaker_threshold=0.42, live_speaker_min_s=2.0, diarization_num_speakers=2
+        ),
     )
     live = session(saying("x"))
     assert live.tracker.threshold == 0.42
-    assert live.tracker.max_speakers is None
+    assert live.tracker.max_speakers == 2
 
 
 @pytest.mark.asyncio
