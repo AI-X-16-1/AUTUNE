@@ -198,11 +198,20 @@ def _sync_action_item_to_notion(action_item_id: str) -> None:
 def _sync_action_item_to_jira(action_item_id: str) -> None:
     """``_sync_action_item_to_notion``'s rules, for Jira (#30).
 
-    A team missing any of ``project_key``, ``issue_type`` or ``base_url`` is
-    skipped the same as one that never connected -- a partially configured
-    workspace should not raise mid-confirmation. Creation itself is held back
-    further, inside ``service.sync_action_item_to_jira``, when the item's
-    assignee has no entry in the team's mapping.
+    A team missing any of ``email``, ``project_key``, ``issue_type`` or
+    ``base_url`` is skipped the same as one that never connected -- a
+    partially configured workspace should not raise mid-confirmation.
+    ``email`` matters as much as the others despite ``JiraClient`` accepting
+    it as a plain string: missing, it still builds a Basic Auth header
+    (``base64(":token")``), Jira answers 401, and that becomes a permanent
+    ``IntegrationError`` this task catches and logs as an ordinary sync
+    failure -- indistinguishable from a real one, on every confirmation,
+    forever (lsh2217's review of #331). Checked by name here instead, so a
+    team that never entered an email gets the same clear
+    ``extraction_jira_not_connected`` skip as one missing anything else.
+    Creation itself is held back further, inside
+    ``service.sync_action_item_to_jira``, when the item's assignee has no
+    entry in the team's mapping.
     """
     try:
         with session_scope() as session:
@@ -212,12 +221,14 @@ def _sync_action_item_to_jira(action_item_id: str) -> None:
                 log.info("extraction_jira_item_gone", action_item_id=action_item_id)
                 return
             config = load_integration(session, meeting.team_id, "jira")
+            email = config.config.get("email") if config is not None else None
             project_key = config.config.get("project_key") if config is not None else None
             issue_type = config.config.get("issue_type") if config is not None else None
             base_url = config.config.get("base_url") if config is not None else None
             if (
                 config is None
                 or not config.secret
+                or not email
                 or not project_key
                 or not issue_type
                 or not base_url
@@ -230,7 +241,7 @@ def _sync_action_item_to_jira(action_item_id: str) -> None:
                 return
             service.sync_action_item_to_jira(
                 session,
-                JiraClient(base_url, config.config.get("email", ""), config.secret),
+                JiraClient(base_url, email, config.secret),
                 action_item_id=action_item_id,
                 project_key=project_key,
                 issue_type=issue_type,

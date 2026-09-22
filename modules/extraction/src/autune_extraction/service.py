@@ -1716,14 +1716,19 @@ def jira_assignee(item: ExtActionItem, assignee_mapping: Mapping[str, str]) -> s
 
     Tried by ``assignee_id`` first -- the stable key, once account linking
     exists (#70) -- and by ``assignee_label`` (the transcript's own name for
-    whoever spoke) only when there is no id to map by. Guessing from the label
-    alone would assign a Jira issue to whichever mapping entry happens to
-    share a name.
+    whoever spoke) only when there is no id at all to map by. **An id present
+    but not (yet) in this team's mapping does not fall through to the label**
+    (lsh2217's review of #331): two people sharing a spoken name or role label
+    -- common with Korean names -- where one has a mapped id and the other's
+    is not mapped yet would otherwise assign the second person's issue to the
+    first person's account. No id, or an id the mapping does not cover
+    either way, is the same answer either way: nothing to send this on, not a
+    guess from whoever else shares the label.
     """
-    if item.assignee_id and item.assignee_id in assignee_mapping:
-        return assignee_mapping[item.assignee_id]
-    if item.assignee_label and item.assignee_label in assignee_mapping:
-        return assignee_mapping[item.assignee_label]
+    if item.assignee_id:
+        return assignee_mapping.get(item.assignee_id)
+    if item.assignee_label:
+        return assignee_mapping.get(item.assignee_label)
     return None
 
 

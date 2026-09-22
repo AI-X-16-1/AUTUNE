@@ -249,9 +249,40 @@ def test_the_label_is_used_when_there_is_no_id(session: Session) -> None:
     assert jira.issues[0]["assignee_account_id"] == "acct_by_label"
 
 
+def test_an_unmapped_id_does_not_fall_back_to_a_colliding_label(session: Session) -> None:
+    """lsh2217's review of #331: two people can share a spoken name/role label
+    -- common with Korean names. If one has a mapped id and the other's id
+    just is not in the mapping yet, the second must not be assigned to the
+    first person's Jira account because their labels happen to match."""
+    jira = FakeJira()
+    row = item(session, assignee_id="user_2", assignee_label="김개발")
+
+    result = sync(
+        session,
+        jira,
+        row.id,
+        assignee_mapping={"user_1": "acct_person_one", "김개발": "acct_person_one"},
+    )
+
+    assert result is None
+    assert jira.issues == []
+
+
 # --- jira_assignee, in isolation --------------------------------------------------
 
 
 def test_jira_assignee_returns_none_with_no_mapping_at_all() -> None:
     row = ExtActionItem(meeting_id=MEETING, description="x", status="todo", confidence=0.9)
     assert service.jira_assignee(row, {}) is None
+
+
+def test_jira_assignee_with_an_unmapped_id_and_a_colliding_label_is_none() -> None:
+    row = ExtActionItem(
+        meeting_id=MEETING,
+        description="x",
+        status="todo",
+        confidence=0.9,
+        assignee_id="user_2",
+        assignee_label="김개발",
+    )
+    assert service.jira_assignee(row, {"김개발": "acct_person_one"}) is None

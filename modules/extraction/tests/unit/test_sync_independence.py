@@ -43,6 +43,7 @@ JIRA_CONFIG = IntegrationConfig(
     team_id="team_1",
     secret="t",
     config={
+        "email": "bot@team.example",
         "project_key": "AUT",
         "issue_type": "Task",
         "base_url": "https://team.atlassian.net",
@@ -211,3 +212,30 @@ def test_a_failed_jira_call_does_not_stop_notion_from_having_already_run(
 
     refs = {r.system for r in wired.scalars(select(ExtExternalRef))}
     assert refs == {"notion"}
+
+
+def test_a_jira_config_missing_only_email_is_skipped_cleanly(
+    wired: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Everything else present, ``email`` alone missing: the same clean skip
+    as a team that never connected Jira at all, not a JiraClient built with
+    an empty email that fails 401 on every confirmation (lsh2217's review of
+    #331) -- a client is never even constructed here."""
+    row = item(wired)
+    wired.commit()
+    no_email = IntegrationConfig(
+        service="jira",
+        team_id="team_1",
+        secret="t",
+        config={k: v for k, v in JIRA_CONFIG.config.items() if k != "email"},
+    )
+    monkeypatch.setattr(tasks, "load_integration", by_service(jira=no_email))
+
+    def must_not_be_called(*_a: object, **_kw: object) -> FakeJira:
+        raise AssertionError("JiraClient was built without an email")
+
+    monkeypatch.setattr(tasks, "JiraClient", must_not_be_called)
+
+    tasks.sync_action_item(row.id)
+
+    assert wired.scalars(select(ExtExternalRef)).all() == []
