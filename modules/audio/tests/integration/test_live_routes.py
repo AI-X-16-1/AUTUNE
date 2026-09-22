@@ -28,6 +28,7 @@ from autune_audio.schemas import SAMPLE_RATE, Transcription, Waveform, Word
 from autune_audio.schemas import Segment as WhisperSegment
 from autune_core import Meeting, TeamMember, User
 from autune_core.auth import issue_token
+from autune_core.errors import ConfigurationError
 
 FRAME = SAMPLE_RATE // 5
 
@@ -109,7 +110,13 @@ def client(
 
     @contextmanager
     def scope():
-        yield db_session
+        # Mirrors ``autune_core.db.session_scope``'s commit/rollback-on-
+        # exception semantics on a SAVEPOINT scoped to this call, so a
+        # failure inside it rolls back only what this scope did (the
+        # ``recording`` flip) -- not the fixtures already flushed into the
+        # test's own outer savepoint before this connection's hello ran.
+        with db_session.begin_nested():
+            yield db_session
 
     monkeypatch.setattr(live_routes, "session_scope", scope)
     monkeypatch.setattr(
@@ -321,6 +328,24 @@ def test_a_model_that_cannot_load_is_4503_and_leaves_no_registry_entry(
         assert ws.receive_json() == {"type": "error", "code": "model_unavailable"}
         assert close_code(ws) == 4503
     assert live_routes._live == {}
+
+
+def test_a_session_that_cannot_be_built_is_4503_and_the_meeting_stays_scheduled(
+    client: TestClient,
+    meeting: str,
+    member: User,
+    monkeypatch: pytest.MonkeyPatch,
+    db_session: Session,
+) -> None:
+    def broken() -> LiveSession:
+        raise ConfigurationError("AUTUNE_AUDIO_LIVE_TRANSCRIBER_IMPL")
+
+    monkeypatch.setattr(live_routes, "build_session", broken)
+    with connect(client, meeting) as ws:
+        hello(ws, issue_token(member.id))
+        assert close_code(ws) == 4503
+    assert db_session.get(Meeting, meeting).status == "scheduled"
+    assert meeting not in live_routes._live
 
 
 def test_no_hello_within_the_timeout_is_4401(

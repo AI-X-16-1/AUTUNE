@@ -33,6 +33,7 @@ from autune_audio.config import get_settings
 from autune_audio.glossary import build_prompt
 from autune_audio.schemas import SAMPLE_RATE, Segment, Transcription, Waveform, Word
 from autune_core import get_logger
+from autune_core.errors import ConfigurationError
 
 log = get_logger(__name__)
 
@@ -52,7 +53,7 @@ def resolve(impl: Impl) -> Literal["faster_whisper", "mlx"]:
     if impl == "auto":
         return "mlx" if mlx_available() else "faster_whisper"
     if impl == "mlx" and not mlx_available():
-        raise RuntimeError(
+        raise ConfigurationError(
             "AUTUNE_AUDIO_LIVE_TRANSCRIBER_IMPL=mlx needs Apple silicon and the extra: "
             "uv sync --package autune-audio --extra mlx"
         )

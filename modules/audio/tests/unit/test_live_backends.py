@@ -15,6 +15,7 @@ import pytest
 from autune_audio.config import AudioSettings
 from autune_audio.live import backends
 from autune_audio.schemas import SAMPLE_RATE, Waveform
+from autune_core.errors import ConfigurationError
 
 
 def test_auto_is_mlx_only_where_it_can_run(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -28,7 +29,7 @@ def test_forcing_mlx_where_it_cannot_run_is_an_error_not_a_fallback(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(backends, "mlx_available", lambda: False)
-    with pytest.raises(RuntimeError, match="extra mlx"):
+    with pytest.raises(ConfigurationError, match="extra mlx"):
         backends.resolve("mlx")
     assert backends.resolve("faster_whisper") == "faster_whisper"
 

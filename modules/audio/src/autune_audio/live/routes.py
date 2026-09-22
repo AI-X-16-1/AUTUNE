@@ -25,7 +25,12 @@ from autune_audio.live.session import LiveSession, TranscribeFailed
 from autune_audio.live.transcriber import Transcriber
 from autune_core import get_logger
 from autune_core.db import session_scope
-from autune_core.errors import ConflictError, NotFoundError, PermissionDeniedError
+from autune_core.errors import (
+    ConfigurationError,
+    ConflictError,
+    NotFoundError,
+    PermissionDeniedError,
+)
 
 log = get_logger(__name__)
 
@@ -36,16 +41,27 @@ class _AlreadyLiveError(ConflictError):
     """A second hello for a meeting this process is already recording."""
 
 
-_transcriber = Transcriber()
+_transcriber: Transcriber | None = None
+"""Built by the first session, not at import: ``Transcriber()`` resolves the
+engine from settings, and a value that cannot run here (``mlx`` off Apple
+silicon) must refuse one socket with 4503, not stop the API from starting
+(``ConfigurationError``: "at the point of use, not at import")."""
 _live: dict[str, LiveSession] = {}
 """Open sessions by meeting id. One per meeting; a second hello is refused."""
+
+
+def shared_transcriber() -> Transcriber:
+    global _transcriber  # noqa: PLW0603 - one model per process, by design
+    if _transcriber is None:
+        _transcriber = Transcriber()
+    return _transcriber
 
 
 def build_session() -> LiveSession:
     """A fresh session on the process-wide transcriber. Tests replace this."""
     return LiveSession(
         segmenter=Segmenter(min_silence_ms=get_settings().live_min_silence_ms),
-        transcriber=_transcriber,
+        transcriber=shared_transcriber(),
     )
 
 
@@ -80,7 +96,12 @@ async def live(websocket: WebSocket, meeting_id: str) -> None:
             if meeting_id in _live:
                 raise _AlreadyLiveError("a live session is already open for this meeting")
             service.begin_live(db, meeting_id=meeting_id)
-        session = build_session()
+            # Inside the scope on purpose: a session that cannot be built
+            # (engine misconfigured, a setting the tracker refuses) raises
+            # here and the scope rolls ``recording`` back with it. Nothing
+            # below awaits before the claim, so the atomicity comment above
+            # still holds.
+            session = build_session()
         _live[meeting_id] = session
     except service.NotATeamMemberError as exc:
         # A real user, just not one this meeting's team recognises --
@@ -112,6 +133,15 @@ async def live(websocket: WebSocket, meeting_id: str) -> None:
         # different message for the person than "someone else is recording".
         await _refuse(
             websocket, protocol.NOT_RECORDABLE, meeting_id=meeting_id, reason=type(exc).__name__
+        )
+        return
+    except ConfigurationError as exc:
+        # The engine this deployment asked for cannot run here. The status
+        # flip was rolled back with the scope; refuse like a model that
+        # failed to load, and say so in the log by type.
+        log.warning("live_model_unavailable", error=type(exc).__name__)
+        await _refuse(
+            websocket, protocol.MODEL_UNAVAILABLE, meeting_id=meeting_id, reason=type(exc).__name__
         )
         return
     except WebSocketDisconnect:
