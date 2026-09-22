@@ -70,7 +70,16 @@ def main() -> int:
     parser.add_argument("--speakers", type=int, default=None, help="head count for the capped run")
     parser.add_argument("--cache", type=Path, default=None, help=".npz of vectors and bounds")
     parser.add_argument("--thresholds", default="0.40,0.45,0.50,0.55,0.60,0.65,0.70,0.75,0.80")
+    parser.add_argument(
+        "--min-seconds",
+        type=float,
+        default=None,
+        help="utterances shorter than this may not open a cluster (default: the deployed setting)",
+    )
     args = parser.parse_args()
+    min_seconds = (
+        args.min_seconds if args.min_seconds is not None else get_settings().live_speaker_min_s
+    )
 
     if args.cache is not None and args.cache.exists():
         data = np.load(args.cache)
@@ -94,6 +103,7 @@ def main() -> int:
 
     print(
         f"utterances {len(seconds)}, scored {sum(t is not None for t in truth)}, "
+        f"min_seconds {min_seconds}, "
         f"embed per utterance mean {np.mean(costs) * 1000:.0f} ms, "
         f"max {np.max(costs) * 1000:.0f} ms"
     )
@@ -101,7 +111,12 @@ def main() -> int:
     print("| threshold | capped | clusters | purity | completeness |")
     print("| --- | --- | --- | --- | --- |")
     for score in sweep(
-        list(vectors), seconds, truth, thresholds=thresholds, max_speakers=args.speakers
+        list(vectors),
+        seconds,
+        truth,
+        thresholds=thresholds,
+        max_speakers=args.speakers,
+        min_seconds=min_seconds,
     ):
         print(
             f"| {score.threshold:.2f} | {'yes' if score.capped else 'no'} | {score.clusters} "

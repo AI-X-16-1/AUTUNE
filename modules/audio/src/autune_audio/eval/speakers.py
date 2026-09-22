@@ -72,8 +72,11 @@ def simulate(
     *,
     threshold: float,
     max_speakers: int | None,
+    min_seconds: float,
 ) -> list[str]:
-    tracker = SpeakerTracker(threshold=threshold, max_speakers=max_speakers)
+    tracker = SpeakerTracker(
+        threshold=threshold, min_seconds=min_seconds, max_speakers=max_speakers
+    )
     return [tracker.label(v, s) for v, s in zip(vectors, seconds, strict=True)]
 
 
@@ -110,12 +113,15 @@ def sweep(
     *,
     thresholds: Sequence[float],
     max_speakers: int | None,
+    min_seconds: float,
 ) -> list[Score]:
     caps: list[int | None] = [None] if max_speakers is None else [None, max_speakers]
     scores = []
     for threshold in thresholds:
         for cap in caps:
-            labels = simulate(vectors, seconds, threshold=threshold, max_speakers=cap)
+            labels = simulate(
+                vectors, seconds, threshold=threshold, max_speakers=cap, min_seconds=min_seconds
+            )
             scores.append(
                 Score(
                     threshold=threshold,

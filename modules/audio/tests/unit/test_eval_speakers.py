@@ -38,15 +38,31 @@ def test_the_midpoint_decides_the_reference_speaker() -> None:
 
 def test_simulate_replays_the_tracker_in_order() -> None:
     vectors = [basis(0), basis(1), basis(0)]
-    assert simulate(vectors, [3.0, 3.0, 3.0], threshold=0.6, max_speakers=None) == [
+    assert simulate(
+        vectors, [3.0, 3.0, 3.0], threshold=0.6, max_speakers=None, min_seconds=1.0
+    ) == [
         "화자 1",
         "화자 2",
         "화자 1",
     ]
-    assert simulate(vectors, [3.0, 3.0, 3.0], threshold=0.6, max_speakers=1) == [
+    assert simulate(vectors, [3.0, 3.0, 3.0], threshold=0.6, max_speakers=1, min_seconds=1.0) == [
         "화자 1",
         "화자 1",
         "화자 1",
+    ]
+
+
+def test_simulate_honours_min_seconds() -> None:
+    vectors = [basis(0), basis(1)]
+    # A 0.5 s second utterance may not open a cluster at min_seconds=1.0 …
+    assert simulate(vectors, [3.0, 0.5], threshold=0.6, max_speakers=None, min_seconds=1.0) == [
+        "화자 1",
+        "화자 1",
+    ]
+    # … and may at min_seconds=0.2.
+    assert simulate(vectors, [3.0, 0.5], threshold=0.6, max_speakers=None, min_seconds=0.2) == [
+        "화자 1",
+        "화자 2",
     ]
 
 
@@ -75,7 +91,7 @@ def test_sweep_reports_every_threshold_capped_and_not() -> None:
     vectors = [basis(0), basis(1), basis(0), basis(1)]
     seconds = [3.0] * 4
     truth = ["A", "B", "A", "B"]
-    scores = sweep(vectors, seconds, truth, thresholds=[0.5, 0.9], max_speakers=2)
+    scores = sweep(vectors, seconds, truth, thresholds=[0.5, 0.9], max_speakers=2, min_seconds=1.0)
     assert [(s.threshold, s.capped) for s in scores] == [
         (0.5, False),
         (0.5, True),
