@@ -86,17 +86,16 @@ class Transcriber:
         await anyio.to_thread.run_sync(guarded)
 
     async def run(self, waveform: Waveform) -> Transcription:
-        def guarded() -> Transcription:
-            with _LOCK:
-                started = time.monotonic()
-                transcription = self._transcribe(waveform)
-                # Audio length in, decode time out: the number a "why is it
-                # slow" question needs, and nothing that is in the audio.
-                log.info(
-                    "live_decode",
-                    audio_s=round(waveform.duration, 1),
-                    decode_s=round(time.monotonic() - started, 2),
-                )
-                return transcription
+        def decode() -> Transcription:
+            started = time.monotonic()
+            transcription = self._transcribe(waveform)
+            # Audio length in, decode time out: the number a "why is it
+            # slow" question needs, and nothing that is in the audio.
+            log.info(
+                "live_decode",
+                audio_s=round(waveform.duration, 1),
+                decode_s=round(time.monotonic() - started, 2),
+            )
+            return transcription
 
-        return await anyio.to_thread.run_sync(guarded)
+        return await off_loop(decode)
