@@ -67,9 +67,13 @@ class LiveSession:
         # the process-wide embedder; a session whose embedder fails sets this
         # back to None and goes on without labels.
         self._embedder = embedder
-        self._tracker = tracker or SpeakerTracker(
-            threshold=settings.live_speaker_threshold,
-            min_seconds=settings.live_speaker_min_s,
+        self._tracker = (
+            tracker
+            if tracker is not None
+            else SpeakerTracker(
+                threshold=settings.live_speaker_threshold,
+                min_seconds=settings.live_speaker_min_s,
+            )
         )
         self.state: Literal["recording", "paused", "ended"] = "recording"
         self.rows_sent = 0
@@ -176,10 +180,11 @@ class LiveSession:
 
     async def _label(self, segment: Segment) -> str:
         """``화자 N`` from the voice, or ``NO_SPEAKER`` when there is no
-        embedder. The first failure switches the embedder off for the
-        session: paying the cost on every row would buy the same answer, and
-        the exception type is all the log gets -- pyannote errors can quote
-        paths."""
+        embedder. The first failure -- the embedding or the tracker's own
+        clustering, e.g. a zero vector or a dimension mismatch -- switches
+        the embedder off for the session: paying the cost on every row would
+        buy the same answer, and the exception type is all the log gets --
+        pyannote errors can quote paths."""
         if self._embedder is None:
             return NO_SPEAKER
         embedder = self._embedder
@@ -189,8 +194,8 @@ class LiveSession:
 
         try:
             vector = await off_loop(embed)
+            return self._tracker.label(vector, segment.end - segment.start)
         except Exception as exc:
             log.warning("live_speaker_failed", error=type(exc).__name__)
             self._embedder = None
             return NO_SPEAKER
-        return self._tracker.label(vector, segment.end - segment.start)

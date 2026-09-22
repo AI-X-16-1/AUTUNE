@@ -327,6 +327,25 @@ async def test_a_dropped_row_does_not_reach_the_tracker() -> None:
 
 
 @pytest.mark.asyncio
+async def test_an_empty_transcription_never_reaches_the_embedder() -> None:
+    def nothing(waveform: Waveform) -> Transcription:
+        return Transcription(
+            segments=(WhisperSegment(start=0.0, end=waveform.duration, text="  ", words=()),),
+            language="ko",
+            language_probability=1.0,
+            duration=waveform.duration,
+        )
+
+    embedder = FakeEmbedder(basis(0))
+    live = labelled(Transcriber(transcribe=nothing, warm_up=lambda: None), embedder)
+
+    rows = await feed(live, np.concatenate([tone(1000), silence(1000)]))
+
+    assert rows == []
+    assert embedder.seen == []
+
+
+@pytest.mark.asyncio
 async def test_no_embedder_means_the_degraded_label() -> None:
     live = labelled(saying("안녕하세요"), None)
     rows = await feed(live, two_utterances())
@@ -352,6 +371,25 @@ async def test_an_embedding_failure_degrades_the_rest_of_the_session(
 
 
 @pytest.mark.asyncio
+async def test_a_bad_vector_from_the_tracker_also_degrades_the_session(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``SpeakerTracker.label`` can raise too -- a zero vector has no
+    direction. That failure must be caught by the same handler as an embedder
+    failure, not escape ``_row`` as an unhandled exception."""
+    embedder = FakeEmbedder(np.zeros(4, dtype=np.float32))
+    live = labelled(saying("안녕하세요"), embedder)
+
+    rows = await feed(live, two_utterances())
+
+    assert [r.speaker for r in rows] == ["?", "?"]
+    assert len(embedder.seen) == 1  # switched off after the tracker's failure
+    out = capsys.readouterr().out
+    assert out.count("live_speaker_failed") == 1
+    assert "ValueError" in out
+
+
+@pytest.mark.asyncio
 async def test_warm_up_that_cannot_load_the_embedder_still_leaves_the_channel_up(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -359,12 +397,18 @@ async def test_warm_up_that_cannot_load_the_embedder_still_leaves_the_channel_up
         def warm_up(self) -> None:
             raise ImportError("pyannote")
 
-    live = labelled(saying("안녕하세요"), Broken())
+    embedder = Broken()
+    live = labelled(saying("안녕하세요"), embedder)
     await live.warm_up()
     rows = await feed(live, np.concatenate([tone(1000), silence(1000)]))
 
     assert [r.speaker for r in rows] == ["?"]
-    assert "live_speaker_unavailable" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "live_speaker_unavailable" in out
+    # The switch-off happened at warm-up, not at the first row: the embedder
+    # is never even asked to embed, and the row's own failure path is silent.
+    assert embedder.seen == []
+    assert "live_speaker_failed" not in out
 
 
 @pytest.mark.asyncio
@@ -387,3 +431,33 @@ def test_the_default_tracker_reads_the_settings(monkeypatch: pytest.MonkeyPatch)
     live = session(saying("x"))
     assert live.tracker.threshold == 0.42
     assert live.tracker.max_speakers is None
+
+
+@pytest.mark.asyncio
+async def test_the_default_tracker_also_reads_the_minimum_seconds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``live_speaker_min_s`` must reach the tracker too, not just
+    ``live_speaker_threshold`` -- proved behaviourally: two very different
+    (orthogonal) vectors from utterances shorter than ``min_s`` still land on
+    the same cluster, because a short utterance takes the nearest label
+    instead of opening a new one."""
+    from autune_audio.config import AudioSettings
+    from autune_audio.live import session as session_module
+
+    monkeypatch.setattr(
+        session_module,
+        "get_settings",
+        lambda: AudioSettings(live_speaker_threshold=0.55, live_speaker_min_s=2.0),
+    )
+    embedder = FakeEmbedder(basis(0), basis(1))
+    live = LiveSession(
+        segmenter=Segmenter(speech_probability=energy, min_silence_ms=700),
+        transcriber=saying("안녕하세요"),
+        embedder=embedder,
+    )
+
+    rows = await feed(live, two_utterances())  # each utterance is ~1 second
+
+    assert [r.speaker for r in rows] == ["화자 1", "화자 1"]
+    assert live.tracker.clusters == 1
