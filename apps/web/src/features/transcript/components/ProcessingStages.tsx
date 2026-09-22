@@ -103,8 +103,9 @@ export function ProcessingStages({ meeting }: { meeting: MeetingDetail }) {
           className="mt-3 text-[var(--color-ink-muted)]"
           style={{ fontSize: "var(--text-meta)" }}
         >
-          이 페이지를 떠나도 처리는 계속됩니다. 단계별 진행률은 아직 제공되지
-          않아 회의 상태로 표시합니다.
+          {meeting.status === "recording"
+            ? "녹음 중인 브라우저가 올리면 처리가 시작됩니다."
+            : "이 페이지를 떠나도 처리는 계속됩니다. 단계별 진행률은 아직 제공되지 않아 회의 상태로 표시합니다."}
         </p>
       )}
     </section>
