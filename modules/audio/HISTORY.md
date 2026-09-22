@@ -223,6 +223,25 @@ What the threshold sweep reports, and the value it settles on, goes in
 `docs/modules/audio-evaluations/04-live-speakers.md` when the owner has run
 it; this entry is updated then.
 
+**2026-09-22.** Review on PR #328 found five things worth fixing before this
+merges, none of them numbers. The centroid was a repeatedly renormalised
+running mean, which drifts toward whichever vectors joined a cluster first;
+`Cluster` now keeps the raw summed vector and reads the mean off it fresh
+each time, so it is exact regardless of join order. Nothing guarded against a
+NaN or zero-norm vector reaching a centroid and poisoning every later
+similarity score; one `unit()` function, shared by the tracker and the
+embedder, now refuses one. The live and stored paths each re-derived the
+speaker head count from the same three settings independently, which is two
+places to get the precedence wrong; `AudioSettings.speaker_bounds()` is now
+the one place, and the `diarization_*_speakers` fields are validated
+`ge=1` at settings load instead of failing confusingly later. A failed
+embedding used to cost the rest of the session's labels after one bad
+vector; it now costs one row, and only three failures in a row switch
+labelling off. And the embedder shared the transcriber's lock, so a slow
+embedding could hold up another meeting's decode; it has its own lock now,
+and a load failure is remembered so a hopeless model is not retried on every
+connection.
+
 ---
 
 ## 3. Decisions, and the ones that reversed
