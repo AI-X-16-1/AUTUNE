@@ -67,7 +67,14 @@ agreement, and sync the result to Notion and Jira.
    first, then the speaker gets a Slack DM. Until the DM goes out the row is
    *not asked* and `AmbiguousAgreement.confirmation_sent` is false; sending
    needs the speaker's Slack account (#70) and a team Slack client (#30).
-7. **Sync** — create Notion pages and Jira issues, storing the returned URLs.
+7. **Sync** — when a person confirms an action item (moves it out of
+   `needs_confirmation`), create one page for it in the team's Notion database
+   and store the URL in `ext_external_refs` (#30). One page per item, whatever
+   happens to it afterwards; a team without Notion connected is skipped. Not
+   part of the extraction run: nothing the model drafted is confirmed yet (#246).
+   A decision goes the same way when a person confirms it (or adds it), to the
+   team's decision database, in the wording they confirmed
+   (`ext_decision_refs`). Jira is not synced yet.
 8. **Publish** — emit `ExtractionResult`.
 
 Classification runs before reference resolution, which is worth stating because
@@ -100,7 +107,8 @@ the overlap the question turns on.
 | `ext_action_items` | Assignee, description, due date, status, origin |
 | `ext_action_item_sources` | Which utterances an item came from |
 | `ext_edit_events` | One row per correction. Counts only — no person on it |
-| `ext_external_refs` | Notion and Jira URLs per action item |
+| `ext_external_refs` | The Notion page an action item became, one per item and system |
+| `ext_decision_refs` | The Notion page a confirmed decision became, one per decision and system |
 | `ext_confirmations` | Every ambiguous agreement, the DM once sent, and the response |
 | `ext_decisions` | Decision entities, their statements and source utterances. `origin` is `model` or `user`; a rerun rebuilds only the model's |
 | `ext_decision_sources` | Which utterances a decision was settled in, in order |
@@ -160,7 +168,7 @@ other module's tables.
 | PATCH | `/action-items/{id}` | Edit or close an item |
 | POST | `/action-items` | Add an item the model missed |
 | DELETE | `/action-items/{id}` | Delete an item the model got wrong |
-| POST | `/results/{meeting_id}/sync` | Re-sync to Notion and Jira |
+| POST | `/results/{meeting_id}/sync` | Re-sync to Notion and Jira — not built; confirming an item syncs it |
 | GET | `/reviews/{meeting_id}` | What needs a person before anything is sent: decisions with their verdict, weak assents with their DM state, items still `needs_confirmation` or below the candidate line (S15, #246) |
 | POST | `/decisions` | Add a decision the model missed. Confirmed, and kept through reruns |
 | PATCH | `/decisions/{id}` | Confirm, reject, reword, or put back to pending |
@@ -172,7 +180,8 @@ other module's tables.
 | Task | Trigger | Queue |
 | --- | --- | --- |
 | `autune.extraction.on_transcript_ready` | `autune.transcript.ready` | `cpu_heavy` |
-| `autune.extraction.sync_external` | After extraction, or manual | `default` |
+| `autune.extraction.sync_action_item` | A person confirms an action item (`PATCH /action-items/{id}` out of `needs_confirmation`). Today it runs in the API process right after the response, as a FastAPI background task — apps/api builds no Celery app to queue it on | `default` |
+| `autune.extraction.sync_decision` | A person confirms a decision (`PATCH /decisions/{id}` to `confirmed`) or adds one (`POST /decisions`). Runs in the API process after the response, like `sync_action_item` | `default` |
 | `autune.extraction.send_confirmations` | After extraction | `default` |
 
 ## Slack surface
@@ -186,7 +195,7 @@ other module's tables.
 | Component | Model |
 | --- | --- |
 | Utterance classification | `kakaobank/kf-deberta-base` (DeBERTa, [MIT](https://huggingface.co/kakaobank/kf-deberta-base)), fine-tuned |
-| Agreement verification | NLI model |
+| Agreement verification | `klue/roberta-base` fine-tuned on KorNLI ([CC BY-SA 4.0](https://github.com/kakaobrain/kor-nlu-datasets) training data, server-only — #172) |
 | Reference resolution, report generation | LLM |
 | Due-date parsing | Rule-based Korean date parser plus LLM fallback |
 

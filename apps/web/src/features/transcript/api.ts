@@ -1,5 +1,5 @@
 /** Calls to /api/audio. This feature calls no other module's endpoints. */
-import { api } from "@/shared/api/client";
+import { api, authHeaders } from "@/shared/api/client";
 
 export { api };
 
@@ -16,7 +16,7 @@ import type { MeetingDetail, TeamSummary, Utterance } from "./types";
  * task finishes, so this returns nothing until the meeting is processed and
  * cannot show a recording as it happens. `audio.md` gives that to a live
  * channel that goes straight to the screen, "never through a contract or an
- * event", and that channel does not exist yet.
+ * event" — `liveSocketUrl` below.
  *
  * `Utterance[]`, not `TranscriptReady`: that payload is the announcement A
  * publishes once, and a consumer is required to check
@@ -25,25 +25,19 @@ import type { MeetingDetail, TeamSummary, Utterance } from "./types";
  * so no mirror is hand-written here.
  */
 export const getTranscript = (meetingId: string) =>
-  api.audio<Utterance[]>(`/transcripts/${meetingId}`, {
-    headers: authHeaders(),
-  });
+  api.audio<Utterance[]>(`/transcripts/${meetingId}`);
 
 /** A meeting's own row: title, status, and the two privacy flags. What S12 polls. */
 export const getMeeting = (meetingId: string) =>
-  api.audio<MeetingDetail>(`/meetings/${meetingId}`, {
-    headers: authHeaders(),
-  });
+  api.audio<MeetingDetail>(`/meetings/${meetingId}`);
 
 /** The teams this person may open a meeting for. Feeds `createMeeting`. */
-export const listTeams = () =>
-  api.audio<TeamSummary[]>("/teams", { headers: authHeaders() });
+export const listTeams = () => api.audio<TeamSummary[]>("/teams");
 
 /** Open a meeting before there is any audio for it (S06, the file-upload path). */
 export const createMeeting = (body: { title: string; team_id: string }) =>
   api.audio<{ meeting_id: string; status: string }>("/meetings", {
     method: "POST",
-    headers: authHeaders(),
     body: JSON.stringify(body),
   });
 
@@ -59,7 +53,6 @@ export const attestConsent = (meetingId: string) =>
     `/meetings/${meetingId}/consent`,
     {
       method: "POST",
-      headers: authHeaders(),
       body: JSON.stringify({ attested: true }),
     },
   );
@@ -102,31 +95,22 @@ export async function uploadRecording(meetingId: string, file: File) {
 /** Mirrors `BASE` in `@/shared/api/client`, which is not exported. See `uploadRecording`. */
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
-/** Where a developer's browser keeps its token. Set by hand; see environments.md. */
-const TOKEN_KEY = "autune.token";
-
 /**
- * The bearer token this browser holds, or null.
+ * The bearer token this browser holds, or null — for the live socket only.
  *
- * Two sources, in order: `localStorage["autune.token"]`, pasted in by hand,
- * then `NEXT_PUBLIC_AUTUNE_DEV_TOKEN`, inlined at build time. Both come from
- * `POST /api/audio/dev/token` (local only). This is not the sign-in design
- * (#156, #189); when the shared client carries the header, this goes.
+ * A `WebSocket` cannot carry request headers, so the live channel sends the
+ * token in its `hello` frame instead (`useLiveSession`). That needs the raw
+ * value, which `authHeaders()` wraps.
+ *
+ * Read back out of `authHeaders()` rather than from `localStorage` again: the
+ * shared client is the one place that decides where a token comes from, and
+ * #286 moved it there precisely so a second copy could not drift from it. A
+ * second reader of `localStorage["autune.token"]` here would be that copy.
+ * When #189 replaces the dev token, this follows it with no change.
  */
 export function getToken(): string | null {
-  let token: string | null = null;
-  try {
-    if (typeof window !== "undefined")
-      token = window.localStorage.getItem(TOKEN_KEY);
-  } catch {
-    // Private mode or blocked storage. Fall through to the build-time value.
-  }
-  return token ?? process.env.NEXT_PUBLIC_AUTUNE_DEV_TOKEN ?? null;
-}
-
-function authHeaders(): HeadersInit {
-  const token = getToken();
-  return token ? { authorization: `Bearer ${token}` } : {};
+  const header = (authHeaders() as Record<string, string>).authorization;
+  return header?.startsWith("Bearer ") ? header.slice("Bearer ".length) : null;
 }
 
 /** The API's origin, for the one URL that cannot go through `request()`: the live socket. */

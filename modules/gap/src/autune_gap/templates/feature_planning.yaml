@@ -25,6 +25,7 @@ items:
     weight: 0.8
     keywords: ["성능", "응답", "지연", "레이턴시", "처리량", "부하", "latency", "p95"]
     question: "이 기능이 만족해야 하는 응답 시간과 처리량은 얼마입니까?"
+    question_about: "{topic}의 응답 시간과 처리량 목표는 얼마입니까?"
 
   - key: cold_start
     category: risk
@@ -32,6 +33,7 @@ items:
     weight: 0.8
     keywords: ["초기", "콜드", "신규", "데이터가 없", "처음", "빈 상태", "cold"]
     question: "데이터가 아직 없는 사용자에게 이 기능은 무엇을 보여줍니까?"
+    question_about: "{topic}에서 데이터가 아직 없는 사용자에게는 무엇을 보여줍니까?"
 
   - key: rollout
     category: next_step
@@ -39,6 +41,7 @@ items:
     weight: 0.7
     keywords: ["롤아웃", "배포", "실험", "ab", "점진", "단계적", "플래그"]
     question: "이 기능을 누구에게 먼저 열고, 효과는 어떻게 확인합니까?"
+    question_about: "{topic}의 롤아웃 대상과 효과 확인 방법은 무엇입니까?"
 
   - key: error_handling
     category: risk
@@ -46,6 +49,7 @@ items:
     weight: 0.7
     keywords: ["에러", "오류", "실패", "예외", "타임아웃", "재시도", "폴백"]
     question: "이 기능이 실패했을 때 사용자에게 무엇이 보입니까?"
+    question_about: "{topic}에서 실패가 났을 때 사용자에게 무엇이 보입니까?"
 
   - key: privacy_impact
     category: privacy
@@ -53,3 +57,4 @@ items:
     weight: 0.9
     keywords: ["개인정보", "프라이버시", "동의", "보관", "삭제", "마스킹", "수집"]
     question: "이 기능은 어떤 데이터를 새로 쓰고, 그 근거와 보관 기간은 무엇입니까?"
+    question_about: "{topic}에서 새로 쓰는 데이터와 그 보관 기간은 무엇입니까?"
