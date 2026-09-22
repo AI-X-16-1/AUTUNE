@@ -195,7 +195,7 @@ other module's tables.
 | Component | Model |
 | --- | --- |
 | Utterance classification | `kakaobank/kf-deberta-base` (DeBERTa, [MIT](https://huggingface.co/kakaobank/kf-deberta-base)), fine-tuned |
-| Agreement verification | NLI model |
+| Agreement verification | `klue/roberta-base` fine-tuned on KorNLI ([CC BY-SA 4.0](https://github.com/kakaobrain/kor-nlu-datasets) training data, server-only — #172) |
 | Reference resolution, report generation | LLM |
 | Due-date parsing | Rule-based Korean date parser plus LLM fallback |
 

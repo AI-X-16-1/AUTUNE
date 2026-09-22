@@ -9,6 +9,7 @@ Never imports another module.
 from __future__ import annotations
 
 from collections.abc import Collection, Iterable, Mapping, Sequence
+from dataclasses import replace
 from datetime import UTC, date, datetime
 from typing import Any, Protocol
 
@@ -46,7 +47,7 @@ from .models import (
     ExtEditEvent,
     ExtExternalRef,
 )
-from .pipeline.base import Classifier
+from .pipeline.base import Classifier, NliModel
 from .schemas import (
     ActionItemCreate,
     ActionItemDetail,
@@ -1045,6 +1046,105 @@ def classify_utterances(
     ]
 
 
+# --- step 4: NLI verification --------------------------------------------------
+
+
+COMMITMENT_HYPOTHESIS = "화자가 이 일을 하겠다고 약속했다"
+"""The one hypothesis every ``ambiguous`` utterance is checked against
+(#12). Not per-utterance: #12 names this exact sentence, and a hypothesis
+that changed per input would make two utterances' NLI scores incomparable."""
+
+_NLI_CHECKED_KINDS = (UtteranceKind.AMBIGUOUS,)
+"""What step 4 re-checks -- **promotion only**, not demotion. A first version
+of this also moved a ``commitment`` row the other way, to ``ambiguous``, on a
+non-entailed score; mkkim68's review of #330 found the demotion side unsafe
+to ship yet and it was narrowed to this:
+
+Demoting a ``commitment`` currently deletes it from the person's view with
+nothing to replace it. ``build_action_items`` stops drafting a card for it
+(it is no longer ``commitment``), and step 6 -- the confirmation DM
+``ambiguous`` rows are supposed to get -- does not exist yet (blocked on
+#70, #30; see ``tasks.py``'s own TODO). The item does not move to a
+different queue; it disappears from both. Promotion has no such gap: an
+``ambiguous`` row gaining a card is pure addition, nothing was showing for
+it before.
+
+This also cuts against ADR 0006's own ranking -- recall over precision,
+because a wrong item costs a click and a missing one costs re-reading the
+whole meeting -- on evidence that does not clear the bar for that trade:
+#172's measured accuracy (dev 0.8185, held-out **XNLI** test 0.8273) is
+zero-shot-transferred to meeting Korean and this module's own hypothesis
+sentence, neither of which #172 measured.
+
+Revisit demotion once step 6 exists (so a demoted row lands somewhere a
+person can still see it) or once #10 measures this hypothesis on meeting
+speech specifically."""
+
+
+def verify_utterances(
+    nli: NliModel, classified: Sequence[ClassifiedUtterance]
+) -> list[ClassifiedUtterance]:
+    """Step 4: NLI over ambiguous agreement (#12).
+
+    Takes no session, on purpose -- same reason as ``classify_utterances``:
+    this is model inference, and the caller runs it before opening a
+    transaction, not inside one.
+
+    Entailment moves an ``ambiguous`` row to ``commitment`` -- the speaker
+    actually promised it, so it belongs in ``build_action_items`` and not in
+    a confirmation DM. Neutral or contradiction leaves it ``ambiguous``,
+    unchanged but for ``nli_verified=True``: #12's confirmation DM is the
+    answer for weak assent that NLI also could not read as a promise. A
+    ``commitment`` row is never re-checked -- see ``_NLI_CHECKED_KINDS``.
+
+    ``confidence`` moves with a promotion, to NLI's own entailment
+    probability, rather than the 5-way classifier's now-stale confidence in
+    ``ambiguous``: a caller reading confidence afterward (ADR 0006's
+    candidate threshold, ``build_action_items``) should read how sure the
+    *last* model to look at this row was, not the first. A row NLI leaves
+    ``ambiguous`` keeps the classifier's own confidence -- nothing about the
+    5-way classifier's ambiguous-probability became stale, since the kind
+    did not change. **This means a ``commitment`` row's ``confidence`` is
+    the classifier's own (5-way softmax) unless it was promoted here, in
+    which case it is NLI's (3-way softmax) -- the two are not the same
+    distribution and are not directly comparable. #10's eventual
+    ``candidate_confidence`` measurement has to either treat them
+    separately or establish that one calibrates against the other; neither
+    is done today, and the threshold stays unset (blank by default) until
+    it is.**
+
+    Every other kind, and anything the classifier called none, passes through
+    with its original ``ClassifiedUtterance`` untouched.
+    """
+    targets = [u for u in classified if u.kind in _NLI_CHECKED_KINDS]
+    if not targets:
+        return list(classified)
+
+    pairs = [(u.text, COMMITMENT_HYPOTHESIS) for u in targets]
+    scores = nli.classify(pairs)
+    if len(scores) != len(targets):
+        # The Protocol promises one per input, in order; zipping a short list
+        # would verify the wrong utterances without an error.
+        raise ValueError(f"asked for {len(targets)} NLI results, the model returned {len(scores)}")
+
+    promoted: dict[str, ClassifiedUtterance] = {
+        utterance.id: replace(
+            utterance, kind=UtteranceKind.COMMITMENT, confidence=score.entailment, nli_verified=True
+        )
+        for utterance, score in zip(targets, scores, strict=True)
+        if score.label == "entailment"
+    }
+    checked = {u.id for u in targets} - promoted.keys()
+    return [
+        promoted[utterance.id]
+        if utterance.id in promoted
+        else replace(utterance, nli_verified=True)
+        if utterance.id in checked
+        else utterance
+        for utterance in classified
+    ]
+
+
 def store_classifications(
     session: Session,
     *,
@@ -1070,7 +1170,7 @@ def store_classifications(
             kind=utterance.kind.value,
             confidence=utterance.confidence,
             model_version=model_version,
-            nli_verified=False,
+            nli_verified=utterance.nli_verified,
         )
         for utterance in utterances
         if utterance.kind is not None

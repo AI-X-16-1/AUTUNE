@@ -15,7 +15,7 @@ from autune_integrations import IntegrationError, NotionClient
 
 from . import service
 from .models import ExtActionItem, ExtDecision
-from .pipeline.registry import get_classifier
+from .pipeline.registry import get_classifier, get_nli
 
 log = get_logger(__name__)
 
@@ -31,15 +31,16 @@ def on_transcript_ready(payload: dict) -> None:
     ``shared_task`` binds to whichever Celery app is running, so this module
     never imports apps/worker.
 
-    Classification happens between two sessions, never inside one -- it is
-    minutes of inference, and a transaction held around it holds a connection
-    and its locks for all of them (``service.classify_utterances``). The first
-    session only reads which utterances belong to a speaker who consented
-    (privacy.md section 5); nobody else's speech reaches the classifier. The
-    writes that follow share one transaction: classifications, decisions and
-    draft items come from the same predictions, and a meeting holding one run's
-    labels and another run's items is not a state anything downstream should be
-    able to read.
+    Classification, then NLI, happen between two sessions, never inside one --
+    both are model inference, and a transaction held around them holds a
+    connection and its locks for all of that time (``service.classify_utterances``,
+    ``service.verify_utterances``). The first session only reads which
+    utterances belong to a speaker who consented (privacy.md section 5);
+    nobody else's speech reaches either model. The writes that follow share
+    one transaction: classifications, decisions and draft items all come from
+    the same NLI-verified predictions, and a meeting holding one run's labels
+    and another run's items is not a state anything downstream should be able
+    to read.
 
     Safe to run twice. Every write replaces the meeting's model-made rows rather
     than adding to them, so a redelivered task ends where the first one did --
@@ -75,6 +76,7 @@ def on_transcript_ready(payload: dict) -> None:
 
     classifier = get_classifier()
     classified = service.classify_utterances(classifier, transcript.utterances, consented=consented)
+    classified = service.verify_utterances(get_nli(), classified)
 
     with session_scope() as session:
         stored = service.store_classifications(
@@ -109,11 +111,10 @@ def on_transcript_ready(payload: dict) -> None:
         ambiguous=ambiguous,
         model_version=classifier.model_version,
     )
-    # TODO(강민구): step 4, NLI over commitments and ambiguous agreement (#12,
-    # no model chosen yet). Step 6, the DM: for each of
-    # ``service.unasked_confirmations``, resolve the speaker's Slack account
-    # and call ``service.ask_for_confirmation`` -- blocked on an account mapping
-    # (#70) and a team Slack client (#30). Step 7, Notion and Jira (#30).
+    # TODO(강민구): step 6, the DM: for each of ``service.unasked_confirmations``,
+    # resolve the speaker's Slack account and call
+    # ``service.ask_for_confirmation`` -- blocked on an account mapping (#70)
+    # and a team Slack client (#30). Step 7, Notion and Jira (#30).
 
     # Step 8, after the writes have committed. The payload is never logged:
     # decision statements and item descriptions are meeting content.

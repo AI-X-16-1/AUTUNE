@@ -36,7 +36,7 @@ from autune_extraction.models import (
     ExtDecisionSource,
     ExtEditEvent,
 )
-from autune_extraction.pipeline import FakeClassifier
+from autune_extraction.pipeline import FakeClassifier, FakeNli
 from autune_extraction.schemas import ActionItemCreate, ActionItemUpdate
 
 MEETING = "mtg_1"
@@ -254,6 +254,7 @@ def run_task(session: Session, monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(tasks, "session_scope", scope)
     monkeypatch.setattr(tasks, "get_classifier", FakeClassifier)
+    monkeypatch.setattr(tasks, "get_nli", FakeNli)
     payload = TranscriptReady(
         meeting_id=MEETING,
         utterances=spoken(),

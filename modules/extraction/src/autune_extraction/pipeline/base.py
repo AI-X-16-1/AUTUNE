@@ -67,6 +67,19 @@ class Prediction:
         return ranked[1] if len(ranked) > 1 else (self.kind, 0.0)
 
 
+@dataclass(frozen=True)
+class NliScores:
+    """One premise/hypothesis result. ``label`` is the argmax of the three --
+    the model's own answer, not a threshold a caller picks (#12: entailment
+    means "the speaker actually promised this", neutral or contradiction means
+    the weak assent stays weak)."""
+
+    label: str  # "entailment" | "contradiction" | "neutral"
+    entailment: float
+    contradiction: float
+    neutral: float
+
+
 @runtime_checkable
 class Classifier(Protocol):
     """Five kinds or none, per utterance. Fine-tuned DeBERTa by default.
@@ -92,4 +105,25 @@ class Classifier(Protocol):
         ids rather than the model returning them, so the model never needs to know
         what an utterance id is.
         """
+        ...
+
+
+@runtime_checkable
+class NliModel(Protocol):
+    """Premise/hypothesis entailment -- step 4 (#12): does an utterance the
+    5-way classifier called ``ambiguous`` actually entail a real promise.
+    klue/roberta fine-tuned on KorNLI by default (#172).
+
+    A second, independent copy of module D's own ``NliModel`` seam
+    (``autune_context.pipeline.base``) rather than a shared one: modules never
+    import each other (invariant 2), and the two modules use NLI for different
+    questions (this one for weak-assent verification, D's for decision-change
+    detection) that happen to be the same kind of model call.
+    """
+
+    @property
+    def model_version(self) -> str: ...
+
+    def classify(self, pairs: list[tuple[str, str]]) -> list[NliScores]:
+        """One result per ``(premise, hypothesis)`` pair, aligned to ``pairs``."""
         ...
