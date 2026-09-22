@@ -46,6 +46,9 @@ const CLOSE_MESSAGES: Record<number, string> = {
   4503: "서버의 전사 모델을 불러올 수 없습니다. 녹음은 계속됩니다.",
 };
 
+/** What the recorder produces and the upload route decodes with ffmpeg. */
+const RECORDING_MIME = "audio/webm;codecs=opus";
+
 /** Authorisation/precondition failures: no live view will ever arrive for
  * this session, so the recording is stopped rather than kept blind. */
 const REFUSAL_CODES = new Set<number>([4401, 4403, 4404, 4409]);
@@ -175,6 +178,15 @@ export function useLiveSession(meetingId: string, stream: MediaStream | null): L
       setPhase("error");
       return;
     }
+    // Before the socket opens: a browser that cannot record webm/opus must
+    // not claim the meeting on the server and then throw on the recorder,
+    // which left the claim held and the next start() blocked. Chrome,
+    // Edge and Firefox record it; Safari does not.
+    if (typeof MediaRecorder === "undefined" || !MediaRecorder.isTypeSupported(RECORDING_MIME)) {
+      setError("이 브라우저는 녹음 형식(webm/opus)을 지원하지 않습니다. Chrome이나 Firefox를 써 주세요.");
+      setPhase("error");
+      return;
+    }
     setPhase("connecting");
     setError(null);
     setLiveLost(false);
@@ -233,7 +245,7 @@ export function useLiveSession(meetingId: string, stream: MediaStream | null): L
 
     // The recorder starts regardless of what the socket does: the recording
     // must not depend on the live view.
-    const rec = new MediaRecorder(stream, { mimeType: "audio/webm;codecs=opus" });
+    const rec = new MediaRecorder(stream, { mimeType: RECORDING_MIME });
     rec.ondataavailable = (event) => {
       if (generation.current !== mine) return;
       if (event.data.size > 0) chunks.current.push(event.data);
@@ -398,7 +410,10 @@ export function useLiveSession(meetingId: string, stream: MediaStream | null): L
       // Nobody is left to call stop(): stop the recorder and drop both
       // refs so a StrictMode remount's start() is not blocked by the
       // re-entry guard, and so a recorder from an unmounted session is
-      // never left running.
+      // never left running. This discards the recording: `beforeunload`
+      // guards a closed tab and a reload, and S13 has no in-app link away
+      // from itself while recording. If one is added, it needs the same
+      // confirmation, because this cleanup will not ask.
       abandon();
     };
   }, [teardownAudio, abandon]);

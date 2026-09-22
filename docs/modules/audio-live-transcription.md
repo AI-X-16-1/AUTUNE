@@ -137,6 +137,16 @@ is `4409`.
 > session. This path stores nothing, so it writes no `aud_masking_events`
 > either — that is the final pipeline's, after the upload.
 
+**A known limit of masking per row.** The segmenter cuts on 700 ms of
+silence, so a number read with a pause in it — `010 1234` / `5678 입니다` —
+arrives as two rows, and neither half matches a pattern on its own: the
+digits reach the browser unmasked. Nothing is stored, so invariant 11's
+"masked before the first write" holds; what does not hold is "the screen
+never shows a digit the stored transcript would hide". The stored path
+masks the whole transcript and is the final form. Joining a digit-final
+segment to the next before masking would close the gap at the cost of one
+extra row's lag; not done for the MVP (#307 review, (a) chosen over (b)).
+
 Storing nothing is the simplification the whole design rests on. The live
 channel is display; the truth is always made by the upload afterwards. That is
 also why live row ids are `utt_live_…` and never equal the stored `utt_…`: the

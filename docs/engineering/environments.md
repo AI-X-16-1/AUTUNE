@@ -26,7 +26,7 @@ pnpm install
 
 uv run alembic -c infra/alembic.ini upgrade heads
 
-uv run uvicorn autune_api.main:app --reload          # API   :8000
+uv run uvicorn autune_api.main:app --reload          # API   :8000 -- one worker, see below
 uv run celery -A autune_worker.celery_app worker -Q default,cpu_heavy,gpu -l info
 pnpm --filter @autune/web dev                        # web   :3000
 uv run python -m autune_bot                          # Slack bot (socket mode)
@@ -98,6 +98,7 @@ prefix `AUTUNE_<MODULE>_`.
 | `AUTUNE_AUDIO_LIVE_CPU_THREADS` | A | CTranslate2 threads for the live model; 0 = CTranslate2 default, set to the machine's performance-core count |
 | `AUTUNE_AUDIO_LIVE_BEAM_SIZE` | A | Beam width on the live path (5) |
 | `AUTUNE_AUDIO_LIVE_TRANSCRIBER_IMPL` | A | `auto` (default) · `faster_whisper` · `mlx`. `mlx` is the live path on Apple silicon's GPU and needs `uv sync --all-packages --extra mlx`; `faster_whisper` follows `AUTUNE_AUDIO_DEVICE`, so an NVIDIA machine sets that to `cuda`. `auto` picks `mlx` where it can run |
+| (uvicorn `--workers`) | A | **Leave at 1.** The live channel's one-session-per-meeting registry is per process; a second worker lets a second session onto the same meeting |
 | `AUTUNE_AUDIO_LIVE_MLX_MODEL` | A | The mlx-whisper weights, a Hugging Face repo. Default `mlx-community/whisper-large-v3-turbo` |
 | `AUTUNE_AUDIO_ORPHAN_AFTER_HOURS` | A | A job still `queued`/`running` after this long has no worker; the sweep fails it and deletes its file. Default `6` |
 | `AUTUNE_AUDIO_HF_TOKEN` | A | Hugging Face token for the gated pyannote models |

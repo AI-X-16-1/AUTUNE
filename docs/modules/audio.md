@@ -96,6 +96,13 @@ grows for the rest of the meeting rather than doubling — nothing is dropped,
 so every row is late by everything queued before it. An MVP limit: the
 condition for moving transcription to a worker is concurrent meetings
 actually happening and #258 resolved, and the move is that one class.
+`_live`, the one-session-per-meeting registry, is a dict in that process:
+the API runs with **one uvicorn worker** (`environments.md`), or a second
+worker lets a second session in.
+
+Live rows are masked one at a time, so a number read with a pause in it
+reaches the screen unmasked across two rows; the stored transcript is the
+masked final form (design §3.5).
 
 ### Consent, until there is a per-person consent flow
 
