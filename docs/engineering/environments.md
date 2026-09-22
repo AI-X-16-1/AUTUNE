@@ -97,6 +97,8 @@ prefix `AUTUNE_<MODULE>_`.
 | `AUTUNE_AUDIO_LIVE_WHISPER_MODEL` | A | The live channel's own model, default `large-v3-turbo`; the stored path keeps `AUTUNE_AUDIO_WHISPER_MODEL` |
 | `AUTUNE_AUDIO_LIVE_CPU_THREADS` | A | CTranslate2 threads for the live model; 0 = CTranslate2 default, set to the machine's performance-core count |
 | `AUTUNE_AUDIO_LIVE_BEAM_SIZE` | A | Beam width on the live path (5) |
+| `AUTUNE_AUDIO_LIVE_TRANSCRIBER_IMPL` | A | `auto` (default) · `faster_whisper` · `mlx`. `mlx` is the live path on Apple silicon's GPU and needs `uv sync --all-packages --extra mlx`; `faster_whisper` follows `AUTUNE_AUDIO_DEVICE`, so an NVIDIA machine sets that to `cuda`. `auto` picks `mlx` where it can run |
+| `AUTUNE_AUDIO_LIVE_MLX_MODEL` | A | The mlx-whisper weights, a Hugging Face repo. Default `mlx-community/whisper-large-v3-turbo` |
 | `AUTUNE_AUDIO_ORPHAN_AFTER_HOURS` | A | A job still `queued`/`running` after this long has no worker; the sweep fails it and deletes its file. Default `6` |
 | `AUTUNE_AUDIO_HF_TOKEN` | A | Hugging Face token for the gated pyannote models |
 | `NEXT_PUBLIC_AUTUNE_DEV_TOKEN` | A (web) | A bearer token for the browser, local only — see "A token for the browser" below |

@@ -130,6 +130,19 @@ class AudioSettings(BaseSettings):
     performance cores -- 10 on that laptop, which halved the decode time --
     without contending with anything but itself."""
 
+    live_transcriber_impl: Literal["auto", "faster_whisper", "mlx"] = "auto"
+    """Which engine transcribes a live utterance (``live/backends.py``).
+
+    ``faster_whisper`` is the stored path's engine on the live model and
+    follows ``device`` -- CUDA where there is an NVIDIA GPU. ``mlx`` is
+    mlx-whisper on Apple silicon's GPU, the only way to a GPU on a Mac; it
+    needs the ``mlx`` extra. ``auto`` picks ``mlx`` where that is installed
+    and can run, ``faster_whisper`` everywhere else."""
+
+    live_mlx_model: str = "mlx-community/whisper-large-v3-turbo"
+    """The mlx-whisper weights, a Hugging Face repo. The MLX conversion of
+    the same turbo model the CTranslate2 path uses."""
+
     live_beam_size: int = 5
     """Beam width on the live path. Width 5 costs turbo about 0.3 s more per
     utterance than width 1 and is what the stored path uses, so a live row

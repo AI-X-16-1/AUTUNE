@@ -14,6 +14,7 @@ import numpy as np
 import pytest
 
 from autune_audio import pipeline
+from autune_audio.live import backends
 from autune_audio.live.transcriber import Transcriber
 from autune_audio.schemas import SAMPLE_RATE, Transcription, Waveform
 
@@ -154,6 +155,8 @@ async def test_no_arguments_uses_the_live_pipeline_functions(
 
     monkeypatch.setattr(pipeline, "warm_up_live", fake_warm_up_live)
     monkeypatch.setattr(pipeline, "transcribe_live", fake_transcribe_live)
+    # Whatever this machine has, the default engine under test is CTranslate2.
+    monkeypatch.setattr(backends, "mlx_available", lambda: False)
 
     transcriber = Transcriber()
     await transcriber.warm_up()

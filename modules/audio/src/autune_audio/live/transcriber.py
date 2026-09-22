@@ -23,19 +23,18 @@ Two properties:
 from __future__ import annotations
 
 import threading
+import time
 from collections.abc import Callable
 
 import anyio
 
-from autune_audio import pipeline
-from autune_audio.glossary import build_prompt
+from autune_audio.live import backends
 from autune_audio.schemas import Transcription, Waveform
+from autune_core import get_logger
+
+log = get_logger(__name__)
 
 _LOCK = threading.Lock()
-
-
-def _default_transcribe(waveform: Waveform) -> Transcription:
-    return pipeline.transcribe_live(waveform, glossary=build_prompt())
 
 
 class Transcriber:
@@ -45,8 +44,12 @@ class Transcriber:
         transcribe: Callable[[Waveform], Transcription] | None = None,
         warm_up: Callable[[], None] | None = None,
     ) -> None:
-        self._transcribe = transcribe or _default_transcribe
-        self._warm_up = warm_up or pipeline.warm_up_live
+        if transcribe is None or warm_up is None:
+            default_transcribe, default_warm_up = backends.select()
+            transcribe = transcribe or default_transcribe
+            warm_up = warm_up or default_warm_up
+        self._transcribe = transcribe
+        self._warm_up = warm_up
         self._warm = False
 
     async def warm_up(self) -> None:
@@ -71,6 +74,15 @@ class Transcriber:
     async def run(self, waveform: Waveform) -> Transcription:
         def guarded() -> Transcription:
             with _LOCK:
-                return self._transcribe(waveform)
+                started = time.monotonic()
+                transcription = self._transcribe(waveform)
+                # Audio length in, decode time out: the number a "why is it
+                # slow" question needs, and nothing that is in the audio.
+                log.info(
+                    "live_decode",
+                    audio_s=round(waveform.duration, 1),
+                    decode_s=round(time.monotonic() - started, 2),
+                )
+                return transcription
 
         return await anyio.to_thread.run_sync(guarded)

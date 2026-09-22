@@ -158,6 +158,22 @@ pacing, `large-v3-turbo` with 10 threads and beam 1: per-row lag went from
 isolated-decode figure because it also carries the segmenter's 0.7 s silence
 wait, VAD, masking, and the socket round trip.
 
+**The live engine is chosen per machine (`live/backends.py`).** CTranslate2
+has no Metal backend, so on a Mac the live path was stuck on the CPU floor
+above. `mlx-whisper` runs the same turbo weights on Apple silicon's GPU:
+isolated decode of the 11.4 s utterance 0.85 s (0.81 s for 5.4 s), text
+identical to CTranslate2's, and inside the API — `live_decode` in the log —
+0.82–0.87 s per row. Utterance end to row, real-time pacing, is now about
+1.7 s (0.7 s silence wait + decode), against ~4 s on ten CPU threads.
+`AUTUNE_AUDIO_LIVE_TRANSCRIBER_IMPL=auto` picks `mlx` where the optional
+`mlx` extra is installed and can run, and `faster_whisper` everywhere else —
+which on a machine with an NVIDIA GPU means `AUTUNE_AUDIO_DEVICE=cuda`, the
+setting the stored path already had. Two facts to know when reading the
+client's own clock: it starts before `hello`, so `ready` (warm-up, 2–7 s)
+has to be subtracted from every row time; and the glossary goes to
+mlx-whisper as `initial_prompt`, which is what makes it write "검색 개편"
+where the unprompted model wrote "검색해변".
+
 ---
 
 ## 3. Decisions, and the ones that reversed

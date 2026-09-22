@@ -280,5 +280,11 @@ def transcribe_live(
         beam_size=settings.live_beam_size,
         **_glossary_kwargs(glossary, settings.glossary_mode),
     )
-    _log_transcription(transcription, detect_repetition(transcription), attempt="live")
+    log_live_transcription(transcription)
     return transcription
+
+
+def log_live_transcription(transcription: Transcription) -> None:
+    """The counts-only line every live engine writes, so a collapse on the
+    live path is visible whichever engine produced it."""
+    _log_transcription(transcription, detect_repetition(transcription), attempt="live")
