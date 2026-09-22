@@ -270,3 +270,48 @@ def test_a_day_long_past_named_without_a_deadline_word_gets_no_date() -> None:
     """The price of not inventing 2027-06-01: a real "3월 2일에" in September is
     missed. A missing date on a draft card, not a wrong one."""
     assert parse_due("3월 2일에 드리겠습니다", WEDNESDAY) is None
+
+
+# --- the past adnominal, but only for a named few verbs (#197) ------------------
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "월요일에 말씀드린 거 정리하겠습니다",
+        "월요일에 공유한 자료 다시 보내겠습니다",
+        "월요일에 보낸 파일 기준으로 정리하겠습니다",
+        "월요일에 전달한 내용 다시 확인하겠습니다",
+    ],
+)
+def test_a_named_verbs_past_adnominal_is_now_read_as_the_past(text: str) -> None:
+    """ "말씀드린" reads the same as "말씀드렸던" now -- #197's #2. Said on
+    Wednesday 09-09, each would read as next Monday if taken forward."""
+    assert parse_due(text, WEDNESDAY) is None
+
+
+def test_an_adjectives_present_form_is_still_not_the_past() -> None:
+    """ "필요한" is not one of the four verbs -- an adjective's present, not a
+    verb's past, and this module still cannot tell the two apart in general
+    (#197's own reason for naming only a few verbs rather than a syllable
+    rule)."""
+    assert parse_due("월요일에 필요한 걸 다시 정리하겠습니다", WEDNESDAY) == DueDate(
+        text="월요일", date=date(2026, 9, 14)
+    )
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "금요일까지 지난번에 말씀드린 거 드리겠습니다",  # deadline word overrides
+    ],
+)
+def test_a_deadline_word_overrides_the_named_verbs_past_adnominal_too(text: str) -> None:
+    assert parse_due(text, WEDNESDAY) == DueDate(text="금요일", date=date(2026, 9, 11))
+
+
+def test_a_past_adnominal_with_no_agreement_marker_stays_the_past() -> None:
+    """ "말씀드린 걸로" has no ``_AGREED`` match at all -- "걸로" needs a "는" or
+    "할" right before it, and "린" is neither -- so this is plain past, the
+    same shape as the existing "말씀드렸던 걸로" case."""
+    assert parse_due("월요일에 말씀드린 걸로 정리하겠습니다", WEDNESDAY) is None

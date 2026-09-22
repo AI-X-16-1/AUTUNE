@@ -140,6 +140,20 @@ def _next(day: date, month: int, dom: int, *, by: str | None) -> date:
     would invent a deadline a year out (review of #159). The cost is the rare
     "3월 2일에 드리겠습니다" said in September, which gets no date -- a missing
     date on a draft card rather than a wrong one.
+
+    **A candidate fix was tried and rejected (#197).** Rolling forward
+    whenever "에" follows the date directly and the clause after it carries a
+    future marker (-겠-, -ㄹ게요, 드릴) does fix "3월 2일에 드리겠습니다"
+    without breaking "6월 1일 자료 기준으로" (no "에" there at all) -- but it
+    also turns "6월 1일에 나온 이슈 정리하겠습니다" into a wrong 2027-06-01.
+    "나온" is a past adnominal this module has no general way to read as past
+    (``_said_of_the_past`` only knows four such verbs, #197's #2, precisely
+    because a syllable-level rule cannot tell a verb's past from an
+    adjective's present) -- so "에 + future marker" catches real deadlines
+    and misdated pasts alike whenever the past marker is a verb outside that
+    short list. Confirmed empirically, not just reasoned through; the eval
+    set #197 asks for before any rule change here is what would actually
+    measure how often each case shows up in real speech.
     """
     candidate = date(day.year, month, dom)
     if candidate >= day or by is None or day - candidate <= RECENT_PAST:
@@ -169,6 +183,21 @@ _AGREED = re.compile(r"기로|[는할]\s*걸로|도록|자고")
 """What turns a past verb into an agreement about the date: 하기로 했다,
 드리는 걸로 했다, 끝내도록 했다, 하자고 했다."""
 
+_PAST_ADNOMINAL_VERBS = re.compile(r"말씀드린|공유한|보낸|전달한")
+"""The past adnominal -(으)ㄴ, but only for these four reporting verbs (#197's
+own candidate list), never as a general syllable check.
+
+-(으)ㄴ is past on a verb ("말씀드린" = said) and present on an adjective
+("필요한" = necessary) -- the same spelling, different tense, and nothing
+about the syllable itself says which. A general check would misread every
+"필요한 거" as the past and drop a real deadline behind it. Naming the exact
+past-adnominal form of a small, closed set of verbs this module already
+expects in a commitment ("말씀드리다, 공유하다, 보내다, 전달하다" -- what a
+promise names having already been discussed or sent) is precise where a
+syllable rule cannot be; it answers nothing about a verb not on this list,
+and adding one is a data decision (#197's own eval-set plan), not a pattern
+someone noticed."""
+
 
 def _past_syllable(ch: str) -> bool:
     code = ord(ch) - 0xAC00
@@ -183,30 +212,31 @@ def _said_of_the_past(text: str, end: int, stop: int) -> bool:
     (review of #159). The clause runs from the phrase to the first clause
     ending, comma or next date phrase, and it is past when a syllable carries
     the past tense's final ㅆ (-았/었/였-, 했, 렸) -- other than -겠- and 있/없 --
-    or the retrospective -던.
+    the retrospective -던, or one of ``_PAST_ADNOMINAL_VERBS``' exact forms
+    (#197 -- "월요일에 말씀드린 거" is now read as past the same way "월요일에
+    말씀드렸던 거" already was; a verb not on that list still is not).
 
     Two things settle it the other way:
 
     - A deadline word straight after the phrase: "금요일까지 지난번에
       말씀드렸던 거 드리겠습니다" is due Friday.
-    - An agreement marker before the first past syllable. In "금요일에
+    - An agreement marker before the first past marker. In "금요일에
       하기로 했습니다" the 했 dates the agreement, not the work -- Friday is
       the deadline. The classifier reads "-기로 했" as a decision for the same
       reason. Order matters: "월요일에 공유했던 거 하기로 했습니다" and
       "월요일에 말씀드렸던 걸로" put the past verb first, so Monday is still
       what happened (review by mkkim68).
-
-    Not read: the past adnominal -(으)ㄴ, "월요일에 말씀드린 거". It is spelled
-    like an adjective's present -- "월요일에 필요한 거" -- and a rule that
-    skipped both would drop real deadlines to catch past mentions.
     """
     if _DEADLINE_WORD.match(text, end):
         return False
     boundary = _CLAUSE_END.search(text, end, stop)
     clause = text[end : boundary.end() if boundary else stop]
-    past = next((i for i, ch in enumerate(clause) if _past_syllable(ch)), None)
-    if past is None:
+    syllable = next((i for i, ch in enumerate(clause) if _past_syllable(ch)), None)
+    adnominal = _PAST_ADNOMINAL_VERBS.search(clause)
+    candidates = [i for i in (syllable, adnominal.start() if adnominal else None) if i is not None]
+    if not candidates:
         return False
+    past = min(candidates)
     agreed = _AGREED.search(clause)
     return agreed is None or agreed.start() > past
 
