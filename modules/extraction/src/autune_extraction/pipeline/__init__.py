@@ -10,15 +10,22 @@ through ``registry``; nothing outside this package names a model class.
 
 from __future__ import annotations
 
-from .base import Classifier, Prediction
+from .base import Classifier, NliModel, NliScores, Prediction
 from .classifier import FakeClassifier, HostedDeberta, LocalDeberta
-from .registry import get_classifier
+from .nli import FakeNli, HostedNli, LocalNli
+from .registry import get_classifier, get_nli
 
 __all__ = [
     "Classifier",
     "FakeClassifier",
+    "FakeNli",
     "HostedDeberta",
+    "HostedNli",
     "LocalDeberta",
+    "LocalNli",
+    "NliModel",
+    "NliScores",
     "Prediction",
     "get_classifier",
+    "get_nli",
 ]

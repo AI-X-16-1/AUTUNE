@@ -64,6 +64,30 @@ class ExtractionSettings(BaseSettings):
     which runs its model once per recording.
     """
 
+    nli_impl: str = "local"
+    """Which NLI model to run for step 4 (#12): ``local``, ``hosted`` or
+    ``fake``. No ``external`` -- same reasoning as ``classifier_impl``.
+
+    Mirrors ``classifier_impl``'s three-way shape rather than module D's own
+    ``AUTUNE_CONTEXT_NLI_*`` naming -- module D is a different module (modules
+    never import each other) and this module's own classifier config is the
+    closer precedent to stay consistent with.
+    """
+
+    nli_checkpoint: str = ""
+    """Pinned, and recorded as the classification's model version once NLI
+    verifies it. Blank by default, the same reason ``classifier_checkpoint``
+    is: no checkpoint is baked in here as a silent default, even though #172
+    settled on one (klue/roberta-base fine-tuned on KorNLI) -- point this at
+    it explicitly. ``fake`` needs none."""
+
+    nli_endpoint: str = ""
+    """Our own inference server, required when ``nli_impl=hosted``."""
+
+    nli_device: str = "cpu"
+    """``cpu`` or ``cuda``, for ``nli_impl=local``. Mirrors
+    ``classifier_device``."""
+
     candidate_confidence: float | None = Field(default=None, ge=0, le=1)
     """Below this confidence an item is shown as a candidate rather than asserted.
 
@@ -100,11 +124,12 @@ class ExtractionSettings(BaseSettings):
     @model_validator(mode="after")
     def _device_is_known(self) -> ExtractionSettings:
         """A typo should not surface as a CUDA error in the middle of a meeting."""
-        if self.classifier_device not in ("cpu", "cuda"):
-            raise ValueError(
-                f"AUTUNE_EXTRACTION_CLASSIFIER_DEVICE={self.classifier_device!r}; "
-                "expected 'cpu' or 'cuda'"
-            )
+        for name, value in (
+            ("CLASSIFIER_DEVICE", self.classifier_device),
+            ("NLI_DEVICE", self.nli_device),
+        ):
+            if value not in ("cpu", "cuda"):
+                raise ValueError(f"AUTUNE_EXTRACTION_{name}={value!r}; expected 'cpu' or 'cuda'")
         return self
 
 

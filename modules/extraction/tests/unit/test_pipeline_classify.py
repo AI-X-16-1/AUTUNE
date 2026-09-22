@@ -44,7 +44,7 @@ from autune_extraction.models import (
     ExtDecisionSource,
     ExtEditEvent,
 )
-from autune_extraction.pipeline import FakeClassifier, Prediction
+from autune_extraction.pipeline import FakeClassifier, FakeNli, Prediction
 
 K = UtteranceKind
 MEETING = "mtg_1"
@@ -389,6 +389,7 @@ def wired(session: Session, monkeypatch: pytest.MonkeyPatch) -> Session:
 
     monkeypatch.setattr(tasks, "session_scope", scope)
     monkeypatch.setattr(tasks, "get_classifier", FakeClassifier)
+    monkeypatch.setattr(tasks, "get_nli", FakeNli)
     return session
 
 
@@ -400,6 +401,25 @@ def test_the_task_classifies_and_groups_a_meeting(wired: Session) -> None:
     assert len(kinds(wired)) == 4
     assert wired.query(ExtDecision).count() == 1
     assert wired.query(ExtConfirmation).count() == 1, "한번 볼게요, recorded and not asked"
+
+
+def test_the_task_runs_step_4_on_commitment_and_ambiguous_rows_only(wired: Session) -> None:
+    """utt_3 (commitment) and utt_5 (ambiguous) both carry a real commitment or
+    weak-assent marker the fake NLI reads; utt_1 (decision) and utt_4
+    (open_question) are never asked."""
+    stored(wired)
+
+    tasks.on_transcript_ready(transcript())
+
+    verified = {
+        row.utterance_id: row.nli_verified for row in wired.scalars(select(ExtClassification))
+    }
+    assert verified == {
+        "utt_1": False,
+        "utt_3": True,
+        "utt_4": False,
+        "utt_5": True,
+    }
 
 
 def test_the_task_refuses_an_unmasked_transcript_before_classifying(
@@ -509,6 +529,7 @@ def test_the_result_goes_out_after_the_writes_commit(
 
     monkeypatch.setattr(tasks, "session_scope", scope)
     monkeypatch.setattr(tasks, "get_classifier", FakeClassifier)
+    monkeypatch.setattr(tasks, "get_nli", FakeNli)
     monkeypatch.setattr(tasks, "publish", lambda event, payload: order.append("publish") or [])
     stored(session)
 

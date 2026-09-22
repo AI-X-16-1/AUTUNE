@@ -9,6 +9,7 @@ Never imports another module.
 from __future__ import annotations
 
 from collections.abc import Collection, Iterable, Mapping, Sequence
+from dataclasses import replace
 from datetime import UTC, date, datetime
 from typing import Any, Protocol
 
@@ -46,7 +47,7 @@ from .models import (
     ExtEditEvent,
     ExtExternalRef,
 )
-from .pipeline.base import Classifier
+from .pipeline.base import Classifier, NliModel
 from .schemas import (
     ActionItemCreate,
     ActionItemDetail,
@@ -1045,6 +1046,82 @@ def classify_utterances(
     ]
 
 
+# --- step 4: NLI verification --------------------------------------------------
+
+
+COMMITMENT_HYPOTHESIS = "화자가 이 일을 하겠다고 약속했다"
+"""The one hypothesis every ``commitment``/``ambiguous`` utterance is checked
+against (#12). Not per-utterance: #12 names this exact sentence, and a
+hypothesis that changed per input would make two utterances' NLI scores
+incomparable."""
+
+_NLI_CHECKED_KINDS = (UtteranceKind.COMMITMENT, UtteranceKind.AMBIGUOUS)
+"""What step 4 re-checks -- the two kinds the 5-way classifier can only guess
+at from register, since weak assent and a real promise can share every
+surface marker (#12's own "한번 볼게요" example). A ``decision``, ``concern`` or
+``open_question`` row, and anything the classifier called none, passes
+through unchanged: NLI answers "did the speaker promise this", which is not
+the question for those kinds."""
+
+
+def verify_utterances(
+    nli: NliModel, classified: Sequence[ClassifiedUtterance]
+) -> list[ClassifiedUtterance]:
+    """Step 4: NLI over commitments and ambiguous agreement (#12).
+
+    Takes no session, on purpose -- same reason as ``classify_utterances``:
+    this is model inference, and the caller runs it before opening a
+    transaction, not inside one.
+
+    Entailment moves an ``ambiguous`` row to ``commitment`` -- the speaker
+    actually promised it, so it belongs in ``build_action_items`` and not in
+    a confirmation DM. Neutral or contradiction moves a ``commitment`` row the
+    other way, to ``ambiguous`` -- what read as a promise on its own wording
+    does not actually commit to anything once read against the hypothesis,
+    and #12's confirmation DM is exactly the fallback for that. A row already
+    at the kind NLI would send it to keeps its ``id``, ``text`` and
+    ``speaker`` and only gains ``nli_verified=True``.
+
+    ``confidence`` moves with the relabel, to NLI's own probability for the
+    label it landed on (``entailment``, or ``contradiction + neutral`` -- the
+    mass NLI puts on "not entailed") rather than the 5-way classifier's
+    now-stale confidence in its original guess: a caller reading confidence
+    afterward (ADR 0006's candidate threshold, ``build_action_items``) should
+    read how sure the *last* model to look at this was, not the first.
+
+    Every other kind, and anything the classifier called none, passes through
+    with its original ``ClassifiedUtterance`` untouched.
+    """
+    targets = [u for u in classified if u.kind in _NLI_CHECKED_KINDS]
+    if not targets:
+        return list(classified)
+
+    pairs = [(u.text, COMMITMENT_HYPOTHESIS) for u in targets]
+    scores = nli.classify(pairs)
+    if len(scores) != len(targets):
+        # The Protocol promises one per input, in order; zipping a short list
+        # would verify the wrong utterances without an error.
+        raise ValueError(f"asked for {len(targets)} NLI results, the model returned {len(scores)}")
+
+    verified: dict[str, ClassifiedUtterance] = {}
+    for utterance, score in zip(targets, scores, strict=True):
+        if score.label == "entailment":
+            verified[utterance.id] = replace(
+                utterance,
+                kind=UtteranceKind.COMMITMENT,
+                confidence=score.entailment,
+                nli_verified=True,
+            )
+        else:
+            verified[utterance.id] = replace(
+                utterance,
+                kind=UtteranceKind.AMBIGUOUS,
+                confidence=score.contradiction + score.neutral,
+                nli_verified=True,
+            )
+    return [verified.get(utterance.id, utterance) for utterance in classified]
+
+
 def store_classifications(
     session: Session,
     *,
@@ -1070,7 +1147,7 @@ def store_classifications(
             kind=utterance.kind.value,
             confidence=utterance.confidence,
             model_version=model_version,
-            nli_verified=False,
+            nli_verified=utterance.nli_verified,
         )
         for utterance in utterances
         if utterance.kind is not None

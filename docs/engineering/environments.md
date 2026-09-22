@@ -98,6 +98,10 @@ prefix `AUTUNE_<MODULE>_`.
 | `AUTUNE_EXTRACTION_CLASSIFIER_CHECKPOINT` | B | Pinned model, recorded with every classification. Never a floating tag. **Blank by default** — no trained checkpoint is published yet, and `local` / `hosted` refuse to start without one |
 | `AUTUNE_EXTRACTION_CLASSIFIER_ENDPOINT` | B | Our own inference server. Required when `CLASSIFIER_IMPL=hosted` |
 | `AUTUNE_EXTRACTION_CLASSIFIER_DEVICE` | B | `cpu` · `cuda`. Default `cpu`. Mirrors `AUTUNE_AUDIO_DEVICE` |
+| `AUTUNE_EXTRACTION_NLI_IMPL` | B | `local` · `hosted` · `fake`. Default `local`. Step 4 (#12), same **no `external`** rule as `CLASSIFIER_IMPL` |
+| `AUTUNE_EXTRACTION_NLI_CHECKPOINT` | B | Recorded as the model version once NLI verifies a row. Never a floating tag. **Blank by default** — #172 settled on klue/roberta-base fine-tuned on KorNLI, but that checkpoint is not baked in as a silent default; `local` / `hosted` refuse to start without one |
+| `AUTUNE_EXTRACTION_NLI_ENDPOINT` | B | Our own inference server. Required when `NLI_IMPL=hosted` |
+| `AUTUNE_EXTRACTION_NLI_DEVICE` | B | `cpu` · `cuda`. Default `cpu`. Mirrors `AUTUNE_EXTRACTION_CLASSIFIER_DEVICE` |
 | `AUTUNE_EXTRACTION_CANDIDATE_CONFIDENCE` | B | Below this, an item is a candidate rather than asserted. **Blank by default** — the number comes from the evaluation set (#10), and blank means nothing is a candidate |
 | `AUTUNE_GAP_RISK_THRESHOLD` | C | Default `0.7`. At or above is `high`, the only severity surfaced |
 | `AUTUNE_GAP_MEDIUM_THRESHOLD` | C | Default `0.5`. Down to here is `medium`, below it `low` |
@@ -173,6 +177,15 @@ must not load a deep-learning stack to do it, and a worker on `hosted` never
 touches it. Without the extra the classifier raises a `RuntimeError` naming this
 command — the default implementation failing with `No module named
 'transformers'` tells the reader nothing about the extra existing.
+
+### NLI (step 4) has the same rule and the same extra
+
+`AUTUNE_EXTRACTION_NLI_IMPL` accepts the same three values for the same reason —
+step 4 (#12) reads a commitment or ambiguous utterance's own text, so an
+external implementation is the same design conversation `CLASSIFIER_IMPL`
+already had. `local` needs the same `local-models` extra as the classifier
+(`transformers`/`torch` are shared); no separate `uv sync` is needed if you
+already installed it for the classifier.
 
 ### A GPU is not picked up by being there
 

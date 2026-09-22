@@ -62,6 +62,13 @@ class ClassifiedUtterance:
     """The label the transcript had for whoever said this, for the owner of a
     decision. Defaults to empty so a caller that does not know it still builds
     one; the statement then carries no owner rather than a wrong one."""
+    nli_verified: bool = False
+    """Whether step 4 (``service.verify_utterances``) actually ran NLI on this
+    utterance -- true for a ``commitment`` or ``ambiguous`` row after that step,
+    false for every other kind and for anything built before it exists. Carried
+    on the utterance itself, not a side collection, because every later step
+    that reads ``kind`` (``build_action_items``, ``record_ambiguous_agreements``,
+    ``store_classifications``) reads this the same way."""
 
 
 @dataclass(frozen=True)
