@@ -118,6 +118,23 @@ STOP_TERMS: frozenset[str] = frozenset(
         "저희",
         "한번",
         "문제",
+        # Contrast markers. ``ko_core_news_lg`` tags 대신 and 말고 as ordinary
+        # common nouns, so a run swallows them: "인기순 정렬 대신 실시간
+        # 개인화로" came back as one topic called 인기순 정렬 대신 실시간 —
+        # two topics and the word between them, welded into a node no reader
+        # recognises. Found while measuring step 2 (#32), where the same word
+        # is the marker that makes the pair ``alternative_to``: a marker
+        # swallowed by a label is a relation the rules can never see.
+        "대신",
+        "말고",
+        "반면",
+        # Cue words. The same argument one step further: these are what step 2
+        # keys on, and the model tags them as ordinary nouns. "정렬 로직은
+        # 인덱스가 필요 없습니다" came back with a topic called 필요, and a
+        # graph whose central node is 필요 raises gaps about nothing. Raised in
+        # review of #249.
+        "필요",
+        "이슈",
     }
 )
 """Nouns that break a run rather than joining it.

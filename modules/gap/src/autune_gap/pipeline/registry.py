@@ -19,8 +19,9 @@ from functools import lru_cache
 
 from autune_gap.config import get_settings
 
-from .base import EntityExtractor
+from .base import EntityExtractor, RelationExtractor
 from .ner import FakeNer, SpacyNer
+from .relations import RuleRelations
 
 _EXTRACTORS: dict[str, str] = {
     "spacy": "a Korean spaCy pipeline in this process",
@@ -43,6 +44,33 @@ def get_entity_extractor() -> EntityExtractor:
     raise ValueError(f"unknown AUTUNE_GAP_NER_IMPL={impl!r}; known: {sorted(_EXTRACTORS)}")
 
 
+_RELATION_EXTRACTORS: dict[str, str] = {
+    "rule": "marker rules over the entities already found, in this process",
+}
+"""Known implementations of step 2. One, and the registry exists anyway.
+
+This is the step that is promised LLM assistance for its hard cases
+(``docs/modules/gap.md``, issue #32), so the seam is what a second entry plugs
+into. Unlike entity extraction an assisted implementation here is *allowed* to
+exist — a relation needs a clause, not a transcript — but it goes through
+``autune_integrations`` rather than a client of its own. See ``base``.
+"""
+
+
+@lru_cache
+def get_relation_extractor() -> RelationExtractor:
+    settings = get_settings()
+    impl = settings.relation_impl
+
+    if impl == "rule":
+        return RuleRelations()
+
+    raise ValueError(
+        f"unknown AUTUNE_GAP_RELATION_IMPL={impl!r}; known: {sorted(_RELATION_EXTRACTORS)}"
+    )
+
+
 def reset_cache() -> None:
-    """Drop the cached extractor. For tests that switch implementations."""
+    """Drop the cached extractors. For tests that switch implementations."""
     get_entity_extractor.cache_clear()
+    get_relation_extractor.cache_clear()

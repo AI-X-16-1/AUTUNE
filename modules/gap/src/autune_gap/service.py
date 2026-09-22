@@ -29,7 +29,7 @@ from autune_gap.models import (
     GapTopicEdge,
     GapTopicUtterance,
 )
-from autune_gap.pipeline import get_entity_extractor
+from autune_gap.pipeline import get_entity_extractor, get_relation_extractor
 from autune_gap.schemas import TemplateRead, TopicEdgeRead, TopicGraphRead, TopicNodeRead
 
 if TYPE_CHECKING:
@@ -50,6 +50,10 @@ def build_topic_graph(transcript: TranscriptReady) -> int:
     the ``gap_related_topics`` rows of any gap already raised — nothing raises
     one yet (#35), and when something does it has to be rebuilt in the same
     run.
+
+    Steps 1 to 5 of docs/modules/gap.md: entities, the relations between them,
+    topics, edges, centrality and the participation matrix. A relation the rules
+    could not read leaves its pair on ``co_occurs``; see ``graph.build_edges``.
 
     Only a consenting participant's speech is analysed (privacy.md section 5),
     and only they appear in the matrix. Speech with no participant behind it is
@@ -90,8 +94,12 @@ def build_topic_graph(transcript: TranscriptReady) -> int:
     entities = extractor.extract(analysed)
     extractor_version = extractor.model_version
 
+    relation_extractor = get_relation_extractor()
+    relations = relation_extractor.extract(analysed, entities)
+    relation_version = relation_extractor.model_version
+
     topics = graph.build_topics(entities, [utterance_id for utterance_id, _ in analysed])
-    edges = graph.co_occurrence_edges(topics)
+    edges = graph.build_edges(topics, relations)
     scores = graph.centrality(topics, edges)
     position = {u.id: index for index, u in enumerate(transcript.utterances)}
 
@@ -130,6 +138,9 @@ def build_topic_graph(transcript: TranscriptReady) -> int:
                 target_topic_id=topic_ids[edge.target],
                 relation=edge.relation,
                 weight=edge.weight,
+                # NULL for co-occurrence: nothing asserted it, the two topics
+                # merely shared an utterance. See the model docstring.
+                extractor_version=None if edge.relation == graph.CO_OCCURS else relation_version,
             )
             for edge in edges
         )
@@ -147,7 +158,13 @@ def build_topic_graph(transcript: TranscriptReady) -> int:
         excluded=len(transcript.utterances) - len(analysed),
         topics=len(topics),
         edges=len(edges),
+        # How many edges the meeting's own words explain, against how many
+        # are there because two topics happened to share an utterance. It is
+        # the number that says whether the rules are earning their precision
+        # risk, and the one to watch when a marker list changes.
+        relations=sum(1 for edge in edges if edge.relation != graph.CO_OCCURS),
         extractor=extractor_version,
+        relation_extractor=relation_version,
     )
     return len(topics)
 

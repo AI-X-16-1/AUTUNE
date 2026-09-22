@@ -12,14 +12,17 @@ import pytest
 from autune_gap.graph import (
     CO_OCCURS,
     LABEL_MAX,
+    RELATION_WEIGHT,
     Topic,
+    build_edges,
     build_topics,
     centrality,
     co_occurrence_edges,
     participation,
+    relation_edges,
     topic_key,
 )
-from autune_gap.pipeline import Entity
+from autune_gap.pipeline import Entity, Relation
 
 
 def entity(text: str, utterance_id: str, label: str = "feature") -> Entity:
@@ -28,6 +31,12 @@ def entity(text: str, utterance_id: str, label: str = "feature") -> Entity:
 
 def topic(key: str, *utterance_ids: str) -> Topic:
     return Topic(key=key, label=key, utterance_ids=utterance_ids)
+
+
+def relation(
+    source: str, target: str, name: str = "depends_on", utterance: str = "utt_1"
+) -> Relation:
+    return Relation(source=source, target=target, relation=name, utterance_id=utterance)
 
 
 # --- what a topic is --------------------------------------------------------
@@ -140,6 +149,91 @@ def test_no_topic_is_joined_to_itself() -> None:
     assert all(e.source != e.target for e in edges)
 
 
+# --- what step 2 extracted becomes an edge -----------------------------------
+
+
+def test_a_relation_between_two_topics_is_an_edge() -> None:
+    edges = relation_edges(
+        [topic("실시간", "utt_1"), topic("콜드스타트", "utt_1")],
+        [relation("실시간", "콜드스타트", "blocked_by")],
+    )
+
+    assert [(e.source, e.relation, e.target, e.weight) for e in edges] == [
+        ("실시간", "blocked_by", "콜드스타트", RELATION_WEIGHT)
+    ]
+
+
+def test_a_relation_weighs_the_same_however_often_it_was_said() -> None:
+    """An assertion is not a frequency. The table is unique on
+    ``(source, target, relation)``, so a repetition could not reach a second row
+    even if the weight tried to carry it."""
+    edges = relation_edges(
+        [topic("정렬", "utt_1"), topic("인덱스", "utt_1")],
+        [
+            relation("정렬", "인덱스", utterance="utt_1"),
+            relation("정렬", "인덱스", utterance="utt_2"),
+        ],
+    )
+
+    assert [e.weight for e in edges] == [RELATION_WEIGHT]
+
+
+def test_a_relation_to_something_that_is_not_a_topic_is_dropped() -> None:
+    """The rules look for every name the meeting used, including in utterances
+    analysis left out. An edge to a topic the graph does not have would point at
+    nothing — or worse, put the excluded speech back in."""
+    edges = relation_edges([topic("정렬", "utt_1")], [relation("정렬", "콜드스타트")])
+
+    assert edges == []
+
+
+def test_a_relation_onto_the_same_topic_is_dropped() -> None:
+    """Two mentions that normalise to one key are one topic, and
+    ``gap_topic_edges`` forbids the self-loop."""
+    edges = relation_edges([topic("검색 기능", "utt_1")], [relation("검색 기능", "검색  기능")])
+
+    assert edges == []
+
+
+# --- typed relations and what is left of co-occurrence -----------------------
+
+
+def test_a_typed_pair_does_not_also_co_occur() -> None:
+    """The typed relation says everything co-occurrence would and more. Two rows
+    would put two statements in the report where the meeting made one."""
+    topics = [topic("실시간", "utt_1"), topic("콜드스타트", "utt_1")]
+
+    edges = build_edges(topics, [relation("실시간", "콜드스타트", "blocked_by")])
+
+    assert [e.relation for e in edges] == ["blocked_by"]
+
+
+def test_a_pair_no_rule_read_keeps_its_co_occurrence_edge() -> None:
+    """Most pairs. Dropping them would leave a meeting nobody spoke carefully in
+    with no edges at all, which is a graph PageRank cannot read."""
+    topics = [topic("실시간", "utt_1"), topic("콜드스타트", "utt_1"), topic("정렬", "utt_1")]
+
+    edges = build_edges(topics, [relation("실시간", "콜드스타트", "blocked_by")])
+    by_relation = {e.relation for e in edges}
+
+    assert by_relation == {"blocked_by", CO_OCCURS}
+    assert {frozenset((e.source, e.target)) for e in edges if e.relation == CO_OCCURS} == {
+        frozenset(("실시간", "정렬")),
+        frozenset(("콜드스타트", "정렬")),
+    }
+
+
+def test_the_reverse_direction_of_a_typed_pair_is_not_filled_in() -> None:
+    """A directed relation is one row. "실시간은 콜드스타트 때문에 막혔다" does
+    not say the reverse, and co-occurrence must not sneak it back in as a second
+    row pointing the other way."""
+    topics = [topic("실시간", "utt_1"), topic("콜드스타트", "utt_1")]
+
+    edges = build_edges(topics, [relation("실시간", "콜드스타트", "blocked_by")])
+
+    assert [(e.source, e.target) for e in edges] == [("실시간", "콜드스타트")]
+
+
 # --- centrality -------------------------------------------------------------
 
 
@@ -174,6 +268,19 @@ def test_the_topic_bridging_two_others_has_the_highest_betweenness() -> None:
 
     assert scores["캐시"].betweenness == max(s.betweenness for s in scores.values())
     assert scores["캐시"].betweenness > 0
+
+
+def test_two_relations_on_one_pair_do_not_depend_on_row_order() -> None:
+    """A ``DiGraph`` holds one edge per direction, so adding both let whichever
+    came last decide the weight — and a topic's rank followed the order rows
+    happened to be built in. The strongest wins, whatever the order."""
+    topics = [topic("정렬", "utt_1"), topic("인덱스", "utt_1"), topic("캐시", "utt_1")]
+    edges = build_edges(
+        topics,
+        [relation("정렬", "인덱스", "depends_on"), relation("정렬", "인덱스", "part_of")],
+    )
+
+    assert centrality(topics, edges) == centrality(topics, list(reversed(edges)))
 
 
 def test_a_meeting_with_no_topics_has_no_scores() -> None:

@@ -107,6 +107,7 @@ prefix `AUTUNE_<MODULE>_`.
 | `AUTUNE_GAP_WEIGHT_TEMPLATE` · `_COVERAGE` · `_PARTICIPATION` | C | Defaults `0.4` · `0.4` · `0.2`. The three risk inputs, relative; renormalised over whichever could be measured |
 | `AUTUNE_GAP_NER_IMPL` | C | `spacy` (default) · `fake`. **No `external`** — see below |
 | `AUTUNE_GAP_NER_MODEL` | C | Default `ko_core_news_lg`. The pipeline **name**; the version comes from the pinned wheel and is recorded per row |
+| `AUTUNE_GAP_RELATION_IMPL` | C | `rule` (default), and nothing else yet. Unlike the entity extractor this step **may** grow an assisted option — see below |
 | `AUTUNE_CONTEXT_EMBEDDER_IMPL` | D | `kure_v1_http` (default), `kure_v1_local`, `fake` |
 | `AUTUNE_CONTEXT_RERANKER_IMPL` | D | `bge_reranker_v2_m3_ko_http` (default), `..._local`, `fake` |
 | `AUTUNE_CONTEXT_NLI_IMPL` | D | `klue_kornli_http` (default), `klue_kornli_local`, `fake` |
@@ -207,6 +208,13 @@ implementation would mean sending the whole transcript to somebody else's
 model — which section 6 of `../architecture/privacy.md` makes a design
 conversation rather than a value you can set. The same reasoning module B
 applied to its classifier.
+
+Relation extraction is the exception, and `AUTUNE_GAP_RELATION_IMPL` is where
+it would go. A relation is read off one clause, so the hard cases can be sent
+without sending the meeting — and an implementation that did would go through
+`packages/integrations` so `check_outbound` sees the request body, never a
+client of its own. Today there is one value, `rule`: marker rules in process,
+no network. See "Step 2 as built" in `../modules/gap.md`.
 
 `spacy` needs a library and a model, and both come from the optional extra:
 
