@@ -86,7 +86,14 @@ class FakeJira:
     transitions: list[tuple[str, str]] = field(default_factory=list)
 
     def create_issue(
-        self, project_key: str, issue_type: str, summary: str, description: str
+        self,
+        project_key: str,
+        issue_type: str,
+        summary: str,
+        description: str,
+        *,
+        assignee_account_id: str | None = None,
+        due_date: str | None = None,
     ) -> str:
         check_outbound({"summary": summary, "description": description}, destination="jira")
         self.issues.append(
@@ -95,6 +102,8 @@ class FakeJira:
                 "type": issue_type,
                 "summary": summary,
                 "description": description,
+                "assignee_account_id": assignee_account_id,
+                "due_date": due_date,
             }
         )
         return f"{project_key}-{len(self.issues)}"

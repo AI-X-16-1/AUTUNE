@@ -1684,6 +1684,110 @@ def sync_action_item_to_notion(
     return ref
 
 
+JIRA = "jira"
+
+JIRA_SUMMARY_MAX = 255
+"""Jira's own limit on ``fields.summary``. The description carries the whole
+item; the summary is cut, not the reason the sync would fail."""
+
+
+class JiraIssues(Protocol):
+    """The one call this sync makes. ``JiraClient`` and ``fakes.FakeJira`` both fit."""
+
+    def create_issue(
+        self,
+        project_key: str,
+        issue_type: str,
+        summary: str,
+        description: str,
+        *,
+        assignee_account_id: str | None = None,
+        due_date: str | None = None,
+    ) -> str: ...
+
+
+def jira_url(base_url: str, issue_key: str) -> str:
+    return f"{base_url.rstrip('/')}/browse/{issue_key}"
+
+
+def jira_assignee(item: ExtActionItem, assignee_mapping: Mapping[str, str]) -> str | None:
+    """This item's Jira account id, or ``None`` when the team's mapping (S28)
+    does not cover this person.
+
+    Tried by ``assignee_id`` first -- the stable key, once account linking
+    exists (#70) -- and by ``assignee_label`` (the transcript's own name for
+    whoever spoke) only when there is no id to map by. Guessing from the label
+    alone would assign a Jira issue to whichever mapping entry happens to
+    share a name.
+    """
+    if item.assignee_id and item.assignee_id in assignee_mapping:
+        return assignee_mapping[item.assignee_id]
+    if item.assignee_label and item.assignee_label in assignee_mapping:
+        return assignee_mapping[item.assignee_label]
+    return None
+
+
+def sync_action_item_to_jira(
+    session: Session,
+    jira: JiraIssues,
+    *,
+    action_item_id: str,
+    project_key: str,
+    issue_type: str,
+    base_url: str,
+    assignee_mapping: Mapping[str, str] | None = None,
+) -> ExtExternalRef | None:
+    """Create the item's Jira issue, once. ``None`` when there is nothing to send.
+
+    ``sync_action_item_to_notion``'s rules: nothing for an item that is gone,
+    still ``needs_confirmation``, or already has its issue -- the claim is an
+    insert that skips an existing row, so a redelivered confirmation, or two
+    workers holding it at once, send one issue. Claim and call share the
+    caller's transaction, so a failed call takes the claim back.
+
+    **Creation is held back when the assignee cannot be mapped** (#30,
+    ui-spec.md S28's "assignee mapping"). An issue Jira would show as
+    unassigned is a worse answer than not creating it yet -- the claim is
+    never made, so a later sync, once the team's mapping covers this person,
+    picks the same item up rather than finding it already sent unassigned.
+    """
+    item = session.get(ExtActionItem, action_item_id)
+    if item is None or item.status == ActionStatus.NEEDS_CONFIRMATION.value:
+        return None
+
+    account_id = jira_assignee(item, assignee_mapping or {})
+    if account_id is None:
+        log.info("extraction_jira_assignee_unmapped", action_item_id=item.id)
+        return None
+
+    claimed = session.scalars(
+        _insert_if_absent_into(session, ExtExternalRef)
+        .values(action_item_id=item.id, system=JIRA, meeting_id=item.meeting_id)
+        .on_conflict_do_nothing(index_elements=["action_item_id", "system"])
+        .returning(ExtExternalRef.action_item_id)
+    ).one_or_none()
+    if claimed is None:
+        # Ids only. The issue exists, or another run is creating it.
+        log.info("extraction_jira_already_synced", action_item_id=item.id)
+        return None
+
+    issue_key = jira.create_issue(
+        project_key,
+        issue_type,
+        item.description[:JIRA_SUMMARY_MAX],
+        item.description,
+        assignee_account_id=account_id,
+        due_date=item.due_date.isoformat() if item.due_date else None,
+    )
+
+    ref = session.get(ExtExternalRef, (item.id, JIRA))
+    assert ref is not None
+    ref.external_id = issue_key
+    ref.url = jira_url(base_url, issue_key)
+    log.info("extraction_jira_synced", action_item_id=item.id, meeting_id=item.meeting_id)
+    return ref
+
+
 DECISION_NOTION_PROPERTIES: Mapping[str, str] = {
     "title": "결정",
     "confidence": "신뢰도",

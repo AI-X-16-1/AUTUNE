@@ -11,7 +11,7 @@ from celery import shared_task
 
 from autune_contracts import EXTRACTION_COMPLETED, TranscriptReady, validate_major_version
 from autune_core import Meeting, get_logger, load_integration, publish, session_scope
-from autune_integrations import IntegrationError, NotionClient
+from autune_integrations import IntegrationError, JiraClient, NotionClient
 
 from . import service
 from .models import ExtActionItem, ExtDecision
@@ -122,13 +122,27 @@ def on_transcript_ready(payload: dict) -> None:
 
 @shared_task(name="autune.extraction.sync_action_item", acks_late=True)
 def sync_action_item(action_item_id: str) -> None:
-    """Step 7 for one item a person just confirmed: its Notion page, once (#30).
+    """Step 7 for one item a person just confirmed: its Notion page and its Jira
+    issue, each once (#30).
 
     Runs when the board moves an item out of ``needs_confirmation``
     (``sync_after_confirmation``), never after extraction: nothing the model drafted
     is confirmed at that point, and #246 keeps unconfirmed items in Autune.
 
-    A team that has not connected Notion is skipped, not failed -- the ordinary
+    **The two services are independent, each in its own transaction and its
+    own try.** A team may have connected one and not the other, and a Notion
+    failure must not stop the Jira attempt from ever running -- catching only
+    around the pair, the way this task used to when it did one thing, would
+    let the first service's exception skip the second every time. Each
+    catch here logs and moves on; ``sync_after_confirmation``'s own catch
+    stays as a backstop for anything that is not an ``IntegrationError``.
+    """
+    _sync_action_item_to_notion(action_item_id)
+    _sync_action_item_to_jira(action_item_id)
+
+
+def _sync_action_item_to_notion(action_item_id: str) -> None:
+    """A team that has not connected Notion is skipped, not failed -- the ordinary
     answer from ``load_integration`` (``autune_core.integrations_config``). The
     client is built from the team's own credential and dropped when the task
     ends, the way module E builds its Slack client.
@@ -137,39 +151,94 @@ def sync_action_item(action_item_id: str) -> None:
     call, and the claim is the primary key (``service.sync_action_item_to_notion``).
     A failed call rolls the claim back, so a later confirmation can send.
 
-    **It does not retry itself.** A timeout is raised as a transient error, and the
+    **Does not retry itself.** A timeout is raised as a transient error, and the
     common shape of one is a POST that reached Notion and made the page while the
     response was lost: retrying then claims again and makes a second page, with
     only the last one recorded. Losing a page to a timeout is the cheaper failure —
     the person can confirm again. Raised in review of #294.
+
+    The ``IntegrationError`` is caught here, outside ``session_scope``, not
+    inside it -- caught inside, ``session_scope`` would see no exception and
+    commit the claim a failed call made, the same bug #320's review found in
+    the backfill script.
     """
-    with session_scope() as session:
-        item = session.get(ExtActionItem, action_item_id)
-        meeting = session.get(Meeting, item.meeting_id) if item is not None else None
-        if item is None or meeting is None:
-            log.info("extraction_notion_item_gone", action_item_id=action_item_id)
-            return
-        config = load_integration(session, meeting.team_id, "notion")
-        database_id = config.config.get("action_db_id") if config is not None else None
-        if config is None or not config.secret or not database_id:
-            # Asked for, not required: a team that connected Notion for decisions
-            # only, or whose token is gone, is skipped. ``require_secret()`` and
-            # ``require()`` raise ValidationError, which is not an
-            # IntegrationError -- it came out of the confirming request as a 422
-            # rather than a skipped page. Raised in review of #294.
-            log.info(
-                "extraction_notion_not_connected",
+    try:
+        with session_scope() as session:
+            item = session.get(ExtActionItem, action_item_id)
+            meeting = session.get(Meeting, item.meeting_id) if item is not None else None
+            if item is None or meeting is None:
+                log.info("extraction_notion_item_gone", action_item_id=action_item_id)
+                return
+            config = load_integration(session, meeting.team_id, "notion")
+            database_id = config.config.get("action_db_id") if config is not None else None
+            if config is None or not config.secret or not database_id:
+                # Asked for, not required: a team that connected Notion for
+                # decisions only, or whose token is gone, is skipped.
+                # ``require_secret()`` and ``require()`` raise ValidationError,
+                # which is not an IntegrationError -- it came out of the
+                # confirming request as a 422 rather than a skipped page.
+                # Raised in review of #294.
+                log.info(
+                    "extraction_notion_not_connected",
+                    action_item_id=action_item_id,
+                    team_id=meeting.team_id,
+                )
+                return
+            service.sync_action_item_to_notion(
+                session,
+                NotionClient(config.secret),
                 action_item_id=action_item_id,
-                team_id=meeting.team_id,
+                database_id=database_id,
+                property_names=config.config.get("action_properties"),
             )
-            return
-        service.sync_action_item_to_notion(
-            session,
-            NotionClient(config.secret),
-            action_item_id=action_item_id,
-            database_id=database_id,
-            property_names=config.config.get("action_properties"),
-        )
+    except IntegrationError:
+        log.warning("extraction_notion_sync_item_failed", action_item_id=action_item_id)
+
+
+def _sync_action_item_to_jira(action_item_id: str) -> None:
+    """``_sync_action_item_to_notion``'s rules, for Jira (#30).
+
+    A team missing any of ``project_key``, ``issue_type`` or ``base_url`` is
+    skipped the same as one that never connected -- a partially configured
+    workspace should not raise mid-confirmation. Creation itself is held back
+    further, inside ``service.sync_action_item_to_jira``, when the item's
+    assignee has no entry in the team's mapping.
+    """
+    try:
+        with session_scope() as session:
+            item = session.get(ExtActionItem, action_item_id)
+            meeting = session.get(Meeting, item.meeting_id) if item is not None else None
+            if item is None or meeting is None:
+                log.info("extraction_jira_item_gone", action_item_id=action_item_id)
+                return
+            config = load_integration(session, meeting.team_id, "jira")
+            project_key = config.config.get("project_key") if config is not None else None
+            issue_type = config.config.get("issue_type") if config is not None else None
+            base_url = config.config.get("base_url") if config is not None else None
+            if (
+                config is None
+                or not config.secret
+                or not project_key
+                or not issue_type
+                or not base_url
+            ):
+                log.info(
+                    "extraction_jira_not_connected",
+                    action_item_id=action_item_id,
+                    team_id=meeting.team_id,
+                )
+                return
+            service.sync_action_item_to_jira(
+                session,
+                JiraClient(base_url, config.config.get("email", ""), config.secret),
+                action_item_id=action_item_id,
+                project_key=project_key,
+                issue_type=issue_type,
+                base_url=base_url,
+                assignee_mapping=config.config.get("assignee_mapping"),
+            )
+    except IntegrationError:
+        log.warning("extraction_jira_sync_item_failed", action_item_id=action_item_id)
 
 
 def sync_after_confirmation(action_item_id: str) -> None:
@@ -178,17 +247,18 @@ def sync_after_confirmation(action_item_id: str) -> None:
     The router hands this to FastAPI's background tasks rather than queueing
     ``sync_action_item`` on the broker: apps/api builds no Celery app, so a
     ``delay`` from a request has nowhere to go, and wiring one in is a change to
-    the team's shared assembly. The claim in ``ext_external_refs`` makes the page
-    once either way.
+    the team's shared assembly. The claim in ``ext_external_refs`` makes each
+    page or issue once either way.
 
-    The person's edit is already committed when this runs, so a Notion failure
-    must not surface as an error on the board. It is logged by id and the claim
-    is rolled back, which lets the next confirmation of that item send.
+    The person's edit is already committed when this runs, so neither service
+    failing may surface as an error on the board -- ``sync_action_item``
+    already catches each one's own ``IntegrationError`` internally, so this
+    catch is a backstop rather than the primary path.
     """
     try:
         sync_action_item(action_item_id)
     except IntegrationError:
-        log.warning("extraction_notion_sync_failed", action_item_id=action_item_id)
+        log.warning("extraction_sync_failed", action_item_id=action_item_id)
 
 
 @shared_task(name="autune.extraction.sync_decision", acks_late=True)

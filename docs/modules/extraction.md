@@ -69,12 +69,18 @@ agreement, and sync the result to Notion and Jira.
    needs the speaker's Slack account (#70) and a team Slack client (#30).
 7. **Sync** — when a person confirms an action item (moves it out of
    `needs_confirmation`), create one page for it in the team's Notion database
-   and store the URL in `ext_external_refs` (#30). One page per item, whatever
-   happens to it afterwards; a team without Notion connected is skipped. Not
-   part of the extraction run: nothing the model drafted is confirmed yet (#246).
-   A decision goes the same way when a person confirms it (or adds it), to the
-   team's decision database, in the wording they confirmed
-   (`ext_decision_refs`). Jira is not synced yet.
+   and one issue for it in the team's Jira project, each independently, and
+   store each URL in `ext_external_refs` (#30). One page and one issue per
+   item, whatever happens to it afterwards; a team missing either connection
+   is skipped for that one, not both -- Notion and Jira are unrelated claims,
+   and one failing must not stop the other from being attempted. Jira
+   creation is held back further when the item's assignee has no entry in the
+   team's assignee mapping (S28) -- an unassigned issue is a worse answer than
+   waiting. Not part of the extraction run: nothing the model drafted is
+   confirmed yet (#246). A decision goes the same way when a person confirms
+   it (or adds it), to the team's decision database, in the wording they
+   confirmed (`ext_decision_refs`) -- Notion only; decisions are not synced to
+   Jira.
 8. **Publish** — emit `ExtractionResult`.
 
 Classification runs before reference resolution, which is worth stating because
@@ -417,4 +423,11 @@ versions.
 
 ## Open questions
 
-- Whether Jira sync is per-action or batched per meeting.
+- ~~Whether Jira sync is per-action or batched per meeting.~~ Per-action,
+  mirroring Notion: one issue on confirmation, in its own claim
+  (`sync_action_item_to_jira`, #30).
+- ui-spec.md S28 names "one of 3 creation timings" for Jira and S17 shows a
+  board-drag triggering a Jira status transition (`JiraClient.transition()`
+  exists, unused). Only the confirmation-time creation this module already
+  does for Notion is built; the other timings and the drag-to-transition flow
+  are not scoped yet.
