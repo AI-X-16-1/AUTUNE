@@ -57,16 +57,6 @@ def _live_model() -> WhisperModel:
     return _model_for(settings.live_whisper_model, settings.live_cpu_threads)
 
 
-def warm_up() -> None:
-    """Load the model now rather than on the first transcription.
-
-    The live channel calls this before it tells the browser it is ready, so a
-    missing model or an unaccepted licence surfaces as a refused connection
-    rather than as a stall on the first utterance.
-    """
-    _model()
-
-
 def warm_up_live() -> None:
     """Load the live model before the browser is told the channel is ready."""
     _live_model()
