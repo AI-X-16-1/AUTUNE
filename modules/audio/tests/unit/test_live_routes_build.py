@@ -3,6 +3,9 @@ the router is imported: a misconfigured engine must not take the API down."""
 
 from __future__ import annotations
 
+import subprocess
+import sys
+
 import pytest
 
 from autune_audio.config import AudioSettings
@@ -15,8 +18,16 @@ def fresh_transcriber(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(routes, "_transcriber", None)
 
 
-def test_importing_the_router_builds_no_transcriber() -> None:
-    assert routes._transcriber is None  # noqa: SLF001 - the seam under test
+def test_importing_the_router_with_a_misconfigured_engine_does_not_raise() -> None:
+    """The PR #307 finding: ``mlx`` on a non-Apple machine must refuse one
+    socket, not stop the API from importing module A's router."""
+    code = (
+        "import os; os.environ['AUTUNE_AUDIO_LIVE_TRANSCRIBER_IMPL'] = 'mlx'\n"
+        "from autune_audio.live import backends, routes\n"
+        "backends.mlx_available = lambda: False\n"
+        "raise SystemExit(0 if routes._transcriber is None else 1)\n"
+    )
+    subprocess.run([sys.executable, "-c", code], check=True, timeout=120)
 
 
 def test_a_misconfigured_engine_fails_at_the_first_session_not_at_import(
