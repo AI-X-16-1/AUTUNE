@@ -207,7 +207,11 @@ already inside `pyannote/speaker-diarization-3.1`, so no new download and the sa
 vector space #6 will identify against -- and nearest-centroid clustering in
 the session with one cosine threshold. Labels are `화자 N` in order of first
 appearance and never change once shown; the stored path was changed to say
-the same thing (it had been showing pyannote's `SPEAKER_02` raw).
+the same thing (it had been showing pyannote's `SPEAKER_02` raw). A meeting
+stored before this change keeps its `SPEAKER_00`-style participant rows; a
+re-upload creates `화자 N` rows beside them (`persistence.py` already
+documents that reruns cannot preserve the mapping), and no migration is
+needed.
 
 | Measure | Value |
 | --- | --- |
