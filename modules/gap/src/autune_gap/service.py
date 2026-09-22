@@ -16,7 +16,18 @@ from sqlalchemy import delete, func, nulls_last, select
 from autune_contracts.enums import GapSeverity
 from autune_contracts.events import GAP_COMPLETED
 from autune_contracts.gap import Gap, GapReport, Participation, Topic
-from autune_core import Meeting, Participant, Utterance, get_logger, ids, new_id, session_scope
+from autune_core import (
+    Meeting,
+    Participant,
+    TeamMember,
+    User,
+    Utterance,
+    get_logger,
+    ids,
+    new_id,
+    session_scope,
+)
+from autune_core.errors import NotFoundError
 from autune_core.events import publish
 from autune_gap import detect, graph, template
 from autune_gap.config import GapSettings, get_settings
@@ -38,6 +49,67 @@ if TYPE_CHECKING:
     from autune_contracts import TranscriptReady
 
 log = get_logger(__name__)
+
+
+def require_readable_meeting(session: Session, meeting_id: str, reader: User) -> None:
+    """Raise unless ``reader`` may read this meeting. Everything under
+    ``/api/gap`` that names a meeting calls this first.
+
+    A token proves who is asking, not whose meetings they may read.
+
+    **An unknown meeting and somebody else's meeting get the same answer.** Both
+    are ``NotFoundError``, never a 403 — a 403 confirms that the id exists, and
+    the ids are the only thing a caller needs to walk the table. Module A checks
+    existence before membership and therefore tells a non-member which meeting
+    ids are real (``modules/audio/.../service.py:64``); #276 asks for that to
+    change there too, and C does not copy it in the meantime.
+
+    Not a 404 for a meeting that exists, is readable, and has not been analysed:
+    the resource is there and has produced nothing, which is what an empty
+    report says. A screen polling while the pipeline runs needs that difference,
+    and module B draws the same line on ``/results/{meeting_id}``.
+
+    The refusal is logged with the reason, because "no such meeting" and "not
+    your team" are the same answer to a caller and different answers to whoever
+    is reading the logs. Ids only — a meeting title is meeting content.
+    """
+    meeting = session.get(Meeting, meeting_id)
+    if meeting is None:
+        log.info(
+            "gap_read_refused", meeting_id=meeting_id, reader_id=reader.id, reason="no_such_meeting"
+        )
+        raise NotFoundError("meeting", meeting_id)
+
+    if not _is_team_member(session, user_id=reader.id, team_id=meeting.team_id):
+        log.info(
+            "gap_read_refused", meeting_id=meeting_id, reader_id=reader.id, reason="not_a_member"
+        )
+        raise NotFoundError("meeting", meeting_id)
+
+
+def _is_team_member(session: Session, *, user_id: str, team_id: str) -> bool:
+    """Whether this user belongs to this team.
+
+    A predicate rather than a raising helper, because the caller above answers
+    both of its cases the same way and a helper that raised its own error would
+    have to be caught and translated.
+
+    **This duplicates four lines of module A** (``require_team_member``), and
+    that is what #276 is deciding: the same check living in two modules is one
+    that can come to mean two things — A's own docstring says so about two
+    copies inside one module. If it moves to ``packages/core`` where
+    ``require_self`` already lives, this function becomes a call to it and the
+    behaviour above does not change. Until that decision, invariant 2 forbids
+    importing A's copy, and a C-local predicate is the only thing available.
+    """
+    return (
+        session.scalar(
+            select(TeamMember.id).where(
+                TeamMember.team_id == team_id, TeamMember.user_id == user_id
+            )
+        )
+        is not None
+    )
 
 
 def build_topic_graph(transcript: TranscriptReady) -> int:
