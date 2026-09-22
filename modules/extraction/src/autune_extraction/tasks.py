@@ -114,7 +114,8 @@ def on_transcript_ready(payload: dict) -> None:
     # TODO(강민구): step 6, the DM: for each of ``service.unasked_confirmations``,
     # resolve the speaker's Slack account and call
     # ``service.ask_for_confirmation`` -- blocked on an account mapping (#70)
-    # and a team Slack client (#30). Step 7, Notion and Jira (#30).
+    # and a team Slack client (#30). Step 7, Notion (#30) -- Jira was
+    # dropped (#82): both its auth paths tie a workspace to whoever set it up.
 
     # Step 8, after the writes have committed. The payload is never logged:
     # decision statements and item descriptions are meeting content.

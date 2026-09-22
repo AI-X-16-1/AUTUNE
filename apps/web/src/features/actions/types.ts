@@ -46,7 +46,7 @@ export const COLUMN_LABELS: Record<ActionStatus, string> = {
  * (this system absent from the array) means nothing has tried yet.
  */
 export interface ExternalRefRead {
-  system: "notion" | "jira";
+  system: "notion"; // Jira dropped (#82)
   url: string | null;
   external_id: string | null;
 }
@@ -74,10 +74,11 @@ export interface ActionItemRead extends ActionItem {
    */
   is_candidate: boolean;
   /**
-   * At most `notion` today (#30); `jira` is designed, not built. Not
-   * `external_refs`: the generated `ActionItem` already has a field by that
-   * name (`ExternalRef[]`, `url` required, the outbound-only shape), and
-   * `extends` cannot narrow it to this stricter one.
+   * At most `notion` today (#30). `jira` was designed (ui-spec S18, S28) but
+   * dropped before being built (#82). Not `external_refs`: the generated
+   * `ActionItem` already has a field by that name (`ExternalRef[]`, `url`
+   * required, the outbound-only shape), and `extends` cannot narrow it to
+   * this stricter one.
    */
   sync_refs: ExternalRefRead[];
   /**
@@ -148,7 +149,7 @@ export type DecisionStatus = "pending" | "confirmed" | "rejected";
  * (this system absent from the array) means nothing has tried yet.
  */
 export interface ExternalRefRead {
-  system: "notion" | "jira";
+  system: "notion"; // Jira dropped (#82)
   url: string | null;
   external_id: string | null;
 }
@@ -172,8 +173,9 @@ export interface ReviewDecision {
    */
   summary: string | null;
   /**
-   * At most `notion` today (#30); `jira` is designed, not built.
-   * Optional rather than required: the backend only started sending this key
+   * At most `notion` today (#30). `jira` was designed (ui-spec S18, S28) but
+   * dropped before being built (#82). Optional rather than required: the
+   * backend only started sending this key
    * once #312 merged, and #314 (which declares this interface) landed first.
    * Absent means the same thing as `[]` -- the render side must not assume it.
    */
