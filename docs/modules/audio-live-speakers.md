@@ -54,8 +54,9 @@ already does the right thing with that: `TranscriptRow` prints
 
 The embedder runs on the same worker thread, under the same lock, right after
 the transcriber: two models fighting for the CPU would slow both, and
-0.2–0.5 s per utterance fits inside the live lag budget (about 1.7 s from
-utterance end to row with mlx; `HISTORY.md` section 2).
+the embedding costs under 60 ms per utterance on CPU (section 3.1), noise
+next to the live lag budget (about 1.7 s from utterance end to row with mlx;
+`HISTORY.md` section 2).
 
 ## 3. Server — `modules/audio/src/autune_audio/live/`
 
@@ -76,10 +77,10 @@ class Embedder:
   shorter than the model's receptive field is padded with zeros to 0.5 s
   before inference — the tracker, not the embedder, decides what a short
   utterance may do (section 3.3).
-- Device: CPU. Metal (`mps`) is not used in this version — the measured cost
-  is inside budget on CPU, and pyannote's `mps` path has open issues with
-  variable-length input. The evaluation records both numbers so the choice can
-  be revisited with data.
+- Device: CPU. A probe on the reference laptop (M4 Pro) loaded the model in
+  0.4 s and embedded 0.5 s / 1 s / 3 s / 10 s of audio in 12 / 12 / 19 / 55 ms
+  — two orders of magnitude under the Whisper decode it follows. No GPU path
+  is needed or built.
 - The Hugging Face token is `AudioSettings.hf_token`, the same one the
   diarizer uses. The wespeaker checkpoint is public, so an empty token works
   for a cached model; the setting is passed through so a fresh machine can
@@ -230,8 +231,7 @@ repository; it lives with the owner). It:
      speakers;
    the reference is the hand-written S1 section of evaluation 02, the part
    where one known person speaks at a time;
-3. times `Embedder.embed` per utterance on CPU and, on Apple silicon, on
-   `mps`;
+3. times `Embedder.embed` per utterance on CPU;
 4. writes `docs/modules/audio-evaluations/04-live-speakers.md` and the
    `HISTORY.md` entry that records the chosen default threshold and why.
 
