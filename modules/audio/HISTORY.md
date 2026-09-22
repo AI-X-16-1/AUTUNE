@@ -174,6 +174,24 @@ has to be subtracted from every row time; and the glossary goes to
 mlx-whisper as `initial_prompt`, which is what makes it write "검색 개편"
 where the unprompted model wrote "검색해변".
 
+**The first real-microphone runs, and what they taught.** Through the real
+page the rows came out as fragments Whisper had guessed at ("Logic
+감사합니다", "hovah 감사합니다", at confidence 0.1–0.25) between correct rows.
+Two facts, both measured on a capture of the person's own audio: the Mac's
+microphones (built-in and a wired earphone alike) deliver speech with almost
+nothing above 1 kHz, which Whisper reads fine with a whole file and badly in
+fragments; and the segmenter was scoring each 200 ms frame with a VAD that
+had no memory of the frame before, so soft syllables read as silence and
+sentences were cut into 0.4–1 s pieces. Three changes, replayed against the
+same capture: the VAD now scores each frame at the end of a 0.6 s window
+(`VAD_CONTEXT_S`); a row whose mean word probability is below
+`live_min_confidence` (0.35) is not sent — the stored path remakes it; and
+the mlx decode runs at temperature 0 with no fallback retries. Result on
+that capture: 9 rows with 3 invented ones → 7 rows, none invented, the
+remaining errors being the microphone's. Chrome's capture path was checked
+separately and passes 1.5–5 kHz flat, so the muffling is upstream of the
+browser.
+
 ---
 
 ## 3. Decisions, and the ones that reversed

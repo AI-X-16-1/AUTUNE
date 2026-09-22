@@ -44,12 +44,12 @@ def energy(frame: np.ndarray) -> float:
     return float(min(1.0, np.sqrt(np.mean(frame * frame)) * 4))
 
 
-def saying(text: str):
+def saying(text: str, *, probability: float = 0.9):
     """A fake transcriber that says ``text`` for any audio."""
 
     def transcribe(waveform: Waveform) -> Transcription:
         words = tuple(
-            Word(start=0.0, end=waveform.duration, text=part, probability=0.9)
+            Word(start=0.0, end=waveform.duration, text=part, probability=probability)
             for part in text.split()
         )
         segment = WhisperSegment(start=0.0, end=waveform.duration, text=text, words=words)
@@ -86,6 +86,23 @@ async def test_an_utterance_becomes_one_masked_row() -> None:
     assert row.speaker_id is None
     assert row.start == 0.0 and 0.9 <= row.end <= 1.3
     assert 0 <= row.confidence <= 1
+
+
+@pytest.mark.asyncio
+async def test_a_guess_below_the_confidence_floor_is_not_a_row() -> None:
+    """The first microphone runs put "Logic 감사합니다" on screen at 0.23; the
+    words the person said scored 0.5 and up. A row is display, and a guess
+    is not worth showing -- the stored path remakes it."""
+    live = LiveSession(
+        segmenter=Segmenter(speech_probability=energy),
+        transcriber=saying("Logic 감사합니다", probability=0.2),
+        min_confidence=0.35,
+    )
+
+    rows = await feed(live, np.concatenate([tone(1000), silence(1000)]))
+
+    assert rows == []
+    assert live.rows_sent == 0
 
 
 @pytest.mark.asyncio

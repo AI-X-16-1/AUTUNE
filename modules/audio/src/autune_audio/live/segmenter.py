@@ -34,16 +34,31 @@ class Segment:
     end: float
 
 
-def _silero_probability(frame: np.ndarray) -> float:
-    """The VAD faster-whisper ships. Loaded on first use, once per process."""
+VAD_CONTEXT_S = 0.6
+"""How much preceding audio the VAD sees along with the frame it scores.
+
+silero is a recurrent model; faster-whisper's wrapper resets its state on
+every call, so a 200 ms frame scored alone is scored with no memory of the
+voice it is in the middle of. On a quiet or muffled microphone that read
+soft syllables as silence and cut sentences into fragments Whisper then
+hallucinated on (the first real-microphone runs). The frame is scored at the
+end of a short window instead, and only the window's tail counts.
+"""
+
+
+def _silero_probability(audio: np.ndarray, tail: int) -> float:
+    """The VAD faster-whisper ships, on ``audio`` whose last ``tail`` samples
+    are the frame being scored. Loaded on first use, once per process."""
     from faster_whisper.vad import get_vad_model
 
     model = get_vad_model()
-    usable = len(frame) - len(frame) % 512
+    usable = len(audio) - len(audio) % 512
     if usable == 0:
         return 0.0
-    probabilities = model(frame[:usable])
-    return float(np.max(probabilities))
+    probabilities = model(audio[len(audio) - usable :])
+    # One probability per 512-sample chunk; the frame is the last few chunks.
+    chunks_in_tail = max(1, int(np.ceil(tail / 512)))
+    return float(np.max(probabilities[-chunks_in_tail:]))
 
 
 class Segmenter:
@@ -56,11 +71,12 @@ class Segmenter:
         max_segment_s: float = 30.0,
         threshold: float = 0.5,
     ) -> None:
-        self._probability = speech_probability or _silero_probability
+        self._probability = speech_probability
         self._min_speech = min_speech_ms / 1000
         self._min_silence = min_silence_ms / 1000
         self._max_segment = max_segment_s
         self._threshold = threshold
+        self._recent: list[np.ndarray] = []  # the VAD's context window, newest last
         self._elapsed = 0.0  # seconds of audio fed so far
         self._open: list[np.ndarray] = []  # frames of the utterance in progress
         self._open_start = 0.0
@@ -71,7 +87,7 @@ class Segmenter:
         """One frame of float32 samples at ``SAMPLE_RATE``. Returns the
         segments it closed -- usually none, sometimes one."""
         duration = len(frame) / SAMPLE_RATE
-        speech = self._probability(frame) >= self._threshold
+        speech = self._speech_probability(frame) >= self._threshold
         closed: list[Segment] = []
 
         if speech:
@@ -95,6 +111,15 @@ class Segmenter:
         if self._open and (self._elapsed - self._open_start) >= self._max_segment:
             closed.extend(self._close())
         return closed
+
+    def _speech_probability(self, frame: np.ndarray) -> float:
+        if self._probability is not None:
+            return self._probability(frame)
+        self._recent.append(frame)
+        keep = int(VAD_CONTEXT_S * SAMPLE_RATE)
+        while sum(len(f) for f in self._recent[:-1]) > keep:
+            self._recent.pop(0)
+        return _silero_probability(np.concatenate(self._recent), tail=len(frame))
 
     def flush(self) -> Segment | None:
         """Close whatever is open. Called on stop."""

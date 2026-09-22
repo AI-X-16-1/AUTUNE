@@ -143,6 +143,12 @@ class AudioSettings(BaseSettings):
     """The mlx-whisper weights, a Hugging Face repo. The MLX conversion of
     the same turbo model the CTranslate2 path uses."""
 
+    live_min_confidence: float = 0.35
+    """A live row below this mean word probability is not sent. On the first
+    real-microphone runs the hallucinated fragments scored 0.08-0.25 and
+    real speech 0.5-0.95; the stored path remakes every row, so a dropped
+    one costs nothing but a moment on screen."""
+
     live_beam_size: int = 5
     """Beam width on the live path. Width 5 costs turbo about 0.3 s more per
     utterance than width 1 and is what the stored path uses, so a live row

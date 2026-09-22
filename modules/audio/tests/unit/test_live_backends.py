@@ -75,4 +75,5 @@ def test_the_mlx_result_becomes_a_transcription(monkeypatch: pytest.MonkeyPatch)
     assert calls[0]["path_or_hf_repo"] == "mlx-community/whisper-tiny"
     assert calls[0]["language"] == "ko"
     assert calls[0]["initial_prompt"] == "pgvector"
+    assert calls[0]["temperature"] == 0.0  # no fallback retries on a fragment
     assert calls[0]["word_timestamps"] is True

@@ -98,6 +98,9 @@ def transcribe_mlx(waveform: Waveform, *, glossary: str | None = None) -> Transc
         language="ko",
         word_timestamps=True,
         initial_prompt=prompt or None,
+        # No temperature fallback: on a short, quiet fragment the retries at
+        # higher temperature are where the invented words came from.
+        temperature=0.0,
     )
     segments = tuple(
         Segment(

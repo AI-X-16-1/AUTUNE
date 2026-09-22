@@ -15,6 +15,7 @@ from typing import Literal
 
 import numpy as np
 
+from autune_audio.config import get_settings
 from autune_audio.live.segmenter import Segment, Segmenter
 from autune_audio.live.transcriber import Transcriber
 from autune_audio.masking import EntityRecogniser, mask
@@ -45,11 +46,15 @@ class LiveSession:
         segmenter: Segmenter,
         transcriber: Transcriber,
         recogniser: EntityRecogniser | None = None,
+        min_confidence: float | None = None,
     ) -> None:
         self._segmenter = segmenter
         self._transcriber = transcriber
         # The same recogniser the stored path uses, chosen by the same setting.
         self._recogniser = recogniser if recogniser is not None else get_recogniser()
+        self._min_confidence = (
+            min_confidence if min_confidence is not None else get_settings().live_min_confidence
+        )
         self.state: Literal["recording", "paused", "ended"] = "recording"
         self.rows_sent = 0
 
@@ -104,6 +109,16 @@ class LiveSession:
         masked = mask(spoken, recogniser=self._recogniser).text
         del spoken  # the unmasked string ends here
         if not masked.strip():
+            return None
+        if confidence < self._min_confidence:
+            # A fragment Whisper was guessing at -- the hallucinated rows of
+            # the first microphone runs sat at 0.1-0.25 while real speech sat
+            # above 0.5. Nothing is lost: the stored path remakes every row.
+            log.info(
+                "live_segment_below_confidence",
+                seconds=round(segment.end - segment.start, 1),
+                confidence=round(confidence, 2),
+            )
             return None
 
         self.rows_sent += 1

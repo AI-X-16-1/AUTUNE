@@ -8,6 +8,7 @@ in ``session.py`` and covered there.
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from autune_audio.live.segmenter import Segmenter
 from autune_audio.schemas import SAMPLE_RATE
@@ -99,3 +100,28 @@ def test_flush_returns_the_open_segment_on_stop() -> None:
     assert last is not None
     assert 0.8 <= last.end - last.start <= 1.2
     assert segmenter.flush() is None
+
+
+def test_the_default_vad_sees_the_frame_with_its_recent_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """silero is scored on a window that ends with the frame, never on the
+    200 ms frame alone: a soft syllable in the middle of a sentence read as
+    silence when the model had no memory of the voice around it."""
+    from autune_audio.live import segmenter as module
+
+    seen: list[tuple[int, int]] = []
+
+    def fake(audio: np.ndarray, tail: int) -> float:
+        seen.append((len(audio), tail))
+        return 1.0
+
+    monkeypatch.setattr(module, "_silero_probability", fake)
+    segmenter = Segmenter()
+    for frame in frames(tone(2000)):
+        segmenter.feed(frame)
+
+    assert seen[0] == (FRAME, FRAME)  # the first frame has no past
+    assert all(tail == FRAME for _, tail in seen)
+    longest = max(length for length, _ in seen)
+    assert FRAME < longest <= int(module.VAD_CONTEXT_S * SAMPLE_RATE) + FRAME
