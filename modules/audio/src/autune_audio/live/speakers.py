@@ -9,7 +9,11 @@ stored path's whole-file diarization corrects an over-split after the upload.
 Pure numpy. Nothing here loads a model, and the vectors it holds -- one
 running-mean centroid per cluster -- live in the session object and die with
 the socket. An embedding is biometric data; nothing is logged but the cluster
-number and the similarity. Design: ``docs/modules/audio-live-speakers.md``.
+number and the similarity. At info level, a per-row cluster id sitting next to
+the row's duration in the surrounding logs would let a log reconstruct
+per-cluster speaking time, which ``privacy.md`` section 3 forbids once a
+cluster is a person; so ``live_speaker_labelled`` is logged at debug. Design:
+``docs/modules/audio-live-speakers.md``.
 """
 
 from __future__ import annotations
@@ -110,7 +114,7 @@ class SpeakerTracker:
         if update:
             cluster.centroid = _unit(cluster.centroid * cluster.count + v)
             cluster.count += 1
-        log.info(
+        log.debug(
             "live_speaker_labelled",
             cluster=index + 1,
             similarity=round(similarity, 3),
@@ -121,7 +125,7 @@ class SpeakerTracker:
     def _open(self, v: np.ndarray, *, similarity: float | None = None) -> str:
         self._clusters.append(Cluster(centroid=v, count=1))
         index = len(self._clusters) - 1
-        log.info(
+        log.debug(
             "live_speaker_labelled",
             cluster=index + 1,
             similarity=None if similarity is None else round(similarity, 3),
