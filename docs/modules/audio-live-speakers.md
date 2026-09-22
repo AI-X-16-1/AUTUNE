@@ -189,7 +189,7 @@ Two changes, so the stored screen and the live screen say the same thing:
 
 The contract is not touched. `Utterance.speaker` is `str`; the docstring's
 example (`'Speaker 2' when unidentified`) and `docs/architecture/contracts.md`
-line 74 are prose. An issue asks the team to update the example; this branch
+line 74 are prose. Issue #327 asks the team to update the example; this branch
 does not edit `packages/`.
 
 ## 5. Errors, limits, privacy
