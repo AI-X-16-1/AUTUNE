@@ -9,7 +9,7 @@ made.
 from __future__ import annotations
 
 from autune_audio.schemas import Segment, Transcription, Turn, Word
-from autune_audio.speakers import UNIDENTIFIED, assign_speakers, speaker_at
+from autune_audio.speakers import UNIDENTIFIED, assign_speakers, rename_speakers, speaker_at
 
 
 def word(text: str, start: float, end: float, probability: float = 0.9) -> Word:
@@ -194,3 +194,31 @@ class TestTheJoinPreservesTheTranscript:
         rejoined = [w.text for u in utterances for w in u.words]
 
         assert rejoined == [f"단어{i}" for i in range(12)]
+
+
+class TestRenaming:
+    """pyannote's labels are arbitrary per run; the screen shows 화자 N."""
+
+    def test_labels_are_numbered_by_first_appearance_in_time(self) -> None:
+        turns = (
+            Turn(5.0, 6.0, "SPEAKER_02"),
+            Turn(0.0, 1.0, "SPEAKER_01"),
+            Turn(2.0, 3.0, "SPEAKER_00"),
+            Turn(7.0, 8.0, "SPEAKER_01"),
+        )
+        renamed = rename_speakers(turns)
+        assert [t.speaker for t in renamed] == ["화자 1", "화자 2", "화자 3", "화자 1"]
+        assert [(t.start, t.end) for t in renamed] == [
+            (0.0, 1.0),
+            (2.0, 3.0),
+            (5.0, 6.0),
+            (7.0, 8.0),
+        ]
+
+    def test_the_prefix_is_the_shared_constant(self) -> None:
+        assert UNIDENTIFIED == "화자"
+        [turn] = rename_speakers((Turn(0.0, 1.0, "X"),))
+        assert turn.speaker == f"{UNIDENTIFIED} 1"
+
+    def test_no_turns_is_no_turns(self) -> None:
+        assert rename_speakers(()) == ()

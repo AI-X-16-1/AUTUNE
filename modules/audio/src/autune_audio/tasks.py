@@ -19,7 +19,7 @@ from autune_audio.masking import mask
 from autune_audio.persistence import persist_transcript, transcript_payload
 from autune_audio.pipeline import transcribe
 from autune_audio.quality import detect_repetition
-from autune_audio.speakers import Utterance, assign_speakers
+from autune_audio.speakers import Utterance, assign_speakers, rename_speakers
 from autune_audio.storage import adopt, delete_orphan, upload_path
 from autune_contracts.events import TRANSCRIPT_READY
 from autune_core import get_logger
@@ -122,7 +122,7 @@ def process_recording(job_id: str) -> None:
         # re-run.
         detect_repetition(transcription).raise_if_collapsed()
 
-        spoken = assign_speakers(transcription, turns)
+        spoken = assign_speakers(transcription, rename_speakers(turns))
         masked = tuple(replace(utterance, text=mask(utterance.text).text) for utterance in spoken)
         _log_masking(meeting_id, spoken, masked)
 
