@@ -173,6 +173,11 @@ export function useLiveSession(meetingId: string, stream: MediaStream | null): L
     // has run since, it is no longer current, no matter what socket-level
     // event triggers it.
     const mine = ++generation.current;
+    // Stale if a newer start(), abandon() or reset() bumped the generation --
+    // or if stop() has begun: stop() only bumps the generation after the
+    // server's `ended`, and a Stop pressed during warm-up must not let this
+    // continuation open the audio graph and flip the phase back to recording.
+    const stale = () => generation.current !== mine || stopping.current;
     if (!stream) return;
     const token = getToken();
     if (!token) {
@@ -264,7 +269,7 @@ export function useLiveSession(meetingId: string, stream: MediaStream | null): L
       // cannot tell us that: `onclose` nulls it before this handler's
       // microtask runs, so it is `null` (not `=== ws`) for every
       // close-originated rejection, stale or not.
-      if (generation.current !== mine) return;
+      if (stale()) return;
       const code = closeCodeOf(caught);
       const message = caught instanceof Error ? caught.message : String(caught);
       if (code !== undefined && REFUSAL_CODES.has(code)) {
@@ -286,7 +291,7 @@ export function useLiveSession(meetingId: string, stream: MediaStream | null): L
 
     // A stop() -- or a fresh start() -- may already have run while this one
     // was still connecting. Do not resurrect a session nobody is waiting for.
-    if (generation.current !== mine) return;
+    if (stale()) return;
 
     let ctx: AudioContext | null = null;
     try {
@@ -299,7 +304,7 @@ export function useLiveSession(meetingId: string, stream: MediaStream | null): L
       // addModule fetches the worklet. A stop() or unmount in that window
       // must not let this continuation wire the microphone into a session
       // nobody is running.
-      if (generation.current !== mine) {
+      if (stale()) {
         void ctx.close();
         return;
       }
@@ -312,7 +317,7 @@ export function useLiveSession(meetingId: string, stream: MediaStream | null): L
       worklet.current = node;
     } catch {
       void ctx?.close();
-      if (generation.current !== mine) return;
+      if (stale()) return;
       // The worklet could not be loaded or wired: no PCM will reach the
       // server, so no rows are coming. The recorder does not need it.
       setLiveLost(true);
