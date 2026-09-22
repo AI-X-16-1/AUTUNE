@@ -96,10 +96,9 @@ async def live(websocket: WebSocket, meeting_id: str) -> None:
                 raise _AlreadyLiveError("a live session is already open for this meeting")
             service.begin_live(db, meeting_id=meeting_id)
             # Inside the scope on purpose: a session that cannot be built
-            # (engine misconfigured, a setting the tracker refuses) raises
-            # here and the scope rolls ``recording`` back with it. Nothing
-            # below awaits before the claim, so the atomicity comment above
-            # still holds.
+            # (engine misconfigured) raises here and the scope rolls
+            # ``recording`` back with it. Nothing below awaits before the
+            # claim, so the atomicity comment above still holds.
             session = build_session()
         registry.claim(meeting_id, session)
     except service.NotATeamMemberError as exc:
@@ -139,6 +138,8 @@ async def live(websocket: WebSocket, meeting_id: str) -> None:
         # flip was rolled back with the scope; refuse like a model that
         # failed to load, and say so in the log by type.
         log.warning("live_model_unavailable", error=type(exc).__name__)
+        with suppress(WebSocketDisconnect):
+            await websocket.send_json(protocol.error("model_unavailable"))
         await _refuse(
             websocket, protocol.MODEL_UNAVAILABLE, meeting_id=meeting_id, reason=type(exc).__name__
         )

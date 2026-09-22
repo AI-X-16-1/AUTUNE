@@ -344,6 +344,7 @@ def test_a_session_that_cannot_be_built_is_4503_and_the_meeting_stays_scheduled(
     monkeypatch.setattr(live_routes, "build_session", broken)
     with connect(client, meeting) as ws:
         hello(ws, issue_token(member.id))
+        assert ws.receive_json() == {"type": "error", "code": "model_unavailable"}
         assert close_code(ws) == 4503
     assert db_session.get(Meeting, meeting).status == "scheduled"
     assert not registry.is_open(meeting)

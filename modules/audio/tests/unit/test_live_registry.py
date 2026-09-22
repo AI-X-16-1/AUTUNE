@@ -40,10 +40,10 @@ def test_a_second_claim_on_the_same_meeting_is_refused() -> None:
 
 def test_importing_service_does_not_pull_in_the_route_stack() -> None:
     """The worker imports ``autune_audio.service`` (through ``autune_audio.tasks``)
-    to refuse an upload while a live socket is open, but must never drag FastAPI
-    and the websocket route in with it: that is the fix for the
-    ``service -> live/__init__ -> routes -> service`` cycle, proven rather than
-    left as an unwritten rule."""
+    to refuse an upload while a live socket is open, but the websocket route
+    module (``live.routes``) must stay out of the worker's import graph: that is
+    the fix for the ``service -> live/__init__ -> routes -> service`` cycle,
+    proven rather than left as an unwritten rule."""
     code = (
         "import sys\n"
         "import autune_audio.service\n"

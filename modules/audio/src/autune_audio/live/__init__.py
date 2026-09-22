@@ -19,6 +19,6 @@ Design: docs/modules/audio-live-transcription.md.
 This package deliberately does not import ``.routes`` here: the router is
 imported by ``autune_audio.router`` directly from ``.live.routes``, so that
 importing ``autune_audio.service`` (as the Celery worker does, through
-``autune_audio.tasks``) never drags FastAPI and the websocket stack into a
-process that has no socket to serve.
+``autune_audio.tasks``) never drags the websocket route module (``live.routes``)
+into a process that has no socket to serve.
 """

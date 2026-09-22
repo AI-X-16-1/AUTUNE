@@ -54,8 +54,8 @@ def resolve(impl: Impl) -> Literal["faster_whisper", "mlx"]:
         return "mlx" if mlx_available() else "faster_whisper"
     if impl == "mlx" and not mlx_available():
         raise ConfigurationError(
-            "AUTUNE_AUDIO_LIVE_TRANSCRIBER_IMPL=mlx needs Apple silicon and the extra: "
-            "uv sync --package autune-audio --extra mlx"
+            "AUTUNE_AUDIO_LIVE_TRANSCRIBER_IMPL asks for an engine that needs Apple "
+            "silicon and the extra: uv sync --package autune-audio --extra mlx"
         )
     return impl
 
