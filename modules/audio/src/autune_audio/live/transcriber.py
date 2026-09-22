@@ -37,6 +37,20 @@ log = get_logger(__name__)
 _LOCK = threading.Lock()
 
 
+async def off_loop[T](fn: Callable[[], T]) -> T:
+    """Run ``fn`` on a worker thread under the process lock.
+
+    The transcriber and the speaker embedder share this: two models
+    competing for the CPU would slow both, and the embedding is milliseconds
+    next to a decode, so it simply waits its turn."""
+
+    def guarded() -> T:
+        with _LOCK:
+            return fn()
+
+    return await anyio.to_thread.run_sync(guarded)
+
+
 class Transcriber:
     def __init__(
         self,

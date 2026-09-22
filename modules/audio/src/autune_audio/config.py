@@ -176,6 +176,17 @@ class AudioSettings(BaseSettings):
     utterance than width 1 and is what the stored path uses, so a live row
     and the row that replaces it after the upload read the same."""
 
+    live_speaker_threshold: float = 0.55
+    """Cosine similarity at or above which a live utterance joins an existing
+    speaker cluster; below it a new ``화자 N`` opens. Provisional: the
+    evaluation in ``docs/modules/audio-live-speakers.md`` section 6 picks the
+    default, and until it has run this is the wespeaker convention."""
+
+    live_speaker_min_s: float = 1.0
+    """A live utterance shorter than this may neither open a speaker cluster
+    nor move a centroid; it takes the nearest label. A sub-second embedding is
+    unreliable, and without the floor every "네" is a new speaker."""
+
     @model_validator(mode="after")
     def _warn_on_cuda_without_token(self) -> AudioSettings:
         """A GPU with no token is a configuration someone meant to finish."""
