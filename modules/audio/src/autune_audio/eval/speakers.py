@@ -15,6 +15,9 @@ Two numbers, both over scored utterances only:
   utterances that landed in their largest cluster; averaged over speakers.
   1.0 means nobody was split.
 
+With no scored utterances (every truth is ``None``) both metrics report 1.0:
+there is nothing to be impure or incomplete about.
+
 Design: ``docs/modules/audio-live-speakers.md`` section 6.
 """
 

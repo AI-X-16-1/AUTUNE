@@ -84,7 +84,10 @@ def main() -> int:
         if args.cache is not None:
             np.savez(args.cache, vectors=vectors, bounds=bounds, costs=np.array(costs))
 
-    blocks = parse_reference(args.reference)
+    try:
+        blocks = parse_reference(args.reference)
+    except ValueError:
+        raise SystemExit(f"bad --reference: {args.reference!r}") from None
     seconds = [float(e - s) for s, e in bounds]
     truth = [reference_speaker(blocks, float(s), float(e)) for s, e in bounds]
     thresholds = [float(t) for t in args.thresholds.split(",")]
@@ -97,7 +100,9 @@ def main() -> int:
     print()
     print("| threshold | capped | clusters | purity | completeness |")
     print("| --- | --- | --- | --- | --- |")
-    for score in sweep(vectors, seconds, truth, thresholds=thresholds, max_speakers=args.speakers):
+    for score in sweep(
+        list(vectors), seconds, truth, thresholds=thresholds, max_speakers=args.speakers
+    ):
         print(
             f"| {score.threshold:.2f} | {'yes' if score.capped else 'no'} | {score.clusters} "
             f"| {score.purity:.3f} | {score.completeness:.3f} |"
