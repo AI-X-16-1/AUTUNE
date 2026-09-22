@@ -40,12 +40,14 @@ def _isolated_settings(monkeypatch: pytest.MonkeyPatch):
     )
 
 
-def item(*, confidence: float = 0.9, sources: tuple[str, ...] = ()) -> ExtActionItem:
+def item(
+    *, confidence: float = 0.9, sources: tuple[str, ...] = (), status: str = "needs_confirmation"
+) -> ExtActionItem:
     row = ExtActionItem(
         id="act_1",
         meeting_id=MEETING,
         description="배포 스크립트 정리",
-        status="needs_confirmation",
+        status=status,
         confidence=confidence,
         origin="model",
     )
@@ -138,6 +140,35 @@ def test_a_hand_added_item_cannot_land_in_the_candidate_band(
     monkeypatch.setenv("AUTUNE_EXTRACTION_CANDIDATE_CONFIDENCE", "1.0")
 
     assert service.read_model(item(confidence=1.0)).is_candidate is False
+
+
+def test_a_confirmed_low_confidence_item_is_not_a_candidate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The bug #295 reported: ``is_candidate`` scored confidence alone, so a
+    low-confidence item a person had already moved off the review screen kept
+    coming back to it on every later visit, because confirming changes
+    ``status`` and never the model's ``confidence`` column.
+
+    Every status but ``needs_confirmation`` is "a person has looked at this,"
+    the same line ``became_confirmed`` draws, so none of them should ever
+    score as a candidate regardless of how low the confidence is.
+    """
+    monkeypatch.setenv("AUTUNE_EXTRACTION_CANDIDATE_CONFIDENCE", "0.9")
+
+    for status in ("todo", "in_progress", "done"):
+        assert service.read_model(item(confidence=0.0, status=status)).is_candidate is False
+
+
+def test_a_needs_confirmation_low_confidence_item_is_still_a_candidate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The case the fix must not break: nobody has looked at this one yet."""
+    monkeypatch.setenv("AUTUNE_EXTRACTION_CANDIDATE_CONFIDENCE", "0.9")
+
+    assert (
+        service.read_model(item(confidence=0.0, status="needs_confirmation")).is_candidate is True
+    )
 
 
 def test_the_setting_refuses_a_threshold_outside_the_confidence_range() -> None:
