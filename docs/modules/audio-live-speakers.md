@@ -22,7 +22,7 @@ owes to the S13 design, which shows "화자 3 미확인" above the transcript.
 | Label stability | **A label never changes once shown.** No merges, no relabel message | S13 is built on rows that do not move (live design, section 1). A merge would need a new message type, a `useLiveSession` change and a "label changed under you" interaction the design does not have. The stored path's whole-file pyannote pass corrects an over-split after the upload |
 | Speaker-count hint | **The live tracker reads the same hint the stored path reads** — `diarization_num_speakers`, else `diarization_max_speakers` — as a cap on how many clusters may open | One knob for both paths (#325). A demo laptop that knows the room has one person gets one label |
 | Label text | **`화자 N`, on both paths.** `speakers.UNIDENTIFIED` becomes `"화자"`, and the stored path maps pyannote's `SPEAKER_00` to `화자 1` by order of first appearance | The same meeting is seen live and then stored; the two screens must agree. Today the stored screen shows `SPEAKER_02` raw. S13 spells it `화자 N`, and no consumer keys on the prefix: module B's `assignee_of` reads `speaker_id is None` only |
-| Failure | **Degrade one row at a time; give up only after three in a row.** An embedder that cannot load logs `live_speaker_unavailable reason=<type> kind=<original type>` once and the session goes on labelling every row `?`. A single failed embed or label costs only that row (`live_speaker_failed error=<type> streak=<n>`, label `?`); three consecutive failures log `live_speaker_unavailable reason=repeated_failures` once and switch labelling off for the rest of the session. The socket stays open throughout | Live rows are display; the stored path is the record. Closing the channel over a speaker label would lose the transcript to save the label |
+| Failure | **Degrade one row at a time; give up only after three in a row.** An embedder that cannot load logs `live_speaker_unavailable reason=<type> kind=<original type, or None for the first failure in a process>` once and the session goes on labelling every row `?`. A single failed embed or label costs only that row (`live_speaker_failed error=<type> streak=<n>`, label `?`); three consecutive failures log `live_speaker_unavailable reason=repeated_failures` once and switch labelling off for the rest of the session. The socket stays open throughout | Live rows are display; the stored path is the record. Closing the channel over a speaker label would lose the transcript to save the label |
 | Threshold | **Chosen by evaluation** (section 6) on the 13-minute four-speaker recording of evaluation 02; a setting overrides it | A cosine threshold on a voice embedding is a measured number, not a guess. The provisional value until the evaluation runs is 0.55 |
 | Storage | **Nothing.** Centroids live in the `LiveSession` and die with the socket | Same rule as every other live-path value. An embedding is biometric data; keeping it is #6's decision, with consent, not a side effect of this |
 
@@ -81,7 +81,9 @@ class Embedder:
     def __init__(
         self, checkpoint: str = "pyannote/wespeaker-voxceleb-resnet34-LM", token: str = ""
     ) -> None: ...
-    def warm_up(self) -> None: ...  # loads the model; raises EmbedderUnavailable if it cannot
+    def warm_up(
+        self,
+    ) -> None: ...  # raises the load error first; later calls raise EmbedderUnavailable(kind)
     def embed(self, waveform: Waveform) -> np.ndarray: ...  # float32, shape (256,), unit length
 
 
@@ -129,7 +131,9 @@ class Cluster:
     count: int
 
     @property
-    def centroid(self) -> np.ndarray: ...  # unit(total), or the zero vector if members cancel
+    def centroid(
+        self,
+    ) -> np.ndarray: ...  # total / ‖total‖, or the zero vector when ‖total‖ <= 1e-6
     def similarity(self, v: np.ndarray) -> float: ...  # centroid . v; 0.0 if cancelled
     def add(self, v: np.ndarray) -> None: ...  # total += v; count += 1
 
@@ -146,7 +150,7 @@ class SpeakerTracker:
     def clusters(self) -> int: ...
 ```
 
-`unit()` is the one place a vector is normalised: a unit-length float32 copy,
+`unit()` is the one place an *incoming* vector is normalised: a unit-length float32 copy,
 raising `ValueError` when there is no direction to keep — a zero norm, or a
 NaN/inf that would poison every later score (`norm == 0` alone is `False` for
 NaN). `label` calls it on its incoming vector; `Embedder.embed` (section 3.1)
@@ -165,7 +169,7 @@ disagree about what counts as a usable vector.
    centroid because the same unreliability would drag it.
 4. **Join** when `s >= threshold`: `cluster.add(vector)` — the vector joins
    the running sum and `count` increments. The centroid is read off that sum
-   fresh each time (`unit(total)`), so it is the exact mean of every member
+   fresh each time (`total / ‖total‖`), so it is the exact mean of every member
    vector, not a repeatedly renormalised running centroid that drifts toward
    the earliest ones.
 5. **Cap** when the cluster count equals `max_speakers`: assigned to `best`
@@ -174,9 +178,10 @@ disagree about what counts as a usable vector.
 6. **Open** otherwise: a new cluster with `total = vector.copy()`, `count = 1`,
    label `화자 {n+1}`.
 
-A cluster's members can in principle cancel to a zero sum (only through a
-capped forced join of an opposite voice); `centroid` then returns the zero
-vector and `similarity` reports `0.0` rather than raising.
+A cluster's members can in principle cancel to a (near-)zero sum
+(`‖total‖ <= 1e-6`, only through a capped forced join of an opposite voice);
+`centroid` then returns the zero vector and `similarity` reports `0.0` rather
+than raising.
 
 Labels are `f"{UNIDENTIFIED} {n}"` with `UNIDENTIFIED` imported from
 `autune_audio.speakers`, so the two paths cannot drift apart.
@@ -229,11 +234,12 @@ reads `AudioSettings.speaker_bounds()` — the single source of head-count
 precedence, also read by `diarization.py` for the stored path: an exact
 `diarization_num_speakers` wins, else the `diarization_max_speakers` upper
 bound, else no cap. All three `diarization_*_speakers` fields are
-`Field(default=None, ge=1)`, so a value below 1 is refused when the settings
-load — see section 5 for what a value below 1 does to `build_session()` when
-it slips through as an env override anyway. One embedder instance per
-process, shared across sessions the way `_model_for` shares Whisper — the
-model is read-only once loaded, and the lock serialises calls anyway.
+`Field(default=None, ge=1)`, so a value below 1 stops the API at startup and
+cannot reach `build_session()` — see section 5 for the `ValueError` clause in
+the hello handler, which is the belt for anything `SpeakerTracker`/`Segmenter`
+construction refuses instead. One embedder instance per process, shared
+across sessions the way `_model_for` shares Whisper — the model is read-only
+once loaded, and the lock serialises calls anyway.
 
 ### 3.5 Settings (`config.py`)
 
@@ -278,14 +284,16 @@ does not edit `packages/`.
   `live_speaker_unavailable reason=repeated_failures` logs once and the rest
   of the session is `?`. Exception types only, never messages — pyannote
   errors can quote file paths.
-- **A bad head-count override reaches `build_session()`**: `Field(ge=1)`
+- **A bad head-count override cannot reach `build_session()`**: `Field(ge=1)`
   refuses `diarization_num_speakers`/`_min_speakers`/`_max_speakers` below 1
-  when `AudioSettings` loads, so this needs a deployment that bypasses
-  validation to happen at all. If it does, `build_session()` raises before
-  the socket is claimed, and the hello handler's 4503 branch catches it next
-  to `ConfigurationError` (it also catches bare `ValueError`, which is what a
-  validation failure and `SpeakerTracker`'s own `max_speakers < 1` guard both
-  raise) — the same refusal as a transcriber that cannot load.
+  when `AudioSettings` loads, and `autune_audio.router` imports `live.routes`,
+  whose module level calls `get_settings()` to build the process-wide
+  `Embedder` — so a value below 1 stops the API at startup; it cannot reach
+  `build_session()`. The hello handler's 4503 branch catching `ValueError`
+  next to `ConfigurationError` is the belt for anything `SpeakerTracker`'s own
+  `max_speakers < 1` guard (or any other construction refusal) raises
+  instead — a session that cannot be built is a 4503 with the status flip
+  rolled back, never a meeting stranded in `recording`.
 - **More clusters than people**: bounded by the hint when there is one,
   otherwise by the threshold. The evaluation reports how many clusters a
   four-person recording produces at each threshold.

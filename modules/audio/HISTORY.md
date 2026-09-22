@@ -223,7 +223,7 @@ What the threshold sweep reports, and the value it settles on, goes in
 `docs/modules/audio-evaluations/04-live-speakers.md` when the owner has run
 it; this entry is updated then.
 
-**2026-09-22.** Review on PR #328 found five things worth fixing before this
+**2026-09-22.** Review on PR #328 found seven things worth fixing before this
 merges, none of them numbers. The centroid was a repeatedly renormalised
 running mean, which drifts toward whichever vectors joined a cluster first;
 `Cluster` now keeps the raw summed vector and reads the mean off it fresh
@@ -240,7 +240,16 @@ vector; it now costs one row, and only three failures in a row switch
 labelling off. And the embedder shared the transcriber's lock, so a slow
 embedding could hold up another meeting's decode; it has its own lock now,
 and a load failure is remembered so a hopeless model is not retried on every
-connection.
+connection. `LiveSession._row` also needed reordering: masking now runs
+before either drop check (empty after masking, then low confidence), and
+both drop checks run before the embed-and-label step, so a masked-empty or
+hallucinated utterance never reaches the tracker and cannot open or move a
+cluster. And `evaluate_live_speakers.py`'s `simulate`/`sweep` used to read
+the tracker's own default `min_seconds` instead of the deployed setting, so a
+sweep could score a threshold against a different short-utterance rule than
+production uses; they now take `min_seconds` as a required keyword, and the
+script defaults it to `get_settings().live_speaker_min_s` and prints the
+value it used.
 
 ---
 
