@@ -104,6 +104,21 @@ class AudioSettings(BaseSettings):
     diarization_model: str = "pyannote/speaker-diarization-3.1"
     """Pinned explicitly. Never load a floating "latest"."""
 
+    diarization_num_speakers: int | None = None
+    """Exactly how many people spoke, when the room knows. On a muffled
+    microphone pyannote split one voice into four clusters (#325); with this
+    set it cannot. A deployment-wide knob for now -- one demo, one room --
+    and the wrong number for a meeting is worse than none, so it stays unset
+    by default. The per-meeting field belongs with S10's attendee list."""
+
+    diarization_min_speakers: int | None = None
+    """Lower bound on speakers when the exact count is unknown. Ignored when
+    ``diarization_num_speakers`` is set."""
+
+    diarization_max_speakers: int | None = None
+    """Upper bound on speakers when the exact count is unknown. Ignored when
+    ``diarization_num_speakers`` is set."""
+
     live_hello_timeout_s: float = 5.0
     """How long a live connection may sit without sending ``hello``."""
 

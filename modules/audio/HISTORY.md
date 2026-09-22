@@ -113,6 +113,13 @@ Two caveats that the number does not carry on its own:
 to detect that it happened in a given meeting.** Production has no reference.
 That property has since broken two other modules (section 6).
 
+On the live-microphone runs of 2026-09-22 (a Mac microphone with almost
+nothing above 1 kHz) one person came back as four speakers, then two. The
+release valve is the one input pyannote's clustering cannot argue with: a
+speaker count. `AUTUNE_AUDIO_DIARIZATION_NUM_SPEAKERS` (or min/max bounds)
+reaches the pipeline call; unset, nothing changes. A per-meeting count
+belongs with S10's attendee list (#325).
+
 ### Live channel — per-row lag (`docs/modules/audio-live-transcription.md` §9)
 
 One synthetic run against the real WebSocket route with `large-v3` on an
