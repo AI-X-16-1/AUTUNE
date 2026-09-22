@@ -202,8 +202,8 @@ browser.
 ### Live speaker labels (`docs/modules/audio-live-speakers.md`)
 
 The live channel shipped with no speaker on a row (#307). This adds one:
-one `wespeaker-voxceleb-resnet34-LM` embedding per utterance -- the model
-already inside `speaker-diarization-3.1`, so no new download and the same
+one `pyannote/wespeaker-voxceleb-resnet34-LM` embedding per utterance -- the model
+already inside `pyannote/speaker-diarization-3.1`, so no new download and the same
 vector space #6 will identify against -- and nearest-centroid clustering in
 the session with one cosine threshold. Labels are `화자 N` in order of first
 appearance and never change once shown; the stored path was changed to say

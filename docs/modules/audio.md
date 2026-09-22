@@ -84,7 +84,7 @@ Plus the shared entities in `packages/core`, which A writes.
 | GET | `/jobs/{job_id}` | Job status and progress (planned) |
 | GET | `/transcripts/{meeting_id}` | Full transcript, masked, for a member of the meeting's team |
 | POST | `/meetings/{meeting_id}/consent` | A member attests that everyone in the recording consented (#190) |
-| WS | `/live/{meeting_id}` | Live transcription: one masked row per utterance, no speaker, nothing stored — `audio-live-transcription.md` |
+| WS | `/live/{meeting_id}` | Live transcription: one masked row per utterance, a speaker cluster label (`화자 N`), no person, nothing stored — `audio-live-transcription.md` |
 | PATCH | `/utterances/{id}` | Correct speaker or text |
 | POST | `/speakers/enroll` | Enroll a voice for identification |
 
