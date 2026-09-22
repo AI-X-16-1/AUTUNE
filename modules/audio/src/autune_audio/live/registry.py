@@ -8,7 +8,16 @@ to refuse an upload for a meeting whose socket is still open: the status
 reconnecting" from "someone else is trying to upload over a live session".
 
 Per process, like the sessions themselves (``environments.md``: uvicorn
-``--workers 1``).
+``--workers 1``) -- so the refusal in ``start_transcription`` only sees a
+claim held in the same process; a second worker process would not see it
+and this registry alone would not stop the race, which is why the
+``--workers 1`` rule in ``environments.md`` is load-bearing, not a default
+left in place. There is also a known, accepted gap the size of one
+uncontended lock acquisition: an upload that takes the meeting row's lock
+in ``start_transcription`` between the hello's ``session_scope`` commit and
+the following ``registry.claim`` call sees no claim yet and is not refused
+by it -- ``start_transcription``'s own row lock still stops it from racing
+a second upload, just not from racing that specific hello.
 """
 
 from __future__ import annotations

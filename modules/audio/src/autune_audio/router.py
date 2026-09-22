@@ -22,7 +22,7 @@ from . import service
 from .config import MAX_UPLOAD_BYTES
 from .config import get_settings as get_audio_settings
 from .enqueue import enqueue_process_recording
-from .live import router as live_router
+from .live.routes import router as live_router
 from .schemas import (
     ConsentAttestation,
     ConsentState,
