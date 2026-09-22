@@ -366,7 +366,12 @@ async def test_one_bad_embedding_costs_one_row_only(capsys: pytest.CaptureFixtur
     rows = await feed(live, np.concatenate([two_utterances(), tone(1000), silence(1000)]))
     assert [r.speaker for r in rows] == ["화자 1", "?", "화자 1"]
     assert len(embedder.seen) == 3
-    assert capsys.readouterr().out.count("live_speaker_failed") == 1
+    out = capsys.readouterr().out
+    assert out.count("live_speaker_failed") == 1
+    # A zero vector fails in the tracker, not the embedder -- logged by type.
+    assert "ValueError" in out
+    # One failure is not three: the switch-off line must not fire.
+    assert "live_speaker_unavailable" not in out
 
 
 @pytest.mark.asyncio

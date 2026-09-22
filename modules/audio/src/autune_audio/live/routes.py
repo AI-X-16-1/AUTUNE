@@ -49,9 +49,10 @@ engine from settings, and a value that cannot run here (``mlx`` off Apple
 silicon) must refuse one socket with 4503, not stop the API from starting
 (``ConfigurationError``: "at the point of use, not at import")."""
 _embedder = Embedder(token=get_settings().hf_token)
-"""One per process, like the transcriber: read-only once loaded, and the
-lock in ``transcriber`` serialises calls anyway. Constructing it loads
-nothing -- the model comes at the first ``warm_up`` -- so it can live here."""
+"""One per process, like the transcriber: read-only once loaded, and
+its own lock serialises calls into the model; see ``transcriber.off_loop``.
+Constructing it loads nothing -- the model comes at the first ``warm_up`` --
+so it can live here."""
 
 
 def shared_transcriber() -> Transcriber:
@@ -150,11 +151,15 @@ async def live(websocket: WebSocket, meeting_id: str) -> None:
         )
         return
     except (ConfigurationError, ValueError) as exc:
-        # The engine this deployment asked for cannot run here, or a value
-        # the session's own construction refuses (a ``ValueError`` from the
-        # tracker) -- either way the status flip is rolled back with the
-        # scope; refuse like a model that failed to load, and say so in the
-        # log by type.
+        # The engine this deployment asked for cannot run here (``Transcriber()``
+        # raises ``ConfigurationError``), or a value the session's own
+        # construction refuses (``SpeakerTracker``/``Segmenter`` raise
+        # ``ValueError``) -- either way the status flip is rolled back with
+        # the scope; refuse like a model that failed to load, and say so in
+        # the log by type. Catching bare ``ValueError`` here is only safe
+        # because the block above already caught ``protocol.ProtocolError``,
+        # which subclasses it -- a hello-parsing error must not fall through
+        # to this handler.
         log.warning("live_model_unavailable", error=type(exc).__name__)
         with suppress(WebSocketDisconnect):
             await websocket.send_json(protocol.error("model_unavailable"))

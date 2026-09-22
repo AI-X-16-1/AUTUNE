@@ -134,7 +134,11 @@ class LiveSession:
         try:
             await off_loop(self._embedder.warm_up, lock=self._embedder.lock)
         except Exception as exc:
-            log.warning("live_speaker_unavailable", reason=type(exc).__name__)
+            log.warning(
+                "live_speaker_unavailable",
+                reason=type(exc).__name__,
+                kind=getattr(exc, "kind", None),
+            )
             self._embedder = None
 
     async def _row(self, segment: Segment) -> Utterance | None:
