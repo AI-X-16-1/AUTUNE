@@ -67,13 +67,27 @@ def test_a_blip_shorter_than_min_speech_is_not_a_segment() -> None:
 
 
 def test_continuous_speech_is_cut_at_the_maximum() -> None:
-    audio = tone(31_000)
+    audio = tone(16_000)
 
-    segments = run(audio, max_segment_s=30.0)
+    segments = run(audio, max_segment_s=15.0)
 
     assert len(segments) == 2
-    assert 29.8 <= segments[0].end - segments[0].start <= 30.2
-    assert segments[1].start >= 29.8
+    assert 14.8 <= segments[0].end - segments[0].start <= 15.2
+    assert segments[1].start >= 14.8
+
+
+def test_a_long_utterance_ends_at_a_short_pause() -> None:
+    """A fluent speaker who never pauses for min_silence still gets rows: once
+    the utterance is soft_after_s long, soft_silence_ms of quiet ends it. The
+    first such run produced one row, at stop."""
+    audio = np.concatenate([tone(7000), silence(500), tone(2000), silence(500), tone(1000)])
+
+    segments = run(audio, min_silence_ms=1000, soft_after_s=6.0, soft_silence_ms=400)
+
+    # 7 s of speech is past soft_after_s, so the 0.5 s pause ends it; the
+    # 2 s that follow are not, so their 0.5 s pause does not, and they join
+    # the last second in the flush.
+    assert [round(s.end - s.start) for s in segments] == [7, 4]
 
 
 def test_silence_alone_produces_nothing_and_holds_nothing() -> None:

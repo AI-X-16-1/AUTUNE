@@ -422,7 +422,11 @@ the mlx decode runs at temperature 0 with no fallback retries. Result on
 that capture: 9 rows with 3 invented ones → 7 rows, none invented, the
 remaining errors being the microphone's; raising the closing silence from
 700 to 1000 ms (`live_min_silence_ms`) then folded a breath's noise into the
-sentence before it instead of a row of its own. Chrome's capture path was checked
+sentence before it instead of a row of its own. The run after that was a
+fluent one with no second-long pause at all, and produced one row, at stop:
+the segmenter now ends an utterance longer than 6 s at a 0.4 s pause and
+cuts at 15 s regardless, so rows keep coming every few seconds either way.
+Chrome's capture path was checked
 separately and passes 1.5–5 kHz flat, so the muffling is upstream of the
 browser.
 

@@ -5,7 +5,9 @@ ended. Three rules, from the design (section 3.1):
 
 - speech of at least ``min_speech_ms`` followed by silence of at least
   ``min_silence_ms`` is a segment (the route passes ``live_min_silence_ms``);
-- a segment reaching ``max_segment_s`` is cut there (Whisper's window);
+  once the speech in it is ``soft_after_s`` long, ``soft_silence_ms`` of
+  silence is enough, so a fluent speaker still gets a row every few seconds;
+- a segment reaching ``max_segment_s`` is cut there;
 - frames with no speech in them are dropped, so silence never accumulates.
 
 Timestamps are counted in frames from the start of the session, never read
@@ -68,12 +70,21 @@ class Segmenter:
         speech_probability: Callable[[np.ndarray], float] | None = None,
         min_speech_ms: int = 300,
         min_silence_ms: int = 1000,
-        max_segment_s: float = 30.0,
+        soft_after_s: float = 6.0,
+        soft_silence_ms: int = 400,
+        max_segment_s: float = 15.0,
         threshold: float = 0.5,
     ) -> None:
         self._probability = speech_probability
         self._min_speech = min_speech_ms / 1000
         self._min_silence = min_silence_ms / 1000
+        # A fluent speaker may not pause for min_silence in a whole minute;
+        # the first such run produced one row, at stop. Once an utterance is
+        # soft_after_s long, a shorter pause is enough to end it, and
+        # max_segment_s ends it regardless -- rows every few seconds, not
+        # every half minute.
+        self._soft_after = soft_after_s
+        self._soft_silence = soft_silence_ms / 1000
         self._max_segment = max_segment_s
         self._threshold = threshold
         self._recent: list[np.ndarray] = []  # the VAD's context window, newest last
@@ -102,7 +113,9 @@ class Segmenter:
             # part of it until it is long enough to end it.
             self._open.append(frame)
             self._silence_run += duration
-            if self._silence_run >= self._min_silence:
+            long_enough = self._speech_in_open >= self._soft_after
+            needed = self._soft_silence if long_enough else self._min_silence
+            if self._silence_run >= needed:
                 closed.extend(self._close())
         # A silent frame with nothing open is dropped here, on the floor.
 
