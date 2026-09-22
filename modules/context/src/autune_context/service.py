@@ -846,6 +846,7 @@ def collect_drift_notices(session: Session, meeting_id: str) -> list[DriftNotice
             ),
         )
     ).all()
+    meeting = session.get(Meeting, meeting_id)
     notices = []
     for version in rows:
         absent = version.key_stakeholders_absent
@@ -853,7 +854,6 @@ def collect_drift_notices(session: Session, meeting_id: str) -> list[DriftNotice
             continue
         thread = session.get(CtxDecision, version.thread_id)
         thread_label = thread.topic_label if thread is not None else version.current_statement[:400]
-        meeting = session.get(Meeting, version.meeting_id)
         # ``current_statement`` is a ``Text`` column with no length limit, and
         # it is quoted in both the channel notice and the DM. An unusually
         # long statement from B can push the outbound payload past

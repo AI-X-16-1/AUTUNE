@@ -153,11 +153,17 @@ def notify_context_events(meeting_id: str) -> None:
     then never holds a pooled DB connection open.
 
     Skips drift specifically (not topic links) if ``late_drift_notified_at``
-    is already set: ordinarily this task claims and sends before this
-    meeting's lineage exists at all, so ``collect_drift_notices`` is naturally
-    empty here and ``notify_late_drift`` sends the drift later -- but if the
-    two ever race the other way (``notify_late_drift`` first), this stops the
-    same drift going out a second time from here.
+    is already set, or if a catch-up is owed (``late_drift_due_at`` is set):
+    ordinarily this task claims and sends before this meeting's lineage
+    exists at all, so ``collect_drift_notices`` is naturally empty here and
+    ``notify_late_drift`` sends the drift later. But ``late_drift_due_at`` and
+    the ``ctx_decision_versions`` rows it covers commit in the same
+    transaction (see ``service.build_decision_lineage``), so if
+    ``build_decision_lineage`` commits between this task's enqueue and its
+    run, ``collect_drift_notices`` would otherwise find those rows too and
+    send them here *and* again from ``notify_late_drift`` -- the
+    ``late_drift_due_at`` check closes that race, not just the
+    already-reversed one ``late_drift_notified_at`` alone covers.
     """
     with session_scope() as session:
         status = session.get(CtxMeetingStatus, meeting_id, with_for_update=True)
@@ -176,7 +182,7 @@ def notify_context_events(meeting_id: str) -> None:
         topic_notices = service.collect_topic_link_notices(session, meeting_id)
         drift_notices = (
             []
-            if status.late_drift_notified_at is not None
+            if status.late_drift_notified_at is not None or status.late_drift_due_at is not None
             else service.collect_drift_notices(session, meeting_id)
         )
         status.notified_at = datetime.now(tz=UTC)

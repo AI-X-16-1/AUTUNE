@@ -144,11 +144,7 @@ def build_decision_drift_personal_dm(
     verb = _change_verb(change_type)
     changed_at = f"{_korean_date(meeting_date)} 회의에서 " if meeting_date is not None else ""
     fallback = f"{changed_at}자리를 비운 사이 결정이 바뀌었습니다."
-    absence_note = (
-        f"{changed_at}이 결정이 바뀔 때 회의에 참석하지 않으셨습니다."
-        if changed_at
-        else "이 결정이 바뀔 때 회의에 참석하지 않으셨습니다."
-    )
+    absence_note = f"{changed_at}이 결정이 바뀔 때 회의에 참석하지 않으셨습니다."
     blocks: list[dict[str, Any]] = [
         {"type": "section", "text": {"type": "mrkdwn", "text": f"● *부재 중 결정 {verb}*"}},
         {"type": "section", "text": {"type": "mrkdwn", "text": f"*{thread_label}*"}},
