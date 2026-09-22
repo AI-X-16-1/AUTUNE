@@ -52,8 +52,8 @@ already does the right thing with that: `TranscriptRow` prints
 `LiveTranscript` collects the distinct labels of such rows into the
 "화자 N · 누구인지 확인이 필요합니다" prompt. **No frontend change.**
 
-The embedder runs on the same worker thread, under the same lock, right after
-the transcriber: two models fighting for the CPU would slow both, and
+The embedder runs on a worker thread under the transcriber's lock, taken again
+after the decode returns: two models fighting for the CPU would slow both, and
 the embedding costs under 60 ms per utterance on CPU (section 3.1), noise
 next to the live lag budget (about 1.7 s from utterance end to row with mlx;
 `HISTORY.md` section 2).
