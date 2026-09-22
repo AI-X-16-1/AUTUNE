@@ -133,7 +133,11 @@ class ActionItemRead(BaseModel):
     produced.
 
     **False for everything while ``candidate_confidence`` is unset**, which is
-    its default until #10 measures one.
+    its default until #10 measures one. **False once a person has confirmed
+    the item**, whatever its confidence -- confirming moves ``status``, not
+    the model's score, so scoring only on confidence would keep a low-
+    confidence item candidate forever, back on the review screen every visit
+    after the one where it was already confirmed (#295).
     """
 
     sync_refs: list[ExternalRefRead]
