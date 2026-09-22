@@ -55,7 +55,8 @@ Text frames are JSON; binary frames are audio.
 Close codes: `4401` no or invalid token · `4403` not a member of the team ·
 `4404` no such meeting · `4409` a session is already open for this meeting ·
 `4410` the meeting is past recording (analysing, complete, delivered) ·
-`4503` the model could not be loaded.
+`4503` the model could not be loaded, or the configured live engine cannot run
+on this machine.
 
 **Why PCM and not `MediaRecorder` chunks.** A webm chunk is not decodable
 without the container header from the first chunk, so a server would have to
@@ -108,7 +109,10 @@ its own model, thread count, and beam width (`live_*` settings,
   serving frames and other connections.
 
 The model loads lazily on the first connection; `ready` is not sent until it
-has. This class is the seam: if live transcription moves to a worker (approach
+has. The `Transcriber` itself is also built at the first hello
+(`routes.shared_transcriber`), not at import, so a misconfigured engine
+refuses one socket instead of stopping the API. This class is the seam: if
+live transcription moves to a worker (approach
 B in the brainstorm — after #258 lands and concurrent meetings exist), its body
 becomes "send to the worker and await the result" and nothing else changes.
 
@@ -127,6 +131,13 @@ able to upload it, and so must a browser whose socket dropped without a `stop`.
 Therefore `service.start_transcription`'s accepted set gains `recording`
 (one line on top of #259). A second `hello` for a meeting with an open session
 is `4409`.
+
+While a live session's claim is held in this process, `start_transcription`
+refuses an upload for that meeting (409): the browser that owns the session
+uploads only after `ended`, and the claim is released before `ended` is sent,
+so its own upload is never refused by it. `begin_live` locks the meeting row
+(`FOR UPDATE`) like `start_transcription`, so a `hello` and an upload racing
+the same meeting serialise on the row and the loser reads the winner's status.
 
 ### 3.5 Invariant 11 on this path
 
@@ -178,6 +189,8 @@ idle ──start()──▶ connecting ──ready──▶ recording ⇄ paused
                                         uploading ──202──▶ router.push(/meetings/{id})
                                             │
                                             └─ upload_failed  (blob still in memory; a retry button)
+
+connecting ──stop()──▶ uploading
 ```
 
 - `start()`: microphone permission → connect → `hello(token)` → on `ready`,
@@ -194,6 +207,12 @@ idle ──start()──▶ connecting ──ready──▶ recording ⇄ paused
   orders of failure, and only the second is prevented.
 - **Closing the tab loses the recording.** Accepted in section 1. One
   `beforeunload` warning.
+- **`stop()` pressed while still `connecting` wins.** `stop()` sets `stopping`
+  before it awaits anything; the continuations after `ready` treat that as
+  stale, so a `ready` that lands during the stop does not reopen the audio
+  graph or flip the phase back to `recording`. The socket and recorder
+  handlers keep the plain generation check so `ended` and the last chunk
+  still reach the stop in progress.
 
 ### 4.2 The gate before start
 
@@ -249,8 +268,8 @@ All in `AudioSettings`, with these defaults:
 | Where | Handling |
 | --- | --- |
 | `transcribe()` raises | one `error(transcribe_failed)`, **session continues.** That stretch is missing from the live view; the recording goes on and the final pipeline sees it |
-| The socket drops | session discarded, buffers gone, meeting stays `recording` so the browser can upload |
-| The model fails to load on first connect (HF token, licence) | `error(model_unavailable)`, `4503`. The screen degrades to "live transcription unavailable, recording continues" — `MediaRecorder` needs no server |
+| The socket drops | session discarded, buffers gone, meeting stays `recording` so the browser can upload. Until this process notices the drop (uvicorn pings every 20 s and gives up after 20 s more), the claim is still held and an upload for the meeting is refused 409 — the screen lands on `upload_failed` with a retry |
+| The model fails to load on first connect (HF token, licence) | `error(model_unavailable)`, `4503`. The screen degrades to "live transcription unavailable, recording continues" — `MediaRecorder` needs no server. An engine that cannot run on this machine (`AUTUNE_AUDIO_LIVE_TRANSCRIBER_IMPL=mlx` off Apple silicon) is the same refusal, raised as `ConfigurationError` when the first session is built, inside the hello's transaction, so the status flip is rolled back and the API itself still starts |
 
 The third is the one that matters: **if live transcription is down entirely,
 nobody loses a recording.** The live channel is display, the recording is the
@@ -322,9 +341,13 @@ look for it — the screen, `audio.md`, or this file.
 one open utterance (≤ 30 s) and drops silent frames as they arrive, which
 bounds memory more tightly than a ring buffer would.
 
-The route claims the per-meeting registry immediately after the "already
-live" check, before the model warm-up, under one `try`/`finally` — a client
-that leaves during a cold model load cannot lock the meeting at 4409.
+The route claims the per-meeting registry (`live/registry.py`) once the
+hello's transaction has committed — after `begin_live` and after the session
+has been built, so a status flip that cannot be paired with a session is
+rolled back rather than claimed — and before the model warm-up, under one
+`try`/`finally`; a client that leaves during a cold model load cannot lock
+the meeting at 4409. `_finish` releases the claim before `ended`, because the
+browser uploads the moment it sees `ended`.
 
 A real user who is not on the team raises `NotATeamMemberError` (a
 `PermissionDeniedError` subclass) from `require_team_member`, so the socket
