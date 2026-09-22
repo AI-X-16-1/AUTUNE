@@ -106,6 +106,18 @@ def test_a_load_failure_propagates_from_warm_up(monkeypatch: pytest.MonkeyPatch)
         Embedder().warm_up()
 
 
+def test_a_missing_model_raises_instead_of_reaching_inference(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: Seen = []
+    install_fakes(monkeypatch, output=np.ones(256, dtype=np.float32), seen=seen)
+    monkeypatch.setattr(
+        sys.modules["pyannote.audio"].Model, "from_pretrained", lambda checkpoint, **kwargs: None
+    )
+    with pytest.raises(RuntimeError):
+        Embedder().warm_up()
+
+
 def test_torch_is_not_imported_at_module_scope() -> None:
     assert "torch" not in vars(embedder_module)
     assert "pyannote" not in vars(embedder_module)

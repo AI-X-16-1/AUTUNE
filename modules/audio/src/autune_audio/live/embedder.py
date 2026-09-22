@@ -40,7 +40,7 @@ class Embedder:
         channel without speaker labels does (it goes on)."""
         if self._inference is not None:
             return
-        from pyannote.audio import Inference, Model
+        from pyannote.audio import Inference, Model  # noqa: PLC0415
 
         model = Model.from_pretrained(self._checkpoint, token=self._token or None)
         if model is None:
@@ -49,7 +49,7 @@ class Embedder:
 
     def embed(self, waveform: Waveform) -> np.ndarray:
         """A unit-length float32 vector for the voice in ``waveform``."""
-        import torch
+        import torch  # noqa: PLC0415
 
         self.warm_up()
         samples = np.asarray(waveform.samples, dtype=np.float32)
