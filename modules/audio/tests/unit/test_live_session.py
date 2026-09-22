@@ -13,6 +13,7 @@ import types
 import numpy as np
 import pytest
 
+from autune_audio.live.embedder import EmbedderUnavailable
 from autune_audio.live.segmenter import Segmenter
 from autune_audio.live.session import NO_SPEAKER, LiveSession, TranscribeFailed
 from autune_audio.live.speakers import SpeakerTracker
@@ -256,11 +257,17 @@ async def test_warm_up_delegates_to_the_transcriber() -> None:
 class FakeEmbedder:
     """Returns the vector the caller queued for each call; records what it saw."""
 
-    def __init__(self, *vectors: np.ndarray, fail_after: int | None = None) -> None:
+    def __init__(
+        self,
+        *vectors: np.ndarray,
+        fail_after: int | None = None,
+        raise_first: BaseException | None = None,
+    ) -> None:
         self.queue = list(vectors)
         self.seen: list[object] = []
         self.warmed = 0
         self.fail_after = fail_after
+        self.raise_first = raise_first
         self.lock = threading.Lock()
 
     def warm_up(self) -> None:
@@ -268,6 +275,8 @@ class FakeEmbedder:
 
     def embed(self, waveform: Waveform) -> np.ndarray:
         self.seen.append(waveform)
+        if self.raise_first is not None and len(self.seen) == 1:
+            raise self.raise_first
         if self.fail_after is not None and len(self.seen) > self.fail_after:
             raise RuntimeError("secret /tmp/path in the message")
         return self.queue.pop(0)
@@ -394,6 +403,27 @@ async def test_three_consecutive_failures_switch_labelling_off(
     # quotes a path on purpose, and it must not survive into the log.
     assert "RuntimeError" in out
     assert "secret" not in out and "/tmp" not in out
+
+
+@pytest.mark.asyncio
+async def test_embedder_unavailable_short_circuits_the_streak(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``EmbedderUnavailable`` means the model is already known-gone (``warm_up``
+    remembered the failure), so the three-strike streak is skipped: the first
+    call retires the embedder and every later row is ``?`` with no further
+    ``embed`` calls."""
+    embedder = FakeEmbedder(basis(0), raise_first=EmbedderUnavailable("OSError"))
+    live = labelled(saying("안녕하세요"), embedder)
+
+    rows = await feed(live, two_utterances())
+
+    assert [r.speaker for r in rows] == [NO_SPEAKER, NO_SPEAKER]
+    assert len(embedder.seen) == 1
+    out = capsys.readouterr().out
+    assert out.count("live_speaker_unavailable") == 1
+    assert "OSError" in out
+    assert "live_speaker_failed" not in out
 
 
 @pytest.mark.asyncio

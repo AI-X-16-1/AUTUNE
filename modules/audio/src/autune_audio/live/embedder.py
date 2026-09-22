@@ -31,7 +31,7 @@ MIN_SECONDS = 0.5
 tracker, not the embedder, decides what a short utterance may do."""
 
 
-class EmbedderUnavailable(RuntimeError):  # noqa: N818 - name fixed by the task interface
+class EmbedderUnavailable(RuntimeError):  # noqa: N818 - name fixed by the design doc (§3.1)
     """The model failed to load once; every later call answers this at once.
     Carries the original exception's type only."""
 

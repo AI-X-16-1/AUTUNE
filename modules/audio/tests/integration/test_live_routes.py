@@ -336,8 +336,8 @@ def _configuration_error() -> LiveSession:
 
 
 def _value_error() -> LiveSession:
-    # What the tracker's own guard raises -- e.g. a negative or zero head
-    # count that slipped past settings validation into ``build_session``.
+    # What the tracker's own guard raises (a value below 1 cannot pass the
+    # settings, so this is the belt, not the expected path).
     raise ValueError("max_speakers must be at least 1")
 
 

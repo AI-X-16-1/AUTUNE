@@ -7,13 +7,13 @@ appearance and never change: S13 is built on rows that do not move, and the
 stored path's whole-file diarization corrects an over-split after the upload.
 
 Pure numpy. Nothing here loads a model, and the vectors it holds -- one
-running-mean centroid per cluster -- live in the session object and die with
-the socket. An embedding is biometric data; nothing is logged but the cluster
-number and the similarity. At info level, a per-row cluster id sitting next to
-the row's duration in the surrounding logs would let a log reconstruct
-per-cluster speaking time, which ``privacy.md`` section 3 forbids once a
-cluster is a person; so ``live_speaker_labelled`` is logged at debug. Design:
-``docs/modules/audio-live-speakers.md``.
+running sum per cluster (the centroid is its mean) -- live in the session
+object and die with the socket. An embedding is biometric data; nothing is
+logged but the cluster number and the similarity. At info level, a per-row
+cluster id sitting next to the row's duration in the surrounding logs would
+let a log reconstruct per-cluster speaking time, which ``privacy.md`` section
+3 forbids once a cluster is a person; so ``live_speaker_labelled`` is logged
+at debug. Design: ``docs/modules/audio-live-speakers.md``.
 """
 
 from __future__ import annotations

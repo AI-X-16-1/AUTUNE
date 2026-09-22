@@ -9,7 +9,7 @@ downstream -- a traceback, ``logger.exception``, an error tracker -- prints
 the original exception's message either. The speaker embedding is taken from
 the raw audio, never from the text -- masking runs on the transcript, the
 embedder runs on ``segment.waveform``, and neither reads the other's output;
-the vector is a local here and a running mean in the tracker, nothing more.
+the vector is a local here and a running sum in the tracker, nothing more.
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ from typing import Literal
 import numpy as np
 
 from autune_audio.config import get_settings
-from autune_audio.live.embedder import Embedder
+from autune_audio.live.embedder import Embedder, EmbedderUnavailable
 from autune_audio.live.segmenter import Segment, Segmenter
 from autune_audio.live.speakers import SpeakerTracker, speaker_cap
 from autune_audio.live.transcriber import Transcriber, off_loop
@@ -137,7 +137,7 @@ class LiveSession:
             log.warning(
                 "live_speaker_unavailable",
                 reason=type(exc).__name__,
-                kind=getattr(exc, "kind", None),
+                kind=exc.kind if isinstance(exc, EmbedderUnavailable) else None,
             )
             self._embedder = None
 
@@ -209,6 +209,13 @@ class LiveSession:
             vector = await off_loop(embed, lock=embedder.lock)
             label = self._tracker.label(vector, segment.end - segment.start)
         except Exception as exc:
+            if isinstance(exc, EmbedderUnavailable):
+                # warm_up already remembered this load as dead; every later
+                # call raises the same way, so the model is known-gone and
+                # the three-strike streak below would be theatre.
+                log.warning("live_speaker_unavailable", reason="EmbedderUnavailable", kind=exc.kind)
+                self._embedder = None
+                return NO_SPEAKER
             self._label_failures += 1
             log.warning(
                 "live_speaker_failed", error=type(exc).__name__, streak=self._label_failures
