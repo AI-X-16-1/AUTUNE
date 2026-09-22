@@ -18,9 +18,10 @@ from autune_contracts.enums import ActionStatus
 from autune_contracts.extraction import ExtractionResult
 from autune_core import Meeting, get_session
 from autune_core.errors import NotFoundError
+from autune_core.settings import get_settings as get_core_settings
 
 from . import service, tasks
-from .models import ExtActionItem, ExtDecision, ExtDecisionReview
+from .models import ExtActionItem, ExtDecision
 from .schemas import (
     ActionItemCreate,
     ActionItemDetail,
@@ -36,6 +37,14 @@ from .schemas import (
 router = APIRouter()
 
 SessionDep = Annotated[Session, Depends(get_session)]
+
+# A local-only page for connecting Notion/Slack by hand, until S28 exists.
+# It has no auth, so it is mounted nowhere but a developer's machine -- see
+# ``dev/routes.py``.
+if get_core_settings().env == "local":
+    from .dev import router as dev_router
+
+    router.include_router(dev_router, prefix="/dev")
 
 
 @router.get("/health")
@@ -121,9 +130,9 @@ def update_action_item(
     session: SessionDep,
     background: BackgroundTasks,
 ) -> ActionItemRead:
-    """Edit or close an item. Confirming it queues its Notion page (#30)."""
+    """Edit or close an item. Confirming it queues its Notion page (#30); an
+    edit to an already-confirmed item queues an update to the same page."""
     item = _load(session, action_item_id)
-    previous_status = item.status
     item = service.update_action_item(session, item, payload)
     # Before the commit, for the reason ``create_action_item`` gives: an edit
     # answered with a 500 must not also have been saved, or it counts twice
@@ -133,9 +142,11 @@ def update_action_item(
     response = service.read_model(item, assignee_name=name)
     session.commit()
     # After the response, so the sync reads the committed row and the board is
-    # not held on Notion. Only the edit that confirms starts one; the sync
-    # itself sends a page once.
-    if service.became_confirmed(previous_status, item):
+    # not held on Notion. Confirming or any later edit both queue the same
+    # task -- ``sync_action_item_to_notion`` itself decides create vs. update
+    # from whether the claim already exists, so a still-``needs_confirmation``
+    # item is the only case this need not queue at all.
+    if item.status != ActionStatus.NEEDS_CONFIRMATION.value:
         background.add_task(tasks.sync_after_confirmation, item.id)
     return response
 
@@ -173,16 +184,18 @@ def review_decision(
 ) -> ReviewDecision:
     """Confirm, reject or reword a proposed decision, or put it back to pending.
 
-    Confirming it sends its Notion page once, after the response (#30)."""
+    Confirming it sends its Notion page (#30); rewording an already-confirmed
+    decision updates the same page instead of leaving it stale."""
     decision = session.get(ExtDecision, decision_id)
     if decision is None:
         raise NotFoundError("decision", decision_id)
-    review = session.get(ExtDecisionReview, decision_id)
-    previous_status = review.status if review is not None else None
     # Built before the commit, for the reason ``create_action_item`` gives.
     response = service.review_decision(session, decision, payload)
     session.commit()
-    if service.decision_became_confirmed(previous_status, response.status):
+    # Confirming or any later reword both queue the same task --
+    # ``sync_decision_to_notion`` decides create vs. update from whether the
+    # claim already exists.
+    if response.status == "confirmed":
         background.add_task(tasks.sync_decision_after_confirmation, decision_id)
     return response
 

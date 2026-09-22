@@ -166,16 +166,25 @@ def test_an_item_still_waiting_for_confirmation_sends_nothing(session: Session) 
     assert session.scalars(select(ExtExternalRef)).all() == []
 
 
-def test_the_second_sync_of_an_item_sends_nothing(session: Session) -> None:
-    """A confirmation delivered twice, or an item moved on to done: one page."""
+def test_the_second_sync_of_an_item_updates_its_page_not_a_new_one(session: Session) -> None:
+    """A confirmation delivered twice, or an item moved on to done: still one
+    page, kept in step -- a later edit updates it rather than being silently
+    skipped."""
     notion = FakeNotion()
     row = item(session)
 
-    sync(session, notion, row.id)
+    ref = sync(session, notion, row.id)
+    assert ref is not None
+    page_id = ref.external_id
     row.status = "done"
-    assert sync(session, notion, row.id) is None
 
-    assert len(notion.pages) == 1
+    again = sync(session, notion, row.id)
+
+    assert again is not None
+    assert again.action_item_id == ref.action_item_id
+    assert len(notion.pages) == 1, "still one page created"
+    assert len(notion.updates) == 1
+    assert notion.updates[0][0] == page_id
 
 
 def test_a_failed_call_takes_the_claim_back_so_a_later_sync_can_send(session: Session) -> None:
@@ -231,16 +240,18 @@ def queued(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     return calls
 
 
-def test_confirming_on_the_board_queues_the_page_once(
+def test_confirming_and_later_edits_each_queue_a_sync(
     client: TestClient, session: Session, queued: list[str]
 ) -> None:
+    """The first queues a create; every edit after, while still confirmed,
+    queues an update -- ``sync_action_item_to_notion`` itself decides which."""
     row = item(session, status="needs_confirmation")
 
     client.patch(f"{PREFIX}/action-items/{row.id}", json={"status": "todo"})
     client.patch(f"{PREFIX}/action-items/{row.id}", json={"status": "done"})
     client.patch(f"{PREFIX}/action-items/{row.id}", json={"description": "고친 설명"})
 
-    assert queued == [row.id]
+    assert queued == [row.id, row.id, row.id]
 
 
 def test_an_edit_that_keeps_the_item_unconfirmed_queues_nothing(

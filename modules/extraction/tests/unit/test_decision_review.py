@@ -668,9 +668,12 @@ def test_nothing_is_blocked_when_nothing_carries_personal_data(
 # --- a confirmed decision's Notion page (#30) ------------------------------------
 
 
-def test_confirming_a_decision_queues_its_page_once(
+def test_confirming_and_rewording_a_decision_each_queue_a_sync(
     client: TestClient, session: Session, notion_syncs: list[str]
 ) -> None:
+    """The first queues a create; every edit after, while still confirmed,
+    queues an update -- ``sync_decision_to_notion`` itself decides which,
+    from whether the claim already exists. Rejecting queues nothing."""
     first, second = two_decisions(session)
 
     client.patch(f"{PREFIX}/decisions/{first.id}", json={"status": "confirmed"})
@@ -678,7 +681,7 @@ def test_confirming_a_decision_queues_its_page_once(
     client.patch(f"{PREFIX}/decisions/{first.id}", json={"statement": "고친 문장"})
     client.patch(f"{PREFIX}/decisions/{second.id}", json={"status": "rejected"})
 
-    assert notion_syncs == [first.id]
+    assert notion_syncs == [first.id, first.id, first.id]
 
 
 def test_a_decision_a_person_adds_is_queued_because_it_is_confirmed(
@@ -723,9 +726,7 @@ def test_the_page_carries_the_confirmed_wording_and_no_quotation(session: Sessio
     assert set(only_title.pages[0][1]) == {"Name"}
 
 
-def test_an_unconfirmed_decision_sends_nothing_and_a_second_sync_neither(
-    session: Session,
-) -> None:
+def test_an_unconfirmed_or_rejected_decision_sends_nothing(session: Session) -> None:
     first, second = two_decisions(session)
     notion = FakeNotion()
 
@@ -738,14 +739,26 @@ def test_an_unconfirmed_decision_sends_nothing_and_a_second_sync_neither(
         service.sync_decision_to_notion(session, notion, decision_id=second.id, database_id="db")
         is None
     )
+    assert notion.pages == []
+
+
+def test_a_second_sync_of_a_confirmed_decision_updates_its_page(session: Session) -> None:
+    """Not a second page -- the same one, kept in step with a later reword."""
+    first, _second = two_decisions(session)
+    notion = FakeNotion()
 
     service.review_decision(session, first, DecisionReviewUpdate(status="confirmed"))
-    service.sync_decision_to_notion(session, notion, decision_id=first.id, database_id="db")
-    assert (
-        service.sync_decision_to_notion(session, notion, decision_id=first.id, database_id="db")
-        is None
-    )
-    assert len(notion.pages) == 1
+    ref = service.sync_decision_to_notion(session, notion, decision_id=first.id, database_id="db")
+    assert ref is not None
+    page_id = ref.external_id
+
+    again = service.sync_decision_to_notion(session, notion, decision_id=first.id, database_id="db")
+
+    assert again is not None
+    assert again.decision_id == ref.decision_id
+    assert len(notion.pages) == 1, "still one page created"
+    assert len(notion.updates) == 1
+    assert notion.updates[0][0] == page_id
 
 
 def test_only_reaching_confirmed_is_a_confirmation() -> None:
