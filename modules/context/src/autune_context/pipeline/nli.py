@@ -85,7 +85,16 @@ class KlueKorNliLocal:
     def classify(self, pairs: list[tuple[str, str]]) -> list[NliScores]:
         out: list[NliScores] = []
         for premise, hypothesis in pairs:
-            records = self._pipe({"text": premise, "text_pair": hypothesis})[0]
+            # klue/roberta-base ships a BertTokenizer (2-segment 0/1
+            # token_type_ids) on top of a RoBERTa encoder (type_vocab_size=1):
+            # id=1 is out of range for token_type_embeddings and crashes --
+            # an IndexError on CPU, an unrecoverable CUDA device-side assert
+            # on GPU. RoBERTa's own tokenizer never emits token_type_ids for
+            # exactly this reason; match that instead of trusting the
+            # checkpoint's tokenizer_config.json.
+            records = self._pipe(
+                {"text": premise, "text_pair": hypothesis}, return_token_type_ids=False
+            )[0]
             scored = {r["label"].lower(): float(r["score"]) for r in records}
             out.append(
                 _with_label(

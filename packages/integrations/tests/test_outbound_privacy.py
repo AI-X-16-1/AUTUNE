@@ -6,6 +6,8 @@ See docs/architecture/privacy.md.
 
 from __future__ import annotations
 
+import time
+
 import pytest
 
 from autune_core.errors import PrivacyViolationError
@@ -443,11 +445,159 @@ def test_a_figure_before_an_account_does_not_hide_it(line: str) -> None:
 def test_an_oversized_payload_is_refused_before_it_is_scanned() -> None:
     """Scanning costs more than linearly, and an oversized payload is refused
     either way. `010-` twenty thousand times took 37 seconds to refuse."""
-    import time
-
     slack = FakeSlack()
     started = time.monotonic()
     with pytest.raises(PrivacyViolationError) as caught:
         slack.post_message("C0123456789", "010-" * 20000)
     assert "length" in caught.value.details
     assert time.monotonic() - started < 1.0
+
+
+# --- separator width (#162) ------------------------------------------------ #
+# One separator character meant these passed the guard entirely. Not
+# over-masking: nothing matched, so `assert_masked` let the text out.
+
+SPACED_AROUND_SEPARATOR = [
+    ("phone", "010 - 1234 - 5678 로 연락 주세요"),
+    ("phone", "02 - 123 - 4567 이요"),
+    ("phone", "+82 - 10 - 1234 - 5678"),
+    ("rrn", "900101 - 1234567 입니다"),
+    ("card", "1234 - 5678 - 9012 - 3456 카드요"),
+]
+
+TYPOGRAPHIC_DASH = [
+    ("phone", "010–1234–5678 입니다"),  # en dash, what an editor makes of a hyphen
+    ("phone", "010 — 1234 — 5678"),  # em dash
+]
+
+PARENTHESISED_AREA_CODE = [("phone", "(02)123-4567 로 전화 주세요")]
+
+# Horizontal whitespace that is not U+0020. `[ \t]` was narrower than the
+# `\s` it replaced *and* narrower than "horizontal space": a no-break space is
+# what Word, HWP and Notion put between number groups, and a full-width space is
+# what a Korean IME emits. Both let a complete landline through untouched -- nine
+# digits, so `account` could not catch it either (#211 review).
+# What Whisper actually wrote, on the first end-to-end run (2026-09-21, the demo
+# runbook). A phone number read aloud as 공일공 일이삼사 오육칠팔 came back as
+# `010 -12345678`: a space, a hyphen, then eight digits run together. On `main`
+# the one-character separator could not cross " -" and eight contiguous digits
+# are short of the twelve the catch-all wants, so no pattern matched, the
+# storage guard -- the same patterns -- passed it, and it was stored in the
+# clear with `pii_masked = true`. The wide separator matches it as a phone
+# number. Not invented: the row is the shape a real transcript had.
+AS_WHISPER_WROTE_IT = [
+    ("phone", "외부 협력사 연락처는 010 -12345678이니까 필요하면 연락 주세요."),
+]
+
+UNUSUAL_HORIZONTAL_SPACE = [
+    ("phone", "02\u00a0123\u00a04567"),  # no-break space
+    ("phone", "010\u30001234\u30005678"),  # ideographic (full-width) space
+    ("phone", "010\u00a0-\u00a01234\u00a0-\u00a05678"),  # NBSP around the dash
+    ("rrn", "900101\u3000-\u30001234567"),
+    ("card", "1234\u00a05678\u00a09012\u00a03456"),
+]
+
+
+@pytest.mark.parametrize(
+    ("category", "text"),
+    SPACED_AROUND_SEPARATOR
+    + TYPOGRAPHIC_DASH
+    + PARENTHESISED_AREA_CODE
+    + UNUSUAL_HORIZONTAL_SPACE
+    + AS_WHISPER_WROTE_IT,
+)
+def test_a_wider_separator_is_still_the_same_number(category: str, text: str) -> None:
+    assert category in {cat for _, _, cat in find_pii(text)}
+    with pytest.raises(PrivacyViolationError):
+        assert_masked(text, destination="slack")
+
+
+# What the width cost. A transcript is dense with numbers written this way, and
+# the widening was measured against these before it was made -- see #162.
+NOT_PERSONAL_DATA = [
+    "2024 - 2025 - 2026 로드맵",  # the case that kept `account` on the narrow one
+    "2026 – 2027 예산안",
+    "스프린트 12 - 13 - 14 계획",
+    "10 - 20 - 30 퍼센트",
+    "Q1 - Q2 - Q3 계획",
+    "1 - 2 - 3 순서로",
+    "매출 100 - 200 억 사이",
+    "페이지 100 - 200 사이",
+    "p95 는 120 - 180 ms 입니다",
+    "예산은 1,234,567원입니다",
+    "2026-09-10 회의록",
+    "버전 1.2.3 배포합니다",
+    "IP 는 192.168.10.20 입니다",
+    "티켓 12345 이슈 67890 확인",
+    "회의실 A - 301 호",
+    "커밋 abc1234 - def5678",
+    "온도 36.5 도",
+    "회의는 3시 30분입니다",
+    "1234)5678(9012)3456",  # `(` between groups is not a separator; only `)` is
+]
+
+
+@pytest.mark.parametrize("text", NOT_PERSONAL_DATA)
+def test_the_wider_separator_does_not_reach_ordinary_meeting_numbers(text: str) -> None:
+    """`2024 - 2025 - 2026` is three groups of two-to-six digits — the shape of
+    `account` exactly. It is why that one pattern keeps the narrow separator."""
+    assert find_pii(text) == []
+    assert_masked(text, destination="slack")
+
+
+# What the width costs, and that the cost is taken knowingly. Four groups of
+# four is the shape of `card`, and the wider separator reaches it -- these are
+# over-masked, not leaked. A roadmap said as four years disappears from the
+# transcript and B, C and D never see that sentence; the "0 false positives"
+# above was measured on three-group lists and does not cover these. Kept here
+# rather than fixed so the next reader knows the trade exists; a Luhn check on
+# `card` is the one thing that could tell a year list from a card number by
+# something other than shape, and that is a separate decision (#212).
+KNOWN_OVER_MASKING = [
+    ("card", "2024 - 2025 - 2026 - 2027 로드맵"),
+    ("card", "1000 - 2000 - 3000 - 4000 원"),
+    ("phone", "031 - 100 - 2000 명"),
+]
+
+
+@pytest.mark.parametrize(("category", "text"), KNOWN_OVER_MASKING)
+def test_a_four_group_list_is_over_masked_and_we_know_it(category: str, text: str) -> None:
+    assert {cat for _, _, cat in find_pii(text)} == {category}
+
+
+@pytest.mark.parametrize("head", ["010", "1234", "900101", "+82"])
+def test_a_long_run_of_spaces_after_a_digit_is_scanned_once(head: str) -> None:
+    """`[ \\t]*[-.–—)]?[ \\t]*` let the two space runs share one run of spaces,
+    and the engine tried every split before failing: 900 ms at ten thousand
+    spaces, quadratic in the run. Whisper emits exactly this on a silent
+    stretch, and transcript masking has no length cap in front of `find_pii`.
+    Per pattern at fifty thousand spaces the quadratic form takes seven to
+    eleven seconds; the fixed one, about a millisecond."""
+    started = time.monotonic()
+    assert find_pii(head + " " * 50_000 + "x") == []
+    assert time.monotonic() - started < 2.0
+
+
+def test_a_match_does_not_run_across_a_line_break() -> None:
+    """`\\s` would let the widened separator join two unrelated numbers. Only
+    `account` can still do this, on the narrow separator it kept, and that is
+    pre-existing rather than something the width introduced."""
+    assert {cat for _, _, cat in find_pii("예산\n150000\n200000")} == {"account"}
+
+
+def test_a_card_number_split_across_lines_is_still_one_card() -> None:
+    """The one shape allowed to cross a line break, and why: without it the
+    text below matched `account` (0, 14) and left `9012` *and* `3456` in the
+    clear -- eight digits where `main` left four (@PARKJAEKYUNG0525 on #211).
+    Four groups of four is nothing but a card."""
+    text = "1234\n5678\n9012\n3456"
+    # `find_pii` keeps every match; the `account` span underneath is the same
+    # overlap `main` reports, and `_most_specific` is what drops it.
+    assert (0, len(text), "card") in find_pii(text)
+
+
+def test_an_international_number_with_a_bracketed_area_code_is_a_known_miss() -> None:
+    """`(` between groups is not a separator this file accepts, because
+    `(1) 2024-2025` has the same shape. Pinned so the miss is a decision,
+    not a surprise."""
+    assert find_pii("+82 (10) 1234-5678") == []

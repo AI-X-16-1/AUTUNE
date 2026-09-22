@@ -214,10 +214,13 @@ class ExtDecisionRef(Base):
 
     The same rule as ``ExtExternalRef`` for action items: keyed by the decision and
     the system, claimed before the call, filled in after it. A separate table
-    rather than a second key on that one, because a decision row has no stable
-    foreign key to point at -- a rerun deletes and rebuilds ``ext_decisions``
-    (``service.build_decisions``). Keyed by the ``dec_`` id like
-    ``ext_decision_reviews``, for the same reason, and taken with the meeting.
+    rather than a second key on that one, kept without a foreign key to
+    ``ext_decisions`` even though ``build_decisions`` no longer deletes and
+    rebuilds every row on a rerun (#297) -- a decision whose id genuinely goes
+    away still has its rows here deleted by name, the same explicit way as its
+    sources and its review, since a later id that comes back would otherwise
+    inherit a stale "already sent to Notion" claim it never earned. Keyed by
+    the ``dec_`` id like ``ext_decision_reviews``, and taken with the meeting.
     """
 
     __tablename__ = "ext_decision_refs"
@@ -328,14 +331,19 @@ class ExtDecisionReview(Base):
     Notion or Slack until somebody confirms it (#246). This is where that answer
     lives.
 
-    **Keyed by the ``dec_`` id, with no foreign key to ``ext_decisions``.** A rerun
-    deletes and rebuilds the meeting's decisions (``service.build_decisions``),
-    and a foreign key would take every review with them. The id is derived from
-    the meeting and the source utterances (#193), so a rebuilt decision with the
-    same sources gets the same id and keeps its review; one whose sources changed
-    is a different decision and loses it, which ``build_decisions`` enforces by
-    deleting reviews whose id was not rebuilt. The meeting foreign key is what
-    takes the rows when the meeting goes.
+    **Keyed by the ``dec_`` id, with a real foreign key to ``ext_decisions``
+    (#297).** A rerun no longer deletes and rebuilds every decision -- the id is
+    derived from the meeting and the source utterances (#193), so
+    ``service.build_decisions`` updates the row that id already names and only
+    inserts or deletes where the set of ids actually changed. A decision whose
+    sources are unchanged is the same row across a rebuild, so its review is
+    never at risk of the foreign key; one whose sources changed is a different
+    decision, and ``build_decisions`` deletes its review along with it rather
+    than diffing the whole meeting's ids against a "kept" list to find it. The
+    foreign key holds anyway, as a backstop against any other path that deletes
+    a decision without going through there -- SQLite does not enforce it
+    without being asked, which is why the delete is not left to it alone. The
+    meeting foreign key still takes every row when the meeting goes.
 
     ``statement`` is the person's rewording, empty when they kept the model's. It
     is typed by a user, like an action item's edited description, so it is not
@@ -354,7 +362,9 @@ class ExtDecisionReview(Base):
         ),
     )
 
-    decision_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    decision_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("ext_decisions.id", ondelete="CASCADE"), primary_key=True
+    )
     meeting_id: Mapped[str] = mapped_column(
         String(64), ForeignKey("meetings.id", ondelete="CASCADE"), nullable=False, index=True
     )

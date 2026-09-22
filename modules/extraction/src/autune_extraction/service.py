@@ -8,7 +8,7 @@ Never imports another module.
 
 from __future__ import annotations
 
-from collections.abc import Collection, Mapping, Sequence
+from collections.abc import Collection, Iterable, Mapping, Sequence
 from datetime import UTC, date, datetime
 from typing import Any, Protocol
 
@@ -289,7 +289,40 @@ def create_action_item(session: Session, payload: ActionItemCreate) -> ExtAction
     Counted as an edit. An item the model missed costs the user more than one it
     got wrong -- they have to notice the absence, which is the failure recall
     makes likely and the one editing cannot fix by itself.
+
+    **Every foreign key on this row is checked before anything is written.** An
+    unknown meeting is a 404 and a source that is not one of *this* meeting's
+    utterances is a 422 naming the field. Without the check the first reached
+    the client as a 500 from the foreign key, found by a local end-to-end run on
+    2026-09-19, and the second was worse when the utterance did exist: an item
+    on one meeting citing another meeting's utterance, whose words
+    ``GET /action-items/{id}`` then quotes on this meeting's board.
+
+    ``assignee_id`` gets the same treatment as the other two, for the reason
+    ``slots.assignee_of`` already gives for the model's own path: the
+    ``user_`` prefix a well-formed id carries does not promise the row is still
+    there, and the field is a foreign key, so a deleted account or a typo would
+    otherwise reach ``session.flush()`` as a 500 rather than a 422 naming the
+    field.
     """
+    if session.get(Meeting, payload.meeting_id) is None:
+        raise NotFoundError("meeting", payload.meeting_id)
+    if payload.assignee_id is not None and session.get(User, payload.assignee_id) is None:
+        raise ValidationError("assignee_id does not name an existing user", field="assignee_id")
+    wanted = set(payload.source_utterance_ids)
+    if wanted:
+        found = set(
+            session.scalars(
+                select(Utterance.id).where(
+                    Utterance.meeting_id == payload.meeting_id, Utterance.id.in_(wanted)
+                )
+            )
+        )
+        if found != wanted:
+            raise ValidationError(
+                "source_utterance_ids must be utterances of this meeting",
+                field="source_utterance_ids",
+            )
     item = ExtActionItem(
         meeting_id=payload.meeting_id,
         description=payload.description,
@@ -337,8 +370,23 @@ def read_model(
     disagreeing with the server about what the meeting produced. While
     ``candidate_confidence`` is unset -- its default until #10 measures one --
     nothing is a candidate, because there is no honest line to draw yet.
+
+    **Confidence alone is not enough, once the item leaves**
+    ``needs_confirmation``. A low-confidence item's ``confidence`` column never
+    changes -- confirming it moves ``status``, not the number the model gave
+    it -- so scoring only on confidence would put it back in front of the
+    person on every later visit to the review screen, one column after they
+    already confirmed it there (#295). Candidate is therefore *this module's
+    own open question, not yet answered*: model-made, and still in
+    ``needs_confirmation``. The same status ``became_confirmed`` reads as the
+    line between the two.
     """
     threshold = get_settings().candidate_confidence
+    is_candidate = (
+        threshold is not None
+        and item.confidence < threshold
+        and item.status == ActionStatus.NEEDS_CONFIRMATION.value
+    )
     return ActionItemRead(
         id=item.id,
         meeting_id=item.meeting_id,
@@ -351,7 +399,7 @@ def read_model(
         confidence=item.confidence,
         origin=item.origin,
         source_utterance_ids=[source.utterance_id for source in item.sources],
-        is_candidate=threshold is not None and item.confidence < threshold,
+        is_candidate=is_candidate,
         summary=summary,
         sync_refs=sync_refs or [],
     )
@@ -561,10 +609,18 @@ def update_action_item(
     An empty body records no edit rather than one, because edit cost counts what
     the user had to fix and a no-op is not that. A double-submitted form would
     otherwise inflate the metric the product is trying to lower.
+
+    A new ``assignee_id`` gets the same existence check ``create_action_item``
+    gives it -- the field is the same foreign key either way, and clearing it
+    (``None``) needs no check at all.
     """
     changes = payload.changes()
     if not changes:
         return item
+
+    new_assignee = changes.get("assignee_id")
+    if new_assignee is not None and session.get(User, new_assignee) is None:
+        raise ValidationError("assignee_id does not name an existing user", field="assignee_id")
 
     for field, value in changes.items():
         setattr(item, field, value.value if isinstance(value, ActionStatus) else value)
@@ -671,67 +727,123 @@ def build_decisions(
     is a different Friday every week. A meeting with no start time keeps the
     phrase as said rather than resolving it against today.
 
-    **Rebuilding replaces, and keeps the ids that still apply.** The meeting's
-    decisions are deleted and rebuilt, and each one's id is derived from the
-    meeting and the utterances it was settled in (``decisions.decision_id``). A
+    **Rebuilding upserts by id, which is derived from the meeting and the
+    utterances a decision was settled in** (``decisions.decision_id``). A
     rebuild over the same labels and the same utterance ids gives the same
-    ``dec_`` ids, so D's lineage keeps pointing at rows that exist (#171). A
-    decision whose sources changed gets a different id -- including every
-    decision after module A reprocesses a recording, since that mints new
-    ``utt_`` ids (#194) -- and a caller that rebuilds still republishes
-    ``ExtractionResult`` for that case. This is a rebuild rather than a merge
-    because matching an old decision to a reworded new one is the same-decision
+    ``dec_`` id, so a decision whose sources are unchanged is the same row
+    across a rebuild -- updated in place, not deleted and reinserted -- and
+    D's lineage keeps pointing at rows that exist (#171) without help from
+    this function. A decision whose sources changed gets a different id --
+    including every decision after module A reprocesses a recording, since
+    that mints new ``utt_`` ids (#194) -- and is a genuinely new row; the one
+    its old id named is deleted. This is still a rebuild rather than a merge:
+    matching an old decision to a reworded new one is the same-decision
     question, and #25 gave that to D.
 
-    The delete is a real delete. These rows are derived from utterances that are
-    still there, so nothing is lost that cannot be recomputed, and privacy.md
-    leaves no room for a soft one. The sources go first, by name, rather than
-    being left to ``ON DELETE CASCADE``: SQLite enforces no foreign keys unless
-    asked, and with ids that repeat, a source row a cascade missed would attach
-    itself to the rebuilt decision.
+    Sources are only written for a row this call inserts. A surviving id
+    proves its sources are the same set in the same order -- that is what
+    produced the id -- so there is nothing to update there; only ``statement``
+    and ``confidence`` can differ between two rebuilds of the same sources.
+
+    Deleting a decision that is genuinely gone is a real delete, and its
+    sources, review and any external ref all go with it -- by name, not left
+    to ``ON DELETE CASCADE`` even though ``ext_decision_reviews.decision_id``
+    now has that foreign key (#297): SQLite enforces no foreign key unless
+    asked, the unit suite runs there, and an id that can repeat across an
+    unrelated meeting's rebuild means a row a cascade missed could attach
+    itself to a different decision reusing that id. The foreign key still
+    holds in Postgres, as a backstop for any path that deletes a decision
+    without going through here. ``ExtDecisionRef`` has no foreign key at all
+    (its own docstring), so it needs the same explicit delete or a decision
+    whose id comes back after a gap would inherit a stale "already sent to
+    Notion" claim and the resync it needs would silently never happen.
+
+    **The insert half is one statement, not a loop of ORM adds, because two
+    reprocesses of the same meeting can be in flight at once** -- a redelivered
+    Celery task, a retry after a slow ack, both true to "every task must be
+    safe to run twice" (``docs/architecture/async-pipeline.md``). Both would
+    compute the same new ``dec_`` id from the same sources and both would see
+    it absent from ``existing``; a plain ``session.add`` for each would let the
+    second one's flush hit this table's primary key. ``INSERT ... ON CONFLICT
+    (id) DO UPDATE`` makes whichever transaction commits second update the
+    row the first one just created rather than collide with it, in the same
+    statement that inserts the ones that are genuinely new.
     """
     meeting = session.get(Meeting, meeting_id)
     day = meeting_day(meeting.started_at if meeting is not None else None)
 
+    fresh = {
+        decision_id(meeting_id, group.source_utterance_ids): group
+        for group in group_decisions(utterances, max_gap=max_gap, day=day)
+    }
+
     # Only the model's decisions are rebuilt. One a person added is not derived
     # from labels, so no rerun can recompute it (#246).
     model_made = (ExtDecision.meeting_id == meeting_id, ExtDecision.origin == "model")
-    stale = select(ExtDecision.id).where(*model_made)
-    session.execute(delete(ExtDecisionSource).where(ExtDecisionSource.decision_id.in_(stale)))
-    session.execute(delete(ExtDecision).where(*model_made))
+    existing_ids = set(session.scalars(select(ExtDecision.id).where(*model_made)))
 
-    decisions = [
-        ExtDecision(
-            id=decision_id(meeting_id, group.source_utterance_ids),
-            meeting_id=meeting_id,
-            statement=group.statement,
-            confidence=group.confidence,
-            sources=[
-                ExtDecisionSource(utterance_id=utterance_id, position=position)
-                for position, utterance_id in enumerate(group.source_utterance_ids)
-            ],
+    gone = existing_ids - fresh.keys()
+    if gone:
+        session.execute(delete(ExtDecisionReview).where(ExtDecisionReview.decision_id.in_(gone)))
+        session.execute(delete(ExtDecisionRef).where(ExtDecisionRef.decision_id.in_(gone)))
+        session.execute(delete(ExtDecisionSource).where(ExtDecisionSource.decision_id.in_(gone)))
+        session.execute(delete(ExtDecision).where(ExtDecision.id.in_(gone)))
+
+    if fresh:
+        upsert = _insert_if_absent_into(session, ExtDecision).values(
+            [
+                {
+                    "id": id_,
+                    "meeting_id": meeting_id,
+                    "statement": group.statement,
+                    "confidence": group.confidence,
+                    "origin": "model",
+                }
+                for id_, group in fresh.items()
+            ]
         )
-        for group in group_decisions(utterances, max_gap=max_gap, day=day)
-    ]
-    session.add_all(decisions)
-    session.flush()
-
-    # A review follows its decision's id (#193, #246). A decision whose sources
-    # changed is a different decision, and a verdict -- or a rewording -- given
-    # about the old one must not quietly apply to it, nor outlive it.
-    kept = [decision.id for decision in decisions] + list(
-        session.scalars(
-            select(ExtDecision.id).where(
-                ExtDecision.meeting_id == meeting_id, ExtDecision.origin == "user"
+        session.execute(
+            upsert.on_conflict_do_update(
+                index_elements=["id"],
+                set_={
+                    "statement": upsert.excluded.statement,
+                    "confidence": upsert.excluded.confidence,
+                },
             )
         )
-    )
-    session.execute(
-        delete(ExtDecisionReview).where(
-            ExtDecisionReview.meeting_id == meeting_id,
-            ExtDecisionReview.decision_id.not_in(kept),
+
+        # Sources are only written once, for a row this statement actually
+        # inserted -- a surviving id's sources are the same set that produced
+        # it, so there is nothing to write there. ``ON CONFLICT DO NOTHING``
+        # on the same race this function's whole upsert exists for: a second
+        # concurrent insert of the same new decision would otherwise collide
+        # on ``uq_ext_decision_sources`` instead of the primary key.
+        new_ids = fresh.keys() - existing_ids
+        if new_ids:
+            session.execute(
+                _insert_if_absent_into(session, ExtDecisionSource)
+                .values(
+                    [
+                        {"decision_id": id_, "utterance_id": utterance_id, "position": position}
+                        for id_ in new_ids
+                        for position, utterance_id in enumerate(fresh[id_].source_utterance_ids)
+                    ]
+                )
+                .on_conflict_do_nothing(index_elements=["decision_id", "utterance_id"])
+            )
+
+    # Ordered by ``fresh``, not a fresh query's ``created_at`` -- a batch
+    # upsert gives every row in it the same server-side timestamp, so an
+    # order-by on that column would settle ties by id instead of the
+    # utterance position the caller actually cares about.
+    rows = {
+        row.id: row
+        for row in session.scalars(
+            select(ExtDecision).options(selectinload(ExtDecision.sources)).where(*model_made)
         )
-    )
+    }
+    decisions = [rows[id_] for id_ in fresh]
+    session.flush()
 
     # Ids only. A statement is meeting content and a log line is a store.
     log.info("extraction_decisions_built", meeting_id=meeting_id, count=len(decisions))
@@ -1170,6 +1282,66 @@ def _suggested(confidence: float) -> bool | None:
     return None if threshold is None else confidence >= threshold
 
 
+def _review_decision_row(
+    decision: ExtDecision,
+    review: ExtDecisionReview | None,
+    refs: Iterable[ExtDecisionRef],
+    summary: str | None,
+) -> ReviewDecision:
+    """Assemble one row from already-fetched pieces.
+
+    Pure and query-free so both call shapes -- one decision fetched by itself,
+    or a meeting's worth fetched in batches -- build the same row the same way
+    without either one re-running the other's queries (#296).
+    """
+    return ReviewDecision(
+        id=decision.id,
+        statement=_confirmed_statement(decision, review),
+        model_statement=decision.statement,
+        confidence=decision.confidence,
+        origin=decision.origin,  # type: ignore[arg-type]
+        status=review.status if review else "pending",  # type: ignore[arg-type]
+        suggested=_suggested(decision.confidence),
+        source_utterance_ids=[
+            source.utterance_id for source in sorted(decision.sources, key=lambda s: s.position)
+        ],
+        sync_refs=[
+            ExternalRefRead(system=ref.system, url=ref.url, external_id=ref.external_id)  # type: ignore[arg-type]
+            for ref in refs
+        ],
+        summary=summary,
+    )
+
+
+def _read_decision(
+    session: Session, decision: ExtDecision, *, refs: Sequence[ExtDecisionRef] | None = None
+) -> ReviewDecision:
+    """One decision, built the way ``review_for_meeting`` builds each of its rows.
+
+    For a caller that already has the one decision it needs -- confirming it,
+    or just having created it -- rather than for listing a meeting's decisions.
+    ``review_for_meeting`` keeps its own batched version of this construction
+    for that case: querying reviews, refs and summaries once for every decision
+    in the meeting is the efficient shape there, and calling this helper once
+    per decision from inside that loop would turn one query into N (#296).
+
+    ``refs`` lets a caller that already knows the answer -- ``create_decision``,
+    whose row cannot have any sync refs yet -- skip that query; left out, it is
+    fetched here.
+    """
+    review = session.get(ExtDecisionReview, decision.id)
+    if refs is None:
+        refs = list(
+            session.scalars(
+                select(ExtDecisionRef)
+                .where(ExtDecisionRef.decision_id == decision.id)
+                .order_by(ExtDecisionRef.created_at)
+            )
+        )
+    summary = decision_summaries(session, [decision]).get(decision.id)
+    return _review_decision_row(decision, review, refs, summary)
+
+
 def review_for_meeting(
     session: Session, meeting_id: str, *, now: datetime | None = None
 ) -> MeetingReview:
@@ -1191,37 +1363,24 @@ def review_for_meeting(
             select(ExtDecisionReview).where(ExtDecisionReview.meeting_id == meeting_id)
         )
     }
-    refs_by_decision: dict[str, list[ExternalRefRead]] = {}
+    refs_by_decision: dict[str, list[ExtDecisionRef]] = {}
     for ref in session.scalars(
         select(ExtDecisionRef)
         .where(ExtDecisionRef.meeting_id == meeting_id)
         .order_by(ExtDecisionRef.created_at)
     ):
-        refs_by_decision.setdefault(ref.decision_id, []).append(
-            ExternalRefRead(system=ref.system, url=ref.url, external_id=ref.external_id)  # type: ignore[arg-type]
-        )
+        refs_by_decision.setdefault(ref.decision_id, []).append(ref)
     summaries = decision_summaries(session, decisions)
 
-    listed = []
-    for decision in decisions:
-        review = reviews.get(decision.id)
-        listed.append(
-            ReviewDecision(
-                id=decision.id,
-                statement=_confirmed_statement(decision, review),
-                model_statement=decision.statement,
-                confidence=decision.confidence,
-                origin=decision.origin,  # type: ignore[arg-type]
-                status=review.status if review else "pending",  # type: ignore[arg-type]
-                suggested=_suggested(decision.confidence),
-                source_utterance_ids=[
-                    source.utterance_id
-                    for source in sorted(decision.sources, key=lambda s: s.position)
-                ],
-                sync_refs=refs_by_decision.get(decision.id, []),
-                summary=summaries.get(decision.id),
-            )
+    listed = [
+        _review_decision_row(
+            decision,
+            reviews.get(decision.id),
+            refs_by_decision.get(decision.id, []),
+            summaries.get(decision.id),
         )
+        for decision in decisions
+    ]
 
     confirmations = session.scalars(
         select(ExtConfirmation)
@@ -1231,7 +1390,7 @@ def review_for_meeting(
     items = [
         item
         for item in list_action_items(session, meeting_id=meeting_id)
-        if item.status == ActionStatus.NEEDS_CONFIRMATION.value or item.is_candidate
+        if item.status == ActionStatus.NEEDS_CONFIRMATION.value
     ]
     return MeetingReview(
         meeting_id=meeting_id,
@@ -1286,11 +1445,7 @@ def review_decision(
             review.statement = None
         session.flush()
 
-    return next(
-        listed
-        for listed in review_for_meeting(session, decision.meeting_id).decisions
-        if listed.id == decision.id
-    )
+    return _read_decision(session, decision)
 
 
 def outbound_for_meeting(session: Session, meeting_id: str) -> Outbound:
@@ -1308,19 +1463,29 @@ def outbound_for_meeting(session: Session, meeting_id: str) -> Outbound:
     in ``blocked``, by id and category, rather than failing the whole meeting: the
     other confirmed items can still go, and the screen asks for that one to be
     reworded. (Suggested in review of #247.)
+
+    **Queries only the two lists this needs**, rather than going through
+    ``review_for_meeting`` for its ``decisions`` and discarding the rest of
+    what that builds -- confirmations, sources, refs, summaries for every
+    decision and action item in the meeting, none of which this function
+    reads (#296).
     """
-    review = review_for_meeting(session, meeting_id)
     blocked: list[OutboundBlocked] = []
 
     decisions = []
-    for decision in review.decisions:
-        if decision.status != "confirmed":
-            continue
-        categories = find_unmasked(decision.statement)
+    confirmed = session.execute(
+        select(ExtDecision, ExtDecisionReview)
+        .join(ExtDecisionReview, ExtDecisionReview.decision_id == ExtDecision.id)
+        .where(ExtDecision.meeting_id == meeting_id, ExtDecisionReview.status == "confirmed")
+        .order_by(ExtDecision.created_at, ExtDecision.id)
+    )
+    for decision, review in confirmed:
+        statement = _confirmed_statement(decision, review)
+        categories = find_unmasked(statement)
         if categories:
             blocked.append(OutboundBlocked(id=decision.id, kind="decision", categories=categories))
         else:
-            decisions.append(OutboundDecision(id=decision.id, statement=decision.statement))
+            decisions.append(OutboundDecision(id=decision.id, statement=statement))
 
     items = []
     for item in list_action_items(session, meeting_id=meeting_id):
@@ -1378,11 +1543,7 @@ def create_decision(session: Session, payload: DecisionCreate) -> ReviewDecision
         )
     )
     session.flush()
-    return next(
-        listed
-        for listed in review_for_meeting(session, decision.meeting_id).decisions
-        if listed.id == decision.id
-    )
+    return _read_decision(session, decision, refs=())
 
 
 def delete_decision(session: Session, decision: ExtDecision) -> None:

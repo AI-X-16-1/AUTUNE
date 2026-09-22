@@ -39,6 +39,7 @@ from autune_extraction.models import (
     ExtClassification,
     ExtConfirmation,
     ExtDecision,
+    ExtDecisionRef,
     ExtDecisionReview,
     ExtDecisionSource,
     ExtEditEvent,
@@ -54,6 +55,7 @@ TABLES = [
     StoredUtterance.__table__,
     ExtClassification.__table__,
     ExtDecision.__table__,
+    ExtDecisionRef.__table__,
     ExtDecisionSource.__table__,
     ExtDecisionReview.__table__,
     # The task drafts action items too (step 3).

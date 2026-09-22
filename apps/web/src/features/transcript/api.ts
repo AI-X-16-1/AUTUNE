@@ -1,5 +1,5 @@
 /** Calls to /api/audio. This feature calls no other module's endpoints. */
-import { api } from "@/shared/api/client";
+import { api, authHeaders } from "@/shared/api/client";
 
 export { api };
 
@@ -25,25 +25,20 @@ import type { MeetingDetail, TeamSummary, Utterance } from "./types";
  * so no mirror is hand-written here.
  */
 export const getTranscript = (meetingId: string) =>
-  api.audio<Utterance[]>(`/transcripts/${meetingId}`, {
-    headers: authHeaders(),
-  });
+  api.audio<Utterance[]>(`/transcripts/${meetingId}`);
 
 /** A meeting's own row: title, status, and the two privacy flags. What S12 polls. */
 export const getMeeting = (meetingId: string) =>
-  api.audio<MeetingDetail>(`/meetings/${meetingId}`, {
-    headers: authHeaders(),
-  });
+  api.audio<MeetingDetail>(`/meetings/${meetingId}`);
 
 /** The teams this person may open a meeting for. Feeds `createMeeting`. */
 export const listTeams = () =>
-  api.audio<TeamSummary[]>("/teams", { headers: authHeaders() });
+  api.audio<TeamSummary[]>("/teams");
 
 /** Open a meeting before there is any audio for it (S06, the file-upload path). */
 export const createMeeting = (body: { title: string; team_id: string }) =>
   api.audio<{ meeting_id: string; status: string }>("/meetings", {
     method: "POST",
-    headers: authHeaders(),
     body: JSON.stringify(body),
   });
 
@@ -59,7 +54,6 @@ export const attestConsent = (meetingId: string) =>
     `/meetings/${meetingId}/consent`,
     {
       method: "POST",
-      headers: authHeaders(),
       body: JSON.stringify({ attested: true }),
     },
   );
@@ -101,35 +95,3 @@ export async function uploadRecording(meetingId: string, file: File) {
 
 /** Mirrors `BASE` in `@/shared/api/client`, which is not exported. See `uploadRecording`. */
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
-
-/** Where a developer's browser keeps its token. Set by hand; see environments.md. */
-const TOKEN_KEY = "autune.token";
-
-/**
- * The bearer token for this browser, until there is a sign-in.
- *
- * `/transcripts/{id}` takes `CurrentUser` and refuses a request without one
- * (#213). Screen S01 does not exist and the shared client sends no
- * `Authorization` header (#156, #189), so until those land this feature attaches
- * the header itself. Two sources, in order:
- *
- * 1. `localStorage["autune.token"]` — pasted in by hand, so a person can switch
- *    users without a rebuild.
- * 2. `NEXT_PUBLIC_AUTUNE_DEV_TOKEN` — inlined at build time from `.env.local`.
- *
- * Both come from `POST /api/audio/dev/token`, which exists only when
- * `AUTUNE_ENV=local`. Nothing here is the sign-in design: when #189 puts the
- * header in `@/shared/api/client`, this function is deleted and `getTranscript`
- * goes back to one argument.
- */
-function authHeaders(): HeadersInit {
-  let token: string | null = null;
-  try {
-    if (typeof window !== "undefined")
-      token = window.localStorage.getItem(TOKEN_KEY);
-  } catch {
-    // Private mode or blocked storage. Fall through to the build-time value.
-  }
-  token ??= process.env.NEXT_PUBLIC_AUTUNE_DEV_TOKEN ?? null;
-  return token ? { authorization: `Bearer ${token}` } : {};
-}
