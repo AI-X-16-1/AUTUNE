@@ -171,7 +171,7 @@ function stagesFor(meeting: MeetingDetail): Stage[] {
     },
     {
       label: "화자 분리",
-      detail: "pyannote · 화자 식별은 아직 없어 SPEAKER_00, 01 … 로 표시됩니다",
+      detail: "pyannote · 화자 식별은 아직 없어 화자 1, 2 … 로 표시됩니다",
       state: recognition,
     },
     {
