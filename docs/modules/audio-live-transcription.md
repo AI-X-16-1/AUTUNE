@@ -17,7 +17,7 @@ names; the first (file upload) exists (#259).
 | --- | --- | --- |
 | Who holds the full recording | **The browser.** `MediaRecorder` keeps the blob in memory; on stop it is uploaded through `POST /meetings/{id}/recording` | The server never accumulates raw audio. Invariant 11 stays simple, and the final pipeline (diarization, masking, persistence, `TranscriptReady`) has exactly one entry point |
 | Unit of a live row | **One utterance**, cut by silence (VAD). A row, once sent, never changes | S13's `LiveTranscript` is built on rows that do not move. Caption-style revision would need a different screen and cannot keep up on CPU |
-| Speaker during recording | **None.** Rows say "unidentified"; the final pipeline attaches speakers after the upload | pyannote needs the whole recording. Online diarization is a new stack and a label-reconciliation problem, not for W3 |
+| Speaker during recording | **A cluster label, `화자 N`**, from one speaker embedding per utterance (`audio-live-speakers.md`). `speaker_id` stays null; the final pipeline attaches people after the upload | Whole-file pyannote needs the whole recording; a per-utterance embedding fits in the lag budget and gives S13 its "화자 N 미확인" prompt. Identification is #6 |
 | Where live transcription runs | **In the API process**, over a WebSocket, Whisper loaded lazily on the first connection | The only option that depends on none of the open decisions (#258, #275). One moving part. The seam that would move it to a worker is one class |
 | Masking on live rows | **Yes**, the same `mask()` | S13 draws PII tokens. Nothing is stored, but there is no reason to show a number on screen that the stored transcript will not |
 | Classification during recording | **None.** `kind` is absent on every live row | #155: the live channel carries no partial results into any contract or event |
@@ -48,7 +48,7 @@ Text frames are JSON; binary frames are audio.
 | S→C | `{"type": "ready"}` | Authenticated and the model is loaded. No audio is accepted before this |
 | C→S | binary | PCM16, mono, 16 kHz, about 200 ms per frame |
 | C→S | `{"type": "pause"}` · `resume` · `stop` | The rail's buttons |
-| S→C | `{"type": "row", "utterance": {…}}` | One utterance, final. A `contracts.Utterance` as-is: `id` is `utt_live_…`, `speaker_id` is `null` (which is what `TranscriptRow` keys "unidentified" on) with `speaker` set to one display label for the whole session, `text` is masked |
+| S→C | `{"type": "row", "utterance": {…}}` | One utterance, final. A `contracts.Utterance` as-is: `id` is `utt_live_…`, `speaker_id` is `null` (which is what `TranscriptRow` keys "unidentified" on) with `speaker` set to the voice's cluster label `화자 N` (`audio-live-speakers.md`), or `?` when the session has no working embedder, `text` is masked |
 | S→C | `{"type": "error", "code": "…"}` | One segment failed, or a frame was refused. The session continues |
 | S→C | `{"type": "ended"}` then close | `stop` has been processed and the last segment sent |
 
@@ -318,7 +318,7 @@ and one run with a real microphone; the manual steps go into
 ## 7. What this does not do
 
 - Reconnect a dropped socket.
-- Show a speaker, or a kind, on a live row.
+- Show a *kind* on a live row. (A speaker cluster label is shown since `audio-live-speakers.md`; a person's name is not, until #6.)
 - Keep the recording if the tab closes.
 - Run more than one transcription at a time per process.
 - Store anything.

@@ -7,7 +7,7 @@ Evaluation reports live in `docs/modules/audio-evaluations/` and hold the full
 tables. This file is the thread through them: the decisions, the reversals, and
 what is still open.
 
-Last updated: 2026-09-15.
+Last updated: 2026-09-22.
 
 ---
 
@@ -198,6 +198,26 @@ that capture: 9 rows with 3 invented ones → 7 rows, none invented, the
 remaining errors being the microphone's. Chrome's capture path was checked
 separately and passes 1.5–5 kHz flat, so the muffling is upstream of the
 browser.
+
+### Live speaker labels (`docs/modules/audio-live-speakers.md`)
+
+The live channel shipped with no speaker on a row (#307). This adds one:
+one `wespeaker-voxceleb-resnet34-LM` embedding per utterance -- the model
+already inside `speaker-diarization-3.1`, so no new download and the same
+vector space #6 will identify against -- and nearest-centroid clustering in
+the session with one cosine threshold. Labels are `화자 N` in order of first
+appearance and never change once shown; the stored path was changed to say
+the same thing (it had been showing pyannote's `SPEAKER_02` raw).
+
+| Measure | Value |
+| --- | --- |
+| Embedder load | 0.4 s |
+| Embedding per utterance, CPU (M4 Pro) | 12 ms at 0.5 s and 1 s, 19 ms at 3 s, 55 ms at 10 s |
+| Threshold default | **0.55, provisional** -- the wespeaker convention until the sweep in `evaluate_live_speakers.py` has run on the four-speaker recording of evaluation 02 |
+
+What the threshold sweep reports, and the value it settles on, goes in
+`docs/modules/audio-evaluations/04-live-speakers.md` when the owner has run
+it; this entry is updated then.
 
 ---
 

@@ -1,6 +1,6 @@
 # Live speaker labels — design
 
-**Date:** 2026-09-22 · **Owner:** 김민경 · **Module:** A · **Status:** Design
+**Date:** 2026-09-22 · **Owner:** 김민경 · **Module:** A · **Status:** Built (`audio/live-speakers`); threshold evaluation pending
 (issue #306; branch `audio/live-speakers`, stacked on `audio/live-transcription`)
 
 A live row on S13 gets a speaker label — `화자 1`, `화자 2` — from the voice

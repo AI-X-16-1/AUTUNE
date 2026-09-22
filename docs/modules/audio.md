@@ -108,6 +108,14 @@ Live rows are masked one at a time, so a number read with a pause in it
 reaches the screen unmasked across two rows; the stored transcript is the
 masked final form (design §3.5).
 
+Every live row carries a speaker cluster label, `화자 N`: one embedding per
+utterance from the diarizer's own embedding model, nearest-centroid
+clustering in the session, a number that never changes once shown, and a
+cap from the same head-count hint the stored path gives pyannote. Nothing is
+stored; a session whose embedder fails shows `?` and goes on. The stored
+path uses the same `화자 N` text, numbered by who spoke first. Design and
+threshold evaluation: `audio-live-speakers.md`.
+
 ### Consent, until there is a per-person consent flow
 
 `participants.consented` had no writer at all (#190): every real meeting came
