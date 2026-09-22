@@ -64,10 +64,11 @@ class ClassifiedUtterance:
     one; the statement then carries no owner rather than a wrong one."""
     nli_verified: bool = False
     """Whether step 4 (``service.verify_utterances``) actually ran NLI on this
-    utterance -- true for a ``commitment`` or ``ambiguous`` row after that step,
-    false for every other kind and for anything built before it exists. Carried
-    on the utterance itself, not a side collection, because every later step
-    that reads ``kind`` (``build_action_items``, ``record_ambiguous_agreements``,
+    utterance -- true for an ``ambiguous`` row after that step (whether or not
+    it was promoted to ``commitment``), false for every other kind and for
+    anything built before it exists. Carried on the utterance itself, not a
+    side collection, because every later step that reads ``kind``
+    (``build_action_items``, ``record_ambiguous_agreements``,
     ``store_classifications``) reads this the same way."""
 
 

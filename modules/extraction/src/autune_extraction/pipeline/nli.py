@@ -63,6 +63,7 @@ class LocalNli:
         self._checkpoint = checkpoint
         self._device = device
         self._pipe: Any = None
+        self._needs_segment_ids = False
 
     @property
     def model_version(self) -> str:
@@ -92,6 +93,19 @@ class LocalNli:
         self._pipe = hf_pipeline(
             "text-classification", model=self._checkpoint, device=self._device, top_k=None
         )
+        # klue/roberta-base ships a BertTokenizer (2-segment 0/1 token_type_ids)
+        # on top of a RoBERTa encoder (type_vocab_size=1): id=1 is out of range
+        # for token_type_embeddings and crashes -- an IndexError on CPU, an
+        # unrecoverable CUDA device-side assert on GPU. RoBERTa's own tokenizer
+        # never emits token_type_ids for exactly this reason -- module D hit
+        # this first (#322, same checkpoint family, same gap still open there:
+        # its own fix is unconditional too). Read from the loaded model's own
+        # config rather than assumed from the checkpoint name, so a real BERT
+        # checkpoint (type_vocab_size=2) pointed at AUTUNE_EXTRACTION_NLI_LOCAL_MODEL
+        # keeps its segment ids instead of silently merging premise and
+        # hypothesis into one -- no crash, no error, just a wrong score no
+        # test or CI would catch.
+        self._needs_segment_ids = self._pipe.model.config.type_vocab_size > 1
         log.info("extraction_nli_loaded", checkpoint=self._checkpoint, device=self._device)
 
     def classify(self, pairs: list[tuple[str, str]]) -> list[NliScores]:
@@ -100,16 +114,9 @@ class LocalNli:
         self._load()
         out: list[NliScores] = []
         for premise, hypothesis in pairs:
-            # klue/roberta-base ships a BertTokenizer (2-segment 0/1
-            # token_type_ids) on top of a RoBERTa encoder (type_vocab_size=1):
-            # id=1 is out of range for token_type_embeddings and crashes -- an
-            # IndexError on CPU, an unrecoverable CUDA device-side assert on
-            # GPU. RoBERTa's own tokenizer never emits token_type_ids for
-            # exactly this reason -- module D hit this first (#322), and this
-            # is the same checkpoint family. Match that instead of trusting
-            # the checkpoint's tokenizer_config.json.
             records = self._pipe(
-                {"text": premise, "text_pair": hypothesis}, return_token_type_ids=False
+                {"text": premise, "text_pair": hypothesis},
+                return_token_type_ids=self._needs_segment_ids,
             )[0]
             scored = {r["label"].lower(): float(r["score"]) for r in records}
             out.append(

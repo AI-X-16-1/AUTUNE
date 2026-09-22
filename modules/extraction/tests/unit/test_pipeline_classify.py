@@ -403,10 +403,11 @@ def test_the_task_classifies_and_groups_a_meeting(wired: Session) -> None:
     assert wired.query(ExtConfirmation).count() == 1, "한번 볼게요, recorded and not asked"
 
 
-def test_the_task_runs_step_4_on_commitment_and_ambiguous_rows_only(wired: Session) -> None:
-    """utt_3 (commitment) and utt_5 (ambiguous) both carry a real commitment or
-    weak-assent marker the fake NLI reads; utt_1 (decision) and utt_4
-    (open_question) are never asked."""
+def test_the_task_runs_step_4_on_ambiguous_rows_only(wired: Session) -> None:
+    """utt_5 (ambiguous, weak-assent marker the fake NLI reads as not entailed)
+    is the only one NLI is asked about. utt_3 is already ``commitment`` and is
+    never re-checked (#330 narrowed this to promotion only); utt_1 (decision)
+    and utt_4 (open_question) were never candidates either."""
     stored(wired)
 
     tasks.on_transcript_ready(transcript())
@@ -416,7 +417,7 @@ def test_the_task_runs_step_4_on_commitment_and_ambiguous_rows_only(wired: Sessi
     }
     assert verified == {
         "utt_1": False,
-        "utt_3": True,
+        "utt_3": False,
         "utt_4": False,
         "utt_5": True,
     }

@@ -111,8 +111,8 @@ class Classifier(Protocol):
 @runtime_checkable
 class NliModel(Protocol):
     """Premise/hypothesis entailment -- step 4 (#12): does an utterance the
-    5-way classifier called ``commitment`` or ``ambiguous`` actually entail a
-    real promise. klue/roberta fine-tuned on KorNLI by default (#172).
+    5-way classifier called ``ambiguous`` actually entail a real promise.
+    klue/roberta fine-tuned on KorNLI by default (#172).
 
     A second, independent copy of module D's own ``NliModel`` seam
     (``autune_context.pipeline.base``) rather than a shared one: modules never
