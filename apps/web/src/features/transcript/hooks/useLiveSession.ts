@@ -43,6 +43,7 @@ const CLOSE_MESSAGES: Record<number, string> = {
   4403: "이 회의의 팀 멤버가 아닙니다.",
   4404: "회의를 찾을 수 없습니다.",
   4409: "이 회의는 이미 다른 곳에서 녹음 중입니다.",
+  4410: "이 회의는 이미 녹음이 끝나 분석되었습니다. 새 회의를 만들어 주세요.",
   4503: "서버의 전사 모델을 불러올 수 없습니다. 녹음은 계속됩니다.",
 };
 
@@ -51,7 +52,7 @@ const RECORDING_MIME = "audio/webm;codecs=opus";
 
 /** Authorisation/precondition failures: no live view will ever arrive for
  * this session, so the recording is stopped rather than kept blind. */
-const REFUSAL_CODES = new Set<number>([4401, 4403, 4404, 4409]);
+const REFUSAL_CODES = new Set<number>([4401, 4403, 4404, 4409, 4410]);
 
 /** The close code on a `ready`-rejection, if the rejection came from a close
  * event rather than a transport error (which carries none). */
@@ -77,7 +78,8 @@ function closeCodeOf(error: unknown): number | undefined {
  *
  * A failure *before* `ready` is not that case. A refusal -- no token, not a
  * team member, no such meeting, or someone else already recording this
- * meeting (4401/4403/4404/4409) -- means no live view is ever coming, so the
+ * meeting, or a meeting already past recording (4401/4403/4404/4409/4410) --
+ * means no live view is ever coming, so the
  * recorder is stopped and the session lands on `phase: "error"` instead of
  * recording something nobody asked for. A transport failure (the socket
  * never connects at all) or the model being unavailable (4503) leaves the

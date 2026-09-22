@@ -163,6 +163,20 @@ def test_a_missing_meeting_is_4404(client: TestClient, member: User) -> None:
         assert close_code(ws) == 4404
 
 
+def test_a_meeting_past_recording_is_4410_not_4409(
+    client: TestClient, meeting: str, member: User, db_session: Session
+) -> None:
+    """The first microphone run of the day: a meeting that had already gone
+    through stop and upload answered "someone else is recording". Nobody
+    was; the meeting was complete, and that is its own refusal."""
+    db_session.get(Meeting, meeting).status = "complete"
+    db_session.flush()
+    with connect(client, meeting) as ws:
+        hello(ws, issue_token(member.id))
+        assert close_code(ws) == 4410
+    assert live_routes._live == {}
+
+
 def test_a_second_session_on_the_same_meeting_is_4409(
     client: TestClient, meeting: str, member: User
 ) -> None:

@@ -54,6 +54,7 @@ Text frames are JSON; binary frames are audio.
 
 Close codes: `4401` no or invalid token · `4403` not a member of the team ·
 `4404` no such meeting · `4409` a session is already open for this meeting ·
+`4410` the meeting is past recording (analysing, complete, delivered) ·
 `4503` the model could not be loaded.
 
 **Why PCM and not `MediaRecorder` chunks.** A webm chunk is not decodable

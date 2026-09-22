@@ -31,6 +31,11 @@ log = get_logger(__name__)
 
 router = APIRouter()
 
+
+class _AlreadyLiveError(ConflictError):
+    """A second hello for a meeting this process is already recording."""
+
+
 _transcriber = Transcriber()
 _live: dict[str, LiveSession] = {}
 """Open sessions by meeting id. One per meeting; a second hello is refused."""
@@ -70,7 +75,7 @@ async def live(websocket: WebSocket, meeting_id: str) -> None:
         with session_scope() as db:
             service.authenticate_live(db, token=message.token, meeting_id=meeting_id)
             if meeting_id in _live:
-                raise ConflictError("a live session is already open for this meeting")
+                raise _AlreadyLiveError("a live session is already open for this meeting")
             service.begin_live(db, meeting_id=meeting_id)
         session = build_session()
         _live[meeting_id] = session
@@ -94,9 +99,16 @@ async def live(websocket: WebSocket, meeting_id: str) -> None:
             websocket, protocol.NO_SUCH_MEETING, meeting_id=meeting_id, reason=type(exc).__name__
         )
         return
-    except ConflictError as exc:
+    except _AlreadyLiveError as exc:
         await _refuse(
             websocket, protocol.ALREADY_LIVE, meeting_id=meeting_id, reason=type(exc).__name__
+        )
+        return
+    except ConflictError as exc:
+        # begin_live: the meeting is analysing, complete or delivered. A
+        # different message for the person than "someone else is recording".
+        await _refuse(
+            websocket, protocol.NOT_RECORDABLE, meeting_id=meeting_id, reason=type(exc).__name__
         )
         return
     except WebSocketDisconnect:

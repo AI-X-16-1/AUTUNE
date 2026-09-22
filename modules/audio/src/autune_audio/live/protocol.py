@@ -18,6 +18,10 @@ UNAUTHENTICATED = 4401
 NOT_A_MEMBER = 4403
 NO_SUCH_MEETING = 4404
 ALREADY_LIVE = 4409
+NOT_RECORDABLE = 4410
+"""The meeting is past recording -- analysing, complete, delivered. Not the
+same refusal as 4409: nobody else is recording, and trying again will not
+help."""
 MODEL_UNAVAILABLE = 4503
 
 
