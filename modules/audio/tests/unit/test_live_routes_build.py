@@ -9,7 +9,7 @@ import sys
 import pytest
 
 from autune_audio.config import AudioSettings
-from autune_audio.live import backends, routes
+from autune_audio.live import backends, registry, routes
 from autune_core.errors import ConfigurationError
 
 
@@ -50,3 +50,35 @@ def test_sessions_share_one_transcriber(monkeypatch: pytest.MonkeyPatch) -> None
     a = routes.build_session()
     b = routes.build_session()
     assert a._transcriber is b._transcriber is routes._transcriber  # noqa: SLF001
+
+
+@pytest.mark.asyncio
+async def test_the_claim_is_released_before_ended_is_sent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    registry.clear()
+    order: list[str] = []
+
+    class Socket:
+        async def send_json(self, data: dict) -> None:
+            order.append(data["type"])
+
+        async def close(self, code: int = 1000) -> None:
+            order.append("close")
+
+    class Session:
+        rows_sent = 0
+
+        async def stop(self):  # noqa: ANN202
+            return []
+
+    registry.claim("m1", Session())  # type: ignore[arg-type]
+    real_release = registry.release
+
+    def release(meeting_id: str) -> None:
+        order.append("release")
+        real_release(meeting_id)
+
+    monkeypatch.setattr(registry, "release", release)
+    await routes._finish(Socket(), Session(), meeting_id="m1")  # noqa: SLF001
+    assert order == ["release", "ended", "close"]

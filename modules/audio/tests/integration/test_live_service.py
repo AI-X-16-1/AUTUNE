@@ -6,6 +6,7 @@ import pytest
 from sqlalchemy.orm import Session
 
 from autune_audio import service
+from autune_audio.live import registry
 from autune_core import Meeting, TeamMember, User
 from autune_core.auth import issue_token
 from autune_core.errors import ConflictError, NotFoundError, PermissionDeniedError
@@ -78,3 +79,18 @@ def test_a_meeting_already_analysed_refuses_a_live_session(
     db_session.flush()
     with pytest.raises(ConflictError):
         service.begin_live(db_session, meeting_id=meeting)
+
+
+def test_an_upload_is_refused_while_a_live_session_is_open(
+    db_session: Session, meeting: str, member: User
+) -> None:
+    db_session.get(Meeting, meeting).status = "recording"
+    db_session.flush()
+    registry.claim(meeting, object())  # type: ignore[arg-type]
+    try:
+        with pytest.raises(ConflictError, match="live session"):
+            service.start_transcription(db_session, meeting_id=meeting, uploader=member)
+    finally:
+        registry.release(meeting)
+    # The browser's own upload, after ``stop``, once the claim is gone.
+    service.start_transcription(db_session, meeting_id=meeting, uploader=member)

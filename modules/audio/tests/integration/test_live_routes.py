@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 from starlette.websockets import WebSocketDisconnect
 
 from autune_audio.config import AudioSettings
+from autune_audio.live import registry
 from autune_audio.live import routes as live_routes
 from autune_audio.live.segmenter import Segmenter
 from autune_audio.live.session import LiveSession
@@ -127,9 +128,9 @@ def client(
             transcriber=saying("연락처는 010-1234-5678입니다"),
         ),
     )
-    live_routes._live.clear()
+    registry.clear()
     yield TestClient(app)
-    live_routes._live.clear()
+    registry.clear()
 
 
 def connect(client: TestClient, meeting: str):
@@ -181,7 +182,7 @@ def test_a_meeting_past_recording_is_4410_not_4409(
     with connect(client, meeting) as ws:
         hello(ws, issue_token(member.id))
         assert close_code(ws) == 4410
-    assert live_routes._live == {}
+    assert registry.open_count() == 0
 
 
 def test_a_second_session_on_the_same_meeting_is_4409(
@@ -306,7 +307,7 @@ def test_the_registry_is_empty_after_stop(client: TestClient, meeting: str, memb
         ws.receive_json()
         ws.send_text(json.dumps({"type": "stop"}))
         ws.receive_json()
-    assert live_routes._live == {}
+    assert registry.open_count() == 0
 
 
 def test_a_model_that_cannot_load_is_4503_and_leaves_no_registry_entry(
@@ -327,7 +328,7 @@ def test_a_model_that_cannot_load_is_4503_and_leaves_no_registry_entry(
         hello(ws, issue_token(member.id))
         assert ws.receive_json() == {"type": "error", "code": "model_unavailable"}
         assert close_code(ws) == 4503
-    assert live_routes._live == {}
+    assert registry.open_count() == 0
 
 
 def test_a_session_that_cannot_be_built_is_4503_and_the_meeting_stays_scheduled(
@@ -345,7 +346,7 @@ def test_a_session_that_cannot_be_built_is_4503_and_the_meeting_stays_scheduled(
         hello(ws, issue_token(member.id))
         assert close_code(ws) == 4503
     assert db_session.get(Meeting, meeting).status == "scheduled"
-    assert meeting not in live_routes._live
+    assert not registry.is_open(meeting)
 
 
 def test_no_hello_within_the_timeout_is_4401(
@@ -358,7 +359,7 @@ def test_no_hello_within_the_timeout_is_4401(
     )
     with connect(client, meeting) as ws:
         assert close_code(ws) == 4401
-    assert live_routes._live == {}
+    assert registry.open_count() == 0
 
 
 def test_a_binary_first_frame_is_4401(client: TestClient, meeting: str) -> None:
@@ -389,7 +390,7 @@ def test_the_session_ends_at_the_limit_and_releases_the_meeting(
             message = ws.receive_json()
         assert message == {"type": "ended"}
         assert close_code(ws) == 1000
-    assert live_routes._live == {}
+    assert registry.open_count() == 0
 
 
 def test_a_client_that_disconnects_mid_session_releases_the_meeting(
@@ -398,10 +399,10 @@ def test_a_client_that_disconnects_mid_session_releases_the_meeting(
     with connect(client, meeting) as ws:
         hello(ws, issue_token(member.id))
         assert ws.receive_json() == {"type": "ready"}
-        assert meeting in live_routes._live
+        assert registry.is_open(meeting)
     # The handler runs on the test client's portal; give it a tick to see
     # the disconnect if it has not already.
     deadline = time.monotonic() + 2.0
-    while live_routes._live and time.monotonic() < deadline:
+    while registry.is_open(meeting) and time.monotonic() < deadline:
         time.sleep(0.01)
-    assert live_routes._live == {}
+    assert registry.open_count() == 0

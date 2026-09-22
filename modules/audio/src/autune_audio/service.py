@@ -15,6 +15,7 @@ from typing import NamedTuple
 import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
+from autune_audio.live import registry as live_registry
 from autune_contracts.transcript import Utterance as ContractUtterance
 from autune_core import Meeting, Participant, Team, TeamMember, User, get_logger
 from autune_core.auth import decode_token
@@ -229,6 +230,15 @@ def start_transcription(session: Session, *, meeting_id: str, uploader: User) ->
         raise ConflictError(
             f"meeting {meeting_id} is {meeting.status}; a recording can only be "
             f"submitted for a meeting that is {' or '.join(sorted(_ACCEPTS_A_RECORDING))}"
+        )
+
+    if meeting.status == "recording" and live_registry.is_open(meeting_id):
+        # The browser that owns the live session uploads after ``ended``,
+        # when the claim is already gone. Anyone else uploading now would
+        # flip the meeting to analyzing under a socket that is still
+        # streaming, and the real recording would be refused when it comes.
+        raise ConflictError(
+            f"meeting {meeting_id} has a live session open; stop it before uploading"
         )
 
     now = datetime.now(tz=UTC)
@@ -606,7 +616,10 @@ def begin_live(session: Session, *, meeting_id: str) -> None:
     recording -- must be able to reconnect. It stays ``recording`` after
     ``stop`` for the same reason: the upload that follows is what moves it on.
     """
-    meeting = session.get(Meeting, meeting_id)
+    # Locked for the read, same as ``start_transcription``: a hello and an
+    # upload racing the same meeting must not both read a status that lets
+    # them both through.
+    meeting = session.get(Meeting, meeting_id, with_for_update=True)
     if meeting is None:
         raise NotFoundError("meeting", meeting_id)
     if meeting.status not in _ACCEPTS_A_LIVE_SESSION:

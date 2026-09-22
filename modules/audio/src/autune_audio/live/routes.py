@@ -19,7 +19,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from autune_audio import service
 from autune_audio.config import get_settings
-from autune_audio.live import protocol
+from autune_audio.live import protocol, registry
 from autune_audio.live.segmenter import Segmenter
 from autune_audio.live.session import LiveSession, TranscribeFailed
 from autune_audio.live.transcriber import Transcriber
@@ -46,8 +46,6 @@ _transcriber: Transcriber | None = None
 engine from settings, and a value that cannot run here (``mlx`` off Apple
 silicon) must refuse one socket with 4503, not stop the API from starting
 (``ConfigurationError``: "at the point of use, not at import")."""
-_live: dict[str, LiveSession] = {}
-"""Open sessions by meeting id. One per meeting; a second hello is refused."""
 
 
 def shared_transcriber() -> Transcriber:
@@ -71,14 +69,15 @@ async def live(websocket: WebSocket, meeting_id: str) -> None:
     await websocket.accept()
 
     # --- hello: authenticate, begin, claim --------------------------------
-    # The claim (``_live[meeting_id] = session``) happens right after the
-    # database scope has committed, with no ``await`` anywhere between the
-    # "already live" check and the claim: this whole block is synchronous, so
-    # no other connection's hello can interleave and see a stale "not live
-    # yet". Claiming only once the scope has closed also means a meeting that
-    # ``begin_live`` refuses (wrong status), or whose commit fails, was never
-    # claimed and needs no rollback -- a claim taken inside the scope would
-    # outlive a commit failure, which raises past every handler below.
+    # The claim (``registry.claim(meeting_id, session)``) happens right after
+    # the database scope has committed, with no ``await`` anywhere between
+    # the "already live" check and the claim: this whole block is
+    # synchronous, so no other connection's hello can interleave and see a
+    # stale "not live yet". Claiming only once the scope has closed also
+    # means a meeting that ``begin_live`` refuses (wrong status), or whose
+    # commit fails, was never claimed and needs no rollback -- a claim taken
+    # inside the scope would outlive a commit failure, which raises past
+    # every handler below.
     try:
         with anyio.fail_after(settings.live_hello_timeout_s):
             event = await websocket.receive()
@@ -93,7 +92,7 @@ async def live(websocket: WebSocket, meeting_id: str) -> None:
             raise protocol.ProtocolError("hello_expected")
         with session_scope() as db:
             service.authenticate_live(db, token=message.token, meeting_id=meeting_id)
-            if meeting_id in _live:
+            if registry.is_open(meeting_id):
                 raise _AlreadyLiveError("a live session is already open for this meeting")
             service.begin_live(db, meeting_id=meeting_id)
             # Inside the scope on purpose: a session that cannot be built
@@ -102,7 +101,7 @@ async def live(websocket: WebSocket, meeting_id: str) -> None:
             # below awaits before the claim, so the atomicity comment above
             # still holds.
             session = build_session()
-        _live[meeting_id] = session
+        registry.claim(meeting_id, session)
     except service.NotATeamMemberError as exc:
         # A real user, just not one this meeting's team recognises --
         # authenticated, not let in.
@@ -148,8 +147,8 @@ async def live(websocket: WebSocket, meeting_id: str) -> None:
         return
 
     # --- warm-up, ready, and the loop, all covered by the same claim -----
-    # Everything from here on holds the ``_live[meeting_id]`` claim taken
-    # above, and one ``finally`` releases it -- whether warm-up fails,
+    # Everything from here on holds the registry claim taken above, and one
+    # ``finally`` releases it -- whether warm-up fails,
     # ``ready`` never reaches a client that already left, the loop ends
     # normally, or the socket drops mid-session.
     reason = "closed"
@@ -192,15 +191,15 @@ async def live(websocket: WebSocket, meeting_id: str) -> None:
                 elif control.type == "resume":
                     session.resume()
                 else:
-                    await _finish(websocket, session)
+                    await _finish(websocket, session, meeting_id=meeting_id)
                     reason = "stopped"
         if deadline.cancelled_caught:
             reason = "session_limit"
-            await _finish(websocket, session)
+            await _finish(websocket, session, meeting_id=meeting_id)
     except WebSocketDisconnect:
         reason = "disconnected"
     finally:
-        _live.pop(meeting_id, None)
+        registry.release(meeting_id)
         log.info(
             "live_session_closed", meeting_id=meeting_id, rows=session.rows_sent, reason=reason
         )
@@ -224,7 +223,7 @@ async def _emit(websocket: WebSocket, session: LiveSession, data: bytes) -> None
         await websocket.send_json(protocol.row(row))
 
 
-async def _finish(websocket: WebSocket, session: LiveSession) -> None:
+async def _finish(websocket: WebSocket, session: LiveSession, *, meeting_id: str) -> None:
     try:
         rows = await session.stop()
     except TranscribeFailed:
@@ -232,5 +231,8 @@ async def _finish(websocket: WebSocket, session: LiveSession) -> None:
         await websocket.send_json(protocol.error("transcribe_failed"))
     for row in rows:
         await websocket.send_json(protocol.row(row))
+    # Released before ``ended``: the browser uploads the moment it sees
+    # ``ended``, and ``start_transcription`` refuses while the claim is held.
+    registry.release(meeting_id)
     await websocket.send_json(protocol.ended())
     await websocket.close()
