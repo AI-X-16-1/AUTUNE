@@ -48,7 +48,7 @@ real, so A ships first (roadmap W2).
 2. **VAD** — silero-vad removes silence and segments speech.
 3. **STT** — Whisper transcribes with timestamps. whisper.cpp on CPU when no GPU
    is available.
-4. **Diarization** — Pyannote separates speakers into `Speaker 1`, `Speaker 2`, …
+4. **Diarization** — Pyannote separates speakers into `화자 1`, `화자 2`, …
 5. **Speaker identification** — speaker embeddings matched against enrolled
    voices in `aud_speaker_embeddings`; unmatched speakers keep the label and a
    null `speaker_id`.
