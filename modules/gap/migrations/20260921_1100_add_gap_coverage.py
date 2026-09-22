@@ -16,12 +16,15 @@ coverage in their title wording only, and parsing product copy to recover a
 state is a worse guess than saying nothing; the next pipeline run rewrites
 every template row in place (``service._store_gaps``).
 
-Chains onto the template-selection revision.
+Chains onto the extractor-version revision, which is the gap branch's head
+on ``main``. It first chained onto the template-selection revision that
+one also revises, which gave the branch two heads. Raised in review of
+#303.
 
 Owner: 박재경. Apply with `alembic upgrade heads` (plural).
 
 Revision ID: e4a7c81b6f30
-Revises: c9e5ab13d742
+Revises: c1f7b0d94e58
 Create Date: 2026-09-21 11:00:00.000000
 """
 
@@ -33,7 +36,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "e4a7c81b6f30"
-down_revision: str | None = "c9e5ab13d742"
+down_revision: str | None = "c1f7b0d94e58"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

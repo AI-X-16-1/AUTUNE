@@ -753,12 +753,16 @@ deletion through `meetings.id` — but it writes to whatever
 else's. The docker-compose database in
 `../engineering/environments.md` is the intended target.
 
-The split between `missing` and `partial` is read off `gap_related_topics`, and
-that reading has a failure mode shaped exactly like a result: an empty link
-table says "every gap is missing". The harness cross-checks it against the
-stored `gap_gaps.title`, which `detect` composes from the coverage state, and
-stops with exit 2 if the two disagree rather than printing a cause split built
-on one of them.
+The split between `missing` and `partial` is read off `gap_gaps.coverage`. It
+used to be derived from `gap_related_topics` — a gap linking to no topic was a
+missing one — and that reading had two problems. One was a failure mode shaped
+exactly like a result: an empty link table says "every gap is missing". The
+other retired the derivation outright: an item the meeting only said out loud
+is partial and links to nothing, so every such gap read as missing. The harness
+cross-checks the stored state against the stored `gap_gaps.title`, which
+`detect` composes from the same coverage state, and stops with exit 2 if the
+two disagree — or if a row carries no coverage at all — rather than printing a
+cause split built on one of them.
 
 The committed set (`eval/fixtures/gap_detection_v1.json`) is **four authored
 meetings, and is not the PRD figure** — that one comes from five to ten real

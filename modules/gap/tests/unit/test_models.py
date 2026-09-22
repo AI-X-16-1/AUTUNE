@@ -309,3 +309,67 @@ def test_no_migration_creates_a_table_no_model_describes() -> None:
     declared = {table.name for table in ALL_TABLES}
 
     assert set(migration_tables()) == declared
+
+
+# --- the revisions form one chain -------------------------------------------
+
+
+def gap_revisions() -> dict[str, tuple[str | None, str | None]]:
+    """Revision -> (down_revision, branch_labels), read off this module's files.
+
+    Text, like `migration_tables`, and for the same reason: `alembic heads`
+    needs the config and a person without Docker runs neither. The failure it
+    catches does not need a database to exist.
+    """
+    migrations = Path(__file__).resolve().parents[2] / "migrations"
+    revisions: dict[str, tuple[str | None, str | None]] = {}
+    for path in sorted(migrations.glob("*.py")):
+        source = path.read_text(encoding="utf-8")
+
+        def one(name: str, text: str = source) -> str | None:
+            match = re.search(rf'^{name}[^=\n]*=\s*(?:\(\s*)?(?:"([^"]+)"|None)', text, re.M)
+            return match.group(1) if match and match.group(1) else None
+
+        revision = one("revision")
+        assert revision is not None, path.name
+        revisions[revision] = (one("down_revision"), one("branch_labels"))
+    return revisions
+
+
+def test_the_module_owns_one_alembic_branch() -> None:
+    """Invariant 7: one revision starts the branch and labels it, and it is the
+    only one with no parent."""
+    roots = [rev for rev, (down, _) in gap_revisions().items() if down is None]
+    labelled = [rev for rev, (_, label) in gap_revisions().items() if label == "gap"]
+
+    assert roots == labelled, (roots, labelled)
+    assert len(roots) == 1, roots
+
+
+def test_the_revisions_leave_exactly_one_head() -> None:
+    """Two revisions naming the same parent split the branch in two.
+
+    `alembic upgrade heads` then applies both, the next revision has to pick a
+    side, and which one it picks decides what a fresh database ends up with.
+    It happened: `e4a7c81b6f30` chained onto `c9e5ab13d742` while
+    `c1f7b0d94e58` — already on `main` — chained onto it too, and nothing in
+    the unit run said so. Raised in review of #303.
+    """
+    revisions = gap_revisions()
+    parents = [down for down, _ in revisions.values() if down is not None]
+
+    assert len(parents) == len(set(parents)), f"two revisions share a parent: {sorted(parents)}"
+
+    heads = sorted(set(revisions) - set(parents))
+    assert len(heads) == 1, f"the gap branch has {len(heads)} heads: {heads}"
+
+
+def test_every_revision_chains_onto_this_module() -> None:
+    """Invariant 7 again: a gap revision never names another module's revision
+    as its parent, which would tie the two branches together."""
+    revisions = gap_revisions()
+
+    for revision, (down, _) in revisions.items():
+        if down is None:
+            continue
+        assert down in revisions, f"{revision} chains onto {down}, which is not this module's"
