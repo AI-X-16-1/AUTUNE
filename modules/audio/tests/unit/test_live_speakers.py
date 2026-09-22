@@ -8,6 +8,8 @@ e1 · tilt(e1, e2, 0.1) ≈ 0.995.
 from __future__ import annotations
 
 import numpy as np
+import pytest
+from pydantic import ValidationError
 
 from autune_audio.config import AudioSettings
 from autune_audio.live.speakers import SpeakerTracker, speaker_cap
@@ -135,7 +137,45 @@ def test_the_threshold_decides_the_boundary() -> None:
     assert strict.label(v, 3.0) == "화자 2"
 
 
-def test_the_cap_comes_from_the_exact_count_first() -> None:
+def test_the_centroid_is_the_exact_mean_not_a_renormalised_sum() -> None:
+    # (1,0), (0,1), (0,1): the mean direction is (1,2)/√5 ≈ (0.447, 0.894).
+    # The old renormalised-sum update gave (0.505, 0.863), drifting toward
+    # the first vector.
+    t = tracker(threshold=0.0, max_speakers=1)
+    for v in (basis(0), basis(1), basis(1)):
+        t.label(v, 3.0)
+    centroid = t._clusters[0].centroid  # noqa: SLF001 - the invariant under test
+    assert centroid == pytest.approx(np.array([1, 2, 0, 0, 0, 0, 0, 0]) / np.sqrt(5), abs=1e-6)
+
+
+def test_a_capped_join_of_an_opposite_voice_leaves_a_defined_score() -> None:
+    # e1 then -e1 under a cap of 1: the sum is the zero vector. The cluster
+    # must not become a corrupted "unit" centroid; its similarity to anything
+    # is 0.0 and the next voice still gets a label.
+    t = tracker(max_speakers=1)
+    t.label(basis(0), 3.0)
+    assert t.label(-basis(0), 3.0) == "화자 1"
+    assert t._clusters[0].similarity(basis(1)) == 0.0  # noqa: SLF001
+    assert t.label(basis(1), 3.0) == "화자 1"
+
+
+def test_a_nan_or_zero_vector_is_refused() -> None:
+    t = tracker()
+    with pytest.raises(ValueError):
+        t.label(np.full(DIM, np.nan, dtype=np.float32), 3.0)
+    with pytest.raises(ValueError):
+        t.label(np.zeros(DIM, dtype=np.float32), 3.0)
+    assert t.clusters == 0
+
+
+def test_the_cap_comes_from_the_settings_bounds() -> None:
     assert speaker_cap(AudioSettings(diarization_num_speakers=2, diarization_max_speakers=5)) == 2
     assert speaker_cap(AudioSettings(diarization_max_speakers=5)) == 5
     assert speaker_cap(AudioSettings()) is None
+
+
+def test_a_head_count_below_one_is_refused_by_the_settings() -> None:
+    with pytest.raises(ValidationError):
+        AudioSettings(diarization_num_speakers=0)
+    with pytest.raises(ValidationError):
+        AudioSettings(diarization_max_speakers=-1)

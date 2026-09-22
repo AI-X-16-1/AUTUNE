@@ -99,6 +99,12 @@ def test_a_zero_vector_is_an_error_not_a_label(monkeypatch: pytest.MonkeyPatch) 
         Embedder().embed(Waveform(samples=np.zeros(SAMPLE_RATE, dtype=np.float32)))
 
 
+def test_a_nan_embedding_is_an_error_not_a_label(monkeypatch: pytest.MonkeyPatch) -> None:
+    install_fakes(monkeypatch, output=np.full(256, np.nan, dtype=np.float32), seen=[])
+    with pytest.raises(ValueError):
+        Embedder().embed(Waveform(samples=np.zeros(SAMPLE_RATE, dtype=np.float32)))
+
+
 def test_a_load_failure_propagates_from_warm_up(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setitem(sys.modules, "pyannote", None)
     monkeypatch.setitem(sys.modules, "pyannote.audio", None)

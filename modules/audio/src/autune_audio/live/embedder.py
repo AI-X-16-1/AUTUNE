@@ -21,6 +21,7 @@ from typing import Any
 
 import numpy as np
 
+from autune_audio.live.speakers import unit
 from autune_audio.schemas import Waveform
 
 CHECKPOINT = "pyannote/wespeaker-voxceleb-resnet34-LM"
@@ -62,8 +63,4 @@ class Embedder:
                 "sample_rate": waveform.sample_rate,
             }
         )
-        vector = np.asarray(raw, dtype=np.float32).reshape(-1)
-        norm = float(np.linalg.norm(vector))
-        if norm == 0.0:
-            raise ValueError("the embedding has no direction")
-        return vector / norm
+        return unit(np.asarray(raw, dtype=np.float32))

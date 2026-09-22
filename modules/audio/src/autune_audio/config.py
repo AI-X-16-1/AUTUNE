@@ -9,7 +9,7 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import model_validator
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 MAX_UPLOAD_BYTES = 500 * 1024 * 1024
@@ -104,18 +104,21 @@ class AudioSettings(BaseSettings):
     diarization_model: str = "pyannote/speaker-diarization-3.1"
     """Pinned explicitly. Never load a floating "latest"."""
 
-    diarization_num_speakers: int | None = None
+    diarization_num_speakers: int | None = Field(default=None, ge=1)
     """Exactly how many people spoke, when the room knows. On a muffled
     microphone pyannote split one voice into four clusters (#325); with this
     set it cannot. A deployment-wide knob for now -- one demo, one room --
     and the wrong number for a meeting is worse than none, so it stays unset
-    by default. The per-meeting field belongs with S10's attendee list."""
+    by default. The per-meeting field belongs with S10's attendee list.
 
-    diarization_min_speakers: int | None = None
+    A value below 1 is refused when the settings load -- the tracker and
+    pyannote both need at least one speaker."""
+
+    diarization_min_speakers: int | None = Field(default=None, ge=1)
     """Lower bound on speakers when the exact count is unknown. Ignored when
     ``diarization_num_speakers`` is set."""
 
-    diarization_max_speakers: int | None = None
+    diarization_max_speakers: int | None = Field(default=None, ge=1)
     """Upper bound on speakers when the exact count is unknown. Ignored when
     ``diarization_num_speakers`` is set."""
 
@@ -196,6 +199,22 @@ class AudioSettings(BaseSettings):
                 "diarization would fail after the recording was already uploaded"
             )
         return self
+
+    def speaker_bounds(self) -> dict[str, int]:
+        """The head-count hint as pyannote keyword arguments (#325).
+
+        An exact count wins over bounds; unset means "cluster freely". The
+        live tracker reads the same dict, so the two paths cannot disagree
+        about precedence.
+        """
+        if self.diarization_num_speakers is not None:
+            return {"num_speakers": self.diarization_num_speakers}
+        bounds: dict[str, int] = {}
+        if self.diarization_min_speakers is not None:
+            bounds["min_speakers"] = self.diarization_min_speakers
+        if self.diarization_max_speakers is not None:
+            bounds["max_speakers"] = self.diarization_max_speakers
+        return bounds
 
     def require_hf_token(self) -> str:
         """The token, or an error naming every repository that needs accepting."""
