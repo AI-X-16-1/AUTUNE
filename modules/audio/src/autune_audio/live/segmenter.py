@@ -4,7 +4,7 @@ Frames come in at a fixed size; the segmenter says when an utterance has
 ended. Three rules, from the design (section 3.1):
 
 - speech of at least ``min_speech_ms`` followed by silence of at least
-  ``min_silence_ms`` is a segment;
+  ``min_silence_ms`` is a segment (the route passes ``live_min_silence_ms``);
 - a segment reaching ``max_segment_s`` is cut there (Whisper's window);
 - frames with no speech in them are dropped, so silence never accumulates.
 
@@ -67,7 +67,7 @@ class Segmenter:
         *,
         speech_probability: Callable[[np.ndarray], float] | None = None,
         min_speech_ms: int = 300,
-        min_silence_ms: int = 700,
+        min_silence_ms: int = 1000,
         max_segment_s: float = 30.0,
         threshold: float = 0.5,
     ) -> None:

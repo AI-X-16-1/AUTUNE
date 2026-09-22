@@ -116,7 +116,7 @@ def client(
         live_routes,
         "build_session",
         lambda: LiveSession(
-            segmenter=Segmenter(speech_probability=energy),
+            segmenter=Segmenter(speech_probability=energy, min_silence_ms=700),
             transcriber=saying("연락처는 010-1234-5678입니다"),
         ),
     )
@@ -265,7 +265,7 @@ def test_a_failed_segment_is_one_error_and_the_next_is_normal(
         live_routes,
         "build_session",
         lambda: LiveSession(
-            segmenter=Segmenter(speech_probability=energy),
+            segmenter=Segmenter(speech_probability=energy, min_silence_ms=700),
             transcriber=saying("두 번째", fail_first=True),
         ),
     )
@@ -312,7 +312,7 @@ def test_a_model_that_cannot_load_is_4503_and_leaves_no_registry_entry(
         live_routes,
         "build_session",
         lambda: LiveSession(
-            segmenter=Segmenter(speech_probability=energy),
+            segmenter=Segmenter(speech_probability=energy, min_silence_ms=700),
             transcriber=Transcriber(warm_up=broken_warm_up),
         ),
     )

@@ -64,7 +64,9 @@ def saying(text: str, *, probability: float = 0.9):
 
 
 def session(transcriber: Transcriber) -> LiveSession:
-    return LiveSession(segmenter=Segmenter(speech_probability=energy), transcriber=transcriber)
+    return LiveSession(
+        segmenter=Segmenter(speech_probability=energy, min_silence_ms=700), transcriber=transcriber
+    )
 
 
 async def feed(live: LiveSession, audio: np.ndarray) -> list:
@@ -94,7 +96,7 @@ async def test_a_guess_below_the_confidence_floor_is_not_a_row() -> None:
     words the person said scored 0.5 and up. A row is display, and a guess
     is not worth showing -- the stored path remakes it."""
     live = LiveSession(
-        segmenter=Segmenter(speech_probability=energy),
+        segmenter=Segmenter(speech_probability=energy, min_silence_ms=700),
         transcriber=saying("Logic 감사합니다", probability=0.2),
         min_confidence=0.35,
     )
@@ -239,7 +241,8 @@ async def test_warm_up_delegates_to_the_transcriber() -> None:
             calls += 1
 
     live = LiveSession(
-        segmenter=Segmenter(speech_probability=energy), transcriber=FakeTranscriber()
+        segmenter=Segmenter(speech_probability=energy, min_silence_ms=700),
+        transcriber=FakeTranscriber(),
     )
 
     await live.warm_up()

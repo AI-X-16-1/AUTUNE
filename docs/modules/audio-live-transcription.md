@@ -84,7 +84,7 @@ by iteration and nothing under `apps/` changes.
 Takes 200 ms PCM frames, runs silero VAD (`faster_whisper.vad`) on each, and
 applies three rules:
 
-- speech of at least 300 ms followed by silence of at least 700 ms → a segment;
+- speech of at least 300 ms followed by silence of at least `live_min_silence_ms` (1000 ms; the spec said 700, see §9) → a segment;
 - a segment reaching 30 s is cut there (Whisper's window);
 - frames that contain no speech are dropped, so silence never accumulates.
 
@@ -420,7 +420,9 @@ same capture: the VAD now scores each frame at the end of a 0.6 s window
 `live_min_confidence` (0.35) is not sent — the stored path remakes it; and
 the mlx decode runs at temperature 0 with no fallback retries. Result on
 that capture: 9 rows with 3 invented ones → 7 rows, none invented, the
-remaining errors being the microphone's. Chrome's capture path was checked
+remaining errors being the microphone's; raising the closing silence from
+700 to 1000 ms (`live_min_silence_ms`) then folded a breath's noise into the
+sentence before it instead of a row of its own. Chrome's capture path was checked
 separately and passes 1.5–5 kHz flat, so the muffling is upstream of the
 browser.
 

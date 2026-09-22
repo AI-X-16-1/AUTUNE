@@ -143,6 +143,13 @@ class AudioSettings(BaseSettings):
     """The mlx-whisper weights, a Hugging Face repo. The MLX conversion of
     the same turbo model the CTranslate2 path uses."""
 
+    live_min_silence_ms: int = 1000
+    """How much silence ends a live utterance. 700 ms cut real speech at
+    every mid-sentence breath; on the microphone captures 1000 ms kept
+    sentences whole and let a breath's noise join the sentence before it
+    instead of becoming a row of its own. Every 100 ms here is 100 ms more
+    lag on every row; 1300 merges sentences a person would keep apart."""
+
     live_min_confidence: float = 0.35
     """A live row below this mean word probability is not sent. On the first
     real-microphone runs the hallucinated fragments scored 0.08-0.25 and

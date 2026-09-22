@@ -36,6 +36,9 @@ def frames(audio: np.ndarray):
 
 
 def run(audio: np.ndarray, **kw) -> list:
+    # The fixtures leave 800 ms gaps; the tests are about the rules, not the
+    # production silence, which the route sets from live_min_silence_ms.
+    kw.setdefault("min_silence_ms", 700)
     segmenter = Segmenter(speech_probability=energy, **kw)
     out = []
     for frame in frames(audio):
@@ -74,7 +77,7 @@ def test_continuous_speech_is_cut_at_the_maximum() -> None:
 
 
 def test_silence_alone_produces_nothing_and_holds_nothing() -> None:
-    segmenter = Segmenter(speech_probability=energy)
+    segmenter = Segmenter(speech_probability=energy, min_silence_ms=700)
     for frame in frames(silence(5000)):
         assert segmenter.feed(frame) == []
     assert segmenter.flush() is None
@@ -91,7 +94,7 @@ def test_timestamps_come_from_the_frame_count() -> None:
 
 
 def test_flush_returns_the_open_segment_on_stop() -> None:
-    segmenter = Segmenter(speech_probability=energy)
+    segmenter = Segmenter(speech_probability=energy, min_silence_ms=700)
     for frame in frames(tone(1000)):
         assert segmenter.feed(frame) == []  # no silence yet, nothing emitted
 

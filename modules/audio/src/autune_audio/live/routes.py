@@ -43,7 +43,10 @@ _live: dict[str, LiveSession] = {}
 
 def build_session() -> LiveSession:
     """A fresh session on the process-wide transcriber. Tests replace this."""
-    return LiveSession(segmenter=Segmenter(), transcriber=_transcriber)
+    return LiveSession(
+        segmenter=Segmenter(min_silence_ms=get_settings().live_min_silence_ms),
+        transcriber=_transcriber,
+    )
 
 
 @router.websocket("/live/{meeting_id}")
