@@ -17,8 +17,9 @@ const TOKEN_KEY = "autune.token";
  * than of the data the module serves. Screen S01 does not exist and the shared
  * client sends no `Authorization` header (#156, #189), so until those land this
  * feature attaches it itself — the same interim helper `features/transcript`
- * carries, kept per feature rather than lifted into `@/shared`, because the
- * shared client growing an auth story is #189's decision and not this file's.
+ * carries. A second copy of an authorisation detail is one that can come to
+ * mean two things, so #286 lifts it into `@/shared/api/client`; until that
+ * lands, this copy is what keeps the screen from reading 403.
  *
  * Two sources, in order:
  *
@@ -27,9 +28,9 @@ const TOKEN_KEY = "autune.token";
  * 2. `NEXT_PUBLIC_AUTUNE_DEV_TOKEN` — inlined at build time from `.env.local`.
  *
  * Both come from `POST /api/audio/dev/token`, which exists only when
- * `AUTUNE_ENV=local`. Nothing here is the sign-in design: when #189 puts the
- * header in `@/shared/api/client`, this function is deleted and each read goes
- * back to one argument.
+ * `AUTUNE_ENV=local`. Nothing here is the sign-in design: when the header moves
+ * to `@/shared/api/client` (#286, and #189 for a real token), this function is
+ * deleted and each read goes back to one argument.
  *
  * A missing token sends no header, so the request fails at the endpoint with
  * the reason the endpoint gives. Sending `Bearer null` would fail the same
