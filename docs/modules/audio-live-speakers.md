@@ -64,9 +64,11 @@ next to the live lag budget (about 1.7 s from utterance end to row with mlx;
 
 ```python
 class Embedder:
-    def __init__(self, checkpoint: str = "pyannote/wespeaker-voxceleb-resnet34-LM", token: str = "") -> None: ...
-    def warm_up(self) -> None: ...            # loads the model; raises if it cannot
-    def embed(self, waveform: Waveform) -> np.ndarray: ...   # float32, shape (256,), unit length
+    def __init__(
+        self, checkpoint: str = "pyannote/wespeaker-voxceleb-resnet34-LM", token: str = ""
+    ) -> None: ...
+    def warm_up(self) -> None: ...  # loads the model; raises if it cannot
+    def embed(self, waveform: Waveform) -> np.ndarray: ...  # float32, shape (256,), unit length
 ```
 
 - `pyannote.audio` is imported inside the method that needs it, the way
@@ -93,11 +95,14 @@ Pure numpy. Knows nothing about audio or models.
 ```python
 @dataclass
 class Cluster:
-    centroid: np.ndarray   # unit length
+    centroid: np.ndarray  # unit length
     count: int
 
+
 class SpeakerTracker:
-    def __init__(self, *, threshold: float, min_seconds: float = 1.0, max_speakers: int | None = None) -> None: ...
+    def __init__(
+        self, *, threshold: float, min_seconds: float = 1.0, max_speakers: int | None = None
+    ) -> None: ...
     def label(self, vector: np.ndarray, seconds: float) -> str: ...
     @property
     def clusters(self) -> int: ...
