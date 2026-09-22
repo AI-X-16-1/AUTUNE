@@ -32,6 +32,7 @@ from autune_extraction.models import (
     ExtDecisionSource,
     ExtExternalRef,
 )
+from autune_integrations import IntegrationError
 from autune_integrations.fakes import FakeNotion
 
 TABLES = [
@@ -116,6 +117,13 @@ def config_for(
     if decision_db:
         cfg["decision_db_id"] = decision_db
     return IntegrationConfig(service="notion", team_id=team, secret=f"token-{team}", config=cfg)
+
+
+class _FailingNotion:
+    """Every call reaches Notion and fails, the way a timeout or a 502 would."""
+
+    def create_page(self, database_id: str, properties: dict) -> str:
+        raise IntegrationError("notion is down")
 
 
 def wire_notion(
@@ -205,6 +213,38 @@ def test_an_item_that_already_has_its_page_is_skipped_not_resent(
     notion_backfill.main([])
 
     assert notion.pages == []
+
+
+def test_a_failed_call_leaves_no_claim_for_a_later_run_to_skip(
+    wired: Session, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The claim and the call share one transaction (``session_scope``). A call
+    that fails must not leave a page nobody ever sent claimed as sent -- that
+    would make ``test_an_item_that_already_has_its_page_is_skipped_not_resent``'s
+    skip permanent instead of retryable."""
+    it = item(wired)
+    wire_notion(monkeypatch, _FailingNotion(), {"team_1": config_for("team_1")})
+
+    code = notion_backfill.main([])
+
+    assert code == 1
+    assert "failed 1" in capsys.readouterr().out
+
+    # ``scope()`` above never reaches its own ``session.commit()`` when the
+    # call raises, the same way ``session_scope`` never reaches its. A fresh
+    # ``session_scope()`` in production would open a new transaction that
+    # never saw the claim; rolling back here is that transaction's equivalent,
+    # not an assertion about this fixture's own bookkeeping.
+    wired.rollback()
+    assert wired.get(ExtExternalRef, (it.id, "notion")) is None
+
+    notion = FakeNotion()
+    wire_notion(monkeypatch, notion, {"team_1": config_for("team_1")})
+
+    notion_backfill.main([])
+
+    assert len(notion.pages) == 1
+    assert wired.get(ExtExternalRef, (it.id, "notion")) is not None
 
 
 # --- a team that never connected -------------------------------------------------

@@ -26,11 +26,11 @@ from __future__ import annotations
 
 import argparse
 import sys
-from collections import Counter
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from sqlalchemy import select
 
+from autune_contracts.enums import ActionStatus
 from autune_core import Meeting, get_logger, load_integration, session_scope
 from autune_integrations import IntegrationError, NotionClient
 
@@ -48,16 +48,13 @@ class Stats:
     already_synced: int = 0
     not_connected: int = 0
     failed: int = 0
-    by_team: Counter[str] = field(default_factory=Counter)
-    """Sent-count keyed by team id, not printed -- kept for the caller to log if
-    it wants to, since a team id is not meeting content."""
 
 
 def _confirmed_action_items(team_id: str | None) -> list[tuple[str, str]]:
     """``(action_item_id, meeting_id)`` for every item past ``needs_confirmation``."""
     with session_scope() as session:
         stmt = select(ExtActionItem.id, ExtActionItem.meeting_id).where(
-            ExtActionItem.status != "needs_confirmation"
+            ExtActionItem.status != ActionStatus.NEEDS_CONFIRMATION.value
         )
         if team_id is not None:
             stmt = stmt.join(Meeting, Meeting.id == ExtActionItem.meeting_id).where(
@@ -79,66 +76,99 @@ def _confirmed_decisions(team_id: str | None) -> list[tuple[str, str]]:
         return list(session.execute(stmt).tuples().all())
 
 
+class _ClientCache:
+    """One ``NotionClient`` per team, not one per row.
+
+    A backfill can walk hundreds of rows across a handful of teams; opening a
+    fresh HTTP client for every row throws away the connection the previous
+    row for the same team just made.
+    """
+
+    def __init__(self) -> None:
+        self._clients: dict[str, NotionClient] = {}
+
+    def get(self, team_id: str, secret: str) -> NotionClient:
+        client = self._clients.get(team_id)
+        if client is None:
+            client = NotionClient(secret)
+            self._clients[team_id] = client
+        return client
+
+
+def _sync_one_action_item(
+    action_item_id: str, meeting_id: str, stats: Stats, clients: _ClientCache
+) -> None:
+    """Its own claim-then-call transaction, the same unit ``tasks.sync_action_item``
+    commits. Left to raise ``IntegrationError`` rather than catching it here: caught
+    inside this ``with`` block, ``session_scope`` would see no exception and commit
+    the claim a failed call made, the way ``tasks.sync_after_confirmation`` avoids
+    it by catching one call *outside* ``session_scope``, not inside it."""
+    with session_scope() as session:
+        meeting = session.get(Meeting, meeting_id)
+        if meeting is None:
+            return
+        config = load_integration(session, meeting.team_id, "notion")
+        database_id = config.config.get("action_db_id") if config is not None else None
+        if config is None or not config.secret or not database_id:
+            stats.not_connected += 1
+            return
+        ref = service.sync_action_item_to_notion(
+            session,
+            clients.get(meeting.team_id, config.secret),
+            action_item_id=action_item_id,
+            database_id=database_id,
+            property_names=config.config.get("action_properties"),
+        )
+        if ref is None:
+            stats.already_synced += 1
+        else:
+            stats.sent += 1
+
+
 def backfill_action_items(rows: list[tuple[str, str]], stats: Stats) -> None:
-    """One session, one row at a time -- each call is its own claim-then-call
-    transaction, the same unit ``tasks.sync_action_item`` commits."""
+    clients = _ClientCache()
     for action_item_id, meeting_id in rows:
-        with session_scope() as session:
-            meeting = session.get(Meeting, meeting_id)
-            if meeting is None:
-                continue
-            config = load_integration(session, meeting.team_id, "notion")
-            database_id = config.config.get("action_db_id") if config is not None else None
-            if config is None or not config.secret or not database_id:
-                stats.not_connected += 1
-                continue
-            try:
-                ref = service.sync_action_item_to_notion(
-                    session,
-                    NotionClient(config.secret),
-                    action_item_id=action_item_id,
-                    database_id=database_id,
-                    property_names=config.config.get("action_properties"),
-                )
-            except IntegrationError:
-                log.warning("extraction_notion_backfill_failed", action_item_id=action_item_id)
-                stats.failed += 1
-                continue
-            if ref is None:
-                stats.already_synced += 1
-            else:
-                stats.sent += 1
-                stats.by_team[meeting.team_id] += 1
+        try:
+            _sync_one_action_item(action_item_id, meeting_id, stats, clients)
+        except IntegrationError:
+            log.warning("extraction_notion_backfill_failed", action_item_id=action_item_id)
+            stats.failed += 1
+
+
+def _sync_one_decision(
+    decision_id: str, meeting_id: str, stats: Stats, clients: _ClientCache
+) -> None:
+    """``_sync_one_action_item``'s rules, for a decision."""
+    with session_scope() as session:
+        meeting = session.get(Meeting, meeting_id)
+        if meeting is None:
+            return
+        config = load_integration(session, meeting.team_id, "notion")
+        database_id = config.config.get("decision_db_id") if config is not None else None
+        if config is None or not config.secret or not database_id:
+            stats.not_connected += 1
+            return
+        ref = service.sync_decision_to_notion(
+            session,
+            clients.get(meeting.team_id, config.secret),
+            decision_id=decision_id,
+            database_id=database_id,
+            property_names=config.config.get("decision_properties"),
+        )
+        if ref is None:
+            stats.already_synced += 1
+        else:
+            stats.sent += 1
 
 
 def backfill_decisions(rows: list[tuple[str, str]], stats: Stats) -> None:
+    clients = _ClientCache()
     for decision_id, meeting_id in rows:
-        with session_scope() as session:
-            meeting = session.get(Meeting, meeting_id)
-            if meeting is None:
-                continue
-            config = load_integration(session, meeting.team_id, "notion")
-            database_id = config.config.get("decision_db_id") if config is not None else None
-            if config is None or not config.secret or not database_id:
-                stats.not_connected += 1
-                continue
-            try:
-                ref = service.sync_decision_to_notion(
-                    session,
-                    NotionClient(config.secret),
-                    decision_id=decision_id,
-                    database_id=database_id,
-                    property_names=config.config.get("decision_properties"),
-                )
-            except IntegrationError:
-                log.warning("extraction_notion_backfill_failed", decision_id=decision_id)
-                stats.failed += 1
-                continue
-            if ref is None:
-                stats.already_synced += 1
-            else:
-                stats.sent += 1
-                stats.by_team[meeting.team_id] += 1
+        try:
+            _sync_one_decision(decision_id, meeting_id, stats, clients)
+        except IntegrationError:
+            log.warning("extraction_notion_backfill_failed", decision_id=decision_id)
+            stats.failed += 1
 
 
 def main(argv: list[str] | None = None) -> int:
