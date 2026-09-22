@@ -240,9 +240,36 @@ Every threshold and weight is in `config.py` (#35): the two severity bands, the
 centrality below which a match is partial, the damping, and the three risk
 weights.
 
-**What is not built:** the question a gap carries is the template item's own
-wording, not one generated from the topics the gap was inferred from. That is
-the rest of #35.
+### Step 8 as built
+
+A gap carries the question that would close it, and a template item holds two
+wordings for it (#35).
+
+- **A partial finding names its topic.** "검색 개인화 기능의 성공 기준은 무엇으로
+  측정합니까?" can be answered; the generic wording has to be decoded first, and
+  a reader opening the report a week later no longer knows which "일" it meant.
+  The topic named is `matched[0]` — the one the risk score was computed against,
+  so the number and the sentence describe the same thing.
+- **A missing finding keeps the generic wording.** There is no topic to name.
+  Naming the meeting's most central topic instead would be a guess, and with
+  step 1's recall where it is that guess is as likely to be "다음 주" as the
+  thing the meeting was about — a question about the wrong subject reads worse
+  than a general one. Same rule as the risk score: what was not measured is not
+  substituted for.
+- **`{topic}` must be followed by an invariant particle** — 의, 에, 에서, 에 대해.
+  은/는, 이/가 and 을/를 change form with the last syllable of the noun before
+  them, and a topic label is a noun read out of a meeting, so the right form is
+  not knowable when the copy is written. The loader refuses the variable ones;
+  the failure it prevents is a screen showing "캐시은".
+
+Putting a topic label in a question is safe for the same reason it is safe as a
+node: `graph.build_topics` drops any entity carrying the mask character, so no
+topic label has ever contained a masked span. #250 is about what that costs in
+recall, and confirms the guarantee itself holds through both extraction paths.
+
+**What is still not built:** a question that reads the *relation* between topics
+rather than naming one — "정렬 로직이 인덱스 재색인에 의존한다면, 재색인은 언제
+끝납니까?" needs #32's triples.
 
 ### Step 9 as built
 

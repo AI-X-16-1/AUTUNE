@@ -137,7 +137,7 @@ def compare(
                     category=item.category,
                     template_item=item.item,
                     title=template_for.format(item=item.item),
-                    question=item.question,
+                    question=question_for(item, matched),
                     coverage=coverage,
                     risk_score=risk,
                     severity=severity_of(risk, thresholds),
@@ -148,6 +148,32 @@ def compare(
 
     scored.sort(key=lambda entry: (-entry[1].risk_score, entry[0]))
     return [finding for _, finding in scored]
+
+
+def question_for(item: TemplateItem, matched: list[TopicView]) -> str:
+    """The question that would close this gap, naming a topic when there is one.
+
+    A gap raised on a topic the meeting named and a gap raised on nothing are
+    different questions to ask. "검색 개인화 기능의 성공 기준은 무엇입니까?" can
+    be answered; "이 일이 성공했다고 판단할 기준은 무엇입니까?" has to be
+    decoded first, and a reader who opens a report a week later no longer knows
+    which "일" it meant.
+
+    **Only a matched topic is named**, and the one the finding was scored
+    against. A missing item has no topic, and naming the meeting's most central
+    one instead would be a guess — with extraction where it is, that guess is as
+    likely to be "다음 주" as the thing the meeting was about, and a question
+    about the wrong subject is worse than a general one. Same rule as
+    ``score``: what was not measured is not substituted for.
+
+    The label is transcript text and safe to put in a question for the reason it
+    is safe as a node: ``graph.build_topics`` drops any entity carrying the mask
+    character, so no topic label has ever contained a masked span (#250 confirms
+    the guarantee holds through both extraction paths).
+    """
+    if not matched:
+        return item.question
+    return item.question_about.format(topic=matched[0].label)
 
 
 def match(item: TemplateItem, topics: list[TopicView]) -> list[TopicView]:
