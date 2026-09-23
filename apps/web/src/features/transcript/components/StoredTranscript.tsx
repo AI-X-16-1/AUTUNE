@@ -53,10 +53,15 @@ export function StoredTranscript({
   kinds?: Record<string, UtteranceKind>;
 }) {
   const state = useTranscript(meetingId);
-  const { speakers, members, assign, error: assignError, pending } = useSpeakers(
-    meetingId,
-    teamId,
-  );
+  const {
+    speakers,
+    speakersError,
+    members,
+    membersError,
+    assign,
+    assignError,
+    pending,
+  } = useSpeakers(meetingId, teamId);
   const unidentified = speakers.filter((entry) => entry.user_id === null);
 
   if (state.status === "loading") {
@@ -85,12 +90,31 @@ export function StoredTranscript({
 
   return (
     <section aria-label="회의 전사">
+      {speakersError && (
+        <p
+          role="alert"
+          style={{ fontSize: "var(--text-meta)", color: "var(--color-signal-attention)" }}
+        >
+          {speakersError}
+        </p>
+      )}
+
+      {membersError && (
+        <p
+          role="alert"
+          style={{ fontSize: "var(--text-meta)", color: "var(--color-signal-attention)" }}
+        >
+          {membersError}
+        </p>
+      )}
+
       {unidentified.map((entry) => (
         <UnidentifiedSpeaker
           key={entry.speaker_label}
           speaker={entry.speaker_label}
           candidate={entry.candidate}
           members={members}
+          membersError={membersError}
           pending={pending}
           onAssign={(userId) => void assign(entry.speaker_label, userId)}
         />

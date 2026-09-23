@@ -36,12 +36,19 @@ export function UnidentifiedSpeaker({
   speaker,
   candidate,
   members,
+  membersError,
   pending = false,
   onAssign,
 }: {
   speaker: string;
   candidate?: SpeakerCandidate | null;
   members?: TeamMember[];
+  /** Set when `GET /teams/{id}/members` failed. An empty `members` with no
+   * error reads as "nobody else on this team"; an empty `members` *with*
+   * one means the picker has nothing to offer only because the request
+   * failed, not because the team is small -- the select is disabled and
+   * says so in its `title` rather than sitting there silently empty. */
+  membersError?: string | null;
   /** True while a confirm this prompt (or a sibling one) started is in
    * flight. Disables every live control, closing the double-click hole a
    * second click mid-request would otherwise open. */
@@ -88,7 +95,8 @@ export function UnidentifiedSpeaker({
       <select
         aria-label={`${speaker} 화자 지정`}
         value={picked}
-        disabled={pending}
+        disabled={pending || Boolean(membersError)}
+        title={membersError ?? undefined}
         onChange={(event) => {
           const userId = event.target.value;
           setPicked(userId);
