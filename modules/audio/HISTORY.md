@@ -465,10 +465,17 @@ Ordered by what the measurements say, not by what is pleasant.
    The mechanism exists (#135); the source of terms does not.
 
 2. **Speed.** RTF 0.73 against a 0.3 target, CPU int8. Options in order of
-   expected return: GPU; `large-v3-turbo` (unmeasured); batching. The target is
-   1.5× recording length end to end (`docs/modules/audio.md`); measured,
-   transcription is 0.73 and diarization adds 0.54 on top, so this is not only
-   Whisper.
+   expected return: GPU; `large-v3-turbo` (unmeasured); batching. The targets
+   are two, both end to end (`docs/modules/audio.md`): ≤ 1.5× recording
+   length at six weeks, ≤ 1× at three months. Measured, transcription is 0.73
+   and diarization 0.54, **1.27× for the two model stages** — inside the
+   six-week budget with 15% of it left, outside the three-month one by 27%,
+   and not yet end to end: decode, masking and the write are unmeasured, and
+   a short file does not pass (2m45s is RTF 1.19 for transcription alone).
+   Eval-02 once read the two targets as one and called this a miss; corrected
+   in #186. Still second on this list: the six-week number passes only on an
+   11-minute file with a thin margin, and the three-month one does not pass
+   at all without the GPU.
 
 3. **An evaluation set.** Every threshold in this module is a placeholder chosen
    from one recording: the masking thresholds, the repetition guard, the glossary

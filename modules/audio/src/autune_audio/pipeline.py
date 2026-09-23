@@ -77,7 +77,8 @@ def _glossary_kwargs(glossary: str, mode: str) -> dict[str, str]:
 
     The CER cost of ``hotwords`` is 0.013, against nearly tripling term
     accuracy. That trade is the one this module exists to make: a wrong particle
-    costs readability, a wrong entity name costs the action item attached to it.
+    costs readability, a wrong entity name costs the reader and module D's
+    lexical link to the last meeting about it (evaluation 01, section 3.1).
 
     ``AUTUNE_AUDIO_GLOSSARY_MODE`` keeps the comparison runnable on a new model
     without a code change. See issue #118.
