@@ -71,20 +71,32 @@ ONE_SPEAKER_TOO_SHORT = (
 
 class _FakeEmbedder:
     """Same shape as ``live.embedder.Embedder``: ``warm_up()``, ``embed()``
-    and a ``checkpoint`` property. Returns a fixed unit vector per call."""
+    and a ``checkpoint`` property.
+
+    Each call to ``embed`` returns a distinct one-hot vector (index 0, then 1,
+    then 2, ...) rather than the same fixed vector every time, so a test can
+    tell one observation's vector from another's -- a bug that paired one
+    speaker's label with a different speaker's vector would otherwise pass.
+    ``warm_up_calls`` lets a test confirm the embedder was never even loaded,
+    for the meetings that must not reach it at all.
+    """
 
     def __init__(self, *, fails: bool = False, dim: int = 256) -> None:
         self._fails = fails
         self._dim = dim
         self._checkpoint = "fake-embedder-v1"
+        self.warm_up_calls = 0
+        self.embed_calls = 0
 
     def warm_up(self) -> None:
+        self.warm_up_calls += 1
         if self._fails:
             raise RuntimeError("no checkpoint on this machine")
 
     def embed(self, waveform: Waveform) -> np.ndarray:
         vector = np.zeros(self._dim, dtype=np.float32)
-        vector[0] = 1.0
+        vector[min(self.embed_calls, self._dim - 1)] = 1.0
+        self.embed_calls += 1
         return vector
 
     @property
@@ -454,7 +466,54 @@ def test_a_speaker_gets_one_observation_row(
 
     Labels match ``화자 N``, not the diarizer's raw ``SPEAKER_00`` -- the same
     labels the transcript and ``participants`` use, so a later confirmation
-    can look an observation up by the label shown on screen.
+    can look an observation up by the label shown on screen. One row per
+    speaker, each carrying the vector for *its own* label, not a neighbour's.
+    """
+    _use_turns(monkeypatch, TWO_SPEAKERS_ENOUGH_SPEECH)
+    _attest(db_session, meeting)
+    fake = _FakeEmbedder()
+    monkeypatch.setattr(tasks, "Embedder", lambda **kwargs: fake)
+
+    tasks.process_recording(job)
+
+    rows = db_session.scalars(sa.select(AudSpeakerEmbedding)).all()
+    assert len(rows) == 2
+    assert {row.speaker_label for row in rows} == {"화자 1", "화자 2"}
+    assert all(row.meeting_id == meeting for row in rows)
+    assert all(row.user_id is None for row in rows)
+    assert {row.model_version for row in rows} == {"fake-embedder-v1"}
+
+    by_label = {row.speaker_label: row for row in rows}
+    # 화자 1's turn starts first, so it is embedded first (call index 0);
+    # 화자 2's vector is a different one-hot vector (index 1). A bug that
+    # zipped labels and vectors out of order would put these on the wrong row.
+    assert by_label["화자 1"].vector[0] == pytest.approx(1.0)
+    assert by_label["화자 1"].vector[1] == pytest.approx(0.0)
+    assert by_label["화자 2"].vector[1] == pytest.approx(1.0)
+    assert by_label["화자 2"].vector[0] == pytest.approx(0.0)
+
+
+def test_a_rerun_replaces_the_meetings_observations_rather_than_doubling_them(
+    pipeline: dict,
+    db_session: Session,
+    job: str,
+    meeting: str,
+    recording: Path,
+    settings: AudioSettings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A genuine second run of the whole task -- a real second upload, not a
+    redelivery of the same job -- must still end with one row per speaker,
+    not two: `_store_speaker_embeddings` deletes before it inserts, the same
+    way `persist_transcript` does for utterances.
+
+    This does not exercise the *concurrent* race #184 describes -- two
+    redelivered runs interleaved under READ COMMITTED -- which a single
+    sequential call cannot reproduce; I checked by hand that moving the
+    write back to before `persist_transcript`'s lock leaves this specific
+    test passing (sequential runs commit and see each other's writes either
+    way). What this pins is the ordinary, much more common case: the write
+    still replaces correctly when the task simply runs twice.
     """
     _use_turns(monkeypatch, TWO_SPEAKERS_ENOUGH_SPEECH)
     _attest(db_session, meeting)
@@ -462,11 +521,13 @@ def test_a_speaker_gets_one_observation_row(
 
     tasks.process_recording(job)
 
+    second_job = _job(db_session, meeting, "queued")
+    _upload(settings, second_job)
+    tasks.process_recording(second_job)
+
     rows = db_session.scalars(sa.select(AudSpeakerEmbedding)).all()
+    assert len(rows) == 2
     assert {row.speaker_label for row in rows} == {"화자 1", "화자 2"}
-    assert all(row.meeting_id == meeting for row in rows)
-    assert all(row.user_id is None for row in rows)
-    assert all(row.model_version for row in rows)
 
 
 def test_no_attestation_means_no_vectors(
@@ -478,9 +539,13 @@ def test_no_attestation_means_no_vectors(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """An embedding is biometric data; without a consent attestation the
-    meeting is transcribed and nothing about anyone's voice is kept."""
+    meeting is transcribed and nothing about anyone's voice is kept -- and
+    the embedder is never even loaded, since the meeting is unconsented
+    before the recording is ever decoded.
+    """
     _use_turns(monkeypatch, TWO_SPEAKERS_ENOUGH_SPEECH)
-    monkeypatch.setattr(tasks, "Embedder", lambda **kwargs: _FakeEmbedder())
+    fake = _FakeEmbedder()
+    monkeypatch.setattr(tasks, "Embedder", lambda **kwargs: fake)
 
     tasks.process_recording(job)
 
@@ -489,6 +554,7 @@ def test_no_attestation_means_no_vectors(
         sa.select(Utterance).where(Utterance.meeting_id == meeting)
     ).all()
     assert utterances != []
+    assert fake.warm_up_calls == 0
 
 
 def test_an_embedder_that_cannot_load_does_not_fail_the_meeting(
@@ -526,6 +592,38 @@ def test_a_speaker_with_two_seconds_gets_no_row(
 
     tasks.process_recording(job)
 
+    rows = db_session.scalars(sa.select(AudSpeakerEmbedding)).all()
+    assert {row.speaker_label for row in rows} == {"화자 1"}
+
+
+def test_a_slicing_failure_for_one_speaker_does_not_fail_the_meeting(
+    pipeline: dict,
+    db_session: Session,
+    job: str,
+    meeting: str,
+    recording: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`representative_waveform`, not just `embed`, is inside the per-speaker
+    guard: a slicing failure for one speaker must not escape and fail the
+    whole meeting any more than an embedding failure does, and the other
+    speaker's row must still be written.
+    """
+    _use_turns(monkeypatch, TWO_SPEAKERS_ENOUGH_SPEECH)
+    _attest(db_session, meeting)
+    monkeypatch.setattr(tasks, "Embedder", lambda **kwargs: _FakeEmbedder())
+    real_representative_waveform = tasks.representative_waveform
+
+    def flaky(waveform: Waveform, turns: object, label: str, **kwargs: object) -> object:
+        if label == "화자 2":
+            raise RuntimeError("bad slice")
+        return real_representative_waveform(waveform, turns, label, **kwargs)
+
+    monkeypatch.setattr(tasks, "representative_waveform", flaky)
+
+    tasks.process_recording(job)
+
+    assert db_session.get(Meeting, meeting).status == "complete"
     rows = db_session.scalars(sa.select(AudSpeakerEmbedding)).all()
     assert {row.speaker_label for row in rows} == {"화자 1"}
 
