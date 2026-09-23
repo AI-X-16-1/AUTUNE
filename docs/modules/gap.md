@@ -176,6 +176,21 @@ Three things came out of that measurement, and each one changed the design:
   `alternative_to` the most common relation in the graph and every one of them a
   coin flip. This is the clearest case for the LLM assistance step 2 is promised.
 
+**A reason can be denied, and a window can hold two of them.** Two guards the
+backward reading needed and did not have, both found by running it (raised in
+review of #254):
+
+- **`때문이 아니라`** names a reason in order to refuse it. Without a guard
+  "검색 기능은 캐시 때문이 아니라 그냥 막혀 있습니다" asserted
+  `검색 기능 blocked_by 캐시` — the reverse of the sentence. `아니` is read
+  between the connective and the cue and nowhere else: `_ALTERNATIVES` reads
+  `아니라` as a contrast marker, and that reading is still the right one for
+  "A가 아니라 B". A reason stated after the denied one is still found.
+- **Two reasons in one window.** "캐시 처리 때문에 인증 탓에 막혀 있습니다"
+  states two, and the resolution check was reading the whole window, so 처리
+  from the first cancelled the second and 인증 — the blocker actually standing
+  — was dropped. The check now sees only what its own connective heads.
+
 **What the reason guard costs.** `_RESOLVED` refuses a blocker whose reason
 clause says the thing is gone — "캐시 이슈가 해결됐기 때문에 …" asserts the
 reverse of a blocker, and `blocked_by` is the one relation the report treats as

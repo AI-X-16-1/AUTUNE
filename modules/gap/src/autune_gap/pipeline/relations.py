@@ -196,6 +196,24 @@ reverse of what it means. 안 is deliberately **not** here: "캐시 없이는 �
 its own 없. Raised in review of #249.
 """
 
+_REASON_DENIED = _NEGATIONS + ("아니",)
+"""What takes back the reason a connective heads, read between it and the cue.
+
+``_NEGATIONS`` guards what follows the *cue*; this guards what follows the
+*connective*, and they are different windows. "캐시 때문이 아니라 그냥 막혀
+있습니다" names a reason in order to deny it, and the backward path asserted it
+anyway — 검색 기능 blocked_by 캐시, the exact reverse of the sentence, in the one
+relation the report treats as a finding. Raised in review of #254 by @lsh2217.
+
+``아니`` is not in ``_NEGATIONS`` and does not belong there: ``_ALTERNATIVES``
+reads ``아니라`` as a contrast marker ("A가 아니라 B"), and a cue near one is not
+thereby denied. Here the window is narrow enough that it means what it says.
+
+The cost is 아니 as a spoken filler — "캐시 때문에, 아니 그러니까, 막혀" loses a
+relation the speaker did state. Loss, which is the direction this module errs
+in, and the window is the few characters between a connective and its cue.
+"""
+
 _QUESTIONS = ("나요", "가요", "까요", "?")
 """What turns an assertion into a question.
 
@@ -337,7 +355,8 @@ def _clause_after(text: str, index: int) -> str:
 def _clause_before(text: str, index: int) -> tuple[int, str]:
     """The tail of the clause that runs up to ``index``, and where it starts.
 
-    The mirror of ``_clause_after``, and bounded the same way — a clause break
+    The mirror of ``_clause_after`` (**change the two together**), bounded the
+    same way — a clause break
     or ``MAX_MARKER_DISTANCE``, whichever comes first. What it reads backwards
     is the reason half of a Korean causal sentence: 때문에 and 탓에 sit *before*
     the predicate they explain, so the connective that makes "막혀" a
@@ -359,6 +378,11 @@ def _rfind_boundary(window: str, boundary: str) -> int:
     ``_find_boundary`` read backwards, including its exception: a 고 preceded by
     다 is the quotative ending inside one clause and not a boundary, so the
     search steps over it and carries on leftwards.
+
+    **Change the two together.** They are the same rule twice with the
+    direction reversed, and a boundary fixed on one side only would leave a
+    clause that ends where the other half does not agree it does. Raised in
+    review of #254.
     """
     end = len(window)
     while True:
@@ -384,6 +408,25 @@ def _causal_in(clause: str) -> int | None:
     """
     at = max(clause.rfind(connective) for connective in _CAUSAL_BEFORE)
     return at if at != -1 else None
+
+
+def _reason_before(clause: str, at: int) -> str:
+    """What the connective at ``at`` offers as its reason, and nothing earlier.
+
+    Bounded on the left by the previous reason-heading connective, because a
+    backward window can hold more than one: "캐시 처리 때문에 인증 탓에 막혀
+    있습니다" states two, and 처리 belongs to the first. Handing the whole window
+    to ``_resolved`` read that 처리 as this reason's resolution and dropped 인증,
+    the blocker actually standing — which is wider than the 처리 ambiguity this
+    module accepts, and in the same losing direction for a sentence that never
+    had it. Raised in review of #254 by @lsh2217.
+    """
+    previous = 0
+    for connective in _CAUSAL_BEFORE:
+        found = clause.rfind(connective, 0, at)
+        if found != -1:
+            previous = max(previous, found + len(connective))
+    return clause[previous:at]
 
 
 def _find_boundary(window: str, boundary: str) -> int:
@@ -482,7 +525,11 @@ def _directed_markers(text: str) -> list[tuple[int, str]]:
             # #254.
             start, before = _clause_before(text, match.start())
             at = _causal_in(before)
-            if at is None or _resolved(before):
+            if at is None:
+                continue
+            if any(marker in before[at:] for marker in _REASON_DENIED):
+                continue
+            if _resolved(_reason_before(before, at)):
                 continue
             # The marker is the connective, not the cue. The thing in the way is
             # what the reason clause names — "캐시 때문에 정렬 로직이 막혀

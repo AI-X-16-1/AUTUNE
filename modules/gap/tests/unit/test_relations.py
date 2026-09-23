@@ -370,10 +370,12 @@ def test_a_verb_ending_behind_the_cue_is_the_previous_clauses_reason() -> None:
     )
 
 
-def test_a_blocker_read_from_both_sides_is_asserted_once() -> None:
-    """ "안 잡혀 있어서" carries a connective after 안 잡 and before 무리, so
-    both readings fire on one sentence. They agree, and a pair never comes back
-    twice with the same relation."""
+def test_the_forward_reading_is_untouched_by_the_backward_one() -> None:
+    """The docstring here used to say both readings fire on this sentence and
+    agree. They do not: ``_CAUSAL_BEFORE`` holds only 때문/탓에/으로 인해, so
+    the 어서 behind 무리 is not read backwards and the forward reading off
+    안 잡 is the only one that ever fires. The assertion was right and the
+    reason given for it was not. Raised in review of #254 by @lsh2217."""
     assert triples("실시간은 콜드스타트가 안 잡혀 있어서 무리입니다", "실시간", "콜드스타트") == [
         ("실시간", "콜드스타트", "blocked_by")
     ]
@@ -413,6 +415,41 @@ def test_a_resolution_word_used_as_a_noun_costs_the_relation() -> None:
     implementation step 2 is promised, not a longer list.
     """
     assert triples("캐시 처리 때문에 검색 기능은 막혀 있습니다", "캐시", "검색 기능") == []
+
+
+def test_a_reason_named_in_order_to_deny_it_is_not_a_blocker() -> None:
+    """#254 review. The backward path had no guard for a denial of the reason
+    itself, so a sentence saying 캐시 was *not* why came back asserting it was —
+    the exact reverse, in the one relation the report treats as a finding.
+
+    The denial guard is narrow on purpose: it reads the few characters between
+    the connective and the cue, so a real reason stated after the denied one is
+    still found."""
+    assert triples("검색 기능은 캐시 때문이 아니라 그냥 막혀 있습니다", "검색 기능", "캐시") == []
+
+    found = triples(
+        "검색 기능은 캐시 때문이 아니라 인증 때문에 막혀 있습니다",
+        "검색 기능",
+        "캐시",
+        "인증",
+    )
+    assert ("검색 기능", "인증", "blocked_by") in found
+    assert ("검색 기능", "캐시", "blocked_by") not in found
+
+
+def test_one_reasons_resolution_does_not_cancel_another() -> None:
+    """#254 review. A backward window can hold more than one reason, and
+    ``_resolved`` was reading the whole of it: 처리 belongs to the 때문에 clause,
+    and finding it there dropped 인증 — the blocker actually standing.
+
+    Wider than the 처리 ambiguity this module accepts, because that one is
+    scoped to a sentence that named a resolution for *this* reason.
+    """
+    assert triples(
+        "검색 기능은 캐시 처리 때문에 인증 탓에 막혀 있습니다", "검색 기능", "캐시", "인증"
+    ) == [("검색 기능", "인증", "blocked_by")]
+
+    assert triples("캐시 처리 때문에 인증 탓에 막혀 있습니다", "캐시", "인증") != []
 
 
 # --- part_of, which no rule produces ----------------------------------------
