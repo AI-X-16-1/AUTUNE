@@ -25,9 +25,9 @@ from sqlalchemy.orm import Session
 from autune_audio import service, tasks
 from autune_audio.config import AudioSettings
 from autune_audio.diarization import FakeDiarizer
-from autune_audio.models import TranscriptionJob
+from autune_audio.models import AudConsentAttestation, AudSpeakerEmbedding, TranscriptionJob
 from autune_audio.quality import TranscriptCollapsedError
-from autune_audio.schemas import Segment, Transcription, Turn, Waveform, Word
+from autune_audio.schemas import SAMPLE_RATE, Segment, Transcription, Turn, Waveform, Word
 from autune_contracts.events import TRANSCRIPT_READY
 from autune_contracts.transcript import TranscriptReady
 from autune_core.entities import Meeting, Utterance
@@ -54,6 +54,62 @@ def _transcription() -> Transcription:
 
 def _turns() -> tuple[Turn, ...]:
     return tuple(Turn(start=start, end=end, speaker=speaker) for speaker, start, end, _ in SPOKEN)
+
+
+TWO_SPEAKERS_ENOUGH_SPEECH = (
+    Turn(start=0.0, end=4.0, speaker="SPEAKER_00"),
+    Turn(start=4.5, end=8.5, speaker="SPEAKER_01"),
+)
+"""Two voices, four seconds each -- both clear the 3 s floor."""
+
+ONE_SPEAKER_TOO_SHORT = (
+    Turn(start=0.0, end=4.0, speaker="SPEAKER_00"),
+    Turn(start=4.5, end=6.5, speaker="SPEAKER_01"),
+)
+"""SPEAKER_01 has only 2 s of speech, under the 3 s floor."""
+
+
+class _FakeEmbedder:
+    """Same shape as ``live.embedder.Embedder``: ``warm_up()``, ``embed()``
+    and a ``checkpoint`` property. Returns a fixed unit vector per call."""
+
+    def __init__(self, *, fails: bool = False, dim: int = 256) -> None:
+        self._fails = fails
+        self._dim = dim
+        self._checkpoint = "fake-embedder-v1"
+
+    def warm_up(self) -> None:
+        if self._fails:
+            raise RuntimeError("no checkpoint on this machine")
+
+    def embed(self, waveform: Waveform) -> np.ndarray:
+        vector = np.zeros(self._dim, dtype=np.float32)
+        vector[0] = 1.0
+        return vector
+
+    @property
+    def checkpoint(self) -> str:
+        return self._checkpoint
+
+
+def _use_turns(
+    monkeypatch: pytest.MonkeyPatch, turns: tuple[Turn, ...], *, seconds: float = 10.0
+) -> None:
+    """Enough decoded audio for ``representative_waveform`` to slice from, and
+    the diarizer turns this test cares about.
+
+    The shared ``pipeline`` fixture's waveform is 160 samples (10 ms) -- fine
+    for tests that never look at speech duration, too short for anything that
+    slices audio by turn. This replaces both ``decode`` and the diarizer.
+    """
+    samples = np.zeros(int(seconds * SAMPLE_RATE), dtype=np.float32)
+    monkeypatch.setattr(tasks, "decode", lambda path: Waveform(samples=samples))
+    monkeypatch.setattr(tasks, "get_diarizer", lambda: FakeDiarizer(turns))
+
+
+def _attest(db_session: Session, meeting_id: str) -> None:
+    db_session.add(AudConsentAttestation(meeting_id=meeting_id))
+    db_session.flush()
 
 
 @pytest.fixture
@@ -380,6 +436,123 @@ def test_a_job_nobody_queued_is_loud(pipeline: dict, settings: AudioSettings) ->
 
     with pytest.raises(NotFoundError):
         tasks.process_recording("job_nobody_queued_this")
+
+
+# --- speaker observation vectors ----------------------------------------------
+
+
+def test_a_speaker_gets_one_observation_row(
+    pipeline: dict,
+    db_session: Session,
+    job: str,
+    meeting: str,
+    recording: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Each speaker with enough speech leaves one vector behind, and it is
+    taken while the audio is still there.
+
+    Labels match ``화자 N``, not the diarizer's raw ``SPEAKER_00`` -- the same
+    labels the transcript and ``participants`` use, so a later confirmation
+    can look an observation up by the label shown on screen.
+    """
+    _use_turns(monkeypatch, TWO_SPEAKERS_ENOUGH_SPEECH)
+    _attest(db_session, meeting)
+    monkeypatch.setattr(tasks, "Embedder", lambda **kwargs: _FakeEmbedder())
+
+    tasks.process_recording(job)
+
+    rows = db_session.scalars(sa.select(AudSpeakerEmbedding)).all()
+    assert {row.speaker_label for row in rows} == {"화자 1", "화자 2"}
+    assert all(row.meeting_id == meeting for row in rows)
+    assert all(row.user_id is None for row in rows)
+    assert all(row.model_version for row in rows)
+
+
+def test_no_attestation_means_no_vectors(
+    pipeline: dict,
+    db_session: Session,
+    job: str,
+    meeting: str,
+    recording: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An embedding is biometric data; without a consent attestation the
+    meeting is transcribed and nothing about anyone's voice is kept."""
+    _use_turns(monkeypatch, TWO_SPEAKERS_ENOUGH_SPEECH)
+    monkeypatch.setattr(tasks, "Embedder", lambda **kwargs: _FakeEmbedder())
+
+    tasks.process_recording(job)
+
+    assert db_session.scalars(sa.select(AudSpeakerEmbedding)).all() == []
+    utterances = db_session.scalars(
+        sa.select(Utterance).where(Utterance.meeting_id == meeting)
+    ).all()
+    assert utterances != []
+
+
+def test_an_embedder_that_cannot_load_does_not_fail_the_meeting(
+    pipeline: dict,
+    db_session: Session,
+    job: str,
+    meeting: str,
+    recording: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The transcript is the product; the vector is an extra."""
+    _use_turns(monkeypatch, TWO_SPEAKERS_ENOUGH_SPEECH)
+    _attest(db_session, meeting)
+    monkeypatch.setattr(tasks, "Embedder", lambda **kwargs: _FakeEmbedder(fails=True))
+
+    tasks.process_recording(job)
+
+    assert db_session.get(Meeting, meeting).status == "complete"
+    assert db_session.scalars(sa.select(AudSpeakerEmbedding)).all() == []
+
+
+def test_a_speaker_with_two_seconds_gets_no_row(
+    pipeline: dict,
+    db_session: Session,
+    job: str,
+    meeting: str,
+    recording: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Under the 3 s floor is noise, not a voice: no row, and the meeting
+    with the speaker who does have enough speech still gets one."""
+    _use_turns(monkeypatch, ONE_SPEAKER_TOO_SHORT)
+    _attest(db_session, meeting)
+    monkeypatch.setattr(tasks, "Embedder", lambda **kwargs: _FakeEmbedder())
+
+    tasks.process_recording(job)
+
+    rows = db_session.scalars(sa.select(AudSpeakerEmbedding)).all()
+    assert {row.speaker_label for row in rows} == {"화자 1"}
+
+
+def test_a_bad_vector_does_not_fail_the_meeting(
+    pipeline: dict,
+    db_session: Session,
+    job: str,
+    meeting: str,
+    recording: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Carried from Task 1's review (#356): SQLAlchemy puts bound parameters
+    -- here a vector -- into a raised ``StatementError``'s message, since
+    ``packages/core``'s engine does not set ``hide_parameters``. Module A's
+    write path must not make that worse: a vector of the wrong width fails
+    pgvector's dimension check, and that failure must not fail a meeting
+    whose transcript is otherwise fine.
+    """
+    _use_turns(monkeypatch, TWO_SPEAKERS_ENOUGH_SPEECH)
+    _attest(db_session, meeting)
+    monkeypatch.setattr(tasks, "Embedder", lambda **kwargs: _FakeEmbedder(dim=4))
+
+    tasks.process_recording(job)
+
+    assert db_session.get(Meeting, meeting).status == "complete"
+    assert db_session.scalars(sa.select(AudSpeakerEmbedding)).all() == []
 
 
 # --- the sweep ----------------------------------------------------------------
