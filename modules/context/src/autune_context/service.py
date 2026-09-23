@@ -169,7 +169,7 @@ def _link_topic(
                 meeting_id=meeting_id,
                 topic_label=topic.label,
                 linked_meeting_id=candidate.linked_meeting_id,
-                linked_meeting_date=_as_datetime(candidate.linked_meeting_date),
+                linked_meeting_date=candidate.linked_meeting_date,
                 similarity=_clamp(candidate.similarity),
                 rerank_score=_clamp(float(rerank_score)),
                 confidence=_clamp(float(rerank_score)),
@@ -727,7 +727,7 @@ def _build_context_links(
         TopicLink(
             topic_label=row.topic_label,
             linked_meeting_id=row.linked_meeting_id,
-            linked_meeting_date=row.linked_meeting_date.date(),
+            linked_meeting_date=row.linked_meeting_date,
             similarity=row.similarity,
             rerank_score=row.rerank_score,
         )
@@ -823,7 +823,7 @@ def collect_topic_link_notices(session: Session, meeting_id: str) -> list[TopicL
     ).all()
     return [
         TopicLinkNotice(
-            topic_label=row.topic_label, linked_meeting_date=row.linked_meeting_date.date()
+            topic_label=row.topic_label, linked_meeting_date=row.linked_meeting_date
         )
         for row in rows
         if row.linked_meeting_date is not None
@@ -1268,10 +1268,6 @@ def _upsert_status(session: Session, meeting_id: str, **fields: object) -> CtxMe
         setattr(status, key, value)
     session.flush()
     return status
-
-
-def _as_datetime(value) -> datetime:
-    return datetime(value.year, value.month, value.day, tzinfo=UTC)
 
 
 def _clamp(value: float) -> float:

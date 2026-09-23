@@ -10,11 +10,12 @@ See docs/architecture/data-model.md and docs/modules/context.md.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     CheckConstraint,
+    Date,
     DateTime,
     Float,
     ForeignKey,
@@ -100,7 +101,7 @@ class CtxTopicLink(Base, TimestampMixin):
     linked_meeting_id: Mapped[str | None] = mapped_column(
         String(64), ForeignKey("meetings.id", ondelete="SET NULL")
     )
-    linked_meeting_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    linked_meeting_date: Mapped[date | None] = mapped_column(Date)
     similarity: Mapped[float] = mapped_column(Float, nullable=False)
     rerank_score: Mapped[float] = mapped_column(Float, nullable=False)
     confidence: Mapped[float] = mapped_column(Float, nullable=False)

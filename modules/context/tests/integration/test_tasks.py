@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import contextlib
 from collections.abc import Iterator
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from unittest.mock import patch
 
 import pytest
@@ -166,7 +166,7 @@ def test_a_catch_up_owed_skips_drift_here_but_still_sends_topic_links(
         CtxTopicLink(
             meeting_id=meeting,
             topic_label="검색 정렬 기준",
-            linked_meeting_date=datetime.now(tz=UTC),
+            linked_meeting_date=date.today(),
             similarity=0.9,
             rerank_score=0.9,
             confidence=0.9,
