@@ -417,9 +417,12 @@ wordings for it (#35).
 
 Putting a topic label in a question is safe for the same reason it is safe as a
 node: `graph.build_topics` drops any entity carrying the mask character, so no
-topic label has ever contained a masked span. That guarantee never moved — #250
-was about what it cost in recall on the way, and closing it means the drop is no
-longer the thing doing the work (see "Step 1 as built").
+topic label has ever contained a masked span. That guarantee never moved, and
+**the drop is still the only thing enforcing it.** #250 stopped a masked value
+taking its neighbour down with it (see "Step 1 as built"), but that works on the
+noun-run path only — a masked value the model tags as an entity in its own right
+reaches `build_topics` untouched, and the mask check is what refuses it there.
+Do not read the one as making the other redundant. Raised in review of #250.
 
 **What is still not built:** a question that reads the *relation* between topics
 rather than naming one — "정렬 로직이 인덱스 재색인에 의존한다면, 재색인은 언제
