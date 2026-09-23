@@ -29,6 +29,8 @@ from .schemas import (
     MeetingCreate,
     MeetingDetail,
     MeetingState,
+    SpeakerEntry,
+    TeamMemberSummary,
     TeamSummary,
 )
 from .storage import assign, handover
@@ -201,6 +203,21 @@ def upload_recording(
             raise EnqueueFailedError() from error
 
     return MeetingState(meeting_id=job.meeting_id, status=job.meeting.status)
+
+
+@router.get("/meetings/{meeting_id}/speakers", response_model=list[SpeakerEntry])
+def list_speakers(meeting_id: str, user: CurrentUser, session: SessionDep) -> list[SpeakerEntry]:
+    """The meeting's speakers, and who each one is or might be. What S13 and
+    S15 draw next to an unidentified row."""
+    return service.speakers_for(session, meeting_id=meeting_id, reader=user)
+
+
+@router.get("/teams/{team_id}/members", response_model=list[TeamMemberSummary])
+def list_team_members(
+    team_id: str, user: CurrentUser, session: SessionDep
+) -> list[TeamMemberSummary]:
+    """The people the speaker picker can offer."""
+    return service.members_of(session, team_id=team_id, reader=user)
 
 
 @router.post("/meetings/{meeting_id}/consent", response_model=ConsentState)

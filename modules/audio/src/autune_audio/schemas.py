@@ -163,6 +163,41 @@ class TeamSummary(BaseModel):
     name: str
 
 
+class SpeakerCandidate(BaseModel):
+    """Who a voice might be. A suggestion: nothing is written until somebody
+    confirms it (``POST /meetings/{id}/speakers/{label}``)."""
+
+    user_id: str
+    name: str
+    similarity: float
+
+
+class SpeakerEntry(BaseModel):
+    """One speaker label of one meeting.
+
+    No utterance count and no duration, on purpose: in a four-person meeting a
+    per-speaker count is a per-person speech volume, which privacy.md section 3
+    forbids -- the same reason ``UnidentifiedSpeaker.tsx`` dropped "발화 41건".
+    """
+
+    speaker_label: str
+    user_id: str | None
+    candidate: SpeakerCandidate | None
+
+
+class SpeakerAssignment(BaseModel):
+    """ "``화자 2`` is this person." The body of the confirmation."""
+
+    user_id: str
+
+
+class TeamMemberSummary(BaseModel):
+    """A person the picker can offer. Id and name; a browser needs no more."""
+
+    user_id: str
+    name: str
+
+
 class ConsentAttestation(BaseModel):
     """What a member sends to say everyone in the recording consented.
 

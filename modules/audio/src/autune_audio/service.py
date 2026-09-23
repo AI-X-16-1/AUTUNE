@@ -21,10 +21,11 @@ from autune_core import Meeting, Participant, Team, TeamMember, User, get_logger
 from autune_core.auth import decode_token
 from autune_core.errors import ConflictError, NotFoundError, PermissionDeniedError
 
-from . import storage
-from .config import AudioSettings
-from .models import AudConsentAttestation, TranscriptionJob
+from . import identification, storage
+from .config import AudioSettings, get_settings
+from .models import AudConsentAttestation, AudSpeakerEmbedding, TranscriptionJob
 from .persistence import transcript_payload
+from .schemas import SpeakerCandidate, SpeakerEntry, TeamMemberSummary
 
 log = get_logger(__name__)
 
@@ -630,3 +631,92 @@ def begin_live(session: Session, *, meeting_id: str) -> None:
     meeting.status = "recording"
     session.flush()
     log.info("live_meeting_recording", meeting_id=meeting_id)
+
+
+def speakers_for(session: Session, *, meeting_id: str, reader: User) -> list[SpeakerEntry]:
+    """Every speaker label of a meeting, with who it is or might be.
+
+    The candidate is computed here rather than stored: a stored one is stale
+    the moment somebody else confirms a profile, and recomputing is one query.
+
+    **Only members of this meeting's team can be candidates.** A candidate
+    from another team would say that person attended this team's meeting.
+    """
+    meeting = session.get(Meeting, meeting_id)
+    if meeting is None:
+        raise NotFoundError("meeting", meeting_id)
+    require_team_member(session, user_id=reader.id, team_id=meeting.team_id)
+
+    participants = list(
+        session.scalars(sa.select(Participant).where(Participant.meeting_id == meeting_id))
+    )
+    observations = {
+        row.speaker_label: row
+        for row in session.scalars(
+            sa.select(AudSpeakerEmbedding).where(AudSpeakerEmbedding.meeting_id == meeting_id)
+        )
+        if row.speaker_label is not None
+    }
+    profiles = _profiles_of_team(session, team_id=meeting.team_id)
+    threshold = get_settings().identification_threshold
+
+    entries = []
+    for participant in participants:
+        observation = observations.get(participant.speaker_label)
+        candidate = None
+        if participant.user_id is None and observation is not None:
+            found = identification.best_candidate(
+                observation.vector,
+                profiles,
+                model_version=observation.model_version,
+                threshold=threshold,
+            )
+            if found is not None:
+                candidate = SpeakerCandidate(
+                    user_id=found.user_id, name=found.display_name, similarity=found.similarity
+                )
+        entries.append(
+            SpeakerEntry(
+                speaker_label=participant.speaker_label,
+                user_id=participant.user_id,
+                candidate=candidate,
+            )
+        )
+    return entries
+
+
+def _profiles_of_team(session: Session, *, team_id: str) -> list[identification.Profile]:
+    """Confirmed voices of this team's members, grouped by person.
+
+    The team join is the privacy boundary, and it is in the query rather than
+    a filter afterwards so that no path can skip it.
+    """
+    rows = session.execute(
+        sa.select(AudSpeakerEmbedding, User.display_name)
+        .join(User, User.id == AudSpeakerEmbedding.user_id)
+        .join(TeamMember, TeamMember.user_id == User.id)
+        .where(TeamMember.team_id == team_id, AudSpeakerEmbedding.user_id.is_not(None))
+    ).all()
+    by_user: dict[tuple[str, str, str], list[tuple[float, ...]]] = {}
+    for row, display_name in rows:
+        key = (row.user_id, display_name, row.model_version)
+        by_user.setdefault(key, []).append(tuple(row.vector))
+    return [
+        identification.Profile(
+            user_id=user_id, display_name=name, vectors=tuple(vectors), model_version=version
+        )
+        for (user_id, name, version), vectors in by_user.items()
+    ]
+
+
+def members_of(session: Session, *, team_id: str, reader: User) -> list[TeamMemberSummary]:
+    """The team's people, for the picker. Members only -- asking about a team
+    you are not in is a 403, not an empty list."""
+    require_team_member(session, user_id=reader.id, team_id=team_id)
+    rows = session.execute(
+        sa.select(User.id, User.display_name)
+        .join(TeamMember, TeamMember.user_id == User.id)
+        .where(TeamMember.team_id == team_id)
+        .order_by(User.display_name)
+    ).all()
+    return [TeamMemberSummary(user_id=user_id, name=name) for user_id, name in rows]
