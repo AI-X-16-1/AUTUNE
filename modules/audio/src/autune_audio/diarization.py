@@ -98,15 +98,7 @@ class PyannoteDiarizer:
         # stops pyannote splitting a voice across clusters on poor audio
         # (#325): the clustering step cannot invent a fourth speaker for a
         # room of one. Unset, it clusters freely, as the evaluation measured.
-        settings = get_settings()
-        bounds: dict[str, int] = {}
-        if settings.diarization_num_speakers:
-            bounds["num_speakers"] = settings.diarization_num_speakers
-        else:
-            if settings.diarization_min_speakers:
-                bounds["min_speakers"] = settings.diarization_min_speakers
-            if settings.diarization_max_speakers:
-                bounds["max_speakers"] = settings.diarization_max_speakers
+        bounds = get_settings().speaker_bounds()
         output = pipeline(audio, **bounds)  # type: ignore[operator]
         # `exclusive_speaker_diarization`, not `speaker_diarization`. pyannote
         # keeps both: the first is what it calls "adapted to downstream

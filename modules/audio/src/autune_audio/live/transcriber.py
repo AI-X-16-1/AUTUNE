@@ -37,6 +37,18 @@ log = get_logger(__name__)
 _LOCK = threading.Lock()
 
 
+async def off_loop[T](fn: Callable[[], T], *, lock: threading.Lock = _LOCK) -> T:
+    """Run ``fn`` on a worker thread under ``lock`` -- the transcriber's own
+    by default. The embedder passes its own: the two models share no state,
+    and a slow embedding must not hold up another meeting's decode."""
+
+    def guarded() -> T:
+        with lock:
+            return fn()
+
+    return await anyio.to_thread.run_sync(guarded)
+
+
 class Transcriber:
     def __init__(
         self,
@@ -72,17 +84,16 @@ class Transcriber:
         await anyio.to_thread.run_sync(guarded)
 
     async def run(self, waveform: Waveform) -> Transcription:
-        def guarded() -> Transcription:
-            with _LOCK:
-                started = time.monotonic()
-                transcription = self._transcribe(waveform)
-                # Audio length in, decode time out: the number a "why is it
-                # slow" question needs, and nothing that is in the audio.
-                log.info(
-                    "live_decode",
-                    audio_s=round(waveform.duration, 1),
-                    decode_s=round(time.monotonic() - started, 2),
-                )
-                return transcription
+        def decode() -> Transcription:
+            started = time.monotonic()
+            transcription = self._transcribe(waveform)
+            # Audio length in, decode time out: the number a "why is it
+            # slow" question needs, and nothing that is in the audio.
+            log.info(
+                "live_decode",
+                audio_s=round(waveform.duration, 1),
+                decode_s=round(time.monotonic() - started, 2),
+            )
+            return transcription
 
-        return await anyio.to_thread.run_sync(guarded)
+        return await off_loop(decode)

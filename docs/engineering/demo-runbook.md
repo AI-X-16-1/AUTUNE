@@ -86,7 +86,7 @@ Do 3b.1 once (a token, into the browser), then:
    progress needs a feed that does not exist. Terminal 2 is where the real
    progress is (3b.5).
 7. When the worker finishes the page switches to the transcript on its own —
-   no reload. Rows with a time code, a speaker label (`SPEAKER_00`, …) and
+   no reload. Rows with a time code, a speaker label (`화자 1`, `화자 2`, …) and
    masked text.
 
 If the run fails, S12 goes red and offers "다시 업로드", which goes back to

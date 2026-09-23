@@ -7,7 +7,7 @@ Evaluation reports live in `docs/modules/audio-evaluations/` and hold the full
 tables. This file is the thread through them: the decisions, the reversals, and
 what is still open.
 
-Last updated: 2026-09-15.
+Last updated: 2026-09-22.
 
 ---
 
@@ -198,6 +198,58 @@ that capture: 9 rows with 3 invented ones → 7 rows, none invented, the
 remaining errors being the microphone's. Chrome's capture path was checked
 separately and passes 1.5–5 kHz flat, so the muffling is upstream of the
 browser.
+
+### Live speaker labels (`docs/modules/audio-live-speakers.md`)
+
+The live channel shipped with no speaker on a row (#307). This adds one:
+one `pyannote/wespeaker-voxceleb-resnet34-LM` embedding per utterance -- the model
+already inside `pyannote/speaker-diarization-3.1`, so no new download and the same
+vector space #6 will identify against -- and nearest-centroid clustering in
+the session with one cosine threshold. Labels are `화자 N` in order of first
+appearance and never change once shown; the stored path was changed to say
+the same thing (it had been showing pyannote's `SPEAKER_02` raw). A meeting
+stored before this change keeps its `SPEAKER_00`-style participant rows; a
+re-upload creates `화자 N` rows beside them (`persistence.py` already
+documents that reruns cannot preserve the mapping), and no migration is
+needed.
+
+| Measure | Value |
+| --- | --- |
+| Embedder load | 0.4 s |
+| Embedding per utterance, CPU (M4 Pro) | 12 ms at 0.5 s and 1 s, 19 ms at 3 s, 55 ms at 10 s |
+| Threshold default | **0.55, provisional** -- the wespeaker convention until the sweep in `evaluate_live_speakers.py` has run on the four-speaker recording of evaluation 02 |
+
+What the threshold sweep reports, and the value it settles on, goes in
+`docs/modules/audio-evaluations/04-live-speakers.md` when the owner has run
+it; this entry is updated then.
+
+**2026-09-22.** Review on PR #328 found seven things worth fixing before this
+merges, none of them numbers. The centroid was a repeatedly renormalised
+running mean, which drifts toward whichever vectors joined a cluster first;
+`Cluster` now keeps the raw summed vector and reads the mean off it fresh
+each time, so it is exact regardless of join order. Nothing guarded against a
+NaN or zero-norm vector reaching a centroid and poisoning every later
+similarity score; one `unit()` function, shared by the tracker and the
+embedder, now refuses one. The live and stored paths each re-derived the
+speaker head count from the same three settings independently, which is two
+places to get the precedence wrong; `AudioSettings.speaker_bounds()` is now
+the one place, and the `diarization_*_speakers` fields are validated
+`ge=1` at settings load instead of failing confusingly later. A failed
+embedding used to cost the rest of the session's labels after one bad
+vector; it now costs one row, and only three failures in a row switch
+labelling off. And the embedder shared the transcriber's lock, so a slow
+embedding could hold up another meeting's decode; it has its own lock now,
+and a load failure is remembered so a hopeless model is not retried on every
+connection. `LiveSession._row` also needed reordering: masking now runs
+before either drop check (empty after masking, then low confidence), and
+both drop checks run before the embed-and-label step, so a masked-empty or
+hallucinated utterance never reaches the tracker and cannot open or move a
+cluster. And `evaluate_live_speakers.py`'s `simulate`/`sweep` used to read
+the tracker's own default `min_seconds` instead of the deployed setting, so a
+sweep could score a threshold against a different short-utterance rule than
+production uses; they now take `min_seconds` as a required keyword, and the
+script defaults it to `get_settings().live_speaker_min_s` and prints the
+value it used.
 
 ---
 

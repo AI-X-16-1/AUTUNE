@@ -22,15 +22,17 @@ a GPU or a Hugging Face token.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from .schemas import Segment, Transcription, Turn, Word
 
-UNIDENTIFIED = "Speaker"
+UNIDENTIFIED = "화자"
 """Prefix for a voice we separated but did not put a name to.
 
-The contract spells the display label this way — ``Speaker 2`` — and types
-``speaker_id`` as ``str | None`` so consumers have to handle it. Identification
+``화자 2`` on screen, the same text on the live path (``live.speakers``) and
+here, so a meeting watched live and then read back does not change its
+labels. The contract types ``speaker_id`` as ``str | None`` so consumers
+handle the unidentified case by the id, never by this string. Identification
 fills the id in later; it never renames this.
 """
 
@@ -74,6 +76,23 @@ def speaker_at(turns: tuple[Turn, ...], word: Word) -> str | None:
         if turn.start <= middle < turn.end:
             return turn.speaker
     return None
+
+
+def rename_speakers(turns: tuple[Turn, ...]) -> tuple[Turn, ...]:
+    """Diarizer labels become ``화자 N``, numbered by first appearance in time.
+
+    pyannote's ``SPEAKER_00`` is whichever voice it clustered first, which is
+    not the voice that spoke first; the screen wants the latter. The turns come
+    back sorted by start, which is the order ``assign_speakers`` reads them in
+    anyway.
+    """
+    names: dict[str, str] = {}
+    renamed: list[Turn] = []
+    for turn in sorted(turns, key=lambda t: t.start):
+        if turn.speaker not in names:
+            names[turn.speaker] = f"{UNIDENTIFIED} {len(names) + 1}"
+        renamed.append(replace(turn, speaker=names[turn.speaker]))
+    return tuple(renamed)
 
 
 def assign_speakers(transcription: Transcription, turns: tuple[Turn, ...]) -> tuple[Utterance, ...]:

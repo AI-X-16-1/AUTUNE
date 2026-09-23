@@ -48,7 +48,7 @@ real, so A ships first (roadmap W2).
 2. **VAD** — silero-vad removes silence and segments speech.
 3. **STT** — Whisper transcribes with timestamps. whisper.cpp on CPU when no GPU
    is available.
-4. **Diarization** — Pyannote separates speakers into `Speaker 1`, `Speaker 2`, …
+4. **Diarization** — Pyannote separates speakers into `화자 1`, `화자 2`, …
 5. **Speaker identification** — speaker embeddings matched against enrolled
    voices in `aud_speaker_embeddings`; unmatched speakers keep the label and a
    null `speaker_id`.
@@ -84,7 +84,7 @@ Plus the shared entities in `packages/core`, which A writes.
 | GET | `/jobs/{job_id}` | Job status and progress (planned) |
 | GET | `/transcripts/{meeting_id}` | Full transcript, masked, for a member of the meeting's team |
 | POST | `/meetings/{meeting_id}/consent` | A member attests that everyone in the recording consented (#190) |
-| WS | `/live/{meeting_id}` | Live transcription: one masked row per utterance, no speaker, nothing stored — `audio-live-transcription.md` |
+| WS | `/live/{meeting_id}` | Live transcription: one masked row per utterance, a speaker cluster label (`화자 N`), no person, nothing stored — `audio-live-transcription.md` |
 | PATCH | `/utterances/{id}` | Correct speaker or text |
 | POST | `/speakers/enroll` | Enroll a voice for identification |
 
@@ -107,6 +107,14 @@ have refused.
 Live rows are masked one at a time, so a number read with a pause in it
 reaches the screen unmasked across two rows; the stored transcript is the
 masked final form (design §3.5).
+
+Every live row carries a speaker cluster label, `화자 N`: one embedding per
+utterance from the diarizer's own embedding model, nearest-centroid
+clustering in the session, a number that never changes once shown, and a
+cap from the same head-count hint the stored path gives pyannote. Nothing is
+stored; a session whose embedder fails shows `?` and goes on. The stored
+path uses the same `화자 N` text, numbered by who spoke first. Design and
+threshold evaluation: `audio-live-speakers.md`.
 
 ### Consent, until there is a per-person consent flow
 

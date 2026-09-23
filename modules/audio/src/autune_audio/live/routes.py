@@ -20,8 +20,10 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from autune_audio import service
 from autune_audio.config import get_settings
 from autune_audio.live import protocol, registry
+from autune_audio.live.embedder import Embedder
 from autune_audio.live.segmenter import Segmenter
 from autune_audio.live.session import LiveSession, TranscribeFailed
+from autune_audio.live.speakers import SpeakerTracker, speaker_cap
 from autune_audio.live.transcriber import Transcriber
 from autune_core import get_logger
 from autune_core.db import session_scope
@@ -46,6 +48,11 @@ _transcriber: Transcriber | None = None
 engine from settings, and a value that cannot run here (``mlx`` off Apple
 silicon) must refuse one socket with 4503, not stop the API from starting
 (``ConfigurationError``: "at the point of use, not at import")."""
+_embedder = Embedder(token=get_settings().hf_token)
+"""One per process, like the transcriber: read-only once loaded, and
+its own lock serialises calls into the model; see ``transcriber.off_loop``.
+Constructing it loads nothing -- the model comes at the first ``warm_up`` --
+so it can live here."""
 
 
 def shared_transcriber() -> Transcriber:
@@ -56,10 +63,20 @@ def shared_transcriber() -> Transcriber:
 
 
 def build_session() -> LiveSession:
-    """A fresh session on the process-wide transcriber. Tests replace this."""
+    """A fresh session on the process-wide models. Tests replace this.
+
+    The tracker is per session -- clusters belong to one meeting -- and its
+    cap is the head count the stored path gives pyannote (#325)."""
+    settings = get_settings()
     return LiveSession(
-        segmenter=Segmenter(min_silence_ms=get_settings().live_min_silence_ms),
+        segmenter=Segmenter(min_silence_ms=settings.live_min_silence_ms),
         transcriber=shared_transcriber(),
+        embedder=_embedder,
+        tracker=SpeakerTracker(
+            threshold=settings.live_speaker_threshold,
+            min_seconds=settings.live_speaker_min_s,
+            max_speakers=speaker_cap(settings),
+        ),
     )
 
 
@@ -133,10 +150,16 @@ async def live(websocket: WebSocket, meeting_id: str) -> None:
             websocket, protocol.NOT_RECORDABLE, meeting_id=meeting_id, reason=type(exc).__name__
         )
         return
-    except ConfigurationError as exc:
-        # The engine this deployment asked for cannot run here. The status
-        # flip was rolled back with the scope; refuse like a model that
-        # failed to load, and say so in the log by type.
+    except (ConfigurationError, ValueError) as exc:
+        # The engine this deployment asked for cannot run here (``Transcriber()``
+        # raises ``ConfigurationError``), or a value the session's own
+        # construction refuses (``SpeakerTracker``/``Segmenter`` raise
+        # ``ValueError``) -- either way the status flip is rolled back with
+        # the scope; refuse like a model that failed to load, and say so in
+        # the log by type. Catching bare ``ValueError`` here is only safe
+        # because the block above already caught ``protocol.ProtocolError``,
+        # which subclasses it -- a hello-parsing error must not fall through
+        # to this handler.
         log.warning("live_model_unavailable", error=type(exc).__name__)
         with suppress(WebSocketDisconnect):
             await websocket.send_json(protocol.error("model_unavailable"))
