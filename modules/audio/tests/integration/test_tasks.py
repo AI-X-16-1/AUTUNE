@@ -25,7 +25,12 @@ from sqlalchemy.orm import Session
 from autune_audio import service, tasks
 from autune_audio.config import AudioSettings
 from autune_audio.diarization import FakeDiarizer
-from autune_audio.models import AudConsentAttestation, AudSpeakerEmbedding, TranscriptionJob
+from autune_audio.models import (
+    EMBEDDING_DIM,
+    AudConsentAttestation,
+    AudSpeakerEmbedding,
+    TranscriptionJob,
+)
 from autune_audio.quality import TranscriptCollapsedError
 from autune_audio.schemas import SAMPLE_RATE, Segment, Transcription, Turn, Waveform, Word
 from autune_contracts.events import TRANSCRIPT_READY
@@ -555,6 +560,34 @@ def test_no_attestation_means_no_vectors(
     ).all()
     assert utterances != []
     assert fake.warm_up_calls == 0
+
+
+def test_a_write_time_consent_check_refuses_observations_with_no_attestation(
+    db_session: Session,
+    meeting: str,
+) -> None:
+    """Consent revoked between the claim-time read and the write --
+    a TOCTOU `process_recording` cannot produce on its own, since
+    finding 2's early read and this function's write happen inside what is,
+    from the task's own point of view, one uninterrupted run.
+
+    `_store_speaker_embeddings` re-checks the attestation at write time
+    deliberately (fix round 1, finding 2): the early read in
+    `process_recording` is only a cost-saving skip, and this is the check
+    that actually gates the write. Since that skip now means `observations`
+    is always `[]` on the no-consent path `process_recording` itself can
+    reach, `test_no_attestation_means_no_vectors` no longer exercises this
+    function's own consent check -- it never gets past the function's
+    `if not observations: return`. This test calls `_store_speaker_embeddings`
+    directly with a non-empty `observations` and no `AudConsentAttestation`
+    row for the meeting at all, so the write-time check is the only thing
+    that can be stopping it.
+    """
+    observations = [("화자 1", np.zeros(EMBEDDING_DIM, dtype=np.float32), "fake-embedder-v1")]
+
+    tasks._store_speaker_embeddings(db_session, meeting_id=meeting, observations=observations)
+
+    assert db_session.scalars(sa.select(AudSpeakerEmbedding)).all() == []
 
 
 def test_an_embedder_that_cannot_load_does_not_fail_the_meeting(
