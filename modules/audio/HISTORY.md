@@ -113,6 +113,92 @@ Two caveats that the number does not carry on its own:
 to detect that it happened in a given meeting.** Production has no reference.
 That property has since broken two other modules (section 6).
 
+On the live-microphone runs of 2026-09-22 (a Mac microphone with almost
+nothing above 1 kHz) one person came back as four speakers, then two. The
+release valve is the one input pyannote's clustering cannot argue with: a
+speaker count. `AUTUNE_AUDIO_DIARIZATION_NUM_SPEAKERS` (or min/max bounds)
+reaches the pipeline call; unset, nothing changes. A per-meeting count
+belongs with S10's attendee list (#325).
+
+### Live channel — per-row lag (`docs/modules/audio-live-transcription.md` §9)
+
+One synthetic run against the real WebSocket route with `large-v3` on an
+Apple-silicon CPU: a 46.6 s two-speaker recording streamed as PCM16 at
+real-time pace.
+
+| Measure | Value |
+| --- | --- |
+| Rows | 5 of 5 utterances, one phone number masked, `speaker_id` null |
+| Lag from utterance end to row | **7–10 s** (each ~10 s utterance takes ~9 s to transcribe) |
+| Same recording faster than real time | wall ≈ audio length: the transcriber is the bottleneck, RTF ≈ 0.95 |
+| Log | counts and ids only; no text, no traceback |
+
+**The lag is one utterance, not a fixed delay, and nothing is dropped.** When
+transcription falls behind, frames queue at the socket and the lag grows for
+the rest of the meeting. Two live meetings on one process therefore do not
+"double the delay" — past RTF 1 the delay stops converging. A bounded
+segment queue with drop-oldest is the follow-up; the browser microphone path
+(worklet, `MediaRecorder`) has not been measured by anyone yet.
+
+**The live path now has its own model, thread count, and beam width.**
+Isolated decode time for one 11.4 s Korean utterance, int8, beam 1, on a
+14-core Apple-silicon CPU:
+
+| model | 4 threads | 10 threads | Korean quality |
+| --- | --- | --- | --- |
+| large-v3 | 6.2 s | 4.6 s | reference |
+| large-v3-turbo | 4.3 s | **2.4 s** | practically the same (both miss the same domain word) |
+| small | 1.0 s | 0.8 s | unusable |
+
+A 5.4 s utterance costs almost the same (turbo/10: 2.2 s) — the encoder pads
+every segment to a 30 s window, so there is a ~2 s floor regardless of
+utterance length. Decision: the live path gets `large-v3-turbo`
+(`live_whisper_model`), its own thread count (`live_cpu_threads`), and beam 5
+(`live_beam_size` — width 5 costs turbo 0.3 s more than width 1, 2.7 s vs 2.4 s); the stored path (`pipeline.transcribe`, worker) keeps
+`large-v3`, beam 5, and its retry. Models are cached per `(name, threads)`,
+so the two paths each build one instance and neither reloads.
+
+Re-measured against the real route, same 46.6 s recording, same real-time
+pacing, `large-v3-turbo` with 10 threads and beam 1: per-row lag went from
+9.5 / 8.6 / 8.6 / 8.8 / 9.4 s (`large-v3`, 4 threads, beam 5) to
+4.1 / 4.0 / 4.1 / 4.1 / 4.6 s. The end-to-end number stays above the 2.4 s
+isolated-decode figure because it also carries the segmenter's 0.7 s silence
+wait, VAD, masking, and the socket round trip.
+
+**The live engine is chosen per machine (`live/backends.py`).** CTranslate2
+has no Metal backend, so on a Mac the live path was stuck on the CPU floor
+above. `mlx-whisper` runs the same turbo weights on Apple silicon's GPU:
+isolated decode of the 11.4 s utterance 0.85 s (0.81 s for 5.4 s), text
+identical to CTranslate2's, and inside the API — `live_decode` in the log —
+0.82–0.87 s per row. Utterance end to row, real-time pacing, is now about
+1.7 s (0.7 s silence wait + decode), against ~4 s on ten CPU threads.
+`AUTUNE_AUDIO_LIVE_TRANSCRIBER_IMPL=auto` picks `mlx` where the optional
+`mlx` extra is installed and can run, and `faster_whisper` everywhere else —
+which on a machine with an NVIDIA GPU means `AUTUNE_AUDIO_DEVICE=cuda`, the
+setting the stored path already had. Two facts to know when reading the
+client's own clock: it starts before `hello`, so `ready` (warm-up, 2–7 s)
+has to be subtracted from every row time; and the glossary goes to
+mlx-whisper as `initial_prompt`, which is what makes it write "검색 개편"
+where the unprompted model wrote "검색해변".
+
+**The first real-microphone runs, and what they taught.** Through the real
+page the rows came out as fragments Whisper had guessed at ("Logic
+감사합니다", "hovah 감사합니다", at confidence 0.1–0.25) between correct rows.
+Two facts, both measured on a capture of the person's own audio: the Mac's
+microphones (built-in and a wired earphone alike) deliver speech with almost
+nothing above 1 kHz, which Whisper reads fine with a whole file and badly in
+fragments; and the segmenter was scoring each 200 ms frame with a VAD that
+had no memory of the frame before, so soft syllables read as silence and
+sentences were cut into 0.4–1 s pieces. Three changes, replayed against the
+same capture: the VAD now scores each frame at the end of a 0.6 s window
+(`VAD_CONTEXT_S`); a row whose mean word probability is below
+`live_min_confidence` (0.35) is not sent — the stored path remakes it; and
+the mlx decode runs at temperature 0 with no fallback retries. Result on
+that capture: 9 rows with 3 invented ones → 7 rows, none invented, the
+remaining errors being the microphone's. Chrome's capture path was checked
+separately and passes 1.5–5 kHz flat, so the muffling is upstream of the
+browser.
+
 ---
 
 ## 3. Decisions, and the ones that reversed

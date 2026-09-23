@@ -22,6 +22,7 @@ from . import service
 from .config import MAX_UPLOAD_BYTES
 from .config import get_settings as get_audio_settings
 from .enqueue import enqueue_process_recording
+from .live.routes import router as live_router
 from .schemas import (
     ConsentAttestation,
     ConsentState,
@@ -64,6 +65,8 @@ if get_core_settings().env == "local":
     from .dev import router as dev_router
 
     router.include_router(dev_router, prefix="/dev")
+
+router.include_router(live_router)
 
 
 @router.get("/health")

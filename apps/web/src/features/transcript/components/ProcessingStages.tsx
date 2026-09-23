@@ -103,8 +103,9 @@ export function ProcessingStages({ meeting }: { meeting: MeetingDetail }) {
           className="mt-3 text-[var(--color-ink-muted)]"
           style={{ fontSize: "var(--text-meta)" }}
         >
-          이 페이지를 떠나도 처리는 계속됩니다. 단계별 진행률은 아직 제공되지
-          않아 회의 상태로 표시합니다.
+          {meeting.status === "recording"
+            ? "녹음 중인 브라우저가 올리면 처리가 시작됩니다."
+            : "이 페이지를 떠나도 처리는 계속됩니다. 단계별 진행률은 아직 제공되지 않아 회의 상태로 표시합니다."}
         </p>
       )}
     </section>
@@ -126,21 +127,27 @@ const STATE_LABEL: Record<StageState, string> = {
 };
 
 function stagesFor(meeting: MeetingDetail): Stage[] {
+  const recording = meeting.status === "recording";
   const analyzing = meeting.status === "analyzing";
   const failed = meeting.status === "failed";
-  const finished = !analyzing && !failed && meeting.status !== "scheduled";
+  // `recording` is the live channel's status (#307): the browser still holds
+  // the audio and nothing has run on the server yet.
+  const finished =
+    !recording && !analyzing && !failed && meeting.status !== "scheduled";
 
   // While analyzing the task is somewhere between decode and the final write;
   // the first stage that is not yet backed by a flag is the one that shows red
-  // on failure.
+  // on failure. While recording, nothing has started.
   const recognition: StageState = finished
     ? "done"
     : failed
       ? "failed"
-      : "running";
+      : recording
+        ? "queued"
+        : "running";
   const masking: StageState = meeting.pii_masked
     ? "done"
-    : failed
+    : failed || recording
       ? "queued"
       : "running";
   const deletion: StageState = meeting.original_audio_deleted
@@ -152,8 +159,10 @@ function stagesFor(meeting: MeetingDetail): Stage[] {
   return [
     {
       label: "업로드 · 형식 검증",
-      detail: "서버가 받았고, ffmpeg 가 16kHz mono 로 변환합니다",
-      state: "done",
+      detail: recording
+        ? "녹음이 끝나면 브라우저가 올립니다"
+        : "서버가 받았고, ffmpeg 가 16kHz mono 로 변환합니다",
+      state: recording ? "queued" : "done",
     },
     {
       label: "음성 인식",

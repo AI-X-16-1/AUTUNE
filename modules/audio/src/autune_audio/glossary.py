@@ -70,14 +70,16 @@ PROJECT_TERMS: tuple[str, ...] = (
     "Bolt for Python",
     "betweenness",
     "PostgreSQL",
-    "FastAPI",
     "Celery",
     "pgvector",
     "Prophet",
     "XGBoost",
-    "SetFit",
     "BM25",
     "PageRank",
+    # Evaluation 01 heard these as "Cepid" and "PEST API"; they rank with the
+    # other terms the recording caught, not with stack names never tried.
+    "SetFit",
+    "FastAPI",
     "spaCy",
     "NER",
     "NLI",
@@ -96,6 +98,17 @@ PROJECT_TERMS: tuple[str, ...] = (
     "large-v3-turbo",
     "faster-whisper",
     "Whisper",
+    # How this team talks in a meeting, ranked above the stack: the first
+    # live-microphone run (2026-09-22) heard "PR 리뷰 요청" as "PM" and "승인
+    # 부탁" as "설명". These are the words a meeting is made of and the ones
+    # B's action items hang on, so they outrank a library name the model
+    # would only mangle. pyannote stays last for the reason below.
+    "스프린트",
+    "데모",
+    "머지",
+    "승인",
+    "리뷰 요청",
+    "PR",
     "pyannote",
 )
 """Every term evaluation 01 caught the model mangling, plus the rest of the

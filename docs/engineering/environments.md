@@ -26,7 +26,7 @@ pnpm install
 
 uv run alembic -c infra/alembic.ini upgrade heads
 
-uv run uvicorn autune_api.main:app --reload          # API   :8000
+uv run uvicorn autune_api.main:app --reload          # API   :8000 -- one worker, see below
 uv run celery -A autune_worker.celery_app worker -Q default,cpu_heavy,gpu -l info
 pnpm --filter @autune/web dev                        # web   :3000
 uv run python -m autune_bot                          # Slack bot (socket mode)
@@ -110,8 +110,22 @@ Where that token comes from, and the two ways to give it to the browser:
 | `AUTUNE_AUDIO_WHISPER_MODEL` | A | e.g. `large-v3` |
 | `AUTUNE_AUDIO_DEVICE` | A | `cuda` or `cpu` |
 | `AUTUNE_AUDIO_TEMP_DIR` | A | Where the recording lives during processing, and only then |
+| `AUTUNE_AUDIO_LIVE_HELLO_TIMEOUT_S` | A | How long a live socket may wait for `hello` (5) |
+| `AUTUNE_AUDIO_LIVE_MAX_SESSION_S` | A | The longest live session, 3 h; the recording is in the browser |
+| `AUTUNE_AUDIO_LIVE_MAX_FRAME_BYTES` | A | One second of PCM16; a bigger frame is refused, not buffered |
+| `AUTUNE_AUDIO_LIVE_FRAME_MS` | A | What the browser is asked to send (200) |
+| `AUTUNE_AUDIO_LIVE_WHISPER_MODEL` | A | The live channel's own model, default `large-v3-turbo`; the stored path keeps `AUTUNE_AUDIO_WHISPER_MODEL` |
+| `AUTUNE_AUDIO_LIVE_CPU_THREADS` | A | CTranslate2 threads for the live model; 0 = CTranslate2 default, set to the machine's performance-core count |
+| `AUTUNE_AUDIO_LIVE_BEAM_SIZE` | A | Beam width on the live path (5) |
+| `AUTUNE_AUDIO_LIVE_MIN_SILENCE_MS` | A | Silence that ends a live utterance (1000). Longer keeps sentences whole and adds that much lag to every row |
+| `AUTUNE_AUDIO_LIVE_MIN_CONFIDENCE` | A | A live row below this mean word probability is not sent (0.35); the stored transcript is the final form |
+| `AUTUNE_AUDIO_LIVE_TRANSCRIBER_IMPL` | A | `auto` (default) · `faster_whisper` · `mlx`. `mlx` is the live path on Apple silicon's GPU and needs `uv sync --all-packages --extra mlx`; `faster_whisper` follows `AUTUNE_AUDIO_DEVICE`, so an NVIDIA machine sets that to `cuda`. `auto` picks `mlx` where it can run |
+| (uvicorn `--workers`) | A | **Leave at 1.** The live channel's one-session-per-meeting claim (`live/registry.py`) is per process: a second worker lets a second session onto the same meeting, and accepts an upload the other worker's open socket should have refused (409) |
+| `AUTUNE_AUDIO_LIVE_MLX_MODEL` | A | The mlx-whisper weights, a Hugging Face repo. Default `mlx-community/whisper-large-v3-turbo` |
 | `AUTUNE_AUDIO_ORPHAN_AFTER_HOURS` | A | A job still `queued`/`running` after this long has no worker; the sweep fails it and deletes its file. Default `6` |
 | `AUTUNE_AUDIO_HF_TOKEN` | A | Hugging Face token for the gated pyannote models |
+| `AUTUNE_AUDIO_DIARIZATION_NUM_SPEAKERS` | A | Exactly how many people spoke, when the room knows (#325). Unset by default: pyannote clusters freely, and a wrong number is worse than none. Deployment-wide for now; the per-meeting field comes with S10 |
+| `AUTUNE_AUDIO_DIARIZATION_MIN_SPEAKERS` / `…_MAX_SPEAKERS` | A | Bounds instead of an exact count. Ignored when `…_NUM_SPEAKERS` is set |
 | `NEXT_PUBLIC_AUTUNE_DEV_TOKEN` | A (web) | A bearer token for the browser, local only — see "A token for the browser" below |
 | `AUTUNE_AUDIO_DIARIZATION_MODEL` | A | Default `pyannote/speaker-diarization-3.1` |
 | `AUTUNE_EXTRACTION_CLASSIFIER_IMPL` | B | `local` · `hosted` · `fake`. Default `local`. **No `external`** — see below |

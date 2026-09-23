@@ -104,6 +104,78 @@ class AudioSettings(BaseSettings):
     diarization_model: str = "pyannote/speaker-diarization-3.1"
     """Pinned explicitly. Never load a floating "latest"."""
 
+    diarization_num_speakers: int | None = None
+    """Exactly how many people spoke, when the room knows. On a muffled
+    microphone pyannote split one voice into four clusters (#325); with this
+    set it cannot. A deployment-wide knob for now -- one demo, one room --
+    and the wrong number for a meeting is worse than none, so it stays unset
+    by default. The per-meeting field belongs with S10's attendee list."""
+
+    diarization_min_speakers: int | None = None
+    """Lower bound on speakers when the exact count is unknown. Ignored when
+    ``diarization_num_speakers`` is set."""
+
+    diarization_max_speakers: int | None = None
+    """Upper bound on speakers when the exact count is unknown. Ignored when
+    ``diarization_num_speakers`` is set."""
+
+    live_hello_timeout_s: float = 5.0
+    """How long a live connection may sit without sending ``hello``."""
+
+    live_max_session_s: float = 3 * 60 * 60
+    """The longest live session, matching the 3-hour ceiling on S03. Past it
+    the session ends normally; the recording is in the browser."""
+
+    live_max_frame_bytes: int = 32 * 1024
+    """One second of PCM16 at 16 kHz. A bigger frame is dropped, not buffered."""
+
+    live_frame_ms: int = 200
+    """What the browser is asked to send. Informational; the server accepts
+    any frame under ``live_max_frame_bytes``."""
+
+    live_whisper_model: str = "large-v3-turbo"
+    """The live channel's model. Turbo keeps large-v3's encoder and cuts the
+    decoder to four layers: on CPU a row costs about half of large-v3 for
+    Korean that reads the same. The stored path keeps ``whisper_model``."""
+
+    live_cpu_threads: int = 0
+    """CTranslate2 threads for the live model. 0 leaves the choice to
+    CTranslate2 (four on the laptop that measured this). One transcription
+    runs at a time on the live path, so the count can be the machine's
+    performance cores -- 10 on that laptop, which halved the decode time --
+    without contending with anything but itself."""
+
+    live_transcriber_impl: Literal["auto", "faster_whisper", "mlx"] = "auto"
+    """Which engine transcribes a live utterance (``live/backends.py``).
+
+    ``faster_whisper`` is the stored path's engine on the live model and
+    follows ``device`` -- CUDA where there is an NVIDIA GPU. ``mlx`` is
+    mlx-whisper on Apple silicon's GPU, the only way to a GPU on a Mac; it
+    needs the ``mlx`` extra. ``auto`` picks ``mlx`` where that is installed
+    and can run, ``faster_whisper`` everywhere else."""
+
+    live_mlx_model: str = "mlx-community/whisper-large-v3-turbo"
+    """The mlx-whisper weights, a Hugging Face repo. The MLX conversion of
+    the same turbo model the CTranslate2 path uses."""
+
+    live_min_silence_ms: int = 1000
+    """How much silence ends a live utterance. 700 ms cut real speech at
+    every mid-sentence breath; on the microphone captures 1000 ms kept
+    sentences whole and let a breath's noise join the sentence before it
+    instead of becoming a row of its own. Every 100 ms here is 100 ms more
+    lag on every row; 1300 merges sentences a person would keep apart."""
+
+    live_min_confidence: float = 0.35
+    """A live row below this mean word probability is not sent. On the first
+    real-microphone runs the hallucinated fragments scored 0.08-0.25 and
+    real speech 0.5-0.95; the stored path remakes every row, so a dropped
+    one costs nothing but a moment on screen."""
+
+    live_beam_size: int = 5
+    """Beam width on the live path. Width 5 costs turbo about 0.3 s more per
+    utterance than width 1 and is what the stored path uses, so a live row
+    and the row that replaces it after the upload read the same."""
+
     @model_validator(mode="after")
     def _warn_on_cuda_without_token(self) -> AudioSettings:
         """A GPU with no token is a configuration someone meant to finish."""
