@@ -607,31 +607,95 @@ def test_a_user_outside_the_team_cannot_be_assigned(
 
 
 def test_deleting_my_voice_profile_removes_only_mine(
-    client: TestClient, db_session: Session, member: User, candidate: User
+    client: TestClient, db_session: Session, meeting: str, member: User, candidate: User
 ) -> None:
+    """A plain ``SELECT DISTINCT user_id`` cannot see the bug this pins: an
+    observation row's own ``user_id`` is always ``NULL`` by the check
+    constraint, so that query passes whether or not the observation the
+    person's voice is still sitting in was ever touched. Each user here has
+    a profile *and* an observation attributable to them through a confirmed
+    participant row -- both must go for the caller, neither for the other
+    user."""
+    db_session.add(Participant(meeting_id=meeting, speaker_label="화자 1", user_id=member.id))
+    db_session.add(observation(meeting, "화자 1", axis(0)))
     db_session.add(profile(member.id, axis(0)))
+    db_session.add(Participant(meeting_id=meeting, speaker_label="화자 2", user_id=candidate.id))
+    db_session.add(observation(meeting, "화자 2", axis(1)))
     db_session.add(profile(candidate.id, axis(1)))
     db_session.flush()
 
     response = client.delete("/api/audio/me/voice-profile")
 
     assert response.status_code == 204
-    remaining = list(db_session.scalars(sa.select(AudSpeakerEmbedding.user_id).distinct()))
-    assert remaining == [candidate.id]
+
+    member_profiles = list(
+        db_session.scalars(
+            sa.select(AudSpeakerEmbedding).where(AudSpeakerEmbedding.user_id == member.id)
+        )
+    )
+    assert member_profiles == []
+    member_observation = db_session.scalar(
+        sa.select(AudSpeakerEmbedding).where(
+            AudSpeakerEmbedding.meeting_id == meeting,
+            AudSpeakerEmbedding.speaker_label == "화자 1",
+        )
+    )
+    assert member_observation is None
+
+    # Deleting a voice profile does not un-assign a speaker the caller is
+    # still credited for -- that is `forget_user_voice`'s job, for someone
+    # who has actually left the product, not this one's.
+    member_participant = db_session.scalar(
+        sa.select(Participant).where(
+            Participant.meeting_id == meeting, Participant.speaker_label == "화자 1"
+        )
+    )
+    assert member_participant is not None
+    assert member_participant.user_id == member.id
+
+    candidate_profiles = list(
+        db_session.scalars(
+            sa.select(AudSpeakerEmbedding).where(AudSpeakerEmbedding.user_id == candidate.id)
+        )
+    )
+    assert len(candidate_profiles) == 1
+    candidate_observation = db_session.scalar(
+        sa.select(AudSpeakerEmbedding).where(
+            AudSpeakerEmbedding.meeting_id == meeting,
+            AudSpeakerEmbedding.speaker_label == "화자 2",
+        )
+    )
+    assert candidate_observation is not None
 
 
 # --- forget_user_voice --------------------------------------------------------
 
 
 def test_the_deletion_hook_removes_a_users_profiles(
-    db_session: Session, monkeypatch: pytest.MonkeyPatch, member: User, candidate: User
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+    meeting: str,
+    member: User,
+    candidate: User,
 ) -> None:
     """Driven through ``autune_core.deletion.run_user_hooks`` rather than
     calling ``service.forget_user_voice`` directly, so this also pins that
     the ``@on_user_deleted("audio")`` registration itself is live -- deleting
     the decorator would not fail a test that only calls the function by
-    name."""
+    name.
+
+    Like the profile-deletion test above, each user has a profile and an
+    observation attributable to them through a confirmed participant --
+    ``SELECT DISTINCT user_id`` alone cannot see the observation. And
+    because leaving the product is more than deleting a profile, the
+    departing user's participant row must come back unassigned, or
+    ``transcript_payload`` keeps naming somebody who left as ``speaker_id``
+    on every later read."""
+    db_session.add(Participant(meeting_id=meeting, speaker_label="화자 1", user_id=member.id))
+    db_session.add(observation(meeting, "화자 1", axis(0)))
     db_session.add(profile(member.id, axis(0)))
+    db_session.add(Participant(meeting_id=meeting, speaker_label="화자 2", user_id=candidate.id))
+    db_session.add(observation(meeting, "화자 2", axis(1)))
     db_session.add(profile(candidate.id, axis(1)))
     db_session.flush()
 
@@ -644,8 +708,47 @@ def test_the_deletion_hook_removes_a_users_profiles(
 
     run_user_hooks(member.id)
 
-    remaining = list(db_session.scalars(sa.select(AudSpeakerEmbedding.user_id).distinct()))
-    assert remaining == [candidate.id]
+    member_profiles = list(
+        db_session.scalars(
+            sa.select(AudSpeakerEmbedding).where(AudSpeakerEmbedding.user_id == member.id)
+        )
+    )
+    assert member_profiles == []
+    member_observation = db_session.scalar(
+        sa.select(AudSpeakerEmbedding).where(
+            AudSpeakerEmbedding.meeting_id == meeting,
+            AudSpeakerEmbedding.speaker_label == "화자 1",
+        )
+    )
+    assert member_observation is None
+    member_participant = db_session.scalar(
+        sa.select(Participant).where(
+            Participant.meeting_id == meeting, Participant.speaker_label == "화자 1"
+        )
+    )
+    assert member_participant is not None
+    assert member_participant.user_id is None
+
+    candidate_profiles = list(
+        db_session.scalars(
+            sa.select(AudSpeakerEmbedding).where(AudSpeakerEmbedding.user_id == candidate.id)
+        )
+    )
+    assert len(candidate_profiles) == 1
+    candidate_observation = db_session.scalar(
+        sa.select(AudSpeakerEmbedding).where(
+            AudSpeakerEmbedding.meeting_id == meeting,
+            AudSpeakerEmbedding.speaker_label == "화자 2",
+        )
+    )
+    assert candidate_observation is not None
+    candidate_participant = db_session.scalar(
+        sa.select(Participant).where(
+            Participant.meeting_id == meeting, Participant.speaker_label == "화자 2"
+        )
+    )
+    assert candidate_participant is not None
+    assert candidate_participant.user_id == candidate.id
 
 
 def test_the_deletion_hook_clears_confirmed_by_and_attested_by_elsewhere(
@@ -656,9 +759,11 @@ def test_the_deletion_hook_clears_confirmed_by_and_attested_by_elsewhere(
     candidate: User,
 ) -> None:
     """Leaving the product clears more than the person's own rows: their id
-    must not linger as *who confirmed* somebody else's profile, or *who
-    attested* a meeting's consent -- both are ids the product no longer has
-    anyone behind."""
+    must not linger as *who confirmed* somebody else's profile, as *who
+    attested* a meeting's consent, or -- the field the hook used to miss
+    entirely, since its own docstring says it exists for exactly the case
+    where the FK's ``SET NULL`` never fires -- as *who was confirmed to be
+    speaking* on a meeting's participant row."""
     db_session.add(
         AudSpeakerEmbedding(
             user_id=candidate.id,
@@ -668,6 +773,7 @@ def test_the_deletion_hook_clears_confirmed_by_and_attested_by_elsewhere(
         )
     )
     db_session.add(AudConsentAttestation(meeting_id=meeting, attested_by=member.id))
+    db_session.add(Participant(meeting_id=meeting, speaker_label="화자 1", user_id=member.id))
     db_session.flush()
 
     @contextmanager
@@ -688,3 +794,11 @@ def test_the_deletion_hook_clears_confirmed_by_and_attested_by_elsewhere(
     attestation = db_session.get(AudConsentAttestation, meeting)
     assert attestation is not None
     assert attestation.attested_by is None
+
+    participant = db_session.scalar(
+        sa.select(Participant).where(
+            Participant.meeting_id == meeting, Participant.speaker_label == "화자 1"
+        )
+    )
+    assert participant is not None
+    assert participant.user_id is None

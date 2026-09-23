@@ -90,8 +90,11 @@ def transcript_for_meeting(
     some. A caller that needs to tell "not yet" from "nothing was said" reads
     the meeting's status, which is what it is for.
 
-    Speaking ratios are not here and never will be. privacy.md section 3 gives
-    those to module E, delivered to the speaker and nobody else.
+    A speaking ratio is not computed here. But since this branch (#6) this
+    payload's utterances carry ``speaker_id``, ``start`` and ``end``, so a
+    per-person duration is one ``GROUP BY`` away for any reader of this
+    route -- whether that is a gap privacy.md section 3 needs closing is
+    open in #361; this function's behaviour has not changed.
     """
     meeting = session.get(Meeting, meeting_id)
     if meeting is None:
@@ -561,12 +564,12 @@ def attest_consent(session: Session, *, meeting_id: str, attested_by: User) -> N
     statement.
 
     Not per person, not revocable, and it does not tell B and C that a meeting
-    they already analysed has changed. Those are S10, S11 and #190's republish
-    question. Nor does anything here undo what B, C and E derived once the
-    meeting was analysed -- today the only way that data goes is with the
-    meeting itself (CASCADE), and before identification (#6) there is no
-    per-person unit to revoke for. The default is not loosened by any of
-    this: a meeting with no attestation is exactly as it was.
+    they already analysed has changed. Those are S10, S11 and #190's follow-ups.
+    Nor does anything here undo what B, C and E derived once the meeting was
+    analysed -- today the only way that data goes is with the meeting itself
+    (CASCADE), and before identification (#6) there is no per-person unit to
+    revoke for. The default is not loosened by any of this: a meeting with no
+    attestation is exactly as it was.
     """
     meeting = session.get(Meeting, meeting_id)
     if meeting is None:
@@ -876,13 +879,58 @@ def assign_speaker(
     log.info("speaker_assigned", meeting_id=meeting_id, learned=learned)
 
 
+def _delete_observations_owned_by(session: Session, *, user_id: str) -> int:
+    """Delete every *observation* row this person's voice is still sitting
+    in, not just their profile rows.
+
+    An observation (``meeting_id`` + ``speaker_label``, the check constraint
+    guarantees ``user_id IS NULL``) is a 256-d vector of somebody's voice in
+    one meeting. Once ``assign_speaker`` has named a participant, that
+    meeting's observation for their label is fully attributable through
+    ``participants.user_id`` even though the vector row itself carries no
+    ``user_id`` -- a plain ``WHERE user_id == ...`` delete, which is the
+    shape a profile row has, never touches it. Left behind, it is a
+    biometric vector of a person who asked for their voice to be forgotten,
+    and the next team member to (re-)confirm that same label would copy it
+    straight back into a fresh profile for them.
+
+    A correlated ``EXISTS`` over ``participants``, not a join: this deletes
+    from ``aud_speaker_embeddings`` alone, and the participant row itself is
+    untouched here -- callers decide separately whether ``user_id`` on it
+    should also be cleared (``forget_user_voice`` does; ``delete_voice_profile``
+    deliberately does not, since the person is still using the product and
+    still is who spoke).
+    """
+    owned_by_user = (
+        sa.select(Participant.id)
+        .where(
+            Participant.meeting_id == AudSpeakerEmbedding.meeting_id,
+            Participant.speaker_label == AudSpeakerEmbedding.speaker_label,
+            Participant.user_id == user_id,
+        )
+        .exists()
+    )
+    result = session.execute(sa.delete(AudSpeakerEmbedding).where(owned_by_user))
+    return int(getattr(result, "rowcount", 0))
+
+
 def delete_voice_profile(session: Session, *, user: User) -> int:
     """Forget this person's voice. privacy.md section 4: a user can delete
-    their own data at any time. Identification simply stops offering them."""
+    their own data at any time. Identification simply stops offering them.
+
+    Deletes both shapes of row their voice can be in: their own profile rows
+    (``user_id`` set), and any meeting observation still attributable to them
+    through a participant row they were confirmed against (see
+    ``_delete_observations_owned_by``) -- otherwise "deleted" would not be
+    true of the vector that matters most, the one still sitting in a meeting
+    somebody could re-confirm.
+    """
+    observations_removed = _delete_observations_owned_by(session, user_id=user.id)
     result = session.execute(
         sa.delete(AudSpeakerEmbedding).where(AudSpeakerEmbedding.user_id == user.id)
     )
-    removed = int(getattr(result, "rowcount", 0))
+    profiles_removed = int(getattr(result, "rowcount", 0))
+    removed = profiles_removed + observations_removed
     session.flush()
     log.info("voice_profile_deleted", rows=removed)
     return removed
@@ -891,19 +939,32 @@ def delete_voice_profile(session: Session, *, user: User) -> int:
 @on_user_deleted("audio")
 def forget_user_voice(user_id: str) -> None:
     """Leaving the product takes the voice with it -- and every trace of the
-    person as someone who *confirmed* or *attested*, even on rows that
-    belong to somebody else.
+    person as someone who *confirmed* or *attested*, and as someone who
+    *spoke*, even on rows that belong to somebody else or to a meeting.
 
-    The FK cascades (``SET NULL`` on ``confirmed_by`` and ``attested_by``,
-    ``CASCADE`` on a profile's own ``user_id``) when the ``users`` row is
-    really deleted; this hook is the path for a deletion that does not
-    remove the row itself, so it does that scrubbing by hand instead of
-    only the person's own rows. Without the second and third statements,
-    someone who left the product would still be named as who confirmed
-    another person's profile or attested a meeting's consent -- ids the
-    product no longer has anyone behind.
+    The FK cascades (``SET NULL`` on ``confirmed_by``, ``attested_by`` and
+    ``participants.user_id``, ``CASCADE`` on a profile's own ``user_id``)
+    when the ``users`` row is really deleted; this hook is the path for a
+    deletion that does not remove the row itself, so it does that scrubbing
+    by hand instead of only the person's own profile rows:
+
+    - meeting observations still attributable to them through a participant
+      row (``_delete_observations_owned_by`` -- must run *before* that
+      participant row's ``user_id`` is cleared below, since it is what finds
+      them);
+    - ``participants.user_id`` itself, or ``transcript_payload`` keeps
+      publishing a person who left the product as ``speaker_id`` to every
+      later reader and every future event;
+    - their own profile rows;
+    - ``confirmed_by`` on somebody else's profile, and ``attested_by`` on a
+      meeting's consent attestation -- ids the product no longer has anyone
+      behind.
     """
     with session_scope() as session:
+        _delete_observations_owned_by(session, user_id=user_id)
+        session.execute(
+            sa.update(Participant).where(Participant.user_id == user_id).values(user_id=None)
+        )
         session.execute(
             sa.delete(AudSpeakerEmbedding).where(AudSpeakerEmbedding.user_id == user_id)
         )

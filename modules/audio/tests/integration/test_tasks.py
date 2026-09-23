@@ -35,7 +35,7 @@ from autune_audio.quality import TranscriptCollapsedError
 from autune_audio.schemas import SAMPLE_RATE, Segment, Transcription, Turn, Waveform, Word
 from autune_contracts.events import TRANSCRIPT_READY
 from autune_contracts.transcript import TranscriptReady
-from autune_core.entities import Meeting, Utterance
+from autune_core.entities import Meeting, Participant, TeamMember, User, Utterance
 
 SPOKEN = [
     ("SPEAKER_00", 0.0, 4.0, "제 번호는 010-1234-5678입니다"),
@@ -533,6 +533,89 @@ def test_a_rerun_replaces_the_meetings_observations_rather_than_doubling_them(
     rows = db_session.scalars(sa.select(AudSpeakerEmbedding)).all()
     assert len(rows) == 2
     assert {row.speaker_label for row in rows} == {"화자 1", "화자 2"}
+
+
+def test_a_confirmed_speaker_survives_a_rerun_that_reclusters_the_voices(
+    pipeline: dict,
+    db_session: Session,
+    job: str,
+    meeting: str,
+    team: str,
+    recording: Path,
+    settings: AudioSettings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Pins **today's** behaviour, not a requirement -- #362 tracks whether
+    it should change; this test does not decide that.
+
+    ``_participants_for`` reuses a participant row by label and preserves
+    whatever ``user_id`` is already on it; ``_store_speaker_embeddings``
+    deletes and re-inserts the meeting's observations on every run
+    (``test_a_rerun_replaces_the_meetings_observations_rather_than_doubling_them``,
+    just above). A real re-upload re-diarizes from scratch, so there is no
+    guarantee ``화자 1`` is still the same voice the second time -- but a
+    confirmation made against the first run's voice survives onto the
+    second run's unconditionally, and ``transcript_payload`` keeps
+    publishing the confirmed person as that label's ``speaker_id`` no
+    matter whose voice ``화자 1`` now actually is. That is the hazard #362
+    tracks; this test only pins that it is what the code does.
+    """
+    _use_turns(monkeypatch, TWO_SPEAKERS_ENOUGH_SPEECH)
+    _attest(db_session, meeting)
+    monkeypatch.setattr(tasks, "Embedder", lambda **kwargs: _FakeEmbedder())
+
+    tasks.process_recording(job)
+
+    alice = User(email="alice@example.com", display_name="앨리스")
+    db_session.add(alice)
+    db_session.flush()
+    db_session.add(TeamMember(team_id=team, user_id=alice.id))
+    db_session.flush()
+
+    service.assign_speaker(
+        db_session,
+        meeting_id=meeting,
+        speaker_label="화자 1",
+        user_id=alice.id,
+        confirmed_by=alice,
+    )
+    db_session.flush()
+
+    first_observation = db_session.scalar(
+        sa.select(AudSpeakerEmbedding).where(
+            AudSpeakerEmbedding.meeting_id == meeting,
+            AudSpeakerEmbedding.speaker_label == "화자 1",
+        )
+    )
+    assert first_observation is not None
+    first_observation_id = first_observation.id
+
+    second_job = _job(db_session, meeting, "queued")
+    _upload(settings, second_job)
+    tasks.process_recording(second_job)
+
+    # The observation was replaced, not kept -- a new row (a fresh
+    # autoincrement id), the same as the doubling test above proves for the
+    # count. Whatever voice produced it this time, it is not necessarily the
+    # one alice was confirmed against.
+    second_observation = db_session.scalar(
+        sa.select(AudSpeakerEmbedding).where(
+            AudSpeakerEmbedding.meeting_id == meeting,
+            AudSpeakerEmbedding.speaker_label == "화자 1",
+        )
+    )
+    assert second_observation is not None
+    assert second_observation.id != first_observation_id
+
+    # The confirmation survives regardless: the participant row for "화자 1"
+    # is reused, not replaced, so it still names alice.
+    participant = db_session.scalar(
+        sa.select(Participant).where(
+            Participant.meeting_id == meeting, Participant.speaker_label == "화자 1"
+        )
+    )
+    assert participant is not None
+    assert participant.user_id == alice.id
 
 
 def test_no_attestation_means_no_vectors(
