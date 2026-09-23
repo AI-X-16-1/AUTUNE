@@ -61,7 +61,7 @@ export function TemplateRail({ comparison }: { comparison: TemplateComparison })
             }}
           >
             이 회의에서는 아직 토픽이 추출되지 않아 어떤 항목도 판정하지 않았습니다. 항목이 모두
-            &quot;다룸&quot;이 아니라, 대조가 일어나지 않은 상태입니다.
+            &quot;충족&quot;이 아니라, 대조가 일어나지 않은 상태입니다.
           </p>
         )}
       </section>
@@ -109,7 +109,7 @@ function ChecklistRow({ item }: { item: TemplateChecklistItem }) {
  *
  * Somebody pressing "해당 없음" is a judgement about the gap, not evidence that
  * the meeting covered the item — the row stays for threshold tuning (ADR 0006)
- * and promoting the item to 다룸 here would hide the input that tuning reads.
+ * and promoting the item to 충족 here would hide the input that tuning reads.
  */
 function verdict(item: TemplateChecklistItem): string {
   if (item.coverage === null) return "분석 전";

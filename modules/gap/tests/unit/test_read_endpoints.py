@@ -563,7 +563,7 @@ def test_a_meeting_nobody_chose_for_answers_with_the_default(client: TestClient)
 
 def test_the_comparison_lists_every_item_of_the_template_in_order(client: TestClient) -> None:
     """The rail is the checklist, not the findings: a covered item has no gap
-    row and still has to appear, because "다룸" is the thing it says."""
+    row and still has to appear, because "충족" is the thing it says."""
     body = client.get(f"{PREFIX}/templates/{MEETING}").json()
     keys = [entry["key"] for entry in body["items"]]
 
