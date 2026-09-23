@@ -14,12 +14,14 @@ from pathlib import Path
 from typing import NamedTuple
 
 import sqlalchemy as sa
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from autune_audio.live import registry as live_registry
 from autune_contracts.transcript import Utterance as ContractUtterance
-from autune_core import Meeting, Participant, Team, TeamMember, User, get_logger
+from autune_core import Meeting, Participant, Team, TeamMember, User, get_logger, session_scope
 from autune_core.auth import decode_token
+from autune_core.deletion import on_user_deleted
 from autune_core.errors import ConflictError, NotFoundError, PermissionDeniedError
 
 from . import identification, storage
@@ -753,3 +755,113 @@ def members_of(session: Session, *, team_id: str, reader: User) -> list[TeamMemb
         .order_by(User.display_name)
     ).all()
     return [TeamMemberSummary(user_id=user_id, name=name) for user_id, name in rows]
+
+
+def assign_speaker(
+    session: Session,
+    *,
+    meeting_id: str,
+    speaker_label: str,
+    user_id: str,
+    confirmed_by: User,
+) -> None:
+    """ "``화자 2`` is this person."
+
+    Two effects, in this order: the participant row carries the user (which is
+    what ``transcript_payload`` publishes as ``speaker_id``), and the meeting's
+    observation vector for that label becomes one of the person's profile
+    vectors.
+
+    The profile row records where it came from, and a second confirmation of
+    the same (meeting, label) **replaces** it. Without that, correcting a
+    mistake would leave the wrong voice in somebody's profile for good.
+
+    **The assignment is the product; the profile copy is a bonus.** The
+    participant write happens first and is never undone by a later failure in
+    the profile copy (see the guard around the insert below) -- a person keeps
+    the credit for confirming even if the vector never makes it into anyone's
+    profile.
+
+    No observation row is the normal case, not an edge: an unconsented meeting
+    has none, and confirming still assigns the speaker, with no profile and no
+    error.
+    """
+    meeting = session.get(Meeting, meeting_id, with_for_update=True)
+    if meeting is None:
+        raise NotFoundError("meeting", meeting_id)
+    require_team_member(session, user_id=confirmed_by.id, team_id=meeting.team_id)
+    require_team_member(session, user_id=user_id, team_id=meeting.team_id)
+
+    participant = session.scalar(
+        sa.select(Participant).where(
+            Participant.meeting_id == meeting_id,
+            Participant.speaker_label == speaker_label,
+        )
+    )
+    if participant is None:
+        raise NotFoundError("speaker", f"{meeting_id}/{speaker_label}")
+    participant.user_id = user_id
+    session.flush()
+
+    observation = session.scalar(
+        sa.select(AudSpeakerEmbedding).where(
+            AudSpeakerEmbedding.meeting_id == meeting_id,
+            AudSpeakerEmbedding.speaker_label == speaker_label,
+        )
+    )
+    learned = False
+    if observation is not None:
+        # A vector is bound biometric data; ``packages/core``'s engine does
+        # not set ``hide_parameters`` and a ``StatementError`` here would
+        # carry it (#356, fixed outside this branch). A SAVEPOINT keeps a
+        # failed copy from rolling back the assignment above, and the
+        # ``except`` never touches the error's message or parameters.
+        try:
+            with session.begin_nested():
+                session.execute(
+                    sa.delete(AudSpeakerEmbedding).where(
+                        AudSpeakerEmbedding.source_meeting_id == meeting_id,
+                        AudSpeakerEmbedding.source_speaker_label == speaker_label,
+                    )
+                )
+                session.add(
+                    AudSpeakerEmbedding(
+                        user_id=user_id,
+                        vector=list(observation.vector),
+                        model_version=observation.model_version,
+                        source_meeting_id=meeting_id,
+                        source_speaker_label=speaker_label,
+                        confirmed_by=confirmed_by.id,
+                        confirmed_at=datetime.now(tz=UTC),
+                    )
+                )
+            learned = True
+        except SQLAlchemyError as exc:
+            log.warning("speaker_profile_copy_failed", error=type(exc).__name__)
+
+    session.flush()
+    # A meeting id and a boolean -- no name, no vector.
+    log.info("speaker_assigned", meeting_id=meeting_id, learned=learned)
+
+
+def delete_voice_profile(session: Session, *, user: User) -> int:
+    """Forget this person's voice. privacy.md section 4: a user can delete
+    their own data at any time. Identification simply stops offering them."""
+    result = session.execute(
+        sa.delete(AudSpeakerEmbedding).where(AudSpeakerEmbedding.user_id == user.id)
+    )
+    removed = int(getattr(result, "rowcount", 0))
+    session.flush()
+    log.info("voice_profile_deleted", rows=removed)
+    return removed
+
+
+@on_user_deleted("audio")
+def forget_user_voice(user_id: str) -> None:
+    """Leaving the product takes the voice with it. The FK cascades when the
+    ``users`` row goes; this hook is the path for a deletion that does not
+    remove the row itself."""
+    with session_scope() as session:
+        session.execute(
+            sa.delete(AudSpeakerEmbedding).where(AudSpeakerEmbedding.user_id == user_id)
+        )

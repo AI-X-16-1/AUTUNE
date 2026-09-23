@@ -29,6 +29,7 @@ from .schemas import (
     MeetingCreate,
     MeetingDetail,
     MeetingState,
+    SpeakerAssignment,
     SpeakerEntry,
     TeamMemberSummary,
     TeamSummary,
@@ -243,3 +244,30 @@ def attest_consent(
     service.attest_consent(session, meeting_id=meeting_id, attested_by=user)
     session.commit()
     return ConsentState(meeting_id=meeting_id, attested=True)
+
+
+@router.post(
+    "/meetings/{meeting_id}/speakers/{speaker_label}", status_code=status.HTTP_204_NO_CONTENT
+)
+def assign_speaker(
+    meeting_id: str,
+    speaker_label: str,
+    body: SpeakerAssignment,
+    user: CurrentUser,
+    session: SessionDep,
+) -> None:
+    """Confirm who a speaker is. The transcript then carries their
+    ``speaker_id``, and the next meeting offers them as a candidate."""
+    service.assign_speaker(
+        session,
+        meeting_id=meeting_id,
+        speaker_label=speaker_label,
+        user_id=body.user_id,
+        confirmed_by=user,
+    )
+
+
+@router.delete("/me/voice-profile", status_code=status.HTTP_204_NO_CONTENT)
+def delete_voice_profile(user: CurrentUser, session: SessionDep) -> None:
+    """Delete every voice vector this account has confirmed."""
+    service.delete_voice_profile(session, user=user)

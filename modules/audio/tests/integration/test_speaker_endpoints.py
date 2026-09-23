@@ -8,16 +8,21 @@ profile equal to the observation scores 1.0, an orthogonal one scores 0.
 from __future__ import annotations
 
 from collections.abc import Iterator
+from contextlib import contextmanager
+from urllib.parse import quote
 
 import pytest
+import sqlalchemy as sa
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
+from autune_audio import service
 from autune_audio.models import EMBEDDING_DIM, AudSpeakerEmbedding
+from autune_audio.persistence import transcript_payload
 from autune_audio.router import router
-from autune_core import AutuneError, Participant, Team, TeamMember, User, get_session
+from autune_core import AutuneError, Participant, Team, TeamMember, User, Utterance, get_session
 from autune_core.auth import current_user
 
 MODEL_VERSION = "test/embedder"
@@ -279,3 +284,197 @@ def test_members_lists_the_team_and_only_that_team(
 
     response = app_for(outsider).get(f"/api/audio/teams/{team}/members")
     assert response.status_code == 403
+
+
+# --- POST /meetings/{id}/speakers/{label} -----------------------------------
+
+
+def _confirm(client: TestClient, meeting: str, label: str, user_id: str):
+    return client.post(
+        f"/api/audio/meetings/{meeting}/speakers/{quote(label)}", json={"user_id": user_id}
+    )
+
+
+def test_confirming_fills_the_speaker_and_copies_the_profile(
+    client: TestClient, db_session: Session, meeting: str, member: User, candidate: User
+) -> None:
+    db_session.add(Participant(meeting_id=meeting, speaker_label="화자 1"))
+    db_session.add(observation(meeting, "화자 1", axis(0)))
+    db_session.flush()
+
+    response = _confirm(client, meeting, "화자 1", candidate.id)
+
+    assert response.status_code == 204
+    participant = db_session.scalar(
+        sa.select(Participant).where(
+            Participant.meeting_id == meeting, Participant.speaker_label == "화자 1"
+        )
+    )
+    assert participant is not None
+    assert participant.user_id == candidate.id
+
+    new_profile = db_session.scalar(
+        sa.select(AudSpeakerEmbedding).where(
+            AudSpeakerEmbedding.source_meeting_id == meeting,
+            AudSpeakerEmbedding.source_speaker_label == "화자 1",
+        )
+    )
+    assert new_profile is not None
+    assert new_profile.user_id == candidate.id
+    assert new_profile.confirmed_by == member.id
+    assert new_profile.confirmed_at is not None
+
+
+def test_the_transcript_then_carries_the_speaker_id(
+    client: TestClient, db_session: Session, meeting: str, candidate: User
+) -> None:
+    participant = Participant(meeting_id=meeting, speaker_label="화자 1")
+    db_session.add(participant)
+    db_session.add(observation(meeting, "화자 1", axis(0)))
+    db_session.flush()
+    db_session.add(
+        Utterance(
+            meeting_id=meeting,
+            participant_id=participant.id,
+            speaker_label="화자 1",
+            start_sec=0.0,
+            end_sec=1.0,
+            text="안녕하세요",
+        )
+    )
+    db_session.flush()
+
+    response = _confirm(client, meeting, "화자 1", candidate.id)
+    assert response.status_code == 204
+
+    payload = transcript_payload(db_session, meeting_id=meeting)
+    [utterance] = payload.utterances
+    assert utterance.speaker_id == candidate.id
+
+
+def test_confirming_again_replaces_the_profile_from_that_source(
+    client: TestClient, db_session: Session, meeting: str, member: User, candidate: User
+) -> None:
+    db_session.add(Participant(meeting_id=meeting, speaker_label="화자 1"))
+    db_session.add(observation(meeting, "화자 1", axis(0)))
+    db_session.flush()
+
+    first = _confirm(client, meeting, "화자 1", member.id)
+    assert first.status_code == 204
+    second = _confirm(client, meeting, "화자 1", candidate.id)
+    assert second.status_code == 204
+
+    rows = list(
+        db_session.scalars(
+            sa.select(AudSpeakerEmbedding).where(
+                AudSpeakerEmbedding.source_meeting_id == meeting,
+                AudSpeakerEmbedding.source_speaker_label == "화자 1",
+            )
+        )
+    )
+    assert len(rows) == 1
+    assert rows[0].user_id == candidate.id
+
+    member_profiles = list(
+        db_session.scalars(
+            sa.select(AudSpeakerEmbedding).where(AudSpeakerEmbedding.user_id == member.id)
+        )
+    )
+    assert member_profiles == []
+
+
+def test_confirming_without_an_observation_still_assigns(
+    client: TestClient, db_session: Session, meeting: str, candidate: User
+) -> None:
+    """No consent, no observation row -- assigning still works, no profile,
+    no error (the normal case, not an edge)."""
+    db_session.add(Participant(meeting_id=meeting, speaker_label="화자 1"))
+    db_session.flush()
+
+    response = _confirm(client, meeting, "화자 1", candidate.id)
+
+    assert response.status_code == 204
+    participant = db_session.scalar(
+        sa.select(Participant).where(
+            Participant.meeting_id == meeting, Participant.speaker_label == "화자 1"
+        )
+    )
+    assert participant is not None
+    assert participant.user_id == candidate.id
+
+    profiles = list(
+        db_session.scalars(
+            sa.select(AudSpeakerEmbedding).where(AudSpeakerEmbedding.user_id == candidate.id)
+        )
+    )
+    assert profiles == []
+
+
+def test_confirming_an_unknown_label_is_404(
+    client: TestClient, db_session: Session, meeting: str, candidate: User
+) -> None:
+    response = _confirm(client, meeting, "화자 9", candidate.id)
+
+    assert response.status_code == 404
+
+
+def test_an_outsider_cannot_confirm(
+    app_for, db_session: Session, meeting: str, outsider: User, candidate: User
+) -> None:
+    db_session.add(Participant(meeting_id=meeting, speaker_label="화자 1"))
+    db_session.flush()
+
+    response = _confirm(app_for(outsider), meeting, "화자 1", candidate.id)
+
+    assert response.status_code == 403
+
+
+def test_a_user_outside_the_team_cannot_be_assigned(
+    client: TestClient, db_session: Session, meeting: str, other_team_member: User
+) -> None:
+    db_session.add(Participant(meeting_id=meeting, speaker_label="화자 1"))
+    db_session.flush()
+
+    response = _confirm(client, meeting, "화자 1", other_team_member.id)
+
+    assert response.status_code == 403
+
+
+# --- DELETE /me/voice-profile ------------------------------------------------
+
+
+def test_deleting_my_voice_profile_removes_only_mine(
+    client: TestClient, db_session: Session, member: User, candidate: User
+) -> None:
+    db_session.add(profile(member.id, axis(0)))
+    db_session.add(profile(candidate.id, axis(1)))
+    db_session.flush()
+
+    response = client.delete("/api/audio/me/voice-profile")
+
+    assert response.status_code == 204
+    remaining = list(db_session.scalars(sa.select(AudSpeakerEmbedding.user_id).distinct()))
+    assert remaining == [candidate.id]
+
+
+# --- forget_user_voice --------------------------------------------------------
+
+
+def test_the_deletion_hook_removes_a_users_profiles(
+    db_session: Session, monkeypatch: pytest.MonkeyPatch, member: User, candidate: User
+) -> None:
+    db_session.add(profile(member.id, axis(0)))
+    db_session.add(profile(candidate.id, axis(1)))
+    db_session.flush()
+
+    @contextmanager
+    def fake_session_scope() -> Iterator[Session]:
+        yield db_session
+        db_session.flush()
+
+    monkeypatch.setattr(service, "session_scope", fake_session_scope)
+
+    service.forget_user_voice(member.id)
+
+    remaining = list(db_session.scalars(sa.select(AudSpeakerEmbedding.user_id).distinct()))
+    assert remaining == [candidate.id]
