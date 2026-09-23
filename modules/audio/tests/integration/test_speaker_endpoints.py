@@ -208,6 +208,23 @@ def test_the_response_carries_no_counts_or_durations(
     assert "seconds" not in response.text
 
 
+def test_a_meeting_with_no_voice_recorded_yet_has_no_candidates(
+    client: TestClient, db_session: Session, meeting: str
+) -> None:
+    """Spec §6: no consent attestation (so the worker never wrote an
+    observation) means no candidates -- not an error. Nothing distinguishes
+    this from any other "no observation row" case at read time, and it must
+    not: a lookup that assumed `observations.get` always finds a row would
+    break exactly here."""
+    db_session.add(Participant(meeting_id=meeting, speaker_label="화자 1"))
+    db_session.flush()
+
+    [entry] = client.get(f"/api/audio/meetings/{meeting}/speakers").json()
+
+    assert entry["user_id"] is None
+    assert entry["candidate"] is None
+
+
 def test_an_outsider_cannot_read_a_meetings_speakers(
     app_for, db_session: Session, meeting: str, outsider: User
 ) -> None:
@@ -234,6 +251,7 @@ def test_members_lists_the_team_and_only_that_team(
 ) -> None:
     body = client.get(f"/api/audio/teams/{team}/members").json()
 
+    assert len(body) == 2
     assert {(row["user_id"], row["name"]) for row in body} == {
         (member.id, member.display_name),
         (candidate.id, candidate.display_name),

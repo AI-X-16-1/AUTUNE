@@ -647,8 +647,16 @@ def speakers_for(session: Session, *, meeting_id: str, reader: User) -> list[Spe
         raise NotFoundError("meeting", meeting_id)
     require_team_member(session, user_id=reader.id, team_id=meeting.team_id)
 
+    # Ordered, not left to whatever Postgres returns -- an unordered read can
+    # reorder between two requests (e.g. after a row update) and the screen
+    # renders this list in place. Not `speaker_label`: that sorts "화자 10"
+    # before "화자 2".
     participants = list(
-        session.scalars(sa.select(Participant).where(Participant.meeting_id == meeting_id))
+        session.scalars(
+            sa.select(Participant)
+            .where(Participant.meeting_id == meeting_id)
+            .order_by(Participant.id)
+        )
     )
     observations = {
         row.speaker_label: row
