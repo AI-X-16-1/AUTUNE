@@ -8,6 +8,7 @@ Never imports another module.
 
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import NamedTuple
@@ -26,6 +27,7 @@ from .config import AudioSettings, get_settings
 from .models import AudConsentAttestation, AudSpeakerEmbedding, TranscriptionJob
 from .persistence import transcript_payload
 from .schemas import SpeakerCandidate, SpeakerEntry, TeamMemberSummary
+from .speakers import UNIDENTIFIED
 
 log = get_logger(__name__)
 
@@ -647,10 +649,10 @@ def speakers_for(session: Session, *, meeting_id: str, reader: User) -> list[Spe
         raise NotFoundError("meeting", meeting_id)
     require_team_member(session, user_id=reader.id, team_id=meeting.team_id)
 
-    # Ordered, not left to whatever Postgres returns -- an unordered read can
-    # reorder between two requests (e.g. after a row update) and the screen
-    # renders this list in place. Not `speaker_label`: that sorts "화자 10"
-    # before "화자 2".
+    # `Participant.id` is a random id (`new_id`), not a sortable one -- this
+    # only makes the read deterministic between two requests (e.g. after a
+    # row update), not correctly ordered. The real order is sorted in below,
+    # from the number in the label.
     participants = list(
         session.scalars(
             sa.select(Participant)
@@ -690,7 +692,30 @@ def speakers_for(session: Session, *, meeting_id: str, reader: User) -> list[Spe
                 candidate=candidate,
             )
         )
+    entries.sort(key=_speaker_order)
     return entries
+
+
+_LABEL_NUMBER = re.compile(rf"^{re.escape(UNIDENTIFIED)} (\d+)$")
+"""``speakers.rename_speakers`` and the live path both number a label this
+way, by first appearance in time -- so the number *is* the ordering the
+screen wants, and reading it back is cheaper than tracking appearance order
+anywhere else."""
+
+
+def _speaker_order(entry: SpeakerEntry) -> tuple[int, int]:
+    """Sort key for ``speakers_for``: the integer in "화자 N", ascending.
+
+    A label that does not match the shape (a future form, a bug upstream)
+    sorts after every numbered one rather than raising -- ``(1, 0)`` for all
+    of them, so Python's stable sort leaves them in the order the query
+    already gave (``Participant.id``, an arbitrary but deterministic
+    tiebreak) instead of reordering or crashing the read.
+    """
+    match = _LABEL_NUMBER.match(entry.speaker_label)
+    if match is None:
+        return (1, 0)
+    return (0, int(match.group(1)))
 
 
 def _profiles_of_team(session: Session, *, team_id: str) -> list[identification.Profile]:

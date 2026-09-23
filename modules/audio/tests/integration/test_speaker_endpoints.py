@@ -225,6 +225,25 @@ def test_a_meeting_with_no_voice_recorded_yet_has_no_candidates(
     assert entry["candidate"] is None
 
 
+def test_ten_speakers_come_back_numbered_not_lexically_sorted(
+    client: TestClient, db_session: Session, meeting: str
+) -> None:
+    """The case that catches a later "simplification" to a string sort: with
+    ten speakers, `speaker_label` alone would put "화자 10" right after "화자
+    1" and before "화자 2". Inserted out of order too, so the response cannot
+    be passing by accident of insertion order (`Participant.id` is random and
+    is only a tiebreak, never the ordering)."""
+    labels = [f"화자 {n}" for n in range(1, 11)]
+    insertion_order = [3, 1, 10, 7, 2, 9, 4, 8, 5, 6]
+    for n in insertion_order:
+        db_session.add(Participant(meeting_id=meeting, speaker_label=f"화자 {n}"))
+    db_session.flush()
+
+    body = client.get(f"/api/audio/meetings/{meeting}/speakers").json()
+
+    assert [entry["speaker_label"] for entry in body] == labels
+
+
 def test_an_outsider_cannot_read_a_meetings_speakers(
     app_for, db_session: Session, meeting: str, outsider: User
 ) -> None:
