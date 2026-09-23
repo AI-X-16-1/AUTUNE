@@ -41,6 +41,15 @@ def item(key: str = "success_criteria", weight: float = 0.9, **kwargs: object) -
     )
 
 
+SILENT: tuple[str, ...] = ()
+"""A meeting where nothing was said, for the tests that are about the graph.
+
+Written out at every call rather than defaulted in ``compare``: "no speech" is
+a claim about a meeting, and an argument that fills itself in is one a caller
+forgets to pass and then reads a coverage state computed from half the evidence.
+"""
+
+
 def one_item_template(*items: TemplateItem) -> Template:
     return Template(key="test", name="테스트", version="test.1", items=items)
 
@@ -60,7 +69,7 @@ def topic(
 
 
 def test_a_central_matched_topic_raises_nothing(thresholds: detect.Thresholds) -> None:
-    findings = detect.compare(one_item_template(item()), [topic()], thresholds)
+    findings = detect.compare(one_item_template(item()), [topic()], SILENT, thresholds)
 
     assert findings == []
 
@@ -69,6 +78,7 @@ def test_nothing_matching_is_missing(thresholds: detect.Thresholds) -> None:
     findings = detect.compare(
         one_item_template(item()),
         [topic(label="콜드스타트")],
+        SILENT,
         thresholds,
     )
 
@@ -80,7 +90,9 @@ def test_a_matched_topic_on_the_edge_of_the_graph_is_partial(
 ) -> None:
     """The meeting named it without settling it. A weaker claim than never
     having come up, and scored as one."""
-    findings = detect.compare(one_item_template(item()), [topic(centrality=0.1)], thresholds)
+    findings = detect.compare(
+        one_item_template(item()), [topic(centrality=0.1)], SILENT, thresholds
+    )
 
     assert [finding.coverage for finding in findings] == [detect.Coverage.PARTIAL]
 
@@ -122,8 +134,8 @@ def test_no_rule_reads_which_job_roles_spoke(thresholds: detect.Thresholds) -> N
     """
     everybody_silent = [topic(silent_share=1.0)]
 
-    assert detect.compare(one_item_template(item()), everybody_silent, thresholds) == []
-    assert detect.classify(everybody_silent, thresholds) is detect.Coverage.COVERED
+    assert detect.compare(one_item_template(item()), everybody_silent, SILENT, thresholds) == []
+    assert detect.classify(everybody_silent, False, thresholds) is detect.Coverage.COVERED
 
 
 # --- scoring ----------------------------------------------------------------
@@ -213,7 +225,9 @@ def test_an_empty_graph_raises_no_gaps(thresholds: detect.Thresholds) -> None:
     """Every item would be missing, and the report would be a whole checklist
     about a meeting the pipeline failed to read. Extraction finding nothing is
     not the meeting having discussed nothing."""
-    findings = detect.compare(one_item_template(item(), item(key="ownership")), [], thresholds)
+    findings = detect.compare(
+        one_item_template(item(), item(key="ownership")), [], SILENT, thresholds
+    )
 
     assert findings == []
 
@@ -229,7 +243,7 @@ def test_findings_come_riskiest_first_and_ties_hold_template_order(
         item(key="second", weight=0.6, keywords=("없는말",)),
     )
 
-    findings = detect.compare(template_with_ties, [topic(label="콜드스타트")], thresholds)
+    findings = detect.compare(template_with_ties, [topic(label="콜드스타트")], SILENT, thresholds)
 
     assert [finding.item_key for finding in findings] == ["heaviest", "first", "second"]
 
@@ -241,6 +255,7 @@ def test_a_finding_carries_the_topics_it_was_inferred_from(
     findings = detect.compare(
         one_item_template(item(keywords=("지표",))),
         [topic("topic_a", "핵심 지표", centrality=0.1)],
+        SILENT,
         thresholds,
     )
 
@@ -253,8 +268,12 @@ def test_a_finding_carries_the_item_question_and_its_display_name(
     """S20 shows both, and ``gap_gaps`` stores both. The title is composed from
     the coverage state, so a partial gap and a missing one do not claim the same
     thing about the meeting."""
-    missing = detect.compare(one_item_template(item()), [topic(label="콜드스타트")], thresholds)[0]
-    partial = detect.compare(one_item_template(item()), [topic(centrality=0.1)], thresholds)[0]
+    missing = detect.compare(
+        one_item_template(item()), [topic(label="콜드스타트")], SILENT, thresholds
+    )[0]
+    partial = detect.compare(
+        one_item_template(item()), [topic(centrality=0.1)], SILENT, thresholds
+    )[0]
 
     assert missing.template_item == "성공 기준·측정 지표"
     assert missing.question == "무엇으로 측정합니까?"
@@ -273,7 +292,7 @@ def test_a_partial_gap_names_the_topic_it_was_inferred_from(
     knows which "일" it meant."""
     matched_but_thin = [topic(label="성공 기준", centrality=0.1)]
 
-    findings = detect.compare(one_item_template(item()), matched_but_thin, thresholds)
+    findings = detect.compare(one_item_template(item()), matched_but_thin, SILENT, thresholds)
 
     assert findings[0].coverage is detect.Coverage.PARTIAL
     assert findings[0].question.startswith("성공 기준의")
@@ -284,7 +303,9 @@ def test_a_missing_gap_keeps_the_generic_question(thresholds: detect.Thresholds)
     instead would be a guess — with extraction where it is, as likely to be
     "다음 주" as the thing the meeting was about. Same rule as `score`: what was
     not measured is not substituted for."""
-    findings = detect.compare(one_item_template(item()), [topic(label="콜드스타트")], thresholds)
+    findings = detect.compare(
+        one_item_template(item()), [topic(label="콜드스타트")], SILENT, thresholds
+    )
 
     assert findings[0].coverage is detect.Coverage.MISSING
     assert findings[0].question == "무엇으로 측정합니까?"
@@ -299,6 +320,7 @@ def test_the_topic_named_is_the_one_the_score_was_based_on(
     findings = detect.compare(
         one_item_template(item(keywords=("지표",))),
         [topic("topic_a", "보조 지표", centrality=0.1), topic("topic_b", "핵심 지표", 0.2)],
+        SILENT,
         thresholds,
     )
 
@@ -314,3 +336,119 @@ def test_question_for_is_callable_on_its_own(thresholds: detect.Thresholds) -> N
         detect.question_for(item(), [topic(label="캐시")])
         == "캐시의 성공 기준은 무엇으로 측정합니까?"
     )
+
+
+# --- what the meeting said, where the graph found nothing -------------------
+
+
+def test_a_keyword_nobody_said_is_still_missing(thresholds: detect.Thresholds) -> None:
+    findings = detect.compare(
+        one_item_template(item(keywords=("지표",))),
+        [topic(label="콜드스타트")],
+        ["오늘은 배포 얘기만 하겠습니다"],
+        thresholds,
+    )
+
+    assert findings[0].coverage is detect.Coverage.MISSING
+
+
+def test_a_keyword_said_out_loud_is_partial_rather_than_missing(
+    thresholds: detect.Thresholds,
+) -> None:
+    """The failure this fixes. A meeting settles an owner and a deadline in
+    words no extractor turned into a topic; the item came back ``missing`` and
+    put a full-weight gap on the screen about something the meeting did."""
+    findings = detect.compare(
+        one_item_template(item(keywords=("지표",))),
+        [topic(label="콜드스타트")],
+        ["핵심 지표는 클릭률로 보겠습니다"],
+        thresholds,
+    )
+
+    assert findings[0].coverage is detect.Coverage.PARTIAL
+    assert findings[0].topic_ids == ()
+
+
+def test_speech_alone_never_covers_an_item(thresholds: detect.Thresholds) -> None:
+    """A word in a sentence is not a settled item. Promoting it to covered would
+    let one passing "다음에 얘기해요" close a gap the meeting never closed, and a
+    covered item raises nothing at all."""
+    findings = detect.compare(
+        one_item_template(item(keywords=("지표",))),
+        [topic(label="콜드스타트")],
+        ["지표 얘기는 다음에 하죠"],
+        thresholds,
+    )
+
+    assert findings != []
+    assert findings[0].coverage is detect.Coverage.PARTIAL
+
+
+def test_a_spoken_item_scores_below_the_same_item_missing(
+    thresholds: detect.Thresholds,
+) -> None:
+    """Precision, in a number. The same item is a weaker claim when the meeting
+    did raise it, so it is damped and lands in a lower band."""
+    said = detect.compare(
+        one_item_template(item(keywords=("지표",))),
+        [topic(label="콜드스타트")],
+        ["핵심 지표는 클릭률로 보겠습니다"],
+        thresholds,
+    )[0]
+    silent = detect.compare(
+        one_item_template(item(keywords=("지표",))),
+        [topic(label="콜드스타트")],
+        SILENT,
+        thresholds,
+    )[0]
+
+    assert said.risk_score < silent.risk_score
+    assert silent.severity == "high"
+    assert said.severity != "high"
+
+
+def test_a_topic_match_outranks_what_was_merely_said(thresholds: detect.Thresholds) -> None:
+    """Both sources agree the item came up; the graph is the one with a
+    centrality to read, so it decides."""
+    findings = detect.compare(
+        one_item_template(item(keywords=("지표",))),
+        [topic(label="핵심 지표", centrality=1.0)],
+        ["핵심 지표는 클릭률로 보겠습니다"],
+        thresholds,
+    )
+
+    assert findings == []
+
+
+def test_speech_is_matched_case_insensitively(thresholds: detect.Thresholds) -> None:
+    """``KPI`` in a template file and ``kpi`` in a transcript are one word;
+    keywords are casefolded at load and the speech is casefolded here."""
+    findings = detect.compare(
+        one_item_template(item(keywords=("kpi",))),
+        [topic(label="콜드스타트")],
+        ["이번 분기 KPI는 그대로 갑니다"],
+        thresholds,
+    )
+
+    assert findings[0].coverage is detect.Coverage.PARTIAL
+
+
+def test_an_empty_graph_still_raises_nothing_however_much_was_said(
+    thresholds: detect.Thresholds,
+) -> None:
+    """An empty graph says extraction found nothing. Keyword hits over a
+    transcript nothing was extracted from are a worse guess, not a better one."""
+    assert (
+        detect.compare(
+            one_item_template(item(keywords=("지표",))),
+            [],
+            ["핵심 지표는 클릭률로 보겠습니다"],
+            thresholds,
+        )
+        == []
+    )
+
+
+def test_mentioned_reads_the_items_own_keywords() -> None:
+    assert detect.mentioned(item(keywords=("지표",)), ["핵심 지표는 클릭률"])
+    assert not detect.mentioned(item(keywords=("지표",)), ["핵심 목표는 클릭률"])

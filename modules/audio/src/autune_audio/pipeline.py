@@ -26,22 +26,40 @@ from .schemas import Segment, Transcription, Waveform, Word
 log = get_logger(__name__)
 
 
-@lru_cache(maxsize=1)
-def _model() -> WhisperModel:
-    """The transcription model, loaded once per process.
+@lru_cache(maxsize=4)
+def _model_for(name: str, cpu_threads: int) -> WhisperModel:
+    """One loaded model per (name, threads), for the life of the process.
 
-    ``compute_type`` follows the device: int8 is what makes CPU inference reach
-    the 1.5x-realtime target, and float16 is the sane default on a GPU.
+    The stored path and the live path use different models; two keys, two
+    instances, each built once. ``compute_type`` follows the device: int8 is
+    what makes CPU inference reach the 1.5x-realtime target, and float16 is
+    the sane default on a GPU.
     """
     settings = get_settings()
     compute_type = "float16" if settings.device == "cuda" else "int8"
-    log.info("whisper_loading", model=settings.whisper_model, device=settings.device)
+    log.info("whisper_loading", model=name, device=settings.device, cpu_threads=cpu_threads)
     return WhisperModel(
-        settings.whisper_model,
+        name,
         device=settings.device,
         compute_type=compute_type,
+        cpu_threads=cpu_threads,
         download_root=settings.model_cache or None,
     )
+
+
+def _model() -> WhisperModel:
+    """The stored path's model."""
+    return _model_for(get_settings().whisper_model, 0)
+
+
+def _live_model() -> WhisperModel:
+    settings = get_settings()
+    return _model_for(settings.live_whisper_model, settings.live_cpu_threads)
+
+
+def warm_up_live() -> None:
+    """Load the live model before the browser is told the channel is ready."""
+    _live_model()
 
 
 def _glossary_kwargs(glossary: str, mode: str) -> dict[str, str]:
@@ -77,7 +95,8 @@ def _glossary_kwargs(glossary: str, mode: str) -> dict[str, str]:
 
     The CER cost of ``hotwords`` is 0.013, against nearly tripling term
     accuracy. That trade is the one this module exists to make: a wrong particle
-    costs readability, a wrong entity name costs the action item attached to it.
+    costs readability, a wrong entity name costs the reader and module D's
+    lexical link to the last meeting about it (evaluation 01, section 3.1).
 
     ``AUTUNE_AUDIO_GLOSSARY_MODE`` keeps the comparison runnable on a new model
     without a code change. See issue #118.
@@ -92,7 +111,13 @@ def _glossary_kwargs(glossary: str, mode: str) -> dict[str, str]:
 
 
 def _decode(
-    waveform: Waveform, *, language: str | None, settings: AudioSettings, **bias: Any
+    waveform: Waveform,
+    *,
+    language: str | None,
+    settings: AudioSettings,
+    model: WhisperModel | None = None,
+    beam_size: int | None = None,
+    **bias: Any,
 ) -> Transcription:
     """One pass over the waveform. ``bias`` is whatever steers the decoder.
 
@@ -100,13 +125,16 @@ def _decode(
     ``bias`` — today ``condition_on_previous_text``, and the meeting glossary
     when #119 lands. The fallback pass calls this with none of it, so a new kind
     of bias is dropped on retry without anyone remembering to drop it.
+
+    ``model`` and ``beam_size`` default to the stored path's; the live path
+    passes its own.
     """
-    segments_iter, info = _model().transcribe(
+    segments_iter, info = (model or _model()).transcribe(
         waveform.samples,
         language=language,
         word_timestamps=True,
         vad_filter=True,
-        beam_size=settings.beam_size,
+        beam_size=beam_size if beam_size is not None else settings.beam_size,
         **bias,
     )
     segments = tuple(
@@ -166,6 +194,8 @@ def transcribe(
         waveform,
         language=language,
         settings=settings,
+        model=None,
+        beam_size=None,
         **_glossary_kwargs(glossary, settings.glossary_mode),
     )
     repetition = detect_repetition(transcription)
@@ -219,3 +249,33 @@ def transcribe_file(
     docs/architecture/privacy.md section 1.
     """
     return transcribe(decode(path), language=language, glossary=glossary)
+
+
+def transcribe_live(
+    waveform: Waveform, *, language: str | None = "ko", glossary: str = ""
+) -> Transcription:
+    """One utterance for the live channel: the live model, the live beam.
+
+    No repetition retry: a live segment is at most thirty seconds, a
+    collapse inside it costs one row, and the stored path remakes every row
+    after the upload. ``transcribe`` above is the one with the second pass.
+    The same counts-only log line is written, tagged ``attempt="live"``, so
+    a collapse on the live path is still visible in the log.
+    """
+    settings = get_settings()
+    transcription = _decode(
+        waveform,
+        language=language,
+        settings=settings,
+        model=_live_model(),
+        beam_size=settings.live_beam_size,
+        **_glossary_kwargs(glossary, settings.glossary_mode),
+    )
+    log_live_transcription(transcription)
+    return transcription
+
+
+def log_live_transcription(transcription: Transcription) -> None:
+    """The counts-only line every live engine writes, so a collapse on the
+    live path is visible whichever engine produced it."""
+    _log_transcription(transcription, detect_repetition(transcription), attempt="live")

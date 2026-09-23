@@ -12,6 +12,7 @@ import pytest
 from autune_gap.graph import (
     CO_OCCURS,
     LABEL_MAX,
+    MASK_CHAR,
     RELATION_WEIGHT,
     Topic,
     build_edges,
@@ -23,6 +24,7 @@ from autune_gap.graph import (
     topic_key,
 )
 from autune_gap.pipeline import Entity, Relation
+from autune_integrations import privacy
 
 
 def entity(text: str, utterance_id: str, label: str = "feature") -> Entity:
@@ -106,6 +108,15 @@ def test_what_is_left_of_masked_data_is_not_a_topic() -> None:
     topics = build_topics([entity("010-****-5678", "utt_1", "metric")], ["utt_1"])
 
     assert topics == []
+
+
+def test_the_mask_this_refuses_is_the_one_the_masker_writes() -> None:
+    """The check is only as good as the character it looks for, and module A
+    decides that character. Spelled out here rather than imported and forgotten:
+    if the notation ever changes, this fails instead of the guard quietly
+    matching nothing. #250."""
+    assert MASK_CHAR is privacy.MASK_CHAR
+    assert build_topics([entity(f"010-{MASK_CHAR * 4}-5678", "utt_1", "metric")], ["utt_1"]) == []
 
 
 def test_a_meeting_with_nothing_named_has_no_topics() -> None:

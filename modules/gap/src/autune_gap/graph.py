@@ -19,10 +19,13 @@ from itertools import combinations
 import networkx as nx
 
 from autune_gap.pipeline import Entity, Relation
+from autune_integrations.privacy import MASK_CHAR
 
-MASK_CHAR = "*"
-"""What module A's masking leaves behind: ``010-****-5678``, ``k***@example.com``
-(privacy.md section 2)."""
+# ``MASK_CHAR`` is what module A's masking leaves behind: ``010-****-5678``,
+# ``k***@example.com`` (privacy.md section 2). Imported rather than written out
+# here — module A masks with the patterns in ``autune_integrations.privacy``,
+# and a second copy of the character in this module is a guard that stops
+# matching the day the notation changes, and says nothing when it does. #250.
 
 LABEL_MAX = 400
 """``gap_topics.label`` is ``String(400)``."""

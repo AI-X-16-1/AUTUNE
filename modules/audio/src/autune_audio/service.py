@@ -15,8 +15,10 @@ from typing import NamedTuple
 import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
+from autune_audio.live import registry as live_registry
 from autune_contracts.transcript import Utterance as ContractUtterance
 from autune_core import Meeting, Participant, Team, TeamMember, User, get_logger
+from autune_core.auth import decode_token
 from autune_core.errors import ConflictError, NotFoundError, PermissionDeniedError
 
 from . import storage
@@ -25,6 +27,16 @@ from .models import AudConsentAttestation, TranscriptionJob
 from .persistence import transcript_payload
 
 log = get_logger(__name__)
+
+
+class NotATeamMemberError(PermissionDeniedError):
+    """A real user who is not on this team.
+
+    A subclass so every HTTP route keeps answering 403 exactly as before,
+    while the live socket -- which cannot answer with a status -- can tell
+    this apart from a token that never resolved to anyone and close with
+    its own code.
+    """
 
 
 def require_team_member(session: Session, *, user_id: str, team_id: str) -> None:
@@ -39,7 +51,7 @@ def require_team_member(session: Session, *, user_id: str, team_id: str) -> None
         sa.select(TeamMember.id).where(TeamMember.team_id == team_id, TeamMember.user_id == user_id)
     )
     if member is None:
-        raise PermissionDeniedError("you are not a member of this team")
+        raise NotATeamMemberError("you are not a member of this team")
 
 
 def transcript_for_meeting(
@@ -111,13 +123,14 @@ def teams_for(session: Session, *, member: User) -> list[Team]:
     )
 
 
-_ACCEPTS_A_RECORDING = frozenset({"scheduled", "failed"})
+_ACCEPTS_A_RECORDING = frozenset({"scheduled", "failed", "recording"})
 """Meeting statuses a recording may be submitted for.
 
-The other five are refusals with different reasons: ``recording`` and
-``analyzing`` already have a run in flight, and ``awaiting_confirmation``,
-``complete`` and ``delivered`` have a transcript four modules have already been
-told about.
+``recording`` because the live channel leaves a meeting there and the upload
+at stop is what moves it on (audio-live-transcription.md, section 3.4). The
+other four are refusals with different reasons: ``analyzing`` already has a
+run in flight, and ``awaiting_confirmation``, ``complete`` and ``delivered``
+have a transcript four modules have already been told about.
 """
 
 
@@ -217,6 +230,15 @@ def start_transcription(session: Session, *, meeting_id: str, uploader: User) ->
         raise ConflictError(
             f"meeting {meeting_id} is {meeting.status}; a recording can only be "
             f"submitted for a meeting that is {' or '.join(sorted(_ACCEPTS_A_RECORDING))}"
+        )
+
+    if meeting.status == "recording" and live_registry.is_open(meeting_id):
+        # The browser that owns the live session uploads after ``ended``,
+        # when the claim is already gone. Anyone else uploading now would
+        # flip the meeting to analyzing under a socket that is still
+        # streaming, and the real recording would be refused when it comes.
+        raise ConflictError(
+            f"meeting {meeting_id} has a live session open; stop it before uploading"
         )
 
     now = datetime.now(tz=UTC)
@@ -555,3 +577,56 @@ def attest_consent(session: Session, *, meeting_id: str, attested_by: User) -> N
         attested_by=attested_by.id,
         participants_updated=updated,
     )
+
+
+def authenticate_live(session: Session, *, token: str, meeting_id: str) -> User:
+    """Who is on the other end of a live socket, and may they be.
+
+    A WebSocket handler cannot take ``CurrentUser`` as a dependency, so the
+    same two checks the HTTP routes make -- decode the token, confirm the
+    membership -- are one function here, and the socket and the routes cannot
+    come to different conclusions about the same token.
+
+    One deliberate divergence from ``current_user``: a well-signed token whose
+    user row is gone raises ``PermissionDeniedError`` here, not
+    ``NotFoundError``. The socket maps ``NotFoundError`` to a close code
+    meaning "no such meeting", and a deleted user must not be reported as that.
+    """
+    user_id = decode_token(token).get("sub")
+    if not user_id:
+        raise PermissionDeniedError("token carries no subject")
+    user = session.get(User, user_id)
+    if user is None:
+        raise PermissionDeniedError("token names nobody")
+    meeting = session.get(Meeting, meeting_id)
+    if meeting is None:
+        raise NotFoundError("meeting", meeting_id)
+    require_team_member(session, user_id=user.id, team_id=meeting.team_id)
+    return user
+
+
+_ACCEPTS_A_LIVE_SESSION = frozenset({"scheduled", "recording"})
+
+
+def begin_live(session: Session, *, meeting_id: str) -> None:
+    """Mark the meeting as being recorded.
+
+    ``recording`` is accepted as well as ``scheduled`` because a socket that
+    drops leaves the meeting there, and the browser -- which still holds the
+    recording -- must be able to reconnect. It stays ``recording`` after
+    ``stop`` for the same reason: the upload that follows is what moves it on.
+    """
+    # Locked for the read, same as ``start_transcription``: a hello and an
+    # upload racing the same meeting must not both read a status that lets
+    # them both through.
+    meeting = session.get(Meeting, meeting_id, with_for_update=True)
+    if meeting is None:
+        raise NotFoundError("meeting", meeting_id)
+    if meeting.status not in _ACCEPTS_A_LIVE_SESSION:
+        raise ConflictError(
+            f"meeting {meeting_id} is {meeting.status}; a live session needs a meeting "
+            f"that is {' or '.join(sorted(_ACCEPTS_A_LIVE_SESSION))}"
+        )
+    meeting.status = "recording"
+    session.flush()
+    log.info("live_meeting_recording", meeting_id=meeting_id)

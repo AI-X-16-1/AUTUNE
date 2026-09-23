@@ -41,7 +41,14 @@ from autune_gap.models import (
     GapTopicUtterance,
 )
 from autune_gap.pipeline import get_entity_extractor, get_relation_extractor
-from autune_gap.schemas import TemplateRead, TopicEdgeRead, TopicGraphRead, TopicNodeRead
+from autune_gap.schemas import (
+    TemplateComparison,
+    TemplateItemRead,
+    TemplateRead,
+    TopicEdgeRead,
+    TopicGraphRead,
+    TopicNodeRead,
+)
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -49,6 +56,11 @@ if TYPE_CHECKING:
     from autune_contracts import TranscriptReady
 
 log = get_logger(__name__)
+
+COVERED = detect.Coverage.COVERED.value
+"""What the rail reports for an item no gap was raised against. It is never
+stored — ``gap_gaps.coverage`` holds only the two states that raise a gap — so
+the covered state is the absence of a row, read back out here."""
 
 
 def require_readable_meeting(session: Session, meeting_id: str, reader: User) -> None:
@@ -272,7 +284,8 @@ def detect_gaps(meeting_id: str) -> int:
 
         chosen = template.get_template(selected_template_key(session, meeting_id))
         topics = _topic_views(session, meeting_id)
-        findings = detect.compare(chosen, topics, _thresholds(settings))
+        speech = _speech(session, meeting_id)
+        findings = detect.compare(chosen, topics, speech, _thresholds(settings))
         _store_gaps(session, meeting_id, chosen, findings)
 
     # Counts and keys only. A gap title is composed from a template file and a
@@ -348,6 +361,67 @@ def available_templates() -> list[TemplateRead]:
     ]
 
 
+def template_comparison(session: Session, meeting_id: str) -> TemplateComparison:
+    """The checklist this meeting is held to, item by item, for the S20 rail.
+
+    **Read from the stored rows, not recomputed.** Every item the meeting left
+    unsettled has a ``gap_gaps`` row carrying the coverage it was classified as
+    when the pipeline ran; an item with no row was covered. Re-running
+    ``detect.classify`` here instead would let the rail and the gap list beside
+    it disagree the moment a threshold moved, and the gap rows are what E was
+    published and what a dismissal was made against.
+
+    **An unanalysed meeting reports no coverage at all.** ``detect.compare``
+    returns nothing for a meeting with no topics on purpose — an empty graph
+    says extraction found nothing, not that the meeting discussed nothing — so
+    reading "no gap row" as "covered" would turn a meeting nobody has processed
+    into a full checklist of green dots. ``analysed`` is false and every item's
+    coverage is null, and the screen says so in its own words.
+
+    A dismissed gap keeps its coverage and is marked ``dismissed``. Somebody
+    calling a gap a false positive is a judgement about the gap, not evidence
+    that the meeting covered the item, and the row is what threshold tuning
+    reads (ADR 0006).
+    """
+    chosen = template.get_template(selected_template_key(session, meeting_id))
+
+    analysed = (
+        session.scalar(
+            select(func.count()).select_from(GapTopic).where(GapTopic.meeting_id == meeting_id)
+        )
+        or 0
+    ) > 0
+
+    raised = {
+        row.template_item_key: row
+        for row in session.scalars(
+            select(GapGap).where(GapGap.meeting_id == meeting_id, GapGap.template_key == chosen.key)
+        )
+    }
+
+    items = []
+    for item in chosen.items:
+        gap = raised.get(item.key)
+        items.append(
+            TemplateItemRead(
+                key=item.key,
+                category=item.category,
+                item=item.item,
+                coverage=None if not analysed else (gap.coverage if gap else COVERED),
+                gap_id=gap.id if gap else None,
+                dismissed=gap is not None and gap.dismissed_at is not None,
+            )
+        )
+
+    return TemplateComparison(
+        template_key=chosen.key,
+        name=chosen.name,
+        version=chosen.version,
+        analysed=analysed,
+        items=items,
+    )
+
+
 def _thresholds(settings: GapSettings) -> detect.Thresholds:
     """``config`` values as the shape ``detect`` takes.
 
@@ -394,6 +468,35 @@ def _topic_views(session: Session, meeting_id: str) -> list[detect.TopicView]:
     return views
 
 
+def _speech(session: Session, meeting_id: str) -> list[str]:
+    """What the consenting room said, one string per utterance.
+
+    The second evidence source ``detect.compare`` reads. Text rather than ids:
+    comparison asks whether a word was said, and nothing it produces points back
+    at an utterance — ``gap_related_topics`` links a gap to topics, which is the
+    evidence a reader can follow on screen.
+
+    **Consent is filtered here the same way ``build_topic_graph`` filters it.**
+    An utterance whose speaker did not consent, or has no participant row behind
+    it at all, is not analysed (docs/architecture/privacy.md section 5); unknown
+    consent is not consent. Reading the meeting's ``utterances`` rows without the
+    join would quietly re-admit exactly the speech the graph was built to leave
+    out, and a gap would then rest on a person who declined.
+
+    The text is already masked — module A masks before it writes and there is no
+    unmasked form to reach. Nothing read here is stored or logged: it decides a
+    coverage state and is dropped.
+    """
+    return list(
+        session.scalars(
+            select(Utterance.text)
+            .join(Participant, Participant.id == Utterance.participant_id)
+            .where(Utterance.meeting_id == meeting_id, Participant.consented.is_(True))
+            .order_by(Utterance.start_sec, Utterance.id)
+        )
+    )
+
+
 def _store_gaps(
     session: Session,
     meeting_id: str,
@@ -436,6 +539,7 @@ def _store_gaps(
         gap.template_item = finding.template_item
         gap.template_version = chosen.version
         gap.suggested_question = finding.question
+        gap.coverage = finding.coverage.value
         session.flush()
 
         session.execute(delete(GapRelatedTopic).where(GapRelatedTopic.gap_id == gap.id))

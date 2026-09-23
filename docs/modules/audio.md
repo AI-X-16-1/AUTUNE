@@ -48,7 +48,7 @@ real, so A ships first (roadmap W2).
 2. **VAD** — silero-vad removes silence and segments speech.
 3. **STT** — Whisper transcribes with timestamps. whisper.cpp on CPU when no GPU
    is available.
-4. **Diarization** — Pyannote separates speakers into `Speaker 1`, `Speaker 2`, …
+4. **Diarization** — Pyannote separates speakers into `화자 1`, `화자 2`, …
 5. **Speaker identification** — speaker embeddings matched against enrolled
    voices in `aud_speaker_embeddings`; unmatched speakers keep the label and a
    null `speaker_id`.
@@ -84,8 +84,37 @@ Plus the shared entities in `packages/core`, which A writes.
 | GET | `/jobs/{job_id}` | Job status and progress (planned) |
 | GET | `/transcripts/{meeting_id}` | Full transcript, masked, for a member of the meeting's team |
 | POST | `/meetings/{meeting_id}/consent` | A member attests that everyone in the recording consented (#190) |
+| WS | `/live/{meeting_id}` | Live transcription: one masked row per utterance, a speaker cluster label (`화자 N`), no person, nothing stored — `audio-live-transcription.md` |
 | PATCH | `/utterances/{id}` | Correct speaker or text |
 | POST | `/speakers/enroll` | Enroll a voice for identification |
+
+### Live transcription runs in the API process
+
+One `Transcriber` lock per process (`live/transcriber.py`). Two meetings live
+at once share it, and once their combined load exceeds real time the delay
+grows for the rest of the meeting rather than doubling — nothing is dropped,
+so every row is late by everything queued before it. An MVP limit: the
+condition for moving transcription to a worker is concurrent meetings
+actually happening and #258 resolved, and the move is that one class.
+`live/registry.py`, the one-session-per-meeting claim, is a dict in that
+process. The route takes it once the hello's transaction has committed and
+releases it before `ended`; `service.start_transcription` refuses an upload
+(409) while it is held. The API runs with **one uvicorn worker**
+(`environments.md`): a second worker would let a second session onto the
+same meeting, and would accept an upload the first worker's claim should
+have refused.
+
+Live rows are masked one at a time, so a number read with a pause in it
+reaches the screen unmasked across two rows; the stored transcript is the
+masked final form (design §3.5).
+
+Every live row carries a speaker cluster label, `화자 N`: one embedding per
+utterance from the diarizer's own embedding model, nearest-centroid
+clustering in the session, a number that never changes once shown, and a
+cap from the same head-count hint the stored path gives pyannote. Nothing is
+stored; a session whose embedder fails shows `?` and goes on. The stored
+path uses the same `화자 N` text, numbered by who spoke first. Design and
+threshold evaluation: `audio-live-speakers.md`.
 
 ### Consent, until there is a per-person consent flow
 
@@ -129,13 +158,17 @@ life.
 | From | To | When |
 | --- | --- | --- |
 | — | `scheduled` | `POST /meetings` |
+| `scheduled`, `recording` | `recording` | a live socket's `hello` (`service.begin_live`) |
 | `scheduled`, `failed` | `analyzing` | a recording is accepted and queued |
+| `recording` | `analyzing` | the browser's upload after `stop`; refused 409 while this process still holds the meeting's live claim |
 | `analyzing` | `complete` | `process_recording` wrote the transcript |
 | `analyzing` | `failed` | the task raised, or the enqueue never reached the broker |
 
-`failed` is the only status other than `scheduled` that accepts a recording. A
-`complete` meeting refuses one: its transcript has already gone out to four
-modules, and replacing it underneath them is the rerun problem in #194.
+`failed` and `recording` are the statuses other than `scheduled` that accept a
+recording — `failed` for recovery, `recording` because the live channel's
+upload is what moves the meeting on. A `complete` meeting refuses one: its
+transcript has already gone out to four modules, and replacing it underneath
+them is the rerun problem in #194.
 
 ### The recording between the two processes
 

@@ -14,6 +14,7 @@ to be bad, and only ``high`` reaches a reader by default.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 
@@ -28,7 +29,14 @@ class Coverage(StrEnum):
     """A topic matched and the meeting gave it real weight. No gap."""
 
     PARTIAL = "partial"
-    """Named, but barely — a topic the graph put at the edge of the meeting."""
+    """Named, but barely.
+
+    Two different meetings reach it. A topic the graph put at the edge of the
+    meeting, or words somebody said that the graph never made a topic out of at
+    all — see ``classify``. Both are "it came up and did not get settled", which
+    is what the state means to a reader, and neither is worth the two states a
+    reader would then have to tell apart.
+    """
 
     MISSING = "missing"
     """Nothing in the meeting matched it.
@@ -99,6 +107,7 @@ they would drift."""
 def compare(
     template: Template,
     topics: list[TopicView],
+    speech: Sequence[str],
     thresholds: Thresholds,
 ) -> list[Finding]:
     """Findings for one meeting, riskiest first.
@@ -107,23 +116,34 @@ def compare(
     template, which is stable, so a re-run of the same meeting stores the same
     gaps in the same order instead of shuffling them under equal scores.
 
-    **A meeting with no topics raises no gaps at all.** Every item would be
-    missing, and the template would produce its whole checklist as findings
-    about a meeting the pipeline failed to read — the graph being empty says
-    extraction found nothing, not that the meeting discussed nothing. It is the
-    one case where "missing" carries no information, and with NER recall on
-    spoken Korean where it is (docs/modules/gap.md, "Step 1 as built") it is a
-    case that happens. Saying nothing is the honest output, and the metric is
-    precision.
+    ``speech`` is what the consenting room actually said, one string per
+    utterance, and it is a second and weaker source of evidence than the graph.
+    Without it the comparison could only ever be as good as entity extraction:
+    a meeting that settles an owner and a deadline in plain Korean — "API
+    업그레이드는 한개발님이 10월 2일까지 맡아주시고요" — produces no topic
+    carrying the word 담당 or 기한, and the item came back ``missing``, which is
+    a false statement about the meeting and a false gap on somebody's screen.
+    NER recall was silently deciding gap precision. See ``classify``.
+
+    **A meeting with no topics raises no gaps at all**, and that survives the
+    change. Every item would be missing, and the template would produce its
+    whole checklist as findings about a meeting the pipeline failed to read —
+    the graph being empty says extraction found nothing, not that the meeting
+    discussed nothing. Reading the speech instead would not rescue it: what an
+    empty graph costs is the ability to tell a covered item from an unmentioned
+    one, and a checklist of keyword hits over a transcript nothing was extracted
+    from is a worse guess, not a better one. Saying nothing is the honest
+    output, and the metric is precision.
     """
     if not topics:
         return []
 
+    spoken = [line.casefold() for line in speech]
     scored: list[tuple[int, Finding]] = []
 
     for position, item in enumerate(template.items):
         matched = match(item, topics)
-        coverage = classify(matched, thresholds)
+        coverage = classify(matched, mentioned(item, spoken), thresholds)
         if coverage is Coverage.COVERED:
             continue
 
@@ -198,12 +218,42 @@ def _looks_like(item: TemplateItem, topic: TopicView) -> bool:
     return any(word in label or label in word for word in item.keywords)
 
 
-def classify(matched: list[TopicView], thresholds: Thresholds) -> Coverage:
+def mentioned(item: TemplateItem, spoken: Sequence[str]) -> bool:
+    """Whether any of the item's keywords was said out loud.
+
+    Plain containment over utterance text, casefolded by the caller. Weaker than
+    a topic match by construction and treated as such: a word appearing in a
+    sentence says the subject came up, not that the meeting made anything of it.
+    "캐시는 따로 필요 없나요?" contains 필요 and settles no dependency.
+
+    It reads the same ``keywords`` the graph match reads, deliberately. A second
+    vocabulary per item would be a second thing to keep true, and the failure it
+    would hide — an item whose keywords do not match the words a meeting uses —
+    is the one worth seeing rather than papering over.
+
+    Only consenting speech reaches here; ``service`` reads the same rows the
+    graph was built from (privacy.md section 5).
+    """
+    return any(word in line for line in spoken for word in item.keywords)
+
+
+def classify(matched: list[TopicView], spoken: bool, thresholds: Thresholds) -> Coverage:
     """Covered, partial, or missing — the three states S20 shows.
 
-    Partial is the meeting having named the thing and leaving it at the edge of
-    the graph: a topic below ``partial_centrality`` carried too little of the
-    meeting to count the item as settled.
+    Two sources of evidence, ranked. A **topic** match is the graph having made
+    the thing a subject of the meeting, and it carries a centrality to read:
+    above ``partial_centrality`` the item is covered, below it the meeting named
+    the thing and left it at the edge, which is partial. A **spoken** match with
+    no topic behind it is weaker still — the words were said and the extractor
+    never raised them to a topic — so it is partial and never covered. Missing
+    is now what it claims to be: nobody said anything of the kind.
+
+    The ranking is the point. Promoting a spoken-only hit to covered would let
+    one passing "다음에 얘기해요" close the item a meeting never settled, and
+    that is a missed gap on the screen. Leaving it at missing — which is what
+    this did before speech was read at all — charges an item the meeting did
+    raise with its full template weight, and that is a false gap. Partial is the
+    honest middle, and ``score`` damps it, so the band it lands in follows.
 
     **There is deliberately no rule about which job roles spoke.** "A topic no
     engineer said anything on is riskier" is #14's own headline signal and it is
@@ -217,7 +267,7 @@ def classify(matched: list[TopicView], thresholds: Thresholds) -> Coverage:
     appear. See docs/modules/gap.md, "Steps 6 and 7 as built".
     """
     if not matched:
-        return Coverage.MISSING
+        return Coverage.PARTIAL if spoken else Coverage.MISSING
     if matched[0].centrality < thresholds.partial_centrality:
         return Coverage.PARTIAL
     return Coverage.COVERED

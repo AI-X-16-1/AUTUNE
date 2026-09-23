@@ -171,7 +171,7 @@ def test_the_event_carries_what_the_database_holds(
     )
     assert [u.id for u in payload.utterances] == [row.id for row in rows]
     assert [u.text for u in payload.utterances] == [row.text for row in rows]
-    assert payload.metadata.participants == ["SPEAKER_00", "SPEAKER_01"]
+    assert payload.metadata.participants == ["화자 1", "화자 2"]
     assert payload.metadata.duration == 9.0
 
 

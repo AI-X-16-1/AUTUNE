@@ -118,6 +118,36 @@ def test_a_gap_carries_the_template_that_raised_it(team_id: str) -> None:
     assert gap.suggested_question
 
 
+def test_a_gap_stores_the_coverage_it_was_classified_as(team_id: str) -> None:
+    """The S20 rail reads this column rather than re-running ``classify``, so
+    "named it and moved on" and "never came up" have to survive the write.
+
+    ``covered`` is never stored: a covered item raises no gap, so the rail reads
+    the absence of a row (``service.template_comparison``).
+    """
+    meeting_id = seed(team_id, {**COVERS_TWO, "리스크": 0.1})
+
+    service.detect_gaps(meeting_id)
+    rows = stored(meeting_id)
+
+    assert rows["risk"].coverage == "partial"
+    assert rows["dependency"].coverage == "missing"
+
+
+def test_the_rail_reports_an_item_no_gap_was_raised_for_as_covered(team_id: str) -> None:
+    meeting_id = seed(team_id, COVERS_TWO)
+
+    service.detect_gaps(meeting_id)
+    with session_scope() as session:
+        comparison = service.template_comparison(session, meeting_id)
+
+    states = {entry.key: entry.coverage for entry in comparison.items}
+
+    assert comparison.analysed is True
+    assert states["success_criteria"] == "covered"
+    assert states["dependency"] == "missing"
+
+
 def test_a_gap_points_at_no_topic_when_the_meeting_never_raised_one(team_id: str) -> None:
     """A missing item was inferred from the absence of a topic, so there is
     nothing for ``gap_related_topics`` to point at."""

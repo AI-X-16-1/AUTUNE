@@ -6,8 +6,11 @@ microphone, the only variable being English proper nouns. Term accuracy was
 10/31. Not one of the libraries this project is built on survived — `pyannote`
 came back as 파이노트, `faster-whisper` as 페이스터 위시퍼.
 
-That is not a readability problem. Module B keys action items on entity names,
-so a mangled term loses the item attached to it.
+That is a readability problem, and a search one: module D's BM25 side
+tokenises 파이노트 and pyannote differently, so two meetings about the same
+thing do not link. It is not a lost action item -- module B takes assignees
+from speaker attribution and does not key on entity names (evaluation 01,
+section 3.1; an earlier version of this comment said otherwise).
 
 **The glossary is per meeting, not global.** Whisper's prompt window is 224
 tokens; a company-wide vocabulary does not fit and would dilute what does. So
@@ -67,14 +70,16 @@ PROJECT_TERMS: tuple[str, ...] = (
     "Bolt for Python",
     "betweenness",
     "PostgreSQL",
-    "FastAPI",
     "Celery",
     "pgvector",
     "Prophet",
     "XGBoost",
-    "SetFit",
     "BM25",
     "PageRank",
+    # Evaluation 01 heard these as "Cepid" and "PEST API"; they rank with the
+    # other terms the recording caught, not with stack names never tried.
+    "SetFit",
+    "FastAPI",
     "spaCy",
     "NER",
     "NLI",
@@ -93,6 +98,17 @@ PROJECT_TERMS: tuple[str, ...] = (
     "large-v3-turbo",
     "faster-whisper",
     "Whisper",
+    # How this team talks in a meeting, ranked above the stack: the first
+    # live-microphone run (2026-09-22) heard "PR 리뷰 요청" as "PM" and "승인
+    # 부탁" as "설명". These are the words a meeting is made of and the ones
+    # B's action items hang on, so they outrank a library name the model
+    # would only mangle. pyannote stays last for the reason below.
+    "스프린트",
+    "데모",
+    "머지",
+    "승인",
+    "리뷰 요청",
+    "PR",
     "pyannote",
 )
 """Every term evaluation 01 caught the model mangling, plus the rest of the
@@ -116,10 +132,12 @@ def build_prompt(
     - ``corrections`` are terms a user has already fixed by hand in this team's
       transcripts. Somebody told us the model got these wrong; that is stronger
       evidence than our own guess at what matters.
-    - ``participants`` are the most expensive to lose. A wrong name does not
-      look wrong, and module B maps assignees by name — 박준호 heard as 박준우
-      silently drops the action item's owner. Two of four names were wrong in
-      evaluation 01.
+    - ``participants`` are the term class every meeting has and no static
+      list can hold. A wrong name does not look wrong, and names are not
+      masked, so the reader and module D's lexical linking both see the
+      misspelling. Module B does not: assignees come from speaker
+      attribution, not from the name in the text (evaluation 01, section
+      3.1).
 
     ``mode`` defaults to ``AUTUNE_AUDIO_GLOSSARY_MODE``, so the glossary is
     always built for the channel it will actually travel on.

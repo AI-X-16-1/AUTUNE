@@ -16,7 +16,7 @@ import type { MeetingDetail, TeamSummary, Utterance } from "./types";
  * task finishes, so this returns nothing until the meeting is processed and
  * cannot show a recording as it happens. `audio.md` gives that to a live
  * channel that goes straight to the screen, "never through a contract or an
- * event", and that channel does not exist yet.
+ * event" — `liveSocketUrl` below.
  *
  * `Utterance[]`, not `TranscriptReady`: that payload is the announcement A
  * publishes once, and a consumer is required to check
@@ -32,8 +32,7 @@ export const getMeeting = (meetingId: string) =>
   api.audio<MeetingDetail>(`/meetings/${meetingId}`);
 
 /** The teams this person may open a meeting for. Feeds `createMeeting`. */
-export const listTeams = () =>
-  api.audio<TeamSummary[]>("/teams");
+export const listTeams = () => api.audio<TeamSummary[]>("/teams");
 
 /** Open a meeting before there is any audio for it (S06, the file-upload path). */
 export const createMeeting = (body: { title: string; team_id: string }) =>
@@ -95,3 +94,31 @@ export async function uploadRecording(meetingId: string, file: File) {
 
 /** Mirrors `BASE` in `@/shared/api/client`, which is not exported. See `uploadRecording`. */
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+
+/**
+ * The bearer token this browser holds, or null — for the live socket only.
+ *
+ * A `WebSocket` cannot carry request headers, so the live channel sends the
+ * token in its `hello` frame instead (`useLiveSession`). That needs the raw
+ * value, which `authHeaders()` wraps.
+ *
+ * Read back out of `authHeaders()` rather than from `localStorage` again: the
+ * shared client is the one place that decides where a token comes from, and
+ * #286 moved it there precisely so a second copy could not drift from it. A
+ * second reader of `localStorage["autune.token"]` here would be that copy.
+ * When #189 replaces the dev token, this follows it with no change.
+ */
+export function getToken(): string | null {
+  const header = (authHeaders() as Record<string, string>).authorization;
+  return header?.startsWith("Bearer ") ? header.slice("Bearer ".length) : null;
+}
+
+/** The API's origin, for the one URL that cannot go through `request()`: the live socket. */
+export function apiBase(): string {
+  return API_BASE;
+}
+
+/** `ws://` or `wss://` for the live channel, from the same origin as the API. */
+export function liveSocketUrl(meetingId: string): string {
+  return `${apiBase().replace(/^http/, "ws")}/api/audio/live/${meetingId}`;
+}

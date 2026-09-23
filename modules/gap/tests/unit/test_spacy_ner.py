@@ -139,6 +139,28 @@ def test_a_masked_span_is_never_a_topic(ner: SpacyNer) -> None:
     assert not any("*" in label for label in found)
 
 
+def test_a_masked_value_does_not_take_the_topic_beside_it_with_it(ner: SpacyNer) -> None:
+    """#250, against the real weights — the measurement the issue was filed on.
+
+    Before this, the model's behaviour decided the outcome and it was not
+    consistent. In the first sentence it found no entity at all, the masked
+    number joined the noun run, and ``graph.build_topics`` dropped the run
+    whole: 고객 연락처 disappeared. In the second a particle broke the run by
+    itself and the topic survived. Same meeting, same personal data, two
+    different graphs.
+
+    Both sentences now keep what was said in the clear, and neither proposes
+    the mask as a term.
+    """
+    swallowed = ner.extract([("utt_1", "고객 연락처 010-****-5678 확인 부탁")])
+    separated = ner.extract([("utt_1", "검색 개인화 기능 담당자 연락처는 010-****-5678 입니다")])
+
+    assert "고객 연락처" in [entity.text for entity in swallowed]
+    assert "검색 개인화 기능 담당자" in [entity.text for entity in separated]
+    assert not any("*" in entity.text for entity in swallowed if entity.label == "term")
+    assert not any("*" in entity.text for entity in separated if entity.label == "term")
+
+
 def test_a_span_the_module_refuses_is_not_re_emitted_as_a_term(ner: SpacyNer) -> None:
     """``LC`` and ``OG`` are dropped by design, so their characters are spoken
     for even though no entity comes back.
