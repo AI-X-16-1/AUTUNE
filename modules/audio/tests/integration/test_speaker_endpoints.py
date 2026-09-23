@@ -437,34 +437,50 @@ def test_a_failed_profile_copy_leaves_the_source_with_no_profile_not_a_stale_one
     db_session: Session,
     monkeypatch: pytest.MonkeyPatch,
     meeting: str,
+    member: User,
     candidate: User,
 ) -> None:
     """The INSERT can fail on its own -- a wrong vector width is pgvector's
     dimension check on ``Vector(256)``, the same failure Task 4 exercises in
-    ``test_tasks.py::test_a_bad_vector_does_not_fail_the_meeting``. The
-    DELETE already ran and is not inside the INSERT's SAVEPOINT, so a failed
-    copy leaves this source with *no* profile -- never with the stale one
-    that was just declared wrong."""
+    ``test_tasks.py::test_a_bad_vector_does_not_fail_the_meeting``.
+
+    A real stale profile is the point: confirm alice first, for real, so
+    there is a row sourced from this exact ``(meeting, 화자 1)`` for the
+    second confirmation to have to get rid of. Then confirm bob and make
+    *that* copy fail. The DELETE already ran and is not inside the INSERT's
+    SAVEPOINT, so alice's profile must be gone regardless -- never left
+    behind as a stale, just-declared-wrong row, and never replaced by a
+    broken one of bob's."""
     db_session.add(Participant(meeting_id=meeting, speaker_label="화자 1"))
     db_session.add(observation(meeting, "화자 1", axis(0)))
     db_session.flush()
+
+    first = _confirm(client, meeting, "화자 1", member.id)
+    assert first.status_code == 204
+    alice_profile = db_session.scalar(
+        sa.select(AudSpeakerEmbedding).where(
+            AudSpeakerEmbedding.source_meeting_id == meeting,
+            AudSpeakerEmbedding.source_speaker_label == "화자 1",
+        )
+    )
+    assert alice_profile is not None
+    assert alice_profile.user_id == member.id
 
     real_add = db_session.add
 
     def _corrupt_the_copy(instance: object) -> None:
         # Only the profile-copy INSERT is targeted -- it is the one
         # ``AudSpeakerEmbedding`` this function ever constructs with a
-        # ``source_meeting_id``. Everything else this test or the route adds
-        # (the ``Participant``, the observation above) passes through.
+        # ``source_meeting_id``. Everything else passes through untouched.
         if isinstance(instance, AudSpeakerEmbedding) and instance.source_meeting_id is not None:
             instance.vector = instance.vector[:4]
         real_add(instance)
 
     monkeypatch.setattr(db_session, "add", _corrupt_the_copy)
 
-    response = _confirm(client, meeting, "화자 1", candidate.id)
+    second = _confirm(client, meeting, "화자 1", candidate.id)
+    assert second.status_code == 204
 
-    assert response.status_code == 204
     participant = db_session.scalar(
         sa.select(Participant).where(
             Participant.meeting_id == meeting, Participant.speaker_label == "화자 1"
@@ -473,22 +489,31 @@ def test_a_failed_profile_copy_leaves_the_source_with_no_profile_not_a_stale_one
     assert participant is not None
     assert participant.user_id == candidate.id
 
-    from_this_source = list(
+    # The assertion that distinguishes the fix: alice's profile from this
+    # source is gone, not left behind because bob's copy broke.
+    alice_profiles = list(
         db_session.scalars(
             sa.select(AudSpeakerEmbedding).where(
                 AudSpeakerEmbedding.source_meeting_id == meeting,
                 AudSpeakerEmbedding.source_speaker_label == "화자 1",
+                AudSpeakerEmbedding.user_id == member.id,
             )
         )
     )
-    assert from_this_source == []
+    assert alice_profiles == []
 
-    profiles = list(
+    # And bob's broken copy did not get written either -- the source ends up
+    # with no profile at all, the safe direction to fail in.
+    bob_profiles = list(
         db_session.scalars(
-            sa.select(AudSpeakerEmbedding).where(AudSpeakerEmbedding.user_id == candidate.id)
+            sa.select(AudSpeakerEmbedding).where(
+                AudSpeakerEmbedding.source_meeting_id == meeting,
+                AudSpeakerEmbedding.source_speaker_label == "화자 1",
+                AudSpeakerEmbedding.user_id == candidate.id,
+            )
         )
     )
-    assert profiles == []
+    assert bob_profiles == []
 
 
 def test_confirming_without_an_observation_still_assigns(
