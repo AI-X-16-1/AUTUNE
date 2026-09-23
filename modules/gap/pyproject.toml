@@ -6,6 +6,13 @@ requires-python = ">=3.12,<3.13"
 dependencies = [
     "autune-contracts",
     "autune-core",
+    # For ``privacy.MASK_CHAR`` only — the one definition of what module A's
+    # masking leaves behind. This module recognises those leftovers in two
+    # places (``graph.build_topics`` refuses them, ``spoken.masked_spans``
+    # breaks noun runs on them) and both have to mean the same character as the
+    # masker itself. Declared here rather than relied on transitively
+    # (/CLAUDE.md invariant 8); importing it is invariant 2's allowance.
+    "autune-integrations",
     "fastapi>=0.115",
     "celery>=5.4",
     "sqlalchemy>=2.0",
