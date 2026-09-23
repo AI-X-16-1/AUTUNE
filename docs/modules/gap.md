@@ -136,7 +136,7 @@ asking the extractor.
 | Relation | Marker | Reads |
 | --- | --- | --- |
 | `depends_on` | 필요, 있어야, 되어야, 선행, 전제, 없이는, 없으면 | "정렬 로직은 인덱스가 필요합니다" |
-| `blocked_by` | a blocker word (안 잡, 미정, 막혀, 무리, 이슈, …) **and** a causal connective in the same clause | "실시간은 콜드스타트가 안 잡혀 있어서 무리입니다" |
+| `blocked_by` | a blocker word (안 잡, 미정, 막혀, 무리, 이슈, …) **and** a causal connective in the same clause, on either side of it | "실시간은 콜드스타트가 **안 잡혀 있어서** 무리입니다", "검색 기능은 캐시 **때문에** 막혀 있습니다" |
 | `alternative_to` | 대신, 말고, 보다는, 아니라, 반면, `vs` | "인기순 정렬 대신 실시간 개인화로" |
 | `part_of` | — **no rule** | |
 
@@ -176,6 +176,18 @@ Three things came out of that measurement, and each one changed the design:
   `alternative_to` the most common relation in the graph and every one of them a
   coin flip. This is the clearest case for the LLM assistance step 2 is promised.
 
+**What the reason guard costs.** `_RESOLVED` refuses a blocker whose reason
+clause says the thing is gone — "캐시 이슈가 해결됐기 때문에 …" asserts the
+reverse of a blocker, and `blocked_by` is the one relation the report treats as
+a finding on its own. 처리 is on that list and is also the ordinary noun for
+the work, so "캐시 처리 때문에 막혀 있습니다" is refused too, and the relation
+the meeting did state is lost. The ambiguity was already here in the forward
+direction; reading backwards means it now costs a relation in two places. Kept
+in the losing direction because precision is C's metric, and pinned by
+`test_a_resolution_word_used_as_a_noun_costs_the_relation` so it is a known
+price rather than a surprise. Telling the two readings apart is the assisted
+implementation's job, not a longer list.
+
 **A marker is a string, and the clause decides whether the speaker meant it.**
 Three guards, each one a sentence that produced an edge before it existed
 (raised in review of #249, found by running the extractor rather than reading
@@ -193,6 +205,19 @@ it):
   The guard window stops at the boundary for the same reason in reverse:
   "인덱스가 필요하고 캐시는 문제 없습니다" must not cancel a need the speaker
   did state.
+
+  **The clause has two sides, and at first only one was read.** `어서`/`아서`/
+  `라서` are verb endings and attach to the predicate, so they follow the
+  blocker word; `때문`/`탓에`/`으로 인해` head the reason and Korean puts the
+  reason first, so they precede it. Looking only forwards from the cue read
+  three of the six connectives and dropped every relation a meeting stated the
+  other way — "검색 기능은 캐시 때문에 막혀 있습니다" asserted nothing. The
+  window now runs backwards as well, bounded by the same clause break and the
+  same `MAX_MARKER_DISTANCE`, and when the connective is the one behind, it
+  rather than the cue is what the ends are read from: in "캐시 때문에 정렬
+  로직이 막혀 있습니다" the mention before the *cue* is 정렬 로직, the thing
+  being blocked. Recall only — no false edge was produced by the narrow
+  window. #254, follow-up to #249.
 - **The source is what the sentence is about.** Korean starts a new subject
   after a connective ending, so the nearest mention after the marker is usually
   the next sentence — "정렬 로직은 인덱스가 필요하고 캐시는 다음 주에 봅시다"

@@ -312,6 +312,88 @@ def test_a_blocker_with_no_reason_given_is_not_a_relation() -> None:
     )
 
 
+def test_a_reason_stated_before_the_blocker_is_still_a_reason() -> None:
+    """#254. Korean puts 때문에 and 탓에 ahead of the predicate they explain, so
+    the connective sits *behind* the cue and the forward-only window never saw
+    it. The relation the meeting stated — 검색 기능 blocked_by 캐시 — was
+    dropped."""
+    assert triples("검색 기능은 캐시 때문에 막혀 있습니다", "검색 기능", "캐시") == [
+        ("검색 기능", "캐시", "blocked_by")
+    ]
+    assert triples("결제 모듈은 인증 탓에 막혀 있습니다", "결제 모듈", "인증") == [
+        ("결제 모듈", "인증", "blocked_by")
+    ]
+
+
+def test_the_thing_in_the_way_is_what_the_reason_clause_names() -> None:
+    """The marker is the connective rather than the cue, which is what keeps the
+    two ends apart when both are named: 정렬 로직 is what is blocked and sits
+    between 때문에 and 막혀, so reading the mention before the *cue* would have
+    made it block on itself."""
+    assert triples("캐시 때문에 정렬 로직이 막혀 있습니다", "캐시", "정렬 로직") == [
+        ("정렬 로직", "캐시", "blocked_by")
+    ]
+
+
+def test_a_reason_behind_the_cue_still_has_to_be_the_same_clause() -> None:
+    """The bound that #249 added, read backwards. A connective in the previous
+    clause belongs to the previous clause's subject, and the whole point of the
+    window is that widening it broke this."""
+    assert (
+        triples(
+            "로그인 모듈은 시간이 없어서 못 했고요 결제 모듈 이슈는 남아 있습니다",
+            "로그인 모듈",
+            "결제 모듈",
+        )
+        == []
+    )
+
+
+def test_a_blocker_read_from_both_sides_is_asserted_once() -> None:
+    """ "안 잡혀 있어서" carries a connective after 안 잡 and before 무리, so
+    both readings fire on one sentence. They agree, and a pair never comes back
+    twice with the same relation."""
+    assert triples("실시간은 콜드스타트가 안 잡혀 있어서 무리입니다", "실시간", "콜드스타트") == [
+        ("실시간", "콜드스타트", "blocked_by")
+    ]
+
+
+def test_a_resolution_in_the_reason_clause_leaves_nothing_blocked() -> None:
+    """The guard that already applied to a reason in front of the cue applies to
+    one behind it.
+
+    "캐시 이슈가 해결됐기 때문에 …" is the reason something *proceeds*, and
+    reading it as a blocker would put the reverse of what the meeting said into
+    the report — which is what ``_resolved`` exists for and why ``blocked_by``
+    is the relation it guards. Both cues in this sentence are refused: 이슈 by
+    the reason in front of it, 막혀 by the one behind.
+    """
+    assert (
+        triples(
+            "캐시 이슈가 해결됐기 때문에 검색 기능은 막혀 있던 게 풀립니다", "캐시", "검색 기능"
+        )
+        == []
+    )
+
+
+def test_a_resolution_word_used_as_a_noun_costs_the_relation() -> None:
+    """What the guard above costs, stated rather than left to be found.
+
+    처리 is both "dealt with" and "the processing" — ``_RESOLVED`` already says
+    so, and ``_UNDONE`` is what takes the first reading back. Neither can see
+    that this one is a noun naming the work, so a reason clause that names it
+    reads as a resolution and the blocker is dropped.
+
+    Kept in the losing direction on purpose: C's metric is precision, a
+    ``blocked_by`` is a finding in its own right, and a blocker the meeting did
+    not assert costs more than one it did. The same ambiguity was already here
+    in the forward direction; this only means it now costs a relation in two
+    places instead of one. Telling the two readings apart needs the assisted
+    implementation step 2 is promised, not a longer list.
+    """
+    assert triples("캐시 처리 때문에 검색 기능은 막혀 있습니다", "캐시", "검색 기능") == []
+
+
 # --- part_of, which no rule produces ----------------------------------------
 
 
@@ -431,7 +513,7 @@ def test_a_meeting_with_no_entities_yields_no_relations() -> None:
 def test_the_extractor_names_itself() -> None:
     """What decides this implementation's output is the marker lists in
     ``relations.py``, and they change without anything else changing."""
-    assert RuleRelations().model_version == "rules-1"
+    assert RuleRelations().model_version == "rules-2"
 
 
 # --- the vocabulary ---------------------------------------------------------

@@ -71,6 +71,14 @@ _CAUSAL = ("어서", "아서", "라서", "때문", "탓에", "으로 인해")
 ``blocked_by`` needs one. Without it "콜드스타트 처리가 안 잡혀 있습니다" is a
 status report, and reading it as the reason 실시간 cannot proceed is the rule
 inventing a link between two things the speaker kept apart.
+
+**They do not all sit in the same place.** ``어서``/``아서``/``라서`` are verb
+endings and attach to the predicate itself — "안 잡혀 있**어서**" — so they
+follow the blocker word. ``때문``/``탓에``/``으로 인해`` are nouns and phrases
+that head the reason, and Korean puts the reason before what it explains —
+"캐시 **때문에** 막혀" — so they precede it. A rule that looked only forwards
+from the cue read the first three and none of the last three, and every
+relation a meeting stated the second way was dropped. #254.
 """
 
 _BLOCKERS = (
@@ -257,9 +265,11 @@ def relations_in(text: str, mentions: Sequence[Mention]) -> list[tuple[str, str,
       붙입니다" both name 인덱스 immediately before the marker. The other end is
       read by ``_ends_around``.
     - **``blocked_by``** — a blocker word (``_BLOCKERS``) *offered as a reason*,
-      so a causal connective (``_CAUSAL``) has to follow it **in the same
-      clause**, and the same assertion guard applies: "캐시 이슈는 없어서" is a
-      blocker that is not there. Ends are read the same way.
+      so a causal connective (``_CAUSAL``) has to sit beside it **in the same
+      clause**, on either side: 어서/아서/라서 attach to the predicate and
+      follow the cue, 때문에/탓에/으로 인해 precede it. The same assertion guard
+      applies: "캐시 이슈는 없어서" is a blocker that is not there. Ends are read
+      the same way, from the connective when it is the one behind.
     - **``alternative_to``** — a contrast marker in the gap between two
       mentions, and nowhere else.
 
@@ -304,6 +314,55 @@ def _clause_after(text: str, index: int) -> str:
         if found != -1:
             cut = min(cut, found + len(boundary))
     return window[:cut]
+
+
+def _clause_before(text: str, index: int) -> tuple[int, str]:
+    """The tail of the clause that runs up to ``index``, and where it starts.
+
+    The mirror of ``_clause_after``, and bounded the same way — a clause break
+    or ``MAX_MARKER_DISTANCE``, whichever comes first. What it reads backwards
+    is the reason half of a Korean causal sentence: 때문에 and 탓에 sit *before*
+    the predicate they explain, so the connective that makes "막혀" a
+    ``blocked_by`` is behind the cue rather than in front of it. #254.
+    """
+    start = max(0, index - MAX_MARKER_DISTANCE)
+    window = text[start:index]
+    cut = 0
+    for boundary in _CLAUSE_BREAKS:
+        found = _rfind_boundary(window, boundary)
+        if found != -1:
+            cut = max(cut, found + len(boundary))
+    return start + cut, window[cut:]
+
+
+def _rfind_boundary(window: str, boundary: str) -> int:
+    """Where ``boundary`` last ends a clause in ``window``, or ``-1``.
+
+    ``_find_boundary`` read backwards, including its exception: a 고 preceded by
+    다 is the quotative ending inside one clause and not a boundary, so the
+    search steps over it and carries on leftwards.
+    """
+    end = len(window)
+    while True:
+        found = window.rfind(boundary, 0, end)
+        if found == -1:
+            return -1
+        if boundary.startswith("고") and found > 0 and window[found - 1] == "다":
+            end = found
+            continue
+        return found
+
+
+def _causal_in(clause: str) -> int | None:
+    """Where the causal connective nearest the end of ``clause`` begins.
+
+    Nearest the end, because that is the one the cue is reading. "캐시가 느려서
+    인덱스 때문에 막혀 있습니다" offers two reasons and 때문에 is the one
+    attached to 막혀; taking the first would reach past a reason the speaker
+    already closed.
+    """
+    at = max(clause.rfind(connective) for connective in _CAUSAL)
+    return at if at != -1 else None
 
 
 def _find_boundary(window: str, boundary: str) -> int:
@@ -351,6 +410,14 @@ def _resolved(clause: str) -> bool:
     resolves nothing, so anything in ``_UNDONE`` after the word takes it back.
     Looking only after it is deliberate — what comes before belongs to the
     blocker ("이슈 해결" is the thing, "해결이 안 되어서" is the state).
+
+    Run on whichever clause carries the causal connective, which since #254 may
+    be the one behind the cue. That doubles what the 처리 ambiguity costs:
+    "캐시 처리 때문에 막혀 있습니다" names the work and reads as a resolution, so
+    a blocker the meeting did state is dropped. Kept, because precision is C's
+    metric and ``blocked_by`` is a finding in its own right — a blocker nobody
+    asserted costs more than one that goes missing. Pinned in
+    ``test_relations.py``.
     """
     for word in _RESOLVED:
         at = clause.find(word)
@@ -378,11 +445,26 @@ def _directed_markers(text: str) -> list[tuple[int, str]]:
             # review of #249.
             if not _asserted(text, match.end()):
                 continue
-            clause = _clause_after(text, match.end())
-            if _resolved(clause):
+            after = _clause_after(text, match.end())
+            if _resolved(after):
                 continue
-            if any(connective in clause for connective in _CAUSAL):
+            if any(connective in after for connective in _CAUSAL):
                 markers.append((match.start(), "blocked_by"))
+                continue
+            # The connective may also sit *behind* the cue, and for two of the
+            # six it always does: 어서/아서/라서 attach to the predicate
+            # ("안 잡혀 있어서") while 때문에/탓에/으로 인해 precede it
+            # ("캐시 때문에 막혀"). Reading only forwards dropped every relation
+            # a meeting stated the second way. #254.
+            start, before = _clause_before(text, match.start())
+            at = _causal_in(before)
+            if at is None or _resolved(before):
+                continue
+            # The marker is the connective, not the cue. The thing in the way is
+            # what the reason clause names — "캐시 때문에 정렬 로직이 막혀
+            # 있습니다" blocks on 캐시, and the mention before the cue is 정렬
+            # 로직, the thing being blocked.
+            markers.append((start + at, "blocked_by"))
     return sorted(markers)
 
 
@@ -467,7 +549,7 @@ class RuleRelations:
     reason ``SpacyNer`` records the pipeline version.
     """
 
-    model_version = "rules-1"
+    model_version = "rules-2"
 
     def extract(self, utterances: list[tuple[str, str]], entities: list[Entity]) -> list[Relation]:
         """Relations in each utterance, against every name the meeting used.
