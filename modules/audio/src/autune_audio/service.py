@@ -44,19 +44,27 @@ class NotATeamMemberError(PermissionDeniedError):
     """
 
 
-def require_team_member(session: Session, *, user_id: str, team_id: str) -> None:
+def require_team_member(
+    session: Session, *, user_id: str, team_id: str, message: str | None = None
+) -> None:
     """Raise unless ``user_id`` belongs to ``team_id``.
 
     A token proves who is asking, not which team's meetings they may read. Named
     and shared rather than written inline, because every route this module grows
     asks the same question and an authorisation check that exists in two places
     is one that can come to mean two things.
+
+    ``message`` lets a caller that checks somebody *other* than the person
+    making the request -- ``assign_speaker`` checking the named ``user_id``,
+    not just ``confirmed_by`` -- say so, rather than telling a caller who is
+    themselves a member "you are not a member of this team" about a refusal
+    that was actually about someone else.
     """
     member = session.scalar(
         sa.select(TeamMember.id).where(TeamMember.team_id == team_id, TeamMember.user_id == user_id)
     )
     if member is None:
-        raise NotATeamMemberError("you are not a member of this team")
+        raise NotATeamMemberError(message or "you are not a member of this team")
 
 
 def transcript_for_meeting(
@@ -784,13 +792,24 @@ def assign_speaker(
 
     No observation row is the normal case, not an edge: an unconsented meeting
     has none, and confirming still assigns the speaker, with no profile and no
-    error.
+    error. But the **replace** still has to happen: a previous confirmation of
+    this exact (meeting, label) can have left a profile row even though there
+    is no observation to replace it with now -- the meeting was reprocessed
+    and the observation dropped, or it was never re-derived at all -- and that
+    stale row is the *wrong* person's voice if this call is naming someone
+    else. So the delete below runs every time, not only when ``observation``
+    is not ``None``.
     """
     meeting = session.get(Meeting, meeting_id, with_for_update=True)
     if meeting is None:
         raise NotFoundError("meeting", meeting_id)
     require_team_member(session, user_id=confirmed_by.id, team_id=meeting.team_id)
-    require_team_member(session, user_id=user_id, team_id=meeting.team_id)
+    require_team_member(
+        session,
+        user_id=user_id,
+        team_id=meeting.team_id,
+        message="the named user is not a member of this team",
+    )
 
     participant = session.scalar(
         sa.select(Participant).where(
@@ -810,20 +829,29 @@ def assign_speaker(
         )
     )
     learned = False
-    if observation is not None:
-        # A vector is bound biometric data; ``packages/core``'s engine does
-        # not set ``hide_parameters`` and a ``StatementError`` here would
-        # carry it (#356, fixed outside this branch). A SAVEPOINT keeps a
-        # failed copy from rolling back the assignment above, and the
-        # ``except`` never touches the error's message or parameters.
-        try:
-            with session.begin_nested():
-                session.execute(
-                    sa.delete(AudSpeakerEmbedding).where(
-                        AudSpeakerEmbedding.source_meeting_id == meeting_id,
-                        AudSpeakerEmbedding.source_speaker_label == speaker_label,
-                    )
+    # A vector is bound biometric data; ``packages/core``'s engine does not
+    # set ``hide_parameters`` and a ``StatementError`` here would carry it
+    # (#356, fixed outside this branch), so the INSERT runs inside a
+    # SAVEPOINT and a ``SQLAlchemyError`` is caught and logged by exception
+    # type only, never its message or parameters. The DELETE shares that
+    # SAVEPOINT deliberately, not because it needs the guard itself -- its
+    # own bound parameters are only a meeting id and a label, never a vector
+    # -- but because a failed INSERT must not leave the row half-replaced.
+    # On that failure both roll back together: the stale (wrong) profile
+    # survives, no new one is written, and the endpoint still returns 204.
+    # A correction can therefore silently not take effect from the profile's
+    # point of view -- ``speaker_profile_copy_failed`` is the only trace --
+    # which is the accepted cost of the ruling above that a profile-copy
+    # failure must never take the assignment down with it.
+    try:
+        with session.begin_nested():
+            session.execute(
+                sa.delete(AudSpeakerEmbedding).where(
+                    AudSpeakerEmbedding.source_meeting_id == meeting_id,
+                    AudSpeakerEmbedding.source_speaker_label == speaker_label,
                 )
+            )
+            if observation is not None:
                 session.add(
                     AudSpeakerEmbedding(
                         user_id=user_id,
@@ -835,9 +863,9 @@ def assign_speaker(
                         confirmed_at=datetime.now(tz=UTC),
                     )
                 )
-            learned = True
-        except SQLAlchemyError as exc:
-            log.warning("speaker_profile_copy_failed", error=type(exc).__name__)
+                learned = True
+    except SQLAlchemyError as exc:
+        log.warning("speaker_profile_copy_failed", error=type(exc).__name__)
 
     session.flush()
     # A meeting id and a boolean -- no name, no vector.
@@ -858,10 +886,30 @@ def delete_voice_profile(session: Session, *, user: User) -> int:
 
 @on_user_deleted("audio")
 def forget_user_voice(user_id: str) -> None:
-    """Leaving the product takes the voice with it. The FK cascades when the
-    ``users`` row goes; this hook is the path for a deletion that does not
-    remove the row itself."""
+    """Leaving the product takes the voice with it -- and every trace of the
+    person as someone who *confirmed* or *attested*, even on rows that
+    belong to somebody else.
+
+    The FK cascades (``SET NULL`` on ``confirmed_by`` and ``attested_by``,
+    ``CASCADE`` on a profile's own ``user_id``) when the ``users`` row is
+    really deleted; this hook is the path for a deletion that does not
+    remove the row itself, so it does that scrubbing by hand instead of
+    only the person's own rows. Without the second and third statements,
+    someone who left the product would still be named as who confirmed
+    another person's profile or attested a meeting's consent -- ids the
+    product no longer has anyone behind.
+    """
     with session_scope() as session:
         session.execute(
             sa.delete(AudSpeakerEmbedding).where(AudSpeakerEmbedding.user_id == user_id)
+        )
+        session.execute(
+            sa.update(AudSpeakerEmbedding)
+            .where(AudSpeakerEmbedding.confirmed_by == user_id)
+            .values(confirmed_by=None)
+        )
+        session.execute(
+            sa.update(AudConsentAttestation)
+            .where(AudConsentAttestation.attested_by == user_id)
+            .values(attested_by=None)
         )

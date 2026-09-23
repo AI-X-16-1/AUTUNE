@@ -11,6 +11,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from urllib.parse import quote
 
+import httpx
 import pytest
 import sqlalchemy as sa
 from fastapi import FastAPI, Request
@@ -19,11 +20,12 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from autune_audio import service
-from autune_audio.models import EMBEDDING_DIM, AudSpeakerEmbedding
+from autune_audio.models import EMBEDDING_DIM, AudConsentAttestation, AudSpeakerEmbedding
 from autune_audio.persistence import transcript_payload
 from autune_audio.router import router
 from autune_core import AutuneError, Participant, Team, TeamMember, User, Utterance, get_session
 from autune_core.auth import current_user
+from autune_core.deletion import run_user_hooks
 
 MODEL_VERSION = "test/embedder"
 
@@ -289,7 +291,7 @@ def test_members_lists_the_team_and_only_that_team(
 # --- POST /meetings/{id}/speakers/{label} -----------------------------------
 
 
-def _confirm(client: TestClient, meeting: str, label: str, user_id: str):
+def _confirm(client: TestClient, meeting: str, label: str, user_id: str) -> httpx.Response:
     return client.post(
         f"/api/audio/meetings/{meeting}/speakers/{quote(label)}", json={"user_id": user_id}
     )
@@ -383,6 +385,53 @@ def test_confirming_again_replaces_the_profile_from_that_source(
     assert member_profiles == []
 
 
+def test_confirming_again_replaces_the_profile_even_without_a_new_observation(
+    client: TestClient, db_session: Session, meeting: str, member: User, candidate: User
+) -> None:
+    """The bug the "replaces" delete used to have: it only ran when a fresh
+    observation existed to replace the old profile with. Here the meeting is
+    reprocessed between the two confirmations -- the observation this
+    source's profile came from is gone by the time the correction lands, as
+    it legitimately can be (``tasks._store_speaker_embeddings`` deletes and
+    re-derives a meeting's observations, and a short-spoken label may not
+    come back). The wrong person's voice must not survive that gap."""
+    db_session.add(Participant(meeting_id=meeting, speaker_label="화자 1"))
+    db_session.add(observation(meeting, "화자 1", axis(0)))
+    db_session.flush()
+
+    first = _confirm(client, meeting, "화자 1", member.id)
+    assert first.status_code == 204
+
+    # The reprocess: the observation this profile was sourced from is gone.
+    db_session.execute(
+        sa.delete(AudSpeakerEmbedding).where(
+            AudSpeakerEmbedding.meeting_id == meeting,
+            AudSpeakerEmbedding.speaker_label == "화자 1",
+        )
+    )
+    db_session.flush()
+
+    second = _confirm(client, meeting, "화자 1", candidate.id)
+    assert second.status_code == 204
+
+    member_profiles = list(
+        db_session.scalars(
+            sa.select(AudSpeakerEmbedding).where(AudSpeakerEmbedding.user_id == member.id)
+        )
+    )
+    assert member_profiles == []
+
+    from_this_source = list(
+        db_session.scalars(
+            sa.select(AudSpeakerEmbedding).where(
+                AudSpeakerEmbedding.source_meeting_id == meeting,
+                AudSpeakerEmbedding.source_speaker_label == "화자 1",
+            )
+        )
+    )
+    assert from_this_source == []
+
+
 def test_confirming_without_an_observation_still_assigns(
     client: TestClient, db_session: Session, meeting: str, candidate: User
 ) -> None:
@@ -427,6 +476,21 @@ def test_an_outsider_cannot_confirm(
     response = _confirm(app_for(outsider), meeting, "화자 1", candidate.id)
 
     assert response.status_code == 403
+    # The one endpoint that mints biometric data: a 403 alone would still
+    # pass if the checks ran after the writes. Nothing must have moved.
+    participant = db_session.scalar(
+        sa.select(Participant).where(
+            Participant.meeting_id == meeting, Participant.speaker_label == "화자 1"
+        )
+    )
+    assert participant is not None
+    assert participant.user_id is None
+    profiles = list(
+        db_session.scalars(
+            sa.select(AudSpeakerEmbedding).where(AudSpeakerEmbedding.user_id == candidate.id)
+        )
+    )
+    assert profiles == []
 
 
 def test_a_user_outside_the_team_cannot_be_assigned(
@@ -438,6 +502,21 @@ def test_a_user_outside_the_team_cannot_be_assigned(
     response = _confirm(client, meeting, "화자 1", other_team_member.id)
 
     assert response.status_code == 403
+    participant = db_session.scalar(
+        sa.select(Participant).where(
+            Participant.meeting_id == meeting, Participant.speaker_label == "화자 1"
+        )
+    )
+    assert participant is not None
+    assert participant.user_id is None
+    profiles = list(
+        db_session.scalars(
+            sa.select(AudSpeakerEmbedding).where(
+                AudSpeakerEmbedding.user_id == other_team_member.id
+            )
+        )
+    )
+    assert profiles == []
 
 
 # --- DELETE /me/voice-profile ------------------------------------------------
@@ -463,6 +542,11 @@ def test_deleting_my_voice_profile_removes_only_mine(
 def test_the_deletion_hook_removes_a_users_profiles(
     db_session: Session, monkeypatch: pytest.MonkeyPatch, member: User, candidate: User
 ) -> None:
+    """Driven through ``autune_core.deletion.run_user_hooks`` rather than
+    calling ``service.forget_user_voice`` directly, so this also pins that
+    the ``@on_user_deleted("audio")`` registration itself is live -- deleting
+    the decorator would not fail a test that only calls the function by
+    name."""
     db_session.add(profile(member.id, axis(0)))
     db_session.add(profile(candidate.id, axis(1)))
     db_session.flush()
@@ -474,7 +558,49 @@ def test_the_deletion_hook_removes_a_users_profiles(
 
     monkeypatch.setattr(service, "session_scope", fake_session_scope)
 
-    service.forget_user_voice(member.id)
+    run_user_hooks(member.id)
 
     remaining = list(db_session.scalars(sa.select(AudSpeakerEmbedding.user_id).distinct()))
     assert remaining == [candidate.id]
+
+
+def test_the_deletion_hook_clears_confirmed_by_and_attested_by_elsewhere(
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+    meeting: str,
+    member: User,
+    candidate: User,
+) -> None:
+    """Leaving the product clears more than the person's own rows: their id
+    must not linger as *who confirmed* somebody else's profile, or *who
+    attested* a meeting's consent -- both are ids the product no longer has
+    anyone behind."""
+    db_session.add(
+        AudSpeakerEmbedding(
+            user_id=candidate.id,
+            vector=axis(0),
+            model_version=MODEL_VERSION,
+            confirmed_by=member.id,
+        )
+    )
+    db_session.add(AudConsentAttestation(meeting_id=meeting, attested_by=member.id))
+    db_session.flush()
+
+    @contextmanager
+    def fake_session_scope() -> Iterator[Session]:
+        yield db_session
+        db_session.flush()
+
+    monkeypatch.setattr(service, "session_scope", fake_session_scope)
+
+    run_user_hooks(member.id)
+
+    candidates_profile = db_session.scalar(
+        sa.select(AudSpeakerEmbedding).where(AudSpeakerEmbedding.user_id == candidate.id)
+    )
+    assert candidates_profile is not None
+    assert candidates_profile.confirmed_by is None
+
+    attestation = db_session.get(AudConsentAttestation, meeting)
+    assert attestation is not None
+    assert attestation.attested_by is None
