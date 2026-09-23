@@ -148,11 +148,17 @@ class MeetingDetail(MeetingState):
     "original deleted" and "masked" from stored state rather than from having
     reached a stage in a diagram. Nothing derived from the transcript is here;
     that is ``/transcripts/{id}``.
+
+    ``team_id`` is the meeting's own row, not anything derived from the
+    transcript: the speaker picker (``GET /teams/{id}/members``) needs it and
+    a screen that already has the meeting should not make a second call to
+    learn who owns it.
     """
 
     title: str
     original_audio_deleted: bool
     pii_masked: bool
+    team_id: str
 
 
 class TeamSummary(BaseModel):

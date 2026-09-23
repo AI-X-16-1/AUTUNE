@@ -115,6 +115,7 @@ def get_meeting(meeting_id: str, user: CurrentUser, session: SessionDep) -> Meet
         status=meeting.status,
         original_audio_deleted=meeting.original_audio_deleted,
         pii_masked=meeting.pii_masked,
+        team_id=meeting.team_id,
     )
 
 
