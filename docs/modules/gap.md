@@ -330,8 +330,8 @@ measured at all. `general` is applied to every meeting unless one is overridden
 false when it guesses wrong.
 
 **Three states, and only two of them raise a gap.** An item is *covered* when a
-matched topic carried real weight, *partial* when the meeting named it and left
-it at the edge of the graph, and *missing* when nothing matched. S20 shows the
+matched topic carried real weight, *partial* when it came up and was not
+settled, and *missing* when nobody said anything of the kind. S20 shows the
 three side by side.
 
 - **Matching is containment either way**, over `graph.topic_key`'s
@@ -339,6 +339,33 @@ three side by side.
   keyword. Deliberately dumb, and the rule v1 measures precision against — what
   replaces it (embeddings over the items) is then a change with a number
   attached rather than a better idea.
+- **Two sources of evidence, ranked: the graph, then the speech.** A topic match
+  carries a centrality, so it decides between covered and partial. A keyword
+  that appears in an utterance with no topic behind it is weaker — the words
+  were said and the extractor never raised them to a topic — so it is *partial*
+  and never covered.
+
+  Without the second source the comparison could only ever be as good as entity
+  extraction, and NER recall was silently deciding gap precision. A meeting that
+  settles an owner and a deadline in plain Korean — "API 업그레이드는 한개발님이
+  10월 2일까지 맡아주시고요" — yields no topic carrying the word 담당 or 기한, so
+  the item came back `missing` and put a full-weight gap on the screen about
+  something the meeting had done. Measured over the three labelled fixtures, the
+  change cut `high`-severity gaps from 8 to 5 without losing a true one at
+  `high`.
+
+  Speech alone never covers an item, because one passing "다음에 얘기해요" would
+  otherwise close an item the meeting never settled. Only consenting speech is
+  read, filtered by the same join `build_topic_graph` uses — unknown consent is
+  not consent, and a gap resting on a person who declined is the failure that
+  matters here.
+
+  **A question counts as having raised the subject.** "소셜 로그인 API가
+  필요한가요?" makes the dependency item partial rather than missing, which
+  demotes a gap somebody might have wanted at `high`. Interrogatives and
+  negations are not detected, and detecting them is its own judgement rather
+  than a one-liner; the fixture labels disagree with the code on exactly this
+  case and it is the open question of the rule.
 - **A missing item scores exactly its template weight.** There is no topic to
   read a centrality off and none to read a silence off, so the weight is the
   only measured input and the score is it. Charging it a full 1.0 for "no
@@ -467,7 +494,7 @@ gaps off a transcript nothing was read out of.
 | PostgreSQL `gap_topic_utterances` | Which utterances a topic was built from, in order |
 | PostgreSQL `gap_topic_edges` | Relations between topics, directed, per meeting, with which extractor asserted each |
 | PostgreSQL `gap_participation` | Topic × participant speech presence |
-| PostgreSQL `gap_gaps` | Detected gaps, category, severity, risk score, question |
+| PostgreSQL `gap_gaps` | Detected gaps, category, coverage, severity, risk score, question |
 | PostgreSQL `gap_related_topics` | Which topics a gap was inferred from |
 | PostgreSQL `gap_meeting_template` | Which template one meeting is compared against, when somebody chose one |
 | PostgreSQL `gap_templates` | Domain templates and their items — **not built, and not needed**, see below |
@@ -521,13 +548,14 @@ here, so the no-deletion-hook sentence above still holds.
 | GET | `/topics/{meeting_id}` | Topic graph for visualization |
 | POST | `/gaps/{id}/dismiss` | Mark a gap as a false positive (feeds threshold tuning) |
 | GET | `/templates` | Available domain templates |
-| GET | `/templates/{meeting_id}` | Which template this meeting is compared against |
+| GET | `/templates/{meeting_id}` | Which template this meeting is held to, and how far it got with each item |
 | PUT | `/templates/{meeting_id}` | Point this meeting at a template and re-compare |
 
 ### The read API as built
 
-Two of the four exist. `/reports/{meeting_id}` and `/topics/{meeting_id}` read
-the stored rows; nothing was added to `apps/` to mount them.
+Everything above is built except `POST /gaps/{id}/dismiss`.
+`/reports/{meeting_id}` and `/topics/{meeting_id}` read the stored rows; nothing
+was added to `apps/` to mount them.
 
 - **The report is read, not replayed.** It is assembled from `gap_*` rows by the
   same `service.build_report` the publish path uses, so a report reopened a week
@@ -562,6 +590,38 @@ that shows one of them is a payload nobody reads. `GET /templates/{meeting_id}`
 answers with the configured default rather than an empty body when nobody has
 chosen, because there is always a template in force and a rail showing nothing
 selected would misreport that.
+
+`GET /templates/{meeting_id}` also carries the comparison itself — every item of
+the template beside `covered`, `partial` or `missing`, and the id of the gap it
+raised. That is the rail on the right of S20, and it is the gap list read from
+the other end: the list says what is missing, the rail says what the missing
+items were measured against, which is what makes a gap a claim rather than an
+opinion. The response is a superset of the selection, so a caller that only
+wanted the key still reads it off the same field; `PUT` keeps taking and
+returning the selection alone, because a request body carrying a read-only
+comparison invites a caller to send one back.
+
+Two things keep it honest, and both are failures it would otherwise make
+silently:
+
+- **Coverage is stored, not recomputed.** `gap_gaps.coverage` records what
+  `detect.classify` decided when the pipeline ran. A rail that re-ran the
+  comparison at read time would disagree with the gap rows beside it the moment
+  `AUTUNE_GAP_PARTIAL_CENTRALITY` moved — and the rows are what E was published
+  and what a dismissal was made against. The report is read, not replayed; so is
+  the checklist behind it. `covered` is never stored, because a covered item
+  raises no gap: the server reads the *absence* of a row back as covered.
+- **An unanalysed meeting reports no coverage at all.** `analysed` is false and
+  every item's coverage is null. Without it, "no gap row" would read as
+  "covered" for a meeting nobody has processed — a full checklist of green dots
+  for a meeting the pipeline never reached, which is the same false statement
+  `compare` refuses to make when it declines to raise a checklist of gaps
+  against an empty graph.
+
+A dismissed item keeps its coverage and is marked dismissed rather than promoted
+to covered. Somebody pressing "해당 없음" is a judgement about the gap, not
+evidence the meeting covered the item, and the row is what threshold tuning
+reads.
 
 `PUT /templates/{meeting_id}` stores the choice **and re-runs detection**, so the
 gaps on `/reports/{meeting_id}` reflect the new template as soon as it returns —
@@ -710,12 +770,16 @@ deletion through `meetings.id` — but it writes to whatever
 else's. The docker-compose database in
 `../engineering/environments.md` is the intended target.
 
-The split between `missing` and `partial` is read off `gap_related_topics`, and
-that reading has a failure mode shaped exactly like a result: an empty link
-table says "every gap is missing". The harness cross-checks it against the
-stored `gap_gaps.title`, which `detect` composes from the coverage state, and
-stops with exit 2 if the two disagree rather than printing a cause split built
-on one of them.
+The split between `missing` and `partial` is read off `gap_gaps.coverage`. It
+used to be derived from `gap_related_topics` — a gap linking to no topic was a
+missing one — and that reading had two problems. One was a failure mode shaped
+exactly like a result: an empty link table says "every gap is missing". The
+other retired the derivation outright: an item the meeting only said out loud
+is partial and links to nothing, so every such gap read as missing. The harness
+cross-checks the stored state against the stored `gap_gaps.title`, which
+`detect` composes from the same coverage state, and stops with exit 2 if the
+two disagree — or if a row carries no coverage at all — rather than printing a
+cause split built on one of them.
 
 The committed set (`eval/fixtures/gap_detection_v1.json`) is **four authored
 meetings, and is not the PRD figure** — that one comes from five to ten real
