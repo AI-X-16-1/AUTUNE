@@ -18,8 +18,26 @@ find is noise. A gap report built on that graph would be about ``한번`` and
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
+
+from autune_integrations.privacy import MASK_CHAR
+
+_MASKED_CHUNK = re.compile(rf"\S*{re.escape(MASK_CHAR)}+\S*")
+"""A whitespace-delimited chunk with a mask character somewhere in it.
+
+``MASK_CHAR`` is imported rather than spelled here. Module A masks with the
+patterns in ``autune_integrations.privacy``, and this module only recognises
+what they leave behind — a copy of the character is a guard that stops matching
+the day the notation changes, without saying so. It was written out twice in
+this module before (#250).
+
+The shape is module A's own reading of a masked token: a run of non-space
+characters containing the mask. ``010-****-5678`` is one chunk because the
+speaker said one number, and the digits either side of the mask are the part
+that survived it.
+"""
 
 MAX_TERM_TOKENS = 4
 """How many tokens a run may join into one topic label.
@@ -173,6 +191,34 @@ def is_bare_noun(tag: str) -> bool:
     ) and bool(parts[0])
 
 
+def masked_spans(text: str) -> list[tuple[int, int]]:
+    """Character ranges module A masked, as ``claimed`` ranges for ``noun_terms``.
+
+    A masked value is not a topic and the graph already refuses one — the
+    ``MASK_CHAR`` check in ``graph.build_topics`` is the last line and stays
+    where it is. What that check cannot do is give back what was lost on the
+    way: when the mask lands inside a noun run, the run carries it, and the run
+    is dropped whole, together with the real topic beside it.
+
+        고객 연락처 010-****-5678 확인 부탁
+            without this  ->  one run, dropped, and 고객 연락처 goes with it
+            with it       ->  고객 연락처, 확인 부탁
+
+    Whether that happens is decided by whether a particle happens to sit
+    between the noun and the masked value: "연락처는 010-****-5678 입니다"
+    breaks the run by itself and keeps its topic, "연락처 010-****-5678" does
+    not. That is a property of how the speaker phrased it and says nothing
+    about what the meeting was about — and C reports on what is *absent* from
+    the graph, so a topic lost here comes back to the reader as "논의되지
+    않았다". #250.
+
+    Not a privacy fix. Nothing masked reached a node before this and nothing
+    does after it; the direction of the bug is loss, and the cost is a false
+    gap on every meeting where somebody read out a number.
+    """
+    return [match.span() for match in _MASKED_CHUNK.finditer(text)]
+
+
 def noun_terms(
     tokens: Sequence[Token], claimed: Iterable[tuple[int, int]] = ()
 ) -> list[tuple[int, str]]:
@@ -195,7 +241,9 @@ def noun_terms(
     ranges. One character belongs to at most one thing, the rule ``FakeNer``
     already follows: without it "다음 주 화요일까지" is a date *and* the tail of
     a noun run, and the graph grows a node nobody can point at in the
-    transcript.
+    transcript. ``ner`` seeds ``claimed`` with ``masked_spans`` for the second
+    half of the same rule — see there for why the model cannot be relied on to
+    claim them itself.
 
     Runs are capped at ``MAX_TERM_TOKENS`` from the left: an over-long run
     yields its first compound and the rest is dropped, rather than being cut

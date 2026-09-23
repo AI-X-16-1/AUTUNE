@@ -12,11 +12,13 @@ from __future__ import annotations
 import pytest
 
 from autune_gap.pipeline.spoken import (
+    MASK_CHAR,
     MAX_TERM_TOKENS,
     STOP_TERMS,
     Token,
     is_bare_noun,
     is_plausible,
+    masked_spans,
     noun_terms,
 )
 
@@ -33,6 +35,12 @@ def tokens(*tagged: tuple[str, str]) -> list[Token]:
 
 def labels(*tagged: tuple[str, str]) -> list[str]:
     return [text for _, text in noun_terms(tokens(*tagged))]
+
+
+def sentence(*tagged: tuple[str, str]) -> str:
+    """The text ``tokens`` laid those tokens out over, so character offsets from
+    one line up with the other."""
+    return " ".join(text for text, _ in tagged)
 
 
 # --- which tokens are nouns at all ------------------------------------------
@@ -172,6 +180,95 @@ def test_the_stoplist_holds_only_what_speech_repeats() -> None:
     is the expensive direction — so the list stays short and single words."""
     assert len(STOP_TERMS) < 50
     assert all(" " not in term for term in STOP_TERMS)
+
+
+# --- what module A's masking left behind ------------------------------------
+
+
+def test_a_masked_value_is_the_chunk_the_speaker_said() -> None:
+    """One span, not three: the digits either side of the mask are what
+    survived one number, and breaking between them would leave ``5678`` free to
+    join the run as a topic of its own."""
+    assert masked_spans(f"010-{MASK_CHAR * 4}-5678") == [(0, 13)]
+    assert masked_spans("연락처는 010-****-5678 입니다") == [(5, 18)]
+
+
+def test_an_unmasked_text_has_no_masked_spans() -> None:
+    """The character is the only signal. Nothing here guesses at what personal
+    data looks like — that is ``autune_integrations.privacy``'s job, on the
+    other side of the masking."""
+    assert masked_spans("검색 개인화 기능 응답 시간 줄이죠") == []
+    assert masked_spans("") == []
+
+
+def test_a_masked_value_breaks_the_run_instead_of_being_carried_by_it() -> None:
+    """#250, and the reason this exists.
+
+    The run joins the mask, the run is then dropped whole by
+    ``graph.build_topics``, and 고객 연락처 — a real topic, said in the clear —
+    goes with it. C reports on what is *absent* from the graph, so what the
+    reader sees is "논의되지 않았다" about something the meeting discussed.
+    """
+    tagged = (
+        ("고객", "ncn"),
+        ("연락처", "ncn"),
+        ("010-****-5678", "ncn"),
+        ("확인", "ncpa"),
+        ("부탁", "ncpa"),
+    )
+    laid_out = tokens(*tagged)
+
+    assert [text for _, text in noun_terms(laid_out)] == ["고객 연락처 010-****-5678 확인"]
+    assert [text for _, text in noun_terms(laid_out, masked_spans(sentence(*tagged)))] == [
+        "고객 연락처",
+        "확인 부탁",
+    ]
+
+
+def test_a_masked_value_a_particle_already_separated_is_not_a_term_either() -> None:
+    """The other half of #250: where a particle happens to break the run, the
+    topic beside it always survived — and the masked chunk became a one-token
+    run of its own, a ``term`` that ``graph.build_topics`` then had to refuse.
+
+    Claiming the span stops it being proposed at all. The graph check stays
+    where it is; this only means it is no longer the thing doing the work.
+    """
+    tagged = (
+        ("검색", "ncn"),
+        ("개인화", "ncpa"),
+        ("기능", "ncn"),
+        ("담당자", "ncn"),
+        ("연락처는", "ncn+jxt"),
+        ("010-****-5678", "ncn"),
+        ("입니다", "pvg+ef"),
+    )
+    laid_out = tokens(*tagged)
+
+    assert [text for _, text in noun_terms(laid_out)] == [
+        "검색 개인화 기능 담당자",
+        "010-****-5678",
+    ]
+    assert [text for _, text in noun_terms(laid_out, masked_spans(sentence(*tagged)))] == [
+        "검색 개인화 기능 담당자"
+    ]
+
+
+def test_nothing_carrying_the_mask_is_proposed_as_a_term_at_all() -> None:
+    """Whatever sits around it — a bare noun, a noun wearing a particle, or
+    nothing — the masked chunk is neither a term nor part of one.
+
+    The bug was that this depended on the neighbour. It no longer does, which
+    is the whole claim; what each sentence *keeps* still differs, because a
+    token carrying a particle was never a candidate.
+    """
+    for tagged in (
+        (("연락처", "ncn"), ("010-****-5678", "ncn"), ("확인", "ncpa")),
+        (("연락처는", "ncn+jxt"), ("010-****-5678", "ncn"), ("확인", "ncpa")),
+        (("010-****-5678", "ncn"),),
+    ):
+        found = noun_terms(tokens(*tagged), masked_spans(sentence(*tagged)))
+
+        assert all(MASK_CHAR not in text for _, text in found)
 
 
 # --- which of the model's entities are worth a node -------------------------

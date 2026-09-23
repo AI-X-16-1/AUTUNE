@@ -89,6 +89,19 @@ a 500MB pipeline is a judgement nobody tests.
   rather than passed through, or a double space — which ASR output carries —
   would split a compound the same meeting says as one topic elsewhere. Both
   raised in review of #222.
+- **What module A masked is claimed too.** A masked value is not a topic and
+  `graph.build_topics` has always refused one, but that check fires on the
+  whole run the mask ended up in, so 고객 연락처 010-****-5678 확인 lost
+  고객 연락처 along with the number. Whether it did was decided by whether a
+  particle happened to sit between the noun and the mask — 연락처는
+  010-****-5678 kept its topic, 연락처 010-****-5678 did not — which is a
+  property of how somebody spoke, not of what the meeting covered. Since C
+  reports on what is *absent*, each loss is a gap raised about something that
+  was discussed. `spoken.masked_spans` claims the chunk so the run breaks on it
+  instead, in both phrasings. The `MASK_CHAR` it looks for is imported from
+  `autune_integrations.privacy`, the masker's own: a second copy of the
+  character here is a guard that stops matching when the notation changes and
+  says nothing about it. #250.
 - **Two precision filters.** A one-character `person` is not a person: A/B 결과
   gives A and B as `PS`, and both became connected nodes. A `metric` with no
   digit in it is not a metric: `QT` on spoken Korean fires on 한번, 네, 좀.
@@ -404,8 +417,9 @@ wordings for it (#35).
 
 Putting a topic label in a question is safe for the same reason it is safe as a
 node: `graph.build_topics` drops any entity carrying the mask character, so no
-topic label has ever contained a masked span. #250 is about what that costs in
-recall, and confirms the guarantee itself holds through both extraction paths.
+topic label has ever contained a masked span. That guarantee never moved — #250
+was about what it cost in recall on the way, and closing it means the drop is no
+longer the thing doing the work (see "Step 1 as built").
 
 **What is still not built:** a question that reads the *relation* between topics
 rather than naming one — "정렬 로직이 인덱스 재색인에 의존한다면, 재색인은 언제
