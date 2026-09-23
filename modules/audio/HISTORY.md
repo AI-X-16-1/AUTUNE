@@ -581,10 +581,10 @@ broken two other modules and each fixed it locally:
 
 Both were latent while `user_id` was always `NULL`. **They are live now**, on
 `audio/speaker-identification`: the day a real meeting gets a confirmed
-speaker, both bugs are reachable, not hypothetical. #167 writes the rule down
+speaker, both bugs are reachable, not hypothetical. #167 wrote the rule down
 once, in `docs/architecture/data-model.md` under "A participant row is a
-voice, not a person" — **open, not merged**, so the rule is still two local
-fixes and no statement.
+voice, not a person" — **merged** (2026-09-15), so the rule was already a
+statement, not just two local fixes, before this feature shipped.
 
 `TranscriptMetadata.participants` still has no description in the contract, and
 the same trap reaches B and C through the payload rather than the table. **#184

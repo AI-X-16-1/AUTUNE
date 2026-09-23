@@ -78,9 +78,9 @@ assigned by similarity alone. Design:
 | Table | Purpose |
 | --- | --- |
 | `aud_jobs` | One row per transcription attempt: `queued` → `running` → `done` / `failed`, or `superseded` by a later attempt. What the worker is queued instead of a path |
-| `aud_speaker_embeddings` | Enrolled voice embeddings per user |
-| `aud_masking_events` | Counts of masked spans by category, for the recall metric. **Never the masked content** |
-| `aud_corrections` | User corrections to speaker attribution and text, for accuracy improvement |
+| `aud_speaker_embeddings` | Two kinds of row: an unconfirmed per-meeting observation vector, and a confirmed profile vector on the person. `audio-speaker-identification.md` §2 |
+| `aud_masking_events` | Planned, not built. Would count masked spans by category, for the recall metric — **never the masked content** |
+| `aud_corrections` | Planned, not built. Would hold user corrections to speaker attribution and text, for accuracy improvement |
 
 Plus the shared entities in `packages/core`, which A writes.
 
@@ -96,7 +96,7 @@ Plus the shared entities in `packages/core`, which A writes.
 | GET | `/transcripts/{meeting_id}` | Full transcript, masked, for a member of the meeting's team |
 | POST | `/meetings/{meeting_id}/consent` | A member attests that everyone in the recording consented (#190) |
 | WS | `/live/{meeting_id}` | Live transcription: one masked row per utterance, a speaker cluster label (`화자 N`), no person, nothing stored — `audio-live-transcription.md` |
-| PATCH | `/utterances/{id}` | Correct speaker or text |
+| PATCH | `/utterances/{id}` | Correct speaker or text (planned — no route exists yet; would back `aud_corrections`) |
 | GET | `/meetings/{meeting_id}/speakers` | Each speaker label in the meeting, and the nearest candidate profile above `AUTUNE_AUDIO_IDENTIFICATION_THRESHOLD`, if any |
 | POST | `/meetings/{meeting_id}/speakers/{speaker_label}` | A team member confirms who a speaker is; fills `Participant.user_id` and copies the vector into that person's profile |
 | DELETE | `/me/voice-profile` | Deletes every profile row for the caller |

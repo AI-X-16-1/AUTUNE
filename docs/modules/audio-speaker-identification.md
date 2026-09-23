@@ -1,8 +1,7 @@
 # Speaker identification — design
 
-**Date:** 2026-09-23 · **Owner:** 김민경 · **Module:** A · **Status:** Built
-(`audio/speaker-identification`); threshold evaluation pending
-(issue #6; branch `audio/speaker-identification`)
+**Date:** 2026-09-23 · **Owner:** 김민경 · **Module:** A · **Status:** Built;
+threshold evaluation pending (issue #6; branch `audio/speaker-identification`)
 
 A voice the pipeline separated becomes a person. The transcript screens show
 `화자 2 · 후보 김민경 · 유사도 0.87`; one click fills `speaker_id` and teaches
