@@ -40,6 +40,7 @@ from autune_gap.models import (
     GapTopicUtterance,
 )
 from autune_gap.pipeline import reset_cache
+from autune_gap.pipeline.relations import RuleRelations
 
 
 @pytest.fixture(autouse=True)
@@ -276,7 +277,13 @@ def test_a_relation_the_meeting_stated_is_stored_with_its_direction(team_id: str
 def test_an_edge_says_what_asserted_it_and_co_occurrence_says_nothing(team_id: str) -> None:
     """The NULL is the point: nothing extracted a co-occurrence edge, the two
     topics merely shared an utterance. Gap precision is compared across versions
-    of whatever built the graph, and after #32 two different things build it."""
+    of whatever built the graph, and after #32 two different things build it.
+
+    Read off ``RuleRelations`` rather than spelled out. What this test is about
+    is *which* edge carries a version and which carries NULL; the string itself
+    is pinned once, by ``test_the_extractor_names_itself``. Written out here it
+    was a second copy that had to be found by CI every time a rule changed — and
+    it was, by #254."""
     blocked = build(team_id, BLOCKED)
     plain = build(team_id, MEETING)
 
@@ -290,7 +297,7 @@ def test_an_edge_says_what_asserted_it_and_co_occurrence_says_nothing(team_id: s
             ).tuples()
         }
 
-    assert versions == {"blocked_by": "rules-1", "co_occurs": None}
+    assert versions == {"blocked_by": RuleRelations.model_version, "co_occurs": None}
 
 
 # --- consent ----------------------------------------------------------------
