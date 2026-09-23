@@ -10,11 +10,13 @@ import type { SpeakerEntry, TeamMember } from "../types";
 /**
  * A meeting's speakers, who each one might be, and the people it could be.
  *
- * Both transcripts use it: the stored one to offer a candidate, the live one
- * to let somebody assign a speaker before the recording has been processed.
- * `assign` refetches rather than patching state -- confirming one speaker can
- * change another's candidate, because the profile it just learned is now in
- * the pool.
+ * `StoredTranscript` is the only caller. `LiveTranscript` cannot use this: no
+ * `Participant` row exists for a meeting until `persist_transcript` writes
+ * them, so `GET /speakers` returns `[]` for the whole time a meeting is
+ * `recording` or `analyzing` -- there is nothing yet for a hook like this one
+ * to fetch or to let somebody assign. `assign` refetches rather than patching
+ * state -- confirming one speaker can change another's candidate, because the
+ * profile it just learned is now in the pool.
  *
  * `error` and `pending` are `assign`'s own outcome, not the two `GET`s'. A
  * 403 (the reader, or the named user, is not a member of the team) and a 404
