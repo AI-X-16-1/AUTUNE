@@ -57,6 +57,23 @@ def test_the_nearest_profile_above_the_threshold_wins() -> None:
     assert found == Candidate(user_id="alice", display_name="ALICE", similarity=pytest.approx(1.0))
 
 
+def test_the_higher_of_two_qualifying_profiles_wins() -> None:
+    """Both clear a 0.7 threshold: alice at 1.0, bob at ~0.7071.
+
+    Ordered bob-first so a "first match wins" implementation would return bob.
+    Bob's mean of e0 and e1 is (1,1,0,…)/√2, whose dot with e0 is 0.7071.
+    """
+    found = best_candidate(
+        axis(0),
+        [profile("bob", axis(0), axis(1)), profile("alice", axis(0))],
+        model_version="m1",
+        threshold=0.7,
+    )
+    assert found is not None
+    assert found.user_id == "alice"
+    assert found.similarity == pytest.approx(1.0)
+
+
 def test_nothing_below_the_threshold_is_offered() -> None:
     # e0 against the mean of e0 and e1 is 0.707, just under 0.71.
     assert (

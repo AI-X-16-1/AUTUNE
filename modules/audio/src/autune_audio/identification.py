@@ -48,6 +48,8 @@ def mean_vector(vectors: Sequence[Sequence[float]]) -> np.ndarray:
     means; ``best_candidate`` skips such a profile rather than failing the
     request.
     """
+    # Vectors arrive from the embedder as float32; cast here to avoid silent
+    # upcast to float64 and to preserve the precision they were computed in.
     stacked = np.asarray(vectors, dtype=np.float32)
     if stacked.size == 0:
         raise ValueError("no vectors")
@@ -70,6 +72,9 @@ def best_candidate(
     Only profiles from the same ``model_version`` are considered: the same
     voice sits somewhere else in another checkpoint's space, so a comparison
     across the two is a number with no meaning.
+
+    Equal similarities are broken by the order supplied: strict ``>``
+    comparison keeps the first-matching profile, so the caller owns the tie.
     """
     try:
         vector = mean_vector([observation])
