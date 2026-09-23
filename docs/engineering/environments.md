@@ -396,6 +396,13 @@ cleared at the end of every task. Do not point it at a synced folder, and do not
 keep test recordings of real meetings on disk. See
 `../architecture/privacy.md`.
 
+**The API and the worker must see the same directory on the same filesystem.**
+The upload endpoint writes the recording and the worker adopts it by job id, so
+a deployment that gives the two processes different storage breaks the handover:
+the worker finds nothing, and the file the endpoint wrote is left with nobody
+to delete it. Compose runs both from one volume; keep it that way, or change
+the handover rather than the path (`privacy.md` section 1, decision #275).
+
 While an upload request is in flight there is a second, short-lived copy of the
 recording in the OS temporary directory (`tempfile.gettempdir()`), written by
 Starlette's multipart parser before module A's code runs. It is deleted when
