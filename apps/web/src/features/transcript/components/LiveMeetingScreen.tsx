@@ -7,7 +7,6 @@ import { Button } from "@/shared/ui/Button";
 
 import { attestConsent } from "../api";
 import { useLiveSession, type LivePhase } from "../hooks/useLiveSession";
-import { useMeeting } from "../hooks/useMeeting";
 import { useMicrophone } from "../hooks/useMicrophone";
 import type { RecordingState } from "../types";
 import { LiveTranscript } from "./LiveTranscript";
@@ -36,18 +35,15 @@ const LEAVING_LOSES_AUDIO = new Set<LivePhase>([
  * only while a consent request is in flight, so a tick is not lost to a
  * start that races it.
  *
- * `LiveTranscript` now assigns speakers for real, through `useSpeakers`, which
- * needs the meeting's team for the picker (`GET /teams/{id}/members`). This
- * screen has only `meetingId`, so it polls the meeting row with `useMeeting`
- * the way `StoredMeetingScreen` already does, and reads `team_id` off it once
- * it has loaded.
+ * Speaker identification does not reach this screen. `LiveTranscript` has no
+ * prompt during a recording — see its own docstring for why (no `Participant`
+ * row exists until the meeting is processed) — so this screen does not need
+ * the meeting's `team_id` and does not poll for it.
  */
 export function LiveMeetingScreen({ meetingId }: { meetingId: string }) {
   const router = useRouter();
   const microphone = useMicrophone();
   const live = useLiveSession(meetingId, microphone.stream);
-  const meetingState = useMeeting(meetingId);
-  const teamId = meetingState.status === "ready" ? meetingState.meeting.team_id : null;
   const [consented, setConsented] = useState(false);
   const [consentPending, setConsentPending] = useState(false);
   const [consentError, setConsentError] = useState<string | null>(null);
@@ -194,8 +190,6 @@ export function LiveMeetingScreen({ meetingId }: { meetingId: string }) {
         </p>
       )}
       <LiveTranscript
-        meetingId={meetingId}
-        teamId={teamId}
         state={state}
         rows={live.rows}
         elapsedSeconds={live.elapsedSeconds}

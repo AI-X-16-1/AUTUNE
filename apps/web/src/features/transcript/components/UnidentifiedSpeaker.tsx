@@ -1,22 +1,27 @@
+import { useEffect, useState } from "react";
+
 import { Button } from "@/shared/ui";
 
 import type { SpeakerCandidate, TeamMember } from "../types";
 
 /**
- * The three ways to put a name to a voice the pipeline separated but could not
- * identify.
+ * Putting a name to a voice the pipeline separated but could not identify.
  *
- * All three end with a person saying who it is. None of them guesses: a
- * similarity score high enough to show is not high enough to write into the
- * record, because the cost of being wrong is a commitment filed under somebody
- * who never made it. A candidate is drawn next to the label with its
- * similarity; confirming is a click, and it is the click that writes the
- * name, never the score.
+ * Two controls are live -- confirming a candidate, and picking from the
+ * team -- and two are placeholders that explain, in their `title`, what is
+ * missing before they can open. Neither live control guesses: a similarity
+ * score high enough to show is not high enough to write into the record,
+ * because the cost of being wrong is a commitment filed under somebody who
+ * never made it. A candidate is drawn next to the label with its similarity;
+ * confirming is a click, and it is the click that writes the name, never the
+ * score.
  *
- * "확인 DM 보내기" is the one that also enrols the voice for next time (S16), so
- * it leads. It is a text button rather than a fill: `ui-spec.md` allows one
- * primary per screen, and on S13 that is 녹음 종료 in the right rail — the
- * action you cannot take back.
+ * "확인 DM 보내기" would also enrol the voice for next time (S16), which is why
+ * it was the lead action when this component had only placeholders. It is
+ * disabled and last now: the candidate confirm is the one click that
+ * actually identifies somebody today, so it takes the `tone="text"` slot,
+ * and `ui-spec.md`'s one-primary-per-screen rule is still respected --
+ * S13's primary is 녹음 종료 in the right rail, the action you cannot take back.
  *
  * **No utterance count.** This line used to read `화자 2 · 발화 41건`, which is
  * a per-person speech volume wearing a number instead of a name. Everyone in
@@ -31,13 +36,29 @@ export function UnidentifiedSpeaker({
   speaker,
   candidate,
   members,
+  pending = false,
   onAssign,
 }: {
   speaker: string;
   candidate?: SpeakerCandidate | null;
   members?: TeamMember[];
+  /** True while a confirm this prompt (or a sibling one) started is in
+   * flight. Disables every live control, closing the double-click hole a
+   * second click mid-request would otherwise open. */
+  pending?: boolean;
   onAssign?: (userId: string) => void;
 }) {
+  // The select is controlled so a failed pick can be undone. A success drops
+  // this whole entry from the caller's list -- the speaker is no longer
+  // unidentified -- so this component unmounts before `picked` would matter;
+  // a failure leaves it mounted with `pending` back at false, which is the
+  // signal to put the placeholder back rather than keep showing a name that
+  // was never written.
+  const [picked, setPicked] = useState("");
+  useEffect(() => {
+    if (!pending) setPicked("");
+  }, [pending]);
+
   return (
     <div
       className="flex flex-wrap items-center gap-2"
@@ -58,16 +79,22 @@ export function UnidentifiedSpeaker({
         <Button
           tone="text"
           size="compact"
+          disabled={pending}
           onClick={() => onAssign?.(candidate.user_id)}
         >
           {candidate.name} 맞습니다
         </Button>
       )}
       <select
-        defaultValue=""
+        aria-label={`${speaker} 화자 지정`}
+        value={picked}
+        disabled={pending}
         onChange={(event) => {
-          if (event.target.value) onAssign?.(event.target.value);
+          const userId = event.target.value;
+          setPicked(userId);
+          if (userId) onAssign?.(userId);
         }}
+        className="focus-visible:outline-none focus-visible:ring-[1.5px] focus-visible:ring-[var(--color-accent-default)]"
         style={{
           height: "var(--control-h-compact)",
           paddingInline: "var(--control-px-compact)",

@@ -1,5 +1,5 @@
 /** Calls to /api/audio. This feature calls no other module's endpoints. */
-import { api, authHeaders } from "@/shared/api/client";
+import { api, ApiError, authHeaders } from "@/shared/api/client";
 
 export { api };
 
@@ -51,12 +51,59 @@ export const createMeeting = (body: { title: string; team_id: string }) =>
 export const getSpeakers = (meetingId: string) =>
   api.audio<SpeakerEntry[]>(`/meetings/${meetingId}/speakers`);
 
-/** Confirm who a speaker is. 204; the transcript then carries their id. */
-export const assignSpeaker = (meetingId: string, speakerLabel: string, userId: string) =>
-  api.audio<void>(`/meetings/${meetingId}/speakers/${encodeURIComponent(speakerLabel)}`, {
-    method: "POST",
-    body: JSON.stringify({ user_id: userId }),
-  });
+/**
+ * Confirm who a speaker is. 204, no body; the transcript then carries their id.
+ *
+ * Not through `api.audio`. `request()` in the shared client treats every
+ * `response.ok` as JSON and unconditionally does `await response.json()` —
+ * fine for every other call in this feature, all of which return a body, but
+ * a 204 has none, and `JSON.parse("")` throws `SyntaxError: Unexpected end of
+ * JSON input`. That turned a write that succeeded into a promise that
+ * rejects: the server assigns the speaker, the client throws before `load()`
+ * ever runs, and the prompt sits there looking like nothing happened. 204 is
+ * still the right status for a write with no body to return — bending the
+ * route to carry one just to dodge a client bug is the wrong fix.
+ * `shared/api/client.ts` is out of bounds for this module, so the workaround
+ * lives here: **#359** tracks the shared-client fix, and this is the one
+ * other call in the feature that goes to `fetch` directly, for the same
+ * reason `uploadRecording` below does.
+ *
+ * A 403 (the reader, or the named user, is not a member of this meeting's
+ * team) and a 404 (unknown speaker label) are real outcomes `useSpeakers`
+ * has to show, not just this call's own JSON bug — so a non-2xx response
+ * throws the same `ApiError` `request()` throws, carrying the server's own
+ * code and message, rather than a bare `Error`. That keeps the error
+ * rendering in `useSpeakers`/`UnidentifiedSpeaker` from needing to
+ * special-case the one call that cannot go through `request()`.
+ */
+export async function assignSpeaker(
+  meetingId: string,
+  speakerLabel: string,
+  userId: string,
+): Promise<void> {
+  const response = await fetch(
+    `${API_BASE}/api/audio/meetings/${meetingId}/speakers/${encodeURIComponent(speakerLabel)}`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json", ...authHeaders() },
+      body: JSON.stringify({ user_id: userId }),
+    },
+  );
+  if (!response.ok) {
+    let body: { error?: { code?: string; message?: string; details?: Record<string, unknown> } } | undefined;
+    try {
+      body = await response.json();
+    } catch {
+      // Non-JSON error body; fall through to the status text.
+    }
+    throw new ApiError(
+      response.status,
+      body?.error?.code ?? "unknown",
+      body?.error?.message ?? response.statusText,
+      body?.error?.details ?? {},
+    );
+  }
+}
 
 /** The team's people, for the picker. */
 export const listTeamMembers = (teamId: string) =>

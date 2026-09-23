@@ -2,11 +2,9 @@
 
 import { RecordingFrame } from "@/shared/ui";
 
-import { useSpeakers } from "../hooks/useSpeakers";
 import type { LiveRow, RecordingState, UtteranceKind } from "../types";
 import { LiveRail } from "./LiveRail";
 import { TranscriptRow } from "./TranscriptRow";
-import { UnidentifiedSpeaker } from "./UnidentifiedSpeaker";
 
 /**
  * S13. The meeting as it is being transcribed.
@@ -21,19 +19,19 @@ import { UnidentifiedSpeaker } from "./UnidentifiedSpeaker";
  * unreadable — somebody is reading it while it is written. Corrections land in
  * S15 after the meeting, where re-reading is the point.
  *
- * Unidentified speakers are collected into one prompt above the transcript
- * rather than repeated on every row of theirs. Answering it once answers every
- * row, which is also what the S16 DM does.
- *
- * **Candidates never appear here.** `useSpeakers` calls `GET /speakers`, but
- * the observation vector a candidate is drawn from is written by the worker
- * after the upload finishes, so a meeting still being recorded has none — the
- * endpoint returns `candidate: null` for every entry. `StoredTranscript` is
- * the screen where a candidate exists and gets offered.
+ * **No identification prompt during a recording, on purpose.** Putting a name
+ * to a voice needs a `Participant` row, and none exists for a meeting until
+ * `persist_transcript` writes them (via `_participants_for`) in the same
+ * transaction as the utterances — a meeting that is still `recording` or
+ * still `analyzing` has none at all, so `GET /speakers` for it returns `[]`,
+ * not a list of unidentified labels. This screen used to derive a label list
+ * straight from the rows' `speaker` strings and offer buttons that only
+ * `console.log`ed; removing that was not a regression, because none of it
+ * ever wrote an assignment. `StoredTranscript` is where a name gets attached,
+ * once the meeting is processed and the participants — and, later, their
+ * candidates — exist to attach one to.
  */
 export function LiveTranscript({
-  meetingId,
-  teamId,
   state,
   rows,
   elapsedSeconds,
@@ -44,8 +42,6 @@ export function LiveTranscript({
   onStop,
   classified = false,
 }: {
-  meetingId: string;
-  teamId: string | null;
   state: RecordingState;
   rows: LiveRow[];
   elapsedSeconds: number;
@@ -62,8 +58,6 @@ export function LiveTranscript({
    * every kind. */
   classified?: boolean;
 }) {
-  const { speakers, members, assign } = useSpeakers(meetingId, teamId);
-  const unidentified = speakers.filter((entry) => entry.user_id === null);
   const counts = classified ? countKinds(rows) : undefined;
 
   return (
@@ -77,16 +71,6 @@ export function LiveTranscript({
         }}
       >
         <main className="min-w-0 flex-1">
-          {unidentified.map((entry) => (
-            <UnidentifiedSpeaker
-              key={entry.speaker_label}
-              speaker={entry.speaker_label}
-              candidate={entry.candidate}
-              members={members}
-              onAssign={(userId) => void assign(entry.speaker_label, userId)}
-            />
-          ))}
-
           {rows.length === 0 ? (
             <p
               style={{
