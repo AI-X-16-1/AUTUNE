@@ -1,6 +1,7 @@
 # Speaker identification — design
 
-**Date:** 2026-09-23 · **Owner:** 김민경 · **Module:** A · **Status:** Design
+**Date:** 2026-09-23 · **Owner:** 김민경 · **Module:** A · **Status:** Built
+(`audio/speaker-identification`); threshold evaluation pending
 (issue #6; branch `audio/speaker-identification`)
 
 A voice the pipeline separated becomes a person. The transcript screens show
@@ -59,10 +60,21 @@ nothing to compare a voice against.
 - Deletion: observation rows go with the meeting by `ON DELETE CASCADE`, and
   profile rows go with the person the same way (`user_id` is a `users.id` FK
   with `ON DELETE CASCADE`, as `team_members.user_id` already is). The
-  `autune_core.deletion` registry's `@on_user_deleted("audio")` hook is what
-  covers leaving a *team* without leaving the product — profiles whose only
-  source meetings belonged to that team are removed there; `privacy.md`
-  section 4 asks for a test that proves it.
+  `autune_core.deletion` registry's `@on_user_deleted("audio")` hook
+  (`forget_user_voice`) is the path for a deletion that does not remove the
+  `users` row itself — `@on_user_deleted` fires on **account deletion**, not
+  on leaving a team (`packages/core/src/autune_core/deletion.py`). It deletes
+  **every** profile row the person has, not only the ones sourced from one
+  team, and it also nulls that person's id out of `confirmed_by` on other
+  people's profile rows and `attested_by` on `aud_consent_attestations`, so
+  someone who left the product is not still named as who confirmed a
+  stranger's profile or attested a meeting's consent. `privacy.md` section 4
+  asks for a test that proves it, and one exists
+  (`test_speaker_endpoints.py`). **Plainly: nothing in the repository calls
+  `run_user_hooks` today (#358)**, so this hook — registered correctly — does
+  not run in production; there is no account-deletion flow to call it yet.
+  `DELETE /me/voice-profile` (below) is the only deletion path that actually
+  fires today.
 
 **Why one table rather than two.** The two rows share every constraint —
 dimension, model version, the vector itself — and confirmation is then one
@@ -148,8 +160,8 @@ returns only the teams themselves; the picker needs the people.
 
 ## 5. Screens
 
-No new screen. `UnidentifiedSpeaker` — already rendered by S13 (live) and S15
-(stored transcript) — gains the candidate line:
+No new screen. `UnidentifiedSpeaker` — rendered by S15 (stored transcript) —
+gains the candidate line:
 
 ```
 화자 2 · 후보 김민경 · 유사도 0.87   [ 김민경 맞습니다 ]  [ 참석자 중에서 지정 ▾ ]
@@ -161,9 +173,15 @@ No new screen. `UnidentifiedSpeaker` — already rendered by S13 (live) and S15
   saying why. The first needs a decision about speakers who have no account;
   the second needs Slack, which is not connected. Neither is in this scope.
 
-On S13 the candidate is always absent — the observation vector is written by
-the worker after the upload, and the live screen is ahead of that. Assignment
-works there anyway, and the candidate appears on the stored screen afterwards.
+**Not built on S13, unlike this design assumed.** No `Participant` row exists
+for a meeting until `persist_transcript` runs, so `GET
+/meetings/{id}/speakers` returns `[]` for the whole time a meeting is
+`recording` or `analyzing` — there is nothing yet for `UnidentifiedSpeaker` to
+render or for an assignment control to act on. The build found this and left
+the prompt off `LiveTranscript` entirely rather than show one with nothing to
+offer (`useSpeakers.ts`'s docstring says the same). Assignment and the
+candidate are stored-transcript-only, S15; the candidate appears there once
+the worker has written the observation vector.
 
 ## 6. Errors and edges
 
@@ -177,7 +195,7 @@ works there anyway, and the candidate appears on the stored screen afterwards.
 | Re-assigning a label | `Participant.user_id` is overwritten; the profile row from that (meeting, label) is replaced |
 | Model version changed | Old profiles are not candidates. One confirmation each rebuilds them |
 | Meeting deleted | Observation rows cascade; profiles survive with `source_meeting_id` set to null |
-| User removed from the team | The deletion hook removes their profiles |
+| User removed from the team | Nothing happens today. `forget_user_voice` would remove every profile of theirs (not team-scoped — see §2), but nothing calls it (#358) |
 
 `identification_threshold` is a setting, provisionally **0.70** — higher than
 the live tracker's 0.55 because that one asks "is this the same voice as a
@@ -199,8 +217,8 @@ sets the real number and goes in `HISTORY.md`, the same way #306's did.
   `speaker_id = null` when somebody confirms, so module B's action items keep
   their `assignee_label`. Propagating a later identification needs either a new
   event (a contract change) or a re-read on B's side, and re-publishing is
-  unsafe while #194 stands. **Opened as its own issue**; this design stops at
-  the transcript screens.
+  unsafe while #194 stands. **Opened as its own issue (#360)**; this design
+  stops at the transcript screens.
 - Enrol a voice from a recording made for that purpose (S04).
 - Send the confirmation DM (S16). The endpoint is shaped for it.
 - Assign a speaker who has no account ("직접 입력").
@@ -215,3 +233,30 @@ sets the real number and goes in `HISTORY.md`, the same way #306's did.
 | #190 | Consent is per meeting, not per person. This design gates on the meeting's attestation, which is what exists |
 | #194 | Why a re-publish is not an option for telling B |
 | #237 | Role and seniority on a speaker — separate, and not needed here |
+
+## 10. What this feature found outside module A
+
+Five issues came out of this feature's reviews, none of them module A's to
+fix:
+
+- **#355** — `packages/core`'s `User.memberships` relationship lacks
+  `passive_deletes=True`, so `session.delete(user)` raises instead of letting
+  the database's own `ON DELETE CASCADE` / `SET NULL` do the work an
+  account-deletion flow would need.
+- **#356** — the shared engine (`packages/core/src/autune_core/db.py`) does
+  not set `hide_parameters`, so a `StatementError` on a failed write carries
+  its bound parameters — for this feature, a 256-float voice vector, inside
+  an error message. Module A guards its own write paths against propagating
+  one; the general fix belongs in `packages/core`.
+- **#357** — `Participant.speaker_label`'s docstring claims identification
+  *renames* the label ("'Speaker 2' until identification succeeds, then the
+  person's name"). It does not — `assign_speaker` only ever sets `user_id` —
+  and code written to that docstring would silently unlink every stored
+  observation, which is keyed on `speaker_label`.
+- **#358** — nothing in the repository calls `run_user_hooks`, so every
+  module's `@on_user_deleted` hook, including this feature's
+  `forget_user_voice`, is dead code until an account-deletion flow exists.
+  See §2.
+- **#359** — `shared/api/client.ts` rejects on every `204` response, which is
+  why `assignSpeaker` in `apps/web/src/features/transcript/api.ts` calls
+  `fetch` directly instead of going through it.

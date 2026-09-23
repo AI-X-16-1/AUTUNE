@@ -7,7 +7,7 @@ Evaluation reports live in `docs/modules/audio-evaluations/` and hold the full
 tables. This file is the thread through them: the decisions, the reversals, and
 what is still open.
 
-Last updated: 2026-09-22.
+Last updated: 2026-09-23.
 
 ---
 
@@ -40,14 +40,17 @@ halves are separated deliberately — see section 3.
 | Raw-audio deletion | `storage.py` | merged (#117) |
 | Diarize | `diarization.py` | merged (#136) |
 | Assign speakers to words | `speakers.py` | merged (#136) |
+| Speaker identification | `identification.py`, `tasks.py`, `service.py`, `router.py` | open, branch `audio/speaker-identification` (#6) |
 | PII masking — patterns | `masking.py` + `autune_integrations.privacy` | merged (#138) |
 | PII masking — spoken numbers | `recognition.py` | open, PR #158 |
 | Persist + publish | `persistence.py`, `tasks.py` | merged (#184) |
 | Event publishing | `autune_core.events` | merged (#145) |
 
-Speaker **identification** (matching a voice to a person, #6) is not built. Every
-`participants.user_id` is `NULL` today, and several downstream bugs are waiting
-on that changing — see section 6.
+Speaker **identification** (matching a voice to a person, #6) is built —
+`docs/modules/audio-speaker-identification.md`. A confirmed speaker fills
+`participants.user_id`; an unconfirmed one still keeps `NULL`. The downstream
+bugs section 6 describes as waiting on that column are live from here, not
+latent — see that section.
 
 ---
 
@@ -250,6 +253,26 @@ sweep could score a threshold against a different short-utterance rule than
 production uses; they now take `min_seconds` as a required keyword, and the
 script defaults it to `get_settings().live_speaker_min_s` and prints the
 value it used.
+
+### Speaker identification (`docs/modules/audio-speaker-identification.md`)
+
+`speaker_id` was null on every utterance the module had ever produced: voices
+were separated and never named. This adds the missing half — a confirmed
+speaker becomes a voice profile, and the next meeting offers that person as a
+candidate for the same voice.
+
+The threshold is **0.70, provisional** — higher than the live tracker's 0.55
+because that one asks whether a voice is the same as a moment ago and this one
+asks whether it is a particular person. The evaluation that settles it needs
+several meetings with the same people, which the in-house recording does not
+have; it is the next thing this feature owes.
+
+The vector itself is taken from **3 to 10 seconds** of a speaker's own turns
+(`speaker_embedding_min_s` / `speaker_embedding_max_s`) — long enough to embed,
+short enough that one straggler turn cannot pull the average toward noise.
+Embedding model: `pyannote/wespeaker-voxceleb-resnet34-LM`, 256 dimensions —
+the same model `audio-live-speakers.md` already uses for the live path, so a
+live vector and a stored vector are comparable without a second download.
 
 ---
 
@@ -542,7 +565,7 @@ side).
 
 ## 6. What is open, and why it matters
 
-### Blocked on speaker identification (#6)
+### Speaker identification shipped (#6) — the two bugs it wakes up are live now
 
 `participants` holds **one row per diarization label**, and splitting one voice
 into two clusters is diarization's characteristic failure. Once `user_id` is
@@ -556,10 +579,11 @@ broken two other modules and each fixed it locally:
   been silent on it; a participation gap raised on that silence is a false
   statement about somebody who spoke.
 
-Both are latent today because `user_id` is always `NULL`. **They go live the day
-#6 ships.** #167 writes the rule down once, in
-`docs/architecture/data-model.md` under "A participant row is a voice, not a
-person" — **open, not merged**, so until it lands the rule is still two local
+Both were latent while `user_id` was always `NULL`. **They are live now**, on
+`audio/speaker-identification`: the day a real meeting gets a confirmed
+speaker, both bugs are reachable, not hypothetical. #167 writes the rule down
+once, in `docs/architecture/data-model.md` under "A participant row is a
+voice, not a person" — **open, not merged**, so the rule is still two local
 fixes and no statement.
 
 `TranscriptMetadata.participants` still has no description in the contract, and
@@ -586,7 +610,7 @@ exists, not fixed one at a time.**
 
 | | |
 | --- | --- |
-| #92 | Legal review of ADR 0007 — Q4 gates whether embedding collection needs separate consent, which gates #6 |
+| #92 | Legal review of ADR 0007 — Q4 gates whether embedding collection needs separate consent. #6 shipped without waiting for the answer, gated instead on the meeting's existing consent attestation; whether that is enough is still #92's open question |
 | #155 | S13's spec asks for live classification counts; the architecture deliberately has no path to fill them |
 | #106 | No frontend test infrastructure — the S13 components have no component tests |
 
@@ -620,8 +644,10 @@ Ordered by what the measurements say, not by what is pleasant.
    mode. Four open detector issues cannot be resolved without one, and the
    `#61` target argument is about what a number means under which conditions.
 
-4. **Speaker identification (#6)**, once #92 answers. It closes two latent bugs in
-   other modules as a side effect.
+4. ~~**Speaker identification (#6)**, once #92 answers.~~ Shipped on
+   `audio/speaker-identification` without waiting for #92 — see the table
+   above and section 6. The threshold evaluation section 2 describes is what
+   this feature still owes, not the identification itself.
 
 5. **Overlapping speech.** DER is measured on one-speaker-at-a-time audio. The
    next recording needs per-speaker tracks — that is the case the two pyannote
