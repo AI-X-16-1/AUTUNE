@@ -122,6 +122,25 @@ class AudioSettings(BaseSettings):
     """Upper bound on speakers when the exact count is unknown. Ignored when
     ``diarization_num_speakers`` is set."""
 
+    identification_threshold: float = 0.70
+    """Cosine similarity at or above which a voice profile is offered as the
+    candidate for a speaker label. Higher than the live tracker's
+    ``live_speaker_threshold``: that one asks "is this the same voice as a
+    moment ago", this one asks "is this a particular person", and the cost of
+    being wrong is a commitment filed under somebody who never made it.
+    Provisional until the evaluation in
+    ``docs/modules/audio-speaker-identification.md`` has run."""
+
+    speaker_embedding_max_s: float = 10.0
+    """How many seconds of one speaker go into their observation vector. More
+    is not better: the embedder pools over the window, and ten seconds of a
+    person is already more than a speaker-verification model needs."""
+
+    speaker_embedding_min_s: float = 3.0
+    """A speaker with less than this much speech in a meeting gets no vector.
+    Someone who said "네" twice cannot be recognised from it, and a noisy row
+    would be offered as a candidate."""
+
     live_hello_timeout_s: float = 5.0
     """How long a live connection may sit without sending ``hello``."""
 
