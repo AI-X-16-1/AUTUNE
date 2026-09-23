@@ -64,12 +64,15 @@ def test_the_meeting_says_what_is_blocking_what(ner: SpacyNer) -> None:
     The other five edges of this meeting are co-occurrence — two topics in one
     sentence and no marker joining them.
 
-    It only works because the rules look for every name the *meeting* used
-    rather than the entities of this utterance: 실시간 is claimed in utterance 1
-    and wears a particle in utterance 2, which is the utterance that states the
-    blocker. Keyed per utterance this list was empty.
+    The blocker is 콜드스타트 처리, the compound the speaker said. Before #278
+    the particle on 처리가 cut it to 콜드스타트, and 실시간은 was not a topic
+    of this utterance at all — the edge was found only because the rules look
+    for every name the *meeting* used. Both halves now come from the utterance
+    that states the relation.
     """
-    assert relations_of(ner, "transcript_ready.typical") == [("실시간", "blocked_by", "콜드스타트")]
+    assert relations_of(ner, "transcript_ready.typical") == [
+        ("실시간", "blocked_by", "콜드스타트 처리")
+    ]
 
 
 def test_a_meeting_that_asserts_nothing_gets_no_relations(ner: SpacyNer) -> None:
@@ -87,11 +90,15 @@ def test_the_typical_meeting_is_about_what_it_discussed(ner: SpacyNer) -> None:
     다음 주 화요일까지 — a graph about a one-letter speaker, an adverb and
     three dates, with no node for real-time personalisation, popularity sort or
     cold start. Those three are what this adds.
+
+    실시간 개인화 and 콜드스타트 처리 are whole since #278: a particle on the
+    last word used to cut them to 실시간 and 콜드스타트.
     """
     found = topics_of(ner, "transcript_ready.typical")
 
     assert "인기순 정렬" in found
-    assert "콜드스타트" in found
+    assert "콜드스타트 처리" in found
+    assert "실시간 개인화" in found
     assert "실시간" in found
 
 
@@ -105,19 +112,20 @@ def test_the_noise_the_model_finds_does_not_become_a_topic(ner: SpacyNer) -> Non
     assert "한번" not in found
 
 
-def test_a_date_is_still_a_topic_including_a_bare_one(ner: SpacyNer) -> None:
-    """Stated rather than left to be discovered: this pass does not filter dates.
+def test_a_deadline_is_a_topic_and_today_is_not(ner: SpacyNer) -> None:
+    """#230: 오늘은 was a node, particle and all, while 오늘 was in
+    ``STOP_TERMS`` and refused as a term — one word, two answers.
 
-    오늘은 is a node, particle and all, while 오늘 is in ``STOP_TERMS`` and
-    could never arrive as a term — the same word is refused on one path and
-    taken on the other. That is not fixed here: a rule that drops 오늘은 while
-    keeping 다음 주 화요일까지, which is a deadline the meeting set, is not the
-    one-liner this PR could carry, and precision is worth an issue rather than
-    a guess. Raised in review of #222; the issue is #230.
+    Both paths now cut the particle with ``spoken.noun_stem`` and ask the same
+    stoplist, so 오늘은 is 오늘 and is refused. 다음 주 화요일까지 is the
+    deadline the meeting set and survives: the stoplist compares the whole span,
+    not the 다음 at its front. It keeps its 까지 because the model tags that
+    화요일까지 ``ncn+ncpa+ncn`` in this sentence — no particle to cut.
     """
     found = topics_of(ner, "transcript_ready.typical")
 
-    assert "오늘은" in found
+    assert "오늘은" not in found
+    assert "오늘" not in found
     assert "다음 주 화요일까지" in found
 
 
@@ -127,7 +135,7 @@ def test_a_short_meeting_has_topics_at_all(ner: SpacyNer) -> None:
     found = topics_of(ner, "transcript_ready.short")
 
     assert "검색 개인화 기능" in found
-    assert "응답 시간" in found
+    assert "응답 시간 목표" in found
 
 
 def test_a_masked_span_is_never_a_topic(ner: SpacyNer) -> None:
@@ -187,7 +195,7 @@ def test_spacing_does_not_split_a_compound(ner: SpacyNer) -> None:
     single = ner.extract([("utt_1", "검색 개인화 기능 이번 스프린트에서 진행하겠습니다")])
 
     assert [entity.text for entity in spaced] == [entity.text for entity in single]
-    assert [entity.text for entity in single] == ["검색 개인화 기능"]
+    assert [entity.text for entity in single] == ["검색 개인화 기능", "스프린트"]
 
 
 def test_a_demonstrative_this_model_tags_as_a_common_noun_is_still_broken(
