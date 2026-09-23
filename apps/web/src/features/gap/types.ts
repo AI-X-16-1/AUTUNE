@@ -111,8 +111,8 @@ export interface TemplateComparison {
 export type Coverage = "covered" | "partial" | "missing";
 
 export const COVERAGE_LABELS: Record<Coverage, string> = {
-  covered: "다룸",
-  partial: "부분",
+  covered: "충족",
+  partial: "미흡",
   missing: "누락",
 };
 
