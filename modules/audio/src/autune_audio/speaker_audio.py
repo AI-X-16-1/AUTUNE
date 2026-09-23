@@ -54,5 +54,9 @@ def representative_waveform(
         taken.append((start, end))
         budget -= end - start
 
+    if not taken:
+        # Non-positive budget asks for no audio.
+        return None
+
     pieces = [waveform.samples[int(start * rate) : int(end * rate)] for start, end in sorted(taken)]
     return Waveform(samples=np.concatenate(pieces), sample_rate=rate)

@@ -66,3 +66,14 @@ def test_a_turn_past_the_end_of_the_audio_is_clipped() -> None:
     turns = (Turn(0.0, 4.0, "A"), Turn(4.0, 9.0, "A"))
     result = representative_waveform(ramp(5), turns, "A", max_seconds=10.0, min_seconds=3.0)
     assert seconds_of(result) == 5.0
+
+
+def test_the_last_turn_is_cut_short_when_the_budget_runs_out() -> None:
+    # (0,4) is taken whole (4 s, budget 5 -> 1 s left); (10,13) is the longer
+    # candidate next but only its first second fits.
+    turns = (Turn(0.0, 4.0, "A"), Turn(10.0, 13.0, "A"))
+    result = representative_waveform(ramp(14), turns, "A", max_seconds=5.0, min_seconds=3.0)
+    assert seconds_of(result) == 5.0
+    assert result is not None
+    # The cut piece comes from the *start* of its turn, not the end.
+    assert result.samples[int(4.0 * SAMPLE_RATE)] == 10.0 * SAMPLE_RATE
