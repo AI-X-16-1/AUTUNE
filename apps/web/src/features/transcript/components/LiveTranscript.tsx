@@ -2,6 +2,7 @@
 
 import { RecordingFrame } from "@/shared/ui";
 
+import { useSpeakers } from "../hooks/useSpeakers";
 import type { LiveRow, RecordingState, UtteranceKind } from "../types";
 import { LiveRail } from "./LiveRail";
 import { TranscriptRow } from "./TranscriptRow";
@@ -23,8 +24,16 @@ import { UnidentifiedSpeaker } from "./UnidentifiedSpeaker";
  * Unidentified speakers are collected into one prompt above the transcript
  * rather than repeated on every row of theirs. Answering it once answers every
  * row, which is also what the S16 DM does.
+ *
+ * **Candidates never appear here.** `useSpeakers` calls `GET /speakers`, but
+ * the observation vector a candidate is drawn from is written by the worker
+ * after the upload finishes, so a meeting still being recorded has none — the
+ * endpoint returns `candidate: null` for every entry. `StoredTranscript` is
+ * the screen where a candidate exists and gets offered.
  */
 export function LiveTranscript({
+  meetingId,
+  teamId,
   state,
   rows,
   elapsedSeconds,
@@ -33,11 +42,10 @@ export function LiveTranscript({
   onPause,
   onResume,
   onStop,
-  onAssignSpeaker,
-  onEnterSpeakerName,
-  onSendConfirmation,
   classified = false,
 }: {
+  meetingId: string;
+  teamId: string | null;
   state: RecordingState;
   rows: LiveRow[];
   elapsedSeconds: number;
@@ -46,9 +54,6 @@ export function LiveTranscript({
   onPause?: () => void;
   onResume?: () => void;
   onStop?: () => void;
-  onAssignSpeaker?: (speaker: string) => void;
-  onEnterSpeakerName?: (speaker: string) => void;
-  onSendConfirmation?: (speaker: string) => void;
   /** Whether module B has reported on this meeting.
    *
    * Not derived from the rows: a meeting B analysed and found nothing in looks
@@ -57,7 +62,8 @@ export function LiveTranscript({
    * every kind. */
   classified?: boolean;
 }) {
-  const unidentified = unidentifiedVoices(rows);
+  const { speakers, members, assign } = useSpeakers(meetingId, teamId);
+  const unidentified = speakers.filter((entry) => entry.user_id === null);
   const counts = classified ? countKinds(rows) : undefined;
 
   return (
@@ -71,13 +77,13 @@ export function LiveTranscript({
         }}
       >
         <main className="min-w-0 flex-1">
-          {unidentified.map((speaker) => (
+          {unidentified.map((entry) => (
             <UnidentifiedSpeaker
-              key={speaker}
-              speaker={speaker}
-              onAssign={() => onAssignSpeaker?.(speaker)}
-              onEnterName={() => onEnterSpeakerName?.(speaker)}
-              onSendConfirmation={() => onSendConfirmation?.(speaker)}
+              key={entry.speaker_label}
+              speaker={entry.speaker_label}
+              candidate={entry.candidate}
+              members={members}
+              onAssign={(userId) => void assign(entry.speaker_label, userId)}
             />
           ))}
 
@@ -112,24 +118,6 @@ export function LiveTranscript({
       </div>
     </>
   );
-}
-
-/**
- * Each unnamed voice once, in the order it first spoke.
- *
- * A list, not a tally. Counting how much each voice said is a per-person speech
- * volume, and a speaker number is not anonymity when everyone was in the room —
- * `privacy.md` section 3 forbids exactly this shape. Listing is also all the
- * prompt needs: it asks who a voice belongs to, and confirming one answers
- * every line that voice spoke.
- */
-function unidentifiedVoices(rows: LiveRow[]): string[] {
-  const seen: string[] = [];
-  for (const { utterance } of rows) {
-    if (utterance.speaker_id != null) continue;
-    if (!seen.includes(utterance.speaker)) seen.push(utterance.speaker);
-  }
-  return seen;
 }
 
 /** Per kind, per meeting. Never per person — `privacy.md` section 3. */

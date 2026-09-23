@@ -7,6 +7,7 @@ import { Button } from "@/shared/ui/Button";
 
 import { attestConsent } from "../api";
 import { useLiveSession, type LivePhase } from "../hooks/useLiveSession";
+import { useMeeting } from "../hooks/useMeeting";
 import { useMicrophone } from "../hooks/useMicrophone";
 import type { RecordingState } from "../types";
 import { LiveTranscript } from "./LiveTranscript";
@@ -35,14 +36,18 @@ const LEAVING_LOSES_AUDIO = new Set<LivePhase>([
  * only while a consent request is in flight, so a tick is not lost to a
  * start that races it.
  *
- * Speaker actions still log. Assigning a speaker writes `speaker_id` on a
- * shared entity, which only module A does and only through `/api/audio`; the
- * endpoint is not there yet, and a live row has no speaker to assign anyway.
+ * `LiveTranscript` now assigns speakers for real, through `useSpeakers`, which
+ * needs the meeting's team for the picker (`GET /teams/{id}/members`). This
+ * screen has only `meetingId`, so it polls the meeting row with `useMeeting`
+ * the way `StoredMeetingScreen` already does, and reads `team_id` off it once
+ * it has loaded.
  */
 export function LiveMeetingScreen({ meetingId }: { meetingId: string }) {
   const router = useRouter();
   const microphone = useMicrophone();
   const live = useLiveSession(meetingId, microphone.stream);
+  const meetingState = useMeeting(meetingId);
+  const teamId = meetingState.status === "ready" ? meetingState.meeting.team_id : null;
   const [consented, setConsented] = useState(false);
   const [consentPending, setConsentPending] = useState(false);
   const [consentError, setConsentError] = useState<string | null>(null);
@@ -189,6 +194,8 @@ export function LiveMeetingScreen({ meetingId }: { meetingId: string }) {
         </p>
       )}
       <LiveTranscript
+        meetingId={meetingId}
+        teamId={teamId}
         state={state}
         rows={live.rows}
         elapsedSeconds={live.elapsedSeconds}
@@ -196,9 +203,6 @@ export function LiveMeetingScreen({ meetingId }: { meetingId: string }) {
         onPause={live.pause}
         onResume={live.resume}
         onStop={() => void onStop()}
-        onAssignSpeaker={(speaker) => console.log("assign speaker", { meetingId, speaker })}
-        onEnterSpeakerName={(speaker) => console.log("enter speaker name", { meetingId, speaker })}
-        onSendConfirmation={(speaker) => console.log("send confirmation DM", { meetingId, speaker })}
       />
     </>
   );

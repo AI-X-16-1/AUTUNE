@@ -3,7 +3,13 @@ import { api, authHeaders } from "@/shared/api/client";
 
 export { api };
 
-import type { MeetingDetail, TeamSummary, Utterance } from "./types";
+import type {
+  MeetingDetail,
+  SpeakerEntry,
+  TeamMember,
+  TeamSummary,
+  Utterance,
+} from "./types";
 
 /** A meeting's stored transcript, masked.
  *
@@ -40,6 +46,21 @@ export const createMeeting = (body: { title: string; team_id: string }) =>
     method: "POST",
     body: JSON.stringify(body),
   });
+
+/** The meeting's speakers and who each one is or might be (S13, S15). */
+export const getSpeakers = (meetingId: string) =>
+  api.audio<SpeakerEntry[]>(`/meetings/${meetingId}/speakers`);
+
+/** Confirm who a speaker is. 204; the transcript then carries their id. */
+export const assignSpeaker = (meetingId: string, speakerLabel: string, userId: string) =>
+  api.audio<void>(`/meetings/${meetingId}/speakers/${encodeURIComponent(speakerLabel)}`, {
+    method: "POST",
+    body: JSON.stringify({ user_id: userId }),
+  });
+
+/** The team's people, for the picker. */
+export const listTeamMembers = (teamId: string) =>
+  api.audio<TeamMember[]>(`/teams/${teamId}/members`);
 
 /**
  * A member's statement that everyone in the recording consented (#190, #283).
