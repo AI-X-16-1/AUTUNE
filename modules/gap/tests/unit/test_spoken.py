@@ -16,9 +16,11 @@ from autune_gap.pipeline.spoken import (
     MAX_TERM_TOKENS,
     STOP_TERMS,
     Token,
+    entity_text,
     is_bare_noun,
     is_plausible,
     masked_spans,
+    noun_stem,
     noun_terms,
 )
 
@@ -95,9 +97,11 @@ def test_a_run_of_nouns_is_the_compound_the_speaker_said() -> None:
     assert labels(("검색", "ncpa"), ("개인화", "ncn"), ("기능", "ncn")) == ["검색 개인화 기능"]
 
 
-def test_a_particle_breaks_the_run_and_keeps_the_label_clean() -> None:
+def test_a_particle_ends_the_run_and_stays_out_of_the_label() -> None:
+    """The noun carrying the particle is the last word of its phrase: it joins
+    the run as its stem, and the next noun starts a new one."""
     assert labels(("실시간", "ncpa+xsn"), ("개인화로", "ncn+jca"), ("합의", "ncpa")) == [
-        "실시간",
+        "실시간 개인화",
         "합의",
     ]
 
@@ -146,7 +150,7 @@ def test_a_span_an_entity_already_claimed_is_not_also_a_term() -> None:
     laid_out = tokens(("자료는", "ncn+jxt"), ("다음", "ncn"), ("주", "ncn"), ("정리", "ncpa"))
     date = laid_out[1].start, laid_out[2].end
 
-    assert [text for _, text in noun_terms(laid_out, [date])] == ["정리"]
+    assert [text for _, text in noun_terms(laid_out, [date])] == ["자료", "정리"]
 
 
 def test_a_term_knows_where_it_was_said() -> None:
@@ -154,7 +158,7 @@ def test_a_term_knows_where_it_was_said() -> None:
     meeting said things in decides the label a topic keeps."""
     laid_out = tokens(("검색", "ncpa"), ("정렬은", "ncn+jxt"), ("인기순", "ncn"))
 
-    assert noun_terms(laid_out) == [(laid_out[0].start, "검색"), (laid_out[2].start, "인기순")]
+    assert noun_terms(laid_out) == [(laid_out[0].start, "검색 정렬"), (laid_out[2].start, "인기순")]
 
 
 def test_nothing_is_found_in_a_sentence_with_no_nouns() -> None:
@@ -180,6 +184,117 @@ def test_the_stoplist_holds_only_what_speech_repeats() -> None:
     is the expensive direction — so the list stays short and single words."""
     assert len(STOP_TERMS) < 50
     assert all(" " not in term for term in STOP_TERMS)
+
+
+# --- a noun and the particle attached to it (#278) --------------------------
+#
+# The tags below are the ones ``ko_core_news_lg`` 3.8.0 gives these words in
+# the sentences #278 measured; ``test_spacy_ner.py`` runs the same sentences
+# against the weights.
+
+
+@pytest.mark.parametrize(
+    ("text", "tag", "stem"),
+    [
+        ("리스크는", "ncn+jxt", "리스크"),
+        ("인덱스가", "nq+jcs", "인덱스"),
+        ("서버에서는", "ncn+jca+jxt", "서버"),
+        ("기능이랑", "ncn+ncn+jca+jxc", "기능"),
+        ("화요일까지", "ncn+ncn+jcj", "화요일"),
+        ("개인화로", "ncn+jca", "개인화"),
+        ("API는", "f+jxt", "API"),
+        ("콜드스타트입니다", "ncn+ncpa+jxc", "콜드스타트"),
+    ],
+)
+def test_a_noun_is_read_through_its_particle(text: str, tag: str, stem: str) -> None:
+    """Cut on the surface, not along ``lemma_``: the lemma gives 개인화로 as
+    개인 + 화로 and 콜드스타트입니다 as 콜드 + 스타트입니다."""
+    assert noun_stem(Token(text=text, tag=tag, start=0, end=len(text))) == stem
+
+
+@pytest.mark.parametrize(
+    ("text", "tag"),
+    [
+        ("붙입니다", "ncn+jp+etm"),
+        ("실패인데", "ncn+jp+ecs"),
+        ("끝나야", "pvg+ecs"),
+        ("그건", "npd+jxt"),
+        ("번까지", "nbu+jxc"),
+    ],
+)
+def test_a_copula_an_ending_or_a_non_content_head_is_not_read_through(text: str, tag: str) -> None:
+    """붙입니다 is a verb the model tagged as a noun and the copula. Reading the
+    copula off would give a topic called 붙, so the copula is left out
+    whole — a topic lost, rather than one invented."""
+    assert noun_stem(Token(text=text, tag=tag, start=0, end=len(text))) is None
+
+
+def test_an_ending_nobody_listed_is_not_guessed_at() -> None:
+    """The tag says a particle is there; the list says which. When the list does
+    not know, the token is refused as it was before, not cut somewhere."""
+    assert noun_stem(Token(text="리스크ㅋ", tag="ncn+jxt", start=0, end=4)) is None
+
+
+@pytest.mark.parametrize(("text", "tag"), [("재시도", "ncpa+jxc"), ("난이도", "ncn+jcs")])
+def test_a_noun_the_model_splits_before_its_last_syllable_is_kept_whole(
+    text: str, tag: str
+) -> None:
+    """Read through, 재시도 is 재시 — and containment matching would then call
+    a template's 재시도 keyword covered by it."""
+    assert noun_stem(Token(text=text, tag=tag, start=0, end=len(text))) == text
+    assert noun_stem(Token(text=f"{text}도", tag=tag, start=0, end=len(text) + 1)) == text
+
+
+def test_the_regression_table_278_agreed_on() -> None:
+    """The six rows written down before this was built. Rows 2-4 failed before
+    it; row 6 is the one that tells a token-level stoplist from a span-level
+    one, and a span-level list would let 오늘 into a label. The issue wrote
+    that row as 오늘 회의; 회의 is a stopword now, so 배포 stands in for it."""
+    assert labels(("오늘은", "ncn+jxt")) == []
+    assert labels(("리스크는", "ncn+jxt")) == ["리스크"]
+    assert labels(
+        ("가장", "mag"),
+        ("큰", "paa+etm"),
+        ("리스크는", "ncn+jxt"),
+        ("콜드스타트입니다", "ncn+ncpa+jxc"),
+    ) == [
+        "리스크",
+        "콜드스타트",
+    ]
+    assert labels(("정렬", "ncn"), ("로직은", "ncn+jxt"), ("끝냅니다", "pvg+ef")) == ["정렬 로직"]
+    assert labels(("오늘", "ncn"), ("배포는", "ncpa+jxt")) == ["배포"]
+
+
+def test_a_bound_noun_the_model_calls_common_does_not_join_a_compound() -> None:
+    """중 and 쪽 are tagged ``ncn``; with the particle read through, 서버 쪽
+    would be a second topic beside 서버."""
+    assert labels(("서버", "ncn"), ("쪽에서", "ncn+jca")) == ["서버"]
+    assert labels(("두", "nnc"), ("가지", "nbu"), ("방법", "ncn"), ("중에", "ncn+jca")) == ["방법"]
+
+
+def test_a_stopword_is_refused_by_its_stem() -> None:
+    """이야기부터 and 사람에게 are discourse nouns with a particle on; the
+    particle used to be what refused them, and now the stoplist has to."""
+    assert labels(("실시간", "ncpa+xsn"), ("개인화", "ncn"), ("이야기부터", "ncn+jxc")) == [
+        "실시간 개인화"
+    ]
+    assert labels(("사람에게", "ncn+jca"), ("폴백으로", "nq+jca")) == ["폴백"]
+
+
+def test_an_entity_loses_the_particle_on_its_last_word_only() -> None:
+    """다음 주 화요일까지 is a deadline and survives as one; its particle goes."""
+    last = Token(text="화요일까지", tag="ncn+ncn+jcj", start=5, end=10)
+    assert entity_text("다음 주 화요일까지", last) == "다음 주 화요일"
+    assert entity_text("오늘은", Token(text="오늘은", tag="ncn+jxt", start=0, end=3)) == "오늘"
+    assert entity_text("오후 3시", Token(text="3시", tag="nnc+nbu", start=3, end=5)) == "오후 3시"
+
+
+def test_a_stopword_is_not_a_topic_on_the_entity_path_either() -> None:
+    """#230: 오늘 was refused as a term and taken as a date. The whole span is
+    compared, so a date that merely starts with 다음 is still a date."""
+    assert not is_plausible("date", "오늘")
+    assert is_plausible("date", "다음 주 화요일")
+    assert is_plausible("date", "다음 주")
 
 
 # --- what module A's masking left behind ------------------------------------

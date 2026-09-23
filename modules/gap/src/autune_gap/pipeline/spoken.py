@@ -86,6 +86,90 @@ noun plus this is still a bare noun; anything else after a ``+`` — a particle
 grammar, and joining it into a label would put "개인화로" in a report where
 "개인화" belongs."""
 
+RULES_VERSION = "spoken-2"
+"""The version of the judgements in this file, appended to the extractor's.
+
+``ko_core_news_lg-3.8.0`` names the weights, and the weights are half of what
+decides the graph: the same parse gives a different set of topics once
+``noun_stem`` reads through a particle. A graph built before that change has
+to be tellable from one built after it, or precision measured across the two
+is two extractors averaged together. Bump it whenever a rule here changes what
+``noun_terms`` or ``is_plausible`` returns for the same tokens."""
+
+_PARTICLES: tuple[str, ...] = tuple(
+    sorted(
+        {
+            # Case and auxiliary particles, and the pairs a noun most often
+            # carries stacked (서버에서는, 화면에도).
+            "은",
+            "는",
+            "이",
+            "가",
+            "을",
+            "를",
+            "의",
+            "에",
+            "께",
+            "로",
+            "으로",
+            "와",
+            "과",
+            "도",
+            "만",
+            "랑",
+            "이랑",
+            "나",
+            "이나",
+            "에서",
+            "에게",
+            "한테",
+            "께서",
+            "하고",
+            "까지",
+            "부터",
+            "보다",
+            "처럼",
+            "만큼",
+            "마다",
+            "에는",
+            "에도",
+            "에서는",
+            "에서도",
+            "으로는",
+            "로는",
+            "까지는",
+            "부터는",
+            # Not a particle, but what ``ko_core_news_lg`` tags as one after a
+            # noun: 콜드스타트입니다 comes back ``ncn+ncpa+jxc``. When the
+            # model tags it as the copula it is (``jp``) the token is not read
+            # through at all — see ``noun_stem``.
+            "입니다",
+        },
+        key=len,
+        reverse=True,
+    )
+)
+"""What ``noun_stem`` cuts off the end of a token, longest first.
+
+The cut is made on the **surface**, not along the model's morphemes. The tag
+decides *whether* a particle is attached; this list decides *what* it was. The
+morpheme split (``lemma_``) cannot be trusted for the second question on this
+vocabulary: it gives 개인화로 as 개인 + 화로 and 콜드스타트입니다 as
+콜드 + 스타트입니다 — a wrong topic that looks right. A token whose ending is
+not on this list is not read through, which costs the topic and invents
+nothing. #278."""
+
+_PARTICLE_LOOKALIKES: frozenset[str] = frozenset({"재시도", "난이도"})
+"""Nouns the model tags as a shorter noun plus a particle.
+
+``ko_core_news_lg`` gives a bare 재시도 as ``ncpa+jxc`` — 재시 and the particle
+도 — and 난이도 as ``ncn+jcs``. Read through, those become topics called 재시
+and 난이, and ``detect.match`` compares by containment, so 재시 would count as
+the meeting having covered a template keyword 재시도. Measured on the words
+this product's meetings use, and tuned the way ``STOP_TERMS`` is: it holds
+what has been seen, not a guess at every 度 noun (정확도, 속도, 만족도 are
+tagged correctly)."""
+
 STOP_TERMS: frozenset[str] = frozenset(
     {
         # Time deixis. A meeting says these constantly and none of them is a
@@ -153,6 +237,22 @@ STOP_TERMS: frozenset[str] = frozenset(
         # review of #249.
         "필요",
         "이슈",
+        # The meeting itself. Every transcript names it — "지난 회의에서",
+        # "회의 끝나고" — and it arrived with a particle often enough that the
+        # particle used to refuse it. Once ``noun_stem`` reads through the
+        # particle, 회의 was the first topic of ``transcript_ready.typical``.
+        # 회의실 is the room: "강남 회의실에서" has ``LC`` claim only 강남.
+        # Found while building #278.
+        "회의",
+        "회의실",
+        # Positional bound nouns the model tags as common nouns (``ncn``, not
+        # ``nbn``): "방법 중에", "서버 쪽에서", "주 안에". With the particle
+        # read through they join the noun before them, and 서버 쪽 becomes a
+        # second topic beside 서버. Measured in #278, alongside 때, which the
+        # model does tag ``nbn`` and needs no entry.
+        "중",
+        "쪽",
+        "안",
     }
 )
 """Nouns that break a run rather than joining it.
@@ -189,6 +289,40 @@ def is_bare_noun(tag: str) -> bool:
     return all(
         part.startswith(_NOUN_TAG_PREFIXES) or part == _NOUN_SUFFIX_TAG for part in parts
     ) and bool(parts[0])
+
+
+def noun_stem(token: Token) -> str | None:
+    """The noun ``token`` names, with its particle cut off, or ``None``.
+
+    A bare noun is its own stem. A noun carrying a particle — 리스크는
+    (``ncn+jxt``), 로직은, 인덱스가 — is the noun without it. Korean attaches a
+    particle to nearly every noun that is not the first half of a compound, so
+    refusing those tokens, as ``noun_terms`` did before this, refused most of
+    what a meeting names: "가장 큰 리스크는 콜드스타트입니다" had no topic in
+    it at all, and "정렬 로직은" came back as 정렬. #278.
+
+    Anything else is ``None``: a verb, an adverb, and a noun followed by the
+    copula (``jp``) or an ending (``e*``). 붙입니다 is tagged ``ncn+jp+etm`` —
+    a verb the model misread as a noun and the copula — and reading through
+    it would give a topic called 붙. The copula is where the model is least
+    reliable, so it is the part left out.
+    """
+    parts = token.tag.split("+")
+    if not parts[0].startswith(_NOUN_TAG_PREFIXES):
+        return None
+    if is_bare_noun(token.tag) or token.text in _PARTICLE_LOOKALIKES:
+        return token.text
+    head = next(
+        index
+        for index, part in enumerate(parts)
+        if not (part.startswith(_NOUN_TAG_PREFIXES) or part == _NOUN_SUFFIX_TAG)
+    )
+    if not all(part.startswith("j") and part != "jp" for part in parts[head:]):
+        return None
+    for particle in _PARTICLES:
+        if token.text.endswith(particle) and len(token.text) > len(particle):
+            return token.text[: -len(particle)]
+    return None
 
 
 def masked_spans(text: str) -> list[tuple[int, int]]:
@@ -236,7 +370,13 @@ def noun_terms(
     needs a node for. Which of the two kinds it is stays undecided (the label
     is ``term``); deciding it is what #13's trained model is for.
 
-    A run breaks on anything that is not a bare noun, on a stopword, and on a
+    A token joins a run as its ``noun_stem``, so 리스크는 joins as 리스크. A
+    particle ends the phrase it is attached to, so the run ends *after* that
+    token: "정렬 로직은 인덱스가" is 정렬 로직 and 인덱스, not one run of three.
+    The stoplist is checked against the stem, one token at a time — 오늘은 is
+    refused because 오늘 is, and 오늘 회의 keeps 회의.
+
+    A run breaks on anything that has no noun stem, on a stopword, and on a
     span some entity already claimed — ``claimed`` carries those as character
     ranges. One character belongs to at most one thing, the rule ``FakeNer``
     already follows: without it "다음 주 화요일까지" is a date *and* the tail of
@@ -265,20 +405,43 @@ def noun_terms(
 
     for token in tokens:
         overlaps = any(token.start < end and start < token.end for start, end in ranges)
-        if not is_bare_noun(token.tag) or token.text in STOP_TERMS or overlaps:
+        stem = None if overlaps else noun_stem(token)
+        if stem is None or stem in STOP_TERMS:
             flush()
             continue
-        run.append(token)
+        run.append(Token(text=stem, tag=token.tag, start=token.start, end=token.start + len(stem)))
+        if stem != token.text:
+            flush()
     flush()
     return terms
+
+
+def entity_text(text: str, last: Token) -> str:
+    """An entity's span with the particle on its last token cut off.
+
+    The model's spans end where the word does, particle included — 오늘은,
+    다음 주 화요일까지, 인덱스가 — and a label carries whatever the span
+    carried. The same ``noun_stem`` the noun runs use decides the cut, so the
+    two paths cannot disagree about where a word ends: before this, 오늘 was
+    refused as a term and accepted as 오늘은, a date (#230).
+    """
+    stem = noun_stem(last)
+    if stem is None or stem == last.text or not text.endswith(last.text):
+        return text
+    return text[: len(text) - len(last.text) + len(stem)]
 
 
 def is_plausible(label: str, text: str) -> bool:
     """Whether an entity the model found is worth a node.
 
-    Two rules, both from the same measurement, both about precision — C's
-    metric is precision and a false topic is what a false gap is raised on.
+    Three rules, all about precision — C's metric is precision and a false
+    topic is what a false gap is raised on.
 
+    - **A stopword is not a topic whichever path found it.** 오늘 is a ``DT``
+      span to the model and a word the noun runs refuse; one list decides
+      both. The whole span is compared, not each word in it: 다음 주 화요일 is
+      a deadline the meeting set, and it survives even though 다음 alone does
+      not (#230).
     - **A one-character person is not a person.** ``A/B 결과`` gives ``A`` and
       ``B`` as ``PS``, and so do ``A안``/``B안``. A meeting transcript has no
       one-letter names in it, and two of them became the most connected nodes
@@ -292,6 +455,8 @@ def is_plausible(label: str, text: str) -> bool:
     model's vocabulary.
     """
     stripped = text.strip()
+    if stripped in STOP_TERMS:
+        return False
     if label == "person":
         return len(stripped) > 1
     if label == "metric":

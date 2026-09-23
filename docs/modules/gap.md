@@ -73,14 +73,33 @@ a 500MB pipeline is a judgement nobody tests.
 - **Noun terms.** A maximal run of content-noun tokens is the compound the
   speaker said, and that is what the graph needs a node for. The run is read
   from the morpheme tag (`ncn+jxt`) rather than the coarse part of speech,
-  which calls 개인화로 an adverb; a particle, an ending or a stopword breaks the
-  run, so the label is 개인화 and not 개인화로. Content noun means common,
+  which calls 개인화로 an adverb. A noun carrying a particle joins the run
+  **as its stem** and ends it — 로직은 joins as 로직, so "정렬 로직은" is
+  정렬 로직 and the label is 개인화 and not 개인화로; an ending, the copula or
+  a stopword breaks the run. Content noun means common,
   proper and foreign (`nc*`, `nq`, `f`) and **not** pronoun, numeral or bound
   noun: matching joins a run rather than breaking it, so letting 그거 or 두 in
   would give a node called 그거 검색 기능 and split the topic the meeting calls
   검색 기능 everywhere else. The tag rule is not enough on its own — this model
   tags 그거 as a common noun — so the demonstratives sit in the stoplist,
   measured rather than assumed.
+- **The particle is cut on the surface, not along the model's morphemes.**
+  Until #278 a noun with a particle on it was refused outright, and Korean puts
+  a particle on nearly every noun that is not the first half of a compound: "가장
+  큰 리스크는 콜드스타트입니다" gave no topic at all, and 정렬 로직은 came back
+  as 정렬. `spoken.noun_stem` now reads through it. The tag decides *whether* a
+  particle is attached (noun parts, then only `j*` parts); a fixed list of
+  particles decides *what* is cut off the end of the word. `lemma_` would have
+  been the obvious source and is wrong on this vocabulary — it splits 개인화로
+  as 개인 + 화로 and 콜드스타트입니다 as 콜드 + 스타트입니다. Three things are
+  deliberately not read through: the copula (`jp`), because 붙입니다 is tagged
+  `ncn+jp+etm` and would give a topic called 붙; an ending the list does not
+  know, which costs the topic rather than inventing one; and the two nouns the
+  model splits before their last syllable, 재시도 and 난이도, which
+  containment matching would otherwise count as a template's 재시도 covered by
+  a topic called 재시. Reading through the particle surfaced words it used to
+  refuse by accident, so 회의, 회의실 and the positional bound nouns the model
+  tags `ncn` (중, 쪽, 안) joined the stoplist in the same change.
 - **A span the model found is claimed whether or not we keep it.** An
   implausible one-letter person, an `LC` meeting room, an `OG` vendor: the
   characters are spoken for, so a refusal cannot come back as a term under
@@ -102,15 +121,19 @@ a 500MB pipeline is a judgement nobody tests.
   `autune_integrations.privacy`, the masker's own: a second copy of the
   character here is a guard that stops matching when the notation changes and
   says nothing about it. #250.
-- **Two precision filters.** A one-character `person` is not a person: A/B 결과
-  gives A and B as `PS`, and both became connected nodes. A `metric` with no
-  digit in it is not a metric: `QT` on spoken Korean fires on 한번, 네, 좀.
-  Precision is C's metric and a false topic is what a false gap is raised on.
-- **Dates are not filtered, and that is a known hole.** 오늘은 is still a node,
-  particle and all, while 오늘 sits in the noun-run stoplist — the same word
-  refused on one path and taken on the other. A rule that drops it while
-  keeping 다음 주 화요일까지, a deadline the meeting set and a value risk
-  scoring will read, is not a one-liner. Issue #230, raised in review of #222.
+- **Three precision filters.** A one-character `person` is not a person: A/B
+  결과 gives A and B as `PS`, and both became connected nodes. A `metric` with
+  no digit in it is not a metric: `QT` on spoken Korean fires on 한번, 네, 좀.
+  And a stopword is not a topic on either path. Precision is C's metric and a
+  false topic is what a false gap is raised on.
+- **Both paths cut the particle and ask the same stoplist.** 오늘은 used to be
+  a `DT` node, particle and all, while 오늘 was refused as a term — one word,
+  two answers (#230). An entity span now loses the particle on its last word
+  by the same `noun_stem`, and the stoplist is asked about the whole span:
+  오늘은 is 오늘 and is refused, and 다음 주 화요일까지, a deadline the meeting
+  set, survives because the span is not 다음. The noun runs ask token by token
+  instead, so 오늘 배포 keeps 배포 — a span-level check would let 오늘 into the
+  label. Both halves of this closed with #278.
 
 **A term's kind stays undecided.** It carries the label `term`, the sixth in
 `ENTITY_LABELS`, which says "a compound the meeting named" and not which of
@@ -162,7 +185,7 @@ weights it, and what a rule can read today is a different question from what an
 edge may say. Raised in review of #249.
 
 **Measured.** Over `transcript_ready.typical` the rules assert exactly one
-relation — `실시간 blocked_by 콜드스타트` — against six co-occurrence edges.
+relation — `실시간 blocked_by 콜드스타트 처리` — against its co-occurrence edges.
 `transcript_ready.short` asserts none: it names two topics in two utterances and
 never says how they stand to each other. Both numbers are pinned in
 `modules/gap/tests/unit/test_spacy_ner.py` (marked `model`).
@@ -609,8 +632,11 @@ There is no `external` implementation and adding one is a privacy decision
 rather than a config string — see `../engineering/environments.md`, "The entity
 extractor has no external option".
 
-Every row a topic produces records `extractor_version` — the pipeline name and
-its version, `ko_core_news_lg-3.8.0`. The name alone is not a version: the
+Every row a topic produces records `extractor_version` — the pipeline name, its
+version and the version of `pipeline.spoken`'s rules,
+`ko_core_news_lg-3.8.0+spoken-2`. The rules are half the extractor: the same
+parse gives a different graph once a rule there changes, so `spoken.RULES_VERSION`
+is bumped with any change to what it keeps. The name alone is not a version: the
 pipeline ships a new release with every spaCy minor, so a graph built with 3.7
 and one built with 3.8 would carry the same string. Gap precision is measured
 over time and dismissals feed threshold tuning; both read across model
