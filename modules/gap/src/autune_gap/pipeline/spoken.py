@@ -24,8 +24,25 @@ from dataclasses import dataclass
 
 from autune_integrations.privacy import MASK_CHAR
 
-_MASKED_CHUNK = re.compile(rf"\S*{re.escape(MASK_CHAR)}+\S*")
-"""A whitespace-delimited chunk with a mask character somewhere in it.
+_MASK_BODY = r"0-9A-Za-z_@.+)\-–—"
+"""What module A leaves standing *inside* a masked value, apart from the mask.
+
+Read off what the masker writes (``autune_audio.masking._hide``): digits and
+its separators for a number (``010-****-5678``), the first character and the
+whole domain for an address (``k***@example.com``), and nothing else — a span
+written in two scripts is hidden whole, so no Hangul survives inside one. The
+separators are ``masking._SHAPE_CHARS`` minus its three spaces, which cannot
+appear in a chunk this pattern bounds by whitespace anyway.
+
+Horizontal space is left out for a second reason: ``privacy._EDGE`` is the
+masker's own statement of what ends a number, and it is this class without the
+punctuation.
+"""
+
+_MASKED_CHUNK = re.compile(
+    rf"(?:[가-힣]|[{_MASK_BODY}]*){re.escape(MASK_CHAR)}+[{_MASK_BODY}{re.escape(MASK_CHAR)}]*"
+)
+"""One masked value, bounded by what could have been part of it.
 
 ``MASK_CHAR`` is imported rather than spelled here. Module A masks with the
 patterns in ``autune_integrations.privacy``, and this module only recognises
@@ -33,10 +50,25 @@ what they leave behind — a copy of the character is a guard that stops matchin
 the day the notation changes, without saying so. It was written out twice in
 this module before (#250).
 
-The shape is module A's own reading of a masked token: a run of non-space
-characters containing the mask. ``010-****-5678`` is one chunk because the
-speaker said one number, and the digits either side of the mask are the part
-that survived it.
+**The bound is not whitespace.** It was, and that was wrong in the direction
+this whole change exists to fix: Korean runs words together, and
+``번호010-****-5678이에요`` claimed 번호 as well — a real noun, lost beside a
+masked value exactly as #250 describes, with a missing space instead of a
+missing particle. Raised in review of #250 by @lsh2217, who reproduced it.
+
+**The single leading Hangul syllable is the one thing a masked value keeps in
+this script.** A name, a place or an address is hidden as ``value[:1]`` plus
+masks — 김민경 becomes 김** — so one syllable may stand immediately before the
+mask, and no more. ``고객김**`` therefore claims 김** and leaves 고객 to be a
+topic.
+
+*Tradeoff noted, not resolved:* importing from ``autune_integrations`` runs that
+package's ``__init__`` and with it the Slack, Notion, Jira and Calendar clients,
+which is a heavier import than this module's "pure functions, no model" claim
+suggests. The alternative is a local copy pinned to the masker's by a test,
+which trades the guarantee for the import; ``packages/integrations`` is shared
+and re-shaping its ``__init__`` needs its own decision. Raised in review of
+#250.
 """
 
 MAX_TERM_TOKENS = 4
@@ -216,6 +248,9 @@ def masked_spans(text: str) -> list[tuple[int, int]]:
     does after it; the direction of the bug is loss, and the cost is a false
     gap on every meeting where somebody read out a number.
     """
+    if MASK_CHAR not in text:
+        # Most utterances in most meetings. Raised in review of #250.
+        return []
     return [match.span() for match in _MASKED_CHUNK.finditer(text)]
 
 

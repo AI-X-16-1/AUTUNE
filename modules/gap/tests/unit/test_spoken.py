@@ -201,6 +201,49 @@ def test_an_unmasked_text_has_no_masked_spans() -> None:
     assert masked_spans("") == []
 
 
+def test_a_masked_value_glued_to_a_word_does_not_claim_the_word() -> None:
+    """Korean runs words together, and the chunk used to be bounded by nothing
+    but whitespace.
+
+    ``번호010-****-5678이에요`` came back as one span covering 번호 — a real
+    noun claimed away and lost beside a masked value, which is #250 again with
+    a missing space in place of a missing particle. Reproduced in review by
+    @lsh2217.
+
+    What bounds it now is what could have been *part of* the masked value: the
+    masker writes digits, its separators and an address's domain, and hides a
+    two-script span whole, so no Hangul survives inside one.
+    """
+    text = "번호010-****-5678이에요"
+
+    assert [text[start:end] for start, end in masked_spans(text)] == ["010-****-5678"]
+
+    tagged = (("번호", "ncn"), ("010-****-5678", "ncn"), ("확인", "ncpa"))
+    laid_out = tokens(*tagged)
+    assert [t for _, t in noun_terms(laid_out, masked_spans(sentence(*tagged)))] == [
+        "번호",
+        "확인",
+    ]
+
+
+def test_a_masked_name_keeps_one_syllable_and_the_run_keeps_the_rest() -> None:
+    """A name, a place or an address is hidden as ``value[:1]`` plus masks —
+    김민경 becomes 김** — so exactly one Hangul syllable may stand inside a
+    masked value, immediately before the mask. One, and no more: ``고객김**``
+    claims 김** and leaves 고객 to be a topic."""
+    assert [t[a:b] for t in ["김** 님께 전달"] for a, b in masked_spans(t)] == ["김**"]
+    assert [t[a:b] for t in ["고객김** 확인"] for a, b in masked_spans(t)] == ["김**"]
+
+
+def test_an_address_is_claimed_with_the_domain_the_masker_left() -> None:
+    """``k***@example.com`` keeps its domain by design, and the whole of it is
+    the masked value — leaving the domain unclaimed would let a noun run take
+    ``example.com`` as a topic."""
+    text = "k***@example.com"
+
+    assert [text[start:end] for start, end in masked_spans(text)] == [text]
+
+
 def test_a_masked_value_breaks_the_run_instead_of_being_carried_by_it() -> None:
     """#250, and the reason this exists.
 
