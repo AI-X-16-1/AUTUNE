@@ -218,6 +218,13 @@ it):
   로직이 막혀 있습니다" the mention before the *cue* is 정렬 로직, the thing
   being blocked. Recall only — no false edge was produced by the narrow
   window. #254, follow-up to #249.
+
+  **Only three of the six run backwards.** `어서`/`아서`/`라서` are verb endings
+  that close the clause they sit in, and the clause-break list has no entry for
+  them, so a backward window that looked for all six read straight past one:
+  "결제 모듈은 시간이 없어서 로그인 모듈 이슈는 못 봤습니다" paired the blocker
+  word with the previous clause's reason and asserted `로그인 모듈 blocked_by
+  결제 모듈`. The backward window takes `때문`/`탓에`/`으로 인해` only.
 - **The source is what the sentence is about.** Korean starts a new subject
   after a connective ending, so the nearest mention after the marker is usually
   the next sentence — "정렬 로직은 인덱스가 필요하고 캐시는 다음 주에 봅시다"

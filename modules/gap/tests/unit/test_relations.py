@@ -349,6 +349,27 @@ def test_a_reason_behind_the_cue_still_has_to_be_the_same_clause() -> None:
     )
 
 
+def test_a_verb_ending_behind_the_cue_is_the_previous_clauses_reason() -> None:
+    """Only 때문/탓에/으로 인해 are read backwards, and this is what that guard
+    buys.
+
+    ``어서`` closes the clause it sits in, and ``_CLAUSE_BREAKS`` has no entry
+    for it — the backward window reads straight past one when no other boundary
+    happens to sit between. With all six connectives behind the cue in scope,
+    "시간이 없어서" became the reason for an 이슈 in the next clause and the
+    sentence asserted a blocker nobody named. 시간 is not a topic, so the ends
+    landed on the two modules instead.
+    """
+    assert (
+        triples(
+            "결제 모듈은 시간이 없어서 로그인 모듈 이슈는 못 봤습니다",
+            "결제 모듈",
+            "로그인 모듈",
+        )
+        == []
+    )
+
+
 def test_a_blocker_read_from_both_sides_is_asserted_once() -> None:
     """ "안 잡혀 있어서" carries a connective after 안 잡 and before 무리, so
     both readings fire on one sentence. They agree, and a pair never comes back

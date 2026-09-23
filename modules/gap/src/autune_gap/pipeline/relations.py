@@ -81,6 +81,24 @@ from the cue read the first three and none of the last three, and every
 relation a meeting stated the second way was dropped. #254.
 """
 
+_CAUSAL_BEFORE = ("때문", "탓에", "으로 인해")
+"""The three of those six that may be read *backwards* from the cue.
+
+The nouns and phrases, and only them. ``어서``/``아서``/``라서`` are verb endings
+that close the clause they sit in, and ``_CLAUSE_BREAKS`` has no entry for them
+— nothing stops ``_clause_before`` from reading straight past one. Searching for
+all six behind the cue therefore paired a blocker word with the previous
+clause's reason wherever no other boundary happened to sit between them:
+
+    결제 모듈은 시간이 없어서 로그인 모듈 이슈는 못 봤습니다
+        -> 로그인 모듈 blocked_by 결제 모듈
+
+which is a finding nobody stated, in the one relation the report treats as a
+finding on its own. Restricting the backward window to the three that head a
+reason is what makes the asymmetry this rule is built on hold in the code as
+well as in the docstring above.
+"""
+
 _BLOCKERS = (
     "안 잡",
     "안 되",
@@ -354,14 +372,17 @@ def _rfind_boundary(window: str, boundary: str) -> int:
 
 
 def _causal_in(clause: str) -> int | None:
-    """Where the causal connective nearest the end of ``clause`` begins.
+    """Where the reason-heading connective nearest the end of ``clause`` begins.
 
-    Nearest the end, because that is the one the cue is reading. "캐시가 느려서
-    인덱스 때문에 막혀 있습니다" offers two reasons and 때문에 is the one
-    attached to 막혀; taking the first would reach past a reason the speaker
+    ``_CAUSAL_BEFORE``, not ``_CAUSAL``: a verb ending behind the cue closes its
+    own clause, and this window would read through it.
+
+    Nearest the end, because that is the one the cue is reading. "캐시 때문에
+    인덱스 문제 때문에 막혀 있습니다" offers two reasons and the second is the
+    one attached to 막혀; taking the first would reach past a reason the speaker
     already closed.
     """
-    at = max(clause.rfind(connective) for connective in _CAUSAL)
+    at = max(clause.rfind(connective) for connective in _CAUSAL_BEFORE)
     return at if at != -1 else None
 
 
@@ -451,11 +472,14 @@ def _directed_markers(text: str) -> list[tuple[int, str]]:
             if any(connective in after for connective in _CAUSAL):
                 markers.append((match.start(), "blocked_by"))
                 continue
-            # The connective may also sit *behind* the cue, and for two of the
-            # six it always does: 어서/아서/라서 attach to the predicate
+            # The connective may also sit *behind* the cue, and for three of
+            # the six it always does: 어서/아서/라서 attach to the predicate
             # ("안 잡혀 있어서") while 때문에/탓에/으로 인해 precede it
             # ("캐시 때문에 막혀"). Reading only forwards dropped every relation
-            # a meeting stated the second way. #254.
+            # a meeting stated the second way. Only those three are read
+            # backwards (``_CAUSAL_BEFORE``) -- a verb ending behind the cue
+            # ends the previous clause, and this window would read past it.
+            # #254.
             start, before = _clause_before(text, match.start())
             at = _causal_in(before)
             if at is None or _resolved(before):
