@@ -828,30 +828,34 @@ def assign_speaker(
             AudSpeakerEmbedding.speaker_label == speaker_label,
         )
     )
+
+    # Unconditional and independent of the INSERT below, and outside any
+    # SAVEPOINT of its own: a human has just said this speaker is not who a
+    # previous confirmation said, and the old profile must not survive that
+    # correction regardless of whether a new one can be written. Its bound
+    # parameters are only a meeting id and a label, never a vector, so #356
+    # does not apply and it needs no guard.
+    session.execute(
+        sa.delete(AudSpeakerEmbedding).where(
+            AudSpeakerEmbedding.source_meeting_id == meeting_id,
+            AudSpeakerEmbedding.source_speaker_label == speaker_label,
+        )
+    )
+
     learned = False
-    # A vector is bound biometric data; ``packages/core``'s engine does not
-    # set ``hide_parameters`` and a ``StatementError`` here would carry it
-    # (#356, fixed outside this branch), so the INSERT runs inside a
-    # SAVEPOINT and a ``SQLAlchemyError`` is caught and logged by exception
-    # type only, never its message or parameters. The DELETE shares that
-    # SAVEPOINT deliberately, not because it needs the guard itself -- its
-    # own bound parameters are only a meeting id and a label, never a vector
-    # -- but because a failed INSERT must not leave the row half-replaced.
-    # On that failure both roll back together: the stale (wrong) profile
-    # survives, no new one is written, and the endpoint still returns 204.
-    # A correction can therefore silently not take effect from the profile's
-    # point of view -- ``speaker_profile_copy_failed`` is the only trace --
-    # which is the accepted cost of the ruling above that a profile-copy
-    # failure must never take the assignment down with it.
-    try:
-        with session.begin_nested():
-            session.execute(
-                sa.delete(AudSpeakerEmbedding).where(
-                    AudSpeakerEmbedding.source_meeting_id == meeting_id,
-                    AudSpeakerEmbedding.source_speaker_label == speaker_label,
-                )
-            )
-            if observation is not None:
+    if observation is not None:
+        # A vector is bound biometric data; ``packages/core``'s engine does
+        # not set ``hide_parameters`` and a ``StatementError`` here would
+        # carry it (#356, fixed outside this branch), so only the INSERT --
+        # the one statement that carries a vector -- runs inside a SAVEPOINT,
+        # and a ``SQLAlchemyError`` is caught and logged by exception type
+        # only, never its message or parameters. On that failure the source
+        # is simply left with no profile, same as the no-observation case
+        # above -- not with the stale one the DELETE already removed. That
+        # is the safe direction to fail in: nothing wrong is retained, and
+        # ``speaker_profile_copy_failed`` is the trace.
+        try:
+            with session.begin_nested():
                 session.add(
                     AudSpeakerEmbedding(
                         user_id=user_id,
@@ -863,9 +867,9 @@ def assign_speaker(
                         confirmed_at=datetime.now(tz=UTC),
                     )
                 )
-                learned = True
-    except SQLAlchemyError as exc:
-        log.warning("speaker_profile_copy_failed", error=type(exc).__name__)
+            learned = True
+        except SQLAlchemyError as exc:
+            log.warning("speaker_profile_copy_failed", error=type(exc).__name__)
 
     session.flush()
     # A meeting id and a boolean -- no name, no vector.

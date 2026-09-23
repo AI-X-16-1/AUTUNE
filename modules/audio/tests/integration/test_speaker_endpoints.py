@@ -432,6 +432,65 @@ def test_confirming_again_replaces_the_profile_even_without_a_new_observation(
     assert from_this_source == []
 
 
+def test_a_failed_profile_copy_leaves_the_source_with_no_profile_not_a_stale_one(
+    client: TestClient,
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+    meeting: str,
+    candidate: User,
+) -> None:
+    """The INSERT can fail on its own -- a wrong vector width is pgvector's
+    dimension check on ``Vector(256)``, the same failure Task 4 exercises in
+    ``test_tasks.py::test_a_bad_vector_does_not_fail_the_meeting``. The
+    DELETE already ran and is not inside the INSERT's SAVEPOINT, so a failed
+    copy leaves this source with *no* profile -- never with the stale one
+    that was just declared wrong."""
+    db_session.add(Participant(meeting_id=meeting, speaker_label="화자 1"))
+    db_session.add(observation(meeting, "화자 1", axis(0)))
+    db_session.flush()
+
+    real_add = db_session.add
+
+    def _corrupt_the_copy(instance: object) -> None:
+        # Only the profile-copy INSERT is targeted -- it is the one
+        # ``AudSpeakerEmbedding`` this function ever constructs with a
+        # ``source_meeting_id``. Everything else this test or the route adds
+        # (the ``Participant``, the observation above) passes through.
+        if isinstance(instance, AudSpeakerEmbedding) and instance.source_meeting_id is not None:
+            instance.vector = instance.vector[:4]
+        real_add(instance)
+
+    monkeypatch.setattr(db_session, "add", _corrupt_the_copy)
+
+    response = _confirm(client, meeting, "화자 1", candidate.id)
+
+    assert response.status_code == 204
+    participant = db_session.scalar(
+        sa.select(Participant).where(
+            Participant.meeting_id == meeting, Participant.speaker_label == "화자 1"
+        )
+    )
+    assert participant is not None
+    assert participant.user_id == candidate.id
+
+    from_this_source = list(
+        db_session.scalars(
+            sa.select(AudSpeakerEmbedding).where(
+                AudSpeakerEmbedding.source_meeting_id == meeting,
+                AudSpeakerEmbedding.source_speaker_label == "화자 1",
+            )
+        )
+    )
+    assert from_this_source == []
+
+    profiles = list(
+        db_session.scalars(
+            sa.select(AudSpeakerEmbedding).where(AudSpeakerEmbedding.user_id == candidate.id)
+        )
+    )
+    assert profiles == []
+
+
 def test_confirming_without_an_observation_still_assigns(
     client: TestClient, db_session: Session, meeting: str, candidate: User
 ) -> None:
