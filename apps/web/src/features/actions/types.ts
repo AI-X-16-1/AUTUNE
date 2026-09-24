@@ -74,7 +74,7 @@ export interface ActionItemRead extends ActionItem {
    */
   is_candidate: boolean;
   /**
-   * At most `notion` today (#30); `jira` is designed, not built. Not
+   * Only `notion` today (#30); Jira was dropped from the product (#82). Not
    * `external_refs`: the generated `ActionItem` already has a field by that
    * name (`ExternalRef[]`, `url` required, the outbound-only shape), and
    * `extends` cannot narrow it to this stricter one.
@@ -172,7 +172,7 @@ export interface ReviewDecision {
    */
   summary: string | null;
   /**
-   * At most `notion` today (#30); `jira` is designed, not built.
+   * Only `notion` today (#30); Jira was dropped from the product (#82).
    * Optional rather than required: the backend only started sending this key
    * once #312 merged, and #314 (which declares this interface) landed first.
    * Absent means the same thing as `[]` -- the render side must not assume it.

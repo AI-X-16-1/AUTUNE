@@ -141,10 +141,10 @@ class ActionItemRead(BaseModel):
     """
 
     sync_refs: list[ExternalRefRead]
-    """One entry per system this item has been claimed for -- today, at most
-    ``notion`` (#30); ``jira`` is designed (ui-spec S18, S28) but unbuilt, so it
-    never appears rather than being shown always-empty. Ordered by
-    ``created_at``, which for one system is also insertion order.
+    """One entry per system this item has been claimed for -- only ``notion``
+    (#30); Jira was dropped from the product (#82), so ``jira`` never appears
+    rather than being shown always-empty. Ordered by ``created_at``, which for
+    one system is also insertion order.
 
     Not ``external_refs``: ``ActionItem`` (the contract this extends) already
     has a field by that name -- the outbound one, ``list[ExternalRef]``, which
@@ -315,7 +315,7 @@ class OutboundBlocked(BaseModel):
 class Outbound(BaseModel):
     """What confirm-and-send would send, and nothing else.
 
-    The Notion, Slack and Jira sync (#30) is to read this and only this. A decision
+    The Notion and Slack sync (#30) is to read this and only this. A decision
     nobody confirmed is not in it, and neither is an item still waiting for
     confirmation.
     """
