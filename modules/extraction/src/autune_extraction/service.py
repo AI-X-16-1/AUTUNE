@@ -47,7 +47,8 @@ from .models import (
     ExtEditEvent,
     ExtExternalRef,
 )
-from .pipeline.base import Classifier, NliModel
+from .pipeline.base import Classifier, NliModel, ReferenceResolver, ResolutionRequest
+from .pipeline.resolver import MAX_CONTEXT_UTTERANCES
 from .schemas import (
     ActionItemCreate,
     ActionItemDetail,
@@ -1208,12 +1209,55 @@ def classifications_for_meeting(session: Session, meeting_id: str) -> list[Class
 # --- step 3: action items from commitments ------------------------------------
 
 
+def resolve_commitment_references(
+    resolver: ReferenceResolver,
+    utterances: Sequence[TranscriptUtterance],
+    classified: Sequence[ClassifiedUtterance],
+) -> dict[str, str]:
+    """Each commitment's description, references resolved against the utterances
+    just before it (#175): "그거 제가 할게요" reads as what "그거" was.
+
+    Runs before any session, the same reason ``classify_utterances`` does -- it
+    is model inference, and a transaction held around it holds a connection and
+    its locks for the length of it.
+
+    The context for a commitment is up to ``MAX_CONTEXT_UTTERANCES`` utterances
+    immediately before it in the meeting, whatever their kind -- an antecedent
+    can live in a ``none`` utterance same as any other. Only masked text ever
+    reaches the resolver (privacy.md section 6), the same as everything else
+    module B sends a model.
+
+    Returns ``{utterance_id: resolved_text}`` for commitments only. A caller
+    reading an id this has no entry for was never a commitment and should keep
+    the utterance's own text -- exactly what a resolver would have returned for
+    it anyway, since one bad or unresolved reference never drops the request
+    (see ``ReferenceResolver``).
+    """
+    order = {utterance.id: index for index, utterance in enumerate(utterances)}
+    spoken = {utterance.id: utterance for utterance in utterances}
+    commitments = [u for u in classified if u.kind is UtteranceKind.COMMITMENT]
+    if not commitments:
+        return {}
+
+    requests = []
+    for utterance in commitments:
+        said = spoken[utterance.id]
+        index = order[utterance.id]
+        start = max(0, index - MAX_CONTEXT_UTTERANCES)
+        context = tuple(u.text for u in utterances[start:index])
+        requests.append(ResolutionRequest(target=said.text, context=context))
+
+    resolved = resolver.resolve(requests)
+    return dict(zip((u.id for u in commitments), resolved, strict=True))
+
+
 def build_action_items(
     session: Session,
     *,
     meeting_id: str,
     utterances: Sequence[TranscriptUtterance],
     classified: Sequence[ClassifiedUtterance],
+    resolved: Mapping[str, str] | None = None,
 ) -> list[ExtActionItem] | None:
     """One draft item per commitment, replacing the model's previous draft.
 
@@ -1228,10 +1272,19 @@ def build_action_items(
     the same replace-not-merge rule as the classifications. Items a person
     typed are never touched.
 
-    Each item is filled by ``slots``: the utterance as its description, its
-    speaker as the assignee, the first date phrase as the due date. Every model
-    item starts in *needs confirmation*.
+    Each item is filled by ``slots``: the speaker as the assignee, the first
+    date phrase as the due date. The description is ``resolved``'s entry for
+    the utterance when there is one (#175) and the utterance's own text
+    otherwise -- ``resolved`` defaults to empty, so a caller that has not run
+    ``resolve_commitment_references`` gets exactly the pre-#175 behaviour. Every
+    model item starts in *needs confirmation*.
+
+    **The due date is still read from the utterance's own text, not the
+    resolved one.** ``parse_due`` depends on the exact verb ending the speaker
+    used, and a resolver rewriting the sentence for a human reader is not
+    obliged to preserve it.
     """
+    resolved = resolved or {}
     edited = session.scalar(
         select(func.count()).select_from(ExtEditEvent).where(ExtEditEvent.meeting_id == meeting_id)
     )
@@ -1268,7 +1321,7 @@ def build_action_items(
         items.append(
             ExtActionItem(
                 meeting_id=meeting_id,
-                description=said.text,
+                description=resolved.get(utterance.id, said.text),
                 assignee_id=assignee.user_id,
                 assignee_label=assignee.label,
                 due_date=due.date if due is not None else None,

@@ -1,8 +1,8 @@
 """Config string -> implementation, loaded once per process.
 
-Nothing outside this package instantiates a model class. Call ``get_classifier()``
-or ``get_nli()``; each is cached, so the checkpoint loads on the first call a
-worker makes and not on every task.
+Nothing outside this package instantiates a model class. Call ``get_classifier()``,
+``get_nli()`` or ``get_resolver()``; each is cached, so the checkpoint loads on
+the first call a worker makes and not on every task.
 """
 
 from __future__ import annotations
@@ -11,9 +11,10 @@ from functools import lru_cache
 
 from autune_extraction.config import get_settings
 
-from .base import Classifier, NliModel
+from .base import Classifier, NliModel, ReferenceResolver
 from .classifier import ENSEMBLE_SEPARATOR, FakeClassifier, HostedDeberta, LocalDeberta
 from .nli import FakeNli, HostedNli, LocalNli
+from .resolver import FakeResolver, HostedResolver, LocalQwenResolver
 
 _CLASSIFIERS: dict[str, str] = {
     "local": "weights in this process",
@@ -29,6 +30,9 @@ _NLI: dict[str, str] = {
     "fake": "deterministic, for tests",
 }
 """Same shape as ``_CLASSIFIERS``, for step 4's model (#12)."""
+
+_RESOLVERS: dict[str, str] = dict(_CLASSIFIERS)
+"""Same three names, same meaning, for the reference resolver (#175)."""
 
 
 @lru_cache
@@ -98,3 +102,31 @@ def get_nli() -> NliModel:
         return FakeNli()
 
     raise ValueError(f"unknown AUTUNE_EXTRACTION_NLI_IMPL={impl!r}; known: {sorted(_NLI)}")
+
+
+@lru_cache
+def get_resolver() -> ReferenceResolver:
+    settings = get_settings()
+    impl = settings.resolver_impl
+
+    if impl in ("local", "hosted") and not settings.resolver_checkpoint:
+        raise ValueError(
+            f"AUTUNE_EXTRACTION_RESOLVER_IMPL={impl} needs "
+            "AUTUNE_EXTRACTION_RESOLVER_CHECKPOINT. Use RESOLVER_IMPL=fake until #175's "
+            "model choice is confirmed."
+        )
+
+    if impl == "local":
+        return LocalQwenResolver(settings.resolver_checkpoint, device=settings.resolver_device)
+    if impl == "hosted":
+        if not settings.resolver_endpoint:
+            raise ValueError(
+                "AUTUNE_EXTRACTION_RESOLVER_IMPL=hosted needs AUTUNE_EXTRACTION_RESOLVER_ENDPOINT"
+            )
+        return HostedResolver(settings.resolver_endpoint, settings.resolver_checkpoint)
+    if impl == "fake":
+        return FakeResolver()
+
+    raise ValueError(
+        f"unknown AUTUNE_EXTRACTION_RESOLVER_IMPL={impl!r}; known: {sorted(_RESOLVERS)}"
+    )

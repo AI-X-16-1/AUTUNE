@@ -139,6 +139,10 @@ Where that token comes from, and the two ways to give it to the browser:
 | `AUTUNE_EXTRACTION_NLI_ENDPOINT` | B | Our own inference server. Required when `NLI_IMPL=hosted` |
 | `AUTUNE_EXTRACTION_NLI_DEVICE` | B | `cpu` · `cuda`. Default `cpu`. Mirrors `AUTUNE_EXTRACTION_CLASSIFIER_DEVICE` |
 | `AUTUNE_EXTRACTION_CANDIDATE_CONFIDENCE` | B | Below this, an item is a candidate rather than asserted. **Blank by default** — the number comes from the evaluation set (#10), and blank means nothing is a candidate |
+| `AUTUNE_EXTRACTION_RESOLVER_IMPL` | B | `local` · `hosted` · `fake` (#175). **Default `fake`** — unlike the classifier, since the model candidate is not yet confirmed. **No `external`**, same reason as the classifier |
+| `AUTUNE_EXTRACTION_RESOLVER_CHECKPOINT` | B | Local model path/hub id, or the hosted model's recorded version. Required for `local`/`hosted` |
+| `AUTUNE_EXTRACTION_RESOLVER_ENDPOINT` | B | Our own inference server. Required when `RESOLVER_IMPL=hosted` |
+| `AUTUNE_EXTRACTION_RESOLVER_DEVICE` | B | `cpu` · `cuda`. Default `cpu`. Mirrors `AUTUNE_EXTRACTION_CLASSIFIER_DEVICE` |
 | `AUTUNE_GAP_RISK_THRESHOLD` | C | Default `0.7`. At or above is `high`, the only severity surfaced |
 | `AUTUNE_GAP_MEDIUM_THRESHOLD` | C | Default `0.5`. Down to here is `medium`, below it `low` |
 | `AUTUNE_GAP_DEFAULT_TEMPLATE` | C | Default `general`. Which domain template a meeting nobody chose one for is held to |

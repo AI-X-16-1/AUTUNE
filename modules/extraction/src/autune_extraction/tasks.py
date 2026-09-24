@@ -15,7 +15,7 @@ from autune_integrations import IntegrationError, NotionClient
 
 from . import service
 from .models import ExtActionItem, ExtDecision
-from .pipeline.registry import get_classifier, get_nli
+from .pipeline.registry import get_classifier, get_nli, get_resolver
 
 log = get_logger(__name__)
 
@@ -31,16 +31,17 @@ def on_transcript_ready(payload: dict) -> None:
     ``shared_task`` binds to whichever Celery app is running, so this module
     never imports apps/worker.
 
-    Classification, then NLI, happen between two sessions, never inside one --
-    both are model inference, and a transaction held around them holds a
-    connection and its locks for all of that time (``service.classify_utterances``,
-    ``service.verify_utterances``). The first session only reads which
-    utterances belong to a speaker who consented (privacy.md section 5);
-    nobody else's speech reaches either model. The writes that follow share
-    one transaction: classifications, decisions and draft items all come from
-    the same NLI-verified predictions, and a meeting holding one run's labels
-    and another run's items is not a state anything downstream should be able
-    to read.
+    Classification, then NLI, then reference resolution (#175) happen between
+    two sessions, never inside one -- all three are model inference, and a
+    transaction held around them holds a connection and its locks for all of
+    that time (``service.classify_utterances``, ``service.verify_utterances``,
+    ``service.resolve_commitment_references``). The first session only reads
+    which utterances belong to a speaker who consented (privacy.md section 5);
+    nobody else's speech reaches any of the three models. The writes that
+    follow share one transaction: classifications, decisions and draft items
+    all come from the same NLI-verified, reference-resolved predictions, and a
+    meeting holding one run's labels and another run's items is not a state
+    anything downstream should be able to read.
 
     Safe to run twice. Every write replaces the meeting's model-made rows rather
     than adding to them, so a redelivered task ends where the first one did --
@@ -78,6 +79,11 @@ def on_transcript_ready(payload: dict) -> None:
     classified = service.classify_utterances(classifier, transcript.utterances, consented=consented)
     classified = service.verify_utterances(get_nli(), classified)
 
+    resolver = get_resolver()
+    resolved_descriptions = service.resolve_commitment_references(
+        resolver, transcript.utterances, classified
+    )
+
     with session_scope() as session:
         stored = service.store_classifications(
             session,
@@ -93,6 +99,7 @@ def on_transcript_ready(payload: dict) -> None:
             meeting_id=transcript.meeting_id,
             utterances=transcript.utterances,
             classified=classified,
+            resolved=resolved_descriptions,
         )
         ambiguous = service.record_ambiguous_agreements(
             session, meeting_id=transcript.meeting_id, classified=classified
@@ -110,6 +117,8 @@ def on_transcript_ready(payload: dict) -> None:
         action_items=len(items) if items is not None else "kept",
         ambiguous=ambiguous,
         model_version=classifier.model_version,
+        resolver_model_version=resolver.model_version,
+        resolved_commitments=len(resolved_descriptions),
     )
     # TODO(강민구): step 6, the DM: for each of ``service.unasked_confirmations``,
     # resolve the speaker's Slack account and call

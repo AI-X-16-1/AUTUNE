@@ -80,6 +80,54 @@ class NliScores:
     neutral: float
 
 
+@dataclass(frozen=True)
+class ResolutionRequest:
+    """One utterance to resolve, and the context it may draw a referent from.
+
+    ``context`` is masked text only, oldest first -- privacy.md section 6, the
+    same rule ``target`` is already under. Nothing outside this window is
+    available to resolve against, by construction: a resolver cannot look up
+    the rest of the meeting, only what it was handed.
+    """
+
+    target: str
+    context: tuple[str, ...] = ()
+
+
+@runtime_checkable
+class ReferenceResolver(Protocol):
+    """A commitment or decision's closing utterance, with its pronouns and
+    bare references filled in from what came before it (#175).
+
+    "그거 제가 할게요" becomes "회의실 예약 제가 할게요" when the context named
+    what "그거" was -- ``ext_action_items.description`` and
+    ``ext_decisions.statement`` read the resolved form; the quote itself is
+    still reachable through ``source_utterance_ids``, so nothing is lost by
+    rewriting it.
+
+    **Never raises for one bad request.** A resolver that cannot resolve a
+    reference, generates something not grounded in its own context, or fails
+    to answer at all returns that request's own ``target`` unchanged rather
+    than raising -- the pipeline does not stop for one commitment. This is a
+    property implementations must uphold, not something ``resolve`` can be
+    asked to skip: a caller passing bad input still gets a same-length,
+    same-order answer back.
+    """
+
+    @property
+    def model_version(self) -> str:
+        """Pinned, and recorded the same way ``Classifier.model_version`` is."""
+        ...
+
+    def resolve(self, requests: list[ResolutionRequest]) -> list[str]:
+        """One resolved sentence per request, in order, never fewer.
+
+        Order is the contract, the same reason ``Classifier.classify`` promises
+        it: callers zip this against their own utterance ids.
+        """
+        ...
+
+
 @runtime_checkable
 class Classifier(Protocol):
     """Five kinds or none, per utterance. Fine-tuned DeBERTa by default.

@@ -36,7 +36,7 @@ from autune_extraction.models import (
     ExtDecisionSource,
     ExtEditEvent,
 )
-from autune_extraction.pipeline import FakeClassifier, FakeNli
+from autune_extraction.pipeline import FakeClassifier, FakeNli, FakeResolver, ResolutionRequest
 from autune_extraction.schemas import ActionItemCreate, ActionItemUpdate
 
 MEETING = "mtg_1"
@@ -152,6 +152,128 @@ def test_a_meeting_with_no_start_time_keeps_the_phrase_and_no_date(session: Sess
 
     assert item.due_date is None
     assert item.due_text == "다음 주 화요일"
+
+
+# --- references resolved before the description is written (#175) -------------
+
+
+class RecordingResolver:
+    """Never resolves anything -- records what it was asked, so a test can
+    check the window a caller built without depending on a real model."""
+
+    model_version = "recording"
+
+    def __init__(self) -> None:
+        self.received: list[ResolutionRequest] = []
+
+    def resolve(self, requests: list[ResolutionRequest]) -> list[str]:
+        self.received.extend(requests)
+        return [request.target for request in requests]
+
+
+def test_resolve_commitment_references_covers_only_commitments(session: Session) -> None:
+    """utt_3 ("네 좋아요") is none of the kinds -- resolving it would be a call
+    spent on an utterance no item is ever built from."""
+    utterances = spoken()
+    classified = service.classify_utterances(
+        FakeClassifier(), utterances, consented={u.id for u in utterances}
+    )
+
+    resolved = service.resolve_commitment_references(FakeResolver(), utterances, classified)
+
+    assert set(resolved) == {"utt_1", "utt_2"}
+
+
+def test_the_context_is_the_utterances_immediately_before_the_target(session: Session) -> None:
+    utterances = spoken()
+    classified = service.classify_utterances(
+        FakeClassifier(), utterances, consented={u.id for u in utterances}
+    )
+    resolver = RecordingResolver()
+
+    service.resolve_commitment_references(resolver, utterances, classified)
+
+    by_target = {r.target: r for r in resolver.received}
+    first, second = "제가 다음 주 화요일까지 정리하겠습니다", "그건 제가 확인하겠습니다"
+    assert by_target[first].context == ()
+    assert by_target[second].context == (first,)
+
+
+def test_the_context_window_is_bounded(session: Session) -> None:
+    """Coupled to MAX_CONTEXT_UTTERANCES=4 on purpose -- if that changes, this
+    should be looked at rather than pass silently."""
+    lines = [
+        (f"utt_{i}", float(i), "김민경", "user_001", f"항목 {i} 확인했습니다") for i in range(6)
+    ]
+    lines.append(("utt_target", 10.0, "김민경", "user_001", "제가 할게요"))
+    utterances = spoken(lines)
+    classified = service.classify_utterances(
+        FakeClassifier(), utterances, consented={u.id for u in utterances}
+    )
+    resolver = RecordingResolver()
+
+    service.resolve_commitment_references(resolver, utterances, classified)
+
+    target_request = next(r for r in resolver.received if r.target == "제가 할게요")
+    assert target_request.context == (
+        "항목 2 확인했습니다",
+        "항목 3 확인했습니다",
+        "항목 4 확인했습니다",
+        "항목 5 확인했습니다",
+    )
+
+
+def test_a_resolved_description_replaces_the_raw_quote(session: Session) -> None:
+    utterances = spoken()
+    classified = service.classify_utterances(
+        FakeClassifier(), utterances, consented={u.id for u in utterances}
+    )
+
+    items = service.build_action_items(
+        session,
+        meeting_id=MEETING,
+        utterances=utterances,
+        classified=classified,
+        resolved={"utt_1": "화요일까지 회의실 예약 제가 정리하겠습니다"},
+    )
+
+    assert items is not None
+    item = next(i for i in items if i.assignee_id == "user_001")
+    assert item.description == "화요일까지 회의실 예약 제가 정리하겠습니다"
+
+
+def test_a_commitment_missing_from_resolved_keeps_its_own_text(session: Session) -> None:
+    """``resolved`` defaults to empty, so a caller that never ran resolution
+    gets exactly the pre-#175 behaviour -- the raw quote."""
+    items = draft(session)
+
+    assert items is not None
+    assert {i.description for i in items} == {
+        "제가 다음 주 화요일까지 정리하겠습니다",
+        "그건 제가 확인하겠습니다",
+    }
+
+
+def test_the_due_date_still_reads_the_utterances_own_text(session: Session) -> None:
+    """A resolver may rewrite the sentence for a reader; it is not obliged to
+    keep the exact verb ending ``parse_due`` depends on, so the date still
+    comes from what the speaker actually said."""
+    utterances = spoken()
+    classified = service.classify_utterances(
+        FakeClassifier(), utterances, consented={u.id for u in utterances}
+    )
+
+    items = service.build_action_items(
+        session,
+        meeting_id=MEETING,
+        utterances=utterances,
+        classified=classified,
+        resolved={"utt_1": "정리는 제가 하겠습니다"},  # no date phrase left
+    )
+
+    assert items is not None
+    item = next(i for i in items if i.assignee_id == "user_001")
+    assert item.due_date == date(2026, 9, 15), "read from utt_1's own text, not the resolved one"
 
 
 # --- what a second run leaves ----------------------------------------------------

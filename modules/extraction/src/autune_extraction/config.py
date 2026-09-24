@@ -121,12 +121,34 @@ class ExtractionSettings(BaseSettings):
             return None
         return value
 
+    resolver_impl: str = "fake"
+    """Which reference resolver to run: ``local``, ``hosted`` or ``fake`` (#175).
+
+    Defaults to ``fake`` rather than ``local``, unlike the classifier: #175's own
+    model choice (``Qwen/Qwen3-4B-Instruct-2507``, a candidate) is not yet
+    confirmed by the Korean judgment run the issue asks for, so nothing runs it
+    by default. ``fake`` returns each commitment's raw quote unchanged -- the
+    same output ``build_action_items`` produced before #175 existed."""
+
+    resolver_checkpoint: str = ""
+    """A local model path or hub id for ``resolver_impl=local``, the model
+    version recorded with every resolution for ``resolver_impl=hosted``. Blank
+    makes both refuse in the registry, the same shape as ``classifier_checkpoint``."""
+
+    resolver_endpoint: str = ""
+    """Our own inference server, required when ``resolver_impl=hosted``."""
+
+    resolver_device: str = "cpu"
+    """``cpu`` or ``cuda``, for ``resolver_impl=local``. Mirrors
+    ``classifier_device``."""
+
     @model_validator(mode="after")
     def _device_is_known(self) -> ExtractionSettings:
         """A typo should not surface as a CUDA error in the middle of a meeting."""
         for name, value in (
             ("CLASSIFIER_DEVICE", self.classifier_device),
             ("NLI_DEVICE", self.nli_device),
+            ("RESOLVER_DEVICE", self.resolver_device),
         ):
             if value not in ("cpu", "cuda"):
                 raise ValueError(f"AUTUNE_EXTRACTION_{name}={value!r}; expected 'cpu' or 'cuda'")
