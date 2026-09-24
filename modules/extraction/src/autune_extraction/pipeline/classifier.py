@@ -15,6 +15,7 @@ from __future__ import annotations
 import hashlib
 import time
 from collections.abc import Callable, Iterator, Mapping
+from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any
 
 from autune_contracts.enums import UtteranceKind
@@ -441,6 +442,34 @@ does not hold a worker, decide when to come back.
 """
 
 
+MAX_CONCURRENT_BATCHES = 4
+"""How many of a meeting's batches may be in flight to the inference server at
+once.
+
+Sequential was safe but wasteful: 28 requests at roughly a hundred
+milliseconds of network time each is close to three seconds spent waiting, one
+batch at a time, on a server that could have been answering four of them
+together. ``httpx.Client`` is documented thread-safe for exactly this --
+concurrent requests share one connection pool -- so a bounded thread pool
+around ``_post`` is enough; nothing here is CPU-bound, so the GIL costs
+nothing while a thread waits on the network.
+
+Written here rather than made a setting, for the same reason as
+``RETRY_BACKOFF_SEC``: there is no inference server yet to measure against, and
+a knob nobody has tuned reads as a tuned value. Bounded on purpose too -- an
+unbounded pool turns "send everything at once" into a self-inflicted burst
+against a server that is supposed to also be answering everyone else, and one
+meeting is not supposed to be able to do that. Four is a guess conservative
+enough not to matter until there is a latency distribution to pick a real
+number from.
+
+This does not change what one bad batch does to the meeting -- a batch that
+exhausts its retries still fails the whole ``classify`` call, same as before.
+It only stops the *other* batches from waiting behind each other for no
+reason.
+"""
+
+
 class HostedDeberta:
     """The same model on our own inference server.
 
@@ -462,6 +491,12 @@ class HostedDeberta:
     **Each of those requests is re-attempted on a transient failure** -- see
     ``_post``. Splitting a meeting into tens of requests multiplies its exposure
     to one bad second, and the split is not optional.
+
+    **Up to ``MAX_CONCURRENT_BATCHES`` of them are in flight together** (#113).
+    Sequential sending was never necessary -- the batches do not depend on each
+    other -- and a meeting of any length used to pay for that anyway. Results
+    are matched back to their batch by position, not by arrival order, so a
+    later batch answering first does not reshuffle the meeting's predictions.
     """
 
     def __init__(self, endpoint: str, model_version: str) -> None:
@@ -515,9 +550,31 @@ class HostedDeberta:
         if not texts:
             return []
 
+        batches = list(_batches_within_budget(texts, MAX_OUTBOUND_CHARS))
+        bodies: list[Any] = [None] * len(batches)
+        # `min` so a short meeting (one or two batches) does not spin up idle
+        # worker threads it will never use.
+        with ThreadPoolExecutor(max_workers=min(MAX_CONCURRENT_BATCHES, len(batches))) as pool:
+            futures = {
+                pool.submit(self._post, batch, index=index): index
+                for index, batch in enumerate(batches)
+            }
+            # Not `as_completed`: every future is waited on regardless of which
+            # one raises first, so one batch's exhausted retries do not cut off
+            # the others while they are still in flight against a shared
+            # connection pool.
+            first_error: BaseException | None = None
+            for future, index in futures.items():
+                try:
+                    bodies[index] = future.result()
+                except BaseException as exc:  # noqa: BLE001 - re-raised below, not swallowed
+                    first_error = first_error or exc
+            if first_error is not None:
+                raise first_error
+
         predictions: list[Prediction] = []
-        for index, batch in enumerate(_batches_within_budget(texts, MAX_OUTBOUND_CHARS)):
-            body = self._post(batch, index=index)
+        for index, batch in enumerate(batches):
+            body = bodies[index]
             # A server answering with a bare array is wrong but comprehensible;
             # letting it surface as AttributeError on a dict method is not.
             rows = body.get("scores", []) if isinstance(body, dict) else body

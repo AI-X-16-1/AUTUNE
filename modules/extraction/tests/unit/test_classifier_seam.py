@@ -7,6 +7,8 @@ shape everything downstream is built against, and it is testable now.
 from __future__ import annotations
 
 import importlib.util
+import threading
+import time
 from collections.abc import Callable, Iterator
 
 import pytest
@@ -21,6 +23,7 @@ from autune_extraction.pipeline.classifier import (
     ESCALATE_BELOW,
     HEAD,
     LABELS,
+    MAX_CONCURRENT_BATCHES,
     MODEL_VERSION_MAX,
     RETRY_BACKOFF_SEC,
     HostedDeberta,
@@ -712,3 +715,114 @@ def test_a_meeting_is_still_one_request_per_batch_when_nothing_fails(
     assert len(predictions) == len(texts)
     assert len(server.calls) == len(list(_batches_within_budget(texts, MAX_OUTBOUND_CHARS)))
     assert slept == []
+
+
+# --- batches overlap instead of queueing behind each other (#113) -----------
+
+
+def _one_batch_per_letter(letters: str) -> list[str]:
+    """One utterance per letter, each alone over half the outbound budget so
+    ``_batches_within_budget`` puts every letter in its own batch."""
+    return [letter * 3999 for letter in letters]
+
+
+class TrackingServer:
+    """Inference server fake that records how many requests overlap and
+    answers each one by the first character of its (single) utterance, so a
+    test can recover which logical batch a response belongs to without
+    depending on the order the server received them in.
+
+    ``delay`` lets a test make one letter slower than the rest.
+    """
+
+    _TAGS: dict[str, list[float]] = {
+        "A": [1.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        "B": [0.0, 1.0, 0.0, 0.0, 0.0, 0.0],
+        "C": [0.0, 0.0, 1.0, 0.0, 0.0, 0.0],
+    }
+
+    def __init__(self, *, delay: Callable[[str], float] = lambda _tag: 0.05) -> None:
+        self._lock = threading.Lock()
+        self._delay = delay
+        self.in_flight = 0
+        self.max_in_flight = 0
+        self.finished_order: list[str] = []
+
+    def request(self, method: str, path: str, *, json: dict) -> dict:
+        tag = json["texts"][0][0]
+        with self._lock:
+            self.in_flight += 1
+            self.max_in_flight = max(self.max_in_flight, self.in_flight)
+        time.sleep(self._delay(tag))
+        with self._lock:
+            self.in_flight -= 1
+            self.finished_order.append(tag)
+        row = self._TAGS.get(tag, [0.0, 0.0, 0.0, 0.0, 0.0, 1.0])
+        return {"scores": [row] * len(json["texts"])}
+
+
+def test_batches_overlap_instead_of_running_one_at_a_time() -> None:
+    """Three batches, each slow enough to be caught mid-flight, must show more
+    than one in flight together -- the point of #113's fix over sequential
+    sending."""
+    classifier = HostedDeberta("http://inference.invalid", "ckpt")
+    server = TrackingServer()
+    classifier._client = server  # type: ignore[assignment]
+
+    classifier.classify(_one_batch_per_letter("ABC"))
+
+    assert server.max_in_flight >= 2
+
+
+def test_concurrency_never_exceeds_the_configured_bound() -> None:
+    """Six batches must never have more than ``MAX_CONCURRENT_BATCHES`` of them
+    running against the server at once."""
+    classifier = HostedDeberta("http://inference.invalid", "ckpt")
+    server = TrackingServer()
+    classifier._client = server  # type: ignore[assignment]
+
+    classifier.classify(_one_batch_per_letter("ABCDEF"))
+
+    assert 2 <= server.max_in_flight <= MAX_CONCURRENT_BATCHES
+
+
+def test_predictions_stay_in_order_even_when_a_later_batch_answers_first() -> None:
+    """A slow first batch must not let a fast later batch overtake it in the
+    output -- results are matched back to their batch by position, not by
+    which one the server answers first."""
+    classifier = HostedDeberta("http://inference.invalid", "ckpt")
+    server = TrackingServer(delay=lambda tag: 0.15 if tag == "A" else 0.0)
+    classifier._client = server  # type: ignore[assignment]
+
+    predictions = classifier.classify(_one_batch_per_letter("ABC"))
+
+    assert server.finished_order[0] != "A", "the setup requires A to answer last"
+    assert [p.kind for p in predictions] == [K.COMMITMENT, K.DECISION, K.OPEN_QUESTION]
+
+
+def test_one_exhausted_batch_still_waits_for_the_others_before_failing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A batch that gives up must not cut the others off mid-flight -- every
+    submitted batch is waited on before ``classify`` raises."""
+    monkeypatch.setattr(classifier_module.time, "sleep", lambda _seconds: None)
+    finished: list[str] = []
+    lock = threading.Lock()
+
+    class OneFailsServer:
+        def request(self, method: str, path: str, *, json: dict) -> dict:
+            tag = json["texts"][0][0]
+            if tag == "A":
+                raise TransientIntegrationError("extraction-classifier returned 502")
+            time.sleep(0.1)
+            with lock:
+                finished.append(tag)
+            return {"scores": [[0.0, 0.0, 0.0, 0.0, 0.0, 1.0]]}
+
+    classifier = HostedDeberta("http://inference.invalid", "ckpt")
+    classifier._client = OneFailsServer()  # type: ignore[assignment]
+
+    with pytest.raises(TransientIntegrationError):
+        classifier.classify(_one_batch_per_letter("ABC"))
+
+    assert set(finished) == {"B", "C"}, "B and C were in flight and must still finish"
