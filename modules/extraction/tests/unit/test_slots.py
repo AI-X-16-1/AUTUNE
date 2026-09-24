@@ -315,3 +315,22 @@ def test_a_past_adnominal_with_no_agreement_marker_stays_the_past() -> None:
     "할" right before it, and "린" is neither -- so this is plain past, the
     same shape as the existing "말씀드렸던 걸로" case."""
     assert parse_due("월요일에 말씀드린 걸로 정리하겠습니다", WEDNESDAY) is None
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "월요일에 자료 공유한다면 좋겠습니다",
+        "월요일에 자료 전달한다면 좋겠습니다",
+        "월요일에 자료 보낸다고 하셨어요",
+        "월요일에 말씀드린다면 좋겠습니다",
+    ],
+)
+def test_a_named_verbs_present_conditional_is_not_the_past(text: str) -> None:
+    """Each of the four past-adnominal forms is also an exact prefix of the
+    same verb's present/conditional -ㄴ다 conjugation -- "공유한" opens
+    "공유한다면" the same way "겠" opens "겠다", which ``_NOT_PAST`` already
+    excludes for the syllable check. Without the ``(?!다)`` lookahead these
+    read as the past and lost their date the same way the genuine past forms
+    do (review by lsh2217 on #333, reproduced against all four verbs)."""
+    assert parse_due(text, WEDNESDAY) == DueDate(text="월요일", date=date(2026, 9, 14))

@@ -183,7 +183,7 @@ _AGREED = re.compile(r"기로|[는할]\s*걸로|도록|자고")
 """What turns a past verb into an agreement about the date: 하기로 했다,
 드리는 걸로 했다, 끝내도록 했다, 하자고 했다."""
 
-_PAST_ADNOMINAL_VERBS = re.compile(r"말씀드린|공유한|보낸|전달한")
+_PAST_ADNOMINAL_VERBS = re.compile(r"(?:말씀드린|공유한|보낸|전달한)(?!다)")
 """The past adnominal -(으)ㄴ, but only for these four reporting verbs (#197's
 own candidate list), never as a general syllable check.
 
@@ -196,7 +196,16 @@ expects in a commitment ("말씀드리다, 공유하다, 보내다, 전달하다
 promise names having already been discussed or sent) is precise where a
 syllable rule cannot be; it answers nothing about a verb not on this list,
 and adding one is a data decision (#197's own eval-set plan), not a pattern
-someone noticed."""
+someone noticed.
+
+**``(?!다)`` for the same reason ``_past_syllable`` excludes ``_NOT_PAST``.**
+Each of these four forms is also an exact prefix of the same verb's
+present/conditional ``-ㄴ다`` conjugation -- "공유한" opens "공유한다면"
+and "공유한다고", "보낸" opens "보낸다고", exactly as "겠" would open "겠다"
+if ``_NOT_PAST`` did not exclude it. Without the lookahead, "월요일에 자료
+공유한다면 좋겠습니다" -- a future conditional, not a reported past -- matched
+the same as "월요일에 자료 공유한 거" and lost its date the same way (review
+by lsh2217: reproduced against all four verbs)."""
 
 
 def _past_syllable(ch: str) -> bool:
