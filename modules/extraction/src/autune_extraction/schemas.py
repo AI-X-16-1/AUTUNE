@@ -105,6 +105,14 @@ class ActionItemRead(BaseModel):
     exists, so a screen can show *somebody's name* without caring which half
     filled it in."""
     due_date: date | None
+    due_text: str | None = None
+    """The phrase the date was parsed from ("다음 주 화요일", "9/20"), kept
+    beside the resolved ``due_date`` rather than replacing it on this response
+    -- S18 shows both (ui-spec): the resolved date to act on, and the speaker's
+    own words so a person can judge the parse rather than take it on faith.
+    ``None`` for a hand-added item, or a model item where no date phrase was
+    said at all; ``slots.parse_due`` leaves both fields empty rather than
+    guessing one from the other."""
     status: str
     confidence: float
     origin: str

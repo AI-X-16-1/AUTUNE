@@ -96,6 +96,13 @@ export interface ActionItemRead extends ActionItem {
    * `null` until `assignee_id` resolves to an account that still exists.
    */
   assignee_name: string | null;
+  /**
+   * The phrase `due_date` was parsed from ("다음 주 화요일", "9/20") — S18
+   * shows both, so a person can judge the parse instead of taking the
+   * resolved date on faith. `null` for a hand-added item, or a model item
+   * where no date phrase was said at all.
+   */
+  due_text: string | null;
 }
 
 /** One source utterance's words, already masked by module A. */
