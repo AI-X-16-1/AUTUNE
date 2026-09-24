@@ -15,8 +15,14 @@ export const metadata: Metadata = {
  */
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="ko">
-      <body>{children}</body>
+    // `suppressHydrationWarning` on both: browser extensions (password
+    // managers, grammar checkers) add attributes to <html> and <body> before
+    // React hydrates, and React reports that as a hydration mismatch even
+    // though nothing this app renders differs. It suppresses the warning for
+    // these two elements' own attributes only -- a real mismatch inside the
+    // tree is still reported.
+    <html lang="ko" suppressHydrationWarning>
+      <body suppressHydrationWarning>{children}</body>
     </html>
   );
 }
