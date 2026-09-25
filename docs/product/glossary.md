@@ -59,7 +59,7 @@ Verified with NLI; when it stays ambiguous, the speaker gets a confirmation DM.
 
 **Action item (액션아이템)**
 A structured, trackable task: assignee, description, due date, source utterance,
-status. Syncs to Notion and Jira.
+status. Syncs to Notion.
 
 ## Module C — gap detection
 

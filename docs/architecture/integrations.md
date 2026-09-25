@@ -1,7 +1,8 @@
 # Integrations
 
 `packages/integrations` wraps every service Autune talks to: Slack, Notion,
-Jira, Google Calendar. Modules call these clients rather than an API directly.
+Google Calendar. Modules call these clients rather than an API directly. Jira
+was evaluated and dropped from the product — see `external-approvals.md`.
 
 ## Why a shared wrapper
 
@@ -62,7 +63,7 @@ variant and no administrator override.
 
 ## Testing without credentials
 
-`autune_integrations.fakes` provides `FakeSlack`, `FakeNotion` and `FakeJira`.
+`autune_integrations.fakes` provides `FakeSlack` and `FakeNotion`.
 They record instead of sending and **run the same privacy guards**, so a test
 that would have leaked fails in tests too. Mock external services here, never
 with network calls.
@@ -78,9 +79,9 @@ assert slack.channel_messages[0].channel == "#squad"
 ## Scope
 
 W1 defines the boundary, the error split and the guards. The full API surface is
-filled in during W3 by the owner who needs it — extraction for Notion and Jira,
-context for Calendar. Writing the rest before the first real call would produce
-an abstraction that fits nothing.
+filled in during W3 by the owner who needs it — extraction for Notion, context
+for Calendar. Writing the rest before the first real call would produce an
+abstraction that fits nothing.
 
 `TransientIntegrationError` is worth retrying (timeout, rate limit, 5xx);
 `PermanentIntegrationError` is not (bad credentials, missing resource,

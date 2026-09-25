@@ -23,7 +23,7 @@ autune/
 ├── packages/
 │   ├── contracts/         # Inter-module data contracts (Pydantic → TS types)
 │   ├── core/              # DB session, settings, auth, logging, shared entities
-│   └── integrations/      # Notion / Jira / Google Calendar / Slack SDK wrappers
+│   └── integrations/      # Notion / Google Calendar / Slack SDK wrappers
 │
 ├── modules/
 │   ├── audio/             # A  Audio pipeline (Whisper, Pyannote, PII masking)

@@ -177,7 +177,7 @@ Where that token comes from, and the two ways to give it to the browser:
 | `AUTUNE_INTELLIGENCE_GAP_CLASSIFIER_BACKBONE` | E | Sentence-embedding backbone SetFit fits its few-shot head onto. Default `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` |
 | `AUTUNE_INTELLIGENCE_WARM_MODELS_ON_WORKER_INIT` | E | `true` only on workers consuming gap-classification tasks. Default `false` |
 
-Notion, Jira and Calendar credentials are **not** environment variables. Each
+Notion and Calendar credentials are **not** environment variables. Each
 team configures its own on screen S28 and they are stored encrypted in
 `team_integrations` — read them with `autune_core.load_integration`, never from
 settings. See `../architecture/data-model.md`.
