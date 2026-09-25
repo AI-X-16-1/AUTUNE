@@ -10,6 +10,7 @@ validated against.
 
 from __future__ import annotations
 
+import importlib.util
 from typing import Any
 
 import pytest
@@ -195,18 +196,29 @@ def test_the_local_resolver_records_its_checkpoint_as_its_version() -> None:
 
 
 def test_asking_the_local_resolver_for_cuda_without_it_fails_before_loading() -> None:
-    resolver = LocalQwenResolver("Qwen/Qwen3-4B-Instruct-2507", device="cuda")
-    import importlib.util
-
-    if importlib.util.find_spec("torch") is None:
-        pytest.skip("torch is not installed here")
-    import torch
-
+    """Needs the whole ``local-models`` stack, not just torch -- same note as
+    ``test_classifier_seam``'s equivalent: CI installs neither, and ``_load``
+    reports the missing extra before it can look at a device, so a guard that
+    only checked ``importlib.util.find_spec`` passed here and failed there.
+    """
+    pytest.importorskip("transformers")
+    torch = pytest.importorskip("torch")
     if torch.cuda.is_available():
         pytest.skip("this machine has CUDA; the refusal path cannot fire")
 
     with pytest.raises(RuntimeError, match="no CUDA"):
-        resolver._load()
+        LocalQwenResolver("Qwen/Qwen3-4B-Instruct-2507", device="cuda")._load()
+
+
+def test_a_missing_extra_is_reported_even_when_a_gpu_was_asked_for() -> None:
+    """Without ``transformers`` there is no torch to ask about a device, so the
+    extra has to be named first. This is the case CI runs: it installs the
+    workspace but not the extra."""
+    if importlib.util.find_spec("transformers") is not None:
+        pytest.skip("the extra is installed here; the missing-extra path cannot fire")
+
+    with pytest.raises(RuntimeError, match="local-models"):
+        LocalQwenResolver("Qwen/Qwen3-4B-Instruct-2507", device="cuda")._load()
 
 
 # --- the registry: config string -> implementation --------------------------
