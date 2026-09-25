@@ -179,7 +179,7 @@ def test_resolve_commitment_references_covers_only_commitments(session: Session)
         FakeClassifier(), utterances, consented={u.id for u in utterances}
     )
 
-    resolved = service.resolve_commitment_references(FakeResolver(), utterances, classified)
+    resolved = service.resolve_commitment_references(FakeResolver(), classified)
 
     assert set(resolved) == {"utt_1", "utt_2"}
 
@@ -191,7 +191,7 @@ def test_the_context_is_the_utterances_immediately_before_the_target(session: Se
     )
     resolver = RecordingResolver()
 
-    service.resolve_commitment_references(resolver, utterances, classified)
+    service.resolve_commitment_references(resolver, classified)
 
     by_target = {r.target: r for r in resolver.received}
     first, second = "제가 다음 주 화요일까지 정리하겠습니다", "그건 제가 확인하겠습니다"
@@ -212,7 +212,7 @@ def test_the_context_window_is_bounded(session: Session) -> None:
     )
     resolver = RecordingResolver()
 
-    service.resolve_commitment_references(resolver, utterances, classified)
+    service.resolve_commitment_references(resolver, classified)
 
     target_request = next(r for r in resolver.received if r.target == "제가 할게요")
     assert target_request.context == (
@@ -238,10 +238,60 @@ def test_the_context_also_includes_utterances_right_after_the_target(session: Se
     )
     resolver = RecordingResolver()
 
-    service.resolve_commitment_references(resolver, utterances, classified)
+    service.resolve_commitment_references(resolver, classified)
 
     target_request = next(r for r in resolver.received if r.target == "제가 할게요")
     assert target_request.context_after == ("그게 언제까지죠?", "다음 주 화요일까지요")
+
+
+def test_a_non_consenting_speakers_words_never_reach_the_resolver(session: Session) -> None:
+    """Found in review of #366: an earlier version windowed context from the
+    raw transcript instead of ``classified``. ``classify_utterances`` blanks a
+    non-consenting speaker's turn to ``text=""`` (privacy.md section 5), but
+    the raw ``utterances`` list still had it in full -- so it could sit in a
+    ``ResolutionRequest``'s context, get copied by the resolver into a
+    resolved description, and land in ``ext_action_items.description``. The
+    window shrinks instead of reaching further back for a replacement line
+    (section 6's "smallest window", not "same-sized window")."""
+    lines = [
+        ("utt_1", 0.0, "김민경", "user_001", "첫 발화"),
+        ("utt_secret", 1.0, "Speaker 2", None, "비동의 화자 발언: 결제 모듈 재작성"),
+        ("utt_target", 2.0, "김민경", "user_001", "그거 제가 할게요"),
+    ]
+    utterances = spoken(lines)
+    consented = {u.id for u in utterances if u.id != "utt_secret"}
+    classified = service.classify_utterances(FakeClassifier(), utterances, consented=consented)
+    resolver = RecordingResolver()
+
+    service.resolve_commitment_references(resolver, classified)
+
+    target_request = next(r for r in resolver.received if r.target == "그거 제가 할게요")
+    assert target_request.context == ("첫 발화",)
+
+
+def test_context_follows_start_time_even_when_the_payload_arrives_unsorted(
+    session: Session,
+) -> None:
+    """Found alongside the non-consent leak in review of #366: this used
+    ``enumerate(utterances)`` for order, but ``classify_utterances`` sorts by
+    ``(start, id)`` precisely because "a payload is not promised to arrive
+    sorted" -- reading order from the unsorted list instead could hand a
+    target a context window in payload order rather than speech order."""
+    lines = [
+        ("utt_target", 2.0, "김민경", "user_001", "그거 제가 할게요"),
+        ("utt_1", 0.0, "김민경", "user_001", "첫 발화"),
+        ("utt_2", 1.0, "Speaker 2", None, "두 번째 발화"),
+    ]
+    utterances = spoken(lines)  # arrives target-first, not in speech order
+    classified = service.classify_utterances(
+        FakeClassifier(), utterances, consented={u.id for u in utterances}
+    )
+    resolver = RecordingResolver()
+
+    service.resolve_commitment_references(resolver, classified)
+
+    target_request = next(r for r in resolver.received if r.target == "그거 제가 할게요")
+    assert target_request.context == ("첫 발화", "두 번째 발화")
 
 
 def test_a_resolved_description_replaces_the_raw_quote(session: Session) -> None:

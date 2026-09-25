@@ -80,9 +80,7 @@ def on_transcript_ready(payload: dict) -> None:
     classified = service.verify_utterances(get_nli(), classified)
 
     resolver = get_resolver()
-    resolved_descriptions = service.resolve_commitment_references(
-        resolver, transcript.utterances, classified
-    )
+    resolved_descriptions = service.resolve_commitment_references(resolver, classified)
 
     with session_scope() as session:
         stored = service.store_classifications(

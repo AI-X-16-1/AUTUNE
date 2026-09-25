@@ -1212,7 +1212,6 @@ def classifications_for_meeting(session: Session, meeting_id: str) -> list[Class
 
 def resolve_commitment_references(
     resolver: ReferenceResolver,
-    utterances: Sequence[TranscriptUtterance],
     classified: Sequence[ClassifiedUtterance],
 ) -> dict[str, str]:
     """Each commitment's description, references resolved against the utterances
@@ -1230,6 +1229,20 @@ def resolve_commitment_references(
     finished transcript, never live. Only masked text ever reaches the resolver
     (privacy.md section 6), the same as everything else module B sends a model.
 
+    **Windowed from ``classified``, never the raw transcript.** Found in review
+    of #366: an earlier version cut context from ``utterances`` directly, which
+    is neither filtered nor promised sorted. ``classify_utterances`` already
+    blanks a non-consenting speaker's turn to ``text=""`` (privacy.md section
+    5, "excluded utterances are not stored, not just hidden") and already
+    orders every row by ``(start, id)`` regardless of payload order -- reading
+    from ``utterances`` instead undid both. A resolver's whole job is copying
+    words out of its context into the sentence it returns, so a leak here does
+    not stop at the model: it lands in ``ext_action_items.description`` and, on
+    confirmation, in Notion. Blank turns are filtered out of the window (``if
+    u.text``) rather than skipped over to fill it back up to size -- a shorter
+    window is still "the smallest window that resolves a reference" (section
+    6); reaching past a non-consenting turn for one more line would not be.
+
     Returns ``{utterance_id: resolved_text}`` for commitments only. A caller
     reading an id this has no entry for was never a commitment and should keep
     the utterance's own text -- exactly what a resolver would have returned for
@@ -1246,22 +1259,20 @@ def resolve_commitment_references(
     quote rather than failing the meeting) is what makes a generated sentence an
     acceptable draft here rather than a silent record.
     """
-    order = {utterance.id: index for index, utterance in enumerate(utterances)}
-    spoken = {utterance.id: utterance for utterance in utterances}
     commitments = [u for u in classified if u.kind is UtteranceKind.COMMITMENT]
     if not commitments:
         return {}
 
+    position = {utterance.id: index for index, utterance in enumerate(classified)}
     requests = []
     for utterance in commitments:
-        said = spoken[utterance.id]
-        index = order[utterance.id]
+        index = position[utterance.id]
         start = max(0, index - MAX_CONTEXT_UTTERANCES)
-        context = tuple(u.text for u in utterances[start:index])
+        context = tuple(u.text for u in classified[start:index] if u.text)
         after_end = index + 1 + MAX_CONTEXT_AFTER
-        context_after = tuple(u.text for u in utterances[index + 1 : after_end])
+        context_after = tuple(u.text for u in classified[index + 1 : after_end] if u.text)
         requests.append(
-            ResolutionRequest(target=said.text, context=context, context_after=context_after)
+            ResolutionRequest(target=utterance.text, context=context, context_after=context_after)
         )
 
     resolved = resolver.resolve(requests)
