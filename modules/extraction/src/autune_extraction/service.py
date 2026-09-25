@@ -1232,6 +1232,16 @@ def resolve_commitment_references(
     the utterance's own text -- exactly what a resolver would have returned for
     it anyway, since one bad or unresolved reference never drops the request
     (see ``ReferenceResolver``).
+
+    **This generates a sentence, and ``decisions._build`` refuses to.** That is
+    not a disagreement inside the module -- a decision's statement is a record
+    someone would write in the minutes, and a generated one would be wrong in a
+    way the reader could not see. An action item's description is a draft ADR
+    0006 has the user finish before it is asserted, sitting in
+    ``needs_confirmation`` until they do; the resolver's own fallback rule
+    (never fewer answers than requests, one bad reference degrades to the raw
+    quote rather than failing the meeting) is what makes a generated sentence an
+    acceptable draft here rather than a silent record.
     """
     order = {utterance.id: index for index, utterance in enumerate(utterances)}
     spoken = {utterance.id: utterance for utterance in utterances}

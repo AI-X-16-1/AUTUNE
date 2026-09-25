@@ -35,23 +35,36 @@ covers that without handing the model the whole meeting to resolve one line."""
 
 
 _DIGIT_RUN = re.compile(r"\d+")
-"""What ``_grounded`` checks did not appear from nowhere.
-
-Not every possible invention -- a resolver can still substitute the wrong
-*name* for a pronoun and this would not catch it. It catches the costliest
-class cheaply and without another model: a date, a count or an amount that is
-not anywhere in the window is not a resolved reference, it is a new fact, and
+"""A date, a count or an amount the resolved sentence states. Cheap to check
+without another model: not anywhere in the window means it is a new fact, and
 #175's own design refuses exactly that ("창에 없는 사실을 만들지 않음")."""
+
+_NAMED_PERSON = re.compile(r"[가-힣]{2,4}(?:님|씨)")
+"""A person named by an honorific, the way a colleague is addressed in speech
+("박지영님", "이건우씨"). Checked for the same reason as ``_DIGIT_RUN`` and
+raised in review of #366: names are not masked the way phone numbers and
+emails are (there is no pattern to detect one by), so a real name can sit in
+plain text in the window, and a resolver substituting the *wrong* one for a
+pronoun is not caught by a digit check at all. This is the more expensive
+mistake -- ``assignee_id`` still comes from ``speaker_id``, never from this
+resolved text (see ``resolve_commitment_references``), so a wrong name here
+means the card shows two different people, not one who might be right."""
 
 
 def _grounded(resolved: str, window: str) -> bool:
-    """Every digit run ``resolved`` states also appears somewhere in ``window``.
+    """Every number and named person ``resolved`` states also appears somewhere
+    in ``window``.
 
-    ``window`` is the target and its context joined, so a number the target
-    utterance itself already said is never flagged -- only one the resolver
-    introduced that the window never mentioned.
+    ``window`` is the target and its context joined, so anything the target
+    utterance itself already said is never flagged -- only something the
+    resolver introduced that the window never mentioned. Not every kind of
+    invention: a resolver could still substitute one name in the window for
+    another, correctly-spelled one, and neither this nor #366's review found a
+    check for that which does not need a second model.
     """
-    return all(digits in window for digits in _DIGIT_RUN.findall(resolved))
+    return all(digits in window for digits in _DIGIT_RUN.findall(resolved)) and all(
+        name in window for name in _NAMED_PERSON.findall(resolved)
+    )
 
 
 def _window_text(request: ResolutionRequest) -> str:
@@ -144,9 +157,7 @@ class LocalQwenResolver:
         self._model = AutoModelForCausalLM.from_pretrained(self._checkpoint, torch_dtype=dtype)
         self._model.to(self._device)
         self._model.eval()
-        log.info(
-            "extraction_resolver_loaded", checkpoint=self._checkpoint, device=self._device
-        )
+        log.info("extraction_resolver_loaded", checkpoint=self._checkpoint, device=self._device)
 
     def _generate(self, request: ResolutionRequest) -> str:
         torch = self._torch
@@ -185,9 +196,7 @@ class LocalQwenResolver:
                 continue
             resolved.append(answer)
         if failures:
-            log.info(
-                "extraction_resolver_fallback", requests=len(requests), fallbacks=failures
-            )
+            log.info("extraction_resolver_fallback", requests=len(requests), fallbacks=failures)
         return resolved
 
 
@@ -245,8 +254,10 @@ class HostedResolver:
                 resolved.append(request.target)
                 continue
             answer = body.get("resolved") if isinstance(body, dict) else None
-            if not isinstance(answer, str) or not answer or not _grounded(
-                answer, _window_text(request)
+            if (
+                not isinstance(answer, str)
+                or not answer
+                or not _grounded(answer, _window_text(request))
             ):
                 resolved.append(request.target)
                 continue

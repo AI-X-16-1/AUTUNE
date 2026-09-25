@@ -72,6 +72,19 @@ def test_text_with_no_numbers_is_trivially_grounded() -> None:
     assert _grounded("회의실 예약 할게요", _window_text(request))
 
 
+# --- groundedness: no substituted names (#366) ------------------------------
+
+
+def test_a_named_person_present_in_the_window_is_grounded() -> None:
+    request = ResolutionRequest(target="그거 제가 할게요", context=("박지영님이 부탁하신 거요",))
+    assert _grounded("박지영님이 부탁한 거 제가 할게요", _window_text(request))
+
+
+def test_a_named_person_absent_from_the_window_is_not_grounded() -> None:
+    request = ResolutionRequest(target="그거 제가 할게요", context=("팀에서 부탁한 거요",))
+    assert not _grounded("박지영님이 부탁한 거 제가 할게요", _window_text(request))
+
+
 def test_the_window_is_context_then_target_in_order() -> None:
     request = ResolutionRequest(target="target", context=("first", "second"))
     assert _window_text(request) == "first\nsecond\ntarget"
