@@ -1,6 +1,6 @@
 # 0007. A meeting record belongs to the meeting, not to its participants
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-09-09
 **Deciders:** needs the whole team — it narrows rule 4 of ADR 0003, and
 `../architecture/privacy.md` section 8 says a rule that blocks you is raised,
