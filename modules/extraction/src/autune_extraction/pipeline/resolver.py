@@ -74,6 +74,52 @@ def _grounded(resolved: str, window: str) -> bool:
     )
 
 
+_TRAILING_PUNCTUATION = re.compile(r"[.!?…\s]+$")
+_TARGET_ENDING_LENGTH = 4
+"""How many trailing characters of the target must survive into the resolved
+sentence. Unmeasured -- like RETRY_BACKOFF_SEC, nobody has run this against a
+labelled set -- picked short on purpose: a target's own reference ("그거") can
+sit right next to its verb ending in a short utterance ("그거 할게요"), and a
+window wide enough to require the pronoun itself to survive would reject the
+very rewrite this check exists to allow. Four characters is enough to catch
+"드릴게요" / "하겠습니다" without reaching back into the reference before it."""
+
+
+def _is_truncated(generated_length: int, max_new_tokens: int) -> bool:
+    """Whether a generation used its entire token budget rather than the model
+    choosing to stop.
+
+    A pure function of the two lengths so the decision is testable without a
+    model: ``generate()`` only reports the sequence it produced, and ``>=``
+    (not ``==``) covers a caller that ever asks for one more token than the
+    budget by mistake.
+    """
+    return generated_length >= max_new_tokens
+
+
+def _retains_target_ending(resolved: str, target: str) -> bool:
+    """Whether ``resolved`` keeps the target's own closing words, not just its
+    context's.
+
+    A real resolution rewrites the *reference* inside the target -- "그거"
+    becomes "회의실 예약" -- and leaves the target's own predicate alone,
+    because nothing about naming a pronoun changes what the speaker said they
+    would do. Live-tested against #366's own comparison on a real transcript:
+    two of nine resolutions were not a rewrite of the target at all, but a
+    nearby context line the model returned instead -- neither shared the
+    target's ending, and both passed ``_grounded`` anyway, because borrowing
+    the *window's own* words is never "a new fact". This is the check that
+    would have caught them.
+
+    Skipped for a target too short to have ``_TARGET_ENDING_LENGTH`` characters
+    after its own trailing punctuation -- there is nothing reliable to compare.
+    """
+    stripped = _TRAILING_PUNCTUATION.sub("", target)
+    if len(stripped) < _TARGET_ENDING_LENGTH:
+        return True
+    return stripped[-_TARGET_ENDING_LENGTH:] in resolved
+
+
 def _window_lines(request: ResolutionRequest) -> list[str]:
     return [*request.context, request.target, *request.context_after]
 
@@ -118,11 +164,13 @@ def _passes_grounding(
     embedder: Embedder | None,
     min_similarity: float | None,
 ) -> bool:
-    """The digit and named-person check always applies; the embedding check
-    only once both an embedder and a threshold are configured
+    """The digit, named-person and target-ending checks always apply; the
+    embedding check only once both an embedder and a threshold are configured
     (``resolver_min_similarity`` unset skips it entirely, unchanged from
     before this existed)."""
     if not _grounded(answer, _window_text(request)):
+        return False
+    if not _retains_target_ending(answer, request.target):
         return False
     if embedder is None or min_similarity is None:
         return True
@@ -162,6 +210,13 @@ _PROMPT_TEMPLATE = """\
 - 위 발화에 없는 새로운 사실(날짜, 숫자, 이름 등)을 만들어내지 마세요.
 - 마스킹된 토큰(예: 대괄호로 묶인 표현)은 그대로 두세요.
 - 위 발화들로 풀리지 않으면 "해소 대상" 문장을 그대로 반환하세요.
+- "해소 대상"의 화자 시점을 그대로 유지하세요. "제가"/"저는"처럼 1인칭으로 말한 것을 \
+"OOO님께서" 같은 3인칭으로 바꾸지 마세요.
+- 결과 문장은 "해소 대상" 하나를 다시 쓴 것이어야 합니다. 지시어만 구체적인 대상으로 \
+바꾸고, "이전 발화"나 "이후 발화"의 다른 내용을 새 문장으로 덧붙이거나 그 내용으로 \
+통째로 바꾸지 마세요.
+- 지시어가 가리킬 수 있는 대상이 여러 개면, "해소 대상" 바로 앞 발화에서 언급된 것을 \
+우선하세요.
 - 다시 쓴 문장 하나만 출력하고, 다른 설명은 붙이지 마세요.
 """
 
@@ -189,7 +244,7 @@ class LocalQwenResolver:
         checkpoint: str,
         *,
         device: str = "cpu",
-        max_new_tokens: int = 96,
+        max_new_tokens: int = 160,
         embedder: Embedder | None = None,
         min_similarity: float | None = None,
     ) -> None:
@@ -234,6 +289,19 @@ class LocalQwenResolver:
         log.info("extraction_resolver_loaded", checkpoint=self._checkpoint, device=self._device)
 
     def _generate(self, request: ResolutionRequest) -> str:
+        """One resolution, or a ``RuntimeError`` if generation ran out of
+        budget before the model chose to stop.
+
+        A ``max_new_tokens`` cutoff mid-sentence is not a shorter answer, it is
+        a broken one -- "확인은 못 했" with no verb ending left is worse than
+        the raw quote it would otherwise replace, and this module's own
+        docstrings elsewhere already refuse "wrong in a way the reader could
+        not see" over "wrong in a way they can". Caught here rather than left
+        for ``_passes_grounding`` because a cut-off sentence can still contain
+        the target's own ending (#366's live comparison: one truncated answer
+        opened with the target verbatim before running on) and would pass that
+        check while still reading as broken.
+        """
         torch = self._torch
         messages = [{"role": "user", "content": _prompt(request)}]
         text = self._tokenizer.apply_chat_template(
@@ -248,6 +316,11 @@ class LocalQwenResolver:
                 pad_token_id=self._tokenizer.eos_token_id,
             )
         generated = output[0][encoded["input_ids"].shape[1] :]
+        if _is_truncated(generated.shape[-1], self._max_new_tokens):
+            raise RuntimeError(
+                f"generation used the full {self._max_new_tokens}-token budget "
+                "without the model choosing to stop -- treated as truncated"
+            )
         return self._tokenizer.decode(generated, skip_special_tokens=True).strip()
 
     def resolve(self, requests: list[ResolutionRequest]) -> list[str]:

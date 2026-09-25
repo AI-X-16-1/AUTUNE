@@ -23,7 +23,9 @@ from autune_extraction.pipeline.resolver import (
     HostedResolver,
     LocalQwenResolver,
     _grounded,
+    _is_truncated,
     _passes_grounding,
+    _retains_target_ending,
     _semantically_grounded,
     _window_text,
 )
@@ -114,6 +116,48 @@ def test_a_number_absent_from_both_sides_of_the_window_is_not_grounded() -> None
         target="그때까지 하겠습니다", context=("일정 얘기해요",), context_after=("네 알겠습니다",)
     )
     assert not _grounded("10월 1일까지 하겠습니다", _window_text(request))
+
+
+# --- groundedness: keeps the target's own ending (#366) ----------------------
+
+
+def test_a_resolution_that_keeps_the_targets_ending_is_grounded() -> None:
+    target = "네, 금요일까지 두 가지 만들어서 공유드릴게요."
+    resolved = "네, 금요일까지 온보딩 시안 두 가지를 만들어서 공유드릴게요."
+    assert _retains_target_ending(resolved, target)
+
+
+def test_a_resolution_that_is_really_a_different_sentence_is_not_grounded() -> None:
+    """Live case from #366's own comparison on a real transcript: the resolver
+    returned a nearby context line instead of resolving the target at all."""
+    target = "결제 빼고 나머지 기능은 내일 QA 서버에 먼저 올려 드릴게요."
+    resolved = "결제 쪽이 바뀌면 기존에 등록된 카드 정보는 그대로 유지되나요?"
+    assert not _retains_target_ending(resolved, target)
+
+
+def test_a_target_too_short_to_compare_is_not_penalised() -> None:
+    assert _retains_target_ending("아무 문장", "네.")
+
+
+def test_passes_grounding_rejects_an_answer_that_drops_the_targets_ending() -> None:
+    request = ResolutionRequest(target="그거 받으면 FAQ에 반영하겠습니다.")
+    answer = "이전 발화에서 언급된 내용을 공유해 달라는 요청을 받은 것이에요."
+    assert not _passes_grounding(answer, request, None, None)
+
+
+# --- truncation: a cut-off answer is worse than the raw quote (#366) ---------
+
+
+def test_a_generation_that_used_the_full_budget_is_truncated() -> None:
+    assert _is_truncated(160, 160)
+
+
+def test_a_generation_that_used_more_than_the_budget_is_still_truncated() -> None:
+    assert _is_truncated(161, 160)
+
+
+def test_a_generation_that_stopped_before_the_budget_is_not_truncated() -> None:
+    assert not _is_truncated(42, 160)
 
 
 # --- groundedness: embedding similarity (#175, #366) -------------------------
@@ -390,12 +434,14 @@ def test_a_grounded_answer_is_kept(hosted) -> None:
 
 
 def test_several_requests_stay_in_order(hosted) -> None:
-    server = Server(answer="답")
-    requests = [ResolutionRequest(target=f"target_{i}") for i in range(3)]
+    # Targets shorter than _TARGET_ENDING_LENGTH skip the ending check for all
+    # three -- this test is about request/response order, not content.
+    server = Server(answer="네")
+    requests = [ResolutionRequest(target=f"t{i}") for i in range(3)]
 
     resolved = hosted(server).resolve(requests)
 
-    assert resolved == ["답", "답", "답"]
+    assert resolved == ["네", "네", "네"]
     assert server.calls == 3
 
 
