@@ -79,7 +79,7 @@ incident. Target recall is 0.95+ for the MVP and 0.99+ at three months.
 - Logging transcript text at any level, including `DEBUG`. Log utterance IDs.
 - Including transcript text in exception messages — an exception string ends up
   in error tracking, which is an external service.
-- Sending unmasked text to Slack, Notion, Jira, or any LLM API.
+- Sending unmasked text to Slack, Notion, or any LLM API.
 
 **User-reported misses** delete the affected utterance immediately. There is no
 review queue: report, delete, then improve the detector.
@@ -162,7 +162,7 @@ deleted is part of shipping a table, not an extra.
 
 ## 6. Third-party services
 
-Anything leaving our infrastructure — LLM APIs, Slack, Notion, Jira, Google
+Anything leaving our infrastructure — LLM APIs, Slack, Notion, Google
 Calendar, error tracking, analytics — carries masked text only, and only what
 the feature needs.
 

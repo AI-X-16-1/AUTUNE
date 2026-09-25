@@ -28,9 +28,9 @@ class ActionStatus(StrEnum):
     """Action item state. Maps 1:1 to the columns on the action board (S17)."""
 
     NEEDS_CONFIRMATION = "needs_confirmation"  # Autune-only; no external issue yet
-    TODO = "todo"  # Jira: To Do
-    IN_PROGRESS = "in_progress"  # Jira: In Progress
-    DONE = "done"  # Jira: Done
+    TODO = "todo"
+    IN_PROGRESS = "in_progress"
+    DONE = "done"
 
 
 class GapSeverity(StrEnum):
@@ -65,4 +65,10 @@ class TranscriptSource(StrEnum):
 class ExternalSystem(StrEnum):
     NOTION = "notion"
     JIRA = "jira"
+    """Unused -- Jira was evaluated and dropped from the product (#82,
+    2026-09-10): both its non-app auth paths are tied to a person's identity,
+    and there was no path to a person-independent one (Forge/Connect) inside
+    this project's six weeks. Kept rather than removed: invariant 5 makes
+    dropping a contract value a breaking change, and no producer has ever
+    emitted it."""
     SLACK = "slack"

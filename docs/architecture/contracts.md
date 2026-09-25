@@ -100,8 +100,7 @@ D consumes this too, for `decisions` only. See "The B → D boundary" below.
       "status": "todo",
       "confidence": 0.88,
       "external_refs": [
-        {"system": "notion", "url": "https://..."},
-        {"system": "jira", "url": "https://..."}
+        {"system": "notion", "url": "https://..."}
       ]
     }
   ],
@@ -155,7 +154,7 @@ two apart. It stays empty until the Korean classifier has a measured quality
 (#10); E shows "not enough data" until then.
 
 `status` is one of `needs_confirmation`, `todo`, `in_progress`, `done` — the
-four columns of the action board (S17) and the Jira states they map to.
+four columns of the action board (S17).
 `needs_confirmation` means Autune has the item but no external issue exists yet.
 
 ### 3. `GapReport` — C → E

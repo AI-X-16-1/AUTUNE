@@ -163,7 +163,7 @@ blocks no merge. Add the reviewers your change needs yourself.
 | Adding a Celery task | `docs/architecture/async-pipeline.md` |
 | Adding a dependency | `docs/engineering/dependencies.md` |
 | Frontend work | `docs/engineering/conventions.md` (frontend features mirror backend modules 1:1) |
-| Calling Slack, Notion, Jira, or Google Calendar | `packages/integrations`, `docs/engineering/environments.md` |
+| Calling Slack, Notion, or Google Calendar | `packages/integrations`, `docs/engineering/environments.md` |
 | Writing or running tests | `docs/engineering/testing.md` |
 | Local setup, Docker, environment variables | `docs/engineering/environments.md` |
 | Understanding why the repo is shaped this way | `docs/decisions/` |
