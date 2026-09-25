@@ -15,7 +15,7 @@ Full detail: `/docs/modules/extraction.md`.
 ## What this module does
 
 Classify utterances five ways → build action-item cards → verify ambiguous
-agreement with NLI → sync to Notion and Jira.
+agreement with NLI → sync to Notion.
 
 ## Consumes
 
@@ -58,8 +58,8 @@ the model calls none is simply not in `ExtractionResult.classifications`.
 
 ## Privacy
 
-- Send Notion and Jira only what an issue needs — description, assignee, due
-  date. Never a transcript.
+- Send Notion only what an issue needs — description, assignee, due date.
+  Never a transcript.
 - Send the LLM the smallest window that resolves a reference, and only masked
   text.
 - Ambiguous-agreement confirmations are DMs to the speaker, never channel posts.
