@@ -261,6 +261,7 @@ def test_a_resolved_description_replaces_the_raw_quote(session: Session) -> None
     assert items is not None
     item = next(i for i in items if i.assignee_id == "user_001")
     assert item.description == "화요일까지 회의실 예약 제가 정리하겠습니다"
+    assert item.description_resolved is True
 
 
 def test_a_commitment_missing_from_resolved_keeps_its_own_text(session: Session) -> None:
@@ -273,6 +274,32 @@ def test_a_commitment_missing_from_resolved_keeps_its_own_text(session: Session)
         "제가 다음 주 화요일까지 정리하겠습니다",
         "그건 제가 확인하겠습니다",
     }
+    assert all(i.description_resolved is False for i in items)
+
+
+def test_a_resolution_that_falls_back_to_the_targets_own_text_is_not_marked_resolved(
+    session: Session,
+) -> None:
+    """#366: a resolver that fails every check returns the raw quote unchanged
+    -- ``description_resolved`` reads that as "not resolved", the same as a
+    caller that never ran resolution at all, rather than trusting the
+    resolver's own report of what it attempted."""
+    utterances = spoken()
+    classified = service.classify_utterances(
+        FakeClassifier(), utterances, consented={u.id for u in utterances}
+    )
+
+    items = service.build_action_items(
+        session,
+        meeting_id=MEETING,
+        utterances=utterances,
+        classified=classified,
+        resolved={"utt_1": "제가 다음 주 화요일까지 정리하겠습니다"},  # identical to the raw quote
+    )
+
+    assert items is not None
+    item = next(i for i in items if i.assignee_id == "user_001")
+    assert item.description_resolved is False
 
 
 def test_the_due_date_still_reads_the_utterances_own_text(session: Session) -> None:

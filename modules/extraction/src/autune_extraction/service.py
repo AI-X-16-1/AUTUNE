@@ -393,6 +393,7 @@ def read_model(
         id=item.id,
         meeting_id=item.meeting_id,
         description=item.description,
+        description_resolved=item.description_resolved,
         assignee_id=item.assignee_id,
         assignee_label=item.assignee_label,
         assignee_name=assignee_name,
@@ -1334,10 +1335,12 @@ def build_action_items(
         said = spoken[utterance.id]
         assignee = assignee_of(said.speaker_id, said.speaker, known=known)
         due = parse_due(said.text, day)
+        description = resolved.get(utterance.id, said.text)
         items.append(
             ExtActionItem(
                 meeting_id=meeting_id,
-                description=resolved.get(utterance.id, said.text),
+                description=description,
+                description_resolved=description != said.text,
                 assignee_id=assignee.user_id,
                 assignee_label=assignee.label,
                 due_date=due.date if due is not None else None,

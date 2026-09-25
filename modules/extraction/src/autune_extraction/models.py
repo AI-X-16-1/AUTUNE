@@ -132,6 +132,20 @@ class ExtActionItem(Base, TimestampMixin):
 
     origin: Mapped[str] = mapped_column(String(16), nullable=False, default="model")
 
+    description_resolved: Mapped[bool] = mapped_column(nullable=False, default=False)
+    """True when ``description`` is ``ReferenceResolver``'s rewrite rather than
+    the source utterance verbatim (#175, #366).
+
+    Set once, in ``build_action_items``, by comparing the description actually
+    stored against the utterance's own text -- not by trusting the resolver's
+    own report, since a resolver that failed every check already returned the
+    raw quote and this should read ``False`` for it the same as for a
+    ``fake``-resolved or hand-added item. S18 shows this so a reviewer knows
+    which descriptions are the speaker's own words and which are a model's
+    paraphrase of them, worth a closer look given #366's own review found the
+    paraphrase wrong often enough to matter.
+    """
+
     sources: Mapped[list[ExtActionItemSource]] = relationship(
         back_populates="action_item",
         cascade="all, delete-orphan",

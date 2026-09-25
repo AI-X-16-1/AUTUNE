@@ -93,6 +93,14 @@ class ActionItemRead(BaseModel):
     id: str
     meeting_id: str
     description: str
+    description_resolved: bool = False
+    """Whether ``description`` is ``ReferenceResolver``'s rewrite rather than
+    the source utterance verbatim (#175, #366). S18 shows this so a reviewer
+    knows which descriptions are the speaker's own words and which are a
+    model's paraphrase of them -- worth a closer look, given #366's own review
+    found the paraphrase wrong often enough to matter. Always ``False`` for a
+    hand-added item, a raw quote (no resolver configured), or a resolution
+    that failed every check and fell back to the quote."""
     assignee_id: str | None
     assignee_label: str | None
     assignee_name: str | None = None

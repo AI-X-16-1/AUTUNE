@@ -96,6 +96,16 @@ export interface ActionItemRead extends ActionItem {
    * `null` until `assignee_id` resolves to an account that still exists.
    */
   assignee_name: string | null;
+  /**
+   * Whether `description` is a resolver's rewrite of the source utterance
+   * rather than the utterance verbatim (#175, #366). S18 shows this so a
+   * reviewer knows which descriptions are the speaker's own words and which
+   * are a model's paraphrase — worth a closer look, since a paraphrase can be
+   * wrong in ways a verbatim quote cannot. Defaults `false`: a hand-added
+   * item, a raw quote, or a resolution that fell back to one all read the
+   * same as "not resolved".
+   */
+  description_resolved: boolean;
 }
 
 /** One source utterance's words, already masked by module A. */
