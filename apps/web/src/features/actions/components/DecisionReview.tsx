@@ -398,19 +398,29 @@ const MIN_FOR_BREAKDOWN = 3;
  * says that one person did not answer their DM: a per-person record of behaviour
  * in a meeting, which `privacy.md` section 3 refuses. The total on its own singles
  * nobody out, so that is what a small meeting gets. Raised in review of #298.
+ *
+ * **Gated on every bucket, not the total (#333's review).** #298 only closed
+ * this below three items overall -- four items split 3 resolved / 1 undecided
+ * still clears that gate and prints "답이 없음 1", the same single-person
+ * reveal for whoever is in the small bucket. The breakdown is shown only when
+ * its smallest bucket also meets `MIN_FOR_BREAKDOWN`; otherwise every meeting
+ * below that gets the same total-only line #298 already established.
  */
 function AmbiguousSummary({ items }: { items: ReviewAmbiguous[] }) {
   if (items.length === 0) return null;
   const counts = new Map<ReviewAmbiguous["outcome"], number>();
   for (const item of items) counts.set(item.outcome, (counts.get(item.outcome) ?? 0) + 1);
+  const smallestBucket = Math.min(...counts.values());
   const breakdown = [...counts]
     .map(([outcome, count]) => `${OUTCOME[outcome]} ${count}`)
     .join(" · ");
 
+  const canShowBreakdown = items.length >= MIN_FOR_BREAKDOWN && smallestBucket >= MIN_FOR_BREAKDOWN;
+
   return (
     <p className="mt-3 text-[var(--color-ink-muted)]" style={{ fontSize: "var(--text-metaSmall)" }}>
       애매한 동의 {items.length}건
-      {items.length >= MIN_FOR_BREAKDOWN ? ` — 발화자 확인: ${breakdown}` : " — 발화자에게 확인 중"}
+      {canShowBreakdown ? ` — 발화자 확인: ${breakdown}` : " — 발화자에게 확인 중"}
     </p>
   );
 }
