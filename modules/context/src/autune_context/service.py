@@ -822,9 +822,7 @@ def collect_topic_link_notices(session: Session, meeting_id: str) -> list[TopicL
         )
     ).all()
     return [
-        TopicLinkNotice(
-            topic_label=row.topic_label, linked_meeting_date=row.linked_meeting_date
-        )
+        TopicLinkNotice(topic_label=row.topic_label, linked_meeting_date=row.linked_meeting_date)
         for row in rows
         if row.linked_meeting_date is not None
     ]
