@@ -10,7 +10,7 @@ get built.
 from __future__ import annotations
 
 from collections.abc import Iterator
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 import pytest
 from sqlalchemy import delete
@@ -35,13 +35,13 @@ def team_id(db_engine: object) -> Iterator[str]:  # db_engine ensures migrations
         s.execute(delete(Team).where(Team.id == tid))
 
 
-def _meeting(team_id: str, *, days_ago: int = 0) -> str:
+def _meeting(team_id: str, *, days_ago: int = 0, started_at: datetime | None = None) -> str:
     with session_scope() as s:
         row = Meeting(
             team_id=team_id,
             title="회의",
             status="analyzing",
-            started_at=datetime.now(tz=UTC) - timedelta(days=days_ago),
+            started_at=started_at or datetime.now(tz=UTC) - timedelta(days=days_ago),
         )
         s.add(row)
         s.flush()
@@ -53,7 +53,7 @@ def _topic_link(
     *,
     status: str,
     linked_meeting_id: str | None = None,
-    linked_meeting_date: datetime | None = None,
+    linked_meeting_date: date | None = None,
     topic_label: str = "검색 정렬",
 ) -> int:
     with session_scope() as s:
@@ -109,11 +109,11 @@ def _decision_version(
 def test_notifies_only_asserted_links(team_id: str) -> None:
     past = _meeting(team_id, days_ago=7)
     meeting = _meeting(team_id)
-    now = datetime.now(tz=UTC)
-    _topic_link(meeting, status="asserted", linked_meeting_id=past, linked_meeting_date=now)
-    _topic_link(meeting, status="pending", linked_meeting_id=past, linked_meeting_date=now)
-    _topic_link(meeting, status="confirmed", linked_meeting_id=past, linked_meeting_date=now)
-    _topic_link(meeting, status="rejected", linked_meeting_id=past, linked_meeting_date=now)
+    today = date.today()
+    _topic_link(meeting, status="asserted", linked_meeting_id=past, linked_meeting_date=today)
+    _topic_link(meeting, status="pending", linked_meeting_id=past, linked_meeting_date=today)
+    _topic_link(meeting, status="confirmed", linked_meeting_id=past, linked_meeting_date=today)
+    _topic_link(meeting, status="rejected", linked_meeting_id=past, linked_meeting_date=today)
     slack = FakeSlack()
 
     with session_scope() as s:
@@ -131,7 +131,7 @@ def test_topic_link_notice_carries_the_topic_label(team_id: str) -> None:
         meeting,
         status="asserted",
         linked_meeting_id=past,
-        linked_meeting_date=datetime.now(tz=UTC),
+        linked_meeting_date=date.today(),
         topic_label="배포 전략",
     )
     slack = FakeSlack()
@@ -213,6 +213,20 @@ def test_a_change_with_no_one_absent_sends_nothing(team_id: str) -> None:
 
     assert sent == 0
     assert slack.sent == []
+
+
+def test_the_notice_dates_an_early_morning_meeting_by_the_korean_day(team_id: str) -> None:
+    """08:00 KST on the 18th is 23:00 UTC on the 17th; the notice must say the 18th."""
+    meeting = _meeting(team_id, started_at=datetime(2026, 9, 17, 23, 0, tzinfo=UTC))
+    _decision_version(
+        team_id, meeting, change_type="modified", key_stakeholders_absent=["usr_alice"]
+    )
+    slack = FakeSlack()
+
+    with session_scope() as s:
+        service.notify_decision_drift(s, slack, _CHANNEL, meeting)
+
+    assert "2026년 9월 18일" in slack.channel_messages[0].text
 
 
 def test_the_channel_notice_names_no_one(team_id: str) -> None:

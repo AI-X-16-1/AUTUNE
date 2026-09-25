@@ -442,7 +442,7 @@ def test_list_decisions_topic_filter_matches_the_visible_head_not_the_stale_cach
 def test_topic_link_date_survives_linked_meeting_deletion(team_id: str) -> None:
     meeting = _meeting(team_id)
     linked_meeting = _meeting(team_id, days_ago=5)
-    linked_date = datetime.now(tz=UTC) - timedelta(days=5)
+    linked_date = (datetime.now(tz=UTC) - timedelta(days=5)).date()
     with session_scope() as s:
         link = CtxTopicLink(
             meeting_id=meeting,
