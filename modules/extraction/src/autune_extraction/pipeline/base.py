@@ -84,14 +84,23 @@ class NliScores:
 class ResolutionRequest:
     """One utterance to resolve, and the context it may draw a referent from.
 
-    ``context`` is masked text only, oldest first -- privacy.md section 6, the
-    same rule ``target`` is already under. Nothing outside this window is
-    available to resolve against, by construction: a resolver cannot look up
-    the rest of the meeting, only what it was handed.
+    ``context`` and ``context_after`` are masked text only, oldest first --
+    privacy.md section 6, the same rule ``target`` is already under. Nothing
+    outside this window is available to resolve against, by construction: a
+    resolver cannot look up the rest of the meeting, only what it was handed.
+
+    ``context_after`` exists because resolution runs after the meeting has
+    ended, over the whole stored transcript -- not live, the way a classifier
+    reading utterances as they arrive would have to be. A clarifying exchange
+    right after a commitment ("그게 언제까지였죠?" / "다음 주 화요일이요") can
+    settle a reference nothing before it does, and there is no reason to
+    withhold it. Kept as a separate field rather than folded into ``context``
+    so a resolver's prompt can say which side of the target each line is on.
     """
 
     target: str
     context: tuple[str, ...] = ()
+    context_after: tuple[str, ...] = ()
 
 
 @runtime_checkable
@@ -174,4 +183,25 @@ class NliModel(Protocol):
 
     def classify(self, pairs: list[tuple[str, str]]) -> list[NliScores]:
         """One result per ``(premise, hypothesis)`` pair, aligned to ``pairs``."""
+        ...
+
+
+@runtime_checkable
+class Embedder(Protocol):
+    """Sentence vectors for the resolver's own similarity check (#175, #366).
+
+    A second, independent copy of module D's KURE-v1 seam
+    (``autune_context.pipeline.base``), same reasoning as ``NliModel``:
+    modules never import each other, and the two use embeddings for different
+    questions -- D for retrieval and decision-thread linking, this one only to
+    ask whether a resolved sentence is close to something its own context
+    window actually said.
+    """
+
+    @property
+    def model_version(self) -> str: ...
+
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        """One vector per input, in order, each already unit-normalised so a
+        dot product is a cosine similarity."""
         ...

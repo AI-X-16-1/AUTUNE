@@ -48,7 +48,7 @@ from .models import (
     ExtExternalRef,
 )
 from .pipeline.base import Classifier, NliModel, ReferenceResolver, ResolutionRequest
-from .pipeline.resolver import MAX_CONTEXT_UTTERANCES
+from .pipeline.resolver import MAX_CONTEXT_AFTER, MAX_CONTEXT_UTTERANCES
 from .schemas import (
     ActionItemCreate,
     ActionItemDetail,
@@ -1215,17 +1215,19 @@ def resolve_commitment_references(
     classified: Sequence[ClassifiedUtterance],
 ) -> dict[str, str]:
     """Each commitment's description, references resolved against the utterances
-    just before it (#175): "그거 제가 할게요" reads as what "그거" was.
+    around it (#175): "그거 제가 할게요" reads as what "그거" was.
 
     Runs before any session, the same reason ``classify_utterances`` does -- it
     is model inference, and a transaction held around it holds a connection and
     its locks for the length of it.
 
     The context for a commitment is up to ``MAX_CONTEXT_UTTERANCES`` utterances
-    immediately before it in the meeting, whatever their kind -- an antecedent
-    can live in a ``none`` utterance same as any other. Only masked text ever
-    reaches the resolver (privacy.md section 6), the same as everything else
-    module B sends a model.
+    immediately before it and ``MAX_CONTEXT_AFTER`` immediately after, whatever
+    their kind -- an antecedent can live in a ``none`` utterance same as any
+    other, and a clarifying exchange can come right after the commitment rather
+    than before it. Both directions are available only because this runs over a
+    finished transcript, never live. Only masked text ever reaches the resolver
+    (privacy.md section 6), the same as everything else module B sends a model.
 
     Returns ``{utterance_id: resolved_text}`` for commitments only. A caller
     reading an id this has no entry for was never a commitment and should keep
@@ -1255,7 +1257,11 @@ def resolve_commitment_references(
         index = order[utterance.id]
         start = max(0, index - MAX_CONTEXT_UTTERANCES)
         context = tuple(u.text for u in utterances[start:index])
-        requests.append(ResolutionRequest(target=said.text, context=context))
+        after_end = index + 1 + MAX_CONTEXT_AFTER
+        context_after = tuple(u.text for u in utterances[index + 1 : after_end])
+        requests.append(
+            ResolutionRequest(target=said.text, context=context, context_after=context_after)
+        )
 
     resolved = resolver.resolve(requests)
     return dict(zip((u.id for u in commitments), resolved, strict=True))

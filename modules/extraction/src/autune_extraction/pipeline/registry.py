@@ -11,8 +11,9 @@ from functools import lru_cache
 
 from autune_extraction.config import get_settings
 
-from .base import Classifier, NliModel, ReferenceResolver
+from .base import Classifier, Embedder, NliModel, ReferenceResolver
 from .classifier import ENSEMBLE_SEPARATOR, FakeClassifier, HostedDeberta, LocalDeberta
+from .embedder import FakeEmbedder, LocalKureEmbedder
 from .nli import FakeNli, HostedNli, LocalNli
 from .resolver import FakeResolver, HostedResolver, LocalQwenResolver
 
@@ -33,6 +34,12 @@ _NLI: dict[str, str] = {
 
 _RESOLVERS: dict[str, str] = dict(_CLASSIFIERS)
 """Same three names, same meaning, for the reference resolver (#175)."""
+
+_EMBEDDERS: dict[str, str] = {
+    "local": "weights in this process",
+    "fake": "deterministic, for tests",
+}
+"""No ``hosted`` yet -- see ``pipeline.embedder``."""
 
 
 @lru_cache
@@ -116,17 +123,52 @@ def get_resolver() -> ReferenceResolver:
             "model choice is confirmed."
         )
 
+    # Unset unless a threshold exists to use it with -- an embedder loaded for
+    # nothing is still a model loaded, and `resolver_min_similarity` unset
+    # already means "skip the similarity check" on its own.
+    embedder = get_embedder() if settings.resolver_min_similarity is not None else None
+
     if impl == "local":
-        return LocalQwenResolver(settings.resolver_checkpoint, device=settings.resolver_device)
+        return LocalQwenResolver(
+            settings.resolver_checkpoint,
+            device=settings.resolver_device,
+            embedder=embedder,
+            min_similarity=settings.resolver_min_similarity,
+        )
     if impl == "hosted":
         if not settings.resolver_endpoint:
             raise ValueError(
                 "AUTUNE_EXTRACTION_RESOLVER_IMPL=hosted needs AUTUNE_EXTRACTION_RESOLVER_ENDPOINT"
             )
-        return HostedResolver(settings.resolver_endpoint, settings.resolver_checkpoint)
+        return HostedResolver(
+            settings.resolver_endpoint,
+            settings.resolver_checkpoint,
+            embedder=embedder,
+            min_similarity=settings.resolver_min_similarity,
+        )
     if impl == "fake":
         return FakeResolver()
 
     raise ValueError(
         f"unknown AUTUNE_EXTRACTION_RESOLVER_IMPL={impl!r}; known: {sorted(_RESOLVERS)}"
+    )
+
+
+@lru_cache
+def get_embedder() -> Embedder:
+    settings = get_settings()
+    impl = settings.embedder_impl
+
+    if impl == "local" and not settings.embedder_checkpoint:
+        raise ValueError(
+            "AUTUNE_EXTRACTION_EMBEDDER_IMPL=local needs AUTUNE_EXTRACTION_EMBEDDER_CHECKPOINT"
+        )
+
+    if impl == "local":
+        return LocalKureEmbedder(settings.embedder_checkpoint, device=settings.embedder_device)
+    if impl == "fake":
+        return FakeEmbedder()
+
+    raise ValueError(
+        f"unknown AUTUNE_EXTRACTION_EMBEDDER_IMPL={impl!r}; known: {sorted(_EMBEDDERS)}"
     )

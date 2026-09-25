@@ -17,10 +17,13 @@ import pytest
 from autune_extraction.config import ExtractionSettings
 from autune_extraction.pipeline import FakeResolver, ResolutionRequest, registry
 from autune_extraction.pipeline.resolver import (
+    MAX_CONTEXT_AFTER,
     MAX_CONTEXT_UTTERANCES,
     HostedResolver,
     LocalQwenResolver,
     _grounded,
+    _passes_grounding,
+    _semantically_grounded,
     _window_text,
 )
 from autune_integrations.errors import PermanentIntegrationError, TransientIntegrationError
@@ -90,6 +93,94 @@ def test_the_window_is_context_then_target_in_order() -> None:
     assert _window_text(request) == "first\nsecond\ntarget"
 
 
+def test_the_window_includes_context_after_the_target() -> None:
+    """Resolution runs over a finished transcript, never live, so a clarifying
+    exchange right after the target is available too."""
+    request = ResolutionRequest(target="target", context=("before",), context_after=("after",))
+    assert _window_text(request) == "before\ntarget\nafter"
+
+
+def test_a_number_from_context_after_grounds_the_resolved_sentence() -> None:
+    """The antecedent for a vague reference can be settled by what came right
+    after it, not only by what came before -- "그게 언제까지였죠?" / "10월
+    1일이요" answers a question the target itself only raised."""
+    request = ResolutionRequest(target="그때까지 하겠습니다", context_after=("10월 1일이요",))
+    assert _grounded("10월 1일까지 하겠습니다", _window_text(request))
+
+
+def test_a_number_absent_from_both_sides_of_the_window_is_not_grounded() -> None:
+    request = ResolutionRequest(
+        target="그때까지 하겠습니다", context=("일정 얘기해요",), context_after=("네 알겠습니다",)
+    )
+    assert not _grounded("10월 1일까지 하겠습니다", _window_text(request))
+
+
+# --- groundedness: embedding similarity (#175, #366) -------------------------
+
+
+class StubEmbedder:
+    """A fixed vector per exact string, so a test controls similarity without
+    real model weights."""
+
+    model_version = "stub"
+
+    def __init__(self, vectors: dict[str, list[float]]) -> None:
+        self._vectors = vectors
+
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        return [self._vectors[text] for text in texts]
+
+
+def test_a_sentence_close_to_its_window_is_semantically_grounded() -> None:
+    embedder = StubEmbedder({"resolved": [1.0, 0.0], "window": [1.0, 0.0]})
+    assert _semantically_grounded("resolved", ["window"], embedder, 0.9)
+
+
+def test_a_sentence_far_from_its_window_is_not_semantically_grounded() -> None:
+    embedder = StubEmbedder({"resolved": [1.0, 0.0], "window": [0.0, 1.0]})
+    assert not _semantically_grounded("resolved", ["window"], embedder, 0.5)
+
+
+def test_semantic_grounding_takes_the_best_line_in_the_window_not_the_average() -> None:
+    embedder = StubEmbedder({"resolved": [1.0, 0.0], "far": [0.0, 1.0], "close": [1.0, 0.0]})
+    assert _semantically_grounded("resolved", ["far", "close"], embedder, 0.9)
+
+
+def test_an_empty_window_has_nothing_to_be_close_to_and_passes() -> None:
+    embedder = StubEmbedder({"resolved": [1.0, 0.0]})
+    assert _semantically_grounded("resolved", [], embedder, 0.99)
+
+
+def test_passes_grounding_skips_the_similarity_check_without_an_embedder() -> None:
+    request = ResolutionRequest(target="그거 할게요", context=("회의실 예약해야죠",))
+    assert _passes_grounding("회의실 예약 할게요", request, None, None)
+
+
+def test_passes_grounding_skips_the_similarity_check_without_a_threshold() -> None:
+    request = ResolutionRequest(target="그거 할게요", context=("회의실 예약해야죠",))
+    embedder = StubEmbedder({})  # never called: min_similarity is None
+    assert _passes_grounding("회의실 예약 할게요", request, embedder, None)
+
+
+def test_passes_grounding_still_checks_digits_even_with_an_embedder_configured() -> None:
+    """The regex check is not replaced by the embedding one -- both apply."""
+    request = ResolutionRequest(target="그때 봅시다")
+    embedder = StubEmbedder({"5시에 봅시다": [1.0], "그때 봅시다": [1.0]})
+    assert not _passes_grounding("5시에 봅시다", request, embedder, -1.0)
+
+
+def test_passes_grounding_applies_the_similarity_check_when_both_are_set() -> None:
+    request = ResolutionRequest(target="그거 할게요", context=("회의실 예약해야죠",))
+    embedder = StubEmbedder(
+        {
+            "회의실 예약 제가 할게요": [0.0, 1.0],
+            "회의실 예약해야죠": [1.0, 0.0],
+            "그거 할게요": [1.0, 0.0],
+        }
+    )
+    assert not _passes_grounding("회의실 예약 제가 할게요", request, embedder, 0.5)
+
+
 # --- the local resolver's own guards ----------------------------------------
 
 
@@ -135,8 +226,10 @@ def configured(monkeypatch: pytest.MonkeyPatch):
         monkeypatch.setattr(registry, "get_settings", lambda: _settings(**overrides))
 
     registry.get_resolver.cache_clear()
+    registry.get_embedder.cache_clear()
     yield apply
     registry.get_resolver.cache_clear()
+    registry.get_embedder.cache_clear()
 
 
 def test_the_default_resolver_is_the_fake(configured) -> None:
@@ -169,6 +262,30 @@ def test_an_unknown_impl_is_refused(configured) -> None:
         registry.get_resolver()
 
 
+def test_a_local_resolver_has_no_embedder_while_no_similarity_threshold_is_set(
+    configured,
+) -> None:
+    """An embedder loaded for nothing is still a model loaded -- unset stays
+    unset all the way through, the same as before this setting existed."""
+    configured(resolver_impl="local", resolver_checkpoint="ckpt")
+
+    resolver = registry.get_resolver()
+
+    assert resolver._embedder is None
+    assert resolver._min_similarity is None
+
+
+def test_a_local_resolver_gets_an_embedder_once_a_similarity_threshold_is_set(
+    configured,
+) -> None:
+    configured(resolver_impl="local", resolver_checkpoint="ckpt", resolver_min_similarity=0.5)
+
+    resolver = registry.get_resolver()
+
+    assert resolver._embedder is not None
+    assert resolver._min_similarity == 0.5
+
+
 # --- the hosted resolver: retry and fall back, never raise for one request --
 
 
@@ -180,9 +297,11 @@ class Server:
         self.failures = list(failures)
         self.calls = 0
         self._answer = answer
+        self.received_bodies: list[dict] = []
 
     def request(self, method: str, path: str, *, json: dict) -> dict:
         self.calls += 1
+        self.received_bodies.append(json)
         if self.failures:
             raise self.failures.pop(0)
         return {"resolved": self._answer}
@@ -190,8 +309,12 @@ class Server:
 
 @pytest.fixture
 def hosted(monkeypatch: pytest.MonkeyPatch):
-    def build(server: Server) -> HostedResolver:
-        resolver = HostedResolver("http://inference.invalid", "ckpt")
+    def build(
+        server: Server, *, embedder: Any = None, min_similarity: float | None = None
+    ) -> HostedResolver:
+        resolver = HostedResolver(
+            "http://inference.invalid", "ckpt", embedder=embedder, min_similarity=min_similarity
+        )
         resolver._client = server  # type: ignore[assignment]
         return resolver
 
@@ -264,6 +387,40 @@ def test_several_requests_stay_in_order(hosted) -> None:
     assert server.calls == 3
 
 
+def test_the_hosted_resolver_sends_context_after_too(hosted) -> None:
+    server = Server()
+    request = ResolutionRequest(target="t", context=("before",), context_after=("after",))
+
+    hosted(server).resolve([request])
+
+    assert server.received_bodies == [
+        {"target": "t", "context": ["before"], "context_after": ["after"]}
+    ]
+
+
+def test_the_hosted_resolver_falls_back_when_semantically_ungrounded(hosted) -> None:
+    embedder = StubEmbedder({"회의실 예약 제가 할게요": [0.0, 1.0], "그거 제가 할게요": [1.0, 0.0]})
+    server = Server(answer="회의실 예약 제가 할게요")
+
+    resolved = hosted(server, embedder=embedder, min_similarity=0.9).resolve(
+        [ResolutionRequest(target="그거 제가 할게요")]
+    )
+
+    assert resolved == ["그거 제가 할게요"]
+
+
+def test_the_hosted_resolver_keeps_a_semantically_grounded_answer(hosted) -> None:
+    embedder = StubEmbedder({"회의실 예약 제가 할게요": [1.0, 0.0], "그거 제가 할게요": [1.0, 0.0]})
+    server = Server(answer="회의실 예약 제가 할게요")
+
+    resolved = hosted(server, embedder=embedder, min_similarity=0.9).resolve(
+        [ResolutionRequest(target="그거 제가 할게요")]
+    )
+
+    assert resolved == ["회의실 예약 제가 할게요"]
+
+
 def test_the_context_window_constant_matches_the_design() -> None:
-    """#175's own design: up to four preceding utterances."""
+    """#175's own design: up to four preceding utterances, two following."""
     assert MAX_CONTEXT_UTTERANCES == 4
+    assert MAX_CONTEXT_AFTER == 2

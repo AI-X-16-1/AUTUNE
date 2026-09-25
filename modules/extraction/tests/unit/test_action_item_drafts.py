@@ -223,6 +223,27 @@ def test_the_context_window_is_bounded(session: Session) -> None:
     )
 
 
+def test_the_context_also_includes_utterances_right_after_the_target(session: Session) -> None:
+    """Resolution runs over a finished transcript, never live, so a clarifying
+    exchange right after the commitment is available too (#175)."""
+    lines = [
+        ("utt_target", 0.0, "김민경", "user_001", "제가 할게요"),
+        ("utt_after_1", 1.0, "Speaker 2", None, "그게 언제까지죠?"),
+        ("utt_after_2", 2.0, "김민경", "user_001", "다음 주 화요일까지요"),
+        ("utt_after_3", 3.0, "Speaker 2", None, "네 알겠습니다"),
+    ]
+    utterances = spoken(lines)
+    classified = service.classify_utterances(
+        FakeClassifier(), utterances, consented={u.id for u in utterances}
+    )
+    resolver = RecordingResolver()
+
+    service.resolve_commitment_references(resolver, utterances, classified)
+
+    target_request = next(r for r in resolver.received if r.target == "제가 할게요")
+    assert target_request.context_after == ("그게 언제까지죠?", "다음 주 화요일까지요")
+
+
 def test_a_resolved_description_replaces_the_raw_quote(session: Session) -> None:
     utterances = spoken()
     classified = service.classify_utterances(

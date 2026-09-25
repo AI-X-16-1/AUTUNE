@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Any
 from autune_core import get_logger
 from autune_integrations.errors import TransientIntegrationError
 
-from .base import ResolutionRequest
+from .base import Embedder, ResolutionRequest
 from .classifier import RETRY_BACKOFF_SEC
 
 if TYPE_CHECKING:
@@ -32,6 +32,13 @@ MAX_CONTEXT_UTTERANCES = 4
 design). A decision or commitment's antecedent -- who "그거" or "우리 팀" is --
 is almost always in the sentence or two just before it; a window this size
 covers that without handing the model the whole meeting to resolve one line."""
+
+MAX_CONTEXT_AFTER = 2
+"""How many following utterances a target may also draw on. Smaller than the
+preceding window -- a clarifying exchange right after a commitment ("그게
+언제까지였죠?" / "다음 주 화요일이요") is usually one turn, not several -- and
+worth having at all only because resolution runs over a finished transcript,
+never live."""
 
 
 _DIGIT_RUN = re.compile(r"\d+")
@@ -67,8 +74,59 @@ def _grounded(resolved: str, window: str) -> bool:
     )
 
 
+def _window_lines(request: ResolutionRequest) -> list[str]:
+    return [*request.context, request.target, *request.context_after]
+
+
 def _window_text(request: ResolutionRequest) -> str:
-    return "\n".join((*request.context, request.target))
+    return "\n".join(_window_lines(request))
+
+
+def _semantically_grounded(
+    resolved: str, window_lines: list[str], embedder: Embedder, min_similarity: float
+) -> bool:
+    """Whether ``resolved`` is close enough, by embedding, to at least one line
+    of its own window to be the same idea rather than one the model drifted
+    into while rewriting it.
+
+    Checked independently of ``_grounded``, which only catches a number or a
+    named person the window never said -- a resolver can drift in meaning
+    while introducing neither. ``Embedder.embed`` promises unit-normalised
+    vectors, so a dot product is already the cosine similarity; no norm to
+    divide by here.
+
+    An empty window (a target with no context on either side) has nothing to
+    be close to, so nothing is asked and the sentence passes -- the digit and
+    name checks are what apply to it instead.
+    """
+    if not window_lines:
+        return True
+    vectors = embedder.embed([resolved, *window_lines])
+    resolved_vector, *window_vectors = vectors
+    return (
+        max(
+            sum(a * b for a, b in zip(resolved_vector, window, strict=True))
+            for window in window_vectors
+        )
+        >= min_similarity
+    )
+
+
+def _passes_grounding(
+    answer: str,
+    request: ResolutionRequest,
+    embedder: Embedder | None,
+    min_similarity: float | None,
+) -> bool:
+    """The digit and named-person check always applies; the embedding check
+    only once both an embedder and a threshold are configured
+    (``resolver_min_similarity`` unset skips it entirely, unchanged from
+    before this existed)."""
+    if not _grounded(answer, _window_text(request)):
+        return False
+    if embedder is None or min_similarity is None:
+        return True
+    return _semantically_grounded(answer, _window_lines(request), embedder, min_similarity)
 
 
 class FakeResolver:
@@ -90,12 +148,15 @@ class FakeResolver:
 _PROMPT_TEMPLATE = """\
 다음은 회의 중 연속된 발화 목록입니다 (오래된 순).
 
+--- 이전 발화 ---
 {context}
 --- 해소 대상 ---
 {target}
+--- 이후 발화 ---
+{context_after}
 
 "해소 대상" 문장에서 "그거", "그건", "저희 팀", "이거" 같은 대명사·생략된 지시어를 \
-위 발화들이 실제로 가리키는 대상으로 바꿔 한 문장으로 다시 쓰세요.
+위 발화들(이전·이후 모두)이 실제로 가리키는 대상으로 바꿔 한 문장으로 다시 쓰세요.
 
 규칙:
 - 위 발화에 없는 새로운 사실(날짜, 숫자, 이름 등)을 만들어내지 마세요.
@@ -107,7 +168,10 @@ _PROMPT_TEMPLATE = """\
 
 def _prompt(request: ResolutionRequest) -> str:
     context = "\n".join(request.context) if request.context else "(없음)"
-    return _PROMPT_TEMPLATE.format(context=context, target=request.target)
+    context_after = "\n".join(request.context_after) if request.context_after else "(없음)"
+    return _PROMPT_TEMPLATE.format(
+        context=context, target=request.target, context_after=context_after
+    )
 
 
 class LocalQwenResolver:
@@ -120,12 +184,22 @@ class LocalQwenResolver:
     forward pass does.
     """
 
-    def __init__(self, checkpoint: str, *, device: str = "cpu", max_new_tokens: int = 96) -> None:
+    def __init__(
+        self,
+        checkpoint: str,
+        *,
+        device: str = "cpu",
+        max_new_tokens: int = 96,
+        embedder: Embedder | None = None,
+        min_similarity: float | None = None,
+    ) -> None:
         if not checkpoint:
             raise ValueError("LocalQwenResolver needs a checkpoint")
         self._checkpoint = checkpoint
         self._device = device
         self._max_new_tokens = max_new_tokens
+        self._embedder = embedder
+        self._min_similarity = min_similarity
         self._model: Any = None
         self._tokenizer: Any = None
 
@@ -190,7 +264,9 @@ class LocalQwenResolver:
                 resolved.append(request.target)
                 failures += 1
                 continue
-            if not answer or not _grounded(answer, _window_text(request)):
+            if not answer or not _passes_grounding(
+                answer, request, self._embedder, self._min_similarity
+            ):
                 resolved.append(request.target)
                 failures += 1
                 continue
@@ -222,16 +298,29 @@ class HostedResolver:
     here yet to design bounded concurrency around.
     """
 
-    def __init__(self, endpoint: str, model_version: str) -> None:
+    def __init__(
+        self,
+        endpoint: str,
+        model_version: str,
+        *,
+        embedder: Embedder | None = None,
+        min_similarity: float | None = None,
+    ) -> None:
         self._client = _resolver_client(endpoint)
         self._model_version = model_version
+        self._embedder = embedder
+        self._min_similarity = min_similarity
 
     @property
     def model_version(self) -> str:
         return self._model_version
 
     def _post(self, request: ResolutionRequest) -> Any:
-        body = {"target": request.target, "context": list(request.context)}
+        body = {
+            "target": request.target,
+            "context": list(request.context),
+            "context_after": list(request.context_after),
+        }
         for attempt, wait in enumerate(RETRY_BACKOFF_SEC, start=1):
             try:
                 return self._client.request("POST", "/resolve", json=body)
@@ -257,7 +346,7 @@ class HostedResolver:
             if (
                 not isinstance(answer, str)
                 or not answer
-                or not _grounded(answer, _window_text(request))
+                or not _passes_grounding(answer, request, self._embedder, self._min_similarity)
             ):
                 resolved.append(request.target)
                 continue
