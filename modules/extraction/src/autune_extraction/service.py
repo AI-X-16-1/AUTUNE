@@ -379,8 +379,9 @@ def read_model(
     person on every later visit to the review screen, one column after they
     already confirmed it there (#295). Candidate is therefore *this module's
     own open question, not yet answered*: model-made, and still in
-    ``needs_confirmation``. The same status ``became_confirmed`` reads as the
-    line between the two.
+    ``needs_confirmation``. Leaving that status for any other column is the
+    same line ``router.update_action_item`` reads before queueing a Notion
+    sync.
     """
     threshold = get_settings().candidate_confidence
     is_candidate = (
@@ -633,18 +634,6 @@ def update_action_item(
 
     _record_edit(session, meeting_id=item.meeting_id, action_item_id=item.id, kind="edited")
     return item
-
-
-def became_confirmed(previous_status: str, item: ExtActionItem) -> bool:
-    """Whether this edit is the one that confirmed the item.
-
-    Confirming is leaving ``needs_confirmation`` for any column a person works in
-    -- the board has no separate "confirm" button, moving the card is the answer.
-    A later move between ``todo``, ``in_progress`` and ``done`` is not a second
-    confirmation, which is half of what keeps the Notion page to one.
-    """
-    confirming = ActionStatus.NEEDS_CONFIRMATION.value
-    return previous_status == confirming and item.status != confirming
 
 
 def delete_action_item(session: Session, item: ExtActionItem) -> None:
@@ -1759,12 +1748,24 @@ def sync_action_item_to_notion(
     try creating it again.
 
     **A later edit finds the claim already there and updates the page
-    instead of creating a second one.** A PATCH is naturally idempotent --
-    two workers racing an update both converge on the same final properties,
-    unlike two creates, which would make two pages -- so this half does not
-    need the insert's own conflict guard. The description, assignee, due
-    date and status a person edited on the board are exactly what this sends;
-    the source utterances never leave Autune either way.
+    instead of creating a second one.** A PATCH is naturally idempotent for a
+    *redelivery of the same edit* -- two workers racing the same update both
+    converge on the same final properties -- but not for two genuinely
+    different edits in flight at once: found in review of #342 (lsh2217).
+    Every edit past confirmation now queues its own sync, each reading
+    current state independently, so a slow network round-trip can let an
+    earlier edit's page write land *after* a later edit's already has,
+    leaving Notion silently stale. ``with_for_update`` on the claim row below
+    closes that: a second sync for the same item blocks until the first's
+    whole transaction -- outbound call included -- commits, forcing the two
+    ``update_page`` calls to reach Notion in the same order their edits
+    committed rather than whatever order the network happens to deliver
+    them. Each sync still sends what it read at its own start (already the
+    right edit, since nothing is queued before its edit commits); the lock
+    only orders the sends, it does not need to make either one re-read. The
+    description, assignee, due date and status a person edited on the board
+    are exactly what this sends; the source utterances never leave Autune
+    either way.
     """
     item = session.get(ExtActionItem, action_item_id)
     if item is None or item.status == ActionStatus.NEEDS_CONFIRMATION.value:
@@ -1774,7 +1775,7 @@ def sync_action_item_to_notion(
     names = property_names or NOTION_PROPERTIES
     properties = notion_properties(item, meeting.title if meeting else None, names)
 
-    existing = session.get(ExtExternalRef, (item.id, NOTION))
+    existing = session.get(ExtExternalRef, (item.id, NOTION), with_for_update=True)
     if existing is not None:
         # Claim and create share one transaction (below), so a row that made
         # it to the database has its page id -- there is no committed row
@@ -1814,16 +1815,6 @@ DECISION_NOTION_PROPERTIES: Mapping[str, str] = {
 }
 """The decision database's property names. A team's ``decision_properties`` map
 replaces this one, the rule ``NOTION_PROPERTIES`` explains for items."""
-
-
-def decision_became_confirmed(previous_status: str | None, current_status: str) -> bool:
-    """Whether this review is the one that confirmed the decision.
-
-    ``previous_status`` is ``None`` when the decision had no review row yet,
-    which is how every model decision starts. Confirming twice, or rewording a
-    confirmed decision, is not a second confirmation -- the page is sent once.
-    """
-    return previous_status != "confirmed" and current_status == "confirmed"
 
 
 def decision_notion_properties(

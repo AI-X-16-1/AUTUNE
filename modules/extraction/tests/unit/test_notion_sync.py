@@ -208,15 +208,6 @@ def test_a_gone_item_sends_nothing(session: Session) -> None:
     assert sync(session, FakeNotion(), "act_missing") is None
 
 
-def test_only_leaving_needs_confirmation_is_a_confirmation(session: Session) -> None:
-    row = item(session, status="todo")
-
-    assert service.became_confirmed("needs_confirmation", row)
-    assert not service.became_confirmed("todo", row)
-    row.status = "needs_confirmation"
-    assert not service.became_confirmed("needs_confirmation", row)
-
-
 # --- the board's edit is the trigger ---------------------------------------------
 
 

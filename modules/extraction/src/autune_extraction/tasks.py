@@ -123,11 +123,13 @@ def on_transcript_ready(payload: dict) -> None:
 
 @shared_task(name="autune.extraction.sync_action_item", acks_late=True)
 def sync_action_item(action_item_id: str) -> None:
-    """Step 7 for one item a person just confirmed: its Notion page, once (#30).
+    """Step 7 for one item past confirmation: create its Notion page the
+    first time, update the same page every edit after (#30, #342).
 
-    Runs when the board moves an item out of ``needs_confirmation``
-    (``sync_after_confirmation``), never after extraction: nothing the model drafted
-    is confirmed at that point, and #246 keeps unconfirmed items in Autune.
+    Runs whenever the board changes an item that has already left
+    ``needs_confirmation`` (``sync_after_confirmation``), never before: nothing
+    the model drafted is confirmed at that point, and #246 keeps unconfirmed
+    items in Autune.
 
     A team that has not connected Notion is skipped, not failed -- the ordinary
     answer from ``load_integration`` (``autune_core.integrations_config``). The
@@ -174,13 +176,15 @@ def sync_action_item(action_item_id: str) -> None:
 
 
 def sync_after_confirmation(action_item_id: str) -> None:
-    """Run the sync in the API process, right after the confirming response.
+    """Run the sync in the API process, right after an edit's response --
+    the confirming edit and every one after it (#342), not confirmation only.
 
     The router hands this to FastAPI's background tasks rather than queueing
     ``sync_action_item`` on the broker: apps/api builds no Celery app, so a
     ``delay`` from a request has nowhere to go, and wiring one in is a change to
-    the team's shared assembly. The claim in ``ext_external_refs`` makes the page
-    once either way.
+    the team's shared assembly. The claim in ``ext_external_refs`` makes the
+    first page once; ``with_for_update`` in ``sync_action_item_to_notion``
+    keeps two of these in flight at once from writing out of order.
 
     The person's edit is already committed when this runs, so a Notion failure
     must not surface as an error on the board. It is logged by id and the claim

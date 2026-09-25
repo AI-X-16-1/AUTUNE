@@ -759,10 +759,3 @@ def test_a_second_sync_of_a_confirmed_decision_updates_its_page(session: Session
     assert len(notion.pages) == 1, "still one page created"
     assert len(notion.updates) == 1
     assert notion.updates[0][0] == page_id
-
-
-def test_only_reaching_confirmed_is_a_confirmation() -> None:
-    assert service.decision_became_confirmed(None, "confirmed")
-    assert service.decision_became_confirmed("pending", "confirmed")
-    assert not service.decision_became_confirmed("confirmed", "confirmed")
-    assert not service.decision_became_confirmed("pending", "rejected")

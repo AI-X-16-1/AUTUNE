@@ -22,6 +22,7 @@ Deleted the day S28 ships.
 
 from __future__ import annotations
 
+import re
 from typing import Annotated, Any
 
 import httpx
@@ -37,6 +38,38 @@ from autune_extraction.service import DECISION_NOTION_PROPERTIES, NOTION_PROPERT
 from .page import PAGE
 
 router = APIRouter()
+
+_PAGE_ID = re.compile(
+    r"[0-9a-fA-F]{8}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{12}$"
+)
+"""A Notion page id, dashed in the standard 8-4-4-4-12 grouping or not.
+
+Notion always places the id as the last 32 hex characters of a page URL's
+last path segment (title words come first, id last), so anchoring at the end
+finds it correctly whether the title contains dashes or not. A title made of
+hex-looking words ("Cafe Deadbeef Notes") cannot false-match: it would need to
+end in exactly this 32-character run in this exact grouping, which no real
+title does.
+"""
+
+
+def _parse_page_id(raw: str) -> str:
+    """A bare Notion page id from either a bare id or a full page URL.
+
+    Found in review of #342 (lsh2217): the previous version was
+    ``raw.split("/")[-1].split("-")[-1].split("?")[0]`` -- splitting on "-"
+    after dropping the URL prefix correctly reaches the id in a titled URL,
+    but then keeps only the text after the *last* dash of whatever remained.
+    For a bare dashed id (the exact form Notion's own UI copies to the
+    clipboard), that throws away everything but the final 12 of 36
+    characters, and every call after this line silently used the wrong id.
+    """
+    candidate = raw.strip().split("?")[0].split("/")[-1]
+    match = _PAGE_ID.search(candidate)
+    if match is None:
+        raise ValueError(f"{raw!r} does not contain a Notion page id")
+    return match.group(0)
+
 
 SessionDep = Annotated[Session, Depends(get_session)]
 
@@ -108,7 +141,10 @@ class ConnectNotion(BaseModel):
 
 @router.post("/connect-notion", include_in_schema=False)
 def connect_notion(body: ConnectNotion, session: SessionDep) -> dict[str, str]:
-    page_id = body.page_id.strip().split("/")[-1].split("-")[-1].split("?")[0]
+    try:
+        page_id = _parse_page_id(body.page_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     existing = load_integration(session, body.team_id, "notion")
     action_db = existing.config.get("action_db_id") if existing else None
