@@ -24,6 +24,7 @@ from autune_extraction.pipeline.resolver import (
     LocalQwenResolver,
     _grounded,
     _is_truncated,
+    _leaks_foreign_script,
     _passes_grounding,
     _retains_target_ending,
     _semantically_grounded,
@@ -116,6 +117,33 @@ def test_a_number_absent_from_both_sides_of_the_window_is_not_grounded() -> None
         target="그때까지 하겠습니다", context=("일정 얘기해요",), context_after=("네 알겠습니다",)
     )
     assert not _grounded("10월 1일까지 하겠습니다", _window_text(request))
+
+
+# --- groundedness: no leaked foreign script (#366) ---------------------------
+
+
+def test_hiragana_absent_from_the_window_is_not_grounded() -> None:
+    """Live case: an all-Korean prompt and window, and Qwen3-4B still produced
+    "...정산 주기について 설명하겠습니다" -- no invented digit or name, so
+    ``_DIGIT_RUN``/``_NAMED_PERSON`` alone would have let it through."""
+    request = ResolutionRequest(target="그 부분은 제가 설명하겠습니다.")
+    assert not _grounded("정산 주기について 설명하겠습니다.", _window_text(request))
+
+
+def test_katakana_absent_from_the_window_is_not_grounded() -> None:
+    assert _leaks_foreign_script("スケジュール 확인하겠습니다", "회의실 확인하겠습니다")
+
+
+def test_text_with_no_foreign_script_is_trivially_grounded() -> None:
+    request = ResolutionRequest(target="그거 할게요", context=("회의실 예약해야죠",))
+    assert _grounded("회의실 예약 할게요", _window_text(request))
+
+
+def test_a_foreign_script_run_already_in_the_window_is_not_a_leak() -> None:
+    """Unlikely in this module's Korean transcripts, but the check is "not in
+    the window", not "never Japanese" -- a run the window already had (a
+    quoted Japanese term, say) is not the resolver's invention."""
+    assert not _leaks_foreign_script("スケジュール 확인하겠습니다", "スケジュール 이야기했었죠")
 
 
 # --- groundedness: keeps the target's own ending (#366) ----------------------
@@ -263,6 +291,61 @@ def test_a_missing_extra_is_reported_even_when_a_gpu_was_asked_for() -> None:
 
     with pytest.raises(RuntimeError, match="local-models"):
         LocalQwenResolver("Qwen/Qwen3-4B-Instruct-2507", device="cuda")._load()
+
+
+# --- the local resolver's foreign-script retry (#366) -----------------------
+
+
+def test_a_foreign_script_leak_triggers_one_resample(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Greedy decoding is deterministic, so a leak is only worth retrying once
+    decoding stops being greedy -- the second call must ask to sample."""
+    resolver = LocalQwenResolver("Qwen/Qwen3-4B-Instruct-2507")
+    monkeypatch.setattr(resolver, "_load", lambda: None)
+    calls: list[bool] = []
+
+    def fake_generate(request: ResolutionRequest, *, sample: bool = False) -> str:
+        calls.append(sample)
+        if not sample:
+            return "회의실において 확정하겠습니다."
+        return "회의실 예약 건 확정하겠습니다."
+
+    monkeypatch.setattr(resolver, "_generate", fake_generate)
+
+    resolved = resolver.resolve([ResolutionRequest(target="네 그거 확정하겠습니다.")])
+
+    assert calls == [False, True]
+    assert resolved == ["회의실 예약 건 확정하겠습니다."]
+
+
+def test_a_resample_that_still_leaks_falls_back_to_the_raw_target(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The retry is one extra chance, not a loop -- a second leak still falls
+    back the same way any other grounding failure does."""
+    resolver = LocalQwenResolver("Qwen/Qwen3-4B-Instruct-2507")
+    monkeypatch.setattr(resolver, "_load", lambda: None)
+    monkeypatch.setattr(resolver, "_generate", lambda request, **_: "たしかに 확정하겠습니다.")
+
+    target = "네 그거 확정하겠습니다."
+    resolved = resolver.resolve([ResolutionRequest(target=target)])
+
+    assert resolved == [target]
+
+
+def test_no_leak_means_no_resample(monkeypatch: pytest.MonkeyPatch) -> None:
+    resolver = LocalQwenResolver("Qwen/Qwen3-4B-Instruct-2507")
+    monkeypatch.setattr(resolver, "_load", lambda: None)
+    calls: list[bool] = []
+
+    def fake_generate(request: ResolutionRequest, *, sample: bool = False) -> str:
+        calls.append(sample)
+        return "회의실 예약 건 확정하겠습니다."
+
+    monkeypatch.setattr(resolver, "_generate", fake_generate)
+
+    resolver.resolve([ResolutionRequest(target="네 그거 확정하겠습니다.")])
+
+    assert calls == [False]
 
 
 # --- the registry: config string -> implementation --------------------------

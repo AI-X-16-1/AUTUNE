@@ -57,10 +57,29 @@ mistake -- ``assignee_id`` still comes from ``speaker_id``, never from this
 resolved text (see ``resolve_commitment_references``), so a wrong name here
 means the card shows two different people, not one who might be right."""
 
+_FOREIGN_SCRIPT_RUN = re.compile(r"[぀-ヿ]+")
+"""A run of Japanese hiragana or katakana. Never legitimate in this module's
+all-Korean transcripts, so a run the window never had is a decoding artifact
+from a multilingually-pretrained model, not a resolution. Live case from
+#366's own dummy-transcript comparison (a synthetic, non-AI-Hub meeting): with
+an all-Korean prompt and an all-Korean context window, Qwen3-4B still produced
+"...정산 주기について 설명하겠습니다" -- no invented number or name, so
+``_DIGIT_RUN``/``_NAMED_PERSON`` alone would have let it through."""
+
+
+def _leaks_foreign_script(resolved: str, window: str) -> bool:
+    """Whether ``resolved`` contains hiragana/katakana the window never had.
+
+    A standalone predicate, not folded silently into ``_grounded``, because
+    ``LocalQwenResolver.resolve`` needs the answer before deciding whether a
+    second, non-greedy attempt is worth making -- see its docstring.
+    """
+    return any(kana not in window for kana in _FOREIGN_SCRIPT_RUN.findall(resolved))
+
 
 def _grounded(resolved: str, window: str) -> bool:
-    """Every number and named person ``resolved`` states also appears somewhere
-    in ``window``.
+    """Every number, named person, and script ``resolved`` uses also appears
+    somewhere in ``window``.
 
     ``window`` is the target and its context joined, so anything the target
     utterance itself already said is never flagged -- only something the
@@ -69,8 +88,10 @@ def _grounded(resolved: str, window: str) -> bool:
     another, correctly-spelled one, and neither this nor #366's review found a
     check for that which does not need a second model.
     """
-    return all(digits in window for digits in _DIGIT_RUN.findall(resolved)) and all(
-        name in window for name in _NAMED_PERSON.findall(resolved)
+    return (
+        all(digits in window for digits in _DIGIT_RUN.findall(resolved))
+        and all(name in window for name in _NAMED_PERSON.findall(resolved))
+        and not _leaks_foreign_script(resolved, window)
     )
 
 
@@ -83,6 +104,18 @@ sit right next to its verb ending in a short utterance ("그거 할게요"), and
 window wide enough to require the pronoun itself to survive would reject the
 very rewrite this check exists to allow. Four characters is enough to catch
 "드릴게요" / "하겠습니다" without reaching back into the reference before it."""
+
+
+_RETRY_SAMPLE_TEMPERATURE = 0.7
+"""Temperature for the one resample attempt after a foreign-script leak.
+
+Greedy decoding (``do_sample=False``, the normal path) is deterministic --
+re-running the exact same prompt reproduces the exact same leak token for
+token, so a retry only has a chance of landing somewhere else once decoding
+stops being greedy. Unmeasured, like ``_TARGET_ENDING_LENGTH``: picked as
+"enough randomness to plausibly choose a different token where the leak
+happened, not so much that a second attempt is a different resolution
+altogether."""
 
 
 def _is_truncated(generated_length: int, max_new_tokens: int) -> bool:
@@ -288,7 +321,7 @@ class LocalQwenResolver:
         self._model.eval()
         log.info("extraction_resolver_loaded", checkpoint=self._checkpoint, device=self._device)
 
-    def _generate(self, request: ResolutionRequest) -> str:
+    def _generate(self, request: ResolutionRequest, *, sample: bool = False) -> str:
         """One resolution, or a ``RuntimeError`` if generation ran out of
         budget before the model chose to stop.
 
@@ -301,6 +334,10 @@ class LocalQwenResolver:
         the target's own ending (#366's live comparison: one truncated answer
         opened with the target verbatim before running on) and would pass that
         check while still reading as broken.
+
+        ``sample`` is only ever true for the one resample ``resolve`` makes
+        after a foreign-script leak (see there) -- the normal call stays
+        greedy and deterministic, unchanged from before this existed.
         """
         torch = self._torch
         messages = [{"role": "user", "content": _prompt(request)}]
@@ -308,13 +345,15 @@ class LocalQwenResolver:
             messages, tokenize=False, add_generation_prompt=True
         )
         encoded = self._tokenizer(text, return_tensors="pt").to(self._device)
+        generate_kwargs: dict[str, Any] = {
+            "max_new_tokens": self._max_new_tokens,
+            "do_sample": sample,
+            "pad_token_id": self._tokenizer.eos_token_id,
+        }
+        if sample:
+            generate_kwargs["temperature"] = _RETRY_SAMPLE_TEMPERATURE
         with torch.no_grad():
-            output = self._model.generate(
-                **encoded,
-                max_new_tokens=self._max_new_tokens,
-                do_sample=False,
-                pad_token_id=self._tokenizer.eos_token_id,
-            )
+            output = self._model.generate(**encoded, **generate_kwargs)
         generated = output[0][encoded["input_ids"].shape[1] :]
         if _is_truncated(generated.shape[-1], self._max_new_tokens):
             raise RuntimeError(
@@ -332,6 +371,13 @@ class LocalQwenResolver:
         for request in requests:
             try:
                 answer = self._generate(request)
+                if answer and _leaks_foreign_script(answer, _window_text(request)):
+                    # Greedy decoding is deterministic -- retrying with the same
+                    # settings would reproduce the exact same leak. This is the
+                    # one case worth a second, non-greedy attempt rather than an
+                    # immediate fallback: see #366's dummy-transcript finding.
+                    log.info("extraction_resolver_foreign_script_retry")
+                    answer = self._generate(request, sample=True)
             except Exception:  # noqa: BLE001 - #175: one bad generation must not fail the meeting
                 log.warning("extraction_resolver_generation_failed", exc_info=True)
                 resolved.append(request.target)
