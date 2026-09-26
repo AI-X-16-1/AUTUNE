@@ -7,7 +7,7 @@ Evaluation reports live in `docs/modules/audio-evaluations/` and hold the full
 tables. This file is the thread through them: the decisions, the reversals, and
 what is still open.
 
-Last updated: 2026-09-23.
+Last updated: 2026-09-26.
 
 ---
 
@@ -266,6 +266,36 @@ because that one asks whether a voice is the same as a moment ago and this one
 asks whether it is a particular person. The evaluation that settles it needs
 several meetings with the same people, which the in-house recording does not
 have; it is the next thing this feature owes.
+
+**First measurement, 2026-09-26 — the threshold has a floor now, and still no
+ceiling.** A six-person 5m27s recording (`오튠회의샘플_6인.m4a`, local only:
+`*.m4a` is git-ignored, and invariant 11 keeps a recording out of durable
+storage) diarized into 6 speakers over 77 turns and produced a vector for all
+six — nobody fell under the 3-second floor. Comparing the six against each
+other gives 15 pairs of **different people recorded in the same room, on the
+same microphone**:
+
+| | Cosine similarity |
+| --- | --- |
+| Closest pair (화자 2 / 화자 6) | **0.382** |
+| Mean of 15 pairs | 0.207 |
+| Furthest pair | 0.100 |
+
+So 0.70 sits **0.32 above the closest false match** on this recording. Same
+mic, same room, same session is the hardest case for telling people apart —
+channel and noise are identical, so only the voices differ — which makes 0.382
+a meaningful upper bound on the false-match region rather than a lucky number.
+
+A second, weaker check the same day: a profile confirmed from an unrelated
+60-second two-person clip was offered to **none** of the six. Correct, and
+what the threshold is for.
+
+**What is still unmeasured is the half that matters more.** These numbers bound
+the threshold from *below* — they say 0.70 will not confuse two people. They say
+nothing about whether it is too *high*, which is the question of how low the
+**same** person scores across two different recordings, and that still needs two
+meetings with the same people. A threshold that never confuses anyone and also
+never recognises anyone is the failure these numbers cannot see.
 
 The vector itself is taken from **3 to 10 seconds** of a speaker's own turns
 (`speaker_embedding_min_s` / `speaker_embedding_max_s`) — long enough to embed,
