@@ -73,13 +73,13 @@ permitted actions — and no new machine learning.
                        │                                    │
                        ▼                                    ▼
               tool registry                           Research agent
-                       │                            (LLM + web search)
+                       │                        (LLM + uploaded material)
         ┌──────┬───────┼───────┬────────┐                   │
         ▼      ▼       ▼       ▼        ▼                   ▼
       [A]    [B]     [C]     [D]      [E]           integrations/privacy
        └──────┴───────┴───────┴────────┘             (outbound boundary)
-            modules, unchanged
-                       │
+            modules, unchanged                    every prompt and every
+                       │                          message, section 8 rule 1
                        ▼
             agent_work_items · agent_runs
 ```
@@ -233,40 +233,65 @@ what makes the product reactive.
 
 ```sql
 CREATE TABLE agent_work_items (
-  id                UUID PRIMARY KEY,
+  id                TEXT PRIMARY KEY,   -- wi_…
   kind              TEXT,       -- action | gap | open_question | decision | risk
   title             TEXT,
   body              TEXT,       -- masked, like everything derived from a transcript
-  origin_meeting    UUID,       -- NULL when it was not born in a meeting
-  origin_utterance  UUID,       -- the evidence for why this exists
-  owner_id          UUID,
-  due_date          DATE,
+  origin_meeting    TEXT,       -- mtg_…, NULL when it was not born in a meeting
+  origin_module     TEXT,       -- b | c | d | e, or NULL; which module's read owns it
+  source_id         TEXT,       -- the owning module's own id: act_…, dec_…, NULL otherwise
+  origin_utterances JSONB,      -- ["utt_…", …]; a decision spans several
+  owner_id          TEXT,       -- user_…
+  due_date          DATE,       -- the agent's own view; B owns ext_action_items.due_date
   status            TEXT,       -- open | in_progress | blocked | resolved | dropped
-  confidence        FLOAT,      -- see section 10
-  external_ref      JSONB,      -- {"notion": "<page id>"}
-  last_signal_at    TIMESTAMP,
+  confirmed         BOOLEAN,    -- as reported by the owning module's read; section 8 rule 3
+  confidence        FLOAT,      -- the owning module's value, never ours; section 10
+  external_ref      JSONB,      -- read back from the owning module; the agent writes no page
+  last_signal_at    TIMESTAMPTZ,
   escalation_lv     INT,        -- 0 watch · 1 DM · 2 raise on agenda · 3 report to lead
-  next_check_at     TIMESTAMP   -- when the agent wakes itself for this item
+  next_check_at     TIMESTAMPTZ,-- when the agent wakes itself for this item
+  created_at        TIMESTAMPTZ,
+  updated_at        TIMESTAMPTZ
 );
 
 CREATE TABLE agent_runs (
-  id          TEXT PRIMARY KEY,
+  id          TEXT PRIMARY KEY,   -- run_…
+  meeting_id  TEXT,    -- mtg_…, NULL for a run with no meeting; the deletion path
+  team_id     TEXT,    -- team_…
   trigger     JSONB,   -- why it woke up
   plan        JSONB,   -- what it meant to do
   steps       JSONB,   -- which tools it called, in order
   proposed    JSONB,   -- the plan it submitted for approval (section 8)
   decisions   JSONB,   -- per item: approved | edited | rejected, and the reason
   actions     JSONB,   -- what it actually did
+  messages    JSONB,   -- the suspended conversation, for resume (section 8)
   outcome     TEXT,
   latency_ms  INT,
-  token_cost  INT
+  token_cost  INT,
+  created_at  TIMESTAMPTZ
 );
 ```
 
-Ids are prefixed strings (`run_…`, `wi_…`) from `autune_core.ids.new_id`, not
-UUIDs — every other table in the repository does it that way
-(`data-model.md`), and an id that says what it is has been worth it every
-time one showed up in a log.
+**Ids are prefixed `TEXT`, in the SQL as well as in the prose.** Primary keys in
+this repository are prefixed strings from `autune_core.ids.new_id` —
+`data-model.md`'s conventions say so and `ids.py` holds the prefixes — and an
+earlier draft of this document asked for that in a paragraph while the `CREATE
+TABLE` above it said `UUID`. @kjfcvx12 caught the contradiction; the SQL is what
+was wrong. `run_` and `wi_` are two new prefixes, and a prefix constant lives in
+`packages/core` (shared, so that one line needs the team's approval like any
+other `packages/` change).
+
+**`source_id` and `origin_utterances` exist because a decision is not one
+utterance.** A work item derived from B carries B's own `act_…` or `dec_…` id, so
+the agent can read the current item rather than its own stale copy, and the
+evidence is a list because a decision spans several utterances — an earlier draft
+had a single `origin_utterance`, which would have thrown away most of the
+evidence for exactly the items that need it most. `origin_utterances` gets a GIN
+index; it is the one JSONB column here that is filtered on, which
+`data-model.md` allows for that reason.
+
+**`confirmed` is read, never inferred.** It records what the owning module's read
+said, and section 8 rule 3 is what depends on it.
 
 `proposed` and `decisions` are the record of the approval gate. They are also
 the closest thing this product has to labels that cost nobody anything: a
@@ -288,24 +313,65 @@ anyone asks about an agent — and it is what the run-timeline screen renders.
 
 ### How work items get created
 
-Not by the modules. **B, C, D and E are not modified.** The agent layer
-subscribes to events those modules already publish
-(`autune.extraction.completed`, `autune.gap.completed`,
-`autune.context.completed`) and writes its own rows. A module writing to
-`agent_*` would be a module writing another owner's table, which invariant 3
-exists to prevent.
+Not by the modules. **No module's existing behaviour changes**, and no module
+writes an `agent_*` row — that would be a module writing another owner's table,
+which invariant 3 exists to prevent. The agent layer subscribes to events those
+modules already publish (`autune.extraction.completed`, `autune.gap.completed`,
+`autune.context.completed`) and writes its own rows.
+
+The one file each module gains is its own `tools.py`, written by that module's
+owner (ADR 0009). "Not modified" means no change to a service, a table, a route
+or a contract; it does not mean the module contributes nothing. An earlier draft
+said "B, C, D and E are not modified" flatly, which read as though the tools
+appeared from nowhere.
+
+**A row created this way starts out unconfirmed, and that is a permission level,
+not a note.** `ExtractionResult` is published before anyone reviews it, so an item
+born from `autune.extraction.completed` is `confirmed = false` until B's read says
+otherwise, and section 8 rule 3 keeps it internal until then. The same applies to
+a decision-drift signal from `autune.context.completed`, and rule 5 keeps
+`key_stakeholders_absent` out of the row entirely.
 
 Work that was never in a meeting — a Notion task, a request in a channel —
-lands in the same table through the same door. That is the moment "beyond the
-meeting" stops being a slogan.
+lands in the same table through the same door, with `origin_meeting` and
+`origin_module` NULL. That is the moment "beyond the meeting" stops being a
+slogan.
 
-### Deletion and retention
+### Deletion and retention — both tables, not one
 
-`agent_work_items.body` is derived from utterances, so it is meeting content
-and inherits every rule in `privacy.md`: masked before it is written, deleted
-with its meeting, and covered by the retention window. It registers with
-`autune_core.deletion` like any other derived table. `intel_reports` shipped
-without that path (#86); this must not repeat it.
+`agent_work_items.body` is derived from utterances, so it is meeting content and
+inherits every rule in `privacy.md`: masked before it is written, deleted with
+its meeting, and covered by the retention window.
+
+**`agent_runs` is meeting content too, and an earlier draft of this document did
+not say so.** Both B and D raised it and D's case is the sharper one.
+`agent_runs.steps`, `decisions` and `messages` hold copies of what the tools
+returned — B's `description` and `assignee_label`, and D's decision statements.
+D's router blanks `previous_statement` and `previous_meeting_id` when the meeting
+they quote passes out of the retention window; if the agent's copy is not swept
+on the same schedule, **a value D deliberately blanked comes back alive in
+`agent_runs`.** And as drafted the table had no `meeting_id` at all, so there was
+no path to delete it by meeting — which `privacy.md` section 7's checklist
+rejects outright: *"Adds a table with no path to deletion by `meeting_id` or
+`user_id`"*. The table above would have been rejected in review, correctly.
+
+So, explicitly:
+
+| Table | Meeting-scoped deletion | Retention expiry |
+| --- | --- | --- |
+| `agent_work_items` | by `origin_meeting` | yes — `body`, `title`, `external_ref` |
+| `agent_runs` | by `meeting_id` | yes — `steps`, `decisions`, `actions`, `messages` |
+
+Both reference `meetings.id` with `ON DELETE CASCADE`, so meeting deletion
+reaches them as rows, and both are registered with the retention sweep. A
+suspended run whose meeting is deleted or expires cannot be resumed, which is
+correct: there is nothing left to act on, and a resume that reconstructed the
+deleted content from its own copy would be the defect this rule exists to
+prevent. Rule 5 in section 8 keeps one field out of these columns altogether.
+
+`intel_reports` shipped without a deletion path (#86); this must not repeat it,
+and a test proving both tables empty after a meeting is deleted is part of
+shipping them.
 
 ## 6. Triggers
 
