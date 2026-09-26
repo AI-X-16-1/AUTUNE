@@ -92,7 +92,7 @@ not teammates, not the meeting organizer, not team administrators, not us.
 **Required:**
 - Compute the ratio, deliver it to that person by Slack DM, and do not persist
   the per-person value.
-- Any endpoint that could return a speaking ratio authorizes on
+- Any endpoint that returns or presents a speaking ratio authorizes on
   `requester_id == subject_id`, with no admin override.
 
 **Forbidden:**
@@ -106,6 +106,39 @@ not teammates, not the meeting organizer, not team administrators, not us.
 The reasoning is that a per-person speech-volume metric visible to a manager
 turns the product into a surveillance tool. That is a product-defining
 constraint, not a configurable option.
+
+### The meeting record is not a speaking-ratio product
+
+This section binds what Autune **computes, stores, presents or exports**. It
+does not forbid the meeting record from saying who spoke.
+
+A transcript carries `speaker_id`, `start` and `end` on every utterance, so a
+per-person duration is arithmetic away for anyone who can read it. That is not
+a loophole, it is what a meeting record is: the same payload already carries
+the full text of everything each person said, which is strictly more revealing
+than how long they spoke. A rule that permitted the content and forbade the
+duration would be protecting the wrong thing. Speaker attribution is also
+load-bearing across the product — module B keys a commitment on who made it,
+and `TranscriptReady` publishes `speaker_id` to four modules.
+
+So the line is drawn at the derived metric, not at the record:
+
+- **Allowed:** a transcript, an utterance, or an event carrying
+  `speaker_id` with timings, to anyone entitled to read that meeting.
+- **Forbidden, exactly as above:** any place where Autune itself turns that
+  into a per-person speech-volume number — a field, a column, a widget, a
+  report, an export, a Slack message, or a contract — for anyone but the
+  speaker.
+
+**A consumer must not derive it either.** A module that reads transcripts must
+not aggregate utterance durations per speaker, and the module that could is the
+one that pins it: a test asserting no per-speaker duration or count leaves its
+read paths (module E, #371). Until #6, `Participant.user_id` was null on every
+meeting the product had produced, so this was impossible in practice rather
+than prevented; identification removed that accident and the rule now needs the
+test.
+
+Decided on #361.
 
 Module E's aggregate metrics — quality score, alignment heatmap, gap
 distribution — are team-level and contain no per-person speech volume.
