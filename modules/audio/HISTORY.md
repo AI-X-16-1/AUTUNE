@@ -7,7 +7,7 @@ Evaluation reports live in `docs/modules/audio-evaluations/` and hold the full
 tables. This file is the thread through them: the decisions, the reversals, and
 what is still open.
 
-Last updated: 2026-09-22.
+Last updated: 2026-09-26.
 
 ---
 
@@ -443,8 +443,21 @@ first cut of this code did.
 The sweep #209 had was dropped because it decided on mtime and could delete a
 file a late task was about to adopt. It is back, deciding against `aud_jobs`
 instead: an attempt that is over, or a job unknown to the database, has no
-owner; a live job is left alone until `orphan_after_hours`. It runs at the
-start of every `process_recording` until there is a periodic trigger (#207).
+owner; a live job is left alone until `orphan_after_hours`.
+
+**Then it got a second trigger, and kept the first** (#207). The in-task call
+fails exactly when it is needed: the situations that leave an orphan behind are
+the situations where uploads stop, so "the next upload will collect it" is not a
+guarantee. `autune.audio.periodic.sweep_orphans` runs it hourly on beat instead,
+owning no job and therefore sparing no file. Both are kept because they fail
+differently — the in-task one is the only one that fires with no beat process
+running, which is every local run and every demo, and the periodic one is the
+only one that fires when nothing is being uploaded at all. Hourly, not sooner:
+a `queued` or `running` job holds its file until `orphan_after_hours` (6h), so a
+shorter interval scans the whole upload directory and collects nothing extra.
+The mechanism that made this possible is `autune_core.periodic`, added in the
+same PR — a module declares a periodic task by defining it, and `apps/worker`
+gains no line (invariant 6).
 
 `privacy.md` section 1 was rewritten in the same PR (decision #275). "Scoped
 to the task" never described a two-process handover; "owned by exactly one

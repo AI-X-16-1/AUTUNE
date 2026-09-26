@@ -81,6 +81,7 @@ agrees on.
 | Name | Kind | Owner |
 | --- | --- | --- |
 | `autune.audio.process_recording` | task | A |
+| `autune.audio.periodic.sweep_orphans` | periodic task | A |
 | `autune.transcript.ready` | event | A |
 | `autune.extraction.on_transcript_ready` | task | B |
 | `autune.extraction.completed` | event | B |
@@ -96,6 +97,49 @@ agrees on.
 Register tasks in your module's `tasks.py`. `apps/worker` discovers them by
 iterating the module list — never add your module to a registration block by
 hand.
+
+### Scheduling
+
+A task that runs on a clock rather than on an event is named
+`autune.<module>.periodic.<name>` and declares its period beside itself:
+
+```python
+from datetime import timedelta
+
+from celery import shared_task
+
+from autune_core import periodic
+
+
+@shared_task(name="autune.audio.periodic.sweep_orphans")
+@periodic(timedelta(hours=1))
+def sweep_orphans() -> None: ...
+```
+
+`make_celery_app` reads the task registry and builds Celery's `beat_schedule`
+from it, so **scheduling is defining the task and unscheduling is deleting
+it** — the same property subscribing has, for the same reason: `apps/` is
+assembly only and a schedule you append to is a registration block (invariant
+6). Nothing under `apps/` changes when your module wants a scheduled job.
+
+The name keeps `autune.<module>.` in front, so `TASK_ROUTES` already sends it
+to your module's queue; a periodic task needs no new route.
+
+Two rules for whoever writes one:
+
+- **It must be safe to run twice and safe to overlap.** Beat restarts, and the
+  previous run may not have finished when the next one is due. Celery
+  serialises neither, and neither does this mechanism — it is the task author's
+  responsibility, exactly as idempotency is.
+- **Declare the schedule in UTC**, because the app runs `enable_utc`. KST is
+  UTC+9, so `crontab(hour=0, minute=0)` fires at **09:00 KST**, and Monday
+  09:00 KST is `crontab(day_of_week="mon", hour=0, minute=0)`. Convert once,
+  here; do not change the app's timezone to avoid the arithmetic.
+
+A periodic task takes no arguments — nothing calls it, so there is nothing to
+pass — and reads what it needs inside the run. A task named
+`autune.<module>.periodic.*` with no `@periodic`, or a `@periodic` under a name
+nothing scans, fails the worker at startup instead of quietly never running.
 
 ## Queues
 
@@ -238,7 +282,21 @@ See `privacy.md`. These are enforced in code review and in tests.
 ```bash
 docker compose up -d          # postgres (pgvector), redis
 uv run celery -A autune_worker.celery_app worker -Q default,cpu_heavy,gpu -l info
+uv run celery -A autune_worker.celery_app beat -l info        # only if you need a schedule
 ```
+
+**Beat is exactly one process, and not one of the workers.** It is a clock, not
+a consumer: it sends the scheduled task and whichever worker services the queue
+runs it. Embedding it in a worker (`celery worker -B`) makes the number of
+clocks the number of workers, so every scheduled job runs once per worker — the
+reason Celery documents `-B` as a development convenience only. Scale workers
+freely; there is one beat. Locally it is optional: nothing in the demo path
+needs it, and module A's orphan sweep also runs at the head of every
+`process_recording` for exactly that reason.
+
+It is deliberately not a service in `infra/docker-compose.yml`: that file runs
+postgres and redis only, the worker is started by hand, and beat alone in
+compose would be the odd one out.
 
 `gpu` is a queue name, not a hardware requirement — `task_routes` sends every
 `autune.audio.*` task there regardless of `AUTUNE_AUDIO_DEVICE`. A worker that

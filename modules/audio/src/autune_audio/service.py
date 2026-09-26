@@ -468,11 +468,16 @@ def sweep_orphans(
     One query for all the job files, not one per file: this runs at the
     start of every task and its cost grows with the backlog. Concurrent
     sweeps are not serialised; they can both delete the same already-gone
-    file (``missing_ok``) and both log it, which is redundant, not wrong.
+    file (``missing_ok``) and both log it, which is redundant, not wrong --
+    which is also what makes two triggers safe.
 
-    Runs at the start of every ``process_recording``, skipping ``keep`` -- the
-    caller's own job -- until there is a periodic trigger for it (#207, #258).
-    Ids only in the log; the filenames are ids.
+    **Two triggers, both kept** (#207). ``tasks.process_recording`` runs it at
+    its head, passing ``keep`` so it does not delete the upload it is about to
+    adopt; ``tasks.sweep_orphans`` runs it hourly on beat, owning no job and so
+    sparing nothing. The in-task one is the only one that fires when no beat
+    process is running -- every local run, every demo. The periodic one is the
+    only one that fires when uploads have stopped, which is when orphans are
+    made. Ids only in the log; the filenames are ids.
     """
     directory = Path(settings.temp_dir)
     if not directory.is_dir():
