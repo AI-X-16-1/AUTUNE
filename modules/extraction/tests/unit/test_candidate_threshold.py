@@ -151,8 +151,8 @@ def test_a_confirmed_low_confidence_item_is_not_a_candidate(
     ``status`` and never the model's ``confidence`` column.
 
     Every status but ``needs_confirmation`` is "a person has looked at this,"
-    the same line ``became_confirmed`` draws, so none of them should ever
-    score as a candidate regardless of how low the confidence is.
+    so none of them should ever score as a candidate regardless of how low
+    the confidence is.
     """
     monkeypatch.setenv("AUTUNE_EXTRACTION_CANDIDATE_CONFIDENCE", "0.9")
 

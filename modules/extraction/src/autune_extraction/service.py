@@ -379,8 +379,9 @@ def read_model(
     person on every later visit to the review screen, one column after they
     already confirmed it there (#295). Candidate is therefore *this module's
     own open question, not yet answered*: model-made, and still in
-    ``needs_confirmation``. The same status ``became_confirmed`` reads as the
-    line between the two.
+    ``needs_confirmation``. Leaving that status for any other column is the
+    same line ``router.update_action_item`` reads before queueing a Notion
+    sync.
     """
     threshold = get_settings().candidate_confidence
     is_candidate = (
@@ -633,18 +634,6 @@ def update_action_item(
 
     _record_edit(session, meeting_id=item.meeting_id, action_item_id=item.id, kind="edited")
     return item
-
-
-def became_confirmed(previous_status: str, item: ExtActionItem) -> bool:
-    """Whether this edit is the one that confirmed the item.
-
-    Confirming is leaving ``needs_confirmation`` for any column a person works in
-    -- the board has no separate "confirm" button, moving the card is the answer.
-    A later move between ``todo``, ``in_progress`` and ``done`` is not a second
-    confirmation, which is half of what keeps the Notion page to one.
-    """
-    confirming = ActionStatus.NEEDS_CONFIRMATION.value
-    return previous_status == confirming and item.status != confirming
 
 
 def delete_action_item(session: Session, item: ExtActionItem) -> None:
@@ -1699,9 +1688,11 @@ none. Raised in review of #294.
 
 
 class NotionPages(Protocol):
-    """The one call the sync makes. ``NotionClient`` and ``fakes.FakeNotion`` both fit."""
+    """The two calls the sync makes. ``NotionClient`` and ``fakes.FakeNotion``
+    both fit."""
 
     def create_page(self, database_id: str, properties: dict[str, Any]) -> str: ...
+    def update_page(self, page_id: str, properties: dict[str, Any]) -> None: ...
 
 
 def notion_url(page_id: str) -> str:
@@ -1747,19 +1738,54 @@ def sync_action_item_to_notion(
     database_id: str,
     property_names: Mapping[str, str] | None = None,
 ) -> ExtExternalRef | None:
-    """Create the item's Notion page, once. ``None`` when there is nothing to send.
+    """Create the item's Notion page the first time; update the same page every
+    time after. ``None`` when there is nothing to send.
 
-    Nothing is sent for an item that is gone, one still waiting for confirmation,
-    or one that already has its page. The last is decided by the database: the
-    claim is an insert that skips an existing row, so a confirmation delivered
-    twice, or two workers holding it at once, send one page -- the second blocks on
-    the first's row and then finds it. Claim and call share the caller's
-    transaction, so a failed call takes the claim back and a later run can try
-    again.
+    Nothing is sent for an item that is gone or one still waiting for
+    confirmation. The first send is decided by the database: the claim is an
+    insert that skips an existing row, so a confirmation delivered twice, or
+    two workers holding it at once, create one page -- the second blocks on
+    the first's row and then finds it. Claim and create share the caller's
+    transaction, so a failed call takes the claim back and a later run can
+    try creating it again.
+
+    **A later edit finds the claim already there and updates the page
+    instead of creating a second one.** A PATCH is naturally idempotent for a
+    *redelivery of the same edit* -- two workers racing the same update both
+    converge on the same final properties -- but not for two genuinely
+    different edits in flight at once: found in review of #342 (lsh2217).
+    Every edit past confirmation now queues its own sync, each reading
+    current state independently, so a slow network round-trip can let an
+    earlier edit's page write land *after* a later edit's already has,
+    leaving Notion silently stale. ``with_for_update`` on the claim row below
+    closes that: a second sync for the same item blocks until the first's
+    whole transaction -- outbound call included -- commits, forcing the two
+    ``update_page`` calls to reach Notion in the same order their edits
+    committed rather than whatever order the network happens to deliver
+    them. Each sync still sends what it read at its own start (already the
+    right edit, since nothing is queued before its edit commits); the lock
+    only orders the sends, it does not need to make either one re-read. The
+    description, assignee, due date and status a person edited on the board
+    are exactly what this sends; the source utterances never leave Autune
+    either way.
     """
     item = session.get(ExtActionItem, action_item_id)
     if item is None or item.status == ActionStatus.NEEDS_CONFIRMATION.value:
         return None
+
+    meeting = session.get(Meeting, item.meeting_id)
+    names = property_names or NOTION_PROPERTIES
+    properties = notion_properties(item, meeting.title if meeting else None, names)
+
+    existing = session.get(ExtExternalRef, (item.id, NOTION), with_for_update=True)
+    if existing is not None:
+        # Claim and create share one transaction (below), so a row that made
+        # it to the database has its page id -- there is no committed row
+        # from a claim whose create never ran.
+        assert existing.external_id is not None
+        notion.update_page(existing.external_id, properties)
+        log.info("extraction_notion_updated", action_item_id=item.id, meeting_id=item.meeting_id)
+        return existing
 
     claimed = session.scalars(
         _insert_if_absent_into(session, ExtExternalRef)
@@ -1768,15 +1794,12 @@ def sync_action_item_to_notion(
         .returning(ExtExternalRef.action_item_id)
     ).one_or_none()
     if claimed is None:
-        # Ids only. The page exists, or another run is creating it.
+        # Another transaction claimed it since the read above -- its own
+        # create (or, from now on, its own update) is what this meeting gets.
         log.info("extraction_notion_already_synced", action_item_id=item.id)
         return None
 
-    meeting = session.get(Meeting, item.meeting_id)
-    names = property_names or NOTION_PROPERTIES
-    page_id = notion.create_page(
-        database_id, notion_properties(item, meeting.title if meeting else None, names)
-    )
+    page_id = notion.create_page(database_id, properties)
 
     ref = session.get(ExtExternalRef, (item.id, NOTION))
     assert ref is not None
@@ -1794,16 +1817,6 @@ DECISION_NOTION_PROPERTIES: Mapping[str, str] = {
 }
 """The decision database's property names. A team's ``decision_properties`` map
 replaces this one, the rule ``NOTION_PROPERTIES`` explains for items."""
-
-
-def decision_became_confirmed(previous_status: str | None, current_status: str) -> bool:
-    """Whether this review is the one that confirmed the decision.
-
-    ``previous_status`` is ``None`` when the decision had no review row yet,
-    which is how every model decision starts. Confirming twice, or rewording a
-    confirmed decision, is not a second confirmation -- the page is sent once.
-    """
-    return previous_status != "confirmed" and current_status == "confirmed"
 
 
 def decision_notion_properties(
@@ -1838,15 +1851,37 @@ def sync_decision_to_notion(
     database_id: str,
     property_names: Mapping[str, str] | None = None,
 ) -> ExtDecisionRef | None:
-    """Create a confirmed decision's Notion page, once. ``None`` when nothing is sent.
+    """Create a confirmed decision's Notion page the first time; update the
+    same page every time after. ``None`` when nothing is sent.
 
     Nothing goes for a decision that is gone or is not confirmed (#246). The
-    claim-then-call shape and its reasons are ``sync_action_item_to_notion``'s.
+    create-then-update shape and its reasons are
+    ``sync_action_item_to_notion``'s -- a reworded confirmed decision (#246
+    allows rewording after confirmation) updates the page it already has
+    rather than being silently skipped.
     """
     decision = session.get(ExtDecision, decision_id)
     review = session.get(ExtDecisionReview, decision_id)
     if decision is None or review is None or review.status != "confirmed":
         return None
+
+    meeting = session.get(Meeting, decision.meeting_id)
+    names = property_names or DECISION_NOTION_PROPERTIES
+    statement = _confirmed_statement(decision, review)
+    properties = decision_notion_properties(
+        statement, decision, meeting.title if meeting else None, names
+    )
+
+    existing = session.get(ExtDecisionRef, (decision.id, NOTION))
+    if existing is not None:
+        assert existing.external_id is not None  # same invariant as the action-item sync
+        notion.update_page(existing.external_id, properties)
+        log.info(
+            "extraction_notion_decision_updated",
+            decision_id=decision.id,
+            meeting_id=decision.meeting_id,
+        )
+        return existing
 
     claimed = session.scalars(
         _insert_if_absent_into(session, ExtDecisionRef)
@@ -1858,13 +1893,7 @@ def sync_decision_to_notion(
         log.info("extraction_notion_decision_already_synced", decision_id=decision.id)
         return None
 
-    meeting = session.get(Meeting, decision.meeting_id)
-    names = property_names or DECISION_NOTION_PROPERTIES
-    statement = review.statement or decision.statement
-    page_id = notion.create_page(
-        database_id,
-        decision_notion_properties(statement, decision, meeting.title if meeting else None, names),
-    )
+    page_id = notion.create_page(database_id, properties)
 
     ref = session.get(ExtDecisionRef, (decision.id, NOTION))
     assert ref is not None

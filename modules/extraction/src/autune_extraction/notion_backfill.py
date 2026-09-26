@@ -8,12 +8,12 @@ team connected Notion -- or before #312 shipped the sync at all -- passed that
 moment with nothing listening, and nothing about its state says so: the board
 shows it as confirmed either way.
 
-This walks every already-confirmed row through the same idempotent
-claim-then-call path the live sync uses
-(``service.sync_action_item_to_notion`` / ``sync_decision_to_notion``), so it
-is **safe to run more than once**: a row that already has its page is claimed
-by nobody, `find`s its existing ``ext_external_refs`` / ``ext_decision_refs``
-row and is skipped, exactly as a redelivered confirmation already is.
+This walks every already-confirmed row through the same claim-then-call path
+the live sync uses (``service.sync_action_item_to_notion`` /
+``sync_decision_to_notion``), so it is **safe to run more than once**: a row
+with no page yet gets one created; a row that already has one gets it
+updated with whatever the description, assignee, due date or statement read
+as now, the same way a later edit on the board does.
 
     uv run python -m autune_extraction.notion_backfill
     uv run python -m autune_extraction.notion_backfill --team team_abc123
@@ -35,7 +35,7 @@ from autune_core import Meeting, PrivacyViolationError, get_logger, load_integra
 from autune_integrations import IntegrationError, NotionClient
 
 from . import service
-from .models import ExtActionItem, ExtDecisionReview
+from .models import ExtActionItem, ExtDecisionRef, ExtDecisionReview, ExtExternalRef
 
 log = get_logger(__name__)
 
@@ -45,7 +45,7 @@ class Stats:
     """Counts only -- see module docstring."""
 
     sent: int = 0
-    already_synced: int = 0
+    updated: int = 0
     not_connected: int = 0
     failed: int = 0
 
@@ -112,6 +112,7 @@ def _sync_one_action_item(
         if config is None or not config.secret or not database_id:
             stats.not_connected += 1
             return
+        already_had_a_page = session.get(ExtExternalRef, (action_item_id, "notion")) is not None
         ref = service.sync_action_item_to_notion(
             session,
             clients.get(meeting.team_id, config.secret),
@@ -119,10 +120,11 @@ def _sync_one_action_item(
             database_id=database_id,
             property_names=config.config.get("action_properties"),
         )
-        if ref is None:
-            stats.already_synced += 1
-        else:
-            stats.sent += 1
+        if ref is not None:
+            if already_had_a_page:
+                stats.updated += 1
+            else:
+                stats.sent += 1
 
 
 def backfill_action_items(rows: list[tuple[str, str]], stats: Stats) -> None:
@@ -157,6 +159,7 @@ def _sync_one_decision(
         if config is None or not config.secret or not database_id:
             stats.not_connected += 1
             return
+        already_had_a_page = session.get(ExtDecisionRef, (decision_id, "notion")) is not None
         ref = service.sync_decision_to_notion(
             session,
             clients.get(meeting.team_id, config.secret),
@@ -164,10 +167,11 @@ def _sync_one_decision(
             database_id=database_id,
             property_names=config.config.get("decision_properties"),
         )
-        if ref is None:
-            stats.already_synced += 1
-        else:
-            stats.sent += 1
+        if ref is not None:
+            if already_had_a_page:
+                stats.updated += 1
+            else:
+                stats.sent += 1
 
 
 def backfill_decisions(rows: list[tuple[str, str]], stats: Stats) -> None:
@@ -206,7 +210,7 @@ def main(argv: list[str] | None = None) -> int:
 
     for label, stats in (("action items", item_stats), ("decisions", decision_stats)):
         print(
-            f"{label:<13} sent {stats.sent:<5} already-synced {stats.already_synced:<5} "
+            f"{label:<13} sent {stats.sent:<5} updated {stats.updated:<5} "
             f"team not connected {stats.not_connected:<5} failed {stats.failed}"
         )
 
