@@ -43,7 +43,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from datetime import timedelta
-from typing import Any, TypeAlias, TypeVar
+from typing import Any, TypeVar
 
 from celery import Celery
 from celery.schedules import BaseSchedule
@@ -56,9 +56,10 @@ SCHEDULE_ATTR = "autune_periodic_schedule"
 
 # `timedelta` or one of Celery's schedule objects (`crontab`, `solar`). A bare
 # number of seconds is deliberately not part of this -- see `periodic`.
-# Spelled as a `TypeAlias` because celery ships no type information, so
-# `BaseSchedule` is `Any` here and mypy reads the bare assignment as a variable.
-Schedule: TypeAlias = timedelta | BaseSchedule
+# A `type` statement, not a bare assignment: celery ships no type information,
+# so `BaseSchedule` is `Any` here and mypy reads the assignment as a variable
+# rather than an alias.
+type Schedule = timedelta | BaseSchedule
 
 F = TypeVar("F", bound=Callable[..., Any])
 

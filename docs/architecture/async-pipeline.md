@@ -113,8 +113,7 @@ from autune_core import periodic
 
 @shared_task(name="autune.audio.periodic.sweep_orphans")
 @periodic(timedelta(hours=1))
-def sweep_orphans() -> None:
-    ...
+def sweep_orphans() -> None: ...
 ```
 
 `make_celery_app` reads the task registry and builds Celery's `beat_schedule`
