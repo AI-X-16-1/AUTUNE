@@ -3,7 +3,9 @@
 > **Status: Proposed.** Nothing described here is built. The direction is under
 > discussion in issue #260 and the layer's location is ADR 0009, still
 > `Proposed`. Read this as a design under review, not as how the system works.
-> Four questions in section 13 block the first line of code.
+> Two questions in section 13 block the first line of code: where the layer
+> lives (13.1) and how a periodic trigger is registered (13.2). 13.3 and 13.4
+> shape the work without blocking it.
 
 Modules A–E are exposed as **tools**. An agent layer above them decides which
 tools to call, when to wake up, and what it is allowed to do with the answer.
@@ -11,6 +13,9 @@ tools to call, when to wake up, and what it is allowed to do with the answer.
 This document covers only the layer. Module boundaries
 (`module-boundaries.md`), contracts (`contracts.md`) and the event pipeline
 (`async-pipeline.md`) are unchanged by it, and that is the point.
+`packages/contracts` in particular gains **no field and no event** — section 8
+rule 4 says how the agent learns what it needs without one, because "contracts
+unchanged" is a claim that needs a mechanism behind it.
 
 ---
 
@@ -306,7 +311,7 @@ without that path (#86); this must not repeat it.
 
 | Kind | Example | Mechanism |
 | --- | --- | --- |
-| Time | 09:00 team briefing; 30 minutes before a meeting | Celery beat |
+| Time | 09:00 team briefing; 30 minutes before a meeting (see below) | Celery beat |
 | State | `next_check_at` due; deadline tomorrow and no signal in three days | 5-minute poll |
 | Event | Meeting analysis finished; bot mentioned | Existing events + webhooks |
 | Request | "Summarise last week's decisions" | Slash command |
@@ -315,6 +320,12 @@ For the first release, **event + state** is enough. Event triggers work today �
 the existing events are published and consumed. State triggers depend on the
 question in section 13.2: their 5-minute poll needs a beat schedule, and this
 repository has none that a module may add.
+
+**The 30-minutes-before trigger does not send a message.** Module D already owns
+the pre-meeting brief (`notify.py`, #234), and section 8 rule 2 is that outbound
+goes out through the module that owns the content. If the agent has something to
+add half an hour before a meeting it adds it to D's brief; it does not post a
+second one into the same slot.
 
 ## 7. The team charter — judgement the team writes down
 
@@ -398,11 +409,151 @@ first action does.
 
 | Level | Nature | Example | Handling |
 | --- | --- | --- | --- |
-| L0 | Internal read or draft | Search, summarise, draft, write to `agent_*` | Automatic |
-| **L0-ext** | **Read that leaves the building** | **Web search, LLM provider call** | **Section 13.3 — unresolved** |
+| L0 | Internal read or draft | Read a module's tool, summarise, draft, write to `agent_*` | Automatic |
+| **L0-ext** | **Read that leaves the building** | **The orchestrator's own LLM call; a web search** | **Automatic, through `assert_masked` and the prompt budget — rule 1 below** |
 | L1 | Reversible write | Thread comment, agenda draft | Automatic, notify after |
-| L2 | Write that moves a person | DM, channel post, Notion page create or re-date | **Plan mode**, then execute |
+| L2 | Write that moves a person | **Asking the owning module to** DM, post, or create a Notion page | **Plan mode**, then execute |
 | L3 | Destructive | Close an issue, delete an event, send externally | Forbidden |
+
+### Six rules, and the L2 row is shorter than it was
+
+Two module owners asked for the same thing from opposite sides of the
+repository, and it turns out to be one rule with five consequences. Numbered,
+because a remark gets read once and a rule gets checked.
+
+#### Rule 1 — every outbound transfer, the orchestrator's own LLM call included, goes through `assert_masked` and a stated budget
+
+The LLM call is the one nobody thinks of as outbound. Every run passes tool
+results into `llm(messages, …)`, and B's results carry `description`, which
+quotes an utterance, and `assignee_label`, which is a person's name.
+@kjfcvx12 is right that this is a transfer and not an internal read, and it is
+why `L0-ext` exists as its own row.
+
+**It is not blocked, and it is not new.** `privacy.md` section 6 already
+governs it and already permits it: *"Anything leaving our infrastructure — LLM
+APIs, Slack, Notion, Google Calendar, error tracking, analytics — carries
+masked text only, and only what the feature needs."* Two conditions, both
+already decided. `packages/integrations/src/autune_integrations/privacy.py` is
+the single enforcement point, and its own docstring names "any LLM API"
+alongside Slack, Notion and Calendar. So the orchestrator's prompt goes out
+through `check_outbound` / `assert_masked` exactly as B's Notion sync and D's
+Slack notices do. There is no new mechanism to build and no new decision to
+make.
+
+An earlier draft of this document said #92 blocks the layer. It does not.
+#92's five questions are consent surviving a departure, label substitution
+under PIPA 제36조, the lawful basis for a retained transcript, voice embeddings
+under 제23조, and GDPR applicability. **None of them asks whether content may
+reach an LLM API.** That dependency was invented here and is removed.
+
+What section 6's *second* condition does impose is a real design constraint,
+and it is the one that bites:
+
+| In the prompt | Cap |
+| --- | --- |
+| Utterance text | **None, by default.** `evidence` is ids (section 4); text is fetched only when a step needs a specific quotation |
+| Quoted utterances, when a step needs them | 10, and only from the meeting the step is about |
+| Tool results | `summary` plus 5 `items` each, the return contract |
+| Whole prompt | `MAX_OUTBOUND_CHARS` (4,000) per `check_outbound` call, and refused past it |
+
+**A transcript never enters a prompt.** A step that needs three action items
+sends three action items. This is a budget the loop enforces, not an
+aspiration: the return contract already makes it the default, because a tool
+hands back a summary and ids rather than rows of text, and `assert_within_size`
+already refuses the rest.
+
+One pre-existing limit, stated so nobody reads the above as a promise it does
+not make: **a person's name is not in `privacy.md` section 2's masking scope.**
+Section 2 covers phone numbers, email addresses, national ID numbers, bank
+accounts and card numbers; it does not cover a name or a sentence that
+identifies someone by its content, and `find_unmasked` therefore does not catch
+either. So `assignee_label` does reach outbound surfaces today. That is true of
+B's Notion sync and D's Slack notices as much as of this layer — it is the
+system's existing masking scope, not something the agent layer introduces, and
+#92 lists it among the things to put to a reviewer.
+
+#### Rule 2 — outbound goes out through the module that owns the content
+
+**The agent reads state and puts it in a briefing. It does not send the DM,
+create the Notion page, or re-date the item.** Every module already does its
+own outbound exactly once and through its own guard, and a second path is a
+duplicate message and a bypassed check at the same time:
+
+| Surface | The module that owns it | What it already does |
+| --- | --- | --- |
+| Ambiguous-agreement confirmation DM | B | `ext_confirmations` + `send_confirmations`, to the speaker only |
+| Notion or Jira page for an item | B | once per (item, system) at confirmation time, recorded in `ext_external_refs` (#294) |
+| An item's due date | B | `ext_action_items.due_date` is B's column; "re-date" is not the agent's verb |
+| Topic-link notice, decision-drift warning, pre-meeting brief | D | `notify.py`, capped and de-duplicated, implementation in #234 |
+| Speaking ratio | E | `feedback.build_speaking_ratio_dm`, DM to the subject only |
+
+So an L2 action is never "the agent sends X". It is "the agent asks the owning
+module to send X, and the module's own guard decides". Two consequences worth
+naming:
+
+- **Section 6's "30 minutes before a meeting" trigger does not send anything.**
+  D's pre-meeting brief already occupies that slot. If the agent has something
+  to add there it goes to D's brief, or it waits for the morning briefing.
+- **The confirmation DM is B's, once.** An agent DMing the same speaker about
+  the same utterance is a duplicate, and the speaker cannot tell which of the
+  two to answer.
+
+#### Rule 3 — unconfirmed content from B does not reach an outbound surface
+
+`ExtractionResult` is published on `autune.extraction.completed` **before a
+person reviews it** (#246, question 2), and B reports model-produced decisions
+at roughly 35% precision. A work item built from that event is a candidate, not
+a fact, and an unreviewed candidate on a channel post or in a morning briefing
+is the product being confidently wrong in public.
+
+@kjfcvx12's rule, adopted as written: **content from B leaves only by way of
+B's own review and outbound read path (`GET /reviews/{meeting_id}/outbound`).
+An unconfirmed item is L0, internal only.** It may sit in `agent_work_items`,
+appear on the run timeline and be shown to the person who opens the review
+screen. It may not be summarised into anything that leaves.
+
+This is #246/#247's gate, and the agent honours it by reading through it rather
+than around it.
+
+#### Rule 4 — how the agent learns that an item is confirmed: it asks B
+
+**Contracts stay unchanged, and this is how.** `Decision` carries no review
+state, and confirming or `PATCH`ing a decision publishes no event, so "the
+contracts are unchanged" needed a mechanism rather than an assertion —
+@kjfcvx12 was right to ask which of two it would be.
+
+The answer is the first one: **the agent calls B's read tool and reads the
+review state from the response.** No optional field on `Decision`, no
+`autune.extraction.reviewed` event. `packages/contracts` is frozen and
+additive-only after W1 (invariant 5), and a change there needs every affected
+owner's approval and a version bump — for a fact one read already returns. The
+cost is a call per run instead of a push, which the 15-call budget in section 9
+absorbs. If a later feature genuinely needs the push, that is an additive
+contract change with its own issue and its own approvals, not something this
+document decides in passing.
+
+#### Rule 5 — `key_stakeholders_absent` is never stored and never forwarded
+
+D holds "which stakeholders were absent from this decision" out of its read API
+deliberately: `DecisionVersionRead`'s docstring says so, #188 is the exposure
+it avoids, and it goes back in only after #156 puts authentication on
+`/api/context`. The value travels on exactly two paths — the `ContextLinks`
+event (`autune.context.completed`) and a decision-drift DM to the absent person
+themselves. Even D's own team-channel notice states a count and no names.
+
+The agent subscribes to `autune.context.completed` (section 5) and persists
+resume messages to `agent_runs` (section 8), so both of those paths lead
+somewhere this value must not go. **The agent does not store
+`key_stakeholders_absent` in any `agent_*` column, does not put it in a prompt,
+and does not put it in a briefing.** One person's record of which cross-meeting
+decisions they missed is theirs, exactly like a speaking ratio, and
+`assert_personal_delivery` is the existing mechanism for this shape: subject
+only, direct only, no administrator override. A drift warning the agent wants to
+raise goes out as D's DM, by rule 2.
+
+#### Rule 6 — L3 has no exception
+
+Unchanged, and stated here so the six read together.
 
 ### Plan mode — a plan is submitted before anything at L2 happens
 
@@ -495,9 +646,11 @@ module's Slack handler is still a TODO and #80 has not decided whether Slack
 is required at all, so a web approval page in `features/` is the path that
 does not wait on anyone.
 
-`L0-ext` is separated from `L0` deliberately. A web search built from meeting
-content *is* an outbound transfer, and invariant 11 does not distinguish
-between a transfer made to be helpful and any other.
+`L0-ext` is separated from `L0` deliberately. A prompt or a search query built
+from meeting content *is* an outbound transfer, and invariant 11 does not
+distinguish between a transfer made to be helpful and any other. What separating
+it buys is that the guard and the budget in rule 1 apply to a named row rather
+than to an intention.
 
 ## 9. The context budget
 
@@ -640,7 +793,11 @@ table is what was measured, not what worked.
 - **A per-module subagent for A, B, C, D and E.** Context isolation is the
   return contract; a loop in front of a single tool call is cost without
   benefit. Section 3.
-- **Web search in Research, for now.** Section 13.3.
+- **Open-web search in Research, for now.** Research reads uploaded material.
+  Section 13.3.
+- **The agent sending anything itself.** Outbound goes out through the module
+  that owns the content, section 8 rule 2.
+- **A classifier behind a third-party API.** Section 11.
 - **A charter that can grant anything.** It tightens only. Section 7.
 - **A framework.** A hand-written loop plus function calling, on the order of
   200 lines. A graph library makes this harder to debug and harder to explain,
@@ -677,13 +834,38 @@ blocked task.
 #207 and #227 are the same question asked twice — a module-neutral way to
 register a periodic task — and should be decided together.
 
-### 13.3 May meeting content leave the building? — #92
+### 13.3 Which outbound providers, on what terms — not #92, and not a blocker
 
-The Research agent searches the web and calls an LLM provider. Both are
-outbound transfers of content derived from a transcript. `privacy.md` and
-`packages/integrations/privacy.py` define the boundary; what may cross it, even
-masked, has not been decided. Until it is, Research runs against uploaded
-material only, never the open web.
+**The rule is decided; the vendor list is not.** `privacy.md` section 6 says
+what may cross the boundary — masked text, only what the feature needs — and
+`packages/integrations/privacy.py` enforces it for every destination including
+"any LLM API". Section 8 rule 1 applies that to the orchestrator's own LLM call
+and states the prompt budget. Nothing about the layer waits on a decision here,
+and an earlier draft of this document was wrong to say #92 blocks it: #92 asks
+about consent surviving a departure, label substitution under PIPA 제36조, the
+lawful basis for a retained transcript, voice embeddings under 제23조, and GDPR
+applicability. None of those is about an outbound transfer.
+
+What is actually undecided is narrower and is procurement rather than
+architecture: **which providers we send to, and under what agreement.** Two
+parts, and only the second holds anything back:
+
+- **The LLM provider.** Open, in the sense that a provider has to be named and
+  its data-processing terms recorded before the first real run — the same
+  question every third-party integration in `packages/integrations` answers.
+  See `../engineering/environments.md` for where a credential and its terms are
+  recorded. It does not block design or the first mock-tool milestone.
+- **Open-web search.** This one stays out of scope for the release. A search
+  query *is* the payload — there is no feature-scoped subset of it to send the
+  way there is for a prompt — and a general search engine is not a processor we
+  have terms with. So **Research reads uploaded material only**, which is enough
+  for the scenario in section 10 and asks nothing of anyone.
+
+One thing is worth restating rather than rediscovering: `privacy.md` section 2's
+masking scope does not include a person's name, so a name does reach every
+outbound surface we already have. That is pre-existing, applies equally to B's
+Notion sync and D's Slack notices, and is on #92's list of things to put to a
+reviewer. It is not a property of this layer and not a reason to hold it.
 
 ### 13.4 Where the charter lives, and who may edit it
 
