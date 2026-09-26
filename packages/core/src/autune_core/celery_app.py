@@ -14,6 +14,10 @@ includes the task modules, a **client** does not and sends by name.
 
 Routes live here and nowhere else. A module that copies them gets one wrong
 eventually, and then only its tasks quietly land on the wrong queue.
+
+The beat schedule is assembled here for the same reason: it is derived from the
+task registry (``periodic.py``), and this is the file that already owns what the
+worker knows and the client does not.
 """
 
 from __future__ import annotations
@@ -22,6 +26,7 @@ from celery import Celery
 
 from autune_contracts import MODULES
 
+from .periodic import beat_schedule
 from .settings import get_settings
 
 # A long task on `default` blocks Slack notifications; a short one on `gpu`
@@ -54,6 +59,12 @@ def make_celery_app(*, include_tasks: bool) -> Celery:
     thread-local, and a thread that never set one -- every FastAPI threadpool
     thread -- gets the *default* app. Without this line the import-time check
     sees Redis and the request handler sends to ``amqp://guest@localhost//``.
+
+    **The worker app also carries the beat schedule**, derived from the tasks
+    the modules registered (``periodic.py``). A client gets none: it imports no
+    task module, so it has nothing to derive one from, and beat is a separate
+    process built from the worker app anyway. See
+    docs/architecture/async-pipeline.md for the command.
     """
     settings = get_settings()
     app = Celery(
@@ -72,5 +83,15 @@ def make_celery_app(*, include_tasks: bool) -> Celery:
         enable_utc=True,
         task_routes=TASK_ROUTES,
     )
+    if include_tasks:
+        # `include=[...]` is imported at finalization, not at construction, so
+        # the registry is still empty on the line above and a scan here would
+        # find no periodic task at all. An empty `beat_schedule` raises nothing
+        # and reads exactly like "no module asked for one", so the failure would
+        # be a job that never runs and nothing saying so -- the whole reason
+        # this mechanism exists. Pinned by
+        # test_the_task_modules_are_imported_before_the_registry_is_scanned.
+        app.loader.import_default_modules()
+        app.conf.beat_schedule = beat_schedule(app)
     app.set_default()
     return app
