@@ -1,7 +1,7 @@
 # The agent layer
 
 > **Status: Proposed.** Nothing described here is built. The direction is under
-> discussion in issue #260 and the layer's location is ADR 0009, still
+> discussion in issue #260 and the layer's location is ADR 0010, still
 > `Proposed`. Read this as a design under review, not as how the system works.
 > Two questions in section 13 block the first line of code: where the layer
 > lives (13.1) and how a periodic trigger is registered (13.2). 13.3 and 13.4
@@ -56,7 +56,7 @@ permitted actions — and no new machine learning.
 
 - Each module gains one new file, `modules/<name>/src/autune_<name>/tools.py`,
   listing three to five callable tools. Nothing else in the module is touched.
-- A new layer, location pending ADR 0009, holds the orchestrator, the tool
+- A new layer, location pending ADR 0010, holds the orchestrator, the tool
   registry, the work-item store and the triggers.
 - Two new tables with an `agent_` prefix (section 5, and `data-model.md`).
 
@@ -186,7 +186,7 @@ does not make it more or less so.
 
 ### What each module's `tools.py` starts from
 
-**Each module's `tools.py` is its owner's file** (ADR 0009), so what follows is
+**Each module's `tools.py` is its owner's file** (ADR 0010), so what follows is
 what each module can already answer, not a list of names anyone else gets to
 fix. An earlier draft of this document asked for tools that do not exist; the
 owners of B, C and D corrected it on #261, and their corrections are what this
@@ -322,7 +322,7 @@ modules already publish (`autune.extraction.completed`, `autune.gap.completed`,
 `autune.context.completed`) and writes its own rows.
 
 The one file each module gains is its own `tools.py`, written by that module's
-owner (ADR 0009). "Not modified" means no change to a service, a table, a route
+owner (ADR 0010). "Not modified" means no change to a service, a table, a route
 or a contract; it does not mean the module contributes nothing. An earlier draft
 said "B, C, D and E are not modified" flatly, which read as though the tools
 appeared from nowhere.
@@ -892,7 +892,7 @@ person, with the partial trace kept in `agent_runs`.
 
 ## 13. Open questions — these block the work
 
-### 13.1 Where does the layer live? — ADR 0009
+### 13.1 Where does the layer live? — ADR 0010
 
 `packages/agent/` breaks the import-linter contract *Packages do not depend on
 modules*. `apps/agent/` breaks invariant 6, *apps is assembly only*. A new
@@ -972,4 +972,4 @@ the design's justification: nothing here is invented for the demo.
 | An execution trace | `agent_runs`, section 5 | Without observability there is no debugging and no trust |
 
 Related: `module-boundaries.md`, `async-pipeline.md`, `data-model.md`,
-`privacy.md`, `../decisions/0009-agent-layer-placement.md`, `../product/prd.md`.
+`privacy.md`, `../decisions/0010-agent-layer-placement.md`, `../product/prd.md`.

@@ -8,7 +8,7 @@ affect implementation decisions. Ask the product owner if you need them.
 > 11 and 14 below carry the proposed wording, marked `Proposed` where it differs
 > from what the team agreed in W1. Nothing in the agent layer is built. Modules
 > A–E, their contracts and their six-week scope are **unchanged** by the
-> proposal. Design: `../architecture/agent-layer.md`. Placement: ADR 0009.
+> proposal. Design: `../architecture/agent-layer.md`. Placement: ADR 0010.
 
 ---
 

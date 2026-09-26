@@ -1,4 +1,4 @@
-# 0009. The agent layer is a top-level peer of `modules/` and `apps/`
+# 0010. The agent layer is a top-level peer of `modules/` and `apps/`
 
 **Status:** Proposed
 **Date:** 2026-09-18
