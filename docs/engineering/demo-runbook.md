@@ -55,6 +55,21 @@ pnpm --filter @autune/web dev
 `autune_api.main:app`, not `apps.api.main:app`: the `apps/` directories are not
 importable names, the packages inside them are (#228).
 
+**No beat.** The demo needs no clock, and the one scheduled job there is today
+— module A's orphan sweep — also runs at the head of every `process_recording`,
+so a demo collects its own leftovers without one. If you do want it:
+
+```bash
+# 5 — beat, if you want the schedule. Exactly one, and never `worker -B`
+uv run celery -A autune_worker.celery_app beat -l info
+```
+
+One process, separate from the workers. `celery worker -B` embeds the clock in
+that worker instead, so the number of clocks becomes the number of workers you
+happen to have started — two workers, and every scheduled job runs twice.
+Celery's own documentation calls `-B` a development convenience for that reason.
+Beat writes `celerybeat-schedule` in the working directory.
+
 Expect from terminal 1 (console format under `AUTUNE_ENV=local`; JSON is the
 non-local renderer):
 

@@ -29,9 +29,11 @@ The uploaded recording exists only for the duration of transcription.
   every file in the temp directory against its job's status in the database
   and deletes the ones whose attempt is over or has been running longer than
   a job can (`service.sweep_orphans`). Never on mtime alone — that deletes a
-  file a late task is about to adopt. Today it runs at the start of every
-  transcription task, so an orphan waits for the next upload; a periodic
-  trigger is #207.
+  file a late task is about to adopt. It runs at the start of every
+  transcription task **and** hourly on beat
+  (`autune.audio.periodic.sweep_orphans`, #207): the first is the only trigger
+  that fires with no beat process running, the second the only one that fires
+  when uploads have stopped — which is when orphans are made.
 - Set `privacy.original_audio_deleted = true` in `TranscriptReady` only after
   the file is actually gone.
 
