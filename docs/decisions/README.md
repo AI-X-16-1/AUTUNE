@@ -57,5 +57,5 @@ Written in English, like every document here.
 | [0004](0004-pgvector-over-chroma.md) | Embeddings live in PostgreSQL, not a separate vector database | Accepted |
 | [0005](0005-no-graph-database.md) | No graph database — graphs are PostgreSQL rows | Accepted |
 | [0006](0006-extraction-quality-target-and-user-editing.md) | Extraction aims at the published ceiling, and the user finishes the list | Accepted |
-| [0007](0007-a-meeting-record-belongs-to-the-meeting.md) | A meeting record belongs to the meeting, not to its participants | Accepted |
+| [0007](0007-a-meeting-record-belongs-to-the-meeting.md) | A meeting record belongs to the meeting, not to its participants | Proposed — pending legal review (#92) |
 | [0008](0008-intel-schema.md) | Module E's `intel_` tables: natural keys, and `intel_reports` deletion is deferred | Accepted |

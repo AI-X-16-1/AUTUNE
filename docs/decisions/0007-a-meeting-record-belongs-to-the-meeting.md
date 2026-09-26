@@ -1,6 +1,8 @@
 # 0007. A meeting record belongs to the meeting, not to its participants
 
-**Status:** Accepted
+**Status:** Proposed — the team agrees; the legal review this ADR asks for
+(#92) has not happened yet, so nothing here is settled. See *Pending review*
+below.
 **Date:** 2026-09-09
 **Deciders:** needs the whole team — it narrows rule 4 of ADR 0003, and
 `../architecture/privacy.md` section 8 says a rule that blocks you is raised,
@@ -44,6 +46,26 @@ meeting.
 
 *Nobody on this team is a lawyer. The statute references below are the shape of
 the problem, not a legal opinion, and this ADR should not ship without review.*
+
+### Pending review
+
+That sentence is why the Status is `Proposed` and not `Accepted`, even though
+the team reviewed and approved this document. The questions it needs answered,
+and what changes for each possible answer, are written out in **#92**. Until
+they come back:
+
+- **Build against this ADR, but do not treat it as settled.** Where a choice
+  would be expensive to reverse if a question comes back "no", say so where the
+  code is, and point at #92.
+- **Q4 is live, not hypothetical.** It asks whether a speaker embedding is
+  생체인식정보 under 제23조 and whether collection needs its own consent. When
+  #92 was written, module A's speaker enrolment was still undecided. It has
+  since shipped (#6), so an answer of "separate consent is required" now has
+  built code behind it, not a future design. Module A's own state is in that
+  issue.
+- **Closing #92 is what flips this Status**, to `Accepted` or `Rejected`. If it
+  is rejected, this document stays and only the Status changes — the record that
+  the question was asked is worth as much as the answer.
 
 ## Decision
 
