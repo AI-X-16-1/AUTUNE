@@ -485,9 +485,11 @@ first action does.
 
 ### Six rules, and the L2 row is shorter than it was
 
-Two module owners asked for the same thing from opposite sides of the
-repository, and it turns out to be one rule with five consequences. Numbered,
-because a remark gets read once and a rule gets checked.
+Rule 1 is about the one transfer nobody counts as one. Rules 2 to 5 are all the
+same rule seen from four sides — **the module that owns the content owns what
+happens to it** — which the owners of B and D asked for independently, from
+opposite ends of the repository. Rule 6 is not new. They are numbered because a
+remark gets read once and a rule gets checked.
 
 #### Rule 1 — every outbound transfer, the orchestrator's own LLM call included, goes through `assert_masked` and a stated budget
 
@@ -522,13 +524,22 @@ and it is the one that bites:
 | Utterance text | **None, by default.** `evidence` is ids (section 4); text is fetched only when a step needs a specific quotation |
 | Quoted utterances, when a step needs them | 10, and only from the meeting the step is about |
 | Tool results | `summary` plus 5 `items` each, the return contract |
-| Whole prompt | `MAX_OUTBOUND_CHARS` (4,000) per `check_outbound` call, and refused past it |
+| Meeting-derived content in one prompt | `MAX_OUTBOUND_CHARS` (4,000), the constant `check_outbound` already enforces, and refused past it |
 
 **A transcript never enters a prompt.** A step that needs three action items
 sends three action items. This is a budget the loop enforces, not an
 aspiration: the return contract already makes it the default, because a tool
 hands back a summary and ids rather than rows of text, and `assert_within_size`
 already refuses the rest.
+
+The last row needs one clarification, because `MAX_OUTBOUND_CHARS` was written
+for a single Slack or Notion message — its docstring says "a single message, not
+a transcript". **The cap applies to the meeting-derived part of the prompt, not
+to the system prompt and charter**, which are our own text and carry nothing
+about a meeting. Whether 4,000 characters of content is the right ceiling for a
+multi-step run is the one number in this section that wants measuring against a
+real briefing before it is trusted; it is the existing constant until then,
+rather than a new one invented here.
 
 One pre-existing limit, stated so nobody reads the above as a promise it does
 not make: **a person's name is not in `privacy.md` section 2's masking scope.**
