@@ -179,17 +179,46 @@ does not make it more or less so.
 6. **Never raise for an expected failure.** `ok=False` with a reason, so the
    agent can read it and take another route. Reserve exceptions for bugs.
 
-### Two asks that are specific to a module
+### What each module's `tools.py` starts from
+
+Each row is the module owner's own account of what their module can already
+answer. An earlier draft asked for tools that do not exist; the owners of B, C
+and D corrected it on #261, and their corrections are what this table says.
+
+| Module | Tools | Note |
+| --- | --- | --- |
+| B | `list_action_items`, `read_classifications`, `read_review` | B's read API, nothing new |
+| C | `detect_gaps(checklist=…)`, `topic_graph`, `participation` | one argument added to `detect_gaps` |
+| D | `links_for_meeting`, `decision_thread`, `list_decisions` | wraps #185's read routes |
+| E | `quality_score`, `trend` | E's aggregate reads |
 
 - **C — `detect_gaps` takes a `checklist: list[str] | None`.** When given, the
   meeting is checked against it; when absent, the built-in domain template
   applies. The team charter (section 7) arrives through this argument, and it
-  is what lets gap detection be tuned by a person rather than retrained.
-- **D — search is two tools, not one.** `search_exact` (BM25) and
-  `search_semantic` (embeddings), exposed separately, because the agent has to
-  choose: a person's name or a decision id wants exact match, "that performance
-  discussion" wants meaning. One merged tool takes the choice away from the
-  only party that can make it.
+  is what lets gap detection be tuned by a person rather than retrained. This
+  is the one signature change the design asks any module for.
+- **D — search is not a tool.** An earlier draft asked for `search_exact`
+  (BM25) and `search_semantic` (embeddings) as two tools, on the reasoning that
+  the agent should choose between exact match and meaning. D does not work that
+  way. There is one `HybridRetriever`: KURE-v1 dense plus BM25 over
+  `kiwipiepy`, fused with RRF and then reranked and NLI-checked, so the BM25
+  half already catches a name or a Jira key and splitting it would take a
+  choice the retriever has already made better. D has no search route at all —
+  #185's read API is `GET /links/{meeting_id}`,
+  `POST /links/{link_id}/confirm`, `GET /decisions/{thread_id}` and
+  `GET /decisions`. And `visible_meeting_clauses` — same team, inside the
+  retention window, earlier than this meeting — is applied *inside* the
+  retriever, so exposing BM25 and dense separately would mean re-enforcing
+  visibility in two more places. D's tools are reads over the links D's
+  pipeline already computed. Free-text search over D's corpus is D's design
+  decision and belongs in its own issue, not here.
+- **B — `classify_utterances` is a read, not a call into the pipeline.**
+  Classifying a 45-minute meeting is about two minutes of CPU (#112), well past
+  the thirty-second budget below, and `service.classify_utterances` is an
+  internal pipeline step that takes the consent filter as a required argument.
+  The tool reads the rows the pipeline already wrote to `ext_classifications`.
+  `verify_agreement` was in an earlier draft of this document and does not
+  exist anywhere in the repository; it is dropped rather than commissioned.
 
 ## 5. State — the two tables that make it proactive
 
@@ -479,11 +508,17 @@ they are a decision and not a discovery.
 | What | Cap | Order |
 | --- | --- | --- |
 | Open work items loaded per run | 30 | deadline soonest, then escalation highest, then most recent signal |
-| Past meetings | 3 | chosen by D's search tools, not by recency |
+| Past meetings | 3 | D's stored links for this meeting, ranked by D, not by recency |
 | Each tool result | `summary` + 5 `items` | the return contract, section 4 |
 | Tool calls per run | 15 | past it, stop and hand over with the partial trace kept |
 | Tokens per run | a ceiling, then observed in `agent_runs.token_cost` | cost has to be predictable before it can be reduced |
 | Wall clock per run | 2 minutes | |
+
+**The agent does not choose the three past meetings by searching.** Cross-meeting
+links are computed at pipeline time and stored in D's tables; `links_for_meeting`
+reads them and the agent takes the top three D ranked. An earlier draft said
+"chosen by D's search tools", which assumed a search route D does not have
+(section 4).
 
 When a cap is hit the run stops and says so. It does not summarise its way
 past the cap, because a summary of a truncated context is a confident answer
@@ -493,18 +528,44 @@ to a question that was not fully read.
 
 This is the part of the design worth defending, and it is not a caveat.
 
-Module B's classifier scores macro F1 0.225 on a real meeting distribution
-(#149) and catches 17% of ambiguous agreements (#115). Module C's pipeline
-does not yet produce a value at all. An agent built on the assumption that its
-tools are right would be confidently wrong several times per meeting.
+Module B's classifier scores five-way macro F1 0.225 on English AMI at the
+meeting's real distribution, with 1,888 false labels per 2,400 utterances
+(#149), and catches 17% of ambiguous agreements (#115). **That is an AMI number
+and not a Korean one.** There is no agreed Korean evaluation set yet (#10) and
+`AUTUNE_EXTRACTION_CLASSIFIER_CHECKPOINT` stays blank until one exists, so no
+Korean figure can be quoted here — an earlier draft of this document read 0.225
+as "a real meeting distribution" as though it were ours.
 
-So the loop treats `confidence` as a first-class input:
+Module C's **risk-scoring step (`gaps`) doesn't produce a value yet — topic
+graph and participation already do** (#249 relation extraction is in review;
+risk scoring is blocked on #22). An earlier draft said C's pipeline produces
+nothing at all, which is not true: `tasks.py` calls `build_topic_graph()` then
+`detect_gaps()` then `publish_report()`, writes four tables and publishes
+`gap.completed`. Only `GapReport.gaps` comes back empty. This matters beyond
+accuracy, because `prd.md` section 5.7's morning briefing names C as a data
+source and the two statements have to describe the same module.
 
-- `confidence >= 0.5` — act within the permitted level.
-- `confidence < 0.5` — **do not act. Ask a person**, quoting the evidence, and
+An agent built on the assumption that its tools are right would be confidently
+wrong several times per meeting. So the loop treats confidence as a first-class
+input:
+
+- **The gate reads the owning module's own confidence and review state. It does
+  not invent a constant.** For an item from B that is `candidate_confidence`
+  — a config value B deliberately leaves unset (`None`) because nothing has
+  measured one (#10) — together with whether the item has been reviewed. An
+  earlier draft of this document wrote `confidence >= 0.5`, which is a number
+  nobody measured; B's `confidence` is an uncalibrated softmax maximum, not the
+  margin over the runner-up, so a threshold on it does not mean what a reader
+  would assume it means. While B's threshold is unset, nothing from B is
+  asserted and everything from B is a candidate, which the next rule already
+  handles.
+- **Under the gate: do not act. Ask a person**, quoting the evidence, and
   record the answer on the work item.
 - A tool returning `ok=False` is a fact to route around, not an error to retry
   blindly.
+
+`agent_work_items.confidence` therefore stores what the module reported, with
+the module and the field it came from, and never a value the layer computed.
 
 The honest version of this product is not one that hides a weak extractor
 behind a confident assistant. It is one that knows which of its own senses to
@@ -517,17 +578,17 @@ The scenario an earlier draft led with — an ambiguous agreement ("that
 performance is probably fine") caught after the meeting, researched, and put
 to the owner as a choice — stood on the two weakest points in the repository:
 the ambiguous-agreement classifier catches 17% (#115), and C's risk scoring
-does not exist. The morning briefing was recommended instead because E's
+does not exist yet. The morning briefing was recommended instead because E's
 aggregation and D's read API actually work.
 
 The charter changes that arithmetic. "A performance requirement is a number"
 is a checklist line, and checking a transcript against a checklist line is a
-prompt over masked utterances, not a topic graph with PageRank on it. It does
-not need `verify_agreement` and it does not need C's pipeline — it needs
-`detect_gaps(checklist=…)` to accept the argument and, until C's real
-implementation lands behind it, an LLM to answer the question. That is the
-"T2" track of section 11 doing real work, and it is the first thing in this
-design that lets the flagship scenario run against a real meeting in W4.
+prompt over masked utterances, not a topic graph with PageRank on it. It needs
+`detect_gaps(checklist=…)` to accept the argument and, until C's risk scoring
+lands behind it, a model to answer the question. That is the "T2" track of
+section 11 doing real work — on our own inference server, per the constraint
+stated there — and it is the first thing in this design that lets the flagship
+scenario run against a real meeting in W4.
 
 So the recommendation is now: **both scenarios, in this order.** The morning
 briefing first, because it runs on modules that exist and it demonstrates the
@@ -541,18 +602,30 @@ first.
 Tools are swappable behind one interface, so the same evaluation set can be
 run through more than one implementation of the same tool.
 
-| Track | The tool behind `classify_utterances` | Measured |
+| Track | The model behind utterance classification | Measured |
 | --- | --- | --- |
 | T1 | Module B's classifier (DeBERTa) | macro F1, latency, cost |
 | T2 | An LLM with a prompt | same |
-| T3 | B's classifier as a first pass, LLM on the uncertain band | same |
+| T3 | B's classifier as a first pass, an LLM on the uncertain band | same |
 
-**One task, not three.** Utterance classification has a measured baseline
-(#149, macro F1 0.225 on a real distribution) and an evaluation set. Gap
-detection has neither — there is no implementation to measure and no labelled
-gaps. Topic linking has D's `context/eval-harness` branch and is the second
-task when that harness merges. Writing a three-by-three table before two of
-its rows can be filled is a promise the numbers may not keep.
+**T2 and T3 run in process or on our own inference server. A third-party API is
+not one of the options.** Feeding a meeting's utterances to a classifier means
+feeding *all* of them, which fails `privacy.md` section 6's second condition —
+only what the feature needs — no matter how well the first one is met. Module B
+already closed this door on purpose: `pipeline/base.py` states that no
+implementation there sends an utterance to a third party and that adding an
+`external` option "would be a privacy decision rather than a config string", and
+`pipeline/registry.py` lists `local`, `hosted` and `fake` with the same note.
+This experiment does not reopen it. `hosted` — our own server — is what T2 and
+T3 mean.
+
+**One task, not three.** Utterance classification has a measured baseline (#149)
+and an evaluation set. Gap detection has neither — no risk-scoring implementation
+to measure and no labelled gaps. Topic linking is the second task and is
+**ready now**: D's harness merged to `main` with #240 (`e15ded1`), carrying both
+the `topic_linking_v1` and `decision_lineage` evaluation sets, so an earlier
+draft's "when that harness merges" is stale. Writing a three-by-three table
+before its rows can be filled is a promise the numbers may not keep.
 
 The second experiment is cheaper and more telling: **the same gap check with
 and without the charter.** If a paragraph a team wrote moves the F1 of gap
@@ -629,7 +702,7 @@ the design's justification: nothing here is invented for the demo.
 | In a coding agent | Here | Why it transfers |
 | --- | --- | --- |
 | A `while` loop and function calling | The orchestrator, section 3 | There is no planner module; the model reads a result and decides the next call |
-| `grep` and `read`, not an index | `search_exact` and `search_semantic`, section 4 | Some questions want exact match and the agent has to be able to choose |
+| `grep` and `read`, not an index | A module's own reads, exposed one per question, section 4 | A tool per question the module can already answer beats one tool with a mode flag |
 | A rules file at the project root | The team charter, section 7 | The cheapest way to change behaviour without training |
 | Reading intent (issues, docs) against reality (code, tests) | Charter against transcript = gap detection | "What should happen next" is the difference between the two |
 | Subagents for context isolation | The return contract, section 4 | The point is protecting the parent's context, not dividing labour |
