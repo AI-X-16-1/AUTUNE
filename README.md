@@ -33,7 +33,7 @@
 | ------- | ------------------------------------------------------------------------------------------------- |
 | 회의 전 | 자료 분석 → 어젠다 초안 → 프리미팅 브리프 _(Phase 2)_                                             |
 | 회의 중 | 실시간 전사 + 화자 분리 + 중간 요약                                                               |
-| 회의 후 | 액션아이템 추출·추적, 갭 탐지, 과거 회의 맥락 연결, 개인 발언 비중 피드백, Slack·Notion·Jira 전송 |
+| 회의 후 | 액션아이템 추출·추적, 갭 탐지, 과거 회의 맥락 연결, 개인 발언 비중 피드백, Slack·Notion 전송 |
 | 축적 후 | 결정 계보 추적, 팀 커뮤니케이션 대시보드, 미스얼라인먼트 예측                                     |
 
 **핵심 차별점:** 회의가 쌓일수록 맥락 연결·갭 패턴·예측 정확도가 올라가는
@@ -64,12 +64,12 @@
 | 모듈                   | 하는 일                                                                 | 핵심 AI                              | 담당   |
 | ---------------------- | ----------------------------------------------------------------------- | ------------------------------------ | ------ |
 | **A. Audio Pipeline**  | 녹음 → 화자별 전사 → 개인정보 마스킹 → 원본 삭제                        | Whisper, Pyannote, Speaker Embedding | 김민경 |
-| **B. 구조화 추출**     | 발화 5종 분류 → 액션아이템 카드 → 모호 동의 NLI 검증 → Notion·Jira 연동 | DeBERTa 분류기, NLI                  | 강민구 |
+| **B. 구조화 추출**     | 발화 5종 분류 → 액션아이템 카드 → 모호 동의 NLI 검증 → Notion 연동 | DeBERTa 분류기, NLI                  | 강민구 |
 | **C. 갭 탐지**         | 토픽 그래프 → 참여도 매트릭스 → 템플릿 대조 → 리스크 스코어링           | spaCy NER, NetworkX, Graph Centrality | 박재경 |
 | **D. 회의 맥락 엔진**  | 과거 회의 토픽 연결 → 결정 계보 추적 → 어젠다·브리프 생성               | Sentence-BERT, BM25, Cross-encoder   | 문민재 |
 | **E. 회의 인텔리전스** | 품질 점수 → 갭 분류 → 예측 → 히트맵 → 주간 리포트                       | SetFit, XGBoost, Prophet             | 이승환 |
 
-A가 만든 전사 결과를 B·C·D가 **병렬로** 소비하고, 각자 Slack·Notion·Jira로 결과를
+A가 만든 전사 결과를 B·C·D가 **병렬로** 소비하고, 각자 Slack·Notion으로 결과를
 내보냅니다. 세 모듈이 남긴 이벤트 로그를 E가 집계해 대시보드와 주간 리포트를 만듭니다.
 
 ```
@@ -94,7 +94,7 @@ A가 만든 전사 결과를 B·C·D가 **병렬로** 소비하고, 각자 Slack
     │ 추출      │      │          │      │ 엔진      │
     └────┬─────┘      └────┬─────┘      └────┬─────┘
          │                 │                 │
-         ├→ Notion/Jira    │                 │
+         ├→ Notion         │                 │
          ├→ Slack          ├→ Slack          ├→ Slack
          │                 │                 │
          └─────────────────┼─────────────────┘
@@ -121,7 +121,7 @@ A가 만든 전사 결과를 B·C·D가 **병렬로** 소비하고, 각자 Slack
 | Frontend    | Next.js + Tailwind (Node 22)                                                    |
 | Database    | PostgreSQL + pgvector — 구조화 데이터, 임베딩 검색, 토픽 그래프, 결정 계보를 모두 담습니다 |
 | 패키지 관리 | uv workspace (Python), pnpm workspace (JS)                                      |
-| 연동        | Slack Bolt, Notion API, Jira REST API, Google Calendar API                      |
+| 연동        | Slack Bolt, Notion API, Google Calendar API                      |
 
 ## 저장소 구조
 
@@ -133,7 +133,7 @@ autune/
 ├── packages/          # 공유 — 모두가 의존, 자주 안 바뀜 (전원 합의)
 │   ├── contracts/     #   모듈 간 데이터 계약 (Pydantic → TS 타입 생성)
 │   ├── core/          #   DB 세션, 설정, 인증, 로깅, 공통 엔티티
-│   └── integrations/  #   Notion / Jira / Calendar / Slack 래퍼
+│   └── integrations/  #   Notion / Calendar / Slack 래퍼
 │
 ├── modules/           # 소유 — 각자 자기 것만 만짐 (1인 1모듈)
 │   ├── audio/         #   A
@@ -176,14 +176,17 @@ pnpm install
 uv run alembic -c infra/alembic.ini upgrade heads
 
 # 실행
-uv run uvicorn apps.api.main:app --reload                              # API :8000
-uv run celery -A apps.worker.celery_app worker -Q default,cpu_heavy    # 워커
+uv run uvicorn autune_api.main:app --reload                           # API :8000
+uv run celery -A autune_worker.celery_app worker -Q default,cpu_heavy,gpu    # 워커
 pnpm --filter @autune/web dev                                          # 웹 :3000
 ```
 
 `--all-packages`는 생략하면 안 됩니다. 워크스페이스 루트는 가상 패키지라
 (`package = false`) 그냥 `uv sync`만 하면 개발 도구만 깔리고 `autune_core`
 import이 바로 실패합니다.
+
+Windows에서는 Celery 기본 `prefork` 풀이 `billiard`/Windows 핸들 문제로 자식
+프로세스를 계속 죽입니다. 워커 명령 뒤에 `--pool=solo`를 붙이세요.
 
 자기 모듈만 작업한다면 `uv sync --package autune-gap`으로 해당 모듈 의존성만
 설치할 수 있습니다 (A의 수 GB짜리 ML 휠을 안 받아도 됩니다). 단 이 경우 다른
@@ -239,7 +242,7 @@ import이 바로 실패합니다.
 | ---- | ---------------------------------------------------- | -------------------- |
 | W1   | 공통 인프라(2일) + 개인 PoC(3일)                     | 각 모듈 PoC 동작     |
 | W2   | AI 파이프라인 + API 서빙. **A 최우선 완성**          | API로 각 모듈 동작   |
-| W3   | 모듈 간 연결 + 프론트 착수. Notion/Jira 연동         | 녹음→파이프라인 관통 |
+| W3   | 모듈 간 연결 + 프론트 착수. Notion 연동         | 녹음→파이프라인 관통 |
 | W4   | 핵심 UI (실시간 전사, 액션 보드, 갭 리포트, 맥락 뷰) | 비개발자 사용 가능   |
 | W5   | 대시보드 + 내부 베타 (실제 회의 5~10개)              | 실제 회의 E2E 검증   |
 | W6   | 버그 수정, 성능, 랜딩 페이지, 데모 영상              | 배포 가능 MVP        |

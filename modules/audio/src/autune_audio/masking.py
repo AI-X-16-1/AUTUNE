@@ -38,7 +38,15 @@ from autune_integrations.privacy import MASK_CHAR, find_pii
 
 # Kept inside a numeric span so the value still reads as a phone number or an
 # account. Everything else is content, whoever found the span.
-_SHAPE_CHARS = "-. +"
+#
+# The set follows `privacy._SEP`, and has to: a separator the patterns accept
+# but this masks stops being layout and turns into damage -- `(02)123-4567`
+# came out `(******-4567` with its parenthesis never closed, and `010–1234–5678`
+# lost both dashes. So: the ASCII four, the typographic dashes and the closing
+# parenthesis #211 added, and the two non-ASCII horizontal spaces (no-break,
+# ideographic) that `[^\S\r\n]` matches. Not `(`: a span starts at its first
+# digit, so the opening parenthesis is never inside one.
+_SHAPE_CHARS = "-. +\u2013\u2014)\u00a0\u3000"
 
 # The categories `find_pii` produces from a digit shape, and the only ones with
 # a layout worth preserving. Anything else came from the recogniser and is
@@ -213,9 +221,22 @@ def _digits_to_keep(category: str, digits: list[str]) -> set[int]:
 
 def _hide(value: str, category: str, *, merged: bool = False) -> str:
     """Keep the shape a reader needs, remove the part they must not have."""
-    if merged:
+    if merged and category in _NUMERIC_CATEGORIES:
         # See _resolve_overlaps: a merged span's digit positions no longer line
-        # up with any one value's layout.
+        # up with any one value's layout, so nothing is kept for its position.
+        # Separators still are, for the two reasons the mixed-script branch
+        # below keeps them: the line has to go on reading as a number having
+        # been said, and `autune_audio.eval` scores masked against unmasked text
+        # token by token, which a span that swallows its own spaces cannot take
+        # part in.
+        #
+        # This used to keep `value[:1]`, which left the first digit of a
+        # run-together value standing — raised in #125 review as minor, and one
+        # digit less minor than it looked.
+        return "".join(char if char in _SHAPE_CHARS else MASK_CHAR for char in value)
+    if merged:
+        # A merged span the recogniser led: a name running into an address, and
+        # the first character stays the way a Korean document redacts a name.
         return value[:1] + MASK_CHAR * (len(value) - 1)
     if category == "email":
         # The first character and the domain: enough to tell two people apart in
@@ -234,6 +255,22 @@ def _hide(value: str, category: str, *, merged: bool = False) -> str:
         # the digits sent it down the numeric path, where every Korean character
         # in it passed through untouched.
         return value[:1] + MASK_CHAR * (len(value) - 1)
+
+    if any(not char.isdigit() and char not in _SHAPE_CHARS for char in value):
+        # Written in two scripts, so there is no digit layout to preserve.
+        #
+        # `_digits_to_keep` counts the characters that are digits, and in a
+        # mixed span those are only the half already written as digits. On
+        # `010-1234 오육칠팔` it counted seven and the phone rule keeps a mobile
+        # prefix and the last four -- which is all seven. Every digit stayed:
+        #
+        #     010-1234 오육칠팔  ->  010-1234 ****
+        #
+        # Keeping "the last four" is also unachievable here when those four are
+        # syllables: leaving them is leaving the number spelled out. So a mixed
+        # span is hidden whole, for the same reason a merged one is -- the
+        # positions the rules count no longer mean what the rules assume.
+        return "".join(char if char in _SHAPE_CHARS else MASK_CHAR for char in value)
 
     digits = [c for c in value if c.isdigit()]
     keep = _digits_to_keep(category, digits)

@@ -13,9 +13,25 @@ Product-level rationale: `../product/prd.md` section 6.
 The uploaded recording exists only for the duration of transcription.
 
 **Required:**
-- Write the upload to a temp path scoped to the task.
+- Write the upload to a temp path **owned by exactly one party at a time**.
+  The upload request owns it until the task is queued and deletes it if that
+  fails (`storage.handover`); the task owns it from the moment it starts and
+  deletes it in a `finally` (`storage.adopt`). A recording with two owners is
+  deleted twice; one with none is never deleted, and that is the durable copy
+  this rule exists to prevent.
 - Delete it in a `finally` block, so it is removed on success, on exception, and
   on cancellation.
+- Hand the file across processes **by job id, not by path**: the endpoint names
+  the file after the job (`{job_id}.upload`) and the worker derives the path
+  from the id it was queued with (`storage.upload_path`). The two ends never
+  exchange a path.
+- Collect orphans. A task can be lost after the enqueue; a sweep compares
+  every file in the temp directory against its job's status in the database
+  and deletes the ones whose attempt is over or has been running longer than
+  a job can (`service.sweep_orphans`). Never on mtime alone — that deletes a
+  file a late task is about to adopt. Today it runs at the start of every
+  transcription task, so an orphan waits for the next upload; a periodic
+  trigger is #207.
 - Set `privacy.original_audio_deleted = true` in `TranscriptReady` only after
   the file is actually gone.
 
@@ -24,10 +40,16 @@ The uploaded recording exists only for the duration of transcription.
   column — including "temporarily, for debugging".
 - Logging the file path in a way that survives the task, or attaching the audio
   to an error report.
-- Passing a path to raw audio in a Celery payload. If a second task needs the
-  audio, it belongs in the same task.
+- Passing a path to raw audio in a Celery payload. Celery writes task arguments
+  to the broker and to its own failure output; a path there is a path in a
+  store. If a second task needs the audio, it belongs in the same task.
 - Keeping a copy for model retraining. Training data collection is a separate
   product decision with its own consent flow, and it does not exist yet.
+
+The wording above is decision #275. The original text said "scoped to the
+task", which did not describe the upload → worker handover at all: the API and
+the worker are different processes, and a file scoped to the request is one the
+worker never receives.
 
 Downstream modules must fail loudly if `original_audio_deleted` is not `true` —
 that flag being false means the pipeline is broken.
@@ -57,7 +79,7 @@ incident. Target recall is 0.95+ for the MVP and 0.99+ at three months.
 - Logging transcript text at any level, including `DEBUG`. Log utterance IDs.
 - Including transcript text in exception messages — an exception string ends up
   in error tracking, which is an external service.
-- Sending unmasked text to Slack, Notion, Jira, or any LLM API.
+- Sending unmasked text to Slack, Notion, or any LLM API.
 
 **User-reported misses** delete the affected utterance immediately. There is no
 review queue: report, delete, then improve the detector.
@@ -88,13 +110,44 @@ constraint, not a configurable option.
 Module E's aggregate metrics — quality score, alignment heatmap, gap
 distribution — are team-level and contain no per-person speech volume.
 
+**Stance is the same kind of data.** Who backed a decision and who raised a
+concern about it is a per-person record of behaviour in a meeting; visible to a
+manager, it answers "who pushed back", which is the same surveillance shape as
+speaking ratio. So:
+
+- No contract, table, endpoint, dashboard, report or export carries one person's
+  stance on a decision — not by participant id, not by user id, not by name.
+- Stance crosses a module boundary only as counts per role
+  (`Decision.stance_by_role`, added in #232), and a role is included only when
+  at least **three** identified people held it at the meeting **and its stance
+  is not unanimous**. In a small team a role is a person. A role in which
+  everyone supported, or everyone raised a concern, says what each person did,
+  so it is left out: `supporting` and `concerns` are each below `identified`,
+  and together at most `identified`. A count of zero is allowed (#232). The
+  contract enforces all of this (`RoleStance`,
+  `STANCE_MIN_IDENTIFIED_PER_ROLE`); do not re-derive a lower number or a
+  looser rule downstream.
+- A consumer that aggregates stance over several meetings leaves a cell empty
+  when its sample is too small, rather than showing a number that identifies the
+  few people behind it.
+
+Three is the same number module E already requires before it delivers speaking
+ratios for a meeting (`_MIN_SPEAKERS_FOR_RATIO`, #128). Decided on #168.
+
 ## 4. Retention and deletion
 
 - Analysis results are retained **90 days** by default, adjustable per team.
 - A scheduled sweep deletes expired results.
-- A user can delete their own data at any time.
+- A user can delete their own data at any time. **The scope of "their own data"
+  is under review — see ADR 0007, decision 5**, which would keep action items,
+  decisions and lineage derived from a person's speech after that person's
+  utterances are deleted. Until that ADR is accepted or rejected, "their own
+  data" includes everything derived from their speech.
 - When a user leaves a team, their utterances and everything derived from them
-  are deleted.
+  are deleted. **This rule is under review — see ADR 0007**, which argues the
+  record belongs to the meeting rather than to its participants, and that
+  leaving is an access change rather than a data change. Until that ADR is
+  accepted or rejected, this line is what the code follows.
 
 **Required of every module:**
 - Every module-owned table is reachable from a `meeting_id` or a `user_id`.
@@ -116,7 +169,7 @@ deleted is part of shipping a table, not an extra.
 
 ## 6. Third-party services
 
-Anything leaving our infrastructure — LLM APIs, Slack, Notion, Jira, Google
+Anything leaving our infrastructure — LLM APIs, Slack, Notion, Google
 Calendar, error tracking, analytics — carries masked text only, and only what
 the feature needs.
 
@@ -136,6 +189,9 @@ Reject a pull request that does any of the following:
 - [ ] Puts transcript text in an exception message
 - [ ] Returns another person's speaking ratio through any surface
 - [ ] Stores per-person speaking ratios
+- [ ] Records, returns or exports one person's stance on a decision, or reports
+      stance for a role below three identified people, or reports a unanimous
+      role
 - [ ] Adds a table with no path to deletion by `meeting_id` or `user_id`
 - [ ] Uses a soft delete for content
 - [ ] Sends more data to a third party than the feature requires

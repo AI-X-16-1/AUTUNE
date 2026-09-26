@@ -11,7 +11,7 @@ from __future__ import annotations
 from datetime import date
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Query, status
 from sqlalchemy.orm import Session
 
 from autune_contracts.enums import ActionStatus
@@ -19,9 +19,19 @@ from autune_contracts.extraction import ExtractionResult
 from autune_core import Meeting, get_session
 from autune_core.errors import NotFoundError
 
-from . import service
-from .models import ExtActionItem
-from .schemas import ActionItemCreate, ActionItemDetail, ActionItemRead, ActionItemUpdate
+from . import service, tasks
+from .models import ExtActionItem, ExtDecision, ExtDecisionReview
+from .schemas import (
+    ActionItemCreate,
+    ActionItemDetail,
+    ActionItemRead,
+    ActionItemUpdate,
+    DecisionCreate,
+    DecisionReviewUpdate,
+    MeetingReview,
+    Outbound,
+    ReviewDecision,
+)
 
 router = APIRouter()
 
@@ -97,22 +107,36 @@ def create_action_item(payload: ActionItemCreate, session: SessionDep) -> Action
     # used to fail here after the item was already saved: the client got a 500
     # for a write that had happened, and a retry made a second item. Failing
     # first lets ``get_session`` roll it back.
-    response = service.read_model(item)
+    names = service.assignee_names(session, [item])
+    name = names.get(item.assignee_id) if item.assignee_id else None
+    response = service.read_model(item, assignee_name=name)
     session.commit()
     return response
 
 
 @router.patch("/action-items/{action_item_id}", response_model=ActionItemRead)
 def update_action_item(
-    action_item_id: str, payload: ActionItemUpdate, session: SessionDep
+    action_item_id: str,
+    payload: ActionItemUpdate,
+    session: SessionDep,
+    background: BackgroundTasks,
 ) -> ActionItemRead:
-    """Edit or close an item."""
-    item = service.update_action_item(session, _load(session, action_item_id), payload)
+    """Edit or close an item. Confirming it queues its Notion page (#30)."""
+    item = _load(session, action_item_id)
+    previous_status = item.status
+    item = service.update_action_item(session, item, payload)
     # Before the commit, for the reason ``create_action_item`` gives: an edit
     # answered with a 500 must not also have been saved, or it counts twice
     # in edit cost when the client retries.
-    response = service.read_model(item)
+    names = service.assignee_names(session, [item])
+    name = names.get(item.assignee_id) if item.assignee_id else None
+    response = service.read_model(item, assignee_name=name)
     session.commit()
+    # After the response, so the sync reads the committed row and the board is
+    # not held on Notion. Only the edit that confirms starts one; the sync
+    # itself sends a page once.
+    if service.became_confirmed(previous_status, item):
+        background.add_task(tasks.sync_after_confirmation, item.id)
     return response
 
 
@@ -125,4 +149,72 @@ def delete_action_item(action_item_id: str, session: SessionDep) -> None:
     keeping what was deleted.
     """
     service.delete_action_item(session, _load(session, action_item_id))
+    session.commit()
+
+
+def _meeting(session: Session, meeting_id: str) -> None:
+    if session.get(Meeting, meeting_id) is None:
+        raise NotFoundError("meeting", meeting_id)
+
+
+@router.get("/reviews/{meeting_id}", response_model=MeetingReview)
+def get_review(meeting_id: str, session: SessionDep) -> MeetingReview:
+    """What needs a person in this meeting before anything is sent (S15, #246)."""
+    _meeting(session, meeting_id)
+    return service.review_for_meeting(session, meeting_id)
+
+
+@router.patch("/decisions/{decision_id}", response_model=ReviewDecision)
+def review_decision(
+    decision_id: str,
+    payload: DecisionReviewUpdate,
+    session: SessionDep,
+    background: BackgroundTasks,
+) -> ReviewDecision:
+    """Confirm, reject or reword a proposed decision, or put it back to pending.
+
+    Confirming it sends its Notion page once, after the response (#30)."""
+    decision = session.get(ExtDecision, decision_id)
+    if decision is None:
+        raise NotFoundError("decision", decision_id)
+    review = session.get(ExtDecisionReview, decision_id)
+    previous_status = review.status if review is not None else None
+    # Built before the commit, for the reason ``create_action_item`` gives.
+    response = service.review_decision(session, decision, payload)
+    session.commit()
+    if service.decision_became_confirmed(previous_status, response.status):
+        background.add_task(tasks.sync_decision_after_confirmation, decision_id)
+    return response
+
+
+@router.get("/reviews/{meeting_id}/outbound", response_model=Outbound)
+def get_outbound(meeting_id: str, session: SessionDep) -> Outbound:
+    """Exactly what confirm-and-send would send: confirmed decisions and accepted items."""
+    _meeting(session, meeting_id)
+    return service.outbound_for_meeting(session, meeting_id)
+
+
+@router.post("/decisions", response_model=ReviewDecision, status_code=status.HTTP_201_CREATED)
+def create_decision(
+    payload: DecisionCreate, session: SessionDep, background: BackgroundTasks
+) -> ReviewDecision:
+    """Add a decision the model missed. It is confirmed and survives a rerun, so
+    its Notion page goes out as for any confirmed decision."""
+    response = service.create_decision(session, payload)
+    session.commit()
+    background.add_task(tasks.sync_decision_after_confirmation, response.id)
+    return response
+
+
+@router.delete("/decisions/{decision_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_decision(decision_id: str, session: SessionDep) -> None:
+    """Delete a decision a person added; reject one the model proposed.
+
+    The model's would come back on the next run, so rejecting is what keeps it
+    gone. See ``service.delete_decision``.
+    """
+    decision = session.get(ExtDecision, decision_id)
+    if decision is None:
+        raise NotFoundError("decision", decision_id)
+    service.delete_decision(session, decision)
     session.commit()

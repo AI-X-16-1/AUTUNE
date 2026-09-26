@@ -1,7 +1,7 @@
 """The outbound privacy boundary.
 
 Everything here runs on data about to leave our infrastructure — Slack, Notion,
-Jira, Google Calendar, any LLM API. This is the one place to enforce the rules
+Google Calendar, any LLM API. This is the one place to enforce the rules
 in docs/architecture/privacy.md, instead of trusting five modules to each
 remember them.
 
@@ -54,7 +54,65 @@ _R: Final = rf"(?![{_EDGE}])"
 # Speech, not writing. The same number arrives spaced, hyphenated or run
 # together depending on the sentence around it, and the shape not accepted is
 # the one that leaks.
-_SEP: Final = r"[-.\s]?"
+#
+# One separator character was too few (#162). A transcript writes `010 - 1234 -
+# 5678` with spaces around the hyphen, an editor turns the hyphen into an en
+# dash, and a landline arrives as `(02)123-4567`; none of those matched at all,
+# so a phone number, a registration number and a card number each passed the
+# guard in an ordinary written form. Horizontal space only -- `\s` would let a
+# match run across a line break and join two unrelated numbers.
+#
+# "Horizontal space" is `[^\S\r\n]` -- everything `\s` matches except a line
+# break -- and not `[ \t]`. The narrower class was a regression this change
+# itself introduced: a no-break space (U+00A0, what Word, HWP and Notion put
+# between number groups) and an ideographic space (U+3000, what a Korean IME
+# emits) matched neither, and `02 123 4567` with NBSPs passed the guard whole
+# -- nine digits, too short for `account` to catch as a fallback. Narrower
+# than `main` on the thing this file exists for.
+#
+# The shape of the expression matters as much as its characters. Written as
+# `{_HSPACE}*[-.–—)]?{_HSPACE}*`, the two space runs share the same spaces when there
+# is no separator between them, and the engine tries every split of a run of n
+# spaces before giving up: quadratic per start position, between a third of a
+# second and a second for a digit followed by ten thousand spaces, which is
+# what Whisper emits on a silent stretch, and per pattern. The second run is
+# allowed only *after* a separator, so a run of spaces has one parse.
+#
+# `)` alone, not `()`: in domestic notation an opening parenthesis stands
+# before a number (`(02)123-4567` starts matching at the `0`), never between
+# its groups, and a character in this class is one more thing that can join
+# two groups. International notation does put one between groups --
+# `+82 (10) 1234-5678` -- and that form is not caught; it is pinned as a known
+# miss rather than widened here, because `(` between groups is also what
+# `(1) 2024-2025` looks like.
+_HSPACE: Final = r"[^\S\r\n]"
+_SEP: Final = rf"{_HSPACE}*(?:[-.–—)]{_HSPACE}*)?"
+
+# The card pattern alone may cross a line break. Four groups of four is a
+# shape nothing else in a transcript has, and a card number read aloud
+# arrives from Whisper with the groups on separate lines often enough that
+# `main` matched it that way. Keeping `_SEP` here would have left the last
+# eight digits in the clear instead of four -- the `account` fallback takes
+# three groups and keeps its tail, and the fourth group falls outside every
+# span (@PARKJAEKYUNG0525 on #211). The same one-parse shape as `_SEP`, so
+# the quadratic case does not come back with the wider class.
+_SEP_CARD: Final = r"\s*(?:[-.–—)]\s*)?"
+
+# The account catch-all keeps the narrow one, and this is the whole reason the
+# two exist separately. `account` is three groups of two-to-six digits, which is
+# also the shape of `2024 - 2025 - 2026`; widening its separator is what turns a
+# list of years into a bank account, measured as the only false positive the
+# change produced. The structured patterns can afford the spaces because their
+# shapes are specific enough to say no on their own -- a phone number starts
+# with a zero, an RRN is 6+7, a card is four groups of four.
+#
+# It keeps `\s` rather than following `_SEP` to horizontal space, which is not
+# an oversight: `account` already joins numbers across a line break on `main`
+# (`예산\n150000\n200000` comes back as one account), and narrowing it here
+# would be a second decision riding along in a file that needs five approvals.
+# Tracked separately. This change makes that case strictly smaller -- `rrn` no
+# longer spans the break, so the same text matches one pattern instead of two.
+_SEP_TIGHT: Final = r"[-.\s]?"
 
 # A Korean bank account is ten digits or more; a date is eight and a version
 # string is eight. Counting digits is what tells them apart, and it needs no
@@ -77,7 +135,7 @@ PII_PATTERNS: Final[tuple[tuple[str, re.Pattern[str]], ...]] = (
     # that way keeps one digit rather than none. One digit of an account for
     # four digits of a national ID is the trade this file makes everywhere.
     ("rrn", re.compile(rf"{_L}\d{{6}}{_SEP}[0-9]\d{{5,7}}{_R}")),
-    ("card", re.compile(rf"{_L}(?:\d{{4}}{_SEP}){{3}}\d{{4}}{_R}")),
+    ("card", re.compile(rf"{_L}(?:\d{{4}}{_SEP_CARD}){{3}}\d{{4}}{_R}")),
     # Any leading-zero prefix rather than an enumerated list. Enumerating is how
     # a regex goes stale: 070 is a common Korean VoIP range, 0505 is a safe
     # number and 080 is freephone, and none of them were in the old list.
@@ -101,7 +159,7 @@ PII_PATTERNS: Final[tuple[tuple[str, re.Pattern[str]], ...]] = (
     # Bank layouts vary -- 3-2-6, 6-2-6, 3-3-6 -- and get said without
     # separators as often as with. See MIN_ACCOUNT_DIGITS for what keeps this
     # from matching every date in a transcript.
-    ("account", re.compile(rf"{_L}\d{{2,6}}{_SEP}\d{{2,6}}{_SEP}\d{{2,6}}{_R}")),
+    ("account", re.compile(rf"{_L}\d{{2,6}}{_SEP_TIGHT}\d{{2,6}}{_SEP_TIGHT}\d{{2,6}}{_R}")),
     # The only pattern that still used `\b`, and the only one whose character
     # classes were `\w`. Both are the same Korean bug from opposite ends:
     # Hangul is a word character, so `\b` never fires between 은 and m, and

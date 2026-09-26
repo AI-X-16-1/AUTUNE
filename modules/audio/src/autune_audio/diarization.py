@@ -94,7 +94,12 @@ class PyannoteDiarizer:
             "waveform": torch.from_numpy(waveform.samples).unsqueeze(0),
             "sample_rate": waveform.sample_rate,
         }
-        output = pipeline(audio)  # type: ignore[operator]
+        # A speaker count, when the meeting knows one, is the one input that
+        # stops pyannote splitting a voice across clusters on poor audio
+        # (#325): the clustering step cannot invent a fourth speaker for a
+        # room of one. Unset, it clusters freely, as the evaluation measured.
+        bounds = get_settings().speaker_bounds()
+        output = pipeline(audio, **bounds)  # type: ignore[operator]
         # `exclusive_speaker_diarization`, not `speaker_diarization`. pyannote
         # keeps both: the first is what it calls "adapted to downstream
         # transcription" and holds no overlapping turns, the second holds them.
@@ -111,7 +116,7 @@ class PyannoteDiarizer:
                 yield_label=True
             )
         )
-        log.info("diarized", turns=len(turns), speakers=len({t.speaker for t in turns}))
+        log.info("diarized", turns=len(turns), speakers=len({t.speaker for t in turns}), **bounds)
         return turns
 
 

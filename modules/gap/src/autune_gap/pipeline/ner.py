@@ -18,7 +18,7 @@ from typing import Any
 from autune_core import get_logger
 
 from .base import Entity
-from .spoken import Token, is_plausible, noun_terms
+from .spoken import Token, is_plausible, masked_spans, noun_terms
 
 log = get_logger(__name__)
 
@@ -148,7 +148,13 @@ class SpacyNer:
         texts = [text for _, text in utterances]
         for (utterance_id, _), doc in zip(utterances, self._nlp.pipe(texts), strict=True):
             spans: list[tuple[int, str, str]] = []
-            claimed: list[tuple[int, int]] = []
+            # Masked values are claimed before the model is consulted, because
+            # whether the model claims them is not stable: 010-****-5678 comes
+            # back as a DT entity when a particle precedes it and disappears
+            # into the noun run beside it when one does not. Claiming the span
+            # either way makes the run break in both, so a number somebody read
+            # out stops taking the topic next to it down with it. #250.
+            claimed: list[tuple[int, int]] = masked_spans(doc.text)
             for span in doc.ents:
                 # Claimed before anything can reject it. A span this module
                 # drops — an implausible one-letter person, a ``LC`` meeting

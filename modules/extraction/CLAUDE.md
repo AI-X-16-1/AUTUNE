@@ -15,7 +15,8 @@ Full detail: `/docs/modules/extraction.md`.
 ## What this module does
 
 Classify utterances five ways → build action-item cards → verify ambiguous
-agreement with NLI → sync to Notion and Jira.
+agreement with NLI → sync to Notion. (Jira was dropped from the product, #82:
+both its credential paths tie a workspace to whoever set it up.)
 
 ## Consumes
 
@@ -37,7 +38,7 @@ See `/docs/architecture/contracts.md`, "The B → D boundary".
 
 `ext_classifications`, `ext_action_items`, `ext_action_item_sources`,
 `ext_edit_events`, `ext_decisions`, `ext_decision_sources`, `ext_external_refs`,
-`ext_confirmations`.
+`ext_confirmations`, `ext_decision_reviews`, `ext_decision_refs`.
 
 The list in `/docs/modules/extraction.md` is the same set; keep the two together.
 This one drifted once already — the B/D boundary commit updated "Publishes" here
@@ -58,8 +59,8 @@ the model calls none is simply not in `ExtractionResult.classifications`.
 
 ## Privacy
 
-- Send Notion and Jira only what an issue needs — description, assignee, due
-  date. Never a transcript.
+- Send Notion only what an issue needs — description, assignee, due date.
+  Never a transcript.
 - Send the LLM the smallest window that resolves a reference, and only masked
   text.
 - Ambiguous-agreement confirmations are DMs to the speaker, never channel posts.

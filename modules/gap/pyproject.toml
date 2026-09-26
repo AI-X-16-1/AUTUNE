@@ -6,10 +6,24 @@ requires-python = ">=3.12,<3.13"
 dependencies = [
     "autune-contracts",
     "autune-core",
+    # For ``privacy.MASK_CHAR`` only — the one definition of what module A's
+    # masking leaves behind. This module recognises those leftovers in two
+    # places (``graph.build_topics`` refuses them, ``spoken.masked_spans``
+    # breaks noun runs on them) and both have to mean the same character as the
+    # masker itself. Declared here rather than relied on transitively
+    # (/CLAUDE.md invariant 8); importing it is invariant 2's allowance.
+    "autune-integrations",
     "fastapi>=0.115",
     "celery>=5.4",
     "sqlalchemy>=2.0",
     "networkx>=3.4",
+    # Domain templates are YAML files in the package (#22). Declared here and
+    # not at the root: it is this module's dependency, and the root manifest is
+    # not where a module's packages go (/CLAUDE.md invariant 8). It is already
+    # in uv.lock as a transitive dependency of another member's model stack,
+    # which is exactly why it has to be named — a module may not rely on a
+    # package it does not ask for.
+    "pyyaml>=6",
     # networkx.pagerank is implemented on scipy.sparse since networkx 3.0 and
     # raises ImportError without it. It is here in the lockfile only because
     # another member pulls it in, which `uv sync --package autune-gap` does not.

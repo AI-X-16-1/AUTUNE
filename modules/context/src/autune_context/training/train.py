@@ -123,7 +123,16 @@ def _fresh_model() -> tuple[PreTrainedTokenizerBase, PreTrainedModel]:
 def _tokenize(dataset: Any, tokenizer: PreTrainedTokenizerBase, max_length: int) -> Any:
     return dataset.map(
         lambda batch: tokenizer(
-            batch["premise"], batch["hypothesis"], truncation=True, max_length=max_length
+            batch["premise"],
+            batch["hypothesis"],
+            truncation=True,
+            max_length=max_length,
+            # klue/roberta-base's BertTokenizer emits 2-segment 0/1
+            # token_type_ids, but the RoBERTa encoder underneath has
+            # type_vocab_size=1 -- id=1 is out of range for
+            # token_type_embeddings (IndexError on CPU, a CUDA device-side
+            # assert on GPU; see pipeline/nli.py's KlueKorNliLocal).
+            return_token_type_ids=False,
         ),
         batched=True,
     )

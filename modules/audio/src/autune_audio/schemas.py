@@ -8,8 +8,11 @@ transcriber returns before speakers are attached.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
+from typing import Literal
 
 import numpy as np
+from pydantic import BaseModel, Field
 
 SAMPLE_RATE = 16_000
 """What both Whisper and pyannote want. Decoding to it once means neither
@@ -106,3 +109,71 @@ class Transcription:
             f"Transcription({len(self.segments)} segments, {len(self.words)} words, "
             f"{self.duration:.1f}s, lang={self.language})"
         )
+
+
+# --- API request and response bodies ----------------------------------------
+#
+# The types above describe stages inside the pipeline; these describe the HTTP
+# surface. Neither belongs in ``packages/contracts`` — a contract type is what
+# another *module* consumes, and nothing here crosses that line.
+
+
+class MeetingCreate(BaseModel):
+    """What a client sends to open a meeting."""
+
+    title: str = Field(min_length=1, max_length=400)
+    team_id: str = Field(min_length=1, max_length=64)
+    started_at: datetime | None = None
+    """When the meeting began. Absent for a recording uploaded after the fact."""
+
+
+class MeetingState(BaseModel):
+    """The id and where the meeting has got to. Returned by both write routes.
+
+    Deliberately thin. A meeting carries a title the team wrote and, once the
+    pipeline has run, its transcript — none of which the caller of a write route
+    needs echoed back, and all of which is meeting content. The screen polls or
+    reads the meeting properly when it wants more than this.
+    """
+
+    meeting_id: str
+    status: str
+
+
+class MeetingDetail(MeetingState):
+    """A meeting's own row, for the screen that follows it (S12, S15).
+
+    The two flags are what the pipeline actually wrote: ``persist_transcript``
+    sets them in the same transaction as the utterances, so a screen can say
+    "original deleted" and "masked" from stored state rather than from having
+    reached a stage in a diagram. Nothing derived from the transcript is here;
+    that is ``/transcripts/{id}``.
+    """
+
+    title: str
+    original_audio_deleted: bool
+    pii_masked: bool
+
+
+class TeamSummary(BaseModel):
+    """A team the caller may open a meeting for. Id and name; nothing else a
+    browser needs to fill ``MeetingCreate.team_id``."""
+
+    team_id: str
+    name: str
+
+
+class ConsentAttestation(BaseModel):
+    """What a member sends to say everyone in the recording consented.
+
+    ``Literal[True]`` rather than ``bool``: ``false`` is not a revocation and
+    not a no-op, it is a request this route has no meaning for, and 422 says so.
+    Revocation is S10/S11 (#190).
+    """
+
+    attested: Literal[True]
+
+
+class ConsentState(BaseModel):
+    meeting_id: str
+    attested: bool

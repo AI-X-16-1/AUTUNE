@@ -42,13 +42,14 @@ documents cover how it is built.
 | `data-model.md` | Shared entities, per-module tables, prefix rules, datastore split |
 | `async-pipeline.md` | Celery event flow A → B/C/D → E, retries, idempotency |
 | `privacy.md` | Raw-audio deletion, PII masking, speaking-ratio confidentiality, retention |
-| `integrations.md` | Slack, Notion, Jira, Calendar wrappers and the outbound privacy boundary |
+| `integrations.md` | Slack, Notion, Calendar wrappers and the outbound privacy boundary |
 | `agent-layer.md` | **Proposed (#260).** Modules as tools, work-item state, triggers, action permission levels |
 
 ### engineering/
 | Document | Contents |
 | --- | --- |
 | `workflow.md` | Branching, PRs, CODEOWNERS, commit format, language rule |
+| `demo-runbook.md` | The upload-to-screen path one command at a time, what to expect, where it breaks |
 | `conventions.md` | Naming, module file layout, API shape, errors, logging, frontend layout |
 | `migrations.md` | Alembic branch-per-module runbook |
 | `dependencies.md` | uv and pnpm workspaces, lockfile conflict policy |

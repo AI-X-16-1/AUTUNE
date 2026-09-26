@@ -15,6 +15,7 @@ from sqlalchemy import Table
 from autune_contracts.enums import GapSeverity
 from autune_gap.models import (
     GapGap,
+    GapMeetingTemplate,
     GapParticipation,
     GapRelatedTopic,
     GapTopic,
@@ -29,6 +30,7 @@ ALL_TABLES: tuple[Table, ...] = (
     GapParticipation.__table__,
     GapGap.__table__,
     GapRelatedTopic.__table__,
+    GapMeetingTemplate.__table__,
 )
 
 
@@ -234,6 +236,12 @@ def test_every_meeting_id_column_is_indexed() -> None:
     for table in ALL_TABLES:
         if "meeting_id" not in table.c:
             continue
+        if table.c.meeting_id.primary_key:
+            # Already indexed, by being the key. `gap_meeting_template` is one
+            # row per meeting, so the lookup this rule is about is the primary
+            # key lookup; a second index on the same column would be a write
+            # every insert pays for and no read uses.
+            continue
         indexed = {tuple(c.name for c in index.columns) for index in table.indexes}
         assert ("meeting_id",) in indexed, table.name
 
@@ -242,12 +250,24 @@ def test_every_meeting_id_column_is_indexed() -> None:
 
 
 def migration_tables() -> dict[str, set[str]]:
-    """Table -> column names, read out of this module's migration files.
+    """Table -> column names, as this module's migrations leave them.
 
     Text, not a database. The round-trip test needs Postgres and a person
     without Docker cannot run it, so the failure this catches — a column added
     to a model and not to the migration — would otherwise reach CI. Reading the
-    ``op.create_table`` calls costs nothing and catches it in the unit run.
+    migration files costs nothing and catches it in the unit run.
+
+    Revisions are read in filename order, which is the order they apply: the
+    date prefix is what makes the two the same thing. ``op.add_column`` counts
+    as much as ``op.create_table``, because a column added by a later revision
+    is a column the database has — and reading only ``create_table`` made the
+    first such column (``gap_topic_edges.extractor_version``, #32) look like a
+    model with no migration behind it.
+
+    A column added to a table no model here describes is not silently accepted
+    either: it shows up as a key, and ``test_no_migration_creates_a_table_no_
+    model_describes`` fails on it. Another module's table is another module's
+    to migrate (invariant 10).
     """
     migrations = Path(__file__).resolve().parents[2] / "migrations"
     tables: dict[str, set[str]] = {}
@@ -257,6 +277,16 @@ def migration_tables() -> dict[str, set[str]]:
             tables[match.group(1)] = set(
                 re.findall(r'sa\.Column\(\s*\n?\s*"(\w+)"', match.group(2))
             )
+        # A column added to an existing table is as real as one the create
+        # statement declared, and adding one is the normal way a table grows
+        # after its first revision. Reading only `create_table` let a model grow
+        # a column with no migration behind it at all, which is the single thing
+        # this test exists to catch. `downgrade` drops rather than adds, so
+        # scanning the whole file picks up no reversal.
+        for table, column in re.findall(
+            r'op\.add_column\(\s*\n?\s*"(\w+)",\s*\n?\s*sa\.Column\(\s*\n?\s*"(\w+)"', source
+        ):
+            tables.setdefault(table, set()).add(column)
     return tables
 
 
@@ -279,3 +309,67 @@ def test_no_migration_creates_a_table_no_model_describes() -> None:
     declared = {table.name for table in ALL_TABLES}
 
     assert set(migration_tables()) == declared
+
+
+# --- the revisions form one chain -------------------------------------------
+
+
+def gap_revisions() -> dict[str, tuple[str | None, str | None]]:
+    """Revision -> (down_revision, branch_labels), read off this module's files.
+
+    Text, like `migration_tables`, and for the same reason: `alembic heads`
+    needs the config and a person without Docker runs neither. The failure it
+    catches does not need a database to exist.
+    """
+    migrations = Path(__file__).resolve().parents[2] / "migrations"
+    revisions: dict[str, tuple[str | None, str | None]] = {}
+    for path in sorted(migrations.glob("*.py")):
+        source = path.read_text(encoding="utf-8")
+
+        def one(name: str, text: str = source) -> str | None:
+            match = re.search(rf'^{name}[^=\n]*=\s*(?:\(\s*)?(?:"([^"]+)"|None)', text, re.M)
+            return match.group(1) if match and match.group(1) else None
+
+        revision = one("revision")
+        assert revision is not None, path.name
+        revisions[revision] = (one("down_revision"), one("branch_labels"))
+    return revisions
+
+
+def test_the_module_owns_one_alembic_branch() -> None:
+    """Invariant 7: one revision starts the branch and labels it, and it is the
+    only one with no parent."""
+    roots = [rev for rev, (down, _) in gap_revisions().items() if down is None]
+    labelled = [rev for rev, (_, label) in gap_revisions().items() if label == "gap"]
+
+    assert roots == labelled, (roots, labelled)
+    assert len(roots) == 1, roots
+
+
+def test_the_revisions_leave_exactly_one_head() -> None:
+    """Two revisions naming the same parent split the branch in two.
+
+    `alembic upgrade heads` then applies both, the next revision has to pick a
+    side, and which one it picks decides what a fresh database ends up with.
+    It happened: `e4a7c81b6f30` chained onto `c9e5ab13d742` while
+    `c1f7b0d94e58` — already on `main` — chained onto it too, and nothing in
+    the unit run said so. Raised in review of #303.
+    """
+    revisions = gap_revisions()
+    parents = [down for down, _ in revisions.values() if down is not None]
+
+    assert len(parents) == len(set(parents)), f"two revisions share a parent: {sorted(parents)}"
+
+    heads = sorted(set(revisions) - set(parents))
+    assert len(heads) == 1, f"the gap branch has {len(heads)} heads: {heads}"
+
+
+def test_every_revision_chains_onto_this_module() -> None:
+    """Invariant 7 again: a gap revision never names another module's revision
+    as its parent, which would tie the two branches together."""
+    revisions = gap_revisions()
+
+    for revision, (down, _) in revisions.items():
+        if down is None:
+            continue
+        assert down in revisions, f"{revision} chains onto {down}, which is not this module's"

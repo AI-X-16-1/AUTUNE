@@ -55,7 +55,7 @@ export function ActionCard({
 
       <div className="mt-2 flex items-center gap-2" style={{ fontSize: "var(--text-metaSmall)" }}>
         <span className="text-[var(--color-ink-body)]">
-          {item.assignee_label ?? "담당 미지정"}
+          {item.assignee_name ?? item.assignee_label ?? "담당 미지정"}
         </span>
         {item.due_date ? (
           <span
@@ -69,17 +69,19 @@ export function ActionCard({
         ) : null}
       </div>
 
-      {item.external_refs?.length ? (
+      {item.sync_refs?.length ? (
         <div
           className="mt-2 flex items-center gap-2 text-[var(--color-ink-muted)]"
           style={{ fontSize: "var(--text-metaSmall)" }}
         >
-          {item.external_refs.map((ref) => (
-            <span key={`${ref.system}-${ref.url}`} className="flex items-center gap-1">
-              <StatusDot variant={ref.url ? "confirmed" : "critical"} />
-              <span style={{ fontFamily: "var(--font-mono)" }}>
-                {ref.external_id ?? ref.system}
-              </span>
+          {item.sync_refs.map((ref) => (
+            <span
+              key={ref.system}
+              className="flex items-center gap-1"
+              title={ref.url ? undefined : "동기화 확인 중"}
+            >
+              <StatusDot variant={ref.url ? "confirmed" : "progress"} />
+              <span>{ref.system}</span>
             </span>
           ))}
         </div>
@@ -100,10 +102,18 @@ export function ActionCard({
  * and calling it hand-added would print the distinction edit cost is measured
  * on the wrong way round.
  */
+/**
+ * The line under the title: what to read to decide if the item is real.
+ *
+ * `summary` -- a preview of the sources beyond the title itself -- stands in
+ * for the count when there is one; the full quotations stay drawer-only
+ * either way, so this is never more than the one line was.
+ */
 function reasonFor(item: ActionItemRead): string {
   if (item.origin === "user") return "직접 추가";
   const sources = item.source_utterance_ids?.length ?? 0;
-  return isCandidate(item) ? `후보 · 근거 발화 ${sources}건` : `근거 발화 ${sources}건`;
+  const base = item.summary ?? `근거 발화 ${sources}건`;
+  return isCandidate(item) ? `후보 · ${base}` : base;
 }
 
 function isOverdue(dueDate: string | null | undefined): boolean {

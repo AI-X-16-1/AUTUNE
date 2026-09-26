@@ -49,10 +49,10 @@ Modules: A Audio · B Extraction · C Gap · D Context · E Intelligence.
 |---|---|---|---|
 | S01 | Landing · sign-in | MVP | Headline "회의는 끝났는데 실행은 시작되지 않았다면" · Google / Slack / magic link · email-sent state (resend after 60s) · error state · no team branding |
 | S02 | Create workspace | MVP | Name (2–40) · role chips (= the `utterances.role` enum) · invite-email chips · import Slack members · 4-step progress |
-| S03 | Onboarding empty home | MVP | 3-item checklist (connect Slack · enrol voice · Notion/Jira); done = ink dot, pending = hollow ring · dropzone (mp3/wav/m4a, 3h, 500MB) · sample meeting |
+| S03 | Onboarding empty home | MVP | 2-item checklist (connect Slack · enrol voice); done = ink dot, pending = hollow ring · dropzone (mp3/wav/m4a, 3h, 500MB) · sample meeting |
 | S04 | Voice enrolment modal | MVP | Two sentences · waveform · circular accent button · timer (red dot) · quality verdict · disabled under 8 seconds · only the embedding vector is stored |
 | S05 | Home | MVP | Next meeting (single paper block) · "Things for me" (overdue → needs confirmation → due soon → in progress) · unresolved gaps · recent meetings (retention expiry D-n) |
-| S06 | Create meeting modal | MVP | Title · date · start · end (optional) · attendee chips (warn when a voice is not enrolled) · audio-source radio (web mic / file) · Notion DB and Jira project checkboxes (per-meeting override) · P2 items shown disabled |
+| S06 | Create meeting modal | MVP | Title · date · start · end (optional) · attendee chips (warn when a voice is not enrolled) · audio-source radio (web mic / file) · Notion DB checkbox (per-meeting override) · P2 items shown disabled |
 
 ### Before · during the meeting (Spec 02)
 | ID | Screen | Stage | Key elements and states |
@@ -69,24 +69,24 @@ Modules: A Audio · B Extraction · C Gap · D Context · E Intelligence.
 ### After the meeting (Spec 03)
 | ID | Screen | Stage | Key elements and states |
 |---|---|---|---|
-| S15 | Review · edit summary | MVP | Tabs (summary / actions / gaps / context / transcript) · inline summary editing · 3 decisions (ambiguous ones ochre + confirm as decision / resend DM / delete) · 4 actions (unassigned = accent "담당 지정") · right rail "needs confirmation" ×3 (speaker / ambiguous / low-confidence span) · PII count + report · delivery targets (Slack · Notion · Jira · personal DM) · editable for 24h after confirmation |
+| S15 | Review · edit summary | MVP | Tabs (summary / actions / gaps / context / transcript) · inline summary editing · 3 decisions (ambiguous ones ochre + confirm as decision / resend DM / delete) · 4 actions (unassigned = accent "담당 지정") · right rail "needs confirmation" ×3 (speaker / ambiguous / low-confidence span) · PII count + report · delivery targets (Slack · Notion · personal DM) · editable for 24h after confirmation |
 | S16 | Speaker confirmation DM | MVP | Quoted candidate utterance · similarity · "제 발화입니다" (accent) / "아닙니다" / "다른 발화 듣기" · yes → store the embedding |
-| S17 | Action board | MVP | 4 columns (Needs confirmation = Autune-only · To Do · In Progress · Done) · card (title → reason → assignee and due date → issue key, status, Notion) · selected card 1.5px accent · drag = Jira transition · broken link in red text |
-| S18 | Action detail drawer | MVP | Assignee / due date / status · source utterance quotation + confidence + the raw text the due date was parsed from · 3 integration rows (Jira key, status, sync / Notion page, checkbox / Slack thread) · history · completion chain |
+| S17 | Action board | MVP | 4 columns (Needs confirmation = Autune-only · To Do · In Progress · Done) · card (title → reason → assignee and due date → Notion) · selected card 1.5px accent · broken link in red text |
+| S18 | Action detail drawer | MVP | Assignee / due date / status · source utterance quotation + confidence + the raw text the due date was parsed from · integration rows (Notion page, checkbox / Slack thread) · history · completion chain |
 | S19 | Ambiguous agreement DM | MVP | Quoted utterance + context · 3 choices (confirm = accent / defer / deny) · no response in 24h = undecided |
 | S20 | Gap report | MVP | HIGH expanded (title · level as text + score + 2px bar · description · resolving-question block · 3 buttons) · MEDIUM collapsed · LOW listed separately · right rail template comparison (covered / partial / missing) · topic × role density (never per person) |
 | S21 | Gap question thread | MVP | Slack thread · answer → classified by B → decision recorded automatically + confirmation reply · "결정 아님" reverts it |
 | S22 | Decision lineage | MVP (graph P2) | Topic list on the left (with revision count) · timeline nodes (hollow ring = original · ochre = changed, with a reason block naming absentees and the NLI label · ink = current) · linked materials · Notion page links |
-| S23 | Speaking-ratio DM | MVP | Subject only · large percentage + 2px bar · even-share baseline · notice that it is not stored server-side · recent trend (local) · turn off |
+| S23 | Speaking-ratio DM | MVP | Subject only · large percentage + 2px bar · even-share baseline · notice that it is not stored server-side · recent trend (local) · turn off · (P2, once built) influence map delivered the same way — subject only, never a shared card (#28) |
 | S24 | Role-specific summary | P2 | Slack tabs (developer / business / design) · 4 rows (decisions · undecided · my actions · materials) · one source, different renderings |
 | S25 | Next agenda · scheduling | P2 | Proposal modal · title and time (when everyone is free) · draft agenda (gaps · actions · carried-over) · Calendar invite and Notion page checkboxes · room booking (P2) |
 
 ### Analytics · settings · Phase 2 (Spec 04)
 | ID | Screen | Stage | Key elements and states |
 |---|---|---|---|
-| S26 | Dashboard | MVP basic | Quality score (A–F + 8-week bars) · role-pair heatmap (5-step greyscale) · gap-type distribution (2px bars) · prediction (P2, probability in mono) · topic recurrence (red/ochre figures) · action completion rate · influence map (P2, dashed card, role level only) |
+| S26 | Dashboard | MVP basic | Quality score (A–F + 8-week bars) · role-pair heatmap (5-step greyscale) · gap-type distribution (2px bars) · prediction (P2, probability in mono) · topic recurrence (red/ochre figures) · action completion rate. No influence map here — subject-only, delivered like S23 (#28) |
 | S27 | Weekly report | MVP basic | Slack, Mondays 09:00 · 3-metric grid · 3 rows (carried over · PM–Data gap · decision change) |
-| S28 | Settings › Integrations | MVP | Slack (channel · DM items · slash command) · **Notion** (minutes DB · property mapping · action DB · decision DB · material source P2 · PII masking always applied) · **Jira** (project and type · one of 3 creation timings · assignee mapping · status mapping · description format) · Calendar (not connected = hollow ring + accent button) · sync-log drawer |
+| S28 | Settings › Integrations | MVP | Slack (channel · DM items · slash command) · **Notion** (minutes DB · property mapping · action DB · decision DB · material source P2 · PII masking always applied) · Calendar (not connected = hollow ring + accent button) · sync-log drawer |
 | S29 | Settings › Privacy and retention | MVP | 7 policy rows (delete original · masking · extra categories · retention 30/90/180/365 days · speaking ratio · consent every meeting or first only · account deletion) — rows that cannot be changed show an "항상 켬" dot · my data (meeting count · embeddings · consents · DMs) · download / delete embeddings / delete everything (red text → modal) |
 | S30 | PII miss report modal | MVP | Selected span highlighted (`#E9EBF6`) · category chips · masked immediately and propagated · add a pattern rule · scan for similar spans |
 | S31 | Meeting-needed proposal DM | P2 | 3 trigger-rationale rows · proposal block (time · attendees · room · congestion avoided) · "이대로 예약" (accent) / "시간 바꾸기" / "필요 없음" |
@@ -126,7 +126,6 @@ Modules: A Audio · B Extraction · C Gap · D Context · E Intelligence.
 - **Utterance kinds (B):** commitment = ink dot · decision = hollow ring · open question = accent dot · concern = red dot · ambiguous = ochre dot. Ambiguous → DM → promoted to commitment or decision when confirmed, demoted to concern when denied.
 - **Meeting state:** scheduled (hollow ring) · recording (red) · analyzing n% (accent) · awaiting confirmation (ochre) · analysis complete (ink) · delivered (ink) · retention expiry D-n (grey dot, muted text).
 - **Gap level:** HIGH ≥ 0.7 red · MEDIUM 0.5–0.7 ochre · LOW grey. HIGH shown by default; the threshold is configurable.
-- **Action column ↔ Jira:** Needs confirmation (Autune-only, not yet created) · To Do · In Progress · Done. Creation is held back when the assignee is unmapped.
 - **Notion:** minutes DB (a page on confirmation) · action DB (optional, two-way) · decision DB (optional) · material source (P2, re-index on webhook). PII masking applies to every write and cannot be disabled.
 - **Privacy:** the original audio is deleted immediately · unmasked text is never stored · speaking ratios are not stored server-side · retention defaults to 90 days · consent logs are kept for audit · on account deletion, utterances and embeddings are deleted while actions and decisions are anonymized to "전 멤버".
 

@@ -24,6 +24,7 @@ from autune_contracts.transcript import (
 )
 from autune_core import Base, Meeting, Participant, User
 from autune_core import Utterance as StoredUtterance
+from autune_core.errors import NotFoundError, ValidationError
 from autune_extraction import service, tasks
 from autune_extraction.models import (
     ExtActionItem,
@@ -31,10 +32,11 @@ from autune_extraction.models import (
     ExtClassification,
     ExtConfirmation,
     ExtDecision,
+    ExtDecisionReview,
     ExtDecisionSource,
     ExtEditEvent,
 )
-from autune_extraction.pipeline import FakeClassifier
+from autune_extraction.pipeline import FakeClassifier, FakeNli
 from autune_extraction.schemas import ActionItemCreate, ActionItemUpdate
 
 MEETING = "mtg_1"
@@ -49,6 +51,7 @@ TABLES = [
     ExtClassification.__table__,
     ExtDecision.__table__,
     ExtDecisionSource.__table__,
+    ExtDecisionReview.__table__,
     ExtActionItem.__table__,
     ExtActionItemSource.__table__,
     ExtEditEvent.__table__,
@@ -251,6 +254,7 @@ def run_task(session: Session, monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(tasks, "session_scope", scope)
     monkeypatch.setattr(tasks, "get_classifier", FakeClassifier)
+    monkeypatch.setattr(tasks, "get_nli", FakeNli)
     payload = TranscriptReady(
         meeting_id=MEETING,
         utterances=spoken(),
@@ -316,3 +320,113 @@ def test_deleting_alone_is_enough_to_keep_the_draft(session: Session) -> None:
 
     assert again is None
     assert len(model_items(session)) == 1
+
+
+# --- what a hand-added item may point at ----------------------------------------
+
+
+def _stored(session: Session, uid: str, meeting_id: str) -> None:
+    session.add(
+        StoredUtterance(
+            id=uid,
+            meeting_id=meeting_id,
+            speaker_label="Speaker 1",
+            start_sec=0.0,
+            end_sec=1.0,
+            text="회의 내용",
+        )
+    )
+    session.flush()
+
+
+def test_an_item_for_an_unknown_meeting_is_not_found(session: Session) -> None:
+    """A 404, not the foreign key's 500 -- found by a local end-to-end run."""
+    with pytest.raises(NotFoundError):
+        service.create_action_item(
+            session, ActionItemCreate(meeting_id="mtg_nope", description="일")
+        )
+    assert session.scalars(select(ExtActionItem)).all() == []
+
+
+def test_a_source_that_does_not_exist_is_refused_by_name(session: Session) -> None:
+    with pytest.raises(ValidationError) as caught:
+        service.create_action_item(
+            session,
+            ActionItemCreate(meeting_id=MEETING, description="일", source_utterance_ids=["utt_x"]),
+        )
+    assert caught.value.details == {"field": "source_utterance_ids"}
+    assert session.scalars(select(ExtActionItem)).all() == []
+
+
+def test_a_source_from_another_meeting_is_refused(session: Session) -> None:
+    """The utterance exists, but the detail endpoint would quote another
+    meeting's words on this meeting's board."""
+    session.add(Meeting(id="mtg_2", team_id="team_1", title="다른 회의", started_at=STARTED))
+    _stored(session, "utt_other", "mtg_2")
+
+    with pytest.raises(ValidationError):
+        service.create_action_item(
+            session,
+            ActionItemCreate(
+                meeting_id=MEETING, description="일", source_utterance_ids=["utt_other"]
+            ),
+        )
+
+
+def test_a_source_of_this_meeting_is_kept(session: Session) -> None:
+    _stored(session, "utt_here", MEETING)
+
+    item = service.create_action_item(
+        session,
+        ActionItemCreate(
+            meeting_id=MEETING,
+            description="일",
+            source_utterance_ids=["utt_here", "utt_here"],
+        ),
+    )
+
+    assert [source.utterance_id for source in item.sources] == ["utt_here"]
+
+
+def test_an_unknown_assignee_is_refused_by_name(session: Session) -> None:
+    """``user_ghost`` passes the schema's ``^user_`` pattern -- the same gap
+    ``slots.assignee_of`` already closed for the model's own path -- so only
+    this existence check stands between it and the foreign key's 500."""
+    with pytest.raises(ValidationError) as caught:
+        service.create_action_item(
+            session,
+            ActionItemCreate(meeting_id=MEETING, description="일", assignee_id="user_ghost"),
+        )
+    assert caught.value.details == {"field": "assignee_id"}
+    assert session.scalars(select(ExtActionItem)).all() == []
+
+
+def test_a_known_assignee_is_kept(session: Session) -> None:
+    item = service.create_action_item(
+        session,
+        ActionItemCreate(meeting_id=MEETING, description="일", assignee_id="user_001"),
+    )
+
+    assert item.assignee_id == "user_001"
+
+
+def test_updating_to_an_unknown_assignee_is_refused_and_changes_nothing(session: Session) -> None:
+    item = service.create_action_item(
+        session, ActionItemCreate(meeting_id=MEETING, description="일")
+    )
+
+    with pytest.raises(ValidationError) as caught:
+        service.update_action_item(session, item, ActionItemUpdate(assignee_id="user_ghost"))
+    assert caught.value.details == {"field": "assignee_id"}
+    assert item.assignee_id is None
+
+
+def test_updating_can_still_clear_an_assignee(session: Session) -> None:
+    item = service.create_action_item(
+        session,
+        ActionItemCreate(meeting_id=MEETING, description="일", assignee_id="user_001"),
+    )
+
+    service.update_action_item(session, item, ActionItemUpdate(assignee_id=None))
+
+    assert item.assignee_id is None

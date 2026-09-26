@@ -8,6 +8,7 @@ nobody else parses.
 from __future__ import annotations
 
 from datetime import date
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -59,6 +60,32 @@ class ActionItemUpdate(BaseModel):
         return self.model_dump(exclude_unset=True)
 
 
+class ExternalRefRead(BaseModel):
+    """Where one confirmed item or decision stands with one outside system.
+
+    Not ``autune_contracts.extraction.ExternalRef``: that type is the outbound
+    event to D and E, and it requires ``url`` because it is only ever built for
+    a ref that finished. This is this module's own read, so it has to say the
+    other two states a sync can be in -- ``url`` is ``None`` while the row is
+    claimed but the call has not returned (in flight) or did not survive it
+    (failed); no row at all means nothing has tried yet, and neither list nor
+    drawer constructs one for that case.
+
+    On the list, not gated behind the drawer the way ``sources`` is: a system
+    name, a url and an id are not meeting content, so ``description`` and
+    ``assignee_label``'s reasoning for being on the list already covers this.
+    """
+
+    system: Literal["notion"]
+    """Jira was dropped from the product (#82): both its credential paths tie
+    a workspace to whoever set it up. The DB's own check constraint still
+    allows ``'jira'`` (unused, kept rather than a migration for a value that
+    only removes a possibility) -- this type is the narrower, honest answer
+    for what the API actually returns."""
+    url: str | None
+    external_id: str | None
+
+
 class ActionItemRead(BaseModel):
     """One item as this module's own screens read it.
 
@@ -73,6 +100,15 @@ class ActionItemRead(BaseModel):
     description: str
     assignee_id: str | None
     assignee_label: str | None
+    assignee_name: str | None = None
+    """The assignee's current display name, read fresh from ``users`` -- never
+    stored. ``assignee_label`` is "the name as spoken, kept when it does not
+    resolve to an account" (``ExtActionItem.assignee_label``'s own docstring);
+    an identified assignee has no label at all, so a card showing only
+    ``assignee_label`` reads an assigned item as unassigned. This is the other
+    half: set only when ``assignee_id`` resolves to an account that still
+    exists, so a screen can show *somebody's name* without caring which half
+    filled it in."""
     due_date: date | None
     status: str
     confidence: float
@@ -102,8 +138,34 @@ class ActionItemRead(BaseModel):
     produced.
 
     **False for everything while ``candidate_confidence`` is unset**, which is
-    its default until #10 measures one.
+    its default until #10 measures one. **False once a person has confirmed
+    the item**, whatever its confidence -- confirming moves ``status``, not
+    the model's score, so scoring only on confidence would keep a low-
+    confidence item candidate forever, back on the review screen every visit
+    after the one where it was already confirmed (#295).
     """
+
+    sync_refs: list[ExternalRefRead]
+    """One entry per system this item has been claimed for -- today, at most
+    ``notion`` (#30). ``jira`` was designed (ui-spec S18, S28) but dropped
+    before being built (#82), so it never appears rather than being shown
+    always-empty. Ordered by ``created_at``, which for one system is also
+    insertion order.
+
+    Not ``external_refs``: ``ActionItem`` (the contract this extends) already
+    has a field by that name -- the outbound one, ``list[ExternalRef]``, which
+    requires ``url`` -- and TypeScript's `extends` cannot narrow an optional,
+    stricter-typed inherited field to this one, which also reports the
+    in-flight and failed states. Same name collision, same fix, as
+    ``ReviewDecision.sync_refs`` below would have hit if ``Decision`` carried
+    the field too."""
+
+    summary: str | None = None
+    """A one-line preview of the item's sources beyond ``description`` itself.
+    Rule-based (the longest of them, truncated), and only when there is more
+    than one -- with a single source ``description`` already is that sentence,
+    and a second copy of it would say nothing ``description`` does not. See
+    ``ReviewDecision.summary`` for why a chosen line belongs on the list."""
 
 
 class SourceUtterance(BaseModel):
@@ -138,3 +200,134 @@ class ActionItemDetail(ActionItemRead):
     the row alone. This list is read from ``utterances`` anyway, so the spoken
     order comes with it at no extra cost.
     """
+
+
+# --- review before anything leaves (#246) ------------------------------------
+
+
+class DecisionReviewUpdate(BaseModel):
+    """A person's verdict on one proposed decision. Both fields optional.
+
+    ``pending`` is allowed so a mis-click can be undone. ``statement`` rewords the
+    decision; sending the model's own wording back clears the rewording rather than
+    storing a copy of it.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["pending", "confirmed", "rejected"] | None = None
+    statement: str | None = Field(default=None, min_length=1, max_length=2000)
+
+
+class DecisionCreate(BaseModel):
+    """A decision the model missed, typed by a person.
+
+    No ``confidence``: a person typing it is the certainty, as with
+    ``ActionItemCreate``. It is confirmed from the moment it exists.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    meeting_id: str = Field(pattern=r"^mtg_")
+    statement: str = Field(min_length=1, max_length=2000)
+    source_utterance_ids: list[str] = Field(default_factory=list)
+    """Optional, in spoken order. Each must be an utterance of this meeting."""
+
+
+class ReviewDecision(BaseModel):
+    """One decision as S15 lists it -- proposed by the model or added by a person."""
+
+    id: str
+    statement: str
+    """What will be sent: the person's rewording when there is one, else the model's."""
+
+    model_statement: str
+    """What the model proposed, kept beside the rewording so the screen can show both."""
+
+    confidence: float
+    origin: Literal["model", "user"]
+    status: Literal["pending", "confirmed", "rejected"]
+    suggested: bool | None
+    """Whether the screen should pre-check it: the confidence clears
+    ``candidate_confidence``. ``None`` while that setting is unset -- there is no
+    measured line yet, and pre-checking everything or nothing would both be a
+    claim the numbers do not support."""
+
+    source_utterance_ids: list[str]
+
+    sync_refs: list[ExternalRefRead]
+    """One entry per system this decision has been claimed for -- today, at
+    most ``notion`` (#30). No drawer exists for a decision (S15 is the whole
+    screen), so this rides on the list the way ``ActionItemRead.sync_refs``
+    does; a URL is not meeting content. Named ``sync_refs`` rather than
+    ``external_refs`` for the same reason as that one -- consistency, though
+    ``Decision`` (the contract) carries no field of that name to collide with."""
+
+    summary: str | None = None
+    """A one-line preview of what the source utterances said, so the list says
+    more than a count. Rule-based, not a model: the longest of them, truncated
+    -- see ``service.decision_summaries``. ``None`` when there is nothing to
+    summarise (a decision with no sources -- a data problem, not a normal
+    state).
+
+    **Still a quotation, on the list, on purpose.** ``ActionItemDetail`` draws
+    the line at the *set* of sources -- the drawer's whole evidence, never
+    forwarded whole -- not at any single derived line; ``description`` and
+    ``assignee_label`` already put content on this same list. One chosen
+    sentence is that kind of line, not the other."""
+
+
+class ReviewAmbiguous(BaseModel):
+    """One weak assent and where its question to the speaker stands.
+
+    Read-only here. The speaker answers by DM (``ext_confirmations``); who else may
+    answer on their behalf is #246 point 1.
+    """
+
+    utterance_id: str
+    outcome: Literal["not_asked", "pending", "undecided", "resolved"]
+    resolved_kind: str | None
+
+
+class MeetingReview(BaseModel):
+    """Everything in one meeting that needs a person before it goes anywhere."""
+
+    meeting_id: str
+    decisions: list[ReviewDecision]
+    ambiguous_agreements: list[ReviewAmbiguous]
+    action_items: list[ActionItemRead]
+    """Items still ``needs_confirmation``, or below the candidate line."""
+
+    pending_decisions: int
+
+
+class OutboundDecision(BaseModel):
+    id: str
+    statement: str
+
+
+class OutboundBlocked(BaseModel):
+    """Something confirmed that still may not leave: its text carries personal data.
+
+    The categories, never the values -- the same rule ``assert_masked`` follows
+    for an exception message. The screen asks the person to reword it.
+    """
+
+    id: str
+    kind: Literal["decision", "action_item"]
+    categories: list[str]
+
+
+class Outbound(BaseModel):
+    """What confirm-and-send would send, and nothing else.
+
+    The Notion and Slack sync (#30; Jira dropped, #82) is to read this and only
+    this. A decision nobody confirmed is not in it, and neither is an item
+    still waiting for confirmation.
+    """
+
+    meeting_id: str
+    decisions: list[OutboundDecision]
+    action_items: list[ActionItemRead]
+    blocked: list[OutboundBlocked]
+    """Confirmed, but held back by the personal-data screen. Not in the lists above."""

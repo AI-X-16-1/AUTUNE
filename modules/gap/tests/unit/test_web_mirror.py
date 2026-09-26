@@ -16,7 +16,13 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from autune_gap.schemas import TopicEdgeRead, TopicGraphRead, TopicNodeRead
+from autune_gap.schemas import (
+    TemplateComparison,
+    TemplateItemRead,
+    TopicEdgeRead,
+    TopicGraphRead,
+    TopicNodeRead,
+)
 
 TYPES_TS = Path(__file__).resolve().parents[4] / "apps/web/src/features/gap/types.ts"
 
@@ -43,3 +49,27 @@ def test_the_web_topic_node_mirror_is_current() -> None:
 
 def test_the_web_topic_edge_mirror_is_current() -> None:
     assert ts_fields("TopicEdge") == set(TopicEdgeRead.model_fields), f"update {TYPES_TS}"
+
+
+def test_the_web_template_comparison_mirror_is_current() -> None:
+    """The S20 rail. Not a contract either — a checklist is module C's own
+    screen and no other module reads one."""
+    assert ts_fields("TemplateComparison") == set(TemplateComparison.model_fields), (
+        f"update {TYPES_TS}"
+    )
+
+
+def test_the_web_template_item_mirror_is_current() -> None:
+    """``TemplateChecklistItem`` on the web: named apart from the contract's own
+    ``TemplateItem``, which is the string on ``Gap.template_item``."""
+    assert ts_fields("TemplateChecklistItem") == set(TemplateItemRead.model_fields), (
+        f"update {TYPES_TS}"
+    )
+
+
+def test_the_rail_can_say_an_item_was_never_compared() -> None:
+    """``coverage`` is nullable on both sides. A meeting with no topic graph has
+    compared nothing, and a rail that rendered that as "covered" would show a
+    full checklist of green dots for a meeting nobody has processed."""
+    assert TemplateItemRead.model_fields["coverage"].default is None
+    assert "coverage: Coverage | null" in TYPES_TS.read_text(encoding="utf-8")

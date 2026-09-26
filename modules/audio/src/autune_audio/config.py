@@ -7,9 +7,23 @@ Document every new variable in docs/engineering/environments.md and add it to
 from __future__ import annotations
 
 from functools import lru_cache
+from typing import Literal
 
-from pydantic import model_validator
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+MAX_UPLOAD_BYTES = 500 * 1024 * 1024
+"""The largest recording an upload endpoint accepts. Matches the dropzone on
+design screen S03.
+
+Enforced while the bytes are written rather than from ``UploadFile.size``: that
+is a number the client sent, and it is ``None`` on a request with no
+Content-Length.
+
+Here rather than beside either endpoint because both of them enforce it — the
+real upload route and the local dev page — and a limit that is written twice is
+a limit that ends up meaning two things.
+"""
 
 
 class AudioSettings(BaseSettings):
@@ -31,6 +45,16 @@ class AudioSettings(BaseSettings):
     at a synced folder" is now enforced rather than requested.
 
     See docs/architecture/privacy.md section 1.
+    """
+
+    orphan_after_hours: int = 6
+    """How long a queued or running job may hold a recording before the sweep
+    treats it as abandoned, fails it, and deletes the file.
+
+    Six hours is three times the longest meeting the pipeline is sized for at
+    the measured ~1.27x real time, plus a queue wait. A job older than that has
+    no worker; its file is a recording with no owner (privacy.md section 1).
+    See ``service.sweep_orphans``.
     """
 
     hf_token: str = ""
@@ -64,8 +88,107 @@ class AudioSettings(BaseSettings):
     new model without editing code. See ``pipeline._glossary_kwargs``.
     """
 
+    recogniser: Literal["spoken_numbers", "none"] = "spoken_numbers"
+    """The second PII detector, behind ``masking.EntityRecogniser``.
+
+    ``spoken_numbers`` finds the five categories in numbers a person read out
+    one digit at a time -- the shapes a pattern cannot describe. ``none``
+    switches it off, which is how the evaluation harness measures the patterns
+    alone and how a leak is attributed to one detector or the other.
+
+    There is no hosted value and there will not be one. This runs over the
+    unmasked transcript, and invariant 11 says that string does not leave the
+    process it was made in.
+    """
+
     diarization_model: str = "pyannote/speaker-diarization-3.1"
     """Pinned explicitly. Never load a floating "latest"."""
+
+    diarization_num_speakers: int | None = Field(default=None, ge=1)
+    """Exactly how many people spoke, when the room knows. On a muffled
+    microphone pyannote split one voice into four clusters (#325); with this
+    set it cannot. A deployment-wide knob for now -- one demo, one room --
+    and the wrong number for a meeting is worse than none, so it stays unset
+    by default. The per-meeting field belongs with S10's attendee list.
+
+    A value below 1 is refused when the settings load -- the tracker and
+    pyannote both need at least one speaker."""
+
+    diarization_min_speakers: int | None = Field(default=None, ge=1)
+    """Lower bound on speakers when the exact count is unknown. Ignored when
+    ``diarization_num_speakers`` is set."""
+
+    diarization_max_speakers: int | None = Field(default=None, ge=1)
+    """Upper bound on speakers when the exact count is unknown. Ignored when
+    ``diarization_num_speakers`` is set."""
+
+    live_hello_timeout_s: float = 5.0
+    """How long a live connection may sit without sending ``hello``."""
+
+    live_max_session_s: float = 3 * 60 * 60
+    """The longest live session, matching the 3-hour ceiling on S03. Past it
+    the session ends normally; the recording is in the browser."""
+
+    live_max_frame_bytes: int = 32 * 1024
+    """One second of PCM16 at 16 kHz. A bigger frame is dropped, not buffered."""
+
+    live_frame_ms: int = 200
+    """What the browser is asked to send. Informational; the server accepts
+    any frame under ``live_max_frame_bytes``."""
+
+    live_whisper_model: str = "large-v3-turbo"
+    """The live channel's model. Turbo keeps large-v3's encoder and cuts the
+    decoder to four layers: on CPU a row costs about half of large-v3 for
+    Korean that reads the same. The stored path keeps ``whisper_model``."""
+
+    live_cpu_threads: int = 0
+    """CTranslate2 threads for the live model. 0 leaves the choice to
+    CTranslate2 (four on the laptop that measured this). One transcription
+    runs at a time on the live path, so the count can be the machine's
+    performance cores -- 10 on that laptop, which halved the decode time --
+    without contending with anything but itself."""
+
+    live_transcriber_impl: Literal["auto", "faster_whisper", "mlx"] = "auto"
+    """Which engine transcribes a live utterance (``live/backends.py``).
+
+    ``faster_whisper`` is the stored path's engine on the live model and
+    follows ``device`` -- CUDA where there is an NVIDIA GPU. ``mlx`` is
+    mlx-whisper on Apple silicon's GPU, the only way to a GPU on a Mac; it
+    needs the ``mlx`` extra. ``auto`` picks ``mlx`` where that is installed
+    and can run, ``faster_whisper`` everywhere else."""
+
+    live_mlx_model: str = "mlx-community/whisper-large-v3-turbo"
+    """The mlx-whisper weights, a Hugging Face repo. The MLX conversion of
+    the same turbo model the CTranslate2 path uses."""
+
+    live_min_silence_ms: int = 1000
+    """How much silence ends a live utterance. 700 ms cut real speech at
+    every mid-sentence breath; on the microphone captures 1000 ms kept
+    sentences whole and let a breath's noise join the sentence before it
+    instead of becoming a row of its own. Every 100 ms here is 100 ms more
+    lag on every row; 1300 merges sentences a person would keep apart."""
+
+    live_min_confidence: float = 0.35
+    """A live row below this mean word probability is not sent. On the first
+    real-microphone runs the hallucinated fragments scored 0.08-0.25 and
+    real speech 0.5-0.95; the stored path remakes every row, so a dropped
+    one costs nothing but a moment on screen."""
+
+    live_beam_size: int = 5
+    """Beam width on the live path. Width 5 costs turbo about 0.3 s more per
+    utterance than width 1 and is what the stored path uses, so a live row
+    and the row that replaces it after the upload read the same."""
+
+    live_speaker_threshold: float = 0.55
+    """Cosine similarity at or above which a live utterance joins an existing
+    speaker cluster; below it a new ``화자 N`` opens. Provisional: the
+    evaluation in ``docs/modules/audio-live-speakers.md`` section 6 picks the
+    default, and until it has run this is the wespeaker convention."""
+
+    live_speaker_min_s: float = 1.0
+    """A live utterance shorter than this may neither open a speaker cluster
+    nor move a centroid; it takes the nearest label. A sub-second embedding is
+    unreliable, and without the floor every "네" is a new speaker."""
 
     @model_validator(mode="after")
     def _warn_on_cuda_without_token(self) -> AudioSettings:
@@ -76,6 +199,22 @@ class AudioSettings(BaseSettings):
                 "diarization would fail after the recording was already uploaded"
             )
         return self
+
+    def speaker_bounds(self) -> dict[str, int]:
+        """The head-count hint as pyannote keyword arguments (#325).
+
+        An exact count wins over bounds; unset means "cluster freely". The
+        live tracker reads the same dict, so the two paths cannot disagree
+        about precedence.
+        """
+        if self.diarization_num_speakers is not None:
+            return {"num_speakers": self.diarization_num_speakers}
+        bounds: dict[str, int] = {}
+        if self.diarization_min_speakers is not None:
+            bounds["min_speakers"] = self.diarization_min_speakers
+        if self.diarization_max_speakers is not None:
+            bounds["max_speakers"] = self.diarization_max_speakers
+        return bounds
 
     def require_hf_token(self) -> str:
         """The token, or an error naming every repository that needs accepting."""

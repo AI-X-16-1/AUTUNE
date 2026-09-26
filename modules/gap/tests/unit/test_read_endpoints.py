@@ -1,4 +1,4 @@
-"""The read side of module C's HTTP surface: ``/reports`` and ``/topics``.
+"""Module C's HTTP surface: ``/reports``, ``/topics`` and ``/templates``.
 
 SQLite in memory and the router on a bare app, the way apps/api mounts it —
 the same harness module B's ``test_read_endpoints`` uses, and for the same
@@ -22,9 +22,22 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
-from autune_core import AutuneError, Base, Meeting, Participant, Utterance, get_session
+from autune_core import (
+    AutuneError,
+    Base,
+    Meeting,
+    Participant,
+    Team,
+    TeamMember,
+    User,
+    Utterance,
+    get_session,
+    issue_token,
+)
+from autune_gap import service, template
 from autune_gap.models import (
     GapGap,
+    GapMeetingTemplate,
     GapParticipation,
     GapRelatedTopic,
     GapTopic,
@@ -37,7 +50,22 @@ MEETING = "mtg_1"
 OTHER_MEETING = "mtg_2"
 PREFIX = "/api/gap"
 
+TEAM = "team_1"
+OTHER_TEAM = "team_2"
+MEMBER = "usr_member"
+OUTSIDER = "usr_outsider"
+"""A user of another team. Not "a user with no team": the interesting caller is
+one who holds a perfectly good token, because that is who a 403 would tell
+which meeting ids are real."""
+
+FOREIGN_MEETING = "mtg_elsewhere"
+"""A real meeting of a team the caller does not belong to. Its answer has to be
+the same as an id nobody ever issued."""
+
 TABLES = [
+    User.__table__,
+    Team.__table__,
+    TeamMember.__table__,
     Meeting.__table__,
     Participant.__table__,
     Utterance.__table__,
@@ -47,6 +75,7 @@ TABLES = [
     GapParticipation.__table__,
     GapGap.__table__,
     GapRelatedTopic.__table__,
+    GapMeetingTemplate.__table__,
 ]
 
 
@@ -59,8 +88,15 @@ def session() -> Iterator[Session]:
     )
     Base.metadata.create_all(engine, tables=TABLES)
     with Session(engine) as session:
+        for user_id in (MEMBER, OUTSIDER):
+            session.add(User(id=user_id, email=f"{user_id}@example.com", display_name=user_id))
+        session.add(Team(id=TEAM, name="autune"))
+        session.add(Team(id=OTHER_TEAM, name="somebody else"))
+        session.add(TeamMember(team_id=TEAM, user_id=MEMBER))
+        session.add(TeamMember(team_id=OTHER_TEAM, user_id=OUTSIDER))
         for meeting_id in (MEETING, OTHER_MEETING):
-            session.add(Meeting(id=meeting_id, team_id="team_1", title="주간 회의"))
+            session.add(Meeting(id=meeting_id, team_id=TEAM, title="주간 회의"))
+        session.add(Meeting(id=FOREIGN_MEETING, team_id=OTHER_TEAM, title="남의 회의"))
         session.flush()
         yield session
 
@@ -76,7 +112,29 @@ def client(session: Session) -> Iterator[TestClient]:
 
     app.include_router(router, prefix=PREFIX)
     app.dependency_overrides[get_session] = lambda: session
+    yield TestClient(app, headers=_bearer(MEMBER))
+
+
+@pytest.fixture
+def anonymous(session: Session) -> Iterator[TestClient]:
+    """The same app with no Authorization header. What the world had until
+    #276."""
+    app = FastAPI()
+
+    @app.exception_handler(AutuneError)
+    async def _render(_: Request, exc: AutuneError) -> JSONResponse:
+        return JSONResponse(status_code=exc.status_code, content=exc.to_dict())
+
+    app.include_router(router, prefix=PREFIX)
+    app.dependency_overrides[get_session] = lambda: session
     yield TestClient(app)
+
+
+def _bearer(user_id: str) -> dict[str, str]:
+    """A real token, signed the way `current_user` verifies it. Overriding the
+    dependency instead would test the routes and not the wiring that makes them
+    require a caller at all."""
+    return {"Authorization": f"Bearer {issue_token(user_id)}"}
 
 
 def participant(
@@ -177,6 +235,9 @@ def gap(
     risk_score: float = 0.9,
     dismissed: bool = False,
     related: tuple[str, ...] = (),
+    template_key: str | None = None,
+    item_key: str | None = None,
+    coverage: str | None = None,
 ) -> str:
     session.add(
         GapGap(
@@ -186,6 +247,9 @@ def gap(
             title="성능 요구사항이 정해지지 않았습니다",
             severity="high",
             risk_score=risk_score,
+            template_key=template_key,
+            template_item_key=item_key,
+            coverage=coverage,
             dismissed_at=datetime.now(tz=UTC) if dismissed else None,
         )
     )
@@ -454,3 +518,282 @@ def test_the_graph_carries_no_participation(client: TestClient, session: Session
 
     assert set(body) == {"meeting_id", "nodes", "edges"}
     assert set(body["nodes"][0]) == {"id", "label", "centrality", "betweenness"}
+
+
+# --- which template a meeting is compared against ---------------------------
+
+
+@pytest.fixture
+def detection(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Records the meetings ``PUT /templates`` re-compared, without running it.
+
+    ``detect_gaps`` opens its own ``session_scope`` against the real database;
+    this harness is SQLite in memory. What the route owes its caller is that it
+    asks for the re-comparison, and that is what is asserted.
+    """
+    called: list[str] = []
+    monkeypatch.setattr(service, "detect_gaps", lambda meeting_id: called.append(meeting_id))
+    return called
+
+
+def test_the_templates_a_meeting_can_be_held_to_are_listed(client: TestClient) -> None:
+    body = client.get(f"{PREFIX}/templates").json()
+
+    assert {entry["key"] for entry in body} == {"general", "feature_planning"}
+    assert all(entry["items"] > 0 for entry in body)
+
+
+def test_the_listing_carries_no_items(client: TestClient) -> None:
+    """Choosing a template is choosing a name. Ten checklists in a payload that
+    shows one of them is every template shipped to a screen nobody opens."""
+    body = client.get(f"{PREFIX}/templates").json()
+
+    assert set(body[0]) == {"key", "name", "version", "items"}
+
+
+def test_a_meeting_nobody_chose_for_answers_with_the_default(client: TestClient) -> None:
+    """Not an empty body: there is always a template in force, and a rail
+    showing nothing selected would misreport that."""
+    body = client.get(f"{PREFIX}/templates/{MEETING}").json()
+
+    assert body["template_key"] == "general"
+    assert body["name"]
+    assert body["version"].startswith("general.")
+
+
+def test_the_comparison_lists_every_item_of_the_template_in_order(client: TestClient) -> None:
+    """The rail is the checklist, not the findings: a covered item has no gap
+    row and still has to appear, because "다룸" is the thing it says."""
+    body = client.get(f"{PREFIX}/templates/{MEETING}").json()
+    keys = [entry["key"] for entry in body["items"]]
+
+    assert keys == [item.key for item in template.get_template("general").items]
+    assert set(body["items"][0]) == {"key", "category", "item", "coverage", "gap_id", "dismissed"}
+
+
+def test_an_unanalysed_meeting_reports_no_coverage_rather_than_a_covered_checklist(
+    client: TestClient,
+) -> None:
+    """The failure this prevents: a meeting nobody has processed rendering as a
+    full checklist of green dots, because no gap row exists for any item.
+
+    `detect.compare` raises nothing for a meeting with no topics on purpose —
+    an empty graph says extraction found nothing, not that the meeting
+    discussed nothing — so absence of a row means "not compared" here.
+    """
+    body = client.get(f"{PREFIX}/templates/{MEETING}").json()
+
+    assert body["analysed"] is False
+    assert all(entry["coverage"] is None for entry in body["items"])
+
+
+def test_an_item_with_no_gap_is_covered_once_the_meeting_has_a_graph(
+    client: TestClient, session: Session
+) -> None:
+    topic(session, "topic_a")
+    item_key = template.get_template("general").items[0].key
+    gap(session, "gap_1", template_key="general", item_key=item_key, coverage="missing")
+
+    body = client.get(f"{PREFIX}/templates/{MEETING}").json()
+    states = {entry["key"]: entry["coverage"] for entry in body["items"]}
+
+    assert body["analysed"] is True
+    assert states.pop(item_key) == "missing"
+    assert set(states.values()) == {"covered"}
+
+
+def test_an_item_carries_the_id_of_the_gap_it_raised(client: TestClient, session: Session) -> None:
+    """The rail and the gap list beside it are one finding seen twice."""
+    topic(session, "topic_a")
+    item_key = template.get_template("general").items[0].key
+    gap(session, "gap_1", template_key="general", item_key=item_key, coverage="partial")
+
+    body = client.get(f"{PREFIX}/templates/{MEETING}").json()
+    entry = next(one for one in body["items"] if one["key"] == item_key)
+
+    assert entry["gap_id"] == "gap_1"
+    assert entry["coverage"] == "partial"
+
+
+def test_a_dismissed_gap_keeps_its_coverage_and_is_marked(
+    client: TestClient, session: Session
+) -> None:
+    """Calling a gap a false positive is a judgement about the gap. It is not
+    evidence the meeting covered the item, so the rail does not promote it."""
+    topic(session, "topic_a")
+    item_key = template.get_template("general").items[0].key
+    gap(
+        session,
+        "gap_1",
+        template_key="general",
+        item_key=item_key,
+        coverage="missing",
+        dismissed=True,
+    )
+
+    body = client.get(f"{PREFIX}/templates/{MEETING}").json()
+    entry = next(one for one in body["items"] if one["key"] == item_key)
+
+    assert entry["coverage"] == "missing"
+    assert entry["dismissed"] is True
+
+
+def test_a_gap_from_another_template_does_not_reach_the_rail(
+    client: TestClient, session: Session
+) -> None:
+    """Switching templates leaves the old rows until the next detection pass;
+    the rail shows the checklist in force, not whatever is in the table."""
+    topic(session, "topic_a")
+    other = template.get_template("feature_planning").items[-1]
+    gap(
+        session,
+        "gap_1",
+        template_key="feature_planning",
+        item_key=other.key,
+        coverage="missing",
+    )
+
+    body = client.get(f"{PREFIX}/templates/{MEETING}").json()
+
+    assert body["template_key"] == "general"
+    assert all(entry["gap_id"] is None for entry in body["items"])
+
+
+def test_an_unknown_meeting_is_a_404(client: TestClient) -> None:
+    assert client.get(f"{PREFIX}/templates/mtg_missing").status_code == 404
+
+
+def test_choosing_a_template_stores_it_and_re_compares(
+    client: TestClient, session: Session, detection: list[str]
+) -> None:
+    response = client.put(
+        f"{PREFIX}/templates/{MEETING}", json={"template_key": "feature_planning"}
+    )
+
+    assert response.json() == {"template_key": "feature_planning"}
+    assert session.get(GapMeetingTemplate, MEETING).template_key == "feature_planning"
+    assert detection == [MEETING]
+
+
+def test_choosing_again_replaces_the_choice(
+    client: TestClient, session: Session, detection: list[str]
+) -> None:
+    """One row per meeting — the table stores the exception, not a history."""
+    client.put(f"{PREFIX}/templates/{MEETING}", json={"template_key": "feature_planning"})
+    client.put(f"{PREFIX}/templates/{MEETING}", json={"template_key": "general"})
+
+    assert session.get(GapMeetingTemplate, MEETING).template_key == "general"
+
+
+def test_a_template_no_file_defines_is_a_422(
+    client: TestClient, session: Session, detection: list[str]
+) -> None:
+    """What is wrong is the value, not the address. Nothing is stored and
+    nothing is re-compared."""
+    response = client.put(f"{PREFIX}/templates/{MEETING}", json={"template_key": "retrospective"})
+
+    assert response.status_code == 422
+    assert session.get(GapMeetingTemplate, MEETING) is None
+    assert detection == []
+
+
+# --- who may read a meeting at all (#276) -----------------------------------
+
+
+ROUTES = [
+    f"{PREFIX}/reports/{{meeting_id}}",
+    f"{PREFIX}/topics/{{meeting_id}}",
+    f"{PREFIX}/templates/{{meeting_id}}",
+]
+"""Every GET that names a meeting. Parameterised rather than written out three
+times, so a route added later without the check fails here — the list is the
+thing a reviewer compares against the router."""
+
+
+@pytest.mark.parametrize("route", ROUTES)
+def test_a_member_of_the_team_may_read(client: TestClient, route: str) -> None:
+    assert client.get(route.format(meeting_id=MEETING)).status_code == 200
+
+
+@pytest.mark.parametrize("route", ROUTES)
+def test_no_token_is_refused(anonymous: TestClient, route: str) -> None:
+    """What the world had until #276: anyone who knew a meeting id read that
+    meeting's gap report, participation matrix included."""
+    assert anonymous.get(route.format(meeting_id=MEETING)).status_code == 403
+
+
+@pytest.mark.parametrize("route", ROUTES)
+def test_another_teams_meeting_is_indistinguishable_from_one_that_does_not_exist(
+    client: TestClient, route: str
+) -> None:
+    """The point of the rule, and the reason it is not a 403.
+
+    A 403 confirms the id exists, and the ids are the only thing a caller needs
+    to walk the table. Status *and* body have to match — an error message that
+    named the team would give the same thing away.
+    """
+    foreign = client.get(route.format(meeting_id=FOREIGN_MEETING))
+    unknown = client.get(route.format(meeting_id="mtg_no_such_thing"))
+
+    assert foreign.status_code == unknown.status_code == 404
+    assert foreign.json()["error"]["code"] == unknown.json()["error"]["code"]
+    assert "team" not in foreign.text
+
+
+@pytest.mark.parametrize("route", ROUTES)
+def test_an_analysed_meeting_and_an_unanalysed_one_are_both_readable(
+    client: TestClient, route: str
+) -> None:
+    """Nothing analysed yet is a state, not a missing resource. A screen polling
+    while the pipeline runs needs that difference, and the new check must not
+    have collapsed it into the 404 above."""
+    assert client.get(route.format(meeting_id=OTHER_MEETING)).status_code == 200
+
+
+def test_the_one_write_is_refused_to_an_outsider(
+    client: TestClient, session: Session, detection: list[str]
+) -> None:
+    """``PUT /templates`` changes what a team sees rather than just reading it,
+    so an unauthenticated caller could have rewritten another team's report."""
+    outsider = TestClient(client.app, headers=_bearer(OUTSIDER))
+
+    response = outsider.put(f"{PREFIX}/templates/{MEETING}", json={"template_key": "general"})
+
+    assert response.status_code == 404
+    assert session.get(GapMeetingTemplate, MEETING) is None
+    assert detection == []
+
+
+def test_the_write_is_refused_with_no_token(
+    anonymous: TestClient, session: Session, detection: list[str]
+) -> None:
+    response = anonymous.put(f"{PREFIX}/templates/{MEETING}", json={"template_key": "general"})
+
+    assert response.status_code == 403
+    assert session.get(GapMeetingTemplate, MEETING) is None
+    assert detection == []
+
+
+def test_a_token_for_a_user_who_no_longer_exists_is_refused(
+    client: TestClient, session: Session
+) -> None:
+    """A signed token outlives the row it names. `current_user` answers 404 for
+    the user; what matters here is that it does not fall through to the report.
+    """
+    gone = TestClient(client.app, headers=_bearer("usr_deleted"))
+
+    assert gone.get(f"{PREFIX}/reports/{MEETING}").status_code == 404
+
+
+def test_the_template_listing_needs_a_caller_and_the_health_check_does_not(
+    client: TestClient, anonymous: TestClient
+) -> None:
+    """``/health`` is what apps/api calls and carries nothing. The template
+    listing carries no meeting content either, but an unauthenticated route in
+    this router is the one somebody copies for the next endpoint.
+    """
+    assert anonymous.get(f"{PREFIX}/health").status_code == 200
+    assert client.get(f"{PREFIX}/health").status_code == 200
+
+    assert anonymous.get(f"{PREFIX}/templates").status_code == 403
+    assert client.get(f"{PREFIX}/templates").status_code == 200

@@ -100,8 +100,7 @@ D consumes this too, for `decisions` only. See "The B → D boundary" below.
       "status": "todo",
       "confidence": 0.88,
       "external_refs": [
-        {"system": "notion", "url": "https://..."},
-        {"system": "jira", "url": "https://..."}
+        {"system": "notion", "url": "https://..."}
       ]
     }
   ],
@@ -110,7 +109,10 @@ D consumes this too, for `decisions` only. See "The B → D boundary" below.
       "id": "dec_014",
       "statement": "검색 정렬은 인기순으로 진행",
       "source_utterance_ids": ["utt_001", "utt_002"],
-      "confidence": 0.86
+      "confidence": 0.86,
+      "stance_by_role": [
+        {"role": "Dev", "identified": 4, "supporting": 3, "concerns": 1}
+      ]
     }
   ],
   "classifications": [
@@ -138,8 +140,21 @@ A `Decision` is not the same as a `Classification` with `kind="decision"`. The
 classification marks one utterance; a decision is an entity that often spans
 several, and it is what D keys a lineage on.
 
+`stance_by_role` counts people per role, never per person (#168). A role is
+listed only when the meeting had at least `STANCE_MIN_IDENTIFIED_PER_ROLE` (3)
+identified people in it, and `identified` carries that number so the model
+rejects a row below the gate. People are counted by distinct `user_id`, each in
+at most one count (`supporting + concerns <= identified`); a person who spoke
+without backing the decision or raising a concern is in neither count, so the
+field says nothing about who spoke. A **unanimous** role (`supporting` or
+`concerns` equal to `identified`) is rejected too — it states every member's
+stance — and the producer leaves that role out. An empty list means either
+that no role cleared the gate or that stance was not computed — do not tell the
+two apart. It stays empty until the Korean classifier has a measured quality
+(#10); E shows "not enough data" until then.
+
 `status` is one of `needs_confirmation`, `todo`, `in_progress`, `done` — the
-four columns of the action board (S17) and the Jira states they map to.
+four columns of the action board (S17).
 `needs_confirmation` means Autune has the item but no external issue exists yet.
 
 ### 3. `GapReport` — C → E

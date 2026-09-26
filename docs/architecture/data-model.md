@@ -27,7 +27,7 @@ absence of a prefix is what marks a table as shared.
 | `users` | A person with an account |
 | `teams` | An organization or squad |
 | `team_members` | User ↔ team membership and role |
-| `team_integrations` | One team's connection to Notion, Jira, Slack or Calendar |
+| `team_integrations` | One team's connection to Notion, Slack or Calendar |
 | `meetings` | One analysis unit |
 | `participants` | One voice at a meeting, identified or not — usually one person, not always; see below |
 | `utterances` | One continuous stretch of speech, PII-masked |
@@ -134,7 +134,7 @@ Every table a module owns is named `<prefix>_<name>`.
 
 | Module | Prefix | Examples |
 | --- | --- | --- |
-| A. audio | `aud_` | `aud_jobs`, `aud_speaker_embeddings`, `aud_masking_events` |
+| A. audio | `aud_` | `aud_jobs`, `aud_speaker_embeddings`, `aud_masking_events`, `aud_consent_attestations` |
 | B. extraction | `ext_` | `ext_classifications`, `ext_action_items`, `ext_external_refs` |
 | C. gap | `gap_` | `gap_topics`, `gap_gaps`, `gap_participation` |
 | D. context | `ctx_` | `ctx_materials`, `ctx_topic_links`, `ctx_decisions`, `ctx_decision_versions` |
@@ -205,7 +205,10 @@ because both must be deletable on request:
   `meeting_id` without a constraint must be cleaned up by the module's own
   deletion hook.
 - **User deletion / team departure** removes that user's utterances and anything
-  derived from them.
+  derived from them. **Under review — see ADR 0007**, which would make departure
+  an access change that clears `participants.user_id` and keeps the meeting's
+  record. Until that ADR is accepted or rejected, this bullet is what the code
+  follows, and `privacy.md` section 4 says the same.
 - **Retention sweep** deletes analysis results past the retention window (90
   days by default).
 

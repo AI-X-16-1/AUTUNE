@@ -15,7 +15,7 @@ a test.
 They may import:
 - `autune_contracts` — the shared data types
 - `autune_core` — DB session, settings, auth, logging, shared entities
-- `autune_integrations` — Slack, Notion, Jira, Google Calendar wrappers
+- `autune_integrations` — Slack, Notion, Google Calendar wrappers
 - any third-party library declared in their own `pyproject.toml`
 
 `packages/*` never imports `modules/*`. The dependency direction is one-way.

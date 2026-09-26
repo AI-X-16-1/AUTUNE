@@ -187,7 +187,7 @@ does not make it more or less so.
   is what lets gap detection be tuned by a person rather than retrained.
 - **D — search is two tools, not one.** `search_exact` (BM25) and
   `search_semantic` (embeddings), exposed separately, because the agent has to
-  choose: a person's name or a Jira key wants exact match, "that performance
+  choose: a person's name or a decision id wants exact match, "that performance
   discussion" wants meaning. One merged tool takes the choice away from the
   only party that can make it.
 
@@ -209,7 +209,7 @@ CREATE TABLE agent_work_items (
   due_date          DATE,
   status            TEXT,       -- open | in_progress | blocked | resolved | dropped
   confidence        FLOAT,      -- see section 10
-  external_ref      JSONB,      -- {"jira": "PROJ-123", "notion": "..."}
+  external_ref      JSONB,      -- {"notion": "<page id>"}
   last_signal_at    TIMESTAMP,
   escalation_lv     INT,        -- 0 watch · 1 DM · 2 raise on agenda · 3 report to lead
   next_check_at     TIMESTAMP   -- when the agent wakes itself for this item
@@ -261,7 +261,7 @@ subscribes to events those modules already publish
 `agent_*` would be a module writing another owner's table, which invariant 3
 exists to prevent.
 
-Work that was never in a meeting — a Jira issue, a request in a channel —
+Work that was never in a meeting — a Notion task, a request in a channel —
 lands in the same table through the same door. That is the moment "beyond the
 meeting" stops being a slogan.
 
@@ -279,7 +279,7 @@ without that path (#86); this must not repeat it.
 | --- | --- | --- |
 | Time | 09:00 team briefing; 30 minutes before a meeting | Celery beat |
 | State | `next_check_at` due; deadline tomorrow and no signal in three days | 5-minute poll |
-| Event | Meeting analysis finished; Jira status changed; bot mentioned | Existing events + webhooks |
+| Event | Meeting analysis finished; bot mentioned | Existing events + webhooks |
 | Request | "Summarise last week's decisions" | Slash command |
 
 For the first release, **event + state** is enough. Both depend on the
@@ -371,7 +371,7 @@ first action does.
 | L0 | Internal read or draft | Search, summarise, draft, write to `agent_*` | Automatic |
 | **L0-ext** | **Read that leaves the building** | **Web search, LLM provider call** | **Section 13.3 — unresolved** |
 | L1 | Reversible write | Thread comment, agenda draft | Automatic, notify after |
-| L2 | Write that moves a person | DM, channel post, Jira create or re-date | **Plan mode**, then execute |
+| L2 | Write that moves a person | DM, channel post, Notion page create or re-date | **Plan mode**, then execute |
 | L3 | Destructive | Close an issue, delete an event, send externally | Forbidden |
 
 ### Plan mode — a plan is submitted before anything at L2 happens
