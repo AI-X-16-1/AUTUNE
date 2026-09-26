@@ -120,7 +120,7 @@ function body(state: ReturnType<typeof useMeeting>, meetingId: string) {
     default:
       return (
         <div className="border-t border-[var(--color-hairline)]">
-          <StoredTranscript meetingId={meetingId} />
+          <StoredTranscript meetingId={meetingId} teamId={meeting.team_id} />
         </div>
       );
   }

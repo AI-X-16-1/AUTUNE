@@ -29,6 +29,9 @@ from .schemas import (
     MeetingCreate,
     MeetingDetail,
     MeetingState,
+    SpeakerAssignment,
+    SpeakerEntry,
+    TeamMemberSummary,
     TeamSummary,
 )
 from .storage import assign, handover
@@ -112,6 +115,7 @@ def get_meeting(meeting_id: str, user: CurrentUser, session: SessionDep) -> Meet
         status=meeting.status,
         original_audio_deleted=meeting.original_audio_deleted,
         pii_masked=meeting.pii_masked,
+        team_id=meeting.team_id,
     )
 
 
@@ -203,6 +207,21 @@ def upload_recording(
     return MeetingState(meeting_id=job.meeting_id, status=job.meeting.status)
 
 
+@router.get("/meetings/{meeting_id}/speakers", response_model=list[SpeakerEntry])
+def list_speakers(meeting_id: str, user: CurrentUser, session: SessionDep) -> list[SpeakerEntry]:
+    """The meeting's speakers, and who each one is or might be. What S13 and
+    S15 draw next to an unidentified row."""
+    return service.speakers_for(session, meeting_id=meeting_id, reader=user)
+
+
+@router.get("/teams/{team_id}/members", response_model=list[TeamMemberSummary])
+def list_team_members(
+    team_id: str, user: CurrentUser, session: SessionDep
+) -> list[TeamMemberSummary]:
+    """The people the speaker picker can offer."""
+    return service.members_of(session, team_id=team_id, reader=user)
+
+
 @router.post("/meetings/{meeting_id}/consent", response_model=ConsentState)
 def attest_consent(
     meeting_id: str, body: ConsentAttestation, user: CurrentUser, session: SessionDep
@@ -226,3 +245,30 @@ def attest_consent(
     service.attest_consent(session, meeting_id=meeting_id, attested_by=user)
     session.commit()
     return ConsentState(meeting_id=meeting_id, attested=True)
+
+
+@router.post(
+    "/meetings/{meeting_id}/speakers/{speaker_label}", status_code=status.HTTP_204_NO_CONTENT
+)
+def assign_speaker(
+    meeting_id: str,
+    speaker_label: str,
+    body: SpeakerAssignment,
+    user: CurrentUser,
+    session: SessionDep,
+) -> None:
+    """Confirm who a speaker is. The transcript then carries their
+    ``speaker_id``, and the next meeting offers them as a candidate."""
+    service.assign_speaker(
+        session,
+        meeting_id=meeting_id,
+        speaker_label=speaker_label,
+        user_id=body.user_id,
+        confirmed_by=user,
+    )
+
+
+@router.delete("/me/voice-profile", status_code=status.HTTP_204_NO_CONTENT)
+def delete_voice_profile(user: CurrentUser, session: SessionDep) -> None:
+    """Delete every voice vector this account has confirmed."""
+    service.delete_voice_profile(session, user=user)

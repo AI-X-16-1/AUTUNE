@@ -70,6 +70,31 @@ export type MeetingDetail = {
   original_audio_deleted: boolean;
   /** Set in the same transaction as the utterances; false until then. */
   pii_masked: boolean;
+  /** The meeting's own team. Feeds `listTeamMembers` for the speaker picker. */
+  team_id: string;
 };
 
 export type TeamSummary = { team_id: string; name: string };
+
+/**
+ * Module A's own speaker endpoints — `/api/audio/meetings/{id}/speakers` and
+ * `/api/audio/teams/{id}/members`.
+ *
+ * Hand-written for the same reason as `MeetingDetail` above: a contract is
+ * what another *module* consumes, and these are module A's own response
+ * shapes, not shared across the boundary. They mirror
+ * `modules/audio/src/autune_audio/schemas.py`.
+ */
+export type SpeakerCandidate = {
+  user_id: string;
+  name: string;
+  similarity: number;
+};
+
+export type SpeakerEntry = {
+  speaker_label: string;
+  user_id: string | null;
+  candidate: SpeakerCandidate | null;
+};
+
+export type TeamMember = { user_id: string; name: string };

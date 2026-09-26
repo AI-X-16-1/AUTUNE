@@ -122,6 +122,49 @@ class AudioSettings(BaseSettings):
     """Upper bound on speakers when the exact count is unknown. Ignored when
     ``diarization_num_speakers`` is set."""
 
+    identification_threshold: float = 0.70
+    """Cosine similarity at or above which a voice profile is offered as the
+    candidate for a speaker label. Higher than the live tracker's
+    ``live_speaker_threshold``: that one asks "is this the same voice as a
+    moment ago", this one asks "is this a particular person", and the cost of
+    being wrong is a commitment filed under somebody who never made it.
+    Provisional until the evaluation in
+    ``docs/modules/audio-speaker-identification.md`` has run."""
+
+    voice_profiles_enabled: bool = False
+    """Whether confirming a speaker may write a voice profile (a vector kept
+    on the person, across meetings, until they delete it or leave).
+
+    Off by default because ADR 0007's legal review is still open: #92's Q4
+    asks whether a voice embedding is 생체인식정보 under 제23조 and whether
+    collecting it needs its own separate, refusable consent, and identification
+    shipped before that question was answered. If the answer turns out to be
+    "yes, separate consent is required," the cost of having shipped with this
+    off is flipping the setting once authentication exists to collect and
+    record that consent (#268 -- ``User`` has no consent field and there is no
+    sign-up flow today); the cost of having shipped it on would have been
+    deleting biometric data already collected and rebuilding the confirmation
+    flow around a consent step that does not exist yet.
+
+    Gates exactly the profile INSERT in ``service.assign_speaker`` -- nothing
+    else. ``Participant.user_id`` is still written (that is attendance, not
+    biometric data), the worker still stores per-meeting observation vectors
+    exactly as before (bounded by the meeting's own retention window, never
+    ``user_id``-bearing), and deleting a profile or a departing user's data
+    is never gated by this -- a flag that limits collection must never also
+    block its own undo.
+    """
+
+    speaker_embedding_max_s: float = 10.0
+    """How many seconds of one speaker go into their observation vector. More
+    is not better: the embedder pools over the window, and ten seconds of a
+    person is already more than a speaker-verification model needs."""
+
+    speaker_embedding_min_s: float = 3.0
+    """A speaker with less than this much speech in a meeting gets no vector.
+    Someone who said "네" twice cannot be recognised from it, and a noisy row
+    would be offered as a candidate."""
+
     live_hello_timeout_s: float = 5.0
     """How long a live connection may sit without sending ``hello``."""
 

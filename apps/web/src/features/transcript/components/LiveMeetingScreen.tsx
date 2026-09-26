@@ -35,9 +35,10 @@ const LEAVING_LOSES_AUDIO = new Set<LivePhase>([
  * only while a consent request is in flight, so a tick is not lost to a
  * start that races it.
  *
- * Speaker actions still log. Assigning a speaker writes `speaker_id` on a
- * shared entity, which only module A does and only through `/api/audio`; the
- * endpoint is not there yet, and a live row has no speaker to assign anyway.
+ * Speaker identification does not reach this screen. `LiveTranscript` has no
+ * prompt during a recording — see its own docstring for why (no `Participant`
+ * row exists until the meeting is processed) — so this screen does not need
+ * the meeting's `team_id` and does not poll for it.
  */
 export function LiveMeetingScreen({ meetingId }: { meetingId: string }) {
   const router = useRouter();
@@ -196,9 +197,6 @@ export function LiveMeetingScreen({ meetingId }: { meetingId: string }) {
         onPause={live.pause}
         onResume={live.resume}
         onStop={() => void onStop()}
-        onAssignSpeaker={(speaker) => console.log("assign speaker", { meetingId, speaker })}
-        onEnterSpeakerName={(speaker) => console.log("enter speaker name", { meetingId, speaker })}
-        onSendConfirmation={(speaker) => console.log("send confirmation DM", { meetingId, speaker })}
       />
     </>
   );

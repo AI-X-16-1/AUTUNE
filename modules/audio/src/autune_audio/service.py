@@ -8,23 +8,28 @@ Never imports another module.
 
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import NamedTuple
 
 import sqlalchemy as sa
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from autune_audio.live import registry as live_registry
 from autune_contracts.transcript import Utterance as ContractUtterance
-from autune_core import Meeting, Participant, Team, TeamMember, User, get_logger
+from autune_core import Meeting, Participant, Team, TeamMember, User, get_logger, session_scope
 from autune_core.auth import decode_token
+from autune_core.deletion import on_user_deleted
 from autune_core.errors import ConflictError, NotFoundError, PermissionDeniedError
 
-from . import storage
-from .config import AudioSettings
-from .models import AudConsentAttestation, TranscriptionJob
+from . import identification, storage
+from .config import AudioSettings, get_settings
+from .models import AudConsentAttestation, AudSpeakerEmbedding, TranscriptionJob
 from .persistence import transcript_payload
+from .schemas import SpeakerCandidate, SpeakerEntry, TeamMemberSummary
+from .speakers import UNIDENTIFIED
 
 log = get_logger(__name__)
 
@@ -39,19 +44,27 @@ class NotATeamMemberError(PermissionDeniedError):
     """
 
 
-def require_team_member(session: Session, *, user_id: str, team_id: str) -> None:
+def require_team_member(
+    session: Session, *, user_id: str, team_id: str, message: str | None = None
+) -> None:
     """Raise unless ``user_id`` belongs to ``team_id``.
 
     A token proves who is asking, not which team's meetings they may read. Named
     and shared rather than written inline, because every route this module grows
     asks the same question and an authorisation check that exists in two places
     is one that can come to mean two things.
+
+    ``message`` lets a caller that checks somebody *other* than the person
+    making the request -- ``assign_speaker`` checking the named ``user_id``,
+    not just ``confirmed_by`` -- say so, rather than telling a caller who is
+    themselves a member "you are not a member of this team" about a refusal
+    that was actually about someone else.
     """
     member = session.scalar(
         sa.select(TeamMember.id).where(TeamMember.team_id == team_id, TeamMember.user_id == user_id)
     )
     if member is None:
-        raise NotATeamMemberError("you are not a member of this team")
+        raise NotATeamMemberError(message or "you are not a member of this team")
 
 
 def transcript_for_meeting(
@@ -77,8 +90,11 @@ def transcript_for_meeting(
     some. A caller that needs to tell "not yet" from "nothing was said" reads
     the meeting's status, which is what it is for.
 
-    Speaking ratios are not here and never will be. privacy.md section 3 gives
-    those to module E, delivered to the speaker and nobody else.
+    A speaking ratio is not computed here. But since this branch (#6) this
+    payload's utterances carry ``speaker_id``, ``start`` and ``end``, so a
+    per-person duration is one ``GROUP BY`` away for any reader of this
+    route -- whether that is a gap privacy.md section 3 needs closing is
+    open in #361; this function's behaviour has not changed.
     """
     meeting = session.get(Meeting, meeting_id)
     if meeting is None:
@@ -548,12 +564,12 @@ def attest_consent(session: Session, *, meeting_id: str, attested_by: User) -> N
     statement.
 
     Not per person, not revocable, and it does not tell B and C that a meeting
-    they already analysed has changed. Those are S10, S11 and #190's republish
-    question. Nor does anything here undo what B, C and E derived once the
-    meeting was analysed -- today the only way that data goes is with the
-    meeting itself (CASCADE), and before identification (#6) there is no
-    per-person unit to revoke for. The default is not loosened by any of
-    this: a meeting with no attestation is exactly as it was.
+    they already analysed has changed. Those are S10, S11 and #190's follow-ups.
+    Nor does anything here undo what B, C and E derived once the meeting was
+    analysed -- today the only way that data goes is with the meeting itself
+    (CASCADE), and before identification (#6) there is no per-person unit to
+    revoke for. The default is not loosened by any of this: a meeting with no
+    attestation is exactly as it was.
     """
     meeting = session.get(Meeting, meeting_id)
     if meeting is None:
@@ -630,3 +646,358 @@ def begin_live(session: Session, *, meeting_id: str) -> None:
     meeting.status = "recording"
     session.flush()
     log.info("live_meeting_recording", meeting_id=meeting_id)
+
+
+def speakers_for(session: Session, *, meeting_id: str, reader: User) -> list[SpeakerEntry]:
+    """Every speaker label of a meeting, with who it is or might be.
+
+    The candidate is computed here rather than stored: a stored one is stale
+    the moment somebody else confirms a profile, and recomputing is one query.
+
+    **Only members of this meeting's team can be candidates.** A candidate
+    from another team would say that person attended this team's meeting.
+    """
+    meeting = session.get(Meeting, meeting_id)
+    if meeting is None:
+        raise NotFoundError("meeting", meeting_id)
+    require_team_member(session, user_id=reader.id, team_id=meeting.team_id)
+
+    # `Participant.id` is a random id (`new_id`), not a sortable one -- this
+    # only makes the read deterministic between two requests (e.g. after a
+    # row update), not correctly ordered. The real order is sorted in below,
+    # from the number in the label.
+    participants = list(
+        session.scalars(
+            sa.select(Participant)
+            .where(Participant.meeting_id == meeting_id)
+            .order_by(Participant.id)
+        )
+    )
+    observations = {
+        row.speaker_label: row
+        for row in session.scalars(
+            sa.select(AudSpeakerEmbedding).where(AudSpeakerEmbedding.meeting_id == meeting_id)
+        )
+        if row.speaker_label is not None
+    }
+    profiles = _profiles_of_team(session, team_id=meeting.team_id)
+    threshold = get_settings().identification_threshold
+
+    entries = []
+    for participant in participants:
+        observation = observations.get(participant.speaker_label)
+        candidate = None
+        if participant.user_id is None and observation is not None:
+            found = identification.best_candidate(
+                observation.vector,
+                profiles,
+                model_version=observation.model_version,
+                threshold=threshold,
+            )
+            if found is not None:
+                candidate = SpeakerCandidate(
+                    user_id=found.user_id, name=found.display_name, similarity=found.similarity
+                )
+        entries.append(
+            SpeakerEntry(
+                speaker_label=participant.speaker_label,
+                user_id=participant.user_id,
+                candidate=candidate,
+            )
+        )
+    entries.sort(key=_speaker_order)
+    return entries
+
+
+_LABEL_NUMBER = re.compile(rf"^{re.escape(UNIDENTIFIED)} (\d+)$")
+"""``speakers.rename_speakers`` and the live path both number a label this
+way, by first appearance in time -- so the number *is* the ordering the
+screen wants, and reading it back is cheaper than tracking appearance order
+anywhere else."""
+
+
+def _speaker_order(entry: SpeakerEntry) -> tuple[int, int]:
+    """Sort key for ``speakers_for``: the integer in "화자 N", ascending.
+
+    A label that does not match the shape (a future form, a bug upstream)
+    sorts after every numbered one rather than raising -- ``(1, 0)`` for all
+    of them, so Python's stable sort leaves them in the order the query
+    already gave (``Participant.id``, an arbitrary but deterministic
+    tiebreak) instead of reordering or crashing the read.
+    """
+    match = _LABEL_NUMBER.match(entry.speaker_label)
+    if match is None:
+        return (1, 0)
+    return (0, int(match.group(1)))
+
+
+def _profiles_of_team(session: Session, *, team_id: str) -> list[identification.Profile]:
+    """Confirmed voices of this team's members, grouped by person.
+
+    The team join is the privacy boundary, and it is in the query rather than
+    a filter afterwards so that no path can skip it.
+    """
+    rows = session.execute(
+        sa.select(AudSpeakerEmbedding, User.display_name)
+        .join(User, User.id == AudSpeakerEmbedding.user_id)
+        .join(TeamMember, TeamMember.user_id == User.id)
+        .where(TeamMember.team_id == team_id, AudSpeakerEmbedding.user_id.is_not(None))
+    ).all()
+    by_user: dict[tuple[str, str, str], list[tuple[float, ...]]] = {}
+    for row, display_name in rows:
+        key = (row.user_id, display_name, row.model_version)
+        by_user.setdefault(key, []).append(tuple(row.vector))
+    return [
+        identification.Profile(
+            user_id=user_id, display_name=name, vectors=tuple(vectors), model_version=version
+        )
+        for (user_id, name, version), vectors in by_user.items()
+    ]
+
+
+def members_of(session: Session, *, team_id: str, reader: User) -> list[TeamMemberSummary]:
+    """The team's people, for the picker. Members only -- asking about a team
+    you are not in is a 403, not an empty list."""
+    require_team_member(session, user_id=reader.id, team_id=team_id)
+    rows = session.execute(
+        sa.select(User.id, User.display_name)
+        .join(TeamMember, TeamMember.user_id == User.id)
+        .where(TeamMember.team_id == team_id)
+        .order_by(User.display_name)
+    ).all()
+    return [TeamMemberSummary(user_id=user_id, name=name) for user_id, name in rows]
+
+
+def assign_speaker(
+    session: Session,
+    *,
+    meeting_id: str,
+    speaker_label: str,
+    user_id: str,
+    confirmed_by: User,
+) -> None:
+    """ "``화자 2`` is this person."
+
+    Two effects, in this order: the participant row carries the user (which is
+    what ``transcript_payload`` publishes as ``speaker_id``), and the meeting's
+    observation vector for that label becomes one of the person's profile
+    vectors.
+
+    The profile row records where it came from, and a second confirmation of
+    the same (meeting, label) **replaces** it. Without that, correcting a
+    mistake would leave the wrong voice in somebody's profile for good.
+
+    **The assignment is the product; the profile copy is a bonus.** The
+    participant write happens first and is never undone by a later failure in
+    the profile copy (see the guard around the insert below) -- a person keeps
+    the credit for confirming even if the vector never makes it into anyone's
+    profile.
+
+    No observation row is the normal case, not an edge: an unconsented meeting
+    has none, and confirming still assigns the speaker, with no profile and no
+    error. But the **replace** still has to happen: a previous confirmation of
+    this exact (meeting, label) can have left a profile row even though there
+    is no observation to replace it with now -- the meeting was reprocessed
+    and the observation dropped, or it was never re-derived at all -- and that
+    stale row is the *wrong* person's voice if this call is naming someone
+    else. So the delete below runs every time, not only when ``observation``
+    is not ``None``.
+
+    **The profile INSERT alone is gated on ``AudioSettings.voice_profiles_enabled``**
+    (#92's Q4, default off -- see the setting's own docstring). Nothing else here
+    is: the participant write above is attendance, not biometric data, and the
+    stale-profile DELETE runs regardless, ahead of the gate -- a flag that limits
+    *collecting* new profiles must never also block undoing an old one.
+    """
+    meeting = session.get(Meeting, meeting_id, with_for_update=True)
+    if meeting is None:
+        raise NotFoundError("meeting", meeting_id)
+    require_team_member(session, user_id=confirmed_by.id, team_id=meeting.team_id)
+    require_team_member(
+        session,
+        user_id=user_id,
+        team_id=meeting.team_id,
+        message="the named user is not a member of this team",
+    )
+
+    participant = session.scalar(
+        sa.select(Participant).where(
+            Participant.meeting_id == meeting_id,
+            Participant.speaker_label == speaker_label,
+        )
+    )
+    if participant is None:
+        raise NotFoundError("speaker", f"{meeting_id}/{speaker_label}")
+    participant.user_id = user_id
+    session.flush()
+
+    observation = session.scalar(
+        sa.select(AudSpeakerEmbedding).where(
+            AudSpeakerEmbedding.meeting_id == meeting_id,
+            AudSpeakerEmbedding.speaker_label == speaker_label,
+        )
+    )
+
+    # Unconditional and independent of the INSERT below, and outside any
+    # SAVEPOINT of its own: a human has just said this speaker is not who a
+    # previous confirmation said, and the old profile must not survive that
+    # correction regardless of whether a new one can be written. Its bound
+    # parameters are only a meeting id and a label, never a vector, so #356
+    # does not apply and it needs no guard.
+    session.execute(
+        sa.delete(AudSpeakerEmbedding).where(
+            AudSpeakerEmbedding.source_meeting_id == meeting_id,
+            AudSpeakerEmbedding.source_speaker_label == speaker_label,
+        )
+    )
+
+    learned = False
+    if observation is None:
+        # True with or without the gate: there is nothing to copy either way,
+        # and this is the more precise fact when both are true -- flipping
+        # the setting would not have produced a profile for this call.
+        reason = "no_observation"
+    elif not get_settings().voice_profiles_enabled:
+        # #92's Q4 (biometric-consent legal review) is unanswered; collecting
+        # a new profile is switched off until it is, or until authentication
+        # exists to record the separate consent it may require (#268). The
+        # participant assignment above and the DELETE above are unaffected --
+        # this is the one write the setting gates.
+        reason = "profiles_disabled"
+    else:
+        # A vector is bound biometric data; ``packages/core``'s engine does
+        # not set ``hide_parameters`` and a ``StatementError`` here would
+        # carry it (#356, fixed outside this branch), so only the INSERT --
+        # the one statement that carries a vector -- runs inside a SAVEPOINT,
+        # and a ``SQLAlchemyError`` is caught and logged by exception type
+        # only, never its message or parameters. On that failure the source
+        # is simply left with no profile, same as the no-observation case
+        # above -- not with the stale one the DELETE already removed. That
+        # is the safe direction to fail in: nothing wrong is retained, and
+        # ``speaker_profile_copy_failed`` is the trace.
+        try:
+            with session.begin_nested():
+                session.add(
+                    AudSpeakerEmbedding(
+                        user_id=user_id,
+                        vector=list(observation.vector),
+                        model_version=observation.model_version,
+                        source_meeting_id=meeting_id,
+                        source_speaker_label=speaker_label,
+                        confirmed_by=confirmed_by.id,
+                        confirmed_at=datetime.now(tz=UTC),
+                    )
+                )
+            learned = True
+            reason = "learned"
+        except SQLAlchemyError as exc:
+            log.warning("speaker_profile_copy_failed", error=type(exc).__name__)
+            reason = "copy_failed"
+
+    session.flush()
+    # A meeting id, a boolean, and a short constant naming why -- no name,
+    # no vector. ``learned=False`` alone cannot tell a disabled setting from
+    # a meeting with no observation; ``reason`` is what a debugging session
+    # actually needs.
+    log.info("speaker_assigned", meeting_id=meeting_id, learned=learned, reason=reason)
+
+
+def _delete_observations_owned_by(session: Session, *, user_id: str) -> int:
+    """Delete every *observation* row this person's voice is still sitting
+    in, not just their profile rows.
+
+    An observation (``meeting_id`` + ``speaker_label``, the check constraint
+    guarantees ``user_id IS NULL``) is a 256-d vector of somebody's voice in
+    one meeting. Once ``assign_speaker`` has named a participant, that
+    meeting's observation for their label is fully attributable through
+    ``participants.user_id`` even though the vector row itself carries no
+    ``user_id`` -- a plain ``WHERE user_id == ...`` delete, which is the
+    shape a profile row has, never touches it. Left behind, it is a
+    biometric vector of a person who asked for their voice to be forgotten,
+    and the next team member to (re-)confirm that same label would copy it
+    straight back into a fresh profile for them.
+
+    A correlated ``EXISTS`` over ``participants``, not a join: this deletes
+    from ``aud_speaker_embeddings`` alone, and the participant row itself is
+    untouched here -- callers decide separately whether ``user_id`` on it
+    should also be cleared (``forget_user_voice`` does; ``delete_voice_profile``
+    deliberately does not, since the person is still using the product and
+    still is who spoke).
+    """
+    owned_by_user = (
+        sa.select(Participant.id)
+        .where(
+            Participant.meeting_id == AudSpeakerEmbedding.meeting_id,
+            Participant.speaker_label == AudSpeakerEmbedding.speaker_label,
+            Participant.user_id == user_id,
+        )
+        .exists()
+    )
+    result = session.execute(sa.delete(AudSpeakerEmbedding).where(owned_by_user))
+    return int(getattr(result, "rowcount", 0))
+
+
+def delete_voice_profile(session: Session, *, user: User) -> int:
+    """Forget this person's voice. privacy.md section 4: a user can delete
+    their own data at any time. Identification simply stops offering them.
+
+    Deletes both shapes of row their voice can be in: their own profile rows
+    (``user_id`` set), and any meeting observation still attributable to them
+    through a participant row they were confirmed against (see
+    ``_delete_observations_owned_by``) -- otherwise "deleted" would not be
+    true of the vector that matters most, the one still sitting in a meeting
+    somebody could re-confirm.
+    """
+    observations_removed = _delete_observations_owned_by(session, user_id=user.id)
+    result = session.execute(
+        sa.delete(AudSpeakerEmbedding).where(AudSpeakerEmbedding.user_id == user.id)
+    )
+    profiles_removed = int(getattr(result, "rowcount", 0))
+    removed = profiles_removed + observations_removed
+    session.flush()
+    log.info("voice_profile_deleted", rows=removed)
+    return removed
+
+
+@on_user_deleted("audio")
+def forget_user_voice(user_id: str) -> None:
+    """Leaving the product takes the voice with it -- and every trace of the
+    person as someone who *confirmed* or *attested*, and as someone who
+    *spoke*, even on rows that belong to somebody else or to a meeting.
+
+    The FK cascades (``SET NULL`` on ``confirmed_by``, ``attested_by`` and
+    ``participants.user_id``, ``CASCADE`` on a profile's own ``user_id``)
+    when the ``users`` row is really deleted; this hook is the path for a
+    deletion that does not remove the row itself, so it does that scrubbing
+    by hand instead of only the person's own profile rows:
+
+    - meeting observations still attributable to them through a participant
+      row (``_delete_observations_owned_by`` -- must run *before* that
+      participant row's ``user_id`` is cleared below, since it is what finds
+      them);
+    - ``participants.user_id`` itself, or ``transcript_payload`` keeps
+      publishing a person who left the product as ``speaker_id`` to every
+      later reader and every future event;
+    - their own profile rows;
+    - ``confirmed_by`` on somebody else's profile, and ``attested_by`` on a
+      meeting's consent attestation -- ids the product no longer has anyone
+      behind.
+    """
+    with session_scope() as session:
+        _delete_observations_owned_by(session, user_id=user_id)
+        session.execute(
+            sa.update(Participant).where(Participant.user_id == user_id).values(user_id=None)
+        )
+        session.execute(
+            sa.delete(AudSpeakerEmbedding).where(AudSpeakerEmbedding.user_id == user_id)
+        )
+        session.execute(
+            sa.update(AudSpeakerEmbedding)
+            .where(AudSpeakerEmbedding.confirmed_by == user_id)
+            .values(confirmed_by=None)
+        )
+        session.execute(
+            sa.update(AudConsentAttestation)
+            .where(AudConsentAttestation.attested_by == user_id)
+            .values(attested_by=None)
+        )

@@ -75,6 +75,12 @@ class Embedder:
             self._unavailable = type(exc).__name__
             raise
 
+    @property
+    def checkpoint(self) -> str:
+        """Recorded with every vector: two vectors are only comparable when
+        they came from the same checkpoint."""
+        return self._checkpoint
+
     def embed(self, waveform: Waveform) -> np.ndarray:
         """A unit-length float32 vector for the voice in ``waveform``."""
         import torch  # noqa: PLC0415

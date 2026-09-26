@@ -8,17 +8,25 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+import numpy as np
+import sqlalchemy as sa
 from celery import shared_task
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import Session
 
 from autune_audio import service
 from autune_audio.config import get_settings
 from autune_audio.decoding import decode
 from autune_audio.diarization import get_diarizer
 from autune_audio.glossary import build_prompt
+from autune_audio.live.embedder import Embedder
 from autune_audio.masking import mask
+from autune_audio.models import AudConsentAttestation, AudSpeakerEmbedding
 from autune_audio.persistence import persist_transcript, transcript_payload
 from autune_audio.pipeline import transcribe
 from autune_audio.quality import detect_repetition
+from autune_audio.schemas import Turn, Waveform
+from autune_audio.speaker_audio import representative_waveform
 from autune_audio.speakers import Utterance, assign_speakers, rename_speakers
 from autune_audio.storage import adopt, delete_orphan, upload_path
 from autune_contracts.events import TRANSCRIPT_READY
@@ -60,6 +68,25 @@ def process_recording(job_id: str) -> None:
     One decode, two consumers. Whisper and pyannote both want the waveform, and
     decoding twice would double the slowest step that is not inference.
 
+    **A speaker's observation vector is also taken inside ``adopt``, not
+    after -- and only for a consented meeting.** ``consented`` is read once,
+    at the very first claim, from the same session that runs
+    ``claim_job``/``sweep_orphans``; ``_speaker_vectors`` -- and the embedder
+    it loads -- is skipped entirely when it is false, so an unconsented
+    meeting never pays for an embedding pass it will not keep
+    (``docs/modules/audio-speaker-identification.md``). ``_speaker_vectors``
+    runs on the same waveform and renamed turns as everything downstream,
+    before the block ends and the recording is deleted -- a vector not taken
+    here can never be taken, because at confirmation time (#6) there is no
+    audio left to take it from. The rows themselves are written *after*
+    ``persist_transcript`` takes the meeting row lock (#184) in the
+    transaction below, for the same reason that lock exists: two redelivered
+    runs of the same job must not each see no rows and each insert their own.
+    ``_store_speaker_embeddings`` re-checks the attestation at write time
+    regardless -- that is the check that actually gates the write; the one
+    here is only an early exit so an unconsented meeting never reaches the
+    embedder.
+
     **Masking runs before the write, not at it.** ``persist_transcript``
     re-checks and refuses, but a guard that is the only masker is a guard that
     fails closed on every real meeting. This is the line privacy.md section 2
@@ -99,6 +126,11 @@ def process_recording(job_id: str) -> None:
     with session_scope() as session:
         claim = service.claim_job(session, job_id=job_id)
         service.sweep_orphans(session, settings=settings, keep=job_id)
+        # Read once, early: an unconsented meeting must not pay for an
+        # embedding pass it will not keep. `_store_speaker_embeddings`
+        # re-checks this at write time regardless -- that is the check that
+        # actually gates the write.
+        consented = session.get(AudConsentAttestation, claim.meeting_id) is not None
     meeting_id = claim.meeting_id
 
     if not claim.run:
@@ -115,14 +147,15 @@ def process_recording(job_id: str) -> None:
         with adopt(upload_path(job_id, settings)) as recording:
             waveform = decode(recording.path)
             transcription = transcribe(waveform, glossary=build_prompt())
-            turns = get_diarizer().diarize(waveform)
+            named = rename_speakers(get_diarizer().diarize(waveform))
+            observations = _speaker_vectors(waveform, named) if consented else []
 
         # Before the write, not after: a collapsed transcript is not a
         # transcript, and the recording is already gone so there is nothing to
         # re-run.
         detect_repetition(transcription).raise_if_collapsed()
 
-        spoken = assign_speakers(transcription, rename_speakers(turns))
+        spoken = assign_speakers(transcription, named)
         masked = tuple(replace(utterance, text=mask(utterance.text).text) for utterance in spoken)
         _log_masking(meeting_id, spoken, masked)
 
@@ -134,6 +167,14 @@ def process_recording(job_id: str) -> None:
                 duration_seconds=transcription.duration,
                 audio_deleted=recording.deleted,
             )
+            # After persist_transcript, not before: that call is what takes
+            # the meeting row lock (#184) that serialises two redelivered
+            # runs of the same job. Writing this before the lock would let
+            # two concurrent runs each see no existing rows under READ
+            # COMMITTED and each insert their own -- doubled rows with
+            # nothing to catch it, since (meeting_id, speaker_label) carries
+            # no unique constraint.
+            _store_speaker_embeddings(session, meeting_id=meeting_id, observations=observations)
             service.mark_complete(session, job_id=job_id)
             payload = transcript_payload(session, meeting_id=meeting_id)
     except Exception as error:
@@ -171,6 +212,108 @@ def process_recording(job_id: str) -> None:
         utterances=len(payload.utterances),
         participants=len(payload.metadata.participants),
     )
+
+
+def _speaker_vectors(
+    waveform: Waveform, turns: tuple[Turn, ...]
+) -> list[tuple[str, np.ndarray, str]]:
+    """One vector per speaker who said enough, taken while the audio exists.
+
+    The recording is deleted when the ``adopt`` block ends (invariant 11), so
+    a vector not taken here can never be taken: at confirmation time (#6)
+    there is no audio. ``turns`` are the renamed ``화자 N`` turns -- the same
+    labels the transcript and ``participants`` carry -- so a stored
+    observation can be looked up by the label shown on screen. Returns
+    ``(speaker_label, vector, model_version)``; an embedder that cannot load
+    or run returns an empty list and the meeting is transcribed as usual. The
+    ``try`` around each speaker covers ``representative_waveform`` as well as
+    ``embed`` -- a slicing failure for one speaker must not escape and fail
+    the whole meeting any more than an embedding failure does; the transcript
+    is the product, the vector is an extra.
+    """
+    settings = get_settings()
+    embedder = Embedder(token=settings.hf_token)
+    try:
+        embedder.warm_up()
+    except Exception as exc:
+        log.warning("speaker_embedding_unavailable", error=type(exc).__name__)
+        return []
+
+    vectors: list[tuple[str, np.ndarray, str]] = []
+    for label in dict.fromkeys(turn.speaker for turn in turns):
+        try:
+            piece = representative_waveform(
+                waveform,
+                turns,
+                label,
+                max_seconds=settings.speaker_embedding_max_s,
+                min_seconds=settings.speaker_embedding_min_s,
+            )
+            if piece is None:
+                continue
+            vectors.append((label, embedder.embed(piece), embedder.checkpoint))
+        except Exception as exc:
+            log.warning("speaker_embedding_failed", error=type(exc).__name__)
+    return vectors
+
+
+def _store_speaker_embeddings(
+    session: Session,
+    *,
+    meeting_id: str,
+    observations: list[tuple[str, np.ndarray, str]],
+) -> None:
+    """Write one observation row per speaker -- only for a meeting somebody
+    has attested consent for.
+
+    An embedding is biometric data. Without an attestation the transcript is
+    still produced and nothing about anyone's voice is kept. The delete-then-
+    insert makes a re-run replace a meeting's observations rather than
+    doubling them, the same way ``persist_transcript`` replaces utterances --
+    and, like that replace, it must run after ``persist_transcript`` has
+    already taken the meeting row lock (#184): called before the lock, two
+    redelivered runs of the same job would each see no existing rows under
+    READ COMMITTED and each insert their own, and there is no unique
+    constraint on ``(meeting_id, speaker_label)`` to catch it. The caller in
+    ``process_recording`` is where that ordering is enforced; this function
+    only assumes the lock is already held.
+
+    The write itself is wrapped in its own guard: ``packages/core``'s engine
+    does not set ``hide_parameters``, so SQLAlchemy puts bound parameters --
+    here a 256-float vector -- into a raised ``StatementError``'s message
+    (#356, fixed outside this branch). This module's write path must not make
+    that worse, so a ``SQLAlchemyError`` here is caught and logged by
+    exception type only, never its message.
+
+    A SAVEPOINT (``begin_nested``), not a plain ``rollback()``: this call
+    shares its session with ``persist_transcript`` and the rest of the
+    transaction that follows it, and a full rollback would discard their work
+    too, not just this one. A failed vector write must never fail a meeting
+    whose transcript is otherwise fine.
+    """
+    if not observations:
+        return
+    if session.get(AudConsentAttestation, meeting_id) is None:
+        log.info("speaker_embeddings_skipped_no_consent", meeting_id=meeting_id)
+        return
+    try:
+        with session.begin_nested():
+            session.execute(
+                sa.delete(AudSpeakerEmbedding).where(AudSpeakerEmbedding.meeting_id == meeting_id)
+            )
+            for label, vector, model_version in observations:
+                session.add(
+                    AudSpeakerEmbedding(
+                        meeting_id=meeting_id,
+                        speaker_label=label,
+                        vector=[float(x) for x in vector],
+                        model_version=model_version,
+                    )
+                )
+    except SQLAlchemyError as exc:
+        log.warning("speaker_embeddings_failed", error=type(exc).__name__)
+        return
+    log.info("speaker_embeddings_stored", meeting_id=meeting_id, speakers=len(observations))
 
 
 def _log_masking(

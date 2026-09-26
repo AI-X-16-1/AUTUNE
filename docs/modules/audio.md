@@ -49,9 +49,10 @@ real, so A ships first (roadmap W2).
 3. **STT** — Whisper transcribes with timestamps. whisper.cpp on CPU when no GPU
    is available.
 4. **Diarization** — Pyannote separates speakers into `화자 1`, `화자 2`, …
-5. **Speaker identification** — speaker embeddings matched against enrolled
-   voices in `aud_speaker_embeddings`; unmatched speakers keep the label and a
-   null `speaker_id`.
+5. **Speaker embedding** — one observation vector per speaker label, from 3–10
+   seconds of their speech, written to `aud_speaker_embeddings` when the
+   meeting has a consent attestation. Matching it against enrolled voices, and
+   filling `speaker_id`, happens later, at read time — see below.
 6. **PII masking** — regex plus NER over the transcript. Runs **before** the
    first database write.
 7. **Delete raw audio** — in a `finally` block, so it happens on failure too.
@@ -62,14 +63,24 @@ real, so A ships first (roadmap W2).
 Interim summaries are generated at intervals during long recordings and streamed
 to the live transcript view.
 
+A speaker somebody confirms becomes a voice profile. The worker keeps one
+vector per speaker while the recording still exists (`aud_speaker_embeddings`,
+consent-gated); `GET /meetings/{id}/speakers` compares it against the profiles
+of that meeting's team and offers the nearest above
+`AUTUNE_AUDIO_IDENTIFICATION_THRESHOLD` as a candidate; a `POST` from a person
+fills `Participant.user_id` — which is what `TranscriptReady` carries as
+`speaker_id` — and copies the vector into that person's profile. Nothing is
+assigned by similarity alone. Design:
+`audio-speaker-identification.md`.
+
 ## Tables
 
 | Table | Purpose |
 | --- | --- |
 | `aud_jobs` | One row per transcription attempt: `queued` → `running` → `done` / `failed`, or `superseded` by a later attempt. What the worker is queued instead of a path |
-| `aud_speaker_embeddings` | Enrolled voice embeddings per user |
-| `aud_masking_events` | Counts of masked spans by category, for the recall metric. **Never the masked content** |
-| `aud_corrections` | User corrections to speaker attribution and text, for accuracy improvement |
+| `aud_speaker_embeddings` | Two kinds of row: an unconfirmed per-meeting observation vector, and a confirmed profile vector on the person. `audio-speaker-identification.md` §2 |
+| `aud_masking_events` | Planned, not built. Would count masked spans by category, for the recall metric — **never the masked content** |
+| `aud_corrections` | Planned, not built. Would hold user corrections to speaker attribution and text, for accuracy improvement |
 
 Plus the shared entities in `packages/core`, which A writes.
 
@@ -85,8 +96,11 @@ Plus the shared entities in `packages/core`, which A writes.
 | GET | `/transcripts/{meeting_id}` | Full transcript, masked, for a member of the meeting's team |
 | POST | `/meetings/{meeting_id}/consent` | A member attests that everyone in the recording consented (#190) |
 | WS | `/live/{meeting_id}` | Live transcription: one masked row per utterance, a speaker cluster label (`화자 N`), no person, nothing stored — `audio-live-transcription.md` |
-| PATCH | `/utterances/{id}` | Correct speaker or text |
-| POST | `/speakers/enroll` | Enroll a voice for identification |
+| PATCH | `/utterances/{id}` | Correct speaker or text (planned — no route exists yet; would back `aud_corrections`) |
+| GET | `/meetings/{meeting_id}/speakers` | Each speaker label in the meeting, and the nearest candidate profile above `AUTUNE_AUDIO_IDENTIFICATION_THRESHOLD`, if any |
+| POST | `/meetings/{meeting_id}/speakers/{speaker_label}` | A team member confirms who a speaker is; fills `Participant.user_id` and copies the vector into that person's profile |
+| DELETE | `/me/voice-profile` | Deletes every profile row for the caller |
+| GET | `/teams/{team_id}/members` | Id and display name of each team member, for the confirmation picker |
 
 ### Live transcription runs in the API process
 
@@ -347,3 +361,12 @@ biometric data before the user has seen what it buys them.
 S06 already shows unenrolled participants as "음성 미등록 · 회의 후 화자 확인이
 필요할 수 있습니다", so an unidentified speaker is a supported state rather than
 a degraded one. See issue #19.
+
+**Neither of the two ways above is what #6 shipped with.** S04 (the 20-second
+modal) and S16 (the confirmation DM) both stay in the design for later — see
+`audio-speaker-identification.md` §1 and §8. What shipped instead is a third
+way in, needing neither: confirming a real meeting's speaker on the stored
+transcript screen (S15) creates the profile as a side effect of the
+confirmation, from the vector the worker already took during that meeting.
+This section describes the intended future of enrollment, not the MVP's
+actual path to a first profile.
