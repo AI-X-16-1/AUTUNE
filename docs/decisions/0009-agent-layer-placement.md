@@ -49,18 +49,46 @@ autune/
 └── infra/
 ```
 
-A fourth import-linter contract is added and enforced from the same commit:
+A fourth import-linter contract is added and enforced from the same commit,
+and `autune_agent` joins `root_packages` in the same edit — without it
+`lint-imports` cannot find the package and the contract passes vacuously:
 
-```ini
-[importlinter:contract:agent-layer]
-name = The agent layer imports modules; nothing imports the agent layer
-type = layers
-layers =
-    autune_agent
-    autune_audio | autune_extraction | autune_gap | autune_context | autune_intelligence
-    autune_core | autune_integrations
-    autune_contracts
+```toml
+[tool.importlinter]
+root_packages = [
+    "autune_contracts", "autune_core", "autune_integrations",
+    "autune_audio", "autune_extraction", "autune_gap",
+    "autune_context", "autune_intelligence",
+    "autune_agent",
+]
+
+[[tool.importlinter.contracts]]
+name = "The agent layer imports modules; nothing imports the agent layer"
+type = "layers"
+layers = [
+    "autune_agent",
+    "autune_audio | autune_extraction | autune_gap | autune_context | autune_intelligence",
+    "autune_integrations",
+    "autune_core",
+    "autune_contracts",
+]
 ```
+
+**`autune_integrations` and `autune_core` are separate layers, not siblings.**
+An earlier draft of this ADR wrote them as `autune_core | autune_integrations`
+on one line. Siblings joined by `|` must be independent of each other, and
+`autune_integrations` imports `autune_core` — `base.py:13`, `errors.py:5`,
+`privacy.py:23`. @mminjae97 built an `autune_agent` stub, moved this block into
+`pyproject.toml` and ran `lint-imports` against the current tree: the sibling
+form fails on those three imports, and the form above passes. The contract's
+point — the agent may import modules, no module may import the agent — is
+unchanged by the fix.
+
+**The block is TOML, not INI.** This repository configures import-linter in
+`pyproject.toml`, so a contract is a `[[tool.importlinter.contracts]]` table
+with `type = "layers"`, matching the three contracts already there. The INI
+form an earlier draft quoted is import-linter's `.ini`/`setup.cfg` syntax and
+would not be read at all.
 
 Two consequences of that contract are the point of writing it down:
 
@@ -145,7 +173,19 @@ agent as well.
 
 ## Not decided here
 
-Two questions in `../architecture/agent-layer.md` section 10 remain open and
-are not settled by this ADR: how Celery is reached outside the worker (#258,
-#207, #227), and whether content derived from a transcript may be sent to a web
-search or an LLM provider (#92). Neither depends on where the layer lives.
+Two questions in `../architecture/agent-layer.md` section 13 remain open and
+are not settled by this ADR: the **beat schedule** a periodic trigger would
+register against (#207, #227 — #258 is closed by #300), and **which outbound
+providers the team is willing to use** for the Research subagent's open-web
+step. Neither depends on where the layer lives.
+
+**Neither of them is #92, and neither blocks the orchestrator's own LLM call.**
+An earlier draft of this ADR said content derived from a transcript may not go
+to an LLM provider until #92 answers. That was wrong twice: `privacy.md`
+section 6 already governs outbound transfer and already permits masked text,
+limited to what the feature needs, to "LLM APIs, Slack, Notion, Google
+Calendar, error tracking, analytics"; and #92's five questions are about
+consent surviving a departure, label substitution under PIPA 제36조, the lawful
+basis for a retained transcript, voice embeddings under 제23조, and GDPR
+applicability. None of them asks whether content may reach an LLM API.
+`../architecture/agent-layer.md` section 8 states the rule that does apply.
