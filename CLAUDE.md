@@ -150,6 +150,24 @@ blocks no merge. Add the reviewers your change needs yourself.
 
 → `docs/architecture/privacy.md`
 
+### Pending amendment — not in effect
+
+Issue #260 proposes an agent layer above modules A–E, and ADR 0010 proposes
+where it lives. **If accepted**, three invariants above gain a bounded
+exception:
+
+- **2** — a new top-level `agent/` may import every module. No module may
+  import it, and modules still may not import one another. A fourth
+  import-linter contract enforces both halves.
+- **3** — a table prefix marks an owner, and an owner becomes a module *or*
+  the agent layer (`agent_`).
+- **6** — unchanged in substance. The layer goes in `agent/`, not `apps/`,
+  precisely so that "apps is assembly only" keeps meaning what it says.
+
+**Until #260 and ADR 0010 are accepted, the eleven invariants above apply
+unchanged.** Do not write code against this note.
+→ `docs/architecture/agent-layer.md`, `docs/decisions/0010-agent-layer-placement.md`
+
 ---
 
 ## 4. Before you code — where to look
