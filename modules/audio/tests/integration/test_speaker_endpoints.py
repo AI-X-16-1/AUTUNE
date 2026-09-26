@@ -20,6 +20,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from autune_audio import service
+from autune_audio.config import AudioSettings
 from autune_audio.models import EMBEDDING_DIM, AudConsentAttestation, AudSpeakerEmbedding
 from autune_audio.persistence import transcript_payload
 from autune_audio.router import router
@@ -116,6 +117,19 @@ def app_for(db_session: Session):
 @pytest.fixture
 def client(app_for, member: User) -> Iterator[TestClient]:
     yield app_for(member)
+
+
+@pytest.fixture
+def voice_profiles_enabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Turns on ``AudioSettings.voice_profiles_enabled`` for a test whose
+    point is the profile row itself.
+
+    Off by default pending #92 (see the setting's own docstring in
+    ``config.py``), so a test that used to get a profile for free now has to
+    ask for one explicitly -- the same way a test that wants consent calls
+    ``attest_consent`` rather than relying on a default that happens to grant
+    it."""
+    monkeypatch.setattr(service, "get_settings", lambda: AudioSettings(voice_profiles_enabled=True))
 
 
 # --- GET /meetings/{id}/speakers --------------------------------------------
@@ -298,7 +312,12 @@ def _confirm(client: TestClient, meeting: str, label: str, user_id: str) -> http
 
 
 def test_confirming_fills_the_speaker_and_copies_the_profile(
-    client: TestClient, db_session: Session, meeting: str, member: User, candidate: User
+    client: TestClient,
+    db_session: Session,
+    meeting: str,
+    member: User,
+    candidate: User,
+    voice_profiles_enabled: None,
 ) -> None:
     db_session.add(Participant(meeting_id=meeting, speaker_label="화자 1"))
     db_session.add(observation(meeting, "화자 1", axis(0)))
@@ -355,7 +374,12 @@ def test_the_transcript_then_carries_the_speaker_id(
 
 
 def test_confirming_again_replaces_the_profile_from_that_source(
-    client: TestClient, db_session: Session, meeting: str, member: User, candidate: User
+    client: TestClient,
+    db_session: Session,
+    meeting: str,
+    member: User,
+    candidate: User,
+    voice_profiles_enabled: None,
 ) -> None:
     db_session.add(Participant(meeting_id=meeting, speaker_label="화자 1"))
     db_session.add(observation(meeting, "화자 1", axis(0)))
@@ -386,7 +410,12 @@ def test_confirming_again_replaces_the_profile_from_that_source(
 
 
 def test_confirming_again_replaces_the_profile_even_without_a_new_observation(
-    client: TestClient, db_session: Session, meeting: str, member: User, candidate: User
+    client: TestClient,
+    db_session: Session,
+    meeting: str,
+    member: User,
+    candidate: User,
+    voice_profiles_enabled: None,
 ) -> None:
     """The bug the "replaces" delete used to have: it only ran when a fresh
     observation existed to replace the old profile with. Here the meeting is
@@ -439,6 +468,7 @@ def test_a_failed_profile_copy_leaves_the_source_with_no_profile_not_a_stale_one
     meeting: str,
     member: User,
     candidate: User,
+    voice_profiles_enabled: None,
 ) -> None:
     """The INSERT can fail on its own -- a wrong vector width is pgvector's
     dimension check on ``Vector(256)``, the same failure Task 4 exercises in
@@ -541,6 +571,118 @@ def test_confirming_without_an_observation_still_assigns(
         )
     )
     assert profiles == []
+
+
+def test_the_setting_off_assigns_the_speaker_and_writes_no_profile(
+    client: TestClient, db_session: Session, meeting: str, candidate: User
+) -> None:
+    """The default. An observation exists, so the only thing stopping the
+    profile is ``voice_profiles_enabled`` being off (#92's Q4).
+
+    The assignment still has to land: it is attendance, not biometric data,
+    and it is what ``TranscriptReady`` publishes as ``speaker_id``. A gate on
+    collecting voices that also stopped the product naming its speakers would
+    be the wrong gate.
+    """
+    db_session.add(Participant(meeting_id=meeting, speaker_label="화자 1"))
+    db_session.add(observation(meeting, "화자 1", axis(0)))
+    db_session.flush()
+
+    response = _confirm(client, meeting, "화자 1", candidate.id)
+
+    assert response.status_code == 204
+    participant = db_session.scalar(
+        sa.select(Participant).where(
+            Participant.meeting_id == meeting, Participant.speaker_label == "화자 1"
+        )
+    )
+    assert participant is not None
+    assert participant.user_id == candidate.id
+
+    assert (
+        list(
+            db_session.scalars(
+                sa.select(AudSpeakerEmbedding).where(AudSpeakerEmbedding.user_id == candidate.id)
+            )
+        )
+        == []
+    )
+
+
+def test_the_setting_off_still_deletes_a_stale_profile_from_that_source(
+    client: TestClient, db_session: Session, meeting: str, member: User, candidate: User
+) -> None:
+    """The one that catches the gate being put in the wrong place.
+
+    A flag that exists to limit *collecting* profiles must never block undoing
+    one already collected. So the DELETE keyed on this
+    ``(source_meeting_id, source_speaker_label)`` runs ahead of the gate and
+    regardless of it: if the setting was ever on, a correction made after it
+    was turned off still has to remove the wrong person's voice. Put the gate
+    above the DELETE instead and alice keeps a profile she was just declared
+    not to be.
+    """
+    stale = profile(member.id, axis(0))
+    stale.source_meeting_id = meeting
+    stale.source_speaker_label = "화자 1"
+    db_session.add(stale)
+    db_session.add(Participant(meeting_id=meeting, speaker_label="화자 1"))
+    db_session.add(observation(meeting, "화자 1", axis(1)))
+    db_session.flush()
+
+    response = _confirm(client, meeting, "화자 1", candidate.id)
+
+    assert response.status_code == 204
+    # Alice's profile from this source is gone, even though the setting means
+    # nothing replaced it.
+    assert (
+        list(
+            db_session.scalars(
+                sa.select(AudSpeakerEmbedding).where(
+                    AudSpeakerEmbedding.source_meeting_id == meeting,
+                    AudSpeakerEmbedding.source_speaker_label == "화자 1",
+                )
+            )
+        )
+        == []
+    )
+
+
+def test_the_setting_off_does_not_block_deleting_a_voice_profile(
+    client: TestClient, db_session: Session, meeting: str, member: User
+) -> None:
+    """Deletion is never gated. Profiles can exist with the setting off --
+    collected before it was turned off, or before it existed -- and both the
+    endpoint and the departure hook have to remove them either way."""
+    kept = profile(member.id, axis(0))
+    kept.source_meeting_id = meeting
+    kept.source_speaker_label = "화자 1"
+    db_session.add(kept)
+    db_session.add(Participant(meeting_id=meeting, speaker_label="화자 1", user_id=member.id))
+    db_session.add(observation(meeting, "화자 1", axis(0)))
+    db_session.flush()
+
+    response = client.delete("/api/audio/me/voice-profile")
+
+    assert response.status_code == 204
+    assert (
+        list(
+            db_session.scalars(
+                sa.select(AudSpeakerEmbedding).where(AudSpeakerEmbedding.user_id == member.id)
+            )
+        )
+        == []
+    )
+    # And the observation that was attributable to them goes with it, exactly
+    # as it does with the setting on.
+    assert (
+        list(
+            db_session.scalars(
+                sa.select(AudSpeakerEmbedding).where(AudSpeakerEmbedding.meeting_id == meeting)
+            )
+        )
+        == []
+    )
 
 
 def test_confirming_an_unknown_label_is_404(

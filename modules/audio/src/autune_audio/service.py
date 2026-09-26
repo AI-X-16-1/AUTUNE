@@ -802,6 +802,12 @@ def assign_speaker(
     stale row is the *wrong* person's voice if this call is naming someone
     else. So the delete below runs every time, not only when ``observation``
     is not ``None``.
+
+    **The profile INSERT alone is gated on ``AudioSettings.voice_profiles_enabled``**
+    (#92's Q4, default off -- see the setting's own docstring). Nothing else here
+    is: the participant write above is attendance, not biometric data, and the
+    stale-profile DELETE runs regardless, ahead of the gate -- a flag that limits
+    *collecting* new profiles must never also block undoing an old one.
     """
     meeting = session.get(Meeting, meeting_id, with_for_update=True)
     if meeting is None:
@@ -846,7 +852,19 @@ def assign_speaker(
     )
 
     learned = False
-    if observation is not None:
+    if observation is None:
+        # True with or without the gate: there is nothing to copy either way,
+        # and this is the more precise fact when both are true -- flipping
+        # the setting would not have produced a profile for this call.
+        reason = "no_observation"
+    elif not get_settings().voice_profiles_enabled:
+        # #92's Q4 (biometric-consent legal review) is unanswered; collecting
+        # a new profile is switched off until it is, or until authentication
+        # exists to record the separate consent it may require (#268). The
+        # participant assignment above and the DELETE above are unaffected --
+        # this is the one write the setting gates.
+        reason = "profiles_disabled"
+    else:
         # A vector is bound biometric data; ``packages/core``'s engine does
         # not set ``hide_parameters`` and a ``StatementError`` here would
         # carry it (#356, fixed outside this branch), so only the INSERT --
@@ -871,12 +889,17 @@ def assign_speaker(
                     )
                 )
             learned = True
+            reason = "learned"
         except SQLAlchemyError as exc:
             log.warning("speaker_profile_copy_failed", error=type(exc).__name__)
+            reason = "copy_failed"
 
     session.flush()
-    # A meeting id and a boolean -- no name, no vector.
-    log.info("speaker_assigned", meeting_id=meeting_id, learned=learned)
+    # A meeting id, a boolean, and a short constant naming why -- no name,
+    # no vector. ``learned=False`` alone cannot tell a disabled setting from
+    # a meeting with no observation; ``reason`` is what a debugging session
+    # actually needs.
+    log.info("speaker_assigned", meeting_id=meeting_id, learned=learned, reason=reason)
 
 
 def _delete_observations_owned_by(session: Session, *, user_id: str) -> int:

@@ -1,7 +1,9 @@
 # Speaker identification — design
 
 **Date:** 2026-09-23 · **Owner:** 김민경 · **Module:** A · **Status:** Built;
-threshold evaluation pending (issue #6; branch `audio/speaker-identification`)
+threshold evaluation pending (issue #6; branch `audio/speaker-identification`).
+**Profile creation is off by default** (`AUTUNE_AUDIO_VOICE_PROFILES_ENABLED=false`)
+pending #92's biometric-consent legal review — see §4 and §8.
 
 A voice the pipeline separated becomes a person. The transcript screens show
 `화자 2 · 후보 김민경 · 유사도 0.87`; one click fills `speaker_id` and teaches
@@ -139,12 +141,23 @@ Body `{"user_id": "usr_…"}`. Any member of the meeting's team may call it.
 1. `Participant.user_id = user_id` for that label — the transcript screens now
    show the name, and `transcript_payload` will carry `speaker_id` on any
    later read;
-2. the observation row for (meeting, label) is copied into a profile row for
-   that user, with `confirmed_by` and `confirmed_at`, replacing whatever
-   profile row that same (meeting, label) produced before;
-3. no observation row (no consent, too little speech, embedder unavailable) →
+2. **only when `AUTUNE_AUDIO_VOICE_PROFILES_ENABLED=true`** (default `false`,
+   pending #92's Q4 — is a voice embedding 생체인식정보 under 제23조, and does
+   collecting it need its own separate consent?): the observation row for
+   (meeting, label) is copied into a profile row for that user, with
+   `confirmed_by` and `confirmed_at`, replacing whatever profile row that same
+   (meeting, label) produced before;
+3. **regardless of the setting**, a profile row already sourced from that
+   (meeting, label) is deleted — a flag that limits *collecting new* profiles
+   must never block undoing an old one, including one written before the
+   setting was turned off;
+4. no observation row (no consent, too little speech, embedder unavailable) →
    step 1 still happens. Assigning a person is useful even when no vector can
    be learned from it.
+
+With the setting off, step 1 is the only thing this endpoint does today: the
+person is assigned, no profile is written, and no candidate will ever be
+offered for them until the setting is turned on and they are confirmed again.
 
 ### `DELETE /me/voice-profile`
 
@@ -191,7 +204,7 @@ the worker has written the observation vector.
 | Speaker with under 3 s of speech | No observation row for that label |
 | Person has no profile yet | No candidate. The first meeting is always manual |
 | Same person on two labels (over-split) | Both may be assigned to them; each adds a profile vector, which improves the mean |
-| Re-assigning a label | `Participant.user_id` is overwritten; the profile row from that (meeting, label) is replaced |
+| Re-assigning a label | `Participant.user_id` is overwritten; the profile row from that (meeting, label), if any, is deleted regardless of the setting, and replaced with a new one only when `AUTUNE_AUDIO_VOICE_PROFILES_ENABLED=true` |
 | Model version changed | Old profiles are not candidates. One confirmation each rebuilds them |
 | Meeting deleted | Observation rows cascade; profiles survive with `source_meeting_id` set to null |
 | User removed from the team | Nothing happens today. `forget_user_voice` would remove every profile of theirs (not team-scoped — see §2), but nothing calls it (#358) |
@@ -212,6 +225,12 @@ sets the real number and goes in `HISTORY.md`, the same way #306's did.
 
 ## 8. What this does not do
 
+- **Create a voice profile, by default.** `AUTUNE_AUDIO_VOICE_PROFILES_ENABLED`
+  defaults to `false` pending #92's Q4 (biometric-consent legal review); until
+  it is answered, or until authentication exists to record a separate consent
+  (#268), confirming a speaker assigns them (`Participant.user_id`) and stores
+  no profile vector. §4 has the detail; `docs/engineering/environments.md` has
+  the variable.
 - **Tell B, C and D.** `TranscriptReady` has already gone out with
   `speaker_id = null` when somebody confirms, so module B's action items keep
   their `assignee_label`. Propagating a later identification needs either a new

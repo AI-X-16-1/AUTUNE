@@ -274,6 +274,18 @@ Embedding model: `pyannote/wespeaker-voxceleb-resnet34-LM`, 256 dimensions —
 the same model `audio-live-speakers.md` already uses for the live path, so a
 live vector and a stored vector are comparable without a second download.
 
+**`voice_profiles_enabled` is `False` by default** — the one setting here that
+is not a tuning knob but a legal gate. ADR 0007's Q4 (#92) asks whether a
+voice embedding is 생체인식정보 under 제23조 and whether collecting it needs
+its own separate consent, and that question was still open when this feature
+shipped. The setting gates only the profile write in `assign_speaker`:
+`Participant.user_id` is still written, the worker still stores observation
+vectors exactly as before, and deleting a profile is never gated — only
+*collecting a new one* is. Turning it on is expected to wait for
+authentication to exist and carry a separate, refusable biometric consent
+(#268); until then the cost of having shipped identification ahead of the
+legal answer is a flag flip, not a rebuild.
+
 ---
 
 ## 3. Decisions, and the ones that reversed

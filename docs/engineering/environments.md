@@ -133,6 +133,7 @@ Where that token comes from, and the two ways to give it to the browser:
 | `AUTUNE_AUDIO_IDENTIFICATION_THRESHOLD` | A | Cosine similarity at or above which a voice profile is offered as a speaker's candidate (0.70, provisional). Never assigns; a person confirms |
 | `AUTUNE_AUDIO_SPEAKER_EMBEDDING_MAX_S` | A | Seconds of one speaker that go into their observation vector (10) |
 | `AUTUNE_AUDIO_SPEAKER_EMBEDDING_MIN_S` | A | A speaker with less speech than this in a meeting gets no vector (3) |
+| `AUTUNE_AUDIO_VOICE_PROFILES_ENABLED` | A | **Default `false`.** Gates only the profile write in `assign_speaker` — confirming still assigns the speaker and the worker still stores observation vectors as before. Off until #92's Q4 (biometric-consent legal review) is answered, or until auth exists to record that consent (#268) |
 | `AUTUNE_EXTRACTION_CLASSIFIER_IMPL` | B | `local` · `hosted` · `fake`. Default `local`. **No `external`** — see below |
 | `AUTUNE_EXTRACTION_CLASSIFIER_CHECKPOINT` | B | Pinned model, recorded with every classification. Never a floating tag. **Blank by default** — no trained checkpoint is published yet, and `local` / `hosted` refuse to start without one |
 | `AUTUNE_EXTRACTION_CLASSIFIER_ENDPOINT` | B | Our own inference server. Required when `CLASSIFIER_IMPL=hosted` |
