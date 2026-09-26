@@ -36,6 +36,7 @@ from .integrations_config import (
     save_integration,
 )
 from .logging import configure_logging, get_logger
+from .periodic import beat_schedule, is_periodic_task_name, periodic
 from .settings import Settings, get_settings
 
 __all__ = [
@@ -46,6 +47,9 @@ __all__ = [
     "publish",
     "subscribers",
     "consumer_task_suffix",
+    "periodic",
+    "beat_schedule",
+    "is_periodic_task_name",
     "Base",
     "Meeting",
     "Participant",
