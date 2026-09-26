@@ -121,12 +121,78 @@ class ExtractionSettings(BaseSettings):
             return None
         return value
 
+    resolver_impl: str = "fake"
+    """Which reference resolver to run: ``local``, ``hosted`` or ``fake`` (#175).
+
+    Defaults to ``fake`` rather than ``local``, unlike the classifier: #175's own
+    model choice (``Qwen/Qwen3-4B-Instruct-2507``, a candidate) is not yet
+    confirmed by the Korean judgment run the issue asks for, so nothing runs it
+    by default. ``fake`` returns each commitment's raw quote unchanged -- the
+    same output ``build_action_items`` produced before #175 existed."""
+
+    resolver_checkpoint: str = ""
+    """A local model path or hub id for ``resolver_impl=local``, the model
+    version recorded with every resolution for ``resolver_impl=hosted``. Blank
+    makes both refuse in the registry, the same shape as ``classifier_checkpoint``."""
+
+    resolver_endpoint: str = ""
+    """Our own inference server, required when ``resolver_impl=hosted``."""
+
+    resolver_device: str = "cpu"
+    """``cpu`` or ``cuda``, for ``resolver_impl=local``. Mirrors
+    ``classifier_device``."""
+
+    embedder_impl: str = "fake"
+    """Which embedder backs the resolver's similarity check: ``local``,
+    ``hosted`` or ``fake`` (#175, #366). No ``hosted`` yet -- see
+    ``pipeline.embedder``.
+
+    Defaults to ``fake`` for the same reason ``resolver_impl`` does: this is a
+    supplementary check the resolver already works without
+    (``resolver_min_similarity`` unset has the same effect), and nothing turns
+    it on until there is a measured threshold to turn it on with."""
+
+    embedder_checkpoint: str = "nlpai-lab/KURE-v1"
+    """Not blank by default, unlike ``resolver_checkpoint``: KURE-v1 is not a
+    candidate awaiting evaluation, it is module D's already-shipped choice for
+    "does this sentence mean the same thing as that one" in Korean, and this
+    setting only matters once ``embedder_impl=local`` and
+    ``resolver_min_similarity`` are both set regardless."""
+
+    embedder_device: str = "cpu"
+    """``cpu`` or ``cuda``, for ``embedder_impl=local``."""
+
+    resolver_min_similarity: float | None = Field(default=None, ge=-1, le=1)
+    """Below this cosine similarity to every line in its own context window, a
+    resolved sentence is treated as ungrounded and the raw quote is kept
+    instead.
+
+    **Empty by default, and that is the point** -- the same reasoning as
+    ``candidate_confidence`` and module D's ``link_confidence_threshold``: no
+    embedding model has been run against a labelled set of good and bad
+    resolutions yet, so there is no honest number to enforce. Unset, the
+    resolver's groundedness check is exactly what it was before this setting
+    existed -- the digit and named-person checks in ``pipeline.resolver``,
+    unaffected by ``embedder_impl``."""
+
+    @field_validator("resolver_min_similarity", mode="before")
+    @classmethod
+    def _blank_similarity_means_unset(cls, value: object) -> object:
+        """Same reason as ``candidate_confidence``: ``.env.example`` carries
+        the name with no value, and a blank string is "deliberately not
+        chosen," not a parse error."""
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
     @model_validator(mode="after")
     def _device_is_known(self) -> ExtractionSettings:
         """A typo should not surface as a CUDA error in the middle of a meeting."""
         for name, value in (
             ("CLASSIFIER_DEVICE", self.classifier_device),
             ("NLI_DEVICE", self.nli_device),
+            ("RESOLVER_DEVICE", self.resolver_device),
+            ("EMBEDDER_DEVICE", self.embedder_device),
         ):
             if value not in ("cpu", "cuda"):
                 raise ValueError(f"AUTUNE_EXTRACTION_{name}={value!r}; expected 'cpu' or 'cuda'")

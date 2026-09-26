@@ -80,6 +80,63 @@ class NliScores:
     neutral: float
 
 
+@dataclass(frozen=True)
+class ResolutionRequest:
+    """One utterance to resolve, and the context it may draw a referent from.
+
+    ``context`` and ``context_after`` are masked text only, oldest first --
+    privacy.md section 6, the same rule ``target`` is already under. Nothing
+    outside this window is available to resolve against, by construction: a
+    resolver cannot look up the rest of the meeting, only what it was handed.
+
+    ``context_after`` exists because resolution runs after the meeting has
+    ended, over the whole stored transcript -- not live, the way a classifier
+    reading utterances as they arrive would have to be. A clarifying exchange
+    right after a commitment ("그게 언제까지였죠?" / "다음 주 화요일이요") can
+    settle a reference nothing before it does, and there is no reason to
+    withhold it. Kept as a separate field rather than folded into ``context``
+    so a resolver's prompt can say which side of the target each line is on.
+    """
+
+    target: str
+    context: tuple[str, ...] = ()
+    context_after: tuple[str, ...] = ()
+
+
+@runtime_checkable
+class ReferenceResolver(Protocol):
+    """A commitment or decision's closing utterance, with its pronouns and
+    bare references filled in from what came before it (#175).
+
+    "그거 제가 할게요" becomes "회의실 예약 제가 할게요" when the context named
+    what "그거" was -- ``ext_action_items.description`` and
+    ``ext_decisions.statement`` read the resolved form; the quote itself is
+    still reachable through ``source_utterance_ids``, so nothing is lost by
+    rewriting it.
+
+    **Never raises for one bad request.** A resolver that cannot resolve a
+    reference, generates something not grounded in its own context, or fails
+    to answer at all returns that request's own ``target`` unchanged rather
+    than raising -- the pipeline does not stop for one commitment. This is a
+    property implementations must uphold, not something ``resolve`` can be
+    asked to skip: a caller passing bad input still gets a same-length,
+    same-order answer back.
+    """
+
+    @property
+    def model_version(self) -> str:
+        """Pinned, and recorded the same way ``Classifier.model_version`` is."""
+        ...
+
+    def resolve(self, requests: list[ResolutionRequest]) -> list[str]:
+        """One resolved sentence per request, in order, never fewer.
+
+        Order is the contract, the same reason ``Classifier.classify`` promises
+        it: callers zip this against their own utterance ids.
+        """
+        ...
+
+
 @runtime_checkable
 class Classifier(Protocol):
     """Five kinds or none, per utterance. Fine-tuned DeBERTa by default.
@@ -126,4 +183,25 @@ class NliModel(Protocol):
 
     def classify(self, pairs: list[tuple[str, str]]) -> list[NliScores]:
         """One result per ``(premise, hypothesis)`` pair, aligned to ``pairs``."""
+        ...
+
+
+@runtime_checkable
+class Embedder(Protocol):
+    """Sentence vectors for the resolver's own similarity check (#175, #366).
+
+    A second, independent copy of module D's KURE-v1 seam
+    (``autune_context.pipeline.base``), same reasoning as ``NliModel``:
+    modules never import each other, and the two use embeddings for different
+    questions -- D for retrieval and decision-thread linking, this one only to
+    ask whether a resolved sentence is close to something its own context
+    window actually said.
+    """
+
+    @property
+    def model_version(self) -> str: ...
+
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        """One vector per input, in order, each already unit-normalised so a
+        dot product is a cosine similarity."""
         ...

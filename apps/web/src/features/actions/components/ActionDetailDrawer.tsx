@@ -92,6 +92,15 @@ export function ActionDetailDrawer({
             >
               {item.confidence.toFixed(2)}
             </span>
+            {item.description_resolved ? (
+              <span
+                className="text-[var(--color-ink-muted)]"
+                style={{ fontSize: "var(--text-metaSmall)" }}
+                title="AI가 발화 속 지시어(그거, 저희 팀 등)를 풀어 다시 쓴 설명입니다. 원문과 다를 수 있어 확인이 필요합니다."
+              >
+                · AI 재구성
+              </span>
+            ) : null}
           </div>
         </div>
         <Button tone="quiet" size="compact" onClick={onClose} aria-label="닫기">

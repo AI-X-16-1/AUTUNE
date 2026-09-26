@@ -10,22 +10,42 @@ through ``registry``; nothing outside this package names a model class.
 
 from __future__ import annotations
 
-from .base import Classifier, NliModel, NliScores, Prediction
+from .base import (
+    Classifier,
+    Embedder,
+    NliModel,
+    NliScores,
+    Prediction,
+    ReferenceResolver,
+    ResolutionRequest,
+)
 from .classifier import FakeClassifier, HostedDeberta, LocalDeberta
+from .embedder import FakeEmbedder, LocalKureEmbedder
 from .nli import FakeNli, HostedNli, LocalNli
-from .registry import get_classifier, get_nli
+from .registry import get_classifier, get_embedder, get_nli, get_resolver
+from .resolver import FakeResolver, HostedResolver, LocalQwenResolver
 
 __all__ = [
     "Classifier",
+    "Embedder",
     "FakeClassifier",
+    "FakeEmbedder",
     "FakeNli",
+    "FakeResolver",
     "HostedDeberta",
     "HostedNli",
+    "HostedResolver",
     "LocalDeberta",
+    "LocalKureEmbedder",
     "LocalNli",
+    "LocalQwenResolver",
     "NliModel",
     "NliScores",
     "Prediction",
+    "ReferenceResolver",
+    "ResolutionRequest",
     "get_classifier",
+    "get_embedder",
     "get_nli",
+    "get_resolver",
 ]
