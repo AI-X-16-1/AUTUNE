@@ -186,16 +186,18 @@ does not make it more or less so.
 
 ### What each module's `tools.py` starts from
 
-Each row is the module owner's own account of what their module can already
-answer. An earlier draft asked for tools that do not exist; the owners of B, C
-and D corrected it on #261, and their corrections are what this table says.
+**Each module's `tools.py` is its owner's file** (ADR 0009), so what follows is
+what each module can already answer, not a list of names anyone else gets to
+fix. An earlier draft of this document asked for tools that do not exist; the
+owners of B, C and D corrected it on #261, and their corrections are what this
+says.
 
-| Module | Tools | Note |
+| Module | What it can already answer | Note |
 | --- | --- | --- |
-| B | `list_action_items`, `read_classifications`, `read_review` | B's read API, nothing new |
-| C | `detect_gaps(checklist=…)`, `topic_graph`, `participation` | one argument added to `detect_gaps` |
-| D | `links_for_meeting`, `decision_thread`, `list_decisions` | wraps #185's read routes |
-| E | `quality_score`, `trend` | E's aggregate reads |
+| B | its action items; the stored classifications; an item's review state | B's read API, nothing new. `list_action_items` exists today |
+| C | gaps against a checklist; the topic graph; per-role participation | one argument added to `detect_gaps`; risk scores pending #22 |
+| D | this meeting's links; a decision thread; the team's decisions | `links_for_meeting`, `decision_thread`, `list_decisions` over #185's read routes, named by D's owner |
+| E | the quality score; the trend | E's aggregate reads |
 
 - **C — `detect_gaps` takes a `checklist: list[str] | None`.** When given, the
   meeting is checked against it; when absent, the built-in domain template
