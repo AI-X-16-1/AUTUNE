@@ -147,6 +147,13 @@ the agent layer (ADR 0009). Everything else about the rule is the same — the
 tables are owned by one party, nobody else writes them, and they need a
 deletion path by `meeting_id` or `user_id` like any other derived table.
 
+Both proposed tables need that path, and **`agent_runs` needs it as much as
+`agent_work_items` does**: its `steps`, `decisions` and suspended `messages`
+hold copies of what the modules' tools returned, so it carries `meeting_id`,
+cascades from `meetings`, and is swept at retention expiry. A copy that outlives
+what it copied is how a value one module blanked comes back alive somewhere
+else. Raised on #261 by the owners of B and D.
+
 A table without a prefix is a shared entity. If you are creating one, you are
 either mistaken or you need team approval.
 

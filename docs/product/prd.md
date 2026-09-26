@@ -149,11 +149,22 @@ weeks, in the reduced form agreed in #260:
   `next_check_at` comes due — a deadline approaching with no signal, a gap
   unresolved across two meetings.
 - **One scenario for the release: the morning briefing.** Quality and trend
-  from E, unresolved gaps from C, today's meetings from D, ranked, and **only
-  the top five sent** — an assistant chooses, a notification bot lists.
+  from E, C's topic graph and per-role participation, today's meetings and
+  their cross-meeting links from D, ranked, and **only the top five sent** — an
+  assistant chooses, a notification bot lists. C's *risk* scores are not in
+  this list: `GapReport.gaps` has no value yet (blocked on #22), while C's topic
+  graph and participation do.
 - **Research.** When a decision is blocked for want of information, gather it
-  from uploaded material and present the options. Web search waits on the
-  privacy question in ADR 0007 / #92.
+  from uploaded material and present the options. Open-web search is out of
+  scope for the release — a query is its own payload and there is no
+  feature-scoped subset of it to send. Not blocked on #92; see
+  `../architecture/agent-layer.md` section 13.3.
+- **Nothing goes out except through the module that owns it.** B sends the
+  confirmation DM and creates the Notion page, D sends the pre-meeting brief
+  and the drift warning, E sends the speaking ratio. The agent reads their
+  state into a briefing and sends nothing itself, so no message arrives twice
+  and no module's own guard is bypassed. `../architecture/agent-layer.md`
+  section 8, rule 2.
 - **The team writes the standard.** A short charter — what a meeting must
   settle, who must be in the room — is the checklist gap detection runs
   against and the policy the agent follows. Tuning is editing a paragraph.
@@ -161,9 +172,14 @@ weeks, in the reduced form agreed in #260:
   `../architecture/agent-layer.md` section 8; an L2 action goes through plan
   mode — the agent investigates with its write tools removed, submits a plan,
   and a person approves it item by item. L0 and L1 do not ask.
-- **Nothing acts on a low-confidence signal.** Below 0.5 the agent asks rather
-  than acts. Module B's classifier is weak today (#149, #115) and the design
-  routes around it rather than hiding it.
+- **Nothing acts on a low-confidence or unreviewed signal.** The agent reads the
+  owning module's own confidence and review state and asks a person rather than
+  acting when either falls short; it does not invent a threshold of its own.
+  Module B's classifier is weak today (#149 is an English AMI figure, not a
+  Korean one; there is no agreed Korean evaluation set yet, #10) and B leaves
+  `candidate_confidence` unset on purpose, so **everything from B is a candidate
+  and stays internal until a person confirms it.** The design routes around the
+  weakness rather than hiding it.
 
 Still Phase 2, unchanged:
 

@@ -195,11 +195,27 @@ it on the next agenda, 3 report to the lead.
 
 **Action level (행동 등급)**
 How dangerous an action is, L0 to L3. L2 and above need a person's approval;
-L3 is forbidden. `L0-ext` covers reads that send content outside the system.
+L3 is forbidden. `L0-ext` covers anything that sends content outside the system,
+the orchestrator's own LLM call included; it is automatic, through
+`assert_masked` and a stated prompt budget.
 
 **Confidence gate (신뢰도 게이트)**
-Below 0.5, the agent asks a person instead of acting. The design's answer to
-extractors that are not accurate yet.
+The agent asks a person instead of acting when the owning module's own
+confidence or review state falls short. It reads that value — B's
+`candidate_confidence`, which is deliberately unset — and never substitutes a
+constant of its own. The design's answer to extractors that are not accurate
+yet.
+
+**Outbound ownership (발신 소유권)**
+Content leaves the system through the module that owns it, never through the
+agent: B sends its own confirmation DM and creates its own Notion page, D sends
+its own notices, E sends the speaking ratio. The agent reads their state into a
+briefing. `../architecture/agent-layer.md` section 8, rule 2.
+
+**Unconfirmed item (미확인 항목)**
+A work item built from `autune.extraction.completed`, which publishes before
+anyone reviews it. Internal only (L0) until B's review read says otherwise; it
+may not be summarised into anything that leaves.
 
 **Team charter (팀 규약)**
 A document the team writes in prose — what a meeting must settle, who must be
