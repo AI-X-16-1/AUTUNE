@@ -282,9 +282,10 @@ without that path (#86); this must not repeat it.
 | Event | Meeting analysis finished; bot mentioned | Existing events + webhooks |
 | Request | "Summarise last week's decisions" | Slash command |
 
-For the first release, **event + state** is enough. Both depend on the
-question in section 13.2: there is no Celery beat in this repository yet, and
-a module cannot add one.
+For the first release, **event + state** is enough. Event triggers work today —
+the existing events are published and consumed. State triggers depend on the
+question in section 13.2: their 5-minute poll needs a beat schedule, and this
+repository has none that a module may add.
 
 ## 7. The team charter — judgement the team writes down
 
@@ -435,9 +436,9 @@ inside the task. On `submit_work_plan` the run **persists its messages and the
 proposal to `agent_runs` and ends**. The decision arrives as an event
 (webhook, button, web form), and a new task **loads the messages back and
 resumes in `execute` mode**. The context the plan was made in is the messages;
-the messages are rows; nothing is lost by the task ending. This is the same
-question as #258 and #207 — how the layer reaches Celery from outside a worker
-— and is decided with them.
+the messages are rows; nothing is lost by the task ending. Enqueuing that
+resuming task from the API process works today (#258, closed by #300); waking
+one on a timeout instead of on a person's click is #207's beat schedule.
 
 ### When it asks, and when it does not
 
@@ -588,13 +589,20 @@ person, with the partial trace kept in `agent_runs`.
 modules*. `apps/agent/` breaks invariant 6, *apps is assembly only*. A new
 top-level `agent/` breaks neither but adds a layer. Proposed: the third.
 
-### 13.2 How is Celery reached outside the worker? — #258, #207, #227
+### 13.2 How is a periodic trigger registered? — #207, #227
 
-There is no beat schedule, the API process has no Celery app at all, and
-modules may not edit `apps/worker`. Every trigger in section 6 stands on this,
-so does plan mode's suspend-and-resume (section 8), and so does the upload
-endpoint that already shipped. Three issues, one question; they should be
-decided together.
+Half of this is solved since the draft was written: #258 closed with #300, so
+one Celery app is built once and is current in every process, including the
+API's. Reaching Celery from outside a worker is no longer the question.
+
+What is left is the **beat schedule**. There is none, and a module may not edit
+`apps/worker` to add one. Every time trigger in section 6 stands on that, and so
+does the 5-minute poll the state triggers use. Plan mode's suspend-and-resume
+(section 8) needs it too, because the resume is a scheduled wake rather than a
+blocked task.
+
+#207 and #227 are the same question asked twice — a module-neutral way to
+register a periodic task — and should be decided together.
 
 ### 13.3 May meeting content leave the building? — #92
 
