@@ -5,9 +5,9 @@ calls one ``service`` function, and returns an explicit response model. These
 tests exercise that path end to end, including the shared ``AutuneError`` -> JSON
 mapping that apps/api installs in production.
 
-``alignment`` and ``report`` rows are not produced yet (that is P1/P2 work), so
-``/heatmap`` and ``/reports`` are covered here for their empty and populated
-shapes by inserting rows directly.
+``/heatmap``, ``/predictions`` and ``/reports`` are covered here for their
+empty and populated shapes by inserting rows directly; the aggregation that
+writes those rows is covered in test_aggregate.py and test_report.py.
 """
 
 from __future__ import annotations
@@ -26,6 +26,7 @@ from autune_intelligence.models import (
     IntelAlignment,
     IntelCompletion,
     IntelGapPattern,
+    IntelPrediction,
     IntelReport,
     IntelScore,
 )
@@ -148,6 +149,59 @@ def test_heatmap_leaves_out_a_pair_scored_in_too_few_meetings(
     body = client.get(f"/api/intelligence/heatmap/{team}").json()
 
     assert [(c["role_a"], c["role_b"]) for c in body] == [("Dev", "PM")]
+
+
+# --- /predictions/{team_id} -----------------------------------------------
+
+
+def _predicted_meeting(
+    db_session: Session, team: str, probability: float, scored_at: datetime
+) -> str:
+    from autune_core import Meeting
+
+    m = Meeting(team_id=team, title="p")
+    db_session.add(m)
+    db_session.flush()
+    _score(db_session, m.id, team, created_at=scored_at)
+    db_session.add(
+        IntelPrediction(
+            meeting_id=m.id,
+            kind="misalignment_risk",
+            horizon_days=14,
+            team_id=team,
+            probability=probability,
+            model_version="heuristic-v1",
+        )
+    )
+    db_session.flush()
+    return m.id
+
+
+def test_predictions_are_withheld_before_the_history_gate(
+    client: TestClient, db_session: Session, team: str
+) -> None:
+    now = datetime.now(UTC)
+    for _ in range(5):  # enough meetings, but all this week
+        _predicted_meeting(db_session, team, 0.4, now)
+
+    body = client.get(f"/api/intelligence/predictions/{team}").json()
+
+    assert body == {"team_id": team, "prediction": None, "reason": "insufficient_history"}
+
+
+def test_predictions_return_the_latest_once_the_gate_clears(
+    client: TestClient, db_session: Session, team: str
+) -> None:
+    old = datetime.now(UTC) - timedelta(weeks=5)
+    for _ in range(3):
+        _predicted_meeting(db_session, team, 0.2, old)
+
+    body = client.get(f"/api/intelligence/predictions/{team}").json()
+
+    assert body["reason"] is None
+    assert body["prediction"]["kind"] == "misalignment_risk"
+    assert body["prediction"]["horizon_days"] == 14
+    assert body["prediction"]["probability"] == pytest.approx(0.2)
 
 
 # --- /reports/{team_id} ---------------------------------------------------

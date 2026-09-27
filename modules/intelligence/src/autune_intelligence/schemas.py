@@ -43,6 +43,32 @@ class HeatmapCell(BaseModel):
     meeting_count: int
 
 
+class PredictionRead(BaseModel):
+    """One stored prediction for a meeting."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    meeting_id: str
+    kind: str
+    horizon_days: int
+    probability: float
+    model_version: str | None
+    updated_at: datetime
+
+
+class PredictionsRead(BaseModel):
+    """The team's latest prediction, or why there is none to show.
+
+    ``reason`` is ``"insufficient_history"`` until the team has four weeks and
+    three scored meetings (#27), and ``"no_prediction"`` if the gate is clear
+    but nothing has been predicted yet. ``None`` when ``prediction`` is set.
+    """
+
+    team_id: str
+    prediction: PredictionRead | None
+    reason: Literal["insufficient_history", "no_prediction"] | None
+
+
 class ReportRead(BaseModel):
     """One generated weekly report."""
 
@@ -75,7 +101,7 @@ class DashboardRead(BaseModel):
     ``recent_scores`` is scoped to the trailing eight weeks (not a meeting
     count) so the frontend's weekly bars never silently span a longer window
     or average a partially-covered week. ``alignment`` and ``predictions`` are
-    not here — they have their own endpoints and are not produced yet.
+    not here — they have their own endpoints (``/heatmap``, ``/predictions``).
     """
 
     team_id: str

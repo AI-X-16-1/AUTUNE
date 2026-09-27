@@ -27,7 +27,14 @@ from autune_core.errors import NotFoundError
 
 from . import service
 from .models import IntelReport, IntelScore
-from .schemas import DashboardRead, HeatmapCell, ReportRead, ScoreRead, SpeakingRatioRead
+from .schemas import (
+    DashboardRead,
+    HeatmapCell,
+    PredictionsRead,
+    ReportRead,
+    ScoreRead,
+    SpeakingRatioRead,
+)
 
 router = APIRouter()
 
@@ -65,6 +72,12 @@ def get_gap_titles(team_id: str, session: SessionDep) -> dict[str, list[str]]:
 def get_heatmap(team_id: str, session: SessionDep) -> list[HeatmapCell]:
     """Cross-role alignment, averaged across the team's meetings."""
     return service.get_heatmap(session, team_id)
+
+
+@router.get("/predictions/{team_id}", response_model=PredictionsRead)
+def get_predictions(team_id: str, session: SessionDep) -> PredictionsRead:
+    """The team's latest misalignment prediction, withheld until #27's gate clears."""
+    return service.get_predictions(session, team_id)
 
 
 @router.get("/reports/{team_id}", response_model=list[ReportRead])
