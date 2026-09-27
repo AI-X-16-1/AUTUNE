@@ -15,6 +15,7 @@ from typing import Any
 
 import pytest
 
+from autune_core.errors import PrivacyViolationError
 from autune_extraction.config import ExtractionSettings
 from autune_extraction.pipeline import FakeResolver, ResolutionRequest, registry
 from autune_extraction.pipeline.resolver import (
@@ -493,6 +494,20 @@ def test_a_rejected_request_also_falls_back_rather_than_raising(hosted) -> None:
     resolved = hosted(server).resolve([ResolutionRequest(target="그거 제가 할게요")])
 
     assert resolved == ["그거 제가 할게요"]
+
+
+def test_a_privacy_violation_is_never_caught_and_downgraded(hosted) -> None:
+    """mkkim68's review of #366: `resolve`'s except clause used to catch bare
+    `Exception`, which also caught `PrivacyViolationError` -- raised by
+    `check_outbound` inside `_post`, a sibling of `IntegrationError` under
+    `AutuneError`, not a subclass. `errors.py`'s own docstring says that one
+    is "never caught and downgraded" (unmasked PII already reached the DB by
+    the time it fires, and a warning log buries that fact). Unlike a
+    transient or permanent integration failure, it must propagate."""
+    server = Server(PrivacyViolationError("outbound text still contains unmasked PII"))
+
+    with pytest.raises(PrivacyViolationError):
+        hosted(server).resolve([ResolutionRequest(target="그거 제가 할게요")])
 
 
 def test_an_ungrounded_answer_falls_back_to_the_target(hosted) -> None:
