@@ -334,3 +334,26 @@ def test_a_named_verbs_present_conditional_is_not_the_past(text: str) -> None:
     read as the past and lost their date the same way the genuine past forms
     do (review by lsh2217 on #333, reproduced against all four verbs)."""
     assert parse_due(text, WEDNESDAY) == DueDate(text="월요일", date=date(2026, 9, 14))
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "월요일에 자료 공유한 후 피드백 주세요",
+        "월요일에 자료 공유한 뒤에 회의하겠습니다",
+        "월요일에 보낸 다음 확인하겠습니다",
+        "월요일에 전달한 다음에 연락드릴게요",
+        "월요일에 보낸대요",
+    ],
+)
+def test_a_named_verbs_relative_past_before_a_later_event_is_not_the_past(text: str) -> None:
+    """-(으)ㄴ before "후/뒤/다음" is past relative to the event that follows
+    it, not relative to the utterance -- "공유한 후 피드백 주세요" asks for
+    feedback after a future Monday, the same shape as "3월 2일에
+    드리겠습니다" in reverse. "보낸대요" is the same -ㄴ다 conjugation
+    contracted to its colloquial quotative-present ("보낸다고 해" -> "보낸대")
+    that ``test_a_named_verbs_present_conditional_is_not_the_past`` already
+    covers for the full form. Without the wider lookahead these read as a
+    reported past and lost their date the same way (review by lsh2217 on
+    #333, reproduced against all four verbs)."""
+    assert parse_due(text, WEDNESDAY) == DueDate(text="월요일", date=date(2026, 9, 14))

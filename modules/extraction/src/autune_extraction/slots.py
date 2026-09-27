@@ -183,7 +183,7 @@ _AGREED = re.compile(r"기로|[는할]\s*걸로|도록|자고")
 """What turns a past verb into an agreement about the date: 하기로 했다,
 드리는 걸로 했다, 끝내도록 했다, 하자고 했다."""
 
-_PAST_ADNOMINAL_VERBS = re.compile(r"(?:말씀드린|공유한|보낸|전달한)(?!다)")
+_PAST_ADNOMINAL_VERBS = re.compile(r"(?:말씀드린|공유한|보낸|전달한)(?!다|대|\s*(?:후|뒤|다음))")
 """The past adnominal -(으)ㄴ, but only for these four reporting verbs (#197's
 own candidate list), never as a general syllable check.
 
@@ -198,14 +198,26 @@ syllable rule cannot be; it answers nothing about a verb not on this list,
 and adding one is a data decision (#197's own eval-set plan), not a pattern
 someone noticed.
 
-**``(?!다)`` for the same reason ``_past_syllable`` excludes ``_NOT_PAST``.**
+**``(?!다|대)`` for the same reason ``_past_syllable`` excludes ``_NOT_PAST``.**
 Each of these four forms is also an exact prefix of the same verb's
 present/conditional ``-ㄴ다`` conjugation -- "공유한" opens "공유한다면"
 and "공유한다고", "보낸" opens "보낸다고", exactly as "겠" would open "겠다"
 if ``_NOT_PAST`` did not exclude it. Without the lookahead, "월요일에 자료
 공유한다면 좋겠습니다" -- a future conditional, not a reported past -- matched
-the same as "월요일에 자료 공유한 거" and lost its date the same way (review
-by lsh2217: reproduced against all four verbs)."""
+the same as "월요일에 자료 공유한 거" and lost its date the same way. "대" is
+the same conjugation contracted to its colloquial quotative-present form
+("보낸다고 해" -> "보낸대") -- "보낸대요" needs the same exclusion "보낸다고
+해요" does.
+
+**the trailing ``후/뒤/다음`` lookahead (whitespace-tolerant) exists because
+-(으)ㄴ before "후/뒤/다음" is relative, not absolute, past.** "공유한 후"'s
+-ㄴ is grammatically past-adnominal, but
+it is past *relative to the event that follows it*, not relative to the
+utterance -- "월요일에 자료 공유한 후 피드백 주세요" asks for feedback after a
+future Monday, the same shape as "3월 2일에 드리겠습니다" in reverse. Without
+this exclusion the phrase read as an already-happened past mention and lost
+its date exactly like the ``-ㄴ다`` conjugations above (review by lsh2217 on
+#333, reproduced with "후", "뒤", "다음", and "대" against all four verbs)."""
 
 
 def _past_syllable(ch: str) -> bool:
