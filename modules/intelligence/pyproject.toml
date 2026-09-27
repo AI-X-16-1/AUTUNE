@@ -22,6 +22,10 @@ local-models = [
     # setfit currently pulls it in transitively but that isn't a declared
     # guarantee, so it is pinned here too.
     "datasets>=2.14",
+    # Misalignment prediction (AUTUNE_INTELLIGENCE_MISALIGNMENT_PREDICTOR_IMPL=local).
+    # xgboost-cpu, not xgboost: same `import xgboost`, without the ~200 MB
+    # nvidia-nccl wheel the full package pulls on Linux for multi-GPU training.
+    "xgboost-cpu>=2.1",
 ]
 
 [build-system]

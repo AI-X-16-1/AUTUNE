@@ -34,3 +34,8 @@ def _warm_models(**_: object) -> None:
     # side effect is wanted.
     classifier.classify(["warmup"])
     log.info("model_ready", getter="get_gap_classifier", version=classifier.model_version)
+    # Same reason for the predictor: with impl=local the first call reads
+    # labeled history and fits XGBoost, which should not happen under a
+    # meeting's row lock either.
+    predictor = get_misalignment_predictor()
+    log.info("model_ready", getter="get_misalignment_predictor", version=predictor.model_version)

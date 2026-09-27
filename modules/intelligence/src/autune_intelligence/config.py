@@ -43,6 +43,21 @@ class IntelligenceSettings(BaseSettings):
     nothing here is fine-tuned and redistributed; the head is refit from
     ``pipeline.classifier._SEED_EXAMPLES`` every process start."""
 
+    misalignment_predictor_impl: str = "heuristic"
+    """Which misalignment predictor to run: ``heuristic`` or ``local``.
+
+    ``local`` fits XGBoost on the trailing window of labeled meetings
+    (``history.TRAINING_WINDOW``) and falls back to the heuristic until that
+    window holds enough labeled history — so it is safe to turn on before
+    there is data. The default stays ``heuristic`` until the eval
+    (``python -m autune_intelligence.eval``) shows the fitted model beating it
+    on calibration. No external option: features never leave the process."""
+
+    misalignment_refit_hours: int = 24
+    """How long a fitted model (or a fallback decision) is kept before the next
+    aggregation refits from history. Labels mature one day at a time, so
+    refitting more often buys nothing."""
+
     warm_models_on_worker_init: bool = False
     """Set only on workers that actually consume gap-classification tasks.
 
