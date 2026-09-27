@@ -99,5 +99,14 @@ function group(items: ActionItemRead[]): {
     byColumn[item.status ?? "needs_confirmation"].push(item);
   }
 
+  // ADR 0007: an item whose assignee left the team goes to the top of its
+  // column instead of sitting invisibly unowned. Stable sort, so the server's
+  // order holds within each group.
+  for (const status of COLUMNS) {
+    byColumn[status].sort(
+      (a, b) => Number(b.needs_reassignment ?? false) - Number(a.needs_reassignment ?? false),
+    );
+  }
+
   return { candidates, byColumn };
 }

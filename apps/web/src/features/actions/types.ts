@@ -104,6 +104,20 @@ export interface ActionItemRead extends ActionItem {
    * where no date phrase was said at all.
    */
   due_text: string | null;
+  /**
+   * How many of the item's sources were deleted after it was made (ADR 0007).
+   * `source_utterance_ids` lists only the ones that still exist, so a model
+   * item whose transcript went has an empty list — the same shape as a
+   * hand-added one. Tell them apart by `origin`; this says the evidence is gone.
+   */
+  deleted_source_count: number;
+  /**
+   * An open item whose assignee is no longer on the meeting's team (ADR 0007).
+   * `assignee_id` and `assignee_name` are already `null` when the assignee is
+   * not a member; this marks the ones someone has to pick up. S17 puts them at
+   * the top of their column.
+   */
+  needs_reassignment: boolean;
 }
 
 /** One source utterance's words, already masked by module A. */
