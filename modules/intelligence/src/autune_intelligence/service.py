@@ -373,7 +373,7 @@ def aggregate_meeting(session: Session, meeting_id: str) -> IntelligenceSnapshot
         extraction=extraction,
         gap=gap,
         context=context,
-        alignment=alignment,
+        alignment_scores=[pair.score for pair in alignment],
         missing_source_count=len(missing),
     )
     (probability,) = predictor.predict([features])

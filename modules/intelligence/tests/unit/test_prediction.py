@@ -8,7 +8,6 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from autune_contracts import ContextLinks, ExtractionResult, GapReport
-from autune_intelligence.alignment import PairAgreement
 from autune_intelligence.pipeline.predictor import HeuristicMisalignmentPredictor
 from autune_intelligence.prediction import (
     MeetingFeatures,
@@ -36,7 +35,7 @@ def _features(**kw: object) -> MeetingFeatures:
         extraction=kw.pop("extraction", None),  # type: ignore[arg-type]
         gap=kw.pop("gap", None),  # type: ignore[arg-type]
         context=kw.pop("context", None),  # type: ignore[arg-type]
-        alignment=kw.pop("alignment", []),  # type: ignore[arg-type]
+        alignment_scores=kw.pop("alignment_scores", []),  # type: ignore[arg-type]
         missing_source_count=kw.pop("missing_source_count", 0),  # type: ignore[arg-type]
     )
 
@@ -72,9 +71,7 @@ def test_lineage_features_count_moved_decisions_but_not_new_ones() -> None:
 
 
 def test_alignment_feature_is_the_weakest_pair() -> None:
-    f = _features(
-        alignment=[PairAgreement("Dev", "PM", 0.9, 2), PairAgreement("Data", "PM", 0.3, 1)]
-    )
+    f = _features(alignment_scores=[0.9, 0.3])
 
     assert f.alignment_min == 0.3
 
@@ -126,7 +123,7 @@ def test_heuristic_probabilities_are_in_the_unit_interval() -> None:
 
 
 def test_heuristic_rises_with_role_disagreement() -> None:
-    base = _features(alignment=[PairAgreement("Dev", "PM", 0.9, 1)])
+    base = _features(alignment_scores=[0.9])
     worse = replace(base, alignment_min=0.2)
 
     low, high = HeuristicMisalignmentPredictor().predict([base, worse])

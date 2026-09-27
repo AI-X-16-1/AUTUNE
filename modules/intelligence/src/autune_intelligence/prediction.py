@@ -35,8 +35,6 @@ from autune_contracts import (
     GapSeverity,
 )
 
-from .alignment import PairAgreement
-
 MISALIGNMENT_KIND: Final = "misalignment_risk"
 MISALIGNMENT_HORIZON_DAYS: Final = 14
 """The horizon in docs/architecture/contracts.md's ``IntelligenceSnapshot``
@@ -85,7 +83,7 @@ def meeting_features(
     extraction: ExtractionResult | None,
     gap: GapReport | None,
     context: ContextLinks | None,
-    alignment: Sequence[PairAgreement],
+    alignment_scores: Sequence[float],
     missing_source_count: int,
 ) -> MeetingFeatures:
     lineage = context.decision_lineage if context is not None else []
@@ -100,7 +98,7 @@ def meeting_features(
             sum(1 for g in gap.gaps if g.severity == GapSeverity.HIGH) if gap is not None else None
         ),
         gap_count=len(gap.gaps) if gap is not None else None,
-        alignment_min=min((p.score for p in alignment), default=None),
+        alignment_min=min(alignment_scores, default=None),
         changed_decision_share=(len(moved) / len(tracked)) if tracked else None,
         reversed_count=(
             sum(1 for c in lineage if c.change_type == ChangeType.REVERSED)
