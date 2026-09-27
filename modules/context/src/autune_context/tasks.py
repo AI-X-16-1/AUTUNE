@@ -13,6 +13,8 @@ failure in B must not cost the user their topic links.
 
 A successful publish also fires ``notify_context_events``: the topic-link
 notice and the decision-drift warning, docs/modules/context.md "Slack surface".
+A rerun of either half after that (a module A reprocess) goes out through
+``republish`` instead, with no notice.
 
 See docs/architecture/async-pipeline.md.
 """
@@ -70,7 +72,12 @@ def on_transcript_ready(payload: dict) -> None:
         meeting_id=transcript.meeting_id,
         utterances=len(transcript.utterances),
     )
-    service.run_topic_linking(transcript)
+    if service.run_topic_linking(transcript):
+        # A rerun of a meeting that already published (module A reprocessed
+        # the recording, or this is a redelivery): the gate below would refuse
+        # it, and E would keep the old links.
+        republish.delay(transcript.meeting_id)
+        return
 
     # Try now (B may already be in); also arm the B-timeout fallback.
     publish_if_ready.delay(transcript.meeting_id)
@@ -84,12 +91,15 @@ def on_extraction_completed(payload: dict) -> None:
     """Thread B's decisions into lineage. Runs after B.
 
     Matches each decision to a thread, runs NLI against the previous statement,
-    and records how the decision moved. Then re-checks whether ``ContextLinks``
-    can be published -- ``force=True`` when this lineage arrived *late* (the
-    B-timeout fallback already published without it), so the republish isn't
-    blocked by the ordinary ``published_at`` guard. See
-    ``service.build_decision_lineage``'s ``was_late`` return and
-    ``publish_if_ready(force=...)``.
+    and records how the decision moved. Then routes on
+    ``service.LineageOutcome``:
+
+    - ``FIRST`` -- re-checks whether ``ContextLinks`` can be published.
+    - ``LATE`` -- the B-timeout fallback already published without this
+      lineage: ``force=True`` republishes past the ``published_at`` guard and
+      sends the drift warning that publish could not.
+    - ``REBUILT`` -- B reran a meeting that already published: ``republish``
+      sends E the rebuilt lineage and notifies nobody.
     """
     result = ExtractionResult.model_validate(payload)
     validate_major_version(result)
@@ -99,8 +109,11 @@ def on_extraction_completed(payload: dict) -> None:
         meeting_id=result.meeting_id,
         decisions=len(result.decisions),
     )
-    was_late = service.build_decision_lineage(result)
-    publish_if_ready.delay(result.meeting_id, force=was_late)
+    outcome = service.build_decision_lineage(result)
+    if outcome is service.LineageOutcome.REBUILT:
+        republish.delay(result.meeting_id)
+        return
+    publish_if_ready.delay(result.meeting_id, force=outcome is service.LineageOutcome.LATE)
 
 
 @shared_task(name="autune.context.publish_if_ready", acks_late=True)
@@ -133,6 +146,25 @@ def publish_if_ready(meeting_id: str, force: bool = False) -> None:
     # own with a ``notified_at`` claim, so a redelivered execution is a
     # no-op rather than a duplicate post.
     notify_context_events.apply_async((meeting_id,))
+
+
+@shared_task(name="autune.context.republish", acks_late=True)
+def republish(meeting_id: str) -> None:
+    """Re-send ``ContextLinks`` after a rerun rebuilt what it carries.
+
+    Enqueued by ``on_transcript_ready`` and ``on_extraction_completed`` when
+    their half reran for a meeting that had already published -- a module A
+    reprocess mints new ``utt_`` ids, so B's ``dec_`` ids and D's links move
+    with it. Sends nothing to Slack: the notices went out with the first
+    publish, and a rerun is not news to the team. A catch-up for late lineage
+    is ``publish_if_ready(force=True)``, not this.
+
+    A no-op for a meeting that has not published yet (``service
+    .publish_if_ready`` refuses ``force`` there), so its first publish still
+    goes through the gate and sends its notices.
+    """
+    republished = service.publish_if_ready(meeting_id, force=True)
+    log.info("context_republish_checked", meeting_id=meeting_id, republished=republished)
 
 
 @shared_task(name="autune.context.notify_context_events", acks_late=True)
@@ -229,10 +261,10 @@ def notify_late_drift(meeting_id: str) -> None:
         target = _slack_target(session, meeting_id, event_prefix="context_late_drift")
         if target is None:
             # Nowhere to send, so nothing is owed. Left set, every later B
-            # reprocess of this meeting would read "still owed" and force a
-            # republish to E, and a team that connects Slack weeks from now
-            # would get a drift notice for a meeting long past. Not marked
-            # notified either -- nothing was sent.
+            # reprocess of this meeting would read "still owed" and take the
+            # late path again instead of a plain republish, and a team that
+            # connects Slack weeks from now would get a drift notice for a
+            # meeting long past. Not marked notified either -- nothing was sent.
             status.late_drift_due_at = None
             return
         channel, config = target

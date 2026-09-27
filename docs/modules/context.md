@@ -183,7 +183,9 @@ and is settled in Phase 0.
    `pending` link for the user to confirm.
 6. Mark `ctx_meeting_status.topic_linking_done`, then schedule
    `autune.context.publish_if_ready` with a countdown of
-   `publish_timeout_s`.
+   `publish_timeout_s`. If the meeting had already published (module A
+   reprocessed the recording), schedule `autune.context.republish` instead —
+   see "Republishing after a rerun".
 
 ### Decision lineage — from `autune.extraction.completed`
 
@@ -247,17 +249,20 @@ lineage view (S22), which reads to a user as a bug.
    version's meeting against the thread's known stakeholders (users across
    every earlier version's meeting). A non-empty list drives the drift warning.
 5. Mark `ctx_meeting_status.lineage_done` (and `extraction_seen`), then call
-   `autune.context.publish_if_ready`.
+   `autune.context.publish_if_ready` — or `autune.context.republish` when
+   the meeting had already published with its lineage (a rerun of B; see
+   "Republishing after a rerun").
 
 Idempotent: a re-run replaces the meeting's `ctx_decision_versions` row(s) and
 re-chains every thread that touches, then runs all three deletion sweeps (see
 "Deletion") — global and idempotent, so running them on every call closes real
 gaps ahead of #87 rather than leaving them for tests to be the only caller.
-Re-chaining a thread updates other meetings' versions too (an earlier meeting
-arriving late shifts what a later one's `previous_*` point to); their
-already-published `ContextLinks` are not automatically re-emitted — E ends up
-with a stale `decision_lineage` for that meeting until something republishes
-it. No automatic republish exists yet; tracked for a later phase.
+The rerun meeting's own `ContextLinks` is republished (see "Republishing after
+a rerun"). Re-chaining a thread updates other meetings' versions too (an
+earlier meeting arriving late shifts what a later one's `previous_*` point
+to); *their* already-published `ContextLinks` are not re-emitted — E ends up
+with a stale `decision_lineage` for those meetings until something republishes
+them. Not done yet; tracked for a later phase.
 
 **Concurrency.** `cpu_heavy` is a concurrent queue (docs/architecture/async-
 pipeline.md): two meetings for the same team can call `build_decision_lineage`
@@ -275,6 +280,34 @@ Publish `ContextLinks` when `topic_linking_done` is set **and** either
 timeout, publish with an empty `decision_lineage` and `"extraction"` in
 `missing_sources`. **A failure in B must never cost the user their topic links.**
 `published_at` guards against a double publish; the task is safe to run twice.
+
+### Republishing after a rerun — `autune.context.republish`
+
+The `published_at` guard also refuses a meeting whose content changed after it
+published. Module A reprocesses a recording by emitting
+`autune.transcript.ready` again with new `utt_` ids, so both halves rerun: topic
+linking rebuilds the links, and B re-emits `autune.extraction.completed` with
+`dec_` ids that moved with their sources. Without a republish E keeps the old
+payload, including `dec_` ids B no longer has.
+
+Each half reads, under the `ctx_meeting_status` row lock, whether the meeting
+had already published before its own write. If it had, it enqueues
+`autune.context.republish`, which re-sends `ContextLinks` built from the rows
+as they are now and **sends no Slack notice** — the notices belong to the first
+publish, and a reprocess is not news to the team. `build_decision_lineage`
+reports this as `LineageOutcome.REBUILT`, distinct from `LATE` (the B-timeout
+fallback published *without* lineage, so the drift warning is still owed and
+goes out through `notify_late_drift`) and `FIRST` (nothing published yet).
+`republish` never performs a first publish: for a meeting with no
+`published_at` it does nothing, so the first `ContextLinks` always goes through
+the gate above with its notices.
+
+An A reprocess therefore republishes twice, once per half, in whichever order
+they finish. Each is built from committed rows under the row lock, so the
+later send is the fresher one and carries both reruns once both have
+committed. E stores the last `ContextLinks` it processes; two workers taking
+the pair out of order would leave the older one — the same exposure the
+late-lineage republish already has, and not closed here.
 
 ## Storage
 
@@ -424,7 +457,8 @@ meeting itself that the two decision routes already applied.
 | --- | --- | --- |
 | `autune.context.on_transcript_ready` | `autune.transcript.ready` | `cpu_heavy` |
 | `autune.context.on_extraction_completed` | `autune.extraction.completed` | `cpu_heavy` |
-| `autune.context.publish_if_ready` | after either half finishes, or on timeout | `default` |
+| `autune.context.publish_if_ready` | after either half finishes, or on timeout | `cpu_heavy` |
+| `autune.context.republish` | either half reran for a meeting that already published | `cpu_heavy` |
 | `autune.context.index_material` | material upload | `cpu_heavy` — Phase 2 |
 | `autune.context.send_brief` | 30 minutes before a meeting | `default` — Phase 2 |
 
