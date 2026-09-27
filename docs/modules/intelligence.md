@@ -72,9 +72,40 @@ See `../architecture/async-pipeline.md`.
    check it against. `AUTUNE_INTELLIGENCE_WARM_MODELS_ON_WORKER_INIT` fits that
    head at worker startup instead of inside a meeting's aggregation lock. See
    `docs/engineering/environments.md`.
-4. **Alignment** — pairwise cross-role agreement, producing the heatmap.
-5. **Prediction** — XGBoost for misalignment risk, Prophet for trend
-   forecasting.
+4. **Alignment** — pairwise cross-role agreement, producing the heatmap
+   (`alignment.py`). Input is only `Decision.stance_by_role` from B — counts
+   per role, already gated by the contract (three identified people, no
+   unanimous role; `../architecture/privacy.md` section 3). Per decision, a
+   role's position is `(supporting - concerns) / identified` in `[-1, 1]`, so
+   people who said nothing count as neutral; two roles agree by
+   `1 - |pos_a - pos_b| / 2`. A decision where *neither* role expressed a
+   stance is skipped, so silence does not read as consensus. A meeting's score
+   for a pair is the mean over the decisions both roles have a row on, written
+   to `intel_alignment` (unordered pair, `role_a < role_b`) and to the
+   snapshot. The heatmap averages per-meeting scores and **leaves out any pair
+   scored in fewer than three meetings** (`MIN_MEETINGS_PER_HEATMAP_CELL`,
+   privacy.md section 3: a small sample leaves the cell empty). Until B's
+   stance producer ships (#10, #168), `stance_by_role` is always empty and so
+   is the heatmap.
+5. **Prediction** — `misalignment_risk`, 14 days: the probability that a
+   decision this meeting settled is **reversed** within two weeks. D already
+   records reversals (`DecisionChange.change_type == "reversed"` with the
+   earlier meeting on `previous_meeting_id`), so that is also the training
+   label — see Metric below. `prediction.meeting_features` reduces the meeting
+   to meeting- and role-level numbers (quality value, gap counts, weakest
+   role-pair alignment, D's lineage churn, whether a change happened with a
+   key stakeholder absent — a boolean, never who — ambiguous agreements,
+   unconfirmed actions, missing sources); `None` means not measured. The
+   predictor is chosen by `AUTUNE_INTELLIGENCE_MISALIGNMENT_PREDICTOR_IMPL`:
+   `heuristic` (default) is a logistic over hand-set weights — unvalidated,
+   the same P1 status as the quality-score weights (#26); `local` fits XGBoost
+   on the trailing 12 weeks of labeled meetings (#27's trailing window) and
+   refits every `AUTUNE_INTELLIGENCE_MISALIGNMENT_REFIT_HOURS`, keeping the
+   heuristic until there are 50 labeled meetings with at least 5 of each
+   outcome. Every prediction is stored in `intel_predictions` with its
+   `model_version`; it is **shown** — in the snapshot and on `/predictions` —
+   only once the team has four weeks of history and three scored meetings
+   (#27). Prophet trend forecasting is not built; see Open questions.
 6. **Report** — `service.generate_weekly_report` aggregates `intel_scores` and
    `intel_gap_patterns` for a team over `[period_start, period_end)` into one
    `intel_reports` row (upserted by `(team_id, period_start)`), and
@@ -157,7 +188,9 @@ foreign keys to another module's tables.
 | --- | --- | --- |
 | GET | `/dashboard/{team_id}` | Dashboard data |
 | GET | `/scores/{meeting_id}` | One meeting's quality score |
-| GET | `/heatmap/{team_id}` | Cross-role alignment heatmap |
+| GET | `/heatmap/{team_id}` | Cross-role alignment heatmap; pairs with fewer than three meetings left out |
+| GET | `/predictions/{team_id}` | Latest misalignment prediction, or `null` with a reason before #27's gate clears |
+| GET | `/gap-titles/{team_id}` | High-severity gap titles behind each pattern count |
 | GET | `/reports/{team_id}` | Weekly reports |
 | GET | `/me/speaking-ratio/{meeting_id}` | **The requester's own ratio only** |
 
@@ -183,8 +216,8 @@ admin override and no team-level variant of this endpoint.
 | Component | Model |
 | --- | --- |
 | Gap pattern classification | SetFit (few-shot) |
-| Prediction | XGBoost |
-| Trend forecasting | Prophet |
+| Prediction | Heuristic baseline; XGBoost once labeled history exists |
+| Trend forecasting | Prophet — not built |
 | Label efficiency | Active learning |
 | Report generation | LLM, from computed numbers only |
 
@@ -194,8 +227,21 @@ Prediction calibration, reported by the owner. Dashboard metrics are descriptive
 and have no accuracy target; the prediction does.
 
 ```bash
-uv run --package autune-intelligence python -m autune_intelligence.eval
+uv run --package autune-intelligence python -m autune_intelligence.eval [--window-weeks 12] [--json]
 ```
+
+A meeting is labeled positive when a later meeting's `decision_lineage`
+reverses one of its decisions within 14 days, and is labeled at all only once
+those 14 days have passed. History is read back from E's own tables, and
+features are rebuilt with the same `meeting_features` the live path uses. The
+report gives, per model version — both what was stored and shown
+(`stored:<version>`) and the current predictor over the same meetings
+(`current:<version>`) — Brier score against a constant base-rate baseline,
+log loss, expected calibration error and a reliability table. Fewer than 30
+labeled examples prints "not scored" instead of a number. Switch the default
+predictor to `local` only once `current:xgb-*` beats `stored:heuristic-v1`
+here. Known blind spot: a decision modified and then reversed in a third
+meeting names the modifying meeting, so the original stays negative.
 
 ## Privacy notes
 
@@ -223,4 +269,11 @@ exactly what a surveillance feature looks like. Read
 ## Open questions
 
 - Quality score weighting: fixed weights or learned from user feedback.
-- Minimum meeting count before predictions are shown at all.
+- Prophet trend forecasting. `Prediction` carries a probability, so a trend
+  needs a probability-shaped question (for example "the team's weekly quality
+  average falls a grade within four weeks"), and a weekly series has only a
+  handful of points for the first months — too few for Prophet's seasonality
+  to mean anything. Deferred until there is enough history to evaluate it.
+
+Decided: predictions are shown after four weeks of history and three meetings
+(#27).
