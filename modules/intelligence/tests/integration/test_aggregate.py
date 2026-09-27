@@ -7,7 +7,12 @@ from sqlalchemy.orm import Session
 
 from autune_contracts import ContextLinks, ExtractionResult, GapReport, IntelligenceSnapshot
 from autune_intelligence import service
-from autune_intelligence.models import IntelCompletion, IntelGapPattern, IntelScore
+from autune_intelligence.models import (
+    IntelAlignment,
+    IntelCompletion,
+    IntelGapPattern,
+    IntelScore,
+)
 
 
 def _stage(session: Session, meeting_id: str, source: str, payload: dict) -> None:
@@ -257,3 +262,62 @@ def test_gap_classification_normalizes_a_freeform_category(
 
     assert snapshot is not None
     assert snapshot.gap_distribution == {"scope": 1}
+
+
+def _extraction_with_stance(meeting_id: str, pm_concerns: int) -> dict:
+    return ExtractionResult(
+        meeting_id=meeting_id,
+        decisions=[
+            {
+                "id": "dec_1",
+                "statement": "s",
+                "confidence": 0.9,
+                "stance_by_role": [
+                    {"role": "PM", "identified": 4, "supporting": 2, "concerns": 0},
+                    {"role": "Dev", "identified": 4, "supporting": 0, "concerns": pm_concerns},
+                ],
+            }
+        ],
+    ).model_dump(mode="json")
+
+
+def _alignment_rows(session: Session, meeting_id: str) -> list[tuple[str, str, float]]:
+    return [
+        (r.role_a, r.role_b, r.score)
+        for r in session.execute(
+            sa.select(IntelAlignment).where(IntelAlignment.meeting_id == meeting_id)
+        ).scalars()
+    ]
+
+
+def test_stance_by_role_becomes_alignment_rows_and_snapshot_entries(
+    db_session: Session, meeting: str, team: str
+) -> None:
+    _stage(db_session, meeting, "extraction", _extraction_with_stance(meeting, pm_concerns=2))
+    _stage(db_session, meeting, "gap", _gap(meeting))
+    _stage(db_session, meeting, "context", _context(meeting))
+
+    snapshot = service.aggregate_meeting(db_session, meeting)
+    db_session.flush()
+
+    assert snapshot is not None
+    # PM +0.5, Dev -0.5 -> 1 - 1.0 / 2
+    assert [(a.role_a, a.role_b, a.score) for a in snapshot.alignment] == [("Dev", "PM", 0.5)]
+    assert _alignment_rows(db_session, meeting) == [("Dev", "PM", 0.5)]
+
+
+def test_re_aggregation_replaces_the_meetings_alignment_rows(
+    db_session: Session, meeting: str
+) -> None:
+    _stage(db_session, meeting, "extraction", _extraction_with_stance(meeting, pm_concerns=2))
+    _stage(db_session, meeting, "gap", _gap(meeting))
+    _stage(db_session, meeting, "context", _context(meeting))
+    service.aggregate_meeting(db_session, meeting)
+
+    service.reopen(db_session, meeting)
+    _stage(db_session, meeting, "extraction", _extraction_with_stance(meeting, pm_concerns=0))
+    service.aggregate_meeting(db_session, meeting)
+    db_session.flush()
+
+    # PM +0.5, Dev 0.0 -> 0.75; the earlier 0.5 row is gone, not duplicated.
+    assert _alignment_rows(db_session, meeting) == [("Dev", "PM", 0.75)]

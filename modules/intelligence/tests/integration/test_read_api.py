@@ -113,25 +113,41 @@ def test_heatmap_is_empty_when_no_alignment_has_been_computed(
     assert client.get(f"/api/intelligence/heatmap/{team}").json() == []
 
 
-def test_heatmap_averages_the_role_pair_score_across_the_team(
-    client: TestClient, db_session: Session, team: str
-) -> None:
+def _seed_alignment(db_session: Session, team: str, role_b: str, scores: tuple[float, ...]) -> None:
     from autune_core import Meeting
 
-    for i, score in enumerate((0.4, 0.8)):
-        m = Meeting(team_id=team, title=f"m{i}")
+    for i, score in enumerate(scores):
+        m = Meeting(team_id=team, title=f"{role_b}{i}")
         db_session.add(m)
         db_session.flush()
         db_session.add(
-            IntelAlignment(meeting_id=m.id, role_a="Dev", role_b="PM", team_id=team, score=score)
+            IntelAlignment(meeting_id=m.id, role_a="Dev", role_b=role_b, team_id=team, score=score)
         )
     db_session.flush()
+
+
+def test_heatmap_averages_the_role_pair_score_across_the_team(
+    client: TestClient, db_session: Session, team: str
+) -> None:
+    _seed_alignment(db_session, team, "PM", (0.4, 0.8, 0.6))
 
     body = client.get(f"/api/intelligence/heatmap/{team}").json()
 
     assert body == [
-        {"role_a": "Dev", "role_b": "PM", "score": pytest.approx(0.6), "meeting_count": 2}
+        {"role_a": "Dev", "role_b": "PM", "score": pytest.approx(0.6), "meeting_count": 3}
     ]
+
+
+def test_heatmap_leaves_out_a_pair_scored_in_too_few_meetings(
+    client: TestClient, db_session: Session, team: str
+) -> None:
+    """privacy.md section 3: a small sample leaves the cell empty."""
+    _seed_alignment(db_session, team, "PM", (0.4, 0.8, 0.6))
+    _seed_alignment(db_session, team, "Design", (0.9, 0.1))
+
+    body = client.get(f"/api/intelligence/heatmap/{team}").json()
+
+    assert [(c["role_a"], c["role_b"]) for c in body] == [("Dev", "PM")]
 
 
 # --- /reports/{team_id} ---------------------------------------------------

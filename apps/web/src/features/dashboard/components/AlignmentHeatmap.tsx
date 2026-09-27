@@ -22,7 +22,7 @@ export function AlignmentHeatmap({ cells }: { cells: HeatmapCell[] }) {
       <HoverPreview mockup={<HeatmapMockup />}>
         <DashboardCard title="직무 쌍 얼라인먼트">
           <p style={{ margin: 0, fontSize: "var(--text-meta)", color: "var(--color-ink-muted)" }}>
-            아직 역할 간 정렬도를 계산하지 않습니다 (#168).
+            표본이 충분한 직무 쌍이 아직 없습니다. 직무 쌍마다 회의 3회 이상 쌓이면 표시됩니다 (#168).
           </p>
         </DashboardCard>
       </HoverPreview>

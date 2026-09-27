@@ -10,7 +10,8 @@ import type { DashboardRead, GapTitlesByPattern, HeatmapCell } from "../types";
  *
  * Three endpoints, one screen: `/dashboard/{team_id}`, `/heatmap/{team_id}`,
  * and `/gap-titles/{team_id}` are separate because the heatmap has its own
- * cadence — role-pair alignment isn't computed yet (#168, in progress) — and
+ * cadence — a role pair only appears once three meetings have scored it, and
+ * none do until B sends stance per role (#168) — and
  * gap titles are a best-effort explanation of `gap_distribution`'s counts,
  * not part of the rollup itself. S26 always shows all three, so they load
  * together here rather than at three call sites. Settled independently: a
