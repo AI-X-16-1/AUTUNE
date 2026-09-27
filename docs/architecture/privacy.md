@@ -32,6 +32,13 @@ The uploaded recording exists only for the duration of transcription.
   file a late task is about to adopt. Today it runs at the start of every
   transcription task, so an orphan waits for the next upload; a periodic
   trigger is #207.
+- Run the API and the worker against **the same `AUTUNE_AUDIO_TEMP_DIR` on the
+  same filesystem**. The handover is a file on disk and an id in a message; if
+  the two processes do not see the same directory, the worker finds nothing to
+  adopt and the recording the endpoint wrote has no owner at all — the durable
+  copy this section exists to prevent. Splitting them across hosts is not a
+  deployment option today, and making it one means replacing the handover, not
+  changing a path.
 - Set `privacy.original_audio_deleted = true` in `TranscriptReady` only after
   the file is actually gone.
 
