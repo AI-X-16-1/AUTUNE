@@ -152,8 +152,8 @@ capability to read.
 1. notion.so/my-integrations → New integration → internal.
 2. Capabilities: **Read content, Update content, Insert content**. No user
    information capability — B sends an assignee name, not a Notion identity.
-3. Keep the token. It does **not** go in `.env`: #57 moved Notion, Jira and
-   Calendar credentials into `team_integrations`, encrypted, one row per team,
+3. Keep the token. It does **not** go in `.env`: #57 moved Notion and Calendar
+   credentials into `team_integrations`, encrypted, one row per team,
    configured on screen S28. `.env` carries only the encryption key.
 4. Create the action-item database, then open it → **⋯ → Connections → Connect
    to → AUTUNE**. Skipping this makes every API call return "could not find
@@ -205,13 +205,9 @@ ids, not the transcript. `packages/integrations/privacy.py` is where that is
 enforced, and it is the file to change if that ever needs to move — not the
 call site.
 
-### Jira
-
-`JiraClient` is implemented, but its credentials no longer live in
-`.env.example` — #57 moved them to `team_integrations` with Notion and Calendar.
-And whether Jira sync is in the six weeks at all is still open: #21 asks when an
-issue gets created, which S28 already anticipates as one of three configurable
-timings. Do not register anything for Jira until that is decided.
+Jira was evaluated and dropped from the product (#82, 2026-09-10) — see "Who
+owns a credential when its creator leaves" below for why. Nothing further to
+register for it.
 
 ---
 
@@ -226,7 +222,7 @@ real problem.
 | --- | --- | --- |
 | Slack | Yes, for bot scopes | Bot users, slash commands and incoming webhooks *"will remain active"* when a member is deactivated. Only *"apps that require member-specific permissions"* deactivate, and *"API tokens are revoked"* refers to that member's own user tokens |
 | Notion | Yes, guaranteed in writing | An internal connection is *"its own bot user"* scoped to the workspace, and *"Access persists independently of users. If the user who shared a page leaves the workspace, the connection retains access to that page."* Every Workspace Owner sees every internal connection in the Developer portal, *"including connections created by others"* |
-| Jira | **No** | Both auth paths are personal. An API token pairs with `AUTUNE_JIRA_EMAIL` — that pairing *is* the personal identity. OAuth 2.0 (3LO) is no better: it accesses the API *"on a user's behalf"*, constrained by that user's permissions |
+| Jira | **No** — dropped (#82) | Both auth paths are personal. An API token pairs with `AUTUNE_JIRA_EMAIL` — that pairing *is* the personal identity. OAuth 2.0 (3LO) is no better: it accesses the API *"on a user's behalf"*, constrained by that user's permissions |
 
 So the practical rules for W1:
 
@@ -244,40 +240,36 @@ their account, and the surviving connection then has access to nothing. So creat
 the action-item database in a **teamspace**, not a private page. This is the actual
 failure mode, and it is not a credential problem at all.
 
-**Jira — this is why deferring it is the right call.** The failure is not
-hypothetical: Atlassian's own docs say a
-3LO refresh token dies if *"The user's Atlassian account password has been
-changed"*, and the only remedies offered are *"Change the password back to the
-original password, or initiate the entire authorization flow from the beginning
-again."* Deactivation is not even discussed, which is worse than being discussed.
-Rotating refresh tokens also expire after **90 days** of inactivity and are
-single-use — each exchange disables the one you sent.
+**Jira — this is why it was dropped, not deferred (#82).** The failure is not
+hypothetical: Atlassian's own docs say a 3LO refresh token dies if *"The user's
+Atlassian account password has been changed"*, and the only remedies offered
+are *"Change the password back to the original password, or initiate the
+entire authorization flow from the beginning again."* Deactivation is not even
+discussed, which is worse than being discussed. Rotating refresh tokens also
+expire after **90 days** of inactivity and are single-use — each exchange
+disables the one you sent.
 
-If Jira has to ship, there are exactly two paths that are not person-bound:
-
-- A **Forge or Connect app**, where *"you don't need to configure authentication
-  it is built into the app frameworks"* — authentication is the app's, not a
-  user's. This is the correct answer for a product.
-- A dedicated Atlassian **service account** that no human uses. Works, costs a
-  licensed seat, and still needs somebody to hold its credentials.
+The only paths that are not person-bound — a **Forge or Connect app** (*"you
+don't need to configure authentication, it is built into the app frameworks"*)
+or a dedicated Atlassian **service account** — both need registration, review
+or a licensed seat beyond this project's six weeks. If Jira is ever revisited,
+start there rather than with the personal-token path this section describes.
 
 ### Beyond the six weeks
 
-The variables in `.env.example` are one global set — one Slack token, one Notion
-token, one Jira token. That shape is correct for our own workspace and wrong for
-a product, where each customer authorizes their own workspace and we hold a
+The variables in `.env.example` are one global set — one Slack token, one
+Notion token. That shape is correct for our own workspace and wrong for a
+product, where each customer authorizes their own workspace and we hold a
 credential per team. E's `core/team-integrations` branch already implements
 exactly that (per-team credentials, encrypted, 624 lines) and is still unmerged.
-When it lands, the product path is: Slack app distribution, a Notion **public**
-integration (internal connections *cannot* span workspaces), and Forge or Connect
-for Jira — each writing into that per-team store rather than into `.env`.
+When it lands, the product path is: Slack app distribution and a Notion
+**public** integration (internal connections *cannot* span workspaces) — each
+writing into that per-team store rather than into `.env`.
 
 Note what that does and does not solve. It removes *our* dependence on one
-person's account. It does not remove the customer's: a 3LO grant is still tied to
-whoever clicked Authorize at their company. Slack and Notion carry the grant at
-workspace level and are fine. Jira is the one that would ask a customer to
-re-authorize after their admin left, which is a support ticket we would rather
-not design in.
+person's account. It does not remove the customer's: a 3LO grant is still tied
+to whoever clicked Authorize at their company. Slack and Notion carry the grant
+at workspace level and are fine.
 
 ## 1.9 AI Hub data terms
 
@@ -353,7 +345,7 @@ results are published. `docs/modules/extraction.md` already records that.
 
 - `.env` on each developer's machine has `AUTUNE_AUDIO_HF_TOKEN`,
   `AUTUNE_SLACK_BOT_TOKEN`, `AUTUNE_SLACK_SIGNING_SECRET` and
-  `AUTUNE_SLACK_APP_TOKEN` filled. Notion, Jira and Calendar are **not** in
+  `AUTUNE_SLACK_APP_TOKEN` filled. Notion and Calendar are **not** in
   `.env` — they are per-team rows in `team_integrations` (#57).
 - The pyannote gate check above prints `gate ok`.
 - The bot answers `/autune` in the demo channel.

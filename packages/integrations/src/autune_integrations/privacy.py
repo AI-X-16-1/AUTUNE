@@ -1,7 +1,7 @@
 """The outbound privacy boundary.
 
 Everything here runs on data about to leave our infrastructure — Slack, Notion,
-Jira, Google Calendar, any LLM API. This is the one place to enforce the rules
+Google Calendar, any LLM API. This is the one place to enforce the rules
 in docs/architecture/privacy.md, instead of trusting five modules to each
 remember them.
 

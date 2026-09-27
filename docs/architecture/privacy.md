@@ -32,6 +32,13 @@ The uploaded recording exists only for the duration of transcription.
   file a late task is about to adopt. Today it runs at the start of every
   transcription task, so an orphan waits for the next upload; a periodic
   trigger is #207.
+- Run the API and the worker against **the same `AUTUNE_AUDIO_TEMP_DIR` on the
+  same filesystem**. The handover is a file on disk and an id in a message; if
+  the two processes do not see the same directory, the worker finds nothing to
+  adopt and the recording the endpoint wrote has no owner at all — the durable
+  copy this section exists to prevent. Splitting them across hosts is not a
+  deployment option today, and making it one means replacing the handover, not
+  changing a path.
 - Set `privacy.original_audio_deleted = true` in `TranscriptReady` only after
   the file is actually gone.
 
@@ -79,7 +86,7 @@ incident. Target recall is 0.95+ for the MVP and 0.99+ at three months.
 - Logging transcript text at any level, including `DEBUG`. Log utterance IDs.
 - Including transcript text in exception messages — an exception string ends up
   in error tracking, which is an external service.
-- Sending unmasked text to Slack, Notion, Jira, or any LLM API.
+- Sending unmasked text to Slack, Notion, or any LLM API.
 
 **User-reported misses** delete the affected utterance immediately. There is no
 review queue: report, delete, then improve the detector.
@@ -138,9 +145,16 @@ ratios for a meeting (`_MIN_SPEAKERS_FOR_RATIO`, #128). Decided on #168.
 
 - Analysis results are retained **90 days** by default, adjustable per team.
 - A scheduled sweep deletes expired results.
-- A user can delete their own data at any time.
+- A user can delete their own data at any time. **The scope of "their own data"
+  is under review — see ADR 0007, decision 5**, which would keep action items,
+  decisions and lineage derived from a person's speech after that person's
+  utterances are deleted. Until that ADR is accepted or rejected, "their own
+  data" includes everything derived from their speech.
 - When a user leaves a team, their utterances and everything derived from them
-  are deleted.
+  are deleted. **This rule is under review — see ADR 0007**, which argues the
+  record belongs to the meeting rather than to its participants, and that
+  leaving is an access change rather than a data change. Until that ADR is
+  accepted or rejected, this line is what the code follows.
 
 **Required of every module:**
 - Every module-owned table is reachable from a `meeting_id` or a `user_id`.
@@ -162,7 +176,7 @@ deleted is part of shipping a table, not an extra.
 
 ## 6. Third-party services
 
-Anything leaving our infrastructure — LLM APIs, Slack, Notion, Jira, Google
+Anything leaving our infrastructure — LLM APIs, Slack, Notion, Google
 Calendar, error tracking, analytics — carries masked text only, and only what
 the feature needs.
 

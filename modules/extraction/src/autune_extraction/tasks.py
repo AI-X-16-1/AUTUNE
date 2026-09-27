@@ -10,7 +10,14 @@ from __future__ import annotations
 from celery import shared_task
 
 from autune_contracts import EXTRACTION_COMPLETED, TranscriptReady, validate_major_version
-from autune_core import Meeting, get_logger, load_integration, publish, session_scope
+from autune_core import (
+    Meeting,
+    PrivacyViolationError,
+    get_logger,
+    load_integration,
+    publish,
+    session_scope,
+)
 from autune_integrations import IntegrationError, NotionClient
 
 from . import service
@@ -121,7 +128,8 @@ def on_transcript_ready(payload: dict) -> None:
     # TODO(강민구): step 6, the DM: for each of ``service.unasked_confirmations``,
     # resolve the speaker's Slack account and call
     # ``service.ask_for_confirmation`` -- blocked on an account mapping (#70)
-    # and a team Slack client (#30). Step 7, Notion and Jira (#30).
+    # and a team Slack client (#30). Step 7, Notion (#30) -- Jira was
+    # dropped (#82): both its auth paths tie a workspace to whoever set it up.
 
     # Step 8, after the writes have committed. The payload is never logged:
     # decision statements and item descriptions are meeting content.
@@ -192,11 +200,23 @@ def sync_after_confirmation(action_item_id: str) -> None:
     The person's edit is already committed when this runs, so a Notion failure
     must not surface as an error on the board. It is logged by id and the claim
     is rolled back, which lets the next confirmation of that item send.
+
+    **``PrivacyViolationError`` is caught the same way.** ``check_outbound``
+    raises it, not ``IntegrationError`` -- a sibling, not a subclass -- when
+    the confirmed description or assignee label still carries unmasked PII.
+    No leak happens either way; the send is still blocked. Left uncaught here
+    it would crash this background task instead of logging gracefully, the
+    same silent failure an unhandled ``IntegrationError`` would be (review,
+    #333).
     """
     try:
         sync_action_item(action_item_id)
     except IntegrationError:
         log.warning("extraction_notion_sync_failed", action_item_id=action_item_id)
+    except PrivacyViolationError:
+        log.warning(
+            "extraction_notion_sync_blocked_by_privacy_guard", action_item_id=action_item_id
+        )
 
 
 @shared_task(name="autune.extraction.sync_decision", acks_late=True)
@@ -234,8 +254,13 @@ def sync_decision(decision_id: str) -> None:
 
 def sync_decision_after_confirmation(decision_id: str) -> None:
     """``sync_after_confirmation`` for a decision: in the API process, never
-    failing the confirmation that started it."""
+    failing the confirmation that started it. Catches ``PrivacyViolationError``
+    the same way and for the same reason -- see that function's own note."""
     try:
         sync_decision(decision_id)
     except IntegrationError:
         log.warning("extraction_notion_decision_sync_failed", decision_id=decision_id)
+    except PrivacyViolationError:
+        log.warning(
+            "extraction_notion_decision_sync_blocked_by_privacy_guard", decision_id=decision_id
+        )

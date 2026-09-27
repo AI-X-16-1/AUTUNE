@@ -21,7 +21,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
-from autune_core import AutuneError, Base, Meeting, Utterance, get_session
+from autune_core import AutuneError, Base, Meeting, PrivacyViolationError, Utterance, get_session
 from autune_core.integrations_config import IntegrationConfig
 from autune_extraction import service, tasks
 from autune_extraction.config import ExtractionSettings
@@ -266,6 +266,22 @@ def test_a_notion_failure_does_not_fail_the_confirmation(
 
     assert response.status_code == 200
     assert session.get(ExtActionItem, row.id).status == "todo"  # type: ignore[union-attr]
+
+
+def test_a_privacy_guard_block_does_not_crash_the_background_task(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``check_outbound`` raises ``PrivacyViolationError``, a sibling of
+    ``IntegrationError`` -- not caught by the same except clause. Left
+    uncaught, this would crash the FastAPI background task the confirming
+    request already returned from (review of #333)."""
+
+    def blocked(_: str) -> None:
+        raise PrivacyViolationError("notion: phone number pattern found")
+
+    monkeypatch.setattr(tasks, "sync_action_item", blocked)
+
+    tasks.sync_after_confirmation("act_1")  # must not raise
 
 
 # --- the task: the team's own Notion, or nothing ----------------------------------

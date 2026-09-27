@@ -76,7 +76,12 @@ class ExternalRefRead(BaseModel):
     ``assignee_label``'s reasoning for being on the list already covers this.
     """
 
-    system: Literal["notion", "jira"]
+    system: Literal["notion"]
+    """Jira was dropped from the product (#82): both its credential paths tie
+    a workspace to whoever set it up. The DB's own check constraint still
+    allows ``'jira'`` (unused, kept rather than a migration for a value that
+    only removes a possibility) -- this type is the narrower, honest answer
+    for what the API actually returns."""
     url: str | None
     external_id: str | None
 
@@ -113,6 +118,14 @@ class ActionItemRead(BaseModel):
     exists, so a screen can show *somebody's name* without caring which half
     filled it in."""
     due_date: date | None
+    due_text: str | None = None
+    """The phrase the date was parsed from ("다음 주 화요일", "9/20"), kept
+    beside the resolved ``due_date`` rather than replacing it on this response
+    -- S18 shows both (ui-spec): the resolved date to act on, and the speaker's
+    own words so a person can judge the parse rather than take it on faith.
+    ``None`` for a hand-added item, or a model item where no date phrase was
+    said at all; ``slots.parse_due`` leaves both fields empty rather than
+    guessing one from the other."""
     status: str
     confidence: float
     origin: str
@@ -150,9 +163,10 @@ class ActionItemRead(BaseModel):
 
     sync_refs: list[ExternalRefRead]
     """One entry per system this item has been claimed for -- today, at most
-    ``notion`` (#30); ``jira`` is designed (ui-spec S18, S28) but unbuilt, so it
-    never appears rather than being shown always-empty. Ordered by
-    ``created_at``, which for one system is also insertion order.
+    ``notion`` (#30). ``jira`` was designed (ui-spec S18, S28) but dropped
+    before being built (#82), so it never appears rather than being shown
+    always-empty. Ordered by ``created_at``, which for one system is also
+    insertion order.
 
     Not ``external_refs``: ``ActionItem`` (the contract this extends) already
     has a field by that name -- the outbound one, ``list[ExternalRef]``, which
@@ -323,9 +337,9 @@ class OutboundBlocked(BaseModel):
 class Outbound(BaseModel):
     """What confirm-and-send would send, and nothing else.
 
-    The Notion, Slack and Jira sync (#30) is to read this and only this. A decision
-    nobody confirmed is not in it, and neither is an item still waiting for
-    confirmation.
+    The Notion and Slack sync (#30; Jira dropped, #82) is to read this and only
+    this. A decision nobody confirmed is not in it, and neither is an item
+    still waiting for confirmation.
     """
 
     meeting_id: str

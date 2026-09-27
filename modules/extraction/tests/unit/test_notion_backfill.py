@@ -20,7 +20,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
-from autune_core import Base, Meeting, Utterance
+from autune_core import Base, Meeting, PrivacyViolationError, Utterance
 from autune_core.integrations_config import IntegrationConfig
 from autune_extraction import notion_backfill
 from autune_extraction.models import (
@@ -74,10 +74,23 @@ def session() -> Iterator[Session]:
 
 @pytest.fixture
 def wired(session: Session, monkeypatch: pytest.MonkeyPatch) -> Session:
+    """Real ``session_scope`` opens a fresh session per call, so one call's
+    rollback can never leak into the next. This fixture reuses one session
+    across every row's call (so a test can inspect what each left behind),
+    which means it has to roll back on exception itself -- matching
+    ``session_scope``'s own ``except Exception: session.rollback(); raise`` --
+    or a failed claim's still-pending insert would ride along on whichever
+    call commits next.
+    """
+
     @contextmanager
     def scope() -> Iterator[Session]:
-        yield session
-        session.commit()
+        try:
+            yield session
+            session.commit()
+        except Exception:
+            session.rollback()
+            raise
 
     monkeypatch.setattr(notion_backfill, "session_scope", scope)
     return session
@@ -245,6 +258,48 @@ def test_a_failed_call_leaves_no_claim_for_a_later_run_to_skip(
 
     assert len(notion.pages) == 1
     assert wired.get(ExtExternalRef, (it.id, "notion")) is not None
+
+
+class _PrivacyBlockedOnce(FakeNotion):
+    """Blocked on the first call, like a real ``NotionClient`` would be when
+    the outbound guard finds unmasked PII -- ``PrivacyViolationError``, a
+    sibling of ``IntegrationError``, not a subclass. Every later call sends
+    like ``FakeNotion`` normally does."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._first = True
+
+    def create_page(self, database_id: str, properties: dict) -> str:
+        if self._first:
+            self._first = False
+            raise PrivacyViolationError("notion: phone number pattern found")
+        return super().create_page(database_id, properties)
+
+
+def test_a_privacy_guard_block_costs_only_its_own_row(
+    wired: Session, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Caught the same way as ``IntegrationError`` (review of #333) -- left
+    uncaught, this would crash the whole batch instead of the one row, since
+    both rows share the same ``for`` loop in ``backfill_action_items``. Order
+    is not asserted: whichever of the two rows the query hands the loop
+    first is the one the fake blocks."""
+    a = item(wired)
+    b = item(wired)
+    wired.commit()
+    notion = _PrivacyBlockedOnce()
+    wire_notion(monkeypatch, notion, {"team_1": config_for("team_1")})
+
+    code = notion_backfill.main([])
+
+    assert code == 1
+    assert "failed 1" in capsys.readouterr().out
+    wired.rollback()
+    refs = {row_id for row_id in (a.id, b.id) if wired.get(ExtExternalRef, (row_id, "notion"))}
+    # The row blocked first has no ref; the loop still reached the other one.
+    assert len(refs) == 1
+    assert len(notion.pages) == 1
 
 
 # --- a team that never connected -------------------------------------------------

@@ -31,7 +31,7 @@ from dataclasses import dataclass
 from sqlalchemy import select
 
 from autune_contracts.enums import ActionStatus
-from autune_core import Meeting, get_logger, load_integration, session_scope
+from autune_core import Meeting, PrivacyViolationError, get_logger, load_integration, session_scope
 from autune_integrations import IntegrationError, NotionClient
 
 from . import service
@@ -133,6 +133,15 @@ def backfill_action_items(rows: list[tuple[str, str]], stats: Stats) -> None:
         except IntegrationError:
             log.warning("extraction_notion_backfill_failed", action_item_id=action_item_id)
             stats.failed += 1
+        except PrivacyViolationError:
+            # A sibling of IntegrationError, not a subclass -- check_outbound
+            # raises this one when the description or assignee label still
+            # carries unmasked PII. Caught here too, or one blocked row would
+            # crash the whole batch instead of costing only itself (#333).
+            log.warning(
+                "extraction_notion_backfill_blocked_by_privacy_guard", action_item_id=action_item_id
+            )
+            stats.failed += 1
 
 
 def _sync_one_decision(
@@ -168,6 +177,11 @@ def backfill_decisions(rows: list[tuple[str, str]], stats: Stats) -> None:
             _sync_one_decision(decision_id, meeting_id, stats, clients)
         except IntegrationError:
             log.warning("extraction_notion_backfill_failed", decision_id=decision_id)
+            stats.failed += 1
+        except PrivacyViolationError:
+            log.warning(
+                "extraction_notion_backfill_blocked_by_privacy_guard", decision_id=decision_id
+            )
             stats.failed += 1
 
 

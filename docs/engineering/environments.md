@@ -185,7 +185,7 @@ Where that token comes from, and the two ways to give it to the browser:
 | `AUTUNE_INTELLIGENCE_GAP_CLASSIFIER_BACKBONE` | E | Sentence-embedding backbone SetFit fits its few-shot head onto. Default `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` |
 | `AUTUNE_INTELLIGENCE_WARM_MODELS_ON_WORKER_INIT` | E | `true` only on workers consuming gap-classification tasks. Default `false` |
 
-Notion, Jira and Calendar credentials are **not** environment variables. Each
+Notion and Calendar credentials are **not** environment variables. Each
 team configures its own on screen S28 and they are stored encrypted in
 `team_integrations` — read them with `autune_core.load_integration`, never from
 settings. See `../architecture/data-model.md`.
@@ -419,6 +419,13 @@ response is what `POST /api/audio/meetings` needs.
 cleared at the end of every task. Do not point it at a synced folder, and do not
 keep test recordings of real meetings on disk. See
 `../architecture/privacy.md`.
+
+**The API and the worker must see the same directory on the same filesystem.**
+The upload endpoint writes the recording and the worker adopts it by job id, so
+a deployment that gives the two processes different storage breaks the handover:
+the worker finds nothing, and the file the endpoint wrote is left with nobody
+to delete it. Compose runs both from one volume; keep it that way, or change
+the handover rather than the path (`privacy.md` section 1, decision #275).
 
 While an upload request is in flight there is a second, short-lived copy of the
 recording in the OS temporary directory (`tempfile.gettempdir()`), written by

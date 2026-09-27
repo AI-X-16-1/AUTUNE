@@ -39,7 +39,7 @@ Autune covers the full meeting lifecycle:
 | --- | --- |
 | Before | Analyze uploaded material → draft agenda → pre-meeting brief (Phase 2) |
 | During | Real-time transcription, interim summaries, undecided-item alerts (Phase 2) |
-| After | Action extraction and tracking, gap detection, context linking, personal speaking-ratio feedback, Slack/Notion/Jira delivery |
+| After | Action extraction and tracking, gap detection, context linking, personal speaking-ratio feedback, Slack/Notion delivery |
 | Over time | Decision lineage, dashboard, influence map, topic linking |
 
 ## 3. Users
@@ -61,7 +61,7 @@ reports) → VP/CTO (dashboard).
 | Module | Owner | Responsibility | What the user gets |
 | --- | --- | --- | --- |
 | **A. Audio Pipeline** | 김민경 | Recording upload → STT → speaker diarization and identification → PII masking → raw audio deletion → unified transcript format | An accurate record of who said what |
-| **B. Structured Extraction** | 강민구 | Classify utterances into five kinds, build action-item cards, verify ambiguous agreement with NLI, sync to Notion/Jira, generate role-specific reports | Automatically organized action-item cards |
+| **B. Structured Extraction** | 강민구 | Classify utterances into five kinds, build action-item cards, verify ambiguous agreement with NLI, sync to Notion, generate role-specific reports | Automatically organized action-item cards |
 | **C. Gap Detection** | 박재경 | Entity and relation extraction → topic graph → participation matrix → domain-template comparison → risk scoring | A list of what this meeting missed |
 | **D. Meeting Context Engine** | 문민재 | Material analysis → agenda generation, past-topic retrieval and linking, decision lineage tracking, pre-meeting briefs | "We decided this last time" |
 | **E. Meeting Intelligence** | 이승환 | Quality scoring, gap classification, prediction, heatmaps, weekly reports, influence map, personal speaking-ratio DMs | A team communication dashboard |
@@ -83,8 +83,7 @@ reports) → VP/CTO (dashboard).
   concern / ambiguous expression.
 - NLI verification of ambiguous agreement; weak agreement triggers a Slack DM
   asking the speaker to confirm.
-- Automatic Notion and Jira issue creation with assignee mapping and due-date
-  parsing.
+- Automatic Notion issue creation with assignee mapping and due-date parsing.
 - Role-specific reports delivered to Slack.
 - Incomplete items from previous meetings resurface in the next one.
 
@@ -172,7 +171,7 @@ Implementation rules: `../architecture/privacy.md`.
     │   [B]    │  │   [C]    │  │   [D]    │  ← parallel
     │Extraction│  │   Gap    │  │ Context  │
     └────┬─────┘  └────┬─────┘  └────┬─────┘
-         ├→ Notion/Jira│             │
+         ├→ Notion     │             │
          ├→ Slack      ├→ Slack      ├→ Slack
          └─────────────┼─────────────┘
                        │ event log
@@ -208,7 +207,7 @@ keep the team building real models rather than prompt chains.
 | Database | PostgreSQL | Structured data and history |
 | Vector search | pgvector, inside PostgreSQL | Embedding search, topic matching, material retrieval — no separate service |
 | Slack | Bolt for Python | Bot framework |
-| External | Notion API, Jira REST API, Google Calendar API | Action item and schedule sync |
+| External | Notion API, Google Calendar API | Action item and schedule sync |
 | Infra | Railway / AWS with GPU instances | STT inference |
 | Desktop (Phase 2) | Electron | System audio capture |
 
@@ -218,7 +217,7 @@ keep the team building real models rather than prompt chains.
 | --- | --- | --- |
 | W1 | Shared infrastructure (2 days): monorepo, DB, auth, Slack bot skeleton, API contracts. Individual PoC (3 days) | Each module's PoC runs |
 | W2 | AI pipelines + API serving. Module A finishes first | Each module works through its API |
-| W3 | Inter-module wiring + frontend start. Slack handlers. Notion/Jira integration begins | Recording → pipeline end to end |
+| W3 | Inter-module wiring + frontend start. Slack handlers. Notion integration begins | Recording → pipeline end to end |
 | W4 | Core UI: live transcript, action board, gap report, context view | Usable by non-engineers |
 | W5 | Dashboard + internal beta on 5–10 real meetings. Model tuning | Real-meeting E2E validation |
 | W6 | Bug fixes, performance, landing page, demo video, pitch deck | Deployable MVP |
@@ -227,7 +226,7 @@ keep the team building real models rather than prompt chains.
 
 **In the 6-week MVP:** recording upload; STT + diarization + live transcript;
 automatic PII masking; immediate raw-audio deletion; action item extraction and
-tracking; Notion/Jira integration; gap detection; Slack integration; past-topic
+tracking; Notion integration; gap detection; Slack integration; past-topic
 linking; basic decision lineage; personal speaking-ratio DM; basic dashboard.
 
 **Phase 2:** material upload → agenda generation; pre-meeting brief; influence

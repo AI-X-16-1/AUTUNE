@@ -245,9 +245,9 @@ def _classifier_client(endpoint: str) -> Any:
     """Our inference server, as a client the way every other one is written.
 
     A subclass rather than an instance whose ``service`` is reassigned after
-    construction: ``JiraClient``, ``NotionClient``, ``SlackClient`` and
-    ``CalendarClient`` are all ``class X(HttpClient): service = "x"``, and
-    ``addressing`` can only be declared the standard way on a class.
+    construction: ``NotionClient``, ``SlackClient`` and ``CalendarClient`` are
+    all ``class X(HttpClient): service = "x"``, and ``addressing`` can only be
+    declared the standard way on a class.
 
     ``addressing`` stays empty. Every string in this body is an utterance, so
     there is nothing here that addresses the request rather than carrying
