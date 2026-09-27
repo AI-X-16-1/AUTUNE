@@ -97,7 +97,7 @@ def _meeting(
     team_id: str,
     *,
     days_ago: int,
-    present: list[str] | None = None,
+    present: list[str | None] | None = None,
     expires_at: datetime | None = None,
 ) -> str:
     with session_scope() as s:
@@ -264,6 +264,47 @@ def test_a_departed_team_member_is_not_recorded_as_absent(team_id: str) -> None:
     guest = _user_without_membership("lineage-guest@x")
     first = _meeting(team_id, days_ago=10, present=[alice, guest])
     second = _meeting(team_id, days_ago=0, present=[alice])  # guest did not return
+
+    service.build_decision_lineage(_extraction(first, [("dec_1", _D1, 0.9)]))
+    service.build_decision_lineage(_extraction(second, [("dec_2", _D1, 0.9)]))
+
+    with session_scope() as s:
+        v2 = s.scalars(
+            select(CtxDecisionVersion).where(CtxDecisionVersion.meeting_id == second)
+        ).one()
+        assert v2.key_stakeholders_absent == []
+
+
+def test_an_unconfirmed_speaker_means_nobody_is_recorded_absent(team_id: str) -> None:
+    """Module A names a speaker only when a person confirms it in the app
+    (#370), after lineage has run, so the new meeting's voices are still
+    ``user_id`` NULL here. Subtracting only the resolved ids would call alice
+    and bob absent from a meeting they may have spoken in, and each would get a
+    drift DM saying so. One unnamed voice is enough to make the roll call
+    incomplete -- it could be bob."""
+    alice, bob = _user(team_id, "lineage-alice@x"), _user(team_id, "lineage-bob@x")
+    first = _meeting(team_id, days_ago=10, present=[alice, bob])
+    unnamed = _meeting(team_id, days_ago=5, present=[None, None])
+    partly = _meeting(team_id, days_ago=0, present=[alice, None])
+
+    service.build_decision_lineage(_extraction(first, [("dec_1", _D1, 0.9)]))
+    service.build_decision_lineage(_extraction(unnamed, [("dec_2", _D1, 0.9)]))
+    service.build_decision_lineage(_extraction(partly, [("dec_3", _D1, 0.9)]))
+
+    with session_scope() as s:
+        versions = s.scalars(
+            select(CtxDecisionVersion).where(CtxDecisionVersion.meeting_id.in_([unnamed, partly]))
+        ).all()
+        assert len(versions) == 2
+        assert all(v.key_stakeholders_absent == [] for v in versions)
+
+
+def test_a_meeting_with_no_participants_records_nobody_absent(team_id: str) -> None:
+    """No participant rows says nothing about who was there, so it is not a
+    meeting everyone missed."""
+    alice = _user(team_id, "lineage-alice@x")
+    first = _meeting(team_id, days_ago=10, present=[alice])
+    second = _meeting(team_id, days_ago=0)
 
     service.build_decision_lineage(_extraction(first, [("dec_1", _D1, 0.9)]))
     service.build_decision_lineage(_extraction(second, [("dec_2", _D1, 0.9)]))

@@ -605,12 +605,14 @@ def _rethread(session: Session, thread_id: str, nli: NliModel) -> None:
             version.change_type = _NLI_TO_CHANGE[label].value
             version.nli_label = label.value
             version.confidence = _clamp(float(getattr(scored[index - 1], label.value)))
-            known = _meeting_user_ids(session, *prior_meeting_ids)
-            present = _meeting_user_ids(session, version.meeting_id)
-            absent = known - present
-            version.key_stakeholders_absent = sorted(
-                _current_team_member_ids(session, thread.team_id, absent)
-            )
+            present = _confirmed_attendance(session, version.meeting_id)
+            if present is None:
+                version.key_stakeholders_absent = []
+            else:
+                known = _meeting_user_ids(session, *prior_meeting_ids)
+                version.key_stakeholders_absent = sorted(
+                    _current_team_member_ids(session, thread.team_id, known - present)
+                )
         version.nli_version = nli.model_version
         prior_meeting_ids.append(version.meeting_id)
 
@@ -633,6 +635,34 @@ def _meeting_user_ids(session: Session, *meeting_ids: str) -> set[str]:
         )
     ).all()
     return {user_id for user_id in rows if user_id is not None}
+
+
+def _confirmed_attendance(session: Session, meeting_id: str) -> set[str] | None:
+    """Who attended ``meeting_id``, or ``None`` when that cannot be told yet.
+
+    Absence is only knowable from a complete roll call. A participant whose
+    ``user_id`` is still NULL is a voice nobody has named: module A identifies
+    speakers only when a person confirms one in the app (#370), which happens
+    after the transcript -- and so after this lineage -- has been built. Any
+    known stakeholder could be that voice, so subtracting only the resolved ids
+    would call people absent from a meeting they spoke in, and each of them
+    would get a decision-drift DM saying so. A meeting with no participant rows
+    at all is the same case: nothing says who was there.
+
+    ``None`` makes the caller record nobody as absent. Missing a warning is the
+    cheaper error: a DM telling someone who was in the room that a decision
+    changed without them is a false statement about that person. The cost is
+    that a meeting with a guest who never resolves to an account never reports
+    an absence; see docs/modules/context.md.
+
+    Reads the shared ``participants`` table — never writes it (invariant 4).
+    """
+    user_ids = session.scalars(
+        select(Participant.user_id).where(Participant.meeting_id == meeting_id)
+    ).all()
+    if not user_ids or any(user_id is None for user_id in user_ids):
+        return None
+    return {user_id for user_id in user_ids if user_id is not None}
 
 
 def _current_team_member_ids(session: Session, team_id: str, user_ids: set[str]) -> set[str]:
