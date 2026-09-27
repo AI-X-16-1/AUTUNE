@@ -259,7 +259,13 @@ Two identities meet in `DecisionChange` and they are not interchangeable:
 | Field | Owner | Lifetime |
 | --- | --- | --- |
 | `thread_id` (`thr_`) | D | Spans meetings — the lineage's identity |
-| `source_decision_id` (`dec_`) | B | This meeting only |
+| `source_decision_id` (`dec_`) | B | This meeting only. The same id across B's rebuilds over the same source utterances; a new id when those change (#171) |
+
+A `dec_` id is derived from the meeting and the utterances the decision was
+settled in, so B rebuilding the same meeting over the same labels hands D the
+same id. It is not stable across a reprocess in module A, which mints new
+`utt_` ids and so changes every source (#194). Changing how the id is derived
+is a breaking change for D, not an implementation detail of B.
 
 **D must not extract decisions itself.** Doing so would duplicate B's
 classifier, and the two would disagree — a decision would appear in the summary
