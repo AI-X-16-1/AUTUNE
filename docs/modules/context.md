@@ -452,7 +452,11 @@ lands, the one `send_task` call here moves behind it.
   per meeting (default 3); anything past the cap collapses into one rollup
   notice instead of one message per topic.
 - **Decision-drift warning** — when a decision changed while a key stakeholder
-  was absent.
+  was absent. States the changing meeting's own date ("2026년 9월 4일
+  회의에서..."), not just that it "changed" — a late-arriving lineage
+  (fallback-then-late-lineage, or a backfilled recording) otherwise reads as
+  "just now" regardless of when the meeting actually happened. Omits the date
+  when the meeting has none set (see PR #263's discussion, issue #257).
 - **Pre-meeting brief** — 30 minutes before the meeting. Phase 2. Contains
   summaries, never transcript excerpts beyond what the brief needs.
 
