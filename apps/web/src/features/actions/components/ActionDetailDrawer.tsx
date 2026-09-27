@@ -104,6 +104,11 @@ export function ActionDetailDrawer({
         <Field label="기한" mono>
           {item.due_date ?? "없음"}
         </Field>
+        {item.due_text ? (
+          <Field label="기한 파싱 원문">
+            <MaskedText>{item.due_text}</MaskedText>
+          </Field>
+        ) : null}
 
         <Field label="상태">
           <select

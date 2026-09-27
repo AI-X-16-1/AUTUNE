@@ -396,6 +396,7 @@ def read_model(
         assignee_label=item.assignee_label,
         assignee_name=assignee_name,
         due_date=item.due_date,
+        due_text=item.due_text,
         status=item.status,
         confidence=item.confidence,
         origin=item.origin,
