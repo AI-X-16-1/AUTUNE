@@ -1,7 +1,7 @@
 /** Calls to /api/intelligence. This feature calls no other module's endpoints. */
 import { api } from "@/shared/api/client";
 
-import type { DashboardRead, GapTitlesByPattern, HeatmapCell } from "./types";
+import type { DashboardRead, GapTitlesByPattern, HeatmapCell, PredictionsRead } from "./types";
 
 export { api };
 
@@ -13,3 +13,6 @@ export const getHeatmap = (teamId: string) =>
 
 export const getGapTitles = (teamId: string) =>
   api.intelligence<GapTitlesByPattern>(`/gap-titles/${encodeURIComponent(teamId)}`);
+
+export const getPredictions = (teamId: string) =>
+  api.intelligence<PredictionsRead>(`/predictions/${encodeURIComponent(teamId)}`);

@@ -4,7 +4,8 @@ import { ActionCompletionRate } from "./ActionCompletionRate";
 import { AlignmentHeatmap } from "./AlignmentHeatmap";
 import { PlaceholderCard } from "./DashboardCard";
 import { GapDistributionBars } from "./GapDistributionBars";
-import { HoverPreview, InfluenceMapMockup, PredictionMockup } from "./HoverPreview";
+import { HoverPreview, InfluenceMapMockup } from "./HoverPreview";
+import { PredictionCard } from "./PredictionCard";
 import { QualityScoreCard } from "./QualityScoreCard";
 import { useDashboard } from "../hooks/useDashboard";
 
@@ -15,7 +16,7 @@ import { useDashboard } from "../hooks/useDashboard";
  * `teamId` in once that lands.
  */
 export function Dashboard({ teamId }: { teamId: string }) {
-  const { dashboard, heatmap, gapTitles, loading, error } = useDashboard(teamId);
+  const { dashboard, heatmap, gapTitles, predictions, loading, error } = useDashboard(teamId);
 
   if (loading && !dashboard) {
     return <p style={metaStyle}>불러오는 중…</p>;
@@ -46,9 +47,7 @@ export function Dashboard({ teamId }: { teamId: string }) {
         <ActionCompletionRate rate={dashboard.action_item_completion_rate} />
       </div>
 
-      <HoverPreview mockup={<PredictionMockup />} side="left">
-        <PlaceholderCard label="예측" />
-      </HoverPreview>
+      <PredictionCard predictions={predictions} />
       <HoverPreview mockup={<InfluenceMapMockup />}>
         <PlaceholderCard label="영향력 맵" />
       </HoverPreview>
