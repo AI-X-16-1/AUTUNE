@@ -187,6 +187,98 @@ def test_the_second_sync_of_an_item_updates_its_page_not_a_new_one(session: Sess
     assert notion.updates[0][0] == page_id
 
 
+def test_a_sync_holding_the_ref_lock_sends_the_edit_committed_after_it_started(
+    session: Session,
+) -> None:
+    """lsh2217's second-round review of #342: the ref-row lock only orders
+    *when* each sync is let past it, not *which* version of the item it
+    already has in hand -- a sync that read the item before the lock and
+    never re-reads would still send that stale copy even though it is the
+    one sending last. Simulated with two independent sessions sharing one
+    in-memory database: session A reads the item before doing anything else
+    (mirroring the pre-lock read a real race would have), session B
+    independently commits a full edit-and-sync in between, and A's own sync
+    call afterwards must still send B's committed description -- it can only
+    do that by re-reading the item after acquiring the lock, not by reusing
+    what it already had."""
+    engine = session.get_bind()
+    row = item(session)
+    session.commit()
+
+    with Session(engine) as session_a:
+        stale = session_a.get(ExtActionItem, row.id)
+        assert stale is not None and stale.description == "릴리스 노트 정리"
+
+        with Session(engine) as session_b:
+            edited = session_b.get(ExtActionItem, row.id)
+            assert edited is not None
+            edited.description = "최신 설명 (B가 커밋)"
+            service.sync_action_item_to_notion(
+                session_b, FakeNotion(), action_item_id=row.id, database_id=DATABASE
+            )
+            session_b.commit()
+
+        notion_a = FakeNotion()
+        service.sync_action_item_to_notion(
+            session_a, notion_a, action_item_id=row.id, database_id=DATABASE
+        )
+        session_a.commit()
+
+    assert notion_a.pages == [], "A finds B's claim already there -- it updates, not creates"
+    assert len(notion_a.updates) == 1
+    sent_title = notion_a.updates[0][1]["작업"]["title"][0]["text"]["content"]
+    assert sent_title == "최신 설명 (B가 커밋)", "A must re-read, not send its own stale copy"
+
+
+def test_a_claim_that_lands_mid_flight_gets_an_update_not_a_dropped_edit(
+    session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """lsh2217's second-round review of #342, from @mminjae97's finding:
+    ``with_for_update`` only locks a row that exists, so a claim that lands
+    *between* this sync's lock-miss (nothing there yet) and its own insert
+    attempt is invisible to that first read -- the insert then conflicts and
+    the old code returned ``None`` right there, silently never sending this
+    edit at all. It must instead notice the conflict, acquire the lock on the
+    row that beat it, and send an update.
+
+    A real interleaving needs two transactions racing inside one function
+    call, which a single-threaded test cannot produce on its own --
+    monkeypatched here by making the *other* transaction's claim commit as a
+    side effect of this sync reaching its own claim attempt, the same point
+    in the real code where the race would land."""
+    engine = session.get_bind()
+    row = item(session)
+    session.commit()
+
+    real_insert_if_absent_into = service._insert_if_absent_into
+    already_raced = False
+
+    def racing_insert_if_absent_into(s: Session, model: type) -> object:
+        nonlocal already_raced
+        if not already_raced and model is ExtExternalRef:
+            already_raced = True
+            with Session(engine) as other:
+                other.add(
+                    ExtExternalRef(action_item_id=row.id, system="notion", meeting_id=MEETING)
+                )
+                other.commit()
+                ref = other.get(ExtExternalRef, (row.id, "notion"))
+                assert ref is not None
+                ref.external_id = "page_from_other_worker"
+                other.commit()
+        return real_insert_if_absent_into(s, model)
+
+    monkeypatch.setattr(service, "_insert_if_absent_into", racing_insert_if_absent_into)
+
+    notion = FakeNotion()
+    result = sync(session, notion, row.id)
+
+    assert result is not None
+    assert notion.pages == [], "no second create -- the race's claim already made the page"
+    assert len(notion.updates) == 1
+    assert notion.updates[0][0] == "page_from_other_worker"
+
+
 def test_a_failed_call_takes_the_claim_back_so_a_later_sync_can_send(session: Session) -> None:
     row = item(session)
     session.commit()

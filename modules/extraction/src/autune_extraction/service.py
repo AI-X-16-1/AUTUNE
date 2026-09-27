@@ -1755,35 +1755,39 @@ def sync_action_item_to_notion(
     Every edit past confirmation now queues its own sync, each reading
     current state independently, so a slow network round-trip can let an
     earlier edit's page write land *after* a later edit's already has,
-    leaving Notion silently stale. ``with_for_update`` on the claim row below
-    closes that: a second sync for the same item blocks until the first's
-    whole transaction -- outbound call included -- commits, forcing the two
-    ``update_page`` calls to reach Notion in the same order their edits
-    committed rather than whatever order the network happens to deliver
-    them. Each sync still sends what it read at its own start (already the
-    right edit, since nothing is queued before its edit commits); the lock
-    only orders the sends, it does not need to make either one re-read. The
-    description, assignee, due date and status a person edited on the board
-    are exactly what this sends; the source utterances never leave Autune
-    either way.
+    leaving Notion silently stale. ``with_for_update`` on the claim row
+    orders when each sync is let past it -- but ordering the sends is not
+    enough on its own if each sync already fixed its properties from an
+    *earlier* read (lsh2217's second-round review of #342): whichever sync
+    acquires the lock last would still send whatever it read first, exactly
+    backwards from the edit order the lock exists to enforce. Every read of
+    the item below happens only after its ref row's lock is held, with
+    ``populate_existing=True`` so a session that already looked at this item
+    for an unrelated reason cannot serve a cached copy here -- the one
+    sending last is always the one sending latest. The description,
+    assignee, due date and status a person edited on the board are exactly
+    what this sends; the source utterances never leave Autune either way.
     """
-    item = session.get(ExtActionItem, action_item_id)
-    if item is None or item.status == ActionStatus.NEEDS_CONFIRMATION.value:
-        return None
-
-    meeting = session.get(Meeting, item.meeting_id)
     names = property_names or NOTION_PROPERTIES
-    properties = notion_properties(item, meeting.title if meeting else None, names)
 
-    existing = session.get(ExtExternalRef, (item.id, NOTION), with_for_update=True)
+    existing = session.get(ExtExternalRef, (action_item_id, NOTION), with_for_update=True)
     if existing is not None:
         # Claim and create share one transaction (below), so a row that made
         # it to the database has its page id -- there is no committed row
         # from a claim whose create never ran.
+        item = session.get(ExtActionItem, action_item_id, populate_existing=True)
+        if item is None or item.status == ActionStatus.NEEDS_CONFIRMATION.value:
+            return existing
+        meeting = session.get(Meeting, item.meeting_id)
+        properties = notion_properties(item, meeting.title if meeting else None, names)
         assert existing.external_id is not None
         notion.update_page(existing.external_id, properties)
         log.info("extraction_notion_updated", action_item_id=item.id, meeting_id=item.meeting_id)
         return existing
+
+    item = session.get(ExtActionItem, action_item_id)
+    if item is None or item.status == ActionStatus.NEEDS_CONFIRMATION.value:
+        return None
 
     claimed = session.scalars(
         _insert_if_absent_into(session, ExtExternalRef)
@@ -1792,11 +1796,26 @@ def sync_action_item_to_notion(
         .returning(ExtExternalRef.action_item_id)
     ).one_or_none()
     if claimed is None:
-        # Another transaction claimed it since the read above -- its own
-        # create (or, from now on, its own update) is what this meeting gets.
-        log.info("extraction_notion_already_synced", action_item_id=item.id)
-        return None
+        # Another transaction's claim landed between our lock-miss above and
+        # this insert -- with_for_update only locks a row that exists, so a
+        # claim still mid-flight was invisible to that first read. Re-acquire
+        # the lock on its now-existing row and update instead of dropping
+        # this edit (lsh2217's second-round review of #342, from
+        # @mminjae97's finding).
+        existing = session.get(ExtExternalRef, (item.id, NOTION), with_for_update=True)
+        assert existing is not None
+        item = session.get(ExtActionItem, action_item_id, populate_existing=True)
+        if item is None or item.status == ActionStatus.NEEDS_CONFIRMATION.value:
+            return existing
+        meeting = session.get(Meeting, item.meeting_id)
+        properties = notion_properties(item, meeting.title if meeting else None, names)
+        assert existing.external_id is not None
+        notion.update_page(existing.external_id, properties)
+        log.info("extraction_notion_updated_after_claim_race", action_item_id=item.id)
+        return existing
 
+    meeting = session.get(Meeting, item.meeting_id)
+    properties = notion_properties(item, meeting.title if meeting else None, names)
     page_id = notion.create_page(database_id, properties)
 
     ref = session.get(ExtExternalRef, (item.id, NOTION))
@@ -1853,25 +1872,27 @@ def sync_decision_to_notion(
     same page every time after. ``None`` when nothing is sent.
 
     Nothing goes for a decision that is gone or is not confirmed (#246). The
-    create-then-update shape and its reasons are
-    ``sync_action_item_to_notion``'s -- a reworded confirmed decision (#246
-    allows rewording after confirmation) updates the page it already has
-    rather than being silently skipped.
+    create-then-update shape, the lock-then-reread ordering, and the
+    claim-race fallback are all ``sync_action_item_to_notion``'s -- a
+    reworded confirmed decision (#246 allows rewording after confirmation)
+    updates the page it already has rather than being silently skipped, and
+    a later rewording is never overtaken by an earlier one that acquires the
+    ref lock second (lsh2217's second-round review of #342 -- this function
+    was missing the lock entirely, not just the reread ordering).
     """
-    decision = session.get(ExtDecision, decision_id)
-    review = session.get(ExtDecisionReview, decision_id)
-    if decision is None or review is None or review.status != "confirmed":
-        return None
-
-    meeting = session.get(Meeting, decision.meeting_id)
     names = property_names or DECISION_NOTION_PROPERTIES
-    statement = _confirmed_statement(decision, review)
-    properties = decision_notion_properties(
-        statement, decision, meeting.title if meeting else None, names
-    )
 
-    existing = session.get(ExtDecisionRef, (decision.id, NOTION))
+    existing = session.get(ExtDecisionRef, (decision_id, NOTION), with_for_update=True)
     if existing is not None:
+        decision = session.get(ExtDecision, decision_id, populate_existing=True)
+        review = session.get(ExtDecisionReview, decision_id, populate_existing=True)
+        if decision is None or review is None or review.status != "confirmed":
+            return existing
+        meeting = session.get(Meeting, decision.meeting_id)
+        statement = _confirmed_statement(decision, review)
+        properties = decision_notion_properties(
+            statement, decision, meeting.title if meeting else None, names
+        )
         assert existing.external_id is not None  # same invariant as the action-item sync
         notion.update_page(existing.external_id, properties)
         log.info(
@@ -1881,6 +1902,11 @@ def sync_decision_to_notion(
         )
         return existing
 
+    decision = session.get(ExtDecision, decision_id)
+    review = session.get(ExtDecisionReview, decision_id)
+    if decision is None or review is None or review.status != "confirmed":
+        return None
+
     claimed = session.scalars(
         _insert_if_absent_into(session, ExtDecisionRef)
         .values(decision_id=decision.id, system=NOTION, meeting_id=decision.meeting_id)
@@ -1888,9 +1914,29 @@ def sync_decision_to_notion(
         .returning(ExtDecisionRef.decision_id)
     ).one_or_none()
     if claimed is None:
-        log.info("extraction_notion_decision_already_synced", decision_id=decision.id)
-        return None
+        # Same claim-race as the action-item sync: re-acquire the lock on the
+        # row that beat us here and update instead of dropping this edit.
+        existing = session.get(ExtDecisionRef, (decision.id, NOTION), with_for_update=True)
+        assert existing is not None
+        decision = session.get(ExtDecision, decision_id, populate_existing=True)
+        review = session.get(ExtDecisionReview, decision_id, populate_existing=True)
+        if decision is None or review is None or review.status != "confirmed":
+            return existing
+        meeting = session.get(Meeting, decision.meeting_id)
+        statement = _confirmed_statement(decision, review)
+        properties = decision_notion_properties(
+            statement, decision, meeting.title if meeting else None, names
+        )
+        assert existing.external_id is not None
+        notion.update_page(existing.external_id, properties)
+        log.info("extraction_notion_decision_updated_after_claim_race", decision_id=decision.id)
+        return existing
 
+    meeting = session.get(Meeting, decision.meeting_id)
+    statement = _confirmed_statement(decision, review)
+    properties = decision_notion_properties(
+        statement, decision, meeting.title if meeting else None, names
+    )
     page_id = notion.create_page(database_id, properties)
 
     ref = session.get(ExtDecisionRef, (decision.id, NOTION))

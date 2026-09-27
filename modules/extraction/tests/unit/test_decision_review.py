@@ -759,3 +759,84 @@ def test_a_second_sync_of_a_confirmed_decision_updates_its_page(session: Session
     assert len(notion.pages) == 1, "still one page created"
     assert len(notion.updates) == 1
     assert notion.updates[0][0] == page_id
+
+
+def test_a_decision_sync_holding_the_ref_lock_sends_the_reword_committed_after_it_started(
+    session: Session,
+) -> None:
+    """lsh2217's second-round review of #342: ``sync_decision_to_notion`` had
+    no ``with_for_update`` at all, so two rewordings in flight at once could
+    reach Notion in whichever order the network delivered them rather than
+    the order they committed in -- the exact bug fixed for action items, just
+    missing here entirely. Same two-session simulation as the action-item
+    version: session A reads the decision before doing anything else, session
+    B commits a full reword-and-sync independently, and A's own sync
+    afterwards must still send B's committed wording."""
+    engine = session.get_bind()
+    first, _second = two_decisions(session)
+    service.review_decision(session, first, DecisionReviewUpdate(status="confirmed"))
+    session.commit()
+
+    with Session(engine) as session_a:
+        stale = session_a.get(ExtDecision, first.id)
+        assert stale is not None
+
+        with Session(engine) as session_b:
+            service.review_decision(
+                session_b,
+                session_b.get(ExtDecision, first.id),  # type: ignore[arg-type]
+                DecisionReviewUpdate(statement="최신 문구 (B가 커밋)"),
+            )
+            service.sync_decision_to_notion(
+                session_b, FakeNotion(), decision_id=first.id, database_id="db"
+            )
+            session_b.commit()
+
+        notion_a = FakeNotion()
+        service.sync_decision_to_notion(session_a, notion_a, decision_id=first.id, database_id="db")
+        session_a.commit()
+
+    assert notion_a.pages == [], "A finds B's claim already there -- it updates, not creates"
+    assert len(notion_a.updates) == 1
+    sent_title = notion_a.updates[0][1]["결정"]["title"][0]["text"]["content"]
+    assert sent_title == "최신 문구 (B가 커밋)", "A must re-read, not send its own stale copy"
+
+
+def test_a_decision_claim_that_lands_mid_flight_gets_an_update_not_a_dropped_edit(
+    session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The decision-side equivalent of the action-item claim-race fix: a
+    claim that lands between this sync's lock-miss and its own insert
+    attempt must not be dropped."""
+    engine = session.get_bind()
+    first, _second = two_decisions(session)
+    service.review_decision(session, first, DecisionReviewUpdate(status="confirmed"))
+    session.commit()
+
+    real_insert_if_absent_into = service._insert_if_absent_into
+    already_raced = False
+
+    def racing_insert_if_absent_into(s: Session, model: type) -> object:
+        nonlocal already_raced
+        if not already_raced and model is ExtDecisionRef:
+            already_raced = True
+            with Session(engine) as other:
+                other.add(ExtDecisionRef(decision_id=first.id, system="notion", meeting_id=MEETING))
+                other.commit()
+                ref = other.get(ExtDecisionRef, (first.id, "notion"))
+                assert ref is not None
+                ref.external_id = "page_from_other_worker"
+                other.commit()
+        return real_insert_if_absent_into(s, model)
+
+    monkeypatch.setattr(service, "_insert_if_absent_into", racing_insert_if_absent_into)
+
+    notion = FakeNotion()
+    result = service.sync_decision_to_notion(
+        session, notion, decision_id=first.id, database_id="db"
+    )
+
+    assert result is not None
+    assert notion.pages == [], "no second create -- the race's claim already made the page"
+    assert len(notion.updates) == 1
+    assert notion.updates[0][0] == "page_from_other_worker"
