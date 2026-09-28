@@ -22,10 +22,11 @@ class ExtractionSettings(BaseSettings):
     classifier_impl: str = "local"
     """Which classifier to run: ``local``, ``hosted``, ``fake`` or ``llm``.
 
-    ``llm`` sends masked utterance text -- nothing else -- to a cloud LLM
-    (``pipeline.llm``). It is never the default: where a meeting's text may go is
-    a privacy decision, and the team signs it off before it is enabled outside a
-    demo -- see ``pipeline.base``."""
+    ``llm`` sends utterance text as module A masked it -- nothing else -- to a
+    cloud LLM (``pipeline.llm``). A name said aloud is not masked, so it goes too.
+    It is never the default: where a meeting's text may go is a privacy
+    decision, and the team signs it off before it is enabled outside a demo --
+    see ``pipeline.base``."""
 
     classifier_checkpoint: str = ""
     """Pinned, and recorded with every classification. Never a floating tag.
@@ -53,12 +54,17 @@ class ExtractionSettings(BaseSettings):
 
     llm_api_key: str = ""
     """Provider API key for ``classifier_impl=llm``. Sent as a header, never in a
-    body or URL. Blank makes the registry refuse ``llm`` by name."""
+    body or URL. Blank makes the registry refuse ``llm`` by name.
+
+    The code cannot tell a free-tier key from a paid one. A free tier may let the
+    provider keep what it is sent, so a free key is for dummy meetings only
+    (#392)."""
 
     llm_model: str = "gemini-3.8-flash"
-    """The model ``classifier_impl=llm`` calls; recorded as ``llm:<model>`` with
-    every classification. 3.8 Flash found all 14 action items in the 8.txt
-    comparison (2026-09-28); 3.5 Flash-Lite found 12 at a seventh of the cost."""
+    """The model ``classifier_impl=llm`` calls; every classification records
+    ``llm:<model>+<fallback>`` (``llm:<model>`` with the fallback off). 3.8
+    Flash found all 14 action items in the 8.txt comparison (2026-09-28); 3.5
+    Flash-Lite found 12 at a seventh of the cost."""
 
     llm_fallback_model: str = "gemini-3.5-flash-lite"
     """Answers a window when ``llm_model`` stays unavailable (429/5xx/timeout after
@@ -70,9 +76,10 @@ class ExtractionSettings(BaseSettings):
     """The provider's API root for ``classifier_impl=llm``."""
 
     llm_timeout_sec: float = 60.0
-    """Read timeout per window for ``classifier_impl=llm``. A thinking model took
-    12-20 s a window against the real API; the shared client's 10 s made every
-    window time out and retry."""
+    """Timeout per request (connect and read) for ``classifier_impl=llm``. A
+    thinking model took 12-20 s a window against the real API; the shared
+    client's 10 s made every window time out and retry. A window may retry and
+    fall back, so it can take several of these."""
 
     classifier_device: str = "cpu"
     """``cpu`` or ``cuda``, for ``classifier_impl=local``. Mirrors
@@ -90,7 +97,9 @@ class ExtractionSettings(BaseSettings):
 
     nli_impl: str = "local"
     """Which NLI model to run for step 4 (#12): ``local``, ``hosted`` or
-    ``fake``. No ``external`` -- same reasoning as ``classifier_impl``.
+    ``fake``. No ``external``: step 4 reads a commitment or ambiguous
+    utterance's own text, so an external implementation is the privacy.md
+    section 6 question ``classifier_impl=llm`` is waiting on (#392).
 
     Mirrors ``classifier_impl``'s three-way shape rather than module D's own
     ``AUTUNE_CONTEXT_NLI_*`` naming -- module D is a different module (modules
