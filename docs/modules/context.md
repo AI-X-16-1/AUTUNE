@@ -246,6 +246,20 @@ lineage view (S22), which reads to a user as a bug.
 4. Compute `key_stakeholders_absent` from the shared `participants` of each
    version's meeting against the thread's known stakeholders (users across
    every earlier version's meeting). A non-empty list drives the drift warning.
+   **Only once every speaker is named.** If the version's meeting has no
+   participant rows, or any participant whose `user_id` is still NULL, the list
+   is empty: that voice could be any of the known stakeholders. Module A names a
+   speaker only when a person confirms it in the app (#370), after this step has
+   run, so a meeting is usually unconfirmed here. Recording the resolved ids
+   alone would mark people absent from a meeting they spoke in and send each of
+   them a drift DM saying so. The accepted cost is a missed warning: a meeting
+   with a guest who never resolves to an account never reports an absence, and
+   a confirmation made later is not picked up until the thread is next
+   re-chained (the re-trigger is #360's question). "Every speaker named" is not
+   a roll call either: module A writes a participant row only for a speaker
+   label that spoke, so a stakeholder who attended without speaking has no row
+   and is still counted absent — a false DM this rule narrows but does not
+   remove.
 5. Mark `ctx_meeting_status.lineage_done` (and `extraction_seen`), then call
    `autune.context.publish_if_ready`.
 
