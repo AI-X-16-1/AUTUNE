@@ -496,8 +496,23 @@ def _team_prediction_visible(
     return prediction_visible(first_at, count, now=now or datetime.now(UTC))
 
 
+_PREDICTION_RECENCY = func.coalesce(Meeting.started_at, IntelPrediction.created_at)
+"""Which meeting's prediction is the team's current one.
+
+Not ``IntelPrediction.updated_at``: that is when E last *wrote* the row, and
+``aggregate_meeting`` upserts it with a fresh ``updated_at`` every time a late
+source reopens a meeting. Ordering by it made a re-aggregated meeting from
+months ago the team's "latest" prediction, with a horizon that closed long
+before. ``created_at`` is the fallback rather than ``first_seen_at`` because it
+is never bumped by the upsert, and a meeting with no ``started_at`` was
+aggregated when it arrived."""
+
+
 def get_predictions(session: Session, team_id: str) -> PredictionsRead:
     """The team's latest misalignment prediction, or why none is shown.
+
+    "Latest" is by when the meeting happened, not when the row was written —
+    see ``_PREDICTION_RECENCY``.
 
     Before #27's gate clears, ``prediction`` is ``None`` and ``reason`` is
     ``"insufficient_history"`` — the stored probabilities exist but are not
@@ -507,12 +522,13 @@ def get_predictions(session: Session, team_id: str) -> PredictionsRead:
         return PredictionsRead(team_id=team_id, prediction=None, reason="insufficient_history")
     latest = session.execute(
         sa.select(IntelPrediction)
+        .join(Meeting, Meeting.id == IntelPrediction.meeting_id)
         .where(
             IntelPrediction.team_id == team_id,
             IntelPrediction.kind == MISALIGNMENT_KIND,
             IntelPrediction.horizon_days == MISALIGNMENT_HORIZON_DAYS,
         )
-        .order_by(IntelPrediction.updated_at.desc(), IntelPrediction.meeting_id.desc())
+        .order_by(_PREDICTION_RECENCY.desc(), IntelPrediction.meeting_id.desc())
         .limit(1)
     ).scalar_one_or_none()
     if latest is None:

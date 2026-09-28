@@ -16,6 +16,7 @@ from collections.abc import Iterator
 from datetime import UTC, date, datetime, timedelta
 
 import pytest
+import sqlalchemy as sa
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
@@ -155,11 +156,15 @@ def test_heatmap_leaves_out_a_pair_scored_in_too_few_meetings(
 
 
 def _predicted_meeting(
-    db_session: Session, team: str, probability: float, scored_at: datetime
+    db_session: Session,
+    team: str,
+    probability: float,
+    scored_at: datetime,
+    started_at: datetime | None = None,
 ) -> str:
     from autune_core import Meeting
 
-    m = Meeting(team_id=team, title="p")
+    m = Meeting(team_id=team, title="p", started_at=started_at)
     db_session.add(m)
     db_session.flush()
     _score(db_session, m.id, team, created_at=scored_at)
@@ -202,6 +207,35 @@ def test_predictions_return_the_latest_once_the_gate_clears(
     assert body["prediction"]["kind"] == "misalignment_risk"
     assert body["prediction"]["horizon_days"] == 14
     assert body["prediction"]["probability"] == pytest.approx(0.2)
+
+
+def test_the_latest_prediction_is_the_newest_meeting_not_the_last_written(
+    client: TestClient, db_session: Session, team: str
+) -> None:
+    """A re-aggregated old meeting must not become the team's prediction.
+
+    ``updated_at`` is bumped every time ``aggregate_meeting`` upserts, which a
+    late source does to meetings long past (``tasks.py``'s reopen path). Ordering
+    by it surfaced a prediction whose 14-day horizon had closed weeks earlier.
+    """
+    now = datetime.now(UTC)
+    old_at, recent_at = now - timedelta(days=40), now - timedelta(days=1)
+    old = _predicted_meeting(db_session, team, 0.57, old_at, started_at=old_at)
+    _predicted_meeting(
+        db_session, team, 0.33, now - timedelta(days=20), started_at=now - timedelta(days=20)
+    )
+    _predicted_meeting(db_session, team, 0.10, recent_at, started_at=recent_at)
+    # The old meeting is re-aggregated last. In one transaction ``func.now()``
+    # is fixed, so the write order is set on the column directly.
+    db_session.execute(
+        sa.update(IntelPrediction).where(IntelPrediction.meeting_id == old).values(updated_at=now)
+    )
+    db_session.flush()
+
+    body = client.get(f"/api/intelligence/predictions/{team}").json()
+
+    assert body["reason"] is None
+    assert body["prediction"]["probability"] == pytest.approx(0.10)
 
 
 # --- /reports/{team_id} ---------------------------------------------------
