@@ -309,13 +309,36 @@ is not a tuning knob but a legal gate. ADR 0007's Q4 (#92) asks whether a
 voice embedding is biometric information (sensitive information) under PIPA
 Article 23 and whether collecting it needs
 its own separate consent, and that question was still open when this feature
-shipped. The setting gates only the profile write in `assign_speaker`:
-`Participant.user_id` is still written, the worker still stores observation
-vectors exactly as before, and deleting a profile is never gated — only
-*collecting a new one* is. Turning it on is expected to wait for
-authentication to exist and carry a separate, refusable biometric consent
-(#268); until then the cost of having shipped identification ahead of the
-legal answer is a flag flip, not a rebuild.
+shipped.
+
+**It gated only the profile write, and that was the wrong line.** Four
+reviewers read the flag as "no biometric data is collected" because the PR said
+so; the code stored an observation vector per speaker on every consented
+meeting regardless of it (@PARKJAEKYUNG0525, @lsh2217 on #370). Those vectors
+are the same data Q4 asks about. They become attributable to a person the
+moment a speaker is confirmed. The consent behind them is one checkbox reading
+"녹음과 분석", which does not mention voice characteristics. And they outlived
+the flag: turning it on later and confirming a speaker copied a vector recorded
+before anyone could have consented to enrolment straight into that person's
+profile.
+
+So the gate moved to collection. With the flag off the embedder is never
+loaded, no vector is taken, and a meeting reprocessed after it goes off gives
+back the vectors it had — the DELETE now runs whether or not anything replaces
+it, which also fixes a re-run leaving a first pass's vectors under labels a
+second diarization had reassigned. `Participant.user_id` is still written (that
+is attendance), and deleting a profile is never gated — a flag that limits
+collection must not block its own undo.
+
+The lesson is narrower than the fix: **a privacy claim in a PR description is
+not a test.** "Merging this collects no biometric data" was written in good
+faith about a gate that existed, one layer away from the collection it was
+describing. What settles it now is `test_the_flag_being_off_collects_no_vectors_even_with_consent`,
+which asserts the embedder was never even loaded.
+
+Turning it on is expected to wait for authentication to exist and carry a
+separate, refusable biometric consent (#268); until then the cost of having
+shipped identification ahead of the legal answer is a flag flip, not a rebuild.
 
 ---
 

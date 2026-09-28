@@ -2,8 +2,9 @@
 
 **Date:** 2026-09-23 · **Owner:** 김민경 · **Module:** A · **Status:** Built;
 threshold evaluation pending (issue #6; branch `audio/speaker-identification`).
-**Profile creation is off by default** (`AUTUNE_AUDIO_VOICE_PROFILES_ENABLED=false`)
-pending #92's biometric-consent legal review — see §4 and §8.
+**Voice data is off by default** (`AUTUNE_AUDIO_VOICE_PROFILES_ENABLED=false`)
+pending #92's biometric-consent legal review. With it off the worker takes no
+observation vector and no profile is ever written — see §4 and §8.
 
 A voice the pipeline separated becomes a person. The transcript screens show
 `화자 2 · 후보 김민경 · 유사도 0.87`; one click fills `speaker_id` and teaches
@@ -152,9 +153,18 @@ Body `{"user_id": "usr_…"}`. Any member of the meeting's team may call it.
    (meeting, label) is deleted — a flag that limits *collecting new* profiles
    must never block undoing an old one, including one written before the
    setting was turned off;
-4. no observation row (no consent, too little speech, embedder unavailable) →
-   step 1 still happens. Assigning a person is useful even when no vector can
-   be learned from it.
+4. no observation row (setting off, no consent, too little speech, embedder
+   unavailable) → step 1 still happens. Assigning a person is useful even when
+   no vector can be learned from it.
+
+**The setting gates collection, not only the copy.** It read as a gate on step
+2 alone until review, and the code matched that reading: a consented meeting
+stored an observation vector per speaker whether the flag was on or off. Those
+vectors are the data Q4 is about, they become attributable the moment step 1
+runs, and turning the flag on later would have enrolled voices recorded before
+anyone could consent to enrolment (@PARKJAEKYUNG0525, @lsh2217 on #370). The
+worker now skips the embedder entirely while the flag is off, and a meeting
+reprocessed after it goes off gives its existing vectors back.
 
 With the setting off, step 1 is the only thing this endpoint does today: the
 person is assigned, no profile is written, and no candidate will ever be
@@ -202,6 +212,7 @@ the worker has written the observation vector.
 | --- | --- |
 | Embedder cannot load in the worker | Step skipped, one warning with the exception type, transcript unaffected |
 | No consent attestation | No observation rows; no candidates; manual assignment still works |
+| `VOICE_PROFILES_ENABLED=false` (default) | No observation rows and no profiles; the embedder is never loaded; manual assignment still works. A meeting reprocessed after it goes off loses the vectors it had |
 | Speaker with under 3 s of speech | No observation row for that label |
 | Person has no profile yet | No candidate. The first meeting is always manual |
 | Same person on two labels (over-split) | Both may be assigned to them; each adds a profile vector, which improves the mean |
@@ -226,12 +237,13 @@ sets the real number and goes in `HISTORY.md`, the same way #306's did.
 
 ## 8. What this does not do
 
-- **Create a voice profile, by default.** `AUTUNE_AUDIO_VOICE_PROFILES_ENABLED`
+- **Keep any voice data, by default.** `AUTUNE_AUDIO_VOICE_PROFILES_ENABLED`
   defaults to `false` pending #92's Q4 (biometric-consent legal review); until
   it is answered, or until authentication exists to record a separate consent
-  (#268), confirming a speaker assigns them (`Participant.user_id`) and stores
-  no profile vector. §4 has the detail; `docs/engineering/environments.md` has
-  the variable.
+  (#268), confirming a speaker assigns them (`Participant.user_id`) and nothing
+  about anyone's voice is stored — not a profile, and not the per-meeting
+  observation vector either. §4 has the detail; `docs/engineering/environments.md`
+  has the variable.
 - **Tell B, C and D.** `TranscriptReady` has already gone out with
   `speaker_id = null` when somebody confirms, so module B's action items keep
   their `assignee_label`. Propagating a later identification needs either a new
