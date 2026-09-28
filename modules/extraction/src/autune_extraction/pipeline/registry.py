@@ -22,9 +22,11 @@ _CLASSIFIERS: dict[str, str] = {
     "hosted": "our own inference server",
     "fake": "deterministic, for tests",
     "llm": "a cloud LLM API, masked utterance text only (pipeline.llm)",
+    "llm_checked": "llm, its commitments checked by the local DeBERTa (pipeline.checked)",
 }
-"""Known implementations and what they are. ``llm`` is the one that leaves our
-infrastructure; it is opt-in and never the default -- see base."""
+"""Known implementations and what they are. ``llm`` and ``llm_checked`` are the
+ones that leave our infrastructure -- the same requests, since ``llm_checked``
+wraps ``llm`` -- opt-in and never the default; see base."""
 
 _NLI: dict[str, str] = {
     "local": "weights in this process",
@@ -33,8 +35,9 @@ _NLI: dict[str, str] = {
 }
 """Same shape as ``_CLASSIFIERS``, for step 4's model (#12)."""
 
-_RESOLVERS: dict[str, str] = dict(_CLASSIFIERS)
-"""Same three names, same meaning, for the reference resolver (#175)."""
+_RESOLVERS: dict[str, str] = {k: v for k, v in _CLASSIFIERS.items() if k != "llm_checked"}
+"""Same names, same meaning, for the reference resolver (#175). ``llm_checked``
+is a classifier arrangement with no resolver counterpart."""
 
 _EMBEDDERS: dict[str, str] = {
     "local": "weights in this process",
@@ -48,7 +51,7 @@ def get_classifier() -> Classifier:
     settings = get_settings()
     impl = settings.classifier_impl
 
-    if impl in ("local", "hosted") and not settings.classifier_checkpoint:
+    if impl in ("local", "hosted", "llm_checked") and not settings.classifier_checkpoint:
         # Both record the checkpoint with every classification, and ``local``
         # loads it. Refused here, by name, rather than as a hub error from inside
         # the first forward pass -- or, for ``hosted``, as classifications stored
@@ -79,22 +82,35 @@ def get_classifier() -> Classifier:
     if impl == "fake":
         return FakeClassifier()
     if impl == "llm":
-        if not settings.llm_api_key:
-            raise ValueError(
-                "AUTUNE_EXTRACTION_CLASSIFIER_IMPL=llm needs AUTUNE_EXTRACTION_LLM_API_KEY"
-            )
-        from .llm import LlmClassifier  # noqa: PLC0415 - only a worker that opted in pays for it
+        return _llm_classifier(impl)
+    if impl == "llm_checked":
+        from .checked import CheckedClassifier  # noqa: PLC0415 - same opt-in as llm
 
-        return LlmClassifier(
-            api_key=settings.llm_api_key,
-            model=settings.llm_model,
-            base_url=settings.llm_base_url,
-            timeout_sec=settings.llm_timeout_sec,
-            fallback_model=settings.llm_fallback_model,
-        )
+        # DeBERTa in process only: the checker exists so the check costs no
+        # second outbound call, and ``hosted`` would be one to our own server
+        # for the same texts.
+        checker = LocalDeberta(settings.classifier_checkpoint, device=settings.classifier_device)
+        return CheckedClassifier(proposer=_llm_classifier(impl), checker=checker)
 
     raise ValueError(
         f"unknown AUTUNE_EXTRACTION_CLASSIFIER_IMPL={impl!r}; known: {sorted(_CLASSIFIERS)}"
+    )
+
+
+def _llm_classifier(impl: str) -> Classifier:
+    settings = get_settings()
+    if not settings.llm_api_key:
+        raise ValueError(
+            f"AUTUNE_EXTRACTION_CLASSIFIER_IMPL={impl} needs AUTUNE_EXTRACTION_LLM_API_KEY"
+        )
+    from .llm import LlmClassifier  # noqa: PLC0415 - only a worker that opted in pays for it
+
+    return LlmClassifier(
+        api_key=settings.llm_api_key,
+        model=settings.llm_model,
+        base_url=settings.llm_base_url,
+        timeout_sec=settings.llm_timeout_sec,
+        fallback_model=settings.llm_fallback_model,
     )
 
 

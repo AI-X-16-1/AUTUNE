@@ -20,13 +20,20 @@ class ExtractionSettings(BaseSettings):
     )
 
     classifier_impl: str = "local"
-    """Which classifier to run: ``local``, ``hosted``, ``fake`` or ``llm``.
+    """Which classifier to run: ``local``, ``hosted``, ``fake``, ``llm`` or
+    ``llm_checked``.
 
     ``llm`` sends utterance text as module A masked it -- nothing else -- to a
     cloud LLM (``pipeline.llm``). A name said aloud is not masked, so it goes too.
     It is never the default: where a meeting's text may go is a privacy
     decision, and the team signs it off before it is enabled outside a demo --
-    see ``pipeline.base``."""
+    see ``pipeline.base``.
+
+    ``llm_checked`` sends the same as ``llm`` and has the local DeBERTa
+    (``classifier_checkpoint``, required) check its commitments: one only the
+    LLM found becomes a candidate instead of being asserted
+    (``pipeline.checked``). It shows candidates only once
+    ``candidate_confidence`` is set."""
 
     classifier_checkpoint: str = ""
     """Pinned, and recorded with every classification. Never a floating tag.
@@ -133,6 +140,11 @@ class ExtractionSettings(BaseSettings):
     does not exist yet. Until it does there is no honest threshold, so nothing is
     a candidate. A default picked to make the band look populated would be a
     number nobody measured, printed to the user as though somebody had.
+
+    ``classifier_impl=llm_checked`` is the exception, because its confidences
+    are not probabilities: 0.9 means the LLM and DeBERTa both said commitment,
+    0.5 that only the LLM did (``pipeline.checked``). Any value in (0.5, 0.9]
+    -- 0.7, say -- separates the two, and nothing is being estimated.
     """
 
     @field_validator("candidate_confidence", mode="before")
