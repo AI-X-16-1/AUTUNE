@@ -10,6 +10,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from functools import lru_cache
+from typing import Final
 
 from autune_core import get_logger
 from autune_intelligence.config import IntelligenceSettings, get_settings
@@ -103,6 +104,19 @@ def get_misalignment_predictor(*, now: datetime | None = None) -> MisalignmentPr
             now + timedelta(hours=settings.misalignment_refit_hours) if impl == "local" else None
         )
     return _predictor
+
+
+FITTED_IMPLS: Final = frozenset({"local"})
+"""Implementations that learn from labeled meetings rather than hand-set weights.
+
+``eval`` asks for this through ``predictor_fits_from_history``: one of these
+scored over the window it was fit on reports an **in-sample** number, which
+cannot be compared with the stored predictions' out-of-sample ones."""
+
+
+def predictor_fits_from_history() -> bool:
+    """Whether the configured predictor learns from labeled meetings."""
+    return get_settings().misalignment_predictor_impl in FITTED_IMPLS
 
 
 _PREDICTORS: dict[str, Callable[[datetime], MisalignmentPredictor]] = {
