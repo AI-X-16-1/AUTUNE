@@ -638,9 +638,9 @@ def _meeting_user_ids(session: Session, *meeting_ids: str) -> set[str]:
 
 
 def _confirmed_attendance(session: Session, meeting_id: str) -> set[str] | None:
-    """Who attended ``meeting_id``, or ``None`` when that cannot be told yet.
+    """Who spoke in ``meeting_id``, or ``None`` until every speaker is named.
 
-    Absence is only knowable from a complete roll call. A participant whose
+    Absence is only knowable once every voice has a name. A participant whose
     ``user_id`` is still NULL is a voice nobody has named: module A identifies
     speakers only when a person confirms one in the app (#370), which happens
     after the transcript -- and so after this lineage -- has been built. Any
@@ -654,6 +654,10 @@ def _confirmed_attendance(session: Session, meeting_id: str) -> set[str] | None:
     changed without them is a false statement about that person. The cost is
     that a meeting with a guest who never resolves to an account never reports
     an absence; see docs/modules/context.md.
+
+    This is the speaker list, not a roll call: module A writes a participant
+    row per speaker label that spoke, so someone who attended in silence has
+    no row, is not in the returned set, and is still counted absent.
 
     Reads the shared ``participants`` table — never writes it (invariant 4).
     """
