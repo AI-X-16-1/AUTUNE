@@ -12,6 +12,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
+from enum import StrEnum
 from typing import TYPE_CHECKING
 
 from celery import current_app
@@ -55,16 +56,43 @@ _CONTEXT_CONSUMER_TASK = "autune.intelligence.on_context_completed"
 _PUBLISHABLE = ("asserted", "confirmed")
 
 
+class LineageOutcome(StrEnum):
+    """What a ``build_decision_lineage`` run leaves owed to ``ContextLinks``.
+
+    Two different questions used to share one boolean: "is a drift warning
+    owed" and "does E need this lineage". A rebuild of a meeting that already
+    published answers the first no and the second yes, and with one flag it
+    got neither -- E kept the old ``dec_`` ids.
+    """
+
+    FIRST = "first"
+    """Nothing published yet: the ordinary ``publish_if_ready`` gate decides,
+    and its publish sends the usual notices."""
+    LATE = "late"
+    """Published by the B-timeout fallback before this lineage existed:
+    republish, and send the drift warning that publish could not carry."""
+    REBUILT = "rebuilt"
+    """Published before, and this run rebuilt the lineage (B reran -- a module
+    A reprocess, or a redelivery): republish so E has the current rows, and
+    notify nobody -- everything this meeting had to say already went out."""
+
+
 # --------------------------------------------------------------------------- #
 # Topic linking — off autune.transcript.ready, in parallel with B and C
 # --------------------------------------------------------------------------- #
 
 
-def run_topic_linking(transcript: TranscriptReady) -> None:
+def run_topic_linking(transcript: TranscriptReady) -> bool:
     """Extract this meeting's topics, link them to past meetings, persist.
 
     Idempotent: a re-run replaces every ``ctx_*`` row this task owns for the
     meeting. Does not publish — that is ``publish_if_ready``.
+
+    Returns whether ``ContextLinks`` had already been published for this
+    meeting, in which case the links just rebuilt are not what E holds and
+    ``tasks.on_transcript_ready`` republishes them. A re-run is a module A
+    reprocess or a redelivery; the ordinary publish would refuse both on its
+    ``published_at`` guard.
     """
     settings = get_settings()
     embedder = get_embedder()
@@ -127,6 +155,12 @@ def run_topic_linking(transcript: TranscriptReady) -> None:
                 session, transcript.meeting_id, topic, candidates, reranker, settings, embedder
             )
 
+        # Under the row lock publish_if_ready takes: either a publish committed
+        # first and this run republishes, or it waits and publishes these links.
+        prior = session.get(
+            CtxMeetingStatus, transcript.meeting_id, with_for_update=True, populate_existing=True
+        )
+        already_published = prior is not None and prior.published_at is not None
         _upsert_status(
             session,
             transcript.meeting_id,
@@ -137,7 +171,9 @@ def run_topic_linking(transcript: TranscriptReady) -> None:
             "context_topic_linking_done",
             meeting_id=transcript.meeting_id,
             links=links_written,
+            already_published=already_published,
         )
+        return already_published
 
 
 def _link_topic(
@@ -208,20 +244,28 @@ def mark_extraction_seen(meeting_id: str) -> None:
         _upsert_status(session, meeting_id, extraction_seen=True)
 
 
-def build_decision_lineage(result: ExtractionResult) -> bool:
+def build_decision_lineage(result: ExtractionResult) -> LineageOutcome:
     """Thread each of B's decisions into a lineage and classify how it moved.
 
-    Returns whether a late-lineage catch-up is owed for this meeting --
-    ``ContextLinks`` already published via the B-timeout fallback (that
-    publish's ``missing_sources`` would have included ``"extraction"``, since
-    B hadn't reported yet) before this lineage arrived. ``tasks
-    .on_extraction_completed`` uses this to force a republish (now carrying
-    the completed ``decision_lineage``) and a one-off drift-only notify -- see
-    ``publish_if_ready(force=...)`` and ``tasks.notify_late_drift``. A caller
-    that doesn't need this (tests, ``mark_extraction_seen``) can ignore the
-    return value.
+    Returns what this run leaves owed to ``ContextLinks`` (``LineageOutcome``),
+    which ``tasks.on_extraction_completed`` routes on:
 
-    This is *not* simply "was this run late": that would go back to False on
+    - ``LATE`` -- a late-lineage catch-up is owed: ``ContextLinks`` already
+      published via the B-timeout fallback (with ``"extraction"`` in
+      ``missing_sources``) before this lineage arrived. Forces a republish
+      carrying the completed ``decision_lineage`` and a one-off drift-only
+      notify -- see ``publish_if_ready(force=...)`` and
+      ``tasks.notify_late_drift``.
+    - ``REBUILT`` -- the meeting published before and this run rebuilt its
+      lineage (B reran it). Republished with no notice: the drift warning
+      belongs to the run that first built the lineage, but E has to hear the
+      rebuilt rows -- B's ``dec_`` ids move whenever a decision's sources do.
+    - ``FIRST`` -- nothing published yet; the ordinary gate decides.
+
+    A caller that doesn't need this (tests, ``mark_extraction_seen``) can
+    ignore the return value.
+
+    ``LATE`` is *not* simply "was this run late": that would go back to False on
     a Celery redelivery of ``on_extraction_completed`` landing after this
     function's own commit (``extraction_seen`` already flipped to True) but
     before ``on_extraction_completed`` reaches its
@@ -229,10 +273,11 @@ def build_decision_lineage(result: ExtractionResult) -> bool:
     warning the same way #257 originally did, just with the window narrowed
     instead of closed. Once a run determines it's late, it sets
     ``late_drift_due_at`` in the same transaction as ``extraction_seen``; the
-    return value is ``late_drift_due_at is not None`` *after* that write, so
-    the "still owed" state persists on the row across a redelivery instead of
-    being recomputed fresh each time. ``tasks.notify_late_drift`` clears it
-    once it actually claims and sends.
+    outcome is ``LATE`` whenever ``late_drift_due_at is not None`` *after*
+    that write, so the "still owed" state persists on the row across a
+    redelivery instead of being recomputed fresh each time.
+    ``tasks.notify_late_drift`` clears it once it actually claims and sends;
+    a rerun after that is ``REBUILT``.
 
     B owns *what counts as a decision in this meeting*; D owns *whether it is the
     same decision as one from before*. Each of ``result.decisions`` is matched by
@@ -278,7 +323,9 @@ def build_decision_lineage(result: ExtractionResult) -> bool:
     Idempotent: every ``ctx_decision_versions`` row for this meeting is replaced
     and its threads are re-chained, then any thread left empty is swept. A re-run
     means the published ``ContextLinks`` should be rebuilt — that is
-    ``publish_if_ready``'s job, not this one.
+    ``publish_if_ready``'s job, not this one; ``REBUILT`` is what asks for it.
+    Other meetings whose versions the re-chaining touched are not republished
+    (see "Decision lineage" in docs/modules/context.md).
 
     Retention is enforced on the *read* side only: ``_thread_heads`` and
     ``_rethread`` both exclude an expired meeting from matching and chaining
@@ -407,13 +454,12 @@ def build_decision_lineage(result: ExtractionResult) -> bool:
         # published, but not because of us" only matches on the one run that
         # flips extraction_seen False -> True, so a later B reprocess of an
         # already-seen meeting reads False and does not re-trigger the late
-        # path every time.
+        # path every time -- it is REBUILT instead, read off the same row.
         before = session.get(
             CtxMeetingStatus, result.meeting_id, with_for_update=True, populate_existing=True
         )
-        was_late = (
-            before is not None and before.published_at is not None and not before.extraction_seen
-        )
+        already_published = before is not None and before.published_at is not None
+        was_late = already_published and before is not None and not before.extraction_seen
         status = _upsert_status(session, result.meeting_id, extraction_seen=True, lineage_done=True)
         if was_late and status.late_drift_due_at is None:
             # ``ContextLinks`` already went out for this meeting -- the
@@ -429,6 +475,12 @@ def build_decision_lineage(result: ExtractionResult) -> bool:
                 meeting_id=result.meeting_id,
                 published_at=status.published_at.isoformat() if status.published_at else None,
             )
+        if status.late_drift_due_at is not None:
+            outcome = LineageOutcome.LATE
+        elif already_published:
+            outcome = LineageOutcome.REBUILT
+        else:
+            outcome = LineageOutcome.FIRST
         log.info(
             "context_decision_lineage_done",
             meeting_id=result.meeting_id,
@@ -438,8 +490,9 @@ def build_decision_lineage(result: ExtractionResult) -> bool:
             threads_swept=orphans_swept,
             labels_swept=labels_swept,
             statements_swept=statements_swept,
+            outcome=outcome.value,
         )
-        return status.late_drift_due_at is not None
+        return outcome
 
 
 class _ThreadHead:
@@ -709,22 +762,28 @@ def publish_if_ready(meeting_id: str, *, force: bool = False) -> bool:
     sees ``published_at`` already set and returns ``False`` instead of
     publishing and notifying a second time.
 
-    ``force=True`` is the one deliberate exception to that guard: it is set
-    only by ``tasks.on_extraction_completed`` when
-    ``build_decision_lineage`` reports its lineage arrived *after* a meeting
-    already published via the B-timeout fallback (``missing_sources =
-    ["extraction"]``). That republish carries the now-complete
-    ``decision_lineage`` to E -- which already knows how to accept a second
-    completion for a meeting it aggregated once (see
+    ``force=True`` is the one deliberate exception to that guard, and means
+    *re*publish: it sends only for a meeting that has already published. Two
+    callers set it: ``tasks.publish_if_ready`` for a ``LineageOutcome.LATE``
+    lineage (it arrived *after* the B-timeout fallback published with
+    ``missing_sources = ["extraction"]``), and ``tasks.republish`` for a
+    rerun of either half (``LineageOutcome.REBUILT``, or
+    ``run_topic_linking`` reporting the meeting already published). The
+    republish carries what the rows say now to E -- which already knows how
+    to accept a second completion for a meeting it aggregated once (see
     ``autune_intelligence.tasks``' "a completion after the first pass reopens
     and re-enqueues") -- and does not re-touch ``published_at`` or re-check
-    the deadline/lineage gate, since we already know why we're here.
+    the deadline/lineage gate, since we already know why we're here. A first
+    publish always goes through the gate, so the first ``ContextLinks`` is
+    never one a republish sent without its notices.
     """
     with session_scope() as session:
         status = session.get(CtxMeetingStatus, meeting_id, with_for_update=True)
         if status is None or not status.topic_linking_done:
             return False
         if status.published_at is not None and not force:
+            return False
+        if status.published_at is None and force:
             return False
 
         if not force:
@@ -736,8 +795,7 @@ def publish_if_ready(meeting_id: str, *, force: bool = False) -> bool:
 
         links = _build_context_links(session, meeting_id, status)
         current_app.send_task(_CONTEXT_CONSUMER_TASK, args=[links.model_dump(mode="json")])
-        first_publish = status.published_at is None
-        if first_publish:
+        if not force:
             status.published_at = datetime.now(tz=UTC)
         log.info(
             "context_republished" if force else "context_published",
