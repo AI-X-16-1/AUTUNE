@@ -307,7 +307,9 @@ they finish. Each is built from committed rows under the row lock, so the
 later send is the fresher one and carries both reruns once both have
 committed. E stores the last `ContextLinks` it processes; two workers taking
 the pair out of order would leave the older one — the same exposure the
-late-lineage republish already has, and not closed here.
+late-lineage republish already has, and not closed here. Closing it needs E to
+tell an older payload from a newer one, and `ContextLinks` carries no version or
+timestamp to do that with — a contract change (invariant 5), not a D-side fix.
 
 ## Storage
 
@@ -459,6 +461,8 @@ meeting itself that the two decision routes already applied.
 | `autune.context.on_extraction_completed` | `autune.extraction.completed` | `cpu_heavy` |
 | `autune.context.publish_if_ready` | after either half finishes, or on timeout | `cpu_heavy` |
 | `autune.context.republish` | either half reran for a meeting that already published | `cpu_heavy` |
+| `autune.context.notify_context_events` | after the first publish (`FIRST`, or the B-timeout fallback) | `default` |
+| `autune.context.notify_late_drift` | after a `LATE` republish; never after `republish` | `default` |
 | `autune.context.index_material` | material upload | `cpu_heavy` — Phase 2 |
 | `autune.context.send_brief` | 30 minutes before a meeting | `default` — Phase 2 |
 
