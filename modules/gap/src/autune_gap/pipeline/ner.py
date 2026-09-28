@@ -18,7 +18,7 @@ from typing import Any
 from autune_core import get_logger
 
 from .base import Entity
-from .spoken import Token, is_plausible, masked_spans, noun_terms
+from .spoken import RULES_VERSION, Token, entity_text, is_plausible, masked_spans, noun_terms
 
 log = get_logger(__name__)
 
@@ -84,7 +84,7 @@ class SpacyNer:
 
     @property
     def model_version(self) -> str:
-        """``ko_core_news_lg-3.8.0`` — the name **and** the version.
+        """``ko_core_news_lg-3.8.0+spoken-2`` — the name, the version, and the rules.
 
         The name alone is not a version. ``ko_core_news_lg`` is a pipeline that
         ships a new release with every spaCy minor, so a graph built with 3.7
@@ -97,9 +97,14 @@ class SpacyNer:
         model, which is unusual for a property and is the honest shape — the
         registry loads once per process anyway, and there is no version to
         report for a model that will not load.
+
+        The ``+spoken-2`` is ``spoken.RULES_VERSION``. The weights are not the
+        whole extractor: what ``spoken`` keeps from the parse decides the graph
+        as much as the parse does, and a rule change there has to be tellable
+        on the row the same way a model upgrade is.
         """
         self._load()
-        return f"{self._model_name}-{self._version}"
+        return f"{self._model_name}-{self._version}+{RULES_VERSION}"
 
     def _load(self) -> None:
         if self._nlp is not None:
@@ -168,8 +173,16 @@ class SpacyNer:
                 if label is None:
                     self._note_unaccounted(span.label_)
                     continue
-                if is_plausible(label, span.text):
-                    spans.append((span.start_char, span.text, label))
+                # The particle on the span's last word is cut by the same rule
+                # the noun runs use, so 오늘은 is 오늘 here too — and refused
+                # by the same stoplist. #230.
+                last = span[-1]
+                text = entity_text(
+                    span.text,
+                    Token(text=last.text, tag=last.tag_, start=last.idx, end=last.idx + len(last)),
+                )
+                if is_plausible(label, text):
+                    spans.append((span.start_char, text, label))
 
             # Whitespace is skipped rather than passed through: a space token
             # is not a noun, so it would flush the run, and "검색  개인화 기능"
