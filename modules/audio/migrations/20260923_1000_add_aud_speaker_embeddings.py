@@ -4,7 +4,15 @@ One table, two kinds of row: an observation of one speaker in one meeting
 (cascades with the meeting) and a confirmed voice profile (lives on the user).
 Identification, #6. Owner: 김민경.
 
-``depends_on`` pins the core revision that creates ``meetings`` and ``users``.
+``depends_on`` pins core's **pgvector** revision, not its shared-entity one.
+The ``vector`` column depends on the extension's type, so a downgrade has to
+drop this table before core drops the extension; without the pin nothing
+orders those two and ``alembic downgrade base`` fails with
+``cannot drop extension vector because other objects depend on it``. Pinning
+``aad0ea392ddc`` covers both dependencies, because it chains onto
+``d34994600a9a`` (the revision that creates ``meetings`` and ``users``).
+Module D's ``ctx_embeddings`` pins the same revision for the same reason.
+
 Chains onto the audio branch's previous head, so the branch keeps one head.
 
 Revision ID: 8f2b6d4a1c93
@@ -23,13 +31,14 @@ from pgvector.sqlalchemy import Vector
 revision: str = "8f2b6d4a1c93"
 down_revision: str | None = "5e7a1c9b2d40"
 branch_labels: str | Sequence[str] | None = None
-depends_on: str | Sequence[str] | None = "d34994600a9a"  # core: shared_entities
+depends_on: str | Sequence[str] | None = "aad0ea392ddc"  # core: enable_pgvector
 
 
 def upgrade() -> None:
-    # The extension is in the image (infra/docker-compose.yml) and module D's
-    # revision creates it too; both are guarded, so whichever runs first wins.
-    op.execute("CREATE EXTENSION IF NOT EXISTS vector")
+    # No `CREATE EXTENSION` here. `depends_on` above puts core's revision
+    # first, and the extension is core's to own -- creating it from a module
+    # as well would read as shared ownership of something only one place
+    # should be responsible for dropping.
     op.create_table(
         "aud_speaker_embeddings",
         sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
