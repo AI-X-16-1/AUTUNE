@@ -85,7 +85,10 @@ def _parse_page_id(raw: str) -> str:
     candidate = raw.strip().split("?")[0].split("/")[-1]
     match = _PAGE_ID.search(candidate)
     if match is None:
-        raise ValueError(f"{raw!r} does not contain a Notion page id")
+        # Not the input itself: the token field sits right above this one, and
+        # a token pasted here would come back in the 400 body. privacy.md 6
+        # treats an exception string as published (mkkim68, review of #402).
+        raise ValueError("no Notion page id found -- paste the page's URL or its 32-character id")
     return match.group(0)
 
 

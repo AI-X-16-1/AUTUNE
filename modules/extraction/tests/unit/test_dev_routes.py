@@ -54,6 +54,17 @@ def test_surrounding_whitespace_is_stripped() -> None:
     )
 
 
+def test_a_refused_value_is_not_echoed_back() -> None:
+    """mkkim68, review of #402: the token field is right above this one, and a
+    token pasted here came back in the 400 body."""
+    token = "ntn_secret_value_pasted_into_the_wrong_field"
+
+    with pytest.raises(ValueError) as caught:
+        _parse_page_id(token)
+
+    assert token not in str(caught.value)
+
+
 def test_something_with_no_id_shaped_run_is_refused() -> None:
     with pytest.raises(ValueError, match="page id"):
         _parse_page_id("그냥 아무 텍스트")
