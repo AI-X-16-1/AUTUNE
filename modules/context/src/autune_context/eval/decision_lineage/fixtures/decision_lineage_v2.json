@@ -1,0 +1,841 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "decision_unchanged_restated",
+      "category": "unchanged_restated",
+      "past_meetings": [
+        {
+          "days_ago": 14,
+          "decision": "다음 릴리스는 베타로 먼저 출시하기로 했다."
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "이전에 정한 대로 베타로 먼저 출시하기로 했다."
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "unchanged"
+    },
+    {
+      "id": "code_review_two_approvals_kept",
+      "category": "unchanged_restated",
+      "past_meetings": [
+        {
+          "days_ago": 14,
+          "decision": "코드 리뷰는 최소 두 명의 승인을 받은 뒤 머지하기로 했다."
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "지난번에 정한 대로 코드 리뷰는 두 명 이상 승인 후 머지하는 원칙을 유지하기로 했다."
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "unchanged"
+    },
+    {
+      "id": "weekly_meeting_time_kept",
+      "category": "unchanged_restated",
+      "past_meetings": [
+        {
+          "days_ago": 21,
+          "decision": "주간 회의는 매주 월요일 오전 10시에 진행하기로 했다."
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "주간 회의 시간은 기존대로 월요일 오전 10시로 유지하기로 했다."
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "unchanged"
+    },
+    {
+      "id": "support_response_target_kept",
+      "category": "unchanged_restated",
+      "past_meetings": [
+        {
+          "days_ago": 10,
+          "decision": "고객 문의 응답 목표 시간은 24시간 이내로 정했다."
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "고객 문의는 계속 24시간 안에 응답하는 것을 목표로 하기로 했다."
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "unchanged"
+    },
+    {
+      "id": "onboarding_two_weeks_kept",
+      "category": "unchanged_restated",
+      "past_meetings": [
+        {
+          "days_ago": 30,
+          "decision": "신규 입사자 온보딩 기간은 2주로 운영하기로 했다."
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "온보딩 기간 2주 방침은 그대로 가져가기로 했다."
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "unchanged"
+    },
+    {
+      "id": "no_friday_deploys_paraphrased",
+      "category": "unchanged_paraphrase",
+      "past_meetings": [
+        {
+          "days_ago": 12,
+          "decision": "금요일에는 배포하지 않기로 했다."
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "주말 직전인 금요일에는 운영 반영을 금지하는 것으로 정리했다."
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "unchanged"
+    },
+    {
+      "id": "partner_contracts_legal_review_paraphrased",
+      "category": "unchanged_paraphrase",
+      "past_meetings": [
+        {
+          "days_ago": 18,
+          "decision": "외부 협력사와의 계약서는 법무팀 검토를 반드시 거치기로 했다."
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "파트너사 계약은 모두 법무 검토를 받은 후에 체결하기로 했다."
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "unchanged"
+    },
+    {
+      "id": "min_ios_version_paraphrased",
+      "category": "unchanged_paraphrase",
+      "past_meetings": [
+        {
+          "days_ago": 9,
+          "decision": "모바일 앱의 최소 지원 버전을 iOS 16으로 정했다."
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "아이폰은 iOS 16 이상만 지원하는 것으로 확정했다."
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "unchanged"
+    },
+    {
+      "id": "docs_in_notion_paraphrased",
+      "category": "unchanged_paraphrase",
+      "past_meetings": [
+        {
+          "days_ago": 25,
+          "decision": "사내 문서는 노션으로 일원화하기로 했다."
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "팀 문서를 전부 노션 한 곳에서 관리하기로 했다."
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "unchanged"
+    },
+    {
+      "id": "outage_notice_30min_paraphrased",
+      "category": "unchanged_paraphrase",
+      "past_meetings": [
+        {
+          "days_ago": 7,
+          "decision": "장애 발생 시 30분 안에 고객 공지를 올리기로 했다."
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "서비스 장애가 나면 30분 이내에 사용자에게 알리는 것으로 정리했다."
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "unchanged"
+    },
+    {
+      "id": "launch_date_pushed_two_weeks",
+      "category": "modified_param",
+      "past_meetings": [
+        {
+          "days_ago": 14,
+          "decision": "정식 출시일을 3월 15일로 정했다."
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "정식 출시일을 3월 29일로 2주 미루기로 했다."
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "modified"
+    },
+    {
+      "id": "marketing_budget_increase_reduced",
+      "category": "modified_param",
+      "past_meetings": [
+        {
+          "days_ago": 10,
+          "decision": "마케팅 예산을 20% 늘리기로 했다."
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "마케팅 예산 증액 폭을 10%로 줄이기로 했다."
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "modified"
+    },
+    {
+      "id": "backend_headcount_three_to_two",
+      "category": "modified_param",
+      "past_meetings": [
+        {
+          "days_ago": 20,
+          "decision": "신규 채용 인원은 백엔드 개발자 3명으로 정했다."
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "백엔드 개발자 채용 인원을 2명으로 조정하기로 했다."
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "modified"
+    },
+    {
+      "id": "refactoring_owner_changed",
+      "category": "modified_param",
+      "past_meetings": [
+        {
+          "days_ago": 8,
+          "decision": "결제 모듈 리팩토링은 프론트엔드 팀이 맡기로 했다."
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "결제 모듈 리팩토링 담당을 백엔드 팀으로 변경하기로 했다."
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "modified"
+    },
+    {
+      "id": "rate_limit_raised",
+      "category": "modified_param",
+      "past_meetings": [
+        {
+          "days_ago": 15,
+          "decision": "API 요청 제한은 분당 100회로 설정하기로 했다."
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "API 요청 제한을 분당 300회로 상향하기로 했다."
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "modified"
+    },
+    {
+      "id": "sprint_two_to_three_weeks",
+      "category": "modified_param",
+      "past_meetings": [
+        {
+          "days_ago": 12,
+          "decision": "스프린트 주기는 2주로 운영하기로 했다."
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "스프린트 주기를 3주로 늘리기로 했다."
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "modified"
+    },
+    {
+      "id": "subscription_price_raised",
+      "category": "modified_param",
+      "past_meetings": [
+        {
+          "days_ago": 30,
+          "decision": "구독 요금은 월 9,900원으로 책정하기로 했다."
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "구독 요금을 월 12,900원으로 인상하기로 했다."
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "modified"
+    },
+    {
+      "id": "decision_modified",
+      "category": "modified_scope",
+      "past_meetings": [
+        {
+          "days_ago": 10,
+          "decision": "신규 기능은 전체 사용자에게 한 번에 배포하기로 했다."
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "신규 기능은 우선 10%의 사용자에게만 단계적으로 배포하기로 했다."
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "modified"
+    },
+    {
+      "id": "dark_mode_narrowed_to_two_screens",
+      "category": "modified_scope",
+      "past_meetings": [
+        {
+          "days_ago": 10,
+          "decision": "다크 모드를 전체 화면에 적용하기로 했다."
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "다크 모드는 우선 설정 화면과 메인 화면에만 적용하기로 했다."
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "modified"
+    },
+    {
+      "id": "remote_work_tenure_condition_added",
+      "category": "modified_scope",
+      "past_meetings": [
+        {
+          "days_ago": 14,
+          "decision": "재택근무는 주 2회 허용하기로 했다."
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "주 2회 재택근무는 입사 3개월이 지난 직원에게만 허용하기로 했다."
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "modified"
+    },
+    {
+      "id": "beta_audience_widened",
+      "category": "modified_scope",
+      "past_meetings": [
+        {
+          "days_ago": 21,
+          "decision": "베타 테스트는 사내 직원 대상으로 진행하기로 했다."
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "베타 테스트 대상을 사내 직원과 외부 고객 50명까지 넓히기로 했다."
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "modified"
+    },
+    {
+      "id": "two_factor_admins_first",
+      "category": "modified_scope",
+      "past_meetings": [
+        {
+          "days_ago": 9,
+          "decision": "모든 서비스에 2단계 인증을 도입하기로 했다."
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "2단계 인증은 관리자 계정에만 먼저 도입하기로 했다."
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "modified"
+    },
+    {
+      "id": "user_conference_cancelled",
+      "category": "reversed_cancel",
+      "past_meetings": [
+        {
+          "days_ago": 14,
+          "decision": "하반기에 오프라인 사용자 컨퍼런스를 개최하기로 했다."
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "하반기 오프라인 사용자 컨퍼런스는 열지 않기로 했다."
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "reversed"
+    },
+    {
+      "id": "recommendation_feed_shelved",
+      "category": "reversed_cancel",
+      "past_meetings": [
+        {
+          "days_ago": 10,
+          "decision": "추천 피드 기능 개발을 이번 분기에 착수하기로 했다."
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "추천 피드 기능 개발은 무기한 보류하기로 했다."
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "reversed"
+    },
+    {
+      "id": "hackathon_discontinued",
+      "category": "reversed_cancel",
+      "past_meetings": [
+        {
+          "days_ago": 20,
+          "decision": "사내 해커톤을 매 분기 열기로 했다."
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "사내 해커톤은 더 이상 진행하지 않기로 했다."
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "reversed"
+    },
+    {
+      "id": "free_trial_cancelled",
+      "category": "reversed_cancel",
+      "past_meetings": [
+        {
+          "days_ago": 7,
+          "decision": "무료 체험 기간을 제공하기로 했다."
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "무료 체험 기간 제공은 취소하기로 했다."
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "reversed"
+    },
+    {
+      "id": "weekly_report_abolished",
+      "category": "reversed_cancel",
+      "past_meetings": [
+        {
+          "days_ago": 16,
+          "decision": "주간 보고서를 매주 금요일에 작성하기로 했다."
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "주간 보고서 작성은 폐지하기로 했다."
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "reversed"
+    },
+    {
+      "id": "decision_reversed",
+      "category": "reversed_alternative",
+      "past_meetings": [
+        {
+          "days_ago": 14,
+          "decision": "다음 릴리스는 베타로 먼저 출시하기로 했다."
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "역시 베타 없이 바로 정식 출시하기로 했다."
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "reversed"
+    },
+    {
+      "id": "mysql_to_postgres",
+      "category": "reversed_alternative",
+      "past_meetings": [
+        {
+          "days_ago": 12,
+          "decision": "데이터베이스는 MySQL을 사용하기로 했다."
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "데이터베이스를 MySQL 대신 PostgreSQL로 가기로 했다."
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "reversed"
+    },
+    {
+      "id": "sketch_to_figma",
+      "category": "reversed_alternative",
+      "past_meetings": [
+        {
+          "days_ago": 20,
+          "decision": "디자인 툴은 스케치를 계속 쓰기로 했다."
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "디자인 툴을 스케치에서 피그마로 전환하기로 했다."
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "reversed"
+    },
+    {
+      "id": "outsourced_support_brought_in_house",
+      "category": "reversed_alternative",
+      "past_meetings": [
+        {
+          "days_ago": 9,
+          "decision": "고객 지원은 외주 업체에 맡기기로 했다."
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "고객 지원은 외주 없이 사내 팀이 직접 운영하기로 했다."
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "reversed"
+    },
+    {
+      "id": "native_to_cross_platform",
+      "category": "reversed_alternative",
+      "past_meetings": [
+        {
+          "days_ago": 15,
+          "decision": "모바일 앱은 네이티브로 개발하기로 했다."
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "모바일 앱은 네이티브 대신 크로스플랫폼으로 개발하기로 했다."
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "reversed"
+    },
+    {
+      "id": "unrelated_decision_opens_new_thread",
+      "category": "new_unrelated",
+      "past_meetings": [
+        {
+          "days_ago": 7,
+          "decision": "마케팅 예산을 20% 늘리기로 했다."
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "사무실 좌석 배치를 새로 정하기로 했다."
+      },
+      "expected_thread_source": null,
+      "expected_change_type": "new"
+    },
+    {
+      "id": "cafeteria_vs_alert_channel",
+      "category": "new_unrelated",
+      "past_meetings": [
+        {
+          "days_ago": 10,
+          "decision": "사내 카페테리아 메뉴를 월 단위로 바꾸기로 했다."
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "모니터링 알림은 슬랙 채널로 보내기로 했다."
+      },
+      "expected_thread_source": null,
+      "expected_change_type": "new"
+    },
+    {
+      "id": "contract_renewal_vs_python_version",
+      "category": "new_unrelated",
+      "past_meetings": [
+        {
+          "days_ago": 5,
+          "decision": "고객사와의 계약을 1년 연장하기로 했다."
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "개발 환경의 파이썬 버전을 3.12로 올리기로 했다."
+      },
+      "expected_thread_source": null,
+      "expected_change_type": "new"
+    },
+    {
+      "id": "workshop_location_vs_data_deletion",
+      "category": "new_unrelated",
+      "past_meetings": [
+        {
+          "days_ago": 25,
+          "decision": "분기 워크숍은 제주도에서 하기로 했다."
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "회원 탈퇴 시 데이터는 30일 뒤에 삭제하기로 했다."
+      },
+      "expected_thread_source": null,
+      "expected_change_type": "new"
+    },
+    {
+      "id": "marketing_budget_vs_marketing_channel",
+      "category": "new_same_domain",
+      "past_meetings": [
+        {
+          "days_ago": 10,
+          "decision": "마케팅 예산을 20% 늘리기로 했다."
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "마케팅 채널은 인스타그램 중심으로 운영하기로 했다."
+      },
+      "expected_thread_source": null,
+      "expected_change_type": "new"
+    },
+    {
+      "id": "launch_date_vs_launch_coupon",
+      "category": "new_same_domain",
+      "past_meetings": [
+        {
+          "days_ago": 14,
+          "decision": "정식 출시일을 3월 15일로 정했다."
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "출시 기념 할인 쿠폰을 신규 가입자에게 지급하기로 했다."
+      },
+      "expected_thread_source": null,
+      "expected_change_type": "new"
+    },
+    {
+      "id": "rate_limit_vs_response_format",
+      "category": "new_same_domain",
+      "past_meetings": [
+        {
+          "days_ago": 12,
+          "decision": "API 요청 제한은 분당 100회로 설정하기로 했다."
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "API 응답 형식은 JSON으로 통일하기로 했다."
+      },
+      "expected_thread_source": null,
+      "expected_change_type": "new"
+    },
+    {
+      "id": "headcount_vs_interview_rounds",
+      "category": "new_same_domain",
+      "past_meetings": [
+        {
+          "days_ago": 8,
+          "decision": "백엔드 개발자 3명을 채용하기로 했다."
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "채용 면접은 2차까지만 진행하기로 했다."
+      },
+      "expected_thread_source": null,
+      "expected_change_type": "new"
+    },
+    {
+      "id": "review_approvals_vs_ci_lint",
+      "category": "new_same_domain",
+      "past_meetings": [
+        {
+          "days_ago": 20,
+          "decision": "코드 리뷰는 최소 두 명의 승인을 받기로 했다."
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "코드 스타일 검사는 CI에서 자동으로 돌리기로 했다."
+      },
+      "expected_thread_source": null,
+      "expected_change_type": "new"
+    },
+    {
+      "id": "remote_days_vs_office_lunch",
+      "category": "new_same_domain",
+      "past_meetings": [
+        {
+          "days_ago": 9,
+          "decision": "재택근무는 주 2회 허용하기로 했다."
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "사무실 출근일에는 팀 점심을 함께 하기로 했다."
+      },
+      "expected_thread_source": null,
+      "expected_change_type": "new"
+    },
+    {
+      "id": "launch_delay_among_budget_and_launch",
+      "category": "distractor",
+      "past_meetings": [
+        {
+          "days_ago": 20,
+          "decision": "마케팅 예산을 20% 늘리기로 했다."
+        },
+        {
+          "days_ago": 10,
+          "decision": "정식 출시일을 3월 15일로 정했다."
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "정식 출시일을 4월 1일로 연기하기로 했다."
+      },
+      "expected_thread_source": 1,
+      "expected_change_type": "modified"
+    },
+    {
+      "id": "database_kept_among_three",
+      "category": "distractor",
+      "past_meetings": [
+        {
+          "days_ago": 15,
+          "decision": "데이터베이스는 MySQL을 사용하기로 했다."
+        },
+        {
+          "days_ago": 12,
+          "decision": "디자인 툴은 피그마를 쓰기로 했다."
+        },
+        {
+          "days_ago": 5,
+          "decision": "스프린트 주기는 2주로 운영하기로 했다."
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "데이터베이스는 이전 결정대로 MySQL을 계속 쓰기로 했다."
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "unchanged"
+    },
+    {
+      "id": "free_trial_dropped_not_price",
+      "category": "distractor",
+      "past_meetings": [
+        {
+          "days_ago": 30,
+          "decision": "무료 체험 기간을 14일로 제공하기로 했다."
+        },
+        {
+          "days_ago": 14,
+          "decision": "구독 요금은 월 9,900원으로 책정하기로 했다."
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "무료 체험은 제공하지 않기로 했다."
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "reversed"
+    },
+    {
+      "id": "outage_notice_tightened_not_inquiry_sla",
+      "category": "distractor",
+      "past_meetings": [
+        {
+          "days_ago": 18,
+          "decision": "고객 문의 응답 목표는 24시간 이내로 정했다."
+        },
+        {
+          "days_ago": 7,
+          "decision": "장애 발생 시 30분 안에 고객 공지를 올리기로 했다."
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "장애 공지 시한을 30분에서 15분으로 앞당기기로 했다."
+      },
+      "expected_thread_source": 1,
+      "expected_change_type": "modified"
+    },
+    {
+      "id": "hackathon_halved_not_conference",
+      "category": "distractor",
+      "past_meetings": [
+        {
+          "days_ago": 21,
+          "decision": "하반기에 오프라인 사용자 컨퍼런스를 개최하기로 했다."
+        },
+        {
+          "days_ago": 10,
+          "decision": "사내 해커톤을 매 분기 열기로 했다."
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "사내 해커톤은 반기에 한 번만 열기로 했다."
+      },
+      "expected_thread_source": 1,
+      "expected_change_type": "modified"
+    },
+    {
+      "id": "beta_restated_then_dropped",
+      "category": "chain",
+      "past_meetings": [
+        {
+          "days_ago": 30,
+          "decision": "다음 릴리스는 베타로 먼저 출시하기로 했다."
+        },
+        {
+          "days_ago": 15,
+          "decision": "이전에 정한 대로 베타로 먼저 출시하기로 했다."
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "베타 없이 바로 정식 출시하기로 했다."
+      },
+      "expected_thread_source": 1,
+      "expected_change_type": "reversed"
+    },
+    {
+      "id": "rate_limit_raised_then_kept",
+      "category": "chain",
+      "past_meetings": [
+        {
+          "days_ago": 28,
+          "decision": "API 요청 제한은 분당 100회로 설정하기로 했다."
+        },
+        {
+          "days_ago": 14,
+          "decision": "API 요청 제한을 분당 300회로 상향하기로 했다."
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "API 요청 제한은 분당 300회를 그대로 유지하기로 했다."
+      },
+      "expected_thread_source": 1,
+      "expected_change_type": "unchanged"
+    },
+    {
+      "id": "remote_work_expanded_then_abolished",
+      "category": "chain",
+      "past_meetings": [
+        {
+          "days_ago": 25,
+          "decision": "재택근무는 주 2회 허용하기로 했다."
+        },
+        {
+          "days_ago": 12,
+          "decision": "재택근무를 주 3회로 늘리기로 했다."
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "재택근무 제도를 폐지하고 전원 출근하기로 했다."
+      },
+      "expected_thread_source": 1,
+      "expected_change_type": "reversed"
+    }
+  ]
+}

@@ -1,6 +1,6 @@
 """Loads the hand-labeled topic-linking evaluation set.
 
-Kept as data, not code, next to ``topic_linking_v1.json`` so a change to the
+Kept as data, not code, next to ``topic_linking_v*.json`` so a change to the
 labels shows up as a data diff rather than a Python diff. Bump the filename's
 version suffix on a change that shifts what counts as correct — a metric that
 moves because the set changed underneath it is not a metric (see
@@ -18,7 +18,7 @@ from importlib.resources import files
 from typing import Any
 
 _DATA_DIR = files(__package__) / "fixtures"
-_DEFAULT_DATASET = "topic_linking_v1.json"
+_DEFAULT_DATASET = "topic_linking_v2.json"
 
 
 @dataclass(frozen=True)
@@ -39,6 +39,15 @@ class EvalCase:
     """Indices into ``past_meetings`` the current meeting's topics should
     *assert* a link to. Empty means: no past meeting is a real match, so any
     asserted link here is a false positive."""
+    category: str = "uncategorized"
+    """What the case is testing, for the runner's per-category breakdown. v2's
+    categories: ``follow_up`` (same topic, shared wording), ``paraphrase``
+    (same topic, little shared wording), ``recurring`` (several past meetings
+    all match), ``distractor`` (only some of several past meetings match),
+    ``multi_topic`` (a six-utterance meeting carrying two topics, so
+    segmentation is in play), ``unrelated``, ``shared_keyword`` (a shared word
+    with a different meaning) and ``same_domain`` (same area, different
+    subject) — the last three expect no link."""
 
 
 def load_cases(name: str = _DEFAULT_DATASET) -> list[EvalCase]:
@@ -54,6 +63,7 @@ def _parse_case(raw: dict[str, Any]) -> EvalCase:
         past_meetings=[_parse_meeting(m) for m in raw["past_meetings"]],
         current_meeting=_parse_meeting(raw["current_meeting"]),
         expected_linked_indices=frozenset(raw.get("expected_linked_indices", [])),
+        category=raw.get("category", "uncategorized"),
     )
 
 

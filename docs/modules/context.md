@@ -474,6 +474,28 @@ The evaluation set is small, hand-labeled, and versioned inside the module. The
 non-LLM extraction path keeps the metric deterministic. Link dismissals from the
 confirmation flow feed threshold tuning.
 
+Each suite's cases carry a `category` (what the case is testing — a paraphrase,
+a shared keyword with a different meaning, a reversed vs. a modified decision),
+and the report breaks accuracy down by it, prints a 95% Wilson interval next to
+every headline number, and sweeps its threshold (`link_confidence_threshold`,
+`lineage_match_threshold`) from the scores the run already stored. Topic
+linking also reports link-level precision and recall and how often a no-link
+meeting got an asserted link; decision lineage scores threading and change-type
+classification separately, with a confusion matrix for the latter. What each
+change type means for labeling is in `eval/decision_lineage/dataset.py`.
+
+Each suite has a development set (`*_v2.json`, the default) and held-out sets
+(`*_heldout_v*.json`), run with `--dataset` (`python -m autune_context.eval
+topic-linking --dataset topic_linking_heldout_v1.json`). A held-out set stays
+held out only until a rule or threshold is chosen by looking at its failures —
+the PR that does that says so. Every set was written by the same person, so a
+held-out set guards against overfitting to particular cases; it is not a sample
+of real meetings.
+
+To run it on a laptop without the team's inference endpoints, use the
+`*_local` implementations (the `local-models` extra) and point
+`AUTUNE_CONTEXT_NLI_LOCAL_MODEL` at the fine-tuned checkpoint.
+
 ## Privacy notes
 
 - Retention interacts directly with this module: a linked past meeting may be

@@ -26,12 +26,20 @@ def main() -> int:
         choices=sorted(_SUITES),
         help="run only this suite; default runs all of them",
     )
+    parser.add_argument(
+        "--dataset",
+        help="fixture file name under the suite's fixtures/ (e.g. the held-out "
+        "set); needs a suite. Default: the suite's own default dataset",
+    )
     args = parser.parse_args()
+    if args.dataset and not args.suite:
+        parser.error("--dataset needs a suite")
 
     for name in [args.suite] if args.suite else sorted(_SUITES):
         module = _SUITES[name]
-        print(f"=== {name} ===")
-        print(module.report(module.run_all()))
+        cases = module.load_cases(args.dataset) if args.dataset else None
+        print(f"=== {name}{f' ({args.dataset})' if args.dataset else ''} ===")
+        print(module.report(module.run_all(cases)))
         print()
     return 0
 
