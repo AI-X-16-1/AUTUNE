@@ -104,9 +104,11 @@ def meeting_day(started_at: datetime | None) -> date | None:
 _WEEK = r"(?P<week>이번\s*주|다다음\s*주|다음\s*주|차주|담주)"
 _WEEK_OFFSET = {"이번": 0, "다다음": 2, "다음": 1, "차주": 1, "담주": 1}
 _WEEK_PART = {"초": 1, "초반": 1, "중반": 3}
-"""Part of a week, as the last weekday it still covers: early is Monday to
-Tuesday, the middle Wednesday to Thursday. A deadline said as a span is due by
-the span's end -- the same reading 주말 (Sunday) and 월말 already get."""
+"""Part of a working week, as the last weekday it covers. The team's reading:
+초 is Monday-Tuesday, 중반 Wednesday-Thursday, 말 Friday, and a week with no
+part Monday-Friday. A deadline said as a span is due by the span's end, the
+same reading 주말 (Sunday) and 월말 already get -- so 말 and the bare week are
+both Friday, below."""
 
 
 def _week_offset(word: str) -> int:
@@ -357,12 +359,11 @@ _PHRASES: tuple[tuple[re.Pattern[str], Resolver], ...] = (
             )
         ),
     ),
-    # 다음 주 말 -- spaced, so the week's end (Friday) or its weekend (Sunday),
-    # and transcription spacing does not tell 주 말 from 주말. The words are
-    # kept for a person to set the day; returning nothing lost them entirely.
+    # 다음 주 말 -- spaced, the working week's end: Friday. Written as one word,
+    # 다음 주말 is the weekend and Sunday (above).
     (
         re.compile(_WEEK + r"\s+말(?!씀)"),
-        lambda _m, _day: None,
+        _needs_day(lambda m, day: _monday(day, _week_offset(m["week"])) + timedelta(days=FRIDAY)),
     ),
     # 이번 주, 다음 주 -- with no day named, the working week's end. Not "다음
     # 주 말" (above), but "다음 주 말씀드릴게요" is a week and a verb.

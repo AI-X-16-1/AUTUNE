@@ -37,12 +37,13 @@ WEDNESDAY = date(2026, 9, 9)
         ("다음 주 중으로 하겠습니다", "다음 주", date(2026, 9, 18)),
         ("다음 주 말씀드리겠습니다", "다음 주", date(2026, 9, 18)),
         ("다음 주 초안 드릴게요", "다음 주", date(2026, 9, 18)),
-        # Part of a week: by the last weekday the part covers.
+        # Part of a week, by its last weekday: 초 Mon-Tue, 중반 Wed-Thu, 말 Fri.
         ("다음 주 초에 드릴게요", "다음 주 초", date(2026, 9, 15)),
         ("다음 주초까지 하겠습니다", "다음 주초", date(2026, 9, 15)),
         ("다음 주 초반에 공유할게요", "다음 주 초반", date(2026, 9, 15)),
         ("다음 주 중반까지 하겠습니다", "다음 주 중반", date(2026, 9, 17)),
         ("이번 주 중반까지 드릴게요", "이번 주 중반", date(2026, 9, 10)),
+        ("다음 주 말까지 하겠습니다", "다음 주 말", date(2026, 9, 18)),
         # Weekends end on Sunday.
         ("주말까지 보겠습니다", "주말", date(2026, 9, 13)),
         ("이번 주말에 정리하겠습니다", "이번 주말", date(2026, 9, 13)),
@@ -68,14 +69,6 @@ WEDNESDAY = date(2026, 9, 9)
 )
 def test_a_phrase_resolves_to_a_day(text: str, phrase: str, due: date) -> None:
     assert parse_due(text, WEDNESDAY) == DueDate(text=phrase, date=due)
-
-
-def test_a_spaced_week_end_keeps_its_words_and_no_day() -> None:
-    """ "다음 주 말" is Friday or Sunday, and spacing from transcription cannot
-    say which; "다음 주말" (one word) stays Sunday. A person sets the day."""
-    due = parse_due("다음 주 말까지 하겠습니다", WEDNESDAY)
-
-    assert due == DueDate(text="다음 주 말", date=None)
 
 
 def test_early_this_week_said_on_a_friday_has_passed() -> None:
