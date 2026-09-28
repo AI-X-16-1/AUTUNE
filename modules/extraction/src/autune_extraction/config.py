@@ -101,10 +101,10 @@ class ExtractionSettings(BaseSettings):
     utterance's own text, so an external implementation is the privacy.md
     section 6 question ``classifier_impl=llm`` is waiting on (#392).
 
-    Mirrors ``classifier_impl``'s three-way shape rather than module D's own
-    ``AUTUNE_CONTEXT_NLI_*`` naming -- module D is a different module (modules
-    never import each other) and this module's own classifier config is the
-    closer precedent to stay consistent with.
+    Mirrors ``classifier_impl``'s ``local``/``hosted``/``fake`` rather than
+    module D's own ``AUTUNE_CONTEXT_NLI_*`` naming -- module D is a different
+    module (modules never import each other) and this module's own classifier
+    config is the closer precedent to stay consistent with.
     """
 
     nli_checkpoint: str = ""
