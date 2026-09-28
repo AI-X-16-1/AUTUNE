@@ -238,6 +238,32 @@ def test_an_item_that_already_has_its_page_is_updated_not_recreated(
     assert notion.updates[0][0] == "page_already_there"
 
 
+def test_a_backfill_leaves_archived_pages_archived_and_remakes_deleted_ones(
+    wired: Session, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """PARKJAEKYUNG0525, review of #404: with archived counted as gone, one
+    backfill made a new page for every page a team had archived (2 -> 4 here),
+    and printed them as "updated". Archived pages now stay archived; a deleted
+    one is made again and counted as replaced."""
+    item(wired)
+    decision(wired)
+    notion = FakeNotion()
+    wire_notion(monkeypatch, notion, {"team_1": config_for("team_1")})
+    notion_backfill.main([])
+    item_page, decision_page = (f"page_{n}" for n in (1, 2))
+    notion.archived.add(item_page)
+    notion.deleted.add(decision_page)
+    capsys.readouterr()
+
+    notion_backfill.main([])
+
+    assert len(notion.pages) == 3, "only the deleted decision page is made again"
+    counts = [line for line in capsys.readouterr().out.splitlines() if " sent " in line]
+    items_line, decisions_line = counts
+    assert "archived, left alone 1" in items_line
+    assert "replaced 1" in decisions_line
+
+
 def test_a_failed_call_leaves_no_claim_for_a_later_run_to_skip(
     wired: Session, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

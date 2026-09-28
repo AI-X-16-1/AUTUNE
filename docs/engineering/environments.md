@@ -130,11 +130,16 @@ Where that token comes from, and the two ways to give it to the browser:
 | `AUTUNE_AUDIO_DIARIZATION_MIN_SPEAKERS` / `…_MAX_SPEAKERS` | A | Bounds instead of an exact count. Ignored when `…_NUM_SPEAKERS` is set. Each must be ≥ 1; the settings refuse to load otherwise |
 | `NEXT_PUBLIC_AUTUNE_DEV_TOKEN` | A (web) | A bearer token for the browser, local only — see "A token for the browser" below |
 | `AUTUNE_AUDIO_DIARIZATION_MODEL` | A | Default `pyannote/speaker-diarization-3.1` |
-| `AUTUNE_EXTRACTION_CLASSIFIER_IMPL` | B | `local` · `hosted` · `fake`. Default `local`. **No `external`** — see below |
+| `AUTUNE_EXTRACTION_CLASSIFIER_IMPL` | B | `local` · `hosted` · `fake` · `llm`. Default `local`. `llm` is opt-in and not signed off for real meetings — see below |
 | `AUTUNE_EXTRACTION_CLASSIFIER_CHECKPOINT` | B | Pinned model, recorded with every classification. Never a floating tag. **Blank by default** — no trained checkpoint is published yet, and `local` / `hosted` refuse to start without one |
 | `AUTUNE_EXTRACTION_CLASSIFIER_ENDPOINT` | B | Our own inference server. Required when `CLASSIFIER_IMPL=hosted` |
 | `AUTUNE_EXTRACTION_CLASSIFIER_DEVICE` | B | `cpu` · `cuda`. Default `cpu`. Mirrors `AUTUNE_AUDIO_DEVICE` |
-| `AUTUNE_EXTRACTION_NLI_IMPL` | B | `local` · `hosted` · `fake`. Default `local`. Step 4 (#12), same **no `external`** rule as `CLASSIFIER_IMPL` |
+| `AUTUNE_EXTRACTION_LLM_API_KEY` | B | Provider key for `CLASSIFIER_IMPL=llm`, sent as a header only. **Blank by default**, and `llm` refuses to start without one. A free-tier key may let the provider keep what it is sent — dummy meetings only |
+| `AUTUNE_EXTRACTION_LLM_MODEL` | B | The model `llm` calls. Default `gemini-3.8-flash`. Every classification records `llm:<model>+<fallback>` while the fallback is on |
+| `AUTUNE_EXTRACTION_LLM_FALLBACK_MODEL` | B | Answers a window when `LLM_MODEL` stays unavailable (429, 5xx, timeout after retries). Default `gemini-3.5-flash-lite`; blank disables it |
+| `AUTUNE_EXTRACTION_LLM_BASE_URL` | B | The provider's API root. Default Google's Generative Language API |
+| `AUTUNE_EXTRACTION_LLM_TIMEOUT_SEC` | B | Timeout per request (connect and read), seconds. Default `60` — a thinking model takes 12–20 s a window, past the shared client's 10 s. A window may retry and fall back, so it can take several of these |
+| `AUTUNE_EXTRACTION_NLI_IMPL` | B | `local` · `hosted` · `fake`. Default `local`. Step 4 (#12). **No `external`**: it reads an utterance's own text — see below |
 | `AUTUNE_EXTRACTION_NLI_CHECKPOINT` | B | Recorded as the model version once NLI verifies a row. Never a floating tag. **Blank by default** — #172 settled on klue/roberta-base fine-tuned on KorNLI, but that checkpoint is not baked in as a silent default; `local` / `hosted` refuse to start without one |
 | `AUTUNE_EXTRACTION_NLI_ENDPOINT` | B | Our own inference server. Required when `NLI_IMPL=hosted` |
 | `AUTUNE_EXTRACTION_NLI_DEVICE` | B | `cpu` · `cuda`. Default `cpu`. Mirrors `AUTUNE_EXTRACTION_CLASSIFIER_DEVICE` |
@@ -147,6 +152,7 @@ Where that token comes from, and the two ways to give it to the browser:
 | `AUTUNE_EXTRACTION_EMBEDDER_CHECKPOINT` | B | Default `nlpai-lab/KURE-v1` — module D's already-shipped choice, not a candidate awaiting evaluation |
 | `AUTUNE_EXTRACTION_EMBEDDER_DEVICE` | B | `cpu` · `cuda`. Default `cpu` |
 | `AUTUNE_EXTRACTION_RESOLVER_MIN_SIMILARITY` | B | Below this cosine similarity to its own context window, a resolved sentence is ungrounded. **Blank by default** — no embedding model has been run against a labelled set yet, and blank skips the check entirely |
+| `AUTUNE_EXTRACTION_DEV_ROUTES` | B | `true` mounts the unauthenticated page for connecting Notion by hand, and only when `AUTUNE_ENV=local` too. Default `false`. Deleted with S28 (#401) |
 | `AUTUNE_GAP_RISK_THRESHOLD` | C | Default `0.7`. At or above is `high`, the only severity surfaced |
 | `AUTUNE_GAP_MEDIUM_THRESHOLD` | C | Default `0.5`. Down to here is `medium`, below it `low` |
 | `AUTUNE_GAP_DEFAULT_TEMPLATE` | C | Default `general`. Which domain template a meeting nobody chose one for is held to |
@@ -196,13 +202,25 @@ Every new variable goes into `.env.example` with a comment and into this table.
 A variable that exists only in someone's local `.env` will break the next
 person's setup.
 
-### The classifier has no external option
+### The classifier's one external option is opt-in
 
-`AUTUNE_EXTRACTION_CLASSIFIER_IMPL` accepts `local`, `hosted` and `fake`, and
-nothing else. Module B classifies every utterance in a meeting, so an external
-implementation would mean sending the whole transcript to somebody else's model —
-which section 6 of `../architecture/privacy.md` makes a design conversation rather
-than a value you can set.
+`AUTUNE_EXTRACTION_CLASSIFIER_IMPL` accepts `local`, `hosted`, `fake` and `llm`.
+Module B classifies every utterance in a meeting, so an external implementation
+sends the whole meeting's text to somebody else's model — which section 6 of
+`../architecture/privacy.md` makes a design conversation rather than a value you
+can set. Module B added `llm` as an opt-in after the 2026-09-23 mentoring, and
+the conversation is #392. Until #392 is settled:
+
+- `llm` is never the default, and nothing selects it for you.
+- Use it on dummy meetings only. A free-tier key may let the provider keep what
+  it is sent; a real meeting needs a paid key and #392's answer.
+
+What it sends is utterance text as module A masked it and a fixed instruction —
+no speaker, no id, no meeting title — in windows under the 4,000-character
+outbound cap, through `autune_integrations.HttpClient` like `hosted`. **A name
+said aloud is not masked:** module A masks resident registration, card, phone
+and account numbers and email addresses, and has no pattern or model for names. So every name spoken in the meeting goes
+with it — the exposure #392 and #92 ask about.
 
 `hosted` points at an inference server we run. It still goes through
 `autune_integrations.HttpClient` so the outbound guard reads the request body:

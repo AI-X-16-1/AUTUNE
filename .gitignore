@@ -20,6 +20,9 @@ out/
 .turbo/
 *.tsbuildinfo
 
+# Where scripts/up.sh puts the three processes' logs and pid files.
+.logs/
+
 # Environment and secrets
 .env
 .env.*

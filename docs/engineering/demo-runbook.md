@@ -30,8 +30,21 @@ section 6, marked *seen*.
 
 ```bash
 cp .env.example .env                                   # once; fill AUTUNE_AUDIO_HF_TOKEN
+./scripts/up.sh                                        # everything below, in one command
+```
+
+`scripts/up.sh` does sections 1 and 2 for you, including the implementation
+choices from the troubleshooting table in section 8 — the ones that otherwise
+fail by returning **nothing** while every endpoint still answers 200. Stop with
+`./scripts/down.sh`. Pass `--real-models` on a machine that has B's and D's
+checkpoints.
+
+The rest of this section is what the script runs, for when you want a terminal
+of your own or something has gone wrong in it:
+
+```bash
 docker compose -f infra/docker-compose.yml up -d
-uv sync --all-packages                                 # not plain `uv sync`
+uv sync --all-packages --extra local-models            # not plain `uv sync`
 pnpm install
 uv run alembic -c infra/alembic.ini upgrade heads      # plural: six branches
 ```

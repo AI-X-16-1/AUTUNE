@@ -32,7 +32,7 @@
 
 key: general
 name: "기본"
-version: 1
+version: 2
 
 items:
   - key: success_criteria
@@ -70,7 +70,12 @@ items:
   - key: next_step
     category: next_step
     item: "다음 단계"
-    weight: 0.6
+    # 0.7, the high threshold, so a meeting that never says what happens next
+    # raises a gap a reader sees by default. At 0.6 a missing next step scored
+    # 0.6 (a missing item scores its weight) and stayed in `medium`, which the
+    # screen hides: gap_detection_v1 missed it in both cases where it was a
+    # real gap. Version 2.
+    weight: 0.7
     keywords: ["다음", "후속", "이후", "계획", "단계", "진행"]
     question: "이 회의 다음에 실제로 일어나는 일은 무엇입니까?"
     question_about: "{topic}에 대해 이 회의 다음에 실제로 일어나는 일은 무엇입니까?"

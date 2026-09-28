@@ -13,7 +13,10 @@ the live sync uses (``service.sync_action_item_to_notion`` /
 ``sync_decision_to_notion``), so it is **safe to run more than once**: a row
 with no page yet gets one created; a row that already has one gets it
 updated with whatever the description, assignee, due date or statement read
-as now, the same way a later edit on the board does.
+as now, the same way a later edit on the board does. A page someone deleted in
+Notion is made again and counted as ``replaced``; one someone archived is left
+archived and counted as ``archived`` -- a backfill does not undo a person's
+tidying (#404).
 
     uv run python -m autune_extraction.notion_backfill
     uv run python -m autune_extraction.notion_backfill --team team_abc123
@@ -46,8 +49,18 @@ class Stats:
 
     sent: int = 0
     updated: int = 0
+    replaced: int = 0
+    """A page deleted in Notion, made again."""
+    archived: int = 0
+    """A page archived in Notion, left as it is."""
     not_connected: int = 0
     failed: int = 0
+
+    def count(self, outcomes: list[service.PageOutcome]) -> None:
+        """What became of a page the row already had. Nothing reported means
+        no call was made for it."""
+        for outcome in outcomes:
+            setattr(self, outcome, getattr(self, outcome) + 1)
 
 
 def _confirmed_action_items(team_id: str | None) -> list[tuple[str, str]]:
@@ -113,16 +126,18 @@ def _sync_one_action_item(
             stats.not_connected += 1
             return
         already_had_a_page = session.get(ExtExternalRef, (action_item_id, "notion")) is not None
+        outcomes: list[service.PageOutcome] = []
         ref = service.sync_action_item_to_notion(
             session,
             clients.get(meeting.team_id, config.secret),
             action_item_id=action_item_id,
             database_id=database_id,
             property_names=config.config.get("action_properties"),
+            on_page=outcomes.append,
         )
         if ref is not None:
             if already_had_a_page:
-                stats.updated += 1
+                stats.count(outcomes)
             else:
                 stats.sent += 1
 
@@ -160,16 +175,18 @@ def _sync_one_decision(
             stats.not_connected += 1
             return
         already_had_a_page = session.get(ExtDecisionRef, (decision_id, "notion")) is not None
+        outcomes: list[service.PageOutcome] = []
         ref = service.sync_decision_to_notion(
             session,
             clients.get(meeting.team_id, config.secret),
             decision_id=decision_id,
             database_id=database_id,
             property_names=config.config.get("decision_properties"),
+            on_page=outcomes.append,
         )
         if ref is not None:
             if already_had_a_page:
-                stats.updated += 1
+                stats.count(outcomes)
             else:
                 stats.sent += 1
 
@@ -211,6 +228,7 @@ def main(argv: list[str] | None = None) -> int:
     for label, stats in (("action items", item_stats), ("decisions", decision_stats)):
         print(
             f"{label:<13} sent {stats.sent:<5} updated {stats.updated:<5} "
+            f"replaced {stats.replaced:<5} archived, left alone {stats.archived:<5} "
             f"team not connected {stats.not_connected:<5} failed {stats.failed}"
         )
 
