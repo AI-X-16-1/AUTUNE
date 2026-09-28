@@ -235,6 +235,75 @@ def test_an_ending_nobody_listed_is_not_guessed_at() -> None:
     assert noun_stem(Token(text="리스크ㅋ", tag="ncn+jxt", start=0, end=4)) is None
 
 
+@pytest.mark.parametrize(
+    ("text", "tag", "stem"),
+    [
+        ("서버에서부터", "ncn+jca+jxc", "서버"),
+        ("모듈까지도", "ncn+jxc", "모듈"),
+        ("학교에서만", "ncn+jca+jxc", "학교"),
+        ("고객에게도", "ncn+jca+jxc", "고객"),
+        ("고객한테는", "ncpa+jca+jxt", "고객"),
+        ("캐시에만", "ncn+jca+jxc", "캐시"),
+        ("데이터에서의", "ncn+jca+jcm", "데이터"),
+        ("인덱스밖에", "ncn+ncn+jca", "인덱스"),
+        ("모델마저", "ncn+jxc", "모델"),
+        ("일정조차", "ncpa+ncn+jxc", "일정"),
+        ("우크라이나에서는", "nq+jca+jxt", "우크라이나"),
+        ("경로로", "ncn+jca", "경로"),
+    ],
+)
+def test_a_stacked_particle_is_cut_whole(text: str, tag: str, stem: str) -> None:
+    """Cut at the longest listed particle alone, 모듈까지도 was 모듈까지 and
+    서버에서부터 was 서버에서 — the rest of the particle left on the topic.
+    Raised in review of #345; the tags are the model's for those sentences."""
+    assert noun_stem(Token(text=text, tag=tag, start=0, end=len(text))) == stem
+
+
+@pytest.mark.parametrize(
+    ("text", "tag"),
+    [
+        ("경로는", "ncn+jxt"),
+        ("개인화로는", "ncn+jxt"),
+        ("경로도", "ncn+jxc"),
+        ("서버로만", "ncn+jca"),
+        ("캐시라도", "ncn+jxc"),
+        ("인프라도", "ncn+jxc"),
+        ("계획대로", "ncn+ncpa+jca"),
+        ("무대로", "ncn+jca"),
+        ("모델이야말로", "ncn+jxc"),
+        ("프로세스로부터", "ncn+jca+jxc"),
+    ],
+)
+def test_an_ending_a_noun_could_also_end_in_is_not_cut(text: str, tag: str) -> None:
+    """경로는 and 개인화로는 carry the same tag; cutting 로는 gives 경, cutting
+    는 gives 개인화로. Either is a topic nobody said, so neither is cut."""
+    assert noun_stem(Token(text=text, tag=tag, start=0, end=len(text))) is None
+
+
+def test_a_case_particle_left_on_the_stem_refuses_the_token() -> None:
+    """에서조차 is not listed; cut at 조차 it would leave 서버에서."""
+    assert noun_stem(Token(text="서버에서조차", tag="ncn+jca+jxc", start=0, end=6)) is None
+
+
+def test_the_rows_345_measured_give_no_topic_carrying_a_particle() -> None:
+    assert labels(("결제", "ncpa"), ("모듈까지도", "ncn+jxc"), ("영향이", "ncn+jcs")) == [
+        "결제 모듈",
+        "영향",
+    ]
+    assert labels(("서버에서부터", "ncn+jca+jxc"), ("로그를", "ncn+jco")) == ["서버", "로그"]
+    assert labels(("정렬", "ncn"), ("로직은", "ncn+jxt"), ("계획대로", "ncn+ncpa+jca")) == [
+        "정렬 로직"
+    ]
+    assert labels(("검색", "ncpa"), ("기능은", "ncn+jxt"), ("캐시라도", "ncn+jxc")) == ["검색 기능"]
+    assert labels(("추천", "ncpa"), ("모델이야말로", "ncn+jxc")) == ["추천"]
+
+
+def test_a_lookalike_carrying_the_copula_is_not_read_through() -> None:
+    """The 재시도 shortcut is taken only once the tag has passed the same check
+    every other token does."""
+    assert noun_stem(Token(text="재시도", tag="ncpa+jp", start=0, end=3)) is None
+
+
 @pytest.mark.parametrize(("text", "tag"), [("재시도", "ncpa+jxc"), ("난이도", "ncn+jcs")])
 def test_a_noun_the_model_splits_before_its_last_syllable_is_kept_whole(
     text: str, tag: str
