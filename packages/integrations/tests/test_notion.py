@@ -1,0 +1,47 @@
+"""``NotionClient.page_state`` against Notion's answers (#403, #404), over a
+mock transport -- no network calls."""
+
+from __future__ import annotations
+
+from typing import Any
+
+import httpx
+import pytest
+
+from autune_integrations.errors import PermanentIntegrationError
+from autune_integrations.notion import NotionClient
+
+
+def client_answering(status: int, body: dict[str, Any] | None = None) -> NotionClient:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "GET"
+        assert request.url.path == "/v1/pages/page_1"
+        return httpx.Response(status, json=body or {})
+
+    client = NotionClient("token")
+    client._client = httpx.Client(
+        base_url="https://api.notion.com/v1", transport=httpx.MockTransport(handler)
+    )
+    return client
+
+
+def test_a_404_is_a_deleted_page() -> None:
+    assert client_answering(404, {"code": "object_not_found"}).page_state("page_1") == "deleted"
+
+
+@pytest.mark.parametrize("flag", ["archived", "in_trash"])
+def test_an_archived_or_trashed_page_is_archived_not_deleted(flag: str) -> None:
+    """A person put it there and can take it back out -- not the same as gone."""
+    assert client_answering(200, {"id": "page_1", flag: True}).page_state("page_1") == "archived"
+
+
+def test_a_live_page_is_live() -> None:
+    body = {"id": "page_1", "archived": False, "in_trash": False}
+    assert client_answering(200, body).page_state("page_1") == "live"
+
+
+def test_any_other_refusal_is_raised_not_read_as_a_state() -> None:
+    """A revoked token would refuse the new page too."""
+    with pytest.raises(PermanentIntegrationError) as caught:
+        client_answering(401).page_state("page_1")
+    assert caught.value.details["upstream_status"] == 401

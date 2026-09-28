@@ -761,6 +761,27 @@ def test_a_second_sync_of_a_confirmed_decision_updates_its_page(session: Session
     assert notion.updates[0][0] == page_id
 
 
+def test_a_reword_of_a_decision_whose_page_was_deleted_makes_a_new_page(
+    session: Session,
+) -> None:
+    """#403 for decisions: the page is gone from Notion, so the reword makes a
+    new one instead of being refused on every later sync."""
+    first, _second = two_decisions(session)
+    notion = FakeNotion()
+    service.review_decision(session, first, DecisionReviewUpdate(status="confirmed"))
+    ref = service.sync_decision_to_notion(session, notion, decision_id=first.id, database_id="db")
+    assert ref is not None
+    assert ref.external_id is not None
+    notion.deleted.add(ref.external_id)
+
+    again = service.sync_decision_to_notion(session, notion, decision_id=first.id, database_id="db")
+
+    assert again is not None
+    assert [database for database, _ in notion.pages] == ["db", "db"]
+    assert again.external_id == "page_2"
+    assert again.url == service.notion_url("page_2")
+
+
 def test_a_decision_sync_holding_the_ref_lock_sends_the_reword_committed_after_it_started(
     session: Session,
 ) -> None:
