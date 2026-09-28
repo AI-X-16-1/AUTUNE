@@ -416,8 +416,20 @@ keep test recordings of real meetings on disk. See
 The upload endpoint writes the recording and the worker adopts it by job id, so
 a deployment that gives the two processes different storage breaks the handover:
 the worker finds nothing, and the file the endpoint wrote is left with nobody
-to delete it. Compose runs both from one volume; keep it that way, or change
-the handover rather than the path (`privacy.md` section 1, decision #275).
+to delete it. Locally both run on the host from the same checkout (the two
+commands at the top of this file), so they share `AUTUNE_AUDIO_TEMP_DIR` by
+construction: `AudioSettings` reads `.env` relative to the working directory,
+and both are started from the repository root. `infra/docker-compose.yml` runs
+only PostgreSQL and Redis, and no volume is involved.
+
+Containerising either process means both must see one **local** directory at
+that path: a bind mount of the host directory (the only option when one of the
+two stays on the host), or a volume shared by both containers on the same host
+— tmpfs or the local driver, never a network- or cloud-backed driver. This is
+the scratch directory `privacy.md` section 1 requires, not the "mounted volume"
+it forbids: files in it are deleted by `storage.adopt` and `service.sweep_orphans`, and
+the volume must not outlive the host. Keep that true, or change the handover
+rather than the path (`privacy.md` section 1, decision #275).
 
 While an upload request is in flight there is a second, short-lived copy of the
 recording in the OS temporary directory (`tempfile.gettempdir()`), written by
