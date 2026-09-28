@@ -31,6 +31,7 @@ from autune_audio.schemas import Segment, Transcription, Turn, Waveform, Word
 from autune_contracts.events import TRANSCRIPT_READY
 from autune_contracts.transcript import TranscriptReady
 from autune_core.entities import Meeting, Utterance
+from autune_core.errors import ConfigurationError
 
 SPOKEN = [
     ("SPEAKER_00", 0.0, 4.0, "제 번호는 010-1234-5678입니다"),
@@ -105,12 +106,26 @@ def pipeline(
         "transcription": _transcription(),
         "audio_present_at_write": None,
         "order": [],
+        # The pipeline's own steps. Separate from `order`, which records only
+        # where the transaction closed against where the event went out.
+        "steps": [],
     }
 
-    monkeypatch.setattr(
-        tasks, "decode", lambda path: Waveform(samples=np.zeros(160, dtype=np.float32))
-    )
-    monkeypatch.setattr(tasks, "transcribe", lambda waveform, **kw: state["transcription"])
+    def fake_resolve_device() -> str:
+        state["steps"].append("resolve_device")
+        return "cpu"
+
+    def fake_decode(path: Path) -> Waveform:
+        state["steps"].append("decode")
+        return Waveform(samples=np.zeros(160, dtype=np.float32))
+
+    def fake_transcribe(waveform: Waveform, **kw: object) -> Transcription:
+        state["steps"].append("transcribe")
+        return state["transcription"]
+
+    monkeypatch.setattr(tasks, "resolve_device", fake_resolve_device)
+    monkeypatch.setattr(tasks, "decode", fake_decode)
+    monkeypatch.setattr(tasks, "transcribe", fake_transcribe)
     monkeypatch.setattr(tasks, "get_diarizer", lambda: FakeDiarizer(_turns()))
     monkeypatch.setattr(tasks, "build_prompt", lambda: "")
 
@@ -304,6 +319,57 @@ def test_a_meeting_whose_task_raised_is_marked_failed(
     with pytest.raises(RuntimeError, match="pyannote could not load"):
         tasks.process_recording(job)
 
+    assert db_session.get(Meeting, meeting).status == "failed"
+    assert db_session.get(TranscriptionJob, job).status == "failed"
+    assert published == []
+
+
+def test_the_diarization_device_is_resolved_before_the_recording_is_opened(
+    pipeline: dict,
+    db_session: Session,
+    job: str,
+    meeting: str,
+    recording: Path,
+) -> None:
+    """Order, and it is the order that makes a misconfiguration survivable.
+
+    ``resolve_device`` used to be reached only from ``PyannoteDiarizer._load``,
+    the last step of the ``adopt`` block, so a device this process cannot use
+    raised after ``transcribe`` — about thirteen minutes on the measured
+    recording — and the block deleted the upload on the way out. The mistake
+    was knowable before the file was opened (#394).
+    """
+    tasks.process_recording(job)
+
+    assert pipeline["steps"] == ["resolve_device", "decode", "transcribe"]
+
+
+def test_an_unusable_device_costs_no_transcription_and_leaves_the_upload(
+    pipeline: dict,
+    db_session: Session,
+    job: str,
+    meeting: str,
+    recording: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    published: list[tuple[str, dict]],
+) -> None:
+    """The failure lands before ``adopt``, so nothing decodes and nothing is deleted.
+
+    The upload stays for ``sweep_orphans``, which collects the files of jobs
+    that are ``failed`` — the attempt is over, and this is the one failure that
+    did not have to spend a recording to discover itself.
+    """
+
+    def unusable() -> str:
+        raise ConfigurationError("AUTUNE_AUDIO_DIARIZATION_DEVICE asks for 'mps'")
+
+    monkeypatch.setattr(tasks, "resolve_device", unusable)
+
+    with pytest.raises(ConfigurationError):
+        tasks.process_recording(job)
+
+    assert pipeline["steps"] == []
+    assert recording.exists()
     assert db_session.get(Meeting, meeting).status == "failed"
     assert db_session.get(TranscriptionJob, job).status == "failed"
     assert published == []

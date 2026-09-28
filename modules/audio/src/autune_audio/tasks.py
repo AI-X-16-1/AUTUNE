@@ -13,7 +13,7 @@ from celery import shared_task
 from autune_audio import service
 from autune_audio.config import get_settings
 from autune_audio.decoding import decode
-from autune_audio.diarization import get_diarizer
+from autune_audio.diarization import get_diarizer, resolve_device
 from autune_audio.glossary import build_prompt
 from autune_audio.masking import mask
 from autune_audio.persistence import persist_transcript, transcript_payload
@@ -112,6 +112,16 @@ def process_recording(job_id: str) -> None:
     log.info("audio_process_started", meeting_id=meeting_id, job_id=job_id)
 
     try:
+        # Before `adopt`, not inside it. A device this process cannot use is a
+        # configuration error, and `_load` raising it would raise it after
+        # `transcribe` -- about thirteen minutes of Whisper on the measured
+        # recording -- inside the block that deletes the upload on the way out.
+        # The meeting would be lost to a mistake that was knowable before the
+        # file was opened (@PARKJAEKYUNG0525, @lsh2217, @mminjae97, @kjfcvx12 on
+        # #394). Resolving here costs one `torch.cuda.is_available()` and fails
+        # in milliseconds, with the upload still on disk for the sweep.
+        resolve_device()
+
         with adopt(upload_path(job_id, settings)) as recording:
             waveform = decode(recording.path)
             transcription = transcribe(waveform, glossary=build_prompt())
