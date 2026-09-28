@@ -381,13 +381,20 @@ CPU with a warning. CPU works, which is exactly the problem: a fallback turns
 14.3× into a log line, and section 4 below is a list of failures that looked
 like successes until somebody measured.
 
-**Two things this does not settle.** `mps` has only been measured in-process;
-module E's SetFit aborts on Metal under prefork and threaded Celery workers,
-which is why the demo runs `--pool=solo` (#329), and pyannote on Metal inherits
-that risk untested. And the target is still missed: at beam 5 the total goes
-from 989 s to about 830 s, 2.5× audio against the 1.5× the module signed up
-for. Transcription was the cost before this and is more of it now — 98% of what
-is left.
+**This is what brings the module inside its processing-time target**, which was
+not obvious when it was written: at the time the baseline was thought to be 3.0×
+and this looked like an improvement from 3.0× to 2.5×. The baseline was wrong —
+it divided by a run that had been asleep — and with it corrected the shipped
+configuration was about 1.78×, so moving diarization to the GPU is the
+difference between over and under. The whole meeting is **434 s for 327 s of
+audio, 1.32×**, and transcription is now 95% of it. Nothing was traded for it:
+the transcript is identical to the millisecond.
+
+**What it does not settle.** `mps` has only been measured in-process. Module E's
+SetFit aborts on Metal under prefork and threaded Celery workers, which is why
+the demo runs `--pool=solo` (#329), and pyannote on Metal inherits that risk
+untested — which is why the setting is empty by default and only the demo opts
+in.
 
 ---
 
