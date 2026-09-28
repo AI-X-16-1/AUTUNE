@@ -11,8 +11,10 @@ validated against.
 from __future__ import annotations
 
 import importlib.util
+import json
 from typing import Any
 
+import httpx
 import pytest
 
 from autune_core.errors import PrivacyViolationError
@@ -508,6 +510,29 @@ def test_a_privacy_violation_is_never_caught_and_downgraded(hosted) -> None:
 
     with pytest.raises(PrivacyViolationError):
         hosted(server).resolve([ResolutionRequest(target="그거 제가 할게요")])
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        json.JSONDecodeError("Expecting value", "<html>502 Bad Gateway</html>", 0),
+        httpx.DecodingError("broken content-encoding"),
+    ],
+    ids=["200-with-an-html-body", "200-with-a-broken-encoding"],
+)
+def test_a_200_with_an_unreadable_body_falls_back_rather_than_failing_the_meeting(
+    hosted, error: Exception
+) -> None:
+    """lsh2217's review of #366: `HttpClient` wraps timeouts, transport errors
+    and 4xx/5xx in `IntegrationError`, but a 200 whose body is not JSON comes
+    up as `JSONDecodeError` / `httpx.DecodingError`. Narrowing the except to
+    `IntegrationError` turned that into a failed meeting; #175 says one bad
+    call must not."""
+    server = Server(error)
+
+    resolved = hosted(server).resolve([ResolutionRequest(target="그거 제가 할게요")])
+
+    assert resolved == ["그거 제가 할게요"]
 
 
 def test_an_ungrounded_answer_falls_back_to_the_target(hosted) -> None:

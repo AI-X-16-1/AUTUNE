@@ -17,7 +17,8 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from autune_core import get_logger
-from autune_integrations.errors import IntegrationError, TransientIntegrationError
+from autune_core.errors import PrivacyViolationError
+from autune_integrations.errors import TransientIntegrationError
 
 from .base import Embedder, ResolutionRequest
 from .classifier import RETRY_BACKOFF_SEC
@@ -457,15 +458,18 @@ class HostedResolver:
         for request in requests:
             try:
                 body = self._post(request)
-            except IntegrationError:  # #175: one bad call must not fail the meeting.
-                # Deliberately not `Exception`: `_post` calls `check_outbound`
-                # (mkkim68's review of #366), which raises `PrivacyViolationError`
-                # -- a sibling of `IntegrationError` under `AutuneError`, not a
-                # subclass -- and errors.py says that one is never caught and
-                # downgraded. Catching the narrower parent lets both
-                # `TransientIntegrationError` and `PermanentIntegrationError`
-                # still degrade to the raw quote below, without silencing the
-                # one exception that means unmasked PII already reached the DB.
+            except PrivacyViolationError:
+                # errors.py: never caught and downgraded. `check_outbound`
+                # raises it inside `_post` when unmasked PII already reached
+                # the DB (mkkim68's review of #366) -- a warning would bury it.
+                raise
+            except Exception:  # noqa: BLE001 - #175: one bad call must not fail the meeting
+                # Not narrowed to `IntegrationError` (lsh2217's review of #366):
+                # `HttpClient.request` wraps only timeouts, transport errors and
+                # 4xx/5xx. A 200 whose body is an HTML gateway page or has a
+                # broken content-encoding surfaces as `JSONDecodeError` /
+                # `httpx.DecodingError`, and nothing above `tasks.py` catches it,
+                # so one odd answer would fail the meeting's whole extraction.
                 log.warning("extraction_resolver_call_failed", exc_info=True)
                 resolved.append(request.target)
                 continue
