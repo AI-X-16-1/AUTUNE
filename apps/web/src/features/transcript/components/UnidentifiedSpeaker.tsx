@@ -55,12 +55,12 @@ export function UnidentifiedSpeaker({
   pending?: boolean;
   onAssign?: (userId: string) => void;
 }) {
-  // The select is controlled so a failed pick can be undone. A success drops
-  // this whole entry from the caller's list -- the speaker is no longer
-  // unidentified -- so this component unmounts before `picked` would matter;
-  // a failure leaves it mounted with `pending` back at false, which is the
-  // signal to put the placeholder back rather than keep showing a name that
-  // was never written.
+  // What the select holds, which is a choice and not yet an assignment: the
+  // "지정" button is what sends it. A success drops this whole entry from the
+  // caller's list -- the speaker is no longer unidentified -- so this
+  // component unmounts before `picked` would matter; a failure leaves it
+  // mounted with `pending` back at false, and the effect puts the placeholder
+  // back rather than keep showing a name that was never written.
   const [picked, setPicked] = useState("");
   useEffect(() => {
     if (!pending) setPicked("");
@@ -97,11 +97,13 @@ export function UnidentifiedSpeaker({
         value={picked}
         disabled={pending || Boolean(membersError)}
         title={membersError ?? undefined}
-        onChange={(event) => {
-          const userId = event.target.value;
-          setPicked(userId);
-          if (userId) onAssign?.(userId);
-        }}
+        // Selecting is not confirming. On Windows Chrome an arrow key on a
+        // closed select fires `change`, so a keyboard user who tabs here and
+        // presses ↓ once used to assign the first team member outright
+        // (@PARKJAEKYUNG0525 on #370). There is no endpoint to undo it, and
+        // with voice profiles on it puts one person's voice under another
+        // person's name. The button below is the confirmation.
+        onChange={(event) => setPicked(event.target.value)}
         className="focus-visible:outline-none focus-visible:ring-[1.5px] focus-visible:ring-[var(--color-accent-default)]"
         style={{
           height: "var(--control-h-compact)",
@@ -120,6 +122,16 @@ export function UnidentifiedSpeaker({
           </option>
         ))}
       </select>
+      <Button
+        tone="text"
+        size="compact"
+        disabled={pending || !picked}
+        onClick={() => {
+          if (picked) onAssign?.(picked);
+        }}
+      >
+        지정
+      </Button>
       <Button
         tone="quiet"
         size="compact"
