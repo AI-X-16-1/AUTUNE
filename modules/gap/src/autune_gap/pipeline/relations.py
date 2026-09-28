@@ -121,6 +121,24 @@ because the tag of 안 잡혀 is a verb phrase like any other — what makes it 
 blocker is the word, not the grammar.
 """
 
+_NOUN_BLOCKERS = ("이슈", "리스크", "블로커")
+"""The ``_BLOCKERS`` that are nouns, which are not read backwards.
+
+A reason stated before a predicate cue is that predicate's reason: "캐시
+때문에 정렬 로직이 막혀 있습니다" blocks on 캐시. Before a noun it is almost
+always a relative clause saying where the noun came from, and nothing was
+blocked:
+
+    인증 때문에 생긴 이슈는 결제 모듈 쪽에서 볼게요
+        -> 결제 모듈 blocked_by 인증            with the backward window
+        -> nothing                              without it
+
+The cost is "캐시 때문에 검색 기능 쪽에 이슈가 있어요", which is a blocker
+and is no longer read — the same direction ``_resolved`` chose. Raised in
+review of #344 by @mminjae97, with a further reason: once #345 reads 리스크는
+as 리스크, the cue word is itself a topic, and "캐시 때문에 리스크가 있어요"
+made 리스크 blocked_by 캐시."""
+
 _RESOLVED = ("해결", "해소", "풀렸", "풀려", "정리되", "정리했", "처리")
 """What a speaker says when the thing in the way is gone.
 
@@ -522,7 +540,9 @@ def _directed_markers(text: str) -> list[tuple[int, str]]:
             # a meeting stated the second way. Only those three are read
             # backwards (``_CAUSAL_BEFORE``) -- a verb ending behind the cue
             # ends the previous clause, and this window would read past it.
-            # #254.
+            # #254. A noun cue is not read backwards: see ``_NOUN_BLOCKERS``.
+            if cue in _NOUN_BLOCKERS:
+                continue
             start, before = _clause_before(text, match.start())
             at = _causal_in(before)
             if at is None:

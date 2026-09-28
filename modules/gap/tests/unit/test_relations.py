@@ -335,6 +335,33 @@ def test_the_thing_in_the_way_is_what_the_reason_clause_names() -> None:
     ]
 
 
+@pytest.mark.parametrize(
+    ("text", "mentions"),
+    [
+        ("인증 때문에 생긴 이슈는 결제 모듈 쪽에서 볼게요", ("인증", "결제 모듈")),
+        ("인증 때문에 발생한 이슈는 결제 모듈에서 확인할게요", ("인증", "결제 모듈")),
+        ("캐시 때문에 나온 리스크는 검색 기능 쪽에 공유할게요", ("캐시", "검색 기능", "리스크")),
+        ("캐시 때문에 리스크가 있어요", ("캐시", "리스크")),
+    ],
+)
+def test_a_reason_before_a_noun_cue_is_where_the_noun_came_from(
+    text: str, mentions: tuple[str, ...]
+) -> None:
+    """ "인증 때문에 생긴 이슈" says where the issue came from, not that anything
+    is blocked. The last row is the one #345 adds: 리스크 is a topic once its
+    particle is read through, and the cue became an end of its own edge. Raised
+    in review of #344."""
+    assert triples(text, *mentions) == []
+
+
+def test_a_reason_before_a_predicate_cue_is_still_read() -> None:
+    """The backward window stays for the predicate cues, which is what #254 is
+    about."""
+    assert triples("보안 때문에 배포 일정이 미정입니다", "보안", "배포") == [
+        ("배포", "보안", "blocked_by")
+    ]
+
+
 def test_a_reason_behind_the_cue_still_has_to_be_the_same_clause() -> None:
     """The bound that #249 added, read backwards. A connective in the previous
     clause belongs to the previous clause's subject, and the whole point of the
