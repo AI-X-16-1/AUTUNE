@@ -12,7 +12,7 @@ import pytest
 from autune_intelligence import history
 from autune_intelligence.config import get_settings
 from autune_intelligence.history import LabeledExample
-from autune_intelligence.pipeline import get_misalignment_predictor, reset_cache
+from autune_intelligence.pipeline import get_misalignment_predictor, registry, reset_cache
 from autune_intelligence.pipeline.predictor import (
     FEATURE_NAMES,
     MODEL_VERSION,
@@ -121,6 +121,7 @@ def test_model_version_survives_a_refit() -> None:
     child), so no bucket ever fills and the honest out-of-sample numbers -- the
     ones actually shown to users -- can never be scored.
     """
+    pytest.importorskip("xgboost")
     first = XGBoostMisalignmentPredictor.fit(_examples(80, seed=1), fitted_at=NOW)
     later = XGBoostMisalignmentPredictor.fit(
         _examples(120, seed=2), fitted_at=NOW + timedelta(days=1)
@@ -156,11 +157,43 @@ def test_unknown_impl_is_an_error(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_local_falls_back_to_the_heuristic_without_history(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """With the extra installed, thin history is a fallback and not an error."""
+    pytest.importorskip("xgboost")
     _use(monkeypatch, "local")
     monkeypatch.setattr(history, "labeled_examples", lambda _session, **_: [])
     monkeypatch.setattr("autune_core.session_scope", _null_scope)
 
     assert isinstance(get_misalignment_predictor(now=NOW), HeuristicMisalignmentPredictor)
+
+
+def test_local_without_the_extra_fails_before_reading_history(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A misconfigured worker should say so at startup, not weeks later.
+
+    With the count check first, ``impl=local`` without the extra stayed quietly
+    on the heuristic until history crossed ``MIN_TRAINING_EXAMPLES`` -- and then
+    raised on every aggregation, leaving the cache empty so each one re-read the
+    database. Checking the import before the read moves the failure to the
+    worker's first call.
+    """
+    _use(monkeypatch, "local")
+    read = False
+
+    def _watched_scope():
+        nonlocal read
+        read = True
+        return _null_scope()
+
+    def _missing() -> None:
+        raise RuntimeError("needs the 'local-models' extra")
+
+    monkeypatch.setattr(registry, "require_xgboost", _missing)
+    monkeypatch.setattr("autune_core.session_scope", _watched_scope)
+
+    with pytest.raises(RuntimeError, match="local-models"):
+        get_misalignment_predictor(now=NOW)
+    assert not read
 
 
 def test_local_refits_once_the_previous_fit_expires(monkeypatch: pytest.MonkeyPatch) -> None:
