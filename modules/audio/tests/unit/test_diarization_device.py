@@ -24,10 +24,24 @@ from autune_core.errors import ConfigurationError
 
 
 class _Device:
-    """What ``torch.device(name)`` returns; pyannote wants the object, not a str."""
+    """What ``torch.device(name)`` returns; pyannote wants the object, not a str.
+
+    It refuses a name torch would refuse. Real ``torch.device('gpu')`` raises a
+    ``RuntimeError``, and that is the whole mechanism keeping a typo from
+    downloading half a gigabyte before it is noticed — a fake that accepted
+    anything would let that regress.
+    """
+
+    KINDS = frozenset({"cpu", "cuda", "mps", "xpu"})
 
     def __init__(self, name: str) -> None:
+        if name.split(":", 1)[0] not in self.KINDS:
+            raise RuntimeError(f"Expected one of {sorted(self.KINDS)}, got '{name}'")
         self.name = name
+
+    def __str__(self) -> str:
+        # `str(torch.device('mps'))` is 'mps'; the load log line records it.
+        return self.name
 
     def __repr__(self) -> str:  # pragma: no cover - only for a failed assert
         return f"device({self.name})"
@@ -139,18 +153,64 @@ def test_an_unavailable_device_raises_instead_of_running_on_cpu(
     assert loaded == []
 
 
-def test_an_unavailable_cuda_names_the_setting_it_came_from(
+def test_an_inherited_device_torch_cannot_reach_takes_cpu_and_says_so(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """``AUTUNE_AUDIO_DEVICE=cuda`` with a CPU torch wheel is a working deployment.
+
+    faster-whisper reaches the GPU through CTranslate2's own CUDA, so that
+    setting means something even where ``torch.cuda.is_available()`` is False
+    (@kjfcvx12, RTX 3060, #394). Raising here would fail every meeting on a box
+    that changed no setting of its own; diarization has been on CPU there all
+    along, so taking CPU changes nothing but the silence.
+    """
     install_fakes(monkeypatch, cuda=False)
     use_settings(monkeypatch, device="cuda", hf_token="hf_x")
+    seen: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        diarization.log, "warning", lambda event, **kw: seen.append({"event": event, **kw})
+    )
+
+    device = diarization.resolve_device()
+
+    assert device.name == "cpu"
+    line = next(entry for entry in seen if entry["event"] == "diarization_device_unavailable")
+    assert line["requested"] == "cuda"
+    assert line["using"] == "cpu"
+    assert line["inherited_from"] == "AUTUNE_AUDIO_DEVICE"
+    # The way out of the silence is a variable, so the line has to name it.
+    assert "AUTUNE_AUDIO_DIARIZATION_DEVICE" in str(line["hint"])
+
+
+def test_an_explicit_device_torch_cannot_reach_still_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The other half of the pair above: asking for it is a promise."""
+    pipeline, loaded = install_fakes(monkeypatch, cuda=False)
+    use_settings(monkeypatch, device="cpu", diarization_device="cuda", hf_token="hf_x")
 
     with pytest.raises(ConfigurationError) as caught:
         diarization.resolve_device()
 
-    # `device` carried the request, so that is the variable to go and edit.
-    assert "AUTUNE_AUDIO_DEVICE" in str(caught.value)
+    assert "AUTUNE_AUDIO_DIARIZATION_DEVICE" in str(caught.value)
     assert "AUTUNE_AUDIO_DIARIZATION_DEVICE=cpu" in str(caught.value)
+    assert pipeline.moved_to == []
+    assert loaded == []
+
+
+def test_a_name_torch_does_not_know_is_refused_before_the_download(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``gpu``/``auto`` pass the availability check, which knows only two kinds."""
+    pipeline, loaded = install_fakes(monkeypatch, cuda=True, mps=True)
+    use_settings(monkeypatch, diarization_device="gpu")
+
+    with pytest.raises(ConfigurationError) as caught:
+        _diarize(diarization.PyannoteDiarizer("fake/checkpoint", token=""))
+
+    assert "gpu" in str(caught.value)
+    assert loaded == []
+    assert pipeline.moved_to == []
 
 
 def test_a_device_index_is_checked_by_its_kind(monkeypatch: pytest.MonkeyPatch) -> None:
