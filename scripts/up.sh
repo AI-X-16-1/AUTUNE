@@ -52,16 +52,26 @@ export AUTUNE_CORS_ALLOWED_ORIGINS=${AUTUNE_CORS_ALLOWED_ORIGINS:-http://localho
 # runbook's troubleshooting table; the failure it prevents is in the comment,
 # because all of these fail by returning *nothing* while every endpoint still
 # answers 200 -- which is how a broken stack looks healthy.
+#
+# These assign unconditionally rather than with `${X:-fake}`. `.env.example`
+# ships every one of them set to a real implementation, so a `cp .env.example
+# .env` -- which the runbook's first line tells you to do -- leaves `:-` with
+# nothing to fill in, and the stack comes up in exactly the state described
+# above. Which is to say: the default was the bug this script exists to
+# prevent, and it took a review to notice because the author had an older
+# `.env` with fakes already in it. Choosing real models is `--real-models`,
+# one place, rather than two that disagree.
 if [ "$REAL_MODELS" = 0 ]; then
   # B's trained checkpoints are not published (#112).
-  export AUTUNE_EXTRACTION_CLASSIFIER_IMPL=${AUTUNE_EXTRACTION_CLASSIFIER_IMPL:-fake}
+  export AUTUNE_EXTRACTION_CLASSIFIER_IMPL=fake
   # B's NLI step (#12) defaults to `local` and refuses to run without a
   # checkpoint; the one #172 settled on is a private HF repo.
-  export AUTUNE_EXTRACTION_NLI_IMPL=${AUTUNE_EXTRACTION_NLI_IMPL:-fake}
+  export AUTUNE_EXTRACTION_NLI_IMPL=fake
   # D's embedder/reranker/NLI want an inference server that is not running.
-  export AUTUNE_CONTEXT_EMBEDDER_IMPL=${AUTUNE_CONTEXT_EMBEDDER_IMPL:-fake}
-  export AUTUNE_CONTEXT_RERANKER_IMPL=${AUTUNE_CONTEXT_RERANKER_IMPL:-fake}
-  export AUTUNE_CONTEXT_NLI_IMPL=${AUTUNE_CONTEXT_NLI_IMPL:-fake}
+  export AUTUNE_CONTEXT_EMBEDDER_IMPL=fake
+  export AUTUNE_CONTEXT_RERANKER_IMPL=fake
+  export AUTUNE_CONTEXT_NLI_IMPL=fake
+  printf '  faking B and D (--real-models to use theirs)\n'
 fi
 # C and E run their real models from the `local-models` extra, installed below.
 export AUTUNE_GAP_NER_IMPL=${AUTUNE_GAP_NER_IMPL:-spacy}
@@ -86,6 +96,13 @@ uv run alembic -c infra/alembic.ini upgrade heads
 
 # --- processes ---------------------------------------------------------------
 "$ROOT/scripts/down.sh" --quiet 2>/dev/null || true
+
+# Job control on, so each `&` below starts its own process group and `$!` is
+# that group's leader. Without it a non-interactive shell puts them all in this
+# script's group, `$!` leads nothing, and `down.sh`'s group kill silently falls
+# back to signalling only the `uv run` / `pnpm` parent -- which happens to have
+# worked because both forward SIGTERM, but not because anything made it.
+set -m
 
 say "api  :8000"
 nohup uv run uvicorn autune_api.main:app --port 8000 > "$LOGS/api.log" 2>&1 &

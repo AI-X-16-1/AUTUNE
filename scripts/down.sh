@@ -17,9 +17,12 @@ for name in api worker web; do
   pid_file="$LOGS/$name.pid"
   if [ -f "$pid_file" ]; then
     pid=$(cat "$pid_file")
-    # The recorded pid is the process group's leader (`uv run`, `pnpm`), and
-    # the thing listening is its child, so kill the group. Without the minus
-    # sign `up.sh` finds the port still taken on the next run.
+    # `up.sh` runs `set -m` before starting these, so each one leads its own
+    # process group and the recorded pid is that leader. The thing listening on
+    # the port is its child (`uv run` execs uvicorn, `pnpm` execs next), so the
+    # group has to be signalled and not just the parent -- otherwise the next
+    # `up.sh` finds the port taken. The fallback covers a process started
+    # without job control, where the negative pid is not a group.
     kill -TERM -"$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null
     rm -f "$pid_file"
     say "stopped $name ($pid)"
@@ -27,9 +30,12 @@ for name in api worker web; do
 done
 
 # Belt and braces: a previous run that died without writing a pid file, or one
-# started by hand from the runbook.
+# started by hand from the runbook. macOS and Linux only -- Git Bash on Windows
+# has no `pkill`, so the `2>/dev/null` makes this a no-op there and the pid
+# files above are all that stops anything.
 pkill -f "uvicorn autune_api.main:app" 2>/dev/null && say "stopped a stray api"
 pkill -f "celery -A autune_worker.celery_app worker" 2>/dev/null && say "stopped a stray worker"
+pkill -f "next dev" 2>/dev/null && say "stopped a stray web"
 
 if [ "${1:-}" = "--docker" ]; then
   say "stopping postgres + redis"
