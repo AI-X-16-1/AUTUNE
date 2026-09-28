@@ -7,6 +7,12 @@ a later meeting within ``MISALIGNMENT_HORIZON_DAYS``: some later meeting's
 anything by hand. A meeting is labeled only once the horizon has fully passed
 — before that, "no reversal yet" is not "no reversal".
 
+A meeting whose horizon contains a later meeting with no measured lineage is
+not labeled at all: D publishes without B's decisions when B times out, and a
+reversal in such a meeting would be invisible, so "negative" would assert more
+than the payload can show. A meeting already seen to be reversed stays
+positive.
+
 Known blind spot: a decision modified in one later meeting and reversed in the
 next names the *modifying* meeting as ``previous_meeting_id``, so the original
 meeting stays negative. Counting only one hop keeps the label to what D
@@ -35,6 +41,7 @@ from autune_core import Meeting, get_logger
 
 from .models import IntelAlignment, IntelCompletion, IntelPrediction, IntelScore
 from .prediction import (
+    EXTRACTION_SOURCE,
     MISALIGNMENT_HORIZON_DAYS,
     MISALIGNMENT_KIND,
     MeetingFeatures,
@@ -81,20 +88,34 @@ def reversal_labels(
     meetings: Iterable[MeetingPoint],
     reversals: Iterable[Reversal],
     *,
+    unmeasured: Iterable[MeetingPoint] = (),
     now: datetime,
     horizon: timedelta = timedelta(days=MISALIGNMENT_HORIZON_DAYS),
 ) -> dict[str, bool]:
-    """``meeting_id -> label`` for every meeting whose horizon has fully passed."""
+    """``meeting_id -> label`` for every meeting whose label is known.
+
+    A meeting is left out when its horizon has not fully passed, and when a
+    meeting of the same team inside its horizon is in ``unmeasured`` — a
+    reversal there would have been invisible, so "negative" would be an
+    assertion about a payload that could not have carried the evidence. A
+    meeting already shown to be positive stays positive: a blind spot elsewhere
+    cannot unmake a reversal that was seen.
+    """
     reversal_times: dict[str, list[datetime]] = {}
     for r in reversals:
         reversal_times.setdefault(r.earlier_meeting_id, []).append(r.at)
+    blind_spots: dict[str, list[datetime]] = {}
+    for u in unmeasured:
+        blind_spots.setdefault(u.team_id, []).append(u.at)
     labels: dict[str, bool] = {}
     for m in meetings:
         if m.at + horizon > now:
             continue
-        labels[m.meeting_id] = any(
-            m.at < at <= m.at + horizon for at in reversal_times.get(m.meeting_id, [])
-        )
+        deadline = m.at + horizon
+        positive = any(m.at < at <= deadline for at in reversal_times.get(m.meeting_id, []))
+        if not positive and any(m.at < at <= deadline for at in blind_spots.get(m.team_id, ())):
+            continue
+        labels[m.meeting_id] = positive
     return labels
 
 
@@ -136,6 +157,7 @@ def labeled_examples(
 
     points: list[MeetingPoint] = []
     reversals: list[Reversal] = []
+    unmeasured: list[MeetingPoint] = []
     parsed: dict[str, tuple[ExtractionResult | None, GapReport | None, ContextLinks | None]] = {}
     for completion, team_id, at, _ in rows:
         mid = completion.meeting_id
@@ -143,15 +165,25 @@ def labeled_examples(
         gap = _parse(GapReport, completion.gap_payload, mid)
         context = _parse(ContextLinks, completion.context_payload, mid)
         parsed[mid] = (extraction, gap, context)
-        points.append(MeetingPoint(meeting_id=mid, team_id=team_id, at=at))
-        if context is not None:
+        point = MeetingPoint(meeting_id=mid, team_id=team_id, at=at)
+        points.append(point)
+        if context is None or EXTRACTION_SOURCE in context.missing_sources:
+            # No lineage was measured here, so this meeting cannot testify that
+            # an earlier one was never reversed.
+            unmeasured.append(point)
+        else:
             reversals.extend(
                 Reversal(earlier_meeting_id=c.previous_meeting_id, at=at)
                 for c in context.decision_lineage
                 if c.change_type == ChangeType.REVERSED and c.previous_meeting_id
             )
 
-    labels = reversal_labels(points, reversals, now=now, horizon=horizon)
+    labels = reversal_labels(points, reversals, unmeasured=unmeasured, now=now, horizon=horizon)
+    blocked = sum(1 for p in points if p.at + horizon <= now and p.meeting_id not in labels)
+    if blocked:
+        # Otherwise "0 labeled meetings" reads as "history is too young" when it
+        # is really B not reaching D.
+        log.info("intelligence_history_labels_blocked_by_blind_spot", meetings=blocked)
     if not labels:
         return []
 
