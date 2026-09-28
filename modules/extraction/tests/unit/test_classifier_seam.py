@@ -210,14 +210,17 @@ def test_a_tokenizer_without_a_length_falls_back_to_the_positions() -> None:
 # --- what has deliberately no implementation --------------------------------
 
 
-def test_there_is_no_external_classifier() -> None:
+def test_the_only_external_classifier_is_llm_and_it_is_opt_in() -> None:
     """Sending a meeting's utterances to somebody else's model is a privacy
     decision, not a config string. privacy.md section 6 bounds what may leave.
 
-    Asserted as the whole key set so adding one fails here, where the reason is
-    written down, rather than passing as an ordinary feature.
+    ``llm`` is that decision, taken for the 2026-09-28 demo push (masked text,
+    nothing else, through ``check_outbound``; see ``pipeline.llm``). Asserted as
+    the whole key set so adding a *second* one still fails here, where the
+    reason is written down, rather than passing as an ordinary feature.
     """
-    assert set(_CLASSIFIERS) == {"local", "hosted", "fake"}
+    assert set(_CLASSIFIERS) == {"local", "hosted", "fake", "llm"}
+    assert ExtractionSettings(_env_file=None).classifier_impl != "llm"  # type: ignore[call-arg]
 
 
 # --- the fake, which everything downstream is built on ----------------------

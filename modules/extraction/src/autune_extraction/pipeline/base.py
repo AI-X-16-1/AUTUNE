@@ -5,11 +5,14 @@ implementation is chosen by a config string (``AUTUNE_EXTRACTION_*_IMPL``) and i
 never referenced directly outside this package — the same shape module D settled
 on, so the two modules can be read the same way.
 
-**No implementation here sends an utterance to a third party.** The utterance
-classifier is a model we fine-tune, run in process or on our own inference
-server; there is no ``external`` option and adding one would be a privacy
-decision rather than a config string. `privacy.md` section 6 bounds what may
-leave our infrastructure, and a whole meeting's utterances is not it.
+**Only one implementation sends utterances to a third party, and only when
+asked to: ``classifier_impl=llm``** (``pipeline.llm``). The default classifier is
+a model we fine-tune, run in process or on our own inference server. ``llm`` was
+added on 2026-09-28 for the demo push (mentoring: "LLM wherever a trained model's
+accuracy is low"), inside `privacy.md` section 6: masked text only, and only what
+the feature needs -- utterance text with no speaker, id or time, in requests of
+at most ``MAX_OUTBOUND_CHARS``, through ``check_outbound``. Whether it may be
+switched on outside a demo is the team's call; the issue opened with it asks.
 """
 
 from __future__ import annotations
