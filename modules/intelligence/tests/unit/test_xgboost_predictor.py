@@ -15,9 +15,11 @@ from autune_intelligence.history import LabeledExample
 from autune_intelligence.pipeline import get_misalignment_predictor, reset_cache
 from autune_intelligence.pipeline.predictor import (
     FEATURE_NAMES,
+    MODEL_VERSION,
     HeuristicMisalignmentPredictor,
     InsufficientHistoryError,
     XGBoostMisalignmentPredictor,
+    feature_fingerprint,
     feature_vector,
 )
 from autune_intelligence.prediction import MeetingFeatures
@@ -106,7 +108,34 @@ def test_fitted_model_learns_the_signal_and_stays_in_range() -> None:
 
     assert weak > strong
     assert all(0.0 <= p <= 1.0 for p in (weak, strong, unmeasured))
-    assert model.model_version == "xgb-20260927T0000-n300"
+    assert model.model_version == MODEL_VERSION
+    assert (model.fitted_at, model.training_size) == (NOW, 300)
+
+
+def test_model_version_survives_a_refit() -> None:
+    """The version groups comparable predictions; it must not change per fit.
+
+    ``eval`` buckets stored predictions by ``model_version`` and refuses to score
+    a bucket under ``MIN_EXAMPLES``. A version carrying the fit timestamp and the
+    example count makes a new bucket every refit (every 24h, and once per prefork
+    child), so no bucket ever fills and the honest out-of-sample numbers -- the
+    ones actually shown to users -- can never be scored.
+    """
+    first = XGBoostMisalignmentPredictor.fit(_examples(80, seed=1), fitted_at=NOW)
+    later = XGBoostMisalignmentPredictor.fit(
+        _examples(120, seed=2), fitted_at=NOW + timedelta(days=1)
+    )
+
+    assert first.model_version == later.model_version
+    assert first.fitted_at != later.fitted_at
+    assert first.training_size == 80 and later.training_size == 120
+
+
+def test_model_version_tracks_the_feature_set() -> None:
+    """What does invalidate a comparison is the features changing under it."""
+    assert MODEL_VERSION.startswith("xgb-f")
+    assert f"xgb-f{feature_fingerprint(FEATURE_NAMES)}" == MODEL_VERSION
+    assert feature_fingerprint(FEATURE_NAMES) != feature_fingerprint((*FEATURE_NAMES, "extra"))
 
 
 def test_default_impl_is_the_heuristic(monkeypatch: pytest.MonkeyPatch) -> None:

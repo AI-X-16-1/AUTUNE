@@ -20,6 +20,7 @@ from .predictor import (
     HeuristicMisalignmentPredictor,
     InsufficientHistoryError,
     XGBoostMisalignmentPredictor,
+    require_xgboost,
 )
 
 log = get_logger(__name__)
@@ -59,6 +60,9 @@ def _fit_local(now: datetime) -> MisalignmentPredictor:
     from autune_core import session_scope  # noqa: PLC0415
     from autune_intelligence.history import labeled_examples  # noqa: PLC0415
 
+    # Before the database read, so a worker configured for `local` without the
+    # extra fails at startup rather than on the day history crosses the floor.
+    require_xgboost()
     with session_scope() as session:
         examples = labeled_examples(session, now=now)
     try:
@@ -66,7 +70,13 @@ def _fit_local(now: datetime) -> MisalignmentPredictor:
     except InsufficientHistoryError as exc:
         log.info("misalignment_predictor_fallback", reason=str(exc))
         return HeuristicMisalignmentPredictor()
-    log.info("misalignment_predictor_fitted", version=predictor.model_version)
+    # The per-fit facts live here, not in model_version -- see MODEL_VERSION.
+    log.info(
+        "misalignment_predictor_fitted",
+        version=predictor.model_version,
+        fitted_at=predictor.fitted_at.isoformat(),
+        examples=predictor.training_size,
+    )
     return predictor
 
 
