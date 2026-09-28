@@ -91,11 +91,13 @@ a 500MB pipeline is a judgement nobody tests.
   particle is attached (noun parts, then only `j*` parts); a fixed list of
   particles decides *what* is cut off the end of the word. `lemma_` would have
   been the obvious source and is wrong on this vocabulary — it splits 개인화로
-  as 개인 + 화로 and 콜드스타트입니다 as 콜드 + 스타트입니다. Three things are
+  as 개인 + 화로 and 콜드스타트입니다 as 콜드 + 스타트입니다. Four things are
   deliberately not read through: the copula (`jp`), because 붙입니다 is tagged
   `ncn+jp+etm` and would give a topic called 붙; an ending the list does not
-  know, which costs the topic rather than inventing one; and the two nouns the
-  model splits before their last syllable, 재시도 and 난이도, which
+  know, which costs the topic rather than inventing one; an ending a particle
+  and a noun's own last syllable spell alike — 경로는 and 개인화로는 carry the
+  same tag, as do 인프라도 and 캐시라도 — where either cut invents a topic on
+  the other half; and the two nouns the model splits before their last syllable, 재시도 and 난이도, which
   containment matching would otherwise count as a template's 재시도 covered by
   a topic called 재시. Reading through the particle surfaced words it used to
   refuse by accident, so 회의, 회의실 and the positional bound nouns the model
