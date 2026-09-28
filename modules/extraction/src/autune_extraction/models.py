@@ -149,8 +149,14 @@ class ExtActionItemSource(Base):
     the quotation, and data-model.md rules JSONB out for anything you join on.
 
     ADR 0006 makes these load-bearing: they are how a user checks an item without
-    replaying the meeting. Whether they survive a member leaving is what ADR 0007
-    is deciding.
+    replaying the meeting.
+
+    A row outlives its utterance (ADR 0007, "Missing attribution is shown, not
+    hidden"): deleting the utterance sets ``utterance_id`` to NULL instead of
+    taking the row. The words go; the fact that the item had a source stays, so
+    a model item whose transcript was deleted is not mistaken for a hand-added
+    one. Every reader skips the NULLs for ids and counts them as
+    ``deleted_source_count``.
     """
 
     __tablename__ = "ext_action_item_sources"
@@ -165,9 +171,14 @@ class ExtActionItemSource(Base):
         nullable=False,
         index=True,
     )
-    utterance_id: Mapped[str] = mapped_column(
-        String(64), ForeignKey("utterances.id", ondelete="CASCADE"), nullable=False, index=True
+    utterance_id: Mapped[str | None] = mapped_column(
+        String(64),
+        ForeignKey(
+            "utterances.id", ondelete="SET NULL", name="fk_ext_action_item_sources_utterance_id"
+        ),
+        index=True,
     )
+    """NULL once the utterance is deleted. Never written NULL by this module."""
 
     action_item: Mapped[ExtActionItem] = relationship(back_populates="sources")
 

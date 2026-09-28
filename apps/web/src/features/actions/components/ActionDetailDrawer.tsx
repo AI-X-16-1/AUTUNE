@@ -100,7 +100,11 @@ export function ActionDetailDrawer({
       </header>
 
       <div className="flex-1 overflow-y-auto" style={{ padding: "var(--space-card)" }}>
-        <Field label="담당">{item.assignee_name ?? item.assignee_label ?? "미지정"}</Field>
+        <Field label="담당">
+          {item.needs_reassignment
+            ? "재배정 필요 · 담당자가 이 팀에 없습니다"
+            : (item.assignee_name ?? item.assignee_label ?? "미지정")}
+        </Field>
         <Field label="기한" mono>
           {item.due_date ?? "없음"}
         </Field>
@@ -153,6 +157,14 @@ export function ActionDetailDrawer({
                   <MaskedText>{source.text}</MaskedText>
                 </Quote>
               ))}
+              {item.deleted_source_count > 0 ? (
+                <p
+                  className="text-[var(--color-ink-muted)]"
+                  style={{ fontSize: "var(--text-metaSmall)" }}
+                >
+                  {`그 밖의 근거 발화 ${item.deleted_source_count}건은 삭제되었습니다.`}
+                </p>
+              ) : null}
             </div>
           ) : (
             <p
@@ -264,8 +276,14 @@ function quotationNote(
   item: ActionItemRead,
   quotation: { loading: boolean; error: Error | null },
 ): string {
-  if (!item.source_utterance_ids?.length) {
+  if (item.origin === "user") {
     return "회의에서 뽑은 항목이 아니라 직접 추가한 항목입니다.";
+  }
+  // The server lists only utterances that still exist (ADR 0007), so an item
+  // whose every source was deleted arrives with an empty list, not a list of
+  // ids that fail to load.
+  if (!item.source_utterance_ids?.length) {
+    return "근거 발화가 삭제되어 더 이상 볼 수 없습니다.";
   }
   if (quotation.loading) return "근거 발화를 불러오는 중입니다.";
   if (quotation.error) return "근거 발화를 불러오지 못했습니다.";
