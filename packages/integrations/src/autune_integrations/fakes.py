@@ -73,11 +73,17 @@ class FakeSlack:
 @dataclass
 class FakeNotion:
     pages: list[tuple[str, dict]] = field(default_factory=list)
+    updates: list[tuple[str, dict]] = field(default_factory=list)
+    """``(page_id, properties)`` for every ``update_page`` call, in order."""
 
     def create_page(self, database_id: str, properties: dict) -> str:
         check_outbound({"properties": properties}, destination="notion")
         self.pages.append((database_id, properties))
         return f"page_{len(self.pages)}"
+
+    def update_page(self, page_id: str, properties: dict) -> None:
+        check_outbound({"properties": properties}, destination="notion")
+        self.updates.append((page_id, properties))
 
 
 @dataclass

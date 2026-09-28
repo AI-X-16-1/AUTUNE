@@ -136,15 +136,23 @@ blocks no merge. Add the reviewers your change needs yourself.
 → `docs/engineering/workflow.md`
 
 ### 11. Privacy rules are code-level constraints, not policy documents
-- Raw audio is deleted immediately after transcription completes. It is never
-  persisted to durable storage, never logged, never copied into a temp path that
-  survives the task.
+- Raw audio is deleted as soon as transcription ends. It is never persisted to
+  durable storage and never logged, and its path is never passed in a Celery
+  payload — the file is named after the job and both ends derive the name. It
+  lives in a temp path owned by exactly one party at a time: the upload request
+  until the task is queued, the task from the moment it starts. A recording
+  whose task was lost is collected by the sweep, which today runs at the start
+  of the next transcription task (#207 makes it periodic). Decision #275.
 - Transcript text is PII-masked **before** it is written to the database. The
   unmasked string must not reach any store, log line, exception message, or
   external integration.
 - Speaking-ratio data is delivered only to the speaker themselves. No endpoint,
   query, dashboard, or export may return one person's speaking ratio to anyone
   else — including team admins. Aggregate speaking-ratio records are not stored.
+  This binds what Autune computes and presents, not the meeting record: a
+  transcript may say who spoke and when, and no module may aggregate those
+  timings into a per-person speech volume except to deliver it to that
+  speaker under the rule above (#361).
 - Analysis results have a retention window (90 days by default) and users can
   delete their own data at any time.
 

@@ -3,6 +3,23 @@
 Same shape and same rules as ``eval.topic_linking.dataset``: data, not code,
 versioned next to the code it scores; bump the filename's version suffix only
 when a change would make an old accuracy number and a new one not comparable.
+
+How ``expected_change_type`` is labeled, from the product's point of view
+rather than from what NLI would say (see ``service._NLI_TO_CHANGE`` for that
+mapping — the whole point of the set is to measure where the two disagree):
+
+- ``unchanged`` — the current statement restates the earlier one, in the same
+  or different words; nothing anyone would act on differs.
+- ``modified`` — the decision still stands, but a parameter moved (a date, an
+  amount, a headcount, an owner) or its scope narrowed, widened, or gained a
+  condition. A date pushed from 3/15 to 3/29 is ``modified``, even though the
+  two sentences cannot both be literally true.
+- ``reversed`` — the earlier decision is withdrawn (cancelled, shelved,
+  abolished) or replaced by an alternative that excludes it (MySQL ->
+  PostgreSQL, outsourced -> in-house).
+- ``new`` — a different decision, even when it sits in the same area as an
+  earlier one (a marketing *channel* decision is not the marketing *budget*
+  decision).
 """
 
 from __future__ import annotations
@@ -13,7 +30,7 @@ from importlib.resources import files
 from typing import Any
 
 _DATA_DIR = files(__package__) / "fixtures"
-_DEFAULT_DATASET = "decision_lineage_v1.json"
+_DEFAULT_DATASET = "decision_lineage_v2.json"
 
 
 @dataclass(frozen=True)
@@ -35,6 +52,13 @@ class EvalCase:
     expected_change_type: str
     """One of ``autune_contracts.ChangeType``'s values. Must be ``"new"`` iff
     ``expected_thread_source`` is ``None`` — enforced in ``_parse_case``."""
+    category: str = "uncategorized"
+    """What the case is testing, for the runner's per-category breakdown. v2
+    splits each change type into how it is phrased (``unchanged_restated`` /
+    ``unchanged_paraphrase``, ``modified_param`` / ``modified_scope``,
+    ``reversed_cancel`` / ``reversed_alternative``, ``new_unrelated`` /
+    ``new_same_domain``), plus ``distractor`` (several past decisions, one
+    right thread) and ``chain`` (the past decisions already form a thread)."""
 
 
 def load_cases(name: str = _DEFAULT_DATASET) -> list[EvalCase]:
@@ -58,6 +82,7 @@ def _parse_case(raw: dict[str, Any]) -> EvalCase:
         current_meeting=_parse_meeting(raw["current_meeting"]),
         expected_thread_source=source,
         expected_change_type=change_type,
+        category=raw.get("category", "uncategorized"),
     )
 
 

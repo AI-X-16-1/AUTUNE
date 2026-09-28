@@ -31,6 +31,7 @@ from autune_contracts import (
     GapSeverity,
     IntelligenceSnapshot,
     Participation,
+    Prediction,
     QualityScore,
 )
 from autune_contracts.intelligence import Grade
@@ -38,18 +39,33 @@ from autune_core import Meeting, Participant, Utterance, get_logger
 from autune_core.errors import NotFoundError
 from autune_integrations import SlackApi, assert_personal_delivery
 
+from .alignment import meeting_alignment
 from .config import get_settings
 from .feedback import build_speaking_ratio_dm
 from .models import (
     IntelAlignment,
     IntelCompletion,
     IntelGapPattern,
+    IntelPrediction,
     IntelReport,
     IntelScore,
 )
-from .pipeline import get_gap_classifier
+from .pipeline import get_gap_classifier, get_misalignment_predictor
 from .pipeline.base import Classification
-from .schemas import DashboardRead, DashboardScoreEntry, HeatmapCell, SpeakingRatioRead
+from .prediction import (
+    MISALIGNMENT_HORIZON_DAYS,
+    MISALIGNMENT_KIND,
+    meeting_features,
+    prediction_visible,
+)
+from .schemas import (
+    DashboardRead,
+    DashboardScoreEntry,
+    HeatmapCell,
+    PredictionRead,
+    PredictionsRead,
+    SpeakingRatioRead,
+)
 from .speaking import SpeakingShare, SpeechSegment, speaker_count_for_gate, speaking_shares
 
 log = get_logger(__name__)
@@ -221,7 +237,7 @@ def aggregate_meeting(session: Session, meeting_id: str) -> IntelligenceSnapshot
         else None
     )
     gap = GapReport.model_validate(row.gap_payload) if row.gap_payload is not None else None
-    _ = (
+    context = (
         ContextLinks.model_validate(row.context_payload)
         if row.context_payload is not None
         else None
@@ -262,6 +278,10 @@ def aggregate_meeting(session: Session, meeting_id: str) -> IntelligenceSnapshot
         classifier_version = classifier.model_version
     pattern_types = [c.pattern_type for c in classifications]
     distribution = dict(Counter(pattern_types))
+
+    # Empty until B's stance producer ships (#10, #168) — every decision's
+    # ``stance_by_role`` is ``[]`` until then, so no pair is scored.
+    alignment = meeting_alignment(extraction.decisions) if extraction is not None else []
 
     session.execute(
         pg_insert(IntelScore)
@@ -335,6 +355,63 @@ def aggregate_meeting(session: Session, meeting_id: str) -> IntelligenceSnapshot
                 },
             )
 
+    session.execute(sa.delete(IntelAlignment).where(IntelAlignment.meeting_id == meeting_id))
+    for pair in alignment:
+        session.add(
+            IntelAlignment(
+                meeting_id=meeting_id,
+                role_a=pair.role_a,
+                role_b=pair.role_b,
+                team_id=meeting.team_id,
+                score=pair.score,
+            )
+        )
+
+    predictor = get_misalignment_predictor()
+    features = meeting_features(
+        quality_value=score.value,
+        extraction=extraction,
+        gap=gap,
+        context=context,
+        alignment_scores=[pair.score for pair in alignment],
+        missing_source_count=len(missing),
+    )
+    (probability,) = predictor.predict([features])
+    session.execute(
+        pg_insert(IntelPrediction)
+        .values(
+            meeting_id=meeting_id,
+            kind=MISALIGNMENT_KIND,
+            horizon_days=MISALIGNMENT_HORIZON_DAYS,
+            team_id=meeting.team_id,
+            probability=probability,
+            model_version=predictor.model_version,
+        )
+        .on_conflict_do_update(
+            index_elements=["meeting_id", "kind", "horizon_days"],
+            set_={
+                "team_id": meeting.team_id,
+                "probability": probability,
+                "model_version": predictor.model_version,
+                "updated_at": func.now(),
+            },
+        )
+    )
+    session.flush()
+    # Stored either way — calibration needs the early predictions too — but
+    # published only once the team clears #27's history gate.
+    predictions = (
+        [
+            Prediction(
+                kind=MISALIGNMENT_KIND,
+                horizon_days=MISALIGNMENT_HORIZON_DAYS,
+                probability=probability,
+            )
+        ]
+        if _team_prediction_visible(session, meeting.team_id)
+        else []
+    )
+
     row.aggregated_at = datetime.now(UTC)
     session.flush()
     session.expire_all()
@@ -344,8 +421,8 @@ def aggregate_meeting(session: Session, meeting_id: str) -> IntelligenceSnapshot
         team_id=meeting.team_id,
         quality_score=score,
         gap_distribution=distribution,
-        alignment=[],
-        predictions=[],
+        alignment=[pair.to_contract() for pair in alignment],
+        predictions=predictions,
         missing_sources=missing,
     )
 
@@ -371,10 +448,23 @@ def get_score(session: Session, meeting_id: str) -> IntelScore:
     return row
 
 
+MIN_MEETINGS_PER_HEATMAP_CELL: Final = 3
+"""A role pair is shown only once this many meetings scored it.
+
+docs/architecture/privacy.md section 3: a consumer that aggregates stance over
+several meetings leaves a cell empty when its sample is too small, rather than
+showing a number that identifies the few people behind it. Three matches the
+per-role gate on ``RoleStance.identified`` and the meeting floor #27 set for
+predictions. The pair is omitted, not returned with a null score, so the
+frontend draws it as "no data" the same way it draws a pair never scored.
+"""
+
+
 def get_heatmap(session: Session, team_id: str) -> list[HeatmapCell]:
     """Role-pair alignment for the team, averaged over its scored meetings.
 
-    Empty until the alignment step that fills ``intel_alignment`` is built.
+    Pairs scored in fewer than ``MIN_MEETINGS_PER_HEATMAP_CELL`` meetings are
+    left out. Every pair is left out until B's stance producer ships (#168).
     """
     rows = session.execute(
         sa.select(
@@ -385,12 +475,69 @@ def get_heatmap(session: Session, team_id: str) -> list[HeatmapCell]:
         )
         .where(IntelAlignment.team_id == team_id)
         .group_by(IntelAlignment.role_a, IntelAlignment.role_b)
+        .having(func.count() >= MIN_MEETINGS_PER_HEATMAP_CELL)
         .order_by(IntelAlignment.role_a, IntelAlignment.role_b)
     ).all()
     return [
         HeatmapCell(role_a=role_a, role_b=role_b, score=float(avg), meeting_count=count)
         for role_a, role_b, avg, count in rows
     ]
+
+
+def _team_prediction_visible(
+    session: Session, team_id: str, *, now: datetime | None = None
+) -> bool:
+    """#27's gate over the team's scored meetings (``intel_scores``)."""
+    first_at, count = session.execute(
+        sa.select(func.min(IntelScore.created_at), func.count()).where(
+            IntelScore.team_id == team_id
+        )
+    ).one()
+    return prediction_visible(first_at, count, now=now or datetime.now(UTC))
+
+
+_PREDICTION_RECENCY = func.coalesce(Meeting.started_at, IntelPrediction.created_at)
+"""Which meeting's prediction is the team's current one.
+
+Not ``IntelPrediction.updated_at``: that is when E last *wrote* the row, and
+``aggregate_meeting`` upserts it with a fresh ``updated_at`` every time a late
+source reopens a meeting. Ordering by it made a re-aggregated meeting from
+months ago the team's "latest" prediction, with a horizon that closed long
+before. ``created_at`` is the fallback rather than ``first_seen_at`` because it
+is never bumped by the upsert, and a meeting with no ``started_at`` was
+aggregated when it arrived."""
+
+
+def get_predictions(session: Session, team_id: str) -> PredictionsRead:
+    """The team's latest misalignment prediction, or why none is shown.
+
+    "Latest" is by when the meeting happened, not when the row was written —
+    see ``_PREDICTION_RECENCY``.
+
+    Before #27's gate clears, ``prediction`` is ``None`` and ``reason`` is
+    ``"insufficient_history"`` — the stored probabilities exist but are not
+    returned, so the gate is enforced here rather than trusted to the client.
+    """
+    if not _team_prediction_visible(session, team_id):
+        return PredictionsRead(team_id=team_id, prediction=None, reason="insufficient_history")
+    latest = session.execute(
+        sa.select(IntelPrediction)
+        .join(Meeting, Meeting.id == IntelPrediction.meeting_id)
+        .where(
+            IntelPrediction.team_id == team_id,
+            IntelPrediction.kind == MISALIGNMENT_KIND,
+            IntelPrediction.horizon_days == MISALIGNMENT_HORIZON_DAYS,
+        )
+        .order_by(_PREDICTION_RECENCY.desc(), IntelPrediction.meeting_id.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+    if latest is None:
+        return PredictionsRead(team_id=team_id, prediction=None, reason="no_prediction")
+    return PredictionsRead(
+        team_id=team_id,
+        prediction=PredictionRead.model_validate(latest),
+        reason=None,
+    )
 
 
 def list_reports(session: Session, team_id: str) -> list[IntelReport]:

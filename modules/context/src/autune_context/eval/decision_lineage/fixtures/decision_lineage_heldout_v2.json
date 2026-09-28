@@ -1,0 +1,437 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "h2_unchanged_keep_word",
+      "category": "unchanged_restated",
+      "past_meetings": [
+        {
+          "days_ago": 12,
+          "decision": "코드 프리즈는 릴리스 3일 전부터 하기로 했다."
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "코드 프리즈 시점은 지금처럼 릴리스 3일 전으로 계속 가기로 했다."
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "unchanged"
+    },
+    {
+      "id": "h2_unchanged_this_time_too",
+      "category": "unchanged_restated",
+      "past_meetings": [
+        {
+          "days_ago": 20,
+          "decision": "분기 워크숍은 외부 장소에서 하기로 했다."
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "이번 분기에도 워크숍은 외부 장소에서 하기로 했다."
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "unchanged"
+    },
+    {
+      "id": "h2_unchanged_only_paraphrase",
+      "category": "unchanged_paraphrase",
+      "past_meetings": [
+        {
+          "days_ago": 10,
+          "decision": "운영 DB 접근은 DBA에게만 허용하기로 했다."
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "운영 데이터베이스에는 DBA만 접근할 수 있게 하기로 했다."
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "unchanged"
+    },
+    {
+      "id": "h2_unchanged_paraphrase_meeting_length",
+      "category": "unchanged_paraphrase",
+      "past_meetings": [
+        {
+          "days_ago": 15,
+          "decision": "정기 회의는 30분을 넘기지 않기로 했다."
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "정례 미팅은 최대 30분 안에 끝내기로 했다."
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "unchanged"
+    },
+    {
+      "id": "h2_unchanged_paraphrase_review_sla",
+      "category": "unchanged_paraphrase",
+      "past_meetings": [
+        {
+          "days_ago": 9,
+          "decision": "코드 리뷰 요청은 하루 안에 응답하기로 했다."
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "리뷰 요청을 받으면 24시간 이내에 답하는 것으로 정리했다."
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "unchanged"
+    },
+    {
+      "id": "h2_modified_param_time",
+      "category": "modified_param",
+      "past_meetings": [
+        {
+          "days_ago": 14,
+          "decision": "전체 회의는 월요일 오전 10시에 하기로 했다."
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "전체 회의 시간을 월요일 오후 2시로 옮기기로 했다."
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "modified"
+    },
+    {
+      "id": "h2_modified_param_quota",
+      "category": "modified_param",
+      "past_meetings": [
+        {
+          "days_ago": 10,
+          "decision": "무료 요금제 저장 용량은 5GB로 정했다."
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "무료 요금제 저장 용량을 2GB로 줄이기로 했다."
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "modified"
+    },
+    {
+      "id": "h2_modified_param_owner",
+      "category": "modified_param",
+      "past_meetings": [
+        {
+          "days_ago": 8,
+          "decision": "신규 고객 온보딩은 영업팀이 맡기로 했다."
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "신규 고객 온보딩 담당을 고객성공팀으로 넘기기로 했다."
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "modified"
+    },
+    {
+      "id": "h2_modified_scope_added_requirement",
+      "category": "modified_scope",
+      "past_meetings": [
+        {
+          "days_ago": 12,
+          "decision": "휴가 신청은 3일 전까지 하기로 했다."
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "휴가 신청은 3일 전까지 하되 팀장 승인도 받기로 했다."
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "modified"
+    },
+    {
+      "id": "h2_modified_scope_restricted",
+      "category": "modified_scope",
+      "past_meetings": [
+        {
+          "days_ago": 16,
+          "decision": "재택근무 장비 지원금을 전 직원에게 주기로 했다."
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "재택근무 장비 지원금은 정규직에게만 주기로 했다."
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "modified"
+    },
+    {
+      "id": "h2_modified_scope_widened",
+      "category": "modified_scope",
+      "past_meetings": [
+        {
+          "days_ago": 11,
+          "decision": "코드 리뷰 필수 규칙은 백엔드 저장소에 적용하기로 했다."
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "코드 리뷰 필수 규칙을 프론트엔드 저장소까지 넓히기로 했다."
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "modified"
+    },
+    {
+      "id": "h2_reversed_undo",
+      "category": "reversed_cancel",
+      "past_meetings": [
+        {
+          "days_ago": 13,
+          "decision": "사내 메신저를 슬랙으로 바꾸기로 했다."
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "슬랙 전환은 없던 일로 하기로 했다."
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "reversed"
+    },
+    {
+      "id": "h2_reversed_stop",
+      "category": "reversed_cancel",
+      "past_meetings": [
+        {
+          "days_ago": 9,
+          "decision": "주간 뉴스레터를 계속 발송하기로 했다."
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "주간 뉴스레터 발송을 이번 달로 끝내고 그만두기로 했다."
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "reversed"
+    },
+    {
+      "id": "h2_reversed_withdraw_noun",
+      "category": "reversed_cancel",
+      "past_meetings": [
+        {
+          "days_ago": 18,
+          "decision": "올해 하반기에 해외 법인을 설립하기로 했다."
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "해외 법인 설립 계획은 전면 철회하기로 했다."
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "reversed"
+    },
+    {
+      "id": "h2_reversed_not_do",
+      "category": "reversed_cancel",
+      "past_meetings": [
+        {
+          "days_ago": 7,
+          "decision": "다음 달 가격을 인상하기로 했다."
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "다음 달 가격 인상은 하지 않기로 했다."
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "reversed"
+    },
+    {
+      "id": "h2_reversed_alt_instead",
+      "category": "reversed_alternative",
+      "past_meetings": [
+        {
+          "days_ago": 15,
+          "decision": "사내 위키는 컨플루언스를 쓰기로 했다."
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "사내 위키는 컨플루언스 말고 노션을 쓰기로 했다."
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "reversed"
+    },
+    {
+      "id": "h2_reversed_alt_switch_back",
+      "category": "reversed_alternative",
+      "past_meetings": [
+        {
+          "days_ago": 20,
+          "decision": "배포는 수동 승인 방식으로 하기로 했다."
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "배포를 수동 승인이 아닌 자동 배포로 바꾸기로 했다."
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "reversed"
+    },
+    {
+      "id": "h2_new_unrelated_one",
+      "category": "new_unrelated",
+      "past_meetings": [
+        {
+          "days_ago": 10,
+          "decision": "보안 교육은 연 2회 하기로 했다."
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "고객 리뷰 답글은 사흘 안에 달기로 했다."
+      },
+      "expected_thread_source": null,
+      "expected_change_type": "new"
+    },
+    {
+      "id": "h2_new_unrelated_two",
+      "category": "new_unrelated",
+      "past_meetings": [
+        {
+          "days_ago": 8,
+          "decision": "사무실 대청소는 매달 마지막 금요일에 하기로 했다."
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "모바일 앱 다크 모드를 다음 분기에 출시하기로 했다."
+      },
+      "expected_thread_source": null,
+      "expected_change_type": "new"
+    },
+    {
+      "id": "h2_new_same_domain_pricing",
+      "category": "new_same_domain",
+      "past_meetings": [
+        {
+          "days_ago": 12,
+          "decision": "무료 요금제 저장 용량은 5GB로 정했다."
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "유료 요금제에 팀 관리 기능을 추가하기로 했다."
+      },
+      "expected_thread_source": null,
+      "expected_change_type": "new"
+    },
+    {
+      "id": "h2_new_same_domain_meeting",
+      "category": "new_same_domain",
+      "past_meetings": [
+        {
+          "days_ago": 14,
+          "decision": "전체 회의는 월요일 오전 10시에 하기로 했다."
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "회의록은 회의 당일에 공유하기로 했다."
+      },
+      "expected_thread_source": null,
+      "expected_change_type": "new"
+    },
+    {
+      "id": "h2_new_same_domain_hiring",
+      "category": "new_same_domain",
+      "past_meetings": [
+        {
+          "days_ago": 9,
+          "decision": "신규 고객 온보딩은 영업팀이 맡기로 했다."
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "영업팀 인센티브 기준을 분기 매출로 바꾸기로 했다."
+      },
+      "expected_thread_source": null,
+      "expected_change_type": "new"
+    },
+    {
+      "id": "h2_chain_reaffirm_after_switch",
+      "category": "chain",
+      "past_meetings": [
+        {
+          "days_ago": 30,
+          "decision": "사내 위키는 컨플루언스를 쓰기로 했다."
+        },
+        {
+          "days_ago": 15,
+          "decision": "사내 위키를 컨플루언스에서 노션으로 옮기기로 했다."
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "사내 위키는 노션을 그대로 쓰기로 했다."
+      },
+      "expected_thread_source": 1,
+      "expected_change_type": "unchanged"
+    },
+    {
+      "id": "h2_chain_reaffirm_after_raise",
+      "category": "chain",
+      "past_meetings": [
+        {
+          "days_ago": 28,
+          "decision": "무료 요금제 저장 용량은 5GB로 정했다."
+        },
+        {
+          "days_ago": 14,
+          "decision": "무료 요금제 저장 용량을 10GB로 늘리기로 했다."
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "무료 요금제 저장 용량은 10GB를 유지하기로 했다."
+      },
+      "expected_thread_source": 1,
+      "expected_change_type": "unchanged"
+    },
+    {
+      "id": "h2_chain_cancel_after_plan",
+      "category": "chain",
+      "past_meetings": [
+        {
+          "days_ago": 26,
+          "decision": "하반기에 사옥 이전을 하기로 했다."
+        },
+        {
+          "days_ago": 12,
+          "decision": "사옥 이전 시점을 내년 1월로 미루기로 했다."
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "사옥 이전은 하지 않기로 했다."
+      },
+      "expected_thread_source": 1,
+      "expected_change_type": "reversed"
+    },
+    {
+      "id": "h2_distractor_modified",
+      "category": "distractor",
+      "past_meetings": [
+        {
+          "days_ago": 18,
+          "decision": "보안 교육은 연 2회 하기로 했다."
+        },
+        {
+          "days_ago": 9,
+          "decision": "휴가 신청은 3일 전까지 하기로 했다."
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "휴가 신청 기한을 5일 전으로 늘리기로 했다."
+      },
+      "expected_thread_source": 1,
+      "expected_change_type": "modified"
+    }
+  ]
+}

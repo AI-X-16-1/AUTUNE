@@ -17,6 +17,10 @@ docs/engineering/testing.md, "Evaluation"):
 Run every suite: ``uv run --package autune-context python -m autune_context.eval``
 Run one: ``uv run --package autune-context python -m autune_context.eval topic-linking``
 
+Seeds and deletes shared entities in a throwaway database -- the one place
+module D writes them (invariant 4). Never point this at a database that holds
+real meetings; ``__main__`` refuses one (``_guard``).
+
 A third suite is a plain subpackage away: give it its own ``dataset.py`` /
 ``runner.py`` / ``fixtures/*.json`` and add it to ``__main__``'s registry.
 """

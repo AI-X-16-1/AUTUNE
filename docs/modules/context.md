@@ -183,7 +183,9 @@ and is settled in Phase 0.
    `pending` link for the user to confirm.
 6. Mark `ctx_meeting_status.topic_linking_done`, then schedule
    `autune.context.publish_if_ready` with a countdown of
-   `publish_timeout_s`.
+   `publish_timeout_s`. If the meeting had already published (module A
+   reprocessed the recording), schedule `autune.context.republish` instead —
+   see "Republishing after a rerun".
 
 ### Decision lineage — from `autune.extraction.completed`
 
@@ -246,18 +248,35 @@ lineage view (S22), which reads to a user as a bug.
 4. Compute `key_stakeholders_absent` from the shared `participants` of each
    version's meeting against the thread's known stakeholders (users across
    every earlier version's meeting). A non-empty list drives the drift warning.
+   **Only once every speaker is named.** If the version's meeting has no
+   participant rows, or any participant whose `user_id` is still NULL, the list
+   is empty: that voice could be any of the known stakeholders. Module A names a
+   speaker only when a person confirms it in the app (#370), after this step has
+   run, so a meeting is usually unconfirmed here. Recording the resolved ids
+   alone would mark people absent from a meeting they spoke in and send each of
+   them a drift DM saying so. The accepted cost is a missed warning: a meeting
+   with a guest who never resolves to an account never reports an absence, and
+   a confirmation made later is not picked up until the thread is next
+   re-chained (the re-trigger is #360's question). "Every speaker named" is not
+   a roll call either: module A writes a participant row only for a speaker
+   label that spoke, so a stakeholder who attended without speaking has no row
+   and is still counted absent — a false DM this rule narrows but does not
+   remove.
 5. Mark `ctx_meeting_status.lineage_done` (and `extraction_seen`), then call
-   `autune.context.publish_if_ready`.
+   `autune.context.publish_if_ready` — or `autune.context.republish` when
+   the meeting had already published with its lineage (a rerun of B; see
+   "Republishing after a rerun").
 
 Idempotent: a re-run replaces the meeting's `ctx_decision_versions` row(s) and
 re-chains every thread that touches, then runs all three deletion sweeps (see
 "Deletion") — global and idempotent, so running them on every call closes real
 gaps ahead of #87 rather than leaving them for tests to be the only caller.
-Re-chaining a thread updates other meetings' versions too (an earlier meeting
-arriving late shifts what a later one's `previous_*` point to); their
-already-published `ContextLinks` are not automatically re-emitted — E ends up
-with a stale `decision_lineage` for that meeting until something republishes
-it. No automatic republish exists yet; tracked for a later phase.
+The rerun meeting's own `ContextLinks` is republished (see "Republishing after
+a rerun"). Re-chaining a thread updates other meetings' versions too (an
+earlier meeting arriving late shifts what a later one's `previous_*` point
+to); *their* already-published `ContextLinks` are not re-emitted — E ends up
+with a stale `decision_lineage` for those meetings until something republishes
+them. Not done yet; tracked for a later phase.
 
 **Concurrency.** `cpu_heavy` is a concurrent queue (docs/architecture/async-
 pipeline.md): two meetings for the same team can call `build_decision_lineage`
@@ -275,6 +294,36 @@ Publish `ContextLinks` when `topic_linking_done` is set **and** either
 timeout, publish with an empty `decision_lineage` and `"extraction"` in
 `missing_sources`. **A failure in B must never cost the user their topic links.**
 `published_at` guards against a double publish; the task is safe to run twice.
+
+### Republishing after a rerun — `autune.context.republish`
+
+The `published_at` guard also refuses a meeting whose content changed after it
+published. Module A reprocesses a recording by emitting
+`autune.transcript.ready` again with new `utt_` ids, so both halves rerun: topic
+linking rebuilds the links, and B re-emits `autune.extraction.completed` with
+`dec_` ids that moved with their sources. Without a republish E keeps the old
+payload, including `dec_` ids B no longer has.
+
+Each half reads, under the `ctx_meeting_status` row lock, whether the meeting
+had already published before its own write. If it had, it enqueues
+`autune.context.republish`, which re-sends `ContextLinks` built from the rows
+as they are now and **sends no Slack notice** — the notices belong to the first
+publish, and a reprocess is not news to the team. `build_decision_lineage`
+reports this as `LineageOutcome.REBUILT`, distinct from `LATE` (the B-timeout
+fallback published *without* lineage, so the drift warning is still owed and
+goes out through `notify_late_drift`) and `FIRST` (nothing published yet).
+`republish` never performs a first publish: for a meeting with no
+`published_at` it does nothing, so the first `ContextLinks` always goes through
+the gate above with its notices.
+
+An A reprocess therefore republishes twice, once per half, in whichever order
+they finish. Each is built from committed rows under the row lock, so the
+later send is the fresher one and carries both reruns once both have
+committed. E stores the last `ContextLinks` it processes; two workers taking
+the pair out of order would leave the older one — the same exposure the
+late-lineage republish already has, and not closed here. Closing it needs E to
+tell an older payload from a newer one, and `ContextLinks` carries no version or
+timestamp to do that with — a contract change (invariant 5), not a D-side fix.
 
 ## Storage
 
@@ -424,7 +473,10 @@ meeting itself that the two decision routes already applied.
 | --- | --- | --- |
 | `autune.context.on_transcript_ready` | `autune.transcript.ready` | `cpu_heavy` |
 | `autune.context.on_extraction_completed` | `autune.extraction.completed` | `cpu_heavy` |
-| `autune.context.publish_if_ready` | after either half finishes, or on timeout | `default` |
+| `autune.context.publish_if_ready` | after either half finishes, or on timeout | `cpu_heavy` |
+| `autune.context.republish` | either half reran for a meeting that already published | `cpu_heavy` |
+| `autune.context.notify_context_events` | after the first publish (`FIRST`, or the B-timeout fallback) | `default` |
+| `autune.context.notify_late_drift` | after a `LATE` republish; never after `republish` | `default` |
 | `autune.context.index_material` | material upload | `cpu_heavy` — Phase 2 |
 | `autune.context.send_brief` | 30 minutes before a meeting | `default` — Phase 2 |
 
@@ -452,7 +504,11 @@ lands, the one `send_task` call here moves behind it.
   per meeting (default 3); anything past the cap collapses into one rollup
   notice instead of one message per topic.
 - **Decision-drift warning** — when a decision changed while a key stakeholder
-  was absent.
+  was absent. States the changing meeting's own date ("2026년 9월 4일
+  회의에서..."), not just that it "changed" — a late-arriving lineage
+  (fallback-then-late-lineage, or a backfilled recording) otherwise reads as
+  "just now" regardless of when the meeting actually happened. Omits the date
+  when the meeting has none set (see PR #263's discussion, issue #257).
 - **Pre-meeting brief** — 30 minutes before the meeting. Phase 2. Contains
   summaries, never transcript excerpts beyond what the brief needs.
 
@@ -469,6 +525,28 @@ uv run --package autune-context python -m autune_context.eval
 The evaluation set is small, hand-labeled, and versioned inside the module. The
 non-LLM extraction path keeps the metric deterministic. Link dismissals from the
 confirmation flow feed threshold tuning.
+
+Each suite's cases carry a `category` (what the case is testing — a paraphrase,
+a shared keyword with a different meaning, a reversed vs. a modified decision),
+and the report breaks accuracy down by it, prints a 95% Wilson interval next to
+every headline number, and sweeps its threshold (`link_confidence_threshold`,
+`lineage_match_threshold`) from the scores the run already stored. Topic
+linking also reports link-level precision and recall and how often a no-link
+meeting got an asserted link; decision lineage scores threading and change-type
+classification separately, with a confusion matrix for the latter. What each
+change type means for labeling is in `eval/decision_lineage/dataset.py`.
+
+Each suite has a development set (`*_v2.json`, the default) and held-out sets
+(`*_heldout_v*.json`), run with `--dataset` (`python -m autune_context.eval
+topic-linking --dataset topic_linking_heldout_v1.json`). A held-out set stays
+held out only until a rule or threshold is chosen by looking at its failures —
+the PR that does that says so. Every set was written by the same person, so a
+held-out set guards against overfitting to particular cases; it is not a sample
+of real meetings.
+
+To run it on a laptop without the team's inference endpoints, use the
+`*_local` implementations (the `local-models` extra) and point
+`AUTUNE_CONTEXT_NLI_LOCAL_MODEL` at the fine-tuned checkpoint.
 
 ## Privacy notes
 

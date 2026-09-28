@@ -73,14 +73,45 @@ a 500MB pipeline is a judgement nobody tests.
 - **Noun terms.** A maximal run of content-noun tokens is the compound the
   speaker said, and that is what the graph needs a node for. The run is read
   from the morpheme tag (`ncn+jxt`) rather than the coarse part of speech,
-  which calls 개인화로 an adverb; a particle, an ending or a stopword breaks the
-  run, so the label is 개인화 and not 개인화로. Content noun means common,
+  which calls 개인화로 an adverb. A noun carrying a particle joins the run
+  **as its stem** and ends it — 로직은 joins as 로직, so "정렬 로직은" is
+  정렬 로직 and the label is 개인화 and not 개인화로; an ending, the copula or
+  a stopword breaks the run. Content noun means common,
   proper and foreign (`nc*`, `nq`, `f`) and **not** pronoun, numeral or bound
   noun: matching joins a run rather than breaking it, so letting 그거 or 두 in
   would give a node called 그거 검색 기능 and split the topic the meeting calls
   검색 기능 everywhere else. The tag rule is not enough on its own — this model
   tags 그거 as a common noun — so the demonstratives sit in the stoplist,
   measured rather than assumed.
+- **The particle is cut on the surface, not along the model's morphemes.**
+  Until #278 a noun with a particle on it was refused outright, and Korean puts
+  a particle on nearly every noun that is not the first half of a compound: "가장
+  큰 리스크는 콜드스타트입니다" gave no topic at all, and 정렬 로직은 came back
+  as 정렬. `spoken.noun_stem` now reads through it. The tag decides *whether* a
+  particle is attached and how many (noun parts, then only `j*` parts); the
+  standard particle inventory decides *what* is cut off the end of the word.
+  `lemma_` would have been the obvious source and is wrong on this vocabulary —
+  it splits 개인화로 as 개인 + 화로 and 콜드스타트입니다 as 콜드 + 스타트입니다.
+  Stacked particles are cut one at a time, no more times than the tag has `j`
+  morphemes: 서버에서부터 (`jca+jxc`) and 서버와는 (`jct+jxt`) are 서버, and
+  결과도 (`jxc`) stays 결과. A stack the model tags as one `j` (모듈까지도) is
+  on the list whole. A cut is only taken where the particle's spelling can
+  follow the syllable before it — 차이랑 is 차이 + 랑, not 차 + 이랑. The list
+  is load-bearing: an ending missing from it is cut wherever a shorter listed
+  ending matches, which is how the first version turned 계획대로 into 계획대
+  (#345). Four things are deliberately not read through: the copula (`jp`),
+  because 붙입니다 is tagged `ncn+jp+etm` and would give a topic called 붙; an
+  ending a particle and a noun's own last syllable spell alike when the tag
+  gives it one `j` — 경로는 and 개인화로는, 성과도 and 서버와도, 인프라도 and
+  캐시라도 — where either cut invents a topic on the other half, except for a
+  short measured list of nouns (경로, 결과, 불만, …) kept by name; a stem a
+  particle is still on (서버에서), which means the list missed a stack; and the
+  two nouns the model splits before their last syllable, 재시도 and 난이도,
+  which containment matching would otherwise count as a template's 재시도
+  covered by
+  a topic called 재시. Reading through the particle surfaced words it used to
+  refuse by accident, so 회의, 회의실 and the positional bound nouns the model
+  tags `ncn` (중, 쪽, 안) joined the stoplist in the same change.
 - **A span the model found is claimed whether or not we keep it.** An
   implausible one-letter person, an `LC` meeting room, an `OG` vendor: the
   characters are spoken for, so a refusal cannot come back as a term under
@@ -102,15 +133,19 @@ a 500MB pipeline is a judgement nobody tests.
   `autune_integrations.privacy`, the masker's own: a second copy of the
   character here is a guard that stops matching when the notation changes and
   says nothing about it. #250.
-- **Two precision filters.** A one-character `person` is not a person: A/B 결과
-  gives A and B as `PS`, and both became connected nodes. A `metric` with no
-  digit in it is not a metric: `QT` on spoken Korean fires on 한번, 네, 좀.
-  Precision is C's metric and a false topic is what a false gap is raised on.
-- **Dates are not filtered, and that is a known hole.** 오늘은 is still a node,
-  particle and all, while 오늘 sits in the noun-run stoplist — the same word
-  refused on one path and taken on the other. A rule that drops it while
-  keeping 다음 주 화요일까지, a deadline the meeting set and a value risk
-  scoring will read, is not a one-liner. Issue #230, raised in review of #222.
+- **Three precision filters.** A one-character `person` is not a person: A/B
+  결과 gives A and B as `PS`, and both became connected nodes. A `metric` with
+  no digit in it is not a metric: `QT` on spoken Korean fires on 한번, 네, 좀.
+  And a stopword is not a topic on either path. Precision is C's metric and a
+  false topic is what a false gap is raised on.
+- **Both paths cut the particle and ask the same stoplist.** 오늘은 used to be
+  a `DT` node, particle and all, while 오늘 was refused as a term — one word,
+  two answers (#230). An entity span now loses the particle on its last word
+  by the same `noun_stem`, and the stoplist is asked about the whole span:
+  오늘은 is 오늘 and is refused, and 다음 주 화요일까지, a deadline the meeting
+  set, survives because the span is not 다음. The noun runs ask token by token
+  instead, so 오늘 배포 keeps 배포 — a span-level check would let 오늘 into the
+  label. Both halves of this closed with #278.
 
 **A term's kind stays undecided.** It carries the label `term`, the sixth in
 `ENTITY_LABELS`, which says "a compound the meeting named" and not which of
@@ -149,7 +184,7 @@ asking the extractor.
 | Relation | Marker | Reads |
 | --- | --- | --- |
 | `depends_on` | 필요, 있어야, 되어야, 선행, 전제, 없이는, 없으면 | "정렬 로직은 인덱스가 필요합니다" |
-| `blocked_by` | a blocker word (안 잡, 미정, 막혀, 무리, 이슈, …) **and** a causal connective in the same clause | "실시간은 콜드스타트가 안 잡혀 있어서 무리입니다" |
+| `blocked_by` | a blocker word (안 잡, 미정, 막혀, 무리, 이슈, …) **and** a causal connective in the same clause, on either side of it | "실시간은 콜드스타트가 **안 잡혀 있어서** 무리입니다", "검색 기능은 캐시 **때문에** 막혀 있습니다" |
 | `alternative_to` | 대신, 말고, 보다는, 아니라, 반면, `vs` | "인기순 정렬 대신 실시간 개인화로" |
 | `part_of` | — **no rule** | |
 
@@ -162,7 +197,7 @@ weights it, and what a rule can read today is a different question from what an
 edge may say. Raised in review of #249.
 
 **Measured.** Over `transcript_ready.typical` the rules assert exactly one
-relation — `실시간 blocked_by 콜드스타트` — against six co-occurrence edges.
+relation — `실시간 blocked_by 콜드스타트 처리` — against its co-occurrence edges.
 `transcript_ready.short` asserts none: it names two topics in two utterances and
 never says how they stand to each other. Both numbers are pinned in
 `modules/gap/tests/unit/test_spacy_ner.py` (marked `model`).
@@ -189,6 +224,33 @@ Three things came out of that measurement, and each one changed the design:
   `alternative_to` the most common relation in the graph and every one of them a
   coin flip. This is the clearest case for the LLM assistance step 2 is promised.
 
+**A reason can be denied, and a window can hold two of them.** Two guards the
+backward reading needed and did not have, both found by running it (raised in
+review of #254):
+
+- **`때문이 아니라`** names a reason in order to refuse it. Without a guard
+  "검색 기능은 캐시 때문이 아니라 그냥 막혀 있습니다" asserted
+  `검색 기능 blocked_by 캐시` — the reverse of the sentence. `아니` is read
+  between the connective and the cue and nowhere else: `_ALTERNATIVES` reads
+  `아니라` as a contrast marker, and that reading is still the right one for
+  "A가 아니라 B". A reason stated after the denied one is still found.
+- **Two reasons in one window.** "캐시 처리 때문에 인증 탓에 막혀 있습니다"
+  states two, and the resolution check was reading the whole window, so 처리
+  from the first cancelled the second and 인증 — the blocker actually standing
+  — was dropped. The check now sees only what its own connective heads.
+
+**What the reason guard costs.** `_RESOLVED` refuses a blocker whose reason
+clause says the thing is gone — "캐시 이슈가 해결됐기 때문에 …" asserts the
+reverse of a blocker, and `blocked_by` is the one relation the report treats as
+a finding on its own. 처리 is on that list and is also the ordinary noun for
+the work, so "캐시 처리 때문에 막혀 있습니다" is refused too, and the relation
+the meeting did state is lost. The ambiguity was already here in the forward
+direction; reading backwards means it now costs a relation in two places. Kept
+in the losing direction because precision is C's metric, and pinned by
+`test_a_resolution_word_used_as_a_noun_costs_the_relation` so it is a known
+price rather than a surprise. Telling the two readings apart is the assisted
+implementation's job, not a longer list.
+
 **A marker is a string, and the clause decides whether the speaker meant it.**
 Three guards, each one a sentence that produced an edge before it existed
 (raised in review of #249, found by running the extractor rather than reading
@@ -206,6 +268,26 @@ it):
   The guard window stops at the boundary for the same reason in reverse:
   "인덱스가 필요하고 캐시는 문제 없습니다" must not cancel a need the speaker
   did state.
+
+  **The clause has two sides, and at first only one was read.** `어서`/`아서`/
+  `라서` are verb endings and attach to the predicate, so they follow the
+  blocker word; `때문`/`탓에`/`으로 인해` head the reason and Korean puts the
+  reason first, so they precede it. Looking only forwards from the cue read
+  three of the six connectives and dropped every relation a meeting stated the
+  other way — "검색 기능은 캐시 때문에 막혀 있습니다" asserted nothing. The
+  window now runs backwards as well, bounded by the same clause break and the
+  same `MAX_MARKER_DISTANCE`, and when the connective is the one behind, it
+  rather than the cue is what the ends are read from: in "캐시 때문에 정렬
+  로직이 막혀 있습니다" the mention before the *cue* is 정렬 로직, the thing
+  being blocked. Recall only — no false edge was produced by the narrow
+  window. #254, follow-up to #249.
+
+  **Only three of the six run backwards.** `어서`/`아서`/`라서` are verb endings
+  that close the clause they sit in, and the clause-break list has no entry for
+  them, so a backward window that looked for all six read straight past one:
+  "결제 모듈은 시간이 없어서 로그인 모듈 이슈는 못 봤습니다" paired the blocker
+  word with the previous clause's reason and asserted `로그인 모듈 blocked_by
+  결제 모듈`. The backward window takes `때문`/`탓에`/`으로 인해` only.
 - **The source is what the sentence is about.** Korean starts a new subject
   after a connective ending, so the nearest mention after the marker is usually
   the next sentence — "정렬 로직은 인덱스가 필요하고 캐시는 다음 주에 봅시다"
@@ -672,8 +754,11 @@ There is no `external` implementation and adding one is a privacy decision
 rather than a config string — see `../engineering/environments.md`, "The entity
 extractor has no external option".
 
-Every row a topic produces records `extractor_version` — the pipeline name and
-its version, `ko_core_news_lg-3.8.0`. The name alone is not a version: the
+Every row a topic produces records `extractor_version` — the pipeline name, its
+version and the version of `pipeline.spoken`'s rules,
+`ko_core_news_lg-3.8.0+spoken-2`. The rules are half the extractor: the same
+parse gives a different graph once a rule there changes, so `spoken.RULES_VERSION`
+is bumped with any change to what it keeps. The name alone is not a version: the
 pipeline ships a new release with every spaCy minor, so a graph built with 3.7
 and one built with 3.8 would carry the same string. Gap precision is measured
 over time and dismissals feed threshold tuning; both read across model

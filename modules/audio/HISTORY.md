@@ -251,7 +251,7 @@ production uses; they now take `min_seconds` as a required keyword, and the
 script defaults it to `get_settings().live_speaker_min_s` and prints the
 value it used.
 
-### Processing time — the target is met, and the first attempt to measure it was wrong
+### Processing time — the target is met with diarization on the GPU (#394), and the first attempt to measure it was wrong
 
 Measured on a six-person 5m27s recording (327.4 s), stored path, accuracy as
 normalised CER against the script that was read. The metric this module signed
@@ -284,6 +284,14 @@ persist, publish — 0.6 s. **Transcription is the pipeline.**
 reconstructed rather than measured: 411 s of Whisper plus the 170 s diarization
 took on CPU. Putting diarization on the GPU is what brings it to 1.32×, and it
 costs no accuracy at all — see the subsection below. Nothing had to be traded.
+
+**Read the 1.32× with its condition attached.** It is the first row, and that
+row is diarization on MPS, which `AUTUNE_AUDIO_DIARIZATION_DEVICE` (#394) turns
+on and which is not the default. MPS is Apple silicon only and unverified under
+a prefork worker (#329); CUDA is unmeasured. So the claim is "the target is
+reachable, and here is the one configuration that reaches it" — not "module A
+meets its KPI". On what ships today it is missed, and beam width is not what
+closes the gap (@lsh2217 on #389).
 
 **`large-v3-turbo` is rejected.** 3.7× faster on the Whisper stage and 29
 points worse, and the shape settles it: deletions rise thirteenfold. It is not
@@ -340,8 +348,16 @@ time of writing that appeared false — the target seemed missed by double — a
 beam 1 looked like the only way to reach it, at 6.6 points of accuracy. With the
 baseline measured properly and diarization on the GPU, **beam 5 reaches the
 target at full accuracy and there is nothing to trade.** Beam 1 remains
-available and remains 60 s faster; it is no longer a decision anybody has to
-make.
+available; it is no longer a decision anybody has to make.
+
+The gap between them is **about 207 s, not 60 s.** 60 s is the distance between
+two rows of the table that differ in two things at once — beam 5 with
+diarization on MPS against beam 1 with diarization on CPU. Held at one
+configuration it is the Whisper stage alone: 411 s against 204 s, which would
+put a beam 1 run with diarization on the GPU near 227 s, about 0.69×. The
+conclusion does not move — beam 1 costs 6.6 accuracy points and 151 deletions
+against 27, and nothing needs that speed — but the number was comparing
+configurations rather than beams (@lsh2217 on #389).
 
 #### Diarization was 171 s because nobody moved it off the CPU
 
@@ -616,8 +632,21 @@ first cut of this code did.
 The sweep #209 had was dropped because it decided on mtime and could delete a
 file a late task was about to adopt. It is back, deciding against `aud_jobs`
 instead: an attempt that is over, or a job unknown to the database, has no
-owner; a live job is left alone until `orphan_after_hours`. It runs at the
-start of every `process_recording` until there is a periodic trigger (#207).
+owner; a live job is left alone until `orphan_after_hours`.
+
+**Then it got a second trigger, and kept the first** (#207). The in-task call
+fails exactly when it is needed: the situations that leave an orphan behind are
+the situations where uploads stop, so "the next upload will collect it" is not a
+guarantee. `autune.audio.periodic.sweep_orphans` runs it hourly on beat instead,
+owning no job and therefore sparing no file. Both are kept because they fail
+differently — the in-task one is the only one that fires with no beat process
+running, which is every local run and every demo, and the periodic one is the
+only one that fires when nothing is being uploaded at all. Hourly, not sooner:
+a `queued` or `running` job holds its file until `orphan_after_hours` (6h), so a
+shorter interval scans the whole upload directory and collects nothing extra.
+The mechanism that made this possible is `autune_core.periodic`, added in the
+same PR — a module declares a periodic task by defining it, and `apps/worker`
+gains no line (invariant 6).
 
 `privacy.md` section 1 was rewritten in the same PR (decision #275). "Scoped
 to the task" never described a two-process handover; "owned by exactly one
