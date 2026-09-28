@@ -2,13 +2,15 @@
 
 With no ``suite``, runs every registered suite. See ``eval``'s own docstring
 for what each one measures and each suite's ``runner`` module for what it
-needs to actually run (a migrated Postgres, at minimum).
+needs to actually run (a migrated Postgres, at minimum). Refuses a database
+that holds meetings it did not create -- see ``_guard``.
 """
 
 from __future__ import annotations
 
 import argparse
 
+from autune_context.eval._guard import refuse_real_meetings
 from autune_context.eval.decision_lineage import runner as decision_lineage
 from autune_context.eval.topic_linking import runner as topic_linking
 
@@ -26,12 +28,21 @@ def main() -> int:
         choices=sorted(_SUITES),
         help="run only this suite; default runs all of them",
     )
+    parser.add_argument(
+        "--dataset",
+        help="fixture file name under the suite's fixtures/ (e.g. the held-out "
+        "set); needs a suite. Default: the suite's own default dataset",
+    )
     args = parser.parse_args()
+    if args.dataset and not args.suite:
+        parser.error("--dataset needs a suite")
+    refuse_real_meetings()
 
     for name in [args.suite] if args.suite else sorted(_SUITES):
         module = _SUITES[name]
-        print(f"=== {name} ===")
-        print(module.report(module.run_all()))
+        cases = module.load_cases(args.dataset) if args.dataset else None
+        print(f"=== {name}{f' ({args.dataset})' if args.dataset else ''} ===")
+        print(module.report(module.run_all(cases)))
         print()
     return 0
 
