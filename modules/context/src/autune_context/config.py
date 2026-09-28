@@ -61,7 +61,14 @@ class ContextSettings(BaseSettings):
     link_confidence_threshold: float = 0.6
     """Above: assert the link. Below: store it as ``pending`` and ask the user.
     Placeholder value; tuned against the evaluation set once it exists (the
-    eval harness is still owed — see docs/modules/context.md, "Metric")."""
+    eval harness is still owed — see docs/modules/context.md, "Metric").
+
+    A production auto-tuning version of this (issue #256) was tried and
+    reverted: confirm/reject only ever labels a ``pending`` link, which by
+    definition scores *below* the current threshold, so the training sample
+    can never show "the threshold is too low" evidence and a tuner fit to it
+    only ever ratchets the value down. Left for #240's offline eval harness,
+    which isn't subject to that bias, or a redesign that isn't."""
 
     # --- decision lineage ---
     lineage_match_threshold: float = 0.6

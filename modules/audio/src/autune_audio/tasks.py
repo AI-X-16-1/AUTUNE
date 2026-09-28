@@ -2,11 +2,16 @@
 
 A is the producer: it turns a recording into a transcript, deletes the raw
 audio, and publishes TranscriptReady. See docs/architecture/async-pipeline.md.
+
+One of them is periodic: the orphan sweep runs on a schedule as well as at the
+head of every ``process_recording``. ``autune_core.periodic`` explains the
+mechanism; ``sweep_orphans`` below explains why A wants both triggers.
 """
 
 from __future__ import annotations
 
 from dataclasses import replace
+from datetime import timedelta
 
 from celery import shared_task
 
@@ -22,7 +27,7 @@ from autune_audio.quality import detect_repetition
 from autune_audio.speakers import Utterance, assign_speakers, rename_speakers
 from autune_audio.storage import adopt, delete_orphan, upload_path
 from autune_contracts.events import TRANSCRIPT_READY
-from autune_core import get_logger
+from autune_core import get_logger, periodic
 from autune_core.db import session_scope
 from autune_core.events import publish
 
@@ -44,9 +49,13 @@ def process_recording(job_id: str) -> None:
     that already finished, has its file deleted and is otherwise declined; one
     still running under another delivery is left entirely alone.
 
-    **The sweep runs first.** Uploads whose task was lost after the enqueue
-    have no other collector until there is a periodic trigger (#207); each
-    run clears the ones the database says are over (``service.sweep_orphans``).
+    **The sweep runs first**, and it also runs on a schedule
+    (``sweep_orphans`` below). Kept here as well because it is one query on a
+    session this task already has, it is idempotent, and it is the trigger that
+    still fires when beat is not running -- which is every local run and every
+    demo. The periodic one is what collects an upload on a day when no second
+    upload ever arrives, which is the case the in-task trigger cannot reach
+    (#207). ``keep=job_id`` spares this attempt's own file.
 
     **Everything that needs the audio happens inside ``adopt``.** Deletion is
     not written here: ``storage.adopt`` owns it, in a ``finally``, so this task
@@ -98,6 +107,10 @@ def process_recording(job_id: str) -> None:
     settings = get_settings()
     with session_scope() as session:
         claim = service.claim_job(session, job_id=job_id)
+        # Two triggers, on purpose: this one and `sweep_orphans` below. This is
+        # the one that works with no beat process running; that one is the one
+        # that works with no further upload arriving. `keep` spares this
+        # attempt's own file -- the periodic caller owns no job and passes none.
         service.sweep_orphans(session, settings=settings, keep=job_id)
     meeting_id = claim.meeting_id
 
@@ -171,6 +184,50 @@ def process_recording(job_id: str) -> None:
         utterances=len(payload.utterances),
         participants=len(payload.metadata.participants),
     )
+
+
+@shared_task(name="autune.audio.periodic.sweep_orphans")
+@periodic(timedelta(hours=1))
+def sweep_orphans() -> None:
+    """Collect uploads nobody is coming for, on a schedule rather than on luck.
+
+    ``service.sweep_orphans`` also runs at the head of every
+    ``process_recording``, and that is where it started -- but the situations
+    that create an orphan overlap with the situations where uploads stop
+    (a worker that died, a broker that was purged, a bad deploy on a Friday),
+    so the in-task trigger is missing exactly when it is needed (#207). A
+    recording with no owner is the durable copy invariant 11 exists to prevent,
+    and "it will be deleted when somebody uploads again" is not a guarantee.
+
+    **Both triggers are kept.** The in-task one costs one query on a session
+    that is open anyway and still fires when no beat process is running, which
+    is every local run and every demo (docs/engineering/demo-runbook.md starts
+    a worker by hand and no beat). This one fires when nothing else happens at
+    all. They cannot collide destructively: the sweep deletes by what the
+    database says, tolerates an already-deleted file, and takes no lock.
+
+    **Hourly, because of ``orphan_after_hours``.** A ``queued`` or ``running``
+    job keeps its file until it is older than that threshold (6h), so for those
+    a shorter interval scans the whole upload directory and deletes nothing.
+    The files that *are* collectable immediately -- a job that is ``done``,
+    ``failed`` or ``superseded``, and a file no job knows past its own grace --
+    are the ones the interval decides the latency for, and an hour of latency
+    on a file that is already unreferenced is not worth a scan every minute.
+    Raise the interval, not lower it, if the directory ever gets large.
+
+    **No arguments, and no ``keep``.** A periodic run owns no upload, so there
+    is nothing to spare: ``keep`` exists for the in-task caller protecting its
+    own file. Everything a run needs it reads here.
+
+    Runs on ``gpu`` like A's other tasks, which is not about hardware: it is the
+    queue A's worker listens on, and therefore the process that can see the
+    directory the files are in.
+    """
+    settings = get_settings()
+    with session_scope() as session:
+        swept = service.sweep_orphans(session, settings=settings)
+    # Ids only, and only how many. The filenames are ids (privacy.md section 1).
+    log.info("audio_orphan_sweep_finished", swept=len(swept))
 
 
 def _log_masking(

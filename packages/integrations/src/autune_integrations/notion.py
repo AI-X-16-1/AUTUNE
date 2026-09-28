@@ -33,3 +33,11 @@ class NotionClient(HttpClient):
     def create_page(self, database_id: str, properties: dict[str, Any]) -> str:
         body = {"parent": {"database_id": database_id}, "properties": properties}
         return str(self.request("POST", "/pages", json=body).get("id", ""))
+
+    def update_page(self, page_id: str, properties: dict[str, Any]) -> None:
+        """Overwrite a page's properties -- everything named in ``properties``,
+        nothing else. A page's content already exists by the time this runs;
+        this is the "keep Notion in sync with a later edit" half, not a second
+        creation, so it is a PATCH to the page itself rather than another
+        ``create_page`` against its database."""
+        self.request("PATCH", f"/pages/{page_id}", json={"properties": properties})

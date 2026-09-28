@@ -200,6 +200,28 @@ def test_publish_has_no_missing_sources_once_b_has_reported(
     assert links.missing_sources == []
 
 
+def test_a_rerun_after_publish_republishes_the_rebuilt_links(
+    team_id: str, published: _CapturingApp
+) -> None:
+    """The topic-link half of the reprocess gap: before, the rerun rebuilt
+    ``ctx_topic_links`` and the ``published_at`` guard kept E on the old set."""
+    current = _meeting(team_id, days_ago=0)
+    assert service.run_topic_linking(_transcript(current, _SEARCH + _SORT)) is False
+    assert service.publish_if_ready(current) is True
+    assert ContextLinks.model_validate(published.sent[0][1][0]).topic_links == []
+
+    # A past meeting on the same topics only exists by the time A reprocesses
+    # ``current``, so the rerun finds links the first run could not.
+    past = _meeting(team_id, days_ago=10)
+    service.run_topic_linking(_transcript(past, _SEARCH + _SORT))
+    assert service.run_topic_linking(_transcript(current, _SEARCH + _SORT)) is True
+
+    assert service.publish_if_ready(current, force=True) is True
+    links = ContextLinks.model_validate(published.sent[1][1][0])
+    assert links.topic_links
+    assert all(link.linked_meeting_id == past for link in links.topic_links)
+
+
 def test_publish_waits_until_topic_linking_is_done(team_id: str, published: _CapturingApp) -> None:
     meeting = _meeting(team_id, days_ago=0)
     service.mark_extraction_seen(meeting)  # B first, D's topic linking not run yet

@@ -1,0 +1,547 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "h2_long_three_topics_one_link",
+      "category": "long_meeting",
+      "past_meetings": [
+        {
+          "days_ago": 16,
+          "lines": [
+            "물류 파트너와 배송 지연 보상 기준을 논의했다.",
+            "3일 이상 늦으면 배송비를 환불하기로 했다.",
+            "파트너 계약서에 조항을 넣기로 했다."
+          ]
+        },
+        {
+          "days_ago": 8,
+          "lines": [
+            "사내 멘토링 프로그램 참가자를 모집했다.",
+            "멘토 열 명이 지원했다.",
+            "매칭은 다음 주에 한다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "lines": [
+          "이번 달 보안 점검 일정을 공유했다.",
+          "외부 업체가 모의 해킹을 진행한다.",
+          "결과 보고는 월말에 받는다.",
+          "배송 지연 보상 조항이 계약서에 반영됐다.",
+          "파트너 측도 3일 기준에 동의했다.",
+          "고객 안내 문구를 새로 만들기로 했다.",
+          "탕비실 간식 예산을 조금 늘렸다.",
+          "과일을 주 2회 들여놓기로 했다.",
+          "비용은 복지 예산에서 쓴다."
+        ]
+      },
+      "expected_linked_indices": [
+        0
+      ]
+    },
+    {
+      "id": "h2_long_two_links_among_three",
+      "category": "long_meeting",
+      "past_meetings": [
+        {
+          "days_ago": 21,
+          "lines": [
+            "앱 푸시 알림 문구 A/B 테스트를 설계했다.",
+            "혜택 강조형과 긴급성 강조형을 비교한다.",
+            "2주 동안 진행하기로 했다."
+          ]
+        },
+        {
+          "days_ago": 13,
+          "lines": [
+            "연말 정산 서류 제출 일정을 안내했다.",
+            "마감은 다음 달 15일이다.",
+            "인사팀이 개별 안내 메일을 보낸다."
+          ]
+        },
+        {
+          "days_ago": 6,
+          "lines": [
+            "데이터 라벨링 외주 업체를 선정했다.",
+            "단가는 건당 50원으로 정했다.",
+            "품질 검수는 샘플링으로 한다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "lines": [
+          "푸시 문구 A/B 테스트 결과를 공유했다.",
+          "혜택 강조형 문구의 클릭률이 더 높았다.",
+          "혜택 강조형으로 전면 교체하기로 했다.",
+          "라벨링 외주 첫 납품분을 검수했다.",
+          "샘플 검수에서 오류율이 4%였다.",
+          "오류가 많은 유형은 가이드를 보강하기로 했다.",
+          "다음 주 전사 타운홀 안건을 정리했다.",
+          "상반기 실적 발표가 첫 순서다.",
+          "질의응답 시간을 30분 잡았다."
+        ]
+      },
+      "expected_linked_indices": [
+        0,
+        2
+      ]
+    },
+    {
+      "id": "h2_long_no_link",
+      "category": "long_meeting",
+      "past_meetings": [
+        {
+          "days_ago": 10,
+          "lines": [
+            "검색 광고 입찰 전략을 바꿨다.",
+            "전환이 낮은 키워드는 입찰을 멈췄다.",
+            "주간 단위로 성과를 본다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "lines": [
+          "신규 입사자 장비 지급 절차를 정리했다.",
+          "입사 전날까지 노트북을 세팅해 둔다.",
+          "장비 반납 절차도 문서화한다.",
+          "사내 행사 사진 공유 방식을 정했다.",
+          "공용 드라이브 폴더에 올리기로 했다.",
+          "외부 공개 전에는 동의를 받는다.",
+          "주차 등록 신청 방식을 바꿨다.",
+          "온라인 양식으로 받기로 했다.",
+          "매달 1일에 갱신한다."
+        ]
+      },
+      "expected_linked_indices": []
+    },
+    {
+      "id": "h2_follow_up_incident_postmortem",
+      "category": "follow_up",
+      "past_meetings": [
+        {
+          "days_ago": 5,
+          "lines": [
+            "어제 결제 장애 원인을 1차로 파악했다.",
+            "DB 커넥션 풀이 고갈됐다.",
+            "풀 크기를 늘리고 재발 방지책을 정리하기로 했다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "lines": [
+          "결제 장애 사후 분석 문서를 검토했다.",
+          "커넥션 풀 모니터링 알림을 추가했다.",
+          "비슷한 장애를 막기 위한 부하 테스트를 하기로 했다."
+        ]
+      },
+      "expected_linked_indices": [
+        0
+      ]
+    },
+    {
+      "id": "h2_follow_up_office_plants",
+      "category": "follow_up",
+      "past_meetings": [
+        {
+          "days_ago": 14,
+          "lines": [
+            "사무실에 공기 정화 식물을 들이기로 했다.",
+            "층마다 다섯 개씩 둔다.",
+            "관리 업체와 계약하기로 했다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "lines": [
+          "식물 관리 업체가 첫 방문을 했다.",
+          "층별로 다섯 개씩 배치를 마쳤다.",
+          "월 2회 관리받기로 했다."
+        ]
+      },
+      "expected_linked_indices": [
+        0
+      ]
+    },
+    {
+      "id": "h2_paraphrase_slow_builds",
+      "category": "paraphrase",
+      "past_meetings": [
+        {
+          "days_ago": 12,
+          "lines": [
+            "CI 빌드 시간이 20분을 넘는다.",
+            "테스트 병렬화가 안 되어 있다.",
+            "테스트를 나눠서 병렬로 돌리기로 했다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "lines": [
+          "머지 전 검증이 너무 오래 걸린다는 불만이 많다.",
+          "검사 작업이 한 줄로 순서대로 돈다.",
+          "여러 러너에 쪼개 돌리는 작업을 시작했다."
+        ]
+      },
+      "expected_linked_indices": [
+        0
+      ]
+    },
+    {
+      "id": "h2_paraphrase_customer_churn",
+      "category": "paraphrase",
+      "past_meetings": [
+        {
+          "days_ago": 18,
+          "lines": [
+            "유료 구독 해지율이 지난 분기에 올랐다.",
+            "해지 사유 1위는 가격 부담이다.",
+            "해지 방어용 할인 제안을 만들기로 했다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "lines": [
+          "돈 내던 사용자들이 이탈하는 속도가 빨라졌다.",
+          "비싸다는 이유로 떠나는 경우가 가장 많다.",
+          "나가려는 사용자에게 특가를 보여주는 화면을 준비했다."
+        ]
+      },
+      "expected_linked_indices": [
+        0
+      ]
+    },
+    {
+      "id": "h2_paraphrase_meeting_notes",
+      "category": "paraphrase",
+      "past_meetings": [
+        {
+          "days_ago": 9,
+          "lines": [
+            "회의록 작성이 사람마다 제각각이다.",
+            "공통 템플릿을 만들기로 했다.",
+            "결정 사항과 담당자를 반드시 적는다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "lines": [
+          "미팅 기록 양식을 하나로 통일한 초안이 나왔다.",
+          "누가 무엇을 하기로 했는지 칸을 따로 뒀다.",
+          "다음 주부터 모든 팀이 쓰기로 했다."
+        ]
+      },
+      "expected_linked_indices": [
+        0
+      ]
+    },
+    {
+      "id": "h2_recurring_three",
+      "category": "recurring",
+      "past_meetings": [
+        {
+          "days_ago": 35,
+          "lines": [
+            "사내 해커톤 주제 후보를 모았다.",
+            "AI 활용 아이디어가 가장 많았다.",
+            "주제를 AI 생산성으로 정했다."
+          ]
+        },
+        {
+          "days_ago": 21,
+          "lines": [
+            "해커톤 팀 구성을 마쳤다.",
+            "여섯 팀이 참가한다.",
+            "심사 기준을 정했다."
+          ]
+        },
+        {
+          "days_ago": 7,
+          "lines": [
+            "해커톤 본선을 진행했다.",
+            "우승 팀은 회의 요약 봇을 만들었다.",
+            "상위 두 팀 결과물을 사내 도입 검토하기로 했다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "lines": [
+          "해커톤 우승작 사내 도입 검토 결과를 공유했다.",
+          "회의 요약 봇을 두 팀에서 시범 사용한다.",
+          "한 달 뒤 확대 여부를 결정한다."
+        ]
+      },
+      "expected_linked_indices": [
+        0,
+        1,
+        2
+      ]
+    },
+    {
+      "id": "h2_distractor_two_hiring",
+      "category": "distractor",
+      "past_meetings": [
+        {
+          "days_ago": 15,
+          "lines": [
+            "프론트엔드 개발자 채용 공고를 냈다.",
+            "리액트 경험을 필수로 적었다.",
+            "지원자 서류는 팀장이 본다."
+          ]
+        },
+        {
+          "days_ago": 7,
+          "lines": [
+            "사내 추천 채용 보상금을 올리기로 했다.",
+            "추천 입사 시 200만 원을 준다.",
+            "다음 달부터 적용한다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "lines": [
+          "프론트엔드 지원자 서류 검토를 마쳤다.",
+          "리액트 경험이 있는 다섯 명을 1차 면접에 부른다.",
+          "면접관은 두 명으로 정했다."
+        ]
+      },
+      "expected_linked_indices": [
+        0
+      ]
+    },
+    {
+      "id": "h2_distractor_two_mobile",
+      "category": "distractor",
+      "past_meetings": [
+        {
+          "days_ago": 11,
+          "lines": [
+            "안드로이드 앱 최소 지원 버전을 올리기로 했다.",
+            "구버전 사용자 비율이 2% 미만이다.",
+            "다음 업데이트부터 적용한다."
+          ]
+        },
+        {
+          "days_ago": 6,
+          "lines": [
+            "iOS 앱 위젯 기능을 기획했다.",
+            "홈 화면에서 오늘 일정을 보여준다.",
+            "디자인 시안을 다음 주까지 만든다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "lines": [
+          "iOS 위젯 디자인 시안을 검토했다.",
+          "오늘 일정과 알림 개수를 함께 보여주기로 했다.",
+          "개발은 다음 스프린트에 시작한다."
+        ]
+      },
+      "expected_linked_indices": [
+        1
+      ]
+    },
+    {
+      "id": "h2_same_domain_two_finance",
+      "category": "same_domain",
+      "past_meetings": [
+        {
+          "days_ago": 10,
+          "lines": [
+            "법인 카드 한도를 부서별로 조정했다.",
+            "영업부 한도를 월 500만 원으로 올렸다.",
+            "사용 내역은 월말에 검토한다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "lines": [
+          "외화 결제 환차손 처리 방식을 논의했다.",
+          "환율은 결제일 기준으로 적용한다.",
+          "분기마다 회계법인 검토를 받는다."
+        ]
+      },
+      "expected_linked_indices": []
+    },
+    {
+      "id": "h2_same_domain_two_infra",
+      "category": "same_domain",
+      "past_meetings": [
+        {
+          "days_ago": 8,
+          "lines": [
+            "쿠버네티스 노드 오토스케일링 설정을 바꿨다.",
+            "최대 노드 수를 20개로 늘렸다.",
+            "야간에는 최소 3개로 줄인다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "lines": [
+          "서비스 로그 보관 정책을 정했다.",
+          "애플리케이션 로그는 30일 보관한다.",
+          "감사 로그는 1년 보관한다."
+        ]
+      },
+      "expected_linked_indices": []
+    },
+    {
+      "id": "h2_same_domain_two_marketing",
+      "category": "same_domain",
+      "past_meetings": [
+        {
+          "days_ago": 12,
+          "lines": [
+            "인플루언서 협업 캠페인 예산을 잡았다.",
+            "뷰티 분야 인플루언서 다섯 명과 계약한다.",
+            "게시물은 다음 달에 올라간다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "lines": [
+          "브랜드 로고 리뉴얼 시안을 검토했다.",
+          "기존보다 단순한 형태로 가기로 했다.",
+          "색상은 두 가지로 줄인다."
+        ]
+      },
+      "expected_linked_indices": []
+    },
+    {
+      "id": "h2_shared_keyword_test",
+      "category": "shared_keyword",
+      "past_meetings": [
+        {
+          "days_ago": 9,
+          "lines": [
+            "신규 기능 A/B 테스트 대상을 정했다.",
+            "신규 가입자의 절반에게 노출한다.",
+            "2주 뒤 결과를 본다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "lines": [
+          "신입 사원 코딩 테스트 문제를 새로 만들었다.",
+          "알고리즘 두 문제와 구현 한 문제로 구성한다.",
+          "시험 시간은 90분이다."
+        ]
+      },
+      "expected_linked_indices": []
+    },
+    {
+      "id": "h2_shared_keyword_release",
+      "category": "shared_keyword",
+      "past_meetings": [
+        {
+          "days_ago": 14,
+          "lines": [
+            "보도자료 배포 일정을 잡았다.",
+            "신제품 발표 당일 오전에 배포한다.",
+            "언론사 목록을 업데이트한다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "lines": [
+          "앱 배포 파이프라인에 승인 단계를 추가했다.",
+          "운영 배포는 두 명이 승인해야 한다.",
+          "야간 배포는 금지한다."
+        ]
+      },
+      "expected_linked_indices": []
+    },
+    {
+      "id": "h2_shared_keyword_session",
+      "category": "shared_keyword",
+      "past_meetings": [
+        {
+          "days_ago": 7,
+          "lines": [
+            "로그인 세션 만료 시간을 줄였다.",
+            "30분 동안 활동이 없으면 로그아웃된다.",
+            "관리자 화면은 10분으로 한다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "lines": [
+          "컨퍼런스 발표 세션 구성을 정했다.",
+          "오전에는 기조 연설 세션을 둔다.",
+          "오후 세션은 세 트랙으로 나눈다."
+        ]
+      },
+      "expected_linked_indices": []
+    },
+    {
+      "id": "h2_unrelated_one",
+      "category": "unrelated",
+      "past_meetings": [
+        {
+          "days_ago": 6,
+          "lines": [
+            "사내 캘린더 공유 규칙을 정했다.",
+            "외부 미팅은 반드시 캘린더에 올린다.",
+            "개인 일정은 비공개로 둔다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "lines": [
+          "고객사 대상 정기 점검 리포트 양식을 만들었다.",
+          "가용성과 장애 이력을 담는다.",
+          "매달 5일에 보낸다."
+        ]
+      },
+      "expected_linked_indices": []
+    },
+    {
+      "id": "h2_unrelated_two",
+      "category": "unrelated",
+      "past_meetings": [
+        {
+          "days_ago": 17,
+          "lines": [
+            "디자인 팀 폰트 라이선스를 갱신했다.",
+            "연 단위로 계약했다.",
+            "사용 가능한 인원은 열 명이다."
+          ]
+        },
+        {
+          "days_ago": 4,
+          "lines": [
+            "모바일 결제 수단에 간편 송금을 추가하기로 했다.",
+            "제휴사와 수수료를 협의한다.",
+            "출시는 다음 분기다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "lines": [
+          "사무실 층간 소음 문제를 관리실에 전달했다.",
+          "회의실 방음 공사를 요청했다.",
+          "공사는 주말에 한다."
+        ]
+      },
+      "expected_linked_indices": []
+    }
+  ]
+}

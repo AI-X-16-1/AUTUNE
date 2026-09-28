@@ -2,12 +2,20 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+
 import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
 from autune_contracts import ContextLinks, ExtractionResult, GapReport, IntelligenceSnapshot
 from autune_intelligence import service
-from autune_intelligence.models import IntelCompletion, IntelGapPattern, IntelScore
+from autune_intelligence.models import (
+    IntelAlignment,
+    IntelCompletion,
+    IntelGapPattern,
+    IntelPrediction,
+    IntelScore,
+)
 
 
 def _stage(session: Session, meeting_id: str, source: str, payload: dict) -> None:
@@ -257,3 +265,109 @@ def test_gap_classification_normalizes_a_freeform_category(
 
     assert snapshot is not None
     assert snapshot.gap_distribution == {"scope": 1}
+
+
+def _extraction_with_stance(meeting_id: str, pm_concerns: int) -> dict:
+    return ExtractionResult(
+        meeting_id=meeting_id,
+        decisions=[
+            {
+                "id": "dec_1",
+                "statement": "s",
+                "confidence": 0.9,
+                "stance_by_role": [
+                    {"role": "PM", "identified": 4, "supporting": 2, "concerns": 0},
+                    {"role": "Dev", "identified": 4, "supporting": 0, "concerns": pm_concerns},
+                ],
+            }
+        ],
+    ).model_dump(mode="json")
+
+
+def _alignment_rows(session: Session, meeting_id: str) -> list[tuple[str, str, float]]:
+    return [
+        (r.role_a, r.role_b, r.score)
+        for r in session.execute(
+            sa.select(IntelAlignment).where(IntelAlignment.meeting_id == meeting_id)
+        ).scalars()
+    ]
+
+
+def test_stance_by_role_becomes_alignment_rows_and_snapshot_entries(
+    db_session: Session, meeting: str, team: str
+) -> None:
+    _stage(db_session, meeting, "extraction", _extraction_with_stance(meeting, pm_concerns=2))
+    _stage(db_session, meeting, "gap", _gap(meeting))
+    _stage(db_session, meeting, "context", _context(meeting))
+
+    snapshot = service.aggregate_meeting(db_session, meeting)
+    db_session.flush()
+
+    assert snapshot is not None
+    # PM +0.5, Dev -0.5 -> 1 - 1.0 / 2
+    assert [(a.role_a, a.role_b, a.score) for a in snapshot.alignment] == [("Dev", "PM", 0.5)]
+    assert _alignment_rows(db_session, meeting) == [("Dev", "PM", 0.5)]
+
+
+def test_re_aggregation_replaces_the_meetings_alignment_rows(
+    db_session: Session, meeting: str
+) -> None:
+    _stage(db_session, meeting, "extraction", _extraction_with_stance(meeting, pm_concerns=2))
+    _stage(db_session, meeting, "gap", _gap(meeting))
+    _stage(db_session, meeting, "context", _context(meeting))
+    service.aggregate_meeting(db_session, meeting)
+
+    service.reopen(db_session, meeting)
+    _stage(db_session, meeting, "extraction", _extraction_with_stance(meeting, pm_concerns=0))
+    service.aggregate_meeting(db_session, meeting)
+    db_session.flush()
+
+    # PM +0.5, Dev 0.0 -> 0.75; the earlier 0.5 row is gone, not duplicated.
+    assert _alignment_rows(db_session, meeting) == [("Dev", "PM", 0.75)]
+
+
+def _full_pass(session: Session, meeting_id: str) -> IntelligenceSnapshot | None:
+    _stage(session, meeting_id, "extraction", _extraction(meeting_id))
+    _stage(session, meeting_id, "gap", _gap(meeting_id))
+    _stage(session, meeting_id, "context", _context(meeting_id))
+    snapshot = service.aggregate_meeting(session, meeting_id)
+    session.flush()
+    return snapshot
+
+
+def test_aggregation_stores_a_prediction_but_withholds_it_from_a_new_team(
+    db_session: Session, meeting: str
+) -> None:
+    snapshot = _full_pass(db_session, meeting)
+
+    row = db_session.get(IntelPrediction, (meeting, "misalignment_risk", 14))
+    assert row is not None
+    assert 0.0 < row.probability < 1.0
+    assert row.model_version == "heuristic-v1"
+    assert snapshot is not None and snapshot.predictions == []  # #27: no history yet
+
+
+def test_snapshot_carries_the_prediction_once_the_team_clears_the_history_gate(
+    db_session: Session, meeting: str, team: str
+) -> None:
+    from autune_core import Meeting
+
+    five_weeks_ago = datetime.now(UTC) - timedelta(weeks=5)
+    for i in range(2):
+        m = Meeting(team_id=team, title=f"past{i}")
+        db_session.add(m)
+        db_session.flush()
+        db_session.add(
+            IntelScore(
+                meeting_id=m.id, team_id=team, grade="B", value=0.8, created_at=five_weeks_ago
+            )
+        )
+    db_session.flush()
+
+    snapshot = _full_pass(db_session, meeting)
+
+    assert snapshot is not None
+    (prediction,) = snapshot.predictions
+    assert (prediction.kind, prediction.horizon_days) == ("misalignment_risk", 14)
+    row = db_session.get(IntelPrediction, (meeting, "misalignment_risk", 14))
+    assert row is not None and prediction.probability == row.probability

@@ -11,15 +11,17 @@ from __future__ import annotations
 import math
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
+from unittest.mock import patch
 
 import pytest
 import sqlalchemy as sa
 from sqlalchemy import delete, select, text
 
-from autune_context import service
+from autune_context import service, tasks
 from autune_context.config import get_settings
 from autune_context.models import CtxDecision, CtxDecisionVersion, CtxMeetingStatus
 from autune_context.pipeline import reset_cache
+from autune_context.service import LineageOutcome
 from autune_contracts import (
     ContextLinks,
     PrivacyFlags,
@@ -96,7 +98,7 @@ def _meeting(
     team_id: str,
     *,
     days_ago: int,
-    present: list[str] | None = None,
+    present: list[str | None] | None = None,
     expires_at: datetime | None = None,
 ) -> str:
     with session_scope() as s:
@@ -263,6 +265,47 @@ def test_a_departed_team_member_is_not_recorded_as_absent(team_id: str) -> None:
     guest = _user_without_membership("lineage-guest@x")
     first = _meeting(team_id, days_ago=10, present=[alice, guest])
     second = _meeting(team_id, days_ago=0, present=[alice])  # guest did not return
+
+    service.build_decision_lineage(_extraction(first, [("dec_1", _D1, 0.9)]))
+    service.build_decision_lineage(_extraction(second, [("dec_2", _D1, 0.9)]))
+
+    with session_scope() as s:
+        v2 = s.scalars(
+            select(CtxDecisionVersion).where(CtxDecisionVersion.meeting_id == second)
+        ).one()
+        assert v2.key_stakeholders_absent == []
+
+
+def test_an_unconfirmed_speaker_means_nobody_is_recorded_absent(team_id: str) -> None:
+    """Module A names a speaker only when a person confirms it in the app
+    (#370), after lineage has run, so the new meeting's voices are still
+    ``user_id`` NULL here. Subtracting only the resolved ids would call alice
+    and bob absent from a meeting they may have spoken in, and each would get a
+    drift DM saying so. One unnamed voice is enough to make the roll call
+    incomplete -- it could be bob."""
+    alice, bob = _user(team_id, "lineage-alice@x"), _user(team_id, "lineage-bob@x")
+    first = _meeting(team_id, days_ago=10, present=[alice, bob])
+    unnamed = _meeting(team_id, days_ago=5, present=[None, None])
+    partly = _meeting(team_id, days_ago=0, present=[alice, None])
+
+    service.build_decision_lineage(_extraction(first, [("dec_1", _D1, 0.9)]))
+    service.build_decision_lineage(_extraction(unnamed, [("dec_2", _D1, 0.9)]))
+    service.build_decision_lineage(_extraction(partly, [("dec_3", _D1, 0.9)]))
+
+    with session_scope() as s:
+        versions = s.scalars(
+            select(CtxDecisionVersion).where(CtxDecisionVersion.meeting_id.in_([unnamed, partly]))
+        ).all()
+        assert len(versions) == 2
+        assert all(v.key_stakeholders_absent == [] for v in versions)
+
+
+def test_a_meeting_with_no_participants_records_nobody_absent(team_id: str) -> None:
+    """No participant rows says nothing about who was there, so it is not a
+    meeting everyone missed."""
+    alice = _user(team_id, "lineage-alice@x")
+    first = _meeting(team_id, days_ago=10, present=[alice])
+    second = _meeting(team_id, days_ago=0)
 
     service.build_decision_lineage(_extraction(first, [("dec_1", _D1, 0.9)]))
     service.build_decision_lineage(_extraction(second, [("dec_2", _D1, 0.9)]))
@@ -570,6 +613,250 @@ def test_publish_carries_the_decision_lineage(team_id: str, published: _Capturin
     assert change.source_decision_id == "dec_2"
     assert change.previous_meeting_id == first
     assert change.change_type == "unchanged"
+
+
+# --------------------------------------------------------------------------- #
+# Late lineage — the B-timeout fallback published before extraction arrived
+# --------------------------------------------------------------------------- #
+
+
+def test_lineage_after_a_timeout_publish_is_reported_as_late(
+    team_id: str, published: _CapturingApp
+) -> None:
+    meeting = _meeting(team_id, days_ago=0)
+    service.run_topic_linking(_transcript(meeting, ["검색 개인화 논의"] * 5))
+
+    # AUTUNE_CONTEXT_PUBLISH_TIMEOUT_S=0 (the _fake_models fixture) means the
+    # deadline is already past, so this publishes via the timeout path with
+    # no lineage yet -- exactly the race build_decision_lineage's "late"
+    # return exists to catch.
+    assert service.publish_if_ready(meeting) is True
+    _name, args = published.sent[0]
+    assert ContextLinks.model_validate(args[0]).missing_sources == ["extraction"]
+
+    outcome = service.build_decision_lineage(_extraction(meeting, [("dec_1", _D1, 0.9)]))
+
+    assert outcome is LineageOutcome.LATE
+
+
+def test_lineage_before_any_publish_is_a_first_build(team_id: str) -> None:
+    meeting = _meeting(team_id, days_ago=0)
+
+    outcome = service.build_decision_lineage(_extraction(meeting, [("dec_1", _D1, 0.9)]))
+
+    assert outcome is LineageOutcome.FIRST
+
+
+def test_reprocessing_before_notify_late_drift_ran_still_reports_it_is_owed(
+    team_id: str, published: _CapturingApp
+) -> None:
+    """If the catch-up notify hasn't actually claimed yet (the crash-recovery
+    gap the ``late_drift_due_at`` column exists to close -- see
+    ``build_decision_lineage``'s docstring), a Celery-redelivered
+    ``on_extraction_completed`` reprocessing the same meeting must still see
+    "still owed," not a freshly (and wrongly) computed ``REBUILT``."""
+    meeting = _meeting(team_id, days_ago=0)
+    service.run_topic_linking(_transcript(meeting, ["검색 개인화 논의"] * 5))
+    service.publish_if_ready(meeting)
+    first = service.build_decision_lineage(_extraction(meeting, [("dec_1", _D1, 0.9)]))
+    assert first is LineageOutcome.LATE
+
+    rerun = service.build_decision_lineage(_extraction(meeting, [("dec_1_rebuilt", _D1, 0.9)]))
+
+    assert rerun is LineageOutcome.LATE
+
+
+def test_reprocessing_after_notify_late_drift_ran_is_rebuilt_not_late_again(
+    team_id: str, published: _CapturingApp
+) -> None:
+    """Once the catch-up notify has actually claimed (clearing
+    ``late_drift_due_at``), a later B reprocess of the same meeting must not
+    re-trigger the catch-up path every time -- but E still has to hear it."""
+    meeting = _meeting(team_id, days_ago=0)
+    service.run_topic_linking(_transcript(meeting, ["검색 개인화 논의"] * 5))
+    service.publish_if_ready(meeting)
+    first = service.build_decision_lineage(_extraction(meeting, [("dec_1", _D1, 0.9)]))
+    assert first is LineageOutcome.LATE
+    with session_scope() as s:
+        s.get(CtxMeetingStatus, meeting).late_drift_due_at = None  # notify_late_drift claimed
+
+    rerun = service.build_decision_lineage(_extraction(meeting, [("dec_1_rebuilt", _D1, 0.9)]))
+
+    assert rerun is LineageOutcome.REBUILT
+
+
+def test_force_republish_carries_the_completed_lineage_and_clears_missing_sources(
+    team_id: str, published: _CapturingApp
+) -> None:
+    meeting = _meeting(team_id, days_ago=0)
+    service.run_topic_linking(_transcript(meeting, ["검색 개인화 논의"] * 5))
+    service.publish_if_ready(meeting)  # first publish: no lineage yet
+    service.build_decision_lineage(_extraction(meeting, [("dec_1", _D1, 0.9)]))
+
+    assert service.publish_if_ready(meeting, force=True) is True
+
+    assert len(published.sent) == 2
+    links = ContextLinks.model_validate(published.sent[1][1][0])
+    assert links.missing_sources == []
+    assert len(links.decision_lineage) == 1
+
+
+def test_force_republish_does_not_move_the_original_published_at(
+    team_id: str, published: _CapturingApp
+) -> None:
+    meeting = _meeting(team_id, days_ago=0)
+    service.run_topic_linking(_transcript(meeting, ["검색 개인화 논의"] * 5))
+    service.publish_if_ready(meeting)
+    with session_scope() as s:
+        first_published_at = s.get(CtxMeetingStatus, meeting).published_at
+    service.build_decision_lineage(_extraction(meeting, [("dec_1", _D1, 0.9)]))
+
+    service.publish_if_ready(meeting, force=True)
+
+    with session_scope() as s:
+        assert s.get(CtxMeetingStatus, meeting).published_at == first_published_at
+
+
+def test_a_non_forced_call_still_refuses_to_republish(
+    team_id: str, published: _CapturingApp
+) -> None:
+    meeting = _meeting(team_id, days_ago=0)
+    service.run_topic_linking(_transcript(meeting, ["검색 개인화 논의"] * 5))
+    service.publish_if_ready(meeting)
+    service.build_decision_lineage(_extraction(meeting, [("dec_1", _D1, 0.9)]))
+
+    assert service.publish_if_ready(meeting) is False  # force defaults to False
+
+    assert len(published.sent) == 1
+
+
+# --------------------------------------------------------------------------- #
+# Rerun after an ordinary publish — module A reprocessed the recording
+# --------------------------------------------------------------------------- #
+
+
+def _published_on_time(team_id: str) -> str:
+    """A meeting whose lineage was in before its (ordinary) publish."""
+    meeting = _meeting(team_id, days_ago=0)
+    service.run_topic_linking(_transcript(meeting, ["검색 개인화 논의"] * 5))
+    first = service.build_decision_lineage(_extraction(meeting, [("dec_1", _D1, 0.9)]))
+    assert first is LineageOutcome.FIRST
+    assert service.publish_if_ready(meeting) is True
+    return meeting
+
+
+def test_a_lineage_rerun_after_an_ordinary_publish_is_rebuilt(
+    team_id: str, published: _CapturingApp
+) -> None:
+    meeting = _published_on_time(team_id)
+
+    rerun = service.build_decision_lineage(_extraction(meeting, [("dec_1_rebuilt", _D1, 0.9)]))
+
+    assert rerun is LineageOutcome.REBUILT
+    with session_scope() as s:
+        assert s.get(CtxMeetingStatus, meeting).late_drift_due_at is None  # no drift owed
+
+
+def test_republishing_a_rebuilt_lineage_carries_the_new_dec_id(
+    team_id: str, published: _CapturingApp
+) -> None:
+    """The gap: E held ``dec_1`` after B had replaced it with ``dec_1_rebuilt``."""
+    meeting = _published_on_time(team_id)
+    with session_scope() as s:
+        first_published_at = s.get(CtxMeetingStatus, meeting).published_at
+    service.build_decision_lineage(_extraction(meeting, [("dec_1_rebuilt", _D1, 0.9)]))
+
+    assert service.publish_if_ready(meeting, force=True) is True
+
+    assert len(published.sent) == 2
+    links = ContextLinks.model_validate(published.sent[1][1][0])
+    assert [c.source_decision_id for c in links.decision_lineage] == ["dec_1_rebuilt"]
+    assert links.missing_sources == []
+    with session_scope() as s:
+        assert s.get(CtxMeetingStatus, meeting).published_at == first_published_at
+
+
+def test_a_forced_publish_never_makes_the_first_publish(
+    team_id: str, published: _CapturingApp
+) -> None:
+    """``republish`` sends no notices, so letting it publish first would lose
+    them: the gate's publish would then find ``published_at`` set."""
+    meeting = _meeting(team_id, days_ago=0)
+    service.run_topic_linking(_transcript(meeting, ["검색 개인화 논의"] * 5))
+    service.build_decision_lineage(_extraction(meeting, [("dec_1", _D1, 0.9)]))
+
+    assert service.publish_if_ready(meeting, force=True) is False
+
+    assert published.sent == []
+    with session_scope() as s:
+        assert s.get(CtxMeetingStatus, meeting).published_at is None
+    assert service.publish_if_ready(meeting) is True  # the gate still publishes
+
+
+def test_topic_linking_reports_whether_the_meeting_had_already_published(
+    team_id: str, published: _CapturingApp
+) -> None:
+    meeting = _meeting(team_id, days_ago=0)
+    assert service.run_topic_linking(_transcript(meeting, ["검색 개인화 논의"] * 5)) is False
+    service.publish_if_ready(meeting)
+
+    rerun = service.run_topic_linking(_transcript(meeting, ["검색 개인화 논의"] * 5))
+
+    assert rerun is True
+
+
+def test_the_republish_task_sends_links_but_no_notice(
+    team_id: str, published: _CapturingApp
+) -> None:
+    meeting = _published_on_time(team_id)
+    service.build_decision_lineage(_extraction(meeting, [("dec_1_rebuilt", _D1, 0.9)]))
+
+    with (
+        patch.object(tasks, "notify_late_drift") as late_drift,
+        patch.object(tasks, "notify_context_events") as regular_notify,
+    ):
+        tasks.republish(meeting)
+
+    assert len(published.sent) == 2
+    late_drift.apply_async.assert_not_called()
+    regular_notify.apply_async.assert_not_called()
+
+
+def test_a_forced_publish_task_routes_to_notify_late_drift_not_notify_context_events(
+    team_id: str, published: _CapturingApp
+) -> None:
+    """``tasks.publish_if_ready`` (not the ``service`` function directly) --
+    the routing decision on ``force`` lives in the task."""
+    meeting = _meeting(team_id, days_ago=0)
+    service.run_topic_linking(_transcript(meeting, ["검색 개인화 논의"] * 5))
+    service.publish_if_ready(meeting)  # first publish: no lineage yet
+    service.build_decision_lineage(_extraction(meeting, [("dec_1", _D1, 0.9)]))
+
+    with (
+        patch.object(tasks, "notify_late_drift") as late_drift,
+        patch.object(tasks, "notify_context_events") as regular_notify,
+    ):
+        tasks.publish_if_ready(meeting, force=True)
+
+    late_drift.apply_async.assert_called_once_with((meeting,))
+    regular_notify.apply_async.assert_not_called()
+
+
+def test_an_unforced_publish_task_routes_to_notify_context_events(
+    team_id: str, published: _CapturingApp
+) -> None:
+    meeting = _meeting(team_id, days_ago=0)
+    service.run_topic_linking(_transcript(meeting, ["검색 개인화 논의"] * 5))
+    service.build_decision_lineage(_extraction(meeting, [("dec_1", _D1, 0.9)]))  # not late
+
+    with (
+        patch.object(tasks, "notify_late_drift") as late_drift,
+        patch.object(tasks, "notify_context_events") as regular_notify,
+    ):
+        tasks.publish_if_ready(meeting, force=False)
+
+    regular_notify.apply_async.assert_called_once_with((meeting,))
+    late_drift.apply_async.assert_not_called()
 
 
 def test_advisory_lock_serializes_lineage_building_per_team(db_engine: sa.Engine) -> None:

@@ -5,9 +5,9 @@ calls one ``service`` function, and returns an explicit response model. These
 tests exercise that path end to end, including the shared ``AutuneError`` -> JSON
 mapping that apps/api installs in production.
 
-``alignment`` and ``report`` rows are not produced yet (that is P1/P2 work), so
-``/heatmap`` and ``/reports`` are covered here for their empty and populated
-shapes by inserting rows directly.
+``/heatmap``, ``/predictions`` and ``/reports`` are covered here for their
+empty and populated shapes by inserting rows directly; the aggregation that
+writes those rows is covered in test_aggregate.py and test_report.py.
 """
 
 from __future__ import annotations
@@ -16,6 +16,7 @@ from collections.abc import Iterator
 from datetime import UTC, date, datetime, timedelta
 
 import pytest
+import sqlalchemy as sa
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
@@ -26,6 +27,7 @@ from autune_intelligence.models import (
     IntelAlignment,
     IntelCompletion,
     IntelGapPattern,
+    IntelPrediction,
     IntelReport,
     IntelScore,
 )
@@ -113,25 +115,127 @@ def test_heatmap_is_empty_when_no_alignment_has_been_computed(
     assert client.get(f"/api/intelligence/heatmap/{team}").json() == []
 
 
-def test_heatmap_averages_the_role_pair_score_across_the_team(
-    client: TestClient, db_session: Session, team: str
-) -> None:
+def _seed_alignment(db_session: Session, team: str, role_b: str, scores: tuple[float, ...]) -> None:
     from autune_core import Meeting
 
-    for i, score in enumerate((0.4, 0.8)):
-        m = Meeting(team_id=team, title=f"m{i}")
+    for i, score in enumerate(scores):
+        m = Meeting(team_id=team, title=f"{role_b}{i}")
         db_session.add(m)
         db_session.flush()
         db_session.add(
-            IntelAlignment(meeting_id=m.id, role_a="Dev", role_b="PM", team_id=team, score=score)
+            IntelAlignment(meeting_id=m.id, role_a="Dev", role_b=role_b, team_id=team, score=score)
         )
     db_session.flush()
+
+
+def test_heatmap_averages_the_role_pair_score_across_the_team(
+    client: TestClient, db_session: Session, team: str
+) -> None:
+    _seed_alignment(db_session, team, "PM", (0.4, 0.8, 0.6))
 
     body = client.get(f"/api/intelligence/heatmap/{team}").json()
 
     assert body == [
-        {"role_a": "Dev", "role_b": "PM", "score": pytest.approx(0.6), "meeting_count": 2}
+        {"role_a": "Dev", "role_b": "PM", "score": pytest.approx(0.6), "meeting_count": 3}
     ]
+
+
+def test_heatmap_leaves_out_a_pair_scored_in_too_few_meetings(
+    client: TestClient, db_session: Session, team: str
+) -> None:
+    """privacy.md section 3: a small sample leaves the cell empty."""
+    _seed_alignment(db_session, team, "PM", (0.4, 0.8, 0.6))
+    _seed_alignment(db_session, team, "Design", (0.9, 0.1))
+
+    body = client.get(f"/api/intelligence/heatmap/{team}").json()
+
+    assert [(c["role_a"], c["role_b"]) for c in body] == [("Dev", "PM")]
+
+
+# --- /predictions/{team_id} -----------------------------------------------
+
+
+def _predicted_meeting(
+    db_session: Session,
+    team: str,
+    probability: float,
+    scored_at: datetime,
+    started_at: datetime | None = None,
+) -> str:
+    from autune_core import Meeting
+
+    m = Meeting(team_id=team, title="p", started_at=started_at)
+    db_session.add(m)
+    db_session.flush()
+    _score(db_session, m.id, team, created_at=scored_at)
+    db_session.add(
+        IntelPrediction(
+            meeting_id=m.id,
+            kind="misalignment_risk",
+            horizon_days=14,
+            team_id=team,
+            probability=probability,
+            model_version="heuristic-v1",
+        )
+    )
+    db_session.flush()
+    return m.id
+
+
+def test_predictions_are_withheld_before_the_history_gate(
+    client: TestClient, db_session: Session, team: str
+) -> None:
+    now = datetime.now(UTC)
+    for _ in range(5):  # enough meetings, but all this week
+        _predicted_meeting(db_session, team, 0.4, now)
+
+    body = client.get(f"/api/intelligence/predictions/{team}").json()
+
+    assert body == {"team_id": team, "prediction": None, "reason": "insufficient_history"}
+
+
+def test_predictions_return_the_latest_once_the_gate_clears(
+    client: TestClient, db_session: Session, team: str
+) -> None:
+    old = datetime.now(UTC) - timedelta(weeks=5)
+    for _ in range(3):
+        _predicted_meeting(db_session, team, 0.2, old)
+
+    body = client.get(f"/api/intelligence/predictions/{team}").json()
+
+    assert body["reason"] is None
+    assert body["prediction"]["kind"] == "misalignment_risk"
+    assert body["prediction"]["horizon_days"] == 14
+    assert body["prediction"]["probability"] == pytest.approx(0.2)
+
+
+def test_the_latest_prediction_is_the_newest_meeting_not_the_last_written(
+    client: TestClient, db_session: Session, team: str
+) -> None:
+    """A re-aggregated old meeting must not become the team's prediction.
+
+    ``updated_at`` is bumped every time ``aggregate_meeting`` upserts, which a
+    late source does to meetings long past (``tasks.py``'s reopen path). Ordering
+    by it surfaced a prediction whose 14-day horizon had closed weeks earlier.
+    """
+    now = datetime.now(UTC)
+    old_at, recent_at = now - timedelta(days=40), now - timedelta(days=1)
+    old = _predicted_meeting(db_session, team, 0.57, old_at, started_at=old_at)
+    _predicted_meeting(
+        db_session, team, 0.33, now - timedelta(days=20), started_at=now - timedelta(days=20)
+    )
+    _predicted_meeting(db_session, team, 0.10, recent_at, started_at=recent_at)
+    # The old meeting is re-aggregated last. In one transaction ``func.now()``
+    # is fixed, so the write order is set on the column directly.
+    db_session.execute(
+        sa.update(IntelPrediction).where(IntelPrediction.meeting_id == old).values(updated_at=now)
+    )
+    db_session.flush()
+
+    body = client.get(f"/api/intelligence/predictions/{team}").json()
+
+    assert body["reason"] is None
+    assert body["prediction"]["probability"] == pytest.approx(0.10)
 
 
 # --- /reports/{team_id} ---------------------------------------------------
