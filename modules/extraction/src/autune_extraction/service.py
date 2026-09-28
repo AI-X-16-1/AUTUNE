@@ -36,7 +36,7 @@ from autune_core import (
     session_scope,
 )
 from autune_core.errors import NotFoundError, ValidationError
-from autune_integrations import SlackApi, assert_personal_delivery
+from autune_integrations import PermanentIntegrationError, SlackApi, assert_personal_delivery
 from autune_integrations.privacy import find_unmasked
 
 from .config import get_settings
@@ -1759,11 +1759,43 @@ none. Raised in review of #294.
 
 
 class NotionPages(Protocol):
-    """The two calls the sync makes. ``NotionClient`` and ``fakes.FakeNotion``
+    """The calls the sync makes. ``NotionClient`` and ``fakes.FakeNotion``
     both fit."""
 
     def create_page(self, database_id: str, properties: dict[str, Any]) -> str: ...
     def update_page(self, page_id: str, properties: dict[str, Any]) -> None: ...
+    def page_is_gone(self, page_id: str) -> bool: ...
+
+
+def _update_or_replace_page(
+    notion: NotionPages,
+    ref: ExtExternalRef | ExtDecisionRef,
+    *,
+    database_id: str,
+    update: dict[str, Any],
+    create: dict[str, Any],
+) -> bool:
+    """Update the page ``ref`` points at; if someone deleted or archived it in
+    Notion, make a new one in the team's database and point ``ref`` there.
+    ``True`` when a new page was made.
+
+    Without this, a page removed in Notion refused every later update, the
+    sync rolled back each time, and the item never reached Notion again
+    (#403). A refusal for any other reason is raised as before: making a new
+    page for one that still exists would leave two. ``create`` is the page
+    as a first send builds it, since a new page has no stale field to clear.
+    """
+    assert ref.external_id is not None
+    try:
+        notion.update_page(ref.external_id, update)
+    except PermanentIntegrationError:
+        if not notion.page_is_gone(ref.external_id):
+            raise
+        page_id = notion.create_page(database_id, create)
+        ref.external_id = page_id
+        ref.url = notion_url(page_id)
+        return True
+    return False
 
 
 def notion_url(page_id: str) -> str:
@@ -1869,12 +1901,20 @@ def sync_action_item_to_notion(
         if item is None or item.status == ActionStatus.NEEDS_CONFIRMATION.value:
             return existing
         meeting = session.get(Meeting, item.meeting_id)
-        properties = notion_properties(
-            item, meeting.title if meeting else None, names, clear_missing=True
+        title = meeting.title if meeting else None
+        replaced = _update_or_replace_page(
+            notion,
+            existing,
+            database_id=database_id,
+            update=notion_properties(item, title, names, clear_missing=True),
+            create=notion_properties(item, title, names),
         )
-        assert existing.external_id is not None
-        notion.update_page(existing.external_id, properties)
-        log.info("extraction_notion_updated", action_item_id=item.id, meeting_id=item.meeting_id)
+        log.info(
+            "extraction_notion_updated",
+            action_item_id=item.id,
+            meeting_id=item.meeting_id,
+            page_replaced=replaced,
+        )
         return existing
 
     item = session.get(ExtActionItem, action_item_id)
@@ -1900,12 +1940,19 @@ def sync_action_item_to_notion(
         if item is None or item.status == ActionStatus.NEEDS_CONFIRMATION.value:
             return existing
         meeting = session.get(Meeting, item.meeting_id)
-        properties = notion_properties(
-            item, meeting.title if meeting else None, names, clear_missing=True
+        title = meeting.title if meeting else None
+        replaced = _update_or_replace_page(
+            notion,
+            existing,
+            database_id=database_id,
+            update=notion_properties(item, title, names, clear_missing=True),
+            create=notion_properties(item, title, names),
         )
-        assert existing.external_id is not None
-        notion.update_page(existing.external_id, properties)
-        log.info("extraction_notion_updated_after_claim_race", action_item_id=item.id)
+        log.info(
+            "extraction_notion_updated_after_claim_race",
+            action_item_id=item.id,
+            page_replaced=replaced,
+        )
         return existing
 
     meeting = session.get(Meeting, item.meeting_id)
@@ -1987,12 +2034,14 @@ def sync_decision_to_notion(
         properties = decision_notion_properties(
             statement, decision, meeting.title if meeting else None, names
         )
-        assert existing.external_id is not None  # same invariant as the action-item sync
-        notion.update_page(existing.external_id, properties)
+        replaced = _update_or_replace_page(
+            notion, existing, database_id=database_id, update=properties, create=properties
+        )
         log.info(
             "extraction_notion_decision_updated",
             decision_id=decision.id,
             meeting_id=decision.meeting_id,
+            page_replaced=replaced,
         )
         return existing
 
@@ -2021,9 +2070,14 @@ def sync_decision_to_notion(
         properties = decision_notion_properties(
             statement, decision, meeting.title if meeting else None, names
         )
-        assert existing.external_id is not None
-        notion.update_page(existing.external_id, properties)
-        log.info("extraction_notion_decision_updated_after_claim_race", decision_id=decision.id)
+        replaced = _update_or_replace_page(
+            notion, existing, database_id=database_id, update=properties, create=properties
+        )
+        log.info(
+            "extraction_notion_decision_updated_after_claim_race",
+            decision_id=decision.id,
+            page_replaced=replaced,
+        )
         return existing
 
     meeting = session.get(Meeting, decision.meeting_id)

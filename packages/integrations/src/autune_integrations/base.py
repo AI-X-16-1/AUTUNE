@@ -73,8 +73,11 @@ class HttpClient:
             raise TransientIntegrationError(f"{self.service} returned {response.status_code}")
         if response.status_code >= 400:
             # The body may echo request content, so it is not put in the message.
+            # ``upstream_status`` lets a caller tell "that page is gone" (404)
+            # from a request it got wrong, without parsing the message.
             raise PermanentIntegrationError(
-                f"{self.service} rejected the request with {response.status_code}"
+                f"{self.service} rejected the request with {response.status_code}",
+                upstream_status=response.status_code,
             )
 
         log.info("integration_call", service=self.service, method=method, path=path)

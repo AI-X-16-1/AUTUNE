@@ -205,6 +205,57 @@ def test_an_update_clears_a_field_the_edit_emptied(session: Session) -> None:
     assert sent["담당자"] == {"rich_text": []}
 
 
+def test_an_edit_to_an_item_whose_page_was_deleted_makes_a_new_page(session: Session) -> None:
+    """#403: someone deleted the page in Notion. Every later update was refused
+    and rolled back, so the item never reached Notion again. The edit now makes
+    a new page in the team's database and the ref points at it."""
+    notion = FakeNotion()
+    row = item(session)
+    ref = sync(session, notion, row.id)
+    assert ref is not None
+    old_page = ref.external_id
+    assert old_page is not None
+    notion.gone.add(old_page)
+
+    row.due_date = None
+    again = sync(session, notion, row.id)
+
+    assert again is not None
+    assert len(notion.pages) == 2
+    assert again.external_id == "page_2"
+    assert again.url == service.notion_url("page_2")
+    assert "마감일" not in notion.pages[1][1], "a new page has no stale field to clear"
+    assert notion.updates == []
+
+    row.status = "done"
+    sync(session, notion, row.id)
+    assert notion.updates[0][0] == "page_2", "later edits go to the new page"
+
+
+def test_a_refused_update_of_a_page_that_still_exists_makes_no_second_page(
+    session: Session,
+) -> None:
+    """#403's guard: a refusal that is not a missing page (a bad property, a
+    conflict) raises as before. A new page for one that still exists would
+    leave two."""
+
+    class RefusingUpdates(FakeNotion):
+        def update_page(self, page_id: str, properties: dict) -> None:
+            raise PermanentIntegrationError("notion rejected the request with 400")
+
+    notion = RefusingUpdates()
+    row = item(session)
+    ref = sync(session, notion, row.id)
+    assert ref is not None
+    old_page = ref.external_id
+
+    with pytest.raises(PermanentIntegrationError):
+        sync(session, notion, row.id)
+
+    assert len(notion.pages) == 1
+    assert ref.external_id == old_page
+
+
 def test_a_sync_holding_the_ref_lock_sends_the_edit_committed_after_it_started(
     session: Session,
 ) -> None:
