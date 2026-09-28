@@ -119,6 +119,32 @@ def test_a_stopword_breaks_the_run_rather_than_joining_it() -> None:
     ]
 
 
+def test_a_hangul_verb_the_model_tags_foreign_is_not_a_topic() -> None:
+    """``ko_core_news_lg`` gives 느려졌습니다 and 터졌습니다 as ``f``. #391."""
+    assert labels(("결제", "ncpa"), ("페이지가", "ncn+jcs"), ("느려졌습니다", "f")) == [
+        "결제 페이지"
+    ]
+    assert labels(("개인화", "ncn"), ("모델마저", "ncn+jxc"), ("느려졌습니다", "f")) == [
+        "개인화 모델"
+    ]
+    assert labels(("캐시가", "nq+jcs"), ("터졌습니다", "f")) == ["캐시"]
+
+
+@pytest.mark.parametrize(
+    ("text", "tag", "stem"),
+    [
+        ("QA", "f", "QA"),
+        ("GPU", "f", "GPU"),
+        ("K8s", "f", "K8s"),
+        ("API는", "f+jxt", "API"),
+        ("Redis가", "f+jcs", "Redis"),
+        ("스프린트에서", "f+jca", "스프린트"),
+    ],
+)
+def test_a_term_tagged_foreign_is_still_a_noun(text: str, tag: str, stem: str) -> None:
+    assert noun_stem(Token(text=text, tag=tag, start=0, end=len(text))) == stem
+
+
 def test_a_one_character_noun_alone_is_not_a_topic() -> None:
     """Counters and bound nouns — 주, 것, 수. A run keeps them, because a run
     that survived the stoplist has a real noun in it."""

@@ -456,6 +456,7 @@ dependencies = [
     { name = "autune-integrations" },
     { name = "celery" },
     { name = "fastapi" },
+    { name = "httpx" },
 ]
 
 [package.optional-dependencies]
@@ -479,6 +480,7 @@ requires-dist = [
     { name = "autune-integrations", editable = "packages/integrations" },
     { name = "celery", specifier = ">=5.4" },
     { name = "fastapi", specifier = ">=0.115" },
+    { name = "httpx", specifier = ">=0.27" },
     { name = "numpy", marker = "extra == 'training'", specifier = ">=1.26" },
     { name = "sentence-transformers", marker = "extra == 'local-models'", specifier = ">=3.0" },
     { name = "torch", marker = "extra == 'local-models'", specifier = ">=2.5" },

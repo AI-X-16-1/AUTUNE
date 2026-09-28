@@ -74,6 +74,21 @@ export type MeetingDetail = {
   team_id: string;
 };
 
+/** One row of the home screen's list. `GET /api/audio/meetings`. */
+export type MeetingSummary = {
+  meeting_id: string;
+  title: string;
+  status: MeetingStatus;
+  /**
+   * ISO 8601, or null for a recording uploaded after the fact — a meeting with
+   * no start time to give. The list is still ordered newest-first, on the row's
+   * own creation time; the backend does not substitute that value here, because
+   * a created-at printed as a meeting time is a wrong answer rather than a
+   * missing one (`service.meetings_for`).
+   */
+  started_at: string | null;
+};
+
 export type TeamSummary = { team_id: string; name: string };
 
 /**
