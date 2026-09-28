@@ -80,12 +80,19 @@ class AudioSettings(BaseSettings):
     points, and 151 deletions against 27, so the shorter beam drops content
     rather than just mishearing it.
 
-    **5 reaches the processing-time target**, which this docstring originally
-    claimed without a number and then briefly claimed the opposite of: 434 s
-    total for 327 s of audio is 1.32×, against the 1.5× in
-    ``modules/audio/CLAUDE.md``. That holds with diarization on a GPU
-    (``diarization_device``); on CPU the same meeting is about 1.78× and over.
-    Beam 1 is still 60 s faster and no longer a trade anybody has to make."""
+    **With diarization on a GPU, 5 reaches the processing-time target.** That
+    condition comes first because it is doing the work: 434 s total for 327 s of
+    audio is 1.32×, against the 1.5× in ``modules/audio/CLAUDE.md``, and the
+    same meeting with diarization on CPU is about 1.78× and over. The GPU path
+    is ``diarization_device`` (#394); it is not the default, only MPS has been
+    measured, and MPS is unverified under a prefork worker (#329). On the
+    configuration that ships today the target is missed, and beam width is not
+    what closes the gap.
+
+    Beam 1 is faster at equal configuration by about 207 s — the Whisper stage
+    alone, 411 s against 204 s — not the 60 s a beam 5 run with diarization on
+    the GPU shows against a beam 1 run with diarization on CPU. Either way it is
+    no longer a trade anybody has to make."""
 
     model_cache: str = ""
     """Where model weights are downloaded. Empty uses the library default.
