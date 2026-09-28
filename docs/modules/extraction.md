@@ -71,8 +71,11 @@ agreement, and sync the result to Notion.
    `needs_confirmation`), create one page for it in the team's Notion database
    and store the URL in `ext_external_refs` (#30). One page per item: a later
    edit updates it (#342). If someone deletes that page in Notion, the next edit
-   makes a new one; if someone archives it, it is left archived (#403). A team
-   without Notion connected is skipped. Not
+   makes a new one; if someone archives it, it is left archived (#403). The
+   board does not say so yet: later edits to that item stop reaching Notion
+   and only the log records it. S18's integration row is where an "archived in
+   Notion" state belongs once it exists. A team without Notion connected is
+   skipped. Not
    part of the extraction run: nothing the model drafted is confirmed yet (#246).
    A decision goes the same way when a person confirms it (or adds it), to the
    team's decision database, in the wording they confirmed
