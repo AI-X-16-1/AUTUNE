@@ -46,9 +46,10 @@ def resolve_device() -> str:
     requested = settings.diarization_device.strip()
     setting = "AUTUNE_AUDIO_DIARIZATION_DEVICE" if requested else "AUTUNE_AUDIO_DEVICE"
     device = requested or settings.device
-    # Only the two accelerators are checked. `cpu` is always there, and a name
-    # torch understands that this does not (`cuda:1`, `xpu`) is better refused by
-    # torch, with its own message, than by a list here that would go stale.
+    # Only the two accelerators are checked, by the kind before the index, so
+    # `cuda:1` is a cuda request. `cpu` is always there, and a device torch
+    # understands that this does not (`xpu`, `mtia`) is better refused by torch,
+    # with its own message, than by a list here that would go stale.
     checks: dict[str, Callable[[], bool]] = {
         "mps": torch.backends.mps.is_available,
         "cuda": torch.cuda.is_available,
