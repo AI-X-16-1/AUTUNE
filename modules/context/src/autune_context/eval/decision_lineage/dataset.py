@@ -5,8 +5,9 @@ versioned next to the code it scores; bump the filename's version suffix only
 when a change would make an old accuracy number and a new one not comparable.
 
 How ``expected_change_type`` is labeled, from the product's point of view
-rather than from what NLI would say (see ``service._NLI_TO_CHANGE`` for that
-mapping — the whole point of the set is to measure where the two disagree):
+rather than from what NLI would say (see ``pipeline.change`` for how NLI output
+becomes a change type — the whole point of the set is to measure where the two
+disagree):
 
 - ``unchanged`` — the current statement restates the earlier one, in the same
   or different words; nothing anyone would act on differs.
