@@ -69,8 +69,10 @@ class ExtractionSettings(BaseSettings):
     llm_fallback_model: str = "gemini-3.5-flash-lite"
     """Answers a window when ``llm_model`` stays unavailable (429/5xx/timeout after
     its retries). 3.8 Flash returned 503 three times running on 2026-09-28;
-    Flash-Lite scored commitment F1 0.909 on 8.txt against 3.8 Flash's 0.968.
-    Blank disables the fallback."""
+    Flash-Lite scored commitment F1 0.909 on 8.txt against 3.8 Flash's 0.968;
+    with the worked examples now in the prompt, 0.938 there and 0.959 on a
+    second dummy meeting. On a free-tier key it answers most windows: 3.8 Flash
+    allows 5 requests a minute and 20 a day. Blank disables the fallback."""
 
     llm_base_url: str = "https://generativelanguage.googleapis.com/v1beta"
     """The provider's API root for ``classifier_impl=llm``."""
