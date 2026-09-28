@@ -71,8 +71,13 @@ and BM25 runs in application code. The two rankings are fused with reciprocal
 rank fusion (RRF).
 
 **Retrieve broad, re-rank narrow.** Top 50 from hybrid retrieval, top 10 after
-re-ranking. Mis-linking is this module's main risk, and re-ranking is what buys
-precision. Below the confidence threshold, offer the link for user confirmation
+re-ranking. Mis-linking is this module's main risk. The evaluation set showed
+the cross-encoder is the wrong judge of *same topic*: it answers "does this
+passage answer this query", and scores a past meeting on the same subject but
+with different content — the plan vs. its status update, the same issue in
+other words — near zero. So a link is asserted on dense segment similarity
+(`link_similarity_threshold`) *or* a confident re-ranker score
+(`link_confidence_threshold`); below both, offer it for user confirmation
 rather than asserting it.
 
 ### Topic-statement extraction is not an LLM task (MVP)
@@ -183,8 +188,10 @@ and is settled in Phase 0.
    meeting is scored on the text of its topic segment closest to this topic
    (`ctx_embeddings.utterance_ids`, read from `utterances`), or on that
    segment's label for a row that predates the column.
-5. Above `link_confidence_threshold`, write an `asserted` link; below it, write a
-   `pending` link for the user to confirm.
+5. At or above `link_similarity_threshold` (dense cosine between the two
+   segments) or `link_confidence_threshold` (re-ranker), write an `asserted`
+   link; below both, write a `pending` link for the user to confirm. The top 10
+   kept are the 10 with the highest of the two scores, stored as `confidence`.
 6. Mark `ctx_meeting_status.topic_linking_done`, then schedule
    `autune.context.publish_if_ready` with a countdown of
    `publish_timeout_s`.
@@ -201,7 +208,7 @@ lineage view (S22), which reads to a user as a bug.
    similar existing thread's *chronologically latest* statement — by the
    matched meeting's `started_at`, not by which version was inserted last —
    cosine ≥ `lineage_match_threshold` (`AUTUNE_CONTEXT_LINEAGE_MATCH_THRESHOLD`,
-   default `0.6`, tuned in eval). Every (decision, thread) pairing in the
+   default `0.65`, tuned in eval). Every (decision, thread) pairing in the
    meeting is scored up front and assigned strongest-first, so a weak match
    earlier in `result.decisions` can't grab a thread out from under a much
    stronger match later in the list. No thread above the threshold opens a new
@@ -232,16 +239,30 @@ lineage view (S22), which reads to a user as a bug.
    meeting's decisions; the two entries are for the same slot.
 2. Every thread this meeting's decisions touched is then **re-chained end to
    end**, not just appended to: order its versions by meeting time and run NLI
-   between each pair's earlier statement (premise) and later one (hypothesis):
-   `entailment` → `unchanged`, `contradiction` → `reversed`, `neutral` →
-   `modified`; the chronologically-first version is `new`. Re-chaining (rather
+   on each adjacent pair in both directions (`pipeline/change.py`):
+   - Entailment either way → `unchanged` — unless only the later statement
+     entails the earlier one *and* it narrows, adds or extends something new
+     (만/도/까지 on a noun the earlier one never mentioned) → `modified`.
+   - A later statement that keeps something (계속/그대로/유지) is re-checked
+     with those words stripped: "B사를 계속 쓴다" after "A사 대신 B사로 바꾼다"
+     contradicts the act of switching, but "B사를 쓴다" is entailed by it →
+     `unchanged`. A real revert ("A사를 계속") still contradicts.
+   - Otherwise a contradiction either way → `reversed` if the later statement
+     negates, stops or cancels/replaces (않/말/안/못/없이/아니, 그만두다·접다,
+     취소·폐지·보류·백지화·대신…), else `modified` — a moved date or amount
+     contradicts the old one exactly as hard as a cancellation, so NLI alone
+     cannot tell them apart.
+   - Anything else → `modified`.
+
+   `nli_label` keeps the model's own forward verdict. The chronologically-first
+   version is `new`. Re-chaining (rather
    than only linking the new version onto whatever was previously "latest") is
    what keeps the lineage correct when B reports meetings out of order — a
    longer meeting finishing after a shorter later one, a backfill — and what
    repairs a later version's chain when an earlier meeting is re-processed.
 3. Each `ctx_decision_versions` row records what changed, in which meeting,
    chained onto its chronological predecessor via `previous_version_id`.
-   `confidence` is the NLI score of the winning label for a non-first version,
+   `confidence` is the NLI score that decided the change type for a non-first version,
    and B's own decision confidence for the chronologically-first one; `nli_label`
    is null for that first version. `confidence` is not recomputed back to B's
    number if a version later becomes its thread's first version again (e.g. an
@@ -481,7 +502,7 @@ confirmation flow feed threshold tuning.
 Each suite's cases carry a `category` (what the case is testing — a paraphrase,
 a shared keyword with a different meaning, a reversed vs. a modified decision),
 and the report breaks accuracy down by it, prints a 95% Wilson interval next to
-every headline number, and sweeps its threshold (`link_confidence_threshold`,
+every headline number, and sweeps its threshold (`link_similarity_threshold`,
 `lineage_match_threshold`) from the scores the run already stored. Topic
 linking also reports link-level precision and recall and how often a no-link
 meeting got an asserted link; decision lineage scores threading and change-type
@@ -495,6 +516,11 @@ held out only until a rule or threshold is chosen by looking at its failures —
 the PR that does that says so. Every set was written by the same person, so a
 held-out set guards against overfitting to particular cases; it is not a sample
 of real meetings.
+
+`*_heldout_v1.json` has since been used to choose rules (`pipeline/change.py`,
+`link_similarity_threshold`), so it is no longer held out. `*_heldout_v2.json`
+was written before those rules and run once after them; the next rule or
+threshold change needs a new held-out set — ideally masked real meetings.
 
 To run it on a laptop without the team's inference endpoints, use the
 `*_local` implementations (the `local-models` extra) and point
@@ -547,9 +573,10 @@ self-hosted LLM.
 
 ## Open questions
 
-- The exact confidence threshold for asserting a link versus asking the user.
-  Ships as `AUTUNE_CONTEXT_LINK_CONFIDENCE_THRESHOLD = 0.6` and is tuned against
-  the evaluation set in Phase 2.
+- The thresholds for asserting a link versus asking the user
+  (`link_similarity_threshold = 0.74`, `link_confidence_threshold = 0.6`) come
+  from short, synthetic evaluation meetings, with a thin margin between same-
+  and different-topic pairs. They need re-checking against real meetings.
 - Whether `autune_core.publish_event` lands before Phase 2, or D ships the
   interim `current_app.send_task` path.
 - Whether the LLM client moves to `packages/integrations` at the start of
