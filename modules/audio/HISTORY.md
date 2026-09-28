@@ -306,7 +306,8 @@ live vector and a stored vector are comparable without a second download.
 
 **`voice_profiles_enabled` is `False` by default** — the one setting here that
 is not a tuning knob but a legal gate. ADR 0007's Q4 (#92) asks whether a
-voice embedding is 생체인식정보 under 제23조 and whether collecting it needs
+voice embedding is biometric information (sensitive information) under PIPA
+Article 23 and whether collecting it needs
 its own separate consent, and that question was still open when this feature
 shipped. The setting gates only the profile write in `assign_speaker`:
 `Participant.user_id` is still written, the worker still stores observation

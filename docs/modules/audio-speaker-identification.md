@@ -142,7 +142,8 @@ Body `{"user_id": "usr_…"}`. Any member of the meeting's team may call it.
    show the name, and `transcript_payload` will carry `speaker_id` on any
    later read;
 2. **only when `AUTUNE_AUDIO_VOICE_PROFILES_ENABLED=true`** (default `false`,
-   pending #92's Q4 — is a voice embedding 생체인식정보 under 제23조, and does
+   pending #92's Q4 — is a voice embedding biometric information (sensitive
+   information) under PIPA Article 23, and does
    collecting it need its own separate consent?): the observation row for
    (meeting, label) is copied into a profile row for that user, with
    `confirmed_by` and `confirmed_at`, replacing whatever profile row that same

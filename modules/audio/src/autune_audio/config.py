@@ -136,7 +136,8 @@ class AudioSettings(BaseSettings):
     on the person, across meetings, until they delete it or leave).
 
     Off by default because ADR 0007's legal review is still open: #92's Q4
-    asks whether a voice embedding is 생체인식정보 under 제23조 and whether
+    asks whether a voice embedding is biometric information (sensitive
+    information) under PIPA Article 23, and whether
     collecting it needs its own separate, refusable consent, and identification
     shipped before that question was answered. If the answer turns out to be
     "yes, separate consent is required," the cost of having shipped with this
