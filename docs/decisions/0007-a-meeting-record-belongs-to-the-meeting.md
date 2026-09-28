@@ -58,11 +58,12 @@ they come back:
   would be expensive to reverse if a question comes back "no", say so where the
   code is, and point at #92.
 - **Q4 is live, not hypothetical.** It asks whether a speaker embedding is
-  생체인식정보 under 제23조 and whether collection needs its own consent. When
-  #92 was written, module A's speaker enrolment was still undecided. It has
-  since shipped (#6), so an answer of "separate consent is required" now has
-  built code behind it, not a future design. Module A's own state is in that
-  issue.
+  biometric information (sensitive information) under PIPA Article 23, and
+  whether collection needs its own consent. When #92 was written, module A's
+  speaker enrolment was still undecided. It is now built (#6, PR #370, with
+  profile collection behind a setting that defaults to off), so an answer of
+  "separate consent is required" lands on code, not a future design. Module A's
+  own state is in that issue.
 - **Closing #92 is what flips this Status**, to `Accepted` or `Rejected`. If it
   is rejected, this document stays and only the Status changes — the record that
   the question was asked is worth as much as the answer.
