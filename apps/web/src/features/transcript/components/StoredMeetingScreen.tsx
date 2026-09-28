@@ -3,6 +3,7 @@
 import Link from "next/link";
 
 import { useMeeting } from "../hooks/useMeeting";
+import { STATUS_LABEL } from "../status";
 import { ProcessingStages } from "./ProcessingStages";
 import { StoredTranscript } from "./StoredTranscript";
 
@@ -125,13 +126,3 @@ function body(state: ReturnType<typeof useMeeting>, meetingId: string) {
       );
   }
 }
-
-const STATUS_LABEL: Partial<Record<string, string>> = {
-  scheduled: "예정",
-  recording: "녹음 중",
-  analyzing: "분석 중",
-  awaiting_confirmation: "확인 대기",
-  complete: "분석 완료",
-  delivered: "전달됨",
-  failed: "실패",
-};

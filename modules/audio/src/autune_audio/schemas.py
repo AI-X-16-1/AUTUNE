@@ -155,6 +155,35 @@ class MeetingDetail(MeetingState):
     pii_masked: bool
 
 
+class MeetingSummary(BaseModel):
+    """One row of the home screen's meeting list (S05).
+
+    **Four fields, and the fourth is a date.** A list row needs a link target, a
+    name, a state and a place in time; everything else it could show is either
+    another module's or something invariant 11 does not let this route say.
+
+    **No counts.** An utterance count is one join from a per-person speech
+    volume, which privacy.md section 3 forbids surfacing to anybody but the
+    speaker -- the line is drawn at the derived metric, not at the column, so a
+    per-meeting total that a caller can difference against a participant list
+    does not get a pass for being an aggregate. Action-item and gap counts are
+    modules B's and C's rows, which A may not read (invariant 2). The row says
+    what happened to the *meeting*; each one links to the screens that own the
+    rest.
+
+    ``started_at`` is nullable because a recording uploaded after the fact has
+    no start time (``MeetingCreate``). The list still orders such a meeting by
+    when its row was made -- see ``service.meetings_for`` -- but it does not
+    invent a ``started_at`` to show for it, because a created-at printed as a
+    meeting time is a wrong answer rather than a missing one.
+    """
+
+    meeting_id: str
+    title: str
+    status: str
+    started_at: datetime | None
+
+
 class TeamSummary(BaseModel):
     """A team the caller may open a meeting for. Id and name; nothing else a
     browser needs to fill ``MeetingCreate.team_id``."""

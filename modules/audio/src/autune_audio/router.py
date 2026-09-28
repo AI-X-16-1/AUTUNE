@@ -29,6 +29,7 @@ from .schemas import (
     MeetingCreate,
     MeetingDetail,
     MeetingState,
+    MeetingSummary,
     TeamSummary,
 )
 from .storage import assign, handover
@@ -98,6 +99,35 @@ def list_teams(user: CurrentUser, session: SessionDep) -> list[TeamSummary]:
     return [
         TeamSummary(team_id=team.id, name=team.name)
         for team in service.teams_for(session, member=user)
+    ]
+
+
+@router.get("/meetings", response_model=list[MeetingSummary])
+def list_meetings(user: CurrentUser, session: SessionDep) -> list[MeetingSummary]:
+    """The meetings of the teams this person belongs to, newest first. S05's list.
+
+    Declared above ``/meetings/{meeting_id}`` so the literal path is read before
+    the parameterised one. Starlette matches in declaration order and
+    ``{meeting_id}`` never matches an empty segment, so the two cannot collide
+    either way -- the order is for whoever reads the file next.
+
+    The route takes ``CurrentUser`` and the service does the authorising — the
+    same split as ``/transcripts/{id}`` — except that here the authorisation *is*
+    the query, because there is no id in the request to check against. See
+    ``service.meetings_for``.
+
+    ``[]`` for somebody on no team, not a 404: no meetings is a state a new
+    install is in, and the screen that renders it says so ("아직 회의가
+    없습니다") rather than showing an error for a database that is merely empty.
+    """
+    return [
+        MeetingSummary(
+            meeting_id=meeting.id,
+            title=meeting.title,
+            status=meeting.status,
+            started_at=meeting.started_at,
+        )
+        for meeting in service.meetings_for(session, member=user)
     ]
 
 

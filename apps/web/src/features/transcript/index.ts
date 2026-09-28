@@ -6,6 +6,7 @@
  * types stay internal so a route cannot compose a screen the feature did not
  * design.
  */
+export { HomeScreen } from "./components/HomeScreen";
 export { LiveMeetingScreen } from "./components/LiveMeetingScreen";
 export { StoredMeetingScreen } from "./components/StoredMeetingScreen";
 export { NewMeetingScreen } from "./components/NewMeetingScreen";
