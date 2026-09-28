@@ -23,9 +23,18 @@ set's change types wrong. What each step here corrects
   word, and a moved parameter is not.
 
 The cue lists are general Korean negation, cancellation and restriction
-vocabulary, not words lifted from the evaluation set. A modification phrased
-with a negation ("주 1회로 줄이고 월요일은 하지 않는다") reads as reversed -- a
-known limit of a lexical cue.
+vocabulary, not words lifted from the evaluation set. One kind of negation is
+not a cue: "차질 없이", "문제없이", "예외 없이" say how a decision is carried
+out, not that it was withdrawn, so an absence whose head is a hitch-or-exception
+noun is skipped. Known limits of a lexical cue:
+
+- A modification phrased with a negation ("주 1회로 줄이고 월요일은 하지
+  않는다") reads as reversed.
+- "대신" marks a replacement, and a replaced *owner* is a moved parameter:
+  "김민경 대신 강민구가 맡기로" reads as reversed, not modified. Telling a
+  person from a vendor or a technology by vocabulary alone is not reliable --
+  kiwipiepy splits names unpredictably ("김민/NNP 경/NNG"), and company names
+  are proper nouns too -- so this stays a limit rather than a rule.
 """
 
 from __future__ import annotations
@@ -71,6 +80,29 @@ _REVERSAL_NOUNS = {
     "번복",
     "대신",
 }
+# Nouns whose absence says "smoothly", not "withdrawn": 차질 없이, 문제없이,
+# 예외 없이, (추가) 비용 없이, 차질이 없도록. Checked against the noun an
+# absence (없이, 없-) attaches to, skipping a subject particle in between.
+# 중단 is left out on purpose: it is itself a reversal noun and matches first.
+_SMOOTH_NOUNS = {
+    "차질",
+    "문제",
+    "예외",
+    "지연",
+    "비용",
+    "부담",
+    "사고",
+    "탈",
+    "무리",
+    "오류",
+    "장애",
+    "이견",
+    "누락",
+    "변동",
+    "변경",
+    "제한",
+}
+_ABSENCE_TOKENS = {("없이", "MAG"), ("없", "VA")}
 # Particles that narrow (만), add (도) or extend (까지) what a decision covers.
 _CONDITION_PARTICLES = {"만", "도", "까지"}
 # Bound expressions restate a threshold ("16 이상만" == "최소 16"), not add one.
@@ -108,11 +140,19 @@ def marks_reversal(statement: str) -> bool:
     """Whether ``statement`` negates, stops, or cancels/replaces something."""
     if "더 이상" in statement:
         return True
+    head: str | None = None  # the noun an absence would attach to
     for form, tag in _morphemes(statement):
+        if (form, tag) in _ABSENCE_TOKENS and head in _SMOOTH_NOUNS:
+            head = None
+            continue
         if (form, tag) in _REVERSAL_TOKENS:
             return True
         if tag.startswith("NN") and form in _REVERSAL_NOUNS:
             return True
+        if tag.startswith("NN"):
+            head = form
+        elif tag != "JKS":  # 차질이 없도록: the particle keeps the head
+            head = None
     return False
 
 
