@@ -51,7 +51,11 @@ from sqlalchemy.orm import Session
 
 from autune_core import get_session
 from autune_core.integrations_config import load_integration, save_integration
-from autune_extraction.service import DECISION_NOTION_PROPERTIES, NOTION_PROPERTIES
+from autune_extraction.service import (
+    DECISION_NOTION_PROPERTIES,
+    NOTION_PROPERTIES,
+    notion_url,
+)
 
 from .page import PAGE
 
@@ -207,6 +211,7 @@ def connect_notion(raw: Annotated[dict[str, Any], Body()], session: SessionDep) 
     action_db = stored.get("action_db_id") if reuse else None
     decision_db = stored.get("decision_db_id") if reuse else None
 
+    reused = bool(action_db and decision_db)
     if not action_db or not decision_db:
         with httpx.Client(
             base_url=NOTION_API,
@@ -252,4 +257,9 @@ def connect_notion(raw: Annotated[dict[str, Any], Body()], session: SessionDep) 
         "team_id": body.team_id,
         "action_db_id": action_db,
         "decision_db_id": decision_db,
+        # What the page tells the person: whether it made the databases or
+        # found the ones it made under this page before, and where they are.
+        "databases": "reused" if reused else "created",
+        "action_db_url": notion_url(action_db),
+        "decision_db_url": notion_url(decision_db),
     }
