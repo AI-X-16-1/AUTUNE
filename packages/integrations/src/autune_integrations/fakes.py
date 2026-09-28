@@ -76,9 +76,11 @@ class FakeNotion:
     pages: list[tuple[str, dict]] = field(default_factory=list)
     updates: list[tuple[str, dict]] = field(default_factory=list)
     """``(page_id, properties)`` for every ``update_page`` call, in order."""
-    gone: set[str] = field(default_factory=set)
-    """Page ids someone deleted or archived in Notion. Updating one is refused
-    the way Notion refuses it, and ``page_is_gone`` says so."""
+    deleted: set[str] = field(default_factory=set)
+    """Page ids deleted in Notion: an update is refused with 404."""
+    archived: set[str] = field(default_factory=set)
+    """Page ids archived or in the trash: an update is refused with 400, as
+    Notion refuses it."""
 
     def create_page(self, database_id: str, properties: dict) -> str:
         check_outbound({"properties": properties}, destination="notion")
@@ -87,14 +89,20 @@ class FakeNotion:
 
     def update_page(self, page_id: str, properties: dict) -> None:
         check_outbound({"properties": properties}, destination="notion")
-        if page_id in self.gone:
+        if page_id in self.deleted:
             raise PermanentIntegrationError(
                 "notion rejected the request with 404", upstream_status=404
             )
+        if page_id in self.archived:
+            raise PermanentIntegrationError(
+                "notion rejected the request with 400", upstream_status=400
+            )
         self.updates.append((page_id, properties))
 
-    def page_is_gone(self, page_id: str) -> bool:
-        return page_id in self.gone
+    def page_state(self, page_id: str) -> str:
+        if page_id in self.deleted:
+            return "deleted"
+        return "archived" if page_id in self.archived else "live"
 
 
 @dataclass

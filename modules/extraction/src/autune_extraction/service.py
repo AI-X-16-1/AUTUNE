@@ -8,10 +8,10 @@ Never imports another module.
 
 from __future__ import annotations
 
-from collections.abc import Collection, Iterable, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from dataclasses import replace
 from datetime import UTC, date, datetime
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.dialects import postgresql, sqlite
@@ -1764,7 +1764,10 @@ class NotionPages(Protocol):
 
     def create_page(self, database_id: str, properties: dict[str, Any]) -> str: ...
     def update_page(self, page_id: str, properties: dict[str, Any]) -> None: ...
-    def page_is_gone(self, page_id: str) -> bool: ...
+    def page_state(self, page_id: str) -> str: ...
+
+
+PageOutcome = Literal["updated", "replaced", "archived"]
 
 
 def _update_or_replace_page(
@@ -1774,28 +1777,46 @@ def _update_or_replace_page(
     database_id: str,
     update: dict[str, Any],
     create: dict[str, Any],
-) -> bool:
-    """Update the page ``ref`` points at; if someone deleted or archived it in
-    Notion, make a new one in the team's database and point ``ref`` there.
-    ``True`` when a new page was made.
+) -> PageOutcome:
+    """Update the page ``ref`` points at, and say what became of it.
 
     Without this, a page removed in Notion refused every later update, the
     sync rolled back each time, and the item never reached Notion again
-    (#403). A refusal for any other reason is raised as before: making a new
-    page for one that still exists would leave two. ``create`` is the page
-    as a first send builds it, since a new page has no stale field to clear.
+    (#403). When an update is refused, Notion is asked what the page is now:
+
+    - ``"deleted"`` -- a new page in the team's database, and ``ref`` points
+      at it (``"replaced"``). Notion gives the same 404 for a page that still
+      exists but is no longer shared with the integration, so that case makes
+      a second page while the first stays where it is. That is deliberate: a
+      page we cannot write to is not one we can keep syncing into.
+    - ``"archived"`` (or in the trash) -- left alone, and nothing raised
+      (``"archived"``). A person put it there, often to tidy away finished
+      work; making it again on the next edit, or for every archived page on a
+      backfill, would undo that (PARKJAEKYUNG0525, review of #404).
+    - ``"live"`` -- the refusal is raised as before: a new page for one that
+      still exists would leave two.
+
+    ``create`` is the page as a first send builds it, since a new page has no
+    stale field to clear. If that create times out after Notion made the page,
+    the page is orphaned and the next edit makes another -- the trade-off the
+    first send already takes by not retrying (``tasks.sync_action_item``).
+    The caller holds the ref row's lock throughout, so a refused update costs
+    up to three Notion calls under it (PATCH, GET, POST) instead of one.
     """
     assert ref.external_id is not None
     try:
         notion.update_page(ref.external_id, update)
     except PermanentIntegrationError:
-        if not notion.page_is_gone(ref.external_id):
+        state = notion.page_state(ref.external_id)
+        if state == "archived":
+            return "archived"
+        if state != "deleted":
             raise
         page_id = notion.create_page(database_id, create)
         ref.external_id = page_id
         ref.url = notion_url(page_id)
-        return True
-    return False
+        return "replaced"
+    return "updated"
 
 
 def notion_url(page_id: str) -> str:
@@ -1857,6 +1878,7 @@ def sync_action_item_to_notion(
     action_item_id: str,
     database_id: str,
     property_names: Mapping[str, str] | None = None,
+    on_page: Callable[[PageOutcome], None] | None = None,
 ) -> ExtExternalRef | None:
     """Create the item's Notion page the first time; update the same page every
     time after. ``None`` when there is nothing to send.
@@ -1889,6 +1911,10 @@ def sync_action_item_to_notion(
     sending last is always the one sending latest. The description,
     assignee, due date and status a person edited on the board are exactly
     what this sends; the source utterances never leave Autune either way.
+
+    **A page someone removed in Notion** (#403): deleted, it is made again;
+    archived, it is left alone -- ``_update_or_replace_page``. ``on_page``
+    hears which, for a caller that counts (``notion_backfill``).
     """
     names = property_names or NOTION_PROPERTIES
 
@@ -1902,7 +1928,7 @@ def sync_action_item_to_notion(
             return existing
         meeting = session.get(Meeting, item.meeting_id)
         title = meeting.title if meeting else None
-        replaced = _update_or_replace_page(
+        outcome = _update_or_replace_page(
             notion,
             existing,
             database_id=database_id,
@@ -1913,8 +1939,10 @@ def sync_action_item_to_notion(
             "extraction_notion_updated",
             action_item_id=item.id,
             meeting_id=item.meeting_id,
-            page_replaced=replaced,
+            page=outcome,
         )
+        if on_page is not None:
+            on_page(outcome)
         return existing
 
     item = session.get(ExtActionItem, action_item_id)
@@ -1941,7 +1969,7 @@ def sync_action_item_to_notion(
             return existing
         meeting = session.get(Meeting, item.meeting_id)
         title = meeting.title if meeting else None
-        replaced = _update_or_replace_page(
+        outcome = _update_or_replace_page(
             notion,
             existing,
             database_id=database_id,
@@ -1951,8 +1979,10 @@ def sync_action_item_to_notion(
         log.info(
             "extraction_notion_updated_after_claim_race",
             action_item_id=item.id,
-            page_replaced=replaced,
+            page=outcome,
         )
+        if on_page is not None:
+            on_page(outcome)
         return existing
 
     meeting = session.get(Meeting, item.meeting_id)
@@ -2008,6 +2038,7 @@ def sync_decision_to_notion(
     decision_id: str,
     database_id: str,
     property_names: Mapping[str, str] | None = None,
+    on_page: Callable[[PageOutcome], None] | None = None,
 ) -> ExtDecisionRef | None:
     """Create a confirmed decision's Notion page the first time; update the
     same page every time after. ``None`` when nothing is sent.
@@ -2034,15 +2065,17 @@ def sync_decision_to_notion(
         properties = decision_notion_properties(
             statement, decision, meeting.title if meeting else None, names
         )
-        replaced = _update_or_replace_page(
+        outcome = _update_or_replace_page(
             notion, existing, database_id=database_id, update=properties, create=properties
         )
         log.info(
             "extraction_notion_decision_updated",
             decision_id=decision.id,
             meeting_id=decision.meeting_id,
-            page_replaced=replaced,
+            page=outcome,
         )
+        if on_page is not None:
+            on_page(outcome)
         return existing
 
     decision = session.get(ExtDecision, decision_id)
@@ -2070,14 +2103,16 @@ def sync_decision_to_notion(
         properties = decision_notion_properties(
             statement, decision, meeting.title if meeting else None, names
         )
-        replaced = _update_or_replace_page(
+        outcome = _update_or_replace_page(
             notion, existing, database_id=database_id, update=properties, create=properties
         )
         log.info(
             "extraction_notion_decision_updated_after_claim_race",
             decision_id=decision.id,
-            page_replaced=replaced,
+            page=outcome,
         )
+        if on_page is not None:
+            on_page(outcome)
         return existing
 
     meeting = session.get(Meeting, decision.meeting_id)

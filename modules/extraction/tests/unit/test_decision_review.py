@@ -772,7 +772,7 @@ def test_a_reword_of_a_decision_whose_page_was_deleted_makes_a_new_page(
     ref = service.sync_decision_to_notion(session, notion, decision_id=first.id, database_id="db")
     assert ref is not None
     assert ref.external_id is not None
-    notion.gone.add(ref.external_id)
+    notion.deleted.add(ref.external_id)
 
     again = service.sync_decision_to_notion(session, notion, decision_id=first.id, database_id="db")
 
