@@ -76,7 +76,12 @@ class ExternalRefRead(BaseModel):
     ``assignee_label``'s reasoning for being on the list already covers this.
     """
 
-    system: Literal["notion", "jira"]
+    system: Literal["notion"]
+    """Jira was dropped from the product (#82): both its credential paths tie
+    a workspace to whoever set it up. The DB's own check constraint still
+    allows ``'jira'`` (unused, kept rather than a migration for a value that
+    only removes a possibility) -- this type is the narrower, honest answer
+    for what the API actually returns."""
     url: str | None
     external_id: str | None
 
@@ -93,6 +98,14 @@ class ActionItemRead(BaseModel):
     id: str
     meeting_id: str
     description: str
+    description_resolved: bool = False
+    """Whether ``description`` is ``ReferenceResolver``'s rewrite rather than
+    the source utterance verbatim (#175, #366). S18 shows this so a reviewer
+    knows which descriptions are the speaker's own words and which are a
+    model's paraphrase of them -- worth a closer look, given #366's own review
+    found the paraphrase wrong often enough to matter. Always ``False`` for a
+    hand-added item, a raw quote (no resolver configured), or a resolution
+    that failed every check and fell back to the quote."""
     assignee_id: str | None
     assignee_label: str | None
     assignee_name: str | None = None
@@ -105,6 +118,14 @@ class ActionItemRead(BaseModel):
     exists, so a screen can show *somebody's name* without caring which half
     filled it in."""
     due_date: date | None
+    due_text: str | None = None
+    """The phrase the date was parsed from ("다음 주 화요일", "9/20"), kept
+    beside the resolved ``due_date`` rather than replacing it on this response
+    -- S18 shows both (ui-spec): the resolved date to act on, and the speaker's
+    own words so a person can judge the parse rather than take it on faith.
+    ``None`` for a hand-added item, or a model item where no date phrase was
+    said at all; ``slots.parse_due`` leaves both fields empty rather than
+    guessing one from the other."""
     status: str
     confidence: float
     origin: str
@@ -121,7 +142,36 @@ class ActionItemRead(BaseModel):
     Ordered by row id, which is insertion order. ``ext_action_item_sources`` has
     no position column; when the drawer needs them in spoken order that is the
     change to make, not a sort here over a field that does not exist.
+
+    Only utterances that still exist. One that was deleted is counted in
+    ``deleted_source_count`` instead.
     """
+
+    deleted_source_count: int = 0
+    """How many of this item's sources were deleted after it was made (ADR 0007,
+    "Missing attribution is shown, not hidden").
+
+    Without it, a model item whose transcript went has an empty
+    ``source_utterance_ids`` -- the same shape as a hand-added item -- and the
+    drawer printed "직접 추가한 항목" over it. ``origin`` says who made the
+    item; this says its evidence is gone, and the screen needs both."""
+
+    needs_reassignment: bool = False
+    """An open item (``todo`` or ``in_progress``) whose assignee is no longer a
+    member of the meeting's team (ADR 0007, "An open commitment is reassigned,
+    never orphaned"). S17 puts it at the top of its column.
+
+    Derived on every read from ``team_members``, the way module D filters
+    ``key_stakeholders_absent``: nothing in the product removes a member yet,
+    so there is no departure event to store it from. Not a member covers a
+    guest who never was one as well as someone who left -- either way nobody
+    on the team holds the item, which is what the flag is for.
+
+    When the assignee is not a member, ``assignee_id`` and ``assignee_name`` on
+    this response are ``None`` whatever the status: ADR 0007's "its assignee
+    clears", applied at read time. The stored column keeps the id, so a person
+    who rejoins gets their items back. A ``done`` item does not need
+    reassigning and stays ``False``."""
 
     is_candidate: bool
     """Whether the model was unsure enough that this is shown apart from the
@@ -142,9 +192,10 @@ class ActionItemRead(BaseModel):
 
     sync_refs: list[ExternalRefRead]
     """One entry per system this item has been claimed for -- today, at most
-    ``notion`` (#30); ``jira`` is designed (ui-spec S18, S28) but unbuilt, so it
-    never appears rather than being shown always-empty. Ordered by
-    ``created_at``, which for one system is also insertion order.
+    ``notion`` (#30). ``jira`` was designed (ui-spec S18, S28) but dropped
+    before being built (#82), so it never appears rather than being shown
+    always-empty. Ordered by ``created_at``, which for one system is also
+    insertion order.
 
     Not ``external_refs``: ``ActionItem`` (the contract this extends) already
     has a field by that name -- the outbound one, ``list[ExternalRef]``, which
@@ -315,9 +366,9 @@ class OutboundBlocked(BaseModel):
 class Outbound(BaseModel):
     """What confirm-and-send would send, and nothing else.
 
-    The Notion, Slack and Jira sync (#30) is to read this and only this. A decision
-    nobody confirmed is not in it, and neither is an item still waiting for
-    confirmation.
+    The Notion and Slack sync (#30; Jira dropped, #82) is to read this and only
+    this. A decision nobody confirmed is not in it, and neither is an item
+    still waiting for confirmation.
     """
 
     meeting_id: str

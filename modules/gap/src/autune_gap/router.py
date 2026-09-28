@@ -26,7 +26,7 @@ from autune_contracts.gap import GapReport
 from autune_core import CurrentUser, get_session
 
 from . import service
-from .schemas import TemplateRead, TemplateSelection, TopicGraphRead
+from .schemas import TemplateComparison, TemplateRead, TemplateSelection, TopicGraphRead
 
 router = APIRouter()
 
@@ -82,18 +82,27 @@ def list_templates(reader: CurrentUser) -> list[TemplateRead]:
     return service.available_templates()
 
 
-@router.get("/templates/{meeting_id}", response_model=TemplateSelection)
+@router.get("/templates/{meeting_id}", response_model=TemplateComparison)
 def get_meeting_template(
     meeting_id: str, session: SessionDep, reader: CurrentUser
-) -> TemplateSelection:
-    """Which template this meeting is compared against.
+) -> TemplateComparison:
+    """Which template this meeting is compared against, and how far it got with
+    each of its items — the template-comparison rail on S20.
 
-    A meeting nobody chose one for answers with the configured default rather
-    than with an empty body: there is always a template in force, and a rail
-    showing nothing selected would misreport that.
+    A meeting nobody chose a template for answers with the configured default
+    rather than with an empty body: there is always a template in force, and a
+    rail showing nothing selected would misreport that. A meeting nobody has
+    analysed answers ``analysed: false`` with no coverage on any item, which is
+    the other thing the rail must not get wrong — see
+    ``service.template_comparison``.
+
+    The response is a superset of ``TemplateSelection``: ``PUT`` still takes and
+    returns the selection alone, because choosing a template is choosing a name
+    and a request body that carried a read-only comparison would invite a caller
+    to send one back.
     """
     service.require_readable_meeting(session, meeting_id, reader)
-    return TemplateSelection(template_key=service.selected_template_key(session, meeting_id))
+    return service.template_comparison(session, meeting_id)
 
 
 @router.put("/templates/{meeting_id}", response_model=TemplateSelection)

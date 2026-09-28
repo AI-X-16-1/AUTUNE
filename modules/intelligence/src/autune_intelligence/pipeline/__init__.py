@@ -16,9 +16,9 @@ from celery.signals import worker_process_init
 from autune_core import get_logger
 from autune_intelligence.config import get_settings
 
-from .registry import get_gap_classifier, reset_cache
+from .registry import get_gap_classifier, get_misalignment_predictor, reset_cache
 
-__all__ = ["get_gap_classifier", "reset_cache"]
+__all__ = ["get_gap_classifier", "get_misalignment_predictor", "reset_cache"]
 
 log = get_logger(__name__)
 

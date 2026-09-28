@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import ColumnElement, or_, select
 
+from autune_context.dates import meeting_day
 from autune_context.models import CtxEmbedding
 from autune_core import Meeting
 
@@ -147,7 +148,7 @@ class HybridRetriever:
         corpus: dict[str, _CorpusEntry] = {}
         for meeting_id, label, started_at in self._session.execute(stmt):
             entry = corpus.get(meeting_id)
-            started_date = started_at.date() if started_at else None
+            started_date = meeting_day(started_at) if started_at else None
             if entry is None:
                 corpus[meeting_id] = _CorpusEntry(label=label, date=started_date, text=label)
             else:

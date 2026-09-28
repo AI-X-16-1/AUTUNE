@@ -10,12 +10,19 @@ from __future__ import annotations
 from celery import shared_task
 
 from autune_contracts import EXTRACTION_COMPLETED, TranscriptReady, validate_major_version
-from autune_core import Meeting, get_logger, load_integration, publish, session_scope
+from autune_core import (
+    Meeting,
+    PrivacyViolationError,
+    get_logger,
+    load_integration,
+    publish,
+    session_scope,
+)
 from autune_integrations import IntegrationError, NotionClient
 
 from . import service
 from .models import ExtActionItem, ExtDecision
-from .pipeline.registry import get_classifier, get_nli
+from .pipeline.registry import get_classifier, get_nli, get_resolver
 
 log = get_logger(__name__)
 
@@ -31,16 +38,17 @@ def on_transcript_ready(payload: dict) -> None:
     ``shared_task`` binds to whichever Celery app is running, so this module
     never imports apps/worker.
 
-    Classification, then NLI, happen between two sessions, never inside one --
-    both are model inference, and a transaction held around them holds a
-    connection and its locks for all of that time (``service.classify_utterances``,
-    ``service.verify_utterances``). The first session only reads which
-    utterances belong to a speaker who consented (privacy.md section 5);
-    nobody else's speech reaches either model. The writes that follow share
-    one transaction: classifications, decisions and draft items all come from
-    the same NLI-verified predictions, and a meeting holding one run's labels
-    and another run's items is not a state anything downstream should be able
-    to read.
+    Classification, then NLI, then reference resolution (#175) happen between
+    two sessions, never inside one -- all three are model inference, and a
+    transaction held around them holds a connection and its locks for all of
+    that time (``service.classify_utterances``, ``service.verify_utterances``,
+    ``service.resolve_commitment_references``). The first session only reads
+    which utterances belong to a speaker who consented (privacy.md section 5);
+    nobody else's speech reaches any of the three models. The writes that
+    follow share one transaction: classifications, decisions and draft items
+    all come from the same NLI-verified, reference-resolved predictions, and a
+    meeting holding one run's labels and another run's items is not a state
+    anything downstream should be able to read.
 
     Safe to run twice. Every write replaces the meeting's model-made rows rather
     than adding to them, so a redelivered task ends where the first one did --
@@ -78,6 +86,9 @@ def on_transcript_ready(payload: dict) -> None:
     classified = service.classify_utterances(classifier, transcript.utterances, consented=consented)
     classified = service.verify_utterances(get_nli(), classified)
 
+    resolver = get_resolver()
+    resolved_descriptions = service.resolve_commitment_references(resolver, classified)
+
     with session_scope() as session:
         stored = service.store_classifications(
             session,
@@ -93,6 +104,7 @@ def on_transcript_ready(payload: dict) -> None:
             meeting_id=transcript.meeting_id,
             utterances=transcript.utterances,
             classified=classified,
+            resolved=resolved_descriptions,
         )
         ambiguous = service.record_ambiguous_agreements(
             session, meeting_id=transcript.meeting_id, classified=classified
@@ -110,11 +122,14 @@ def on_transcript_ready(payload: dict) -> None:
         action_items=len(items) if items is not None else "kept",
         ambiguous=ambiguous,
         model_version=classifier.model_version,
+        resolver_model_version=resolver.model_version,
+        resolved_commitments=len(resolved_descriptions),
     )
     # TODO(강민구): step 6, the DM: for each of ``service.unasked_confirmations``,
     # resolve the speaker's Slack account and call
     # ``service.ask_for_confirmation`` -- blocked on an account mapping (#70)
-    # and a team Slack client (#30). Step 7, Notion and Jira (#30).
+    # and a team Slack client (#30). Step 7, Notion (#30) -- Jira was
+    # dropped (#82): both its auth paths tie a workspace to whoever set it up.
 
     # Step 8, after the writes have committed. The payload is never logged:
     # decision statements and item descriptions are meeting content.
@@ -123,11 +138,13 @@ def on_transcript_ready(payload: dict) -> None:
 
 @shared_task(name="autune.extraction.sync_action_item", acks_late=True)
 def sync_action_item(action_item_id: str) -> None:
-    """Step 7 for one item a person just confirmed: its Notion page, once (#30).
+    """Step 7 for one item past confirmation: create its Notion page the
+    first time, update the same page every edit after (#30, #342).
 
-    Runs when the board moves an item out of ``needs_confirmation``
-    (``sync_after_confirmation``), never after extraction: nothing the model drafted
-    is confirmed at that point, and #246 keeps unconfirmed items in Autune.
+    Runs whenever the board changes an item that has already left
+    ``needs_confirmation`` (``sync_after_confirmation``), never before: nothing
+    the model drafted is confirmed at that point, and #246 keeps unconfirmed
+    items in Autune.
 
     A team that has not connected Notion is skipped, not failed -- the ordinary
     answer from ``load_integration`` (``autune_core.integrations_config``). The
@@ -174,22 +191,36 @@ def sync_action_item(action_item_id: str) -> None:
 
 
 def sync_after_confirmation(action_item_id: str) -> None:
-    """Run the sync in the API process, right after the confirming response.
+    """Run the sync in the API process, right after an edit's response --
+    the confirming edit and every one after it (#342), not confirmation only.
 
     The router hands this to FastAPI's background tasks rather than queueing
     ``sync_action_item`` on the broker: apps/api builds no Celery app, so a
     ``delay`` from a request has nowhere to go, and wiring one in is a change to
-    the team's shared assembly. The claim in ``ext_external_refs`` makes the page
-    once either way.
+    the team's shared assembly. The claim in ``ext_external_refs`` makes the
+    first page once; ``with_for_update`` in ``sync_action_item_to_notion``
+    keeps two of these in flight at once from writing out of order.
 
     The person's edit is already committed when this runs, so a Notion failure
     must not surface as an error on the board. It is logged by id and the claim
     is rolled back, which lets the next confirmation of that item send.
+
+    **``PrivacyViolationError`` is caught the same way.** ``check_outbound``
+    raises it, not ``IntegrationError`` -- a sibling, not a subclass -- when
+    the confirmed description or assignee label still carries unmasked PII.
+    No leak happens either way; the send is still blocked. Left uncaught here
+    it would crash this background task instead of logging gracefully, the
+    same silent failure an unhandled ``IntegrationError`` would be (review,
+    #333).
     """
     try:
         sync_action_item(action_item_id)
     except IntegrationError:
         log.warning("extraction_notion_sync_failed", action_item_id=action_item_id)
+    except PrivacyViolationError:
+        log.warning(
+            "extraction_notion_sync_blocked_by_privacy_guard", action_item_id=action_item_id
+        )
 
 
 @shared_task(name="autune.extraction.sync_decision", acks_late=True)
@@ -227,8 +258,13 @@ def sync_decision(decision_id: str) -> None:
 
 def sync_decision_after_confirmation(decision_id: str) -> None:
     """``sync_after_confirmation`` for a decision: in the API process, never
-    failing the confirmation that started it."""
+    failing the confirmation that started it. Catches ``PrivacyViolationError``
+    the same way and for the same reason -- see that function's own note."""
     try:
         sync_decision(decision_id)
     except IntegrationError:
         log.warning("extraction_notion_decision_sync_failed", decision_id=decision_id)
+    except PrivacyViolationError:
+        log.warning(
+            "extraction_notion_decision_sync_blocked_by_privacy_guard", decision_id=decision_id
+        )

@@ -45,6 +45,52 @@ class TemplateSelection(BaseModel):
     template_key: str
 
 
+class TemplateItemRead(BaseModel):
+    """One checklist item beside what the meeting did with it.
+
+    ``coverage`` is ``covered``, ``partial`` or ``missing``, and ``None`` when
+    the meeting has no topic graph yet — nothing has been compared, which is
+    not the same as everything being covered and must not render as it. See
+    ``service.template_comparison``.
+
+    ``gap_id`` points at the row on the left of the screen, so the rail and the
+    gap list are the same finding seen twice rather than two lists a reader has
+    to reconcile. Null for a covered item, which raised nothing.
+    """
+
+    key: str
+    category: str
+    item: str
+    coverage: str | None = None
+    gap_id: str | None = None
+    dismissed: bool = False
+    """Somebody called this gap a false positive. The item is still not covered
+    — the row stays and threshold tuning reads it (ADR 0006) — so the rail says
+    both rather than quietly promoting the item to covered."""
+
+
+class TemplateComparison(BaseModel):
+    """The S20 rail: which checklist this meeting is held to, and how far it
+    got with each item.
+
+    A superset of ``TemplateSelection`` — ``template_key`` is still the first
+    field, so a caller that only wanted to know which template is in force
+    reads the same key off the same endpoint.
+
+    ``analysed`` is whether the meeting has a topic graph at all. Without one
+    ``detect.compare`` raises nothing by design (an empty graph says extraction
+    found nothing, not that the meeting discussed nothing), so every item would
+    otherwise read as covered — the exact false statement the rail exists to
+    avoid making.
+    """
+
+    template_key: str
+    name: str
+    version: str
+    analysed: bool
+    items: list[TemplateItemRead] = Field(default_factory=list)
+
+
 class TopicNodeRead(BaseModel):
     """One node of the graph S20 draws.
 

@@ -42,7 +42,7 @@ documents cover how it is built.
 | `data-model.md` | Shared entities, per-module tables, prefix rules, datastore split |
 | `async-pipeline.md` | Celery event flow A → B/C/D → E, retries, idempotency |
 | `privacy.md` | Raw-audio deletion, PII masking, speaking-ratio confidentiality, retention |
-| `integrations.md` | Slack, Notion, Jira, Calendar wrappers and the outbound privacy boundary |
+| `integrations.md` | Slack, Notion, Calendar wrappers and the outbound privacy boundary |
 
 ### engineering/
 | Document | Contents |

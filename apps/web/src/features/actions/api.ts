@@ -133,6 +133,6 @@ export const createDecision = (meetingId: string, statement: string) =>
  */
 export const deleteDecision = (id: string) => withoutBody(`/decisions/${encodeURIComponent(id)}`);
 
-/** Re-push this meeting's items to Notion and Jira. */
+/** Re-push this meeting's items to Notion. */
 export const syncResults = (meetingId: string) =>
   api.extraction<void>(`/results/${meetingId}/sync`, { method: "POST" });

@@ -45,7 +45,7 @@ from autune_gap import detect, service
 from autune_gap.eval.dataset import DEFAULT_DATASET, EvalCase, load_cases
 from autune_gap.eval.metrics import CaseScore, Report, classify_false_positive, score
 from autune_gap.graph import topic_key
-from autune_gap.models import GapGap, GapRelatedTopic, GapTopic
+from autune_gap.models import GapGap, GapTopic
 from autune_gap.template import Template, TemplateItem, get_template
 
 _SURFACED = "high"
@@ -87,18 +87,14 @@ def run_case(case: EvalCase) -> CaseScore:
                     select(GapTopic.label).where(GapTopic.meeting_id == meeting_id)
                 )
             )
-            # Which gaps point at a topic. A missing item was inferred from the
-            # absence of one and points at none; a partial one points at the
-            # topic it was inferred from. The row does not store the coverage
-            # state, and this is the same fact read off the link table.
-            with_topics = set(
-                s.scalars(
-                    select(GapRelatedTopic.gap_id).where(
-                        GapRelatedTopic.gap_id.in_([row.id for row in rows])
-                    )
-                )
-            )
-            _check_coverage_agrees(rows, with_topics, chosen)
+            # The row stores the coverage state now (#303), so the split is
+            # read off it. It used to be derived from `gap_related_topics` --
+            # a gap with no linked topic was one raised on an absent item --
+            # and that derivation stopped being true in the same PR: an item
+            # the meeting only *said*, with no topic behind it, is partial and
+            # links to nothing. Every such gap read as missing, disagreed with
+            # its own title, and stopped the run.
+            _check_coverage_agrees(rows, chosen)
             topics = (
                 s.scalar(
                     select(func.count())
@@ -118,7 +114,7 @@ def run_case(case: EvalCase) -> CaseScore:
             for row in rows
             if row.severity == _SURFACED
             and row.template_item_key is not None
-            and row.id in with_topics
+            and row.coverage == detect.Coverage.PARTIAL
         )
 
         return CaseScore(
@@ -143,26 +139,31 @@ class HarnessInconsistencyError(Exception):
     would print cannot be trusted. Louder than a wrong number."""
 
 
-def _check_coverage_agrees(rows: list[GapGap], with_topics: set[str], chosen: Template) -> None:
-    """Cross-check the partial/missing split against the stored title.
+def _check_coverage_agrees(rows: list[GapGap], chosen: Template) -> None:
+    """Cross-check the stored partial/missing split against the stored title.
 
-    The split is derived from ``gap_related_topics`` — a gap with no linked
-    topic was raised on an absent item. That derivation has a failure mode that
-    looks exactly like a real result: ``build_topic_graph`` deletes the
-    meeting's topics before ``detect_gaps`` runs and the cascade takes the link
-    rows with them, so **an empty link table reads as "every gap is missing"**
-    (``service.detect_gaps`` says as much in its own docstring). The headline
-    claim this harness makes — that the centrality threshold is not what costs
-    precision — is exactly that shape, and nothing in the report would tell the
-    two apart.
+    The split used to be derived from ``gap_related_topics`` — a gap with no
+    linked topic was raised on an absent item — because the row did not carry
+    the state. That derivation had a failure mode that looked exactly like a
+    real result: ``build_topic_graph`` deletes the meeting's topics before
+    ``detect_gaps`` runs and the cascade takes the link rows with them, so **an
+    empty link table read as "every gap is missing"** (``service.detect_gaps``
+    says as much in its own docstring). The headline claim this harness makes —
+    that the centrality threshold is not what costs precision — is exactly that
+    shape, and nothing in the report would have told the two apart.
 
-    ``gap_gaps.title`` is an independent second reading. ``detect`` composes it
-    from the coverage state, the two wordings differ, and the row stores it. If
-    the two disagree, the run stops rather than printing a conclusion built on
-    one of them. Storing the coverage on the row is the real fix and belongs to
-    #266's schema, not here.
+    ``gap_gaps.coverage`` is what this docstring used to call the real fix, and
+    #303 added it. The derivation is gone, and with it the cascade failure
+    mode. What remains is the guard: ``gap_gaps.title`` is an independent
+    second reading — ``detect`` composes it from the same coverage state, the
+    two wordings differ, and the row stores both — so if they disagree the run
+    stops rather than printing a conclusion built on one of them.
 
-    Raised in review of #277.
+    **A row with no coverage stops the run too.** The column is nullable
+    because rows written before its migration have nothing to put there, and a
+    ``None`` read as "not partial" is a wrong number rather than a refusal.
+
+    Raised in review of #277; re-aimed at the stored column in review of #303.
     """
     items = {item.key: item for item in chosen.items}
 
@@ -175,12 +176,18 @@ def _check_coverage_agrees(rows: list[GapGap], with_topics: set[str], chosen: Te
         if from_title is None:
             continue
 
-        from_links = "partial" if row.id in with_topics else "missing"
-        if from_title != from_links:
+        if row.coverage is None:
             raise HarnessInconsistencyError(
-                f"{row.meeting_id}: gap on {row.template_item_key!r} reads {from_links!r} from "
-                f"gap_related_topics and {from_title!r} from its stored title. The cause split "
-                "in this report would be wrong, so it is not printed."
+                f"{row.meeting_id}: gap on {row.template_item_key!r} stores no coverage, and "
+                f"its title reads {from_title!r}. The cause split in this report would be "
+                "guessed, so it is not printed."
+            )
+
+        if from_title != row.coverage:
+            raise HarnessInconsistencyError(
+                f"{row.meeting_id}: gap on {row.template_item_key!r} stores {row.coverage!r} "
+                f"and its title reads {from_title!r}. The cause split in this report would be "
+                "wrong, so it is not printed."
             )
 
 

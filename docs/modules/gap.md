@@ -73,14 +73,45 @@ a 500MB pipeline is a judgement nobody tests.
 - **Noun terms.** A maximal run of content-noun tokens is the compound the
   speaker said, and that is what the graph needs a node for. The run is read
   from the morpheme tag (`ncn+jxt`) rather than the coarse part of speech,
-  which calls 개인화로 an adverb; a particle, an ending or a stopword breaks the
-  run, so the label is 개인화 and not 개인화로. Content noun means common,
+  which calls 개인화로 an adverb. A noun carrying a particle joins the run
+  **as its stem** and ends it — 로직은 joins as 로직, so "정렬 로직은" is
+  정렬 로직 and the label is 개인화 and not 개인화로; an ending, the copula or
+  a stopword breaks the run. Content noun means common,
   proper and foreign (`nc*`, `nq`, `f`) and **not** pronoun, numeral or bound
   noun: matching joins a run rather than breaking it, so letting 그거 or 두 in
   would give a node called 그거 검색 기능 and split the topic the meeting calls
   검색 기능 everywhere else. The tag rule is not enough on its own — this model
   tags 그거 as a common noun — so the demonstratives sit in the stoplist,
   measured rather than assumed.
+- **The particle is cut on the surface, not along the model's morphemes.**
+  Until #278 a noun with a particle on it was refused outright, and Korean puts
+  a particle on nearly every noun that is not the first half of a compound: "가장
+  큰 리스크는 콜드스타트입니다" gave no topic at all, and 정렬 로직은 came back
+  as 정렬. `spoken.noun_stem` now reads through it. The tag decides *whether* a
+  particle is attached and how many (noun parts, then only `j*` parts); the
+  standard particle inventory decides *what* is cut off the end of the word.
+  `lemma_` would have been the obvious source and is wrong on this vocabulary —
+  it splits 개인화로 as 개인 + 화로 and 콜드스타트입니다 as 콜드 + 스타트입니다.
+  Stacked particles are cut one at a time, no more times than the tag has `j`
+  morphemes: 서버에서부터 (`jca+jxc`) and 서버와는 (`jct+jxt`) are 서버, and
+  결과도 (`jxc`) stays 결과. A stack the model tags as one `j` (모듈까지도) is
+  on the list whole. A cut is only taken where the particle's spelling can
+  follow the syllable before it — 차이랑 is 차이 + 랑, not 차 + 이랑. The list
+  is load-bearing: an ending missing from it is cut wherever a shorter listed
+  ending matches, which is how the first version turned 계획대로 into 계획대
+  (#345). Four things are deliberately not read through: the copula (`jp`),
+  because 붙입니다 is tagged `ncn+jp+etm` and would give a topic called 붙; an
+  ending a particle and a noun's own last syllable spell alike when the tag
+  gives it one `j` — 경로는 and 개인화로는, 성과도 and 서버와도, 인프라도 and
+  캐시라도 — where either cut invents a topic on the other half, except for a
+  short measured list of nouns (경로, 결과, 불만, …) kept by name; a stem a
+  particle is still on (서버에서), which means the list missed a stack; and the
+  two nouns the model splits before their last syllable, 재시도 and 난이도,
+  which containment matching would otherwise count as a template's 재시도
+  covered by
+  a topic called 재시. Reading through the particle surfaced words it used to
+  refuse by accident, so 회의, 회의실 and the positional bound nouns the model
+  tags `ncn` (중, 쪽, 안) joined the stoplist in the same change.
 - **A span the model found is claimed whether or not we keep it.** An
   implausible one-letter person, an `LC` meeting room, an `OG` vendor: the
   characters are spoken for, so a refusal cannot come back as a term under
@@ -102,15 +133,19 @@ a 500MB pipeline is a judgement nobody tests.
   `autune_integrations.privacy`, the masker's own: a second copy of the
   character here is a guard that stops matching when the notation changes and
   says nothing about it. #250.
-- **Two precision filters.** A one-character `person` is not a person: A/B 결과
-  gives A and B as `PS`, and both became connected nodes. A `metric` with no
-  digit in it is not a metric: `QT` on spoken Korean fires on 한번, 네, 좀.
-  Precision is C's metric and a false topic is what a false gap is raised on.
-- **Dates are not filtered, and that is a known hole.** 오늘은 is still a node,
-  particle and all, while 오늘 sits in the noun-run stoplist — the same word
-  refused on one path and taken on the other. A rule that drops it while
-  keeping 다음 주 화요일까지, a deadline the meeting set and a value risk
-  scoring will read, is not a one-liner. Issue #230, raised in review of #222.
+- **Three precision filters.** A one-character `person` is not a person: A/B
+  결과 gives A and B as `PS`, and both became connected nodes. A `metric` with
+  no digit in it is not a metric: `QT` on spoken Korean fires on 한번, 네, 좀.
+  And a stopword is not a topic on either path. Precision is C's metric and a
+  false topic is what a false gap is raised on.
+- **Both paths cut the particle and ask the same stoplist.** 오늘은 used to be
+  a `DT` node, particle and all, while 오늘 was refused as a term — one word,
+  two answers (#230). An entity span now loses the particle on its last word
+  by the same `noun_stem`, and the stoplist is asked about the whole span:
+  오늘은 is 오늘 and is refused, and 다음 주 화요일까지, a deadline the meeting
+  set, survives because the span is not 다음. The noun runs ask token by token
+  instead, so 오늘 배포 keeps 배포 — a span-level check would let 오늘 into the
+  label. Both halves of this closed with #278.
 
 **A term's kind stays undecided.** It carries the label `term`, the sixth in
 `ENTITY_LABELS`, which says "a compound the meeting named" and not which of
@@ -149,7 +184,7 @@ asking the extractor.
 | Relation | Marker | Reads |
 | --- | --- | --- |
 | `depends_on` | 필요, 있어야, 되어야, 선행, 전제, 없이는, 없으면 | "정렬 로직은 인덱스가 필요합니다" |
-| `blocked_by` | a blocker word (안 잡, 미정, 막혀, 무리, 이슈, …) **and** a causal connective in the same clause | "실시간은 콜드스타트가 안 잡혀 있어서 무리입니다" |
+| `blocked_by` | a blocker word (안 잡, 미정, 막혀, 무리, 이슈, …) **and** a causal connective in the same clause, on either side of it | "실시간은 콜드스타트가 **안 잡혀 있어서** 무리입니다", "검색 기능은 캐시 **때문에** 막혀 있습니다" |
 | `alternative_to` | 대신, 말고, 보다는, 아니라, 반면, `vs` | "인기순 정렬 대신 실시간 개인화로" |
 | `part_of` | — **no rule** | |
 
@@ -162,7 +197,7 @@ weights it, and what a rule can read today is a different question from what an
 edge may say. Raised in review of #249.
 
 **Measured.** Over `transcript_ready.typical` the rules assert exactly one
-relation — `실시간 blocked_by 콜드스타트` — against six co-occurrence edges.
+relation — `실시간 blocked_by 콜드스타트 처리` — against its co-occurrence edges.
 `transcript_ready.short` asserts none: it names two topics in two utterances and
 never says how they stand to each other. Both numbers are pinned in
 `modules/gap/tests/unit/test_spacy_ner.py` (marked `model`).
@@ -189,6 +224,33 @@ Three things came out of that measurement, and each one changed the design:
   `alternative_to` the most common relation in the graph and every one of them a
   coin flip. This is the clearest case for the LLM assistance step 2 is promised.
 
+**A reason can be denied, and a window can hold two of them.** Two guards the
+backward reading needed and did not have, both found by running it (raised in
+review of #254):
+
+- **`때문이 아니라`** names a reason in order to refuse it. Without a guard
+  "검색 기능은 캐시 때문이 아니라 그냥 막혀 있습니다" asserted
+  `검색 기능 blocked_by 캐시` — the reverse of the sentence. `아니` is read
+  between the connective and the cue and nowhere else: `_ALTERNATIVES` reads
+  `아니라` as a contrast marker, and that reading is still the right one for
+  "A가 아니라 B". A reason stated after the denied one is still found.
+- **Two reasons in one window.** "캐시 처리 때문에 인증 탓에 막혀 있습니다"
+  states two, and the resolution check was reading the whole window, so 처리
+  from the first cancelled the second and 인증 — the blocker actually standing
+  — was dropped. The check now sees only what its own connective heads.
+
+**What the reason guard costs.** `_RESOLVED` refuses a blocker whose reason
+clause says the thing is gone — "캐시 이슈가 해결됐기 때문에 …" asserts the
+reverse of a blocker, and `blocked_by` is the one relation the report treats as
+a finding on its own. 처리 is on that list and is also the ordinary noun for
+the work, so "캐시 처리 때문에 막혀 있습니다" is refused too, and the relation
+the meeting did state is lost. The ambiguity was already here in the forward
+direction; reading backwards means it now costs a relation in two places. Kept
+in the losing direction because precision is C's metric, and pinned by
+`test_a_resolution_word_used_as_a_noun_costs_the_relation` so it is a known
+price rather than a surprise. Telling the two readings apart is the assisted
+implementation's job, not a longer list.
+
 **A marker is a string, and the clause decides whether the speaker meant it.**
 Three guards, each one a sentence that produced an edge before it existed
 (raised in review of #249, found by running the extractor rather than reading
@@ -206,6 +268,26 @@ it):
   The guard window stops at the boundary for the same reason in reverse:
   "인덱스가 필요하고 캐시는 문제 없습니다" must not cancel a need the speaker
   did state.
+
+  **The clause has two sides, and at first only one was read.** `어서`/`아서`/
+  `라서` are verb endings and attach to the predicate, so they follow the
+  blocker word; `때문`/`탓에`/`으로 인해` head the reason and Korean puts the
+  reason first, so they precede it. Looking only forwards from the cue read
+  three of the six connectives and dropped every relation a meeting stated the
+  other way — "검색 기능은 캐시 때문에 막혀 있습니다" asserted nothing. The
+  window now runs backwards as well, bounded by the same clause break and the
+  same `MAX_MARKER_DISTANCE`, and when the connective is the one behind, it
+  rather than the cue is what the ends are read from: in "캐시 때문에 정렬
+  로직이 막혀 있습니다" the mention before the *cue* is 정렬 로직, the thing
+  being blocked. Recall only — no false edge was produced by the narrow
+  window. #254, follow-up to #249.
+
+  **Only three of the six run backwards.** `어서`/`아서`/`라서` are verb endings
+  that close the clause they sit in, and the clause-break list has no entry for
+  them, so a backward window that looked for all six read straight past one:
+  "결제 모듈은 시간이 없어서 로그인 모듈 이슈는 못 봤습니다" paired the blocker
+  word with the previous clause's reason and asserted `로그인 모듈 blocked_by
+  결제 모듈`. The backward window takes `때문`/`탓에`/`으로 인해` only.
 - **The source is what the sentence is about.** Korean starts a new subject
   after a connective ending, so the nearest mention after the marker is usually
   the next sentence — "정렬 로직은 인덱스가 필요하고 캐시는 다음 주에 봅시다"
@@ -330,8 +412,8 @@ measured at all. `general` is applied to every meeting unless one is overridden
 false when it guesses wrong.
 
 **Three states, and only two of them raise a gap.** An item is *covered* when a
-matched topic carried real weight, *partial* when the meeting named it and left
-it at the edge of the graph, and *missing* when nothing matched. S20 shows the
+matched topic carried real weight, *partial* when it came up and was not
+settled, and *missing* when nobody said anything of the kind. S20 shows the
 three side by side.
 
 - **Matching is containment either way**, over `graph.topic_key`'s
@@ -339,6 +421,33 @@ three side by side.
   keyword. Deliberately dumb, and the rule v1 measures precision against — what
   replaces it (embeddings over the items) is then a change with a number
   attached rather than a better idea.
+- **Two sources of evidence, ranked: the graph, then the speech.** A topic match
+  carries a centrality, so it decides between covered and partial. A keyword
+  that appears in an utterance with no topic behind it is weaker — the words
+  were said and the extractor never raised them to a topic — so it is *partial*
+  and never covered.
+
+  Without the second source the comparison could only ever be as good as entity
+  extraction, and NER recall was silently deciding gap precision. A meeting that
+  settles an owner and a deadline in plain Korean — "API 업그레이드는 한개발님이
+  10월 2일까지 맡아주시고요" — yields no topic carrying the word 담당 or 기한, so
+  the item came back `missing` and put a full-weight gap on the screen about
+  something the meeting had done. Measured over the three labelled fixtures, the
+  change cut `high`-severity gaps from 8 to 5 without losing a true one at
+  `high`.
+
+  Speech alone never covers an item, because one passing "다음에 얘기해요" would
+  otherwise close an item the meeting never settled. Only consenting speech is
+  read, filtered by the same join `build_topic_graph` uses — unknown consent is
+  not consent, and a gap resting on a person who declined is the failure that
+  matters here.
+
+  **A question counts as having raised the subject.** "소셜 로그인 API가
+  필요한가요?" makes the dependency item partial rather than missing, which
+  demotes a gap somebody might have wanted at `high`. Interrogatives and
+  negations are not detected, and detecting them is its own judgement rather
+  than a one-liner; the fixture labels disagree with the code on exactly this
+  case and it is the open question of the rule.
 - **A missing item scores exactly its template weight.** There is no topic to
   read a centrality off and none to read a silence off, so the weight is the
   only measured input and the score is it. Charging it a full 1.0 for "no
@@ -467,7 +576,7 @@ gaps off a transcript nothing was read out of.
 | PostgreSQL `gap_topic_utterances` | Which utterances a topic was built from, in order |
 | PostgreSQL `gap_topic_edges` | Relations between topics, directed, per meeting, with which extractor asserted each |
 | PostgreSQL `gap_participation` | Topic × participant speech presence |
-| PostgreSQL `gap_gaps` | Detected gaps, category, severity, risk score, question |
+| PostgreSQL `gap_gaps` | Detected gaps, category, coverage, severity, risk score, question |
 | PostgreSQL `gap_related_topics` | Which topics a gap was inferred from |
 | PostgreSQL `gap_meeting_template` | Which template one meeting is compared against, when somebody chose one |
 | PostgreSQL `gap_templates` | Domain templates and their items — **not built, and not needed**, see below |
@@ -521,13 +630,14 @@ here, so the no-deletion-hook sentence above still holds.
 | GET | `/topics/{meeting_id}` | Topic graph for visualization |
 | POST | `/gaps/{id}/dismiss` | Mark a gap as a false positive (feeds threshold tuning) |
 | GET | `/templates` | Available domain templates |
-| GET | `/templates/{meeting_id}` | Which template this meeting is compared against |
+| GET | `/templates/{meeting_id}` | Which template this meeting is held to, and how far it got with each item |
 | PUT | `/templates/{meeting_id}` | Point this meeting at a template and re-compare |
 
 ### The read API as built
 
-Two of the four exist. `/reports/{meeting_id}` and `/topics/{meeting_id}` read
-the stored rows; nothing was added to `apps/` to mount them.
+Everything above is built except `POST /gaps/{id}/dismiss`.
+`/reports/{meeting_id}` and `/topics/{meeting_id}` read the stored rows; nothing
+was added to `apps/` to mount them.
 
 - **The report is read, not replayed.** It is assembled from `gap_*` rows by the
   same `service.build_report` the publish path uses, so a report reopened a week
@@ -562,6 +672,38 @@ that shows one of them is a payload nobody reads. `GET /templates/{meeting_id}`
 answers with the configured default rather than an empty body when nobody has
 chosen, because there is always a template in force and a rail showing nothing
 selected would misreport that.
+
+`GET /templates/{meeting_id}` also carries the comparison itself — every item of
+the template beside `covered`, `partial` or `missing`, and the id of the gap it
+raised. That is the rail on the right of S20, and it is the gap list read from
+the other end: the list says what is missing, the rail says what the missing
+items were measured against, which is what makes a gap a claim rather than an
+opinion. The response is a superset of the selection, so a caller that only
+wanted the key still reads it off the same field; `PUT` keeps taking and
+returning the selection alone, because a request body carrying a read-only
+comparison invites a caller to send one back.
+
+Two things keep it honest, and both are failures it would otherwise make
+silently:
+
+- **Coverage is stored, not recomputed.** `gap_gaps.coverage` records what
+  `detect.classify` decided when the pipeline ran. A rail that re-ran the
+  comparison at read time would disagree with the gap rows beside it the moment
+  `AUTUNE_GAP_PARTIAL_CENTRALITY` moved — and the rows are what E was published
+  and what a dismissal was made against. The report is read, not replayed; so is
+  the checklist behind it. `covered` is never stored, because a covered item
+  raises no gap: the server reads the *absence* of a row back as covered.
+- **An unanalysed meeting reports no coverage at all.** `analysed` is false and
+  every item's coverage is null. Without it, "no gap row" would read as
+  "covered" for a meeting nobody has processed — a full checklist of green dots
+  for a meeting the pipeline never reached, which is the same false statement
+  `compare` refuses to make when it declines to raise a checklist of gaps
+  against an empty graph.
+
+A dismissed item keeps its coverage and is marked dismissed rather than promoted
+to covered. Somebody pressing "해당 없음" is a judgement about the gap, not
+evidence the meeting covered the item, and the row is what threshold tuning
+reads.
 
 `PUT /templates/{meeting_id}` stores the choice **and re-runs detection**, so the
 gaps on `/reports/{meeting_id}` reflect the new template as soon as it returns —
@@ -612,8 +754,11 @@ There is no `external` implementation and adding one is a privacy decision
 rather than a config string — see `../engineering/environments.md`, "The entity
 extractor has no external option".
 
-Every row a topic produces records `extractor_version` — the pipeline name and
-its version, `ko_core_news_lg-3.8.0`. The name alone is not a version: the
+Every row a topic produces records `extractor_version` — the pipeline name, its
+version and the version of `pipeline.spoken`'s rules,
+`ko_core_news_lg-3.8.0+spoken-2`. The rules are half the extractor: the same
+parse gives a different graph once a rule there changes, so `spoken.RULES_VERSION`
+is bumped with any change to what it keeps. The name alone is not a version: the
 pipeline ships a new release with every spaCy minor, so a graph built with 3.7
 and one built with 3.8 would carry the same string. Gap precision is measured
 over time and dismissals feed threshold tuning; both read across model
@@ -710,12 +855,16 @@ deletion through `meetings.id` — but it writes to whatever
 else's. The docker-compose database in
 `../engineering/environments.md` is the intended target.
 
-The split between `missing` and `partial` is read off `gap_related_topics`, and
-that reading has a failure mode shaped exactly like a result: an empty link
-table says "every gap is missing". The harness cross-checks it against the
-stored `gap_gaps.title`, which `detect` composes from the coverage state, and
-stops with exit 2 if the two disagree rather than printing a cause split built
-on one of them.
+The split between `missing` and `partial` is read off `gap_gaps.coverage`. It
+used to be derived from `gap_related_topics` — a gap linking to no topic was a
+missing one — and that reading had two problems. One was a failure mode shaped
+exactly like a result: an empty link table says "every gap is missing". The
+other retired the derivation outright: an item the meeting only said out loud
+is partial and links to nothing, so every such gap read as missing. The harness
+cross-checks the stored state against the stored `gap_gaps.title`, which
+`detect` composes from the same coverage state, and stops with exit 2 if the
+two disagree — or if a row carries no coverage at all — rather than printing a
+cause split built on one of them.
 
 The committed set (`eval/fixtures/gap_detection_v1.json`) is **four authored
 meetings, and is not the PRD figure** — that one comes from five to ten real

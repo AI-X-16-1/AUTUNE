@@ -13,8 +13,11 @@ serve a health check, and would make this module's unit tests need one.
 from __future__ import annotations
 
 import hashlib
+import threading
 import time
 from collections.abc import Callable, Iterator, Mapping
+from concurrent.futures import FIRST_EXCEPTION, ThreadPoolExecutor
+from concurrent.futures import wait as wait_for_futures
 from typing import TYPE_CHECKING, Any
 
 from autune_contracts.enums import UtteranceKind
@@ -245,9 +248,9 @@ def _classifier_client(endpoint: str) -> Any:
     """Our inference server, as a client the way every other one is written.
 
     A subclass rather than an instance whose ``service`` is reassigned after
-    construction: ``JiraClient``, ``NotionClient``, ``SlackClient`` and
-    ``CalendarClient`` are all ``class X(HttpClient): service = "x"``, and
-    ``addressing`` can only be declared the standard way on a class.
+    construction: ``NotionClient``, ``SlackClient`` and ``CalendarClient`` are
+    all ``class X(HttpClient): service = "x"``, and ``addressing`` can only be
+    declared the standard way on a class.
 
     ``addressing`` stays empty. Every string in this body is an utterance, so
     there is nothing here that addresses the request rather than carrying
@@ -441,6 +444,44 @@ does not hold a worker, decide when to come back.
 """
 
 
+MAX_CONCURRENT_BATCHES = 4
+"""How many of a meeting's batches may be in flight to the inference server at
+once.
+
+Sequential was safe but wasteful: 28 requests at roughly a hundred
+milliseconds of network time each is close to three seconds spent waiting, one
+batch at a time, on a server that could have been answering four of them
+together. ``httpx.Client`` is documented thread-safe for exactly this --
+concurrent requests share one connection pool -- so a bounded thread pool
+around ``_post`` is enough; nothing here is CPU-bound, so the GIL costs
+nothing while a thread waits on the network.
+
+Written here rather than made a setting, for the same reason as
+``RETRY_BACKOFF_SEC``: there is no inference server yet to measure against, and
+a knob nobody has tuned reads as a tuned value. Bounded on purpose too -- an
+unbounded pool turns "send everything at once" into a self-inflicted burst
+against a server that is supposed to also be answering everyone else, and one
+meeting is not supposed to be able to do that. Four is a guess conservative
+enough not to matter until there is a latency distribution to pick a real
+number from.
+
+**A batch that exhausts its retries still fails the whole ``classify`` call,
+and the batches that had not started yet are never sent.** The first version
+submitted every batch and waited on all of them, so against a server that is
+down a 28-batch meeting sent 84 requests (every batch x 3 attempts) and held
+the worker ~230 s, where the sequential loop stopped after 3 requests and
+~32 s (PARKJAEKYUNG0525's review of #113's PR, #365). Now the first failure
+cancels every batch still queued; only the ones already in flight -- at most
+``MAX_CONCURRENT_BATCHES`` -- are waited for, so none is cut off mid-request.
+The request count before failing is bounded by this number times
+``len(RETRY_BACKOFF_SEC) + 1``, not by the meeting's length.
+"""
+
+
+class _SkippedBatchError(Exception):
+    """A batch never sent because another one had already failed."""
+
+
 class HostedDeberta:
     """The same model on our own inference server.
 
@@ -462,6 +503,12 @@ class HostedDeberta:
     **Each of those requests is re-attempted on a transient failure** -- see
     ``_post``. Splitting a meeting into tens of requests multiplies its exposure
     to one bad second, and the split is not optional.
+
+    **Up to ``MAX_CONCURRENT_BATCHES`` of them are in flight together** (#113).
+    Sequential sending was never necessary -- the batches do not depend on each
+    other -- and a meeting of any length used to pay for that anyway. Results
+    are matched back to their batch by position, not by arrival order, so a
+    later batch answering first does not reshuffle the meeting's predictions.
     """
 
     def __init__(self, endpoint: str, model_version: str) -> None:
@@ -511,13 +558,60 @@ class HostedDeberta:
                 time.sleep(wait)
         return self._client.request("POST", "/classify", json={"texts": batch})
 
+    def _post_unless_stopped(self, batch: list[str], *, index: int, stop: threading.Event) -> Any:
+        """``_post``, unless another batch has already failed; a failure here
+        raises the flag for the batches not yet started."""
+        if stop.is_set():
+            raise _SkippedBatchError
+        try:
+            return self._post(batch, index=index)
+        except BaseException:
+            stop.set()
+            raise
+
     def classify(self, texts: list[str]) -> list[Prediction]:
         if not texts:
             return []
 
+        batches = list(_batches_within_budget(texts, MAX_OUTBOUND_CHARS))
+        bodies: list[Any] = [None] * len(batches)
+        # `min` so a short meeting (one or two batches) does not spin up idle
+        # worker threads it will never use.
+        with ThreadPoolExecutor(max_workers=min(MAX_CONCURRENT_BATCHES, len(batches))) as pool:
+            stop = threading.Event()
+            futures = {
+                pool.submit(self._post_unless_stopped, batch, index=index, stop=stop): index
+                for index, batch in enumerate(batches)
+            }
+            # Returns as soon as any batch fails. The queued ones are cancelled
+            # -- they never reach the server -- and leaving the `with` block
+            # waits only for the ones already in flight, so no request is cut
+            # off mid-way (see MAX_CONCURRENT_BATCHES). `stop` closes the gap
+            # cancel() leaves: a worker that frees up between the failure and
+            # the cancel would otherwise start the next queued batch.
+            done, pending = wait_for_futures(futures, return_when=FIRST_EXCEPTION)
+            failed = sorted(
+                (
+                    f
+                    for f in done
+                    if f.exception() is not None
+                    and not isinstance(f.exception(), _SkippedBatchError)
+                ),
+                key=lambda f: futures[f],
+            )
+            if failed:
+                for future in pending:
+                    future.cancel()
+        if failed:
+            # The earliest failed batch, so the error a caller sees does not
+            # depend on thread scheduling.
+            raise failed[0].exception()  # type: ignore[misc]
+        for future, index in futures.items():
+            bodies[index] = future.result()
+
         predictions: list[Prediction] = []
-        for index, batch in enumerate(_batches_within_budget(texts, MAX_OUTBOUND_CHARS)):
-            body = self._post(batch, index=index)
+        for index, batch in enumerate(batches):
+            body = bodies[index]
             # A server answering with a bare array is wrong but comprehensible;
             # letting it surface as AttributeError on a dict method is not.
             rows = body.get("scores", []) if isinstance(body, dict) else body

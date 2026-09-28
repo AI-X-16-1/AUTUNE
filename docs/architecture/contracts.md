@@ -100,8 +100,7 @@ D consumes this too, for `decisions` only. See "The B → D boundary" below.
       "status": "todo",
       "confidence": 0.88,
       "external_refs": [
-        {"system": "notion", "url": "https://..."},
-        {"system": "jira", "url": "https://..."}
+        {"system": "notion", "url": "https://..."}
       ]
     }
   ],
@@ -155,7 +154,7 @@ two apart. It stays empty until the Korean classifier has a measured quality
 (#10); E shows "not enough data" until then.
 
 `status` is one of `needs_confirmation`, `todo`, `in_progress`, `done` — the
-four columns of the action board (S17) and the Jira states they map to.
+four columns of the action board (S17).
 `needs_confirmation` means Autune has the item but no external issue exists yet.
 
 ### 3. `GapReport` — C → E
@@ -260,7 +259,15 @@ Two identities meet in `DecisionChange` and they are not interchangeable:
 | Field | Owner | Lifetime |
 | --- | --- | --- |
 | `thread_id` (`thr_`) | D | Spans meetings — the lineage's identity |
-| `source_decision_id` (`dec_`) | B | This meeting only |
+| `source_decision_id` (`dec_`) | B | This meeting only. The same id across B's rebuilds over the same source utterances; a new id when those change (#171) |
+
+A `dec_` id for a decision B's model proposed is derived from the meeting and
+the utterances it was settled in, so B rebuilding the same meeting over the same
+labels hands D the same id. It is not stable across a reprocess in module A,
+which mints new `utt_` ids and so changes every source (#194). A decision a
+person added (#246) keeps the id it was created with: B's rebuilds never touch
+it, and neither does a reprocess in A. Changing how the id is derived is a
+breaking change for D, not an implementation detail of B.
 
 **D must not extract decisions itself.** Doing so would duplicate B's
 classifier, and the two would disagree — a decision would appear in the summary

@@ -46,7 +46,7 @@ export const COLUMN_LABELS: Record<ActionStatus, string> = {
  * (this system absent from the array) means nothing has tried yet.
  */
 export interface ExternalRefRead {
-  system: "notion" | "jira";
+  system: "notion"; // Jira dropped (#82)
   url: string | null;
   external_id: string | null;
 }
@@ -74,10 +74,11 @@ export interface ActionItemRead extends ActionItem {
    */
   is_candidate: boolean;
   /**
-   * At most `notion` today (#30); `jira` is designed, not built. Not
-   * `external_refs`: the generated `ActionItem` already has a field by that
-   * name (`ExternalRef[]`, `url` required, the outbound-only shape), and
-   * `extends` cannot narrow it to this stricter one.
+   * At most `notion` today (#30). `jira` was designed (ui-spec S18, S28) but
+   * dropped before being built (#82). Not `external_refs`: the generated
+   * `ActionItem` already has a field by that name (`ExternalRef[]`, `url`
+   * required, the outbound-only shape), and `extends` cannot narrow it to
+   * this stricter one.
    */
   sync_refs: ExternalRefRead[];
   /**
@@ -96,6 +97,37 @@ export interface ActionItemRead extends ActionItem {
    * `null` until `assignee_id` resolves to an account that still exists.
    */
   assignee_name: string | null;
+  /**
+   * Whether `description` is a resolver's rewrite of the source utterance
+   * rather than the utterance verbatim (#175, #366). S18 shows this so a
+   * reviewer knows which descriptions are the speaker's own words and which
+   * are a model's paraphrase — worth a closer look, since a paraphrase can be
+   * wrong in ways a verbatim quote cannot. Defaults `false`: a hand-added
+   * item, a raw quote, or a resolution that fell back to one all read the
+   * same as "not resolved".
+   */
+  description_resolved: boolean;
+  /**
+   * The phrase `due_date` was parsed from ("다음 주 화요일", "9/20") — S18
+   * shows both, so a person can judge the parse instead of taking the
+   * resolved date on faith. `null` for a hand-added item, or a model item
+   * where no date phrase was said at all.
+   */
+  due_text: string | null;
+  /**
+   * How many of the item's sources were deleted after it was made (ADR 0007).
+   * `source_utterance_ids` lists only the ones that still exist, so a model
+   * item whose transcript went has an empty list — the same shape as a
+   * hand-added one. Tell them apart by `origin`; this says the evidence is gone.
+   */
+  deleted_source_count: number;
+  /**
+   * An open item whose assignee is no longer on the meeting's team (ADR 0007).
+   * `assignee_id` and `assignee_name` are already `null` when the assignee is
+   * not a member; this marks the ones someone has to pick up. S17 puts them at
+   * the top of their column.
+   */
+  needs_reassignment: boolean;
 }
 
 /** One source utterance's words, already masked by module A. */
@@ -148,7 +180,7 @@ export type DecisionStatus = "pending" | "confirmed" | "rejected";
  * (this system absent from the array) means nothing has tried yet.
  */
 export interface ExternalRefRead {
-  system: "notion" | "jira";
+  system: "notion"; // Jira dropped (#82)
   url: string | null;
   external_id: string | null;
 }
@@ -172,8 +204,9 @@ export interface ReviewDecision {
    */
   summary: string | null;
   /**
-   * At most `notion` today (#30); `jira` is designed, not built.
-   * Optional rather than required: the backend only started sending this key
+   * At most `notion` today (#30). `jira` was designed (ui-spec S18, S28) but
+   * dropped before being built (#82). Optional rather than required: the
+   * backend only started sending this key
    * once #312 merged, and #314 (which declares this interface) landed first.
    * Absent means the same thing as `[]` -- the render side must not assume it.
    */

@@ -132,6 +132,20 @@ class ExtActionItem(Base, TimestampMixin):
 
     origin: Mapped[str] = mapped_column(String(16), nullable=False, default="model")
 
+    description_resolved: Mapped[bool] = mapped_column(nullable=False, default=False)
+    """True when ``description`` is ``ReferenceResolver``'s rewrite rather than
+    the source utterance verbatim (#175, #366).
+
+    Set once, in ``build_action_items``, by comparing the description actually
+    stored against the utterance's own text -- not by trusting the resolver's
+    own report, since a resolver that failed every check already returned the
+    raw quote and this should read ``False`` for it the same as for a
+    ``fake``-resolved or hand-added item. S18 shows this so a reviewer knows
+    which descriptions are the speaker's own words and which are a model's
+    paraphrase of them, worth a closer look given #366's own review found the
+    paraphrase wrong often enough to matter.
+    """
+
     sources: Mapped[list[ExtActionItemSource]] = relationship(
         back_populates="action_item",
         cascade="all, delete-orphan",
@@ -149,8 +163,14 @@ class ExtActionItemSource(Base):
     the quotation, and data-model.md rules JSONB out for anything you join on.
 
     ADR 0006 makes these load-bearing: they are how a user checks an item without
-    replaying the meeting. Whether they survive a member leaving is what ADR 0007
-    is deciding.
+    replaying the meeting.
+
+    A row outlives its utterance (ADR 0007, "Missing attribution is shown, not
+    hidden"): deleting the utterance sets ``utterance_id`` to NULL instead of
+    taking the row. The words go; the fact that the item had a source stays, so
+    a model item whose transcript was deleted is not mistaken for a hand-added
+    one. Every reader skips the NULLs for ids and counts them as
+    ``deleted_source_count``.
     """
 
     __tablename__ = "ext_action_item_sources"
@@ -165,9 +185,14 @@ class ExtActionItemSource(Base):
         nullable=False,
         index=True,
     )
-    utterance_id: Mapped[str] = mapped_column(
-        String(64), ForeignKey("utterances.id", ondelete="CASCADE"), nullable=False, index=True
+    utterance_id: Mapped[str | None] = mapped_column(
+        String(64),
+        ForeignKey(
+            "utterances.id", ondelete="SET NULL", name="fk_ext_action_item_sources_utterance_id"
+        ),
+        index=True,
     )
+    """NULL once the utterance is deleted. Never written NULL by this module."""
 
     action_item: Mapped[ExtActionItem] = relationship(back_populates="sources")
 

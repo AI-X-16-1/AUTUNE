@@ -29,9 +29,18 @@ The uploaded recording exists only for the duration of transcription.
   every file in the temp directory against its job's status in the database
   and deletes the ones whose attempt is over or has been running longer than
   a job can (`service.sweep_orphans`). Never on mtime alone — that deletes a
-  file a late task is about to adopt. Today it runs at the start of every
-  transcription task, so an orphan waits for the next upload; a periodic
-  trigger is #207.
+  file a late task is about to adopt. It runs at the start of every
+  transcription task **and** hourly on beat
+  (`autune.audio.periodic.sweep_orphans`, #207): the first is the only trigger
+  that fires with no beat process running, the second the only one that fires
+  when uploads have stopped — which is when orphans are made.
+- Run the API and the worker against **the same `AUTUNE_AUDIO_TEMP_DIR` on the
+  same filesystem**. The handover is a file on disk and an id in a message; if
+  the two processes do not see the same directory, the worker finds nothing to
+  adopt and the recording the endpoint wrote has no owner at all — the durable
+  copy this section exists to prevent. Splitting them across hosts is not a
+  deployment option today, and making it one means replacing the handover, not
+  changing a path.
 - Set `privacy.original_audio_deleted = true` in `TranscriptReady` only after
   the file is actually gone.
 
@@ -79,7 +88,7 @@ incident. Target recall is 0.95+ for the MVP and 0.99+ at three months.
 - Logging transcript text at any level, including `DEBUG`. Log utterance IDs.
 - Including transcript text in exception messages — an exception string ends up
   in error tracking, which is an external service.
-- Sending unmasked text to Slack, Notion, Jira, or any LLM API.
+- Sending unmasked text to Slack, Notion, or any LLM API.
 
 **User-reported misses** delete the affected utterance immediately. There is no
 review queue: report, delete, then improve the detector.
@@ -92,7 +101,7 @@ not teammates, not the meeting organizer, not team administrators, not us.
 **Required:**
 - Compute the ratio, deliver it to that person by Slack DM, and do not persist
   the per-person value.
-- Any endpoint that could return a speaking ratio authorizes on
+- Any endpoint that returns or presents a speaking ratio authorizes on
   `requester_id == subject_id`, with no admin override.
 
 **Forbidden:**
@@ -106,6 +115,40 @@ not teammates, not the meeting organizer, not team administrators, not us.
 The reasoning is that a per-person speech-volume metric visible to a manager
 turns the product into a surveillance tool. That is a product-defining
 constraint, not a configurable option.
+
+### The meeting record is not a speaking-ratio product
+
+This section binds what Autune **computes, stores, presents or exports**. It
+does not forbid the meeting record from saying who spoke.
+
+A transcript carries `speaker_id`, `start` and `end` on every utterance, so a
+per-person duration is arithmetic away for anyone who can read it. That is not
+a loophole, it is what a meeting record is: the same payload already carries
+the full text of everything each person said, which is strictly more revealing
+than how long they spoke. A rule that permitted the content and forbade the
+duration would be protecting the wrong thing. Speaker attribution is also
+load-bearing across the product — module B keys a commitment on who made it,
+and `TranscriptReady` publishes `speaker_id` to four modules.
+
+So the line is drawn at the derived metric, not at the record:
+
+- **Allowed:** a transcript, an utterance, or an event carrying
+  `speaker_id` with timings, to anyone entitled to read that meeting.
+- **Forbidden, exactly as above:** any place where Autune itself turns that
+  into a per-person speech-volume number — a field, a column, a widget, a
+  report, an export, a Slack message, or a contract — for anyone but the
+  speaker.
+
+**A consumer must not derive it either.** A module that reads transcripts must
+not aggregate utterance durations per speaker for anyone but that speaker — the
+Slack DM and `GET /me/speaking-ratio/{meeting_id}` required above are the only
+sanctioned uses — and the module that could is the one that pins it: a test
+asserting no per-speaker duration or utterance count leaves its read paths
+(module E, #371). Until #6, `Participant.user_id` was null on every meeting the
+product had produced, so this was impossible in practice rather than prevented;
+identification removed that accident and the rule now needs the test.
+
+Decided on #361.
 
 Module E's aggregate metrics — quality score, alignment heatmap, gap
 distribution — are team-level and contain no per-person speech volume.
@@ -138,9 +181,16 @@ ratios for a meeting (`_MIN_SPEAKERS_FOR_RATIO`, #128). Decided on #168.
 
 - Analysis results are retained **90 days** by default, adjustable per team.
 - A scheduled sweep deletes expired results.
-- A user can delete their own data at any time.
+- A user can delete their own data at any time. **The scope of "their own data"
+  is under review — see ADR 0007, decision 5**, which would keep action items,
+  decisions and lineage derived from a person's speech after that person's
+  utterances are deleted. Until that ADR is accepted or rejected, "their own
+  data" includes everything derived from their speech.
 - When a user leaves a team, their utterances and everything derived from them
-  are deleted.
+  are deleted. **This rule is under review — see ADR 0007**, which argues the
+  record belongs to the meeting rather than to its participants, and that
+  leaving is an access change rather than a data change. Until that ADR is
+  accepted or rejected, this line is what the code follows.
 
 **Required of every module:**
 - Every module-owned table is reachable from a `meeting_id` or a `user_id`.
@@ -162,7 +212,7 @@ deleted is part of shipping a table, not an extra.
 
 ## 6. Third-party services
 
-Anything leaving our infrastructure — LLM APIs, Slack, Notion, Jira, Google
+Anything leaving our infrastructure — LLM APIs, Slack, Notion, Google
 Calendar, error tracking, analytics — carries masked text only, and only what
 the feature needs.
 
