@@ -30,10 +30,16 @@ from autune_contracts import (
     ActionStatus,
     ChangeType,
     ContextLinks,
+    DecisionChange,
     ExtractionResult,
     GapReport,
     GapSeverity,
 )
+
+EXTRACTION_SOURCE: Final = "extraction"
+"""B's name in ``ContextLinks.missing_sources``. When it is there, D published
+without B's decisions, so the empty ``decision_lineage`` means "not measured"
+rather than "nothing was reversed"."""
 
 MISALIGNMENT_KIND: Final = "misalignment_risk"
 MISALIGNMENT_HORIZON_DAYS: Final = 14
@@ -72,9 +78,34 @@ class MeetingFeatures:
     earlier version — a team already revising itself."""
     reversed_count: int | None
     change_with_stakeholder_absent: bool | None
+    """Whether any tracked decision moved while someone was absent — never who.
+
+    ``False`` is weaker than it reads. D can only name an absentee once every
+    participant is resolved to a user, so a meeting with any unconfirmed speaker
+    yields an empty ``key_stakeholders_absent`` and lands here as ``False``. The
+    contract has no field separating "everyone attended" from "attendance
+    unknown", so until participant resolution lands this feature is mostly the
+    latter. Weight it accordingly.
+    """
     ambiguous_agreement_count: int | None
     unconfirmed_action_share: float | None
     missing_source_count: int
+
+
+def _measured_lineage(context: ContextLinks | None) -> list[DecisionChange] | None:
+    """D's decision lineage, or ``None`` when it was never measured.
+
+    D publishes topic links without waiting for B and marks the gap with
+    ``"extraction"`` in ``missing_sources``. The empty ``decision_lineage`` that
+    comes with it means "B's decisions never arrived", not "nothing was
+    reversed" — reading it as zero would feed a false negative into the
+    heuristic weights and into every predictor trained on these rows. D
+    republishes with ``force`` once B reports late (#310), so a later
+    re-aggregation measures the meeting properly.
+    """
+    if context is None or EXTRACTION_SOURCE in context.missing_sources:
+        return None
+    return context.decision_lineage
 
 
 def meeting_features(
@@ -86,8 +117,8 @@ def meeting_features(
     alignment_scores: Sequence[float],
     missing_source_count: int,
 ) -> MeetingFeatures:
-    lineage = context.decision_lineage if context is not None else []
-    tracked = [c for c in lineage if c.change_type != ChangeType.NEW]
+    lineage = _measured_lineage(context)
+    tracked = [c for c in (lineage or []) if c.change_type != ChangeType.NEW]
     moved = [c for c in tracked if c.change_type in (ChangeType.MODIFIED, ChangeType.REVERSED)]
     actions = extraction.action_items if extraction is not None else []
 
@@ -102,11 +133,11 @@ def meeting_features(
         changed_decision_share=(len(moved) / len(tracked)) if tracked else None,
         reversed_count=(
             sum(1 for c in lineage if c.change_type == ChangeType.REVERSED)
-            if context is not None
+            if lineage is not None
             else None
         ),
         change_with_stakeholder_absent=(
-            any(c.key_stakeholders_absent for c in moved) if context is not None else None
+            any(c.key_stakeholders_absent for c in moved) if lineage is not None else None
         ),
         ambiguous_agreement_count=(
             len(extraction.ambiguous_agreements) if extraction is not None else None

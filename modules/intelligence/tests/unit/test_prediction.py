@@ -70,6 +70,33 @@ def test_lineage_features_count_moved_decisions_but_not_new_ones() -> None:
     assert f.change_with_stakeholder_absent is True
 
 
+def test_lineage_is_unmeasured_when_b_never_reported_to_d() -> None:
+    """An empty lineage because B timed out is not "no reversals happened".
+
+    D publishes topic links without waiting for B, with ``"extraction"`` in
+    ``missing_sources``. Counting that as zero would feed "no reversal" into the
+    heuristic weights and into the predictor's training rows.
+    """
+    context = ContextLinks(meeting_id="mtg_1", decision_lineage=[], missing_sources=["extraction"])
+
+    f = _features(context=context)
+
+    assert f.reversed_count is None
+    assert f.change_with_stakeholder_absent is None
+    assert f.changed_decision_share is None
+
+
+def test_lineage_is_measured_when_d_reported_without_b_missing() -> None:
+    """An empty lineage with B present is a real zero: nothing changed."""
+    context = ContextLinks(meeting_id="mtg_1", decision_lineage=[])
+
+    f = _features(context=context)
+
+    assert f.reversed_count == 0
+    assert f.change_with_stakeholder_absent is False
+    assert f.changed_decision_share is None
+
+
 def test_alignment_feature_is_the_weakest_pair() -> None:
     f = _features(alignment_scores=[0.9, 0.3])
 
