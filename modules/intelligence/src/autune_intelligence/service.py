@@ -38,6 +38,7 @@ from autune_core import Meeting, Participant, Utterance, get_logger
 from autune_core.errors import NotFoundError
 from autune_integrations import SlackApi, assert_personal_delivery
 
+from .alignment import meeting_alignment
 from .config import get_settings
 from .feedback import build_speaking_ratio_dm
 from .models import (
@@ -263,6 +264,10 @@ def aggregate_meeting(session: Session, meeting_id: str) -> IntelligenceSnapshot
     pattern_types = [c.pattern_type for c in classifications]
     distribution = dict(Counter(pattern_types))
 
+    # Empty until B's stance producer ships (#10, #168) — every decision's
+    # ``stance_by_role`` is ``[]`` until then, so no pair is scored.
+    alignment = meeting_alignment(extraction.decisions) if extraction is not None else []
+
     session.execute(
         pg_insert(IntelScore)
         .values(
@@ -335,6 +340,18 @@ def aggregate_meeting(session: Session, meeting_id: str) -> IntelligenceSnapshot
                 },
             )
 
+    session.execute(sa.delete(IntelAlignment).where(IntelAlignment.meeting_id == meeting_id))
+    for pair in alignment:
+        session.add(
+            IntelAlignment(
+                meeting_id=meeting_id,
+                role_a=pair.role_a,
+                role_b=pair.role_b,
+                team_id=meeting.team_id,
+                score=pair.score,
+            )
+        )
+
     row.aggregated_at = datetime.now(UTC)
     session.flush()
     session.expire_all()
@@ -344,7 +361,7 @@ def aggregate_meeting(session: Session, meeting_id: str) -> IntelligenceSnapshot
         team_id=meeting.team_id,
         quality_score=score,
         gap_distribution=distribution,
-        alignment=[],
+        alignment=[pair.to_contract() for pair in alignment],
         predictions=[],
         missing_sources=missing,
     )
@@ -371,10 +388,23 @@ def get_score(session: Session, meeting_id: str) -> IntelScore:
     return row
 
 
+MIN_MEETINGS_PER_HEATMAP_CELL: Final = 3
+"""A role pair is shown only once this many meetings scored it.
+
+docs/architecture/privacy.md section 3: a consumer that aggregates stance over
+several meetings leaves a cell empty when its sample is too small, rather than
+showing a number that identifies the few people behind it. Three matches the
+per-role gate on ``RoleStance.identified`` and the meeting floor #27 set for
+predictions. The pair is omitted, not returned with a null score, so the
+frontend draws it as "no data" the same way it draws a pair never scored.
+"""
+
+
 def get_heatmap(session: Session, team_id: str) -> list[HeatmapCell]:
     """Role-pair alignment for the team, averaged over its scored meetings.
 
-    Empty until the alignment step that fills ``intel_alignment`` is built.
+    Pairs scored in fewer than ``MIN_MEETINGS_PER_HEATMAP_CELL`` meetings are
+    left out. Every pair is left out until B's stance producer ships (#168).
     """
     rows = session.execute(
         sa.select(
@@ -385,6 +415,7 @@ def get_heatmap(session: Session, team_id: str) -> list[HeatmapCell]:
         )
         .where(IntelAlignment.team_id == team_id)
         .group_by(IntelAlignment.role_a, IntelAlignment.role_b)
+        .having(func.count() >= MIN_MEETINGS_PER_HEATMAP_CELL)
         .order_by(IntelAlignment.role_a, IntelAlignment.role_b)
     ).all()
     return [
