@@ -44,9 +44,9 @@ import re
 from typing import Annotated, Any
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Body, Depends, HTTPException
 from fastapi.responses import HTMLResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 from sqlalchemy.orm import Session
 
 from autune_core import get_session
@@ -172,8 +172,30 @@ class ConnectNotion(BaseModel):
     id)."""
 
 
+def _read_body(raw: dict[str, Any]) -> ConnectNotion:
+    """The request as ``ConnectNotion``, refused without repeating what was sent.
+
+    Declared as the parameter type, a missing or wrong field made FastAPI's
+    default 422, whose ``input`` carries the whole body -- the token included
+    -- and ``apps/api`` has no handler that would strip it (PARKJAEKYUNG0525,
+    review of #402). Validated here instead, the refusal names each field and
+    what was wrong with it, never a value.
+    """
+    try:
+        return ConnectNotion.model_validate(raw)
+    except ValidationError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=[
+                {"loc": list(error["loc"]), "msg": error["msg"]}
+                for error in exc.errors(include_input=False, include_url=False)
+            ],
+        ) from None
+
+
 @router.post("/connect-notion", include_in_schema=False)
-def connect_notion(body: ConnectNotion, session: SessionDep) -> dict[str, str]:
+def connect_notion(raw: Annotated[dict[str, Any], Body()], session: SessionDep) -> dict[str, str]:
+    body = _read_body(raw)
     try:
         page_id = _parse_page_id(body.page_id)
     except ValueError as exc:

@@ -7,16 +7,20 @@ one test of Notion's error body uses a mock transport.
 
 from __future__ import annotations
 
+import re
 from types import SimpleNamespace
 from typing import Any
 
 import httpx
 import pytest
-from fastapi import HTTPException
+from fastapi import FastAPI, HTTPException
+from fastapi.testclient import TestClient
 
+from autune_core import get_session
 from autune_core.integrations_config import IntegrationConfig
 from autune_extraction import router as router_module
 from autune_extraction.dev import routes
+from autune_extraction.dev.page import PAGE as PAGE_HTML
 from autune_extraction.dev.routes import ConnectNotion, _parse_page_id
 
 PAGE = "8e2c9c50-4b0d-4bb0-b0b0-1234567890ab"
@@ -181,3 +185,50 @@ def test_a_non_json_refusal_from_notion_is_reported_not_a_500() -> None:
 
     assert caught.value.status_code == 502
     assert caught.value.detail == "Notion answered 502"
+
+
+# --- what the page sends (PARKJAEKYUNG0525, review of #402) -----------------------
+
+
+def _page_fields() -> set[str]:
+    """The keys ``connectNotion()`` in the page puts in its JSON body."""
+    body = PAGE_HTML.split("function connectNotion()", 1)[1].split("}, ", 1)[0]
+    return set(re.findall(r"^\s+(\w+): document\.getElementById", body, re.M))
+
+
+def _client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
+    monkeypatch.setattr(routes, "load_integration", lambda *a: None)
+    monkeypatch.setattr(routes, "save_integration", lambda *a, **k: None)
+    monkeypatch.setattr(routes, "_create_database", lambda client, *, title, **_: f"db_{title}")
+    app = FastAPI()
+    app.include_router(routes.router, prefix="/dev")
+    app.dependency_overrides[get_session] = lambda: _Session()
+    return TestClient(app)
+
+
+def test_the_page_sends_exactly_the_fields_the_route_reads() -> None:
+    """The page sent action_db_id/decision_db_id after the route had moved to
+    page_id, so every connect from it was a 422."""
+    assert _page_fields() == set(ConnectNotion.model_fields)
+
+
+def test_the_pages_payload_connects(monkeypatch: pytest.MonkeyPatch) -> None:
+    payload = dict.fromkeys(_page_fields(), "x") | {"page_id": PAGE, "token": "ntn_token"}
+
+    response = _client(monkeypatch).post("/dev/connect-notion", json=payload)
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "connected"
+
+
+def test_a_refused_request_does_not_send_the_token_back(monkeypatch: pytest.MonkeyPatch) -> None:
+    """FastAPI's default 422 put the whole body, token included, in ``input``."""
+    token = "ntn_secret_value"
+
+    response = _client(monkeypatch).post(
+        "/dev/connect-notion", json={"team_id": "team_1", "token": token}
+    )
+
+    assert response.status_code == 422
+    assert token not in response.text
+    assert response.json()["detail"] == [{"loc": ["page_id"], "msg": "Field required"}]

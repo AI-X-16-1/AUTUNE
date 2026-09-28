@@ -78,13 +78,21 @@ async function post(path, body, resultId) {
       body: JSON.stringify(body),
     });
     const data = await res.json();
-    if (!res.ok) throw new Error(data.detail || JSON.stringify(data));
+    if (!res.ok) throw new Error(describe(data));
     el.className = "result ok";
     el.textContent = JSON.stringify(data);
   } catch (e) {
     el.className = "result err";
     el.textContent = String(e);
   }
+}
+
+// A 422's detail is a list; show where and what, never a value (the token is one).
+function describe(data) {
+  if (Array.isArray(data.detail)) {
+    return data.detail.map((e) => (e.loc || []).join(".") + ": " + e.msg).join("; ");
+  }
+  return data.detail || "request failed";
 }
 
 function connectNotion() {
