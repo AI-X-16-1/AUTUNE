@@ -39,7 +39,7 @@ from autune_contracts import (
     TranscriptSource,
     Utterance,
 )
-from autune_core import Meeting, Team, session_scope
+from autune_core import Meeting, Participant, Team, session_scope
 from autune_core import Utterance as UtteranceRow
 
 # The six-week target from docs/modules/context.md, "Metric" / "Phased
@@ -145,7 +145,9 @@ def _seed_meeting(team_id: str, meeting: EvalMeeting) -> str:
     """The meeting row plus its ``utterances``, as module A leaves them before
     publishing ``TranscriptReady`` -- the re-ranker reads a past topic's text
     back from ``utterances``, so a meeting seeded without them would be scored
-    against its label alone. Deleted with the team, by cascade."""
+    against its label alone. One consenting participant speaks every line:
+    topic linking analyses only a consenting speaker's utterances, so without
+    it nothing would be linked at all. Deleted with the team, by cascade."""
     with session_scope() as s:
         row = Meeting(
             team_id=team_id,
@@ -155,10 +157,14 @@ def _seed_meeting(team_id: str, meeting: EvalMeeting) -> str:
         )
         s.add(row)
         s.flush()
+        speaker = Participant(meeting_id=row.id, speaker_label="화자", consented=True)
+        s.add(speaker)
+        s.flush()
         s.add_all(
             UtteranceRow(
                 id=_utterance_id(row.id, i),
                 meeting_id=row.id,
+                participant_id=speaker.id,
                 speaker_label="화자",
                 start_sec=float(i),
                 end_sec=float(i) + 1,

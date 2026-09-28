@@ -18,7 +18,7 @@ from sqlalchemy import ColumnElement, or_, select
 
 from autune_context.dates import meeting_day
 from autune_context.models import CtxEmbedding
-from autune_core import Meeting, Utterance
+from autune_core import Meeting, Participant, Utterance
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -120,6 +120,12 @@ class HybridRetriever:
         rows with no ``utterance_ids`` (written before that column) and
         segments whose utterances are all gone -- the caller falls back to the
         label.
+
+        Reads only a consenting speaker's text (privacy.md section 5), the same
+        line ``service.consented_utterance_ids`` draws when the segment is cut.
+        Checked again here, at read time, because the ids were stored earlier:
+        a row from before that filter, or a speaker who has since withdrawn,
+        must not put that speech in front of the re-ranker.
         """
         if not meeting_ids:
             return {}
@@ -137,7 +143,9 @@ class HybridRetriever:
         texts: dict[str, str] = {
             utterance_id: text
             for utterance_id, text in self._session.execute(
-                select(Utterance.id, Utterance.text).where(Utterance.id.in_(wanted))
+                select(Utterance.id, Utterance.text)
+                .join(Participant, Participant.id == Utterance.participant_id)
+                .where(Utterance.id.in_(wanted), Participant.consented.is_(True))
             )
         }
         passages: dict[str, str] = {}

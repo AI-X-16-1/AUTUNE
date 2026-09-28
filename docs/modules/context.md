@@ -183,19 +183,29 @@ and is settled in Phase 0.
 
 1. `require_privacy_guarantees()` on the payload; refuse an undeleted-audio or
    unmasked transcript.
-2. Extract topics (`pipeline/topics.py`), embed them with KURE-v1, persist to
+2. Keep only a consenting speaker's utterances (`privacy.md` section 5): those
+   whose `participants` row has `consented = true`. An utterance with no
+   participant is out — unknown is not yes. This is the line B and C already
+   draw (#163); `TranscriptReady` carries every utterance and each consumer
+   filters. Nothing below sees the rest: not the embedder, a label, BM25, the
+   re-ranker, or `utterance_ids`. A meeting nobody consented to gets no topics
+   and no links, and still marks topic linking done.
+3. Extract topics (`pipeline/topics.py`), embed them with KURE-v1, persist to
    `ctx_embeddings` (`kind = "topic"`).
-3. Hybrid retrieval over past meetings of the same team, within the retention
+4. Hybrid retrieval over past meetings of the same team, within the retention
    window: pgvector cosine + in-process BM25, fused with RRF, top 50.
-4. Re-rank those 50 with the cross-encoder, keep the top 10. Each candidate
+5. Re-rank those 50 with the cross-encoder, keep the top 10. Each candidate
    meeting is scored on the text of its topic segment closest to this topic
    (`ctx_embeddings.utterance_ids`, read from `utterances`), or on that
-   segment's label for a row that predates the column.
-5. At or above `link_similarity_threshold` (dense cosine between the two
+   segment's label for a row that predates the column. The text is read only
+   where its speaker still consents — checked again at read time, so a
+   withdrawal takes effect without re-running the past meeting (the label is
+   the fallback, as for deleted utterances).
+6. At or above `link_similarity_threshold` (dense cosine between the two
    segments) or `link_confidence_threshold` (re-ranker), write an `asserted`
    link; below both, write a `pending` link for the user to confirm. The top 10
    kept are the 10 with the highest of the two scores, stored as `confidence`.
-6. Mark `ctx_meeting_status.topic_linking_done`, then schedule
+7. Mark `ctx_meeting_status.topic_linking_done`, then schedule
    `autune.context.publish_if_ready` with a countdown of
    `publish_timeout_s`. If the meeting had already published (module A
    reprocessed the recording), schedule `autune.context.republish` instead —
