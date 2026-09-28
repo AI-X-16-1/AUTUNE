@@ -96,7 +96,224 @@ to be tellable from one built after it, or precision measured across the two
 is two extractors averaged together. Bump it whenever a rule here changes what
 ``noun_terms`` or ``is_plausible`` returns for the same tokens."""
 
-_STACK_BASES: tuple[str, ...] = (
+_ALLOMORPHS: tuple[tuple[str, str], ...] = (
+    ("은", "는"),
+    ("이", "가"),
+    ("을", "를"),
+    ("과", "와"),
+    ("이랑", "랑"),
+    ("이나", "나"),
+    ("이나마", "나마"),
+    ("이라도", "라도"),
+    ("이야말로", "야말로"),
+    ("이든지", "든지"),
+    ("이든가", "든가"),
+    ("은커녕", "는커녕"),
+    ("으로", "로"),
+    ("으로서", "로서"),
+    ("으로써", "로써"),
+)
+"""Particles whose spelling depends on the noun, as (after a consonant, after a
+vowel). 서버는 but 모델은; 서버로 but 폴백으로.
+
+The ``으로`` family splits differently: 로 follows a vowel **or** ㄹ (모델로),
+and 으로 every other consonant. ``_fits`` holds that exception.
+
+Standard Korean grammar, not a measurement — which is why it can serve as a
+check on a cut. 차이랑 ends in the letters of 이랑, and cutting them would leave
+차; 이랑 only follows a consonant and 차 has none, so the cut is 랑 and the noun
+is 차이."""
+
+_INVARIANT_PARTICLES: tuple[str, ...] = (
+    # Case particles (격조사).
+    "의",
+    "에",
+    "에서",
+    "에게",
+    "에게서",
+    "한테",
+    "한테서",
+    "께",
+    "께서",
+    "더러",
+    "에다",
+    "에다가",
+    "하고",
+    "처럼",
+    "만큼",
+    "보다",
+    "같이",
+    # Auxiliary particles (보조사).
+    "도",
+    "만",
+    "까지",
+    "부터",
+    "마저",
+    "조차",
+    "밖에",
+    "대로",
+    "뿐",
+    "마다",
+    "커녕",
+    "치고",
+)
+"""Particles spelled the same after any noun.
+
+Together with ``_ALLOMORPHS`` this is the standard inventory of case and
+auxiliary particles, walked once rather than grown by what was seen (#345).
+Left out on purpose: the vocative (아, 야, 여) and the informal 이야/야, which
+a noun that names a topic does not take in a meeting, and the ending-like 요,
+서, 며, whose single syllable would be the longest match on too many words
+that are not particles at all. The copula is not here either — ``noun_stem``
+refuses a ``jp`` tag outright."""
+
+_STACK_HEADS: tuple[str, ...] = (
+    "에",
+    "에서",
+    "에게",
+    "에게서",
+    "한테",
+    "한테서",
+    "께서",
+    "에다",
+    "에다가",
+    "하고",
+    "처럼",
+    "만큼",
+    "보다",
+    "같이",
+    "까지",
+    "부터",
+    "마저",
+    "조차",
+    "밖에",
+    "대로",
+    "마다",
+    "으로",
+    "으로서",
+    "로서",
+    "으로써",
+    "로써",
+    "이랑",
+)
+"""Particles another particle stacks onto, when they are the first of the two.
+
+Each is two syllables or more, save 에, which no noun a meeting names ends in
+(화면에도, 캐시에만). ``ko_core_news_lg`` does not tag a stack
+consistently: 결과까지도 is ``jxc+jxc`` but 모듈까지도 is one ``jxc``, and
+캐시처럼은 and 고객만큼은 are one ``jxt`` each. A stack the model tagged as one
+morpheme gets one cut (see ``noun_stem``), so these pairs are on the list
+whole.
+
+같이 is here for a second reason: it ends in 이, so without 같이나 on the list
+the longest match in 서버같이나 is 이나, and the stem is 서버같. Found by
+``test_a_stem_never_ends_in_a_listed_particle``.
+
+Any other one-syllable head — 로, 과, 만 — is not, because a noun can end in that
+syllable: 결과, 경로, 불만. With 과도 on the list, 결과도 would be cut to 결.
+Those stacks are cut one particle at a time instead, and only as far as the
+tag has particles for (서버로는 is ``jca+jxt``, two). Where the model gives a
+one-syllable-headed stack a single tag — 결과만은 is ``jxt`` — the cut stops
+one short and leaves 결과만. That is the direction chosen: a label one syllable
+too long still contains the noun, and one syllable too short is contained by
+words that have nothing to do with it (불 is in 불만, 불가, 불안)."""
+
+_STACK_TAILS: tuple[tuple[str, str], ...] = (
+    ("은", "는"),
+    ("이", "가"),
+    ("을", "를"),
+    ("이나", "나"),
+    ("이라도", "라도"),
+    ("의", "의"),
+    ("도", "도"),
+    ("만", "만"),
+    ("까지", "까지"),
+    ("부터", "부터"),
+    ("마저", "마저"),
+    ("조차", "조차"),
+)
+"""What stacks onto a ``_STACK_HEADS`` particle, as (after a consonant, after a
+vowel): 까지는, 처럼은, 에서부터, 까지도, 조차도."""
+
+_RIEUL = 8
+"""ㄹ's index among the final consonants of a Hangul syllable."""
+
+
+def _final_consonant(syllable: str) -> int | None:
+    """The index of ``syllable``'s final consonant, 0 for none, or ``None`` when
+    it is not a Hangul syllable (API, QA — nothing is known about those)."""
+    code = ord(syllable) - 0xAC00
+    if not 0 <= code < 11172:
+        return None
+    return code % 28
+
+
+def _fits(ending: str, before: str) -> bool:
+    """Whether ``ending`` can follow the syllable ``before``, per
+    ``_ALLOMORPHS``. A particle with one spelling fits anything.
+
+    Compared by prefix, so a stack is held to its first particle's rule:
+    이랑은 follows a consonant because 이랑 does. Every longer spelling in the
+    table begins with a shorter one that takes the same side (이 / 이랑,
+    로 / 로서), which is what makes the first match the right one."""
+    final = _final_consonant(before)
+    if final is None:
+        return True
+    for after_consonant, after_vowel in _ALLOMORPHS:
+        takes_rieul = after_vowel.startswith("로")
+        if ending.startswith(after_consonant):
+            return final != 0 and not (takes_rieul and final == _RIEUL)
+        if ending.startswith(after_vowel):
+            return final == 0 or (takes_rieul and final == _RIEUL)
+    return True
+
+
+def _stack(head: str) -> list[str]:
+    """``head`` with each of ``_STACK_TAILS`` on it, in the spelling its last
+    syllable takes."""
+    after_consonant = bool(_final_consonant(head[-1]))
+    tails = [consonant if after_consonant else vowel for consonant, vowel in _STACK_TAILS]
+    return [head + tail for tail in tails if tail != head]
+
+
+PARTICLES: dict[str, int] = dict(
+    sorted(
+        {
+            **{particle: 1 for pair in _ALLOMORPHS for particle in pair},
+            **{particle: 1 for particle in _INVARIANT_PARTICLES},
+            **{stacked: 2 for head in _STACK_HEADS for stacked in _stack(head)},
+            # Not a particle, but what ``ko_core_news_lg`` tags as one after a
+            # noun: 콜드스타트입니다 comes back ``ncn+ncpa+jxc``. When the
+            # model tags it as the copula it is (``jp``) the token is not read
+            # through at all — see ``noun_stem``.
+            "입니다": 1,
+        }.items(),
+        key=lambda item: len(item[0]),
+        reverse=True,
+    )
+)
+"""What ``noun_stem`` cuts off the end of a token, longest first, with how many
+particles each ending is.
+
+The cut is made on the **surface**, not along the model's morphemes. The tag
+decides *whether* a particle is attached and how many; this list decides
+*what* they were. The morpheme split (``lemma_``) cannot be trusted for the
+second question on this vocabulary: it gives 개인화로 as 개인 + 화로 and
+콜드스타트입니다 as 콜드 + 스타트입니다 — a wrong topic that looks right. #278.
+
+**This list is load-bearing, and nothing structural stands behind it.** An
+ending that is not on it is still cut wherever a shorter ending on it matches:
+the first version of this list had no 밖에, 대로 or 라도, and 인덱스밖에,
+계획대로 and 캐시라도 came out as 인덱스밖, 계획대 and 캐시라 — each a label
+that looks like a noun and matches by containment (#345). Re-tagging the cut
+stem does not catch that; it was measured and passes 계획대 as ``ncn``. What
+does catch part of it is ``_fits``: a cut that leaves a syllable the particle
+cannot follow is not taken; ``_AMBIGUOUS_ENDINGS`` and ``_CASE_LEFTOVERS``
+refuse the rest that were found. Only an ending that matches nothing on the
+list, not even its last syllable, is sure to cost the topic and invent
+nothing."""
+
+_CASE_LEFTOVERS: tuple[str, ...] = (
     "에",
     "에서",
     "에게",
@@ -112,147 +329,60 @@ _STACK_BASES: tuple[str, ...] = (
     "이랑",
     "하고",
 )
-"""Particles a noun carries with another stacked after it, and no noun ends in.
+"""Particles no noun a meeting names ends in.
 
-Two uses. Each is paired with ``_STACK_TAILS`` to write the stacked forms into
-``_PARTICLES`` (서버에서는, 고객에게도, 서버보다는, 사용자마다의). And a stem
-that still ends in one of these after its particle is cut is refused: nothing a
-meeting names ends in 에서 or 보다, so 서버에서 left over from 서버에서조차
-means the list was missing a stack, not that the noun is called that.
+A stem still ending in one of these after every cut the tag allowed is
+refused: 서버에서 left over from an unlisted 서버에서나마 means the list was
+missing a stack, not that the noun is called that. The net under
+``PARTICLES`` for the stacks it does not generate."""
 
-Three particles stack like these but are not here, because nouns do end in
-them: 로 (경로) — see ``_AMBIGUOUS_ENDINGS`` — 와·과·랑 (결과, 사랑) — see
-``_PAIRED_BASES`` — and 만 (불만)."""
+_AMBIGUOUS_HEADS: tuple[str, ...] = ("로", "과", "와", "랑", "만")
+"""One-syllable particles another stacks onto, which nouns also end in: 경로,
+결과, 사랑, 불만. See ``_AMBIGUOUS_ENDINGS``."""
 
-_STACK_TAILS: tuple[str, ...] = ("은", "는", "도", "만", "의")
-
-_PAIRED_BASES: tuple[str, ...] = ("와", "과", "랑")
-"""Comitative particles, whose stacked forms are cut only on the tag's word.
-
-과 is also the last syllable of 결과, 효과, 성과, and 결과는 and 효과는 are
-tagged ``ncpa+jxt`` and ``ncn+jxt`` — one ``j``. The stacked particle, when the
-model sees it, is two: 서버와는 ``ncn+jct+jxt``, 고객과의 ``ncn+jct+jcm``. So
-과는 or 와의 is cut whole when the tag holds two ``j`` morphemes, and the token
-is refused when it holds one. That second case loses real stacks the model
-merged — 디자인팀과도 and 서버와도 come back ``ncn+jxc``, the tag 성과도 has —
-which is the price of not calling 성과 a topic named 성.
-
-The ``j`` count is not a general rule: 서버에서는 is two ``j`` for one listed
-entry and 고객과는 is tagged ``ncn+xsn+jxt``. It is used only here, where it
-is the one signal that separates the readings."""
-
-_PAIRED_STACKS: frozenset[str] = frozenset(
-    base + tail for base in _PAIRED_BASES for tail in _STACK_TAILS
+_AMBIGUOUS_ENDINGS: frozenset[str] = frozenset(
+    {stacked for head in _AMBIGUOUS_HEADS for stacked in _stack(head)} | {"라도", "대로"}
 )
+"""Endings a particle and a noun's own last syllable spell alike, where the tag
+does not tell them apart either.
 
-_PARTICLES: tuple[str, ...] = tuple(
-    sorted(
-        {
-            # Case and auxiliary particles.
-            "은",
-            "는",
-            "이",
-            "가",
-            "을",
-            "를",
-            "의",
-            "에",
-            "께",
-            "로",
-            "으로",
-            "와",
-            "과",
-            "도",
-            "만",
-            "랑",
-            "이랑",
-            "나",
-            "이나",
-            "에서",
-            "에게",
-            "한테",
-            "께서",
-            "하고",
-            "까지",
-            "부터",
-            "보다",
-            "처럼",
-            "만큼",
-            "마다",
-            "조차",
-            "마저",
-            "밖에",
-            "에서부터",
-            "으로부터",
-            *(base + tail for base in _STACK_BASES for tail in _STACK_TAILS),
-            *_PAIRED_STACKS,
-            # Not a particle, but what ``ko_core_news_lg`` tags as one after a
-            # noun: 콜드스타트입니다 comes back ``ncn+ncpa+jxc``. When the
-            # model tags it as the copula it is (``jp``) the token is not read
-            # through at all — see ``noun_stem``.
-            "입니다",
-        },
-        key=len,
-        reverse=True,
-    )
-)
-"""What ``noun_stem`` cuts off the end of a token, longest first.
-
-The cut is made on the **surface**, not along the model's morphemes. The tag
-decides *whether* a particle is attached; this list decides *what* it was. The
-morpheme split (``lemma_``) cannot be trusted for the second question on this
-vocabulary: it gives 개인화로 as 개인 + 화로 and 콜드스타트입니다 as
-콜드 + 스타트입니다 — a wrong topic that looks right. #278.
-
-A token whose ending is not on this list is not read through, which costs the
-topic. That alone does not keep a wrong topic out: an unlisted particle usually
-*ends* in a listed one (까지도 in 도, 에서부터 in 부터), and the cut would leave
-the rest of it on the stem — 모듈까지, 서버에서. So the list carries the
-stacked forms, a stem still ending in a ``_STACK_BASES`` particle is refused,
-a stacked 와·과·랑 is cut on the tag's word (``_PAIRED_BASES``), and an ending
-that could be either is in ``_AMBIGUOUS_ENDINGS``. #345."""
-
-_AMBIGUOUS_ENDINGS: tuple[str, ...] = (
-    "로는",
-    "로도",
-    "로만",
-    "로부터",
-    "라도",
-    "대로",
-    "야말로",
-    "만은",
-    "만이",
-    "만도",
-    "만의",
-    "만을",
-)
-"""Endings a particle and a noun's own last syllable spell alike.
-
-``ko_core_news_lg`` tags both readings the same, so neither the tag nor the
-surface can tell them apart:
+``ko_core_news_lg`` gives both readings one ``j``:
 
     개인화로는  ncn+jxt   개인화 + 로는      경로는    ncn+jxt   경로 + 는
+    서버와도    ncn+jxc   서버 + 와도        성과도    ncn+jxc   성과 + 도
+    배포만은    ncn+jxt   배포 + 만은        미만은    ncn+jxt   미만 + 은
     캐시라도    ncn+jxc   캐시 + 라도        인프라도  ncn+jxc   인프라 + 도
     일정대로    ncn+jca   일정 + 대로        무대로    ncn+jca   무대 + 로
-    모델이야말로 ncn+jxc  모델 + 이야말로    카메라야말로 ncn+jxc 카메라 + 야말로
-    배포만은    ncn+jxt   배포 + 만은        미만은    ncn+jxt   미만 + 은
 
-Either cut invents a topic on the other half — 경, 개인화로, 인프, 캐시라,
-배포만 — so a token ending in one of these is refused, unless its stem is in
-``_NOUNS_ENDING_LIKE_A_PARTICLE``. 으로는 is unambiguous (no noun ends in 으)
-and a listed particle longer than the match still cuts."""
+Either cut invents a topic on the other half — 경, 개인화로, 서버와, 성,
+배포만, 인프 — so the token is refused when the cut would be its last, unless
+what is left is in ``_NOUNS_ENDING_LIKE_A_PARTICLE``. Where the tag has a
+``j`` for each particle the count settles it and the cut is made: 서버로는
+(``jca+jxt``) is 서버, and 서버와는 (``jct+jxt``) is 서버.
 
-_NOUNS_ENDING_LIKE_A_PARTICLE: frozenset[str] = frozenset(
-    {"경로", "회로", "인프라", "결과", "효과", "성과", "불만", "미만"}
+The stacks are those of ``_AMBIGUOUS_HEADS``, generated the way ``PARTICLES``
+generates its own; 라도 and 대로 are the single particles with the same
+problem. 야말로 is not here: ``_fits`` settles it. 카메라야말로 can only be
+카메라 + 야말로, and 모델이야말로 only 모델 + 이야말로."""
+
+_NOUNS_ENDING_LIKE_A_PARTICLE: tuple[str, ...] = (
+    "경로",
+    "회로",
+    "인프라",
+    "결과",
+    "효과",
+    "성과",
+    "불만",
+    "미만",
 )
 """Nouns whose last syllable is a particle, measured, so they keep their topic.
 
-``_AMBIGUOUS_ENDINGS`` and ``_PAIRED_BASES`` refuse a token rather than guess
-which reading it is, and these are the words that refusal costs most often in
-this product's meetings: 경로는, 결과는, 불만은 would otherwise name nothing.
-A token that is one of these (as its last word) plus a listed particle is that
-noun. Tuned the way ``STOP_TERMS`` is — what has been seen, not every noun that
-ends in 과 or 로."""
+``_AMBIGUOUS_ENDINGS`` refuses a token rather than guess which reading it is,
+and these are the words that refusal costs most often in this product's
+meetings: 경로는, 결과는, 불만은 would otherwise name nothing. A token that is
+one of these (as its last word) plus a listed particle is that noun. Tuned the
+way ``STOP_TERMS`` is — what has been seen, not every noun that ends in 과 or
+로."""
 
 _PARTICLE_LOOKALIKES: frozenset[str] = frozenset({"재시도", "난이도"})
 """Nouns the model tags as a shorter noun plus a particle.
@@ -263,7 +393,13 @@ and 난이, and ``detect.match`` compares by containment, so 재시 would count 
 the meeting having covered a template keyword 재시도. Measured on the words
 this product's meetings use, and tuned the way ``STOP_TERMS`` is: it holds
 what has been seen, not a guess at every 度 noun (정확도, 속도, 만족도 are
-tagged correctly)."""
+tagged correctly).
+
+**Measured on ``ko_core_news_lg`` 3.8.0 and true of no other version.** A new
+model can start splitting 정확도 or stop splitting 재시도. ``pytest -m model``
+will not notice unless one of its sentences happens to use the word, so a
+model upgrade means tagging the 度 nouns again by hand and rewriting this list
+from what comes back."""
 
 STOP_TERMS: frozenset[str] = frozenset(
     {
@@ -401,6 +537,17 @@ def noun_stem(token: Token) -> str | None:
     a verb the model misread as a noun and the copula — and reading through
     it would give a topic called 붙. The copula is where the model is least
     reliable, so it is the part left out.
+
+    Stacked particles are cut one ending at a time, and only as many as the
+    tag has ``j`` morphemes for: 서버에서부터 (``jca+jxc``) is 부터 and then
+    에서. The count is what keeps a noun whose last syllable spells a particle
+    whole — 결과도, 합의는 and 경로로 carry one ``j`` each, so one cut is made
+    and 과, 의, 로 stay. Cutting until nothing on the list matches would give
+    결, 합 and 경. A stack the model tags as one morpheme (모듈까지도, ``jxc``)
+    is on ``PARTICLES`` whole and costs the one cut. Where one cut could be
+    read two ways, the token is refused (``_AMBIGUOUS_ENDINGS``) unless the
+    noun is one known to end like a particle (``_NOUNS_ENDING_LIKE_A_PARTICLE``),
+    and so is a stem a particle is still on (``_CASE_LEFTOVERS``).
     """
     parts = token.tag.split("+")
     if not parts[0].startswith(_NOUN_TAG_PREFIXES):
@@ -414,33 +561,38 @@ def noun_stem(token: Token) -> str | None:
     )
     if not all(part.startswith("j") and part != "jp" for part in parts[head:]):
         return None
-    if token.text in _PARTICLE_LOOKALIKES:
-        return token.text
-    known = next(
-        (
-            token.text[: -len(p)]
-            for p in _PARTICLES
-            if token.text.endswith(p)
-            and token.text[: -len(p)].endswith(tuple(_NOUNS_ENDING_LIKE_A_PARTICLE))
-        ),
-        None,
-    )
-    if known is not None:
-        return known
-    particle = next(
-        (p for p in _PARTICLES if token.text.endswith(p) and len(token.text) > len(p)), None
-    )
-    if particle is None:
-        return None
-    if any(
-        token.text.endswith(ending) and len(ending) >= len(particle)
-        for ending in _AMBIGUOUS_ENDINGS
-    ):
-        return None
-    if particle in _PAIRED_STACKS and sum(part.startswith("j") for part in parts) < 2:
-        return None
-    stem = token.text[: -len(particle)]
-    if stem.endswith(_STACK_BASES):
+    stem = token.text
+    remaining = len(parts) - head
+    while remaining > 0 and stem not in _PARTICLE_LOOKALIKES:
+        cuts = [
+            (particle, count)
+            for particle, count in PARTICLES.items()
+            if stem.endswith(particle)
+            and len(stem) > len(particle)
+            and _fits(particle, stem[-len(particle) - 1])
+        ]
+        if not cuts:
+            break
+        # A measured noun decides between two readings the longest match would
+        # otherwise take blind: 인프라도 is 인프라 + 도, not 인프 + 라도.
+        known = [
+            cut for cut in cuts if stem[: -len(cut[0])].endswith(_NOUNS_ENDING_LIKE_A_PARTICLE)
+        ]
+        particle, count = (known or cuts)[0]
+        if (
+            remaining <= count
+            and not known
+            and any(
+                stem.endswith(ending) and len(ending) >= len(particle)
+                for ending in _AMBIGUOUS_ENDINGS
+            )
+        ):
+            return None
+        stem = stem[: -len(particle)]
+        remaining -= count
+    if stem == token.text:
+        return stem if stem in _PARTICLE_LOOKALIKES else None
+    if stem.endswith(_CASE_LEFTOVERS):
         return None
     return stem
 

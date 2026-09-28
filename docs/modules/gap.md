@@ -88,20 +88,27 @@ a 500MB pipeline is a judgement nobody tests.
   a particle on nearly every noun that is not the first half of a compound: "가장
   큰 리스크는 콜드스타트입니다" gave no topic at all, and 정렬 로직은 came back
   as 정렬. `spoken.noun_stem` now reads through it. The tag decides *whether* a
-  particle is attached (noun parts, then only `j*` parts); a fixed list of
-  particles decides *what* is cut off the end of the word. `lemma_` would have
-  been the obvious source and is wrong on this vocabulary — it splits 개인화로
-  as 개인 + 화로 and 콜드스타트입니다 as 콜드 + 스타트입니다. Four things are
-  deliberately not read through: the copula (`jp`), because 붙입니다 is tagged
-  `ncn+jp+etm` and would give a topic called 붙; an ending the list does not
-  know, which costs the topic rather than inventing one; an ending a particle
-  and a noun's own last syllable spell alike — 경로는 and 개인화로는 carry the
-  same tag, as do 인프라도 and 캐시라도 — where either cut invents a topic on
-  the other half, except for a short measured list of nouns (경로, 결과, 불만,
-  …) kept by name; a stacked 와·과·랑 is cut only when the tag shows two
-  particle morphemes, since 결과는 has one and 서버와는 has two; and the two
-  nouns the model splits before their last syllable, 재시도 and 난이도, which
-  containment matching would otherwise count as a template's 재시도 covered by
+  particle is attached and how many (noun parts, then only `j*` parts); the
+  standard particle inventory decides *what* is cut off the end of the word.
+  `lemma_` would have been the obvious source and is wrong on this vocabulary —
+  it splits 개인화로 as 개인 + 화로 and 콜드스타트입니다 as 콜드 + 스타트입니다.
+  Stacked particles are cut one at a time, no more times than the tag has `j`
+  morphemes: 서버에서부터 (`jca+jxc`) and 서버와는 (`jct+jxt`) are 서버, and
+  결과도 (`jxc`) stays 결과. A stack the model tags as one `j` (모듈까지도) is
+  on the list whole. A cut is only taken where the particle's spelling can
+  follow the syllable before it — 차이랑 is 차이 + 랑, not 차 + 이랑. The list
+  is load-bearing: an ending missing from it is cut wherever a shorter listed
+  ending matches, which is how the first version turned 계획대로 into 계획대
+  (#345). Four things are deliberately not read through: the copula (`jp`),
+  because 붙입니다 is tagged `ncn+jp+etm` and would give a topic called 붙; an
+  ending a particle and a noun's own last syllable spell alike when the tag
+  gives it one `j` — 경로는 and 개인화로는, 성과도 and 서버와도, 인프라도 and
+  캐시라도 — where either cut invents a topic on the other half, except for a
+  short measured list of nouns (경로, 결과, 불만, …) kept by name; a stem a
+  particle is still on (서버에서), which means the list missed a stack; and the
+  two nouns the model splits before their last syllable, 재시도 and 난이도,
+  which containment matching would otherwise count as a template's 재시도
+  covered by
   a topic called 재시. Reading through the particle surfaced words it used to
   refuse by accident, so 회의, 회의실 and the positional bound nouns the model
   tags `ncn` (중, 쪽, 안) joined the stoplist in the same change.

@@ -12,10 +12,14 @@ from __future__ import annotations
 import pytest
 
 from autune_gap.pipeline.spoken import (
+    _AMBIGUOUS_ENDINGS,
+    _STACK_TAILS,
     MASK_CHAR,
     MAX_TERM_TOKENS,
+    PARTICLES,
     STOP_TERMS,
     Token,
+    _fits,
     entity_text,
     is_bare_noun,
     is_plausible,
@@ -250,12 +254,28 @@ def test_an_ending_nobody_listed_is_not_guessed_at() -> None:
         ("일정조차", "ncpa+ncn+jxc", "일정"),
         ("우크라이나에서는", "nq+jca+jxt", "우크라이나"),
         ("경로로", "ncn+jca", "경로"),
+        # Added when the cut learned to count (#345).
+        ("서버에서조차", "ncn+jca+jxc", "서버"),
+        ("서버로는", "ncn+jca+jxt", "서버"),
+        ("결과까지도", "ncn+jxc+jxc", "결과"),
+        ("캐시처럼은", "ncn+jxt", "캐시"),
+        ("고객만큼은", "ncn+jxt", "고객"),
+        ("모델이랑은", "ncn+jxt", "모델"),
+        ("서버조차도", "ncn+jxc", "서버"),
+        ("계획이라도", "ncn+jxc", "계획"),
+        ("모델이야말로", "ncn+jxc", "모델"),
+        ("카메라야말로", "ncn+jxc", "카메라"),
+        ("프로세스로부터", "ncn+jca+jxc", "프로세스"),
     ],
 )
 def test_a_stacked_particle_is_cut_whole(text: str, tag: str, stem: str) -> None:
     """Cut at the longest listed particle alone, 모듈까지도 was 모듈까지 and
     서버에서부터 was 서버에서 — the rest of the particle left on the topic.
-    Raised in review of #345; the tags are the model's for those sentences."""
+    Raised in review of #345; the tags are the model's for those sentences.
+
+    The second half reads the tag's count: 서버로는 and 프로세스로부터 carry a
+    ``j`` for each particle, so the 로 is a particle too; 모델이야말로 and
+    카메라야말로 are settled by which spelling can follow the noun."""
     assert noun_stem(Token(text=text, tag=tag, start=0, end=len(text))) == stem
 
 
@@ -268,8 +288,7 @@ def test_a_stacked_particle_is_cut_whole(text: str, tag: str, stem: str) -> None
         ("캐시라도", "ncn+jxc"),
         ("계획대로", "ncn+ncpa+jca"),
         ("무대로", "ncn+jca"),
-        ("모델이야말로", "ncn+jxc"),
-        ("프로세스로부터", "ncn+jca+jxc"),
+        ("도로부터", "ncn+jxc"),
     ],
 )
 def test_an_ending_a_noun_could_also_end_in_is_not_cut(text: str, tag: str) -> None:
@@ -288,7 +307,7 @@ MEASURED_345: list[tuple[str, str, str | None]] = [
     ("캐시라도", "ncn+jxc", None),
     ("서버에서부터", "ncn+jca+jxc", "서버"),
     ("모듈까지도", "ncn+jxc", "모듈"),
-    ("모델이야말로", "ncn+jxc", None),
+    ("모델이야말로", "ncn+jxc", "모델"),
     ("서버와는", "ncn+jct+jxt", "서버"),
     ("고객과의", "ncn+jct+jcm", "고객"),
     ("서버와의", "nq+jct+jcm", "서버"),
@@ -330,8 +349,9 @@ def test_a_measured_token_loses_its_whole_particle_or_names_nothing(
 
 
 def test_a_case_particle_left_on_the_stem_refuses_the_token() -> None:
-    """에서조차 is not listed; cut at 조차 it would leave 서버에서."""
-    assert noun_stem(Token(text="서버에서조차", tag="ncn+jca+jxc", start=0, end=6)) is None
+    """에서나마 is not listed, and a single ``j`` allows one cut: 나마 would
+    leave 서버에서."""
+    assert noun_stem(Token(text="서버에서나마", tag="ncn+jxc", start=0, end=6)) is None
 
 
 def test_the_rows_345_measured_give_no_topic_carrying_a_particle() -> None:
@@ -344,7 +364,95 @@ def test_the_rows_345_measured_give_no_topic_carrying_a_particle() -> None:
         "정렬 로직"
     ]
     assert labels(("검색", "ncpa"), ("기능은", "ncn+jxt"), ("캐시라도", "ncn+jxc")) == ["검색 기능"]
-    assert labels(("추천", "ncpa"), ("모델이야말로", "ncn+jxc")) == ["추천"]
+    assert labels(("추천", "ncpa"), ("모델이야말로", "ncn+jxc")) == ["추천 모델"]
+
+
+@pytest.mark.parametrize(
+    ("text", "tag", "stem"),
+    [
+        ("결과도", "ncn+jxc", "결과"),
+        ("결과로는", "ncn+jca+jxt", "결과"),
+        ("효과도", "ncn+jxc", "효과"),
+        ("합의는", "ncpa+jxt", "합의"),
+        ("경로로", "ncn+jca", "경로"),
+        ("속도도", "ncn+jxc", "속도"),
+        ("불만도", "ncpa+jxc", "불만"),
+    ],
+)
+def test_a_noun_ending_in_a_particle_syllable_keeps_it(text: str, tag: str, stem: str) -> None:
+    """Cutting until the list stops matching would give 결, 합, 경 and 불 — and
+    불 is contained in 불가 and 불안. The tag's ``j`` count is what stops it."""
+    assert noun_stem(Token(text=text, tag=tag, start=0, end=len(text))) == stem
+
+
+def test_a_particle_is_cut_in_the_spelling_that_follows_the_noun() -> None:
+    """차이랑 ends in the letters of 이랑, but 이랑 only follows a consonant."""
+    assert noun_stem(Token(text="차이랑", tag="ncn+jct", start=0, end=3)) == "차이"
+    assert noun_stem(Token(text="모델로", tag="ncn+jca", start=0, end=3)) == "모델"
+    assert noun_stem(Token(text="폴백으로", tag="nq+jca", start=0, end=4)) == "폴백"
+
+
+def test_a_one_syllable_headed_stack_the_model_tagged_as_one_is_refused() -> None:
+    """결과만은 is ``jxt``, the tag 불만은 has: one cut, which could be 결과만 +
+    은 or 결과 + 만은. Either reading is a guess, so neither is taken."""
+    assert noun_stem(Token(text="결과만은", tag="ncn+jxt", start=0, end=4)) is None
+    assert noun_stem(Token(text="결과만은", tag="ncn+jxc+jxt", start=0, end=4)) == "결과"
+
+
+_PLAIN_NOUNS = ("서버", "모듈", "인덱스", "고객", "로직", "캐시", "폴백", "리스크", "모델", "계획")
+_SINGLE_PARTICLES = [particle for particle, count in PARTICLES.items() if count == 1]
+_SECOND_PARTICLES = sorted({particle for pair in _STACK_TAILS for particle in pair})
+
+
+def _joined(noun: str, *particles: str) -> str | None:
+    """``noun`` with ``particles`` attached, or ``None`` if one of them is the
+    spelling that cannot follow what is before it (서버이, 모델는)."""
+    text = noun
+    for particle in particles:
+        if not _fits(particle, text[-1]):
+            return None
+        text += particle
+    return text
+
+
+def test_a_stem_never_ends_in_a_listed_particle() -> None:
+    """The property the first version broke: where the tag says a particle is
+    attached, what is left does not end in one. It is the noun, or it is
+    nothing — and nothing only where ``_AMBIGUOUS_ENDINGS`` says the cut could
+    be read two ways (서버라도 is refused because 인프라도 has to be).
+
+    Every particle on the list, and every particle followed by one that stacks
+    onto another (는, 도, 만, 의, 까지 ...), on nouns that do not end in a
+    particle syllable themselves (a noun that does — 결과 — is the case above,
+    where this property is false by design). One ``j`` per particle, and the
+    listed stacks also as the single ``j`` the model sometimes gives them.
+    """
+    assert not any(noun.endswith(tuple(PARTICLES)) for noun in _PLAIN_NOUNS)
+    cases: list[tuple[str, str, str]] = []
+    for noun in _PLAIN_NOUNS:
+        for ending, count in PARTICLES.items():
+            text = _joined(noun, ending)
+            if text is not None:
+                cases.append((noun, text, "ncn" + "+jxc" * count))
+                cases.append((noun, text, "ncn+jxc"))
+        for first in _SINGLE_PARTICLES:
+            for second in _SECOND_PARTICLES:
+                text = _joined(noun, first, second)
+                if text is not None:
+                    cases.append((noun, text, "ncn+jca+jxc"))
+
+    wrong = [
+        (text, tag, stem)
+        for noun, text, tag in cases
+        if (stem := noun_stem(Token(text=text, tag=tag, start=0, end=len(text)))) != noun
+        and not (stem is None and any(ending in text for ending in _AMBIGUOUS_ENDINGS))
+    ]
+    assert wrong == []
+    assert not any(
+        stem.endswith(tuple(PARTICLES))
+        for _, text, tag in cases
+        if (stem := noun_stem(Token(text=text, tag=tag, start=0, end=len(text)))) is not None
+    )
 
 
 def test_a_lookalike_carrying_the_copula_is_not_read_through() -> None:
