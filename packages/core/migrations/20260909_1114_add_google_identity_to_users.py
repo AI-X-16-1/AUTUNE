@@ -6,7 +6,7 @@ rather than in a separate identities table — a second provider (Slack) gets it
 own column here, and only a third would justify the extra table.
 
 Revision ID: 9235e57e02fe
-Revises: aad0ea392ddc
+Revises: 7c1f4b9e02a5
 Create Date: 2026-09-09 11:14:39.016162
 """
 
@@ -18,7 +18,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "9235e57e02fe"
-down_revision: str | None = "aad0ea392ddc"
+down_revision: str | None = "7c1f4b9e02a5"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
