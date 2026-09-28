@@ -131,12 +131,13 @@ So the line is drawn at the derived metric, not at the record:
   speaker.
 
 **A consumer must not derive it either.** A module that reads transcripts must
-not aggregate utterance durations per speaker, and the module that could is the
-one that pins it: a test asserting no per-speaker duration or count leaves its
-read paths (module E, #371). Until #6, `Participant.user_id` was null on every
-meeting the product had produced, so this was impossible in practice rather
-than prevented; identification removed that accident and the rule now needs the
-test.
+not aggregate utterance durations per speaker for anyone but that speaker — the
+Slack DM and `GET /me/speaking-ratio/{meeting_id}` required above are the only
+sanctioned uses — and the module that could is the one that pins it: a test
+asserting no per-speaker duration or utterance count leaves its read paths
+(module E, #371). Until #6, `Participant.user_id` was null on every meeting the
+product had produced, so this was impossible in practice rather than prevented;
+identification removed that accident and the rule now needs the test.
 
 Decided on #361.
 
