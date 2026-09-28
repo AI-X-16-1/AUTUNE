@@ -133,6 +133,7 @@ def run_topic_linking(transcript: TranscriptReady) -> bool:
                     meeting_id=transcript.meeting_id,
                     kind="topic",
                     ref_label=topic.label,
+                    utterance_ids=topic.utterance_ids,
                     embedding=topic.vector,
                     model_version=embedder.model_version,
                 )
@@ -187,7 +188,7 @@ def _link_topic(
 ) -> int:
     if not candidates:
         return 0
-    scores = reranker.score(topic.text, [c.topic_label for c in candidates])
+    scores = reranker.score(topic.text, [c.passage for c in candidates])
     ranked = sorted(zip(candidates, scores, strict=True), key=lambda cs: cs[1], reverse=True)
 
     written = 0

@@ -90,7 +90,8 @@ For the MVP, topics are extracted without an LLM:
 2. **Label** each segment with kiwipiepy noun-phrase candidates scored by
    in-segment frequency against rarity in a background corpus of past meetings.
 3. **Represent** each topic for matching as the segment's mean-pooled embedding,
-   plus its top utterances for BM25 and the re-ranker.
+   plus the ids of the utterances it was cut from. The re-ranker reads those
+   utterances' text back from `utterances`; BM25 still matches on labels.
 
 This keeps the core path fully on self-hosted infrastructure, keeps the
 evaluation deterministic, and avoids sending a full transcript to an external
@@ -178,7 +179,10 @@ and is settled in Phase 0.
    `ctx_embeddings` (`kind = "topic"`).
 3. Hybrid retrieval over past meetings of the same team, within the retention
    window: pgvector cosine + in-process BM25, fused with RRF, top 50.
-4. Re-rank those 50 with the cross-encoder, keep the top 10.
+4. Re-rank those 50 with the cross-encoder, keep the top 10. Each candidate
+   meeting is scored on the text of its topic segment closest to this topic
+   (`ctx_embeddings.utterance_ids`, read from `utterances`), or on that
+   segment's label for a row that predates the column.
 5. Above `link_confidence_threshold`, write an `asserted` link; below it, write a
    `pending` link for the user to confirm.
 6. Mark `ctx_meeting_status.topic_linking_done`, then schedule
@@ -332,7 +336,7 @@ cleaned up by a deletion hook (see "Deletion").
 
 | Table | Purpose | Key columns | Anchor / deletion |
 | --- | --- | --- | --- |
-| `ctx_embeddings` | Topic (and, Phase 2, material) embeddings | `kind`, `ref_label`, `embedding vector(N)`, `model_version` | `meeting_id` FK `ON DELETE CASCADE` |
+| `ctx_embeddings` | Topic (and, Phase 2, material) embeddings | `kind`, `ref_label`, `utterance_ids` (JSONB, nullable), `embedding vector(N)`, `model_version` | `meeting_id` FK `ON DELETE CASCADE` |
 | `ctx_topic_links` | Meeting-to-meeting topic links with scores | `topic_label`, `linked_meeting_date`, `similarity`, `rerank_score`, `confidence`, `status` (`asserted`/`pending`/`confirmed`/`rejected`), `retriever_version`, `reranker_version` | `meeting_id` FK `CASCADE`; `linked_meeting_id` FK `ON DELETE SET NULL` |
 | `ctx_decisions` | Decision threads (lineage identity, spans meetings) | `id` (`thr_`), `topic_label` | `team_id` FK `CASCADE`; orphan sweep deferred (#87) |
 | `ctx_decision_versions` | Each version of a decision | `source_decision_id` (`dec_`, no FK), `previous_version_id` (self-FK), `current_statement`, `previous_statement`, `previous_meeting_id` (no FK), `change_type`, `nli_label`, `confidence`, `key_stakeholders_absent` (JSONB), `nli_version` | `thread_id` FK `CASCADE`, `meeting_id` FK `CASCADE` |
