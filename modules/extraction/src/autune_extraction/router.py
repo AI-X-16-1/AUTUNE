@@ -18,6 +18,7 @@ from autune_contracts.enums import ActionStatus
 from autune_contracts.extraction import ExtractionResult
 from autune_core import Meeting, get_session
 from autune_core.errors import NotFoundError
+from autune_core.settings import get_settings as get_core_settings
 
 from . import service, tasks
 from .models import ExtActionItem, ExtDecision
@@ -36,6 +37,14 @@ from .schemas import (
 router = APIRouter()
 
 SessionDep = Annotated[Session, Depends(get_session)]
+
+# A local-only page for connecting Notion/Slack by hand, until S28 exists.
+# It has no auth, so it is mounted nowhere but a developer's machine -- see
+# ``dev/routes.py`` and #401 for why a module may write team_integrations here.
+if get_core_settings().env == "local":
+    from .dev import router as dev_router
+
+    router.include_router(dev_router, prefix="/dev")
 
 
 @router.get("/health")
