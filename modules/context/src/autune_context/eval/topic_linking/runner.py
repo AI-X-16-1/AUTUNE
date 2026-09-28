@@ -138,8 +138,9 @@ def run_case(case: EvalCase) -> CaseResult:
 
 def _seed_meeting(team_id: str, meeting: EvalMeeting) -> str:
     """The meeting row plus its ``utterances``, as module A leaves them before
-    publishing ``TranscriptReady``, so anything that reads a past meeting's
-    utterances back finds them. Deleted with the team, by cascade."""
+    publishing ``TranscriptReady`` -- the re-ranker reads a past topic's text
+    back from ``utterances``, so a meeting seeded without them would be scored
+    against its label alone. Deleted with the team, by cascade."""
     with session_scope() as s:
         row = Meeting(
             team_id=team_id,
