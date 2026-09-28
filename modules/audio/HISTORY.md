@@ -7,7 +7,7 @@ Evaluation reports live in `docs/modules/audio-evaluations/` and hold the full
 tables. This file is the thread through them: the decisions, the reversals, and
 what is still open.
 
-Last updated: 2026-09-22.
+Last updated: 2026-09-27.
 
 ---
 
@@ -250,6 +250,93 @@ sweep could score a threshold against a different short-utterance rule than
 production uses; they now take `min_seconds` as a required keyword, and the
 script defaults it to `get_settings().live_speaker_min_s` and prints the
 value it used.
+
+### Processing time — the target is missed, and three of the four levers are worse than the miss
+
+Measured 2026-09-27 on a six-person 5m27s recording, stored path, CPU int8,
+against the script that was read. The metric this module signed up for is
+**≤1.5× recording length** (`modules/audio/CLAUDE.md`); at 327 s of audio that
+is 491 s.
+
+Where the time goes, at the shipped settings (`large-v3`, beam 5):
+
+| Stage | Seconds | Share |
+| --- | --- | --- |
+| Decode | 0.15 | — |
+| **Whisper** | **817** | **83%** |
+| Diarization | 171 | 17% |
+| Embeddings, masking, persist, publish | 0.6 | — |
+| Total | **989 — 3.0× audio** | |
+
+So transcription is the cost, not diarization, and the target is missed by
+double. Then each lever, one run per row, same recording:
+
+| Configuration | Whisper | Total | ×audio | Accuracy | Deletions | Record changed |
+| --- | --- | --- | --- | --- | --- | --- |
+| `large-v3`, beam 5 — shipped | 817 s | 989 s | 3.0× | **89.4%** | 27 | — |
+| `large-v3`, beam 1 | 204 s | 374 s | **1.14×** | 82.8% | 151 | 10.7% |
+| `large-v3-turbo`, beam 5 | 112 s | 289 s | 0.88× | **60.7%** | 358 | 36.2% |
+| `large-v3`, beam 5, `cpu_threads=10` | **3,449 s** | — | — | 89.4%, byte-identical | 27 | 0% |
+
+Accuracy is normalised CER against the script; "record changed" is normalised
+CER against the shipped configuration's own transcript.
+
+**`large-v3-turbo` is rejected.** 7.3× faster and 29 points worse, and the
+shape is what settles it: deletions rise thirteenfold. It is not mishearing the
+meeting, it is dropping about a fifth of it — 500 characters that never reach
+B's action items, C's gaps or D's links, because they were never transcribed.
+This is the measurement behind `live/backends.py`'s split: *"the stored path
+has one engine […] the live path can afford a second one because a row is
+display, remade by the stored path after the upload."* On an 11-second live
+utterance turbo reads the same; on a five-minute file it does not.
+
+**mlx is rejected for the same reason, without needing its own run.**
+`live_mlx_model` is `mlx-community/whisper-large-v3-turbo`, so letting the
+stored path use Metal inherits exactly that loss. An mlx `large-v3` would have
+to be found and measured; the 2.8× in `backends.py` was measured on turbo and
+does not transfer.
+
+**More threads made it four times slower.** `cpu_threads` was a hardcoded `0`
+on the stored path — CTranslate2 then picks four on this machine — while the
+live path had a setting. Raising it to 10 on a fourteen-core M4 Pro took
+Whisper from 817 s to 3,449 s while returning a **byte-identical** transcript
+(61 segments, 651 words, `distinct_ratio=1.0` both times). Threads change how
+long a decode takes and not what it returns, so this was expected to be the one
+free lever; it is free and it is negative. Ten threads spread past the
+performance cores, and every parallel section then waits on an efficiency core.
+The hardcoded `0` is right, and a setting whose only non-default value is
+harmful was not added.
+
+**Both of those results reverse the live-channel table above**, and that is the
+finding rather than a footnote. That table measured one 11.4 s utterance and
+found 10 threads *faster* than 4 (large-v3 6.2 s → 4.6 s, turbo 4.3 s → 2.4 s,
+which is the halving `live_cpu_threads`'s docstring cites) and turbo
+*"practically the same"* quality as `large-v3`. On a 327 s file the same two
+settings are 4.2× slower and 29 points worse.
+
+Neither measurement is wrong. They describe different workloads, and the table
+itself says why: *"the encoder pads every segment to a 30 s window, so there is
+a ~2 s floor regardless of utterance length."* One short utterance is one
+window; a meeting is eleven of them in sequence, where a per-window cost
+compounds and a per-window omission accumulates into a fifth of the transcript.
+
+What does not follow is generalising either result. `AUTUNE_AUDIO_LIVE_CPU_THREADS=10`
+is set in the demo today on the strength of a single-utterance measurement, and
+the crossover was never looked for. Filed as #376. The lesson for this module is
+narrower than the numbers: **a decode measurement taken on one utterance says
+nothing about a meeting**, in either direction, and the live/stored split is the
+thing that has been protecting the record from that mistake.
+
+**So there is no free lever, and `beam_size`'s own docstring is wrong.** It
+says 5 is "what the processing-time target assumes"; at beam 5 the target is
+missed by double, and beam 1 is what reaches it, at 6.6 points and a 10.7%
+different transcript. The remaining choice is 3.0× at 89.4% or 1.14× at 82.8%,
+and it is a product decision rather than a tuning one.
+
+**Diarization is next either way.** At 169–176 s across every run here it is
+the most stable number in the table, and it becomes the majority of the time
+the moment Whisper stops being it. Nothing under 1.5× is reachable by tuning
+transcription alone.
 
 ---
 
