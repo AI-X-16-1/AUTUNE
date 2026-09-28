@@ -232,16 +232,32 @@ uv run --package autune-intelligence python -m autune_intelligence.eval [--windo
 
 A meeting is labeled positive when a later meeting's `decision_lineage`
 reverses one of its decisions within 14 days, and is labeled at all only once
-those 14 days have passed. History is read back from E's own tables, and
+those 14 days have passed. It is also left unlabeled when a meeting of the same
+team inside those 14 days has no measured lineage — D publishes without B's
+decisions when B times out, so a reversal there would have been invisible and
+"negative" would claim more than the payload can carry. A meeting already seen
+to be reversed stays positive. Meetings held back this way are counted in the
+`intelligence_history_labels_blocked_by_blind_spot` log line, so "0 labeled
+meetings" can be told apart from short history. History is read back from E's own tables, and
 features are rebuilt with the same `meeting_features` the live path uses. The
 report gives, per model version — both what was stored and shown
 (`stored:<version>`) and the current predictor over the same meetings
 (`current:<version>`) — Brier score against a constant base-rate baseline,
 log loss, expected calibration error and a reliability table. Fewer than 30
-labeled examples prints "not scored" instead of a number. Switch the default
-predictor to `local` only once `current:xgb-*` beats `stored:heuristic-v1`
-here. Known blind spot: a decision modified and then reversed in a third
-meeting names the modifying meeting, so the original stays negative.
+labeled examples prints "not scored" instead of a number.
+
+`current:*` is produced by the predictor this process would use, so with
+`AUTUNE_INTELLIGENCE_MISALIGNMENT_PREDICTOR_IMPL=local` — which is what it takes
+for a `current:xgb-*` row to appear at all — it is **fit on the same window the
+report then scores it on**. Those numbers are in-sample and cannot be compared
+with `stored:heuristic-v1`, which was never fit on anything. **The criterion for
+switching the default to `local` is therefore still open** (#383): either the
+eval gains a time-based holdout, or the comparison moves to `stored:xgb-*`
+accumulated by running `local` in shadow. Until one of those lands, the default
+stays `heuristic`.
+
+Known blind spot: a decision modified and then reversed in a third meeting names
+the modifying meeting, so the original stays negative.
 
 ## Privacy notes
 
