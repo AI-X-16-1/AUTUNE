@@ -97,7 +97,10 @@ a 500MB pipeline is a judgement nobody tests.
   know, which costs the topic rather than inventing one; an ending a particle
   and a noun's own last syllable spell alike — 경로는 and 개인화로는 carry the
   same tag, as do 인프라도 and 캐시라도 — where either cut invents a topic on
-  the other half; and the two nouns the model splits before their last syllable, 재시도 and 난이도, which
+  the other half, except for a short measured list of nouns (경로, 결과, 불만,
+  …) kept by name; a stacked 와·과·랑 is cut only when the tag shows two
+  particle morphemes, since 결과는 has one and 서버와는 has two; and the two
+  nouns the model splits before their last syllable, 재시도 and 난이도, which
   containment matching would otherwise count as a template's 재시도 covered by
   a topic called 재시. Reading through the particle surfaced words it used to
   refuse by accident, so 회의, 회의실 and the positional bound nouns the model

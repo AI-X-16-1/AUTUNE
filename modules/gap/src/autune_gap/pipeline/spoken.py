@@ -96,18 +96,54 @@ to be tellable from one built after it, or precision measured across the two
 is two extractors averaged together. Bump it whenever a rule here changes what
 ``noun_terms`` or ``is_plausible`` returns for the same tokens."""
 
-_STACK_BASES: tuple[str, ...] = ("에", "에서", "에게", "한테", "께", "으로", "까지", "부터")
-"""Case particles a noun carries with another particle stacked after it.
+_STACK_BASES: tuple[str, ...] = (
+    "에",
+    "에서",
+    "에게",
+    "한테",
+    "께",
+    "으로",
+    "까지",
+    "부터",
+    "보다",
+    "처럼",
+    "마다",
+    "만큼",
+    "이랑",
+    "하고",
+)
+"""Particles a noun carries with another stacked after it, and no noun ends in.
 
 Two uses. Each is paired with ``_STACK_TAILS`` to write the stacked forms into
-``_PARTICLES`` (서버에서는, 고객에게도, 캐시에만). And a stem that still ends
-in one of these after its particle is cut is refused: nothing a meeting names
-ends in 에서 or 까지, so 서버에서 left over from 서버에서조차 means the list
-was missing a stack, not that the noun is called that.
+``_PARTICLES`` (서버에서는, 고객에게도, 서버보다는, 사용자마다의). And a stem
+that still ends in one of these after its particle is cut is refused: nothing a
+meeting names ends in 에서 or 보다, so 서버에서 left over from 서버에서조차
+means the list was missing a stack, not that the noun is called that.
 
-로 is not here, though it stacks like the rest: see ``_AMBIGUOUS_ENDINGS``."""
+Three particles stack like these but are not here, because nouns do end in
+them: 로 (경로) — see ``_AMBIGUOUS_ENDINGS`` — 와·과·랑 (결과, 사랑) — see
+``_PAIRED_BASES`` — and 만 (불만)."""
 
-_STACK_TAILS: tuple[str, ...] = ("는", "도", "만", "의")
+_STACK_TAILS: tuple[str, ...] = ("은", "는", "도", "만", "의")
+
+_PAIRED_BASES: tuple[str, ...] = ("와", "과", "랑")
+"""Comitative particles, whose stacked forms are cut only on the tag's word.
+
+과 is also the last syllable of 결과, 효과, 성과, and 결과는 and 효과는 are
+tagged ``ncpa+jxt`` and ``ncn+jxt`` — one ``j``. The stacked particle, when the
+model sees it, is two: 서버와는 ``ncn+jct+jxt``, 고객과의 ``ncn+jct+jcm``. So
+과는 or 와의 is cut whole when the tag holds two ``j`` morphemes, and the token
+is refused when it holds one. That second case loses real stacks the model
+merged — 디자인팀과도 and 서버와도 come back ``ncn+jxc``, the tag 성과도 has —
+which is the price of not calling 성과 a topic named 성.
+
+The ``j`` count is not a general rule: 서버에서는 is two ``j`` for one listed
+entry and 고객과는 is tagged ``ncn+xsn+jxt``. It is used only here, where it
+is the one signal that separates the readings."""
+
+_PAIRED_STACKS: frozenset[str] = frozenset(
+    base + tail for base in _PAIRED_BASES for tail in _STACK_TAILS
+)
 
 _PARTICLES: tuple[str, ...] = tuple(
     sorted(
@@ -149,6 +185,7 @@ _PARTICLES: tuple[str, ...] = tuple(
             "에서부터",
             "으로부터",
             *(base + tail for base in _STACK_BASES for tail in _STACK_TAILS),
+            *_PAIRED_STACKS,
             # Not a particle, but what ``ko_core_news_lg`` tags as one after a
             # noun: 콜드스타트입니다 comes back ``ncn+ncpa+jxc``. When the
             # model tags it as the copula it is (``jp``) the token is not read
@@ -172,9 +209,23 @@ topic. That alone does not keep a wrong topic out: an unlisted particle usually
 *ends* in a listed one (까지도 in 도, 에서부터 in 부터), and the cut would leave
 the rest of it on the stem — 모듈까지, 서버에서. So the list carries the
 stacked forms, a stem still ending in a ``_STACK_BASES`` particle is refused,
-and an ending that could be either is in ``_AMBIGUOUS_ENDINGS``. #345."""
+a stacked 와·과·랑 is cut on the tag's word (``_PAIRED_BASES``), and an ending
+that could be either is in ``_AMBIGUOUS_ENDINGS``. #345."""
 
-_AMBIGUOUS_ENDINGS: tuple[str, ...] = ("로는", "로도", "로만", "로부터", "라도", "대로", "야말로")
+_AMBIGUOUS_ENDINGS: tuple[str, ...] = (
+    "로는",
+    "로도",
+    "로만",
+    "로부터",
+    "라도",
+    "대로",
+    "야말로",
+    "만은",
+    "만이",
+    "만도",
+    "만의",
+    "만을",
+)
 """Endings a particle and a noun's own last syllable spell alike.
 
 ``ko_core_news_lg`` tags both readings the same, so neither the tag nor the
@@ -184,10 +235,24 @@ surface can tell them apart:
     캐시라도    ncn+jxc   캐시 + 라도        인프라도  ncn+jxc   인프라 + 도
     일정대로    ncn+jca   일정 + 대로        무대로    ncn+jca   무대 + 로
     모델이야말로 ncn+jxc  모델 + 이야말로    카메라야말로 ncn+jxc 카메라 + 야말로
+    배포만은    ncn+jxt   배포 + 만은        미만은    ncn+jxt   미만 + 은
 
-Either cut invents a topic on the other half — 경, 개인화로, 인프, 캐시라 — so
-a token ending in one of these is refused. 으로는 is unambiguous (no noun ends
-in 으) and a listed particle longer than the match still cuts."""
+Either cut invents a topic on the other half — 경, 개인화로, 인프, 캐시라,
+배포만 — so a token ending in one of these is refused, unless its stem is in
+``_NOUNS_ENDING_LIKE_A_PARTICLE``. 으로는 is unambiguous (no noun ends in 으)
+and a listed particle longer than the match still cuts."""
+
+_NOUNS_ENDING_LIKE_A_PARTICLE: frozenset[str] = frozenset(
+    {"경로", "회로", "인프라", "결과", "효과", "성과", "불만", "미만"}
+)
+"""Nouns whose last syllable is a particle, measured, so they keep their topic.
+
+``_AMBIGUOUS_ENDINGS`` and ``_PAIRED_BASES`` refuse a token rather than guess
+which reading it is, and these are the words that refusal costs most often in
+this product's meetings: 경로는, 결과는, 불만은 would otherwise name nothing.
+A token that is one of these (as its last word) plus a listed particle is that
+noun. Tuned the way ``STOP_TERMS`` is — what has been seen, not every noun that
+ends in 과 or 로."""
 
 _PARTICLE_LOOKALIKES: frozenset[str] = frozenset({"재시도", "난이도"})
 """Nouns the model tags as a shorter noun plus a particle.
@@ -351,6 +416,17 @@ def noun_stem(token: Token) -> str | None:
         return None
     if token.text in _PARTICLE_LOOKALIKES:
         return token.text
+    known = next(
+        (
+            token.text[: -len(p)]
+            for p in _PARTICLES
+            if token.text.endswith(p)
+            and token.text[: -len(p)].endswith(tuple(_NOUNS_ENDING_LIKE_A_PARTICLE))
+        ),
+        None,
+    )
+    if known is not None:
+        return known
     particle = next(
         (p for p in _PARTICLES if token.text.endswith(p) and len(token.text) > len(p)), None
     )
@@ -360,6 +436,8 @@ def noun_stem(token: Token) -> str | None:
         token.text.endswith(ending) and len(ending) >= len(particle)
         for ending in _AMBIGUOUS_ENDINGS
     ):
+        return None
+    if particle in _PAIRED_STACKS and sum(part.startswith("j") for part in parts) < 2:
         return None
     stem = token.text[: -len(particle)]
     if stem.endswith(_STACK_BASES):

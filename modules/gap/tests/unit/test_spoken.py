@@ -262,12 +262,10 @@ def test_a_stacked_particle_is_cut_whole(text: str, tag: str, stem: str) -> None
 @pytest.mark.parametrize(
     ("text", "tag"),
     [
-        ("경로는", "ncn+jxt"),
         ("개인화로는", "ncn+jxt"),
-        ("경로도", "ncn+jxc"),
+        ("도로도", "ncn+jxc"),
         ("서버로만", "ncn+jca"),
         ("캐시라도", "ncn+jxc"),
-        ("인프라도", "ncn+jxc"),
         ("계획대로", "ncn+ncpa+jca"),
         ("무대로", "ncn+jca"),
         ("모델이야말로", "ncn+jxc"),
@@ -276,8 +274,59 @@ def test_a_stacked_particle_is_cut_whole(text: str, tag: str, stem: str) -> None
 )
 def test_an_ending_a_noun_could_also_end_in_is_not_cut(text: str, tag: str) -> None:
     """경로는 and 개인화로는 carry the same tag; cutting 로는 gives 경, cutting
-    는 gives 개인화로. Either is a topic nobody said, so neither is cut."""
+    는 gives 개인화로. Either is a topic nobody said, so neither is cut — 경로
+    itself is kept by name, in ``_NOUNS_ENDING_LIKE_A_PARTICLE``."""
     assert noun_stem(Token(text=text, tag=tag, start=0, end=len(text))) is None
+
+
+MEASURED_345: list[tuple[str, str, str | None]] = [
+    # Both review rounds of #345. Every tag is what ``ko_core_news_lg`` 3.8.0
+    # gave the token in a sentence; the stem is the whole particle off, or
+    # nothing.
+    ("인덱스밖에", "ncn+ncn+jca", "인덱스"),
+    ("계획대로", "ncn+ncpa+jca", None),
+    ("캐시라도", "ncn+jxc", None),
+    ("서버에서부터", "ncn+jca+jxc", "서버"),
+    ("모듈까지도", "ncn+jxc", "모듈"),
+    ("모델이야말로", "ncn+jxc", None),
+    ("서버와는", "ncn+jct+jxt", "서버"),
+    ("고객과의", "ncn+jct+jcm", "고객"),
+    ("서버와의", "nq+jct+jcm", "서버"),
+    ("고객과도", "ncn+jct+jxc", "고객"),
+    ("디자인팀과도", "ncn+jxc", None),
+    ("서버와도", "ncn+jxc", None),
+    ("고객과는", "ncn+xsn+jxt", None),
+    ("서버보다는", "ncn+jca+jxt", "서버"),
+    ("일정보다는", "ncn+xsn+jca+jxt", "일정"),
+    ("영업팀처럼은", "nq+ncn+jxt", "영업팀"),
+    ("사용자마다의", "ncn+ncn+jcm", "사용자"),
+    ("지난번만큼은", "ncn+jxt", "지난번"),
+    ("디자인팀이랑은", "ncn+jxc+jxt", "디자인팀"),
+    ("고객이랑도", "ncn+xsn+jxc", "고객"),
+    ("캐시만은", "nq+jxt", None),
+    ("배포만은", "ncn+jxt", None),
+    ("기능만이", "ncn+jcs", None),
+    ("결과는", "ncpa+jxt", "결과"),
+    ("효과는", "ncn+jxt", "효과"),
+    ("성과도", "ncn+jxc", "성과"),
+    ("결과와의", "ncpa+jct+jcm", "결과"),
+    ("불만은", "ncps+jxt", "불만"),
+    ("불만이", "ncn+jcs", "불만"),
+    ("미만은", "ncn+jxt", "미만"),
+    ("경로는", "ncn+jxt", "경로"),
+    ("회로는", "ncn+jxt", "회로"),
+    ("인프라도", "ncn+jxc", "인프라"),
+    ("사랑은", "ncpa+jxt", None),
+]
+
+
+@pytest.mark.parametrize(("text", "tag", "stem"), MEASURED_345)
+def test_a_measured_token_loses_its_whole_particle_or_names_nothing(
+    text: str, tag: str, stem: str | None
+) -> None:
+    """Never a stem with part of a particle left on it — 서버와, 고객과,
+    서버보다, 캐시만 — and never one cut into the noun — 결, 경, 인프."""
+    assert noun_stem(Token(text=text, tag=tag, start=0, end=len(text))) == stem
 
 
 def test_a_case_particle_left_on_the_stem_refuses_the_token() -> None:
