@@ -15,7 +15,10 @@ external option to weigh that decision against.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
+
+if TYPE_CHECKING:
+    from autune_intelligence.prediction import MeetingFeatures
 
 PATTERN_TYPES: tuple[str, ...] = (
     "schedule",
@@ -96,4 +99,24 @@ class GapClassifier(Protocol):
         know what a gap id is — the same shape as module B's
         ``Classifier.classify``.
         """
+        ...
+
+
+@runtime_checkable
+class MisalignmentPredictor(Protocol):
+    """Probability a decision from the meeting is reversed within the horizon.
+
+    Batch in, batch out, same order — the shape ``GapClassifier`` uses. Reads
+    only ``MeetingFeatures``, which carries no text and no person, so no
+    implementation needs anything that could leave the process.
+    """
+
+    @property
+    def model_version(self) -> str:
+        """Recorded on every ``intel_predictions`` row, so calibration can be
+        measured per version."""
+        ...
+
+    def predict(self, features: list[MeetingFeatures]) -> list[float]:
+        """One probability in ``[0, 1]`` per input, in the same order."""
         ...

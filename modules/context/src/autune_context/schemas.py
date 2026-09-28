@@ -7,7 +7,7 @@ read API. No other service parses them.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
@@ -31,7 +31,7 @@ class TopicLinkRead(BaseModel):
     meeting_id: str
     topic_label: str
     linked_meeting_id: str | None
-    linked_meeting_date: datetime | None
+    linked_meeting_date: date | None
     similarity: float
     rerank_score: float
     confidence: float

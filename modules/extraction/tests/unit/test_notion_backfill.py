@@ -211,14 +211,22 @@ def test_running_the_backfill_twice_sends_each_page_once(
     assert len(notion.pages) == 2
 
 
-def test_an_item_that_already_has_its_page_is_skipped_not_resent(
+def test_an_item_that_already_has_its_page_is_updated_not_recreated(
     wired: Session, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The case #317 is actually for: the live sync already sent this one
-    (or the backfill did, on an earlier run) -- the claim finds the row and
-    the backfill must not make a second page."""
+    """The live sync already sent this one (or the backfill did, on an
+    earlier run) -- the claim finds the row, so the content is refreshed on
+    the same page rather than a second one being made."""
     it = item(wired)
-    wired.add(ExtExternalRef(action_item_id=it.id, system="notion", meeting_id=it.meeting_id))
+    wired.add(
+        ExtExternalRef(
+            action_item_id=it.id,
+            system="notion",
+            meeting_id=it.meeting_id,
+            external_id="page_already_there",
+            url="https://www.notion.so/page_already_there",
+        )
+    )
     wired.flush()
     notion = FakeNotion()
     wire_notion(monkeypatch, notion, {"team_1": config_for("team_1")})
@@ -226,6 +234,8 @@ def test_an_item_that_already_has_its_page_is_skipped_not_resent(
     notion_backfill.main([])
 
     assert notion.pages == []
+    assert len(notion.updates) == 1
+    assert notion.updates[0][0] == "page_already_there"
 
 
 def test_a_failed_call_leaves_no_claim_for_a_later_run_to_skip(

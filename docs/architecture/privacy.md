@@ -34,6 +34,13 @@ The uploaded recording exists only for the duration of transcription.
   (`autune.audio.periodic.sweep_orphans`, #207): the first is the only trigger
   that fires with no beat process running, the second the only one that fires
   when uploads have stopped — which is when orphans are made.
+- Run the API and the worker against **the same `AUTUNE_AUDIO_TEMP_DIR` on the
+  same filesystem**. The handover is a file on disk and an id in a message; if
+  the two processes do not see the same directory, the worker finds nothing to
+  adopt and the recording the endpoint wrote has no owner at all — the durable
+  copy this section exists to prevent. Splitting them across hosts is not a
+  deployment option today, and making it one means replacing the handover, not
+  changing a path.
 - Set `privacy.original_audio_deleted = true` in `TranscriptReady` only after
   the file is actually gone.
 

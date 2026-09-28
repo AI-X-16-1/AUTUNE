@@ -12,8 +12,9 @@ from functools import lru_cache
 
 from autune_intelligence.config import IntelligenceSettings, get_settings
 
-from .base import GapClassifier
+from .base import GapClassifier, MisalignmentPredictor
 from .classifier import FakeGapClassifier, SetFitGapClassifier
+from .predictor import HeuristicMisalignmentPredictor
 
 _CLASSIFIERS: dict[str, Callable[[IntelligenceSettings], GapClassifier]] = {
     "local": lambda settings: SetFitGapClassifier(settings.gap_classifier_backbone),
@@ -41,6 +42,17 @@ def get_gap_classifier() -> GapClassifier:
     return factory(settings)
 
 
+@lru_cache
+def get_misalignment_predictor() -> MisalignmentPredictor:
+    """The heuristic baseline, until there is reversal history to fit XGBoost on.
+
+    No config switch yet: with one implementation a setting would only be a
+    way to misspell it. One arrives with the second implementation.
+    """
+    return HeuristicMisalignmentPredictor()
+
+
 def reset_cache() -> None:
-    """Drop the cached classifier. For tests that switch implementations."""
+    """Drop the cached models. For tests that switch implementations."""
     get_gap_classifier.cache_clear()
+    get_misalignment_predictor.cache_clear()
