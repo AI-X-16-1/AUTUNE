@@ -13,15 +13,55 @@ process or on our own inference server.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from functools import lru_cache
 from typing import Protocol, runtime_checkable
 
 from autune_core import get_logger
+from autune_core.errors import ConfigurationError
 
 from .config import get_settings
 from .schemas import Turn, Waveform
 
 log = get_logger(__name__)
+
+
+def resolve_device() -> str:
+    """Which device pyannote is loaded onto, or an error saying why it cannot be.
+
+    ``diarization_device`` when it is set, ``device`` otherwise, so a CUDA
+    deployment gets the GPU for both stages from the one variable it already
+    sets and nothing changes for a deployment that sets neither.
+
+    **An unavailable device raises instead of falling back to CPU.** CPU works,
+    which is what makes the fallback tempting and what makes it wrong: it is
+    14.3x slower (``config.AudioSettings.diarization_device``), and a warning in
+    a log nobody reads is how a 14x regression ships. ``HISTORY.md`` section 4 is
+    a list of failures that looked like successes until somebody measured; a
+    diarizer quietly on CPU is the same shape, and the shape this refuses.
+    """
+    import torch  # noqa: PLC0415 - see PyannoteDiarizer; the extra may be absent
+
+    settings = get_settings()
+    requested = settings.diarization_device.strip()
+    setting = "AUTUNE_AUDIO_DIARIZATION_DEVICE" if requested else "AUTUNE_AUDIO_DEVICE"
+    device = requested or settings.device
+    # Only the two accelerators are checked. `cpu` is always there, and a name
+    # torch understands that this does not (`cuda:1`, `xpu`) is better refused by
+    # torch, with its own message, than by a list here that would go stale.
+    checks: dict[str, Callable[[], bool]] = {
+        "mps": torch.backends.mps.is_available,
+        "cuda": torch.cuda.is_available,
+    }
+    available = checks.get(device.split(":", 1)[0])
+    if available is not None and not available():
+        raise ConfigurationError(
+            f"{setting} asks diarization to run on '{device}', which is not "
+            f"available in this process. This is not falling back to CPU: CPU is "
+            f"14x slower on the same recording, and a fallback would hide that. "
+            f"Set AUTUNE_AUDIO_DIARIZATION_DEVICE=cpu to accept the cost."
+        )
+    return device
 
 
 @runtime_checkable
@@ -78,10 +118,33 @@ class PyannoteDiarizer:
                 "uv sync --package autune-audio --extra diarization"
             ) from exc
 
+        import torch  # noqa: PLC0415 - see the class docstring
+
+        # Before the download, not after: a device this process cannot use is a
+        # configuration error, and there is no reason to fetch half a gigabyte of
+        # weights to find out.
+        device = resolve_device()
         # `token=`, not `use_auth_token=`: renamed in pyannote.audio 4.x, and the
         # old name fails with a message about the wrong thing.
-        self._pipeline = Pipeline.from_pretrained(self._checkpoint, token=self._token)
-        log.info("diarizer_loaded", checkpoint=self._checkpoint)
+        pipeline = Pipeline.from_pretrained(self._checkpoint, token=self._token)
+        if pipeline is None:
+            # pyannote returns None rather than raising when it cannot load the
+            # checkpoint -- an unaccepted licence on one of the three gated repos
+            # is the usual reason. Without this the next line fails on `None`.
+            raise RuntimeError(
+                f"pyannote could not load '{self._checkpoint}'. Check "
+                "AUTUNE_AUDIO_HF_TOKEN and that the licence is accepted on all "
+                "three gated repositories (see config.AudioSettings.hf_token)."
+            )
+        # Never leave this out. `from_pretrained` builds the pipeline on CPU and
+        # stays there, so without `.to()` a CUDA box runs Whisper on the GPU and
+        # diarization beside it on the processor -- which is how it shipped until
+        # #389's follow-up measured the 14.3x. Once, at load: `diarize` is called
+        # per recording and moving a loaded model per call would cost more than
+        # the device saves.
+        pipeline.to(torch.device(device))
+        self._pipeline = pipeline
+        log.info("diarizer_loaded", checkpoint=self._checkpoint, device=device)
         return self._pipeline
 
     def diarize(self, waveform: Waveform) -> tuple[Turn, ...]:
