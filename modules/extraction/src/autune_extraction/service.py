@@ -1699,7 +1699,11 @@ def notion_url(page_id: str) -> str:
 
 
 def notion_properties(
-    item: ExtActionItem, meeting_title: str | None, names: Mapping[str, str]
+    item: ExtActionItem,
+    meeting_title: str | None,
+    names: Mapping[str, str],
+    *,
+    clear_missing: bool = False,
 ) -> dict[str, Any]:
     """The page for one item: what an issue needs, and nothing from the transcript.
 
@@ -1708,6 +1712,15 @@ def notion_properties(
     it came from. Source utterances stay in Autune -- ``privacy.md`` and this
     module's CLAUDE.md both keep the transcript out of Notion, and the client's
     ``check_outbound`` refuses an unmasked value in any of these anyway.
+
+    **``clear_missing`` is for an update.** A create leaves an empty field off
+    the page (``test_a_field_the_item_does_not_have_is_left_off_the_page``). But
+    Notion's PATCH overwrites only the properties it names, so an update that
+    leaves the assignee or due date off keeps the *old* value on the page --
+    clearing a due date is "a correction like any other" (``ActionItemUpdate``),
+    and the board would say no date while Notion kept one. An update therefore
+    names the emptied field with Notion's empty value (PARKJAEKYUNG0525's
+    review of #342).
     """
 
     def text(value: str) -> dict[str, Any]:
@@ -1721,8 +1734,12 @@ def notion_properties(
     assignee = item.assignee_label
     if assignee:
         fields["assignee"] = text(assignee)
+    elif clear_missing:
+        fields["assignee"] = {"rich_text": []}
     if item.due_date is not None:
         fields["due"] = {"date": {"start": item.due_date.isoformat()}}
+    elif clear_missing:
+        fields["due"] = {"date": None}
     if meeting_title:
         fields["meeting"] = text(meeting_title)
     return {names[key]: value for key, value in fields.items() if key in names}
@@ -1779,7 +1796,9 @@ def sync_action_item_to_notion(
         if item is None or item.status == ActionStatus.NEEDS_CONFIRMATION.value:
             return existing
         meeting = session.get(Meeting, item.meeting_id)
-        properties = notion_properties(item, meeting.title if meeting else None, names)
+        properties = notion_properties(
+            item, meeting.title if meeting else None, names, clear_missing=True
+        )
         assert existing.external_id is not None
         notion.update_page(existing.external_id, properties)
         log.info("extraction_notion_updated", action_item_id=item.id, meeting_id=item.meeting_id)
@@ -1808,7 +1827,9 @@ def sync_action_item_to_notion(
         if item is None or item.status == ActionStatus.NEEDS_CONFIRMATION.value:
             return existing
         meeting = session.get(Meeting, item.meeting_id)
-        properties = notion_properties(item, meeting.title if meeting else None, names)
+        properties = notion_properties(
+            item, meeting.title if meeting else None, names, clear_missing=True
+        )
         assert existing.external_id is not None
         notion.update_page(existing.external_id, properties)
         log.info("extraction_notion_updated_after_claim_race", action_item_id=item.id)

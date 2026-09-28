@@ -187,6 +187,24 @@ def test_the_second_sync_of_an_item_updates_its_page_not_a_new_one(session: Sess
     assert notion.updates[0][0] == page_id
 
 
+def test_an_update_clears_a_field_the_edit_emptied(session: Session) -> None:
+    """PARKJAEKYUNG0525's review of #342: Notion's PATCH overwrites only the
+    properties it names, so an update that left the emptied due date and
+    assignee off kept the old values on the page while the board showed none."""
+    notion = FakeNotion()
+    row = item(session)
+    sync(session, notion, row.id)
+    assert {"담당자", "마감일"} <= set(notion.pages[0][1])
+
+    row.due_date = None
+    row.assignee_label = None
+    sync(session, notion, row.id)
+
+    sent = notion.updates[0][1]
+    assert sent["마감일"] == {"date": None}
+    assert sent["담당자"] == {"rich_text": []}
+
+
 def test_a_sync_holding_the_ref_lock_sends_the_edit_committed_after_it_started(
     session: Session,
 ) -> None:
