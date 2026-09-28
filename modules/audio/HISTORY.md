@@ -338,6 +338,52 @@ the most stable number in the table, and it becomes the majority of the time
 the moment Whisper stops being it. Nothing under 1.5× is reachable by tuning
 transcription alone.
 
+#### Diarization was 171 s because nobody moved it off the CPU
+
+Measured 2026-09-28 on the same six-person 5m27s recording (327.4 s),
+`num_speakers=6`, one process, one waveform, so this is **one recording** and
+not a benchmark:
+
+| Device | Time | ×audio |
+| --- | --- | --- |
+| `cpu` | 163.4 s | 0.50× |
+| `mps` | **11.5 s** | **0.035×** |
+
+163.4 s here against the 169–176 s in the runs above is the same stage's
+run-to-run spread on the same machine; the row to read is the other one.
+
+`PyannoteDiarizer._load` called `Pipeline.from_pretrained` and never `.to()`.
+pyannote builds its pipeline on CPU and stays there, so the 171 s in the table
+above is a CPU number on a machine with a GPU — and on a CUDA box the same bug
+sent Whisper to the GPU through `AUTUNE_AUDIO_DEVICE` and left diarization
+beside it on the processor. One line, 14.3×.
+
+**The 0 ms boundary agreement is what makes it safe to take.** 77 turns and 6
+speakers both times, the same label on all 77, maximum drift 0 ms on start
+boundaries and 0 ms on end boundaries, total speech 297.4 s against 297.4 s.
+Equal counts would not have been enough: `speakers` assigns each word to the
+turn containing it, so a device that moved a boundary by 40 ms would move words
+between speakers downstream. Nothing moved.
+
+The device is its own setting, `AUTUNE_AUDIO_DIARIZATION_DEVICE`, and not a
+third value for `AUTUNE_AUDIO_DEVICE` — that one is handed to faster-whisper,
+whose CTranslate2 backend has no Metal support, so `mps` there would break
+transcription. Empty follows `AUTUNE_AUDIO_DEVICE`, so a CUDA deployment gets
+both stages on the GPU from the variable it already sets.
+
+An unavailable device raises `ConfigurationError` instead of falling back to
+CPU with a warning. CPU works, which is exactly the problem: a fallback turns
+14.3× into a log line, and section 4 below is a list of failures that looked
+like successes until somebody measured.
+
+**Two things this does not settle.** `mps` has only been measured in-process;
+module E's SetFit aborts on Metal under prefork and threaded Celery workers,
+which is why the demo runs `--pool=solo` (#329), and pyannote on Metal inherits
+that risk untested. And the target is still missed: at beam 5 the total goes
+from 989 s to about 830 s, 2.5× audio against the 1.5× the module signed up
+for. Transcription was the cost before this and is more of it now — 98% of what
+is left.
+
 ---
 
 ## 3. Decisions, and the ones that reversed

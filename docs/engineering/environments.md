@@ -130,6 +130,7 @@ Where that token comes from, and the two ways to give it to the browser:
 | `AUTUNE_AUDIO_DIARIZATION_MIN_SPEAKERS` / `…_MAX_SPEAKERS` | A | Bounds instead of an exact count. Ignored when `…_NUM_SPEAKERS` is set. Each must be ≥ 1; the settings refuse to load otherwise |
 | `NEXT_PUBLIC_AUTUNE_DEV_TOKEN` | A (web) | A bearer token for the browser, local only — see "A token for the browser" below |
 | `AUTUNE_AUDIO_DIARIZATION_MODEL` | A | Default `pyannote/speaker-diarization-3.1` |
+| `AUTUNE_AUDIO_DIARIZATION_DEVICE` | A | Where pyannote runs: empty (default) follows `AUTUNE_AUDIO_DEVICE`, or `cpu` · `mps` · `cuda`. Separate from `AUTUNE_AUDIO_DEVICE` because that one reaches faster-whisper, which has no Metal support. `mps` is 14.3× faster than CPU on the measured recording for a millisecond-identical result (`modules/audio/HISTORY.md` §2), but is untested under a prefork or threaded Celery worker — module E's SetFit aborts on Metal there (#329). An unavailable device fails the task; there is no silent CPU fallback |
 | `AUTUNE_EXTRACTION_CLASSIFIER_IMPL` | B | `local` · `hosted` · `fake`. Default `local`. **No `external`** — see below |
 | `AUTUNE_EXTRACTION_CLASSIFIER_CHECKPOINT` | B | Pinned model, recorded with every classification. Never a floating tag. **Blank by default** — no trained checkpoint is published yet, and `local` / `hosted` refuse to start without one |
 | `AUTUNE_EXTRACTION_CLASSIFIER_ENDPOINT` | B | Our own inference server. Required when `CLASSIFIER_IMPL=hosted` |
@@ -440,4 +441,5 @@ transcript, generate one.
 | Celery task never runs | Worker is not listening on that queue. Check `-Q` |
 | import-linter fails | You imported another module. Fix the import, not the config |
 | Whisper is very slow | Running on CPU. Set `AUTUNE_AUDIO_DEVICE=cuda` or use a smaller model locally |
+| Diarization takes minutes on a Mac | It is on CPU, which is where it stays unless told otherwise. `AUTUNE_AUDIO_DIARIZATION_DEVICE=mps`, in a `--pool=solo` worker (#329) |
 | Generated TS types are stale in CI | Run `pnpm run gen:contracts` and commit the output |

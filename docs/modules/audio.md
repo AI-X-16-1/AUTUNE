@@ -233,7 +233,7 @@ the database is what makes this one safe. It runs at the start of every
 | --- | --- | --- |
 | STT | Whisper (`large-v3`), whisper.cpp on CPU | `AUTUNE_AUDIO_WHISPER_MODEL` |
 | VAD | silero-vad | |
-| Diarization | Pyannote 4.x, `speaker-diarization-3.1` | `AUTUNE_AUDIO_HF_TOKEN`, licence accepted on **three** gated repos — see `../engineering/environments.md` |
+| Diarization | Pyannote 4.x, `speaker-diarization-3.1` | `AUTUNE_AUDIO_HF_TOKEN`, licence accepted on **three** gated repos — see `../engineering/environments.md`. Runs where `AUTUNE_AUDIO_DIARIZATION_DEVICE` says, its own setting because `AUTUNE_AUDIO_DEVICE` reaches faster-whisper; `mps` is 14.3× CPU on one measured recording (`modules/audio/HISTORY.md` §2) |
 | Speaker ID | The pipeline's own `speaker_embeddings` (256-d) + cosine similarity | Threshold in `config.py`. pyannote 4.x returns a vector per speaker, so no separate embedding model is needed |
 | PII detection | Regex + NER | Double detection, recall-weighted |
 | Interim summary | LLM | The only LLM use in A |
