@@ -116,6 +116,40 @@ class AudioSettings(BaseSettings):
     diarization_model: str = "pyannote/speaker-diarization-3.1"
     """Pinned explicitly. Never load a floating "latest"."""
 
+    diarization_device: str = ""
+    """Where pyannote runs. Empty follows ``device``; ``cpu``, ``mps``, ``cuda``.
+
+    Until #389's follow-up the pipeline never moved the loaded pipeline off CPU,
+    so diarization ran on CPU even where ``device=cuda`` sent Whisper to the GPU.
+    Measured on the same six-person 5m27s recording (327.4 s) as the rest of
+    HISTORY.md section 2, ``num_speakers=6``, one process, one waveform:
+
+    | Device | Time | ×audio |
+    | --- | --- | --- |
+    | ``cpu`` | 163.4 s | 0.50× |
+    | ``mps`` | 11.5 s | 0.035× |
+
+    14.3× faster for an output that is identical to the millisecond: 77 turns
+    and 6 speakers both times, 0 ms maximum drift on both start and end
+    boundaries, the same label on all 77 turns, 297.4 s of speech either way.
+    Boundaries matter more than counts here — ``speakers`` assigns each word to
+    the turn that contains it, so identical edges mean nothing downstream moves.
+
+    **A separate setting rather than a third value for ``device``.** ``device``
+    is read by ``pipeline._model_for`` and handed to faster-whisper, whose
+    CTranslate2 backend has no Metal support; ``AUTUNE_AUDIO_DEVICE=mps`` would
+    break transcription to speed up diarization. This is the same split as the
+    live path's own model, threads and beam width.
+
+    **``mps`` is not known to be safe under a prefork or threaded Celery
+    worker.** Module E's SetFit aborts on Metal in exactly that setting, which
+    is why the demo worker runs ``--pool=solo`` (#329); putting pyannote on
+    Metal inherits the risk and nobody has run it under prefork. Measured
+    in-process only. An unavailable device raises ``ConfigurationError`` rather
+    than falling back to CPU -- see ``diarization.resolve_device``, and the
+    14.3× is why a silent fallback would be worse than a failure.
+    """
+
     diarization_num_speakers: int | None = Field(default=None, ge=1)
     """Exactly how many people spoke, when the room knows. On a muffled
     microphone pyannote split one voice into four clusters (#325); with this
