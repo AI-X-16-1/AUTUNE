@@ -149,6 +149,10 @@ blocks no merge. Add the reviewers your change needs yourself.
 - Speaking-ratio data is delivered only to the speaker themselves. No endpoint,
   query, dashboard, or export may return one person's speaking ratio to anyone
   else — including team admins. Aggregate speaking-ratio records are not stored.
+  This binds what Autune computes and presents, not the meeting record: a
+  transcript may say who spoke and when, and no module may aggregate those
+  timings into a per-person speech volume except to deliver it to that
+  speaker under the rule above (#361).
 - Analysis results have a retention window (90 days by default) and users can
   delete their own data at any time.
 
