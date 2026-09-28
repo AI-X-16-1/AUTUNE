@@ -1,7 +1,11 @@
-"""A local-only page for connecting a team's Notion/Slack integration by hand.
+"""A local-only page for connecting a team's Notion integration by hand.
 
-Mirrors module A's own ``dev/routes.py``: mounted only under
-``AUTUNE_ENV=local`` (see ``router.py``), not in the OpenAPI schema, no auth.
+Mirrors module A's own ``dev/routes.py``, with one more gate: mounted only
+under ``AUTUNE_ENV=local`` *and* ``AUTUNE_EXTRACTION_DEV_ROUTES=true`` (see
+``router.dev_routes_enabled``), not in the OpenAPI schema, no auth. Without
+the second gate a deployment that forgot ``AUTUNE_ENV`` would let anyone point
+any team's sync at their own Notion workspace (lsh2217, review of #402).
+
 S28 (Settings > Integrations) does not exist yet -- this exists so a developer
 can put a real team_integrations row in the database without one, the same
 reason module A's ``/dev/token`` exists for sign-in.
@@ -14,8 +18,10 @@ integration beforehand, Notion's own requirement) and creates "액션 아이템"
 and "결정" as child databases under it, with the same property names
 ``service.NOTION_PROPERTIES``/``DECISION_NOTION_PROPERTIES`` already expect
 -- so a page the sync writes to and the schema this creates cannot drift
-apart. Idempotent: a team that already has both ids in its stored config
-gets them back unchanged rather than a second pair of databases.
+apart. Idempotent for the same page: a team that already has both ids made
+under it gets them back rather than a second pair. A different page -- or a
+connection stored before the page was recorded -- gets a new pair, because the
+old databases may not be shared with the new token (lsh2217, review of #402).
 
 **It writes team_integrations, which modules otherwise never do.**
 ``data-model.md`` reserves that table for the settings layer; #401 makes a
@@ -135,10 +141,22 @@ def _create_database(
         # Notion's own message, not ours -- it names what was wrong with the
         # request (bad page id, integration not shared with the page, ...),
         # which is exactly what someone filling in this form needs to read.
+        # A proxy's HTML page instead of Notion's JSON must not turn that
+        # into a 500 (lsh2217, review of #402).
+        try:
+            message = resp.json().get("message")
+        except ValueError:
+            message = None
         raise HTTPException(
-            status_code=resp.status_code, detail=resp.json().get("message", resp.text)
+            status_code=resp.status_code,
+            detail=message or f"Notion answered {resp.status_code}",
         )
     return str(resp.json()["id"])
+
+
+def _same_page(stored: object, page_id: str) -> bool:
+    """Notion takes a page id with or without its dashes; so does this."""
+    return isinstance(stored, str) and stored.replace("-", "") == page_id.replace("-", "")
 
 
 class ConnectNotion(BaseModel):
@@ -159,8 +177,10 @@ def connect_notion(body: ConnectNotion, session: SessionDep) -> dict[str, str]:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     existing = load_integration(session, body.team_id, "notion")
-    action_db = existing.config.get("action_db_id") if existing else None
-    decision_db = existing.config.get("decision_db_id") if existing else None
+    stored = existing.config if existing is not None else {}
+    reuse = _same_page(stored.get("parent_page_id"), page_id)
+    action_db = stored.get("action_db_id") if reuse else None
+    decision_db = stored.get("decision_db_id") if reuse else None
 
     if not action_db or not decision_db:
         with httpx.Client(
@@ -194,7 +214,11 @@ def connect_notion(body: ConnectNotion, session: SessionDep) -> dict[str, str]:
         body.team_id,
         "notion",
         secret=body.token,
-        config={"action_db_id": action_db, "decision_db_id": decision_db},
+        config={
+            "action_db_id": action_db,
+            "decision_db_id": decision_db,
+            "parent_page_id": page_id,
+        },
     )
     session.commit()
     return {
@@ -204,23 +228,3 @@ def connect_notion(body: ConnectNotion, session: SessionDep) -> dict[str, str]:
         "action_db_id": action_db,
         "decision_db_id": decision_db,
     }
-
-
-class ConnectSlack(BaseModel):
-    team_id: str
-    bot_token: str
-
-
-@router.post("/connect-slack", include_in_schema=False)
-def connect_slack(body: ConnectSlack, session: SessionDep) -> dict[str, str]:
-    """Saved for completeness -- module B has no consumer for this yet.
-
-    The confirmation DM (#12) is blocked on #70 (a speaker's Slack account)
-    and #30 (a team Slack client), so connecting Slack here does not make
-    anything happen. It is here so a developer testing #12's ambiguous path
-    is not left wondering whether the missing piece is the connection or the
-    feature; it is the feature.
-    """
-    save_integration(session, body.team_id, "slack", secret=body.bot_token, config={})
-    session.commit()
-    return {"status": "connected", "service": "slack", "team_id": body.team_id}

@@ -199,6 +199,14 @@ class ExtractionSettings(BaseSettings):
     existed -- the digit and named-person checks in ``pipeline.resolver``,
     unaffected by ``embedder_impl``."""
 
+    dev_routes: bool = False
+    """Mount the local-only page for connecting Notion by hand (``dev/``, #401).
+
+    Needed on top of ``AUTUNE_ENV=local``: that env is also the default, so a
+    deployment that forgot to set it would otherwise serve an unauthenticated
+    route that stores any team's Notion token (lsh2217, review of #402). Off
+    unless someone asks for it by name."""
+
     @field_validator("resolver_min_similarity", mode="before")
     @classmethod
     def _blank_similarity_means_unset(cls, value: object) -> object:

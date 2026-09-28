@@ -21,6 +21,7 @@ from autune_core.errors import NotFoundError
 from autune_core.settings import get_settings as get_core_settings
 
 from . import service, tasks
+from .config import get_settings
 from .models import ExtActionItem, ExtDecision
 from .schemas import (
     ActionItemCreate,
@@ -38,10 +39,19 @@ router = APIRouter()
 
 SessionDep = Annotated[Session, Depends(get_session)]
 
-# A local-only page for connecting Notion/Slack by hand, until S28 exists.
-# It has no auth, so it is mounted nowhere but a developer's machine -- see
-# ``dev/routes.py`` and #401 for why a module may write team_integrations here.
-if get_core_settings().env == "local":
+
+def dev_routes_enabled() -> bool:
+    """The local-only page for connecting Notion by hand, until S28 exists.
+
+    It has no auth, so it needs both ``AUTUNE_ENV=local`` and an explicit
+    ``AUTUNE_EXTRACTION_DEV_ROUTES=true``: ``local`` is also the env's default,
+    and forgetting to set it must not be enough to serve this. See
+    ``dev/routes.py`` and #401 for why a module may write team_integrations
+    here at all."""
+    return get_core_settings().env == "local" and get_settings().dev_routes
+
+
+if dev_routes_enabled():
     from .dev import router as dev_router
 
     router.include_router(dev_router, prefix="/dev")

@@ -50,33 +50,20 @@ PAGE = """<!doctype html>
 <body>
 <main>
   <h1>연동 설정 (dev)</h1>
-  <p class="sub">S28이 아직 없어서 대신 씁니다. 로컬 개발용, 인증 없음. AUTUNE_ENV=local에서만 마운트됩니다.</p>
+  <p class="sub">S28이 아직 없어서 대신 씁니다. 로컬 개발용, 인증 없음. AUTUNE_ENV=local과 AUTUNE_EXTRACTION_DEV_ROUTES=true가 둘 다 있어야 마운트됩니다.</p>
   <div class="warn">team_id는 /api/audio/dev/token으로 발급받은 값을 그대로 씁니다.</div>
 
   <section>
     <h2>Notion</h2>
-    <p class="hint">액션아이템·결정 확인 시 실제로 페이지가 생성됩니다.</p>
+    <p class="hint">페이지 하나를 integration에 먼저 공유하세요. 그 아래에 "액션 아이템"·"결정" DB를 만들고, 이후 확정한 항목이 그 DB에 페이지로 생깁니다.</p>
     <label>team_id</label>
     <input id="notion-team" placeholder="team_...">
     <label>Integration token</label>
     <input id="notion-token" placeholder="ntn_...">
-    <label>action_db_id</label>
-    <input id="notion-action-db">
-    <label>decision_db_id</label>
-    <input id="notion-decision-db">
+    <label>Notion 페이지 URL 또는 id</label>
+    <input id="notion-page" placeholder="https://www.notion.so/...">
     <button onclick="connectNotion()">Notion 연결</button>
     <div id="notion-result" class="result"></div>
-  </section>
-
-  <section>
-    <h2>Slack</h2>
-    <p class="hint">저장만 됩니다 — 애매한 동의 확인 DM(#12)은 #70·#30이 안 풀려서 아직 아무것도 안 보냅니다.</p>
-    <label>team_id</label>
-    <input id="slack-team" placeholder="team_...">
-    <label>Bot token</label>
-    <input id="slack-token" placeholder="xoxb-...">
-    <button onclick="connectSlack()">Slack 연결</button>
-    <div id="slack-result" class="result"></div>
   </section>
 
 <script>
@@ -104,16 +91,8 @@ function connectNotion() {
   post("/api/extraction/dev/connect-notion", {
     team_id: document.getElementById("notion-team").value,
     token: document.getElementById("notion-token").value,
-    action_db_id: document.getElementById("notion-action-db").value,
-    decision_db_id: document.getElementById("notion-decision-db").value,
+    page_id: document.getElementById("notion-page").value,
   }, "notion-result");
-}
-
-function connectSlack() {
-  post("/api/extraction/dev/connect-slack", {
-    team_id: document.getElementById("slack-team").value,
-    bot_token: document.getElementById("slack-token").value,
-  }, "slack-result");
 }
 </script>
 </main>

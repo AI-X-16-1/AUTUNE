@@ -1,15 +1,26 @@
-"""``/dev/connect-notion``'s page-id parsing (#342).
+"""``/dev/connect-notion`` (#342, #402): page-id parsing, the mount gate, and
+which databases a connection keeps.
 
-Just the pure parser -- the route itself talks to the real Notion API to
-create databases, which is what ``dev/page.py``'s manual walkthrough is for,
-not a unit test.
+Notion itself is never called: database creation is replaced by a stub, and the
+one test of Notion's error body uses a mock transport.
 """
 
 from __future__ import annotations
 
-import pytest
+from types import SimpleNamespace
+from typing import Any
 
-from autune_extraction.dev.routes import _parse_page_id
+import httpx
+import pytest
+from fastapi import HTTPException
+
+from autune_core.integrations_config import IntegrationConfig
+from autune_extraction import router as router_module
+from autune_extraction.dev import routes
+from autune_extraction.dev.routes import ConnectNotion, _parse_page_id
+
+PAGE = "8e2c9c50-4b0d-4bb0-b0b0-1234567890ab"
+OTHER_PAGE = "11111111-2222-3333-4444-555555555555"
 
 
 def test_a_bare_dashed_id_is_kept_whole() -> None:
@@ -46,3 +57,116 @@ def test_surrounding_whitespace_is_stripped() -> None:
 def test_something_with_no_id_shaped_run_is_refused() -> None:
     with pytest.raises(ValueError, match="page id"):
         _parse_page_id("그냥 아무 텍스트")
+
+
+# --- the mount gate (lsh2217, review of #402) -------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("env", "opted_in", "mounted"),
+    [
+        ("local", True, True),
+        ("local", False, False),
+        ("production", True, False),
+        ("staging", True, False),
+    ],
+)
+def test_the_page_needs_local_and_an_explicit_opt_in(
+    monkeypatch: pytest.MonkeyPatch, env: str, opted_in: bool, mounted: bool
+) -> None:
+    """``local`` is also the env's default, so a deployment that forgot to set
+    it must not serve an unauthenticated route that stores any team's token."""
+    monkeypatch.setattr(router_module, "get_core_settings", lambda: SimpleNamespace(env=env))
+    monkeypatch.setattr(router_module, "get_settings", lambda: SimpleNamespace(dev_routes=opted_in))
+
+    assert router_module.dev_routes_enabled() is mounted
+
+
+# --- which databases a connection keeps -------------------------------------------
+
+
+class _Session:
+    def commit(self) -> None:
+        pass
+
+
+def _connect(
+    monkeypatch: pytest.MonkeyPatch, stored: dict[str, Any] | None, page_id: str
+) -> tuple[dict[str, str], list[str], dict[str, Any]]:
+    created: list[str] = []
+    saved: dict[str, Any] = {}
+
+    def create(client: httpx.Client, *, title: str, **_: Any) -> str:
+        created.append(title)
+        return f"db_new_{len(created)}"
+
+    def save(session: Any, team_id: str, service: str, **kw: Any) -> None:
+        saved.update(kw)
+
+    existing = (
+        IntegrationConfig(service="notion", team_id="team_1", secret="old", config=stored)
+        if stored is not None
+        else None
+    )
+    monkeypatch.setattr(routes, "load_integration", lambda *a: existing)
+    monkeypatch.setattr(routes, "save_integration", save)
+    monkeypatch.setattr(routes, "_create_database", create)
+
+    body = ConnectNotion(team_id="team_1", token="new", page_id=page_id)
+    result = routes.connect_notion(body, _Session())  # type: ignore[arg-type]
+    return result, created, saved
+
+
+def test_connecting_the_same_page_again_keeps_its_databases(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stored = {"action_db_id": "db_a", "decision_db_id": "db_d", "parent_page_id": PAGE}
+
+    result, created, saved = _connect(monkeypatch, stored, PAGE.replace("-", ""))
+
+    assert created == []
+    assert (result["action_db_id"], result["decision_db_id"]) == ("db_a", "db_d")
+    assert saved["secret"] == "new"
+
+
+def test_a_different_page_gets_its_own_databases(monkeypatch: pytest.MonkeyPatch) -> None:
+    """lsh2217, review of #402: reconnecting with another page kept the old
+    database ids, which the new token may not be able to reach, so every later
+    sync failed."""
+    stored = {"action_db_id": "db_a", "decision_db_id": "db_d", "parent_page_id": PAGE}
+
+    result, created, saved = _connect(monkeypatch, stored, OTHER_PAGE)
+
+    assert created == ["액션 아이템", "결정"]
+    assert result["action_db_id"] == "db_new_1"
+    assert saved["config"]["parent_page_id"] == OTHER_PAGE
+
+
+def test_a_connection_stored_without_its_page_gets_new_databases(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Rows saved before the page was recorded cannot be matched to one."""
+    stored = {"action_db_id": "db_a", "decision_db_id": "db_d"}
+
+    _result, created, _saved = _connect(monkeypatch, stored, PAGE)
+
+    assert len(created) == 2
+
+
+def test_a_non_json_refusal_from_notion_is_reported_not_a_500() -> None:
+    """lsh2217, review of #402: a proxy's HTML page made ``resp.json()`` raise."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(502, text="<html>Bad Gateway</html>")
+
+    transport = httpx.MockTransport(handler)
+    with (
+        httpx.Client(base_url=routes.NOTION_API, transport=transport) as client,
+        pytest.raises(HTTPException) as caught,
+    ):
+        routes._create_database(
+            client, page_id=PAGE, title="결정", names={"title": "결정"}, status_select=False
+        )
+
+    assert caught.value.status_code == 502
+    assert caught.value.detail == "Notion answered 502"

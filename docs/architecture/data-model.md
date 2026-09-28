@@ -56,9 +56,10 @@ if config is None:
 client = NotionClient(config.require_secret())
 ```
 
-The one exception, until S28 ships, is a route mounted only under
-`AUTUNE_ENV=local` for connecting an integration by hand (#401). It is deleted
-with S28.
+The one exception, until S28 ships, is a route for connecting an integration
+by hand (#401). It is mounted only under `AUTUNE_ENV=local` **and** an explicit
+opt-in (`AUTUNE_EXTRACTION_DEV_ROUTES=true`), so forgetting to set the env is not
+enough to serve it, and it is deleted with S28.
 
 Ask per call rather than caching the result — a team can disconnect a service
 between two meetings. Credentials belong to the customer team, not to the
