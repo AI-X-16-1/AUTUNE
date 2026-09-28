@@ -64,7 +64,14 @@ class BgeRerankerKoLocal:
     def score(self, query: str, passages: list[str]) -> list[float]:
         if not passages:
             return []
-        raw = self._model.predict([(query, p) for p in passages])
+        from torch import nn
+
+        # Ask for raw logits explicitly. ``predict`` otherwise applies the
+        # model's own default activation — a sigmoid for a one-label
+        # cross-encoder like this one — and a second sigmoid on top of that
+        # squeezed every score into [0.5, 0.73], so ``link_confidence_threshold``
+        # meant something different here than behind the HTTP endpoint.
+        raw = self._model.predict([(query, p) for p in passages], activation_fn=nn.Identity())
         return [1.0 / (1.0 + math.exp(-float(s))) for s in raw]
 
 
