@@ -44,6 +44,15 @@ export function ActionCard({
         style={{ fontSize: "var(--text-rowTitle)", fontWeight: "var(--text-rowTitle-weight)" }}
       >
         {item.description}
+        {item.description_resolved ? (
+          <span
+            className="ml-1.5 text-[var(--color-ink-muted)]"
+            style={{ fontSize: "var(--text-metaSmall)", fontWeight: 400 }}
+            title="AI가 발화 속 지시어(그거, 저희 팀 등)를 풀어 다시 쓴 설명입니다. 원문과 다를 수 있어 확인이 필요합니다."
+          >
+            · AI 재구성
+          </span>
+        ) : null}
       </div>
 
       <div

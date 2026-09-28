@@ -36,7 +36,7 @@ from autune_extraction.models import (
     ExtDecisionSource,
     ExtEditEvent,
 )
-from autune_extraction.pipeline import FakeClassifier, FakeNli
+from autune_extraction.pipeline import FakeClassifier, FakeNli, FakeResolver, ResolutionRequest
 from autune_extraction.schemas import ActionItemCreate, ActionItemUpdate
 
 MEETING = "mtg_1"
@@ -152,6 +152,226 @@ def test_a_meeting_with_no_start_time_keeps_the_phrase_and_no_date(session: Sess
 
     assert item.due_date is None
     assert item.due_text == "다음 주 화요일"
+
+
+# --- references resolved before the description is written (#175) -------------
+
+
+class RecordingResolver:
+    """Never resolves anything -- records what it was asked, so a test can
+    check the window a caller built without depending on a real model."""
+
+    model_version = "recording"
+
+    def __init__(self) -> None:
+        self.received: list[ResolutionRequest] = []
+
+    def resolve(self, requests: list[ResolutionRequest]) -> list[str]:
+        self.received.extend(requests)
+        return [request.target for request in requests]
+
+
+def test_resolve_commitment_references_covers_only_commitments(session: Session) -> None:
+    """utt_3 ("네 좋아요") is none of the kinds -- resolving it would be a call
+    spent on an utterance no item is ever built from."""
+    utterances = spoken()
+    classified = service.classify_utterances(
+        FakeClassifier(), utterances, consented={u.id for u in utterances}
+    )
+
+    resolved = service.resolve_commitment_references(FakeResolver(), classified)
+
+    assert set(resolved) == {"utt_1", "utt_2"}
+
+
+def test_the_context_is_the_utterances_immediately_before_the_target(session: Session) -> None:
+    utterances = spoken()
+    classified = service.classify_utterances(
+        FakeClassifier(), utterances, consented={u.id for u in utterances}
+    )
+    resolver = RecordingResolver()
+
+    service.resolve_commitment_references(resolver, classified)
+
+    by_target = {r.target: r for r in resolver.received}
+    first, second = "제가 다음 주 화요일까지 정리하겠습니다", "그건 제가 확인하겠습니다"
+    assert by_target[first].context == ()
+    assert by_target[second].context == (first,)
+
+
+def test_the_context_window_is_bounded(session: Session) -> None:
+    """Coupled to MAX_CONTEXT_UTTERANCES=4 on purpose -- if that changes, this
+    should be looked at rather than pass silently."""
+    lines = [
+        (f"utt_{i}", float(i), "김민경", "user_001", f"항목 {i} 확인했습니다") for i in range(6)
+    ]
+    lines.append(("utt_target", 10.0, "김민경", "user_001", "제가 할게요"))
+    utterances = spoken(lines)
+    classified = service.classify_utterances(
+        FakeClassifier(), utterances, consented={u.id for u in utterances}
+    )
+    resolver = RecordingResolver()
+
+    service.resolve_commitment_references(resolver, classified)
+
+    target_request = next(r for r in resolver.received if r.target == "제가 할게요")
+    assert target_request.context == (
+        "항목 2 확인했습니다",
+        "항목 3 확인했습니다",
+        "항목 4 확인했습니다",
+        "항목 5 확인했습니다",
+    )
+
+
+def test_the_context_also_includes_utterances_right_after_the_target(session: Session) -> None:
+    """Resolution runs over a finished transcript, never live, so a clarifying
+    exchange right after the commitment is available too (#175)."""
+    lines = [
+        ("utt_target", 0.0, "김민경", "user_001", "제가 할게요"),
+        ("utt_after_1", 1.0, "Speaker 2", None, "그게 언제까지죠?"),
+        ("utt_after_2", 2.0, "김민경", "user_001", "다음 주 화요일까지요"),
+        ("utt_after_3", 3.0, "Speaker 2", None, "네 알겠습니다"),
+    ]
+    utterances = spoken(lines)
+    classified = service.classify_utterances(
+        FakeClassifier(), utterances, consented={u.id for u in utterances}
+    )
+    resolver = RecordingResolver()
+
+    service.resolve_commitment_references(resolver, classified)
+
+    target_request = next(r for r in resolver.received if r.target == "제가 할게요")
+    assert target_request.context_after == ("그게 언제까지죠?", "다음 주 화요일까지요")
+
+
+def test_a_non_consenting_speakers_words_never_reach_the_resolver(session: Session) -> None:
+    """Found in review of #366: an earlier version windowed context from the
+    raw transcript instead of ``classified``. ``classify_utterances`` blanks a
+    non-consenting speaker's turn to ``text=""`` (privacy.md section 5), but
+    the raw ``utterances`` list still had it in full -- so it could sit in a
+    ``ResolutionRequest``'s context, get copied by the resolver into a
+    resolved description, and land in ``ext_action_items.description``. The
+    window shrinks instead of reaching further back for a replacement line
+    (section 6's "smallest window", not "same-sized window")."""
+    lines = [
+        ("utt_1", 0.0, "김민경", "user_001", "첫 발화"),
+        ("utt_secret", 1.0, "Speaker 2", None, "비동의 화자 발언: 결제 모듈 재작성"),
+        ("utt_target", 2.0, "김민경", "user_001", "그거 제가 할게요"),
+    ]
+    utterances = spoken(lines)
+    consented = {u.id for u in utterances if u.id != "utt_secret"}
+    classified = service.classify_utterances(FakeClassifier(), utterances, consented=consented)
+    resolver = RecordingResolver()
+
+    service.resolve_commitment_references(resolver, classified)
+
+    target_request = next(r for r in resolver.received if r.target == "그거 제가 할게요")
+    assert target_request.context == ("첫 발화",)
+
+
+def test_context_follows_start_time_even_when_the_payload_arrives_unsorted(
+    session: Session,
+) -> None:
+    """Found alongside the non-consent leak in review of #366: this used
+    ``enumerate(utterances)`` for order, but ``classify_utterances`` sorts by
+    ``(start, id)`` precisely because "a payload is not promised to arrive
+    sorted" -- reading order from the unsorted list instead could hand a
+    target a context window in payload order rather than speech order."""
+    lines = [
+        ("utt_target", 2.0, "김민경", "user_001", "그거 제가 할게요"),
+        ("utt_1", 0.0, "김민경", "user_001", "첫 발화"),
+        ("utt_2", 1.0, "Speaker 2", None, "두 번째 발화"),
+    ]
+    utterances = spoken(lines)  # arrives target-first, not in speech order
+    classified = service.classify_utterances(
+        FakeClassifier(), utterances, consented={u.id for u in utterances}
+    )
+    resolver = RecordingResolver()
+
+    service.resolve_commitment_references(resolver, classified)
+
+    target_request = next(r for r in resolver.received if r.target == "그거 제가 할게요")
+    assert target_request.context == ("첫 발화", "두 번째 발화")
+
+
+def test_a_resolved_description_replaces_the_raw_quote(session: Session) -> None:
+    utterances = spoken()
+    classified = service.classify_utterances(
+        FakeClassifier(), utterances, consented={u.id for u in utterances}
+    )
+
+    items = service.build_action_items(
+        session,
+        meeting_id=MEETING,
+        utterances=utterances,
+        classified=classified,
+        resolved={"utt_1": "화요일까지 회의실 예약 제가 정리하겠습니다"},
+    )
+
+    assert items is not None
+    item = next(i for i in items if i.assignee_id == "user_001")
+    assert item.description == "화요일까지 회의실 예약 제가 정리하겠습니다"
+    assert item.description_resolved is True
+
+
+def test_a_commitment_missing_from_resolved_keeps_its_own_text(session: Session) -> None:
+    """``resolved`` defaults to empty, so a caller that never ran resolution
+    gets exactly the pre-#175 behaviour -- the raw quote."""
+    items = draft(session)
+
+    assert items is not None
+    assert {i.description for i in items} == {
+        "제가 다음 주 화요일까지 정리하겠습니다",
+        "그건 제가 확인하겠습니다",
+    }
+    assert all(i.description_resolved is False for i in items)
+
+
+def test_a_resolution_that_falls_back_to_the_targets_own_text_is_not_marked_resolved(
+    session: Session,
+) -> None:
+    """#366: a resolver that fails every check returns the raw quote unchanged
+    -- ``description_resolved`` reads that as "not resolved", the same as a
+    caller that never ran resolution at all, rather than trusting the
+    resolver's own report of what it attempted."""
+    utterances = spoken()
+    classified = service.classify_utterances(
+        FakeClassifier(), utterances, consented={u.id for u in utterances}
+    )
+
+    items = service.build_action_items(
+        session,
+        meeting_id=MEETING,
+        utterances=utterances,
+        classified=classified,
+        resolved={"utt_1": "제가 다음 주 화요일까지 정리하겠습니다"},  # identical to the raw quote
+    )
+
+    assert items is not None
+    item = next(i for i in items if i.assignee_id == "user_001")
+    assert item.description_resolved is False
+
+
+def test_the_due_date_still_reads_the_utterances_own_text(session: Session) -> None:
+    """A resolver may rewrite the sentence for a reader; it is not obliged to
+    keep the exact verb ending ``parse_due`` depends on, so the date still
+    comes from what the speaker actually said."""
+    utterances = spoken()
+    classified = service.classify_utterances(
+        FakeClassifier(), utterances, consented={u.id for u in utterances}
+    )
+
+    items = service.build_action_items(
+        session,
+        meeting_id=MEETING,
+        utterances=utterances,
+        classified=classified,
+        resolved={"utt_1": "정리는 제가 하겠습니다"},  # no date phrase left
+    )
+
+    assert items is not None
+    item = next(i for i in items if i.assignee_id == "user_001")
+    assert item.due_date == date(2026, 9, 15), "read from utt_1's own text, not the resolved one"
 
 
 # --- what a second run leaves ----------------------------------------------------

@@ -34,6 +34,11 @@ training = [
 local-models = [
     "transformers>=4.46",
     "torch>=2.5",
+    # For the resolver's own KURE-v1 embedder (#175's similarity grounding
+    # check). Same version module D pins its own copy at -- modules never
+    # import each other, so this is a second dependency on the same package,
+    # not a shared one.
+    "sentence-transformers>=3.0",
 ]
 
 [build-system]
