@@ -84,7 +84,7 @@ class SpacyNer:
 
     @property
     def model_version(self) -> str:
-        """``ko_core_news_lg-3.8.0+spoken-2`` — the name, the version, and the rules.
+        """``ko_core_news_lg-3.8.0+spoken-3`` — the name, the version, and the rules.
 
         The name alone is not a version. ``ko_core_news_lg`` is a pipeline that
         ships a new release with every spaCy minor, so a graph built with 3.7
@@ -98,7 +98,7 @@ class SpacyNer:
         registry loads once per process anyway, and there is no version to
         report for a model that will not load.
 
-        The ``+spoken-2`` is ``spoken.RULES_VERSION``. The weights are not the
+        The ``+spoken-3`` is ``spoken.RULES_VERSION``. The weights are not the
         whole extractor: what ``spoken`` keeps from the parse decides the graph
         as much as the parse does, and a rule change there has to be tellable
         on the row the same way a model upgrade is.

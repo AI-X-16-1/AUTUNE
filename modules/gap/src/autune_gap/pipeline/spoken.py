@@ -109,7 +109,19 @@ The rest of the ``n`` family is deliberately out, because matching here means
 
 Raised in review of #222: the earlier version claimed these were let in "so a
 run is broken correctly", which is backwards — a tag that matches is a tag that
-joins."""
+joins.
+
+An ``f`` token that is a sentence-final verb is not: see ``_FOREIGN_VERB``."""
+
+_FOREIGN_VERB = re.compile(r"^[^A-Za-z0-9]*(?:니다|어요|아요|해요|네요|세요|죠)$")
+"""An ``f`` token that is a Hangul verb the model could not parse.
+
+``ko_core_news_lg`` tags some verbs ``f``: 느려졌습니다 and 터졌습니다 come back
+as one ``f`` morpheme, so "결제 페이지가 느려졌습니다" had a topic called
+느려졌습니다. Hangul alone does not mark them — the model tags a loanword with
+a particle ``f`` too (스프린트에서 ``f+jca``) — so what is refused is Hangul
+that ends in a sentence-final ending, which no noun does. A token with a Latin
+letter or a digit (API는, K8s) is never refused here. #391."""
 
 _NOUN_SUFFIX_TAG = "xsn"
 """A noun-forming suffix, as in ``실시간`` (``ncpa+xsn``). A token that is a
@@ -118,7 +130,7 @@ noun plus this is still a bare noun; anything else after a ``+`` — a particle
 grammar, and joining it into a label would put "개인화로" in a report where
 "개인화" belongs."""
 
-RULES_VERSION = "spoken-2"
+RULES_VERSION = "spoken-3"
 """The version of the judgements in this file, appended to the extractor's.
 
 ``ko_core_news_lg-3.8.0`` names the weights, and the weights are half of what
@@ -583,6 +595,8 @@ def noun_stem(token: Token) -> str | None:
     """
     parts = token.tag.split("+")
     if not parts[0].startswith(_NOUN_TAG_PREFIXES):
+        return None
+    if parts[0] == "f" and _FOREIGN_VERB.match(token.text):
         return None
     if is_bare_noun(token.tag):
         return token.text
