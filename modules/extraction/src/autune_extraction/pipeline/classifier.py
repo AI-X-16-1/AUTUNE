@@ -1,9 +1,9 @@
 """The utterance classifier: in-process weights, our own inference server, a fake.
 
-Three implementations and deliberately no fourth. There is no external-API option
-because sending a meeting's utterances to somebody else's classifier is a decision
-about where personal data goes, and `privacy.md` section 6 makes that a design
-conversation rather than a value of ``AUTUNE_EXTRACTION_CLASSIFIER_IMPL``.
+The external option lives elsewhere, in ``pipeline.llm``, and is opt-in: sending a
+meeting's utterances to somebody else's model is a decision about where personal
+data goes, which `privacy.md` section 6 makes a design conversation (#392) rather
+than a default of ``AUTUNE_EXTRACTION_CLASSIFIER_IMPL``.
 
 ``torch`` and ``transformers`` are imported inside the class that needs them.
 Importing at module scope would make ``apps/api`` load a deep-learning stack to

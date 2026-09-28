@@ -9,4 +9,4 @@ export { RecordingFrame } from "./RecordingFrame";
 export { Row } from "./Row";
 export { ScoreLabel, type ScoreLevel } from "./ScoreLabel";
 export { StatusDot, type StatusVariant } from "./StatusDot";
-export { Tabs } from "./Tabs";
+export { TabLinks, Tabs } from "./Tabs";

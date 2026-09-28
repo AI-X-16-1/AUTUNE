@@ -44,8 +44,8 @@ def test_an_extending_template_names_both_files_in_its_version() -> None:
     ``general`` would then be averaged together with one raised after it — the
     thing ``template_version`` exists to keep apart.
     """
-    assert template.get_template("general").version == "general.1"
-    assert template.get_template("feature_planning").version == "general.1+feature_planning.1"
+    assert template.get_template("general").version == "general.2"
+    assert template.get_template("feature_planning").version == "general.2+feature_planning.1"
 
 
 def test_every_shipped_item_can_raise_a_usable_gap() -> None:

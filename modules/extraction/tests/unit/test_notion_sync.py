@@ -205,6 +205,108 @@ def test_an_update_clears_a_field_the_edit_emptied(session: Session) -> None:
     assert sent["담당자"] == {"rich_text": []}
 
 
+def test_an_edit_to_an_item_whose_page_was_deleted_makes_a_new_page(session: Session) -> None:
+    """#403: someone deleted the page in Notion. Every later update was refused
+    and rolled back, so the item never reached Notion again. The edit now makes
+    a new page in the team's database and the ref points at it."""
+    notion = FakeNotion()
+    row = item(session)
+    ref = sync(session, notion, row.id)
+    assert ref is not None
+    old_page = ref.external_id
+    assert old_page is not None
+    notion.deleted.add(old_page)
+
+    row.due_date = None
+    again = sync(session, notion, row.id)
+
+    assert again is not None
+    assert len(notion.pages) == 2
+    assert again.external_id == "page_2"
+    assert again.url == service.notion_url("page_2")
+    assert "마감일" not in notion.pages[1][1], "a new page has no stale field to clear"
+    assert notion.updates == []
+
+    row.status = "done"
+    sync(session, notion, row.id)
+    assert notion.updates[0][0] == "page_2", "later edits go to the new page"
+
+
+def test_an_edit_to_an_item_whose_page_was_archived_leaves_it_archived(session: Session) -> None:
+    """PARKJAEKYUNG0525, review of #404: a person archives a finished item's
+    page to tidy the database. The next edit must not bring it back as a new
+    page -- and must not fail the sync either, or every edit after it would."""
+    notion = FakeNotion()
+    row = item(session)
+    ref = sync(session, notion, row.id)
+    assert ref is not None
+    old_page = ref.external_id
+    assert old_page is not None
+    notion.archived.add(old_page)
+    heard: list[str] = []
+
+    row.status = "done"
+    again = sync(session, notion, row.id, on_page=heard.append)
+
+    assert again is not None
+    assert len(notion.pages) == 1, "no second page"
+    assert again.external_id == old_page
+    assert heard == ["archived"]
+
+
+def test_a_refusal_whose_page_cannot_be_looked_up_raises_and_keeps_the_ref(
+    session: Session,
+) -> None:
+    """PARKJAEKYUNG0525, review of #404: the update is refused and so is the
+    look-up (a revoked token). Nothing is made, the ref still points where it
+    did, and the error reaches the caller, which rolls back."""
+
+    class RevokedAfterCreate(FakeNotion):
+        def update_page(self, page_id: str, properties: dict) -> None:
+            raise PermanentIntegrationError("notion rejected the request with 401")
+
+        def page_state(self, page_id: str) -> str:
+            raise PermanentIntegrationError(
+                "notion rejected the request with 401", upstream_status=401
+            )
+
+    notion = RevokedAfterCreate()
+    row = item(session)
+    ref = sync(session, notion, row.id)
+    assert ref is not None
+    old_page = ref.external_id
+
+    with pytest.raises(PermanentIntegrationError):
+        sync(session, notion, row.id)
+
+    assert len(notion.pages) == 1
+    assert ref.external_id == old_page
+
+
+def test_a_refused_update_of_a_page_that_still_exists_makes_no_second_page(
+    session: Session,
+) -> None:
+    """#403's guard: a refusal that is not a missing page (a bad property, a
+    conflict) raises as before. A new page for one that still exists would
+    leave two."""
+
+    class RefusingUpdates(FakeNotion):
+        def update_page(self, page_id: str, properties: dict) -> None:
+            raise PermanentIntegrationError("notion rejected the request with 400")
+
+    notion = RefusingUpdates()
+    row = item(session)
+    ref = sync(session, notion, row.id)
+    assert ref is not None
+    old_page = ref.external_id
+
+    with pytest.raises(PermanentIntegrationError):
+        sync(session, notion, row.id)
+
+    assert len(notion.pages) == 1
+    assert ref.external_id == old_page
+
+
 def test_a_sync_holding_the_ref_lock_sends_the_edit_committed_after_it_started(
     session: Session,
 ) -> None:
@@ -295,6 +397,45 @@ def test_a_claim_that_lands_mid_flight_gets_an_update_not_a_dropped_edit(
     assert notion.pages == [], "no second create -- the race's claim already made the page"
     assert len(notion.updates) == 1
     assert notion.updates[0][0] == "page_from_other_worker"
+
+
+def test_a_claim_race_onto_a_deleted_page_makes_a_new_page(
+    session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """PARKJAEKYUNG0525, review of #404: the claim-race path updates too, so
+    it recovers a deleted page the same way. Same race as the test above."""
+    engine = session.get_bind()
+    row = item(session)
+    session.commit()
+
+    real_insert_if_absent_into = service._insert_if_absent_into
+    already_raced = False
+
+    def racing_insert_if_absent_into(s: Session, model: type) -> object:
+        nonlocal already_raced
+        if not already_raced and model is ExtExternalRef:
+            already_raced = True
+            with Session(engine) as other:
+                other.add(
+                    ExtExternalRef(
+                        action_item_id=row.id,
+                        system="notion",
+                        meeting_id=MEETING,
+                        external_id="page_from_other_worker",
+                    )
+                )
+                other.commit()
+        return real_insert_if_absent_into(s, model)
+
+    monkeypatch.setattr(service, "_insert_if_absent_into", racing_insert_if_absent_into)
+
+    notion = FakeNotion(deleted={"page_from_other_worker"})
+    heard: list[str] = []
+    result = sync(session, notion, row.id, on_page=heard.append)
+
+    assert result is not None
+    assert heard == ["replaced"]
+    assert result.external_id == "page_1"
 
 
 def test_a_failed_call_takes_the_claim_back_so_a_later_sync_can_send(session: Session) -> None:
