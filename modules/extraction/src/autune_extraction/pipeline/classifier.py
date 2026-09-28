@@ -13,9 +13,11 @@ serve a health check, and would make this module's unit tests need one.
 from __future__ import annotations
 
 import hashlib
+import threading
 import time
 from collections.abc import Callable, Iterator, Mapping
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import FIRST_EXCEPTION, ThreadPoolExecutor
+from concurrent.futures import wait as wait_for_futures
 from typing import TYPE_CHECKING, Any
 
 from autune_contracts.enums import UtteranceKind
@@ -463,11 +465,21 @@ meeting is not supposed to be able to do that. Four is a guess conservative
 enough not to matter until there is a latency distribution to pick a real
 number from.
 
-This does not change what one bad batch does to the meeting -- a batch that
-exhausts its retries still fails the whole ``classify`` call, same as before.
-It only stops the *other* batches from waiting behind each other for no
-reason.
+**A batch that exhausts its retries still fails the whole ``classify`` call,
+and the batches that had not started yet are never sent.** The first version
+submitted every batch and waited on all of them, so against a server that is
+down a 28-batch meeting sent 84 requests (every batch x 3 attempts) and held
+the worker ~230 s, where the sequential loop stopped after 3 requests and
+~32 s (PARKJAEKYUNG0525's review of #113's PR, #365). Now the first failure
+cancels every batch still queued; only the ones already in flight -- at most
+``MAX_CONCURRENT_BATCHES`` -- are waited for, so none is cut off mid-request.
+The request count before failing is bounded by this number times
+``len(RETRY_BACKOFF_SEC) + 1``, not by the meeting's length.
 """
+
+
+class _SkippedBatchError(Exception):
+    """A batch never sent because another one had already failed."""
 
 
 class HostedDeberta:
@@ -546,6 +558,17 @@ class HostedDeberta:
                 time.sleep(wait)
         return self._client.request("POST", "/classify", json={"texts": batch})
 
+    def _post_unless_stopped(self, batch: list[str], *, index: int, stop: threading.Event) -> Any:
+        """``_post``, unless another batch has already failed; a failure here
+        raises the flag for the batches not yet started."""
+        if stop.is_set():
+            raise _SkippedBatchError
+        try:
+            return self._post(batch, index=index)
+        except BaseException:
+            stop.set()
+            raise
+
     def classify(self, texts: list[str]) -> list[Prediction]:
         if not texts:
             return []
@@ -555,22 +578,36 @@ class HostedDeberta:
         # `min` so a short meeting (one or two batches) does not spin up idle
         # worker threads it will never use.
         with ThreadPoolExecutor(max_workers=min(MAX_CONCURRENT_BATCHES, len(batches))) as pool:
+            stop = threading.Event()
             futures = {
-                pool.submit(self._post, batch, index=index): index
+                pool.submit(self._post_unless_stopped, batch, index=index, stop=stop): index
                 for index, batch in enumerate(batches)
             }
-            # Not `as_completed`: every future is waited on regardless of which
-            # one raises first, so one batch's exhausted retries do not cut off
-            # the others while they are still in flight against a shared
-            # connection pool.
-            first_error: BaseException | None = None
-            for future, index in futures.items():
-                try:
-                    bodies[index] = future.result()
-                except BaseException as exc:  # noqa: BLE001 - re-raised below, not swallowed
-                    first_error = first_error or exc
-            if first_error is not None:
-                raise first_error
+            # Returns as soon as any batch fails. The queued ones are cancelled
+            # -- they never reach the server -- and leaving the `with` block
+            # waits only for the ones already in flight, so no request is cut
+            # off mid-way (see MAX_CONCURRENT_BATCHES). `stop` closes the gap
+            # cancel() leaves: a worker that frees up between the failure and
+            # the cancel would otherwise start the next queued batch.
+            done, pending = wait_for_futures(futures, return_when=FIRST_EXCEPTION)
+            failed = sorted(
+                (
+                    f
+                    for f in done
+                    if f.exception() is not None
+                    and not isinstance(f.exception(), _SkippedBatchError)
+                ),
+                key=lambda f: futures[f],
+            )
+            if failed:
+                for future in pending:
+                    future.cancel()
+        if failed:
+            # The earliest failed batch, so the error a caller sees does not
+            # depend on thread scheduling.
+            raise failed[0].exception()  # type: ignore[misc]
+        for future, index in futures.items():
+            bodies[index] = future.result()
 
         predictions: list[Prediction] = []
         for index, batch in enumerate(batches):

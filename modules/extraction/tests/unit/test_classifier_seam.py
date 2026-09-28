@@ -800,29 +800,42 @@ def test_predictions_stay_in_order_even_when_a_later_batch_answers_first() -> No
     assert [p.kind for p in predictions] == [K.COMMITMENT, K.DECISION, K.OPEN_QUESTION]
 
 
-def test_one_exhausted_batch_still_waits_for_the_others_before_failing(
+def test_a_failed_batch_cancels_the_queued_ones_and_waits_for_those_in_flight(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A batch that gives up must not cut the others off mid-flight -- every
-    submitted batch is waited on before ``classify`` raises."""
+    """PARKJAEKYUNG0525's review of #365: against a server that always fails,
+    the first version sent every batch x every attempt (84 requests for 28
+    batches; main stopped at 3). Now the queued batches are never sent -- the
+    count is bounded by the in-flight ones, not by the meeting -- and the ones
+    already in flight finish rather than being cut off.
+
+    The delay is ``threading.Event().wait``, not ``time.sleep``:
+    ``classifier_module.time`` *is* the ``time`` module, so patching its
+    ``sleep`` (to skip the backoff) would also turn a ``time.sleep`` delay here
+    into a no-op and leave nothing in flight to observe."""
     monkeypatch.setattr(classifier_module.time, "sleep", lambda _seconds: None)
+    calls: list[str] = []
     finished: list[str] = []
     lock = threading.Lock()
 
-    class OneFailsServer:
+    class AlwaysFailsServer:
         def request(self, method: str, path: str, *, json: dict) -> dict:
             tag = json["texts"][0][0]
-            if tag == "A":
-                raise TransientIntegrationError("extraction-classifier returned 502")
-            time.sleep(0.1)
+            with lock:
+                calls.append(tag)
+            threading.Event().wait(0.05)
             with lock:
                 finished.append(tag)
-            return {"scores": [[0.0, 0.0, 0.0, 0.0, 0.0, 1.0]]}
+            raise TransientIntegrationError("extraction-classifier returned 502")
 
     classifier = HostedDeberta("http://inference.invalid", "ckpt")
-    classifier._client = OneFailsServer()  # type: ignore[assignment]
+    classifier._client = AlwaysFailsServer()  # type: ignore[assignment]
+    letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ01"  # 28 batches, as in the review
 
     with pytest.raises(TransientIntegrationError):
-        classifier.classify(_one_batch_per_letter("ABC"))
+        classifier.classify(_one_batch_per_letter(letters))
 
-    assert set(finished) == {"B", "C"}, "B and C were in flight and must still finish"
+    attempts = len(classifier_module.RETRY_BACKOFF_SEC) + 1
+    assert len(calls) <= classifier_module.MAX_CONCURRENT_BATCHES * attempts
+    assert len(set(calls)) <= classifier_module.MAX_CONCURRENT_BATCHES, "queued batches never sent"
+    assert len(finished) == len(calls), "every request that started was allowed to finish"
