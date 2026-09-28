@@ -381,6 +381,34 @@ CPU with a warning. CPU works, which is exactly the problem: a fallback turns
 14.3× into a log line, and section 4 below is a list of failures that looked
 like successes until somebody measured.
 
+**That rule cost a working deployment, and review caught it before it shipped.**
+Four reviewers converged on the same hole (#394). `uv sync` installs a CPU torch
+wheel on Windows while faster-whisper reaches the GPU through CTranslate2's own
+CUDA, so `AUTUNE_AUDIO_DEVICE=cuda` is a configuration that works today with
+`torch.cuda.is_available()` False — measured by @kjfcvx12 on an RTX 3060. An
+empty `DIARIZATION_DEVICE` inherits that `cuda`, so the rule as written would
+have failed every meeting on a box that changed no setting of its own, and the
+troubleshooting table in `environments.md` recommends exactly that setting.
+
+The distinction the rule was missing is between a device you asked for and one
+you inherited. An explicit `DIARIZATION_DEVICE` is a promise and still raises.
+An empty one takes CPU and logs `diarization_device_unavailable` naming the
+variable — which regresses nothing, because diarization has run on CPU since it
+shipped. What it removes is the silence, not the speed.
+
+**And it raised after thirteen minutes of Whisper.** `resolve_device` was
+reached only from `_load`, the last step inside the `adopt` block, so the error
+arrived after transcription and the block deleted the upload on the way out —
+a mistake knowable before the file was opened, charged the whole recording.
+`process` now resolves the device before `adopt`, so it fails in milliseconds
+with the upload still on disk for the sweep. Two integration tests hold the
+order: one asserts `resolve_device → decode → transcribe`, the other that an
+unusable device decodes nothing and leaves the file.
+
+**CUDA is still unmeasured.** The 0 ms agreement is CPU against MPS. Whether a
+CUDA box produces the same turns, and how pyannote shares VRAM with Whisper
+`large-v3` in fp16, are open; `=cpu` is the way out.
+
 **This is what brings the module inside its processing-time target**, which was
 not obvious when it was written: at the time the baseline was thought to be 3.0×
 and this looked like an improvement from 3.0× to 2.5×. The baseline was wrong —
