@@ -76,15 +76,16 @@ class AudioSettings(BaseSettings):
 
     "Marginally better" understated it in both directions. Measured on a
     six-person 5m27s recording (HISTORY.md, section 2): beam 5 transcribes in
-    817 s at 89.4% accuracy, beam 1 in 204 s at 82.8% — four times faster for
-    6.6 points, and 151 deletions against 27, so the shorter beam drops content
+    411 s at 89.4% accuracy, beam 1 in 204 s at 82.8% — twice as fast for 6.6
+    points, and 151 deletions against 27, so the shorter beam drops content
     rather than just mishearing it.
 
-    **5 does not reach the processing-time target**, which this docstring used
-    to claim it assumed: 989 s total for 327 s of audio is 3.0×, against the
-    1.5× in ``modules/audio/CLAUDE.md``. Beam 1 reaches it at 1.14×. Which of
-    the two the product wants is not a tuning decision, so the default stays at
-    the accurate one and the number is written down instead."""
+    **5 reaches the processing-time target**, which this docstring originally
+    claimed without a number and then briefly claimed the opposite of: 434 s
+    total for 327 s of audio is 1.32×, against the 1.5× in
+    ``modules/audio/CLAUDE.md``. That holds with diarization on a GPU
+    (``diarization_device``); on CPU the same meeting is about 1.78× and over.
+    Beam 1 is still 60 s faster and no longer a trade anybody has to make."""
 
     model_cache: str = ""
     """Where model weights are downloaded. Empty uses the library default.
