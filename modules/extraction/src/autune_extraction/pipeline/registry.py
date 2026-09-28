@@ -19,9 +19,10 @@ _CLASSIFIERS: dict[str, str] = {
     "local": "weights in this process",
     "hosted": "our own inference server",
     "fake": "deterministic, for tests",
+    "llm": "a cloud LLM API, masked utterance text only (pipeline.llm)",
 }
-"""Known implementations and what they are. There is no external-API entry, and
-adding one is a privacy decision rather than a dictionary key -- see base."""
+"""Known implementations and what they are. ``llm`` is the one that leaves our
+infrastructure; it is opt-in and never the default -- see base."""
 
 _NLI: dict[str, str] = {
     "local": "weights in this process",
@@ -66,6 +67,20 @@ def get_classifier() -> Classifier:
         return HostedDeberta(settings.classifier_endpoint, settings.classifier_checkpoint)
     if impl == "fake":
         return FakeClassifier()
+    if impl == "llm":
+        if not settings.llm_api_key:
+            raise ValueError(
+                "AUTUNE_EXTRACTION_CLASSIFIER_IMPL=llm needs AUTUNE_EXTRACTION_LLM_API_KEY"
+            )
+        from .llm import LlmClassifier  # noqa: PLC0415 - only a worker that opted in pays for it
+
+        return LlmClassifier(
+            api_key=settings.llm_api_key,
+            model=settings.llm_model,
+            base_url=settings.llm_base_url,
+            timeout_sec=settings.llm_timeout_sec,
+            fallback_model=settings.llm_fallback_model,
+        )
 
     raise ValueError(
         f"unknown AUTUNE_EXTRACTION_CLASSIFIER_IMPL={impl!r}; known: {sorted(_CLASSIFIERS)}"

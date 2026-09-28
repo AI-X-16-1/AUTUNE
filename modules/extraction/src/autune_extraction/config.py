@@ -20,11 +20,12 @@ class ExtractionSettings(BaseSettings):
     )
 
     classifier_impl: str = "local"
-    """Which classifier to run: ``local``, ``hosted`` or ``fake``.
+    """Which classifier to run: ``local``, ``hosted``, ``fake`` or ``llm``.
 
-    No ``external``. Sending a meeting's utterances to somebody else's classifier
-    is a decision about where personal data goes, not a config value -- see
-    ``pipeline.base``."""
+    ``llm`` sends masked utterance text -- nothing else -- to a cloud LLM
+    (``pipeline.llm``). It is never the default: where a meeting's text may go is
+    a privacy decision, and the team signs it off before it is enabled outside a
+    demo -- see ``pipeline.base``."""
 
     classifier_checkpoint: str = ""
     """Pinned, and recorded with every classification. Never a floating tag.
@@ -49,6 +50,29 @@ class ExtractionSettings(BaseSettings):
 
     classifier_endpoint: str = ""
     """Our own inference server, required when ``classifier_impl=hosted``."""
+
+    llm_api_key: str = ""
+    """Provider API key for ``classifier_impl=llm``. Sent as a header, never in a
+    body or URL. Blank makes the registry refuse ``llm`` by name."""
+
+    llm_model: str = "gemini-3.8-flash"
+    """The model ``classifier_impl=llm`` calls; recorded as ``llm:<model>`` with
+    every classification. 3.8 Flash found all 14 action items in the 8.txt
+    comparison (2026-09-28); 3.5 Flash-Lite found 12 at a seventh of the cost."""
+
+    llm_fallback_model: str = "gemini-3.5-flash-lite"
+    """Answers a window when ``llm_model`` stays unavailable (429/5xx/timeout after
+    its retries). 3.8 Flash returned 503 three times running on 2026-09-28;
+    Flash-Lite scored commitment F1 0.909 on 8.txt against 3.8 Flash's 0.968.
+    Blank disables the fallback."""
+
+    llm_base_url: str = "https://generativelanguage.googleapis.com/v1beta"
+    """The provider's API root for ``classifier_impl=llm``."""
+
+    llm_timeout_sec: float = 60.0
+    """Read timeout per window for ``classifier_impl=llm``. A thinking model took
+    12-20 s a window against the real API; the shared client's 10 s made every
+    window time out and retry."""
 
     classifier_device: str = "cpu"
     """``cpu`` or ``cuda``, for ``classifier_impl=local``. Mirrors
