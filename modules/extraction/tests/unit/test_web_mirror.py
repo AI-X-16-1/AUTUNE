@@ -45,6 +45,8 @@ def test_the_web_read_model_mirror_is_current() -> None:
         "assignee_name",
         "description_resolved",
         "due_text",
+        "deleted_source_count",
+        "needs_reassignment",
     }
     assert ts_fields("ActionItemRead") == added, f"update {TYPES_TS}"
     assert ts_fields("ExternalRefRead") == set(ExternalRefRead.model_fields), f"update {TYPES_TS}"

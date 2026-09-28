@@ -26,7 +26,15 @@ from autune_contracts.extraction import (
     ExtractionResult,
 )
 from autune_contracts.transcript import Utterance as TranscriptUtterance
-from autune_core import Meeting, Participant, User, Utterance, get_logger, session_scope
+from autune_core import (
+    Meeting,
+    Participant,
+    TeamMember,
+    User,
+    Utterance,
+    get_logger,
+    session_scope,
+)
 from autune_core.errors import NotFoundError, ValidationError
 from autune_integrations import SlackApi, assert_personal_delivery
 from autune_integrations.privacy import find_unmasked
@@ -352,8 +360,12 @@ def read_model(
     assignee_name: str | None = None,
     summary: str | None = None,
     sync_refs: list[ExternalRefRead] | None = None,
+    assignee_departed: bool = False,
 ) -> ActionItemRead:
     """One item as this module's own screens read it.
+
+    ``assignee_departed`` comes from ``departed_assignees``; see
+    ``ActionItemRead.needs_reassignment`` for what it changes.
 
     Built here rather than by ``from_attributes`` on the schema because five of
     its fields are not columns: the source ids live in the link table, whether
@@ -389,23 +401,77 @@ def read_model(
         and item.confidence < threshold
         and item.status == ActionStatus.NEEDS_CONFIRMATION.value
     )
+    source_ids = live_source_ids(item)
     return ActionItemRead(
         id=item.id,
         meeting_id=item.meeting_id,
         description=item.description,
         description_resolved=item.description_resolved,
-        assignee_id=item.assignee_id,
+        assignee_id=None if assignee_departed else item.assignee_id,
         assignee_label=item.assignee_label,
-        assignee_name=assignee_name,
+        assignee_name=None if assignee_departed else assignee_name,
         due_date=item.due_date,
         due_text=item.due_text,
         status=item.status,
         confidence=item.confidence,
         origin=item.origin,
-        source_utterance_ids=[source.utterance_id for source in item.sources],
+        source_utterance_ids=source_ids,
+        deleted_source_count=len(item.sources) - len(source_ids),
+        needs_reassignment=assignee_departed and item.status in _OPEN_STATUSES,
         is_candidate=is_candidate,
         summary=summary,
         sync_refs=sync_refs or [],
+    )
+
+
+_OPEN_STATUSES = frozenset({ActionStatus.TODO.value, ActionStatus.IN_PROGRESS.value})
+
+
+def live_source_ids(item: ExtActionItem) -> list[str]:
+    """The item's source utterances that still exist, in insertion order.
+
+    A link row outlives its utterance with ``utterance_id`` NULL (see
+    ``ExtActionItemSource``); those are counted, never listed.
+    """
+    return [source.utterance_id for source in item.sources if source.utterance_id is not None]
+
+
+def departed_assignees(session: Session, items: Sequence[ExtActionItem]) -> set[str]:
+    """Ids of the items whose assignee is not a member of the meeting's team.
+
+    Reads the shared ``team_members`` table and never writes it (invariant 4).
+    One query for the whole list. Same rule as module D's
+    ``_current_team_member_ids``, keyed on the item's meeting rather than a
+    thread.
+    """
+    ids = [item.id for item in items if item.assignee_id is not None]
+    if not ids:
+        return set()
+    member = (
+        select(TeamMember.id)
+        .where(
+            TeamMember.team_id == Meeting.team_id,
+            TeamMember.user_id == ExtActionItem.assignee_id,
+        )
+        .exists()
+    )
+    rows = session.scalars(
+        select(ExtActionItem.id)
+        .join(Meeting, Meeting.id == ExtActionItem.meeting_id)
+        .where(ExtActionItem.id.in_(ids), ~member)
+    )
+    return set(rows)
+
+
+def read_one(session: Session, item: ExtActionItem) -> ActionItemRead:
+    """``read_model`` for a single item a route just wrote, with its assignee
+    looked up. No summary or sync refs -- the routes that write never sent
+    them."""
+    name = assignee_names(session, [item]).get(item.assignee_id) if item.assignee_id else None
+    return read_model(
+        item,
+        assignee_name=name,
+        assignee_departed=item.id in departed_assignees(session, [item]),
     )
 
 
@@ -459,6 +525,7 @@ def list_action_items(
 
     items = list(session.scalars(query))
     names = assignee_names(session, items)
+    departed = departed_assignees(session, items)
     summaries = action_item_summaries(session, items)
     refs = action_item_external_refs(session, [item.id for item in items])
     return [
@@ -467,6 +534,7 @@ def list_action_items(
             assignee_name=names.get(item.assignee_id) if item.assignee_id else None,
             summary=summaries.get(item.id),
             sync_refs=refs.get(item.id, []),
+            assignee_departed=item.id in departed,
         )
         for item in items
     ]
@@ -485,8 +553,11 @@ def read_detail(session: Session, item: ExtActionItem) -> ActionItemDetail:
     name = names.get(item.assignee_id) if item.assignee_id else None
     summary = action_item_summaries(session, [item]).get(item.id)
     refs = action_item_external_refs(session, [item.id]).get(item.id, [])
+    departed = item.id in departed_assignees(session, [item])
     return ActionItemDetail(
-        **read_model(item, assignee_name=name, summary=summary, sync_refs=refs).model_dump(),
+        **read_model(
+            item, assignee_name=name, summary=summary, sync_refs=refs, assignee_departed=departed
+        ).model_dump(),
         sources=source_utterances(session, item.id),
     )
 
@@ -552,13 +623,12 @@ def action_item_summaries(session: Session, items: Sequence[ExtActionItem]) -> d
     way), and repeating it as ``summary`` would be a second copy of the same
     line, not a new one.
     """
-    multi = [item for item in items if len(item.sources) > 1]
-    texts = _summary_texts(
-        session, {source.utterance_id for item in multi for source in item.sources}
-    )
+    live = {item.id: live_source_ids(item) for item in items}
+    multi = [item for item in items if len(live[item.id]) > 1]
+    texts = _summary_texts(session, {uid for item in multi for uid in live[item.id]})
     summaries: dict[str, str] = {}
     for item in multi:
-        candidates = [texts[s.utterance_id] for s in item.sources if s.utterance_id in texts]
+        candidates = [texts[uid] for uid in live[item.id] if uid in texts]
         if candidates:
             summaries[item.id] = _truncate(max(candidates, key=len))
     return summaries
@@ -963,7 +1033,7 @@ def contract_action_item(item: ExtActionItem) -> ActionItem:
         assignee_id=item.assignee_id,
         assignee_label=item.assignee_label,
         due_date=item.due_date,
-        source_utterance_ids=[source.utterance_id for source in item.sources],
+        source_utterance_ids=live_source_ids(item),
         status=ActionStatus(item.status),
         confidence=item.confidence,
     )

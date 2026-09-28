@@ -10,11 +10,12 @@ See docs/architecture/data-model.md and docs/modules/context.md.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     CheckConstraint,
+    Date,
     DateTime,
     Float,
     ForeignKey,
@@ -100,7 +101,7 @@ class CtxTopicLink(Base, TimestampMixin):
     linked_meeting_id: Mapped[str | None] = mapped_column(
         String(64), ForeignKey("meetings.id", ondelete="SET NULL")
     )
-    linked_meeting_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    linked_meeting_date: Mapped[date | None] = mapped_column(Date)
     similarity: Mapped[float] = mapped_column(Float, nullable=False)
     rerank_score: Mapped[float] = mapped_column(Float, nullable=False)
     confidence: Mapped[float] = mapped_column(Float, nullable=False)
@@ -193,9 +194,35 @@ class CtxMeetingStatus(Base, TimestampMixin):
     deadline_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     notified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    """Set once ``notify_context_events`` claims this meeting's Slack notices,
-    *before* any are sent -- see ``service.claim_notifications``. Guards
-    against a duplicate post if the task is redelivered, at the cost of a
-    notice going unsent (never retried) if the worker dies between the claim
-    and the send. Same trade-off ``published_at`` already makes for the
-    publish step."""
+    """Set once ``tasks.notify_context_events`` claims this meeting's topic-link
+    and drift notices, *before* any are sent. Guards against a duplicate post
+    if the task is redelivered, at the cost of a notice going unsent (never
+    retried) if the worker dies between the claim and the send. Same
+    trade-off ``published_at`` already makes for the publish step."""
+    late_drift_notified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    """Set once ``tasks.notify_late_drift`` claims this meeting's catch-up
+    drift notice, *before* it is sent, and cleared -- there is nothing left to
+    claim -- alongside it. Only relevant for a meeting whose lineage arrived
+    after ``notified_at`` already fired -- see ``late_drift_due_at`` and
+    ``publish_if_ready(force=...)``."""
+    late_drift_due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    """Set by ``service.build_decision_lineage`` in the same transaction as
+    ``extraction_seen`` when this run's lineage is late (arrived after a
+    B-timeout publish). ``extraction_seen`` flips exactly once, so a naive
+    "was this run late" check reads False on a Celery redelivery of
+    ``on_extraction_completed`` that lands after the first run's commit but
+    before its ``publish_if_ready.delay(force=True)`` -- the drift warning
+    that redelivery owes would otherwise be silently lost. This column
+    survives across such a redelivery instead: ``build_decision_lineage``
+    returns ``late_drift_due_at is not None`` rather than a freshly computed
+    boolean, so the "still owed" state persists on the row until
+    ``notify_late_drift`` clears it -- because it claimed the send, or because
+    the team has no Slack channel to send to.
+
+    That protects the window between ``build_decision_lineage``'s commit and
+    ``notify_late_drift``'s claim. It does not protect the send itself:
+    ``notify_late_drift`` sets ``late_drift_notified_at`` and clears this
+    column in one commit *before* posting, so a worker that dies after that
+    commit and before the post loses the notice for good. That is the
+    accept-a-lost-notice-over-a-duplicate trade ``notified_at`` already
+    makes, kept here on purpose."""

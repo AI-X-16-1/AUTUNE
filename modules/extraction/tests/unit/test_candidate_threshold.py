@@ -41,7 +41,10 @@ def _isolated_settings(monkeypatch: pytest.MonkeyPatch):
 
 
 def item(
-    *, confidence: float = 0.9, sources: tuple[str, ...] = (), status: str = "needs_confirmation"
+    *,
+    confidence: float = 0.9,
+    sources: tuple[str | None, ...] = (),
+    status: str = "needs_confirmation",
 ) -> ExtActionItem:
     row = ExtActionItem(
         id="act_1",
@@ -79,6 +82,65 @@ def test_a_hand_added_item_reports_no_sources_rather_than_omitting_the_field() -
     assert read.source_utterance_ids == []
 
 
+def test_a_deleted_source_is_counted_not_listed() -> None:
+    """ADR 0007: a model item whose utterance went says so, rather than
+    reading as hand-added. The link row survives with a NULL id."""
+    read = service.read_model(item(sources=("utt_1", None)))
+
+    assert read.source_utterance_ids == ["utt_1"]
+    assert read.deleted_source_count == 1
+
+
+def test_an_item_whose_every_source_went_is_still_the_models() -> None:
+    """The case the drawer used to call "직접 추가"."""
+    read = service.read_model(item(sources=(None, None)))
+
+    assert read.source_utterance_ids == []
+    assert read.deleted_source_count == 2
+    assert read.origin == "model"
+
+
+@pytest.mark.parametrize(
+    ("status", "flagged"),
+    [("todo", True), ("in_progress", True), ("done", False), ("needs_confirmation", False)],
+)
+def test_only_an_open_item_with_a_departed_assignee_needs_reassigning(
+    status: str, flagged: bool
+) -> None:
+    """ADR 0007: an open commitment is reassigned, never orphaned. A closed one
+    needs nothing; a draft is not anyone's commitment yet."""
+    row = item(status=status)
+    row.assignee_id = "user_gone"
+
+    read = service.read_model(row, assignee_name="떠난 사람", assignee_departed=True)
+
+    assert read.needs_reassignment is flagged
+
+
+def test_a_departed_assignee_is_cleared_from_the_response_whatever_the_status() -> None:
+    """ "Its assignee clears", at read time: the stored column keeps the id."""
+    row = item(status="done")
+    row.assignee_id = "user_gone"
+
+    read = service.read_model(row, assignee_name="떠난 사람", assignee_departed=True)
+
+    assert (read.assignee_id, read.assignee_name) == (None, None)
+    assert row.assignee_id == "user_gone"
+
+
+def test_a_present_assignee_is_untouched() -> None:
+    row = item(status="todo")
+    row.assignee_id = "user_here"
+
+    read = service.read_model(row, assignee_name="있는 사람")
+
+    assert (read.assignee_id, read.assignee_name, read.needs_reassignment) == (
+        "user_here",
+        "있는 사람",
+        False,
+    )
+
+
 def test_the_response_carries_every_field_the_board_reads() -> None:
     """A field dropped from this schema does not fail anywhere — the client
     reads ``undefined`` and renders the falsy branch. Assert the whole set so a
@@ -97,6 +159,8 @@ def test_the_response_carries_every_field_the_board_reads() -> None:
         "confidence",
         "origin",
         "source_utterance_ids",
+        "deleted_source_count",
+        "needs_reassignment",
         "is_candidate",
         "sync_refs",
         "summary",

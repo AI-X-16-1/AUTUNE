@@ -142,7 +142,36 @@ class ActionItemRead(BaseModel):
     Ordered by row id, which is insertion order. ``ext_action_item_sources`` has
     no position column; when the drawer needs them in spoken order that is the
     change to make, not a sort here over a field that does not exist.
+
+    Only utterances that still exist. One that was deleted is counted in
+    ``deleted_source_count`` instead.
     """
+
+    deleted_source_count: int = 0
+    """How many of this item's sources were deleted after it was made (ADR 0007,
+    "Missing attribution is shown, not hidden").
+
+    Without it, a model item whose transcript went has an empty
+    ``source_utterance_ids`` -- the same shape as a hand-added item -- and the
+    drawer printed "직접 추가한 항목" over it. ``origin`` says who made the
+    item; this says its evidence is gone, and the screen needs both."""
+
+    needs_reassignment: bool = False
+    """An open item (``todo`` or ``in_progress``) whose assignee is no longer a
+    member of the meeting's team (ADR 0007, "An open commitment is reassigned,
+    never orphaned"). S17 puts it at the top of its column.
+
+    Derived on every read from ``team_members``, the way module D filters
+    ``key_stakeholders_absent``: nothing in the product removes a member yet,
+    so there is no departure event to store it from. Not a member covers a
+    guest who never was one as well as someone who left -- either way nobody
+    on the team holds the item, which is what the flag is for.
+
+    When the assignee is not a member, ``assignee_id`` and ``assignee_name`` on
+    this response are ``None`` whatever the status: ADR 0007's "its assignee
+    clears", applied at read time. The stored column keeps the id, so a person
+    who rejoins gets their items back. A ``done`` item does not need
+    reassigning and stays ``False``."""
 
     is_candidate: bool
     """Whether the model was unsure enough that this is shown apart from the

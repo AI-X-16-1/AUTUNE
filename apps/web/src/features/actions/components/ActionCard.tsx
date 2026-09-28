@@ -63,9 +63,20 @@ export function ActionCard({
       </div>
 
       <div className="mt-2 flex items-center gap-2" style={{ fontSize: "var(--text-metaSmall)" }}>
-        <span className="text-[var(--color-ink-body)]">
-          {item.assignee_name ?? item.assignee_label ?? "담당 미지정"}
-        </span>
+        {item.needs_reassignment ? (
+          // Text, not a fill: red belongs to elapsing time and failure
+          // (ui-spec section 0), and this is neither -- it is work nobody holds.
+          <span
+            className="text-[var(--color-ink-strong)]"
+            style={{ fontWeight: "var(--text-status-weight)" }}
+          >
+            재배정 필요
+          </span>
+        ) : (
+          <span className="text-[var(--color-ink-body)]">
+            {item.assignee_name ?? item.assignee_label ?? "담당 미지정"}
+          </span>
+        )}
         {item.due_date ? (
           <span
             style={{
@@ -121,7 +132,13 @@ export function ActionCard({
 function reasonFor(item: ActionItemRead): string {
   if (item.origin === "user") return "직접 추가";
   const sources = item.source_utterance_ids?.length ?? 0;
-  const base = item.summary ?? `근거 발화 ${sources}건`;
+  const deleted = item.deleted_source_count ?? 0;
+  // ADR 0007: a model item whose evidence was deleted says so, rather than
+  // printing "근거 발화 0건" as if the model had made it up.
+  const base =
+    sources === 0 && deleted > 0
+      ? "근거 발화 삭제됨"
+      : (item.summary ?? `근거 발화 ${sources}건`) + (deleted > 0 ? ` · ${deleted}건 삭제됨` : "");
   return isCandidate(item) ? `후보 · ${base}` : base;
 }
 
