@@ -330,9 +330,9 @@ def test_a_named_verbs_present_conditional_is_not_the_past(text: str) -> None:
     """Each of the four past-adnominal forms is also an exact prefix of the
     same verb's present/conditional -ㄴ다 conjugation -- "공유한" opens
     "공유한다면" the same way "겠" opens "겠다", which ``_NOT_PAST`` already
-    excludes for the syllable check. Without the ``(?!다)`` lookahead these
-    read as the past and lost their date the same way the genuine past forms
-    do (review by lsh2217 on #333, reproduced against all four verbs)."""
+    excludes for the syllable check. They are not followed by a noun that
+    takes a past mention, so ``_PAST_ADNOMINAL_VERBS`` does not match (review
+    by lsh2217 on #333, reproduced against all four verbs)."""
     assert parse_due(text, WEDNESDAY) == DueDate(text="월요일", date=date(2026, 9, 14))
 
 
@@ -344,6 +344,13 @@ def test_a_named_verbs_present_conditional_is_not_the_past(text: str) -> None:
         "월요일에 보낸 다음 확인하겠습니다",
         "월요일에 전달한 다음에 연락드릴게요",
         "월요일에 보낸대요",
+        # Third review round on #333: each dated on main, lost here before
+        # the lookahead became an allow-list.
+        "월요일에 자료 공유한 이후에 피드백 주세요",
+        "월요일에 보낸 직후 연락드릴게요",
+        "월요일에 보낸답니다",
+        "월요일에 자료 공유한답니다",
+        "월요일에 보낸단다",
     ],
 )
 def test_a_named_verbs_relative_past_before_a_later_event_is_not_the_past(text: str) -> None:
@@ -353,7 +360,8 @@ def test_a_named_verbs_relative_past_before_a_later_event_is_not_the_past(text: 
     드리겠습니다" in reverse. "보낸대요" is the same -ㄴ다 conjugation
     contracted to its colloquial quotative-present ("보낸다고 해" -> "보낸대")
     that ``test_a_named_verbs_present_conditional_is_not_the_past`` already
-    covers for the full form. Without the wider lookahead these read as a
-    reported past and lost their date the same way (review by lsh2217 on
-    #333, reproduced against all four verbs)."""
+    covers for the full form, and "-ㄴ답니다/-ㄴ단다" its formal and plain
+    forms. None is followed by a noun that takes a past mention, so each
+    keeps its date exactly as on ``main`` (review by lsh2217 on #333, three
+    rounds, reproduced against all four verbs)."""
     assert parse_due(text, WEDNESDAY) == DueDate(text="월요일", date=date(2026, 9, 14))

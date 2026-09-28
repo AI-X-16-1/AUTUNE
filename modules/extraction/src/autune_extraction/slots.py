@@ -183,9 +183,11 @@ _AGREED = re.compile(r"기로|[는할]\s*걸로|도록|자고")
 """What turns a past verb into an agreement about the date: 하기로 했다,
 드리는 걸로 했다, 끝내도록 했다, 하자고 했다."""
 
-_PAST_ADNOMINAL_VERBS = re.compile(r"(?:말씀드린|공유한|보낸|전달한)(?!다|대|\s*(?:후|뒤|다음))")
+_PAST_ADNOMINAL_VERBS = re.compile(
+    r"(?:말씀드린|공유한|보낸|전달한)(?=\s*(?:거|것|건|걸|게|대로|내용|자료|파일|부분))"
+)
 """The past adnominal -(으)ㄴ, but only for these four reporting verbs (#197's
-own candidate list), never as a general syllable check.
+own candidate list), and only before a noun that takes a past mention.
 
 -(으)ㄴ is past on a verb ("말씀드린" = said) and present on an adjective
 ("필요한" = necessary) -- the same spelling, different tense, and nothing
@@ -198,26 +200,18 @@ syllable rule cannot be; it answers nothing about a verb not on this list,
 and adding one is a data decision (#197's own eval-set plan), not a pattern
 someone noticed.
 
-**``(?!다|대)`` for the same reason ``_past_syllable`` excludes ``_NOT_PAST``.**
-Each of these four forms is also an exact prefix of the same verb's
-present/conditional ``-ㄴ다`` conjugation -- "공유한" opens "공유한다면"
-and "공유한다고", "보낸" opens "보낸다고", exactly as "겠" would open "겠다"
-if ``_NOT_PAST`` did not exclude it. Without the lookahead, "월요일에 자료
-공유한다면 좋겠습니다" -- a future conditional, not a reported past -- matched
-the same as "월요일에 자료 공유한 거" and lost its date the same way. "대" is
-the same conjugation contracted to its colloquial quotative-present form
-("보낸다고 해" -> "보낸대") -- "보낸대요" needs the same exclusion "보낸다고
-해요" does.
-
-**the trailing ``후/뒤/다음`` lookahead (whitespace-tolerant) exists because
--(으)ㄴ before "후/뒤/다음" is relative, not absolute, past.** "공유한 후"'s
--ㄴ is grammatically past-adnominal, but
-it is past *relative to the event that follows it*, not relative to the
-utterance -- "월요일에 자료 공유한 후 피드백 주세요" asks for feedback after a
-future Monday, the same shape as "3월 2일에 드리겠습니다" in reverse. Without
-this exclusion the phrase read as an already-happened past mention and lost
-its date exactly like the ``-ㄴ다`` conjugations above (review by lsh2217 on
-#333, reproduced with "후", "뒤", "다음", and "대" against all four verbs)."""
+**What may follow is an allow-list, not a deny-list.** Each form is also the
+start of things that are not a reported past: the -ㄴ다 conjugation
+("공유한다면", "보낸다고", contracted "보낸대요", formal "보낸답니다", "보낸단다")
+and a relative past before a later event ("공유한 후/뒤/다음/이후", "보낸
+직후" -- past relative to what follows, so "월요일에 자료 공유한 이후에 피드백
+주세요" is still due after Monday). Three review rounds on #333 (lsh2217)
+each found another member of that open set, because "not followed by X" can
+never list every X. So the form counts only when a noun that receives a past
+mention follows it -- "말씀드린 거/대로", "공유한 자료", "보낸 파일", "전달한
+내용". Anything else reads exactly as it does without this pattern, so a
+phrase outside the list cannot regress; growing the noun list is the same
+data question as growing the verb list."""
 
 
 def _past_syllable(ch: str) -> bool:
