@@ -152,6 +152,22 @@ def test_the_body_holds_utterance_text_and_the_instructions_and_nothing_else(sle
     assert provider.paths == ["/models/gemini-test:generateContent"]
 
 
+def test_an_addressing_key_holding_an_object_is_refused_before_anything_is_sent() -> None:
+    """mkkim68, review of #405: ``check_outbound`` skips everything under an
+    addressing key. If ``role`` ever held an object, the phone number inside
+    would leave unchecked -- so the client refuses the body first."""
+    client = llm_module._llm_client("http://llm.invalid", API_KEY, 5.0)
+    body = {"contents": [{"role": {"note": "010-1234-5678"}, "parts": [{"text": "안녕하세요"}]}]}
+
+    with pytest.raises(PrivacyViolationError, match="'role'"):
+        client.request("POST", "/models/m:generateContent", json=body)
+
+
+@pytest.mark.parametrize("key", ["role", "responseMimeType"])
+def test_string_addressing_values_pass(key: str) -> None:
+    llm_module.require_scalar_addressing({"a": [{key: "user"}]}, frozenset({key}))
+
+
 def test_an_unmasked_phone_number_is_refused_before_anything_is_sent() -> None:
     """The real client, so the real guard: it raises before the (invalid) host
     is ever contacted. A masking miss upstream stops here, loudly."""

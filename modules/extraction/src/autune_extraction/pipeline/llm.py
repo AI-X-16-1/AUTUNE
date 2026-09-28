@@ -44,6 +44,7 @@ from typing import Any
 
 from autune_contracts.enums import UtteranceKind
 from autune_core import get_logger
+from autune_core.errors import PrivacyViolationError
 from autune_integrations.errors import TransientIntegrationError
 from autune_integrations.privacy import MAX_OUTBOUND_CHARS
 
@@ -81,12 +82,36 @@ _BODY_OVERHEAD = len(INSTRUCTIONS) + 200
 """Instructions plus line markers and JSON punctuation the budget has to leave room for."""
 
 
+def require_scalar_addressing(value: Any, addressing: frozenset[str]) -> None:
+    """Refuse a body where an ``addressing`` key holds anything but a string.
+
+    ``check_outbound`` skips the whole value under an addressing key, not just a
+    string, so the exemption is safe only while both keys here stay scalars --
+    as ``contents[].role`` and ``generationConfig.responseMimeType`` are in the
+    provider's API today. If either ever holds an object, whatever sits inside
+    it would leave unchecked; this makes that a refusal instead of a comment
+    someone has to remember (mkkim68, review of #405). The message names the
+    key only, never the value.
+    """
+    if isinstance(value, dict):
+        for key, inner in value.items():
+            if key in addressing and not isinstance(inner, str):
+                raise PrivacyViolationError(
+                    f"{key!r} is exempt from the outbound check only as a string"
+                )
+            require_scalar_addressing(inner, addressing)
+    elif isinstance(value, (list, tuple)):
+        for inner in value:
+            require_scalar_addressing(inner, addressing)
+
+
 def _llm_client(base_url: str, api_key: str, timeout_sec: float) -> Any:
     """The provider as a client the way every other outbound one is written.
 
     ``addressing`` names the keys whose values steer the request rather than
-    carry meeting content, so ``check_outbound`` skips only those. The API key
-    travels in a header, never in the body or the URL.
+    carry meeting content, so ``check_outbound`` skips only those -- and only
+    while they are strings (``require_scalar_addressing``). The API key travels
+    in a header, never in the body or the URL.
 
     **The read timeout is raised for this client only.** ``HttpClient``'s 10 s
     suits Slack and Notion; a thinking model answering one window took 12-20 s
@@ -99,6 +124,10 @@ def _llm_client(base_url: str, api_key: str, timeout_sec: float) -> Any:
     class LlmClient(HttpClient):
         service = "extraction-llm-classifier"
         addressing = frozenset({"role", "responseMimeType"})
+
+        def request(self, method: str, path: str, **kwargs: Any) -> dict[str, Any]:
+            require_scalar_addressing(kwargs.get("json"), self.addressing)
+            return super().request(method, path, **kwargs)
 
     client = LlmClient(base_url, headers={"x-goog-api-key": api_key})
     client._client.timeout = timeout_sec  # noqa: SLF001 - httpx's own setter; see above
