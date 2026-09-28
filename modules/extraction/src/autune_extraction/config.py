@@ -53,7 +53,11 @@ class ExtractionSettings(BaseSettings):
 
     llm_api_key: str = ""
     """Provider API key for ``classifier_impl=llm``. Sent as a header, never in a
-    body or URL. Blank makes the registry refuse ``llm`` by name."""
+    body or URL. Blank makes the registry refuse ``llm`` by name.
+
+    The code cannot tell a free-tier key from a paid one. A free tier may let the
+    provider keep what it is sent, so a free key is for dummy meetings only
+    (#392)."""
 
     llm_model: str = "gemini-3.8-flash"
     """The model ``classifier_impl=llm`` calls; recorded as ``llm:<model>`` with
