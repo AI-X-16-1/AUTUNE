@@ -132,8 +132,10 @@ class AudioSettings(BaseSettings):
     ``docs/modules/audio-speaker-identification.md`` has run."""
 
     voice_profiles_enabled: bool = False
-    """Whether confirming a speaker may write a voice profile (a vector kept
-    on the person, across meetings, until they delete it or leave).
+    """Whether this deployment keeps voice data at all: the per-meeting
+    observation vectors the worker takes, and the profile a confirmation
+    writes (a vector kept on the person, across meetings, until they delete it
+    or leave).
 
     Off by default because ADR 0007's legal review is still open: #92's Q4
     asks whether a voice embedding is biometric information (sensitive
@@ -147,13 +149,33 @@ class AudioSettings(BaseSettings):
     deleting biometric data already collected and rebuilding the confirmation
     flow around a consent step that does not exist yet.
 
-    Gates exactly the profile INSERT in ``service.assign_speaker`` -- nothing
-    else. ``Participant.user_id`` is still written (that is attendance, not
-    biometric data), the worker still stores per-meeting observation vectors
-    exactly as before (bounded by the meeting's own retention window, never
-    ``user_id``-bearing), and deleting a profile or a departing user's data
-    is never gated by this -- a flag that limits collection must never also
-    block its own undo.
+    **It gated only the profile INSERT until review caught that.** The worker
+    stored an observation vector per speaker whenever a meeting had an
+    attestation, flag or no flag, so "merging this collects no biometric data"
+    was not true of the code that said it (@PARKJAEKYUNG0525, @lsh2217 on
+    #370). Those vectors are the same biometric data Q4 asks about, they
+    become attributable to a person the moment a speaker is confirmed, and the
+    consent behind them is one checkbox that says "녹음과 분석" and does not
+    mention voice characteristics. Worse, they survived the flag: turning it on
+    later and confirming a speaker copied a vector recorded before anyone could
+    have consented to enrolment into that person's profile.
+
+    So it gates collection as well. With it off, ``_speaker_vectors`` does not
+    run and ``_store_speaker_embeddings`` writes nothing -- and a meeting
+    reprocessed after it goes off gives its existing vectors back, because the
+    DELETE runs whether or not anything replaces them.
+
+    ``Participant.user_id`` is still written; that is attendance, not
+    biometric data. Deleting a profile or a departing user's data is never
+    gated by this -- a flag that limits collection must never also block its
+    own undo.
+
+    **Retention is the flag, not a sweep.** An earlier version of this
+    docstring said observation vectors were "bounded by the meeting's own
+    retention window". Nothing in the repository deletes a meeting whose
+    ``expires_at`` has passed, so that bound did not exist (@PARKJAEKYUNG0525
+    on #370). What bounds them today is this setting being off by default and
+    ``forget_user_voice``; the retention sweep is still owed.
     """
 
     speaker_embedding_max_s: float = 10.0

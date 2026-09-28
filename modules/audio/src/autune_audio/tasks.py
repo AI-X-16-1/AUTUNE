@@ -78,11 +78,12 @@ def process_recording(job_id: str) -> None:
     decoding twice would double the slowest step that is not inference.
 
     **A speaker's observation vector is also taken inside ``adopt``, not
-    after -- and only for a consented meeting.** ``consented`` is read once,
-    at the very first claim, from the same session that runs
-    ``claim_job``/``sweep_orphans``; ``_speaker_vectors`` -- and the embedder
-    it loads -- is skipped entirely when it is false, so an unconsented
-    meeting never pays for an embedding pass it will not keep
+    after -- and only for a consented meeting on a deployment that has voice
+    profiles switched on.** ``consented`` is read once, at the very first
+    claim, from the same session that runs ``claim_job``/``sweep_orphans``,
+    and ``voice_profiles_enabled`` beside it; ``_speaker_vectors`` -- and the
+    embedder it loads -- is skipped entirely unless both hold, so a meeting
+    whose vectors would have nowhere to go never pays for the embedding pass
     (``docs/modules/audio-speaker-identification.md``). ``_speaker_vectors``
     runs on the same waveform and renamed turns as everything downstream,
     before the block ends and the recording is deleted -- a vector not taken
@@ -91,10 +92,10 @@ def process_recording(job_id: str) -> None:
     ``persist_transcript`` takes the meeting row lock (#184) in the
     transaction below, for the same reason that lock exists: two redelivered
     runs of the same job must not each see no rows and each insert their own.
-    ``_store_speaker_embeddings`` re-checks the attestation at write time
-    regardless -- that is the check that actually gates the write; the one
-    here is only an early exit so an unconsented meeting never reaches the
-    embedder.
+    ``_store_speaker_embeddings`` re-checks both the attestation and the flag
+    at write time regardless -- those are the checks that actually gate the
+    write; the ones here are only an early exit so a meeting that will keep
+    nothing never reaches the embedder.
 
     **Masking runs before the write, not at it.** ``persist_transcript``
     re-checks and refuses, but a guard that is the only masker is a guard that
@@ -161,7 +162,16 @@ def process_recording(job_id: str) -> None:
             waveform = decode(recording.path)
             transcription = transcribe(waveform, glossary=build_prompt())
             named = rename_speakers(get_diarizer().diarize(waveform))
-            observations = _speaker_vectors(waveform, named) if consented else []
+            # Two conditions, not one. Consent is the meeting's; the flag is
+            # the deployment's, and while it is off there is nothing an
+            # observation vector could be used for -- `assign_speaker` will
+            # not copy one into a profile. Collecting anyway would hold
+            # biometric data ahead of the question #92 Q4 asks about it, and
+            # would mean that turning the flag on later enrols voices recorded
+            # before anyone could consent to enrolment (@PARKJAEKYUNG0525,
+            # @lsh2217 on #370).
+            collect_vectors = consented and settings.voice_profiles_enabled
+            observations = _speaker_vectors(waveform, named) if collect_vectors else []
 
         # Before the write, not after: a collapsed transcript is not a
         # transcript, and the recording is already gone so there is nothing to
@@ -277,12 +287,32 @@ def _store_speaker_embeddings(
     observations: list[tuple[str, np.ndarray, str]],
 ) -> None:
     """Write one observation row per speaker -- only for a meeting somebody
-    has attested consent for.
+    has attested consent for, and only while voice profiles are enabled.
 
     An embedding is biometric data. Without an attestation the transcript is
-    still produced and nothing about anyone's voice is kept. The delete-then-
-    insert makes a re-run replace a meeting's observations rather than
-    doubling them, the same way ``persist_transcript`` replaces utterances --
+    still produced and nothing about anyone's voice is kept.
+
+    **The flag is re-read here, not trusted from the caller.** It gates
+    ``assign_speaker``'s profile write as well, and while it is off an
+    observation vector has no use -- so holding one is collection without a
+    purpose, ahead of the question #92 Q4 asks about exactly this data. The
+    caller passes no observations in that case; this check is what makes the
+    guarantee independent of it.
+
+    **The DELETE runs before the emptiness check, not after.** Returning early
+    on an empty list left a re-run's vectors under labels a second diarization
+    pass had reassigned: the embedder failing, every speaker falling under
+    ``speaker_embedding_min_s``, or the flag going off between runs all
+    produce no observations, and the first run's rows then described whoever
+    ``화자 2`` turned out to be the second time. A vector under the wrong label
+    offers the wrong candidate, and confirming it copies a stranger's voice
+    into somebody's profile (@PARKJAEKYUNG0525 on #370). Consent decides
+    whether this function owns the meeting's rows; once it does, it rewrites
+    them completely, and rewriting to nothing is a valid result.
+
+    The delete-then-insert makes a re-run replace a meeting's observations
+    rather than doubling them, the same way ``persist_transcript`` replaces
+    utterances --
     and, like that replace, it must run after ``persist_transcript`` has
     already taken the meeting row lock (#184): called before the lock, two
     redelivered runs of the same job would each see no existing rows under
@@ -304,17 +334,19 @@ def _store_speaker_embeddings(
     too, not just this one. A failed vector write must never fail a meeting
     whose transcript is otherwise fine.
     """
-    if not observations:
-        return
     if session.get(AudConsentAttestation, meeting_id) is None:
         log.info("speaker_embeddings_skipped_no_consent", meeting_id=meeting_id)
         return
+    enabled = get_settings().voice_profiles_enabled
     try:
         with session.begin_nested():
             session.execute(
                 sa.delete(AudSpeakerEmbedding).where(AudSpeakerEmbedding.meeting_id == meeting_id)
             )
-            for label, vector, model_version in observations:
+            # The DELETE is unconditional; the INSERT is not. Both halves of
+            # that sentence are the gate: with the flag off this rewrites the
+            # meeting's vectors to none, whatever it was handed.
+            for label, vector, model_version in observations if enabled else []:
                 session.add(
                     AudSpeakerEmbedding(
                         meeting_id=meeting_id,
@@ -326,7 +358,15 @@ def _store_speaker_embeddings(
     except SQLAlchemyError as exc:
         log.warning("speaker_embeddings_failed", error=type(exc).__name__)
         return
+    if not enabled:
+        # The caller already collected nothing, so this is the DELETE landing
+        # on its own: a meeting reprocessed after the flag went off gives its
+        # vectors back rather than keeping them under labels nobody will use.
+        log.info("speaker_embeddings_skipped_disabled", meeting_id=meeting_id)
+        return
     log.info("speaker_embeddings_stored", meeting_id=meeting_id, speakers=len(observations))
+
+
 @shared_task(name="autune.audio.periodic.sweep_orphans")
 @periodic(timedelta(hours=1))
 def sweep_orphans() -> None:

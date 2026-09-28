@@ -131,12 +131,32 @@ def _attest(db_session: Session, meeting_id: str) -> None:
 
 @pytest.fixture
 def settings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> AudioSettings:
-    """The worker's scratch directory, owned by this test."""
+    """The worker's scratch directory, owned by this test.
+
+    ``voice_profiles_enabled`` stays at its real default, which is off. A test
+    that wants observation vectors asks for ``voice_profiles`` below, so the
+    default a deployment actually gets is the one every other test runs under.
+    """
     scratch = tmp_path / "scratch"
     scratch.mkdir()
     fake = AudioSettings(temp_dir=str(scratch))
     monkeypatch.setattr(tasks, "get_settings", lambda: fake)
     return fake
+
+
+@pytest.fixture
+def voice_profiles(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, settings: AudioSettings
+) -> AudioSettings:
+    """A deployment that has turned voice profiles on (#92 Q4 answered).
+
+    Both the collection in ``process_recording`` and the write in
+    ``_store_speaker_embeddings`` read the flag, so this replaces the same
+    ``tasks.get_settings`` the ``settings`` fixture installed.
+    """
+    enabled = AudioSettings(temp_dir=settings.temp_dir, voice_profiles_enabled=True)
+    monkeypatch.setattr(tasks, "get_settings", lambda: enabled)
+    return enabled
 
 
 @pytest.fixture
@@ -465,6 +485,7 @@ def test_a_speaker_gets_one_observation_row(
     meeting: str,
     recording: Path,
     monkeypatch: pytest.MonkeyPatch,
+    voice_profiles: AudioSettings,
 ) -> None:
     """Each speaker with enough speech leaves one vector behind, and it is
     taken while the audio is still there.
@@ -506,6 +527,7 @@ def test_a_rerun_replaces_the_meetings_observations_rather_than_doubling_them(
     recording: Path,
     settings: AudioSettings,
     monkeypatch: pytest.MonkeyPatch,
+    voice_profiles: AudioSettings,
 ) -> None:
     """A genuine second run of the whole task -- a real second upload, not a
     redelivery of the same job -- must still end with one row per speaker,
@@ -544,6 +566,7 @@ def test_a_confirmed_speaker_survives_a_rerun_that_reclusters_the_voices(
     recording: Path,
     settings: AudioSettings,
     monkeypatch: pytest.MonkeyPatch,
+    voice_profiles: AudioSettings,
 ) -> None:
     """Pins **today's** behaviour, not a requirement -- #362 tracks whether
     it should change; this test does not decide that.
@@ -648,6 +671,7 @@ def test_no_attestation_means_no_vectors(
 def test_a_write_time_consent_check_refuses_observations_with_no_attestation(
     db_session: Session,
     meeting: str,
+    voice_profiles: AudioSettings,
 ) -> None:
     """Consent revoked between the claim-time read and the write --
     a TOCTOU `process_recording` cannot produce on its own, since
@@ -659,16 +683,135 @@ def test_a_write_time_consent_check_refuses_observations_with_no_attestation(
     `process_recording` is only a cost-saving skip, and this is the check
     that actually gates the write. Since that skip now means `observations`
     is always `[]` on the no-consent path `process_recording` itself can
-    reach, `test_no_attestation_means_no_vectors` no longer exercises this
-    function's own consent check -- it never gets past the function's
-    `if not observations: return`. This test calls `_store_speaker_embeddings`
+    reach, `test_no_attestation_means_no_vectors` does not reach this
+    function's own consent check. This test calls `_store_speaker_embeddings`
     directly with a non-empty `observations` and no `AudConsentAttestation`
     row for the meeting at all, so the write-time check is the only thing
-    that can be stopping it.
+    that can be stopping it -- and the only thing that could, now that the
+    DELETE runs whether or not there is anything to insert.
     """
     observations = [("화자 1", np.zeros(EMBEDDING_DIM, dtype=np.float32), "fake-embedder-v1")]
 
     tasks._store_speaker_embeddings(db_session, meeting_id=meeting, observations=observations)
+
+    assert db_session.scalars(sa.select(AudSpeakerEmbedding)).all() == []
+
+
+def test_a_write_time_flag_check_refuses_observations_while_profiles_are_off(
+    db_session: Session,
+    meeting: str,
+    settings: AudioSettings,
+) -> None:
+    """The second layer, and the one a deliberate-breakage run showed was bare.
+
+    ``process_recording`` already passes an empty list while the flag is off,
+    so nothing reaching this function through the task can exercise its own
+    flag check -- removing that check left every test passing. Both reviewers
+    asked for the re-check by name (@PARKJAEKYUNG0525, @lsh2217 on #370): the
+    early skip is a cost saving, this is the guarantee, and a guarantee with no
+    test is the shape #370 was in to begin with.
+
+    Called directly with a non-empty ``observations`` and the flag at its
+    default, so the write-time check is the only thing that can stop it.
+    """
+    _attest(db_session, meeting)
+    observations = [("화자 1", np.zeros(EMBEDDING_DIM, dtype=np.float32), "fake-embedder-v1")]
+
+    tasks._store_speaker_embeddings(db_session, meeting_id=meeting, observations=observations)
+
+    assert db_session.scalars(sa.select(AudSpeakerEmbedding)).all() == []
+
+
+def test_the_flag_being_off_collects_no_vectors_even_with_consent(
+    pipeline: dict,
+    db_session: Session,
+    job: str,
+    meeting: str,
+    recording: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The default deployment keeps no voice data, and the embedder never loads.
+
+    The flag used to gate only ``assign_speaker``'s profile write, so a
+    consented meeting stored an observation vector per speaker regardless, and
+    the PR claiming "merging this collects no biometric data" described
+    something the code did not do (@PARKJAEKYUNG0525, @lsh2217 on #370). This
+    is that repro: consent present, flag at its default, two speakers with
+    plenty of speech.
+
+    ``warm_up_calls == 0`` is what makes it a collection gate rather than a
+    write gate. An embedder that ran and threw its vectors away would still
+    have computed them from the recording.
+    """
+    _use_turns(monkeypatch, TWO_SPEAKERS_ENOUGH_SPEECH)
+    _attest(db_session, meeting)
+    fake = _FakeEmbedder()
+    monkeypatch.setattr(tasks, "Embedder", lambda **kwargs: fake)
+
+    tasks.process_recording(job)
+
+    assert db_session.scalars(sa.select(AudSpeakerEmbedding)).all() == []
+    assert fake.warm_up_calls == 0
+    # The transcript is unaffected: this gates voice data, not the meeting.
+    assert db_session.scalars(sa.select(Utterance).where(Utterance.meeting_id == meeting)).all()
+
+
+def test_turning_the_flag_off_gives_back_the_vectors_on_the_next_run(
+    pipeline: dict,
+    db_session: Session,
+    job: str,
+    meeting: str,
+    recording: Path,
+    settings: AudioSettings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Vectors collected while it was on do not outlive it being turned off.
+
+    The write used to return before the DELETE whenever there was nothing to
+    insert, so rows from a previous run stayed under labels a second
+    diarization pass had reassigned. Turning the flag off is the clearest case:
+    nothing to insert, and every reason to stop holding what is there.
+    """
+    _use_turns(monkeypatch, TWO_SPEAKERS_ENOUGH_SPEECH)
+    _attest(db_session, meeting)
+    monkeypatch.setattr(tasks, "Embedder", lambda **kwargs: _FakeEmbedder())
+
+    on = AudioSettings(temp_dir=settings.temp_dir, voice_profiles_enabled=True)
+    monkeypatch.setattr(tasks, "get_settings", lambda: on)
+    tasks.process_recording(job)
+    assert len(db_session.scalars(sa.select(AudSpeakerEmbedding)).all()) == 2
+
+    monkeypatch.setattr(tasks, "get_settings", lambda: settings)
+    second_job = _job(db_session, meeting, "queued")
+    _upload(settings, second_job)
+    tasks.process_recording(second_job)
+
+    assert db_session.scalars(sa.select(AudSpeakerEmbedding)).all() == []
+
+
+def test_a_rerun_that_produces_no_vectors_does_not_leave_the_old_ones(
+    db_session: Session,
+    meeting: str,
+    voice_profiles: AudioSettings,
+) -> None:
+    """An empty result rewrites the meeting to empty; it does not skip the write.
+
+    ``if not observations: return`` sat above the DELETE, so an embedder that
+    failed on a second upload -- or every speaker falling under the 3 s floor
+    -- left the first run's rows in place. A second diarization pass can hand
+    ``화자 2`` to a different voice, and a vector under the wrong label offers
+    the wrong candidate; confirm it and a stranger's voice goes into somebody's
+    profile (@PARKJAEKYUNG0525 on #370, non-blocking 1).
+
+    Called directly: reaching this through the task would need an embedder that
+    succeeds once and fails once, which tests the fake rather than the rule.
+    """
+    _attest(db_session, meeting)
+    first = [("화자 1", np.zeros(EMBEDDING_DIM, dtype=np.float32), "fake-embedder-v1")]
+    tasks._store_speaker_embeddings(db_session, meeting_id=meeting, observations=first)
+    assert len(db_session.scalars(sa.select(AudSpeakerEmbedding)).all()) == 1
+
+    tasks._store_speaker_embeddings(db_session, meeting_id=meeting, observations=[])
 
     assert db_session.scalars(sa.select(AudSpeakerEmbedding)).all() == []
 
@@ -680,6 +823,7 @@ def test_an_embedder_that_cannot_load_does_not_fail_the_meeting(
     meeting: str,
     recording: Path,
     monkeypatch: pytest.MonkeyPatch,
+    voice_profiles: AudioSettings,
 ) -> None:
     """The transcript is the product; the vector is an extra."""
     _use_turns(monkeypatch, TWO_SPEAKERS_ENOUGH_SPEECH)
@@ -699,6 +843,7 @@ def test_a_speaker_with_two_seconds_gets_no_row(
     meeting: str,
     recording: Path,
     monkeypatch: pytest.MonkeyPatch,
+    voice_profiles: AudioSettings,
 ) -> None:
     """Under the 3 s floor is noise, not a voice: no row, and the meeting
     with the speaker who does have enough speech still gets one."""
@@ -719,6 +864,7 @@ def test_a_slicing_failure_for_one_speaker_does_not_fail_the_meeting(
     meeting: str,
     recording: Path,
     monkeypatch: pytest.MonkeyPatch,
+    voice_profiles: AudioSettings,
 ) -> None:
     """`representative_waveform`, not just `embed`, is inside the per-speaker
     guard: a slicing failure for one speaker must not escape and fail the
@@ -751,6 +897,7 @@ def test_a_bad_vector_does_not_fail_the_meeting(
     meeting: str,
     recording: Path,
     monkeypatch: pytest.MonkeyPatch,
+    voice_profiles: AudioSettings,
 ) -> None:
     """Carried from Task 1's review (#356): SQLAlchemy puts bound parameters
     -- here a vector -- into a raised ``StatementError``'s message, since
