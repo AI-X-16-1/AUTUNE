@@ -183,7 +183,7 @@ asking the extractor.
 
 | Relation | Marker | Reads |
 | --- | --- | --- |
-| `depends_on` | 필요, 있어야, 되어야, 선행, 전제, 없이는, 없으면 | "정렬 로직은 인덱스가 필요합니다" |
+| `depends_on` | 필요, 있어야, 되어야, 선행, 전제, 없이는, 없으면; and 끝나야, 끝내야, 나와야, 마쳐야 **only when another clause follows** | "정렬 로직은 인덱스가 필요합니다", "인덱스 재색인이 먼저 **끝나야** 정렬 로직을 붙일 수 있습니다" |
 | `blocked_by` | a blocker word (안 잡, 미정, 막혀, 무리, 이슈, …) **and** a causal connective in the same clause, on either side of it | "실시간은 콜드스타트가 **안 잡혀 있어서** 무리입니다", "검색 기능은 캐시 **때문에** 막혀 있습니다" |
 | `alternative_to` | 대신, 말고, 보다는, 아니라, 반면, `vs` | "인기순 정렬 대신 실시간 개인화로" |
 | `part_of` | — **no rule** | |
@@ -309,6 +309,29 @@ the same review:
   word. Only the left side is guarded: Korean attaches particles directly, so
   실시간은 and 실시간으로 have to stay mentions, and telling 실시간성 from those
   needs the tagger rather than a boundary.
+
+**A finish is a condition only when something follows it.** "인덱스 재색인이
+먼저 끝나야 정렬 로직을 붙일 수 있습니다" is the commonest way a meeting says one
+piece of work waits on another, and none of the plain need words is in it —
+gap_detection_v1's search-personalisation case lost its dependency to exactly
+this. The same ending also closes an obligation: "정렬 로직이 금요일까지
+끝나야 합니다" is a deadline, and read as a need it would assert that 정렬 로직
+depends on whatever was named before it. So 끝나야, 끝내야, 나와야 and 마쳐야
+count only when a clause follows; 합니다, 해요, 돼요, 겠-, 할 and the end of the
+utterance refuse them. 있어야 and 되어야 take no such guard, because "캐시가
+있어야 합니다" is a need either way — what is obliged there is the thing
+existing, not a date somebody promised. `rules-3`.
+
+**A date or a quantity is never an end.** Entities labelled `date` or `metric`
+are left out of the names the rules search for. They sit exactly where the
+thing needed is looked for — "인덱스가 금요일까지 있어야 정렬 로직을 붙입니다"
+read as `정렬 로직 depends_on 금요일까지` — and neither is a thing another thing
+waits on. They are still topics; only the relation step stops seeing them.
+`rules-3`.
+
+With #456 reading `depends_on` as evidence for the dependency item, the two
+together close search-personalisation's dependency false positive:
+gap_detection_v1 `high` precision 0.842 → 0.889, recall 1.0.
 
 **The cue words themselves are not topics.** 필요 and 이슈 join 대신, 말고 and
 반면 in `spoken.STOP_TERMS`: the model tags all of them as ordinary nouns, so a
