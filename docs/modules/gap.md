@@ -419,8 +419,31 @@ three side by side.
 - **Matching is containment either way**, over `graph.topic_key`'s
   normalisation: a keyword inside a longer label, and a label inside a longer
   keyword. Deliberately dumb, and the rule v1 measures precision against — what
-  replaces it (embeddings over the items) is then a change with a number
-  attached rather than a better idea.
+  replaces it is then a change with a number attached rather than a better idea.
+- **A stated relation matches too.** An item may name step-2 relations
+  (`relations` in the template file), and a topic at either end of such an edge
+  in `gap_topic_edges` matches the item the way a keyword hit does — ranked by
+  centrality, so it can cover the item or leave it partial. `general`'s
+  `dependency` names `depends_on` and `blocked_by` (version 3). A dependency is
+  how two things stand to each other, and no topic label says it: "마이그레이션
+  검증 스크립트가 먼저 있어야 롤백 절차가 의미가 있습니다" already came out of
+  step 2 as `롤백 절차 depends_on 마이그레이션 검증 스크립트`, and the item
+  was still reported missing because neither label contains 의존 or 선행. On
+  gap_detection_v1 the change closed that false positive — `high` precision
+  0.800 → 0.842, recall unchanged at 1.0. `co_occurs` is refused at load: two
+  topics said together say nothing about how they relate. The two dependency
+  false positives left are a marker the rules do not know yet ("먼저 끝나야")
+  and a sentence with only one topic in it, which no relation can reach.
+- **Embeddings over the topic labels were measured and not built.** KURE-v1
+  between each item's display name and each topic label, over the same set:
+  of the five settled items keyword matching missed, it placed no correct topic
+  nearest to any — they were settled with a verb or by a relation, and the
+  nearest label was an unrelated one ("성공 기준" for `dependency`). It also
+  scored real gaps above true matches (`ownership` against "보관 기간" at
+  0.546; `performance` against "응답 시간", a true match, at 0.500), so no
+  floor separates them. A label match can cover an item, which makes every
+  such error a real gap hidden. Reading the *speech* by meaning is a different
+  mechanism with a different ceiling, and is where sentence embeddings go.
 - **Two sources of evidence, ranked: the graph, then the speech.** A topic match
   carries a centrality, so it decides between covered and partial. A keyword
   that appears in an utterance with no topic behind it is weaker — the words

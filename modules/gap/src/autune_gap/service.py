@@ -448,9 +448,14 @@ def _topic_views(session: Session, meeting_id: str) -> list[detect.TopicView]:
     docs/architecture/privacy.md section 3 turns on. A topic nobody was
     considered for carries ``None``, which ``detect.score`` drops rather than
     reading as "everybody spoke".
+
+    Each view also carries the step-2 relations its topic takes part in, which
+    is how an item like dependency matches a meeting that stated one without
+    naming it (``TemplateItem.relations``).
     """
     topics = _topics_in_reading_order(session, meeting_id)
     said = _spoke_by_person(session, meeting_id, [topic.id for topic in topics])
+    related = _relations_by_topic(session, meeting_id)
 
     views = []
     for topic in topics:
@@ -462,10 +467,34 @@ def _topic_views(session: Session, meeting_id: str) -> list[detect.TopicView]:
         )
         views.append(
             detect.TopicView(
-                id=topic.id, label=topic.label, centrality=topic.centrality, silent_share=silent
+                id=topic.id,
+                label=topic.label,
+                centrality=topic.centrality,
+                silent_share=silent,
+                relations=frozenset(related.get(topic.id, ())),
             )
         )
     return views
+
+
+def _relations_by_topic(session: Session, meeting_id: str) -> dict[str, set[str]]:
+    """Topic id -> the step-2 relations it is either end of.
+
+    Both ends, because an item that asks about a dependency is raised by the
+    thing that waits as much as by the thing waited on. ``co_occurs`` is left
+    out in the query rather than after it: it is most of a meeting's edges and
+    none of them is evidence here.
+    """
+    related: dict[str, set[str]] = {}
+    rows = session.execute(
+        select(
+            GapTopicEdge.source_topic_id, GapTopicEdge.target_topic_id, GapTopicEdge.relation
+        ).where(GapTopicEdge.meeting_id == meeting_id, GapTopicEdge.relation != graph.CO_OCCURS)
+    )
+    for source, target, relation in rows:
+        related.setdefault(source, set()).add(relation)
+        related.setdefault(target, set()).add(relation)
+    return related
 
 
 def _speech(session: Session, meeting_id: str) -> list[str]:

@@ -55,12 +55,18 @@ class TopicView:
     along a person (docs/architecture/privacy.md section 3). ``None`` means
     there was nobody to measure it over, which is a missing signal and not a
     quiet zero; see ``score``.
+
+    ``relations`` is every step-2 relation the topic sits at either end of —
+    ``depends_on`` when the meeting said it depends on something, or that
+    something depends on it. ``co_occurs`` is never in it; see
+    ``TemplateItem.relations``.
     """
 
     id: str
     label: str
     centrality: float
     silent_share: float | None = None
+    relations: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True)
@@ -206,16 +212,37 @@ def match(item: TemplateItem, topics: list[TopicView]) -> list[TopicView]:
     guessed would report a meeting as having covered something it did not.
 
     This is the rule v1 measures precision against. It is deliberately dumb, and
-    what replaces it — embeddings over the template items — is then a change
-    with a number attached rather than a better idea.
+    what replaces it is then a change with a number attached rather than a
+    better idea.
+
+    **A topic an item's relation touches matches too.** The dependency item is
+    about how two things stand to each other, which no label carries; a
+    ``depends_on`` edge the rules read off a marker the speaker said is the
+    meeting having stated one. It is graph evidence like a keyword hit, and is
+    ranked the same way. What it does not do is guess: the edge exists only
+    where step 2 found a marker, so an item matched this way was said.
+
+    **Embeddings over the topic labels were measured and are not here.** On
+    gap_detection_v1, KURE-v1 found no settled item a keyword had missed — the
+    five it could have reached were settled with a verb, or by a relation, and
+    the nearest label to each was an unrelated one ("성공 기준" for dependency).
+    It also scored real gaps above true matches: ownership against "보관 기간",
+    a real gap, at 0.546; performance against "응답 시간", a true match, at
+    0.500. No floor separates the
+    two, and a label match can cover an item, so every error would be a real
+    gap hidden. See docs/modules/gap.md, "Steps 6 and 7 as built".
     """
-    hits = [topic for topic in topics if _looks_like(item, topic)]
+    hits = [topic for topic in topics if _looks_like(item, topic) or _related(item, topic)]
     return sorted(hits, key=lambda topic: (-topic.centrality, topic.id))
 
 
 def _looks_like(item: TemplateItem, topic: TopicView) -> bool:
     label = topic_key(topic.label)
     return any(word in label or label in word for word in item.keywords)
+
+
+def _related(item: TemplateItem, topic: TopicView) -> bool:
+    return not topic.relations.isdisjoint(item.relations)
 
 
 def mentioned(item: TemplateItem, spoken: Sequence[str]) -> bool:
