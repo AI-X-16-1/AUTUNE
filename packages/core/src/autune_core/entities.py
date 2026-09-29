@@ -97,6 +97,50 @@ class TeamIntegration(Base, TimestampMixin):
     """Who connected it, for the sync-log drawer on S28. Null once they leave."""
 
 
+class UserIntegration(Base, TimestampMixin):
+    """One person's connection to one outside service -- their own calendar or
+    mailbox, not the team's workspace.
+
+    #59 kept ``team_integrations`` one row per team and said that when consent
+    had to be per person, the answer was a new table rather than a wider one,
+    because the two lifetimes are opposite: a team's connection outlives the
+    person who made it (``connected_by`` goes ``SET NULL``), while a person's
+    grant must go with them. Here the row belongs to the user and is deleted
+    with them (``ON DELETE CASCADE``) -- deleting an account deletes its tokens.
+
+    Calendar is here because each person's own tasks go on their own calendar
+    and a date they move there comes back to Autune (#435); Gmail because a
+    mailbox is one person's (#431). Neither is readable by a teammate or an
+    admin: nothing reads a row but code acting for that user.
+
+    Written by ``autune_core``, like ``team_integrations``; modules read it
+    through ``load_user_integration``. ``secret`` is Fernet ciphertext.
+    """
+
+    __tablename__ = "user_integrations"
+    __table_args__ = (
+        UniqueConstraint("user_id", "service", name="uq_user_integrations_user_service"),
+        CheckConstraint(
+            "service IN ('calendar','gmail')",
+            name="ck_user_integrations_service",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    service: Mapped[str] = mapped_column(String(32), nullable=False)
+
+    secret: Mapped[str | None] = mapped_column(Text)
+    """Fernet ciphertext of the refresh token. Go through ``save_user_integration``."""
+
+    config: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    """The non-secret half: which calendar, the account's address. A module's own
+    sync state (a cursor, a last-seen time) goes in its own prefixed table --
+    modules read this row and never write it."""
+
+
 class User(Base, TimestampMixin):
     __tablename__ = "users"
 
