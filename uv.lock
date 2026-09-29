@@ -560,7 +560,8 @@ local-models = [
     { name = "datasets" },
     { name = "sentence-transformers" },
     { name = "setfit" },
-    { name = "xgboost-cpu" },
+    { name = "xgboost", marker = "sys_platform == 'darwin'" },
+    { name = "xgboost-cpu", marker = "sys_platform != 'darwin'" },
 ]
 
 [package.metadata]
@@ -573,7 +574,8 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.115" },
     { name = "sentence-transformers", marker = "extra == 'local-models'", specifier = ">=3.0" },
     { name = "setfit", marker = "extra == 'local-models'", specifier = ">=1.1" },
-    { name = "xgboost-cpu", marker = "extra == 'local-models'", specifier = ">=2.1" },
+    { name = "xgboost", marker = "sys_platform == 'darwin' and extra == 'local-models'", specifier = ">=2.1" },
+    { name = "xgboost-cpu", marker = "sys_platform != 'darwin' and extra == 'local-models'", specifier = ">=2.1" },
 ]
 provides-extras = ["local-models"]
 
@@ -3537,6 +3539,21 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/ad/ec/a7b10705172bdb669b9687a8ff68bbe5f566437d2a49ad6d976af48b6d10/wrapt-2.4.0-cp312-cp312-win_amd64.whl", hash = "sha256:8b464316489fb2fca0669ea0f8f07290054a0f26fc72982d3e4cf95469628ba9", size = 96423, upload-time = "2026-08-30T04:39:56.81Z" },
     { url = "https://files.pythonhosted.org/packages/83/7a/e838ac6463a1a1a1817b2f184ee2aa20c54692b80368c5063403c8d2461c/wrapt-2.4.0-cp312-cp312-win_arm64.whl", hash = "sha256:db1285071ea09a7767fac608e7b5c7b03c09833b06186875a359905fbc659d29", size = 93003, upload-time = "2026-08-30T04:39:58.237Z" },
     { url = "https://files.pythonhosted.org/packages/79/c8/fafe0002f572ced999c792cfe8b05d39269c63d8193d15d25bd828bcad7a/wrapt-2.4.0-py3-none-any.whl", hash = "sha256:18aabd9301d06026f5900538051773d6f87f65ae02cdc60de482df978513dc0a", size = 73713, upload-time = "2026-08-30T04:41:49.805Z" },
+]
+
+[[package]]
+name = "xgboost"
+version = "3.4.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+    { name = "nvidia-nccl-cu13", marker = "python_version < '0'" },
+    { name = "scipy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/38/a9/295320f741c5be4be996c73ee65a2a11852028c50daa7229adb0d61c330b/xgboost-3.4.1.tar.gz", hash = "sha256:6968a4c71efdfa859df0dfcad0d99211c95c28c4ffd6aecff46efff77d18026a", size = 1231819, upload-time = "2026-08-15T08:39:21.197Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/57/ea/0bdcd374241a86f1986e87e272516f0a70d841c3aa86aa9ca167fb651573/xgboost-3.4.1-py3-none-macosx_10_15_x86_64.whl", hash = "sha256:1ea15f15f661825b6a67d87674fb9604a1abb38dd0d4c5cf0486fc85f5203e83", size = 2541584, upload-time = "2026-08-15T08:38:48.484Z" },
+    { url = "https://files.pythonhosted.org/packages/f7/94/e5c37a8972ad780edc1d8459d1931356344ca133f7f99ba9cfda516b5bba/xgboost-3.4.1-py3-none-macosx_12_0_arm64.whl", hash = "sha256:a7afd7dbace0951c93aa85ffe046e54bc40893f5b51cd3e7991eb157bf9c7c7c", size = 2365501, upload-time = "2026-08-15T08:38:52.366Z" },
 ]
 
 [[package]]
