@@ -108,11 +108,19 @@ def collect_tools(modules: Iterable[str] = MODULES) -> dict[str, Tool]:
 
 
 class CallBudget:
-    """One per run. The main agent and every subagent it delegates to spend from it."""
+    """One per run. The main agent and every subagent it delegates to spend from it.
+
+    It also keeps the run's trace, ``steps``: each call's tool name, whether it
+    answered, and its evidence ids -- never a summary, an item or a reason, any
+    of which a tool may fill with meeting text. It lives here rather than in the
+    graph so a run stopped by the cap still has everything up to the call that
+    stopped it.
+    """
 
     def __init__(self, limit: int = MAX_TOOL_CALLS) -> None:
         self.limit = limit
         self.used = 0
+        self.steps: list[dict[str, Any]] = []
 
     def spend(self, name: str) -> None:
         if self.used >= self.limit:
@@ -157,5 +165,15 @@ class Toolbox:
         tool = self._tools.get(name)
         if tool is None:
             # A route to correct, not a crash.
-            return ToolResult.failure(f"{name} is not available here")
-        return tool(self._session, **arguments)
+            result = ToolResult.failure(f"{name} is not available here")
+        else:
+            result = tool(self._session, **arguments)
+        self._budget.steps.append(
+            {
+                "tool": name,
+                "ok": result.ok,
+                "evidence": result.evidence,
+                "truncated": result.truncated,
+            }
+        )
+        return result

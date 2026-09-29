@@ -20,6 +20,8 @@ TOPIC: Final = "topic"
 DECISION: Final = "dec"
 DECISION_THREAD: Final = "thr"  # D's lineage identity, spanning meetings
 JOB: Final = "job"
+RUN: Final = "run"  # the agent layer's agent_runs
+WORK_ITEM: Final = "wi"  # the agent layer's agent_work_items
 
 
 def new_id(prefix: str) -> str:

@@ -83,6 +83,13 @@ def create_app(*, origins: list[str] | None = None) -> FastAPI:
         app.include_router(router, prefix=f"/api/{name}", tags=[name])
         log.info("router_registered", module=name, prefix=f"/api/{name}")
 
+    # The agent layer is not a module and is not in MODULES; ADR 0010 lets
+    # apps import it. One layer, one router, mounted the same way.
+    app.include_router(
+        import_module("autune_agent.router").router, prefix="/api/agent", tags=["agent"]
+    )
+    log.info("router_registered", module="agent", prefix="/api/agent")
+
     return app
 
 
