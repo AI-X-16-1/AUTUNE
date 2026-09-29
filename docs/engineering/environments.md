@@ -162,6 +162,10 @@ Where that token comes from, and the two ways to give it to the browser:
 | `AUTUNE_AUDIO_DIARIZATION_MIN_SPEAKERS` / `…_MAX_SPEAKERS` | A | Bounds instead of an exact count. Ignored when `…_NUM_SPEAKERS` is set. Each must be ≥ 1; the settings refuse to load otherwise |
 | `NEXT_PUBLIC_AUTUNE_DEV_TOKEN` | A (web) | A bearer token for the browser, local only — see "A token for the browser" below |
 | `AUTUNE_AUDIO_DIARIZATION_MODEL` | A | Default `pyannote/speaker-diarization-3.1` |
+| `AUTUNE_AUDIO_IDENTIFICATION_THRESHOLD` | A | Cosine similarity at or above which a voice profile is offered as a speaker's candidate (0.70, provisional). Never assigns; a person confirms |
+| `AUTUNE_AUDIO_SPEAKER_EMBEDDING_MAX_S` | A | Seconds of one speaker that go into their observation vector (10) |
+| `AUTUNE_AUDIO_SPEAKER_EMBEDDING_MIN_S` | A | A speaker with less speech than this in a meeting gets no vector (3) |
+| `AUTUNE_AUDIO_VOICE_PROFILES_ENABLED` | A | **Default `false`, and with it off no voice data is kept at all.** It gates both the worker's per-meeting observation vectors and the profile write in `assign_speaker`; a meeting reprocessed after it goes off gives its existing vectors back. Confirming a speaker still assigns them (`participants.user_id` is attendance, not biometric data), and deleting a profile is never gated by it. Off until #92's Q4 (is a voice embedding sensitive information under PIPA Article 23, and does it need its own refusable consent) is answered, or until auth exists to record that consent (#268) |
 | `AUTUNE_EXTRACTION_CLASSIFIER_IMPL` | B | `local` · `hosted` · `fake` · `llm`. Default `local`. `llm` is opt-in and not signed off for real meetings — see below |
 | `AUTUNE_EXTRACTION_CLASSIFIER_CHECKPOINT` | B | Pinned model, recorded with every classification. Never a floating tag. **Blank by default** — no trained checkpoint is published yet, and `local` / `hosted` refuse to start without one |
 | `AUTUNE_EXTRACTION_CLASSIFIER_ENDPOINT` | B | Our own inference server. Required when `CLASSIFIER_IMPL=hosted` |

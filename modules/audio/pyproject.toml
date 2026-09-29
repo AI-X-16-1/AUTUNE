@@ -26,6 +26,9 @@ dependencies = [
     # is named because autune_audio.eval.hike imports it directly.
     "pyarrow>=18",
     "huggingface-hub>=0.25",
+    # Voice-profile vectors live in Postgres, like module D's embeddings
+    # (docs/decisions/0004-pgvector-over-chroma.md).
+    "pgvector>=0.3",
 ]
 
 [project.optional-dependencies]
