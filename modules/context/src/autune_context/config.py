@@ -58,10 +58,25 @@ class ContextSettings(BaseSettings):
     retrieve_top_k: int = 50
     rerank_top_k: int = 10
     rrf_k: int = 60
+    link_similarity_threshold: float = 0.74
+    """Dense cosine similarity between this topic's segment and a past meeting's
+    closest one, at or above which the link is asserted -- the primary signal
+    (see ``service._link_topic``). Set on the evaluation set's dev and first
+    held-out splits (docs/modules/context.md, "Metric"): same-topic pairs
+    bottomed out at 0.743, different-topic pairs reached 0.773: the two
+    distributions overlap, so no value separates them all -- 0.74 keeps every
+    same-topic pair and gives up three same-area ones. That three counts this
+    threshold alone; the rule asserts at this similarity *or* at
+    ``link_confidence_threshold``, so the asserted set can only be larger.
+    Measured on short, synthetic meetings; re-check against real meetings
+    before trusting it further."""
     link_confidence_threshold: float = 0.6
-    """Above: assert the link. Below: store it as ``pending`` and ask the user.
-    Placeholder value; tuned against the evaluation set once it exists (the
-    eval harness is still owed — see docs/modules/context.md, "Metric").
+    """Cross-encoder score at or above which the link is also asserted,
+    whatever its dense similarity. Below both thresholds: store it as
+    ``pending`` and ask the user. The re-ranker scores same-topic meetings
+    with different content near zero, so on its own this let almost nothing
+    through; it is kept because nothing it asserted on the evaluation set was
+    wrong.
 
     A production auto-tuning version of this (issue #256) was tried and
     reverted: confirm/reject only ever labels a ``pending`` link, which by
@@ -71,14 +86,16 @@ class ContextSettings(BaseSettings):
     which isn't subject to that bias, or a redesign that isn't."""
 
     # --- decision lineage ---
-    lineage_match_threshold: float = 0.6
+    lineage_match_threshold: float = 0.65
     """Cosine similarity between B's decision statement and a thread's latest
     statement, above which the decision is threaded into that existing lineage
-    rather than opening a new one. Placeholder; tuned against the evaluation set
-    once it exists. Also sensitive to how B's ``Decision.statement`` is built —
-    a last-utterance quote (no reference resolution yet, extraction issue #11)
-    scores closing remarks from unrelated decisions higher than this default
-    tolerates, so don't tune this threshold to today's statements."""
+    rather than opening a new one. 0.65 from the evaluation set's dev split,
+    where 0.6 threaded two same-area but different decisions together (a
+    marketing *channel* onto the marketing *budget*). Also sensitive to how
+    B's ``Decision.statement`` is built — a last-utterance quote (no
+    reference resolution yet, extraction issue #11) scores closing remarks
+    from unrelated decisions higher than this default tolerates, so don't
+    tune this threshold to today's statements."""
 
     # --- publishing ---
     publish_timeout_s: int = 600

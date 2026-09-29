@@ -71,8 +71,13 @@ and BM25 runs in application code. The two rankings are fused with reciprocal
 rank fusion (RRF).
 
 **Retrieve broad, re-rank narrow.** Top 50 from hybrid retrieval, top 10 after
-re-ranking. Mis-linking is this module's main risk, and re-ranking is what buys
-precision. Below the confidence threshold, offer the link for user confirmation
+re-ranking. Mis-linking is this module's main risk. The evaluation set showed
+the cross-encoder is the wrong judge of *same topic*: it answers "does this
+passage answer this query", and scores a past meeting on the same subject but
+with different content — the plan vs. its status update, the same issue in
+other words — near zero. So a link is asserted on dense segment similarity
+(`link_similarity_threshold`) *or* a confident re-ranker score
+(`link_confidence_threshold`); below both, offer it for user confirmation
 rather than asserting it.
 
 ### Topic-statement extraction is not an LLM task (MVP)
@@ -87,10 +92,19 @@ For the MVP, topics are extracted without an LLM:
 1. **Segment** the transcript with an embedding-based TextTiling: a sliding
    window over consecutive utterance embeddings, cut at local similarity minima,
    with sub-minimum-length segments merged.
-2. **Label** each segment with kiwipiepy noun-phrase candidates scored by
-   in-segment frequency against rarity in a background corpus of past meetings.
+2. **Label** each segment with its most repeated noun phrase. Phrases are
+   runs of whitespace-separated words that kiwipiepy reads as starting with a
+   content noun — word-level, so a word missing from its dictionary (온보딩)
+   survives whole. Numbers with counters (5장), one-letter nouns, names with an
+   honorific (민재님) and nouns every meeting shares (오늘, 회의, 확인) break a
+   phrase. The score is words × occurrences among the repeated phrases, so a
+   phrase said twice outranks one of its words said three times (#352: one-word
+   labels such as `장` or `10` gave the re-ranker nothing to score). A segment
+   with no noun phrase at all is small talk and is dropped, not labelled with a
+   snippet of itself. There is no background-corpus weighting.
 3. **Represent** each topic for matching as the segment's mean-pooled embedding,
-   plus its top utterances for BM25 and the re-ranker.
+   plus the ids of the utterances it was cut from. The re-ranker reads those
+   utterances' text back from `utterances`; BM25 still matches on labels.
 
 This keeps the core path fully on self-hosted infrastructure, keeps the
 evaluation deterministic, and avoids sending a full transcript to an external
@@ -146,6 +160,9 @@ Rules:
   `torch` and `transformers`, which live in the `local-models` optional
   dependency group and are used only for local development, CI-free runs, and
   evaluation. The worker image runs the `*_http` implementations.
+  `scripts/up.sh` runs the embedder and re-ranker this way, and the NLI step
+  too under `--real-models`; the fakes are not a lighter demo of this module —
+  the fake embedder is a hash of the text, so it links next to nothing.
 - **`Fake*` implementations** back unit tests; integration and pipeline tests
   select them with `AUTUNE_CONTEXT_*_IMPL=fake`.
 
@@ -174,14 +191,29 @@ and is settled in Phase 0.
 
 1. `require_privacy_guarantees()` on the payload; refuse an undeleted-audio or
    unmasked transcript.
-2. Extract topics (`pipeline/topics.py`), embed them with KURE-v1, persist to
+2. Keep only a consenting speaker's utterances (`privacy.md` section 5): those
+   whose `participants` row has `consented = true`. An utterance with no
+   participant is out — unknown is not yes. This is the line B and C already
+   draw (#163); `TranscriptReady` carries every utterance and each consumer
+   filters. Nothing below sees the rest: not the embedder, a label, BM25, the
+   re-ranker, or `utterance_ids`. A meeting nobody consented to gets no topics
+   and no links, and still marks topic linking done.
+3. Extract topics (`pipeline/topics.py`), embed them with KURE-v1, persist to
    `ctx_embeddings` (`kind = "topic"`).
-3. Hybrid retrieval over past meetings of the same team, within the retention
+4. Hybrid retrieval over past meetings of the same team, within the retention
    window: pgvector cosine + in-process BM25, fused with RRF, top 50.
-4. Re-rank those 50 with the cross-encoder, keep the top 10.
-5. Above `link_confidence_threshold`, write an `asserted` link; below it, write a
-   `pending` link for the user to confirm.
-6. Mark `ctx_meeting_status.topic_linking_done`, then schedule
+5. Re-rank those 50 with the cross-encoder, keep the top 10. Each candidate
+   meeting is scored on the text of its topic segment closest to this topic
+   (`ctx_embeddings.utterance_ids`, read from `utterances`), or on that
+   segment's label for a row that predates the column. The text is read only
+   where its speaker still consents — checked again at read time, so a
+   withdrawal takes effect without re-running the past meeting (the label is
+   the fallback, as for deleted utterances).
+6. At or above `link_similarity_threshold` (dense cosine between the two
+   segments) or `link_confidence_threshold` (re-ranker), write an `asserted`
+   link; below both, write a `pending` link for the user to confirm. The top 10
+   kept are the 10 with the highest of the two scores, stored as `confidence`.
+7. Mark `ctx_meeting_status.topic_linking_done`, then schedule
    `autune.context.publish_if_ready` with a countdown of
    `publish_timeout_s`. If the meeting had already published (module A
    reprocessed the recording), schedule `autune.context.republish` instead —
@@ -199,7 +231,7 @@ lineage view (S22), which reads to a user as a bug.
    similar existing thread's *chronologically latest* statement — by the
    matched meeting's `started_at`, not by which version was inserted last —
    cosine ≥ `lineage_match_threshold` (`AUTUNE_CONTEXT_LINEAGE_MATCH_THRESHOLD`,
-   default `0.6`, tuned in eval). Every (decision, thread) pairing in the
+   default `0.65`, tuned in eval). Every (decision, thread) pairing in the
    meeting is scored up front and assigned strongest-first, so a weak match
    earlier in `result.decisions` can't grab a thread out from under a much
    stronger match later in the list. No thread above the threshold opens a new
@@ -230,16 +262,30 @@ lineage view (S22), which reads to a user as a bug.
    meeting's decisions; the two entries are for the same slot.
 2. Every thread this meeting's decisions touched is then **re-chained end to
    end**, not just appended to: order its versions by meeting time and run NLI
-   between each pair's earlier statement (premise) and later one (hypothesis):
-   `entailment` → `unchanged`, `contradiction` → `reversed`, `neutral` →
-   `modified`; the chronologically-first version is `new`. Re-chaining (rather
+   on each adjacent pair in both directions (`pipeline/change.py`):
+   - Entailment either way → `unchanged` — unless only the later statement
+     entails the earlier one *and* it narrows, adds or extends something new
+     (만/도/까지 on a noun the earlier one never mentioned) → `modified`.
+   - A later statement that keeps something (계속/그대로/유지) is re-checked
+     with those words stripped: "B사를 계속 쓴다" after "A사 대신 B사로 바꾼다"
+     contradicts the act of switching, but "B사를 쓴다" is entailed by it →
+     `unchanged`. A real revert ("A사를 계속") still contradicts.
+   - Otherwise a contradiction either way → `reversed` if the later statement
+     negates, stops or cancels/replaces (않/말/안/못/없이/아니, 그만두다·접다,
+     취소·폐지·보류·백지화·대신…), else `modified` — a moved date or amount
+     contradicts the old one exactly as hard as a cancellation, so NLI alone
+     cannot tell them apart.
+   - Anything else → `modified`.
+
+   `nli_label` keeps the model's own forward verdict. The chronologically-first
+   version is `new`. Re-chaining (rather
    than only linking the new version onto whatever was previously "latest") is
    what keeps the lineage correct when B reports meetings out of order — a
    longer meeting finishing after a shorter later one, a backfill — and what
    repairs a later version's chain when an earlier meeting is re-processed.
 3. Each `ctx_decision_versions` row records what changed, in which meeting,
    chained onto its chronological predecessor via `previous_version_id`.
-   `confidence` is the NLI score of the winning label for a non-first version,
+   `confidence` is the NLI score that decided the change type for a non-first version,
    and B's own decision confidence for the chronologically-first one; `nli_label`
    is null for that first version. `confidence` is not recomputed back to B's
    number if a version later becomes its thread's first version again (e.g. an
@@ -332,7 +378,7 @@ cleaned up by a deletion hook (see "Deletion").
 
 | Table | Purpose | Key columns | Anchor / deletion |
 | --- | --- | --- | --- |
-| `ctx_embeddings` | Topic (and, Phase 2, material) embeddings | `kind`, `ref_label`, `embedding vector(N)`, `model_version` | `meeting_id` FK `ON DELETE CASCADE` |
+| `ctx_embeddings` | Topic (and, Phase 2, material) embeddings | `kind`, `ref_label`, `utterance_ids` (JSONB, nullable), `embedding vector(N)`, `model_version` | `meeting_id` FK `ON DELETE CASCADE` |
 | `ctx_topic_links` | Meeting-to-meeting topic links with scores | `topic_label`, `linked_meeting_date`, `similarity`, `rerank_score`, `confidence`, `status` (`asserted`/`pending`/`confirmed`/`rejected`), `retriever_version`, `reranker_version` | `meeting_id` FK `CASCADE`; `linked_meeting_id` FK `ON DELETE SET NULL` |
 | `ctx_decisions` | Decision threads (lineage identity, spans meetings) | `id` (`thr_`), `topic_label` | `team_id` FK `CASCADE`; orphan sweep deferred (#87) |
 | `ctx_decision_versions` | Each version of a decision | `source_decision_id` (`dec_`, no FK), `previous_version_id` (self-FK), `current_statement`, `previous_statement`, `previous_meeting_id` (no FK), `change_type`, `nli_label`, `confidence`, `key_stakeholders_absent` (JSONB), `nli_version` | `thread_id` FK `CASCADE`, `meeting_id` FK `CASCADE` |
@@ -529,7 +575,7 @@ confirmation flow feed threshold tuning.
 Each suite's cases carry a `category` (what the case is testing — a paraphrase,
 a shared keyword with a different meaning, a reversed vs. a modified decision),
 and the report breaks accuracy down by it, prints a 95% Wilson interval next to
-every headline number, and sweeps its threshold (`link_confidence_threshold`,
+every headline number, and sweeps its threshold (`link_similarity_threshold`,
 `lineage_match_threshold`) from the scores the run already stored. Topic
 linking also reports link-level precision and recall and how often a no-link
 meeting got an asserted link; decision lineage scores threading and change-type
@@ -543,6 +589,11 @@ held out only until a rule or threshold is chosen by looking at its failures —
 the PR that does that says so. Every set was written by the same person, so a
 held-out set guards against overfitting to particular cases; it is not a sample
 of real meetings.
+
+`*_heldout_v1.json` has since been used to choose rules (`pipeline/change.py`,
+`link_similarity_threshold`), so it is no longer held out. `*_heldout_v2.json`
+was written before those rules and run once after them; the next rule or
+threshold change needs a new held-out set — ideally masked real meetings.
 
 To run it on a laptop without the team's inference endpoints, use the
 `*_local` implementations (the `local-models` extra) and point
@@ -595,9 +646,10 @@ self-hosted LLM.
 
 ## Open questions
 
-- The exact confidence threshold for asserting a link versus asking the user.
-  Ships as `AUTUNE_CONTEXT_LINK_CONFIDENCE_THRESHOLD = 0.6` and is tuned against
-  the evaluation set in Phase 2.
+- The thresholds for asserting a link versus asking the user
+  (`link_similarity_threshold = 0.74`, `link_confidence_threshold = 0.6`) come
+  from short, synthetic evaluation meetings, with a thin margin between same-
+  and different-topic pairs. They need re-checking against real meetings.
 - Whether `autune_core.publish_event` lands before Phase 2, or D ships the
   interim `current_app.send_task` path.
 - Whether the LLM client moves to `packages/integrations` at the start of

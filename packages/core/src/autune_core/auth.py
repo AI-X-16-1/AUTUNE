@@ -1,9 +1,19 @@
-"""Authentication skeleton.
+"""Authentication.
 
-W1 scope: issue and verify a JWT, and resolve the current user from it. Real
-Google, Slack and magic-link sign-in (screen S01) arrives in W2 — the point of
-this file is that module routers can depend on ``current_user`` today and not be
-rewritten when real sign-in lands.
+Two halves:
+
+- **Sessions.** ``issue_token`` mints a short-lived HS256 JWT signed with our own
+  ``secret_key``; ``current_user`` resolves it back to a ``User`` row. A module
+  router depends on ``current_user`` and never learns how the session was
+  established.
+- **Sign-in.** The OAuth flow that produces a session lives in ``auth_router``
+  and ``oauth/``. W1 shipped only the session half; Google sign-in (screen S01)
+  is W2. This is the library approach — PyJWT for our own session, Google's OIDC
+  verified directly, no auth BaaS.
+
+The session travels either as ``Authorization: Bearer <jwt>`` (service clients,
+tests) or as the ``autune_session`` cookie (the browser). ``current_user``
+accepts both.
 """
 
 from __future__ import annotations
@@ -12,7 +22,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any
 
 import jwt
-from fastapi import Depends, Header
+from fastapi import Cookie, Depends, Header, Response
 from sqlalchemy.orm import Session
 
 from .db import get_session
@@ -22,6 +32,8 @@ from .settings import get_settings
 
 ALGORITHM = "HS256"
 DEFAULT_TTL = timedelta(days=7)
+
+SESSION_COOKIE = "autune_session"
 
 
 def issue_token(user_id: str, ttl: timedelta = DEFAULT_TTL) -> str:
@@ -39,14 +51,37 @@ def decode_token(token: str) -> dict[str, Any]:
         raise PermissionDeniedError("token is not valid") from exc
 
 
-def _bearer(authorization: Annotated[str | None, Header()] = None) -> str:
-    if not authorization or not authorization.lower().startswith("bearer "):
-        raise PermissionDeniedError("missing bearer token")
-    return authorization.split(" ", 1)[1]
+def set_session_cookie(response: Response, token: str, ttl: timedelta = DEFAULT_TTL) -> None:
+    """Attach the session as an HttpOnly cookie. Used by the OAuth callback."""
+    response.set_cookie(
+        SESSION_COOKIE,
+        token,
+        max_age=int(ttl.total_seconds()),
+        httponly=True,
+        secure=get_settings().session_cookie_secure,
+        samesite="lax",
+        path="/",
+    )
+
+
+def clear_session_cookie(response: Response) -> None:
+    response.delete_cookie(SESSION_COOKIE, path="/")
+
+
+def _session_token(
+    authorization: Annotated[str | None, Header()] = None,
+    autune_session: Annotated[str | None, Cookie()] = None,
+) -> str:
+    """The raw JWT, from the Authorization header if present, else the cookie."""
+    if authorization and authorization.lower().startswith("bearer "):
+        return authorization.split(" ", 1)[1]
+    if autune_session:
+        return autune_session
+    raise PermissionDeniedError("no session: send a bearer token or sign in")
 
 
 def current_user(
-    token: Annotated[str, Depends(_bearer)],
+    token: Annotated[str, Depends(_session_token)],
     session: Annotated[Session, Depends(get_session)],
 ) -> User:
     """FastAPI dependency resolving the authenticated user."""

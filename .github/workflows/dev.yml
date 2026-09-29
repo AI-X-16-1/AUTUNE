@@ -1,0 +1,16 @@
+name: Windows PC Job
+
+on:
+  push:
+    branches: [ "dev" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: self-hosted
+    steps:
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          path: .

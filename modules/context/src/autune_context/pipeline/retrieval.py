@@ -18,7 +18,7 @@ from sqlalchemy import ColumnElement, or_, select
 
 from autune_context.dates import meeting_day
 from autune_context.models import CtxEmbedding
-from autune_core import Meeting
+from autune_core import Meeting, Participant, Utterance
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -53,6 +53,12 @@ class Candidate:
     """Best dense cosine similarity seen for this meeting (0..1)."""
     fusion_score: float
     """Reciprocal-rank-fusion score across the dense and lexical rankings."""
+    passage: str
+    """What the re-ranker reads for this meeting: the text of its topic segment
+    closest to the query topic, read back from ``utterances``. Falls back to
+    that segment's label when the row predates ``ctx_embeddings.utterance_ids``
+    or its utterances are gone. Comparing the query segment's full text to a
+    one- or two-word label is what kept every real match near zero."""
 
 
 def reciprocal_rank_fusion[K](rankings: Sequence[Sequence[K]], *, k: int) -> dict[K, float]:
@@ -89,18 +95,65 @@ class HybridRetriever:
         fused = reciprocal_rank_fusion([[m for m, _ in dense], lexical], k=self._rrf_k)
         best_sim = dict(dense)
 
-        candidates = [
+        ranked = sorted(fused.items(), key=lambda ms: ms[1], reverse=True)[: self._top_k]
+        passages = self._passages(topic.vector, [meeting_id for meeting_id, _ in ranked])
+        return [
             Candidate(
                 linked_meeting_id=meeting_id,
                 linked_meeting_date=corpus[meeting_id].date,
                 topic_label=corpus[meeting_id].label,
                 similarity=best_sim.get(meeting_id, 0.0),
                 fusion_score=score,
+                passage=passages.get(meeting_id) or corpus[meeting_id].label,
             )
-            for meeting_id, score in fused.items()
+            for meeting_id, score in ranked
         ]
-        candidates.sort(key=lambda c: c.fusion_score, reverse=True)
-        return candidates[: self._top_k]
+
+    def _passages(self, vector: list[float], meeting_ids: list[str]) -> dict[str, str]:
+        """Meeting id -> the text of that meeting's topic segment closest to
+        ``vector``, for the re-ranker.
+
+        Closest by the same cosine distance the dense ranking uses, so a
+        meeting that covered several topics is judged on the one that matched,
+        not on whichever label happened to come first. A meeting found only by
+        BM25 still gets its closest segment this way. Missing from the result:
+        rows with no ``utterance_ids`` (written before that column) and
+        segments whose utterances are all gone -- the caller falls back to the
+        label.
+
+        Reads only a consenting speaker's text (privacy.md section 5), the same
+        line ``service.consented_utterance_ids`` draws when the segment is cut.
+        Checked again here, at read time, because the ids were stored earlier:
+        a row from before that filter, or a speaker who has since withdrawn,
+        must not put that speech in front of the re-ranker.
+        """
+        if not meeting_ids:
+            return {}
+        distance = CtxEmbedding.embedding.cosine_distance(vector)
+        closest = self._session.execute(
+            select(CtxEmbedding.meeting_id, CtxEmbedding.utterance_ids)
+            .where(CtxEmbedding.kind == "topic", CtxEmbedding.meeting_id.in_(meeting_ids))
+            .distinct(CtxEmbedding.meeting_id)
+            .order_by(CtxEmbedding.meeting_id, distance)
+        ).all()
+        segments = {meeting_id: ids for meeting_id, ids in closest if ids}
+        wanted = [utterance_id for ids in segments.values() for utterance_id in ids]
+        if not wanted:
+            return {}
+        texts: dict[str, str] = {
+            utterance_id: text
+            for utterance_id, text in self._session.execute(
+                select(Utterance.id, Utterance.text)
+                .join(Participant, Participant.id == Utterance.participant_id)
+                .where(Utterance.id.in_(wanted), Participant.consented.is_(True))
+            )
+        }
+        passages: dict[str, str] = {}
+        for meeting_id, ids in segments.items():
+            text = " ".join(texts[i] for i in ids if i in texts)
+            if text:
+                passages[meeting_id] = text
+        return passages
 
     def _visible(self, team_id: str, before: datetime):
         """A meeting D is allowed to link to: this team, in the past, still inside

@@ -6,7 +6,8 @@ wherever a trained model's accuracy is low. The fine-tuned DeBERTa's commitment
 F1 on real Korean speech is ~0.3. This implementation, run against the real API
 on the self-authored 8.txt dummy meeting (86 utterances, 16 commitment rows),
 scored commitment F1 0.968 with gemini-3.8-flash and 0.909 with
-gemini-3.5-flash-lite (2026-09-28).
+gemini-3.5-flash-lite (2026-09-28); the worked examples in ``INSTRUCTIONS``
+took Flash-Lite to 0.938 there and 0.959 on a second dummy meeting.
 
 **What leaves our infrastructure, and why it is allowed** (privacy.md section 6:
 masked text only, and only what the feature needs):
@@ -70,9 +71,33 @@ INSTRUCTIONS = (
     "그 외(설명·잡담·맞장구·투표·예상 수치)는 적지 마세요.\n"
     "[문맥] 줄은 판단하지 말고 참고만 하세요. "
     'JSON 한 줄로만 답하세요: {"labels": {"줄번호": "종류", ...}}. 해당 없으면 {"labels": {}}.'
+    "\n예시(다른 회의):\n"
+    "1 [문맥] 이 설문 결과는 누가 정리해 주실래요?\n"
+    "2 [대상] 제가 할게요, 목요일까지요. → commitment\n"
+    "3 [대상] 캐시 만료 시간을 1시간으로 늘리는 걸 제안드려요. → 적지 않음(제안은 약속 아님)\n"
+    "4 [대상] 그럼 수진 님이 로그 확인하고 결과 공유해 주세요. "
+    "→ open_question(남에게 시킴, 화자 본인 약속 아님)\n"
+    "5 [대상] 저는 영업 입장에서 2안을 밀고 싶어요. → 적지 않음(의견·투표)\n"
+    "6 [문맥] 어떤 인력이 필요하세요?\n"
+    "7 [대상] 프런트엔드 한 명이요. → 적지 않음(질문에 대한 답)\n"
 )
 """Kept short on purpose: ``check_outbound`` counts these characters against the
-same 4,000 as the utterances."""
+same 4,000 as the utterances.
+
+The examples are the one prompt change that measured better and steadier on two
+dummy meetings (2026-09-28). Without them gemini-3.5-flash-lite -- the fallback
+that answers every window once 3.8 Flash's free-tier 20 requests a day are
+spent -- keeps recall near 1.0 but labels an answer to a question, a proposal
+or a vote as a commitment, and a different set each run even at temperature 0:
+commitment F1 0.750-0.970 on 8.txt and 0.721-0.939 on EVAL_02, three runs each.
+With them, 0.938 on all three 8.txt runs and 0.939-0.979 on EVAL_02, for fewer
+output tokens. The cost: 8.txt's "천천히 만들어볼게요" (#77) was missed in all
+three. Lines 3-7 are the four false-positive kinds 8.txt showed, written as
+analogues rather than copies; EVAL_02 was not looked at before it was scored.
+Raising ``thinkingLevel`` was tried and is not set: low and medium spent no
+thinking tokens, medium scored 0.607 on EVAL_02, and high cost more per meeting
+than 3.8 Flash. Only commitment was scored -- the gold on both meetings marks
+commitments only -- so the effect on the other four kinds is unmeasured."""
 
 _KINDS = {kind.value: kind for kind in UtteranceKind}
 _RETRY_BACKOFF_SEC = (2.0, 5.0, 10.0)

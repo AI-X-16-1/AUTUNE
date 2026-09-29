@@ -20,13 +20,20 @@ class ExtractionSettings(BaseSettings):
     )
 
     classifier_impl: str = "local"
-    """Which classifier to run: ``local``, ``hosted``, ``fake`` or ``llm``.
+    """Which classifier to run: ``local``, ``hosted``, ``fake``, ``llm`` or
+    ``llm_checked``.
 
     ``llm`` sends utterance text as module A masked it -- nothing else -- to a
     cloud LLM (``pipeline.llm``). A name said aloud is not masked, so it goes too.
     It is never the default: where a meeting's text may go is a privacy
     decision, and the team signs it off before it is enabled outside a demo --
-    see ``pipeline.base``."""
+    see ``pipeline.base``.
+
+    ``llm_checked`` sends the same as ``llm`` and has the local DeBERTa
+    (``classifier_checkpoint``, required) check its commitments: one only the
+    LLM found becomes a candidate instead of being asserted
+    (``pipeline.checked``). It shows candidates only once
+    ``candidate_confidence`` is set."""
 
     classifier_checkpoint: str = ""
     """Pinned, and recorded with every classification. Never a floating tag.
@@ -69,8 +76,10 @@ class ExtractionSettings(BaseSettings):
     llm_fallback_model: str = "gemini-3.5-flash-lite"
     """Answers a window when ``llm_model`` stays unavailable (429/5xx/timeout after
     its retries). 3.8 Flash returned 503 three times running on 2026-09-28;
-    Flash-Lite scored commitment F1 0.909 on 8.txt against 3.8 Flash's 0.968.
-    Blank disables the fallback."""
+    Flash-Lite scored commitment F1 0.909 on 8.txt against 3.8 Flash's 0.968;
+    with the worked examples now in the prompt, 0.938 there and 0.959 on a
+    second dummy meeting. On a free-tier key it answers most windows: 3.8 Flash
+    allows 5 requests a minute and 20 a day. Blank disables the fallback."""
 
     llm_base_url: str = "https://generativelanguage.googleapis.com/v1beta"
     """The provider's API root for ``classifier_impl=llm``."""
@@ -101,10 +110,10 @@ class ExtractionSettings(BaseSettings):
     utterance's own text, so an external implementation is the privacy.md
     section 6 question ``classifier_impl=llm`` is waiting on (#392).
 
-    Mirrors ``classifier_impl``'s three-way shape rather than module D's own
-    ``AUTUNE_CONTEXT_NLI_*`` naming -- module D is a different module (modules
-    never import each other) and this module's own classifier config is the
-    closer precedent to stay consistent with.
+    Mirrors ``classifier_impl``'s ``local``/``hosted``/``fake`` rather than
+    module D's own ``AUTUNE_CONTEXT_NLI_*`` naming -- module D is a different
+    module (modules never import each other) and this module's own classifier
+    config is the closer precedent to stay consistent with.
     """
 
     nli_checkpoint: str = ""
@@ -133,6 +142,11 @@ class ExtractionSettings(BaseSettings):
     does not exist yet. Until it does there is no honest threshold, so nothing is
     a candidate. A default picked to make the band look populated would be a
     number nobody measured, printed to the user as though somebody had.
+
+    ``classifier_impl=llm_checked`` is the exception, because its confidences
+    are not probabilities: 0.9 means the LLM and DeBERTa both said commitment,
+    0.5 that only the LLM did (``pipeline.checked``). Any value in (0.5, 0.9]
+    -- 0.7, say -- separates the two, and nothing is being estimated.
     """
 
     @field_validator("candidate_confidence", mode="before")

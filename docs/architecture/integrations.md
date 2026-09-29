@@ -44,7 +44,8 @@ shape this file has now been wrong in twice.
 A client may declare `addressing`: keys whose values say *where* a request goes
 rather than *what it carries*. `CalendarClient` declares `attendees`, because an
 invitee's address is supplied by the feature, not extracted from a meeting, and
-checking it would refuse every invitation. Declaring nothing checks everything,
+checking it would refuse every invitation; and `items`, `free_busy`'s list of
+calendars to ask about. Declaring nothing checks everything,
 so forgetting to declare fails closed.
 
 **Pass the structured payload, not just the text.** A rich message carries its
@@ -79,9 +80,18 @@ assert slack.channel_messages[0].channel == "#squad"
 ## Scope
 
 W1 defines the boundary, the error split and the guards. The full API surface is
-filled in during W3 by the owner who needs it — extraction for Notion, context
-for Calendar. Writing the rest before the first real call would produce an
-abstraction that fits nothing.
+filled in during W3 by the owner who needs it — extraction for Notion; Calendar
+by the Workload subagent's owner (#260, #435). Writing the rest before the first
+real call would produce an abstraction that fits nothing.
+
+**What Calendar reads, and what it never returns** (#435, #438). `list_events`
+returns a team calendar's events without attendees — other people's addresses,
+external guests included, stay out of the return type. `free_busy` returns busy
+windows only, and `None` for a calendar Google could not read, which is unknown
+rather than free (#59). `changed_events` returns only events carrying Autune's
+private tag, filtered by Google, so reading a date back from a person's calendar
+never reads the rest of it. `FakeCalendar` mirrors all of these and runs the
+same outbound check on writes, `create_event`'s `addressing` included.
 
 `TransientIntegrationError` is worth retrying (timeout, rate limit, 5xx);
 `PermanentIntegrationError` is not (bad credentials, missing resource,
