@@ -23,8 +23,9 @@ from .crypto import decrypt, encrypt
 from .entities import UserIntegration
 from .errors import ValidationError
 
-USER_SERVICES: Final = ("calendar", "gmail")
-"""Kept in step with the check constraint on ``user_integrations.service``."""
+USER_SERVICES: Final = ("calendar",)
+"""Kept in step with the check constraint on ``user_integrations.service``.
+``gmail`` is added with #431's decision, not before it."""
 
 
 @dataclass(frozen=True)
@@ -58,7 +59,12 @@ def load_user_integration(
     session: Session, user_id: str, service: str
 ) -> UserIntegrationConfig | None:
     """This person's configuration for ``service``, or None if they never
-    connected it -- the ordinary answer, so callers skip rather than fail."""
+    connected it -- the ordinary answer, so callers skip rather than fail.
+
+    **Call it only for the person the work is for.** Any ``user_id`` is
+    accepted; that one person's grant is used only on that person's behalf --
+    their own tasks on their own calendar -- is the caller's rule to keep, the
+    same as privacy.md section 3 keeps a speaking ratio with its speaker."""
     row = _row(session, user_id, service)
     if row is None:
         return None
@@ -79,8 +85,9 @@ def save_user_integration(
     config: dict[str, Any] | None = None,
 ) -> None:
     """Create or update one person's settings for one service. ``secret`` is
-    encrypted here; ``None`` leaves the stored one alone -- what changing
-    which calendar is used does."""
+    encrypted here; ``config`` is stored as written, so a credential never goes
+    in it. ``None`` leaves the stored secret alone -- what changing which
+    calendar is used does."""
     row = _row(session, user_id, service)
     if row is None:
         row = UserIntegration(user_id=user_id, service=service, config={})
@@ -92,7 +99,12 @@ def save_user_integration(
 
 
 def disconnect_user_integration(session: Session, user_id: str, service: str) -> None:
-    """Remove a person's connection, credential and all."""
+    """Remove a person's connection, credential and all -- here.
+
+    It does not revoke the grant at the provider: Google's refresh token stays
+    valid until the person removes Autune from their account or it expires.
+    S28's disconnect (#428) should call ``https://oauth2.googleapis.com/revoke``
+    before this."""
     row = _row(session, user_id, service)
     if row is not None:
         session.delete(row)

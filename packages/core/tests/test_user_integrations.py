@@ -26,6 +26,12 @@ def test_unknown_service_is_refused() -> None:
         _check_service("notion")  # a team connects Notion, not a person
 
 
+def test_gmail_waits_for_its_decision() -> None:
+    """#431 is open; the schema does not get ahead of it."""
+    with pytest.raises(ValidationError):
+        _check_service("gmail")
+
+
 def test_services_match_the_check_constraint() -> None:
     check = next(
         c for c in Base.metadata.tables[TABLE].constraints if c.name == f"ck_{TABLE}_service"

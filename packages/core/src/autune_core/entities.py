@@ -109,9 +109,11 @@ class UserIntegration(Base, TimestampMixin):
     with them (``ON DELETE CASCADE``) -- deleting an account deletes its tokens.
 
     Calendar is here because each person's own tasks go on their own calendar
-    and a date they move there comes back to Autune (#435); Gmail because a
-    mailbox is one person's (#431). Neither is readable by a teammate or an
-    admin: nothing reads a row but code acting for that user.
+    and a date they move there comes back to Autune (#435). A mailbox (#431)
+    has the same shape, but ``gmail`` joins the check constraint only once
+    #431 is decided -- a schema is not written ahead of the decision it
+    serves. Nothing reads a row but code acting for that user: not a
+    teammate, not an admin.
 
     Written by ``autune_core``, like ``team_integrations``; modules read it
     through ``load_user_integration``. ``secret`` is Fernet ciphertext.
@@ -121,7 +123,7 @@ class UserIntegration(Base, TimestampMixin):
     __table_args__ = (
         UniqueConstraint("user_id", "service", name="uq_user_integrations_user_service"),
         CheckConstraint(
-            "service IN ('calendar','gmail')",
+            "service IN ('calendar')",
             name="ck_user_integrations_service",
         ),
     )
@@ -136,9 +138,11 @@ class UserIntegration(Base, TimestampMixin):
     """Fernet ciphertext of the refresh token. Go through ``save_user_integration``."""
 
     config: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
-    """The non-secret half: which calendar, the account's address. A module's own
-    sync state (a cursor, a last-seen time) goes in its own prefixed table --
-    modules read this row and never write it."""
+    """The non-secret half: which calendar, the account's address. **Stored as
+    written -- only ``secret`` is encrypted**, so nothing that works as a
+    credential belongs here. A module's own sync state (a cursor, a last-seen
+    time) goes in its own prefixed table -- modules read this row and never
+    write it."""
 
 
 class User(Base, TimestampMixin):
