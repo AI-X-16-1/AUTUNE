@@ -67,12 +67,22 @@ if [ "$REAL_MODELS" = 0 ]; then
   # B's NLI step (#12) defaults to `local` and refuses to run without a
   # checkpoint; the one #172 settled on is a private HF repo.
   export AUTUNE_EXTRACTION_NLI_IMPL=fake
-  # D's embedder/reranker/NLI want an inference server that is not running.
-  export AUTUNE_CONTEXT_EMBEDDER_IMPL=fake
-  export AUTUNE_CONTEXT_RERANKER_IMPL=fake
+  # D's NLI checkpoint is a private HF repo that runs server-only (#172).
   export AUTUNE_CONTEXT_NLI_IMPL=fake
-  printf '  faking B and D (--real-models to use theirs)\n'
+  printf "  faking B and D's NLI (--real-models to use theirs)\n"
+else
+  export AUTUNE_CONTEXT_NLI_IMPL=klue_kornli_local
 fi
+# D's embedder and re-ranker run in-process either way; a CPU is enough. The
+# `.env.example` defaults are `*_http` clients for inference servers nobody
+# runs, and faking them is not a smaller version of D: the fake embedder is a
+# hash of the text, so topic boundaries land anywhere and no two differently
+# worded sentences look alike -- the context tab stays all but empty. Both
+# models come from the `local-models` extra installed below and download on
+# the first context task (~4.4 GB). On a CPU a five-minute meeting takes about
+# a minute, most of it re-ranking against past meetings.
+export AUTUNE_CONTEXT_EMBEDDER_IMPL=kure_v1_local
+export AUTUNE_CONTEXT_RERANKER_IMPL=bge_reranker_v2_m3_ko_local
 # C and E run their real models from the `local-models` extra, installed below.
 export AUTUNE_GAP_NER_IMPL=${AUTUNE_GAP_NER_IMPL:-spacy}
 export AUTUNE_INTELLIGENCE_GAP_CLASSIFIER_IMPL=${AUTUNE_INTELLIGENCE_GAP_CLASSIFIER_IMPL:-local}
@@ -131,5 +141,6 @@ printf '  api     http://localhost:8000/health  %s\n' "$(curl -s http://localhos
 printf '  web     http://localhost:3000\n'
 printf '  logs    %s/{api,worker,web}.log\n' "$LOGS"
 printf '\nFirst upload: open http://localhost:3000, make a meeting, upload a recording.\n'
-printf 'The first run downloads Whisper large-v3 (several GB) -- watch worker.log.\n'
+printf 'The first run downloads Whisper large-v3 (several GB), and the first context\n'
+printf 'task KURE-v1 and its re-ranker (~4.4 GB) -- watch worker.log.\n'
 printf 'Stop with ./scripts/down.sh\n'
