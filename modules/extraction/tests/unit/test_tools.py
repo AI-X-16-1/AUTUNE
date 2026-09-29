@@ -7,6 +7,7 @@ SQLite in memory, the way ``test_read_endpoints`` builds B's tables.
 from __future__ import annotations
 
 from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import UTC, date, datetime, timedelta
 
 import pytest
@@ -135,10 +136,17 @@ def classification(s: Session, uid: str, kind: str) -> None:
 # --- every tool -------------------------------------------------------------------
 
 
+ARGS = {
+    tools.open_action_items: (TEAM,),
+    tools.workload_by_owner: (TEAM,),
+    tools.person_action_items: (TEAM, "user_in"),
+    tools.action_item_status: (TEAM, "act_missing"),
+}
+
+
 def test_every_tool_returns_the_tool_result_shape(session: Session) -> None:
     for tool in tools.TOOLS:
-        args = (TEAM,) if tool in (tools.open_action_items, tools.workload_by_owner) else (MEETING,)
-        assert set(tool(session, *args)) == KEYS, tool.__name__
+        assert set(tool(session, *ARGS.get(tool, (MEETING,)))) == KEYS, tool.__name__
 
 
 def test_every_docstring_starts_with_when_to_use_it() -> None:
@@ -148,7 +156,13 @@ def test_every_docstring_starts_with_when_to_use_it() -> None:
 
 
 @pytest.mark.parametrize(
-    "tool", [tools.meeting_action_items, tools.unresolved_questions, tools.review_state]
+    "tool",
+    [
+        tools.meeting_action_items,
+        tools.unresolved_questions,
+        tools.review_state,
+        tools.meeting_decisions,
+    ],
 )
 def test_an_unknown_meeting_is_ok_false_not_an_exception(session: Session, tool) -> None:
     result = tool(session, "mtg_nope")
@@ -387,3 +401,215 @@ def test_workload_cites_no_utterance_and_quotes_no_item(session: Session) -> Non
 
     assert result["evidence"] == []
     assert all("할 일" not in i["body"] and "할 일" not in i["title"] for i in result["items"])
+
+
+# --- meeting_decisions ------------------------------------------------------------
+
+
+def decision(s: Session, dec_id: str, *, status: str | None, meeting: str = MEETING) -> None:
+    s.add(ExtDecision(id=dec_id, meeting_id=meeting, statement=f"{dec_id} 결정", confidence=0.8))
+    s.flush()
+    if status is not None:
+        s.add(ExtDecisionReview(decision_id=dec_id, meeting_id=meeting, status=status))
+        s.flush()
+
+
+def test_only_confirmed_decisions_are_quoted(session: Session) -> None:
+    decision(session, "dec_ok", status="confirmed")
+    decision(session, "dec_wait", status=None)
+    decision(session, "dec_no", status="rejected")
+
+    result = tools.meeting_decisions(session, MEETING)
+
+    assert [i["title"] for i in result["items"]] == ["dec_ok 결정"]
+    assert "확인 대기 1건" in result["summary"]
+    assert "dec_wait 결정" not in str(result)
+    assert "dec_no 결정" not in str(result)
+
+
+# --- person_action_items ----------------------------------------------------------
+
+
+def test_one_persons_open_confirmed_items_in_this_team(session: Session) -> None:
+    item(session, "act_mine", due=TODAY - timedelta(days=1))
+    item(session, "act_done", status="done")
+    item(session, "act_draft", status="needs_confirmation")
+    item(session, "act_other", assignee=None)
+    item(session, "act_elsewhere", meeting=OTHER_MEETING)
+
+    result = tools.person_action_items(session, TEAM, "user_in")
+
+    assert [i["id"] for i in result["items"]] == ["act_mine"]
+    assert result["summary"] == "박지영님의 진행 중 액션아이템 1건, 기한 지남 1건."
+
+
+def test_someone_off_the_team_is_refused(session: Session) -> None:
+    result = tools.person_action_items(session, TEAM, "user_gone")
+    assert result["ok"] is False
+    assert result["items"] == []
+
+
+# --- action_item_status -----------------------------------------------------------
+
+
+def test_a_confirmed_item_with_where_it_went(session: Session) -> None:
+    item(session, "act_1", due=TODAY + timedelta(days=2))
+    session.add(
+        ExtExternalRef(
+            action_item_id="act_1",
+            system="notion",
+            meeting_id=MEETING,
+            external_id="page",
+            url="https://notion.so/page",
+        )
+    )
+    session.flush()
+
+    (finding,) = tools.action_item_status(session, TEAM, "act_1")["items"]
+
+    assert finding["title"] == "act_1 할 일"
+    assert finding["body"].endswith("notion 연동됨")
+
+
+def test_an_unconfirmed_item_is_reported_without_its_text(session: Session) -> None:
+    item(session, "act_draft", status="needs_confirmation")
+
+    result = tools.action_item_status(session, TEAM, "act_draft")
+
+    assert "act_draft 할 일" not in str(result)
+    assert result["items"][0]["title"] == "확인 대기"
+
+
+def test_another_teams_item_is_the_same_as_an_unknown_one(session: Session) -> None:
+    item(session, "act_theirs", meeting=OTHER_MEETING)
+
+    theirs = tools.action_item_status(session, TEAM, "act_theirs")
+    unknown = tools.action_item_status(session, TEAM, "act_nope")
+
+    assert theirs["ok"] is False
+    assert unknown["ok"] is False
+    assert theirs["summary"] == unknown["summary"]
+
+
+# --- actions: L2, run by the main agent after approval ------------------------------
+
+
+@pytest.fixture
+def acting(session: Session, monkeypatch: pytest.MonkeyPatch) -> dict[str, list[str]]:
+    """Actions own their transaction; here it is this session. The after-commit
+    syncs are recorded instead of reaching Notion or a calendar."""
+    synced: dict[str, list[str]] = {"items": [], "decisions": []}
+
+    @contextmanager
+    def scope() -> Iterator[Session]:
+        yield session
+        session.commit()
+
+    monkeypatch.setattr(tools, "session_scope", scope)
+    monkeypatch.setattr(tools.tasks, "sync_after_confirmation", synced["items"].append)
+    monkeypatch.setattr(tools.tasks, "sync_decision_after_confirmation", synced["decisions"].append)
+    return synced
+
+
+def test_actions_are_not_offered_as_tools() -> None:
+    """A model calls ``TOOLS``; an action runs only after a person approves."""
+    assert not set(tools.ACTIONS) & set(tools.TOOLS)
+    for action in tools.ACTIONS:
+        assert "L2" in (action.__doc__ or ""), action.__name__
+        assert "delete" not in action.__name__, "L3 is forbidden"
+
+
+def test_confirming_an_item_makes_it_a_todo_and_syncs_it(
+    session: Session, acting: dict[str, list[str]]
+) -> None:
+    item(session, "act_draft", status="needs_confirmation")
+
+    result = tools.confirm_action_item(TEAM, "act_draft")
+
+    assert result["ok"] is True
+    assert session.get(ExtActionItem, "act_draft").status == "todo"  # type: ignore[union-attr]
+    assert acting["items"] == ["act_draft"]
+    assert session.query(ExtEditEvent).count() == 1, "counted as the board counts an edit"
+
+
+def test_confirming_twice_is_refused(session: Session, acting: dict[str, list[str]]) -> None:
+    item(session, "act_1", status="todo")
+    assert tools.confirm_action_item(TEAM, "act_1")["ok"] is False
+    assert acting["items"] == []
+
+
+def test_reassigning_lands_only_on_a_team_member(
+    session: Session, acting: dict[str, list[str]]
+) -> None:
+    member(session, "user_free", "최여유")
+    item(session, "act_1")
+
+    refused = tools.reassign_action_item(TEAM, "act_1", "user_gone")
+    moved = tools.reassign_action_item(TEAM, "act_1", "user_free")
+
+    assert refused["ok"] is False
+    assert moved["ok"] is True
+    assert session.get(ExtActionItem, "act_1").assignee_id == "user_free"  # type: ignore[union-attr]
+
+
+def test_an_action_never_reaches_another_teams_item(
+    session: Session, acting: dict[str, list[str]]
+) -> None:
+    item(session, "act_theirs", meeting=OTHER_MEETING)
+
+    for result in (
+        tools.set_action_item_status(TEAM, "act_theirs", "done"),
+        tools.set_action_item_due_date(TEAM, "act_theirs", "2026-10-02"),
+        tools.reassign_action_item(TEAM, "act_theirs", "user_in"),
+        tools.confirm_action_item(TEAM, "act_theirs"),
+        tools.add_action_item(TEAM, OTHER_MEETING, "끼워넣기"),
+    ):
+        assert result["ok"] is False
+    assert session.get(ExtActionItem, "act_theirs").status == "todo"  # type: ignore[union-attr]
+    assert session.query(ExtActionItem).count() == 1
+    assert acting["items"] == []
+
+
+def test_a_due_date_arrives_as_text_and_can_be_cleared(
+    session: Session, acting: dict[str, list[str]]
+) -> None:
+    item(session, "act_1", due=TODAY)
+
+    assert tools.set_action_item_due_date(TEAM, "act_1", "2026-10-02")["ok"] is True
+    assert session.get(ExtActionItem, "act_1").due_date == date(2026, 10, 2)  # type: ignore[union-attr]
+    assert tools.set_action_item_due_date(TEAM, "act_1", "다음 주")["ok"] is False
+    assert tools.set_action_item_due_date(TEAM, "act_1", None)["ok"] is True
+    assert session.get(ExtActionItem, "act_1").due_date is None  # type: ignore[union-attr]
+
+
+def test_a_status_outside_the_board_is_refused(
+    session: Session, acting: dict[str, list[str]]
+) -> None:
+    item(session, "act_1")
+    assert tools.set_action_item_status(TEAM, "act_1", "needs_confirmation")["ok"] is False
+    assert tools.set_action_item_status(TEAM, "act_1", "done")["ok"] is True
+    assert session.get(ExtActionItem, "act_1").status == "done"  # type: ignore[union-attr]
+
+
+def test_an_added_item_waits_for_confirmation_and_is_not_synced(
+    session: Session, acting: dict[str, list[str]]
+) -> None:
+    result = tools.add_action_item(TEAM, MEETING, "회의록 공유", assignee_id="user_in")
+
+    (row,) = session.query(ExtActionItem).all()
+    assert result["items"][0]["id"] == row.id
+    assert (row.status, row.origin, row.assignee_id) == ("needs_confirmation", "user", "user_in")
+    assert acting["items"] == []
+
+
+def test_reviewing_a_decision(session: Session, acting: dict[str, list[str]]) -> None:
+    decision(session, "dec_1", status=None)
+    decision(session, "dec_2", status=None)
+
+    assert tools.review_decision(TEAM, "dec_1", "confirmed")["ok"] is True
+    assert tools.review_decision(TEAM, "dec_2", "rejected")["ok"] is True
+    assert tools.review_decision(TEAM, "dec_2", "maybe")["ok"] is False
+
+    assert acting["decisions"] == ["dec_1"]
+    statuses = {r.decision_id: r.status for r in session.query(ExtDecisionReview)}
+    assert statuses == {"dec_1": "confirmed", "dec_2": "rejected"}
