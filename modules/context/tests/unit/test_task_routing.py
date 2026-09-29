@@ -114,3 +114,24 @@ def test_republish_forces_past_the_guard_and_notifies_nobody(republished: bool) 
     publish.assert_called_once_with(MEETING, force=True)
     regular_notify.apply_async.assert_not_called()
     late_drift.apply_async.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("already_published", "republished", "rearmed"),
+    [(None, False, False), (True, True, False), (False, False, True)],
+)
+def test_rederive_routes_like_a_transcript_arriving(
+    enqueued: dict[str, MagicMock],
+    already_published: bool | None,
+    republished: bool,
+    rearmed: bool,
+) -> None:
+    """Published: republish, no notice. Still waiting on B: the publish check
+    and B-timeout fallback armed again, since the rerun moved the deadline.
+    Declined by the service: nothing at all."""
+    with patch.object(tasks.service, "rederive_topics", return_value=already_published):
+        tasks.rederive_topics(MEETING)
+
+    assert enqueued["republish"].delay.called is republished
+    assert enqueued["publish_if_ready"].delay.called is rearmed
+    assert enqueued["publish_if_ready"].apply_async.called is rearmed

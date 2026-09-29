@@ -216,8 +216,10 @@ and is settled in Phase 0.
    (`ctx_embeddings.utterance_ids`, read from `utterances`), or on that
    segment's label for a row that predates the column. The text is read only
    where its speaker still consents — checked again at read time, so a
-   withdrawal takes effect without re-running the past meeting (the label is
-   the fallback, as for deleted utterances).
+   withdrawal keeps that speech itself away from the re-ranker without
+   re-running the past meeting. The label is the fallback, as for deleted
+   utterances; it was derived from consented speech only for rows written
+   after #439 — see "Re-deriving after consent changes".
 6. At or above `link_similarity_threshold` (dense cosine between the two
    segments) or `link_confidence_threshold` (re-ranker), write an `asserted`
    link; below both, write a `pending` link for the user to confirm. The top 10
@@ -227,6 +229,45 @@ and is settled in Phase 0.
    `publish_timeout_s`. If the meeting had already published (module A
    reprocessed the recording), schedule `autune.context.republish` instead —
    see "Republishing after a rerun".
+
+### Re-deriving after consent changes — `autune.context.rederive_topics`
+
+Step 2 filters when the transcript arrives, and nothing arrives when consent
+changes afterwards. Two cases leave a meeting's topics out of step with it:
+
+- **Rows written before #439** were derived from every utterance: a
+  non-consenting speaker's speech can be in `ctx_embeddings.ref_label`, its
+  vector, and `ctx_topic_links.topic_label`. The read-time filter in step 5
+  keeps their text from the re-ranker but cannot reach a label or a vector,
+  and those still feed BM25, dense search and the label fallback.
+- **Consent attested after analysis.** `autune_audio.service.attest_consent`
+  can land once D has analysed the meeting and tells no consumer, so D keeps
+  no topics for speech that is now allowed. When withdrawal exists (#190), it
+  is the same case in the other direction.
+
+`service.rederive_topics` re-runs steps 2–7 from the utterances module A
+stored, through the same code path as the event, and routes like it:
+republish with no notice if the meeting had published, otherwise re-arm the
+publish check. It declines, touching nothing, a meeting D never analysed, one
+past its retention window, or one whose row lacks A's privacy flags.
+
+**Operational procedure.** After #439 is deployed, and after any change to
+consent on meetings D has already analysed, run
+
+```bash
+uv run --package autune-context python -m autune_context.rederive [--team TEAM_ID]
+```
+
+where a `cpu_heavy` worker's settings apply (database, model endpoints,
+broker). It re-derives one meeting at a time, oldest first, in this process —
+each meeting's links are scored against the meetings before it, so a fan-out to
+concurrent workers would score some against predecessors not yet re-derived.
+`--dry-run` lists the meetings. The pre-meeting brief (#437) recaps
+`ref_label` to Slack, so this runs **before** briefs are enabled for real
+meetings.
+
+Triggering it automatically when consent changes needs an event from module A;
+none exists yet.
 
 ### Decision lineage — from `autune.extraction.completed`
 

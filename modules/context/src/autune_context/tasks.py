@@ -98,6 +98,27 @@ def on_transcript_ready(payload: dict) -> None:
     )
 
 
+@shared_task(name="autune.context.rederive_topics", acks_late=True)
+def rederive_topics(meeting_id: str) -> None:
+    """Re-run topic linking from the stored transcript after the consent
+    behind it changed -- see ``service.rederive_topics``.
+
+    Routes like ``on_transcript_ready``: a meeting that already published is
+    republished with no notice; one still waiting on B gets its publish check
+    and B-timeout fallback armed again, since re-running moved its deadline.
+    A meeting the service declines (never analysed, expired, no privacy
+    guarantees) is left as it was.
+    """
+    already_published = service.rederive_topics(meeting_id)
+    if already_published is None:
+        return
+    if already_published:
+        republish.delay(meeting_id)
+        return
+    publish_if_ready.delay(meeting_id)
+    publish_if_ready.apply_async((meeting_id,), countdown=get_settings().publish_timeout_s)
+
+
 @shared_task(name="autune.context.on_extraction_completed", acks_late=True)
 def on_extraction_completed(payload: dict) -> None:
     """Thread B's decisions into lineage. Runs after B.

@@ -431,3 +431,103 @@ def test_the_reranker_never_reads_a_withdrawn_speakers_past_text(
     assert reranker.calls
     for _query, passages in reranker.calls:
         assert passages and set(passages) <= labels
+
+
+# --------------------------------------------------------------------------- #
+# rederive_topics -- the backfill after consent changed behind a meeting
+# --------------------------------------------------------------------------- #
+
+
+def _as_module_a_leaves_it(meeting_id: str) -> None:
+    """The privacy flags module A sets on the row once it has transcribed."""
+    with session_scope() as s:
+        row = s.get(Meeting, meeting_id)
+        assert row is not None
+        row.pii_masked = True
+        row.original_audio_deleted = True
+
+
+def _analysed(team_id: str, lines: list[str], **transcript_kwargs: object) -> str:
+    meeting = _meeting(team_id, days_ago=0)
+    service.run_topic_linking(_transcript(meeting, lines, **transcript_kwargs))  # type: ignore[arg-type]
+    _as_module_a_leaves_it(meeting)
+    return meeting
+
+
+def _utterance_ids_behind_topics(meeting_id: str) -> set[str]:
+    return {uid for row in _topic_rows(meeting_id) for uid in (row.utterance_ids or [])}
+
+
+def test_rederive_drops_what_a_non_consenting_speaker_said(team_id: str) -> None:
+    # Before #439 every utterance was analysed: stand that state up by
+    # analysing while both speakers count, then record the refusal.
+    lines = _SEARCH + _SORT
+    speakers = ["동의"] * 5 + ["거부"] * 5
+    meeting = _analysed(team_id, lines, speakers=speakers)
+    assert _utterance_ids_behind_topics(meeting) & {f"utt_{meeting}_{i}" for i in range(5, 10)}
+    with session_scope() as s:
+        s.execute(
+            update(Participant)
+            .where(Participant.meeting_id == meeting, Participant.speaker_label == "거부")
+            .values(consented=False)
+        )
+
+    assert service.rederive_topics(meeting) is False  # analysed, not yet published
+
+    kept = _utterance_ids_behind_topics(meeting)
+    assert kept and kept <= {f"utt_{meeting}_{i}" for i in range(5)}
+
+
+def test_rederive_picks_up_consent_attested_after_analysis(team_id: str) -> None:
+    meeting = _analysed(team_id, _SEARCH + _SORT, refusing=frozenset({"화자"}))
+    assert _topic_rows(meeting) == []
+    with session_scope() as s:  # what autune_audio.service.attest_consent does
+        s.execute(
+            update(Participant).where(Participant.meeting_id == meeting).values(consented=True)
+        )
+
+    service.rederive_topics(meeting)
+
+    assert _topic_rows(meeting)
+
+
+def test_rederive_reports_a_published_meeting_so_it_is_republished(team_id: str) -> None:
+    meeting = _analysed(team_id, _SEARCH + _SORT)
+    with session_scope() as s:
+        status = s.get(CtxMeetingStatus, meeting)
+        assert status is not None
+        status.published_at = datetime.now(tz=UTC)
+
+    assert service.rederive_topics(meeting) is True
+
+
+@pytest.mark.parametrize("state", ["not_analysed", "expired", "no_privacy_guarantees"])
+def test_rederive_leaves_alone_what_it_must_not_stand_in_for(team_id: str, state: str) -> None:
+    meeting = _analysed(team_id, _SEARCH + _SORT)
+    before = sorted(row.id for row in _topic_rows(meeting))
+    with session_scope() as s:
+        row = s.get(Meeting, meeting)
+        assert row is not None
+        if state == "not_analysed":
+            s.execute(delete(CtxMeetingStatus).where(CtxMeetingStatus.meeting_id == meeting))
+        elif state == "expired":
+            row.expires_at = datetime.now(tz=UTC) - timedelta(minutes=1)
+        else:
+            row.pii_masked = False
+
+    assert service.rederive_topics(meeting) is None
+    assert sorted(row.id for row in _topic_rows(meeting)) == before
+
+
+def test_rederivable_meetings_are_this_teams_analysed_ones_oldest_first(team_id: str) -> None:
+    newer = _meeting(team_id, days_ago=1)
+    older = _meeting(team_id, days_ago=5)
+    never_analysed = _meeting(team_id, days_ago=3)
+    for meeting in (newer, older):
+        service.run_topic_linking(_transcript(meeting, _SEARCH))
+
+    with session_scope() as s:
+        ids = service.rederivable_meeting_ids(s, team_id=team_id)
+
+    assert ids == [older, newer]
+    assert never_analysed not in ids
