@@ -268,9 +268,7 @@ def backfill_jira(meeting_id: str, session: SessionDep, reader: CurrentUser) -> 
 
 
 @router.get("/notion/setup")
-def notion_setup_state(
-    meeting_id: str, session: SessionDep, reader: CurrentUser
-) -> dict[str, Any]:
+def notion_setup_state(meeting_id: str, session: SessionDep, reader: CurrentUser) -> dict[str, Any]:
     """After a one-click Notion connection (#428): the pages the team shared with
     Autune, and where its databases are now, if anywhere."""
     return notion_connect.pages_for(_member_team(session, reader, meeting_id))
