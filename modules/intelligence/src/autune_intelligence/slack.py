@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any
 
 from autune_core import get_logger
 
-from .service import MEETING_REPORT_OPEN_ACTION
+from .service import MEETING_REPORT_OPEN_ACTION, MEETING_REPORT_REVIEW_ACTION
 
 if TYPE_CHECKING:
     from slack_bolt import App
@@ -27,10 +27,10 @@ def register(app: App) -> None:
 
     E's Slack surface is outbound: weekly report, meeting report, prediction
     warnings, and the speaking-ratio DM (see docs/modules/intelligence.md).
-    The one interactive component is the meeting report's "상세보기" button.
-    It is a URL button -- the browser opens the page -- but Slack still sends
-    the click to the app and shows an error unless it is acknowledged, so the
-    handler only acknowledges. feedback.py's DM has no buttons on purpose (a
+    The interactive components are the meeting report's two URL buttons,
+    "상세보기" and "확인하러 가기". The browser opens the page, but Slack still
+    sends the click to the app and shows an error unless it is acknowledged, so
+    the handlers only acknowledge. feedback.py's DM has no buttons on purpose (a
     working opt-out needs a handler plus stored state, a separate change).
 
     The speaking-ratio DM goes through SlackClient.send_personal, which
@@ -41,6 +41,7 @@ def register(app: App) -> None:
     either way so no one has to edit the app to add a handler later.
     """
     app.action(MEETING_REPORT_OPEN_ACTION)(_ack_only)
+    app.action(MEETING_REPORT_REVIEW_ACTION)(_ack_only)
 
 
 def _ack_only(ack: Any) -> None:

@@ -186,6 +186,45 @@ def test_post_without_a_web_url_has_no_button(db_session: Session, meeting: str)
     assert all(block["type"] != "actions" for block in slack.blocks[0] or [])
 
 
+def test_a_report_with_pending_items_gets_a_review_button(
+    db_session: Session, meeting: str, web_base_url: str
+) -> None:
+    service.save_meeting_report(db_session, meeting, BODY, pending_review=True)
+    claimed = service.claim_meeting_report(db_session, meeting)
+    assert claimed is not None and claimed.pending_review is True
+    slack = BlockRecordingSlack()
+
+    service.post_meeting_report(slack, "C123", claimed)
+
+    urls = [
+        element["url"]
+        for block in slack.blocks[0] or []
+        if block["type"] == "actions"
+        for element in block["elements"]
+    ]
+    assert urls == [
+        f"{web_base_url}/meetings/{meeting}",
+        f"{web_base_url}/meetings/{meeting}/actions",
+    ]
+
+
+def test_a_payload_refused_before_the_claim_leaves_the_report_unclaimed(
+    db_session: Session, meeting: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A pattern tightened between save and post must not lose the report."""
+    service.save_meeting_report(db_session, meeting, BODY)
+
+    def refuse(*_args: object, **_kwargs: object) -> None:
+        raise PrivacyViolationError("refusing", categories=["phone"])
+
+    monkeypatch.setattr(service, "check_outbound", refuse)
+    with pytest.raises(PrivacyViolationError):
+        service.claim_meeting_report(db_session, meeting)
+
+    row = db_session.get(IntelMeetingReport, meeting)
+    assert row is not None and row.sent_at is None
+
+
 # --- deletion -----------------------------------------------------------------
 
 
