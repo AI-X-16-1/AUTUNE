@@ -30,7 +30,7 @@ from autune_integrations import SlackClient
 
 from . import service
 from .config import get_settings
-from .models import IntelCompletion
+from .models import IntelCompletion, IntelMeetingReport
 
 log = get_logger(__name__)
 
@@ -178,3 +178,40 @@ def generate_weekly_report(team_id: str, period_end: str | None = None) -> None:
         period_start=str(start),
         meeting_count=report.metrics_json["meeting_count"],
     )
+
+
+@shared_task(name="autune.intelligence.deliver_meeting_report", acks_late=True)
+def deliver_meeting_report(meeting_id: str) -> None:
+    """Post a meeting's stored report to its team's Slack channel, at most once.
+
+    Takes the meeting id only -- the body is read from ``intel_meeting_reports``,
+    never carried in the payload (decision #275's rule for Celery arguments).
+    The claim commits before the post, so a retry or a worker lost after the
+    post finds the report claimed and sends nothing. Without a connected Slack
+    or a configured ``channel`` the report stays stored and unclaimed, the same
+    as the weekly report.
+    """
+    with session_scope() as session:
+        report = session.get(IntelMeetingReport, meeting_id)
+        if report is None:
+            log.info("intelligence_meeting_report_missing", meeting_id=meeting_id)
+            return
+        config = load_integration(session, report.team_id, "slack")
+        channel = config.config.get("channel") if config is not None else None
+        if config is None or channel is None:
+            log.info(
+                "intelligence_meeting_report_no_channel",
+                meeting_id=meeting_id,
+                slack_connected=config is not None,
+            )
+            return
+        secret = config.require_secret()
+        claimed = service.claim_meeting_report(session, meeting_id)
+
+    if claimed is None:
+        log.info("intelligence_meeting_report_already_claimed", meeting_id=meeting_id)
+        return
+    slack_ts = service.post_meeting_report(SlackClient(secret), channel, claimed)
+    with session_scope() as session:
+        service.record_meeting_report_post(session, meeting_id, channel, slack_ts)
+    log.info("intelligence_meeting_report_posted", meeting_id=meeting_id)

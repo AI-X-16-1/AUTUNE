@@ -176,6 +176,7 @@ See `../architecture/async-pipeline.md`.
 | `intel_predictions` | Predictions with horizon and probability |
 | `intel_reports` | Generated weekly reports |
 | `intel_completion` | Which of B, C, D have reported per meeting |
+| `intel_meeting_reports` | One summary report per meeting, composed by the agent layer's Report subagent; posted once, deleted with its meeting |
 
 There is no speaking-ratio table, and there will not be one.
 

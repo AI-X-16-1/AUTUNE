@@ -14,6 +14,7 @@ timeout elapses. The Celery glue that enqueues the aggregate task lives in
 from __future__ import annotations
 
 from collections import Counter
+from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from typing import Final
 
@@ -36,8 +37,8 @@ from autune_contracts import (
 )
 from autune_contracts.intelligence import Grade
 from autune_core import Meeting, Participant, Utterance, get_logger
-from autune_core.errors import NotFoundError
-from autune_integrations import SlackApi, assert_personal_delivery
+from autune_core.errors import ConflictError, NotFoundError, ValidationError
+from autune_integrations import SlackApi, assert_masked, assert_personal_delivery
 
 from .alignment import meeting_alignment
 from .config import get_settings
@@ -46,6 +47,7 @@ from .models import (
     IntelAlignment,
     IntelCompletion,
     IntelGapPattern,
+    IntelMeetingReport,
     IntelPrediction,
     IntelReport,
     IntelScore,
@@ -814,6 +816,140 @@ def generate_weekly_report(
         metrics_json=metrics_json,
         source_meeting_ids=meeting_ids,
     )
+
+
+# --- Meeting report (agent layer, #260/#261) --------------------------------
+#
+# The Report subagent composes one summary per meeting from B, C, D and E's
+# tools (agent-layer.md section 3.1); E stores it and posts it, because
+# outbound goes through the module that owns the surface (section 8 rule 2).
+# Whether a post needs a person's approval first is the main agent's gate, not
+# this code's -- these functions do what they are asked, once.
+
+MEETING_REPORT_MAX_CHARS: Final = 3000
+"""Slack's limit for one section block's text. A longer body is refused rather
+than cut, because a cut summary reads as a finished one.
+
+It also has to fit ``autune_integrations.privacy.MAX_OUTBOUND_CHARS`` (4000),
+which counts every string in the request: the body once, the title (at most
+400) as the preview, and the button's scaffolding. ``post_meeting_report``
+therefore never sends the body twice."""
+
+MEETING_REPORT_OPEN_ACTION: Final = "intel_meeting_report_open"
+"""The button's ``action_id``. slack.py acknowledges it so Slack shows no error."""
+
+
+def save_meeting_report(
+    session: Session, meeting_id: str, body_markdown: str
+) -> IntelMeetingReport:
+    """Store the meeting's report body, replacing an unsent one.
+
+    The body is checked for personal data before it is written, not only when
+    it is posted: privacy.md section 2 keeps unmasked text out of every store.
+    A report already posted is not replaced -- people have read that version,
+    and a silent edit would make the stored copy disagree with what they saw.
+    """
+    meeting = session.get(Meeting, meeting_id)
+    if meeting is None:
+        raise NotFoundError("meeting", meeting_id)
+    if len(body_markdown) > MEETING_REPORT_MAX_CHARS:
+        raise ValidationError(
+            f"report body exceeds {MEETING_REPORT_MAX_CHARS} characters", field="body_markdown"
+        )
+    assert_masked(body_markdown, destination="intel_meeting_reports")
+
+    row = session.get(IntelMeetingReport, meeting_id)
+    if row is None:
+        row = IntelMeetingReport(
+            meeting_id=meeting_id, team_id=meeting.team_id, body_markdown=body_markdown
+        )
+        session.add(row)
+    elif row.sent_at is not None:
+        raise ConflictError("meeting report was already posted", meeting_id=meeting_id)
+    else:
+        row.body_markdown = body_markdown
+    session.flush()
+    return row
+
+
+def _meeting_report_blocks(meeting_id: str, body_markdown: str) -> list[dict]:
+    blocks: list[dict] = [{"type": "section", "text": {"type": "mrkdwn", "text": body_markdown}}]
+    base_url = get_settings().web_base_url
+    if base_url:
+        blocks.append(
+            {
+                "type": "actions",
+                "elements": [
+                    {
+                        "type": "button",
+                        "text": {"type": "plain_text", "text": "상세보기"},
+                        "url": f"{base_url.rstrip('/')}/meetings/{meeting_id}",
+                        "action_id": MEETING_REPORT_OPEN_ACTION,
+                    }
+                ],
+            }
+        )
+    return blocks
+
+
+@dataclass(frozen=True)
+class ClaimedReport:
+    """What ``post_meeting_report`` needs, read while the claim held the row."""
+
+    meeting_id: str
+    title: str
+    body_markdown: str
+
+
+def claim_meeting_report(session: Session, meeting_id: str) -> ClaimedReport | None:
+    """Mark the report sent and hand it out, or ``None`` if it was already claimed.
+
+    The claim comes **before** the post and its transaction must commit before
+    the post is made: at most once, the rule B's Notion sync (#342) and D's
+    brief (#437) follow. The row is locked, so two tasks for the same meeting
+    (a retry, a second approval) cannot both see it unsent. A post that fails
+    after the claim costs this meeting its report; it never sends a second copy.
+    """
+    row = session.execute(
+        sa.select(IntelMeetingReport)
+        .where(IntelMeetingReport.meeting_id == meeting_id)
+        .with_for_update()
+    ).scalar_one_or_none()
+    if row is None:
+        raise NotFoundError("meeting report", meeting_id)
+    if row.sent_at is not None:
+        return None
+    row.sent_at = datetime.now(UTC)
+    session.flush()
+    title = session.scalar(sa.select(Meeting.title).where(Meeting.id == meeting_id)) or ""
+    return ClaimedReport(meeting_id=meeting_id, title=title, body_markdown=row.body_markdown)
+
+
+def post_meeting_report(slack: SlackApi, channel: str, report: ClaimedReport) -> str:
+    """Post a claimed report. Returns Slack's message ts.
+
+    The body goes out once, in the section block. The top-level ``text`` is
+    Slack's notification preview (see ``autune_integrations.privacy.strings_in``),
+    so it carries the title; putting the body there as well sent it twice and
+    pushed a body above ~1,940 characters past ``MAX_OUTBOUND_CHARS``.
+    """
+    return slack.post_message(
+        channel,
+        f"{report.title} 회의 리포트",
+        _meeting_report_blocks(report.meeting_id, report.body_markdown),
+    )
+
+
+def record_meeting_report_post(
+    session: Session, meeting_id: str, channel: str, slack_ts: str
+) -> None:
+    """Remember where the report went, so a later edit or thread can find it."""
+    row = session.get(IntelMeetingReport, meeting_id)
+    if row is None:  # the meeting was deleted while the post was in flight
+        return
+    row.slack_channel = channel
+    row.slack_ts = slack_ts
+    session.flush()
 
 
 # --- Speaking ratio (pipeline step 7) -----------------------------------

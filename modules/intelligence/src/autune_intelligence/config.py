@@ -72,6 +72,13 @@ class IntelligenceSettings(BaseSettings):
     reads labeled history and fits XGBoost. Under both defaults there is nothing
     to warm and the hook costs one settings read."""
 
+    web_base_url: str | None = None
+    """Where the web app is served, e.g. ``https://autune.example.com``.
+
+    The meeting report's "상세보기" button links to ``{web_base_url}/meetings/{id}``.
+    Unset, the report is posted without the button rather than with a link that
+    points nowhere."""
+
 
 @lru_cache
 def get_settings() -> IntelligenceSettings:
