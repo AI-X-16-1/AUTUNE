@@ -3,7 +3,12 @@ import { api, authHeaders } from "@/shared/api/client";
 
 export { api };
 
-import type { MeetingDetail, TeamSummary, Utterance } from "./types";
+import type {
+  MeetingDetail,
+  MeetingSummary,
+  TeamSummary,
+  Utterance,
+} from "./types";
 
 /** A meeting's stored transcript, masked.
  *
@@ -30,6 +35,18 @@ export const getTranscript = (meetingId: string) =>
 /** A meeting's own row: title, status, and the two privacy flags. What S12 polls. */
 export const getMeeting = (meetingId: string) =>
   api.audio<MeetingDetail>(`/meetings/${meetingId}`);
+
+/**
+ * Every meeting this person may see, newest first. The home screen's list (S05).
+ *
+ * Team-scoped by the backend's join through `team_members` — not by a filter
+ * here and not by a `team_id` this browser passes, because the caller does not
+ * get to say which meetings are theirs. No counts in a row either: an utterance
+ * count is one join from a per-person speech volume (privacy.md section 3), and
+ * action items and gaps belong to modules B and C, which A may not read. A row
+ * links to the screens that own the rest.
+ */
+export const listMeetings = () => api.audio<MeetingSummary[]>("/meetings");
 
 /** The teams this person may open a meeting for. Feeds `createMeeting`. */
 export const listTeams = () => api.audio<TeamSummary[]>("/teams");

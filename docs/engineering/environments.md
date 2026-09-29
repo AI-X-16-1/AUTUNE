@@ -75,6 +75,34 @@ prefix `AUTUNE_<MODULE>_`.
 | `AUTUNE_LOG_LEVEL` | `INFO` | |
 | `AUTUNE_RETENTION_DAYS` | `90` | Default analysis retention |
 | `AUTUNE_CORS_ALLOWED_ORIGINS` | `` | Comma-separated origins `apps/api` allows via CORS. Empty (default) means no CORS headers at all. Set to `http://localhost:3000` for local dev when running `apps/web`'s dev server against `apps/api`'s — a browser blocks the response otherwise, since `:3000` and `:8000` are different origins. Outside `local`, every origin must be an explicit `https://` URL — `*` and plain `http://` are refused at startup |
+| `AUTUNE_WEB_BASE_URL` | `http://localhost:3000` | Where the OAuth callback sends the browser back to |
+
+### Sign-in
+
+| Variable | Example | Notes |
+| --- | --- | --- |
+| `AUTUNE_GOOGLE_CLIENT_ID` | | Google Cloud OAuth client (W2). Blank disables Google sign-in |
+| `AUTUNE_GOOGLE_CLIENT_SECRET` | | Never commit |
+| `AUTUNE_GOOGLE_REDIRECT_URI` | `http://localhost:3000/api/auth/google/callback` | The **web** origin, not the API — the browser reaches `/api/*` through the Next proxy, so the callback must land there too. Must match a redirect URI registered in the Google Cloud console exactly, per environment |
+| `API_PROXY_TARGET` | `http://localhost:8000` | Web-only (read by `apps/web/next.config.ts`), where `/api/*` is proxied. Set per environment; not an `autune_core` setting |
+
+Google *sign-in* is identity only (`openid email profile`) and is unrelated to
+`AUTUNE_GOOGLE_CALENDAR_CREDENTIALS`, which grants module D calendar access.
+
+**Two cookies, two jobs.** `autune_session` is the signed session (7 days,
+`HttpOnly`, `SameSite=Lax`, `Secure` outside local). `autune_oauth_state` lives
+only for the 600 seconds of one sign-in, is scoped to the callback's own path,
+and holds the OAuth `state`: the callback refuses a request whose cookie does
+not match the `state` in the query, so a callback URL opened in somebody else's
+browser cannot sign them in as whoever started it. Redis proves a state was
+issued; the cookie is what proves to whom.
+`packages/core/src/autune_core/auth_router.py` has the reasoning.
+
+**A signed-out session is signed out in the browser only.** `POST /logout`
+clears the cookie; the JWT it held stays valid until it expires. A token that
+leaked cannot be revoked, which is acceptable for a first version and is not
+acceptable for long — it needs a token version on `User`, or a server-side
+session, before this carries real meetings.
 
 ### Web (`apps/web`)
 
@@ -85,6 +113,10 @@ nothing secret goes here.
 | --- | --- | --- |
 | `NEXT_PUBLIC_API_URL` | `http://localhost:8000` | Where the browser reaches `apps/api` |
 | `NEXT_PUBLIC_AUTUNE_DEV_TOKEN` | | Bearer token for every call, until sign-in (S01) exists. Build-time fallback for the value below |
+
+The web app proxies `/api/*` to the API (`next.config.ts`) so the browser sees
+one origin and the `autune_session` cookie stays first-party. `NEXT_PUBLIC_API_URL`
+overrides the client base only if you deliberately want cross-origin calls.
 
 **Signing in, until there is a sign-in.** Routes that take `CurrentUser` refuse
 a request without a bearer token, and S01 is not built. Until it is,
@@ -130,15 +162,29 @@ Where that token comes from, and the two ways to give it to the browser:
 | `AUTUNE_AUDIO_DIARIZATION_MIN_SPEAKERS` / `…_MAX_SPEAKERS` | A | Bounds instead of an exact count. Ignored when `…_NUM_SPEAKERS` is set. Each must be ≥ 1; the settings refuse to load otherwise |
 | `NEXT_PUBLIC_AUTUNE_DEV_TOKEN` | A (web) | A bearer token for the browser, local only — see "A token for the browser" below |
 | `AUTUNE_AUDIO_DIARIZATION_MODEL` | A | Default `pyannote/speaker-diarization-3.1` |
-| `AUTUNE_EXTRACTION_CLASSIFIER_IMPL` | B | `local` · `hosted` · `fake`. Default `local`. **No `external`** — see below |
+| `AUTUNE_EXTRACTION_CLASSIFIER_IMPL` | B | `local` · `hosted` · `fake` · `llm`. Default `local`. `llm` is opt-in and not signed off for real meetings — see below |
 | `AUTUNE_EXTRACTION_CLASSIFIER_CHECKPOINT` | B | Pinned model, recorded with every classification. Never a floating tag. **Blank by default** — no trained checkpoint is published yet, and `local` / `hosted` refuse to start without one |
 | `AUTUNE_EXTRACTION_CLASSIFIER_ENDPOINT` | B | Our own inference server. Required when `CLASSIFIER_IMPL=hosted` |
 | `AUTUNE_EXTRACTION_CLASSIFIER_DEVICE` | B | `cpu` · `cuda`. Default `cpu`. Mirrors `AUTUNE_AUDIO_DEVICE` |
-| `AUTUNE_EXTRACTION_NLI_IMPL` | B | `local` · `hosted` · `fake`. Default `local`. Step 4 (#12), same **no `external`** rule as `CLASSIFIER_IMPL` |
+| `AUTUNE_EXTRACTION_LLM_API_KEY` | B | Provider key for `CLASSIFIER_IMPL=llm`, sent as a header only. **Blank by default**, and `llm` refuses to start without one. A free-tier key may let the provider keep what it is sent — dummy meetings only |
+| `AUTUNE_EXTRACTION_LLM_MODEL` | B | The model `llm` calls. Default `gemini-3.8-flash`. Every classification records `llm:<model>+<fallback>` while the fallback is on |
+| `AUTUNE_EXTRACTION_LLM_FALLBACK_MODEL` | B | Answers a window when `LLM_MODEL` stays unavailable (429, 5xx, timeout after retries). Default `gemini-3.5-flash-lite`; blank disables it |
+| `AUTUNE_EXTRACTION_LLM_BASE_URL` | B | The provider's API root. Default Google's Generative Language API |
+| `AUTUNE_EXTRACTION_LLM_TIMEOUT_SEC` | B | Timeout per request (connect and read), seconds. Default `60` — a thinking model takes 12–20 s a window, past the shared client's 10 s. A window may retry and fall back, so it can take several of these |
+| `AUTUNE_EXTRACTION_NLI_IMPL` | B | `local` · `hosted` · `fake`. Default `local`. Step 4 (#12). **No `external`**: it reads an utterance's own text — see below |
 | `AUTUNE_EXTRACTION_NLI_CHECKPOINT` | B | Recorded as the model version once NLI verifies a row. Never a floating tag. **Blank by default** — #172 settled on klue/roberta-base fine-tuned on KorNLI, but that checkpoint is not baked in as a silent default; `local` / `hosted` refuse to start without one |
 | `AUTUNE_EXTRACTION_NLI_ENDPOINT` | B | Our own inference server. Required when `NLI_IMPL=hosted` |
 | `AUTUNE_EXTRACTION_NLI_DEVICE` | B | `cpu` · `cuda`. Default `cpu`. Mirrors `AUTUNE_EXTRACTION_CLASSIFIER_DEVICE` |
 | `AUTUNE_EXTRACTION_CANDIDATE_CONFIDENCE` | B | Below this, an item is a candidate rather than asserted. **Blank by default** — the number comes from the evaluation set (#10), and blank means nothing is a candidate |
+| `AUTUNE_EXTRACTION_RESOLVER_IMPL` | B | `local` · `hosted` · `fake` (#175). **Default `fake`** — unlike the classifier, since the model candidate is not yet confirmed. **No `external`**, same reason as the classifier |
+| `AUTUNE_EXTRACTION_RESOLVER_CHECKPOINT` | B | Local model path/hub id, or the hosted model's recorded version. Required for `local`/`hosted` |
+| `AUTUNE_EXTRACTION_RESOLVER_ENDPOINT` | B | Our own inference server. Required when `RESOLVER_IMPL=hosted` |
+| `AUTUNE_EXTRACTION_RESOLVER_DEVICE` | B | `cpu` · `cuda`. Default `cpu`. Mirrors `AUTUNE_EXTRACTION_CLASSIFIER_DEVICE` |
+| `AUTUNE_EXTRACTION_EMBEDDER_IMPL` | B | `local` · `fake` (#175, #366). **No `hosted` yet.** Default `fake`, same reason as `RESOLVER_IMPL` |
+| `AUTUNE_EXTRACTION_EMBEDDER_CHECKPOINT` | B | Default `nlpai-lab/KURE-v1` — module D's already-shipped choice, not a candidate awaiting evaluation |
+| `AUTUNE_EXTRACTION_EMBEDDER_DEVICE` | B | `cpu` · `cuda`. Default `cpu` |
+| `AUTUNE_EXTRACTION_RESOLVER_MIN_SIMILARITY` | B | Below this cosine similarity to its own context window, a resolved sentence is ungrounded. **Blank by default** — no embedding model has been run against a labelled set yet, and blank skips the check entirely |
+| `AUTUNE_EXTRACTION_DEV_ROUTES` | B | `true` mounts the unauthenticated page for connecting Notion by hand, and only when `AUTUNE_ENV=local` too. Default `false`. Deleted with S28 (#401) |
 | `AUTUNE_GAP_RISK_THRESHOLD` | C | Default `0.7`. At or above is `high`, the only severity surfaced |
 | `AUTUNE_GAP_MEDIUM_THRESHOLD` | C | Default `0.5`. Down to here is `medium`, below it `low` |
 | `AUTUNE_GAP_DEFAULT_TEMPLATE` | C | Default `general`. Which domain template a meeting nobody chose one for is held to |
@@ -167,15 +213,18 @@ Where that token comes from, and the two ways to give it to the browser:
 | `AUTUNE_CONTEXT_RETRIEVE_TOP_K` | D | Hybrid retrieval breadth. Default `50` |
 | `AUTUNE_CONTEXT_RERANK_TOP_K` | D | Kept after re-ranking. Default `10` |
 | `AUTUNE_CONTEXT_RRF_K` | D | Reciprocal-rank-fusion constant. Default `60` |
-| `AUTUNE_CONTEXT_LINK_CONFIDENCE_THRESHOLD` | D | Assert vs. ask. Default `0.6`, tuned in eval |
-| `AUTUNE_CONTEXT_LINEAGE_MATCH_THRESHOLD` | D | Decision-to-thread match cutoff (cosine). Default `0.6`, tuned in eval |
+| `AUTUNE_CONTEXT_LINK_SIMILARITY_THRESHOLD` | D | Assert a topic link at or above this dense segment similarity (cosine). Default `0.74`, tuned in eval |
+| `AUTUNE_CONTEXT_LINK_CONFIDENCE_THRESHOLD` | D | Also assert at or above this re-ranker score. Default `0.6` |
+| `AUTUNE_CONTEXT_LINEAGE_MATCH_THRESHOLD` | D | Decision-to-thread match cutoff (cosine). Default `0.65`, tuned in eval |
 | `AUTUNE_CONTEXT_PUBLISH_TIMEOUT_S` | D | Wait for B before publishing. Default `600` |
 | `AUTUNE_CONTEXT_MAX_TOPIC_LINK_NOTICES` | D | Individual topic-link Slack messages per meeting before the rest roll up into one notice. Default `3` |
 | `AUTUNE_CONTEXT_WARM_MODELS_ON_WORKER_INIT` | D | `true` only on workers consuming `cpu_heavy`. Default `false` |
 | `AUTUNE_INTELLIGENCE_AGGREGATE_TIMEOUT_SECONDS` | E | Wait for B/C/D before aggregating without the rest. Default `600` |
 | `AUTUNE_INTELLIGENCE_GAP_CLASSIFIER_IMPL` | E | `local` (default) · `fake`. **No `external`, no `hosted`** — see below |
 | `AUTUNE_INTELLIGENCE_GAP_CLASSIFIER_BACKBONE` | E | Sentence-embedding backbone SetFit fits its few-shot head onto. Default `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` |
-| `AUTUNE_INTELLIGENCE_WARM_MODELS_ON_WORKER_INIT` | E | `true` only on workers consuming gap-classification tasks. Default `false` |
+| `AUTUNE_INTELLIGENCE_WARM_MODELS_ON_WORKER_INIT` | E | `true` only on workers consuming aggregation tasks — builds the gap classifier and the misalignment predictor at startup. Default `false` |
+| `AUTUNE_INTELLIGENCE_MISALIGNMENT_PREDICTOR_IMPL` | E | `heuristic` (default) · `local` (XGBoost fit on labeled history, heuristic until there is enough). No external option |
+| `AUTUNE_INTELLIGENCE_MISALIGNMENT_REFIT_HOURS` | E | How long a fit (or fallback) is kept before `local` refits. Default `24` |
 
 Notion and Calendar credentials are **not** environment variables. Each
 team configures its own on screen S28 and they are stored encrypted in
@@ -186,13 +235,25 @@ Every new variable goes into `.env.example` with a comment and into this table.
 A variable that exists only in someone's local `.env` will break the next
 person's setup.
 
-### The classifier has no external option
+### The classifier's one external option is opt-in
 
-`AUTUNE_EXTRACTION_CLASSIFIER_IMPL` accepts `local`, `hosted` and `fake`, and
-nothing else. Module B classifies every utterance in a meeting, so an external
-implementation would mean sending the whole transcript to somebody else's model —
-which section 6 of `../architecture/privacy.md` makes a design conversation rather
-than a value you can set.
+`AUTUNE_EXTRACTION_CLASSIFIER_IMPL` accepts `local`, `hosted`, `fake` and `llm`.
+Module B classifies every utterance in a meeting, so an external implementation
+sends the whole meeting's text to somebody else's model — which section 6 of
+`../architecture/privacy.md` makes a design conversation rather than a value you
+can set. Module B added `llm` as an opt-in after the 2026-09-23 mentoring, and
+the conversation is #392. Until #392 is settled:
+
+- `llm` is never the default, and nothing selects it for you.
+- Use it on dummy meetings only. A free-tier key may let the provider keep what
+  it is sent; a real meeting needs a paid key and #392's answer.
+
+What it sends is utterance text as module A masked it and a fixed instruction —
+no speaker, no id, no meeting title — in windows under the 4,000-character
+outbound cap, through `autune_integrations.HttpClient` like `hosted`. **A name
+said aloud is not masked:** module A masks resident registration, card, phone
+and account numbers and email addresses, and has no pattern or model for names. So every name spoken in the meeting goes
+with it — the exposure #392 and #92 ask about.
 
 `hosted` points at an inference server we run. It still goes through
 `autune_integrations.HttpClient` so the outbound guard reads the request body:
@@ -214,12 +275,13 @@ touches it. Without the extra the classifier raises a `RuntimeError` naming this
 command — the default implementation failing with `No module named
 'transformers'` tells the reader nothing about the extra existing.
 
-### NLI (step 4) has the same rule and the same extra
+### NLI (step 4) has no external option, and the same extra
 
-`AUTUNE_EXTRACTION_NLI_IMPL` accepts the same three values for the same reason —
-step 4 (#12) reads a commitment or ambiguous utterance's own text, so an
-external implementation is the same design conversation `CLASSIFIER_IMPL`
-already had. `local` needs the same `local-models` extra as the classifier
+`AUTUNE_EXTRACTION_NLI_IMPL` accepts `local`, `hosted` and `fake` — not the
+classifier's `llm`. Step 4 (#12) reads a commitment or ambiguous utterance's
+own text, so an external implementation is the section 6 question #392 is
+settling for the classifier; the classifier's opt-in does not extend to NLI.
+`local` needs the same `local-models` extra as the classifier
 (`transformers`/`torch` are shared); no separate `uv sync` is needed if you
 already installed it for the classifier.
 
@@ -255,8 +317,7 @@ recording.
 extracts entities from **every** utterance in a meeting, so an external
 implementation would mean sending the whole transcript to somebody else's
 model — which section 6 of `../architecture/privacy.md` makes a design
-conversation rather than a value you can set. The same reasoning module B
-applied to its classifier.
+conversation rather than a value you can set.
 
 Relation extraction is the exception, and `AUTUNE_GAP_RELATION_IMPL` is where
 it would go. A relation is read off one clause, so the hard cases can be sent
@@ -287,9 +348,12 @@ reader nothing about the extra existing.
 nothing else. It classifies gaps across a team's whole meeting history —
 exactly the aggregation section 3 of `../architecture/privacy.md` asks module
 E to be careful with — so an external implementation is a design conversation,
-not a config value. That much is the same reasoning modules B and C give for
-ruling out `external` on their own model-facing settings; it says nothing
-about `hosted`, which B does have (`AUTUNE_EXTRACTION_CLASSIFIER_IMPL` above).
+not a config value. That much is the same reasoning module C gives for its
+entity extractor (`AUTUNE_GAP_NER_IMPL`) and module B for its NLI
+(`AUTUNE_EXTRACTION_NLI_IMPL`). B's classifier is the exception: it has an
+opt-in external `llm` (`AUTUNE_EXTRACTION_CLASSIFIER_IMPL` above), never the
+default and pending #392. None of this says anything about `hosted`, which B
+does have on both of its settings.
 
 E has no `hosted` for an unrelated reason: unlike B's classifier or C's NER
 model, there is no separate checkpoint to pin and no inference server to point
@@ -411,6 +475,25 @@ response is what `POST /api/audio/meetings` needs.
 cleared at the end of every task. Do not point it at a synced folder, and do not
 keep test recordings of real meetings on disk. See
 `../architecture/privacy.md`.
+
+**The API and the worker must see the same directory on the same filesystem.**
+The upload endpoint writes the recording and the worker adopts it by job id, so
+a deployment that gives the two processes different storage breaks the handover:
+the worker finds nothing, and the file the endpoint wrote is left with nobody
+to delete it. Locally both run on the host from the same checkout (the two
+commands at the top of this file), so they share `AUTUNE_AUDIO_TEMP_DIR` by
+construction: `AudioSettings` reads `.env` relative to the working directory,
+and both are started from the repository root. `infra/docker-compose.yml` runs
+only PostgreSQL and Redis, and no volume is involved.
+
+Containerising either process means both must see one **local** directory at
+that path: a bind mount of the host directory (the only option when one of the
+two stays on the host), or a volume shared by both containers on the same host
+— tmpfs or the local driver, never a network- or cloud-backed driver. This is
+the scratch directory `privacy.md` section 1 requires, not the "mounted volume"
+it forbids: files in it are deleted by `storage.adopt` and `service.sweep_orphans`, and
+the volume must not outlive the host. Keep that true, or change the handover
+rather than the path (`privacy.md` section 1, decision #275).
 
 While an upload request is in flight there is a second, short-lived copy of the
 recording in the OS temporary directory (`tempfile.gettempdir()`), written by

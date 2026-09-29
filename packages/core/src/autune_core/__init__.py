@@ -5,7 +5,16 @@ agreement. ``autune_core`` never imports a module.
 """
 
 from . import crypto, deletion, ids
-from .auth import CurrentUser, current_user, issue_token, require_self
+from .auth import (
+    SESSION_COOKIE,
+    CurrentUser,
+    clear_session_cookie,
+    current_user,
+    issue_token,
+    require_self,
+    set_session_cookie,
+)
+from .auth_service import upsert_user_from_google
 from .db import Base, get_engine, get_session, get_sessionmaker, session_scope
 from .entities import (
     Meeting,
@@ -36,6 +45,7 @@ from .integrations_config import (
     save_integration,
 )
 from .logging import configure_logging, get_logger
+from .periodic import beat_schedule, is_periodic_task_name, periodic
 from .settings import Settings, get_settings
 
 __all__ = [
@@ -46,6 +56,9 @@ __all__ = [
     "publish",
     "subscribers",
     "consumer_task_suffix",
+    "periodic",
+    "beat_schedule",
+    "is_periodic_task_name",
     "Base",
     "Meeting",
     "Participant",
@@ -58,6 +71,10 @@ __all__ = [
     "current_user",
     "issue_token",
     "require_self",
+    "SESSION_COOKIE",
+    "set_session_cookie",
+    "clear_session_cookie",
+    "upsert_user_from_google",
     "deletion",
     "get_engine",
     "get_sessionmaker",

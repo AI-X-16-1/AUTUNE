@@ -35,6 +35,15 @@ WEDNESDAY = date(2026, 9, 9)
         # A week and no day: the working week's end.
         ("이번 주까지 끝내겠습니다", "이번 주", date(2026, 9, 11)),
         ("다음 주 중으로 하겠습니다", "다음 주", date(2026, 9, 18)),
+        ("다음 주 말씀드리겠습니다", "다음 주", date(2026, 9, 18)),
+        ("다음 주 초안 드릴게요", "다음 주", date(2026, 9, 18)),
+        # Part of a week, by its last weekday: 초 Mon-Tue, 중반 Wed-Thu, 말 Fri.
+        ("다음 주 초에 드릴게요", "다음 주 초", date(2026, 9, 15)),
+        ("다음 주초까지 하겠습니다", "다음 주초", date(2026, 9, 15)),
+        ("다음 주 초반에 공유할게요", "다음 주 초반", date(2026, 9, 15)),
+        ("다음 주 중반까지 하겠습니다", "다음 주 중반", date(2026, 9, 17)),
+        ("이번 주 중반까지 드릴게요", "이번 주 중반", date(2026, 9, 10)),
+        ("다음 주 말까지 하겠습니다", "다음 주 말", date(2026, 9, 18)),
         # Weekends end on Sunday.
         ("주말까지 보겠습니다", "주말", date(2026, 9, 13)),
         ("이번 주말에 정리하겠습니다", "이번 주말", date(2026, 9, 13)),
@@ -60,6 +69,11 @@ WEDNESDAY = date(2026, 9, 9)
 )
 def test_a_phrase_resolves_to_a_day(text: str, phrase: str, due: date) -> None:
     assert parse_due(text, WEDNESDAY) == DueDate(text=phrase, date=due)
+
+
+def test_early_this_week_said_on_a_friday_has_passed() -> None:
+    """Early this week ended on Tuesday; said on Friday it is not a deadline."""
+    assert parse_due("이번 주 초에 드릴게요", date(2026, 9, 11)) is None
 
 
 def test_an_utterance_with_no_date_has_none() -> None:
@@ -270,3 +284,98 @@ def test_a_day_long_past_named_without_a_deadline_word_gets_no_date() -> None:
     """The price of not inventing 2027-06-01: a real "3월 2일에" in September is
     missed. A missing date on a draft card, not a wrong one."""
     assert parse_due("3월 2일에 드리겠습니다", WEDNESDAY) is None
+
+
+# --- the past adnominal, but only for a named few verbs (#197) ------------------
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "월요일에 말씀드린 거 정리하겠습니다",
+        "월요일에 공유한 자료 다시 보내겠습니다",
+        "월요일에 보낸 파일 기준으로 정리하겠습니다",
+        "월요일에 전달한 내용 다시 확인하겠습니다",
+    ],
+)
+def test_a_named_verbs_past_adnominal_is_now_read_as_the_past(text: str) -> None:
+    """ "말씀드린" reads the same as "말씀드렸던" now -- #197's #2. Said on
+    Wednesday 09-09, each would read as next Monday if taken forward."""
+    assert parse_due(text, WEDNESDAY) is None
+
+
+def test_an_adjectives_present_form_is_still_not_the_past() -> None:
+    """ "필요한" is not one of the four verbs -- an adjective's present, not a
+    verb's past, and this module still cannot tell the two apart in general
+    (#197's own reason for naming only a few verbs rather than a syllable
+    rule)."""
+    assert parse_due("월요일에 필요한 걸 다시 정리하겠습니다", WEDNESDAY) == DueDate(
+        text="월요일", date=date(2026, 9, 14)
+    )
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "금요일까지 지난번에 말씀드린 거 드리겠습니다",  # deadline word overrides
+    ],
+)
+def test_a_deadline_word_overrides_the_named_verbs_past_adnominal_too(text: str) -> None:
+    assert parse_due(text, WEDNESDAY) == DueDate(text="금요일", date=date(2026, 9, 11))
+
+
+def test_a_past_adnominal_with_no_agreement_marker_stays_the_past() -> None:
+    """ "말씀드린 걸로" has no ``_AGREED`` match at all -- "걸로" needs a "는" or
+    "할" right before it, and "린" is neither -- so this is plain past, the
+    same shape as the existing "말씀드렸던 걸로" case."""
+    assert parse_due("월요일에 말씀드린 걸로 정리하겠습니다", WEDNESDAY) is None
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "월요일에 자료 공유한다면 좋겠습니다",
+        "월요일에 자료 전달한다면 좋겠습니다",
+        "월요일에 자료 보낸다고 하셨어요",
+        "월요일에 말씀드린다면 좋겠습니다",
+    ],
+)
+def test_a_named_verbs_present_conditional_is_not_the_past(text: str) -> None:
+    """Each of the four past-adnominal forms is also an exact prefix of the
+    same verb's present/conditional -ㄴ다 conjugation -- "공유한" opens
+    "공유한다면" the same way "겠" opens "겠다", which ``_NOT_PAST`` already
+    excludes for the syllable check. They are not followed by a noun that
+    takes a past mention, so ``_PAST_ADNOMINAL_VERBS`` does not match (review
+    by lsh2217 on #333, reproduced against all four verbs)."""
+    assert parse_due(text, WEDNESDAY) == DueDate(text="월요일", date=date(2026, 9, 14))
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "월요일에 자료 공유한 후 피드백 주세요",
+        "월요일에 자료 공유한 뒤에 회의하겠습니다",
+        "월요일에 보낸 다음 확인하겠습니다",
+        "월요일에 전달한 다음에 연락드릴게요",
+        "월요일에 보낸대요",
+        # Third review round on #333: each dated on main, lost here before
+        # the lookahead became an allow-list.
+        "월요일에 자료 공유한 이후에 피드백 주세요",
+        "월요일에 보낸 직후 연락드릴게요",
+        "월요일에 보낸답니다",
+        "월요일에 자료 공유한답니다",
+        "월요일에 보낸단다",
+    ],
+)
+def test_a_named_verbs_relative_past_before_a_later_event_is_not_the_past(text: str) -> None:
+    """-(으)ㄴ before "후/뒤/다음" is past relative to the event that follows
+    it, not relative to the utterance -- "공유한 후 피드백 주세요" asks for
+    feedback after a future Monday, the same shape as "3월 2일에
+    드리겠습니다" in reverse. "보낸대요" is the same -ㄴ다 conjugation
+    contracted to its colloquial quotative-present ("보낸다고 해" -> "보낸대")
+    that ``test_a_named_verbs_present_conditional_is_not_the_past`` already
+    covers for the full form, and "-ㄴ답니다/-ㄴ단다" its formal and plain
+    forms. None is followed by a noun that takes a past mention, so each
+    keeps its date exactly as on ``main`` (review by lsh2217 on #333, three
+    rounds, reproduced against all four verbs)."""
+    assert parse_due(text, WEDNESDAY) == DueDate(text="월요일", date=date(2026, 9, 14))

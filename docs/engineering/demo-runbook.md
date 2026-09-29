@@ -30,8 +30,23 @@ section 6, marked *seen*.
 
 ```bash
 cp .env.example .env                                   # once; fill AUTUNE_AUDIO_HF_TOKEN
+./scripts/up.sh                                        # everything below, in one command
+```
+
+`scripts/up.sh` does sections 1 and 2 for you, including the implementation
+choices from the troubleshooting table in section 8 — the ones that otherwise
+fail by returning **nothing** while every endpoint still answers 200. Stop with
+`./scripts/down.sh`. D runs its embedder and re-ranker for real either way —
+in-process, a CPU is enough — and fakes only its NLI step. Pass
+`--real-models` on a machine that has B's checkpoints and access to D's private
+NLI checkpoint (section 4.1).
+
+The rest of this section is what the script runs, for when you want a terminal
+of your own or something has gone wrong in it:
+
+```bash
 docker compose -f infra/docker-compose.yml up -d
-uv sync --all-packages                                 # not plain `uv sync`
+uv sync --all-packages --extra local-models            # not plain `uv sync`
 pnpm install
 uv run alembic -c infra/alembic.ini upgrade heads      # plural: six branches
 ```
@@ -54,6 +69,21 @@ pnpm --filter @autune/web dev
 
 `autune_api.main:app`, not `apps.api.main:app`: the `apps/` directories are not
 importable names, the packages inside them are (#228).
+
+**No beat.** The demo needs no clock, and the one scheduled job there is today
+— module A's orphan sweep — also runs at the head of every `process_recording`,
+so a demo collects its own leftovers without one. If you do want it:
+
+```bash
+# 5 — beat, if you want the schedule. Exactly one, and never `worker -B`
+uv run celery -A autune_worker.celery_app beat -l info
+```
+
+One process, separate from the workers. `celery worker -B` embeds the clock in
+that worker instead, so the number of clocks becomes the number of workers you
+happen to have started — two workers, and every scheduled job runs twice.
+Celery's own documentation calls `-B` a development convenience for that reason.
+Beat writes `celerybeat-schedule` in the working directory.
 
 Expect from terminal 1 (console format under `AUTUNE_ENV=local`; JSON is the
 non-local renderer):
@@ -266,7 +296,7 @@ this table, which is what the run showed:
 | B | `CLASSIFIER_IMPL=local needs AUTUNE_EXTRACTION_CLASSIFIER_CHECKPOINT` — no trained checkpoint is published | `AUTUNE_EXTRACTION_CLASSIFIER_IMPL=fake` | `…_IMPL=local`, `…_CHECKPOINT=<ckpt1>,<ckpt2>` (comma = ensemble, #245; the checkpoints are on B's machine, #112), `…_DEVICE=cpu`. Needs transformers, which `uv sync --all-packages` does not install: `uv run --with transformers celery …` or the `local-models` extra. First load ~60 s |
 | B (step 4, #12) | `NLI_IMPL=local needs AUTUNE_EXTRACTION_NLI_CHECKPOINT`, or a 401/404 from a private HF Hub repo | `AUTUNE_EXTRACTION_NLI_IMPL=fake` | `.env.example`'s `…_NLI_CHECKPOINT` is #172's private checkpoint (`mminjae97/autune-context-kornli-klue-roberta`) — needs `hf auth login` with an invited account, or ask 문민재 for access. Same `local-models` extra as the classifier, no second install |
 | C | `No module named 'spacy'` | `AUTUNE_GAP_NER_IMPL=fake` | `uv sync --package autune-gap --extra local-models` then `python -m spacy download ko_core_news_lg` |
-| D | `embedder inference endpoint http://autune-embed.internal:8080 is not reachable` | `AUTUNE_CONTEXT_EMBEDDER_IMPL=fake`, `…_RERANKER_IMPL=fake`, `…_NLI_IMPL=fake` | `kure_v1_local` etc. with the `local-models` extra, or the `_ENDPOINT`s pointed at a running inference server |
+| D | `embedder inference endpoint http://autune-embed.internal:8080 is not reachable` — `.env.example`'s `*_http` defaults name inference servers nobody runs | `AUTUNE_CONTEXT_EMBEDDER_IMPL=kure_v1_local`, `…_RERANKER_IMPL=bge_reranker_v2_m3_ko_local`, `…_NLI_IMPL=fake` — what `up.sh` sets. Not `fake` for the first two: the fake embedder is a hash of the text, so the context tab stays all but empty. Same `local-models` extra as C and E; the first context task downloads ~4.4 GB, then a five-minute meeting takes about a minute on a CPU. The faked NLI calls a change `reversed` only when one side negates (`안`, `못`, `아니`) | `…_NLI_IMPL=klue_kornli_local` — `.env.example`'s `…_NLI_LOCAL_MODEL` is private and runs server-only (#172): `hf auth login` with an invited account |
 | E | `the SetFit gap classifier needs the 'local-models' extra` — `aggregate` raises after B, C and D reported, so `/scores/{id}` is 404 and the dashboard counts nothing | `AUTUNE_INTELLIGENCE_GAP_CLASSIFIER_IMPL=fake` | `uv sync --package autune-intelligence --extra local-models`; the SetFit head fits on first use |
 
 `fake` implementations are deterministic stand-ins for tests. They make the

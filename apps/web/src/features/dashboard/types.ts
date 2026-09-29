@@ -48,3 +48,24 @@ export interface HeatmapCell {
  * meeting's payload never arrived is simply absent, not an error.
  */
 export type GapTitlesByPattern = Record<string, string[]>;
+
+/** One stored prediction — `PredictionRead` in the module's schemas.py. */
+export interface PredictionRead {
+  meeting_id: string;
+  kind: string;
+  horizon_days: number;
+  probability: number;
+  model_version: string | null;
+  updated_at: string;
+}
+
+/**
+ * As `/api/intelligence/predictions/{team_id}` returns it. `prediction` is
+ * `null` until the team has four weeks and three scored meetings (#27) —
+ * the server withholds it; the client never decides the gate.
+ */
+export interface PredictionsRead {
+  team_id: string;
+  prediction: PredictionRead | null;
+  reason: "insufficient_history" | "no_prediction" | null;
+}

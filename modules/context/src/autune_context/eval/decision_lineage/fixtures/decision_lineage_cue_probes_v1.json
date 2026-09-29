@@ -1,0 +1,54 @@
+{
+  "version": 1,
+  "_about": "Targeted probes for the lexical reversal cues in pipeline.change, not a KPI set: run with --dataset decision_lineage_cue_probes_v1.json. Added in review of #398 for 없이 read as a reversal and 대신 + a person.",
+  "cases": [
+    {
+      "id": "probe_smooth_absence_date_moved",
+      "category": "modified_param",
+      "past_meetings": [{"days_ago": 14, "decision": "정식 출시일을 3월 15일로 정했다."}],
+      "current_meeting": {"days_ago": 0, "decision": "차질 없이 정식 출시일을 3월 29일로 옮기기로 했다."},
+      "expected_thread_source": 0,
+      "expected_change_type": "modified"
+    },
+    {
+      "id": "probe_smooth_absence_review_rule_tightened",
+      "category": "modified_param",
+      "past_meetings": [{"days_ago": 10, "decision": "모든 PR은 한 명 승인 후 머지하기로 했다."}],
+      "current_meeting": {"days_ago": 0, "decision": "예외 없이 모든 PR은 두 명 승인 후 머지하기로 했다."},
+      "expected_thread_source": 0,
+      "expected_change_type": "modified"
+    },
+    {
+      "id": "probe_smooth_absence_headcount_raised",
+      "category": "modified_param",
+      "past_meetings": [{"days_ago": 20, "decision": "상담 인원은 3명으로 운영하기로 했다."}],
+      "current_meeting": {"days_ago": 0, "decision": "추가 비용 없이 상담 인원을 5명으로 늘리기로 했다."},
+      "expected_thread_source": 0,
+      "expected_change_type": "modified"
+    },
+    {
+      "id": "probe_daesin_owner_replaced",
+      "category": "modified_param",
+      "past_meetings": [{"days_ago": 8, "decision": "결제 모듈 리팩토링은 박지수 님이 맡기로 했다."}],
+      "current_meeting": {"days_ago": 0, "decision": "결제 모듈 리팩토링은 박지수 님 대신 이현우 님이 맡기로 했다."},
+      "expected_thread_source": 0,
+      "expected_change_type": "modified"
+    },
+    {
+      "id": "probe_daesin_vendor_replaced",
+      "category": "reversed_alternative",
+      "past_meetings": [{"days_ago": 15, "decision": "결제 대행사는 A사로 정했다."}],
+      "current_meeting": {"days_ago": 0, "decision": "결제 대행사는 A사 대신 B사로 바꾸기로 했다."},
+      "expected_thread_source": 0,
+      "expected_change_type": "reversed"
+    },
+    {
+      "id": "probe_absence_as_replacement",
+      "category": "reversed_alternative",
+      "past_meetings": [{"days_ago": 12, "decision": "외부 API 호출이 실패하면 세 번 재시도하기로 했다."}],
+      "current_meeting": {"days_ago": 0, "decision": "외부 API 호출이 실패하면 재시도 없이 바로 폴백으로 처리하기로 했다."},
+      "expected_thread_source": 0,
+      "expected_change_type": "reversed"
+    }
+  ]
+}

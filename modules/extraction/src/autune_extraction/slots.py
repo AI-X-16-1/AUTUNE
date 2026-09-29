@@ -103,6 +103,12 @@ def meeting_day(started_at: datetime | None) -> date | None:
 
 _WEEK = r"(?P<week>이번\s*주|다다음\s*주|다음\s*주|차주|담주)"
 _WEEK_OFFSET = {"이번": 0, "다다음": 2, "다음": 1, "차주": 1, "담주": 1}
+_WEEK_PART = {"초": 1, "초반": 1, "중반": 3}
+"""Part of a working week, as the last weekday it covers. The team's reading:
+초 is Monday-Tuesday, 중반 Wednesday-Thursday, 말 Friday, and a week with no
+part Monday-Friday. A deadline said as a span is due by the span's end, the
+same reading 주말 (Sunday) and 월말 already get -- so 말 and the bare week are
+both Friday, below."""
 
 
 def _week_offset(word: str) -> int:
@@ -140,6 +146,20 @@ def _next(day: date, month: int, dom: int, *, by: str | None) -> date:
     would invent a deadline a year out (review of #159). The cost is the rare
     "3월 2일에 드리겠습니다" said in September, which gets no date -- a missing
     date on a draft card rather than a wrong one.
+
+    **A candidate fix was tried and rejected (#197).** Rolling forward
+    whenever "에" follows the date directly and the clause after it carries a
+    future marker (-겠-, -ㄹ게요, 드릴) does fix "3월 2일에 드리겠습니다"
+    without breaking "6월 1일 자료 기준으로" (no "에" there at all) -- but it
+    also turns "6월 1일에 나온 이슈 정리하겠습니다" into a wrong 2027-06-01.
+    "나온" is a past adnominal this module has no general way to read as past
+    (``_said_of_the_past`` only knows four such verbs, #197's #2, precisely
+    because a syllable-level rule cannot tell a verb's past from an
+    adjective's present) -- so "에 + future marker" catches real deadlines
+    and misdated pasts alike whenever the past marker is a verb outside that
+    short list. Confirmed empirically, not just reasoned through; the eval
+    set #197 asks for before any rule change here is what would actually
+    measure how often each case shows up in real speech.
     """
     candidate = date(day.year, month, dom)
     if candidate >= day or by is None or day - candidate <= RECENT_PAST:
@@ -169,6 +189,36 @@ _AGREED = re.compile(r"기로|[는할]\s*걸로|도록|자고")
 """What turns a past verb into an agreement about the date: 하기로 했다,
 드리는 걸로 했다, 끝내도록 했다, 하자고 했다."""
 
+_PAST_ADNOMINAL_VERBS = re.compile(
+    r"(?:말씀드린|공유한|보낸|전달한)(?=\s*(?:거|것|건|걸|게|대로|내용|자료|파일|부분))"
+)
+"""The past adnominal -(으)ㄴ, but only for these four reporting verbs (#197's
+own candidate list), and only before a noun that takes a past mention.
+
+-(으)ㄴ is past on a verb ("말씀드린" = said) and present on an adjective
+("필요한" = necessary) -- the same spelling, different tense, and nothing
+about the syllable itself says which. A general check would misread every
+"필요한 거" as the past and drop a real deadline behind it. Naming the exact
+past-adnominal form of a small, closed set of verbs this module already
+expects in a commitment ("말씀드리다, 공유하다, 보내다, 전달하다" -- what a
+promise names having already been discussed or sent) is precise where a
+syllable rule cannot be; it answers nothing about a verb not on this list,
+and adding one is a data decision (#197's own eval-set plan), not a pattern
+someone noticed.
+
+**What may follow is an allow-list, not a deny-list.** Each form is also the
+start of things that are not a reported past: the -ㄴ다 conjugation
+("공유한다면", "보낸다고", contracted "보낸대요", formal "보낸답니다", "보낸단다")
+and a relative past before a later event ("공유한 후/뒤/다음/이후", "보낸
+직후" -- past relative to what follows, so "월요일에 자료 공유한 이후에 피드백
+주세요" is still due after Monday). Three review rounds on #333 (lsh2217)
+each found another member of that open set, because "not followed by X" can
+never list every X. So the form counts only when a noun that receives a past
+mention follows it -- "말씀드린 거/대로", "공유한 자료", "보낸 파일", "전달한
+내용". Anything else reads exactly as it does without this pattern, so a
+phrase outside the list cannot regress; growing the noun list is the same
+data question as growing the verb list."""
+
 
 def _past_syllable(ch: str) -> bool:
     code = ord(ch) - 0xAC00
@@ -183,30 +233,31 @@ def _said_of_the_past(text: str, end: int, stop: int) -> bool:
     (review of #159). The clause runs from the phrase to the first clause
     ending, comma or next date phrase, and it is past when a syllable carries
     the past tense's final ㅆ (-았/었/였-, 했, 렸) -- other than -겠- and 있/없 --
-    or the retrospective -던.
+    the retrospective -던, or one of ``_PAST_ADNOMINAL_VERBS``' exact forms
+    (#197 -- "월요일에 말씀드린 거" is now read as past the same way "월요일에
+    말씀드렸던 거" already was; a verb not on that list still is not).
 
     Two things settle it the other way:
 
     - A deadline word straight after the phrase: "금요일까지 지난번에
       말씀드렸던 거 드리겠습니다" is due Friday.
-    - An agreement marker before the first past syllable. In "금요일에
+    - An agreement marker before the first past marker. In "금요일에
       하기로 했습니다" the 했 dates the agreement, not the work -- Friday is
       the deadline. The classifier reads "-기로 했" as a decision for the same
       reason. Order matters: "월요일에 공유했던 거 하기로 했습니다" and
       "월요일에 말씀드렸던 걸로" put the past verb first, so Monday is still
       what happened (review by mkkim68).
-
-    Not read: the past adnominal -(으)ㄴ, "월요일에 말씀드린 거". It is spelled
-    like an adjective's present -- "월요일에 필요한 거" -- and a rule that
-    skipped both would drop real deadlines to catch past mentions.
     """
     if _DEADLINE_WORD.match(text, end):
         return False
     boundary = _CLAUSE_END.search(text, end, stop)
     clause = text[end : boundary.end() if boundary else stop]
-    past = next((i for i, ch in enumerate(clause) if _past_syllable(ch)), None)
-    if past is None:
+    syllable = next((i for i, ch in enumerate(clause) if _past_syllable(ch)), None)
+    adnominal = _PAST_ADNOMINAL_VERBS.search(clause)
+    candidates = [i for i in (syllable, adnominal.start() if adnominal else None) if i is not None]
+    if not candidates:
         return False
+    past = min(candidates)
     agreed = _AGREED.search(clause)
     return agreed is None or agreed.start() > past
 
@@ -297,9 +348,27 @@ _PHRASES: tuple[tuple[re.Pattern[str], Resolver], ...] = (
             )
         ),
     ),
-    # 이번 주, 다음 주 -- with no day named, the working week's end.
+    # 다음 주 초, 다음 주초, 이번 주 중반 -- part of a week, by its last day.
+    # Before the bare week below, which would read them as Friday. Not 초안
+    # (a draft), 초과 or 초기, which start with the same syllable.
     (
-        re.compile(_WEEK + r"(?!\s*[월화수목금토일]요일)(?!\s*말)"),
+        re.compile(_WEEK + r"\s*(?P<part>초반|초(?![안과기대청])|중반)"),
+        _needs_day(
+            lambda m, day: (
+                _monday(day, _week_offset(m["week"])) + timedelta(days=_WEEK_PART[m["part"]])
+            )
+        ),
+    ),
+    # 다음 주 말 -- spaced, the working week's end: Friday. Written as one word,
+    # 다음 주말 is the weekend and Sunday (above).
+    (
+        re.compile(_WEEK + r"\s+말(?!씀)"),
+        _needs_day(lambda m, day: _monday(day, _week_offset(m["week"])) + timedelta(days=FRIDAY)),
+    ),
+    # 이번 주, 다음 주 -- with no day named, the working week's end. Not "다음
+    # 주 말" (above), but "다음 주 말씀드릴게요" is a week and a verb.
+    (
+        re.compile(_WEEK + r"(?!\s*[월화수목금토일]요일)(?!\s*말(?!씀))"),
         _needs_day(lambda m, day: _monday(day, _week_offset(m["week"])) + timedelta(days=FRIDAY)),
     ),
     # 금요일 -- the next one after the meeting. Said on a Friday, it means the

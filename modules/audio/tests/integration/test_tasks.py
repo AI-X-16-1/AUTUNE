@@ -570,3 +570,40 @@ def test_the_sweep_spares_a_job_file_whose_row_is_not_committed_yet(
 
     assert fresh.exists()
     assert not dead.exists()
+
+
+def test_the_periodic_sweep_collects_what_no_upload_would_have(
+    db_session: Session,
+    meeting: str,
+    settings: AudioSettings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The second trigger, against the real database (#207).
+
+    Same sweep, one difference that is the point of it: a periodic run owns no
+    job, so it passes no ``keep`` and spares nothing. The two assertions are
+    the same file, first through the in-task call that protects it and then
+    through the scheduled one that does not.
+
+    No ``pipeline`` fixture: this task decodes nothing and publishes nothing.
+    It needs a session and a directory, and that is all it should need.
+    """
+
+    class Scope:
+        def __enter__(self) -> Session:
+            return db_session
+
+        def __exit__(self, *exc: object) -> None:
+            db_session.flush()
+
+    monkeypatch.setattr(tasks, "session_scope", Scope)
+
+    finished = _job(db_session, meeting, "done")
+    leftover = _upload(settings, finished)
+
+    assert service.sweep_orphans(db_session, settings=settings, keep=finished) == []
+    assert leftover.exists(), "the in-task trigger spares its caller's own upload"
+
+    tasks.sweep_orphans()
+
+    assert not leftover.exists()

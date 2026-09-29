@@ -211,14 +211,24 @@ failed and its file deleted. A file no job knows — written but not yet
 claimed, or renamed but not yet committed — is deleted only once it is older
 than that threshold, since a request may still be inside it. #209 swept on
 mtime and could delete a file a late task was about to adopt; deciding against
-the database is what makes this one safe. It runs at the start of every
-`process_recording` until there is a periodic trigger (#207).
+the database is what makes this one safe.
+
+**It has two triggers and keeps both** (#207). `process_recording` runs it at
+its head, passing `keep` so it does not collect the upload it is about to adopt;
+`autune.audio.periodic.sweep_orphans` runs it hourly on beat, owning no job and
+so sparing nothing. Neither is redundant: the in-task one is the only one that
+fires when no beat process is running — every local run, every demo — and the
+periodic one is the only one that fires when uploads have stopped, which is
+when orphans are made. Hourly rather than sooner because a `queued` or
+`running` job keeps its file until `AUTUNE_AUDIO_ORPHAN_AFTER_HOURS`, so a
+shorter interval scans the whole directory to delete nothing.
 
 ## Celery tasks
 
 | Task | Trigger | Queue |
 | --- | --- | --- |
 | `autune.audio.process_recording` | Upload | `gpu` |
+| `autune.audio.periodic.sweep_orphans` | Beat, hourly | `gpu` |
 | `autune.audio.generate_interim_summary` | Interval during processing | `cpu_heavy` |
 
 ## Slack surface

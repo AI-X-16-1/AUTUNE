@@ -22,6 +22,13 @@ if TYPE_CHECKING:
 class BgeRerankerKoHttp:
     """Expects ``POST {endpoint}/rerank {"query": str, "passages": [str]}`` ->
     ``{"scores": [float]}`` (sigmoid-normalised, ``[0, 1]``) and ``GET {endpoint}/info``.
+
+    A module-local ``httpx`` client, not ``autune_integrations.HttpClient``: the
+    endpoint is our own inference server, and ``check_outbound`` guards traffic
+    that leaves our infrastructure. The passages are past meetings' masked
+    segment text, not labels, so if this endpoint is ever hosted outside our
+    infrastructure, move this client onto ``HttpClient`` in the same change --
+    the same rule ``LlmClient`` already follows (see ``base.py``).
     """
 
     def __init__(self, settings: ContextSettings) -> None:
@@ -64,7 +71,14 @@ class BgeRerankerKoLocal:
     def score(self, query: str, passages: list[str]) -> list[float]:
         if not passages:
             return []
-        raw = self._model.predict([(query, p) for p in passages])
+        from torch import nn
+
+        # Ask for raw logits explicitly. ``predict`` otherwise applies the
+        # model's own default activation — a sigmoid for a one-label
+        # cross-encoder like this one — and a second sigmoid on top of that
+        # squeezed every score into [0.5, 0.73], so ``link_confidence_threshold``
+        # meant something different here than behind the HTTP endpoint.
+        raw = self._model.predict([(query, p) for p in passages], activation_fn=nn.Identity())
         return [1.0 / (1.0 + math.exp(-float(s))) for s in raw]
 
 

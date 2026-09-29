@@ -8,10 +8,10 @@ Never imports another module.
 
 from __future__ import annotations
 
-from collections.abc import Collection, Iterable, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from dataclasses import replace
 from datetime import UTC, date, datetime
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.dialects import postgresql, sqlite
@@ -26,9 +26,17 @@ from autune_contracts.extraction import (
     ExtractionResult,
 )
 from autune_contracts.transcript import Utterance as TranscriptUtterance
-from autune_core import Meeting, Participant, User, Utterance, get_logger, session_scope
+from autune_core import (
+    Meeting,
+    Participant,
+    TeamMember,
+    User,
+    Utterance,
+    get_logger,
+    session_scope,
+)
 from autune_core.errors import NotFoundError, ValidationError
-from autune_integrations import SlackApi, assert_personal_delivery
+from autune_integrations import PermanentIntegrationError, SlackApi, assert_personal_delivery
 from autune_integrations.privacy import find_unmasked
 
 from .config import get_settings
@@ -47,7 +55,8 @@ from .models import (
     ExtEditEvent,
     ExtExternalRef,
 )
-from .pipeline.base import Classifier, NliModel
+from .pipeline.base import Classifier, NliModel, ReferenceResolver, ResolutionRequest
+from .pipeline.resolver import MAX_CONTEXT_AFTER, MAX_CONTEXT_UTTERANCES
 from .schemas import (
     ActionItemCreate,
     ActionItemDetail,
@@ -351,8 +360,12 @@ def read_model(
     assignee_name: str | None = None,
     summary: str | None = None,
     sync_refs: list[ExternalRefRead] | None = None,
+    assignee_departed: bool = False,
 ) -> ActionItemRead:
     """One item as this module's own screens read it.
+
+    ``assignee_departed`` comes from ``departed_assignees``; see
+    ``ActionItemRead.needs_reassignment`` for what it changes.
 
     Built here rather than by ``from_attributes`` on the schema because five of
     its fields are not columns: the source ids live in the link table, whether
@@ -379,8 +392,9 @@ def read_model(
     person on every later visit to the review screen, one column after they
     already confirmed it there (#295). Candidate is therefore *this module's
     own open question, not yet answered*: model-made, and still in
-    ``needs_confirmation``. The same status ``became_confirmed`` reads as the
-    line between the two.
+    ``needs_confirmation``. Leaving that status for any other column is the
+    same line ``router.update_action_item`` reads before queueing a Notion
+    sync.
     """
     threshold = get_settings().candidate_confidence
     is_candidate = (
@@ -388,21 +402,77 @@ def read_model(
         and item.confidence < threshold
         and item.status == ActionStatus.NEEDS_CONFIRMATION.value
     )
+    source_ids = live_source_ids(item)
     return ActionItemRead(
         id=item.id,
         meeting_id=item.meeting_id,
         description=item.description,
-        assignee_id=item.assignee_id,
+        description_resolved=item.description_resolved,
+        assignee_id=None if assignee_departed else item.assignee_id,
         assignee_label=item.assignee_label,
-        assignee_name=assignee_name,
+        assignee_name=None if assignee_departed else assignee_name,
         due_date=item.due_date,
+        due_text=item.due_text,
         status=item.status,
         confidence=item.confidence,
         origin=item.origin,
-        source_utterance_ids=[source.utterance_id for source in item.sources],
+        source_utterance_ids=source_ids,
+        deleted_source_count=len(item.sources) - len(source_ids),
+        needs_reassignment=assignee_departed and item.status in _OPEN_STATUSES,
         is_candidate=is_candidate,
         summary=summary,
         sync_refs=sync_refs or [],
+    )
+
+
+_OPEN_STATUSES = frozenset({ActionStatus.TODO.value, ActionStatus.IN_PROGRESS.value})
+
+
+def live_source_ids(item: ExtActionItem) -> list[str]:
+    """The item's source utterances that still exist, in insertion order.
+
+    A link row outlives its utterance with ``utterance_id`` NULL (see
+    ``ExtActionItemSource``); those are counted, never listed.
+    """
+    return [source.utterance_id for source in item.sources if source.utterance_id is not None]
+
+
+def departed_assignees(session: Session, items: Sequence[ExtActionItem]) -> set[str]:
+    """Ids of the items whose assignee is not a member of the meeting's team.
+
+    Reads the shared ``team_members`` table and never writes it (invariant 4).
+    One query for the whole list. Same rule as module D's
+    ``_current_team_member_ids``, keyed on the item's meeting rather than a
+    thread.
+    """
+    ids = [item.id for item in items if item.assignee_id is not None]
+    if not ids:
+        return set()
+    member = (
+        select(TeamMember.id)
+        .where(
+            TeamMember.team_id == Meeting.team_id,
+            TeamMember.user_id == ExtActionItem.assignee_id,
+        )
+        .exists()
+    )
+    rows = session.scalars(
+        select(ExtActionItem.id)
+        .join(Meeting, Meeting.id == ExtActionItem.meeting_id)
+        .where(ExtActionItem.id.in_(ids), ~member)
+    )
+    return set(rows)
+
+
+def read_one(session: Session, item: ExtActionItem) -> ActionItemRead:
+    """``read_model`` for a single item a route just wrote, with its assignee
+    looked up. No summary or sync refs -- the routes that write never sent
+    them."""
+    name = assignee_names(session, [item]).get(item.assignee_id) if item.assignee_id else None
+    return read_model(
+        item,
+        assignee_name=name,
+        assignee_departed=item.id in departed_assignees(session, [item]),
     )
 
 
@@ -456,6 +526,7 @@ def list_action_items(
 
     items = list(session.scalars(query))
     names = assignee_names(session, items)
+    departed = departed_assignees(session, items)
     summaries = action_item_summaries(session, items)
     refs = action_item_external_refs(session, [item.id for item in items])
     return [
@@ -464,6 +535,7 @@ def list_action_items(
             assignee_name=names.get(item.assignee_id) if item.assignee_id else None,
             summary=summaries.get(item.id),
             sync_refs=refs.get(item.id, []),
+            assignee_departed=item.id in departed,
         )
         for item in items
     ]
@@ -482,8 +554,11 @@ def read_detail(session: Session, item: ExtActionItem) -> ActionItemDetail:
     name = names.get(item.assignee_id) if item.assignee_id else None
     summary = action_item_summaries(session, [item]).get(item.id)
     refs = action_item_external_refs(session, [item.id]).get(item.id, [])
+    departed = item.id in departed_assignees(session, [item])
     return ActionItemDetail(
-        **read_model(item, assignee_name=name, summary=summary, sync_refs=refs).model_dump(),
+        **read_model(
+            item, assignee_name=name, summary=summary, sync_refs=refs, assignee_departed=departed
+        ).model_dump(),
         sources=source_utterances(session, item.id),
     )
 
@@ -549,13 +624,12 @@ def action_item_summaries(session: Session, items: Sequence[ExtActionItem]) -> d
     way), and repeating it as ``summary`` would be a second copy of the same
     line, not a new one.
     """
-    multi = [item for item in items if len(item.sources) > 1]
-    texts = _summary_texts(
-        session, {source.utterance_id for item in multi for source in item.sources}
-    )
+    live = {item.id: live_source_ids(item) for item in items}
+    multi = [item for item in items if len(live[item.id]) > 1]
+    texts = _summary_texts(session, {uid for item in multi for uid in live[item.id]})
     summaries: dict[str, str] = {}
     for item in multi:
-        candidates = [texts[s.utterance_id] for s in item.sources if s.utterance_id in texts]
+        candidates = [texts[uid] for uid in live[item.id] if uid in texts]
         if candidates:
             summaries[item.id] = _truncate(max(candidates, key=len))
     return summaries
@@ -633,18 +707,6 @@ def update_action_item(
 
     _record_edit(session, meeting_id=item.meeting_id, action_item_id=item.id, kind="edited")
     return item
-
-
-def became_confirmed(previous_status: str, item: ExtActionItem) -> bool:
-    """Whether this edit is the one that confirmed the item.
-
-    Confirming is leaving ``needs_confirmation`` for any column a person works in
-    -- the board has no separate "confirm" button, moving the card is the answer.
-    A later move between ``todo``, ``in_progress`` and ``done`` is not a second
-    confirmation, which is half of what keeps the Notion page to one.
-    """
-    confirming = ActionStatus.NEEDS_CONFIRMATION.value
-    return previous_status == confirming and item.status != confirming
 
 
 def delete_action_item(session: Session, item: ExtActionItem) -> None:
@@ -960,7 +1022,7 @@ def contract_action_item(item: ExtActionItem) -> ActionItem:
         assignee_id=item.assignee_id,
         assignee_label=item.assignee_label,
         due_date=item.due_date,
-        source_utterance_ids=[source.utterance_id for source in item.sources],
+        source_utterance_ids=live_source_ids(item),
         status=ActionStatus(item.status),
         confidence=item.confidence,
     )
@@ -1209,12 +1271,82 @@ def classifications_for_meeting(session: Session, meeting_id: str) -> list[Class
 # --- step 3: action items from commitments ------------------------------------
 
 
+def resolve_commitment_references(
+    resolver: ReferenceResolver,
+    classified: Sequence[ClassifiedUtterance],
+) -> dict[str, str]:
+    """Each commitment's description, references resolved against the utterances
+    around it (#175): "그거 제가 할게요" reads as what "그거" was.
+
+    Runs before any session, the same reason ``classify_utterances`` does -- it
+    is model inference, and a transaction held around it holds a connection and
+    its locks for the length of it.
+
+    The context for a commitment is up to ``MAX_CONTEXT_UTTERANCES`` utterances
+    immediately before it and ``MAX_CONTEXT_AFTER`` immediately after, whatever
+    their kind -- an antecedent can live in a ``none`` utterance same as any
+    other, and a clarifying exchange can come right after the commitment rather
+    than before it. Both directions are available only because this runs over a
+    finished transcript, never live. Only masked text ever reaches the resolver
+    (privacy.md section 6), the same as everything else module B sends a model.
+
+    **Windowed from ``classified``, never the raw transcript.** Found in review
+    of #366: an earlier version cut context from ``utterances`` directly, which
+    is neither filtered nor promised sorted. ``classify_utterances`` already
+    blanks a non-consenting speaker's turn to ``text=""`` (privacy.md section
+    5, "excluded utterances are not stored, not just hidden") and already
+    orders every row by ``(start, id)`` regardless of payload order -- reading
+    from ``utterances`` instead undid both. A resolver's whole job is copying
+    words out of its context into the sentence it returns, so a leak here does
+    not stop at the model: it lands in ``ext_action_items.description`` and, on
+    confirmation, in Notion. Blank turns are filtered out of the window (``if
+    u.text``) rather than skipped over to fill it back up to size -- a shorter
+    window is still "the smallest window that resolves a reference" (section
+    6); reaching past a non-consenting turn for one more line would not be.
+
+    Returns ``{utterance_id: resolved_text}`` for commitments only. A caller
+    reading an id this has no entry for was never a commitment and should keep
+    the utterance's own text -- exactly what a resolver would have returned for
+    it anyway, since one bad or unresolved reference never drops the request
+    (see ``ReferenceResolver``).
+
+    **This generates a sentence, and ``decisions._build`` refuses to.** That is
+    not a disagreement inside the module -- a decision's statement is a record
+    someone would write in the minutes, and a generated one would be wrong in a
+    way the reader could not see. An action item's description is a draft ADR
+    0006 has the user finish before it is asserted, sitting in
+    ``needs_confirmation`` until they do; the resolver's own fallback rule
+    (never fewer answers than requests, one bad reference degrades to the raw
+    quote rather than failing the meeting) is what makes a generated sentence an
+    acceptable draft here rather than a silent record.
+    """
+    commitments = [u for u in classified if u.kind is UtteranceKind.COMMITMENT]
+    if not commitments:
+        return {}
+
+    position = {utterance.id: index for index, utterance in enumerate(classified)}
+    requests = []
+    for utterance in commitments:
+        index = position[utterance.id]
+        start = max(0, index - MAX_CONTEXT_UTTERANCES)
+        context = tuple(u.text for u in classified[start:index] if u.text)
+        after_end = index + 1 + MAX_CONTEXT_AFTER
+        context_after = tuple(u.text for u in classified[index + 1 : after_end] if u.text)
+        requests.append(
+            ResolutionRequest(target=utterance.text, context=context, context_after=context_after)
+        )
+
+    resolved = resolver.resolve(requests)
+    return dict(zip((u.id for u in commitments), resolved, strict=True))
+
+
 def build_action_items(
     session: Session,
     *,
     meeting_id: str,
     utterances: Sequence[TranscriptUtterance],
     classified: Sequence[ClassifiedUtterance],
+    resolved: Mapping[str, str] | None = None,
 ) -> list[ExtActionItem] | None:
     """One draft item per commitment, replacing the model's previous draft.
 
@@ -1229,10 +1361,19 @@ def build_action_items(
     the same replace-not-merge rule as the classifications. Items a person
     typed are never touched.
 
-    Each item is filled by ``slots``: the utterance as its description, its
-    speaker as the assignee, the first date phrase as the due date. Every model
-    item starts in *needs confirmation*.
+    Each item is filled by ``slots``: the speaker as the assignee, the first
+    date phrase as the due date. The description is ``resolved``'s entry for
+    the utterance when there is one (#175) and the utterance's own text
+    otherwise -- ``resolved`` defaults to empty, so a caller that has not run
+    ``resolve_commitment_references`` gets exactly the pre-#175 behaviour. Every
+    model item starts in *needs confirmation*.
+
+    **The due date is still read from the utterance's own text, not the
+    resolved one.** ``parse_due`` depends on the exact verb ending the speaker
+    used, and a resolver rewriting the sentence for a human reader is not
+    obliged to preserve it.
     """
+    resolved = resolved or {}
     edited = session.scalar(
         select(func.count()).select_from(ExtEditEvent).where(ExtEditEvent.meeting_id == meeting_id)
     )
@@ -1266,10 +1407,12 @@ def build_action_items(
         said = spoken[utterance.id]
         assignee = assignee_of(said.speaker_id, said.speaker, known=known)
         due = parse_due(said.text, day)
+        description = resolved.get(utterance.id, said.text)
         items.append(
             ExtActionItem(
                 meeting_id=meeting_id,
-                description=said.text,
+                description=description,
+                description_resolved=description != said.text,
                 assignee_id=assignee.user_id,
                 assignee_label=assignee.label,
                 due_date=due.date if due is not None else None,
@@ -1699,9 +1842,64 @@ none. Raised in review of #294.
 
 
 class NotionPages(Protocol):
-    """The one call the sync makes. ``NotionClient`` and ``fakes.FakeNotion`` both fit."""
+    """The calls the sync makes. ``NotionClient`` and ``fakes.FakeNotion``
+    both fit."""
 
     def create_page(self, database_id: str, properties: dict[str, Any]) -> str: ...
+    def update_page(self, page_id: str, properties: dict[str, Any]) -> None: ...
+    def page_state(self, page_id: str) -> str: ...
+
+
+PageOutcome = Literal["updated", "replaced", "archived"]
+
+
+def _update_or_replace_page(
+    notion: NotionPages,
+    ref: ExtExternalRef | ExtDecisionRef,
+    *,
+    database_id: str,
+    update: dict[str, Any],
+    create: dict[str, Any],
+) -> PageOutcome:
+    """Update the page ``ref`` points at, and say what became of it.
+
+    Without this, a page removed in Notion refused every later update, the
+    sync rolled back each time, and the item never reached Notion again
+    (#403). When an update is refused, Notion is asked what the page is now:
+
+    - ``"deleted"`` -- a new page in the team's database, and ``ref`` points
+      at it (``"replaced"``). Notion gives the same 404 for a page that still
+      exists but is no longer shared with the integration, so that case makes
+      a second page while the first stays where it is. That is deliberate: a
+      page we cannot write to is not one we can keep syncing into.
+    - ``"archived"`` (or in the trash) -- left alone, and nothing raised
+      (``"archived"``). A person put it there, often to tidy away finished
+      work; making it again on the next edit, or for every archived page on a
+      backfill, would undo that (PARKJAEKYUNG0525, review of #404).
+    - ``"live"`` -- the refusal is raised as before: a new page for one that
+      still exists would leave two.
+
+    ``create`` is the page as a first send builds it, since a new page has no
+    stale field to clear. If that create times out after Notion made the page,
+    the page is orphaned and the next edit makes another -- the trade-off the
+    first send already takes by not retrying (``tasks.sync_action_item``).
+    The caller holds the ref row's lock throughout, so a refused update costs
+    up to three Notion calls under it (PATCH, GET, POST) instead of one.
+    """
+    assert ref.external_id is not None
+    try:
+        notion.update_page(ref.external_id, update)
+    except PermanentIntegrationError:
+        state = notion.page_state(ref.external_id)
+        if state == "archived":
+            return "archived"
+        if state != "deleted":
+            raise
+        page_id = notion.create_page(database_id, create)
+        ref.external_id = page_id
+        ref.url = notion_url(page_id)
+        return "replaced"
+    return "updated"
 
 
 def notion_url(page_id: str) -> str:
@@ -1710,7 +1908,11 @@ def notion_url(page_id: str) -> str:
 
 
 def notion_properties(
-    item: ExtActionItem, meeting_title: str | None, names: Mapping[str, str]
+    item: ExtActionItem,
+    meeting_title: str | None,
+    names: Mapping[str, str],
+    *,
+    clear_missing: bool = False,
 ) -> dict[str, Any]:
     """The page for one item: what an issue needs, and nothing from the transcript.
 
@@ -1719,6 +1921,15 @@ def notion_properties(
     it came from. Source utterances stay in Autune -- ``privacy.md`` and this
     module's CLAUDE.md both keep the transcript out of Notion, and the client's
     ``check_outbound`` refuses an unmasked value in any of these anyway.
+
+    **``clear_missing`` is for an update.** A create leaves an empty field off
+    the page (``test_a_field_the_item_does_not_have_is_left_off_the_page``). But
+    Notion's PATCH overwrites only the properties it names, so an update that
+    leaves the assignee or due date off keeps the *old* value on the page --
+    clearing a due date is "a correction like any other" (``ActionItemUpdate``),
+    and the board would say no date while Notion kept one. An update therefore
+    names the emptied field with Notion's empty value (PARKJAEKYUNG0525's
+    review of #342).
     """
 
     def text(value: str) -> dict[str, Any]:
@@ -1732,8 +1943,12 @@ def notion_properties(
     assignee = item.assignee_label
     if assignee:
         fields["assignee"] = text(assignee)
+    elif clear_missing:
+        fields["assignee"] = {"rich_text": []}
     if item.due_date is not None:
         fields["due"] = {"date": {"start": item.due_date.isoformat()}}
+    elif clear_missing:
+        fields["due"] = {"date": None}
     if meeting_title:
         fields["meeting"] = text(meeting_title)
     return {names[key]: value for key, value in fields.items() if key in names}
@@ -1746,17 +1961,73 @@ def sync_action_item_to_notion(
     action_item_id: str,
     database_id: str,
     property_names: Mapping[str, str] | None = None,
+    on_page: Callable[[PageOutcome], None] | None = None,
 ) -> ExtExternalRef | None:
-    """Create the item's Notion page, once. ``None`` when there is nothing to send.
+    """Create the item's Notion page the first time; update the same page every
+    time after. ``None`` when there is nothing to send.
 
-    Nothing is sent for an item that is gone, one still waiting for confirmation,
-    or one that already has its page. The last is decided by the database: the
-    claim is an insert that skips an existing row, so a confirmation delivered
-    twice, or two workers holding it at once, send one page -- the second blocks on
-    the first's row and then finds it. Claim and call share the caller's
-    transaction, so a failed call takes the claim back and a later run can try
-    again.
+    Nothing is sent for an item that is gone or one still waiting for
+    confirmation. The first send is decided by the database: the claim is an
+    insert that skips an existing row, so a confirmation delivered twice, or
+    two workers holding it at once, create one page -- the second blocks on
+    the first's row and then finds it. Claim and create share the caller's
+    transaction, so a failed call takes the claim back and a later run can
+    try creating it again.
+
+    **A later edit finds the claim already there and updates the page
+    instead of creating a second one.** A PATCH is naturally idempotent for a
+    *redelivery of the same edit* -- two workers racing the same update both
+    converge on the same final properties -- but not for two genuinely
+    different edits in flight at once: found in review of #342 (lsh2217).
+    Every edit past confirmation now queues its own sync, each reading
+    current state independently, so a slow network round-trip can let an
+    earlier edit's page write land *after* a later edit's already has,
+    leaving Notion silently stale. ``with_for_update`` on the claim row
+    orders when each sync is let past it -- but ordering the sends is not
+    enough on its own if each sync already fixed its properties from an
+    *earlier* read (lsh2217's second-round review of #342): whichever sync
+    acquires the lock last would still send whatever it read first, exactly
+    backwards from the edit order the lock exists to enforce. Every read of
+    the item below happens only after its ref row's lock is held, with
+    ``populate_existing=True`` so a session that already looked at this item
+    for an unrelated reason cannot serve a cached copy here -- the one
+    sending last is always the one sending latest. The description,
+    assignee, due date and status a person edited on the board are exactly
+    what this sends; the source utterances never leave Autune either way.
+
+    **A page someone removed in Notion** (#403): deleted, it is made again;
+    archived, it is left alone -- ``_update_or_replace_page``. ``on_page``
+    hears which, for a caller that counts (``notion_backfill``).
     """
+    names = property_names or NOTION_PROPERTIES
+
+    existing = session.get(ExtExternalRef, (action_item_id, NOTION), with_for_update=True)
+    if existing is not None:
+        # Claim and create share one transaction (below), so a row that made
+        # it to the database has its page id -- there is no committed row
+        # from a claim whose create never ran.
+        item = session.get(ExtActionItem, action_item_id, populate_existing=True)
+        if item is None or item.status == ActionStatus.NEEDS_CONFIRMATION.value:
+            return existing
+        meeting = session.get(Meeting, item.meeting_id)
+        title = meeting.title if meeting else None
+        outcome = _update_or_replace_page(
+            notion,
+            existing,
+            database_id=database_id,
+            update=notion_properties(item, title, names, clear_missing=True),
+            create=notion_properties(item, title, names),
+        )
+        log.info(
+            "extraction_notion_updated",
+            action_item_id=item.id,
+            meeting_id=item.meeting_id,
+            page=outcome,
+        )
+        if on_page is not None:
+            on_page(outcome)
+        return existing
+
     item = session.get(ExtActionItem, action_item_id)
     if item is None or item.status == ActionStatus.NEEDS_CONFIRMATION.value:
         return None
@@ -1768,15 +2039,38 @@ def sync_action_item_to_notion(
         .returning(ExtExternalRef.action_item_id)
     ).one_or_none()
     if claimed is None:
-        # Ids only. The page exists, or another run is creating it.
-        log.info("extraction_notion_already_synced", action_item_id=item.id)
-        return None
+        # Another transaction's claim landed between our lock-miss above and
+        # this insert -- with_for_update only locks a row that exists, so a
+        # claim still mid-flight was invisible to that first read. Re-acquire
+        # the lock on its now-existing row and update instead of dropping
+        # this edit (lsh2217's second-round review of #342, from
+        # @mminjae97's finding).
+        existing = session.get(ExtExternalRef, (item.id, NOTION), with_for_update=True)
+        assert existing is not None
+        item = session.get(ExtActionItem, action_item_id, populate_existing=True)
+        if item is None or item.status == ActionStatus.NEEDS_CONFIRMATION.value:
+            return existing
+        meeting = session.get(Meeting, item.meeting_id)
+        title = meeting.title if meeting else None
+        outcome = _update_or_replace_page(
+            notion,
+            existing,
+            database_id=database_id,
+            update=notion_properties(item, title, names, clear_missing=True),
+            create=notion_properties(item, title, names),
+        )
+        log.info(
+            "extraction_notion_updated_after_claim_race",
+            action_item_id=item.id,
+            page=outcome,
+        )
+        if on_page is not None:
+            on_page(outcome)
+        return existing
 
     meeting = session.get(Meeting, item.meeting_id)
-    names = property_names or NOTION_PROPERTIES
-    page_id = notion.create_page(
-        database_id, notion_properties(item, meeting.title if meeting else None, names)
-    )
+    properties = notion_properties(item, meeting.title if meeting else None, names)
+    page_id = notion.create_page(database_id, properties)
 
     ref = session.get(ExtExternalRef, (item.id, NOTION))
     assert ref is not None
@@ -1794,16 +2088,6 @@ DECISION_NOTION_PROPERTIES: Mapping[str, str] = {
 }
 """The decision database's property names. A team's ``decision_properties`` map
 replaces this one, the rule ``NOTION_PROPERTIES`` explains for items."""
-
-
-def decision_became_confirmed(previous_status: str | None, current_status: str) -> bool:
-    """Whether this review is the one that confirmed the decision.
-
-    ``previous_status`` is ``None`` when the decision had no review row yet,
-    which is how every model decision starts. Confirming twice, or rewording a
-    confirmed decision, is not a second confirmation -- the page is sent once.
-    """
-    return previous_status != "confirmed" and current_status == "confirmed"
 
 
 def decision_notion_properties(
@@ -1837,12 +2121,46 @@ def sync_decision_to_notion(
     decision_id: str,
     database_id: str,
     property_names: Mapping[str, str] | None = None,
+    on_page: Callable[[PageOutcome], None] | None = None,
 ) -> ExtDecisionRef | None:
-    """Create a confirmed decision's Notion page, once. ``None`` when nothing is sent.
+    """Create a confirmed decision's Notion page the first time; update the
+    same page every time after. ``None`` when nothing is sent.
 
     Nothing goes for a decision that is gone or is not confirmed (#246). The
-    claim-then-call shape and its reasons are ``sync_action_item_to_notion``'s.
+    create-then-update shape, the lock-then-reread ordering, and the
+    claim-race fallback are all ``sync_action_item_to_notion``'s -- a
+    reworded confirmed decision (#246 allows rewording after confirmation)
+    updates the page it already has rather than being silently skipped, and
+    a later rewording is never overtaken by an earlier one that acquires the
+    ref lock second (lsh2217's second-round review of #342 -- this function
+    was missing the lock entirely, not just the reread ordering).
     """
+    names = property_names or DECISION_NOTION_PROPERTIES
+
+    existing = session.get(ExtDecisionRef, (decision_id, NOTION), with_for_update=True)
+    if existing is not None:
+        decision = session.get(ExtDecision, decision_id, populate_existing=True)
+        review = session.get(ExtDecisionReview, decision_id, populate_existing=True)
+        if decision is None or review is None or review.status != "confirmed":
+            return existing
+        meeting = session.get(Meeting, decision.meeting_id)
+        statement = _confirmed_statement(decision, review)
+        properties = decision_notion_properties(
+            statement, decision, meeting.title if meeting else None, names
+        )
+        outcome = _update_or_replace_page(
+            notion, existing, database_id=database_id, update=properties, create=properties
+        )
+        log.info(
+            "extraction_notion_decision_updated",
+            decision_id=decision.id,
+            meeting_id=decision.meeting_id,
+            page=outcome,
+        )
+        if on_page is not None:
+            on_page(outcome)
+        return existing
+
     decision = session.get(ExtDecision, decision_id)
     review = session.get(ExtDecisionReview, decision_id)
     if decision is None or review is None or review.status != "confirmed":
@@ -1855,16 +2173,37 @@ def sync_decision_to_notion(
         .returning(ExtDecisionRef.decision_id)
     ).one_or_none()
     if claimed is None:
-        log.info("extraction_notion_decision_already_synced", decision_id=decision.id)
-        return None
+        # Same claim-race as the action-item sync: re-acquire the lock on the
+        # row that beat us here and update instead of dropping this edit.
+        existing = session.get(ExtDecisionRef, (decision.id, NOTION), with_for_update=True)
+        assert existing is not None
+        decision = session.get(ExtDecision, decision_id, populate_existing=True)
+        review = session.get(ExtDecisionReview, decision_id, populate_existing=True)
+        if decision is None or review is None or review.status != "confirmed":
+            return existing
+        meeting = session.get(Meeting, decision.meeting_id)
+        statement = _confirmed_statement(decision, review)
+        properties = decision_notion_properties(
+            statement, decision, meeting.title if meeting else None, names
+        )
+        outcome = _update_or_replace_page(
+            notion, existing, database_id=database_id, update=properties, create=properties
+        )
+        log.info(
+            "extraction_notion_decision_updated_after_claim_race",
+            decision_id=decision.id,
+            page=outcome,
+        )
+        if on_page is not None:
+            on_page(outcome)
+        return existing
 
     meeting = session.get(Meeting, decision.meeting_id)
-    names = property_names or DECISION_NOTION_PROPERTIES
-    statement = review.statement or decision.statement
-    page_id = notion.create_page(
-        database_id,
-        decision_notion_properties(statement, decision, meeting.title if meeting else None, names),
+    statement = _confirmed_statement(decision, review)
+    properties = decision_notion_properties(
+        statement, decision, meeting.title if meeting else None, names
     )
+    page_id = notion.create_page(database_id, properties)
 
     ref = session.get(ExtDecisionRef, (decision.id, NOTION))
     assert ref is not None

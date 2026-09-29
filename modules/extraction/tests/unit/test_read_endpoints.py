@@ -22,7 +22,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
 from autune_contracts.extraction import ExtractionResult
-from autune_core import AutuneError, Base, Meeting, User, Utterance, get_session
+from autune_core import AutuneError, Base, Meeting, TeamMember, User, Utterance, get_session
 from autune_extraction import service
 from autune_extraction.config import ExtractionSettings
 from autune_extraction.confirmations import WEAK_ASSENT
@@ -47,6 +47,8 @@ PREFIX = "/api/extraction"
 TABLES = [
     Meeting.__table__,
     User.__table__,
+    # Read on every list: an assignee who is not a member needs reassigning.
+    TeamMember.__table__,
     Utterance.__table__,
     ExtActionItem.__table__,
     ExtActionItemSource.__table__,
@@ -129,7 +131,7 @@ def action_item(
     status: str = "needs_confirmation",
     assignee_id: str | None = None,
     due_date: date | None = None,
-    sources: tuple[str, ...] = (),
+    sources: tuple[str | None, ...] = (),
     origin: str = "model",
 ) -> ExtActionItem:
     row = ExtActionItem(
@@ -146,6 +148,14 @@ def action_item(
     session.add(row)
     session.flush()
     return row
+
+
+def member(session: Session, user_id: str, name: str = "팀원") -> str:
+    """A user on the meetings' team -- the normal case for an assignee."""
+    session.add(User(id=user_id, email=f"{user_id}@example.com", display_name=name))
+    session.add(TeamMember(team_id="team_1", user_id=user_id))
+    session.flush()
+    return user_id
 
 
 def ids(response_body: list[dict[str, object]]) -> list[object]:
@@ -190,8 +200,7 @@ def test_an_identified_assignee_carries_their_current_name(
     field shows an assigned item as unassigned. ``assignee_name`` is read fresh
     from ``users`` for exactly this case, so a display name change reaches the
     board on the next request rather than needing the item rewritten."""
-    session.add(User(id="user_a", email="a@example.com", display_name="박지영"))
-    session.flush()
+    member(session, "user_a", "박지영")
     action_item(session, "act_1", assignee_id="user_a")
     action_item(session, "act_2")  # no assignee at all
 
@@ -211,13 +220,108 @@ def test_an_assignee_whose_account_is_gone_reports_no_name(
     """``assignee_id`` is ``SET NULL`` on account deletion in Postgres; this
     unit suite's SQLite tables enforce no such foreign key, so the dangling id
     this test writes is the shape a deleted-account row is left in. Reads
-    nothing, rather than raising on a user that used to exist."""
+    nothing, rather than raising on a user that used to exist -- and, being on
+    no team, reads as cleared, which is what Postgres would have stored."""
     action_item(session, "act_1", assignee_id="user_ghost")
 
     body = client.get(f"{PREFIX}/action-items", params={"meeting_id": MEETING}).json()
 
-    assert body[0]["assignee_id"] == "user_ghost"
+    assert body[0]["assignee_id"] is None
     assert body[0]["assignee_name"] is None
+
+
+# --- ADR 0007: departure and deleted sources ---------------------------------
+
+
+def test_an_open_item_whose_assignee_left_the_team_needs_reassigning(
+    client: TestClient, session: Session
+) -> None:
+    """ "An open commitment is reassigned, never orphaned." Leaving a team
+    removes a ``team_members`` row and nothing else, so that row is the signal."""
+    member(session, "user_a", "박지영")
+    session.add(User(id="user_gone", email="gone@example.com", display_name="이건우"))
+    session.flush()
+    action_item(session, "act_stays", status="todo", assignee_id="user_a")
+    action_item(session, "act_open", status="in_progress", assignee_id="user_gone")
+    action_item(session, "act_closed", status="done", assignee_id="user_gone")
+
+    body = client.get(f"{PREFIX}/action-items", params={"meeting_id": MEETING}).json()
+
+    by_id = {item["id"]: item for item in body}
+    assert {key: by_id[key]["needs_reassignment"] for key in by_id} == {
+        "act_stays": False,
+        "act_open": True,
+        "act_closed": False,
+    }
+    # "Its assignee clears" -- on the closed one too; it just needs nothing.
+    for key in ("act_open", "act_closed"):
+        assert (by_id[key]["assignee_id"], by_id[key]["assignee_name"]) == (None, None)
+    assert by_id["act_stays"]["assignee_name"] == "박지영"
+
+    detail = client.get(f"{PREFIX}/action-items/act_open").json()
+    assert detail["needs_reassignment"] is True
+    assert detail["assignee_id"] is None
+
+
+def test_membership_is_read_against_the_meetings_own_team(
+    client: TestClient, session: Session
+) -> None:
+    """A member of some other team is not a member of this one."""
+    session.add(User(id="user_x", email="x@example.com", display_name="다른 팀"))
+    session.add(TeamMember(team_id="team_other", user_id="user_x"))
+    session.flush()
+    action_item(session, "act_1", status="todo", assignee_id="user_x")
+
+    body = client.get(f"{PREFIX}/action-items", params={"meeting_id": MEETING}).json()
+
+    assert body[0]["needs_reassignment"] is True
+
+
+def test_rejoining_the_team_gives_the_item_back(client: TestClient, session: Session) -> None:
+    """The stored column keeps the id; clearing happens on the way out."""
+    session.add(User(id="user_back", email="back@example.com", display_name="복귀"))
+    session.flush()
+    action_item(session, "act_1", status="todo", assignee_id="user_back")
+    assert client.get(f"{PREFIX}/action-items").json()[0]["needs_reassignment"] is True
+
+    session.add(TeamMember(team_id="team_1", user_id="user_back"))
+    session.flush()
+
+    item = client.get(f"{PREFIX}/action-items").json()[0]
+    assert (item["assignee_id"], item["needs_reassignment"]) == ("user_back", False)
+
+
+def test_a_deleted_source_is_counted_and_not_listed(client: TestClient, session: Session) -> None:
+    """ "Missing attribution is shown, not hidden." The link row outlives its
+    utterance with a NULL id (Postgres ``SET NULL``; written directly here,
+    since this suite's SQLite enforces no foreign keys)."""
+    kept = utterance(session, "utt_kept", 1.0, "배포는 제가 할게요")
+    action_item(session, "act_1", sources=(kept, None))
+    action_item(session, "act_2", sources=(None,))
+
+    body = client.get(f"{PREFIX}/action-items", params={"meeting_id": MEETING}).json()
+    by_id = {item["id"]: item for item in body}
+
+    assert (by_id["act_1"]["source_utterance_ids"], by_id["act_1"]["deleted_source_count"]) == (
+        ["utt_kept"],
+        1,
+    )
+    assert (by_id["act_2"]["source_utterance_ids"], by_id["act_2"]["deleted_source_count"]) == (
+        [],
+        1,
+    )
+    detail = client.get(f"{PREFIX}/action-items/act_1").json()
+    assert [source["id"] for source in detail["sources"]] == ["utt_kept"]
+
+
+def test_the_contract_never_carries_a_deleted_source(session: Session) -> None:
+    """D and E read ``source_utterance_ids`` as ids that resolve; a NULL would
+    not even validate."""
+    action_item(session, "act_1", sources=(None,))
+
+    result = service.result_for_meeting(session, MEETING)
+
+    assert result.action_items[0].source_utterance_ids == []
 
 
 def test_due_before_is_strict_and_drops_items_with_no_date(

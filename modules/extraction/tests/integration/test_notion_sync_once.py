@@ -1,9 +1,12 @@
 """One Notion page per confirmed item, on PostgreSQL (#30).
 
 The unit suite shows the rule on SQLite, which has one writer. Here two real
-transactions sync the same item: the second is held on the first's claim until
-the first commits, then finds the row and sends nothing. Also: deleting the item
-takes its reference with it.
+transactions sync the same item at once: the second's own claim conflicts with
+the first's (still uncommitted, so invisible to the second's first lock check --
+a real MVCC gap the SQLite unit tests cannot reproduce), and once the first
+commits the second re-acquires the ref's lock and sends an update rather than
+being silently dropped (lsh2217's second-round review of #342). Also: deleting
+the item takes its reference with it.
 
 The data is committed, because both transactions have to see it, and removed at
 the end by deleting the team (everything below it cascades).
@@ -62,7 +65,7 @@ def waiting_on_a_lock(engine: sa.Engine, pid: int) -> bool:
         )
 
 
-def test_two_syncs_at_once_send_one_page(db_engine: sa.Engine, item_id: str) -> None:
+def test_two_syncs_at_once_send_one_page_then_an_update(db_engine: sa.Engine, item_id: str) -> None:
     notion = FakeNotion()
     first = Session(db_engine)
     second = Session(db_engine)
@@ -86,8 +89,12 @@ def test_two_syncs_at_once_send_one_page(db_engine: sa.Engine, item_id: str) -> 
         first.commit()
         worker.join(timeout=5)
 
-        assert outcome["ref"] is None
-        assert len(notion.pages) == 1
+        # The second sync's own claim conflicted with the first's (committed
+        # while the second was blocked on it) -- rather than dropping this
+        # sync, it re-acquires the ref's lock and sends an update instead.
+        assert outcome["ref"] is not None
+        assert len(notion.pages) == 1, "one create, not two"
+        assert len(notion.updates) == 1, "the second sync updates, it does not vanish"
     finally:
         first.close()
         second.close()
