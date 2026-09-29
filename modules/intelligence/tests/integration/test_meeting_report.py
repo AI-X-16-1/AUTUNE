@@ -107,7 +107,7 @@ def test_claim_hands_out_the_report_once(db_session: Session, meeting: str) -> N
     second = service.claim_meeting_report(db_session, meeting)
 
     assert first is not None and first.body_markdown == BODY
-    assert first.title == "Test Meeting"
+    assert first.preview == "Test Meeting 회의 리포트"
     assert second is None
     row = db_session.get(IntelMeetingReport, meeting)
     assert row is not None and row.sent_at is not None
@@ -146,6 +146,24 @@ def test_post_carries_the_body_once_and_the_title_as_the_preview(
         for element in block["elements"]
     ]
     assert [b["url"] for b in buttons] == [f"{web_base_url}/meetings/{meeting}"]
+
+
+def test_a_title_holding_personal_data_is_left_out_of_the_preview(
+    db_session: Session, team: str
+) -> None:
+    """Checked before the claim commits: a refused post would lose the report for good."""
+    from autune_core import Meeting
+
+    row = Meeting(team_id=team, title="kim@example.com 1:1")
+    db_session.add(row)
+    db_session.flush()
+    slack = FakeSlack()  # runs check_outbound on every string, the title included
+
+    claimed = _claimed(db_session, row.id)
+    service.post_meeting_report(slack, "C123", claimed)
+
+    assert claimed.preview == "회의 리포트"
+    assert [m.text for m in slack.sent] == ["회의 리포트"]
 
 
 def test_a_report_at_the_length_cap_passes_the_outbound_size_check(

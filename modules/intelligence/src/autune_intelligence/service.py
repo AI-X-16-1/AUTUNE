@@ -43,6 +43,7 @@ from autune_integrations import (
     SlackApi,
     assert_masked,
     assert_personal_delivery,
+    find_unmasked,
 )
 
 from .alignment import meeting_alignment
@@ -853,6 +854,13 @@ def save_meeting_report(
     it is posted: privacy.md section 2 keeps unmasked text out of every store.
     A report already posted is not replaced -- people have read that version,
     and a silent edit would make the stored copy disagree with what they saw.
+
+    **The body holds this meeting's content only.** The row is deleted with this
+    meeting and nothing else, so a sentence quoted from another meeting -- a past
+    decision from D's lineage, a team-wide action item from B -- would outlive
+    that meeting's deletion here. The Report subagent links another meeting by
+    its title and a link, and does not quote it. Decided on #459 (option (a) of
+    the review note), over storing cited meeting ids for a sweep.
     """
     meeting = session.get(Meeting, meeting_id)
     if meeting is None:
@@ -902,7 +910,8 @@ class ClaimedReport:
     """What ``post_meeting_report`` needs, read while the claim held the row."""
 
     meeting_id: str
-    title: str
+    preview: str
+    """Slack's top-level ``text``: the notification preview, never the body."""
     body_markdown: str
 
 
@@ -924,10 +933,26 @@ def claim_meeting_report(session: Session, meeting_id: str) -> ClaimedReport | N
         raise NotFoundError("meeting report", meeting_id)
     if row.sent_at is not None:
         return None
+    title = session.scalar(sa.select(Meeting.title).where(Meeting.id == meeting_id)) or ""
     row.sent_at = datetime.now(UTC)
     session.flush()
-    title = session.scalar(sa.select(Meeting.title).where(Meeting.id == meeting_id)) or ""
-    return ClaimedReport(meeting_id=meeting_id, title=title, body_markdown=row.body_markdown)
+    return ClaimedReport(
+        meeting_id=meeting_id, preview=_report_preview(title), body_markdown=row.body_markdown
+    )
+
+
+def _report_preview(title: str) -> str:
+    """The title as the preview, unless it holds personal data.
+
+    Decided here, before the claim commits, because ``check_outbound`` refuses
+    the whole post over one string: a title such as ``kim@example.com 1:1``
+    (common when a calendar event names the meeting) would otherwise fail the
+    post after the claim, and the report could never be claimed again. The body
+    was checked when it was saved; the title never was.
+    """
+    if not title or find_unmasked(title):
+        return "회의 리포트"
+    return f"{title} 회의 리포트"
 
 
 def post_meeting_report(slack: SlackApi, channel: str, report: ClaimedReport) -> str:
@@ -935,12 +960,12 @@ def post_meeting_report(slack: SlackApi, channel: str, report: ClaimedReport) ->
 
     The body goes out once, in the section block. The top-level ``text`` is
     Slack's notification preview (see ``autune_integrations.privacy.strings_in``),
-    so it carries the title; putting the body there as well sent it twice and
+    so it carries the title (``_report_preview``); putting the body there as well sent it twice and
     pushed a body above ~1,940 characters past ``MAX_OUTBOUND_CHARS``.
     """
     return slack.post_message(
         channel,
-        f"{report.title} 회의 리포트",
+        report.preview,
         _meeting_report_blocks(report.meeting_id, report.body_markdown),
     )
 
