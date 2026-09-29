@@ -142,6 +142,9 @@ class FakeCalendar:
     listed: list[CalendarEvent] = field(default_factory=list)
     busy: dict[str, list[tuple[datetime, datetime]]] = field(default_factory=dict)
     deleted: list[str] = field(default_factory=list)
+    created: int = 0
+    """Events ever made, so an id is never reused -- not even after a test
+    empties ``events`` to stand for someone deleting them in Calendar."""
 
     def list_events(
         self, calendar_id: str, time_min: datetime, time_max: datetime, *, limit: int = 50
@@ -159,7 +162,8 @@ class FakeCalendar:
         check_outbound(
             {"summary": summary, "description": description}, destination="google_calendar"
         )
-        event_id = f"evt_{len(self.events) + len(self.deleted) + 1}"
+        self.created += 1
+        event_id = f"evt_{self.created}"
         self.events[event_id] = {
             "calendar": calendar_id,
             "summary": summary,
