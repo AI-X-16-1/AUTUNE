@@ -17,8 +17,11 @@ import re
 from pathlib import Path
 
 from autune_gap.schemas import (
+    GapDismissal,
     TemplateComparison,
     TemplateItemRead,
+    TemplateRead,
+    TemplateSelection,
     TopicEdgeRead,
     TopicGraphRead,
     TopicNodeRead,
@@ -73,3 +76,19 @@ def test_the_rail_can_say_an_item_was_never_compared() -> None:
     full checklist of green dots for a meeting nobody has processed."""
     assert TemplateItemRead.model_fields["coverage"].default is None
     assert "coverage: Coverage | null" in TYPES_TS.read_text(encoding="utf-8")
+
+
+def test_the_web_template_option_mirror_is_current() -> None:
+    """``TemplateOption`` on the web: what the rail's picker lists."""
+    assert ts_fields("TemplateOption") == set(TemplateRead.model_fields), f"update {TYPES_TS}"
+
+
+def test_the_web_template_selection_mirror_is_current() -> None:
+    assert ts_fields("TemplateSelection") == set(TemplateSelection.model_fields), (
+        f"update {TYPES_TS}"
+    )
+
+
+def test_the_web_dismissal_mirror_is_current() -> None:
+    """What "해당 없음" and its undo return. No dismisser on either side."""
+    assert ts_fields("GapDismissal") == set(GapDismissal.model_fields), f"update {TYPES_TS}"

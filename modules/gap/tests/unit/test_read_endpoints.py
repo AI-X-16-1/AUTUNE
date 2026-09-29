@@ -797,3 +797,96 @@ def test_the_template_listing_needs_a_caller_and_the_health_check_does_not(
 
     assert anonymous.get(f"{PREFIX}/templates").status_code == 403
     assert client.get(f"{PREFIX}/templates").status_code == 200
+
+
+# --- dismissing a gap: "해당 없음" on S20 -----------------------------------
+
+
+def _dismiss_path(gap_id: str) -> str:
+    return f"{PREFIX}/gaps/{gap_id}/dismiss"
+
+
+def test_a_dismissed_gap_leaves_the_report_and_stays_in_the_table(
+    client: TestClient, session: Session
+) -> None:
+    """The row is marked, not deleted: threshold tuning reads the mark."""
+    gap(session, "gap_1")
+
+    response = client.post(_dismiss_path("gap_1"))
+
+    assert response.status_code == 200
+    assert response.json() == {"gap_id": "gap_1", "meeting_id": MEETING, "dismissed": True}
+    assert client.get(f"{PREFIX}/reports/{MEETING}").json()["gaps"] == []
+    assert session.get(GapGap, "gap_1").dismissed_at is not None
+
+
+def test_dismissing_twice_keeps_the_first_moment(client: TestClient, session: Session) -> None:
+    """A double click must not move the timestamp tuning reads."""
+    gap(session, "gap_1")
+    client.post(_dismiss_path("gap_1"))
+    first = session.get(GapGap, "gap_1").dismissed_at
+
+    client.post(_dismiss_path("gap_1"))
+
+    assert session.get(GapGap, "gap_1").dismissed_at == first
+
+
+def test_a_dismissal_can_be_taken_back(client: TestClient, session: Session) -> None:
+    gap(session, "gap_1", dismissed=True)
+
+    response = client.delete(_dismiss_path("gap_1"))
+
+    assert response.json()["dismissed"] is False
+    assert session.get(GapGap, "gap_1").dismissed_at is None
+    assert [g["id"] for g in client.get(f"{PREFIX}/reports/{MEETING}").json()["gaps"]] == ["gap_1"]
+
+
+def test_the_rail_marks_the_item_once_its_gap_is_dismissed(
+    client: TestClient, session: Session
+) -> None:
+    item = template.get_template("general").items[0].key
+    topic(session, "top_1")
+    gap(session, "gap_1", template_key="general", item_key=item, coverage="missing")
+
+    client.post(_dismiss_path("gap_1"))
+
+    rail = client.get(f"{PREFIX}/templates/{MEETING}").json()
+    row = next(one for one in rail["items"] if one["key"] == item)
+    assert row["dismissed"] is True
+    assert row["coverage"] == "missing"
+
+
+@pytest.mark.parametrize("method", ["post", "delete"])
+def test_an_unknown_gap_and_another_teams_gap_are_the_same_404(
+    client: TestClient, session: Session, method: str
+) -> None:
+    """The meeting's own 404 would name the meeting, and so confirm that the
+    gap id somebody guessed is real."""
+    gap(session, "gap_foreign", meeting_id=FOREIGN_MEETING)
+
+    foreign = getattr(client, method)(_dismiss_path("gap_foreign"))
+    unknown = getattr(client, method)(_dismiss_path("gap_no_such_thing"))
+
+    assert foreign.status_code == unknown.status_code == 404
+    assert foreign.json()["error"]["code"] == unknown.json()["error"]["code"]
+    assert foreign.json()["error"].get("details") == unknown.json()["error"].get("details")
+    assert "meeting" not in foreign.text
+    assert session.get(GapGap, "gap_foreign").dismissed_at is None
+
+
+@pytest.mark.parametrize("method", ["post", "delete"])
+def test_dismissing_needs_a_caller(anonymous: TestClient, session: Session, method: str) -> None:
+    gap(session, "gap_1")
+
+    assert getattr(anonymous, method)(_dismiss_path("gap_1")).status_code == 403
+    assert session.get(GapGap, "gap_1").dismissed_at is None
+
+
+def test_the_dismissal_records_nobody(client: TestClient, session: Session) -> None:
+    """ADR 0003: which teammate pressed the button is not stored anywhere."""
+    gap(session, "gap_1")
+
+    body = client.post(_dismiss_path("gap_1")).json()
+
+    assert MEMBER not in str(body)
+    assert set(body) == {"gap_id", "meeting_id", "dismissed"}

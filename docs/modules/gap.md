@@ -629,13 +629,14 @@ here, so the no-deletion-hook sentence above still holds.
 | GET | `/reports/{meeting_id}` | Full gap report |
 | GET | `/topics/{meeting_id}` | Topic graph for visualization |
 | POST | `/gaps/{id}/dismiss` | Mark a gap as a false positive (feeds threshold tuning) |
+| DELETE | `/gaps/{id}/dismiss` | Take a dismissal back |
 | GET | `/templates` | Available domain templates |
 | GET | `/templates/{meeting_id}` | Which template this meeting is held to, and how far it got with each item |
 | PUT | `/templates/{meeting_id}` | Point this meeting at a template and re-compare |
 
 ### The read API as built
 
-Everything above is built except `POST /gaps/{id}/dismiss`.
+Everything above is built.
 `/reports/{meeting_id}` and `/topics/{meeting_id}` read the stored rows; nothing
 was added to `apps/` to mount them.
 
@@ -713,8 +714,24 @@ the pipeline produced, and a template somebody is trying out on S20 should not
 silently rewrite that. A key no template file defines is a 422, not a 404 — what
 is wrong is the value, not the address.
 
-`POST /gaps/{id}/dismiss` is still not built. It now has rows to act on, and
-what it needs is the screen that calls it (#48).
+`POST /gaps/{id}/dismiss` sets `dismissed_at` and nothing else; `DELETE` on the
+same path clears it, because a button pressed by mistake has to be undoable from
+the screen or the mistake sits in the data tuning reads. Both return the state
+the server settled on (`schemas.GapDismissal`). Dismissing twice keeps the first
+timestamp. The routes are named by the gap, so the membership check is the
+service's own: an unknown gap and a gap on another team's meeting are the same
+404, and neither names the meeting. Neither republishes `autune.gap.completed`,
+for the reason `PUT /templates` does not.
+
+A dismissal made under one template survives a switch to another. Switching
+drops the old checklist's gaps, but a dismissed one stays — marked, out of the
+report, and not on the rail, which reads only the template in force — so tuning
+keeps its input and switching back finds the judgement where it was left.
+
+S20 calls all of this (#48): "해당 없음" on a HIGH gap, "되돌리기" on the rail
+item it leaves behind, and the rail's template picker. The screen re-reads the
+report, graph and rail after each write rather than patching its own copy, and
+polls them every five seconds while the rail says `analysed: false`.
 
 ## Celery tasks
 
