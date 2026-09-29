@@ -63,6 +63,48 @@ def test_delivery_is_enqueued_only_after_the_commit_with_the_id_only(
     assert row is not None and row.pending_review is True
 
 
+def test_a_rolled_back_publish_is_never_enqueued_by_a_later_commit(
+    db_session: Session, team: str
+) -> None:
+    """A caller that reuses its session after a rollback must not post that report."""
+    meeting = _meeting(db_session, team, "결제 기능 기획")
+    db_session.commit()
+
+    with patch.object(tasks.deliver_meeting_report, "apply_async") as enqueue:
+        tools.publish_meeting_report(db_session, meeting, BODY)
+        db_session.rollback()
+        db_session.commit()
+
+    enqueue.assert_not_called()
+
+
+def test_two_publishes_in_one_transaction_enqueue_once(db_session: Session, team: str) -> None:
+    meeting = _meeting(db_session, team, "결제 기능 기획")
+
+    with patch.object(tasks.deliver_meeting_report, "apply_async") as enqueue:
+        tools.publish_meeting_report(db_session, meeting, BODY)
+        tools.publish_meeting_report(db_session, meeting, BODY)
+        db_session.commit()
+
+    enqueue.assert_called_once_with((meeting,))
+
+
+def test_a_broker_failure_after_commit_does_not_fail_the_commit(
+    db_session: Session, team: str
+) -> None:
+    """The row is committed by then; a raise here would tell the caller it was not."""
+    meeting = _meeting(db_session, team, "결제 기능 기획")
+
+    with patch.object(
+        tasks.deliver_meeting_report, "apply_async", side_effect=ConnectionError("broker down")
+    ):
+        tools.publish_meeting_report(db_session, meeting, BODY)
+        db_session.commit()
+
+    row = db_session.get(IntelMeetingReport, meeting)
+    assert row is not None and row.sent_at is None
+
+
 def test_publish_is_not_ok_for_an_unknown_meeting(db_session: Session) -> None:
     result = tools.publish_meeting_report(db_session, "mtg_doesnotexist", BODY)
 

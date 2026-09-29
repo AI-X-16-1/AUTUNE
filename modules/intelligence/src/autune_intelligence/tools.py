@@ -33,11 +33,13 @@ from typing import Any
 from sqlalchemy import event
 from sqlalchemy.orm import Session
 
-from autune_core import Meeting
+from autune_core import Meeting, get_logger
 from autune_core.errors import ConflictError, NotFoundError, ValidationError
 
 from . import service, tasks
 from .service import _gap_burden
+
+log = get_logger(__name__)
 
 MAX_ITEMS = 5
 """agent-layer.md section 4: a tool ranks and keeps five; the rest stay in E's tables."""
@@ -260,15 +262,50 @@ def publish_meeting_report(
             items=[],
             confidence=0.0,
         )
-    # After commit, not now: a worker could pick the task up before this
-    # transaction commits, find no row, and drop the report.
-    event.listen(
-        session,
-        "after_commit",
-        lambda _s: tasks.deliver_meeting_report.apply_async((meeting_id,)),
-        once=True,
-    )
+    _deliver_after_commit(session, meeting_id)
     return _result(summary="리포트를 저장했고, 커밋되면 발송합니다.", items=[])
+
+
+_PENDING_DELIVERIES = "autune_intelligence.pending_report_deliveries"
+"""``session.info`` key: meetings published in the session's open transaction."""
+
+
+def _deliver_after_commit(session: Session, meeting_id: str) -> None:
+    """Enqueue delivery when this transaction commits, and never if it rolls back.
+
+    After commit, not now: a worker could pick the task up before the commit,
+    find no row, and drop the report. And not a bare one-shot ``after_commit``
+    listener: that survives a rollback and fires on the session's next,
+    unrelated commit, posting a report whose publish was rolled back. The set
+    also folds two publishes of one meeting in one transaction into one task.
+    """
+    pending = session.info.get(_PENDING_DELIVERIES)
+    if pending is None:
+        pending = session.info[_PENDING_DELIVERIES] = set()
+        event.listen(session, "after_commit", _enqueue_pending)
+        event.listen(session, "after_soft_rollback", _drop_pending)
+    pending.add(meeting_id)
+
+
+def _enqueue_pending(session: Session) -> None:
+    pending: set[str] = session.info.get(_PENDING_DELIVERIES, set())
+    meeting_ids = sorted(pending)
+    pending.clear()
+    for meeting_id in meeting_ids:
+        try:
+            tasks.deliver_meeting_report.apply_async((meeting_id,))
+        except Exception as exc:  # the row is committed; the caller must not see a failure
+            # Stored and unclaimed: publishing the meeting again enqueues it.
+            log.warning(
+                "intelligence_meeting_report_enqueue_failed",
+                meeting_id=meeting_id,
+                error=type(exc).__name__,
+            )
+
+
+def _drop_pending(session: Session, previous_transaction: Any) -> None:
+    if previous_transaction.parent is None:  # the outermost transaction rolled back
+        session.info.get(_PENDING_DELIVERIES, set()).clear()
 
 
 WRITE_TOOLS = [publish_meeting_report]
