@@ -42,13 +42,22 @@ class JiraAccess:
         return f"JiraAccess(cloud_id={self.cloud_id!r}, project_key={self.project_key!r})"
 
 
-def jira_access(team_id: str, *, client: AtlassianOAuthClient | None = None) -> JiraAccess | None:
+def jira_access(
+    team_id: str, *, client: AtlassianOAuthClient | None = None, check_project: bool = False
+) -> JiraAccess | None:
     """A fresh access token for the team's Jira, or ``None`` when the team has
     not connected Jira or its connection needs a person to reconnect.
 
     A refused refresh token marks the connection ``needs_reconnect`` (committed)
     and raises ``JiraReconnectRequiredError`` once; later calls return ``None`` until
     someone connects again, so a dead grant is not retried on every edit.
+
+    ``check_project`` also confirms the chosen project still exists. One that
+    was deleted is recorded as ``project_missing`` (its key) with no project
+    chosen, and the answer carries ``project_key=None``: the module skips, and
+    the screen asks for a new project -- whose choice brings every confirmed
+    item back (module B's backfill). Nothing here creates a project: that
+    needs Jira's admin scope, which this connection does not ask for.
     """
     with session_scope() as session:
         row = session.scalars(
@@ -71,9 +80,17 @@ def jira_access(team_id: str, *, client: AtlassianOAuthClient | None = None) -> 
             raise
         if tokens.refresh_token:
             row.secret = encrypt(tokens.refresh_token)
+        project_key = config.get("project_key")
+        cloud_id = str(config["cloud_id"])
+        if (
+            check_project
+            and project_key
+            and not atlassian.project_exists(tokens.access_token, cloud_id, project_key)
+        ):
+            row.config = {**config, "project_key": None, "project_missing": project_key}
+            log.warning("jira_project_missing", team_id=team_id)
+            project_key = None
         # Committed by session_scope on the way out, before the caller's calls.
         return JiraAccess(
-            access_token=tokens.access_token,
-            cloud_id=str(config["cloud_id"]),
-            project_key=config.get("project_key"),
+            access_token=tokens.access_token, cloud_id=cloud_id, project_key=project_key
         )

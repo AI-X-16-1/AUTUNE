@@ -544,6 +544,8 @@ def jira_status(
         "needs_reconnect": bool(config.config.get("needs_reconnect")),
         "site_name": config.config.get("site_name"),
         "project_key": config.config.get("project_key"),
+        # The key of a chosen project that has since been deleted in Jira.
+        "project_missing": config.config.get("project_missing"),
     }
     if not answer["needs_reconnect"] and not answer["project_key"]:
         answer["projects"] = [{"key": p.key, "name": p.name} for p in _projects_for(team_id)]
@@ -572,7 +574,12 @@ def jira_choose_project(
         raise NotFoundError("integration", f"jira for team {team_id}")
     if project_key not in {p.key for p in _projects_for(team_id)}:
         raise PermissionDeniedError("that project is not visible to this Jira connection")
-    save_integration(session, team_id, JIRA, config={**config.config, "project_key": project_key})
+    save_integration(
+        session,
+        team_id,
+        JIRA,
+        config={**config.config, "project_key": project_key, "project_missing": None},
+    )
     return {"connected": True, "project_key": project_key}
 
 

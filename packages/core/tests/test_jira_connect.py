@@ -196,6 +196,7 @@ def test_status_and_disconnect_are_for_members_only(world: dict[str, Any]) -> No
         "needs_reconnect": False,
         "site_name": "acme",
         "project_key": "AUT",
+        "project_missing": None,
     }
     assert signed_in(world, OUTSIDER).get(f"/api/auth/jira?meeting_id={MEETING}").status_code == 403
 
@@ -239,9 +240,13 @@ def _patch_scope(monkeypatch: pytest.MonkeyPatch, session: _Session) -> None:
 
 
 class _Refresher:
-    def __init__(self, answer: AtlassianTokens | Exception) -> None:
+    def __init__(self, answer: AtlassianTokens | Exception, *, project: bool = True) -> None:
         self.answer = answer
+        self.project = project
         self.seen: list[str] = []
+
+    def project_exists(self, access_token: str, cloud_id: str, key: str) -> bool:
+        return self.project
 
     def refresh(self, token: str) -> AtlassianTokens:
         self.seen.append(token)
@@ -313,3 +318,45 @@ def test_a_refused_refresh_is_reconnect_and_says_nothing_secret() -> None:
     with pytest.raises(JiraReconnectRequiredError) as caught:
         client.refresh("the-refresh-token")
     assert "the-refresh-token" not in str(caught.value)
+
+
+def test_a_deleted_project_is_recorded_and_no_project_is_handed_out(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    row = _Row("enc:old", {"cloud_id": "cloud-1", "project_key": "AT"})
+    _patch_scope(monkeypatch, _Session(row))
+    refresher = _Refresher(AtlassianTokens("access", "new", frozenset()), project=False)
+
+    access = jira_connection.jira_access(TEAM, client=refresher, check_project=True)  # type: ignore[arg-type]
+
+    assert access is not None
+    assert access.project_key is None
+    assert row.config["project_key"] is None
+    assert row.config["project_missing"] == "AT"
+
+
+def test_without_check_project_nothing_is_asked(monkeypatch: pytest.MonkeyPatch) -> None:
+    row = _Row("enc:old", {"cloud_id": "cloud-1", "project_key": "AT"})
+    _patch_scope(monkeypatch, _Session(row))
+    refresher = _Refresher(AtlassianTokens("access", "new", frozenset()), project=False)
+
+    access = jira_connection.jira_access(TEAM, client=refresher)  # type: ignore[arg-type]
+
+    assert access is not None
+    assert access.project_key == "AT"
+
+
+def test_choosing_a_project_clears_the_missing_one(
+    world: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client = signed_in(world)
+    finish(client, start(client))
+    world["saved"][TEAM]["config"].update(project_key=None, project_missing="AUT")
+    monkeypatch.setattr(
+        auth_router_module, "_projects_for", lambda team_id: [JiraProject("NEW", "n")]
+    )
+
+    body = client.post(f"/api/auth/jira/project?meeting_id={MEETING}&project_key=NEW").json()
+
+    assert body == {"connected": True, "project_key": "NEW"}
+    assert world["saved"][TEAM]["config"]["project_missing"] is None

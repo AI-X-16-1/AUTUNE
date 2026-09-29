@@ -151,6 +151,22 @@ class AtlassianOAuthClient:
         values = body.get("values", []) if isinstance(body, dict) else []
         return [JiraProject(key=str(p["key"]), name=str(p.get("name", ""))) for p in values]
 
+    def project_exists(self, access_token: str, cloud_id: str, key: str) -> bool:
+        """Whether the chosen project is still there -- deleted (or in the
+        trash) answers 404."""
+        try:
+            response = self._http.get(
+                f"{API_ROOT}/{cloud_id}/rest/api/3/project/{key}",
+                headers={"Authorization": f"Bearer {access_token}", "Accept": "application/json"},
+            )
+        except httpx.HTTPError as exc:
+            raise AutuneError("could not reach Atlassian") from exc
+        if response.status_code == 404:
+            return False
+        if response.status_code >= 400:
+            raise AutuneError(f"Atlassian answered {response.status_code}")
+        return True
+
     def _get(self, url: str, access_token: str) -> Any:
         try:
             response = self._http.get(
