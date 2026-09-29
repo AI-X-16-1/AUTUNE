@@ -19,7 +19,7 @@ from datetime import UTC, datetime
 import pytest
 from sqlalchemy import delete, select
 
-from autune_core import Meeting, Participant, Team, session_scope
+from autune_core import Meeting, Participant, Team, Utterance, session_scope
 from autune_gap import service
 from autune_gap.config import get_settings
 from autune_gap.models import (
@@ -29,6 +29,8 @@ from autune_gap.models import (
     GapTopic,
     GapTopicEdge,
 )
+from autune_gap.pipeline import reset_cache
+from autune_gap.template import get_template
 
 
 @pytest.fixture
@@ -171,7 +173,7 @@ def test_a_gap_carries_the_template_that_raised_it(team_id: str) -> None:
     gap = stored(meeting_id)["risk"]
 
     assert gap.template_key == "general"
-    assert gap.template_version == "general.3"
+    assert gap.template_version == "general.4"
     assert gap.template_item == "리스크·예외 처리"
     assert gap.suggested_question
 
@@ -400,3 +402,79 @@ def test_the_override_goes_when_the_meeting_does(team_id: str) -> None:
 
     with session_scope() as s:
         assert s.get(GapMeetingTemplate, meeting_id) is None
+
+
+# --- speech read by meaning ---------------------------------------------------
+
+
+@pytest.fixture
+def fake_embedder() -> Iterator[None]:
+    """``AUTUNE_GAP_EMBEDDER_IMPL=fake`` for one test. The fake is lexical, so
+    an utterance written as one of an item's example sentences is nearest to
+    that item — which is what these tests need, and says nothing about KURE-v1."""
+    settings = get_settings()
+    original = settings.embedder_impl
+    settings.embedder_impl = "fake"
+    reset_cache()
+    try:
+        yield
+    finally:
+        settings.embedder_impl = original
+        reset_cache()
+
+
+def say(meeting_id: str, *lines: str, consented: bool = True) -> None:
+    with session_scope() as s:
+        person = Participant(meeting_id=meeting_id, speaker_label="발화자", consented=consented)
+        s.add(person)
+        s.flush()
+        for index, text in enumerate(lines):
+            s.add(
+                Utterance(
+                    id=f"utt_{person.id}_{index}",
+                    meeting_id=meeting_id,
+                    participant_id=person.id,
+                    speaker_label="발화자",
+                    start_sec=float(index),
+                    end_sec=float(index) + 1,
+                    text=text,
+                )
+            )
+
+
+def dependency_example() -> str:
+    general = get_template("general")
+    return next(item for item in general.items if item.key == "dependency").examples[0]
+
+
+def test_an_item_the_embedder_heard_is_stored_partial(team_id: str, fake_embedder: None) -> None:
+    """The ``no-noun`` fix end to end: no keyword of ``dependency`` was said and
+    no topic names it, and the item is raised as partial rather than missing."""
+    meeting_id = seed(team_id, COVERS_TWO)
+    say(meeting_id, dependency_example())
+
+    service.detect_gaps(meeting_id)
+
+    assert stored(meeting_id)["dependency"].coverage == "partial"
+    assert stored(meeting_id)["risk"].coverage == "missing"
+
+
+def test_with_the_embedder_off_the_same_meeting_is_missing(team_id: str) -> None:
+    """The baseline, kept: nothing heard by meaning, keywords only."""
+    meeting_id = seed(team_id, COVERS_TWO)
+    say(meeting_id, dependency_example())
+
+    service.detect_gaps(meeting_id)
+
+    assert stored(meeting_id)["dependency"].coverage == "missing"
+
+
+def test_the_embedder_reads_only_consenting_speech(team_id: str, fake_embedder: None) -> None:
+    """privacy.md section 5: a participant who declined is not analysed, by the
+    keyword reading or by this one."""
+    meeting_id = seed(team_id, COVERS_TWO)
+    say(meeting_id, dependency_example(), consented=False)
+
+    service.detect_gaps(meeting_id)
+
+    assert stored(meeting_id)["dependency"].coverage == "missing"

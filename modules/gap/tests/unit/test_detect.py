@@ -502,3 +502,57 @@ def test_an_empty_graph_still_raises_nothing_however_much_was_said(
 def test_mentioned_reads_the_items_own_keywords() -> None:
     assert detect.mentioned(item(keywords=("지표",)), ["핵심 지표는 클릭률"])
     assert not detect.mentioned(item(keywords=("지표",)), ["핵심 목표는 클릭률"])
+
+
+# --- speech read by meaning (``semantic``) ------------------------------------
+
+
+def test_an_item_heard_by_meaning_is_partial_not_missing(thresholds: detect.Thresholds) -> None:
+    """The ``no-noun`` case: the meeting settled the item with a verb and a
+    date, no keyword was said, and the embedder heard it anyway."""
+    findings = detect.compare(
+        one_item_template(item()),
+        [topic(label="콜드스타트")],
+        SILENT,
+        thresholds,
+        heard=frozenset({"success_criteria"}),
+    )
+
+    assert [finding.coverage for finding in findings] == [detect.Coverage.PARTIAL]
+
+
+def test_an_item_heard_by_meaning_is_never_covered(thresholds: detect.Thresholds) -> None:
+    """As strong as a spoken keyword and no stronger. A sentence close to "제가
+    맡겠습니다" is a reason not to call the item missing, not proof it was
+    settled."""
+    findings = detect.compare(
+        one_item_template(item()),
+        [topic(label="콜드스타트")],
+        SILENT,
+        thresholds,
+        heard=frozenset({"success_criteria"}),
+    )
+
+    assert findings, "a heard item with no topic behind it still raises a gap"
+
+
+def test_hearing_a_different_item_changes_nothing(thresholds: detect.Thresholds) -> None:
+    findings = detect.compare(
+        one_item_template(item()),
+        [topic(label="콜드스타트")],
+        SILENT,
+        thresholds,
+        heard=frozenset({"ownership"}),
+    )
+
+    assert [finding.coverage for finding in findings] == [detect.Coverage.MISSING]
+
+
+def test_an_empty_graph_raises_nothing_whatever_was_heard(thresholds: detect.Thresholds) -> None:
+    """The empty-graph rule holds with the embedder on: an empty graph says
+    extraction failed, and hearing the speech does not make the comparison
+    able to tell covered from unmentioned."""
+    assert (
+        detect.compare(one_item_template(item()), [], SILENT, thresholds, heard=frozenset({"x"}))
+        == []
+    )

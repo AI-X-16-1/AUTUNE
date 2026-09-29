@@ -494,6 +494,8 @@ three side by side.
   negations are not detected, and detecting them is its own judgement rather
   than a one-liner; the fixture labels disagree with the code on exactly this
   case and it is the open question of the rule.
+- **The speech can also be read by meaning** (`AUTUNE_GAP_EMBEDDER_IMPL=local`,
+  off by default). See "Speech read by meaning" below.
 - **A missing item scores exactly its template weight.** There is no topic to
   read a centrality off and none to read a silence off, so the weight is the
   only measured input and the score is it. Charging it a full 1.0 for "no
@@ -547,6 +549,64 @@ deletes the meeting's topics first and the cascade takes those rows with them.
 Every threshold and weight is in `config.py` (#35): the two severity bands, the
 centrality below which a match is partial, the damping, and the three risk
 weights.
+
+### Speech read by meaning
+
+A keyword is a noun, and the eval set's false positives were all `no-noun`: the
+meeting settled the item with a verb and a date — "정렬 로직은 이건우님이 맡고
+다음 주 금요일까지 초안을 봅니다" — and said no noun a keyword list or a better
+extractor could reach. `autune_gap.semantic` reads the same consenting speech a
+second way, through a sentence embedder (KURE-v1, in process, the model B and D
+already run).
+
+- **Every item carries example sentences** (`examples` in the template files) —
+  what settling it sounds like in a meeting. An utterance is compared against
+  every item's examples and against `semantic.BACKGROUND`, sentences that
+  settle nothing ("네 좋습니다", "오늘은 진행 상황만 공유드릴게요"), and counts
+  for the class it is nearest to if that is an item and the cosine reaches
+  `AUTUNE_GAP_SEMANTIC_FLOOR`.
+- **Nearest class, because a cutoff does not separate.** Item names and
+  example sentences were both measured against the eval set with a per-item
+  cutoff first, and the distributions overlapped: "네 알겠습니다. 그럼 여기서
+  마치겠습니다" is 0.65 from "그 작업은 제가 맡겠습니다" on the shared ending
+  alone, above the 0.61 of the utterance that really did settle an owner in
+  `search-personalisation`. Against the background class the same sentence
+  lands at 0.86 and counts for nothing.
+- **A heard item is exactly as strong as a spoken keyword.** It makes a missing
+  item *partial*, never covered, and `detect.classify`'s ranking is unchanged.
+  So the change closes a `no-noun` false positive by moving it below `high`
+  rather than by claiming the item was settled — the row stays, a reader who
+  opens `medium` sees it, and precision over every severity does not move.
+- **Examples are never taken from the eval set**, and a test compares the two.
+  The harness would otherwise be grading its own answer key.
+- **Nothing leaves the process and nothing is stored.** The embedder is
+  `local` or `fake`; there is no external option, for the reason the entity
+  extractor has none. The vectors decide which items were said and are dropped.
+
+`python -m autune_gap.eval --compare` runs the set twice, embedder off and then
+on, and prints what became of every baseline false positive. On the four
+authored cases, with spaCy:
+
+| | off | local |
+| --- | --- | --- |
+| precision (`high`) | 0.80 | 0.88 |
+| recall (`high`) | 1.00 | 0.94 |
+| false positives (all `no-noun`) | 4 | 2 |
+| true positives | 16 | 15 |
+
+Closed: `deploy-retro:ownership` and `outbound-privacy:dependency`. Still
+raised: `search-personalisation:dependency` — "인덱스 재색인이 먼저 끝나야
+정렬 로직을 붙일 수 있습니다" reaches only 0.51 with the dependency examples,
+under the floor — and `deploy-retro:dependency`, whose utterance is nearer the
+`risk` examples, and one utterance counts for one item. Lost: `search-personalisation:cold_start`, a real gap, because "인기순
+정렬 대신 실시간 개인화로 가는 거죠" is nearest the cold-start examples.
+
+**Off by default, and that is the finding rather than caution.** The floor
+(0.55) and margin (0) were chosen by looking at these four meetings, so the
+table says the mechanism does what it claims on them and nothing about whether
+it holds. The W5 meetings decide; `--compare` is the command to run on them.
+LLM verification of what the embedder heard is a separate, later step and a
+privacy decision of its own (`../architecture/privacy.md` section 6).
 
 ### Step 8 as built
 
@@ -796,6 +856,7 @@ polls them every five seconds while the rail says `analysed: false`.
 | --- | --- |
 | Entity extraction | spaCy NER (Korean model) |
 | Relation extraction | Rule-based patterns plus LLM assistance |
+| Spoken evidence by meaning | KURE-v1 sentence embeddings, in process, off by default |
 | Graph | NetworkX, in memory |
 | Topic importance | PageRank, betweenness centrality |
 | Risk scoring | Weighted heuristic; thresholds in `config.py` |
@@ -876,6 +937,7 @@ and dismissals feed threshold tuning.
 
 ```bash
 uv run --package autune-gap python -m autune_gap.eval
+uv run --package autune-gap python -m autune_gap.eval --compare   # embedder off vs local
 ```
 
 Precision is measured over the `high` band, because that is what a reader

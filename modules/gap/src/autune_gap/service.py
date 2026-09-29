@@ -30,7 +30,7 @@ from autune_core import (
 )
 from autune_core.errors import NotFoundError
 from autune_core.events import publish
-from autune_gap import detect, graph, template
+from autune_gap import detect, graph, semantic, template
 from autune_gap.config import GapSettings, get_settings
 from autune_gap.models import (
     GapGap,
@@ -41,7 +41,11 @@ from autune_gap.models import (
     GapTopicEdge,
     GapTopicUtterance,
 )
-from autune_gap.pipeline import get_entity_extractor, get_relation_extractor
+from autune_gap.pipeline import (
+    get_entity_extractor,
+    get_relation_extractor,
+    get_sentence_embedder,
+)
 from autune_gap.schemas import (
     GapDismissal,
     TemplateComparison,
@@ -292,7 +296,10 @@ def detect_gaps(meeting_id: str) -> int:
         chosen = template.get_template(selected_template_key(session, meeting_id))
         topics = _topic_views(session, meeting_id)
         speech = _speech(session, meeting_id)
-        findings = detect.compare(chosen, topics, speech, _thresholds(settings))
+        # An empty graph raises nothing whatever was said (`detect.compare`),
+        # so the speech is not embedded for a meeting that cannot use it.
+        heard = _heard(chosen, speech, settings) if topics else frozenset()
+        findings = detect.compare(chosen, topics, speech, _thresholds(settings), heard)
         _store_gaps(session, meeting_id, chosen, findings)
 
     # Counts and keys only. A gap title is composed from a template file and a
@@ -305,6 +312,8 @@ def detect_gaps(meeting_id: str) -> int:
         topics=len(topics),
         gaps=len(findings),
         high=sum(1 for finding in findings if finding.severity == "high"),
+        embedder=settings.embedder_impl,
+        heard=len(heard),
     )
     return len(findings)
 
@@ -348,6 +357,31 @@ def set_dismissed(session: Session, gap_id: str, reader: User, *, dismissed: boo
 
     log.info("gap_dismissal_set", gap_id=gap_id, meeting_id=row.meeting_id, dismissed=dismissed)
     return GapDismissal(gap_id=gap_id, meeting_id=row.meeting_id, dismissed=dismissed)
+
+
+def _heard(chosen: template.Template, speech: list[str], settings: GapSettings) -> frozenset[str]:
+    """Template items the speech said by meaning, or nothing when the embedder
+    is off. See ``semantic``.
+
+    The utterances go to an embedder in this process and nowhere else
+    (``pipeline.base.SentenceEmbedder``). Their vectors are not stored: they
+    decide which items were said and are dropped with this frame.
+    """
+    embedder = get_sentence_embedder()
+    if embedder is None or not speech:
+        return frozenset()
+
+    examples = semantic.examples_for(chosen)
+    if not any(label != semantic.BACKGROUND_KEY for label in examples.labels):
+        return frozenset()
+
+    return semantic.heard(
+        embedder.embed(speech),
+        embedder.embed(list(examples.texts)),
+        examples.labels,
+        floor=settings.semantic_floor,
+        margin=settings.semantic_margin,
+    )
 
 
 def selected_template_key(session: Session, meeting_id: str) -> str:

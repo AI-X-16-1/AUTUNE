@@ -95,6 +95,12 @@ class TemplateItem:
     say nothing about how they relate, and an item matched on proximity would
     be covered by any meeting that named two things at once. Optional — an item
     without it is matched by its keywords alone."""
+    examples: tuple[str, ...] = ()
+    """Sentences a meeting says when it settles this item — "민수님이 담당해서
+    수요일까지 마무리해 주세요" for ownership. Read by ``semantic`` through a
+    sentence embedder, so an item settled with a verb and a date is heard even
+    when no keyword was said. Optional: an item without them is matched by its
+    keywords alone, and the embedder is off by default."""
 
 
 @dataclass(frozen=True)
@@ -246,6 +252,7 @@ def _item(entry: dict[str, Any], template_key: str) -> TemplateItem:
         question=str(entry["question"]),
         question_about=_question_about(entry, template_key),
         relations=_relations(entry, template_key),
+        examples=_examples(entry, template_key),
     )
 
 
@@ -266,3 +273,19 @@ def _relations(entry: dict[str, Any], template_key: str) -> tuple[str, ...]:
             f"known: {list(RELATION_LABELS)}"
         )
     return relations
+
+
+def _examples(entry: dict[str, Any], template_key: str) -> tuple[str, ...]:
+    raw = entry.get("examples", ())
+    if isinstance(raw, str) or not isinstance(raw, (list, tuple)):
+        # A bare string would be iterated character by character, and every
+        # character would become an example sentence.
+        raise ConfigurationError(
+            f"template {template_key!r} item {entry.get('key')!r} has examples that are not a list"
+        )
+    examples = tuple(str(sentence).strip() for sentence in raw)
+    if any(not sentence for sentence in examples):
+        raise ConfigurationError(
+            f"template {template_key!r} item {entry.get('key')!r} has an empty example sentence"
+        )
+    return examples

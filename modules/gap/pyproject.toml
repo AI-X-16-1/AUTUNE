@@ -28,6 +28,10 @@ dependencies = [
     # raises ImportError without it. It is here in the lockfile only because
     # another member pulls it in, which `uv sync --package autune-gap` does not.
     "scipy>=1.13",
+    # ``semantic`` compares utterance vectors against example vectors as one
+    # matrix product. In the lockfile already through scipy, and named here for
+    # the reason scipy is: a module asks for what it imports.
+    "numpy>=1.26",
 ]
 
 [project.optional-dependencies]
@@ -45,6 +49,12 @@ local-models = [
     # somebody runs it, and two checkouts would then extract with different
     # models under the same name. uv.lock holds this one.
     "ko-core-news-lg @ https://github.com/explosion/spacy-models/releases/download/ko_core_news_lg-3.8.0/ko_core_news_lg-3.8.0-py3-none-any.whl",
+    # The utterance embedder behind template comparison's spoken evidence
+    # (``pipeline.embedder``). KURE-v1 is module D's shipped choice and module
+    # B's too; the model is fetched from the Hugging Face hub on first load and
+    # runs in this process -- nothing is sent anywhere.
+    "sentence-transformers>=3.0",
+    "torch>=2.2",
 ]
 
 [build-system]

@@ -69,7 +69,10 @@ somebody pointed at a non-default template. Everything here still cascades from
 ## AI stack
 
 spaCy NER (Korean), rule-based relation extraction with LLM assistance,
-NetworkX for PageRank and betweenness, weighted risk scoring.
+NetworkX for PageRank and betweenness, weighted risk scoring. Template
+comparison can also read the speech by meaning with KURE-v1 in process
+(`AUTUNE_GAP_EMBEDDER_IMPL`, off by default); the example sentences it compares
+against live in the template files and must never be copied from the eval set.
 
 The graph is one meeting's worth — tens of nodes — so it is built in memory from
 rows each run. At that size PageRank and betweenness take single-digit

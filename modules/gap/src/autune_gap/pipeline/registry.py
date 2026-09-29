@@ -19,7 +19,8 @@ from functools import lru_cache
 
 from autune_gap.config import get_settings
 
-from .base import EntityExtractor, RelationExtractor
+from .base import EntityExtractor, RelationExtractor, SentenceEmbedder
+from .embedder import FakeEmbedder, LocalKureEmbedder
 from .ner import FakeNer, SpacyNer
 from .relations import RuleRelations
 
@@ -70,7 +71,34 @@ def get_relation_extractor() -> RelationExtractor:
     )
 
 
+_EMBEDDERS: dict[str, str] = {
+    "off": "no sentence evidence -- keywords only, the rule-based baseline",
+    "local": "KURE-v1 (or AUTUNE_GAP_EMBEDDER_CHECKPOINT) in this process",
+    "fake": "deterministic, for tests",
+}
+"""Known sentence embedders. ``off`` is a real value, not a missing one: it is
+the baseline the eval compares against, and a deployment that has not installed
+the extra runs it. There is no external entry — see ``base.SentenceEmbedder``."""
+
+
+@lru_cache
+def get_sentence_embedder() -> SentenceEmbedder | None:
+    """The configured embedder, or ``None`` when ``AUTUNE_GAP_EMBEDDER_IMPL=off``."""
+    settings = get_settings()
+    impl = settings.embedder_impl
+
+    if impl == "off":
+        return None
+    if impl == "local":
+        return LocalKureEmbedder(settings.embedder_checkpoint, device=settings.embedder_device)
+    if impl == "fake":
+        return FakeEmbedder()
+
+    raise ValueError(f"unknown AUTUNE_GAP_EMBEDDER_IMPL={impl!r}; known: {sorted(_EMBEDDERS)}")
+
+
 def reset_cache() -> None:
-    """Drop the cached extractors. For tests that switch implementations."""
+    """Drop the cached models. For tests and the eval, which switch implementations."""
     get_entity_extractor.cache_clear()
     get_relation_extractor.cache_clear()
+    get_sentence_embedder.cache_clear()
