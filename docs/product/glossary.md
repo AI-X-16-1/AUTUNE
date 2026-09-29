@@ -163,10 +163,9 @@ A table defined in `packages/core` — `User`, `Team`, `Meeting`, `Participant`,
 
 **Table prefix (테이블 접두사)**
 The mandatory prefix on a module-owned table: `aud_`, `ext_`, `gap_`, `ctx_`,
-`intel_`. `agent_` is proposed in #260 for the agent layer, which is not a
-module.
+`intel_`. `agent_` belongs to the agent layer (#260), which is not a module.
 
-## Agent layer (proposed — #260)
+## Agent layer (#260)
 
 Not built. Vocabulary is listed here so the design discussion uses one set of
 words. See `../architecture/agent-layer.md`.

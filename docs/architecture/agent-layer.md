@@ -1,11 +1,10 @@
 # The agent layer
 
-> **Status: Proposed.** Nothing described here is built. The direction is under
-> discussion in issue #260 and the layer's location is ADR 0010, still
-> `Proposed`. Read this as a design under review, not as how the system works.
-> The two questions that blocked the first line of code are answered: the
-> layer lives in a top-level `agent/` (13.1, agreed on #260 on 2026-09-26), and
-> a periodic trigger is a `@periodic` task (13.2, #374). **Who builds what is in
+> **Status: Decided.** The direction was decided on #260 (closed 2026-09-29)
+> and the layer's location is ADR 0010, `Accepted`. Nothing described here is
+> built yet; the skeleton is #432. The two questions that blocked the first line
+> of code are answered: the layer lives in a top-level `agent/` (13.1) and a
+> periodic trigger is a `@periodic` task (13.2, #374). **Who builds what is in
 > section 3.1, and the dates are in section 14** — start there if you are
 > picking up a subagent.
 
@@ -120,7 +119,7 @@ and keeps their module's `tools.py`.
 | **Research** | 김민경 | When a meeting raises an idea or argues over a fact nobody could confirm, gathers what is known into a short document and proposes sending it to the people involved | meeting completed; `autune.transcript.ready`; a chat request | D (links, decisions), B (open questions), uploaded material | a Slack message to the meeting's participants — L2 |
 | **Briefing** | 문민재 | Ten minutes before a meeting, sends the previous meeting's summary and the issues this one should settle; links Jira issues **if #82 brings Jira back** | time, from Google Calendar (`list_events`) | D (links, decision threads), B (open items), C (undismissed gaps and their questions), Jira only after #82 | D's pre-meeting brief — D's own surface, rule 2 |
 | **Follow-up** | 박재경 | Watches progress and gaps nobody closed; when a follow-up meeting looks needed, proposes one — to the team lead only | state, `@periodic` | C's topic-level aggregates only (a topic's `silent_share`, undismissed gaps), B (open items), D (decision threads, topic links), Calendar (`free_busy`) | a proposal on the lead's approval screen; the calendar event only after approval — L2 |
-| **Workload** | 강민구 | Notices that one person is overloaded while another has finished, and proposes a redistribution — to the manager only; owns the Gmail and Google Calendar integration | state, `@periodic` | B (items per owner and their state), Calendar (`free_busy`), Jira only after #82 | a proposal on the manager's approval screen; any reassignment only after approval — L2 |
+| **Workload** | 강민구 | Notices that one person is overloaded while another has finished, and proposes a redistribution — to the manager only; owns the Gmail, Google Calendar and Jira integrations | state, `@periodic` | B (items per owner and their state), Calendar (`free_busy`), Jira only after #82 | a proposal on the manager's approval screen; any reassignment only after approval — L2 |
 | **Report** | 이승환 | After a meeting, writes the summary minutes report and sends it | `autune.intelligence.completed` | E (scores, trend), B, C, D (their summaries) | E's report delivery — E's own surface, rule 2 |
 
 Three things in that table are decisions, not descriptions:
@@ -153,10 +152,12 @@ Three things in that table are decisions, not descriptions:
   follow-up. It reads **busy windows only** — never titles, attendees or places
   of other people's events — and returns `None` for a calendar it could not
   read, which a subagent must not treat as free.
-- **Jira is not.** `integrations.md` records it as evaluated and dropped, and
-  #82 — whose credentials, and whether it is in the six weeks at all — is open.
-  Briefing's issue links and anything Workload would read from Jira are
-  **conditional on #82**; both subagents are specified to work without it.
+- **Jira is not, yet.** `integrations.md` records it as evaluated and dropped,
+  and #82 — whose credentials it runs on — is reopened. 강민구 owns Jira (agreed
+  with 문민재 on #260): moving `JiraClient` to 3LO, B's action-to-issue sync,
+  and the reads Briefing asks for in its own issue, the way #435 did for
+  Calendar. Until #82 lands, Briefing's issue links and Workload's Jira reads
+  are **conditional**; both subagents are specified to work without them.
 - **Gmail is new** (section 13.6).
 
 ### 3.2 Where the code goes
@@ -1196,10 +1197,10 @@ through `privacy.py` like every other client. Mail is also the one surface
 that reaches people outside the team, which is L3 in section 8 today — so the
 first version reads mail and drafts replies, and sends nothing.
 
-Jira is not a client today: `integrations.md` records it as evaluated and
-dropped, and #82 — whose credentials it runs on, and whether it is in the six
-weeks at all — is open. Briefing's issue links and any Jira read by Workload
-wait on #82, and neither subagent depends on them.
+Jira is not a working client today: `integrations.md` records it as evaluated
+and dropped, and #82 is reopened with 강민구 owning it (3LO, B's sync, and
+Briefing's reads). Briefing's issue links and any Jira read by Workload wait on
+#82, and neither subagent depends on them.
 
 ## 14. Build plan — from 2026-09-29 to 2026-10-12
 
@@ -1207,16 +1208,12 @@ The mentor's dates on #260: the base features run end to end by **9/30**, and
 development closes on **10/12**. The agent layer fits between them. Each row is
 one owner's; a date is when it is merged, not started.
 
-**No agent code merges before #260 is decided and ADR 0010 is `Accepted`.**
-That is what the root `CLAUDE.md` note says, and merging this document alone
-does not do it — it merges ADR 0010 as `Proposed`. So the skeleton waits in
-review as a draft (#432), subagent owners can build against its branch, and
-every date below assumes #260 is decided by 10/1. If it is not, the dates move
-with it.
+**Agent code merges after this document.** #260 is decided and ADR 0010 is
+`Accepted` here; the skeleton (#432) merges once this does.
 
 | By | Main agent (김민경) | Every subagent owner |
 | --- | --- | --- |
-| **10/1** | `agent/` skeleton ready for review (#432): workspace member, the fourth to sixth import-linter contracts, `ToolResult`, `Subagent`, the registry, a supervisor graph running one mock subagent over mock tools | confirm with the integration's owner what your subagent needs from Calendar; open an issue for anything missing |
+| **10/1** | `agent/` skeleton merged (#432): workspace member, the fourth to sixth import-linter contracts, `ToolResult`, `Subagent`, the registry, a supervisor graph running one mock subagent over mock tools | confirm with 강민구 what your subagent needs from Calendar or Jira; open an issue for anything missing |
 | **10/5** | `agent_work_items`, `agent_runs`, `agent_approvers` and their migration; the chat endpoint; the run-timeline screen | your module's `tools.py` returns real data; your subagent runs against mock tools with its own tests |
 | **10/9** | plan mode and the approval screen; triggers from section 6; the morning briefing | your subagent runs against real tools, end to end on one real meeting |
 | **10/12** | demo run of all five subagents; the fixed pipeline still works with the layer off | fixes only |

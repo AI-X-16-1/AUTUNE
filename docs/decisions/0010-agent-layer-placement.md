@@ -1,9 +1,9 @@
 # 0010. The agent layer is a top-level peer of `modules/` and `apps/`
 
-**Status:** Proposed
-**Date:** 2026-09-18
-**Deciders:** 김민경 (proposer). The import-linter contracts are shared, so this
-needs the whole team — see issue #260.
+**Status:** Accepted
+**Date:** 2026-09-18, accepted 2026-09-29
+**Deciders:** 김민경 (proposer), 강민구, 박재경, 문민재, 이승환 — each agreed to
+this placement on #260, which closed on 2026-09-29.
 
 ## Context
 
