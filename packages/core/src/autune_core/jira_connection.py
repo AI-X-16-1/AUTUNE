@@ -20,6 +20,7 @@ from sqlalchemy import select
 from .crypto import decrypt, encrypt
 from .db import session_scope
 from .entities import TeamIntegration
+from .errors import AutuneError
 from .logging import get_logger
 from .oauth.atlassian import AtlassianOAuthClient, JiraReconnectRequiredError, get_atlassian_client
 
@@ -80,17 +81,37 @@ def jira_access(
             raise
         if tokens.refresh_token:
             row.secret = encrypt(tokens.refresh_token)
+        # Committed now, before any other call: the old refresh token is already
+        # retired, and anything that raised from here on would roll the new one
+        # back and leave the team holding a dead grant (review of #457).
+        session.commit()
         project_key = config.get("project_key")
         cloud_id = str(config["cloud_id"])
-        if (
-            check_project
-            and project_key
-            and not atlassian.project_exists(tokens.access_token, cloud_id, project_key)
-        ):
-            row.config = {**config, "project_key": None, "project_missing": project_key}
-            log.warning("jira_project_missing", team_id=team_id)
-            project_key = None
-        # Committed by session_scope on the way out, before the caller's calls.
+        if check_project and project_key:
+            try:
+                exists = atlassian.project_exists(tokens.access_token, cloud_id, project_key)
+            except AutuneError as exc:
+                # A timeout, a 5xx, a 429: not knowing is not "deleted". Only
+                # Atlassian's 404 is; the project stays chosen.
+                log.warning("jira_project_check_failed", team_id=team_id, error=exc.code)
+                exists = True
+            if not exists:
+                current = session.scalars(
+                    select(TeamIntegration)
+                    .where(TeamIntegration.team_id == team_id, TeamIntegration.service == JIRA)
+                    .with_for_update()
+                ).one_or_none()
+                if current is not None:
+                    latest = dict(current.config or {})
+                    # Unless someone chose another project since the commit above.
+                    if latest.get("project_key") == project_key:
+                        current.config = {
+                            **latest,
+                            "project_key": None,
+                            "project_missing": project_key,
+                        }
+                log.warning("jira_project_missing", team_id=team_id)
+                project_key = None
         return JiraAccess(
             access_token=tokens.access_token, cloud_id=cloud_id, project_key=project_key
         )

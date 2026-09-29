@@ -215,9 +215,16 @@ class _Row:
 
 
 class _Session:
+    """One row, with a real session's commit and rollback: a rollback puts the
+    row back as the last commit left it."""
+
     def __init__(self, row: _Row | None) -> None:
         self.row = row
         self.commits = 0
+        self._committed = self._snapshot()
+
+    def _snapshot(self) -> tuple[str | None, dict[str, Any]] | None:
+        return None if self.row is None else (self.row.secret, dict(self.row.config))
 
     def scalars(self, _stmt: Any) -> _Session:
         return self
@@ -227,12 +234,22 @@ class _Session:
 
     def commit(self) -> None:
         self.commits += 1
+        self._committed = self._snapshot()
+
+    def rollback(self) -> None:
+        if self.row is not None and self._committed is not None:
+            self.row.secret, self.row.config = self._committed[0], dict(self._committed[1])
 
 
 def _patch_scope(monkeypatch: pytest.MonkeyPatch, session: _Session) -> None:
     @contextmanager
     def scope() -> Iterator[_Session]:
-        yield session
+        try:
+            yield session
+        except Exception:
+            session.rollback()
+            raise
+        session.commit()
 
     monkeypatch.setattr(jira_connection, "session_scope", scope)
     monkeypatch.setattr(jira_connection, "encrypt", lambda v: f"enc:{v}")
@@ -240,12 +257,16 @@ def _patch_scope(monkeypatch: pytest.MonkeyPatch, session: _Session) -> None:
 
 
 class _Refresher:
-    def __init__(self, answer: AtlassianTokens | Exception, *, project: bool = True) -> None:
+    def __init__(
+        self, answer: AtlassianTokens | Exception, *, project: bool | Exception = True
+    ) -> None:
         self.answer = answer
         self.project = project
         self.seen: list[str] = []
 
     def project_exists(self, access_token: str, cloud_id: str, key: str) -> bool:
+        if isinstance(self.project, Exception):
+            raise self.project
         return self.project
 
     def refresh(self, token: str) -> AtlassianTokens:
@@ -333,6 +354,42 @@ def test_a_deleted_project_is_recorded_and_no_project_is_handed_out(
     assert access.project_key is None
     assert row.config["project_key"] is None
     assert row.config["project_missing"] == "AT"
+
+
+def test_a_failed_project_check_keeps_the_rotated_token_and_the_project(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Review of #457: Atlassian answering 5xx or 429 to the project check must
+    neither roll the rotated refresh token back nor call the project deleted."""
+    row = _Row("enc:old", {"cloud_id": "cloud-1", "project_key": "AT"})
+    _patch_scope(monkeypatch, _Session(row))
+    refresher = _Refresher(
+        AtlassianTokens("access", "new", frozenset()), project=AutuneError("Atlassian answered 503")
+    )
+
+    access = jira_connection.jira_access(TEAM, client=refresher, check_project=True)  # type: ignore[arg-type]
+
+    assert access is not None
+    assert access.project_key == "AT"
+    assert row.secret == "enc:new"
+    assert "project_missing" not in row.config
+
+
+def test_the_rotated_token_survives_anything_the_project_check_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Even an error nobody expected rolls back to the commit that already
+    holds the new token -- never to the retired one."""
+    row = _Row("enc:old", {"cloud_id": "cloud-1", "project_key": "AT"})
+    _patch_scope(monkeypatch, _Session(row))
+    refresher = _Refresher(
+        AtlassianTokens("access", "new", frozenset()), project=RuntimeError("a bug")
+    )
+
+    with pytest.raises(RuntimeError):
+        jira_connection.jira_access(TEAM, client=refresher, check_project=True)  # type: ignore[arg-type]
+
+    assert row.secret == "enc:new"
 
 
 def test_without_check_project_nothing_is_asked(monkeypatch: pytest.MonkeyPatch) -> None:
