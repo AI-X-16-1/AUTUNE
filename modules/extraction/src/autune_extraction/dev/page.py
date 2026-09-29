@@ -42,9 +42,24 @@ PAGE = """<!doctype html>
     background:var(--accent); color:#fff; font-size:13px; font-weight:600; cursor:pointer;
   }
   button:hover { background:var(--accent-hover) }
-  .result { margin-top:10px; font-size:12.5px; font-family:var(--mono); white-space:pre-wrap; }
-  .result.ok { color:var(--ok) }
-  .result.err { color:var(--critical) }
+  button:disabled { opacity:.6; cursor:default }
+  .result { margin-top:14px; font-size:13px; }
+  .result:empty { display:none }
+  .result.busy { color:var(--muted) }
+  .card { border:1px solid var(--hairline); border-radius:var(--radius); padding:14px 16px; background:var(--paper) }
+  .card.ok { border-color:rgba(46,125,70,.35); background:rgba(46,125,70,.06) }
+  .card.err { border-color:rgba(194,68,60,.35); background:rgba(194,68,60,.06) }
+  .card h3 { margin:0 0 4px; font-size:13.5px; font-weight:600 }
+  .card.ok h3 { color:var(--ok) }
+  .card.err h3 { color:var(--critical) }
+  .card p { margin:4px 0; color:var(--body) }
+  .links { display:flex; gap:8px; flex-wrap:wrap; margin:10px 0 6px }
+  .links a {
+    display:inline-block; padding:7px 12px; border:1px solid var(--hairline); border-radius:var(--radius);
+    background:var(--panel); color:var(--accent); text-decoration:none; font-weight:600; font-size:12.5px;
+  }
+  .links a:hover { background:var(--selection) }
+  .next { font-size:12px; color:var(--muted) }
 </style>
 </head>
 <body>
@@ -62,28 +77,70 @@ PAGE = """<!doctype html>
     <input id="notion-token" placeholder="ntn_...">
     <label>Notion 페이지 URL 또는 id</label>
     <input id="notion-page" placeholder="https://www.notion.so/...">
-    <button onclick="connectNotion()">Notion 연결</button>
+    <button id="notion-connect" onclick="connectNotion()">Notion 연결</button>
     <div id="notion-result" class="result"></div>
   </section>
 
 <script>
-async function post(path, body, resultId) {
+// Built with DOM calls rather than innerHTML: the text comes from the server
+// and from Notion's own error messages.
+function node(tag, attrs, children) {
+  const el = document.createElement(tag);
+  Object.entries(attrs || {}).forEach(([k, v]) => el.setAttribute(k, v));
+  (children || []).forEach((c) => el.append(c));
+  return el;
+}
+
+function card(kind, title, lines) {
+  return node("div", { class: "card " + kind }, [node("h3", {}, [title]), ...lines]);
+}
+
+function connected(data) {
+  const made = data.databases === "created";
+  return card("ok", "✓ Notion에 연결했습니다", [
+    node("p", {}, [made
+      ? "페이지 아래에 “액션 아이템”·“결정” DB를 새로 만들었습니다."
+      : "이 페이지에 전에 만든 DB가 있어서 그대로 씁니다. 새로 만들지 않았습니다."]),
+    node("div", { class: "links" }, [
+      node("a", { href: data.action_db_url, target: "_blank", rel: "noopener" }, ["액션 아이템 DB 열기 ↗"]),
+      node("a", { href: data.decision_db_url, target: "_blank", rel: "noopener" }, ["결정 DB 열기 ↗"]),
+    ]),
+    node("p", { class: "next" }, ["이제 액션 보드에서 항목을 확정하면 이 DB에 페이지가 생깁니다."]),
+  ]);
+}
+
+function failed(status, message) {
+  const hint = status === 404
+    ? "페이지를 연동에 공유했는지 확인하세요: Notion 페이지 오른쪽 위 ••• → 연결에서 추가."
+    : status === 401
+      ? "Integration token을 다시 확인하세요."
+      : null;
+  return card("err", "연결하지 못했습니다", [
+    node("p", {}, [message]),
+    ...(hint ? [node("p", { class: "next" }, [hint])] : []),
+  ]);
+}
+
+async function post(path, body, resultId, buttonId, render) {
   const el = document.getElementById(resultId);
-  el.className = "result";
-  el.textContent = "...";
+  const button = document.getElementById(buttonId);
+  button.disabled = true;
+  el.className = "result busy";
+  el.replaceChildren("연결 중… Notion에 DB를 만드는 데 몇 초 걸립니다.");
   try {
     const res = await fetch(path, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
     });
-    const data = await res.json();
-    if (!res.ok) throw new Error(describe(data));
-    el.className = "result ok";
-    el.textContent = JSON.stringify(data);
+    const data = await res.json().catch(() => ({}));
+    el.className = "result";
+    el.replaceChildren(res.ok ? render(data) : failed(res.status, describe(data)));
   } catch (e) {
-    el.className = "result err";
-    el.textContent = String(e);
+    el.className = "result";
+    el.replaceChildren(failed(0, "API에 닿지 못했습니다: " + String(e)));
+  } finally {
+    button.disabled = false;
   }
 }
 
@@ -100,7 +157,7 @@ function connectNotion() {
     team_id: document.getElementById("notion-team").value,
     token: document.getElementById("notion-token").value,
     page_id: document.getElementById("notion-page").value,
-  }, "notion-result");
+  }, "notion-result", "notion-connect", connected);
 }
 </script>
 </main>
