@@ -58,6 +58,17 @@ def _transcription() -> Transcription:
     return Transcription(segments=segments, language="ko", language_probability=0.99, duration=9.0)
 
 
+def _transcription_of(text: str) -> Transcription:
+    """`_transcription`'s first segment, with `text` in place of its line."""
+    speaker, start, end, _ = SPOKEN[0]
+    rest = [(s, e, t) for _, s, e, t in SPOKEN[1:]]
+    segments = tuple(
+        Segment(start=s, end=e, text=t, words=(Word(start=s, end=e, text=t, probability=0.9),))
+        for s, e, t in [(start, end, text), *rest]
+    )
+    return Transcription(segments=segments, language="ko", language_probability=0.99, duration=9.0)
+
+
 def _turns() -> tuple[Turn, ...]:
     return tuple(Turn(start=start, end=end, speaker=speaker) for speaker, start, end, _ in SPOKEN)
 
@@ -330,6 +341,28 @@ def test_personal_data_is_masked_before_the_first_insert(
     )
     assert "010-1234-5678" not in " ".join(texts)
     assert "010-****-5678" in " ".join(texts)
+
+
+def test_a_number_read_out_as_words_is_masked_before_the_first_insert(
+    pipeline: dict, db_session: Session, job: str, meeting: str, recording: Path
+) -> None:
+    """The half the digit patterns cannot see.
+
+    A phone number said aloud carries no digits, so `find_pii` finds nothing
+    and only the recogniser does. The batch path used not to pass one, which
+    left the live path masking what this one stored in the clear -- found in
+    review of #484, where the text of these rows goes to an external verifier.
+    """
+    said = "제 번호는 공일공 일이삼사 오육칠팔 입니다"
+    pipeline["transcription"] = _transcription_of(said)
+
+    tasks.process_recording(job)
+
+    texts = list(
+        db_session.scalars(sa.select(Utterance.text).where(Utterance.meeting_id == meeting))
+    )
+    assert "공일공" not in " ".join(texts)
+    assert "제 번호는 *** **** **** 입니다" in texts
 
 
 def test_a_collapsed_transcript_is_not_written_and_not_published(

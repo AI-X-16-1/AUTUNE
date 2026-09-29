@@ -145,6 +145,23 @@ class TestWhatItRefusesToWrite:
                 audio_deleted=True,
             )
 
+    def test_a_number_read_out_as_words_is_refused_too(
+        self, db_session: Session, meeting: str
+    ) -> None:
+        """The guard runs the recogniser, not the digit patterns alone.
+
+        Without it this row stored in the clear and every consumer read it,
+        because no pattern matches a number said as words (#484 review).
+        """
+        with pytest.raises(PrivacyViolationError):
+            persist_transcript(
+                db_session,
+                meeting_id=meeting,
+                utterances=(spoken("SPEAKER_00", 0.0, 3.0, "공일공 일이삼사 오육칠팔로 주세요"),),
+                duration_seconds=3.0,
+                audio_deleted=True,
+            )
+
     def test_nothing_is_written_when_one_utterance_is_unmasked(
         self, db_session: Session, meeting: str
     ) -> None:
