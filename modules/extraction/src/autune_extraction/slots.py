@@ -219,12 +219,13 @@ def _period(month: Callable[[re.Match[str]], int]) -> Resolver:
 Resolver = Callable[[re.Match[str], date | None], date | None]
 
 _BY = r"전까지|까지|전에|내로|내에|안에|이내|중으로|중에|중(?![가-힣])|쯤"
+"""Words that make the date before them a deadline: 까지, 안에, 중으로, ..."""
+
 _YEAR = r"(?:(?<!\d)(?P<y>20\d{2})\s*년\s*|(?P<rel>올해|내년)\s*)?"
 """An optional year before a month, half or quarter: 2027년, 올해, 내년."""
 _PERIOD_BY = rf"(?=\s*(?P<by>{_BY})?)"
 _PERIOD_BY_REQUIRED = rf"(?=\s*(?:(?P<by>{_BY})|에|말(?!씀)))"
 """A month or a period is a deadline only when something after it says so."""
-"""Words that make the date before them a deadline: 까지, 안에, 중으로, ..."""
 
 _DEADLINE_WORD = re.compile(rf"\s*(?:{_BY})")
 _CLAUSE_END = re.compile(r"[,.?!\n]|(?:고|는데|은데|지만|니까|어서|아서|해서|면서|며)(?=\s|$)")
