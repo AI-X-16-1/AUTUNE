@@ -5,6 +5,10 @@ modules read them. First Google sign-in creates the row, a later one updates the
 profile, and a Google login that matches an email a magic link already created
 links the two by filling in ``google_sub``.
 
+A Google account whose email changed to one another row already holds keeps
+its old email: ``users.email`` is unique, and which of the two rows owns that
+address is not something a sign-in can decide.
+
 Team membership is not decided here — a brand-new user has no ``team_members``
 row until they are invited or create a team, which is a separate flow.
 """
@@ -18,7 +22,10 @@ from sqlalchemy.orm import Session
 
 from .entities import User
 from .ids import USER, new_id
+from .logging import get_logger
 from .oauth.google import GoogleIdentity
+
+log = get_logger(__name__)
 
 
 def upsert_user_from_google(session: Session, identity: GoogleIdentity) -> User:
@@ -39,7 +46,12 @@ def upsert_user_from_google(session: Session, identity: GoogleIdentity) -> User:
         )
         session.add(user)
     else:
-        user.email = identity.email
+        if user.email != identity.email:
+            holder = session.scalar(select(User.id).where(User.email == identity.email))
+            if holder is None:
+                user.email = identity.email
+            else:
+                log.warning("auth_google_email_taken", user_id=user.id, holder_id=holder)
         if identity.name:
             user.display_name = identity.name
 

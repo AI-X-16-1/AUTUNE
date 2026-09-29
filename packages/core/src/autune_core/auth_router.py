@@ -11,7 +11,10 @@ Flow:
 - ``GET /google/callback`` -> check that cookie against the query's ``state``,
                               upsert the user, set the session cookie, 303 back
                               to the web app
-- ``POST /logout``         -> clear the cookie
+- ``GET /providers``       -> which providers this server can complete, so the
+                              sign-in screen disables the rest
+- ``POST /logout``         -> clear the cookie (the token itself stays valid
+                              until it expires; see environments.md)
 - ``GET /me``              -> the current user (used by the web app to bootstrap)
 """
 
@@ -175,6 +178,11 @@ def _complete_sign_in(
     response = RedirectResponse(_web_url(transaction.redirect_to), status_code=303)
     set_session_cookie(response, issue_token(user.id))
     return response
+
+
+@router.get("/providers")
+def providers() -> dict[str, bool]:
+    return {"google": get_settings().google_sign_in_configured}
 
 
 @router.post("/logout", status_code=204)

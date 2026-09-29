@@ -28,6 +28,25 @@ export function googleStartUrl(redirectTo = "/"): string {
   return authUrl(`/google/start?redirect_to=${encodeURIComponent(redirectTo)}`);
 }
 
+/** Which providers this server can complete sign-in with. */
+export interface Providers {
+  google: boolean;
+}
+
+/**
+ * Null when the server could not be asked. The caller then leaves the buttons
+ * enabled: a failed probe is not evidence that sign-in is off.
+ */
+export async function getProviders(): Promise<Providers | null> {
+  try {
+    const response = await fetch(authUrl("/providers"), { credentials: "include" });
+    if (!response.ok) return null;
+    return (await response.json()) as Providers;
+  } catch {
+    return null;
+  }
+}
+
 /** The current user, or null when there is no valid session. */
 export async function getSession(): Promise<SessionUser | null> {
   try {
