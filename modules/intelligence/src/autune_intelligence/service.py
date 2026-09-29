@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from collections import Counter
 from dataclasses import dataclass
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta, timezone
 from typing import Final
 
 import sqlalchemy as sa
@@ -892,6 +892,25 @@ def save_meeting_report(
         row.pending_review = pending_review
     session.flush()
     return row
+
+
+_KST: Final = timezone(timedelta(hours=9))
+"""The report's date is the team's calendar date. A fixed offset until a team
+timezone setting exists (#227 is undecided)."""
+
+MEETING_REPORT_FOOTER: Final = "자동 생성된 리포트입니다."
+
+
+def meeting_report_document(meeting: Meeting, body_markdown: str) -> str:
+    """Header, the subagent's body, footer -- the text ``save_meeting_report`` stores.
+
+    The header names the meeting unless its title holds personal data, the
+    same test ``_report_preview`` makes; stored text is checked by
+    ``assert_masked``, so such a title would refuse the whole report.
+    """
+    when = (meeting.started_at or meeting.created_at).astimezone(_KST)
+    title = meeting.title if meeting.title and not find_unmasked(meeting.title) else "회의 리포트"
+    return f"📋 {title} · {when.month}/{when.day}\n\n{body_markdown}\n\n{MEETING_REPORT_FOOTER}"
 
 
 def _meeting_report_blocks(meeting_id: str, body_markdown: str, pending_review: bool) -> list[dict]:

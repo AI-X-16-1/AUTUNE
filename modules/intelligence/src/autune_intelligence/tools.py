@@ -30,11 +30,13 @@ from __future__ import annotations
 
 from typing import Any
 
+from sqlalchemy import event
 from sqlalchemy.orm import Session
 
-from autune_core.errors import NotFoundError
+from autune_core import Meeting
+from autune_core.errors import ConflictError, NotFoundError, ValidationError
 
-from . import service
+from . import service, tasks
 from .service import _gap_burden
 
 MAX_ITEMS = 5
@@ -216,3 +218,60 @@ def misalignment_risk(session: Session, team_id: str) -> dict[str, Any]:
 
 TOOLS = [meeting_quality, team_trend, recurring_gaps, misalignment_risk]
 """Collected by the agent layer by iterating modules (invariant 6), never registered by hand."""
+
+
+def publish_meeting_report(
+    session: Session, meeting_id: str, body_markdown: str, pending_review: bool = False
+) -> dict[str, Any]:
+    """Use this only to carry out a Report subagent's proposal: store a finished
+    meeting report and schedule its post to the team channel. Never call it to
+    read anything, and never with text another meeting said.
+
+    Adds the header (title, date) and the "자동 생성" footer, stores the report,
+    and enqueues delivery after the transaction commits. ``pending_review``
+    adds a button to B's review board. Returns ``ok=False`` with a reason when
+    the meeting is unknown, the report was already posted, or it is too long.
+    """
+    meeting = session.get(Meeting, meeting_id)
+    if meeting is None:
+        return _result(
+            ok=False,
+            reason=f"no meeting {meeting_id}",
+            summary="회의를 찾을 수 없습니다.",
+            items=[],
+            confidence=0.0,
+        )
+    document = service.meeting_report_document(meeting, body_markdown)
+    try:
+        service.save_meeting_report(session, meeting_id, document, pending_review=pending_review)
+    except ConflictError:
+        return _result(
+            ok=False,
+            reason="already posted",
+            summary="이미 게시된 리포트입니다.",
+            items=[],
+            confidence=0.0,
+        )
+    except ValidationError:
+        return _result(
+            ok=False,
+            reason="report too long",
+            summary=f"리포트가 {service.MEETING_REPORT_MAX_CHARS}자를 넘습니다.",
+            items=[],
+            confidence=0.0,
+        )
+    # After commit, not now: a worker could pick the task up before this
+    # transaction commits, find no row, and drop the report.
+    event.listen(
+        session,
+        "after_commit",
+        lambda _s: tasks.deliver_meeting_report.apply_async((meeting_id,)),
+        once=True,
+    )
+    return _result(summary="리포트를 저장했고, 커밋되면 발송합니다.", items=[])
+
+
+WRITE_TOOLS = [publish_meeting_report]
+"""Writes a proposal may name. Kept out of ``TOOLS``: anything there is reachable
+through a subagent's Toolbox, which would let a subagent write without the
+main agent's gate. How the main agent collects these is asked on #261."""
