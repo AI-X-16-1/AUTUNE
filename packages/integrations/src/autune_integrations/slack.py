@@ -13,10 +13,11 @@ from __future__ import annotations
 from typing import Any, Protocol
 
 from .base import HttpClient
-from .errors import PermanentIntegrationError
+from .errors import PermanentIntegrationError, SlackRecipientNotLinkedError
 from .privacy import assert_personal_delivery
 
 AUTUNE_USER_PREFIX = "user_"
+SLACK_PERSON_PREFIXES = ("U", "W")  # member ids; W is Enterprise Grid
 
 DESTINATION = "slack"
 
@@ -102,13 +103,17 @@ class SlackClient(HttpClient):
 
 
 def _member_id(recipient: str) -> str:
-    if not recipient.startswith(AUTUNE_USER_PREFIX):
-        return recipient
-    from autune_core.user_integrations import slack_member_id
+    """A Slack member id for a DM, never a channel: a ``C...`` passed by
+    mistake would post a personal message where others read it."""
+    if recipient.startswith(AUTUNE_USER_PREFIX):
+        from autune_core.user_integrations import slack_member_id
 
-    member = slack_member_id(recipient)
-    if member is None:
-        raise PermanentIntegrationError(
-            "this person has not linked a Slack account for direct messages"
-        )
-    return member
+        member = slack_member_id(recipient)
+        if member is None:
+            raise SlackRecipientNotLinkedError(
+                "this person has not linked a Slack account for direct messages"
+            )
+        return member
+    if recipient.startswith(SLACK_PERSON_PREFIXES):
+        return recipient
+    raise PermanentIntegrationError("a direct message goes to a person, not a channel")

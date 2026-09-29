@@ -51,13 +51,22 @@ from .logging import get_logger
 from .oauth.atlassian import AtlassianOAuthClient, get_atlassian_client
 from .oauth.google import CALENDAR_SCOPE, GoogleOAuthClient, get_google_client
 from .oauth.notion import NotionOAuthClient, get_notion_oauth_client
-from .oauth.slack import SlackChannel, SlackInstall, SlackOAuthClient, get_slack_oauth_client
+from .oauth.slack import (
+    SlackAccountTakenError,
+    SlackChannel,
+    SlackInstall,
+    SlackOAuthClient,
+    SlackTeamNotConnectedError,
+    SlackWrongWorkspaceError,
+    get_slack_oauth_client,
+)
 from .oauth.state import STATE_TTL_SECONDS, OAuthTransaction, StateStore, get_state_store
 from .settings import get_settings
 from .user_integrations import (
     disconnect_user_integration,
     load_user_integration,
     save_user_integration,
+    users_linked_to_slack_member,
 )
 
 log = get_logger(__name__)
@@ -1041,7 +1050,19 @@ def _finish_slack_identity(
     try:
         if error or not code or not transaction.user_id:
             raise PermissionDeniedError("Slack sign-in was not approved")
-        identity = slack.identify(code)
+        identity = slack.identify(code, nonce=transaction.nonce)
+        workspaces = _slack_workspaces_of(session, transaction.user_id)
+        if not workspaces:
+            raise SlackTeamNotConnectedError("no team of this person has installed Autune in Slack")
+        if identity.team_id not in workspaces:
+            raise SlackWrongWorkspaceError("signed in to a workspace no team of theirs installed")
+        others = [
+            uid
+            for uid in users_linked_to_slack_member(session, identity.user_id)
+            if uid != transaction.user_id
+        ]
+        if others:
+            raise SlackAccountTakenError("that Slack account is linked to another person")
         save_user_integration(
             session,
             transaction.user_id,
@@ -1052,19 +1073,39 @@ def _finish_slack_identity(
         outcome = "connected"
     except AutuneError as exc:
         log.info("auth_slack_identity_failed", user_id=transaction.user_id, reason=exc.code)
-        outcome = "failed"
+        outcome = f"failed&reason={exc.code}"
     return RedirectResponse(
         _web_url(_with_query(transaction.redirect_to, f"slack_me={outcome}")), status_code=303
     )
 
 
+def _slack_workspaces_of(session: Session, user_id: str) -> dict[str, str]:
+    """``{workspace id: name}`` for every Slack workspace a team of this
+    person installed Autune in -- the only places their DMs can come from."""
+    team_ids = session.scalars(select(TeamMember.team_id).where(TeamMember.user_id == user_id))
+    workspaces: dict[str, str] = {}
+    for team_id in team_ids:
+        installed = load_integration(session, team_id, SLACK)
+        workspace = str(installed.config.get("workspace_id") or "") if installed else ""
+        if installed is not None and installed.secret and workspace:
+            workspaces[workspace] = str(installed.config.get("workspace_name") or "")
+    return workspaces
+
+
 @router.get("/slack/me")
 def slack_identity_status(
     user: CurrentUser, session: Annotated[Session, Depends(get_session)]
-) -> dict[str, bool]:
-    """Whether the signed-in person linked their Slack account -- theirs only."""
+) -> dict[str, object]:
+    """Whether the signed-in person linked their Slack account, and in which
+    workspace -- theirs only, so a person can see a link that is not theirs."""
     linked = load_user_integration(session, user.id, "slack")
-    return {"linked": bool(linked and linked.config.get("slack_user_id"))}
+    if linked is None or not linked.config.get("slack_user_id"):
+        return {"linked": False}
+    workspace = str(linked.config.get("slack_team_id") or "")
+    return {
+        "linked": True,
+        "workspace_name": _slack_workspaces_of(session, user.id).get(workspace),
+    }
 
 
 @router.post("/slack/me/disconnect")

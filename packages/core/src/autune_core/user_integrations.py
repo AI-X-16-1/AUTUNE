@@ -124,6 +124,20 @@ def users_with_integration(session: Session, service: str) -> list[str]:
     )
 
 
+def users_linked_to_slack_member(session: Session, member_id: str) -> list[str]:
+    """Autune users whose linked Slack account is ``member_id``. One Slack
+    person is one Autune person: a second link to the same member id is a
+    shared browser's leftover Slack session, not a second owner (#478)."""
+    return list(
+        session.scalars(
+            select(UserIntegration.user_id).where(
+                UserIntegration.service == "slack",
+                UserIntegration.config["slack_user_id"].as_string() == member_id,
+            )
+        )
+    )
+
+
 def _check_service(service: str) -> None:
     if service not in USER_SERVICES:
         raise ValidationError(

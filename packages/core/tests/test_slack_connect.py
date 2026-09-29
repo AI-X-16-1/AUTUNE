@@ -476,56 +476,176 @@ def test_linking_needs_a_signed_in_person(world: dict[str, Any]) -> None:
     assert anonymous.get("/api/auth/slack/me/start").status_code in (401, 403)
 
 
-def test_linking_stores_only_the_persons_own_member_id(
-    world: dict[str, Any], monkeypatch: pytest.MonkeyPatch
-) -> None:
+class Identifying(FakeSlack):
+    def __init__(self, identity: Any) -> None:
+        super().__init__()
+        self.identity = identity
+        self.nonces: list[str] = []
+
+    def identity_url(self, *, state: str, nonce: str) -> str:
+        return f"https://slack.com/openid/connect/authorize?state={state}"
+
+    def identify(self, code: str, *, nonce: str) -> Any:
+        self.nonces.append(nonce)
+        return self.identity
+
+
+def _link(
+    world: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    signed_in_as: str,
+    workspace: str = "T1",
+    installed: bool = True,
+    taken_by: list[str] | None = None,
+) -> tuple[str, dict[str, Any]]:
     from autune_core.oauth.slack import SlackIdentity
 
+    if installed:
+        world["saved"][TEAM] = {
+            "secret": "xoxb-1",
+            "config": {"channel": "C1", "workspace_id": "T1", "workspace_name": "Acme"},
+        }
     linked: dict[str, Any] = {}
     monkeypatch.setattr(
         auth_router_module,
         "save_user_integration",
         lambda _s, uid, svc, **kw: linked.update(kw, user_id=uid, service=svc),
     )
-
-    class Identifying(FakeSlack):
-        def identity_url(self, *, state: str, nonce: str) -> str:
-            return f"https://slack.com/openid/connect/authorize?state={state}"
-
-        def identify(self, code: str) -> SlackIdentity:
-            return SlackIdentity(user_id="U42", team_id="T1")
-
-    world["app"].dependency_overrides[get_slack_oauth_client] = lambda: Identifying()
-    client = signed_in(world)
+    monkeypatch.setattr(
+        auth_router_module, "users_linked_to_slack_member", lambda _s, member: taken_by or []
+    )
+    slack = Identifying(SlackIdentity(user_id="U42", team_id=workspace))
+    world["app"].dependency_overrides[get_slack_oauth_client] = lambda: slack
+    client = signed_in(world, signed_in_as)
     response = client.get("/api/auth/slack/me/start?redirect_to=/meetings/m/actions")
     state = parse_qs(urlsplit(response.headers["location"]).query)["state"][0]
-
     back = client.get(f"/api/auth/slack/callback?state={state}&code=c")
+    world["identifying"] = slack
+    return back.headers["location"], linked
 
-    assert back.headers["location"].endswith("/meetings/m/actions?slack_me=connected")
+
+def test_linking_stores_only_the_persons_own_member_id(
+    world: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    location, linked = _link(world, monkeypatch, signed_in_as=ME)
+
+    assert location.endswith("/meetings/m/actions?slack_me=connected")
     assert linked == {
         "user_id": ME,
         "service": "slack",
         "config": {"slack_user_id": "U42", "slack_team_id": "T1"},
     }
+    # The nonce this flow stored is the one identify() is asked to match.
+    assert world["identifying"].nonces and world["identifying"].nonces[0]
 
 
-def test_identify_asks_for_openid_only_and_reads_the_member_id() -> None:
+def test_a_personal_workspace_is_not_linked(
+    world: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review of #478: the browser was signed in to another workspace; the
+    link would say "linked" while every DM went nowhere."""
+    location, linked = _link(world, monkeypatch, signed_in_as=ME, workspace="T_PERSONAL")
+
+    assert location.endswith("?slack_me=failed&reason=slack_wrong_workspace")
+    assert linked == {}
+
+
+def test_linking_before_the_team_installs_says_so(
+    world: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    location, linked = _link(world, monkeypatch, signed_in_as=ME, installed=False)
+
+    assert location.endswith("?slack_me=failed&reason=slack_team_not_connected")
+    assert linked == {}
+
+
+def test_a_slack_account_linked_to_someone_else_is_refused(
+    world: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review of #478: a Slack session left in a shared browser would send this
+    person's DMs -- speaking ratio included -- to someone else."""
+    location, linked = _link(world, monkeypatch, signed_in_as=ME, taken_by=[OUTSIDER])
+
+    assert location.endswith("?slack_me=failed&reason=slack_account_taken")
+    assert linked == {}
+
+
+def test_relinking_the_same_account_is_fine(
+    world: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    location, _ = _link(world, monkeypatch, signed_in_as=ME, taken_by=[ME])
+    assert location.endswith("?slack_me=connected")
+
+
+def test_status_names_the_workspace(world: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> None:
+    from autune_core.user_integrations import UserIntegrationConfig
+
+    _link(world, monkeypatch, signed_in_as=ME)
+    monkeypatch.setattr(
+        auth_router_module,
+        "load_user_integration",
+        lambda _s, uid, svc: UserIntegrationConfig(
+            svc, uid, None, {"slack_user_id": "U42", "slack_team_id": "T1"}
+        ),
+    )
+    assert signed_in(world).get("/api/auth/slack/me").json() == {
+        "linked": True,
+        "workspace_name": "Acme",
+    }
+
+
+def _signin_client(answers: list[dict[str, Any]], calls: list[str]) -> SlackOAuthClient:
+    replies = iter(answers)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request.url.path.rsplit("/", 1)[-1])
+        return httpx.Response(200, json=next(replies))
+
+    return _slack_at(handler)
+
+
+def _id_token(nonce: str) -> str:
+    import jwt
+
+    return jwt.encode(
+        {"nonce": nonce, "sub": "U42"}, "signature-not-checked-by-identify-32b", algorithm="HS256"
+    )
+
+
+def test_identify_asks_for_openid_only_checks_the_nonce_and_revokes() -> None:
     calls: list[str] = []
-    client = _client(
-        {
-            "openid.connect.token": {"ok": True, "access_token": "xoxp-once"},
-            "openid.connect.userInfo": {
+    client = _signin_client(
+        [
+            {"ok": True, "access_token": "xoxp-once", "id_token": _id_token("n1")},
+            {
                 "ok": True,
                 "sub": "U42",
                 "https://slack.com/user_id": "U42",
                 "https://slack.com/team_id": "T1",
             },
-        },
+            {"ok": True, "revoked": True},
+        ],
         calls,
     )
-    url = client.identity_url(state="s", nonce="n")
+    url = client.identity_url(state="s", nonce="n1")
     assert parse_qs(urlsplit(url).query)["scope"] == ["openid"]
-    identity = client.identify("c")
+
+    identity = client.identify("c", nonce="n1")
+
     assert (identity.user_id, identity.team_id) == ("U42", "T1")
-    assert calls == ["openid.connect.token", "openid.connect.userInfo"]
+    assert calls == ["openid.connect.token", "openid.connect.userInfo", "auth.revoke"]
+
+
+def test_a_nonce_from_another_flow_is_refused_and_the_token_still_revoked() -> None:
+    calls: list[str] = []
+    client = _signin_client(
+        [
+            {"ok": True, "access_token": "xoxp-once", "id_token": _id_token("someone-else")},
+            {"ok": True, "revoked": True},
+        ],
+        calls,
+    )
+    with pytest.raises(PermissionDeniedError, match="nonce"):
+        client.identify("c", nonce="n1")
+    assert calls == ["openid.connect.token", "auth.revoke"]

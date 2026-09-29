@@ -10,7 +10,7 @@ import httpx
 import pytest
 
 from autune_core import user_integrations
-from autune_integrations.errors import PermanentIntegrationError
+from autune_integrations.errors import PermanentIntegrationError, SlackRecipientNotLinkedError
 from autune_integrations.slack import SlackClient
 
 
@@ -43,8 +43,19 @@ def test_someone_who_has_not_linked_is_refused_before_anything_is_sent(
     monkeypatch.setattr(user_integrations, "slack_member_id", lambda uid: None)
     sent: list[dict[str, Any]] = []
 
-    with pytest.raises(PermanentIntegrationError, match="not linked"):
+    # Its own subclass, so a sender going through a list can skip just this
+    # person and still let real failures surface.
+    with pytest.raises(SlackRecipientNotLinkedError):
         client({"ok": True}, sent).send_dm("user_abc", "x")
+    assert sent == []
+
+
+def test_a_channel_id_is_not_a_dm_recipient() -> None:
+    """Review of #478: a C... passed by mistake would post a personal message
+    where others read it."""
+    sent: list[dict[str, Any]] = []
+    with pytest.raises(PermanentIntegrationError, match="not a channel"):
+        client({"ok": True}, sent).send_dm("C123", "x")
     assert sent == []
 
 
@@ -62,3 +73,9 @@ def test_slacks_ok_false_is_a_failure_not_a_delivery() -> None:
     """#280: channel_not_found came back as HTTP 200 and was recorded as sent."""
     with pytest.raises(PermanentIntegrationError, match="channel_not_found"):
         client({"ok": False, "error": "channel_not_found"}, []).post_message("C1", "x")
+
+
+def test_an_enterprise_grid_member_id_is_passed_through() -> None:
+    sent: list[dict[str, Any]] = []
+    client({"ok": True, "ts": "1"}, sent).send_dm("W777", "x")
+    assert sent[0]["channel"] == "W777"

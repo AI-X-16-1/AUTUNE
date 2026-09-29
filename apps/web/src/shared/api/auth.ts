@@ -269,11 +269,14 @@ export function slackMeConnectUrl(redirectTo = "/"): string {
   return authUrl(`/slack/me/start?redirect_to=${encodeURIComponent(redirectTo)}`);
 }
 
-export async function getSlackMe(): Promise<{ linked: boolean } | null> {
+export async function getSlackMe(): Promise<{
+  linked: boolean;
+  workspace_name?: string | null;
+} | null> {
   try {
     const response = await fetch(authUrl("/slack/me"), { credentials: "include" });
     if (!response.ok) return null;
-    return (await response.json()) as { linked: boolean };
+    return (await response.json()) as { linked: boolean; workspace_name?: string | null };
   } catch {
     return null;
   }

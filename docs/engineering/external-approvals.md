@@ -184,8 +184,13 @@ This needs the user scope **`openid`** under *User Token Scopes* -- and only
 that one: not `email`, not `profile`, and still no `users:read` or
 `users:read.email`. We learn the identity of whoever linked and never read the
 directory (#70). The user token Slack issues for the sign-in is not kept.
-Someone who has not linked is refused by name rather than sent to
-`channel_not_found`.
+Someone who has not linked is refused by name
+(`SlackRecipientNotLinkedError`) rather than sent to `channel_not_found`.
+A link is refused when the browser signed in to a workspace none of the
+person's teams installed Autune in, or when that Slack account is already
+linked to another Autune person -- a shared browser's leftover session would
+otherwise receive their DMs, speaking ratio included. The ID token's nonce is
+checked and the sign-in's user token is revoked right after `userInfo`.
 
 ### Notion
 
