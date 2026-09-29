@@ -285,8 +285,7 @@ recording.
 extracts entities from **every** utterance in a meeting, so an external
 implementation would mean sending the whole transcript to somebody else's
 model — which section 6 of `../architecture/privacy.md` makes a design
-conversation rather than a value you can set. The same reasoning module B
-applied to its classifier.
+conversation rather than a value you can set.
 
 Relation extraction is the exception, and `AUTUNE_GAP_RELATION_IMPL` is where
 it would go. A relation is read off one clause, so the hard cases can be sent
