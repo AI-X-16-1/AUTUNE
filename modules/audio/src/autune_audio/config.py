@@ -71,8 +71,28 @@ class AudioSettings(BaseSettings):
     """
 
     beam_size: int = 5
-    """Whisper beam width. Higher is slower and marginally better; 5 is the
-    faster-whisper default and what the processing-time target assumes."""
+    """Whisper beam width, and the only lever that moves processing time
+    without changing the model.
+
+    "Marginally better" understated it in both directions. Measured on a
+    six-person 5m27s recording (HISTORY.md, section 2): beam 5 transcribes in
+    411 s at 89.4% accuracy, beam 1 in 204 s at 82.8% — twice as fast for 6.6
+    points, and 151 deletions against 27, so the shorter beam drops content
+    rather than just mishearing it.
+
+    **With diarization on a GPU, 5 reaches the processing-time target.** That
+    condition comes first because it is doing the work: 434 s total for 327 s of
+    audio is 1.32×, against the 1.5× in ``modules/audio/CLAUDE.md``, and the
+    same meeting with diarization on CPU is about 1.78× and over. The GPU path
+    is ``diarization_device`` (#394); it is not the default, only MPS has been
+    measured, and MPS is unverified under a prefork worker (#329). On the
+    configuration that ships today the target is missed, and beam width is not
+    what closes the gap.
+
+    Beam 1 is faster at equal configuration by about 207 s — the Whisper stage
+    alone, 411 s against 204 s — not the 60 s a beam 5 run with diarization on
+    the GPU shows against a beam 1 run with diarization on CPU. Either way it is
+    no longer a trade anybody has to make."""
 
     model_cache: str = ""
     """Where model weights are downloaded. Empty uses the library default.

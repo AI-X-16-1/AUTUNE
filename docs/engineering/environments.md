@@ -347,9 +347,12 @@ reader nothing about the extra existing.
 nothing else. It classifies gaps across a team's whole meeting history —
 exactly the aggregation section 3 of `../architecture/privacy.md` asks module
 E to be careful with — so an external implementation is a design conversation,
-not a config value. That much is the same reasoning modules B and C give for
-ruling out `external` on their own model-facing settings; it says nothing
-about `hosted`, which B does have (`AUTUNE_EXTRACTION_CLASSIFIER_IMPL` above).
+not a config value. That much is the same reasoning module C gives for its
+entity extractor (`AUTUNE_GAP_NER_IMPL`) and module B for its NLI
+(`AUTUNE_EXTRACTION_NLI_IMPL`). B's classifier is the exception: it has an
+opt-in external `llm` (`AUTUNE_EXTRACTION_CLASSIFIER_IMPL` above), never the
+default and pending #392. None of this says anything about `hosted`, which B
+does have on both of its settings.
 
 E has no `hosted` for an unrelated reason: unlike B's classifier or C's NER
 model, there is no separate checkpoint to pin and no inference server to point

@@ -106,6 +106,49 @@ def meeting_for(session: Session, *, meeting_id: str, reader: User) -> Meeting:
     return meeting
 
 
+def meetings_for(session: Session, *, member: User) -> list[Meeting]:
+    """Every meeting ``member`` may see, newest first. The home screen's list (S05).
+
+    **The membership join is the authorisation, and that is the whole point of
+    this function.** Every other read in this module is handed a meeting id and
+    answers "may you"; this one is handed nobody's id and has to answer "which".
+    The ``team_members`` join is what makes the answer a property of the query
+    rather than of a filter applied afterwards -- a filter is a line somebody can
+    move or forget, and forgetting it here returns every meeting in the
+    database to whoever holds a token. There is no branch in this function for
+    that reason: no ``all`` flag, no admin path, no "if no teams then".
+
+    **No ``team_id`` filter, deliberately.** The home screen shows what the
+    person can see, and a browser that wants one team's meetings already has
+    them here -- it knows which team each row belongs to as soon as it needs to.
+    A parameter would be a second authorisation path (a team id the caller is
+    not on has to be refused, not quietly emptied) for a narrowing nothing asks
+    for yet. S05's per-team view adds it when there is a screen behind it.
+
+    **Ordered by ``coalesce(started_at, created_at)``.** ``started_at`` is null
+    for a recording uploaded after the fact (``create_meeting``), and ordering on
+    the column alone puts those meetings at one end of the list regardless of
+    when they happened -- a demo where every meeting is an upload comes out in an
+    arbitrary order. The row's own ``created_at`` is the best available answer
+    for those, and it is close: a meeting uploaded after the fact was made when
+    it was uploaded. The id breaks the remaining tie so the list does not shuffle
+    between two requests; it is random, not chronological, so it decides nothing
+    but stability.
+
+    Read-only over shared entities, which invariant 4 allows every module. No
+    counts: see ``MeetingSummary``.
+    """
+    ordering = sa.func.coalesce(Meeting.started_at, Meeting.created_at)
+    return list(
+        session.scalars(
+            sa.select(Meeting)
+            .join(TeamMember, TeamMember.team_id == Meeting.team_id)
+            .where(TeamMember.user_id == member.id)
+            .order_by(ordering.desc(), Meeting.id.desc())
+        )
+    )
+
+
 def teams_for(session: Session, *, member: User) -> list[Team]:
     """The teams ``member`` belongs to, by name.
 
