@@ -439,6 +439,11 @@ brief rather than sending it twice, the trade the other notices make. A team
 with no Slack channel still gets the row (readable in the app) with `sent_at`
 left `NULL`.
 
+**In the app**, the same brief sits at the top of S15's context tab
+(`features/context` `BriefPanel`), rendered from `GET /briefs/{meeting_id}`. A
+meeting with no brief — every finished meeting, and a scheduled one until its
+brief is composed — draws nothing there, and the tab reads as it did before.
+
 ## Storage
 
 PostgreSQL only. Every row is reachable from a `meeting_id`, a `team_id`, or is
