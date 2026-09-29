@@ -23,6 +23,7 @@ from sqlalchemy.pool import StaticPool
 
 from autune_contracts.extraction import ExtractionResult
 from autune_core import AutuneError, Base, Meeting, TeamMember, User, Utterance, get_session
+from autune_core.auth import current_user
 from autune_extraction import service
 from autune_extraction.config import ExtractionSettings
 from autune_extraction.confirmations import WEAK_ASSENT
@@ -39,6 +40,8 @@ from autune_extraction.models import (
     ExtExternalRef,
 )
 from autune_extraction.router import router
+
+from .conftest import sign_in
 
 MEETING = "mtg_1"
 OTHER_MEETING = "mtg_2"
@@ -105,6 +108,7 @@ def client(session: Session) -> Iterator[TestClient]:
 
     app.include_router(router, prefix=PREFIX)
     app.dependency_overrides[get_session] = lambda: session
+    sign_in(app, session)
     yield TestClient(app)
 
 
@@ -643,6 +647,7 @@ def test_a_threshold_that_cannot_be_read_saves_nothing(
     app = FastAPI()
     app.include_router(router, prefix=PREFIX)
     app.dependency_overrides[get_session] = scoped
+    sign_in(app, session)
     client = TestClient(app, raise_server_exceptions=False)
 
     if method == "post":
@@ -656,3 +661,100 @@ def test_a_threshold_that_cannot_be_read_saves_nothing(
     assert session.query(ExtActionItem).count() == 1
     assert session.get(ExtActionItem, "act_1").description == "act_1 할 일"  # type: ignore[union-attr]
     assert session.query(ExtEditEvent).count() == 0, "no edit was counted either"
+
+
+# --- who may read what (#189) -----------------------------------------------------
+
+FOREIGN_MEETING = "mtg_x"
+"""Held by a team the signed-in caller is not on."""
+
+# (method, path, body) with ``{m}``/``{a}``/``{d}`` for a meeting, item, decision id.
+ROUTES = [
+    ("get", "/results/{m}", None),
+    ("get", "/reviews/{m}", None),
+    ("get", "/reviews/{m}/outbound", None),
+    ("get", "/action-items/{a}", None),
+    ("patch", "/action-items/{a}", {"description": "고친 설명"}),
+    ("delete", "/action-items/{a}", None),
+    ("post", "/action-items", {"meeting_id": "{m}", "description": "새 항목"}),
+    ("patch", "/decisions/{d}", {"status": "confirmed"}),
+    ("delete", "/decisions/{d}", None),
+    ("post", "/decisions", {"meeting_id": "{m}", "statement": "새 결정"}),
+]
+
+
+@pytest.fixture
+def foreign(session: Session) -> None:
+    session.add(Meeting(id=FOREIGN_MEETING, team_id="team_other", title="다른 팀 회의"))
+    session.flush()
+    action_item(session, "act_x", meeting_id=FOREIGN_MEETING)
+    session.add(
+        ExtDecision(
+            id="dec_x", meeting_id=FOREIGN_MEETING, statement="다른 팀의 결정", confidence=0.9
+        )
+    )
+    session.flush()
+
+
+def _call(client: TestClient, method: str, path: str, body: dict | None, ids: dict) -> str:
+    url = PREFIX + path.format(**ids)
+    if body is None:
+        response = client.request(method, url)
+    else:
+        filled = {k: v.format(**ids) if isinstance(v, str) else v for k, v in body.items()}
+        response = client.request(method, url, json=filled)
+    assert response.status_code == 404, (method, path, response.text)
+    return response.text
+
+
+@pytest.mark.parametrize(("method", "path", "body"), ROUTES)
+@pytest.mark.usefixtures("foreign")
+def test_another_teams_meeting_is_refused_exactly_as_an_unknown_one(
+    client: TestClient, method: str, path: str, body: dict | None
+) -> None:
+    """A 403 would confirm the id exists; the refusal must be the same 404, with
+    only the id differing, and must name nothing from the meeting."""
+    theirs = {"m": FOREIGN_MEETING, "a": "act_x", "d": "dec_x"}
+    missing = {"m": "mtg_missing", "a": "act_missing", "d": "dec_missing"}
+
+    refused = _call(client, method, path, body, theirs)
+    unknown = _call(client, method, path, body, missing)
+
+    for real, fake in zip(theirs.values(), missing.values(), strict=True):
+        refused = refused.replace(real, "ID")
+        unknown = unknown.replace(fake, "ID")
+    assert refused == unknown
+    assert "다른 팀" not in refused
+
+
+@pytest.mark.usefixtures("foreign")
+def test_a_refused_write_changes_nothing(client: TestClient, session: Session) -> None:
+    for method, path, body in ROUTES:
+        if method != "get":
+            _call(client, method, path, body, {"m": FOREIGN_MEETING, "a": "act_x", "d": "dec_x"})
+    session.expire_all()
+
+    items = session.query(ExtActionItem).filter_by(meeting_id=FOREIGN_MEETING).all()
+    assert [(i.id, i.description) for i in items] == [("act_x", "act_x 할 일")]
+    assert session.query(ExtDecision).filter_by(meeting_id=FOREIGN_MEETING).count() == 1
+    assert session.query(ExtDecisionReview).count() == 0
+    assert session.query(ExtEditEvent).count() == 0
+
+
+@pytest.mark.usefixtures("foreign")
+def test_the_list_holds_only_the_callers_teams_items(client: TestClient, session: Session) -> None:
+    action_item(session, "act_1")
+
+    everything = client.get(f"{PREFIX}/action-items").json()
+    theirs = client.get(f"{PREFIX}/action-items", params={"meeting_id": FOREIGN_MEETING}).json()
+
+    assert [i["id"] for i in everything] == ["act_1"]
+    assert theirs == [], "the same empty list a meeting that does not exist gets"
+
+
+def test_no_session_is_refused_before_anything_is_read(client: TestClient) -> None:
+    client.app.dependency_overrides.pop(current_user)  # type: ignore[attr-defined]
+
+    assert client.get(f"{PREFIX}/results/{MEETING}").status_code == 403
+    assert client.get(f"{PREFIX}/action-items").status_code == 403
+    assert client.get(f"{PREFIX}/health").status_code == 200

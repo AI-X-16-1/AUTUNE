@@ -4,6 +4,14 @@ Routes parse, delegate to ``service``, and format the result. No business logic
 here — it cannot be reused by ``tasks.py`` if it lives in a route.
 
 The prefix ``/api/extraction`` is applied by apps/api; declare paths relative to it.
+
+**Every route but ``/health`` takes ``CurrentUser`` and, before anything else,
+resolves what it names through ``service.require_readable_meeting`` /
+``readable_action_item`` / ``readable_decision``** (#189). A caller outside the
+meeting's team gets the same 404 as an unknown id; the list is narrowed to the
+caller's teams instead. ``tests/unit/test_route_auth.py`` fails for a route that
+does not take the user. The ``/dev`` page is outside this rule: it is served
+only with ``AUTUNE_ENV=local`` and its own opt-in (see ``dev_routes_enabled``).
 """
 
 from __future__ import annotations
@@ -16,13 +24,11 @@ from sqlalchemy.orm import Session
 
 from autune_contracts.enums import ActionStatus
 from autune_contracts.extraction import ExtractionResult
-from autune_core import Meeting, get_session
-from autune_core.errors import NotFoundError
+from autune_core import CurrentUser, get_session
 from autune_core.settings import get_settings as get_core_settings
 
 from . import service, tasks
 from .config import get_settings
-from .models import ExtActionItem, ExtDecision
 from .schemas import (
     ActionItemCreate,
     ActionItemDetail,
@@ -63,64 +69,60 @@ def health() -> dict[str, str]:
     return {"module": "extraction", "status": "ok"}
 
 
-def _load(session: Session, action_item_id: str) -> ExtActionItem:
-    """The item, or a 404 that names no meeting content.
-
-    ``AutuneError`` is mapped to a response by apps/api, so the message reaches a
-    user and a log. It carries the id and nothing else.
-    """
-    item = session.get(ExtActionItem, action_item_id)
-    if item is None:
-        raise NotFoundError("action item", action_item_id)
-    return item
-
-
 @router.get("/results/{meeting_id}", response_model=ExtractionResult)
-def get_results(meeting_id: str, session: SessionDep) -> ExtractionResult:
+def get_results(meeting_id: str, session: SessionDep, reader: CurrentUser) -> ExtractionResult:
     """Everything this meeting produced, including every correction since.
 
     A meeting with nothing extracted yet answers with empty lists, not a 404:
     the meeting exists and has, so far, produced nothing. Only a meeting that
-    does not exist is not found.
+    does not exist -- or is not the caller's team's -- is not found.
     """
-    if session.get(Meeting, meeting_id) is None:
-        raise NotFoundError("meeting", meeting_id)
+    service.require_readable_meeting(session, meeting_id, reader)
     return service.result_for_meeting(session, meeting_id)
 
 
 @router.get("/action-items", response_model=list[ActionItemRead])
 def list_action_items(
     session: SessionDep,
+    reader: CurrentUser,
     meeting_id: str | None = None,
     assignee_id: str | None = None,
     # Aliased so the parameter does not shadow ``fastapi.status`` in this module.
     status_filter: Annotated[ActionStatus | None, Query(alias="status")] = None,
     due_before: date | None = None,
 ) -> list[ActionItemRead]:
-    """Items for the board, by any combination of the four filters."""
+    """Items for the board, by any combination of the four filters, from the
+    caller's teams' meetings only."""
     return service.list_action_items(
         session,
         meeting_id=meeting_id,
         assignee_id=assignee_id,
         status=status_filter,
         due_before=due_before,
+        visible_to=reader.id,
     )
 
 
 @router.get("/action-items/{action_item_id}", response_model=ActionItemDetail)
-def get_action_item(action_item_id: str, session: SessionDep) -> ActionItemDetail:
+def get_action_item(
+    action_item_id: str, session: SessionDep, reader: CurrentUser
+) -> ActionItemDetail:
     """One item and the text of the utterances it came from, for the drawer."""
-    return service.read_detail(session, _load(session, action_item_id))
+    item = service.readable_action_item(session, action_item_id, reader)
+    return service.read_detail(session, item)
 
 
 @router.post("/action-items", response_model=ActionItemRead, status_code=status.HTTP_201_CREATED)
-def create_action_item(payload: ActionItemCreate, session: SessionDep) -> ActionItemRead:
+def create_action_item(
+    payload: ActionItemCreate, session: SessionDep, reader: CurrentUser
+) -> ActionItemRead:
     """Add an item the model missed.
 
     ADR 0006 ranks recall above precision because a wrong item costs a click and
     a missing one costs re-reading the meeting. This is the route that makes the
     second recoverable.
     """
+    service.require_readable_meeting(session, payload.meeting_id, reader)
     item = service.create_action_item(session, payload)
     # The response is built before the commit. ``read_model`` reads the
     # candidate threshold, and a threshold that does not parse (a 7 in .env)
@@ -137,11 +139,12 @@ def update_action_item(
     action_item_id: str,
     payload: ActionItemUpdate,
     session: SessionDep,
+    reader: CurrentUser,
     background: BackgroundTasks,
 ) -> ActionItemRead:
     """Edit or close an item. Confirming it queues its Notion page (#30); an
     edit to an already-confirmed item queues an update to the same page."""
-    item = _load(session, action_item_id)
+    item = service.readable_action_item(session, action_item_id, reader)
     item = service.update_action_item(session, item, payload)
     # Before the commit, for the reason ``create_action_item`` gives: an edit
     # answered with a 500 must not also have been saved, or it counts twice
@@ -159,7 +162,7 @@ def update_action_item(
 
 
 @router.delete("/action-items/{action_item_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_action_item(action_item_id: str, session: SessionDep) -> None:
+def delete_action_item(action_item_id: str, session: SessionDep, reader: CurrentUser) -> None:
     """Delete an item the model got wrong.
 
     Real deletion. ``privacy.md`` allows no soft deletes and no tombstones
@@ -170,21 +173,16 @@ def delete_action_item(action_item_id: str, session: SessionDep) -> None:
     (``tasks.remove_calendar_event``, #435): once the row cascades away the
     event can no longer be found.
     """
-    item = _load(session, action_item_id)
+    item = service.readable_action_item(session, action_item_id, reader)
     tasks.remove_calendar_event(item.id)
     service.delete_action_item(session, item)
     session.commit()
 
 
-def _meeting(session: Session, meeting_id: str) -> None:
-    if session.get(Meeting, meeting_id) is None:
-        raise NotFoundError("meeting", meeting_id)
-
-
 @router.get("/reviews/{meeting_id}", response_model=MeetingReview)
-def get_review(meeting_id: str, session: SessionDep) -> MeetingReview:
+def get_review(meeting_id: str, session: SessionDep, reader: CurrentUser) -> MeetingReview:
     """What needs a person in this meeting before anything is sent (S15, #246)."""
-    _meeting(session, meeting_id)
+    service.require_readable_meeting(session, meeting_id, reader)
     return service.review_for_meeting(session, meeting_id)
 
 
@@ -193,15 +191,14 @@ def review_decision(
     decision_id: str,
     payload: DecisionReviewUpdate,
     session: SessionDep,
+    reader: CurrentUser,
     background: BackgroundTasks,
 ) -> ReviewDecision:
     """Confirm, reject or reword a proposed decision, or put it back to pending.
 
     Confirming it sends its Notion page (#30); rewording an already-confirmed
     decision updates the same page instead of leaving it stale."""
-    decision = session.get(ExtDecision, decision_id)
-    if decision is None:
-        raise NotFoundError("decision", decision_id)
+    decision = service.readable_decision(session, decision_id, reader)
     # Built before the commit, for the reason ``create_action_item`` gives.
     response = service.review_decision(session, decision, payload)
     session.commit()
@@ -214,18 +211,19 @@ def review_decision(
 
 
 @router.get("/reviews/{meeting_id}/outbound", response_model=Outbound)
-def get_outbound(meeting_id: str, session: SessionDep) -> Outbound:
+def get_outbound(meeting_id: str, session: SessionDep, reader: CurrentUser) -> Outbound:
     """Exactly what confirm-and-send would send: confirmed decisions and accepted items."""
-    _meeting(session, meeting_id)
+    service.require_readable_meeting(session, meeting_id, reader)
     return service.outbound_for_meeting(session, meeting_id)
 
 
 @router.post("/decisions", response_model=ReviewDecision, status_code=status.HTTP_201_CREATED)
 def create_decision(
-    payload: DecisionCreate, session: SessionDep, background: BackgroundTasks
+    payload: DecisionCreate, session: SessionDep, reader: CurrentUser, background: BackgroundTasks
 ) -> ReviewDecision:
     """Add a decision the model missed. It is confirmed and survives a rerun, so
     its Notion page goes out as for any confirmed decision."""
+    service.require_readable_meeting(session, payload.meeting_id, reader)
     response = service.create_decision(session, payload)
     session.commit()
     background.add_task(tasks.sync_decision_after_confirmation, response.id)
@@ -233,14 +231,12 @@ def create_decision(
 
 
 @router.delete("/decisions/{decision_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_decision(decision_id: str, session: SessionDep) -> None:
+def delete_decision(decision_id: str, session: SessionDep, reader: CurrentUser) -> None:
     """Delete a decision a person added; reject one the model proposed.
 
     The model's would come back on the next run, so rejecting is what keeps it
     gone. See ``service.delete_decision``.
     """
-    decision = session.get(ExtDecision, decision_id)
-    if decision is None:
-        raise NotFoundError("decision", decision_id)
+    decision = service.readable_decision(session, decision_id, reader)
     service.delete_decision(session, decision)
     session.commit()

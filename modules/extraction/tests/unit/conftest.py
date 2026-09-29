@@ -3,8 +3,16 @@
 from __future__ import annotations
 
 import pytest
+from fastapi import FastAPI
+from sqlalchemy.orm import Session
 
+from autune_core import TeamMember, User
+from autune_core.auth import current_user
 from autune_extraction import tasks
+
+READER = "user_reader"
+"""The signed-in caller of router tests: a member of ``team_1``, where every
+fixture meeting is held, and of no other team."""
 
 SYNC_ACTION_ITEM_CALENDAR = tasks.sync_action_item_calendar
 """The real task, for ``test_calendar_sync`` to put back."""
@@ -20,3 +28,13 @@ def _no_calendar_sync(monkeypatch: pytest.MonkeyPatch) -> None:
     that exercise them put the real ones back themselves."""
     monkeypatch.setattr(tasks, "sync_action_item_calendar", lambda _action_item_id: None)
     monkeypatch.setattr(tasks, "remove_calendar_event", lambda _action_item_id: None)
+
+
+def sign_in(app: FastAPI, session: Session, *, team_id: str = "team_1") -> None:
+    """Every route but /health takes ``CurrentUser`` (#189). Make ``READER`` the
+    caller and put them on ``team_id``. ``team_members`` must be in the test's
+    tables; the ``User`` is never written, so ``users`` need not be."""
+    session.add(TeamMember(team_id=team_id, user_id=READER))
+    session.flush()
+    reader = User(id=READER, email=f"{READER}@example.com", display_name="읽는 사람")
+    app.dependency_overrides[current_user] = lambda: reader

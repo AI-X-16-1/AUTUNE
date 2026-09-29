@@ -492,6 +492,71 @@ def assignee_names(session: Session, items: Sequence[ExtActionItem]) -> dict[str
     return {user_id: display_name for user_id, display_name in rows}
 
 
+# --- who may read what (#189) ---------------------------------------------------
+
+
+def _is_team_member(session: Session, *, user_id: str, team_id: str) -> bool:
+    return (
+        session.scalar(
+            select(TeamMember.id).where(
+                TeamMember.user_id == user_id, TeamMember.team_id == team_id
+            )
+        )
+        is not None
+    )
+
+
+def _refuse(kind: str, ident: str, reader: User, reason: str) -> NotFoundError:
+    # Ids only: a description or a decision statement is meeting content.
+    log.info("extraction_read_refused", kind=kind, ident=ident, reader_id=reader.id, reason=reason)
+    return NotFoundError(kind, ident)
+
+
+def _require_member_of_meeting(
+    session: Session, meeting_id: str, reader: User, *, kind: str, ident: str
+) -> None:
+    team_id = session.scalar(select(Meeting.team_id).where(Meeting.id == meeting_id))
+    if team_id is None:
+        raise _refuse(kind, ident, reader, "no_such_meeting")
+    if not _is_team_member(session, user_id=reader.id, team_id=team_id):
+        raise _refuse(kind, ident, reader, "not_a_member")
+
+
+def require_readable_meeting(session: Session, meeting_id: str, reader: User) -> None:
+    """Raise unless ``reader`` belongs to the team that held this meeting.
+
+    A token proves who is asking, not whose meetings they may read. **An unknown
+    id and somebody else's get the same answer**, a ``NotFoundError`` and never
+    a 403: a 403 confirms the id exists. Same rule as module C (#276) and D
+    (#470); the log keeps the reason. Writing is the same check -- anyone on the
+    team may correct its meetings' results, as the review screen assumes.
+    """
+    _require_member_of_meeting(session, meeting_id, reader, kind="meeting", ident=meeting_id)
+
+
+def readable_action_item(session: Session, action_item_id: str, reader: User) -> ExtActionItem:
+    """The item, if ``reader`` is on the team of its meeting; otherwise the same
+    404 an unknown id gets, naming the item and not its meeting."""
+    item = session.get(ExtActionItem, action_item_id)
+    if item is None:
+        raise _refuse("action item", action_item_id, reader, "no_such_item")
+    _require_member_of_meeting(
+        session, item.meeting_id, reader, kind="action item", ident=action_item_id
+    )
+    return item
+
+
+def readable_decision(session: Session, decision_id: str, reader: User) -> ExtDecision:
+    """As ``readable_action_item``, for a decision."""
+    decision = session.get(ExtDecision, decision_id)
+    if decision is None:
+        raise _refuse("decision", decision_id, reader, "no_such_decision")
+    _require_member_of_meeting(
+        session, decision.meeting_id, reader, kind="decision", ident=decision_id
+    )
+    return decision
+
+
 def list_action_items(
     session: Session,
     *,
@@ -499,8 +564,14 @@ def list_action_items(
     assignee_id: str | None = None,
     status: ActionStatus | None = None,
     due_before: date | None = None,
+    visible_to: str | None = None,
 ) -> list[ActionItemRead]:
     """The items S17 and S05 put on screen. Every filter is optional and they AND.
+
+    ``visible_to`` is a user id: only items from meetings of that user's teams
+    come back. The route always passes it (#189); B's own callers, which already
+    hold a meeting or a team, do not. A meeting outside the caller's teams
+    therefore lists nothing, the same answer as a meeting that does not exist.
 
     ``due_before`` is strict: an item due on that day is not before it. That
     makes "overdue" one argument -- today's date -- instead of yesterday's, and
@@ -523,6 +594,10 @@ def list_action_items(
         query = query.where(ExtActionItem.status == status.value)
     if due_before is not None:
         query = query.where(ExtActionItem.due_date < due_before)
+    if visible_to is not None:
+        query = query.join(Meeting, Meeting.id == ExtActionItem.meeting_id).where(
+            Meeting.team_id.in_(select(TeamMember.team_id).where(TeamMember.user_id == visible_to))
+        )
 
     items = list(session.scalars(query))
     names = assignee_names(session, items)
