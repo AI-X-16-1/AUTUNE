@@ -234,9 +234,11 @@ uv run --package autune-intelligence python -m autune_intelligence.eval [--windo
 A meeting is labeled positive when a later meeting's `decision_lineage`
 reverses one of its decisions within 14 days, and is labeled at all only once
 those 14 days have passed. It is also left unlabeled when a meeting of the same
-team inside those 14 days has no measured lineage — D publishes without B's
-decisions when B times out, so a reversal there would have been invisible and
-"negative" would claim more than the payload can carry. A meeting already seen
+team inside those 14 days could not have shown a reversal — either its lineage
+was measured and came back without B's decisions (D publishes that way when B
+times out), or E never aggregated it at all, so nothing was measured. Either way
+a reversal there would have been invisible and "negative" would claim more than
+anything looked at. A meeting already seen
 to be reversed stays positive. Meetings held back this way are counted in the
 `intelligence_history_labels_blocked_by_blind_spot` log line, so "0 labeled
 meetings" can be told apart from short history. History is read back from E's own tables, and
@@ -262,26 +264,25 @@ honest skill is zero at best — that procedure reported a Brier skill of **+0.6
 where the held-out score was **-0.120**: it would have promoted a model that had
 learned nothing.
 
-**Three things must hold before the default becomes `local`.** Two are about
-whether the comparison can be trusted at all; only the third is the comparison.
+**Two things must hold before the default becomes `local`.** The first is about
+whether the comparison can be trusted at all; only the second is the comparison.
 
-1. **#445 is fixed.** `labeled_examples` only sees meetings E has already
-   aggregated, so a later meeting of the same team that exists in `meetings`
-   without an aggregated completion cannot enter `unmeasured` — and the meeting
-   before it is labelled negative although nothing looked for a reversal. Where
-   module A failed, that false negative is permanent. The holdout splits the same
-   label set, so the fit and the comparison below would both rest on it.
-2. **#450 is fixed.** The two rows below are scored on different meetings:
+1. **#450 is fixed.** The two rows below are scored on different meetings:
    `current:` on the holdout window alone (a fortnight under the defaults),
    `stored:` on the whole training window. Brier skill normalises each against its
    own base rate, so a difference in reversal rate does not decide it — but
    nothing corrects for a fortnight simply being easier to call than a quarter.
    #450 adds a `stored:` row over the same holdout meetings, which is the
    comparison this rule means.
-3. **`current:xgb-*` beats `stored:heuristic-v1` on Brier skill**, over the same
+2. **`current:xgb-*` beats `stored:heuristic-v1` on Brier skill**, over the same
    meetings once #450 lands. Compare the skill, not the raw Brier.
 
-Until all three hold, the default stays `heuristic`.
+Until both hold, the default stays `heuristic`.
+
+There was a third condition until #453: the label treated a meeting E had never
+aggregated as evidence of no reversal, so both the fit and the comparison would
+have rested on false negatives. That is fixed, and the blind spot it left behind
+is described below.
 
 Known blind spots in the label itself:
 
@@ -289,8 +290,13 @@ Known blind spots in the label itself:
   meeting, so the original stays negative.
 - A later meeting E has not aggregated withholds the earlier meeting's label
   the same way a measured one with a missing extraction source does, but the two
-  need different fixes, so the blind-spot log counts them apart
-  (`unmeasured_lineage` and `unaggregated`).
+  need different fixes — B not reaching D, against a pipeline that stalled or
+  failed before E saw the meeting. So the blind-spot log reports
+  `blocked_by_unmeasured_lineage` and `blocked_by_unaggregated`. Both count
+  **withheld meetings**, not blind spots: one stalled meeting can withhold
+  several labels or none, and a count of blind spots would send someone after one
+  that is doing no harm. A meeting can be withheld by both causes, so the two
+  need not sum to `meetings`.
 
 ## Privacy notes
 
