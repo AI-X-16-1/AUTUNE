@@ -31,6 +31,7 @@ from autune_extraction.models import (
     ExtDecisionReview,
     ExtDecisionSource,
     ExtExternalRef,
+    ExtNotionTarget,
 )
 from autune_integrations import IntegrationError
 from autune_integrations.fakes import FakeNotion
@@ -41,6 +42,7 @@ TABLES = [
     ExtActionItem.__table__,
     ExtActionItemSource.__table__,
     ExtExternalRef.__table__,
+    ExtNotionTarget.__table__,
     ExtDecision.__table__,
     ExtDecisionSource.__table__,
     ExtDecisionReview.__table__,

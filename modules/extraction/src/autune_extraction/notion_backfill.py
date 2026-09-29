@@ -37,7 +37,7 @@ from autune_contracts.enums import ActionStatus
 from autune_core import Meeting, PrivacyViolationError, get_logger, load_integration, session_scope
 from autune_integrations import IntegrationError, NotionClient
 
-from . import service
+from . import notion_setup, service
 from .models import ExtActionItem, ExtDecisionRef, ExtDecisionReview, ExtExternalRef
 
 log = get_logger(__name__)
@@ -121,7 +121,7 @@ def _sync_one_action_item(
         if meeting is None:
             return
         config = load_integration(session, meeting.team_id, "notion")
-        database_id = config.config.get("action_db_id") if config is not None else None
+        database_id = notion_setup.database_id(session, meeting.team_id, config, "action_db_id")
         if config is None or not config.secret or not database_id:
             stats.not_connected += 1
             return
@@ -170,7 +170,7 @@ def _sync_one_decision(
         if meeting is None:
             return
         config = load_integration(session, meeting.team_id, "notion")
-        database_id = config.config.get("decision_db_id") if config is not None else None
+        database_id = notion_setup.database_id(session, meeting.team_id, config, "decision_db_id")
         if config is None or not config.secret or not database_id:
             stats.not_connected += 1
             return

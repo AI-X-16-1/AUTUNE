@@ -34,7 +34,10 @@ from collections.abc import Mapping
 from typing import Any
 
 import httpx
+from sqlalchemy.orm import Session
 
+from autune_core.integrations_config import IntegrationConfig
+from autune_extraction.models import ExtNotionTarget
 from autune_extraction.service import DECISION_NOTION_PROPERTIES, NOTION_PROPERTIES
 
 NOTION_API = "https://api.notion.com/v1"
@@ -160,3 +163,68 @@ def provision_databases(
         created.append(key)
     config["parent_page_id"] = page_id
     return config, created
+
+
+def shared_pages(client: httpx.Client, *, limit: int = 50) -> list[dict[str, str]]:
+    """The pages the workspace shared with Autune on Notion's consent screen --
+    what the team chooses a parent from. Rows of a database are left out: a
+    database's pages (our own action items among them) are not a place to put
+    new databases."""
+    resp = client.post(
+        "/search",
+        json={"filter": {"property": "object", "value": "page"}, "page_size": limit},
+    )
+    if resp.status_code >= 400:
+        raise NotionSetupError(resp.status_code, f"Notion answered {resp.status_code}")
+    pages: list[dict[str, str]] = []
+    for page in resp.json().get("results", []):
+        if page.get("parent", {}).get("type") == "database_id" or page.get("archived"):
+            continue
+        pages.append({"id": str(page["id"]), "title": _title(page) or "(제목 없음)"})
+    return pages
+
+
+def _title(page: Mapping[str, Any]) -> str:
+    for prop in page.get("properties", {}).values():
+        if prop.get("type") == "title":
+            return "".join(part.get("plain_text", "") for part in prop.get("title", []))
+    return ""
+
+
+def database_id(
+    session: Session, team_id: str, config: IntegrationConfig | None, key: str
+) -> str | None:
+    """A team's database id: from B's own ``ext_notion_targets`` (one-click
+    setup), else from the connection's config (the local dev page, #401)."""
+    target = session.get(ExtNotionTarget, team_id)
+    if target is not None:
+        value = getattr(target, key, None)
+        return str(value) if value else None
+    stored = config.config.get(key) if config is not None else None
+    return str(stored) if stored else None
+
+
+def stored_targets(session: Session, team_id: str) -> dict[str, str]:
+    """What ``provision_databases`` should treat as already made for this team."""
+    target = session.get(ExtNotionTarget, team_id)
+    if target is None:
+        return {}
+    return {
+        "parent_page_id": target.parent_page_id,
+        "action_db_id": target.action_db_id,
+        "decision_db_id": target.decision_db_id,
+        "minutes_db_id": target.minutes_db_id,
+    }
+
+
+def save_targets(session: Session, team_id: str, config: Mapping[str, str]) -> ExtNotionTarget:
+    target = session.get(ExtNotionTarget, team_id)
+    if target is None:
+        target = ExtNotionTarget(team_id=team_id)
+        session.add(target)
+    target.parent_page_id = config["parent_page_id"]
+    target.action_db_id = config["action_db_id"]
+    target.decision_db_id = config["decision_db_id"]
+    target.minutes_db_id = config["minutes_db_id"]
+    session.flush()
+    return target

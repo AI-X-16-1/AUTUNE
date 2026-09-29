@@ -148,3 +148,34 @@ export const backfillJira = (meetingId: string) =>
     { method: "POST" },
   );
 
+export interface NotionPage {
+  id: string;
+  title: string;
+}
+
+export interface NotionSetupState {
+  connected: boolean;
+  pages?: NotionPage[];
+  target?: { parent_page_id: string; action_db_url: string; decision_db_url: string; minutes_db_url: string } | null;
+}
+
+export interface NotionSetupResult {
+  databases: "created" | "added" | "reused";
+  action_db_url: string;
+  decision_db_url: string;
+  minutes_db_url: string;
+  action_items: { sent: number; replaced: number; failed: number };
+  decisions: { sent: number; replaced: number; failed: number };
+}
+
+/** The pages the team shared with Autune, and where its databases are (#428). */
+export const getNotionSetup = (meetingId: string) =>
+  api.extraction<NotionSetupState>(`/notion/setup?meeting_id=${encodeURIComponent(meetingId)}`);
+
+/** Make the databases under `pageId` and fill them with everything confirmed. */
+export const setUpNotion = (meetingId: string, pageId: string) =>
+  api.extraction<NotionSetupResult>(
+    `/notion/setup?meeting_id=${encodeURIComponent(meetingId)}&page_id=${encodeURIComponent(pageId)}`,
+    { method: "POST" },
+  );
+

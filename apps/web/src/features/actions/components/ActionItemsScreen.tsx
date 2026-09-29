@@ -6,6 +6,7 @@ import { ActionBoard } from "./ActionBoard";
 import { ActionDetailDrawer } from "./ActionDetailDrawer";
 import { CalendarConnect } from "./CalendarConnect";
 import { JiraConnect } from "./JiraConnect";
+import { NotionConnect } from "./NotionConnect";
 import { DecisionReview } from "./DecisionReview";
 import { useActionItems } from "../hooks/useActionItems";
 
@@ -73,6 +74,7 @@ export function ActionItemsScreen({ meetingId }: { meetingId: string }) {
         <div className="mt-3 flex flex-col gap-2">
           <CalendarConnect />
           <JiraConnect meetingId={meetingId} />
+          <NotionConnect meetingId={meetingId} />
         </div>
 
         <div className="mt-6">

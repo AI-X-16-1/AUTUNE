@@ -46,7 +46,7 @@ from autune_integrations import (
     refresh_access_token,
 )
 
-from . import calendar_sync, jira_sync, service
+from . import calendar_sync, jira_sync, notion_setup, service
 from .models import ExtActionItem, ExtCalendarPoll, ExtDecision
 from .pipeline.registry import get_classifier, get_nli, get_resolver
 
@@ -194,7 +194,7 @@ def sync_action_item(action_item_id: str) -> None:
             log.info("extraction_notion_item_gone", action_item_id=action_item_id)
             return
         config = load_integration(session, meeting.team_id, "notion")
-        database_id = config.config.get("action_db_id") if config is not None else None
+        database_id = notion_setup.database_id(session, meeting.team_id, config, "action_db_id")
         if config is None or not config.secret or not database_id:
             # Asked for, not required: a team that connected Notion for decisions
             # only, or whose token is gone, is skipped. ``require_secret()`` and
@@ -552,7 +552,7 @@ def sync_decision(decision_id: str) -> None:
             log.info("extraction_notion_decision_gone", decision_id=decision_id)
             return
         config = load_integration(session, meeting.team_id, "notion")
-        database_id = config.config.get("decision_db_id") if config is not None else None
+        database_id = notion_setup.database_id(session, meeting.team_id, config, "decision_db_id")
         if config is None or not config.secret or not database_id:
             log.info(
                 "extraction_notion_decisions_not_connected",

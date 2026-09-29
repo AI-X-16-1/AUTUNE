@@ -25,7 +25,12 @@ from autune_extraction.jira_sync import (
     close_for_deleted_item,
     sync_action_item_to_jira,
 )
-from autune_extraction.models import ExtActionItem, ExtActionItemSource, ExtExternalRef
+from autune_extraction.models import (
+    ExtActionItem,
+    ExtActionItemSource,
+    ExtExternalRef,
+    ExtNotionTarget,
+)
 from autune_integrations.fakes import FakeJira
 
 from .conftest import CLOSE_JIRA_ISSUE, SYNC_ACTION_ITEM_JIRA
@@ -43,6 +48,7 @@ TABLES = [
     ExtActionItem.__table__,
     ExtActionItemSource.__table__,
     ExtExternalRef.__table__,
+    ExtNotionTarget.__table__,
 ]
 
 
