@@ -402,6 +402,7 @@ what makes the product reactive.
 ```sql
 CREATE TABLE agent_work_items (
   id                TEXT PRIMARY KEY,   -- wi_…
+  team_id           TEXT,       -- team_…; every query is per team
   kind              TEXT,       -- action | gap | open_question | decision | risk
   title             TEXT,
   body              TEXT,       -- masked, like everything derived from a transcript
@@ -426,14 +427,17 @@ CREATE TABLE agent_runs (
   id          TEXT PRIMARY KEY,   -- run_…
   meeting_id  TEXT,    -- mtg_…, NULL for a run with no meeting; the deletion path
   team_id     TEXT,    -- team_…
+  requested_by TEXT,   -- user_…, for a chat turn; SET NULL with the user
   trigger     JSONB,   -- why it woke up
+  route       TEXT,    -- the subagent it went to, or NULL
   plan        JSONB,   -- what it meant to do
   steps       JSONB,   -- which tools it called, in order
   proposed    JSONB,   -- the plan it submitted for approval (section 8)
   decisions   JSONB,   -- per item: approved | edited | rejected, and the reason
   actions     JSONB,   -- what it actually did
   messages    JSONB,   -- the suspended conversation, for resume (section 8)
-  outcome     TEXT,
+  outcome     TEXT,    -- answered | unrouted | budget_exceeded | failed
+  answer      TEXT,    -- only when meeting_id is set; see below
   latency_ms  INT,
   token_cost  INT,
   created_at  TIMESTAMPTZ
@@ -493,6 +497,12 @@ would be overclaiming.
 **`next_check_at` is the whole of "wakes up by itself".** The scheduler selects
 `WHERE next_check_at <= now()` and calls the orchestrator. There is nothing
 else to it.
+
+**A run about no meeting keeps no text.** A chat question has no `meeting_id`,
+so nothing would delete its row with a meeting it quotes. Its `answer`, and a
+proposed action's title and body, go back to the person who asked and are not
+stored; the row keeps tool names, evidence ids, the route and the outcome.
+`steps` never hold a tool's summary, items or reason, for any run (#449).
 
 **`agent_runs` is written from the first commit, not added later.** Without it
 there is no way to answer "why did it do that", which is the only question
