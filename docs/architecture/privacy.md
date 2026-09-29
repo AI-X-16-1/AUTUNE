@@ -41,6 +41,15 @@ The uploaded recording exists only for the duration of transcription.
   copy this section exists to prevent. Splitting them across hosts is not a
   deployment option today, and making it one means replacing the handover, not
   changing a path.
+- Keep the scratch directory **owner-only**. The recordings themselves are
+  `0600` — `NamedTemporaryFile` creates them that way — so their contents are
+  already unreadable by another account on the machine. The directory's mode
+  decides something narrower and still worth keeping: whether that account can
+  *list* it, and read off the job ids, the file sizes and the times. Not what
+  was said in a meeting, but who uploaded one, when, and how long it ran.
+  `storage._private_directory` creates it at `0700`; a directory that already
+  exists keeps its mode and is reported once, because `AUTUNE_AUDIO_TEMP_DIR`
+  may point at a directory this process does not own (#351).
 - Set `privacy.original_audio_deleted = true` in `TranscriptReady` only after
   the file is actually gone.
 

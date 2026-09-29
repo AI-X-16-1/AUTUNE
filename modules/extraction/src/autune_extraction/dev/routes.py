@@ -3,8 +3,10 @@
 Mirrors module A's own ``dev/routes.py``, with one more gate: mounted only
 under ``AUTUNE_ENV=local`` *and* ``AUTUNE_EXTRACTION_DEV_ROUTES=true`` (see
 ``router.dev_routes_enabled``), not in the OpenAPI schema, no auth. Without
-the second gate a deployment that forgot ``AUTUNE_ENV`` would let anyone point
-any team's sync at their own Notion workspace (lsh2217, review of #402).
+the second gate every ``local`` stack -- the demo one included, reachable by
+whoever is on its network -- would let anyone point any team's sync at their
+own Notion workspace (lsh2217, review of #402). A deployment that forgets
+``AUTUNE_ENV`` is ``production`` since #446, so it gets neither gate.
 
 S28 (Settings > Integrations) does not exist yet -- this exists so a developer
 can put a real team_integrations row in the database without one, the same

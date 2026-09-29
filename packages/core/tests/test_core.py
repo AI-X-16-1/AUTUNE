@@ -55,6 +55,18 @@ def test_default_secret_is_refused_outside_local() -> None:
         Settings(env="production", secret_key="local-development-only-change-me")
 
 
+def test_an_unset_env_is_production_and_refuses_the_default_secret(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#408: a deployment that forgets AUTUNE_ENV must not come up as local,
+    where the shipped key signs sessions and the unauthenticated /dev routes
+    are mounted. The error names the fix for the developer who hits it."""
+    monkeypatch.delenv("AUTUNE_ENV", raising=False)
+    monkeypatch.delenv("AUTUNE_SECRET_KEY", raising=False)
+    with pytest.raises(ValueError, match="set AUTUNE_ENV=local"):
+        Settings(_env_file=None)
+
+
 def test_local_tolerates_the_default_secret() -> None:
     assert Settings(env="local").secret_key.startswith("local-development-only")
 

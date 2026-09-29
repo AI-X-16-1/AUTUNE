@@ -90,8 +90,8 @@ def test_something_with_no_id_shaped_run_is_refused() -> None:
 def test_the_page_needs_local_and_an_explicit_opt_in(
     monkeypatch: pytest.MonkeyPatch, env: str, opted_in: bool, mounted: bool
 ) -> None:
-    """``local`` is also the env's default, so a deployment that forgot to set
-    it must not serve an unauthenticated route that stores any team's token."""
+    """``local`` is what every checkout and the demo stack run under, so it
+    alone must not serve an unauthenticated route that stores any team's token."""
     monkeypatch.setattr(router_module, "get_core_settings", lambda: SimpleNamespace(env=env))
     monkeypatch.setattr(router_module, "get_settings", lambda: SimpleNamespace(dev_routes=opted_in))
 

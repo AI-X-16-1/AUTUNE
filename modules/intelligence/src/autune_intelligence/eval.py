@@ -5,8 +5,9 @@
 Reads labeled history (``history.labeled_examples``) and, per model version,
 scores the probabilities that were actually stored and shown against whether a
 decision from that meeting was reversed within the horizon. Also scores the
-current in-process predictor refit-free over the same meetings, so a new
-version can be compared before it ships.
+current in-process predictor, so a new version can be compared before it ships
+— on held-out meetings when that predictor is fit from history, because an
+in-sample score is not comparable with the stored ones (see ``HOLDOUT``).
 
 Prints counts, rates and scores only — no meeting content, no team names.
 """
@@ -23,13 +24,62 @@ from autune_core import session_scope
 
 from .calibration import CalibrationReport, calibration_report
 from .history import TRAINING_WINDOW, LabeledExample, labeled_examples
-from .pipeline import get_misalignment_predictor
+from .pipeline import (
+    get_misalignment_predictor,
+    predictor_fits_from_history,
+    reset_cache,
+)
 
 MIN_EXAMPLES = 30
 """Below this, a Brier score is noise — the report says so instead of printing one."""
 
+HOLDOUT = timedelta(weeks=4)
+"""How much of the recent past the fitted predictor is not allowed to learn from.
 
-def evaluate(examples: list[LabeledExample]) -> dict[str, CalibrationReport | None]:
+Only applies when the configured predictor is fit from history. Such a
+predictor scored over the window it was fit on reports an **in-sample** number,
+and `stored:` rows are out-of-sample, so comparing them decides nothing: fitting
+200 trees on fifty-odd meetings beats the heuristic on its own training data
+almost however bad the model is. Measured on random labels with no signal at
+all, in-sample Brier skill came out +0.577 while the same model scored -0.084
+on fresh data.
+
+So the predictor is built as of ``now - HOLDOUT`` — it sees only meetings whose
+horizon had closed by then — and scored only on meetings after that point. Four
+weeks because it has to clear the 14-day label horizon with room left for
+enough scored meetings; below the horizon nothing is scoreable at all."""
+
+
+def _current_row(
+    examples: list[LabeledExample], *, now: datetime, holdout: timedelta
+) -> tuple[str, list[LabeledExample], object]:
+    """The in-process predictor, the meetings it may be scored on, and its label.
+
+    A predictor that is not fit from history has nothing to leak, so it is
+    scored on everything. A fitted one is rebuilt as of the split and scored
+    only after it — see ``HOLDOUT``.
+    """
+    if not predictor_fits_from_history():
+        predictor = get_misalignment_predictor()
+        return f"current:{predictor.model_version}", examples, predictor
+
+    split = now - holdout
+    reset_cache()
+    try:
+        predictor = get_misalignment_predictor(now=split)
+    finally:
+        # Do not leave a predictor fit at a past date in the process cache.
+        reset_cache()
+    scored = [e for e in examples if e.at > split]
+    return f"current:{predictor.model_version} (out of sample)", scored, predictor
+
+
+def evaluate(
+    examples: list[LabeledExample],
+    *,
+    now: datetime | None = None,
+    holdout: timedelta = HOLDOUT,
+) -> dict[str, CalibrationReport | None]:
     """``model_version -> report``; ``None`` for a version with too few examples."""
     by_version: dict[str, tuple[list[float], list[bool]]] = {}
     for e in examples:
@@ -38,12 +88,15 @@ def evaluate(examples: list[LabeledExample]) -> dict[str, CalibrationReport | No
             probs.append(p)
             outcomes.append(e.reversed_within_horizon)
 
-    predictor = get_misalignment_predictor()
     if examples:
-        by_version[f"current:{predictor.model_version}"] = (
-            predictor.predict([e.features for e in examples]),
-            [e.reversed_within_horizon for e in examples],
+        label, scored, predictor = _current_row(
+            examples, now=now or datetime.now(UTC), holdout=holdout
         )
+        if scored:
+            by_version[label] = (
+                predictor.predict([e.features for e in scored]),  # type: ignore[attr-defined]
+                [e.reversed_within_horizon for e in scored],
+            )
 
     return {
         version: calibration_report(probs, outcomes) if len(probs) >= MIN_EXAMPLES else None
@@ -85,6 +138,12 @@ def main(argv: list[str] | None = None) -> int:
         default=TRAINING_WINDOW.days // 7,
         help="How far back to read labeled meetings.",
     )
+    parser.add_argument(
+        "--holdout-weeks",
+        type=int,
+        default=HOLDOUT.days // 7,
+        help="Recent weeks a fitted predictor may not learn from, and is scored on.",
+    )
     parser.add_argument("--json", action="store_true", help="Machine-readable output.")
     args = parser.parse_args(argv)
 
@@ -92,7 +151,9 @@ def main(argv: list[str] | None = None) -> int:
         examples = labeled_examples(
             session, now=datetime.now(UTC), window=timedelta(weeks=args.window_weeks)
         )
-    reports = evaluate(examples)
+
+    now = datetime.now(UTC)
+    reports = evaluate(examples, now=now, holdout=timedelta(weeks=args.holdout_weeks))
 
     if args.json:
         json.dump(

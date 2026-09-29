@@ -14,11 +14,21 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 Environment = Literal["local", "staging", "production"]
 
+# Appended to every "refused outside local" error: the likeliest reader is a
+# developer whose checkout has no AUTUNE_ENV, now that unset means production.
+_LOCAL_HINT = " If this is a local checkout, set AUTUNE_ENV=local (see .env.example)."
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="AUTUNE_", env_file=".env", extra="ignore")
 
-    env: Environment = "local"
+    env: Environment = "production"
+    """Unset means production, deliberately (#408). A deployment that forgets
+    ``AUTUNE_ENV`` then meets production's startup checks -- a real secret key,
+    an encryption key, an https CORS allowlist -- and mounts no unauthenticated
+    ``/dev`` route, instead of quietly running as a dev box that signs sessions
+    with the shipped key. Local checkouts set ``local`` in ``.env`` (it is in
+    ``.env.example``); CI and ``scripts/up.sh`` set it too."""
     log_level: str = "INFO"
 
     database_url: str = "postgresql+psycopg://autune:autune@localhost:5432/autune"
@@ -72,7 +82,8 @@ class Settings(BaseSettings):
         if self.env != "local" and self.secret_key.startswith("local-development-only"):
             raise ValueError(
                 f"AUTUNE_SECRET_KEY still holds the development default in env={self.env}. "
-                'Generate one: python -c "import secrets; print(secrets.token_urlsafe(32))"'
+                'Generate one: python -c "import secrets; print(secrets.token_urlsafe(32))".'
+                + _LOCAL_HINT
             )
         return self
 
@@ -87,7 +98,8 @@ class Settings(BaseSettings):
             raise ValueError(
                 f"AUTUNE_ENCRYPTION_KEY is not set in env={self.env}; integration "
                 "credentials cannot be stored. Generate one: python -c "
-                '"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"'
+                '"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())".'
+                + _LOCAL_HINT
             )
         return self
 

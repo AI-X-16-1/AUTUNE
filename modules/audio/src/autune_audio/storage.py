@@ -226,6 +226,55 @@ def adopt(path: Path) -> Iterator[Recording]:
             raise failure
 
 
+def _private_directory(directory: Path) -> None:
+    """Make the scratch directory, owner-only, and say so when it already is not.
+
+    The recordings themselves are already unreadable by anyone else --
+    ``NamedTemporaryFile`` creates at ``0600``. What the directory's mode
+    decides is whether another account on the machine can *list* it: the job
+    ids, the file sizes, the times. Not what was said in a meeting, but who
+    uploaded a meeting, when, and how long it ran (#351).
+
+    **Created at ``0700``.** ``mode`` is applied only when the directory is
+    made, and umask can only clear bits, never set them, so a directory this
+    call creates is owner-only on any umask.
+
+    **An existing directory keeps its mode, and gets a warning instead.**
+    Two ways to be wrong here and this is neither:
+
+    - ``chmod``-ing it would tighten a directory somebody else may own.
+      ``AUTUNE_AUDIO_TEMP_DIR`` defaults to ``/tmp/autune-audio`` but nothing
+      stops it being ``/tmp``, and ``chmod 0700 /tmp`` breaks the machine.
+      ``_reject_persistent`` refuses a directory a recording could *survive*
+      in; it does not promise we own this one.
+    - Refusing to start would fail every upload on every machine that has run
+      this before today, over a directory listing.
+
+    So it is said once, loudly, naming the variable and the remedy. Both
+    processes that write here run as the same user -- ``scripts/up.sh`` starts
+    the API and the worker in one shell, and there is no container image for
+    either -- so ``0700`` costs the handover nothing.
+    """
+    try:
+        directory.mkdir(parents=True, mode=0o700)
+        return
+    except FileExistsError:
+        pass
+
+    mode = directory.stat().st_mode & 0o777
+    if mode & 0o077:
+        log.warning(
+            "audio_temp_dir_is_listable",
+            mode=f"{mode:04o}",
+            hint=(
+                "AUTUNE_AUDIO_TEMP_DIR is readable by other accounts on this "
+                "machine. The recordings are 0600, so their contents are not "
+                "exposed, but their names, sizes and times are. Run "
+                "`chmod 700` on it, or point the variable at a new directory."
+            ),
+        )
+
+
 def _new_temp_file(*, suffix: str, settings: AudioSettings | None) -> Recording:
     """Reserve a path for a recording, refusing anywhere it could survive.
 
@@ -237,7 +286,7 @@ def _new_temp_file(*, suffix: str, settings: AudioSettings | None) -> Recording:
     settings = settings or get_settings()
     directory = Path(settings.temp_dir)
     _reject_persistent(directory)
-    directory.mkdir(parents=True, exist_ok=True)
+    _private_directory(directory)
 
     with NamedTemporaryFile(dir=directory, suffix=suffix, delete=False) as handle:
         return Recording(path=Path(handle.name))
