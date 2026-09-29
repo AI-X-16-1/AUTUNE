@@ -14,6 +14,9 @@ EXTRACTION_COMPLETED: Final = "autune.extraction.completed"
 GAP_COMPLETED: Final = "autune.gap.completed"
 CONTEXT_COMPLETED: Final = "autune.context.completed"
 INTELLIGENCE_COMPLETED: Final = "autune.intelligence.completed"
+EXTRACTION_AGENDA_CHANGED: Final = "autune.extraction.agenda_changed"
+"""B -> D. A team's open Jira issues changed; the payload is a ``TeamAgenda``.
+About a team, not a meeting, so it is outside the per-meeting pipeline (#436)."""
 
 EVENTS: Final = (
     TRANSCRIPT_READY,
@@ -21,6 +24,7 @@ EVENTS: Final = (
     GAP_COMPLETED,
     CONTEXT_COMPLETED,
     INTELLIGENCE_COMPLETED,
+    EXTRACTION_AGENDA_CHANGED,
 )
 """Every event the pipeline publishes.
 

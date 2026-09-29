@@ -14,7 +14,12 @@ from datetime import UTC, datetime, timedelta
 from celery import shared_task
 from sqlalchemy.orm import Session
 
-from autune_contracts import EXTRACTION_COMPLETED, TranscriptReady, validate_major_version
+from autune_contracts import (
+    EXTRACTION_AGENDA_CHANGED,
+    EXTRACTION_COMPLETED,
+    TranscriptReady,
+    validate_major_version,
+)
 from autune_core import (
     Meeting,
     PrivacyViolationError,
@@ -446,3 +451,26 @@ def sync_decision_after_confirmation(decision_id: str) -> None:
         log.warning(
             "extraction_notion_decision_sync_blocked_by_privacy_guard", decision_id=decision_id
         )
+
+
+@shared_task(name="autune.extraction.periodic.publish_team_agendas")
+@periodic(timedelta(minutes=5))
+def publish_team_agendas() -> None:
+    """Every five minutes, each team's open Jira issues as one ``TeamAgenda``
+    (#436), for the brief D sends ten minutes before a meeting.
+
+    Periodic rather than on each edit: the board's edits run in the API
+    process, which has no Celery app to publish from (#170), and a snapshot
+    that is republished cannot be lost the way a single change event can. A
+    team whose last issue closed still gets its now-empty snapshot, so D does
+    not keep showing it. Only ids are logged; the titles are meeting content.
+    """
+    now = datetime.now(UTC)
+    with session_scope() as session:
+        agendas = [
+            service.team_agenda(session, team_id, now=now)
+            for team_id in service.teams_with_jira_issues(session)
+        ]
+    for agenda in agendas:
+        publish(EXTRACTION_AGENDA_CHANGED, agenda.model_dump(mode="json"))
+        log.info("extraction_agenda_published", team_id=agenda.team_id, issues=len(agenda.issues))

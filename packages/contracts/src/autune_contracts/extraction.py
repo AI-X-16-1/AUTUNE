@@ -1,12 +1,15 @@
-"""B -> E. Classifications, action items, and unresolved agreement."""
+"""B -> E. Classifications, action items, and unresolved agreement.
+
+B -> D. The Jira issues a team has open, for the pre-meeting brief (#436).
+"""
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 
 from pydantic import Field, model_validator
 
-from ._base import ContractModel, Payload
+from ._base import ContractModel, Payload, TeamPayload
 from .enums import ActionStatus, ExternalSystem, UtteranceKind
 
 
@@ -129,3 +132,36 @@ class ExtractionResult(Payload):
     )
     classifications: list[Classification] = Field(default_factory=list)
     ambiguous_agreements: list[AmbiguousAgreement] = Field(default_factory=list)
+
+
+JIRA_ISSUE_URL = r"^https://[A-Za-z0-9.-]+/browse/[A-Z][A-Z0-9_]*-[0-9]+$"
+"""An issue's browse link on a Jira site: https, a host, ``/browse/KEY-12``.
+
+A consumer puts ``url`` in an ``href`` (D's brief panel does), so anything but
+this shape -- a ``javascript:`` URL above all -- is refused at validation rather
+than trusted to every renderer."""
+
+
+class AgendaIssue(ContractModel):
+    """One open Jira issue a team's meetings may take up.
+
+    What a brief line needs and nothing else: no assignee, no description body.
+    """
+
+    title: str = Field(min_length=1, description="The issue's summary: masked item text.")
+    key: str | None = Field(default=None, pattern=r"^[A-Z][A-Z0-9_]*-[0-9]+$")
+    status: str | None = Field(default=None, description="A display name, e.g. 진행 중.")
+    url: str | None = Field(default=None, pattern=JIRA_ISSUE_URL)
+
+
+class TeamAgenda(TeamPayload):
+    """Every open issue made from the team's action items, as of ``as_of`` (#436).
+
+    A snapshot, not a change: each one replaces the last, and an empty
+    ``issues`` means the team has none open. Events can arrive out of order, so a
+    consumer keeps the one with the latest ``as_of``. The producer decides the
+    order (most pressing first) and caps the list; a consumer shows the head.
+    """
+
+    as_of: datetime
+    issues: list[AgendaIssue] = Field(default_factory=list)
