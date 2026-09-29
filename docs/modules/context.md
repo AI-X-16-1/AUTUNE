@@ -146,6 +146,9 @@ Rules:
   `torch` and `transformers`, which live in the `local-models` optional
   dependency group and are used only for local development, CI-free runs, and
   evaluation. The worker image runs the `*_http` implementations.
+  `scripts/up.sh` runs the embedder and re-ranker this way, and the NLI step
+  too under `--real-models`; the fakes are not a lighter demo of this module —
+  the fake embedder is a hash of the text, so it links next to nothing.
 - **`Fake*` implementations** back unit tests; integration and pipeline tests
   select them with `AUTUNE_CONTEXT_*_IMPL=fake`.
 
