@@ -177,8 +177,13 @@ class XGBoostMisalignmentPredictor:
         self._model = model
         self.model_version = MODEL_VERSION
         self.fitted_at = fitted_at
-        """When this instance was fit. Present only on a predictor fit from
-        history; ``eval`` reads it to decide that a holdout is needed."""
+        """When this instance was fit. Reported in the
+        ``misalignment_predictor_fitted`` log line, which is where the fit time
+        went when it came out of ``model_version``. Nothing reads it to decide
+        whether a holdout is needed -- ``eval`` asks
+        ``registry.predictor_fits_from_history`` about the configured
+        implementation instead, so an unfitted predictor needs no such
+        attribute."""
         self.training_size = training_size
 
     @classmethod

@@ -47,7 +47,12 @@ def _examples(n: int, *, oldest_days: int, newest_days: int) -> list[LabeledExam
 
 
 class _Stub:
-    """Stands in for a predictor; `fitted_at` marks one fit from history."""
+    """Stands in for a predictor.
+
+    `fitted` is what `predictor_fits_from_history` returns below -- that is what
+    `eval` asks. `fitted_at` rides along only because a real fitted predictor
+    carries it.
+    """
 
     def __init__(self, version: str, *, fitted: bool) -> None:
         self.model_version = version
