@@ -7,11 +7,20 @@ a later meeting within ``MISALIGNMENT_HORIZON_DAYS``: some later meeting's
 anything by hand. A meeting is labeled only once the horizon has fully passed
 — before that, "no reversal yet" is not "no reversal".
 
-A meeting whose horizon contains a later meeting with no measured lineage is
-not labeled at all: D publishes without B's decisions when B times out, and a
-reversal in such a meeting would be invisible, so "negative" would assert more
-than the payload can show. A meeting already seen to be reversed stays
-positive.
+A meeting whose horizon contains a later meeting that could not have shown a
+reversal is not labeled at all, because "negative" would assert more than
+anything looked at. Two things make a later meeting unable to show one, and they
+are counted apart in the blind-spot log because they are fixed in different
+places:
+
+- Its lineage was measured and came back without B's decisions — D publishes
+  without them when B times out.
+- E never aggregated it, so nothing was measured at all: the upload is still in
+  flight, the payloads are staged, or module A failed. That last one never
+  resolves on its own.
+
+A meeting already seen to be reversed stays positive; a blind spot cannot unmake
+a reversal that was measured.
 
 Known blind spot: a decision modified in one later meeting and reversed in the
 next names the *modifying* meeting as ``previous_meeting_id``, so the original
@@ -28,12 +37,14 @@ cannot drift apart. Nothing here is written anywhere.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from typing import Any
 
 import sqlalchemy as sa
 from pydantic import ValidationError
+from sqlalchemy import Row
 from sqlalchemy.orm import Session
 
 from autune_contracts import ChangeType, ContextLinks, ExtractionResult, GapReport
@@ -134,6 +145,46 @@ def _parse[T: (ExtractionResult, GapReport, ContextLinks)](
         return None
 
 
+def _unvisited_meetings(
+    session: Session, rows: Sequence[Row[Any]], *, since: datetime, now: datetime
+) -> list[MeetingPoint]:
+    """Meetings of the same teams that the labeling query above never saw.
+
+    A reversal is only visible where E aggregated the meeting that carried it,
+    so a meeting missing from that query is a blind spot in the strongest sense:
+    not "lineage was measured and came back empty" but "nothing was measured".
+    The meeting before it cannot be called negative on that basis. #445.
+
+    Anything absent counts, rather than only what
+    ``aggregated_at IS NOT NULL`` excludes: the query also inner-joins
+    ``intel_scores``, so a meeting aggregated without a quality score is just as
+    invisible. Defining this as "not in ``rows``" cannot drift from whatever that
+    query filters on next.
+
+    Teams are limited to those the query did return — a team with nothing
+    aggregated has no label to withhold, so scanning it buys nothing.
+    ``created_at`` stands in for a missing ``started_at`` the way
+    ``first_seen_at`` does above, so a meeting that was never scheduled still
+    lands somewhere in time instead of being skipped.
+    """
+    teams = {team_id for _, team_id, _, _ in rows}
+    if not teams:
+        return []
+    visited = {completion.meeting_id for completion, _, _, _ in rows}
+    at_column = sa.func.coalesce(Meeting.started_at, Meeting.created_at)
+    return [
+        MeetingPoint(meeting_id=mid, team_id=team_id, at=at)
+        for mid, team_id, at in session.execute(
+            sa.select(Meeting.id, Meeting.team_id, at_column).where(
+                Meeting.team_id.in_(teams),
+                at_column >= since,
+                at_column <= now,
+            )
+        )
+        if mid not in visited
+    ]
+
+
 def labeled_examples(
     session: Session,
     *,
@@ -178,12 +229,23 @@ def labeled_examples(
                 if c.change_type == ChangeType.REVERSED and c.previous_meeting_id
             )
 
+    unmeasured_lineage = len(unmeasured)
+    unvisited = _unvisited_meetings(session, rows, since=since, now=now)
+    unmeasured.extend(unvisited)
+
     labels = reversal_labels(points, reversals, unmeasured=unmeasured, now=now, horizon=horizon)
     blocked = sum(1 for p in points if p.at + horizon <= now and p.meeting_id not in labels)
     if blocked:
-        # Otherwise "0 labeled meetings" reads as "history is too young" when it
-        # is really B not reaching D.
-        log.info("intelligence_history_labels_blocked_by_blind_spot", meetings=blocked)
+        # Otherwise "0 labeled meetings" reads as "history is too young". The two
+        # causes are counted apart because they are fixed in different places: an
+        # unmeasured lineage is B not reaching D, an unaggregated meeting is a
+        # pipeline that stalled or failed before E ever saw it.
+        log.info(
+            "intelligence_history_labels_blocked_by_blind_spot",
+            meetings=blocked,
+            unmeasured_lineage=unmeasured_lineage,
+            unaggregated=len(unvisited),
+        )
     if not labels:
         return []
 
