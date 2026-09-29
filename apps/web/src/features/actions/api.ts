@@ -136,3 +136,15 @@ export const deleteDecision = (id: string) => withoutBody(`/decisions/${encodeUR
 /** Re-push this meeting's items to Notion. */
 export const syncResults = (meetingId: string) =>
   api.extraction<void>(`/results/${meetingId}/sync`, { method: "POST" });
+
+/**
+ * Put every confirmed item of the meeting's team into its Jira project -- right
+ * after a project is chosen, so a project replacing a deleted one holds
+ * everything (#458).
+ */
+export const backfillJira = (meetingId: string) =>
+  api.extraction<{ synced: number; failed: number }>(
+    `/jira/backfill?meeting_id=${encodeURIComponent(meetingId)}`,
+    { method: "POST" },
+  );
+

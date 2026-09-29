@@ -210,7 +210,7 @@ def test_the_task_uses_the_teams_fresh_access_and_chosen_project(
 
     fake = Closable()
     monkeypatch.setattr(
-        tasks, "jira_access", lambda team: JiraAccess("acc-token", "cloud-1", "AUT")
+        tasks, "jira_access", lambda team, **kw: JiraAccess("acc-token", "cloud-1", "AUT")
     )
 
     def for_cloud(token: str, cloud: str) -> FakeJira:
@@ -230,7 +230,7 @@ def test_the_task_uses_the_teams_fresh_access_and_chosen_project(
 def test_a_team_not_connected_or_without_a_project_is_skipped(
     wired: Session, monkeypatch: pytest.MonkeyPatch, access: JiraAccess | None
 ) -> None:
-    monkeypatch.setattr(tasks, "jira_access", lambda team: access)
+    monkeypatch.setattr(tasks, "jira_access", lambda team, **kw: access)
     tasks.sync_action_item_jira(item(wired).id)
     assert wired.scalars(select(ExtExternalRef)).all() == []
 
@@ -275,10 +275,72 @@ def test_an_item_that_never_became_an_issue_closes_nothing(session: Session) -> 
 def test_an_unreachable_jira_never_blocks_a_deletion(
     wired: Session, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    def refused(team: str) -> None:
+    def refused(team: str, **kw: object) -> None:
         raise JiraReconnectRequiredError("refused")
 
     monkeypatch.setattr(tasks, "close_jira_issue", CLOSE_JIRA_ISSUE)
     monkeypatch.setattr(tasks, "jira_access", refused)
 
     tasks.close_jira_issue(item(wired).id)  # must not raise
+
+
+# --- a new project gets everything back (#458) ---------------------------------------
+
+
+def test_choosing_a_new_project_brings_every_confirmed_item_back(
+    wired: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The old project was deleted with its issues: every confirmed item is
+    made again in the new one; unconfirmed items stay in Autune."""
+
+    class Closable(FakeJira):
+        def close(self) -> None:
+            pass
+
+    fake = Closable()
+    kept = item(wired, description="이미 보냈던 작업")
+    wired.add(
+        ExtExternalRef(action_item_id=kept.id, system=JIRA, meeting_id=MEETING, external_id="OLD-1")
+    )
+    never_sent = item(wired, description="보내지 못했던 작업", status="done")
+    item(wired, description="확인 대기", status="needs_confirmation")
+    wired.flush()
+    monkeypatch.setattr(
+        tasks, "jira_access", lambda team, **kw: JiraAccess("acc-token", "cloud-1", "NEW")
+    )
+    monkeypatch.setattr(tasks.JiraClient, "for_cloud", staticmethod(lambda t, c: fake))
+
+    counts = tasks.backfill_jira("team_1")
+
+    assert counts == {"synced": 2, "failed": 0}
+    assert sorted(t["summary"] for t in fake.tasks.values()) == [
+        "보내지 못했던 작업",
+        "이미 보냈던 작업",
+    ]
+    assert all(t["project"] == "NEW" for t in fake.tasks.values())
+    refs = {r.action_item_id: r.external_id for r in wired.scalars(select(ExtExternalRef))}
+    assert refs[kept.id].startswith("NEW-")
+    assert refs[never_sent.id].startswith("NEW-")
+    assert fake.categories[refs[never_sent.id]] == "done"
+
+
+def test_no_project_chosen_backfills_nothing(
+    wired: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    item(wired)
+    monkeypatch.setattr(tasks, "jira_access", lambda team, **kw: JiraAccess("t", "cloud-1", None))
+    assert tasks.backfill_jira("team_1") == {"synced": 0, "failed": 0}
+
+
+def test_the_sync_task_checks_the_project_still_exists(
+    wired: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    asked: list[dict[str, object]] = []
+
+    def access(team: str, **kw: object) -> None:
+        asked.append(kw)
+        return None
+
+    monkeypatch.setattr(tasks, "jira_access", access)
+    tasks.sync_action_item_jira(item(wired).id)
+    assert asked == [{"check_project": True}]

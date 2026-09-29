@@ -134,6 +134,8 @@ export interface JiraConnection {
   needs_reconnect?: boolean;
   site_name?: string | null;
   project_key?: string | null;
+  /** The key of a chosen project that has since been deleted in Jira. */
+  project_missing?: string | null;
   projects?: { key: string; name: string }[];
 }
 

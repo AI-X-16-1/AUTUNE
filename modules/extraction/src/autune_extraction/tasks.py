@@ -12,6 +12,7 @@ from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 
 from celery import shared_task
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from autune_contracts import (
@@ -21,6 +22,7 @@ from autune_contracts import (
     TranscriptReady,
     validate_major_version,
 )
+from autune_contracts.enums import ActionStatus
 from autune_core import (
     AutuneError,
     Meeting,
@@ -280,7 +282,9 @@ def sync_action_item_jira(action_item_id: str) -> None:
         meeting = session.get(Meeting, item.meeting_id) if item is not None else None
         if item is None or meeting is None:
             return
-        access = jira_access(meeting.team_id)
+        # ``check_project``: a project deleted in Jira comes back as no project,
+        # recorded for the screen to ask for a new one (#458).
+        access = jira_access(meeting.team_id, check_project=True)
         if access is None or not access.project_key:
             log.info("extraction_jira_not_connected", action_item_id=action_item_id)
             return
@@ -434,6 +438,59 @@ def _pull_one(user_id: str) -> list[str]:
             .on_conflict_do_update(index_elements=["user_id"], set_={"polled_at": started})
         )
         return moved
+
+
+def backfill_jira(team_id: str) -> dict[str, int]:
+    """Every confirmed item of the team into its Jira project -- after a project
+    is chosen, including a new one chosen because the old was deleted (#458).
+
+    Each item goes through ``sync_action_item_to_jira``: an issue that still
+    exists is rewritten, one that went with a deleted project answers 404 and
+    is made again in the chosen project, one never sent is created. One access
+    token for the run; one item's failure is counted and does not stop the rest.
+    """
+    counts = {"synced": 0, "failed": 0}
+    access = jira_access(team_id, check_project=True)
+    if access is None or not access.project_key:
+        return counts
+    with session_scope() as session:
+        config = load_integration(session, team_id, jira_sync.JIRA)
+        site_url = config.config.get("site_url") if config is not None else None
+        item_ids = list(
+            session.scalars(
+                select(ExtActionItem.id)
+                .join(Meeting, Meeting.id == ExtActionItem.meeting_id)
+                .where(
+                    Meeting.team_id == team_id,
+                    ExtActionItem.status != ActionStatus.NEEDS_CONFIRMATION.value,
+                )
+                .order_by(ExtActionItem.id)
+            )
+        )
+    client = JiraClient.for_cloud(access.access_token, access.cloud_id)
+    try:
+        for action_item_id in item_ids:
+            try:
+                with session_scope() as session:
+                    jira_sync.sync_action_item_to_jira(
+                        session,
+                        client,
+                        action_item_id=action_item_id,
+                        project_key=access.project_key,
+                        site_url=site_url,
+                    )
+                counts["synced"] += 1
+            except Exception as exc:  # noqa: BLE001 -- one item's failure is its own
+                counts["failed"] += 1
+                log.warning(
+                    "extraction_jira_backfill_item_failed",
+                    action_item_id=action_item_id,
+                    error=type(exc).__name__,
+                )
+    finally:
+        client.close()
+    log.info("extraction_jira_backfilled", team_id=team_id, **counts)
+    return counts
 
 
 def close_jira_issue(action_item_id: str) -> None:

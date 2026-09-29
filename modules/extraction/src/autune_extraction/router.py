@@ -20,11 +20,12 @@ from datetime import date
 from typing import Annotated
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Query, status
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from autune_contracts.enums import ActionStatus
 from autune_contracts.extraction import ExtractionResult
-from autune_core import CurrentUser, get_session
+from autune_core import CurrentUser, Meeting, get_session
 from autune_core.settings import get_settings as get_core_settings
 
 from . import service, tasks
@@ -242,3 +243,15 @@ def delete_decision(decision_id: str, session: SessionDep, reader: CurrentUser) 
     decision = service.readable_decision(session, decision_id, reader)
     service.delete_decision(session, decision)
     session.commit()
+
+
+@router.post("/jira/backfill")
+def backfill_jira(meeting_id: str, session: SessionDep, reader: CurrentUser) -> dict[str, int]:
+    """Put every confirmed item of this meeting's team into its Jira project now
+    -- what the screen calls right after a project is chosen, so a project that
+    replaces a deleted one holds everything the old one did (#458). Members of
+    the team only: anyone else gets the 404 an unknown meeting gets (#189)."""
+    service.require_readable_meeting(session, meeting_id, reader)
+    team_id = session.scalar(select(Meeting.team_id).where(Meeting.id == meeting_id))
+    assert team_id is not None  # the check above found it
+    return tasks.backfill_jira(team_id)
