@@ -223,7 +223,7 @@ Where that token comes from, and the two ways to give it to the browser:
 | `AUTUNE_INTELLIGENCE_GAP_CLASSIFIER_IMPL` | E | `local` (default) · `fake`. **No `external`, no `hosted`** — see below |
 | `AUTUNE_INTELLIGENCE_GAP_CLASSIFIER_BACKBONE` | E | Sentence-embedding backbone SetFit fits its few-shot head onto. Default `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` |
 | `AUTUNE_INTELLIGENCE_WARM_MODELS_ON_WORKER_INIT` | E | `true` only on workers consuming aggregation tasks — builds the gap classifier and the misalignment predictor at startup. Default `false` |
-| `AUTUNE_INTELLIGENCE_MISALIGNMENT_PREDICTOR_IMPL` | E | `heuristic` (default) · `local` (XGBoost fit on labeled history, heuristic until there is enough). No external option |
+| `AUTUNE_INTELLIGENCE_MISALIGNMENT_PREDICTOR_IMPL` | E | `heuristic` (default) · `local` (XGBoost fit on labeled history, heuristic until there is enough). No external option. Making `local` the default is gated on #445 and #450 — see `../modules/intelligence.md` |
 | `AUTUNE_INTELLIGENCE_MISALIGNMENT_REFIT_HOURS` | E | How long a fit (or fallback) is kept before `local` refits. Default `24` |
 
 Notion and Calendar credentials are **not** environment variables. Each
@@ -374,6 +374,21 @@ uv sync --package autune-intelligence --extra local-models
 
 Without the extra the classifier raises a `RuntimeError` naming this command,
 the same shape B's and C's local implementations use.
+
+The misalignment predictor's `local` implementation
+(`AUTUNE_INTELLIGENCE_MISALIGNMENT_PREDICTOR_IMPL`) comes from the same extra, and
+on macOS it needs one thing more. XGBoost's macOS wheel links
+`@rpath/libomp.dylib` without bundling it, so the install succeeds and
+`import xgboost` then fails:
+
+```bash
+brew install libomp   # macOS only, and only for the predictor
+```
+
+That failure is an `XGBoostError`, not an `ImportError`, so it passes straight
+through the check that would otherwise name the extra — the message you get is
+XGBoost's own and it names the library. Nothing else in `local-models` needs
+OpenMP, so a Mac running only the gap classifier can skip this.
 
 ## Secrets
 
