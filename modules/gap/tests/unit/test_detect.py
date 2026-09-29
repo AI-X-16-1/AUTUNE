@@ -38,6 +38,7 @@ def item(key: str = "success_criteria", weight: float = 0.9, **kwargs: object) -
         keywords=tuple(kwargs.get("keywords", ("지표", "성공"))),  # type: ignore[arg-type]
         question="무엇으로 측정합니까?",
         question_about="{topic}의 성공 기준은 무엇으로 측정합니까?",
+        relations=tuple(kwargs.get("relations", ())),  # type: ignore[arg-type]
     )
 
 
@@ -59,9 +60,14 @@ def topic(
     label: str = "핵심 지표",
     centrality: float = 1.0,
     silent_share: float | None = 0.0,
+    relations: frozenset[str] = frozenset(),
 ) -> detect.TopicView:
     return detect.TopicView(
-        id=topic_id, label=label, centrality=centrality, silent_share=silent_share
+        id=topic_id,
+        label=label,
+        centrality=centrality,
+        silent_share=silent_share,
+        relations=relations,
     )
 
 
@@ -116,6 +122,50 @@ def test_matches_come_most_central_first(thresholds: detect.Thresholds) -> None:
     )
 
     assert [found.id for found in matched] == ["topic_b", "topic_a"]
+
+
+def test_a_topic_an_items_relation_touches_matches_it(thresholds: detect.Thresholds) -> None:
+    """ "정렬 로직" names no dependency; the meeting saying it waits on something
+    does. Covered, because the edge is graph evidence and the topic is central."""
+    dependency = item("dependency", keywords=("의존",), relations=("depends_on",))
+    waits = topic(label="정렬 로직", relations=frozenset({"depends_on"}))
+
+    assert detect.match(dependency, [waits]) == [waits]
+    assert detect.compare(one_item_template(dependency), [waits], SILENT, thresholds) == []
+
+
+def test_a_relation_the_item_does_not_name_matches_nothing(
+    thresholds: detect.Thresholds,
+) -> None:
+    """Two alternatives weighed against each other are not a dependency."""
+    dependency = item("dependency", keywords=("의존",), relations=("depends_on",))
+    weighed = topic(label="인기순 정렬", relations=frozenset({"alternative_to"}))
+
+    assert detect.match(dependency, [weighed]) == []
+
+
+def test_an_item_with_no_relations_is_matched_by_keywords_alone() -> None:
+    """The default, and every item but dependency ships with it."""
+    waits = topic(label="정렬 로직", relations=frozenset({"depends_on"}))
+
+    assert detect.match(item(keywords=("지표",)), [waits]) == []
+
+
+def test_a_related_topic_on_the_edge_of_the_graph_is_partial(
+    thresholds: detect.Thresholds,
+) -> None:
+    """A relation match is ranked like a keyword match, not above it: a
+    dependency stated about a topic the meeting barely touched is thin."""
+    dependency = item("dependency", keywords=("의존",), relations=("depends_on",))
+    findings = detect.compare(
+        one_item_template(dependency),
+        [topic(label="정렬 로직", centrality=0.1, relations=frozenset({"depends_on"}))],
+        SILENT,
+        thresholds,
+    )
+
+    assert [finding.coverage for finding in findings] == [detect.Coverage.PARTIAL]
+    assert findings[0].question == "정렬 로직의 성공 기준은 무엇으로 측정합니까?"
 
 
 # --- what is deliberately not a rule ----------------------------------------
