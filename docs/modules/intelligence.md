@@ -280,9 +280,10 @@ Known blind spots in the label itself:
 
 - A decision modified and then reversed in a third meeting names the modifying
   meeting, so the original stays negative.
-- A later meeting E has not aggregated is invisible to `labeled_examples`
-  entirely, so it cannot withhold the earlier meeting's label the way a measured
-  one with a missing extraction source does — #445.
+- A later meeting E has not aggregated withholds the earlier meeting's label
+  the same way a measured one with a missing extraction source does, but the two
+  need different fixes, so the blind-spot log counts them apart
+  (`unmeasured_lineage` and `unaggregated`).
 
 ## Privacy notes
 
