@@ -19,11 +19,16 @@ from autune_core import Base, JiraAccess, Meeting, TeamMember, User, Utterance
 from autune_core.integrations_config import IntegrationConfig
 from autune_core.oauth.atlassian import JiraReconnectRequiredError
 from autune_extraction import tasks
-from autune_extraction.jira_sync import JIRA, sync_action_item_to_jira
+from autune_extraction.jira_sync import (
+    DELETED_NOTE,
+    JIRA,
+    close_for_deleted_item,
+    sync_action_item_to_jira,
+)
 from autune_extraction.models import ExtActionItem, ExtActionItemSource, ExtExternalRef
 from autune_integrations.fakes import FakeJira
 
-from .conftest import SYNC_ACTION_ITEM_JIRA
+from .conftest import CLOSE_JIRA_ISSUE, SYNC_ACTION_ITEM_JIRA
 
 MEETING, ME, GONE = "mtg_1", "user_me", "user_gone"
 SAID = "제가 금요일까지 스펙 초안 공유하겠습니다"
@@ -243,3 +248,37 @@ def test_a_refused_grant_never_fails_the_confirmation(monkeypatch: pytest.Monkey
 
 def test_the_jira_task_does_not_retry_itself() -> None:
     assert not getattr(SYNC_ACTION_ITEM_JIRA, "autoretry_for", ())
+
+
+# --- deleting an item closes its issue (#458, option C) -----------------------------
+
+
+def test_deleting_an_item_closes_its_issue_with_a_note(session: Session) -> None:
+    jira = FakeJira()
+    row = item(session)
+    sync(session, jira, row)
+
+    assert close_for_deleted_item(session, jira, action_item_id=row.id) is True
+
+    assert jira.categories["AUT-1"] == "done"
+    assert jira.comments["AUT-1"] == [DELETED_NOTE]
+    assert "AUT-1" in jira.tasks  # closed, not deleted
+
+
+def test_an_item_that_never_became_an_issue_closes_nothing(session: Session) -> None:
+    jira = FakeJira()
+    row = item(session, status="needs_confirmation")
+    assert close_for_deleted_item(session, jira, action_item_id=row.id) is False
+    assert jira.comments == {}
+
+
+def test_an_unreachable_jira_never_blocks_a_deletion(
+    wired: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def refused(team: str) -> None:
+        raise JiraReconnectRequiredError("refused")
+
+    monkeypatch.setattr(tasks, "close_jira_issue", CLOSE_JIRA_ISSUE)
+    monkeypatch.setattr(tasks, "jira_access", refused)
+
+    tasks.close_jira_issue(item(wired).id)  # must not raise

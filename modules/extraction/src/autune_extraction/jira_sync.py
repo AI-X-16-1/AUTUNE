@@ -20,8 +20,13 @@ person with no account there, leaves the issue unassigned rather than guessed.
 **One issue per item**, claimed in ``ext_external_refs`` (``system = 'jira'``)
 before it is created -- the Notion page's pattern -- so a confirmation
 delivered twice makes one issue. An issue deleted in Jira is made again on the
-next edit. Deleting the item in Autune leaves its issue: the team's Jira is a
-record the team works in, as its Notion is.
+next edit.
+
+**Deleting the item in Autune closes its issue, it does not delete it**
+(``close_for_deleted_item``): the issue moves to a ``done`` status and gets a
+comment saying Autune deleted the item. A wrongly extracted item should not
+sit in the team's open work, and the team may have commented or worked on the
+issue, which a delete would take with it (decided with the user, #458).
 
 Status moves go through whatever transition the team's workflow offers into
 that category; a workflow without one leaves the issue where it is.
@@ -78,6 +83,8 @@ class JiraIssues(Protocol):
     ) -> bool: ...
 
     def move_to_category(self, issue_key: str, category: str) -> bool: ...
+
+    def add_comment(self, issue_key: str, text: str) -> None: ...
 
 
 def _assignee_account(session: Session, jira: JiraIssues, item: ExtActionItem) -> str | None:
@@ -152,3 +159,20 @@ def sync_action_item_to_jira(
     if category is not None and not jira.move_to_category(str(ref.external_id), category):
         log.info("extraction_jira_no_transition", action_item_id=item.id, category=category)
     return ref
+
+
+DELETED_NOTE = "Autune에서 삭제된 액션 아이템입니다. 이슈 기록은 남기고 닫았습니다."
+
+
+def close_for_deleted_item(session: Session, jira: JiraIssues, *, action_item_id: str) -> bool:
+    """Before the board deletes an item: close its issue with a note. ``False``
+    when the item never became an issue. The ref row goes with the item."""
+    ref = session.get(ExtExternalRef, (action_item_id, JIRA))
+    if ref is None or not ref.external_id:
+        return False
+    key = str(ref.external_id)
+    if not jira.move_to_category(key, "done"):
+        log.info("extraction_jira_no_transition", action_item_id=action_item_id, category="done")
+    jira.add_comment(key, DELETED_NOTE)
+    log.info("extraction_jira_closed_with_item", action_item_id=action_item_id)
+    return True

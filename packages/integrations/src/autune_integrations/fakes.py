@@ -135,6 +135,7 @@ class FakeJira:
     """email -> account id; a missing email is someone Jira will not reveal."""
     categories: dict[str, str] = field(default_factory=dict)
     searched: list[str] = field(default_factory=list)
+    comments: dict[str, list[str]] = field(default_factory=dict)
 
     def find_account_id(self, email: str) -> str | None:
         self.searched.append(email)
@@ -174,6 +175,10 @@ class FakeJira:
             return False
         self.tasks[issue_key].update(summary=summary, due=due_date, assignee=assignee_account_id)
         return True
+
+    def add_comment(self, issue_key: str, text: str) -> None:
+        check_outbound({"body": text}, destination="jira")
+        self.comments.setdefault(issue_key, []).append(text)
 
     def move_to_category(self, issue_key: str, category: str) -> bool:
         self.categories[issue_key] = category

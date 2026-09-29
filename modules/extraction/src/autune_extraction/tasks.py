@@ -436,6 +436,30 @@ def _pull_one(user_id: str) -> list[str]:
         return moved
 
 
+def close_jira_issue(action_item_id: str) -> None:
+    """Before the board deletes an item: its Jira issue closed with a note
+    (``jira_sync.close_for_deleted_item``). Runs in the deleting request, best
+    effort -- an unreachable Jira never blocks a deletion."""
+    try:
+        with session_scope() as session:
+            item = session.get(ExtActionItem, action_item_id)
+            meeting = session.get(Meeting, item.meeting_id) if item is not None else None
+            if meeting is None:
+                return
+            access = jira_access(meeting.team_id)
+            if access is None:
+                return
+            client = JiraClient.for_cloud(access.access_token, access.cloud_id)
+            try:
+                jira_sync.close_for_deleted_item(session, client, action_item_id=action_item_id)
+            finally:
+                client.close()
+    except Exception as exc:  # noqa: BLE001 -- a deletion must not fail on Jira
+        log.warning(
+            "extraction_jira_close_failed", action_item_id=action_item_id, error=type(exc).__name__
+        )
+
+
 def remove_calendar_event(action_item_id: str) -> None:
     """Before the board deletes an item: its event off its assignee's calendar
     (``calendar_sync.remove_event``). Runs in the deleting request, best effort

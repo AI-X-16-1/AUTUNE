@@ -132,6 +132,9 @@ class JiraClient(HttpClient):
             "POST", f"/issue/{issue_key}/transitions", json={"transition": {"id": transition_id}}
         )
 
+    def add_comment(self, issue_key: str, text: str) -> None:
+        self.request("POST", f"/issue/{issue_key}/comment", json={"body": _doc(text)})
+
     def move_to_category(self, issue_key: str, category: str) -> bool:
         """Move the issue into a status of ``category`` (``new``,
         ``indeterminate``, ``done``) through whatever transition its workflow
