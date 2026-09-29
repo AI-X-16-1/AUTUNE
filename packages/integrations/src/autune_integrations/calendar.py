@@ -265,9 +265,16 @@ class CalendarClient(HttpClient):
         self, calendar_id: str, event_id: str, summary: str, day: date, *, description: str = ""
     ) -> bool:
         """Move or rename an all-day event. ``False`` when it is gone -- someone
-        deleted it in Calendar -- so the caller can make a new one."""
+        deleted it in Calendar -- so the caller can make a new one.
+
+        **Gone is not only a 404.** Google keeps a deleted event for a while as
+        ``status: "cancelled"`` and accepts a PATCH to it with a 200, which
+        leaves it cancelled; read as success, a task deleted by hand would
+        never come back (lsh2217, review of #441). The body sent does not set
+        ``status``, so the answer's status is still the event's own, and a
+        cancelled one is reported as gone rather than quietly revived."""
         try:
-            self.request(
+            answer = self.request(
                 "PATCH",
                 f"/calendars/{calendar_id}/events/{event_id}",
                 json=_all_day(summary, day, description),
@@ -276,7 +283,7 @@ class CalendarClient(HttpClient):
             if exc.details.get("upstream_status") in (404, 410):
                 return False
             raise
-        return True
+        return answer.get("status") != "cancelled"
 
     def delete_event(self, calendar_id: str, event_id: str) -> None:
         """Delete an event; one already gone (404, or 410 once deleted) is done."""

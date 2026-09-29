@@ -249,3 +249,15 @@ def test_changed_events_asks_google_for_autunes_events_only_and_pages() -> None:
     assert events[0].private == {"autune_item": "act_1"}
     assert events[1].cancelled
     assert events[1].start is None
+
+
+def test_a_patch_to_an_event_deleted_by_hand_reports_it_gone() -> None:
+    """Google answers a PATCH to a recently deleted event with 200 and the event
+    still cancelled -- that is gone, not updated (review of #441)."""
+    c = client(lambda request: httpx.Response(200, json={"id": "evt_1", "status": "cancelled"}))
+    assert c.update_all_day_event("primary", "evt_1", "제목", date(2026, 10, 2)) is False
+
+
+def test_a_patch_to_a_live_event_is_an_update() -> None:
+    c = client(lambda request: httpx.Response(200, json={"id": "evt_1", "status": "confirmed"}))
+    assert c.update_all_day_event("primary", "evt_1", "제목", date(2026, 10, 2)) is True
