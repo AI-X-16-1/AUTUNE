@@ -70,13 +70,87 @@ TARGET = {
 
 
 def test_bs_own_table_is_read_before_the_connection_config(session: Session) -> None:
-    dev_config = IntegrationConfig("notion", TEAM, "t", {"action_db_id": "old-a"})
+    dev_config = IntegrationConfig(
+        "notion", TEAM, "t", {"action_db_id": "old-a", "workspace_id": "ws-1"}
+    )
     assert notion_setup.database_id(session, TEAM, dev_config, "action_db_id") == "old-a"
 
-    notion_setup.save_targets(session, TEAM, TARGET)
+    notion_setup.save_targets(session, TEAM, TARGET, workspace_id="ws-1")
 
     assert notion_setup.database_id(session, TEAM, dev_config, "action_db_id") == "db-a"
-    assert notion_setup.stored_targets(session, TEAM) == TARGET
+    assert notion_setup.stored_targets(session, TEAM, dev_config) == TARGET
+
+
+def test_databases_from_another_workspace_are_not_used(session: Session) -> None:
+    """#467 review: disconnect, connect another workspace -- the old ids are
+    databases the new token cannot see, and every sync would be refused."""
+    notion_setup.save_targets(session, TEAM, TARGET, workspace_id="ws-old")
+    now = IntegrationConfig("notion", TEAM, "t", {"workspace_id": "ws-new"})
+
+    assert notion_setup.database_id(session, TEAM, now, "action_db_id") is None
+    assert notion_setup.stored_targets(session, TEAM, now) == {}
+
+
+def _pages_for(
+    session: Session, monkeypatch: pytest.MonkeyPatch, pages: list[dict] | Exception
+) -> dict[str, Any]:
+    @contextmanager
+    def scope() -> Iterator[Session]:
+        yield session
+
+    class _Client:
+        def __enter__(self) -> _Client:
+            return self
+
+        def __exit__(self, *exc: Any) -> None:
+            pass
+
+    def shared(client: Any) -> list[dict]:
+        if isinstance(pages, Exception):
+            raise pages
+        return pages
+
+    monkeypatch.setattr(notion_connect, "session_scope", scope)
+    monkeypatch.setattr(
+        notion_connect,
+        "load_integration",
+        lambda _s, team, svc: IntegrationConfig("notion", team, "t", {"workspace_id": "ws-1"}),
+    )
+    monkeypatch.setattr(notion_setup, "notion_client", lambda token: _Client())
+    monkeypatch.setattr(notion_setup, "shared_pages", shared)
+    return notion_connect.pages_for(TEAM)
+
+
+def test_a_parent_page_still_shared_keeps_its_target(
+    session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    notion_setup.save_targets(session, TEAM, TARGET, workspace_id="ws-1")
+    answer = _pages_for(session, monkeypatch, [{"id": "page-1", "title": "팀 위키"}])
+    assert answer["target"]["parent_page_id"] == "page-1"
+
+
+def test_a_parent_page_no_longer_shared_asks_for_a_page_again(
+    session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    notion_setup.save_targets(session, TEAM, TARGET, workspace_id="ws-1")
+    answer = _pages_for(session, monkeypatch, [{"id": "page-9", "title": "다른 페이지"}])
+    assert answer["target"] is None
+    assert answer["pages"] == [{"id": "page-9", "title": "다른 페이지"}]
+
+
+def test_a_refused_token_asks_for_a_reconnect_not_a_500(
+    session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    answer = _pages_for(session, monkeypatch, notion_setup.NotionSetupError(401, "unauthorized"))
+    assert answer["needs_reconnect"] is True
+    assert answer["target"] is None
+
+
+def test_notion_being_down_is_still_an_error(
+    session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with pytest.raises(notion_setup.NotionSetupError):
+        _pages_for(session, monkeypatch, notion_setup.NotionSetupError(502, "bad gateway"))
 
 
 def test_setting_up_records_the_databases_then_fills_them(
@@ -117,7 +191,9 @@ def test_setting_up_records_the_databases_then_fills_them(
     monkeypatch.setattr(
         notion_connect,
         "load_integration",
-        lambda _s, team, svc: IntegrationConfig("notion", team, "ntn_token", {}),
+        lambda _s, team, svc: IntegrationConfig(
+            "notion", team, "ntn_token", {"workspace_id": "ws-1"}
+        ),
     )
     monkeypatch.setattr(notion_setup, "notion_client", lambda token: _Client())
     monkeypatch.setattr(notion_setup, "provision_databases", provision)
@@ -133,7 +209,9 @@ def test_setting_up_records_the_databases_then_fills_them(
     result = notion_connect.set_up(TEAM, "page-2")
 
     assert calls == ["provision:page-2:False", "items", "decisions"]  # recorded before filling
-    assert session.get(ExtNotionTarget, TEAM).parent_page_id == "page-2"  # type: ignore[union-attr]
+    row = session.get(ExtNotionTarget, TEAM)
+    assert row is not None and row.parent_page_id == "page-2"
+    assert row.workspace_id == "ws-1"  # the workspace it was made in
     assert result["databases"] == "created"
     assert (result["action_items"]["sent"], result["action_items"]["replaced"]) == (2, 1)
     assert result["decisions"]["sent"] == 1

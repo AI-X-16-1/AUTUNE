@@ -155,6 +155,8 @@ export interface NotionPage {
 
 export interface NotionSetupState {
   connected: boolean;
+  /** Notion refused the stored token: the team connects again. */
+  needs_reconnect?: boolean;
   pages?: NotionPage[];
   target?: { parent_page_id: string; action_db_url: string; decision_db_url: string; minutes_db_url: string } | null;
 }

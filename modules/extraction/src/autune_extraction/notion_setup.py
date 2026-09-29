@@ -195,8 +195,12 @@ def database_id(
     session: Session, team_id: str, config: IntegrationConfig | None, key: str
 ) -> str | None:
     """A team's database id: from B's own ``ext_notion_targets`` (one-click
-    setup), else from the connection's config (the local dev page, #401)."""
-    target = session.get(ExtNotionTarget, team_id)
+    setup), else from the connection's config (the local dev page, #401).
+
+    A target row made in another workspace than the current connection's is
+    not used: after a reconnect elsewhere its ids are databases the new token
+    cannot see, and every sync would be refused (#467 review)."""
+    target = current_target(session, team_id, config)
     if target is not None:
         value = getattr(target, key, None)
         return str(value) if value else None
@@ -204,9 +208,28 @@ def database_id(
     return str(stored) if stored else None
 
 
-def stored_targets(session: Session, team_id: str) -> dict[str, str]:
-    """What ``provision_databases`` should treat as already made for this team."""
+def workspace_of(config: IntegrationConfig | None) -> str | None:
+    value = config.config.get("workspace_id") if config is not None else None
+    return str(value) if value else None
+
+
+def current_target(
+    session: Session, team_id: str, config: IntegrationConfig | None
+) -> ExtNotionTarget | None:
+    """The team's target row, when it belongs to the workspace the team is
+    connected to now."""
     target = session.get(ExtNotionTarget, team_id)
+    if target is None or target.workspace_id != workspace_of(config):
+        return None
+    return target
+
+
+def stored_targets(
+    session: Session, team_id: str, config: IntegrationConfig | None
+) -> dict[str, str]:
+    """What ``provision_databases`` should treat as already made for this team
+    -- nothing from another workspace."""
+    target = current_target(session, team_id, config)
     if target is None:
         return {}
     return {
@@ -217,11 +240,14 @@ def stored_targets(session: Session, team_id: str) -> dict[str, str]:
     }
 
 
-def save_targets(session: Session, team_id: str, config: Mapping[str, str]) -> ExtNotionTarget:
+def save_targets(
+    session: Session, team_id: str, config: Mapping[str, str], *, workspace_id: str | None
+) -> ExtNotionTarget:
     target = session.get(ExtNotionTarget, team_id)
     if target is None:
         target = ExtNotionTarget(team_id=team_id)
         session.add(target)
+    target.workspace_id = workspace_id
     target.parent_page_id = config["parent_page_id"]
     target.action_db_id = config["action_db_id"]
     target.decision_db_id = config["decision_db_id"]

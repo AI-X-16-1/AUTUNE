@@ -668,6 +668,9 @@ class ExtNotionTarget(Base):
     action_db_id: Mapped[str] = mapped_column(String(64), nullable=False)
     decision_db_id: Mapped[str] = mapped_column(String(64), nullable=False)
     minutes_db_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    workspace_id: Mapped[str | None] = mapped_column(String(64))
+    """The Notion workspace these databases live in. A row naming another
+    workspace than the team's current connection is ignored (#467 review)."""
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

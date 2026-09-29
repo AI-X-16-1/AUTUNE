@@ -118,7 +118,19 @@ export function NotionConnect({ meetingId }: { meetingId: string }) {
           Autune에 공유된 페이지가 없습니다. 다시 연결하면서 팀스페이스 페이지를 하나 골라 주세요.
         </span>
       ) : null}
-      {setup && !setup.target && setup.pages && setup.pages.length > 1 ? (
+      {setup?.needs_reconnect ? (
+        <>
+          <span className="text-[var(--color-signal-critical)]" style={meta}>
+            Notion이 연결을 거부했습니다. 다시 연결해 주세요.
+          </span>
+          <Button tone="text" size="compact" onClick={connect}>
+            다시 연결
+          </Button>
+        </>
+      ) : null}
+      {/* Also after a reconnect elsewhere, or once the parent page is no longer
+          shared: the stored databases are not used, and a page is chosen again. */}
+      {setup && !setup.target && setup.pages && setup.pages.length >= 1 ? (
         <label className="flex items-center gap-2 text-[var(--color-ink-muted)]" style={meta}>
           DB를 만들 페이지
           <select disabled={busy} defaultValue="" onChange={(event) => void setUp(event.target.value)}>

@@ -40,14 +40,29 @@ def _urls(target: dict[str, str]) -> dict[str, str]:
 
 def pages_for(team_id: str) -> dict[str, Any]:
     """The pages the team may put Autune's databases under, and where they are
-    now if they are anywhere."""
+    now if they are anywhere.
+
+    ``target`` is ``None`` -- so the screen sets up again or asks for a page --
+    when the stored databases belong to another workspace than the current
+    connection, or their parent page is no longer shared with Autune (#467
+    review). A Notion that refuses the token answers ``needs_reconnect``."""
     with session_scope() as session:
         config = load_integration(session, team_id, NOTION)
-        target = notion_setup.stored_targets(session, team_id)
+        target = notion_setup.stored_targets(session, team_id, config)
     if config is None or not config.secret:
         return {"connected": False}
     with notion_setup.notion_client(config.secret) as client:
-        pages = notion_setup.shared_pages(client)
+        try:
+            pages = notion_setup.shared_pages(client)
+        except notion_setup.NotionSetupError as exc:
+            if 400 <= exc.status_code < 500:
+                log.info(
+                    "extraction_notion_needs_reconnect", team_id=team_id, status=exc.status_code
+                )
+                return {"connected": True, "needs_reconnect": True, "pages": [], "target": None}
+            raise
+    if target and target["parent_page_id"] not in {page["id"] for page in pages}:
+        target = {}
     return {
         "connected": True,
         "pages": pages,
@@ -67,9 +82,13 @@ def set_up(team_id: str, page_id: str) -> dict[str, Any]:
             raise notion_setup.NotionSetupError(409, "Notion is not connected for this team")
         with notion_setup.notion_client(config.secret) as client:
             target, created = notion_setup.provision_databases(
-                client, page_id=page_id, stored=notion_setup.stored_targets(session, team_id)
+                client,
+                page_id=page_id,
+                stored=notion_setup.stored_targets(session, team_id, config),
             )
-        notion_setup.save_targets(session, team_id, target)
+        notion_setup.save_targets(
+            session, team_id, target, workspace_id=notion_setup.workspace_of(config)
+        )
 
     items = notion_backfill.Stats()
     notion_backfill.backfill_action_items(notion_backfill._confirmed_action_items(team_id), items)
