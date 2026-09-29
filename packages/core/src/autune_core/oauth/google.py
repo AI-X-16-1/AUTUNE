@@ -15,6 +15,7 @@ Calendar access (module D, Phase 2) is a separate grant with its own storage.
 
 from __future__ import annotations
 
+import re
 from functools import lru_cache
 from typing import Any
 from urllib.parse import urlencode
@@ -23,7 +24,13 @@ import httpx
 import jwt
 
 from autune_core.errors import AutuneError, PermissionDeniedError
+from autune_core.logging import get_logger
 from autune_core.settings import get_settings
+
+log = get_logger(__name__)
+
+# RFC 6749 section 5.2 error codes are lowercase ASCII with underscores.
+_OAUTH_ERROR = re.compile(r"[a-z_]{1,64}")
 
 AUTHORIZE_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth"
 TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token"
@@ -104,7 +111,15 @@ class GoogleOAuthClient:
 
         if response.status_code != httpx.codes.OK:
             # The body can carry the reason but also the code; keep it out of the
-            # error string, which reaches error tracking.
+            # error string, which reaches error tracking. Log only Google's error
+            # code -- ``invalid_client`` (wrong secret), ``invalid_grant`` (spent or
+            # expired code), ``redirect_uri_mismatch`` -- which names the setting to
+            # fix without repeating anything from the request.
+            log.warning(
+                "auth_google_token_rejected",
+                status=response.status_code,
+                error=_oauth_error(response),
+            )
             raise PermissionDeniedError("Google rejected the authorization code")
 
         id_token = response.json().get("id_token")
@@ -141,6 +156,18 @@ class GoogleOAuthClient:
             name=claims.get("name"),
             picture=claims.get("picture"),
         )
+
+
+def _oauth_error(response: httpx.Response) -> str:
+    """Google's ``error`` field if it is a well-formed OAuth error code, else a
+    placeholder: anything else in that field is not safe to log verbatim."""
+    try:
+        error = response.json().get("error")
+    except ValueError:
+        return "unparseable"
+    if isinstance(error, str) and _OAUTH_ERROR.fullmatch(error):
+        return error
+    return "unrecognised"
 
 
 @lru_cache
