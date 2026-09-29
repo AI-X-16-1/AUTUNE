@@ -47,6 +47,15 @@ BOT_SCOPES = (
 )
 
 
+class SlackChannelUnavailableError(AutuneError):
+    """Neither ``#autune`` nor ``#autune-alerts`` can be used: each name is
+    taken by a channel the bot cannot see or join -- a private one, or an
+    archived one. A person has to invite the bot or free a name."""
+
+    code = "slack_channel_unavailable"
+    status_code = 409
+
+
 @dataclass(frozen=True)
 class SlackInstall:
     access_token: str
@@ -112,7 +121,20 @@ class SlackOAuthClient:
         )
 
     def ensure_channel(self, token: str, name: str) -> SlackChannel:
-        """``#name`` for the team's alerts: made, or joined when it exists."""
+        """``#name`` for the team's alerts: made, or joined when a public one of
+        that name exists. When the name belongs to a channel the bot cannot
+        join -- private or archived, found testing on a real workspace where
+        someone had made a private ``#autune`` -- ``#name-alerts`` is tried the
+        same way before giving up."""
+        for candidate in (name, f"{name}-alerts"):
+            channel = self._make_or_join(token, candidate)
+            if channel is not None:
+                return channel
+        raise SlackChannelUnavailableError(
+            f"#{name} and #{name}-alerts are taken by channels the bot cannot join"
+        )
+
+    def _make_or_join(self, token: str, name: str) -> SlackChannel | None:
         created = self._call(
             "conversations.create",
             data={"name": name},
@@ -125,7 +147,7 @@ class SlackOAuthClient:
             return SlackChannel(str(channel["id"]), str(channel["name"]), created=True)
         existing = self._find_public_channel(token, name)
         if existing is None:
-            raise AutuneError("the channel name is taken but no such channel is visible")
+            return None  # taken by a private or archived channel
         self._call(
             "conversations.join",
             data={"channel": existing},

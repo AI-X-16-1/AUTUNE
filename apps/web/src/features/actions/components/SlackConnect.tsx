@@ -28,9 +28,15 @@ export function SlackConnect({ meetingId }: { meetingId: string }) {
       const url = new URL(window.location.href);
       const result = url.searchParams.get("slack");
       if (result === "connected") setNote("Slack에 연결했습니다. 알림은 이 채널로 갑니다.");
-      else if (result === "failed") setNote("Slack을 연결하지 못했습니다. 다시 시도해 주세요.");
+      else if (result === "failed")
+        setNote(
+          url.searchParams.get("reason") === "slack_channel_unavailable"
+            ? "#autune과 #autune-alerts를 쓸 수 없습니다(비공개나 보관된 채널). Autune 봇을 그 채널에 초대하거나 이름을 비워 주세요."
+            : "Slack을 연결하지 못했습니다. 다시 시도해 주세요.",
+        );
       if (result !== null) {
         url.searchParams.delete("slack");
+        url.searchParams.delete("reason");
         window.history.replaceState(null, "", url.toString());
       }
     });

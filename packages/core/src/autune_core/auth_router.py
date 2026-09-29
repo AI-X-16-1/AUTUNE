@@ -875,7 +875,9 @@ def _finish_slack_connect(
         outcome = "connected"
     except AutuneError as exc:
         log.info("auth_slack_connect_failed", team_id=transaction.team_id, reason=exc.code)
-        outcome = "failed"
+        # Our own error code, never Slack's text: the screen explains the one
+        # case a person can fix (a private #autune) and is generic otherwise.
+        outcome = f"failed&reason={exc.code}"
     return RedirectResponse(
         _web_url(_with_query(transaction.redirect_to, f"slack={outcome}")), status_code=303
     )

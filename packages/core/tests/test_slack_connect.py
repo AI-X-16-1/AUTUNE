@@ -151,7 +151,7 @@ def test_a_failed_install_goes_back_to_the_screen(world: dict[str, Any], case: s
 
     response = client.get(f"/api/auth/slack/callback?state={state}{extra}")
 
-    assert response.headers["location"].endswith("?slack=failed")
+    assert "?slack=failed&reason=" in response.headers["location"]
     assert world["saved"] == {}
 
 
@@ -225,3 +225,45 @@ def test_a_refused_code_says_why_without_the_code() -> None:
         client.exchange_code("the-secret-code")
     assert "invalid_code" in str(caught.value)
     assert "the-secret-code" not in str(caught.value)
+
+
+def test_a_private_autune_falls_back_to_autune_alerts() -> None:
+    """Found on a real workspace: someone had made a private #autune."""
+    calls: list[str] = []
+    answers = iter(
+        [
+            {"ok": False, "error": "name_taken"},  # create #autune
+            {"ok": True, "channels": []},  # list: not public
+            {"ok": True, "channel": {"id": "C5", "name": "autune-alerts"}},  # create #autune-alerts
+        ]
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request.url.path.rsplit("/", 1)[-1])
+        return httpx.Response(200, json=next(answers))
+
+    client = SlackOAuthClient(
+        client_id="cid",
+        client_secret="cs",
+        redirect_uri="https://example.test/cb",
+        http=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+    assert client.ensure_channel("xoxb", "autune") == SlackChannel(
+        "C5", "autune-alerts", created=True
+    )
+    assert calls == ["conversations.create", "conversations.list", "conversations.create"]
+
+
+def test_no_usable_channel_is_a_named_failure(world: dict[str, Any]) -> None:
+    from autune_core.oauth.slack import SlackChannelUnavailableError
+
+    class NoChannel(FakeSlack):
+        def ensure_channel(self, token: str, name: str) -> SlackChannel:
+            raise SlackChannelUnavailableError("both taken")
+
+    world["app"].dependency_overrides[get_slack_oauth_client] = lambda: NoChannel()
+    client = signed_in(world)
+    response = client.get(f"/api/auth/slack/callback?state={start(client)}&code=c")
+
+    assert response.headers["location"].endswith("?slack=failed&reason=slack_channel_unavailable")
+    assert world["saved"] == {}
