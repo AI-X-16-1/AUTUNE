@@ -7,9 +7,11 @@ that nothing lands in an intel_ table and that the delivery goes through
 
 from __future__ import annotations
 
+import pytest
 import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
+from autune_integrations import PermanentIntegrationError, TransientIntegrationError
 from autune_integrations.fakes import FakeSlack
 from autune_intelligence import service
 
@@ -246,3 +248,42 @@ def test_a_meeting_with_no_speech_sends_nothing(db_session: Session, meeting: st
 
     assert sent == 0
     assert slack.sent == []
+
+
+class _Unreachable(FakeSlack):
+    """FakeSlack that cannot reach some users: ``refused`` raises the given error."""
+
+    def __init__(self, refused: dict[str, Exception]) -> None:
+        super().__init__()
+        self.refused = refused
+
+    def send_dm(self, user_id: str, text: str, blocks: list[dict] | None = None) -> str:
+        if user_id in self.refused:
+            raise self.refused[user_id]
+        return super().send_dm(user_id, text, blocks)
+
+
+def test_one_unreachable_person_does_not_cost_the_others_their_dm(
+    db_session: Session, meeting: str
+) -> None:
+    """#478 makes an unlinked recipient (and Slack's ok:false) raise. The loop
+    skips that one person and still DMs everyone after them."""
+    alice, bob, carol = _three_speakers(db_session, meeting)
+    db_session.flush()
+    slack = _Unreachable({bob: PermanentIntegrationError("not linked for direct messages")})
+
+    sent = service.send_personal_feedback(db_session, slack, meeting)
+
+    assert sent == 2
+    assert sorted(m.channel for m in slack.sent) == sorted([alice, carol])
+
+
+def test_a_transient_failure_still_raises(db_session: Session, meeting: str) -> None:
+    """Only a permanent refusal is skipped; a rate limit or an outage is not
+    silently turned into a missing DM."""
+    _, bob, _ = _three_speakers(db_session, meeting)
+    db_session.flush()
+    slack = _Unreachable({bob: TransientIntegrationError("slack is down")})
+
+    with pytest.raises(TransientIntegrationError):
+        service.send_personal_feedback(db_session, slack, meeting)
