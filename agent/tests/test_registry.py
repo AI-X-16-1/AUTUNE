@@ -166,3 +166,12 @@ def test_the_graph_refuses_to_run_with_tracing_on(value: str) -> None:
 def test_tracing_off_or_unset_is_fine() -> None:
     refuse_tracing({})
     refuse_tracing({"LANGCHAIN_TRACING_V2": "false"})
+
+
+def test_a_refused_call_still_spends_the_budget() -> None:
+    budget = CallBudget(limit=1)
+    box = Toolbox({}, SESSION, budget, allowed=[])
+
+    box.call("gap.anything")
+    with pytest.raises(BudgetExceededError):
+        box.call("gap.anything")

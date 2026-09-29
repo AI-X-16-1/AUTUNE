@@ -151,10 +151,11 @@ class Toolbox:
         return {name: tool.description for name, tool in self._tools.items()}
 
     def call(self, name: str, **arguments: Any) -> ToolResult:
+        # Spent before the lookup: a model that keeps asking for a tool it was
+        # not given still reaches the cap (review on #432).
+        self._budget.spend(name)
         tool = self._tools.get(name)
         if tool is None:
-            # A model asking for a tool it was not given is a route to correct,
-            # not a crash.
+            # A route to correct, not a crash.
             return ToolResult.failure(f"{name} is not available here")
-        self._budget.spend(name)
         return tool(self._session, **arguments)

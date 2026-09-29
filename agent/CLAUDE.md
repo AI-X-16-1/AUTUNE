@@ -1,7 +1,8 @@
 # CLAUDE.md — the agent layer
 
-Read the root `CLAUDE.md` first. Design: `docs/architecture/agent-layer.md`
-(on #261 until it merges). Placement: ADR 0010.
+Read the root `CLAUDE.md` first. Design: `docs/architecture/agent-layer.md`.
+Placement: ADR 0010. This layer is code only once #260 is decided and ADR 0010
+is `Accepted`; until then the root `CLAUDE.md` invariants apply unchanged.
 
 ## Who owns what
 
