@@ -99,9 +99,13 @@ For the MVP, topics are extracted without an LLM:
    honorific (민재님) and nouns every meeting shares (오늘, 회의, 확인) break a
    phrase. The score is words × occurrences among the repeated phrases, so a
    phrase said twice outranks one of its words said three times (#352: one-word
-   labels such as `장` or `10` gave the re-ranker nothing to score). A segment
-   with no noun phrase at all is small talk and is dropped, not labelled with a
-   snippet of itself. There is no background-corpus weighting.
+   labels such as `장` or `10` gave the re-ranker nothing to score). When no
+   phrase repeats, the label is the segment's first phrase — a segment starts
+   where the conversation turned, usually on someone raising the subject. The
+   phrase nearest the segment's embedding was tried for that case and rejected:
+   on a real meeting it chose generic words, every candidate within 0.04 of the
+   rest. A segment with no noun phrase at all is small talk and is dropped, not
+   labelled with a snippet of itself. There is no background-corpus weighting.
 3. **Represent** each topic for matching as the segment's mean-pooled embedding,
    plus the ids of the utterances it was cut from. The re-ranker reads those
    utterances' text back from `utterances`; BM25 still matches on labels.
