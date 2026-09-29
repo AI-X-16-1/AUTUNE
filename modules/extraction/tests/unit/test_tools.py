@@ -613,3 +613,28 @@ def test_reviewing_a_decision(session: Session, acting: dict[str, list[str]]) ->
     assert acting["decisions"] == ["dec_1"]
     statuses = {r.decision_id: r.status for r in session.query(ExtDecisionReview)}
     assert statuses == {"dec_1": "confirmed", "dec_2": "rejected"}
+
+
+def test_workload_rows_carry_their_counts_as_fields(session: Session) -> None:
+    """The Workload subagent reads numbers, not the Korean body."""
+    member(session, "user_free", "최여유")
+    for n in range(3):
+        item(session, f"act_{n}", due=TODAY - timedelta(days=1))
+
+    rows_by_id = {r["id"]: r for r in tools.workload_by_owner(session, TEAM)["items"]}
+
+    assert {k: rows_by_id["user_in"][k] for k in ("open", "overdue", "done", "state")} == {
+        "open": 3,
+        "overdue": 3,
+        "done": 0,
+        "state": "loaded",
+    }
+    assert rows_by_id["user_free"]["state"] == "free"
+
+
+def test_item_rows_say_whether_they_are_late(session: Session) -> None:
+    item(session, "act_late", due=TODAY - timedelta(days=1))
+
+    (row,) = tools.person_action_items(session, TEAM, "user_in")["items"]
+
+    assert (row["overdue"], row["needs_reassignment"]) == (True, False)

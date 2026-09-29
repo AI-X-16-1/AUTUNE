@@ -103,6 +103,8 @@ def _item_finding(item: ActionItemRead, today: date) -> dict[str, Any]:
         "score": _urgency(item, today),
         "id": item.id,
         "meeting_id": item.meeting_id,
+        "overdue": overdue,
+        "needs_reassignment": item.needs_reassignment,
     }
 
 
@@ -319,6 +321,11 @@ def _load_finding(
         "body": body + tag,
         "score": float(load.weight),
         "id": load.user_id or "unowned",
+        # The same counts as fields, so a subagent reads numbers, not Korean.
+        "open": load.open,
+        "overdue": load.overdue,
+        "done": load.done,
+        "state": "loaded" if load in overloaded else "free" if load in free else "",
     }
 
 
