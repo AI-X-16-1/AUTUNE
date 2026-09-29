@@ -141,6 +141,8 @@ def test_connecting_the_same_page_again_keeps_its_databases(
 
     assert created == []
     assert (result["action_db_id"], result["decision_db_id"]) == ("db_a", "db_d")
+    assert result["databases"] == "reused"
+    assert result["action_db_url"] == "https://www.notion.so/db_a"
     assert saved["secret"] == "new"
 
 
@@ -154,6 +156,7 @@ def test_a_different_page_gets_its_own_databases(monkeypatch: pytest.MonkeyPatch
 
     assert created == ["액션 아이템", "결정"]
     assert result["action_db_id"] == "db_new_1"
+    assert result["databases"] == "created"
     assert saved["config"]["parent_page_id"] == OTHER_PAGE
 
 

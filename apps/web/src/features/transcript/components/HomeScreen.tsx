@@ -45,32 +45,39 @@ export function HomeScreen() {
   const state = useMeetings();
 
   return (
-    <main className="mx-auto max-w-[720px] p-[var(--space-page)]">
-      <header className="flex items-start justify-between gap-4">
-        <div className="min-w-0">
-          <h1
-            className="text-ink-strong"
-            style={{
-              fontSize: "var(--text-title)",
-              fontWeight: "var(--text-title-weight)",
-              letterSpacing: "var(--text-title-tracking)",
-            }}
-          >
-            Autune
-          </h1>
-          <p
-            className="mt-2 text-[var(--color-ink-muted)]"
-            style={{ fontSize: "var(--text-meta)" }}
-          >
-            {subtitle(state)}
-          </p>
-        </div>
-        <Button tone="primary" onClick={() => router.push("/meetings/new")}>
-          회의 만들기
-        </Button>
-      </header>
+    // Two widths on purpose. The outer one is the shell's: 1200 with the page
+    // gutter, the same box the top bar's wordmark sits in, so this screen's
+    // first column starts where the wordmark does. The inner one is the
+    // reading width — a list of meeting titles stretched to 1200 is a line
+    // your eye has to travel back across.
+    <main className="mx-auto max-w-[1200px] p-[var(--space-page)]">
+      <div className="max-w-[720px]">
+        <header className="flex items-start justify-between gap-4">
+          <div className="min-w-0">
+            <h1
+              className="text-ink-strong"
+              style={{
+                fontSize: "var(--text-title)",
+                fontWeight: "var(--text-title-weight)",
+                letterSpacing: "var(--text-title-tracking)",
+              }}
+            >
+              회의
+            </h1>
+            <p
+              className="mt-2 text-[var(--color-ink-muted)]"
+              style={{ fontSize: "var(--text-meta)" }}
+            >
+              {subtitle(state)}
+            </p>
+          </div>
+          <Button tone="primary" onClick={() => router.push("/meetings/new")}>
+            회의 만들기
+          </Button>
+        </header>
 
-      <div className="mt-6">{body(state)}</div>
+        <div className="mt-6">{body(state)}</div>
+      </div>
     </main>
   );
 }
