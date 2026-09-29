@@ -198,6 +198,11 @@ Where that token comes from, and the two ways to give it to the browser:
 | `AUTUNE_GAP_NER_IMPL` | C | `spacy` (default) · `fake`. **No `external`** — see below |
 | `AUTUNE_GAP_NER_MODEL` | C | Default `ko_core_news_lg`. The pipeline **name**; the version comes from the pinned wheel and is recorded per row |
 | `AUTUNE_GAP_RELATION_IMPL` | C | `rule` (default), and nothing else yet. Unlike the entity extractor this step **may** grow an assisted option — see below |
+| `AUTUNE_GAP_EMBEDDER_IMPL` | C | `off` (default) · `local` · `fake`. Reads template comparison's speech by meaning. **No `external`**, same reason as the entity extractor; `local` needs the `local-models` extra |
+| `AUTUNE_GAP_EMBEDDER_CHECKPOINT` | C | Default `nlpai-lab/KURE-v1` — module D's and B's choice |
+| `AUTUNE_GAP_EMBEDDER_DEVICE` | C | `cpu` (default) · `cuda`. Never inferred from the machine |
+| `AUTUNE_GAP_SEMANTIC_FLOOR` | C | Default `0.55`. The cosine an utterance needs with an item's nearest example to count as saying it |
+| `AUTUNE_GAP_SEMANTIC_MARGIN` | C | Default `0`. How far the winning item must lead the runner-up |
 | `AUTUNE_CONTEXT_EMBEDDER_IMPL` | D | `kure_v1_http` (default), `kure_v1_local`, `fake` |
 | `AUTUNE_CONTEXT_RERANKER_IMPL` | D | `bge_reranker_v2_m3_ko_http` (default), `..._local`, `fake` |
 | `AUTUNE_CONTEXT_NLI_IMPL` | D | `klue_kornli_http` (default), `klue_kornli_local`, `fake` |

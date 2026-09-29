@@ -225,6 +225,6 @@ function pair(source: string, target: string, weight: number) {
 
 /** What the picker offers on the demo route: the two templates the package ships. */
 export const DEMO_TEMPLATES: TemplateOption[] = [
-  { key: "feature_planning", name: "기능 기획", version: "general.2+feature_planning.1", items: 10 },
-  { key: "general", name: "기본", version: "general.2", items: 5 },
+  { key: "feature_planning", name: "기능 기획", version: "general.4+feature_planning.2", items: 10 },
+  { key: "general", name: "기본", version: "general.4", items: 5 },
 ];

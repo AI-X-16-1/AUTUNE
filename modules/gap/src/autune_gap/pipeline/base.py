@@ -186,3 +186,37 @@ class RelationExtractor(Protocol):
         requests out of one.
         """
         ...
+
+
+@runtime_checkable
+class SentenceEmbedder(Protocol):
+    """Sentence vectors for template comparison's spoken evidence.
+
+    ``detect`` already reads the speech for an item's keywords, and a keyword is
+    a noun: a meeting that settles an owner with "제가 금요일까지 맡겠습니다" says
+    no noun that could name the item, and the eval set's ``no-noun`` false
+    positives are exactly that shape. A sentence vector compares what an
+    utterance *says* against example sentences of what settling the item sounds
+    like, so the verb and the date count too. See ``autune_gap.semantic``.
+
+    An independent copy of the seam modules B and D already have — modules never
+    import each other — and the same model, KURE-v1, for the same reason D chose
+    it: Korean-tuned and already the team's answer to "do these two sentences
+    say the same thing".
+
+    **In process only.** Every consenting utterance of a meeting goes through
+    this, which is the whole transcript; an implementation that sent it
+    elsewhere is the design conversation ``privacy.md`` section 6 describes, not
+    a value of ``AUTUNE_GAP_EMBEDDER_IMPL``. Nothing it returns is stored: the
+    vectors decide a coverage state and are dropped.
+    """
+
+    @property
+    def model_version(self) -> str:
+        """The checkpoint, so a run can say which model decided what it heard."""
+        ...
+
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        """One vector per input, in order, each unit-normalised so a dot product
+        is a cosine similarity."""
+        ...

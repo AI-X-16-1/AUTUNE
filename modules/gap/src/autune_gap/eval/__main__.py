@@ -14,7 +14,9 @@ from __future__ import annotations
 
 import argparse
 import io
+import os
 import sys
+from collections.abc import Callable
 
 from autune_gap.config import get_settings
 from autune_gap.eval.dataset import DEFAULT_DATASET, EvalSetError
@@ -25,14 +27,18 @@ from autune_gap.eval.metrics import (
     PARTIAL,
     TARGET_PRECISION_SIX_WEEKS,
     TARGET_PRECISION_THREE_MONTHS,
+    CaseScore,
     Report,
 )
 from autune_gap.eval.runner import HarnessInconsistencyError, run_all
+from autune_gap.pipeline.registry import get_sentence_embedder
+
+EMBEDDERS = ("off", "local", "fake")
 
 
-def format_report(report: Report, *, extractor: str) -> str:
+def format_report(report: Report, *, extractor: str, embedder: str = "off") -> str:
     lines = [
-        f"Gap detection -- {len(report.cases)} cases, extractor {extractor}",
+        f"Gap detection -- {len(report.cases)} cases, extractor {extractor}, embedder {embedder}",
         "",
         f"{'case':<24}{'template':<18}{'topics':>7}{'real':>6}{'high':>6}{'TP':>5}{'FP':>5}",
     ]
@@ -64,11 +70,12 @@ def format_report(report: Report, *, extractor: str) -> str:
         total = sum(by_cause.values())
         lines += [
             "",
-            f"    {fixable} of {total} are reachable by a change to this module. The rest are"
-            " `no-noun`:",
+            f"    {fixable} of {total} are reachable by a keyword or extraction change. The rest"
+            " are `no-noun`:",
             "    the meeting settled the item with a verb or a date and said no noun that could",
-            "    name it, so neither a keyword list nor a better extractor gets to them. That is",
-            "    a ceiling on matching keywords against topic labels, not a mistuning of it.",
+            "    name it, so neither a keyword list nor a better extractor gets to them. The",
+            "    sentence embedder (`--embedder local`) is what reads those; `--compare` shows",
+            "    which of them it closes.",
         ]
 
     lines += ["", *_notes(report, extractor=extractor)]
@@ -139,6 +146,108 @@ def _notes(report: Report, *, extractor: str) -> list[str]:
     return notes
 
 
+def format_comparison(baseline: Report, candidate: Report, *, embedder: str) -> str:
+    """The two runs side by side, and what moved between them item by item.
+
+    Same cases, same extractor, same thresholds; the only difference is whether
+    the speech was also read by meaning. Every false positive the baseline
+    raised is listed with what became of it, so "no-noun went from 4 to 2" can
+    be checked against which two, and every real gap the candidate stopped
+    surfacing is listed as the price.
+    """
+    before = {case.case_id: case for case in baseline.cases}
+    after = {case.case_id: case for case in candidate.cases}
+
+    lines = [
+        f"Comparison -- embedder off (baseline) vs {embedder}",
+        "",
+        f"{'':<22}{'off':>10}{embedder:>10}",
+        _row("precision (high)", baseline.precision, candidate.precision),
+        _row("recall (high)", baseline.recall, candidate.recall),
+        _row("precision (all)", baseline.precision_any_severity, candidate.precision_any_severity),
+        _count("true positives", baseline, candidate, lambda case: case.true_positives),
+        _count("false positives", baseline, candidate, lambda case: case.false_positives),
+    ]
+    by_cause_before = baseline.false_positives_by_cause
+    by_cause_after = candidate.false_positives_by_cause
+    for cause in sorted(set(by_cause_before) | set(by_cause_after)):
+        lines.append(
+            f"{'  fp ' + cause:<22}{by_cause_before.get(cause, 0):>10}"
+            f"{by_cause_after.get(cause, 0):>10}"
+        )
+
+    lines += ["", "  baseline false positives, and what became of them:"]
+    for case_id, case in before.items():
+        other = after[case_id]
+        for item in sorted(case.false_positives):
+            if item in other.false_positives:
+                fate = f"still raised ({other.cause(item)})"
+            elif item in other.raised_any:
+                fate = "closed -- still raised, below high"
+            else:
+                fate = "closed -- no longer raised"
+            lines.append(f"    {case_id:<24}{item:<18}{case.cause(item):<14}{fate}")
+
+    new_fp = [
+        f"{case_id}:{item}"
+        for case_id, case in after.items()
+        for item in sorted(case.false_positives - before[case_id].false_positives)
+    ]
+    lost = [
+        f"{case_id}:{item}"
+        for case_id, case in after.items()
+        for item in sorted(case.missed - before[case_id].missed)
+    ]
+    lines += [
+        "",
+        f"  new false positives:          {new_fp or 'none'}",
+        f"  real gaps no longer surfaced: {lost or 'none'}",
+        "",
+        "Four authored meetings, and the embedder's floor and margin were chosen by",
+        "looking at them. A difference here says the mechanism does what it claims on",
+        "these cases; whether it holds is for the W5 meetings to say.",
+    ]
+    return "\n".join(lines)
+
+
+def _row(name: str, left: float | None, right: float | None) -> str:
+    def cell(value: float | None) -> str:
+        return "n/a" if value is None else f"{value:.4f}"
+
+    return f"{name:<22}{cell(left):>10}{cell(right):>10}"
+
+
+def _count(
+    name: str, left: Report, right: Report, items: Callable[[CaseScore], frozenset[str]]
+) -> str:
+    def total(report: Report) -> int:
+        return sum(len(items(case)) for case in report.cases)
+
+    return f"{name:<22}{total(left):>10}{total(right):>10}"
+
+
+def _with_embedder(impl: str, run: Callable[[], Report]) -> Report:
+    """Run with ``AUTUNE_GAP_EMBEDDER_IMPL`` set to ``impl``, then put it back.
+
+    Settings and the embedder are both cached per process, so both caches are
+    dropped on the way in and on the way out. The entity extractor's is not:
+    reloading spaCy between two runs would change nothing but the time.
+    """
+    previous = os.environ.get("AUTUNE_GAP_EMBEDDER_IMPL")
+    os.environ["AUTUNE_GAP_EMBEDDER_IMPL"] = impl
+    get_settings.cache_clear()
+    get_sentence_embedder.cache_clear()
+    try:
+        return run()
+    finally:
+        if previous is None:
+            os.environ.pop("AUTUNE_GAP_EMBEDDER_IMPL", None)
+        else:
+            os.environ["AUTUNE_GAP_EMBEDDER_IMPL"] = previous
+        get_settings.cache_clear()
+        get_sentence_embedder.cache_clear()
+
+
 def main(argv: list[str] | None = None) -> int:
     for stream in (sys.stdout, sys.stderr):
         if isinstance(stream, io.TextIOWrapper):
@@ -150,10 +259,27 @@ def main(argv: list[str] | None = None) -> int:
         default=DEFAULT_DATASET,
         help=f"labeled set in eval/fixtures/ (default {DEFAULT_DATASET})",
     )
+    parser.add_argument(
+        "--embedder",
+        choices=EMBEDDERS,
+        default=None,
+        help="sentence embedder for this run (default: AUTUNE_GAP_EMBEDDER_IMPL)",
+    )
+    parser.add_argument(
+        "--compare",
+        action="store_true",
+        help="run twice -- embedder off, then --embedder (default local) -- and compare",
+    )
     args = parser.parse_args(argv)
 
+    embedder = args.embedder or ("local" if args.compare else get_settings().embedder_impl)
+    if args.compare and embedder == "off":
+        parser.error("--compare needs an embedder to compare against: local or fake")
+
+    extractor = get_settings().ner_impl
     try:
-        report = run_all(args.dataset)
+        baseline = _with_embedder("off", lambda: run_all(args.dataset)) if args.compare else None
+        report = _with_embedder(embedder, lambda: run_all(args.dataset))
     except (EvalSetError, HarnessInconsistencyError) as exc:
         # Both mean the report would be a number about something other than
         # what it claims. Exit 2 rather than 1: nothing was measured, so this is
@@ -161,7 +287,13 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 2
 
-    print(format_report(report, extractor=get_settings().ner_impl))
+    if baseline is not None:
+        print(format_report(baseline, extractor=extractor, embedder="off"))
+        print()
+    print(format_report(report, extractor=extractor, embedder=embedder))
+    if baseline is not None:
+        print()
+        print(format_comparison(baseline, report, embedder=embedder))
     return 0 if report.meets_six_week_target else 1
 
 

@@ -35,10 +35,18 @@
 # that is about how two things stand to each other, which no topic label says
 # — "검증 스크립트가 먼저 있어야 롤백 절차가 의미가 있습니다" states a
 # dependency without the word 의존. Never `co_occurs`; the loader refuses it.
+#
+# `examples` are sentences a meeting says when it settles the item, read by a
+# sentence embedder when AUTUNE_GAP_EMBEDDER_IMPL is on (`autune_gap.semantic`).
+# They are what catches an item settled with a verb and a date and no noun --
+# "제가 금요일까지 맡겠습니다" -- which no keyword can. Write them as a person
+# would say them in a meeting, varied in subject and phrasing, and **never copy
+# a line from the eval set**: the harness would then be grading its own answer
+# key. Version 4 added them.
 
 key: general
 name: "기본"
-version: 3
+version: 4
 
 items:
   - key: success_criteria
@@ -48,6 +56,10 @@ items:
     keywords: ["성공", "기준", "지표", "목표", "측정", "정확도", "정밀도", "kpi"]
     question: "이 일이 성공했다고 판단할 기준은 무엇이고, 무엇으로 측정합니까?"
     question_about: "{topic}의 성공 기준은 무엇이고, 무엇으로 측정합니까?"
+    examples:
+      - "이 기능이 잘 됐는지는 전환율로 판단하겠습니다"
+      - "목표 수치는 작업 완료율 20% 향상입니다"
+      - "성공했다고 보는 기준을 정해 둡시다"
 
   - key: ownership
     category: ownership
@@ -56,6 +68,10 @@ items:
     keywords: ["담당", "책임", "기한", "마감", "일정", "언제까지", "데드라인"]
     question: "이 일은 누가 맡고, 언제까지 끝내기로 합니까?"
     question_about: "{topic}의 담당자와 기한은 어떻게 정합니까?"
+    examples:
+      - "그 작업은 제가 맡겠습니다"
+      - "민수님이 담당해서 수요일까지 마무리해 주세요"
+      - "설계 문서는 다음 주 화요일까지 제가 올리겠습니다"
 
   - key: risk
     category: risk
@@ -64,6 +80,10 @@ items:
     keywords: ["리스크", "위험", "예외", "실패", "장애", "롤백", "대비"]
     question: "이 방향이 실패하거나 예외 상황이 생기면 무엇을 합니까?"
     question_about: "{topic}에서 문제가 생기거나 예외 상황이 오면 무엇을 합니까?"
+    examples:
+      - "이게 잘못되면 되돌릴 방법을 준비해 둬야 합니다"
+      - "장애가 나면 이전 버전으로 되돌리겠습니다"
+      - "최악의 경우를 대비한 계획이 있어야 합니다"
 
   - key: dependency
     category: dependency
@@ -75,6 +95,10 @@ items:
     relations: [depends_on, blocked_by]
     question: "이 일을 시작하기 전에 먼저 끝나 있어야 하는 것은 무엇입니까?"
     question_about: "{topic}에 앞서 먼저 끝나 있어야 하는 것은 무엇입니까?"
+    examples:
+      - "결제 모듈 작업이 끝나야 이걸 시작할 수 있습니다"
+      - "디자인이 나오기 전까지는 개발을 못 합니다"
+      - "다른 팀 API가 준비돼야 연동할 수 있습니다"
 
   - key: next_step
     category: next_step
@@ -88,3 +112,7 @@ items:
     keywords: ["다음", "후속", "이후", "계획", "단계", "진행"]
     question: "이 회의 다음에 실제로 일어나는 일은 무엇입니까?"
     question_about: "{topic}에 대해 이 회의 다음에 실제로 일어나는 일은 무엇입니까?"
+    examples:
+      - "다음 회의에서 결과를 공유하겠습니다"
+      - "우선 시안을 만들어 보고 다시 모이죠"
+      - "이후에는 사용자 테스트를 진행합니다"

@@ -79,6 +79,38 @@ class GapSettings(BaseSettings):
     A general Korean pipeline trained on written text; meeting speech is spoken
     Korean, so recall is expected to be poor until #13 fine-tunes one."""
 
+    embedder_impl: str = "off"
+    """Which sentence embedder reads the speech for template comparison:
+    ``off``, ``local`` or ``fake``.
+
+    ``off`` is the rule-based baseline — an item counts as said only when one of
+    its keywords was. ``local`` adds KURE-v1 in this process, which hears an item
+    settled with a verb or a date and no noun (``autune_gap.semantic``).
+
+    **Off by default until real meetings say otherwise.** The eval set is four
+    authored meetings, and the two numbers below were chosen by looking at
+    them; ``python -m autune_gap.eval --compare`` prints both runs side by side
+    so the W5 meetings can decide. No ``external``: the input is every consenting
+    utterance of the meeting (``pipeline.base.SentenceEmbedder``)."""
+
+    embedder_checkpoint: str = "nlpai-lab/KURE-v1"
+    """The model ``local`` loads. Module D's shipped choice, and module B's."""
+
+    embedder_device: str = "cpu"
+    """``cpu`` or ``cuda``. Never inferred from the machine, for the reason
+    module B gives: a latency measured on one scheduling says nothing about the
+    other."""
+
+    semantic_floor: float = 0.55
+    """The cosine an utterance needs with an item's closest example sentence to
+    count as having said the item. Below it the utterance is about nothing on
+    the checklist, whatever it was nearest to."""
+
+    semantic_margin: float = 0.0
+    """How far the winning item must lead the runner-up — another item or the
+    background class. ``0`` means the nearest one wins outright; raising it
+    makes an utterance close to two items count for neither."""
+
 
 @lru_cache
 def get_settings() -> GapSettings:

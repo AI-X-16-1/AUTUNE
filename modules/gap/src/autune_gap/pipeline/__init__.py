@@ -17,9 +17,16 @@ from .base import (
     EntityExtractor,
     Relation,
     RelationExtractor,
+    SentenceEmbedder,
 )
+from .embedder import FakeEmbedder, LocalKureEmbedder
 from .ner import FakeNer, SpacyNer
-from .registry import get_entity_extractor, get_relation_extractor, reset_cache
+from .registry import (
+    get_entity_extractor,
+    get_relation_extractor,
+    get_sentence_embedder,
+    reset_cache,
+)
 from .relations import RuleRelations
 
 __all__ = [
@@ -28,12 +35,16 @@ __all__ = [
     "SYMMETRIC_RELATIONS",
     "Entity",
     "EntityExtractor",
+    "FakeEmbedder",
     "FakeNer",
+    "LocalKureEmbedder",
     "Relation",
     "RelationExtractor",
     "RuleRelations",
+    "SentenceEmbedder",
     "SpacyNer",
     "get_entity_extractor",
     "get_relation_extractor",
+    "get_sentence_embedder",
     "reset_cache",
 ]

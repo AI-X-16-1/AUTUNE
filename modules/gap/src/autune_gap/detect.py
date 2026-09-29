@@ -115,6 +115,7 @@ def compare(
     topics: list[TopicView],
     speech: Sequence[str],
     thresholds: Thresholds,
+    heard: frozenset[str] = frozenset(),
 ) -> list[Finding]:
     """Findings for one meeting, riskiest first.
 
@@ -130,6 +131,13 @@ def compare(
     carrying the word 담당 or 기한, and the item came back ``missing``, which is
     a false statement about the meeting and a false gap on somebody's screen.
     NER recall was silently deciding gap precision. See ``classify``.
+
+    ``heard`` is the same speech read by meaning rather than by keyword: the
+    item keys ``semantic.heard`` found an utterance nearest to. It reaches the
+    item that keyword matching cannot — settled with a verb and a date and no
+    noun — and it is exactly as strong as a spoken keyword, no stronger: partial
+    at most. Empty when ``AUTUNE_GAP_EMBEDDER_IMPL=off``, which leaves the
+    rule-based comparison unchanged.
 
     **A meeting with no topics raises no gaps at all**, and that survives the
     change. Every item would be missing, and the template would produce its
@@ -149,7 +157,8 @@ def compare(
 
     for position, item in enumerate(template.items):
         matched = match(item, topics)
-        coverage = classify(matched, mentioned(item, spoken), thresholds)
+        said = mentioned(item, spoken) or item.key in heard
+        coverage = classify(matched, said, thresholds)
         if coverage is Coverage.COVERED:
             continue
 
