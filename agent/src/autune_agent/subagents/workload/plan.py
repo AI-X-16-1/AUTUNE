@@ -31,6 +31,16 @@ MAX_PER_TAKER = 2
 MAX_MOVES = 5
 """A subagent returns at most five items (section 4); one move is one item."""
 
+BUSY_SHARE_MAX = 0.75
+"""A taker whose calendar is at least this booked over the coming days is not
+given more work. Unknown is not free, and not full either: such a taker stays,
+and the proposal says the calendar could not be read."""
+
+Busy = dict[str, float | None]
+"""``busy_share`` by user id from ``extraction.team_busy_hours``; ``None`` is a
+calendar that could not be read. Absent entirely when the calendar was not
+consulted."""
+
 
 @dataclass(frozen=True)
 class Person:
@@ -60,6 +70,8 @@ class Move:
     taker: Person
     taker_open: int
     """The taker's open count before this move, counting earlier moves this run."""
+    taker_busy: float | None = None
+    calendar_read: bool = False
 
     @property
     def title(self) -> str:
@@ -68,9 +80,16 @@ class Move:
     @property
     def rationale(self) -> str:
         late = " · 기한 지남" if self.item.overdue else ""
+        calendar = ""
+        if self.calendar_read:
+            calendar = (
+                " · 캘린더 확인 불가"
+                if self.taker_busy is None
+                else f" · 일정 {round(self.taker_busy * 100)}%"
+            )
         return (
             f"{self.giver.name}: 진행 중 {self.giver.open}건, 기한 지남 {self.giver.overdue}건 → "
-            f"{self.taker.name}: 진행 중 {self.taker_open}건{late}"
+            f"{self.taker.name}: 진행 중 {self.taker_open}건{calendar}{late}"
         )
 
 
@@ -141,18 +160,35 @@ def _mean_open(people: list[Person]) -> float:
     return sum(p.open for p in people) / len(people) if people else 0.0
 
 
-def plan_moves(people: list[Person], items_of: dict[str, list[Candidate]]) -> list[Move]:
+def busy_from(result: ToolResult) -> Busy:
+    """``team_busy_hours``'s rows as ``busy_share`` by user id."""
+    busy: Busy = {}
+    for row in result.items:
+        extra = _extra(row)
+        user_id = extra.get("id")
+        if isinstance(user_id, str):
+            share = extra.get("busy_share")
+            busy[user_id] = float(share) if isinstance(share, int | float) else None
+    return busy
+
+
+def plan_moves(
+    people: list[Person], items_of: dict[str, list[Candidate]], busy: Busy | None = None
+) -> list[Move]:
     """Moves from each loaded person to the lightest taker, most urgent item first.
 
     From one person: enough to bring them to the team's mean, at least one and
     at most ``MAX_PER_GIVER``. A move never leaves the taker holding as much as
-    the giver still does -- that would only move the pile.
+    the giver still does -- that would only move the pile. With ``busy``, a taker
+    whose calendar is ``BUSY_SHARE_MAX`` booked is passed over.
     """
     open_now = {p.user_id: p.open for p in people}
     given: dict[str, int] = {}
     target = ceil(_mean_open(people))
     moves: list[Move] = []
-    candidates = takers(people)
+    candidates = [
+        t for t in takers(people) if busy is None or (busy.get(t.user_id) or 0.0) < BUSY_SHARE_MAX
+    ]
     for giver in givers(people):
         wanted = min(MAX_PER_GIVER, max(1, giver.open - target))
         for item in items_of.get(giver.user_id, [])[:wanted]:
@@ -168,7 +204,14 @@ def plan_moves(people: list[Person], items_of: dict[str, list[Candidate]]) -> li
                 break
             taker = min(eligible, key=lambda t: (open_now[t.user_id], candidates.index(t)))
             moves.append(
-                Move(item=item, giver=giver, taker=taker, taker_open=open_now[taker.user_id])
+                Move(
+                    item=item,
+                    giver=giver,
+                    taker=taker,
+                    taker_open=open_now[taker.user_id],
+                    taker_busy=busy.get(taker.user_id) if busy is not None else None,
+                    calendar_read=busy is not None,
+                )
             )
             given[taker.user_id] = given.get(taker.user_id, 0) + 1
             open_now[taker.user_id] += 1

@@ -6,8 +6,9 @@ speech: no speaking-ratio tool may be in its allow-list (privacy.md section 3),
 and ``Subagent`` refuses one.
 
 The rules are in ``plan.py``, the subgraph in ``graph.py``. Google Calendar
-(``free_busy``) and Jira reads are not in the allow-list yet: the first needs a
-tool in B's ``tools.py``, the second waits on #82.
+comes through B's ``team_busy_hours`` (busy windows only, the team's own
+connection); without one the subagent decides on work alone. Jira reads wait
+on #82.
 """
 
 from __future__ import annotations
