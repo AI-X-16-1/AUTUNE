@@ -242,12 +242,13 @@ touches it. Without the extra the classifier raises a `RuntimeError` naming this
 command — the default implementation failing with `No module named
 'transformers'` tells the reader nothing about the extra existing.
 
-### NLI (step 4) has the same rule and the same extra
+### NLI (step 4) has no external option, and the same extra
 
-`AUTUNE_EXTRACTION_NLI_IMPL` accepts the same three values for the same reason —
-step 4 (#12) reads a commitment or ambiguous utterance's own text, so an
-external implementation is the same design conversation `CLASSIFIER_IMPL`
-already had. `local` needs the same `local-models` extra as the classifier
+`AUTUNE_EXTRACTION_NLI_IMPL` accepts `local`, `hosted` and `fake` — not the
+classifier's `llm`. Step 4 (#12) reads a commitment or ambiguous utterance's
+own text, so an external implementation is the section 6 question #392 is
+settling for the classifier; the classifier's opt-in does not extend to NLI.
+`local` needs the same `local-models` extra as the classifier
 (`transformers`/`torch` are shared); no separate `uv sync` is needed if you
 already installed it for the classifier.
 
