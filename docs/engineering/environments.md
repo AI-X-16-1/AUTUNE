@@ -75,6 +75,34 @@ prefix `AUTUNE_<MODULE>_`.
 | `AUTUNE_LOG_LEVEL` | `INFO` | |
 | `AUTUNE_RETENTION_DAYS` | `90` | Default analysis retention |
 | `AUTUNE_CORS_ALLOWED_ORIGINS` | `` | Comma-separated origins `apps/api` allows via CORS. Empty (default) means no CORS headers at all. Set to `http://localhost:3000` for local dev when running `apps/web`'s dev server against `apps/api`'s — a browser blocks the response otherwise, since `:3000` and `:8000` are different origins. Outside `local`, every origin must be an explicit `https://` URL — `*` and plain `http://` are refused at startup |
+| `AUTUNE_WEB_BASE_URL` | `http://localhost:3000` | Where the OAuth callback sends the browser back to |
+
+### Sign-in
+
+| Variable | Example | Notes |
+| --- | --- | --- |
+| `AUTUNE_GOOGLE_CLIENT_ID` | | Google Cloud OAuth client (W2). Blank disables Google sign-in |
+| `AUTUNE_GOOGLE_CLIENT_SECRET` | | Never commit |
+| `AUTUNE_GOOGLE_REDIRECT_URI` | `http://localhost:3000/api/auth/google/callback` | The **web** origin, not the API — the browser reaches `/api/*` through the Next proxy, so the callback must land there too. Must match a redirect URI registered in the Google Cloud console exactly, per environment |
+| `API_PROXY_TARGET` | `http://localhost:8000` | Web-only (read by `apps/web/next.config.ts`), where `/api/*` is proxied. Set per environment; not an `autune_core` setting |
+
+Google *sign-in* is identity only (`openid email profile`) and is unrelated to
+`AUTUNE_GOOGLE_CALENDAR_CREDENTIALS`, which grants module D calendar access.
+
+**Two cookies, two jobs.** `autune_session` is the signed session (7 days,
+`HttpOnly`, `SameSite=Lax`, `Secure` outside local). `autune_oauth_state` lives
+only for the 600 seconds of one sign-in, is scoped to the callback's own path,
+and holds the OAuth `state`: the callback refuses a request whose cookie does
+not match the `state` in the query, so a callback URL opened in somebody else's
+browser cannot sign them in as whoever started it. Redis proves a state was
+issued; the cookie is what proves to whom.
+`packages/core/src/autune_core/auth_router.py` has the reasoning.
+
+**A signed-out session is signed out in the browser only.** `POST /logout`
+clears the cookie; the JWT it held stays valid until it expires. A token that
+leaked cannot be revoked, which is acceptable for a first version and is not
+acceptable for long — it needs a token version on `User`, or a server-side
+session, before this carries real meetings.
 
 ### Web (`apps/web`)
 
@@ -85,6 +113,10 @@ nothing secret goes here.
 | --- | --- | --- |
 | `NEXT_PUBLIC_API_URL` | `http://localhost:8000` | Where the browser reaches `apps/api` |
 | `NEXT_PUBLIC_AUTUNE_DEV_TOKEN` | | Bearer token for every call, until sign-in (S01) exists. Build-time fallback for the value below |
+
+The web app proxies `/api/*` to the API (`next.config.ts`) so the browser sees
+one origin and the `autune_session` cookie stays first-party. `NEXT_PUBLIC_API_URL`
+overrides the client base only if you deliberately want cross-origin calls.
 
 **Signing in, until there is a sign-in.** Routes that take `CurrentUser` refuse
 a request without a bearer token, and S01 is not built. Until it is,
@@ -285,8 +317,7 @@ recording.
 extracts entities from **every** utterance in a meeting, so an external
 implementation would mean sending the whole transcript to somebody else's
 model — which section 6 of `../architecture/privacy.md` makes a design
-conversation rather than a value you can set. The same reasoning module B
-applied to its classifier.
+conversation rather than a value you can set.
 
 Relation extraction is the exception, and `AUTUNE_GAP_RELATION_IMPL` is where
 it would go. A relation is read off one clause, so the hard cases can be sent

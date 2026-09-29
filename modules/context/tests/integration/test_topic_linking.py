@@ -11,7 +11,7 @@ from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 
 from autune_context import service
 from autune_context.config import get_settings
@@ -25,7 +25,7 @@ from autune_contracts import (
     TranscriptSource,
     Utterance,
 )
-from autune_core import Meeting, Team, session_scope
+from autune_core import Meeting, Participant, Team, session_scope
 from autune_core import Utterance as UtteranceRow
 
 
@@ -82,19 +82,30 @@ def _meeting(team_id: str, *, days_ago: int, expires_at: datetime | None = None)
         return row.id
 
 
-def _transcript(meeting_id: str, lines: list[str]) -> TranscriptReady:
+def _transcript(
+    meeting_id: str,
+    lines: list[str],
+    *,
+    speakers: list[str] | None = None,
+    refusing: frozenset[str] = frozenset(),
+) -> TranscriptReady:
+    """The payload, plus what module A writes before publishing it: one
+    ``participants`` row per speaker label (consenting unless in ``refusing``)
+    and the ``utterances`` rows behind it. Safe to call again for a re-run."""
+    labels = speakers or ["화자"] * len(lines)
+    _persist(meeting_id, lines, labels, refusing)
     return TranscriptReady(
         meeting_id=meeting_id,
         utterances=[
             Utterance(
                 id=f"utt_{meeting_id}_{i}",
-                speaker="화자",
+                speaker=label,
                 start=float(i),
                 end=float(i) + 1,
                 text=line,
                 confidence=0.9,
             )
-            for i, line in enumerate(lines)
+            for i, (line, label) in enumerate(zip(lines, labels, strict=True))
         ],
         metadata=TranscriptMetadata(
             duration=float(len(lines)),
@@ -104,6 +115,41 @@ def _transcript(meeting_id: str, lines: list[str]) -> TranscriptReady:
             privacy=PrivacyFlags(original_audio_deleted=True, pii_masked=True),
         ),
     )
+
+
+def _persist(
+    meeting_id: str, lines: list[str], labels: list[str], refusing: frozenset[str]
+) -> None:
+    with session_scope() as s:
+        existing = {
+            p.speaker_label: p.id
+            for p in s.scalars(select(Participant).where(Participant.meeting_id == meeting_id))
+        }
+        for label in dict.fromkeys(labels):
+            if label not in existing:
+                row = Participant(
+                    meeting_id=meeting_id, speaker_label=label, consented=label not in refusing
+                )
+                s.add(row)
+                s.flush()
+                existing[label] = row.id
+        have = set(
+            s.scalars(select(UtteranceRow.id).where(UtteranceRow.meeting_id == meeting_id)).all()
+        )
+        s.add_all(
+            UtteranceRow(
+                id=f"utt_{meeting_id}_{i}",
+                meeting_id=meeting_id,
+                participant_id=existing[label],
+                speaker_label=label,
+                start_sec=float(i),
+                end_sec=float(i) + 1,
+                text=line,
+                confidence=0.9,
+            )
+            for i, (line, label) in enumerate(zip(lines, labels, strict=True))
+            if f"utt_{meeting_id}_{i}" not in have
+        )
 
 
 _SEARCH = ["검색 개인화 논의"] * 5
@@ -158,23 +204,6 @@ class _RecordingReranker:
         return [0.9] * len(passages)
 
 
-def _persist_utterances(meeting_id: str, lines: list[str]) -> None:
-    """What module A writes before publishing -- ids matching ``_transcript``'s."""
-    with session_scope() as s:
-        s.add_all(
-            UtteranceRow(
-                id=f"utt_{meeting_id}_{i}",
-                meeting_id=meeting_id,
-                speaker_label="화자",
-                start_sec=float(i),
-                end_sec=float(i) + 1,
-                text=line,
-                confidence=0.9,
-            )
-            for i, line in enumerate(lines)
-        )
-
-
 def test_the_reranker_reads_the_past_segments_text_not_its_label(
     team_id: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -183,7 +212,6 @@ def test_the_reranker_reads_the_past_segments_text_not_its_label(
     matches near zero against a full segment of text."""
     past = _meeting(team_id, days_ago=10)
     current = _meeting(team_id, days_ago=0)
-    _persist_utterances(past, _SEARCH + _SORT)
     service.run_topic_linking(_transcript(past, _SEARCH + _SORT))
 
     reranker = _RecordingReranker()
@@ -210,7 +238,9 @@ def test_the_reranker_falls_back_to_the_label_without_utterances(
     ``utterance_ids``) is still a candidate, scored against its label."""
     past = _meeting(team_id, days_ago=10)
     current = _meeting(team_id, days_ago=0)
-    service.run_topic_linking(_transcript(past, _SEARCH + _SORT))  # no utterance rows
+    service.run_topic_linking(_transcript(past, _SEARCH + _SORT))
+    with session_scope() as s:  # deleted since, e.g. by the person who said them
+        s.execute(delete(UtteranceRow).where(UtteranceRow.meeting_id == past))
 
     reranker = _RecordingReranker()
     monkeypatch.setattr(service, "get_reranker", lambda: reranker)
@@ -309,3 +339,95 @@ def test_publish_waits_until_topic_linking_is_done(team_id: str, published: _Cap
 
     assert service.publish_if_ready(meeting) is False
     assert published.sent == []
+
+
+# --------------------------------------------------------------------------- #
+# Consent — privacy.md section 5, the line modules B and C already draw
+# --------------------------------------------------------------------------- #
+
+
+def _topic_rows(meeting_id: str) -> list[CtxEmbedding]:
+    with session_scope() as s:
+        rows = s.scalars(select(CtxEmbedding).where(CtxEmbedding.meeting_id == meeting_id)).all()
+        s.expunge_all()
+        return list(rows)
+
+
+def test_a_meeting_nobody_consented_to_is_not_analysed(team_id: str) -> None:
+    past = _meeting(team_id, days_ago=10)
+    current = _meeting(team_id, days_ago=0)
+    service.run_topic_linking(_transcript(past, _SEARCH + _SORT))
+
+    service.run_topic_linking(_transcript(current, _SEARCH + _SORT, refusing=frozenset({"화자"})))
+
+    assert _topic_rows(current) == []
+    with session_scope() as s:
+        assert s.scalars(select(CtxTopicLink).where(CtxTopicLink.meeting_id == current)).all() == []
+        status = s.get(CtxMeetingStatus, current)
+        assert status is not None and status.topic_linking_done  # the publish is not held up
+
+
+def test_only_a_consenting_speakers_utterances_reach_a_segment(team_id: str) -> None:
+    meeting = _meeting(team_id, days_ago=0)
+    speakers = ["동의"] * 5 + ["거부"] * 5
+
+    service.run_topic_linking(
+        _transcript(meeting, _SEARCH + _SORT, speakers=speakers, refusing=frozenset({"거부"}))
+    )
+
+    stored = [i for row in _topic_rows(meeting) for i in (row.utterance_ids or [])]
+    assert stored
+    assert set(stored) <= {f"utt_{meeting}_{i}" for i in range(5)}
+
+
+def test_an_utterance_with_no_participant_behind_it_is_not_analysed(team_id: str) -> None:
+    """Whether its speaker consented is unknown, and unknown is not yes."""
+    meeting = _meeting(team_id, days_ago=0)
+    transcript = _transcript(meeting, _SEARCH + _SORT)
+    with session_scope() as s:
+        s.execute(
+            update(UtteranceRow)
+            .where(UtteranceRow.meeting_id == meeting)
+            .values(participant_id=None)
+        )
+
+    service.run_topic_linking(transcript)
+
+    assert _topic_rows(meeting) == []
+
+
+def test_a_rerun_after_a_speaker_withdraws_drops_what_they_said(team_id: str) -> None:
+    meeting = _meeting(team_id, days_ago=0)
+    service.run_topic_linking(_transcript(meeting, _SEARCH + _SORT))
+    assert _topic_rows(meeting)
+    with session_scope() as s:
+        s.execute(
+            update(Participant).where(Participant.meeting_id == meeting).values(consented=False)
+        )
+
+    service.run_topic_linking(_transcript(meeting, _SEARCH + _SORT))
+
+    assert _topic_rows(meeting) == []
+
+
+def test_the_reranker_never_reads_a_withdrawn_speakers_past_text(
+    team_id: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``utterance_ids`` were stored while the past speaker consented; the
+    text is checked again when read, so a withdrawal takes effect without
+    re-running the past meeting. The past segment is still scored -- on its
+    label, the same fallback as for deleted utterances."""
+    past = _meeting(team_id, days_ago=10)
+    current = _meeting(team_id, days_ago=0)
+    service.run_topic_linking(_transcript(past, _SEARCH + _SORT))
+    with session_scope() as s:
+        s.execute(update(Participant).where(Participant.meeting_id == past).values(consented=False))
+
+    reranker = _RecordingReranker()
+    monkeypatch.setattr(service, "get_reranker", lambda: reranker)
+    service.run_topic_linking(_transcript(current, _SEARCH + _SORT))
+
+    labels = {row.ref_label for row in _topic_rows(past)}
+    assert reranker.calls
+    for _query, passages in reranker.calls:
+        assert passages and set(passages) <= labels

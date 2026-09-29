@@ -3,6 +3,9 @@
 Routers are collected by iterating the module list. Nobody edits this file to
 ship a feature: if you need custom behavior, put it in your module's router.
 See docs/architecture/monorepo.md.
+
+The one hand-mounted router is ``/api/auth``: sign-in is cross-cutting, owned by
+the whole team, and belongs to no module, so it is registered by name.
 """
 
 from __future__ import annotations
@@ -15,6 +18,7 @@ from fastapi.responses import JSONResponse
 
 from autune_contracts import MODULES
 from autune_core import AutuneError, configure_logging, get_logger, get_settings
+from autune_core.auth_router import router as auth_router
 from autune_core.celery_app import make_celery_app
 
 configure_logging()
@@ -66,6 +70,13 @@ def create_app(*, origins: list[str] | None = None) -> FastAPI:
     @app.get("/health", tags=["meta"])
     def health() -> dict[str, object]:
         return {"status": "ok", "env": get_settings().env, "modules": list(MODULES)}
+
+    # Sign-in is not a module. It belongs to no owner in the map and every
+    # module's routes depend on it, so it is registered here by name rather
+    # than discovered — the one exception invariant 6 allows itself, and the
+    # reason it is written out instead of appended to the loop below.
+    app.include_router(auth_router, prefix="/api/auth", tags=["auth"])
+    log.info("router_registered", module="auth", prefix="/api/auth")
 
     for name in MODULES:
         router = import_module(f"autune_{name}.router").router
