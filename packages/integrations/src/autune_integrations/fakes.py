@@ -140,6 +140,7 @@ class FakeCalendar:
 
     events: dict[str, dict] = field(default_factory=dict)
     listed: list[CalendarEvent] = field(default_factory=list)
+    changed: list[CalendarEvent] = field(default_factory=list)
     busy: dict[str, list[tuple[datetime, datetime]]] = field(default_factory=dict)
     deleted: list[str] = field(default_factory=list)
     created: int = 0
@@ -151,13 +152,30 @@ class FakeCalendar:
     ) -> list[CalendarEvent]:
         return self.listed[:limit]
 
+    def changed_events(
+        self,
+        calendar_id: str,
+        *,
+        updated_min: datetime,
+        tag: tuple[str, str],
+        max_pages: int = 10,
+    ) -> list[CalendarEvent]:
+        """What a test put in ``changed``, filtered by the tag the way Google does."""
+        return [e for e in self.changed if e.private.get(tag[0]) == tag[1]]
+
     def free_busy(
         self, emails: list[str], time_min: datetime, time_max: datetime
     ) -> dict[str, list[tuple[datetime, datetime]] | None]:
         return {email: self.busy.get(email) for email in emails}
 
     def create_all_day_event(
-        self, calendar_id: str, summary: str, day: date, *, description: str = ""
+        self,
+        calendar_id: str,
+        summary: str,
+        day: date,
+        *,
+        description: str = "",
+        private: dict[str, str] | None = None,
     ) -> str:
         check_outbound(
             {"summary": summary, "description": description}, destination="google_calendar"
@@ -169,6 +187,7 @@ class FakeCalendar:
             "summary": summary,
             "day": day,
             "description": description,
+            "private": dict(private or {}),
         }
         return event_id
 

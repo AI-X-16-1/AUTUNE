@@ -197,3 +197,55 @@ def test_the_fake_answers_like_the_client() -> None:
         "in@example.com": [],
         "out@else.com": None,
     }
+
+
+# --- Autune's tag and the read-back (#435, per-person calendars) --------------------
+
+
+def test_a_created_event_carries_autunes_private_tag() -> None:
+    sent: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        sent.update(json.loads(request.content))
+        return httpx.Response(200, json={"id": "evt_1"})
+
+    client(handler).create_all_day_event(
+        "primary", "[마감] 스펙", date(2026, 10, 2), private={"autune": "act_1"}
+    )
+
+    assert sent["extendedProperties"] == {"private": {"autune": "act_1"}}
+
+
+def test_changed_events_asks_google_for_autunes_events_only_and_pages() -> None:
+    """The tag filter is Google's, so the rest of a person's calendar is never
+    returned -- this pins that it is actually sent."""
+    seen: list[httpx.URL] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.url)
+        if "pageToken" not in request.url.params:
+            return httpx.Response(
+                200,
+                json={
+                    "items": [
+                        {
+                            "id": "evt_1",
+                            "start": {"date": "2026-10-05"},
+                            "end": {"date": "2026-10-06"},
+                            "extendedProperties": {"private": {"autune_item": "act_1"}},
+                        }
+                    ],
+                    "nextPageToken": "p2",
+                },
+            )
+        return httpx.Response(200, json={"items": [{"id": "evt_2", "status": "cancelled"}]})
+
+    events = client(handler).changed_events("primary", updated_min=START, tag=("autune", "1"))
+
+    assert seen[0].params["privateExtendedProperty"] == "autune=1"
+    assert seen[0].params["showDeleted"] == "true"
+    assert seen[1].params["pageToken"] == "p2"
+    assert events[0].start == date(2026, 10, 5)
+    assert events[0].private == {"autune_item": "act_1"}
+    assert events[1].cancelled
+    assert events[1].start is None

@@ -2,9 +2,16 @@
 
 Owned by the Workload subagent's owner (#260, #261 section 3.1) and shared by
 three callers, per #435: Briefing lists a team calendar's upcoming meetings,
-Follow-up and Workload ask when people are busy, and module B puts a confirmed
-action item's due date on the team calendar. Follow-up's approved meeting is
-``create_event``.
+Follow-up and Workload ask when people are busy, and module B puts each
+person's own confirmed action items on their own calendar and reads back a
+date they moved there. Follow-up's approved meeting is ``create_event``.
+
+**Autune's events carry a private tag, and the read-back asks for that tag.**
+``create_all_day_event`` stores ``private`` in the event's
+``extendedProperties.private``, which only the app that wrote it sees, and
+``changed_events`` filters on it server-side (``privateExtendedProperty``).
+Google returns only Autune's own events, so reading a date back never reads
+the rest of a person's calendar.
 
 **Availability is busy windows only** -- never event titles, attendees or
 places, which are other people's data. ``free_busy`` is the only read that
@@ -91,23 +98,44 @@ def refresh_access_token(
 
 @dataclass(frozen=True)
 class CalendarEvent:
-    """One event from a calendar the team connected -- its own meetings."""
+    """One event from a connected calendar."""
 
     id: str
     summary: str
-    start: datetime | date
-    end: datetime | date
+    start: datetime | date | None
+    end: datetime | date | None
     attendees: list[str] = field(default_factory=list)
+    private: dict[str, str] = field(default_factory=dict)
+    """``extendedProperties.private`` -- Autune's own tag on events it made."""
+    cancelled: bool = False
+    """Deleted in Calendar. Only ``changed_events`` returns these; a cancelled
+    event carries no dates."""
 
     @property
     def all_day(self) -> bool:
         return not isinstance(self.start, datetime)
 
 
-def _when(raw: dict[str, Any]) -> datetime | date:
+def _when(raw: dict[str, Any] | None) -> datetime | date | None:
+    if not raw:
+        return None
     if "dateTime" in raw:
         return datetime.fromisoformat(raw["dateTime"])
-    return date.fromisoformat(raw["date"])
+    if "date" in raw:
+        return date.fromisoformat(raw["date"])
+    return None
+
+
+def _event(raw: dict[str, Any]) -> CalendarEvent:
+    return CalendarEvent(
+        id=str(raw["id"]),
+        summary=str(raw.get("summary", "")),
+        start=_when(raw.get("start")),
+        end=_when(raw.get("end")),
+        attendees=[a["email"] for a in raw.get("attendees", []) if "email" in a],
+        private=dict(raw.get("extendedProperties", {}).get("private", {})),
+        cancelled=raw.get("status") == "cancelled",
+    )
 
 
 class CalendarClient(HttpClient):
@@ -141,17 +169,35 @@ class CalendarClient(HttpClient):
             "maxResults": str(limit),
         }
         body = self.request("GET", f"/calendars/{calendar_id}/events", params=params)
-        return [
-            CalendarEvent(
-                id=str(raw["id"]),
-                summary=str(raw.get("summary", "")),
-                start=_when(raw["start"]),
-                end=_when(raw["end"]),
-                attendees=[a["email"] for a in raw.get("attendees", []) if "email" in a],
-            )
-            for raw in body.get("items", [])
-            if raw.get("status") != "cancelled"
-        ]
+        return [_event(raw) for raw in body.get("items", []) if raw.get("status") != "cancelled"]
+
+    def changed_events(
+        self,
+        calendar_id: str,
+        *,
+        updated_min: datetime,
+        tag: tuple[str, str],
+        max_pages: int = 10,
+    ) -> list[CalendarEvent]:
+        """Autune's own events -- those whose private property ``tag[0]`` is
+        ``tag[1]`` -- changed since ``updated_min``, deletions included
+        (``cancelled``). The filter runs at Google, so nothing else on the
+        person's calendar is returned (module docstring)."""
+        params: dict[str, str] = {
+            "privateExtendedProperty": f"{tag[0]}={tag[1]}",
+            "updatedMin": updated_min.isoformat(),
+            "showDeleted": "true",
+            "maxResults": "250",
+        }
+        events: list[CalendarEvent] = []
+        for _ in range(max_pages):
+            body = self.request("GET", f"/calendars/{calendar_id}/events", params=params)
+            events += [_event(raw) for raw in body.get("items", [])]
+            token = body.get("nextPageToken")
+            if not token:
+                break
+            params["pageToken"] = str(token)
+        return events
 
     def free_busy(
         self, emails: list[str], time_min: datetime, time_max: datetime
@@ -197,14 +243,22 @@ class CalendarClient(HttpClient):
         )
 
     def create_all_day_event(
-        self, calendar_id: str, summary: str, day: date, *, description: str = ""
+        self,
+        calendar_id: str,
+        summary: str,
+        day: date,
+        *,
+        description: str = "",
+        private: dict[str, str] | None = None,
     ) -> str:
         """An all-day event on ``day`` with no attendees, so nobody is sent an
-        invitation -- a due date on the team calendar, not a meeting."""
+        invitation -- a due date, not a meeting. ``private`` is Autune's tag
+        (``extendedProperties.private``), how ``changed_events`` finds it again."""
+        body = _all_day(summary, day, description)
+        if private:
+            body["extendedProperties"] = {"private": private}
         return str(
-            self.request(
-                "POST", f"/calendars/{calendar_id}/events", json=_all_day(summary, day, description)
-            ).get("id", "")
+            self.request("POST", f"/calendars/{calendar_id}/events", json=body).get("id", "")
         )
 
     def update_all_day_event(
