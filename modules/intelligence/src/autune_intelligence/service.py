@@ -38,7 +38,12 @@ from autune_contracts import (
 from autune_contracts.intelligence import Grade
 from autune_core import Meeting, Participant, Utterance, get_logger
 from autune_core.errors import ConflictError, NotFoundError, ValidationError
-from autune_integrations import SlackApi, assert_masked, assert_personal_delivery
+from autune_integrations import (
+    PermanentIntegrationError,
+    SlackApi,
+    assert_masked,
+    assert_personal_delivery,
+)
 
 from .alignment import meeting_alignment
 from .config import get_settings
@@ -1118,7 +1123,10 @@ def _deliver_personal(
 def send_personal_feedback(session: Session, slack: SlackApi, meeting_id: str) -> int:
     """DM each identified participant their own speaking ratio. Returns the count.
 
-    A speaker with no linked user account cannot be reached and is skipped. The
+    A speaker with no linked user account cannot be reached and is skipped, and
+    so is one Slack refuses permanently (``PermanentIntegrationError``: not
+    linked for DMs, or ``ok: false``). A transient failure still raises, so the
+    task fails loudly rather than dropping a DM that a later run could send. The
     ratio is withheld entirely — no DM at all — when fewer than
     ``_MIN_SPEAKERS_FOR_RATIO`` people (``speaker_count_for_gate``) spoke, for
     the same reason ``/me/speaking-ratio`` withholds it. The ratio is not
@@ -1147,7 +1155,20 @@ def send_personal_feedback(session: Session, slack: SlackApi, meeting_id: str) -
         fallback, blocks = build_speaking_ratio_dm(
             ratio=share.ratio, participant_count=participant_count
         )
-        _deliver_personal(slack, share.user_id, fallback, blocks)
+        try:
+            _deliver_personal(slack, share.user_id, fallback, blocks)
+        except PermanentIntegrationError as exc:
+            # One person Slack cannot reach -- no linked account, or a
+            # refusal such as channel_not_found -- must not cost everyone
+            # after them their DM (#478 makes both raise). Ids and the error
+            # code only: the message can quote the recipient.
+            log.info(
+                "speaking_ratio_recipient_unreachable",
+                meeting_id=meeting_id,
+                user_id=share.user_id,
+                error=exc.code,
+            )
+            continue
         sent += 1
 
     log.info("speaking_ratio_feedback_sent", meeting_id=meeting_id, recipients=sent)
