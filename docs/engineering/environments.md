@@ -363,9 +363,9 @@ reader nothing about the extra existing.
 ### Module C's template verifier is opt-in and external
 
 `AUTUNE_GAP_VERIFIER_IMPL=gemini` sends the utterances the embedder could not
-decide, one line each and masked by module A, to Google — with their candidate
-checklist items and nothing else from the meeting. **Names said aloud are not
-masked** and go with them. Same standing as module B's `llm` classifier (#392):
+decide, one line each as module A stored them, to Google — with their candidate
+checklist items and nothing else from the meeting. **Names, and on the batch
+path numbers read out as words, are not masked** and go with them. Same standing as module B's `llm` classifier (#392):
 never the default, dummy meetings only until the team decides, and a free-tier
 key may let the provider keep what it is sent. What a request carries is listed
 in `../modules/gap.md`, "Verifying what the embedder was unsure of".

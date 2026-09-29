@@ -12,14 +12,20 @@ here and a registry entry, and nothing outside this package changes.
 - The candidate items offered in this request: each item's name, its question
   and up to ``AUTUNE_GAP_VERIFIER_EXAMPLES`` example sentences — template-file
   content, not meeting content.
-- The ambiguous utterances, each on its own numbered line, as module A masked
-  them. **Names said aloud are not masked** (module A has no pattern for them),
-  so a name in one of these lines goes too. No speaker, no timestamp, no meeting
-  or utterance id, no neighbouring line.
+- The ambiguous utterances, each on its own numbered line, as module A stored
+  them. **Names and numbers said aloud are not masked**: module A has no pattern
+  for names, and on the batch path it does not run its spoken-number recogniser,
+  so "공일공 일이삼사…" is stored as said (module A's to fix, raised in review
+  of #484). Either goes with its line. No speaker, no timestamp, no meeting or
+  utterance id, no neighbouring line.
 
 Every request goes through ``autune_integrations.HttpClient``, so
 ``check_outbound`` scans every string in the body and refuses an unmasked phone
-number, e-mail or account number, and an oversized body.
+number, e-mail or account number written in digits. **That refusal is not
+caught here.** It means a stored transcript holds an unmasked value — module
+A's masking failed (invariant 11) — and it fails the task rather than falling
+back quietly. A question too long to send is never sent, so the size half of
+the check cannot be what fires.
 """
 
 from __future__ import annotations
@@ -154,8 +160,8 @@ def parse(answer: str, offered: dict[int, dict[str, str]]) -> dict[int, frozense
 def batches(questions: list[Question], budget: int) -> list[list[Question]]:
     """Consecutive questions whose rendered text fits ``budget`` characters.
 
-    A single question too large for the budget still gets a batch of its own;
-    ``check_outbound`` then refuses it by name rather than this silently
+    A single question too large for the budget still gets a batch of its own,
+    and ``GeminiVerifier`` leaves it unsent and unanswered rather than
     truncating the utterance.
     """
     out: list[list[Question]] = []
@@ -207,7 +213,11 @@ def _client(base_url: str, api_key: str, timeout_sec: float) -> Any:
             return super().request(method, path, **kwargs)
 
     client = VerifierClient(base_url, headers={"x-goog-api-key": api_key})
-    client._client.timeout = timeout_sec  # noqa: SLF001 - httpx's own setter; see above
+    # Temporary: reaches into the shared client's private httpx instance, as
+    # module B's LLM client does. If HttpClient changes how it holds it, this
+    # stops applying silently and the timeout drops back to 10 s. Needs
+    # HttpClient(timeout=...); see #487.
+    client._client.timeout = timeout_sec  # noqa: SLF001
     return client
 
 
@@ -241,9 +251,18 @@ class GeminiVerifier:
         return f"gemini:{self._model}" + (f"+{self._fallback}" if self._fallback else "")
 
     def verify(self, questions: list[Question]) -> list[frozenset[str] | None]:
+        """Raises ``PrivacyViolationError`` when the outbound check finds an
+        unmasked value; every other failure leaves its questions unanswered."""
         self.asked.extend(questions)
+        budget = MAX_OUTBOUND_CHARS - _OVERHEAD
         answers: list[frozenset[str] | None] = []
-        for index, batch in enumerate(batches(questions, MAX_OUTBOUND_CHARS - _OVERHEAD)):
+        for index, batch in enumerate(batches(questions, budget)):
+            if len(render(batch)[0]) > budget:
+                # Only a lone question can be over: one utterance too long to
+                # send. Not sending it is the rule; the embedding answers for it.
+                log.info("gap_verifier_question_too_long", batch=index)
+                answers.extend([None] * len(batch))
+                continue
             answers.extend(self._verify_batch(batch, index=index))
         return answers
 
@@ -256,7 +275,11 @@ class GeminiVerifier:
         }
         try:
             parsed = parse(_answer_text(self._post(body, index=index)), offered)
-        except (IntegrationError, PrivacyViolationError, ValueError) as exc:
+        except (IntegrationError, ValueError) as exc:
+            # The provider did not answer usefully: fall back. Not
+            # PrivacyViolationError -- that one is an unmasked value in a stored
+            # transcript, and it propagates (review of #484).
+            #
             # The class name only: a provider message or a parse error can echo
             # the request, which is utterances.
             log.warning(

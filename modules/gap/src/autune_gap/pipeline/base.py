@@ -232,8 +232,8 @@ class TemplateVerifier(Protocol):
 
     **The only step in this module that may send meeting text off the
     machine.** An external implementation receives, per ambiguous utterance,
-    the utterance text as module A masked it — names spoken aloud are *not*
-    masked — together with the candidate items' names, questions and example
+    the utterance text as module A stored it — names and numbers spoken aloud
+    are *not* masked — together with the candidate items' names, questions and example
     sentences from the template files. It never receives the rest of the
     meeting, a speaker, a time or an id. That is still transcript content
     leaving our infrastructure, which ``privacy.md`` section 6 permits only
@@ -254,7 +254,11 @@ class TemplateVerifier(Protocol):
     def verify(self, questions: list[Question]) -> list[frozenset[str] | None]:
         """One answer per question, in order: the candidate keys the utterance
         discussed, or ``None`` when that question could not be answered (the
-        provider failed, or the outbound check refused the request). An
-        implementation never raises for a failed request — the caller falls
-        back to the embedding's own answer for that utterance."""
+        provider failed, or the utterance was too long to send). The caller
+        falls back to the embedding's own answer for that utterance.
+
+        **One failure is raised, not answered:** ``PrivacyViolationError``
+        from the outbound check. It means an unmasked value reached a stored
+        transcript, which is a broken invariant to stop on, not a provider
+        hiccup to fall back from."""
         ...

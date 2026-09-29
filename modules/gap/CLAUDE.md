@@ -76,10 +76,11 @@ against live in the template files and must never be copied from the eval set.
 
 The utterances the embedder cannot decide may be checked by an LLM
 (`AUTUNE_GAP_VERIFIER_IMPL`, off by default). **`gemini` is this module's only
-external call**: it sends each ambiguous utterance, masked but with any spoken
-name, and its candidate items. The verifier confirms candidates and nothing
-else; coverage and risk stay in `detect`. Keep it that way, and keep every
-request going through `autune_integrations`.
+external call**: it sends each ambiguous utterance, masked but with any name or
+number said aloud, and its candidate items. The verifier confirms candidates
+and nothing else; coverage and risk stay in `detect`. Keep it that way, keep
+every request going through `autune_integrations`, and never catch the
+`PrivacyViolationError` its outbound check raises.
 
 The graph is one meeting's worth — tens of nodes — so it is built in memory from
 rows each run. At that size PageRank and betweenness take single-digit

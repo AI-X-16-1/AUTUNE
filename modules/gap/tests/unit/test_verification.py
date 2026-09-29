@@ -11,6 +11,7 @@ from collections.abc import Iterator
 
 import pytest
 
+from autune_core.errors import PrivacyViolationError
 from autune_gap import semantic, service, template, verification
 from autune_gap.config import get_settings
 from autune_gap.pipeline import FakeVerifier
@@ -263,6 +264,19 @@ def _embedding_only(text: str) -> frozenset[str]:
         floor=settings.semantic_floor,
         margin=settings.semantic_margin,
     )
+
+
+def test_a_privacy_refusal_fails_the_run(wired: list[FakeVerifier]) -> None:
+    """``PrivacyViolationError`` is not an unanswered question. It propagates
+    out of ``_hear`` and so out of ``detect_gaps``, and the task fails."""
+
+    def refuse(question: verification.Question) -> frozenset[str] | None:
+        raise PrivacyViolationError("outbound payload to test contains a phone number")
+
+    wired.append(FakeVerifier(refuse))
+
+    with pytest.raises(PrivacyViolationError):
+        hear(TORN)
 
 
 def test_with_the_verifier_off_the_embedding_decides_alone(wired: list[FakeVerifier]) -> None:

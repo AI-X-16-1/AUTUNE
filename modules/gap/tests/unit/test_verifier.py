@@ -181,9 +181,11 @@ def test_an_unparseable_answer_leaves_its_questions_unanswered() -> None:
     assert verifier.verify([REINDEX]) == [None]
 
 
-def test_an_unmasked_phone_number_is_refused_before_it_is_sent() -> None:
-    """``check_outbound`` runs on the body. Module A masks before it writes, so
-    this cannot arrive from the pipeline; if it ever does, it does not leave."""
+def test_an_unmasked_phone_number_is_refused_and_raised() -> None:
+    """``check_outbound`` runs on the body and refuses it, so nothing leaves.
+    The refusal is **raised, not answered**: module A masks before it writes,
+    so an unmasked number here means a stored transcript broke invariant 11,
+    and falling back to the embedding would hide that (review of #484)."""
     sent: list[httpx.Request] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -192,8 +194,25 @@ def test_an_unmasked_phone_number_is_refused_before_it_is_sent() -> None:
 
     leaked = question("연락은 010-1234-5678로 주세요", "ownership")
 
-    assert gemini(handler).verify([leaked]) == [None]
+    with pytest.raises(PrivacyViolationError):
+        gemini(handler).verify([leaked])
     assert sent == []
+
+
+def test_an_utterance_too_long_to_send_is_not_sent() -> None:
+    """Not sending is the rule for what does not fit, and it is not a privacy
+    failure: the question goes unanswered and the embedding answers for it."""
+    sent: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        sent.append(request)
+        return reply('{"answers": {"1": ["B"]}}')  # B is dependency in REINDEX's batch
+
+    long = question("가" * (MAX_OUTBOUND_CHARS + 10), "dependency")
+
+    assert gemini(handler).verify([long, REINDEX]) == [None, {"dependency"}]
+    assert len(sent) == 1
+    assert "가" * 50 not in sent[0].content.decode()
 
 
 def test_gemini_refuses_to_start_without_a_key() -> None:

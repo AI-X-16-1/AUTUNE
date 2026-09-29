@@ -631,10 +631,17 @@ confirms joins `heard`, and `heard` enters `detect.compare` exactly as the
 embedding's answer did: partial at most. Coverage, severity and risk are
 `detect`'s and did not change.
 
-**When it cannot answer, the embedding stands.** A failed or refused request,
-an unparseable answer, or an utterance past `VERIFY_MAX_UTTERANCES` keeps the
-embedding-only decision (`semantic.nearest_item`), and `gap_detection_complete`
-logs how many were asked and how many went unanswered.
+**When it cannot answer, the embedding stands.** A failed request, an
+unparseable answer, an utterance too long to send, or one past
+`VERIFY_MAX_UTTERANCES` keeps the embedding-only decision
+(`semantic.nearest_item`), and `gap_detection_complete` logs how many were
+asked and how many went unanswered.
+
+**A privacy refusal is not "cannot answer".** When `check_outbound` finds an
+unmasked value in a request, `PrivacyViolationError` propagates and the task
+fails. It means a stored transcript holds what module A should have masked;
+falling back would keep the product running while hiding that. Raised in
+review of #484.
 
 **What leaves, with `gemini`.** Per request, under the 4,000-character outbound
 cap and through `autune_integrations.HttpClient` (`check_outbound` scans the
@@ -642,10 +649,13 @@ body):
 
 - the fixed instruction text;
 - the candidate items offered in that request — template-file content;
-- the ambiguous utterances, numbered, **as module A masked them**. Module A masks
-  resident registration, card, phone and account numbers and e-mail addresses;
-  **it does not mask names**, so a name said in one of these lines goes to
-  Google. No speaker, time, meeting or utterance id, and no neighbouring line.
+- the ambiguous utterances, numbered, **as module A stored them**. Module A masks
+  resident registration, card, phone and account numbers and e-mail addresses
+  written in digits. **It does not mask names, and on the batch path it does
+  not mask numbers read out as words** ("공일공 일이삼사…" — the spoken-number
+  recogniser runs on the live path only; module A's to fix, raised in review
+  of #484). Either goes to Google with its line. No speaker, time, meeting or
+  utterance id, and no neighbouring line.
 
 A meeting with no topics sends nothing, since it raises no gaps. At most
 `VERIFY_MAX_UTTERANCES` utterances of one meeting leave per run. This is the

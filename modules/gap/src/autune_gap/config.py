@@ -116,7 +116,7 @@ class GapSettings(BaseSettings):
     ``fake`` or ``gemini``. Needs the embedder on (``embedder_impl``).
 
     ``off`` keeps the embedding's own answer for every utterance. **``gemini``
-    sends each ambiguous utterance, masked but with any spoken name in it, to
+    sends each ambiguous utterance, masked but with any name or spoken-out number in it, to
     Google** along with its candidate items — never the rest of the meeting.
     That is privacy.md section 6's design conversation, so it is never the
     default and belongs on dummy meetings until the team decides otherwise

@@ -391,8 +391,9 @@ class Hearing:
     asked: int = 0
     """Of those, how many were sent to the verifier."""
     unanswered: int = 0
-    """Asked and not answered: the provider failed or the outbound check refused.
-    These keep the embedding's own answer."""
+    """Asked and not answered: the provider failed, or the utterance was too long
+    to send. These keep the embedding's own answer. An outbound privacy refusal
+    is not counted here; it fails the task."""
 
 
 def _hear(chosen: template.Template, speech: list[str], settings: GapSettings) -> Hearing:
