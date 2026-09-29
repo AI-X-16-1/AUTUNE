@@ -39,7 +39,7 @@ from autune_context.pipeline.change import classify_change, strip_keep_words
 from autune_context.pipeline.retrieval import HybridRetriever, visible_meeting_clauses
 from autune_context.pipeline.topics import extract_topics
 from autune_contracts import ChangeType, ContextLinks, DecisionChange, NliLabel, TopicLink
-from autune_core import Meeting, Participant, TeamMember, get_logger, session_scope
+from autune_core import Meeting, Participant, TeamMember, Utterance, get_logger, session_scope
 from autune_core.errors import ConflictError, NotFoundError
 from autune_integrations import SlackApi, assert_personal_delivery
 
@@ -94,6 +94,12 @@ def run_topic_linking(transcript: TranscriptReady) -> bool:
     ``tasks.on_transcript_ready`` republishes them. A re-run is a module A
     reprocess or a redelivery; the ordinary publish would refuse both on its
     ``published_at`` guard.
+
+    Only a consenting speaker's utterances are analysed (privacy.md section 5,
+    ``consented_utterance_ids``): the rest never reach the embedder, a topic
+    label, the BM25 corpus, the re-ranker, or ``ctx_embeddings.utterance_ids``.
+    A meeting where nobody consented gets no topics and no links -- and a
+    re-run after a speaker withdraws drops what their speech produced.
     """
     settings = get_settings()
     embedder = get_embedder()
@@ -104,8 +110,10 @@ def run_topic_linking(transcript: TranscriptReady) -> bool:
         if meeting is None:
             raise ValueError(f"{transcript.meeting_id}: meeting row not found")
 
+        consented = consented_utterance_ids(session, transcript.meeting_id)
+        analysed = [u for u in transcript.utterances if u.id in consented]
         topics = extract_topics(
-            list(transcript.utterances),
+            analysed,
             embedder,
             window=settings.topic_window,
             min_segment=settings.topic_min_segment,
@@ -115,6 +123,8 @@ def run_topic_linking(transcript: TranscriptReady) -> bool:
             "context_topics_extracted",
             meeting_id=transcript.meeting_id,
             topics=len(topics),
+            utterances=len(analysed),
+            excluded=len(transcript.utterances) - len(analysed),
         )
 
         session.execute(
@@ -176,6 +186,28 @@ def run_topic_linking(transcript: TranscriptReady) -> bool:
             already_published=already_published,
         )
         return already_published
+
+
+def consented_utterance_ids(session: Session, meeting_id: str) -> set[str]:
+    """This meeting's utterances whose speaker consented to analysis.
+
+    The line modules B and C already draw (``autune_extraction.service
+    .consented_utterance_ids``, #163): ``Participant.consented`` is False for a
+    speaker whose speech is excluded from analysis, and an utterance with no
+    participant behind it is out as well -- whether its speaker consented is
+    unknown, and unknown is not yes. ``TranscriptReady`` carries every
+    utterance; filtering is the consumer's job.
+
+    Reads the shared ``utterances`` and ``participants`` tables -- never writes
+    them (invariant 4).
+    """
+    return set(
+        session.scalars(
+            select(Utterance.id)
+            .join(Participant, Participant.id == Utterance.participant_id)
+            .where(Utterance.meeting_id == meeting_id, Participant.consented.is_(True))
+        ).all()
+    )
 
 
 def _link_topic(
