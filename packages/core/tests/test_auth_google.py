@@ -32,6 +32,7 @@ from autune_core.oauth.state import (
     RedisStateStore,
     get_state_store,
 )
+from autune_core.settings import get_settings
 
 # --------------------------------------------------------------------------- #
 # State store
@@ -238,6 +239,24 @@ def test_upsert_is_idempotent_on_google_sub(db: Session) -> None:
     second = upsert_user_from_google(db, _identity(name="New"))
     assert first.id == second.id
     assert second.display_name == "New"
+
+
+def test_upsert_follows_a_changed_google_email(db: Session) -> None:
+    upsert_user_from_google(db, _identity())
+    user = upsert_user_from_google(db, _identity(email="new@example.com"))
+    assert user.email == "new@example.com"
+
+
+def test_upsert_keeps_the_old_email_when_another_user_holds_the_new_one(db: Session) -> None:
+    first = upsert_user_from_google(db, _identity())
+    db.add(User(id="user_other", email="taken@example.com", display_name="Other"))
+    db.flush()
+
+    user = upsert_user_from_google(db, _identity(email="taken@example.com"))
+
+    assert user.id == first.id
+    assert user.email == "a@example.com"
+    assert user.last_login_at is not None
 
 
 def test_upsert_links_an_existing_magic_link_user_by_email(db: Session) -> None:
@@ -544,6 +563,20 @@ def test_me_accepts_the_session_cookie(
     user = upsert_user_from_google(db, _identity())
     client.cookies.set(SESSION_COOKIE, issue_token(user.id))
     assert client.get("/api/auth/me").status_code == 200
+
+
+def test_providers_reports_whether_google_is_configured(
+    api: tuple[TestClient, dict[str, object]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client, _ = api
+    settings = get_settings()
+    monkeypatch.setattr(settings, "google_client_id", "")
+    assert client.get("/api/auth/providers").json() == {"google": False}
+
+    monkeypatch.setattr(settings, "google_client_id", "id")
+    monkeypatch.setattr(settings, "google_client_secret", "secret")
+    monkeypatch.setattr(settings, "google_redirect_uri", "http://localhost:3000/cb")
+    assert client.get("/api/auth/providers").json() == {"google": True}
 
 
 def test_logout_clears_the_cookie(api: tuple[TestClient, dict[str, object]]) -> None:

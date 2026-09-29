@@ -126,6 +126,13 @@ class Settings(BaseSettings):
         return self.env == "production"
 
     @property
+    def google_sign_in_configured(self) -> bool:
+        """Whether all three Google OAuth values are set, so sign-in can complete."""
+        return bool(
+            self.google_client_id and self.google_client_secret and self.google_redirect_uri
+        )
+
+    @property
     def session_cookie_secure(self) -> bool:
         """Send the session cookie over HTTPS only, everywhere but local."""
         return self.env != "local"
