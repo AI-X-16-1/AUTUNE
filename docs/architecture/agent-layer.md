@@ -719,11 +719,17 @@ through `check_outbound` / `assert_masked` exactly as B's Notion sync and D's
 Slack notices do. There is no new mechanism to build and no new decision to
 make.
 
-An earlier draft of this document said #92 blocks the layer. It does not.
-#92's five questions are consent surviving a departure, label substitution
-under PIPA 제36조, the lawful basis for a retained transcript, voice embeddings
-under 제23조, and GDPR applicability. **None of them asks whether content may
-reach an LLM API.** That dependency was invented here and is removed.
+An earlier draft of this document said #92 blocks the layer. It blocks the
+design of it no longer, but one of its questions now bears on deployment. #92's
+original five are consent surviving a departure, label substitution under PIPA
+제36조, the lawful basis for a retained transcript, voice embeddings under
+제23조, and GDPR applicability; none of them asks whether content may reach an
+LLM API, and the blanket dependency invented here is removed. On 09-28, #392
+added a sixth that does: whether a whole meeting's utterances reaching a
+provider abroad is an overseas transfer under 제28조의8. It does not change the
+mechanism above — `check_outbound` is still the one enforcement point — but it
+does set who may be in the meetings we run this on. Section 13.3 states the
+rule that holds until #92 answers.
 
 What section 6's *second* condition does impose is a real design constraint,
 and it is the one that bites:
@@ -1082,10 +1088,11 @@ T3 mean.
 **Stale since #393, and not this document's call to settle.** Module B has
 since added `classifier_impl=llm`, which sends masked utterance windows to
 Gemini through `check_outbound`, so the door the paragraph above describes is
-open in B's own code. Whether that meets section 6's second condition is B's
-owner's decision, recorded in B's docs; this section keeps the old wording
-only so the history reads straight, and T2 now has a running implementation
-to measure.
+open in B's own code. Whether that meets section 6's second condition is a
+team decision on #392 (`decision`, `privacy`) rather than B's owner's alone,
+and it is still open; until it closes, `llm` runs on demo meetings only. This
+section keeps the old wording only so the history reads straight, and T2 now
+has a running implementation to measure.
 
 **One task, not three.** Utterance classification has a measured baseline (#149)
 and an evaluation set. Gap detection has an implementation but no labelled
@@ -1149,26 +1156,35 @@ A task declares its own period with `@periodic` beside `@shared_task`, and
 (`async-pipeline.md`). Nobody edits `apps/worker`. Every time and state trigger
 in section 6 stands on this, and so does plan mode's resume on a timeout.
 
-### 13.3 Which outbound providers, on what terms — not #92, and not a blocker
+### 13.3 Which outbound providers, on what terms — #392's rule until #92 answers
 
 **The rule is decided; the vendor list is not.** `privacy.md` section 6 says
 what may cross the boundary — masked text, only what the feature needs — and
 `packages/integrations/privacy.py` enforces it for every destination including
 "any LLM API". Section 8 rule 1 applies that to the orchestrator's own LLM call
-and states the prompt budget. Nothing about the layer waits on a decision here,
-and an earlier draft of this document was wrong to say #92 blocks it: #92 asks
-about consent surviving a departure, label substitution under PIPA 제36조, the
-lawful basis for a retained transcript, voice embeddings under 제23조, and GDPR
-applicability. None of those is about an outbound transfer.
+and states the prompt budget.
 
-What is actually undecided is narrower and is procurement rather than
-architecture: **which providers we send to, and under what agreement.** Two
-parts, and only the second holds anything back:
+An earlier draft said #92 does not touch this. That was true of #92's original
+five questions — consent surviving a departure, label substitution under PIPA
+제36조, the lawful basis for a retained transcript, voice embeddings under
+제23조, GDPR applicability — and it stopped being true on 09-28, when #392 added
+a sixth: whether sending a whole meeting's utterances to an LLM provider abroad
+is an overseas transfer under 제28조의8. Names are why — `find_unmasked` carries
+no name pattern, so a real name spoken in a meeting crosses the boundary, for
+every utterance rather than a few sentences. That question is open on #92, and
+the rule below is what holds until it is answered.
 
-- **The LLM provider: Gemini.** Module B already calls it through
-  `check_outbound` (#393), so the agent layer adds no new provider. What is
-  still owed is the data-processing terms recorded next to the credential in
-  `../engineering/environments.md`, as for every third-party integration, and
+What is undecided is narrower than the architecture: **which providers we send
+to, and under what agreement.** Two parts, and each carries a condition:
+
+- **The LLM provider: Gemini, on the same terms as B's `classifier_impl=llm` —
+  demo meetings only until #392 is decided and a paid key with recorded
+  data-processing terms replaces the free one.** Nothing in the code tells a
+  demo meeting from a real one, nor a free key from a paid one (#405), so this
+  is a deployment rule and not a runtime check. Module B already calls Gemini
+  through `check_outbound` (#393), so the agent layer adds no new provider;
+  what is still owed is those terms, recorded next to the credential in
+  `../engineering/environments.md` as for every third-party integration, and
   the free tier's rate limit — B hit it (#419) — which five subagents sharing
   one key will hit sooner. It does not block design or the mock-tool milestone.
 - **Open-web search.** This one stays out of scope for the release. A search
