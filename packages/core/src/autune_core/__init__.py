@@ -45,6 +45,7 @@ from .integrations_config import (
     require_integration,
     save_integration,
 )
+from .jira_connection import JiraAccess, jira_access
 from .logging import configure_logging, get_logger
 from .periodic import beat_schedule, is_periodic_task_name, periodic
 from .settings import Settings, get_settings
@@ -73,6 +74,8 @@ __all__ = [
     "Participant",
     "Team",
     "TeamIntegration",
+    "JiraAccess",
+    "jira_access",
     "UserIntegration",
     "USER_SERVICES",
     "UserIntegrationConfig",
