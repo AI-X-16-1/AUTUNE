@@ -225,6 +225,7 @@ Where that token comes from, and the two ways to give it to the browser:
 | `AUTUNE_INTELLIGENCE_WARM_MODELS_ON_WORKER_INIT` | E | `true` only on workers consuming aggregation tasks — builds the gap classifier and the misalignment predictor at startup. Default `false` |
 | `AUTUNE_INTELLIGENCE_MISALIGNMENT_PREDICTOR_IMPL` | E | `heuristic` (default) · `local` (XGBoost fit on labeled history, heuristic until there is enough). No external option |
 | `AUTUNE_INTELLIGENCE_MISALIGNMENT_REFIT_HOURS` | E | How long a fit (or fallback) is kept before `local` refits. Default `24` |
+| `AUTUNE_INTELLIGENCE_WEB_BASE_URL` | E | Web app origin, e.g. `https://autune.example.com`. The meeting report's details button links to `<this>/meetings/<id>`; unset, the report is posted without the button. Default unset |
 
 Notion and Calendar credentials are **not** environment variables. Each
 team configures its own on screen S28 and they are stored encrypted in

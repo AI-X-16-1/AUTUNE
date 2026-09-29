@@ -36,8 +36,8 @@ from autune_contracts import (
 )
 from autune_contracts.intelligence import Grade
 from autune_core import Meeting, Participant, Utterance, get_logger
-from autune_core.errors import NotFoundError
-from autune_integrations import SlackApi, assert_personal_delivery
+from autune_core.errors import ConflictError, NotFoundError, ValidationError
+from autune_integrations import SlackApi, assert_masked, assert_personal_delivery
 
 from .alignment import meeting_alignment
 from .config import get_settings
@@ -46,6 +46,7 @@ from .models import (
     IntelAlignment,
     IntelCompletion,
     IntelGapPattern,
+    IntelMeetingReport,
     IntelPrediction,
     IntelReport,
     IntelScore,
@@ -814,6 +815,97 @@ def generate_weekly_report(
         metrics_json=metrics_json,
         source_meeting_ids=meeting_ids,
     )
+
+
+# --- Meeting report (agent layer, #260/#261) --------------------------------
+#
+# The Report subagent composes one summary per meeting from B, C, D and E's
+# tools (agent-layer.md section 3.1); E stores it and posts it, because
+# outbound goes through the module that owns the surface (section 8 rule 2).
+# Whether a post needs a person's approval first is the main agent's gate, not
+# this code's -- these functions do what they are asked, once.
+
+MEETING_REPORT_MAX_CHARS: Final = 3000
+"""Slack's limit for one section block's text. A longer body is refused rather
+than cut, because a cut summary reads as a finished one."""
+
+MEETING_REPORT_OPEN_ACTION: Final = "intel_meeting_report_open"
+"""The button's ``action_id``. slack.py acknowledges it so Slack shows no error."""
+
+
+def save_meeting_report(
+    session: Session, meeting_id: str, body_markdown: str
+) -> IntelMeetingReport:
+    """Store the meeting's report body, replacing an unsent one.
+
+    The body is checked for personal data before it is written, not only when
+    it is posted: privacy.md section 2 keeps unmasked text out of every store.
+    A report already posted is not replaced -- people have read that version,
+    and a silent edit would make the stored copy disagree with what they saw.
+    """
+    meeting = session.get(Meeting, meeting_id)
+    if meeting is None:
+        raise NotFoundError("meeting", meeting_id)
+    if len(body_markdown) > MEETING_REPORT_MAX_CHARS:
+        raise ValidationError(
+            f"report body exceeds {MEETING_REPORT_MAX_CHARS} characters", field="body_markdown"
+        )
+    assert_masked(body_markdown, destination="intel_meeting_reports")
+
+    row = session.get(IntelMeetingReport, meeting_id)
+    if row is None:
+        row = IntelMeetingReport(
+            meeting_id=meeting_id, team_id=meeting.team_id, body_markdown=body_markdown
+        )
+        session.add(row)
+    elif row.sent_at is not None:
+        raise ConflictError("meeting report was already posted", meeting_id=meeting_id)
+    else:
+        row.body_markdown = body_markdown
+    session.flush()
+    return row
+
+
+def _meeting_report_blocks(meeting_id: str, body_markdown: str) -> list[dict]:
+    blocks: list[dict] = [{"type": "section", "text": {"type": "mrkdwn", "text": body_markdown}}]
+    base_url = get_settings().web_base_url
+    if base_url:
+        blocks.append(
+            {
+                "type": "actions",
+                "elements": [
+                    {
+                        "type": "button",
+                        "text": {"type": "plain_text", "text": "상세보기"},
+                        "url": f"{base_url.rstrip('/')}/meetings/{meeting_id}",
+                        "action_id": MEETING_REPORT_OPEN_ACTION,
+                    }
+                ],
+            }
+        )
+    return blocks
+
+
+def deliver_meeting_report(
+    session: Session, slack: SlackApi, meeting_id: str, channel: str
+) -> bool:
+    """Post the stored report to ``channel`` once. Returns whether it posted.
+
+    A report already posted is skipped, so a retried task or a repeated
+    approval does not post the same meeting twice.
+    """
+    row = session.get(IntelMeetingReport, meeting_id)
+    if row is None:
+        raise NotFoundError("meeting report", meeting_id)
+    if row.sent_at is not None:
+        return False
+    row.slack_ts = slack.post_message(
+        channel, row.body_markdown, _meeting_report_blocks(meeting_id, row.body_markdown)
+    )
+    row.slack_channel = channel
+    row.sent_at = datetime.now(UTC)
+    session.flush()
+    return True
 
 
 # --- Speaking ratio (pipeline step 7) -----------------------------------

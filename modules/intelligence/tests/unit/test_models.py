@@ -12,6 +12,7 @@ INTEL_TABLES = {
     "intel_alignment",
     "intel_predictions",
     "intel_reports",
+    "intel_meeting_reports",
 }
 
 
@@ -19,7 +20,7 @@ def _table(name: str):
     return Base.metadata.tables[name]
 
 
-def test_module_owns_exactly_these_six_tables() -> None:
+def test_module_owns_exactly_these_seven_tables() -> None:
     present = {n for n in Base.metadata.tables if n.startswith("intel_")}
     assert present == INTEL_TABLES
 
@@ -46,6 +47,7 @@ def test_primary_keys_are_the_spec_natural_keys() -> None:
         "intel_alignment": ["meeting_id", "role_a", "role_b"],
         "intel_predictions": ["meeting_id", "kind", "horizon_days"],
         "intel_reports": ["team_id", "period_start"],
+        "intel_meeting_reports": ["meeting_id"],
     }
     for name, cols in expected.items():
         assert [c.name for c in _table(name).primary_key.columns] == cols
