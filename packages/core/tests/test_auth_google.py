@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from autune_core import SESSION_COOKIE, issue_token
+from autune_core.auth_router import STATE_COOKIE
 from autune_core.auth_router import router as auth_router
 from autune_core.auth_service import upsert_user_from_google
 from autune_core.db import Base, get_session
@@ -331,12 +332,84 @@ def test_callback_signs_the_user_in_and_sets_a_cookie(
     assert db.query(User).filter(User.google_sub == "sub-1").one()
 
 
+def test_start_binds_the_state_to_this_browser(
+    api: tuple[TestClient, dict[str, object]],
+) -> None:
+    client, _ = api
+    response = client.get("/api/auth/google/start")
+
+    state = response.headers["location"].split("state=", 1)[1].split("&", 1)[0]
+    assert response.cookies[STATE_COOKIE] == state
+    set_cookie = response.headers["set-cookie"].lower()
+    assert "httponly" in set_cookie
+    assert "samesite=lax" in set_cookie
+    assert "path=/api/auth/google/callback" in set_cookie
+
+
+def test_callback_from_another_browser_is_refused(
+    api: tuple[TestClient, dict[str, object]], db: Session
+) -> None:
+    """Login CSRF: the attacker starts the flow, consents with their own Google
+    account, and sends the callback URL to a victim instead of following it."""
+    attacker, holder = api
+    start = attacker.get("/api/auth/google/start")
+    state = start.headers["location"].split("state=", 1)[1].split("&", 1)[0]
+
+    victim = TestClient(attacker.app, follow_redirects=False)
+    response = victim.get(f"/api/auth/google/callback?state={state}&code=abc")
+
+    assert response.status_code == 403
+    assert SESSION_COOKIE not in response.cookies
+    assert db.query(User).count() == 0
+    store = holder["state_store"]
+    assert len(store._entries) == 1  # type: ignore[attr-defined]  # not spent
+
+
+def test_callback_refuses_a_state_cookie_that_does_not_match(
+    api: tuple[TestClient, dict[str, object]],
+) -> None:
+    client, _ = api
+    start = client.get("/api/auth/google/start")
+    state = start.headers["location"].split("state=", 1)[1].split("&", 1)[0]
+    client.cookies.set(STATE_COOKIE, "someone-elses-state", path="/api/auth/google/callback")
+
+    response = client.get(f"/api/auth/google/callback?state={state}&code=abc")
+    assert response.status_code == 403
+    assert SESSION_COOKIE not in response.cookies
+
+
+def test_callback_refuses_a_non_ascii_state_without_a_500(
+    api: tuple[TestClient, dict[str, object]],
+) -> None:
+    client, _ = api
+    client.cookies.set(STATE_COOKIE, "abc", path="/api/auth/google/callback")
+    response = client.get("/api/auth/google/callback?state=%ED%95%9C&code=abc")
+    assert response.status_code == 403
+
+
+def test_callback_clears_the_state_cookie_either_way(
+    api: tuple[TestClient, dict[str, object]],
+) -> None:
+    client, holder = api
+    signed_in = _complete_login(client, holder["state_store"])  # type: ignore[arg-type]
+    holder["identity"] = _identity(email_verified=False)
+    refused = _complete_login(client, holder["state_store"])  # type: ignore[arg-type]
+
+    assert (signed_in.status_code, refused.status_code) == (303, 403)
+    for response in (signed_in, refused):
+        cleared = [c for c in response.headers.get_list("set-cookie") if c.startswith(STATE_COOKIE)]
+        assert cleared and "max-age=0" in cleared[0].lower()
+
+
 def test_callback_rejects_an_unknown_state(
     api: tuple[TestClient, dict[str, object]],
 ) -> None:
     client, _ = api
+    # The cookie matches, so this reaches the store and fails there.
+    client.cookies.set(STATE_COOKIE, "forged", path="/api/auth/google/callback")
     response = client.get("/api/auth/google/callback?state=forged&code=abc")
     assert response.status_code == 403
+    assert response.json()["error"]["message"] == "sign-in state is unknown or has expired"
 
 
 def test_callback_rejects_an_unverified_email(
