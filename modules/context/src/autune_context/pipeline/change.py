@@ -81,7 +81,7 @@ _REVERSAL_NOUNS = {
     "대신",
 }
 # Nouns whose absence says "smoothly", not "withdrawn": 차질 없이, 문제없이,
-# 예외 없이, (추가) 비용 없이, 차질이 없도록. Checked against the noun an
+# 예외 없이, (추가) 비용·예산 없이, 차질이 없도록. Checked against the noun an
 # absence (없이, 없-) attaches to, skipping a subject particle in between.
 # 중단 is left out on purpose: it is itself a reversal noun and matches first.
 _SMOOTH_NOUNS = {
@@ -90,6 +90,7 @@ _SMOOTH_NOUNS = {
     "예외",
     "지연",
     "비용",
+    "예산",
     "부담",
     "사고",
     "탈",

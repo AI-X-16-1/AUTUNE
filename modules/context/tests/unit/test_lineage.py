@@ -130,6 +130,7 @@ def test_a_moved_parameter_is_not_a_reversal(statement: str) -> None:
         "배포는 차질 없이 다음 주 화요일로 옮기기로 했다.",
         "예외 없이 모든 PR은 두 명 승인 후 머지하기로 했다.",
         "추가 비용 없이 인원을 5명으로 늘리기로 했다.",
+        "추가 예산 없이 10월 출시로 옮기기로 했다.",
         "문제없이 일정대로 진행하기로 했다.",  # 문제 + 없이, one word
         "차질이 없도록 일정을 다음 주로 옮기기로 했다.",  # 없- after a subject particle
     ],
