@@ -49,7 +49,7 @@ from autune_context.pipeline import get_embedder, get_reranker
 from autune_context.pipeline.retrieval import HybridRetriever, visible_meeting_clauses
 from autune_context.pipeline.topics import TopicSegment
 from autune_contracts import ChangeType
-from autune_core import Meeting, TeamMember, User, get_logger
+from autune_core import Meeting, Participant, TeamMember, User, Utterance, get_logger
 from autune_core.errors import NotFoundError
 
 log = get_logger(__name__)
@@ -255,18 +255,29 @@ def _recap(session: Session, previous_meeting_id: str, now: datetime) -> BriefRe
     Expired counts as gone, the same as deleted: the retention sweep may not
     have run yet, but D stops showing a meeting at ``expires_at``, not at the
     sweep (docs/modules/context.md, "Deletion").
+
+    A topic label is cut from its segment's speech, and the brief posts it to
+    the team's Slack channel, so a label is shown only while every utterance
+    behind it belongs to a consenting speaker (privacy.md section 5) -- the
+    read-time check ``HybridRetriever._passages`` makes before the re-ranker.
+    A label with no ``utterance_ids`` (stored before that column, so possibly
+    before #439's consent filter) or whose utterances are gone cannot be
+    checked, and is left out. Decisions come from B, which filters by consent
+    before extracting them.
     """
     previous = session.get(Meeting, previous_meeting_id)
     if previous is None or not _is_visible(previous, now):
         return None
 
-    topics: list[str] = []
-    for label in session.scalars(
-        select(CtxEmbedding.ref_label)
+    labelled = session.execute(
+        select(CtxEmbedding.ref_label, CtxEmbedding.utterance_ids)
         .where(CtxEmbedding.meeting_id == previous_meeting_id, CtxEmbedding.kind == "topic")
         .order_by(CtxEmbedding.id)
-    ):
-        if label not in topics:
+    ).all()
+    consented = _consented_utterances(session, [i for _, ids in labelled for i in ids or ()])
+    topics: list[str] = []
+    for label, ids in labelled:
+        if ids and consented.issuperset(ids) and label not in topics:
             topics.append(label)
     decisions = [
         BriefDecision(statement=statement, change_type=ChangeType(change_type))
@@ -282,6 +293,19 @@ def _recap(session: Session, previous_meeting_id: str, now: datetime) -> BriefRe
         day=meeting_day(previous.started_at) if previous.started_at else None,
         topics=tuple(topics),
         decisions=tuple(decisions),
+    )
+
+
+def _consented_utterances(session: Session, utterance_ids: list[str]) -> set[str]:
+    """Those of ``utterance_ids`` that still exist and belong to a consenting speaker."""
+    if not utterance_ids:
+        return set()
+    return set(
+        session.scalars(
+            select(Utterance.id)
+            .join(Participant, Participant.id == Utterance.participant_id)
+            .where(Utterance.id.in_(utterance_ids), Participant.consented.is_(True))
+        )
     )
 
 

@@ -13,7 +13,7 @@ from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from sqlalchemy import delete
+from sqlalchemy import delete, update
 
 from autune_context import briefs
 from autune_context.config import get_settings
@@ -26,7 +26,15 @@ from autune_context.models import (
 )
 from autune_context.pipeline import get_embedder, reset_cache
 from autune_contracts import ChangeType
-from autune_core import Meeting, Team, TeamMember, User, session_scope
+from autune_core import (
+    Meeting,
+    Participant,
+    Team,
+    TeamMember,
+    User,
+    Utterance,
+    session_scope,
+)
 from autune_core.errors import NotFoundError
 
 NOW = datetime(2026, 9, 30, 5, 50, tzinfo=UTC)
@@ -98,8 +106,15 @@ def _analyzed(
     topics: tuple[str, ...] = (),
     decisions: tuple[tuple[str, ChangeType], ...] = (),
     expires_at: datetime | None = None,
+    consented: bool = True,
+    unchecked_topics: tuple[str, ...] = (),
 ) -> str:
-    """A past meeting D has processed: its status row, topics and decisions."""
+    """A past meeting D has processed: its status row, topics and decisions.
+
+    Each of ``topics`` is cut from one utterance by a speaker whose consent is
+    ``consented``, as topic linking stores it. ``unchecked_topics`` are stored
+    with no ``utterance_ids``, as rows from before that column are.
+    """
     embedder = get_embedder()
     with session_scope() as s:
         meeting = Meeting(
@@ -112,7 +127,24 @@ def _analyzed(
         s.add(meeting)
         s.flush()
         s.add(CtxMeetingStatus(meeting_id=meeting.id, topic_linking_done=True))
-        for label, vector in zip(topics, embedder.embed(list(topics)), strict=True):
+        speaker = Participant(meeting_id=meeting.id, speaker_label="화자", consented=consented)
+        s.add(speaker)
+        s.flush()
+        labels = topics + unchecked_topics
+        for i, (label, vector) in enumerate(zip(labels, embedder.embed(list(labels)), strict=True)):
+            utterance_ids = None
+            if i < len(topics):
+                utterance = Utterance(
+                    meeting_id=meeting.id,
+                    participant_id=speaker.id,
+                    speaker_label="화자",
+                    start_sec=float(i),
+                    end_sec=float(i) + 1,
+                    text=f"{label} 이야기를 했다",
+                )
+                s.add(utterance)
+                s.flush()
+                utterance_ids = [utterance.id]
             s.add(
                 CtxEmbedding(
                     meeting_id=meeting.id,
@@ -120,6 +152,7 @@ def _analyzed(
                     ref_label=label,
                     embedding=vector,
                     model_version=embedder.model_version,
+                    utterance_ids=utterance_ids,
                 )
             )
         for statement, change_type in decisions:
@@ -265,6 +298,63 @@ def test_the_recap_carries_topics_and_decisions_with_their_change(team_id: str) 
     assert [(d.statement, d.change_type) for d in brief.recap.decisions] == [
         ("결제 모듈 출시는 10월로 미룬다", ChangeType.REVERSED)
     ]
+
+
+def test_a_label_from_a_speaker_who_did_not_consent_is_not_recapped(team_id: str) -> None:
+    """The brief goes to the team's Slack channel; a label cut from speech
+    without consent must not (#437 review). The decisions still come through."""
+    _analyzed(
+        team_id,
+        title="주간 회의",
+        days_ago=7,
+        topics=("검색 정렬",),
+        decisions=(("결제 모듈 출시는 10월로 미룬다", ChangeType.MODIFIED),),
+        consented=False,
+    )
+    meeting = _scheduled(team_id)
+
+    brief = _compose(meeting)
+
+    assert brief is not None and brief.recap is not None
+    assert brief.recap.topics == ()
+    assert [d.statement for d in brief.recap.decisions] == ["결제 모듈 출시는 10월로 미룬다"]
+
+
+def test_a_label_whose_speech_cannot_be_checked_is_not_recapped(team_id: str) -> None:
+    """Stored with no ``utterance_ids`` -- before that column, so possibly before
+    the consent filter -- a label cannot be shown to come from consenting speech."""
+    _analyzed(
+        team_id,
+        title="주간 회의",
+        days_ago=7,
+        topics=("결제 모듈",),
+        unchecked_topics=("검색 정렬",),
+    )
+    meeting = _scheduled(team_id)
+
+    brief = _compose(meeting)
+
+    assert brief is not None and brief.recap is not None
+    assert brief.recap.topics == ("결제 모듈",)
+
+
+def test_a_withdrawn_consent_drops_the_label_from_a_brief_already_composed(
+    team_id: str, member: User
+) -> None:
+    previous = _analyzed(team_id, title="주간 회의", days_ago=7, topics=("검색 정렬",))
+    meeting = _scheduled(team_id)
+    composed = _compose(meeting)
+    assert composed is not None and composed.recap is not None
+    assert composed.recap.topics == ("검색 정렬",)
+
+    with session_scope() as s:
+        s.execute(
+            update(Participant).where(Participant.meeting_id == previous).values(consented=False)
+        )
+    with session_scope() as s:
+        brief = briefs.get_brief(s, meeting, member, now=NOW)
+
+    assert brief.recap is not None and brief.recap.topics == ()
 
 
 def test_a_brief_is_claimed_once(team_id: str) -> None:
