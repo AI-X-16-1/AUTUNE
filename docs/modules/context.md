@@ -643,6 +643,15 @@ To run it on a laptop without the team's inference endpoints, use the
   showed the field rendered on screen from an unauthenticated route — see
   #188. Re-add it to the read API once #156 ships route auth; nothing else
   about the field changes.
+- A drift DM Slack refuses for good — the absent person has not linked a Slack
+  account for direct messages, or Slack answers `ok: false` (#478) — is skipped
+  and the next person still gets theirs; a refused channel notice is skipped
+  the same way. Every send runs after its `notified_at` /
+  `late_drift_notified_at` claim commits, so a send that raised out of the loop
+  would cost everyone after it their notice, for good. **The skip is logged by
+  Slack's error code and a count, never by recipient id**: each recipient is
+  someone who was absent when a decision changed, which the channel notice
+  deliberately reduces to a count.
 
 ## Phased delivery
 

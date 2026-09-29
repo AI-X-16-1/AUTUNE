@@ -17,6 +17,8 @@ from autune_context.notify import (
     build_topic_link_rollup_notice,
 )
 from autune_contracts import ChangeType
+from autune_core.errors import PrivacyViolationError
+from autune_integrations import PermanentIntegrationError, TransientIntegrationError
 from autune_integrations.fakes import FakeSlack
 
 _CHANNEL = "C0TESTCHANNEL"
@@ -204,3 +206,124 @@ def test_send_topic_link_notices_exactly_at_the_cap_has_no_rollup(
     service.send_topic_link_notices(slack, _CHANNEL, [_link("a"), _link("b")])
 
     assert len(slack.channel_messages) == 2
+
+
+# --------------------------------------------------------------------------- #
+# One refusal does not cost the rest (#478)
+#
+# Every send runs after its claim commits, so whatever a loop fails to reach
+# is never retried. #478 makes Slack's ok:false and an unlinked DM recipient
+# raise PermanentIntegrationError; these pin that D skips that one send and
+# carries on, while a transient failure and the privacy guard still raise.
+# --------------------------------------------------------------------------- #
+
+
+class _Refusing(FakeSlack):
+    """FakeSlack that refuses some sends: ``dm`` by recipient id, ``post`` by
+    position among channel posts (0-based)."""
+
+    def __init__(
+        self,
+        *,
+        dm: dict[str, Exception] | None = None,
+        post: dict[int, Exception] | None = None,
+    ) -> None:
+        super().__init__()
+        self.refuse_dm = dm or {}
+        self.refuse_post = post or {}
+        self.posts_tried = 0
+
+    def post_message(self, channel: str, text: str, blocks: list[dict] | None = None) -> str:
+        attempt = self.posts_tried
+        self.posts_tried += 1
+        if attempt in self.refuse_post:
+            raise self.refuse_post[attempt]
+        return super().post_message(channel, text, blocks)
+
+    def send_dm(self, user_id: str, text: str, blocks: list[dict] | None = None) -> str:
+        if user_id in self.refuse_dm:
+            raise self.refuse_dm[user_id]
+        return super().send_dm(user_id, text, blocks)
+
+
+def _drift(*absent: str, label: str = "결제 모듈 교체") -> service.DriftNotice:
+    return service.DriftNotice(
+        thread_label=label,
+        statement_preview="결제 모듈 교체는 다음 분기로 미룹니다",
+        change_type=ChangeType.REVERSED,
+        absent_user_ids=absent,
+        meeting_date=date(2026, 9, 28),
+    )
+
+
+def _dm_recipients(slack: FakeSlack) -> list[str]:
+    return [m.channel for m in slack.sent if m.is_dm]
+
+
+def test_an_unreachable_absentee_does_not_cost_the_others_their_dm() -> None:
+    slack = _Refusing(dm={"user_b": PermanentIntegrationError("not linked for direct messages")})
+
+    posted = service.send_decision_drift_notices(
+        slack, _CHANNEL, [_drift("user_a", "user_b", "user_c")]
+    )
+
+    assert posted == 1
+    assert _dm_recipients(slack) == ["user_a", "user_c"]
+
+
+def test_a_refused_channel_notice_still_sends_that_events_dms_and_the_next_event() -> None:
+    """``not_in_channel`` once the bot is removed: the absentees are still told,
+    and the next drift event is still tried."""
+    slack = _Refusing(post={0: PermanentIntegrationError("slack refused: not_in_channel")})
+
+    posted = service.send_decision_drift_notices(
+        slack, _CHANNEL, [_drift("user_a", label="첫째"), _drift("user_b", label="둘째")]
+    )
+
+    assert posted == 1
+    assert [m.text for m in slack.channel_messages if "둘째" in m.text]
+    assert _dm_recipients(slack) == ["user_a", "user_b"]
+
+
+def test_a_refused_topic_link_notice_skips_only_itself(monkeypatch: pytest.MonkeyPatch) -> None:
+    _capped_settings(monkeypatch, cap=3)
+    slack = _Refusing(post={0: PermanentIntegrationError("slack refused: not_in_channel")})
+
+    sent = service.send_topic_link_notices(slack, _CHANNEL, [_link("a"), _link("b"), _link("c")])
+
+    assert sent == 2
+    assert len(slack.channel_messages) == 2
+
+
+def test_a_refused_rollup_is_not_counted_as_sent(monkeypatch: pytest.MonkeyPatch) -> None:
+    _capped_settings(monkeypatch, cap=1)
+    slack = _Refusing(post={1: PermanentIntegrationError("slack refused: not_in_channel")})
+
+    sent = service.send_topic_link_notices(slack, _CHANNEL, [_link("a"), _link("b"), _link("c")])
+
+    assert sent == 1
+
+
+def test_a_transient_failure_still_raises() -> None:
+    """A rate limit or an outage is not silently turned into a lost notice."""
+    slack = _Refusing(dm={"user_a": TransientIntegrationError("slack is down")})
+
+    with pytest.raises(TransientIntegrationError):
+        service.send_decision_drift_notices(slack, _CHANNEL, [_drift("user_a")])
+
+
+def test_the_privacy_guard_is_not_swallowed() -> None:
+    """``PrivacyViolationError`` is not a ``PermanentIntegrationError``; an
+    unmasked statement must stop the send, not be skipped as unreachable."""
+    assert not issubclass(PrivacyViolationError, PermanentIntegrationError)
+    slack = FakeSlack()
+    leaking = service.DriftNotice(
+        thread_label="연락처",
+        statement_preview="담당자 번호는 010-1234-5678입니다",
+        change_type=ChangeType.MODIFIED,
+        absent_user_ids=("user_a",),
+        meeting_date=None,
+    )
+
+    with pytest.raises(PrivacyViolationError):
+        service.send_decision_drift_notices(slack, _CHANNEL, [leaking])
