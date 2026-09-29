@@ -10,7 +10,9 @@ have leaked personal data fails here too, which is the point.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import date, datetime
 
+from .calendar import CalendarEvent
 from .errors import PermanentIntegrationError
 from .privacy import assert_personal_delivery, check_outbound
 from .slack import SlackClient, slack_body
@@ -126,3 +128,57 @@ class FakeJira:
 
     def transition(self, issue_key: str, transition_id: str) -> None:
         self.transitions.append((issue_key, transition_id))
+
+
+@dataclass
+class FakeCalendar:
+    """Records all-day events by id and answers reads from what a test put in.
+
+    ``busy`` maps an address to its busy windows; an address missing from it is
+    one Google could not read, so ``free_busy`` answers ``None`` for it -- the
+    same "unknown, not free" rule as the real client."""
+
+    events: dict[str, dict] = field(default_factory=dict)
+    listed: list[CalendarEvent] = field(default_factory=list)
+    busy: dict[str, list[tuple[datetime, datetime]]] = field(default_factory=dict)
+    deleted: list[str] = field(default_factory=list)
+
+    def list_events(
+        self, calendar_id: str, time_min: datetime, time_max: datetime, *, limit: int = 50
+    ) -> list[CalendarEvent]:
+        return self.listed[:limit]
+
+    def free_busy(
+        self, emails: list[str], time_min: datetime, time_max: datetime
+    ) -> dict[str, list[tuple[datetime, datetime]] | None]:
+        return {email: self.busy.get(email) for email in emails}
+
+    def create_all_day_event(
+        self, calendar_id: str, summary: str, day: date, *, description: str = ""
+    ) -> str:
+        check_outbound(
+            {"summary": summary, "description": description}, destination="google_calendar"
+        )
+        event_id = f"evt_{len(self.events) + len(self.deleted) + 1}"
+        self.events[event_id] = {
+            "calendar": calendar_id,
+            "summary": summary,
+            "day": day,
+            "description": description,
+        }
+        return event_id
+
+    def update_all_day_event(
+        self, calendar_id: str, event_id: str, summary: str, day: date, *, description: str = ""
+    ) -> bool:
+        check_outbound(
+            {"summary": summary, "description": description}, destination="google_calendar"
+        )
+        if event_id not in self.events:
+            return False
+        self.events[event_id].update(summary=summary, day=day, description=description)
+        return True
+
+    def delete_event(self, calendar_id: str, event_id: str) -> None:
+        if self.events.pop(event_id, None) is not None:
+            self.deleted.append(event_id)
