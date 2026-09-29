@@ -91,3 +91,39 @@ export async function requestMagicLink(email: string): Promise<void> {
   }
   throw new ApiError(response.status, "magic_link_failed", message);
 }
+
+/**
+ * Where the browser goes to connect the signed-in person's own Google Calendar
+ * (#435). A full navigation: Google's consent screen, then back to `redirectTo`
+ * with `?calendar=connected`.
+ */
+export function googleCalendarConnectUrl(redirectTo = "/"): string {
+  return authUrl(`/google/calendar/start?redirect_to=${encodeURIComponent(redirectTo)}`);
+}
+
+/** Whether the signed-in person has connected their own calendar. */
+export async function getCalendarConnection(): Promise<{ connected: boolean } | null> {
+  try {
+    const response = await fetch(authUrl("/google/calendar"), { credentials: "include" });
+    if (!response.ok) return null;
+    return (await response.json()) as { connected: boolean };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Revoke the grant at Google and forget it. `revoked` is false when Google did
+ * not confirm -- the connection is gone here either way.
+ */
+export async function disconnectCalendar(): Promise<{ revoked: boolean }> {
+  const response = await fetch(authUrl("/google/calendar/disconnect"), {
+    method: "POST",
+    credentials: "include",
+  });
+  if (!response.ok) {
+    throw new ApiError(response.status, "calendar_disconnect_failed", "disconnect failed");
+  }
+  return (await response.json()) as { revoked: boolean };
+}
+

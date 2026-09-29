@@ -33,9 +33,14 @@ from .auth_service import upsert_user_from_google
 from .db import get_session
 from .errors import AutuneError, PermissionDeniedError
 from .logging import get_logger
-from .oauth.google import GoogleOAuthClient, get_google_client
+from .oauth.google import CALENDAR_SCOPE, GoogleOAuthClient, get_google_client
 from .oauth.state import STATE_TTL_SECONDS, OAuthTransaction, StateStore, get_state_store
 from .settings import get_settings
+from .user_integrations import (
+    disconnect_user_integration,
+    load_user_integration,
+    save_user_integration,
+)
 
 log = get_logger(__name__)
 
@@ -168,6 +173,9 @@ def _complete_sign_in(
     if transaction is None:
         raise PermissionDeniedError("sign-in state is unknown or has expired")
 
+    if transaction.purpose == "calendar":
+        return _complete_calendar_connect(transaction, google, session, code=code)
+
     identity = google.verify(google.exchange_code(code), nonce=transaction.nonce)
     if not identity.email_verified:
         raise PermissionDeniedError("this Google account's email is not verified")
@@ -195,3 +203,107 @@ def logout() -> Response:
 @router.get("/me")
 def me(user: CurrentUser) -> dict[str, str]:
     return {"id": user.id, "email": user.email, "display_name": user.display_name}
+
+
+# --------------------------------------------------------------------------- #
+# A person's own Google Calendar (#435): one click, their own grant
+# --------------------------------------------------------------------------- #
+
+
+@router.get("/google/calendar/start")
+def google_calendar_start(
+    request: Request,
+    user: CurrentUser,
+    store: Annotated[StateStore, Depends(get_state_store)],
+    google: Annotated[GoogleOAuthClient, Depends(get_google_client)],
+    redirect_to: Annotated[str, Query()] = "/",
+) -> RedirectResponse:
+    """Send a signed-in person to Google to let Autune put their own tasks'
+    due dates on their own calendar.
+
+    The same flow and callback as sign-in -- the same ``state`` cookie binding,
+    so a callback from another browser is refused -- with the person's id kept
+    in the transaction from *this* request's session. The callback therefore
+    stores the grant for whoever started, never for whoever finishes.
+    """
+    state = secrets.token_urlsafe(32)
+    nonce = secrets.token_urlsafe(24)
+    store.put(
+        state,
+        OAuthTransaction(
+            nonce=nonce,
+            redirect_to=_safe_redirect_target(redirect_to),
+            purpose="calendar",
+            user_id=user.id,
+        ),
+    )
+    url = google.authorization_url(
+        state=state, nonce=nonce, scope=f"openid {CALENDAR_SCOPE}", offline=True
+    )
+    response = RedirectResponse(url, status_code=307)
+    response.set_cookie(
+        STATE_COOKIE,
+        state,
+        max_age=STATE_TTL_SECONDS,
+        httponly=True,
+        secure=get_settings().session_cookie_secure,
+        samesite="lax",
+        path=_callback_path(request),
+    )
+    return response
+
+
+def _complete_calendar_connect(
+    transaction: OAuthTransaction,
+    google: GoogleOAuthClient,
+    session: Session,
+    *,
+    code: str,
+) -> RedirectResponse:
+    if not transaction.user_id:
+        raise PermissionDeniedError("calendar connect was not started by a signed-in person")
+    grant = google.exchange_grant(code)
+    # The ID token proves this code answered *our* request (nonce), not which
+    # Google account it was: someone may keep their calendar on another account.
+    google.verify(grant.id_token, nonce=transaction.nonce)
+    if CALENDAR_SCOPE not in grant.scopes:
+        raise PermissionDeniedError("calendar access was not granted")
+    if not grant.refresh_token:
+        raise PermissionDeniedError("Google granted no offline access; connect again")
+    save_user_integration(
+        session,
+        transaction.user_id,
+        "calendar",
+        secret=grant.refresh_token,
+        config={"calendar_id": "primary"},
+    )
+    log.info("auth_google_calendar_connected", user_id=transaction.user_id)
+    target = transaction.redirect_to
+    target += ("&" if "?" in target else "?") + "calendar=connected"
+    return RedirectResponse(_web_url(target), status_code=303)
+
+
+@router.get("/google/calendar")
+def google_calendar_status(
+    user: CurrentUser, session: Annotated[Session, Depends(get_session)]
+) -> dict[str, bool]:
+    """Whether the signed-in person has connected their own calendar -- theirs
+    only; there is no way to ask about anyone else."""
+    grant = load_user_integration(session, user.id, "calendar")
+    return {"connected": grant is not None and bool(grant.secret)}
+
+
+@router.post("/google/calendar/disconnect")
+def google_calendar_disconnect(
+    user: CurrentUser,
+    session: Annotated[Session, Depends(get_session)],
+    google: Annotated[GoogleOAuthClient, Depends(get_google_client)],
+) -> dict[str, bool]:
+    """Revoke the grant at Google, then forget it here (#444 review). Our copy
+    goes even when Google cannot be reached; ``revoked`` says whether Google
+    confirmed, so a person knows to check their Google account otherwise."""
+    grant = load_user_integration(session, user.id, "calendar")
+    revoked = bool(grant and grant.secret and google.revoke(grant.secret))
+    disconnect_user_integration(session, user.id, "calendar")
+    log.info("auth_google_calendar_disconnected", user_id=user.id, revoked=revoked)
+    return {"connected": False, "revoked": revoked}
