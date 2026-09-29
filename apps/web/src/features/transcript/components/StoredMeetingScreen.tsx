@@ -13,11 +13,15 @@ import { StoredTranscript } from "./StoredTranscript";
  *
  * Two screens share this URL and the meeting's status says which one: S12
  * (the pipeline, while `analyzing` or `failed`) and the transcript tab of S15
- * (once `complete`). S15 draws five tabs — summary, actions, gaps, context,
- * transcript — and four of them belong to other features, which this one may
- * not import (`CLAUDE.md` in this folder; #239 is the open question about how
- * a page composes features). Until that is decided, this screen is the one
- * tab this feature owns.
+ * (once `complete`). The other tabs belong to other features, which this one
+ * may not import (`CLAUDE.md` in this folder). They are no longer unreachable
+ * because of it: the route group's layout draws the tab bar and mounts each
+ * feature's own screen behind its own URL (#423), which is the answer #239
+ * was asking for — a page composes features, a feature does not.
+ *
+ * It brings no width or side padding of its own. That layout is the container,
+ * and a second one here would centre this column inside it while the action
+ * board and the gap report line up with the tab bar.
  *
  * `useMeeting` polls while the pipeline is moving and stops when it is not.
  * `StoredTranscript` is mounted only once the meeting is past `analyzing`, so
@@ -29,7 +33,7 @@ export function StoredMeetingScreen({ meetingId }: { meetingId: string }) {
   const state = useMeeting(meetingId);
 
   return (
-    <main className="mx-auto max-w-[720px] p-[var(--space-page)]">
+    <main className="max-w-[720px] pb-[var(--space-page)]">
       <header>
         <p
           className="text-[var(--color-ink-muted)]"
