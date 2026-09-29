@@ -45,6 +45,20 @@ class TemplateSelection(BaseModel):
     template_key: str
 
 
+class GapDismissal(BaseModel):
+    """Whether somebody called one gap a false positive.
+
+    What ``POST`` and ``DELETE /gaps/{gap_id}/dismiss`` both return, so the
+    screen reads the state the server settled on rather than assuming its own
+    request won. No timestamp and no dismisser: the screen needs the flag, and
+    who pressed the button is exactly what ``gap_gaps`` refuses to store.
+    """
+
+    gap_id: str
+    meeting_id: str
+    dismissed: bool
+
+
 class TemplateItemRead(BaseModel):
     """One checklist item beside what the meeting did with it.
 

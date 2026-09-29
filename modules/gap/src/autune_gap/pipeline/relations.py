@@ -173,6 +173,36 @@ meeting needs, and the graph can carry that without claiming anybody is blocked
 today.
 """
 
+_NEEDS_DONE = ("끝나야", "끝내야", "나와야", "마쳐야")
+"""Need words that say one thing has to be *finished* before another starts.
+
+"인덱스 재색인이 먼저 끝나야 정렬 로직을 붙일 수 있습니다" is a dependency
+stated as plainly as spoken Korean states one, and none of ``_NEEDS`` is in it.
+
+**Only as a connective.** The same ending closes a sentence as an obligation —
+"정렬 로직이 금요일까지 끝나야 합니다" — and that is a deadline, not a
+dependency; ``_OBLIGATIONS`` is what tells the two apart. ``_NEEDS`` has no such
+guard and does not need one: "캐시가 있어야 합니다" is a need either way, since
+what is obliged there is the thing existing, while an obliged *finish* is a
+date somebody promised.
+"""
+
+_OBLIGATIONS = ("하", "합", "해", "했", "할", "돼", "됩", "되", "된", "겠")
+"""What follows ``-야`` when it closes an obligation rather than a condition:
+끝나야 합니다, 끝나야 해요, 끝나야 돼요, 끝나야겠네요, 끝나야 할 일."""
+
+_NOT_AN_END = ("date", "metric")
+"""Entity labels that never stand at either end of a relation.
+
+A date is when something happens and a quantity is how much of it, and neither
+is a thing another thing waits on. They sit exactly where the rules look for the
+thing needed — "인덱스가 금요일까지 있어야 정렬 로직을 붙입니다" puts 금요일까지
+immediately before the marker, and the rule read ``정렬 로직 depends_on
+금요일까지``. Leaving them out of the names the rules search for makes the
+nearest mention the one the sentence is about. They stay topics; only the
+relation step stops seeing them.
+"""
+
 _ALTERNATIVES = re.compile(r"대신|말고|보다는|아니라|반면|(?<![A-Za-z])(?:vs|versus)(?![A-Za-z])")
 """Markers that weigh one topic against another.
 
@@ -317,7 +347,8 @@ def relations_in(text: str, mentions: Sequence[Mention]) -> list[tuple[str, str,
       mention just before it, which is where both Korean word orders put it:
       "정렬 로직은 인덱스가 필요합니다" and "인덱스가 있어야 정렬 로직을
       붙입니다" both name 인덱스 immediately before the marker. The other end is
-      read by ``_ends_around``.
+      read by ``_ends_around``. A finish word (``_NEEDS_DONE``) counts too, but
+      only as a condition with a clause after it (``_obliged``).
     - **``blocked_by``** — a blocker word (``_BLOCKERS``) *offered as a reason*,
       so a causal connective (``_CAUSAL``) has to sit beside it **in the same
       clause**, on either side: 어서/아서/라서 attach to the predicate and
@@ -517,6 +548,12 @@ def _directed_markers(text: str) -> list[tuple[int, str]]:
             for match in _finditer(cue, text)
             if _asserted(text, match.end())
         )
+    for cue in _NEEDS_DONE:
+        markers.extend(
+            (match.start(), "depends_on")
+            for match in _finditer(cue, text)
+            if not _obliged(text, match.end()) and _asserted(text, match.end())
+        )
     for cue in _BLOCKERS:
         for match in _finditer(cue, text):
             # A blocker is a relation only when it is offered as the reason, and
@@ -557,6 +594,16 @@ def _directed_markers(text: str) -> list[tuple[int, str]]:
             # 로직, the thing being blocked.
             markers.append((start + at, "blocked_by"))
     return sorted(markers)
+
+
+def _obliged(text: str, cue_end: int) -> bool:
+    """Whether the ``-야`` ending at ``cue_end`` closes an obligation.
+
+    The end of the utterance counts as one: "끝나야." with nothing after it has
+    no second clause to be the condition of.
+    """
+    rest = text[cue_end:].lstrip()
+    return not rest or rest[0] in ".?!" or rest.startswith(_OBLIGATIONS)
 
 
 def _ends_around(text: str, mentions: Sequence[Mention], marker: int) -> tuple[str, str] | None:
@@ -640,7 +687,7 @@ class RuleRelations:
     reason ``SpacyNer`` records the pipeline version.
     """
 
-    model_version = "rules-2"
+    model_version = "rules-3"
 
     def extract(self, utterances: list[tuple[str, str]], entities: list[Entity]) -> list[Relation]:
         """Relations in each utterance, against every name the meeting used.
@@ -659,7 +706,7 @@ class RuleRelations:
         drops any relation whose ends are not both topics. What this widens is
         only which utterances can *state* a relation between them.
         """
-        names = {entity.text for entity in entities}
+        names = {entity.text for entity in entities if entity.label not in _NOT_AN_END}
         found: list[Relation] = []
         for utterance_id, text in utterances:
             spans = mention_spans(text, names)

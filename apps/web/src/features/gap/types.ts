@@ -107,6 +107,39 @@ export interface TemplateComparison {
   items: TemplateChecklistItem[];
 }
 
+/**
+ * One template a meeting can be held to — `TemplateRead` in
+ * `modules/gap/src/autune_gap/schemas.py`, as `GET /api/gap/templates` lists it.
+ *
+ * `items` is a count, not the checklist: choosing a template is choosing a
+ * name, and the checklist only means something next to a meeting, which is what
+ * `TemplateComparison` is.
+ */
+export interface TemplateOption {
+  key: string;
+  name: string;
+  version: string;
+  items: number;
+}
+
+/** What `PUT /api/gap/templates/{meeting_id}` takes and returns. */
+export interface TemplateSelection {
+  template_key: string;
+}
+
+/**
+ * What both `POST` and `DELETE /api/gap/gaps/{gap_id}/dismiss` return: the state
+ * the server settled on, so the screen never assumes its own request won.
+ *
+ * No timestamp and no dismisser. Which teammate pressed "해당 없음" is not
+ * stored anywhere (ADR 0003), and the screen has no use for when.
+ */
+export interface GapDismissal {
+  gap_id: string;
+  meeting_id: string;
+  dismissed: boolean;
+}
+
 /** How far the meeting got with one checklist item. */
 export type Coverage = "covered" | "partial" | "missing";
 

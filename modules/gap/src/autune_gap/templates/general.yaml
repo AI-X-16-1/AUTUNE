@@ -29,10 +29,16 @@
 # words a meeting would actually say — a keyword that matches everything raises
 # no gap, and one that matches nothing raises a gap in every meeting. Two
 # characters is the minimum; shorter than that matches by accident.
+#
+# `relations` name step-2 relations whose edge is the meeting having raised the
+# item: a topic at either end of one matches it like a keyword hit. For an item
+# that is about how two things stand to each other, which no topic label says
+# — "검증 스크립트가 먼저 있어야 롤백 절차가 의미가 있습니다" states a
+# dependency without the word 의존. Never `co_occurs`; the loader refuses it.
 
 key: general
 name: "기본"
-version: 2
+version: 3
 
 items:
   - key: success_criteria
@@ -64,6 +70,9 @@ items:
     item: "의존성·선행 조건"
     weight: 0.7
     keywords: ["의존", "선행", "전제", "필요", "블로커", "대기", "연동"]
+    # `blocked_by` as well as `depends_on`: something in the way is something
+    # that has to be cleared first, which is what this item asks. Version 3.
+    relations: [depends_on, blocked_by]
     question: "이 일을 시작하기 전에 먼저 끝나 있어야 하는 것은 무엇입니까?"
     question_about: "{topic}에 앞서 먼저 끝나 있어야 하는 것은 무엇입니까?"
 

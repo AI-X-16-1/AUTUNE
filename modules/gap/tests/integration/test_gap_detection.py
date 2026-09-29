@@ -22,7 +22,13 @@ from sqlalchemy import delete, select
 from autune_core import Meeting, Participant, Team, session_scope
 from autune_gap import service
 from autune_gap.config import get_settings
-from autune_gap.models import GapGap, GapMeetingTemplate, GapParticipation, GapTopic
+from autune_gap.models import (
+    GapGap,
+    GapMeetingTemplate,
+    GapParticipation,
+    GapTopic,
+    GapTopicEdge,
+)
 
 
 @pytest.fixture
@@ -37,13 +43,21 @@ def team_id(db_engine: object) -> Iterator[str]:  # db_engine ensures migrations
         s.execute(delete(Team).where(Team.id == tid))
 
 
-def seed(team_id: str, topics: dict[str, float], *, people: int = 2) -> str:
+def seed(
+    team_id: str,
+    topics: dict[str, float],
+    *,
+    people: int = 2,
+    edges: tuple[tuple[str, str, str], ...] = (),
+) -> str:
     """A meeting whose topic graph is already built. Returns the meeting id.
 
     ``topics`` is label -> centrality. Everybody is recorded as having spoken on
     the first topic and silent on the rest, which is a participation matrix with
     both values in it — a matrix that was all one value would let a scoring bug
     that ignores it pass.
+
+    ``edges`` is ``(source label, relation, target label)``, stored one way.
     """
     with session_scope() as s:
         meeting = Meeting(team_id=team_id, title="회의", status="analyzing")
@@ -59,6 +73,7 @@ def seed(team_id: str, topics: dict[str, float], *, people: int = 2) -> str:
             s.flush()
             participants.append(person.id)
 
+        ids: dict[str, str] = {}
         for position, (label, centrality) in enumerate(topics.items()):
             topic = GapTopic(
                 meeting_id=meeting.id,
@@ -75,6 +90,18 @@ def seed(team_id: str, topics: dict[str, float], *, people: int = 2) -> str:
                         topic_id=topic.id, participant_id=participant_id, spoke=position == 0
                     )
                 )
+            ids[label] = topic.id
+
+        for source, relation, target in edges:
+            s.add(
+                GapTopicEdge(
+                    meeting_id=meeting.id,
+                    source_topic_id=ids[source],
+                    target_topic_id=ids[target],
+                    relation=relation,
+                    weight=1.0,
+                )
+            )
 
         return meeting.id
 
@@ -104,6 +131,37 @@ def test_the_items_a_meeting_missed_become_gaps(team_id: str) -> None:
     assert set(stored(meeting_id)) == {"risk", "dependency", "next_step"}
 
 
+def test_a_dependency_the_meeting_stated_covers_the_item_without_its_words(
+    team_id: str,
+) -> None:
+    """Neither label says 의존 or 선행, and the edge between them is the meeting
+    having said one waits on the other. The edge is read back out of
+    ``gap_topic_edges``, which is where step 2 left it."""
+    meeting_id = seed(
+        team_id,
+        {**COVERS_TWO, "정렬 로직": 0.9, "인덱스 재색인": 0.8},
+        edges=(("정렬 로직", "depends_on", "인덱스 재색인"),),
+    )
+
+    service.detect_gaps(meeting_id)
+
+    assert set(stored(meeting_id)) == {"risk", "next_step"}
+
+
+def test_two_topics_merely_said_together_do_not_cover_a_dependency(team_id: str) -> None:
+    """``co_occurs`` is most of a meeting's edges, and says nothing about how
+    the two relate."""
+    meeting_id = seed(
+        team_id,
+        {**COVERS_TWO, "정렬 로직": 0.9, "인덱스 재색인": 0.8},
+        edges=(("정렬 로직", "co_occurs", "인덱스 재색인"),),
+    )
+
+    service.detect_gaps(meeting_id)
+
+    assert "dependency" in stored(meeting_id)
+
+
 def test_a_gap_carries_the_template_that_raised_it(team_id: str) -> None:
     """Precision is measured across template edits, and a row that cannot say
     which checklist raised it averages two of them together."""
@@ -113,7 +171,7 @@ def test_a_gap_carries_the_template_that_raised_it(team_id: str) -> None:
     gap = stored(meeting_id)["risk"]
 
     assert gap.template_key == "general"
-    assert gap.template_version == "general.2"
+    assert gap.template_version == "general.3"
     assert gap.template_item == "리스크·예외 처리"
     assert gap.suggested_question
 
@@ -287,6 +345,36 @@ def test_switching_templates_drops_the_rows_the_old_one_raised(team_id: str) -> 
     service.detect_gaps(meeting_id)
 
     assert {gap.template_key for gap in stored(meeting_id).values()} == {"general"}
+
+
+def test_switching_templates_keeps_what_was_dismissed_under_the_old_one(team_id: str) -> None:
+    """A dismissal is threshold tuning's input (ADR 0006), and S20's picker makes
+    trying another template one click. Switching away must not throw the
+    judgement out, and switching back must find it where it was left."""
+    meeting_id = seed(team_id, COVERS_TWO)
+    service.detect_gaps(meeting_id)
+    dismissed_id = stored(meeting_id)["risk"].id
+    with session_scope() as s:
+        s.get(GapGap, dismissed_id).dismissed_at = datetime.now(UTC)
+
+    with session_scope() as s:
+        service.set_template(s, meeting_id, "feature_planning")
+    service.detect_gaps(meeting_id)
+
+    with session_scope() as s:
+        kept = s.get(GapGap, dismissed_id)
+        assert kept is not None and kept.template_key == "general"
+        assert kept.dismissed_at is not None
+        report = service.build_report(s, meeting_id)
+    assert dismissed_id not in {gap.id for gap in report.gaps}
+
+    with session_scope() as s:
+        service.set_template(s, meeting_id, "general")
+    service.detect_gaps(meeting_id)
+
+    back = stored(meeting_id)["risk"]
+    assert back.id == dismissed_id
+    assert back.dismissed_at is not None
 
 
 def test_an_override_naming_a_template_that_no_longer_exists_falls_back(team_id: str) -> None:

@@ -9,6 +9,7 @@ Never imports another module.
 from __future__ import annotations
 
 from collections import defaultdict
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from sqlalchemy import delete, func, nulls_last, select
@@ -42,6 +43,7 @@ from autune_gap.models import (
 )
 from autune_gap.pipeline import get_entity_extractor, get_relation_extractor
 from autune_gap.schemas import (
+    GapDismissal,
     TemplateComparison,
     TemplateItemRead,
     TemplateRead,
@@ -271,6 +273,11 @@ def detect_gaps(meeting_id: str) -> int:
     sit in the table waiting to be counted. Only template rows are touched;
     a gap found from the graph alone carries no template key and is left alone.
 
+    **The one exception is a dismissed row of another template.** Switching the
+    meeting to a different checklist drops the old one's gaps, but not the ones
+    somebody dismissed: that judgement is tuning's input, and switching back
+    finds it where it was left. See ``_store_gaps``.
+
     Call it after ``build_topic_graph``, which deletes and rebuilds the topics —
     the cascade takes ``gap_related_topics`` with them, and this puts them back.
     Between the two a report read shows its gaps with no related topics, which
@@ -300,6 +307,47 @@ def detect_gaps(meeting_id: str) -> int:
         high=sum(1 for finding in findings if finding.severity == "high"),
     )
     return len(findings)
+
+
+def set_dismissed(session: Session, gap_id: str, reader: User, *, dismissed: bool) -> GapDismissal:
+    """Mark one gap a false positive, or take the mark back.
+
+    ``dismissed_at`` is the whole write. The row stays either way: a dismissed
+    gap leaves the report (``build_report``) but not the table, because
+    threshold tuning reads what was dismissed (ADR 0006). Nobody's id is stored
+    or logged with it — which teammate pressed "해당 없음" is a per-person
+    record of conduct ADR 0003 refuses.
+
+    Dismissing twice keeps the first timestamp, so a double click does not move
+    the moment tuning reads. Taking a mark back that is not there is a no-op.
+
+    **An unknown gap and a gap on somebody else's meeting are the same 404**,
+    for the reason ``require_readable_meeting`` gives about meeting ids. That
+    function is not called here because its 404 names the *meeting*, which
+    would tell a caller that the gap id they guessed is real.
+
+    It does not republish ``autune.gap.completed``, for the reason
+    ``set_template`` gives: E scored the meeting the pipeline produced, and a
+    judgement made on S20 afterwards does not rewrite that score.
+    """
+    row = session.get(GapGap, gap_id)
+    meeting = session.get(Meeting, row.meeting_id) if row is not None else None
+    if (
+        row is None
+        or meeting is None
+        or not _is_team_member(session, user_id=reader.id, team_id=meeting.team_id)
+    ):
+        log.info("gap_dismissal_refused", gap_id=gap_id)
+        raise NotFoundError("gap", gap_id)
+
+    if dismissed and row.dismissed_at is None:
+        row.dismissed_at = datetime.now(tz=UTC)
+    elif not dismissed:
+        row.dismissed_at = None
+    session.flush()
+
+    log.info("gap_dismissal_set", gap_id=gap_id, meeting_id=row.meeting_id, dismissed=dismissed)
+    return GapDismissal(gap_id=gap_id, meeting_id=row.meeting_id, dismissed=dismissed)
 
 
 def selected_template_key(session: Session, meeting_id: str) -> str:
@@ -448,9 +496,14 @@ def _topic_views(session: Session, meeting_id: str) -> list[detect.TopicView]:
     docs/architecture/privacy.md section 3 turns on. A topic nobody was
     considered for carries ``None``, which ``detect.score`` drops rather than
     reading as "everybody spoke".
+
+    Each view also carries the step-2 relations its topic takes part in, which
+    is how an item like dependency matches a meeting that stated one without
+    naming it (``TemplateItem.relations``).
     """
     topics = _topics_in_reading_order(session, meeting_id)
     said = _spoke_by_person(session, meeting_id, [topic.id for topic in topics])
+    related = _relations_by_topic(session, meeting_id)
 
     views = []
     for topic in topics:
@@ -462,10 +515,34 @@ def _topic_views(session: Session, meeting_id: str) -> list[detect.TopicView]:
         )
         views.append(
             detect.TopicView(
-                id=topic.id, label=topic.label, centrality=topic.centrality, silent_share=silent
+                id=topic.id,
+                label=topic.label,
+                centrality=topic.centrality,
+                silent_share=silent,
+                relations=frozenset(related.get(topic.id, ())),
             )
         )
     return views
+
+
+def _relations_by_topic(session: Session, meeting_id: str) -> dict[str, set[str]]:
+    """Topic id -> the step-2 relations it is either end of.
+
+    Both ends, because an item that asks about a dependency is raised by the
+    thing that waits as much as by the thing waited on. ``co_occurs`` is left
+    out in the query rather than after it: it is most of a meeting's edges and
+    none of them is evidence here.
+    """
+    related: dict[str, set[str]] = {}
+    rows = session.execute(
+        select(
+            GapTopicEdge.source_topic_id, GapTopicEdge.target_topic_id, GapTopicEdge.relation
+        ).where(GapTopicEdge.meeting_id == meeting_id, GapTopicEdge.relation != graph.CO_OCCURS)
+    )
+    for source, target, relation in rows:
+        related.setdefault(source, set()).add(relation)
+        related.setdefault(target, set()).add(relation)
+    return related
 
 
 def _speech(session: Session, meeting_id: str) -> list[str]:
@@ -548,8 +625,17 @@ def _store_gaps(
         )
 
     for stale, gap in stored.items():
-        if stale not in produced:
-            session.delete(gap)
+        if stale in produced:
+            continue
+        # A dismissal made under another template outlives the switch away from
+        # it: it is threshold tuning's input (ADR 0006), and S20's picker makes
+        # trying a template one click. Kept, it is also still there when the
+        # meeting is switched back. It never reaches a reader in the meantime —
+        # the report leaves dismissed rows out and the rail reads only the
+        # template in force.
+        if gap.dismissed_at is not None and stale[0] != chosen.key:
+            continue
+        session.delete(gap)
 
 
 def publish_report(meeting_id: str) -> GapReport:
