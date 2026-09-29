@@ -161,6 +161,27 @@ class GoogleOAuthClient:
         return response.status_code == httpx.codes.OK
 
     def verify(self, id_token: str, *, nonce: str) -> GoogleIdentity:
+        """Who signed in: a verified ID token that also names an email -- the
+        sign-in path upserts the user by it."""
+        claims = self.verify_request(id_token, nonce=nonce)
+        email = claims.get("email")
+        if not email:
+            raise PermissionDeniedError("Google account exposes no email address")
+
+        return GoogleIdentity(
+            sub=str(claims["sub"]),
+            email=str(email),
+            email_verified=bool(claims.get("email_verified", False)),
+            name=claims.get("name"),
+            picture=claims.get("picture"),
+        )
+
+    def verify_request(self, id_token: str, *, nonce: str) -> dict[str, Any]:
+        """That this ID token answers *our* request: signature, audience,
+        issuer, expiry and nonce. It asks nothing about the account, so it
+        holds for a grant without the ``email`` scope -- the calendar connect,
+        which may be on another Google account than the one that signed in
+        (#452 review)."""
         try:
             signing_key = self._jwks_client.get_signing_key_from_jwt(id_token)
             claims: dict[str, Any] = jwt.decode(
@@ -177,18 +198,7 @@ class GoogleOAuthClient:
             raise PermissionDeniedError("Google ID token has an unexpected issuer")
         if claims.get("nonce") != nonce:
             raise PermissionDeniedError("Google ID token nonce does not match the request")
-
-        email = claims.get("email")
-        if not email:
-            raise PermissionDeniedError("Google account exposes no email address")
-
-        return GoogleIdentity(
-            sub=str(claims["sub"]),
-            email=str(email),
-            email_verified=bool(claims.get("email_verified", False)),
-            name=claims.get("name"),
-            picture=claims.get("picture"),
-        )
+        return claims
 
 
 @lru_cache

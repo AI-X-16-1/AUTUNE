@@ -22,7 +22,7 @@ from autune_core.auth_router import STATE_COOKIE
 from autune_core.auth_router import router as auth_router
 from autune_core.db import Base, get_session
 from autune_core.entities import User
-from autune_core.errors import AutuneError
+from autune_core.errors import AutuneError, PermissionDeniedError
 from autune_core.oauth.google import (
     CALENDAR_SCOPE,
     GoogleGrant,
@@ -55,9 +55,13 @@ class FakeGoogle:
         return self.grant
 
     def verify(self, id_token: str, *, nonce: str) -> GoogleIdentity:
-        return GoogleIdentity(
-            sub="sub", email="me@example.com", email_verified=True, name=None, picture=None
-        )
+        # The calendar consent asks for no ``email`` scope, so a calendar on
+        # another Google account comes back without one -- and verify() then
+        # refuses, as the real client does (#452 review). Sign-in is not here.
+        raise PermissionDeniedError("Google account exposes no email address")
+
+    def verify_request(self, id_token: str, *, nonce: str) -> dict[str, Any]:
+        return {"sub": "another-google-account", "nonce": nonce}
 
     def revoke(self, token: str) -> bool:
         self.revoked.append(token)
@@ -220,6 +224,37 @@ def test_status_is_the_persons_own(world: dict[str, Any]) -> None:
     }
 
 
+def test_a_calendar_on_an_account_without_an_email_claim_connects(
+    world: dict[str, Any],
+) -> None:
+    """#452 review: the consent is ``openid`` + calendar, so another account's
+    ID token carries no email; requiring one made every such connect a 403."""
+    client = signed_in(world)
+    response = callback(client, start(client))
+
+    assert response.headers["location"].endswith("?calendar=connected")
+    assert world["grants"] == {ME: "1//refresh"}
+
+
+def test_reconnecting_revokes_the_grant_it_replaces(world: dict[str, Any]) -> None:
+    world["grants"][ME] = "1//old"
+    client = signed_in(world)
+
+    callback(client, start(client))
+
+    assert world["google"].revoked == ["1//old"]
+    assert world["grants"] == {ME: "1//refresh"}
+
+
+def test_reconnecting_with_the_same_token_keeps_it(world: dict[str, Any]) -> None:
+    world["grants"][ME] = "1//refresh"
+    client = signed_in(world)
+
+    callback(client, start(client))
+
+    assert world["google"].revoked == []
+
+
 def test_disconnect_revokes_at_google_then_forgets(world: dict[str, Any]) -> None:
     world["grants"][ME] = "1//refresh"
 
@@ -300,3 +335,20 @@ def test_a_transaction_from_before_this_change_reads_as_sign_in() -> None:
         ).user_id
         == ME
     )
+
+
+def test_another_flows_state_is_not_a_google_sign_in(world: dict[str, Any]) -> None:
+    """#452 review (inline): Jira, Notion and Slack keep their state in the same
+    store. With cookie and query both set to such a state, the Google callback
+    refuses instead of running a sign-in."""
+    world["store"].put("st-jira", OAuthTransaction("", "/", purpose="jira", user_id=ME))
+    exchanged: list[str] = []
+    world["google"].exchange_code = lambda code: exchanged.append(code) or ""
+    client = signed_in(world)
+    client.cookies.set(STATE_COOKIE, "st-jira")
+
+    response = callback(client, "st-jira")
+
+    assert response.status_code == 403
+    assert exchanged == []
+    assert world["grants"] == {}

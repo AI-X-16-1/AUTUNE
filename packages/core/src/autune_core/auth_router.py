@@ -16,6 +16,11 @@ Flow:
 - ``POST /logout``         -> clear the cookie (the token itself stays valid
                               until it expires; see environments.md)
 - ``GET /me``              -> the current user (used by the web app to bootstrap)
+- ``GET /google/calendar/start``       -> Google's consent for the person's own
+                                         calendar, offline; the same callback
+                                         finishes it (purpose ``calendar``)
+- ``GET /google/calendar``             -> whether *this* person connected one
+- ``POST /google/calendar/disconnect`` -> revoke at Google, then forget
 """
 
 from __future__ import annotations
@@ -172,6 +177,10 @@ def _complete_sign_in(
 
     if transaction.purpose == "calendar":
         return _finish_calendar_connect(transaction, google, session, code=code, error=error)
+    if transaction.purpose != "sign_in":
+        # Other flows (Jira, Notion, Slack) share this store; their state is
+        # never a Google sign-in, even with the cookie and query both set.
+        raise PermissionDeniedError("this state did not start a Google sign-in")
 
     if error or not code:
         raise PermissionDeniedError("Google sign-in did not complete")
@@ -294,12 +303,18 @@ def _complete_calendar_connect(
         raise PermissionDeniedError("calendar connect was not started by a signed-in person")
     grant = google.exchange_grant(code)
     # The ID token proves this code answered *our* request (nonce), not which
-    # Google account it was: someone may keep their calendar on another account.
-    google.verify(grant.id_token, nonce=transaction.nonce)
+    # Google account it was: someone may keep their calendar on another account,
+    # and the consent asks for no ``email``, so none is required (#452 review).
+    google.verify_request(grant.id_token, nonce=transaction.nonce)
     if CALENDAR_SCOPE not in grant.scopes:
         raise PermissionDeniedError("calendar access was not granted")
     if not grant.refresh_token:
         raise PermissionDeniedError("Google granted no offline access; connect again")
+    previous = load_user_integration(session, transaction.user_id, "calendar")
+    if previous is not None and previous.secret and previous.secret != grant.refresh_token:
+        # A reconnect replaces the grant; the old refresh token is ended rather
+        # than left valid and unknown to us.
+        google.revoke(previous.secret)
     save_user_integration(
         session,
         transaction.user_id,
@@ -331,7 +346,12 @@ def google_calendar_disconnect(
 ) -> dict[str, bool]:
     """Revoke the grant at Google, then forget it here (#444 review). Our copy
     goes even when Google cannot be reached; ``revoked`` says whether Google
-    confirmed, so a person knows to check their Google account otherwise."""
+    confirmed, so a person knows to check their Google account otherwise.
+
+    The consent used ``include_granted_scopes``, so revoking this token can end
+    the whole grant that Google account gave Autune -- sign-in scopes included.
+    The next sign-in with that account then shows Google's consent screen again;
+    nothing else changes."""
     grant = load_user_integration(session, user.id, "calendar")
     revoked = bool(grant and grant.secret and google.revoke(grant.secret))
     disconnect_user_integration(session, user.id, "calendar")

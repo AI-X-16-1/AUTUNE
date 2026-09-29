@@ -101,10 +101,9 @@ def save_user_integration(
 def disconnect_user_integration(session: Session, user_id: str, service: str) -> None:
     """Remove a person's connection, credential and all -- here.
 
-    It does not revoke the grant at the provider: Google's refresh token stays
-    valid until the person removes Autune from their account or it expires.
-    S28's disconnect (#428) should call ``https://oauth2.googleapis.com/revoke``
-    before this."""
+    It does not revoke the grant at the provider; the caller does that first.
+    ``POST /api/auth/google/calendar/disconnect`` revokes at Google, then calls
+    this."""
     row = _row(session, user_id, service)
     if row is not None:
         session.delete(row)
