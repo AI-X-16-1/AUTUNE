@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from autune_contracts.enums import ActionStatus, UtteranceKind
 from autune_contracts.extraction import (
+    AGENDA_TITLE_MAX,
     JIRA_ISSUE_URL,
     ActionItem,
     AgendaIssue,
@@ -2247,6 +2248,12 @@ _JIRA_KEY = re.compile(r"^[A-Z][A-Z0-9_]*-[0-9]+$")
 _JIRA_URL = re.compile(JIRA_ISSUE_URL)
 
 
+def _one_line(text: str, limit: int) -> str:
+    """Whitespace collapsed, and cut to ``limit`` characters with an ellipsis."""
+    line = " ".join(text.split())
+    return line if len(line) <= limit else line[: limit - 1].rstrip() + "…"
+
+
 def teams_with_jira_issues(session: Session) -> list[str]:
     """Teams any of whose items ever became a Jira issue -- the teams whose
     agenda can be non-empty, or was and must now be published empty."""
@@ -2297,7 +2304,7 @@ def team_agenda(session: Session, team_id: str, *, now: datetime) -> TeamAgenda:
     )
     issues = []
     for description, status, key, url in rows:
-        title = " ".join(description.split())
+        title = _one_line(description, AGENDA_TITLE_MAX)
         if not title:
             continue
         issues.append(

@@ -6,6 +6,7 @@ import pytest
 from pydantic import ValidationError
 
 from autune_contracts import (
+    AGENDA_TITLE_MAX,
     EVENTS,
     EXTRACTION_AGENDA_CHANGED,
     AgendaIssue,
@@ -65,3 +66,16 @@ def test_the_agenda_is_version_checked_like_a_meeting_payload() -> None:
 def test_it_is_about_a_team() -> None:
     with pytest.raises(ValidationError):
         TeamAgenda.model_validate(fixtures.load("team_agenda") | {"team_id": "mtg_1"})
+
+
+@pytest.mark.parametrize("as_of", ["2026-09-29T08:50:00", "2026-09-29"])
+def test_a_time_without_an_offset_is_refused(as_of: str) -> None:
+    """D keeps the latest ``as_of``; naive against aware cannot be compared."""
+    with pytest.raises(ValidationError):
+        TeamAgenda.model_validate(fixtures.load("team_agenda") | {"as_of": as_of})
+
+
+def test_a_title_is_bounded() -> None:
+    AgendaIssue(title="가" * AGENDA_TITLE_MAX)
+    with pytest.raises(ValidationError):
+        AgendaIssue(title="가" * (AGENDA_TITLE_MAX + 1))

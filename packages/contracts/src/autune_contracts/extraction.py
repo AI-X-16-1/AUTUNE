@@ -5,9 +5,9 @@ B -> D. The Jira issues a team has open, for the pre-meeting brief (#436).
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date
 
-from pydantic import Field, model_validator
+from pydantic import AwareDatetime, Field, model_validator
 
 from ._base import ContractModel, Payload, TeamPayload
 from .enums import ActionStatus, ExternalSystem, UtteranceKind
@@ -134,6 +134,11 @@ class ExtractionResult(Payload):
     ambiguous_agreements: list[AmbiguousAgreement] = Field(default_factory=list)
 
 
+AGENDA_TITLE_MAX = 200
+"""Characters in one issue title. Up to twenty titles go into a brief that is
+posted to Slack under ``check_outbound``'s 4,000-character cap, and a brief
+over it is refused, not cut (#491 review). The producer shortens to this."""
+
 JIRA_ISSUE_URL = r"^https://[A-Za-z0-9.-]+/browse/[A-Z][A-Z0-9_]*-[0-9]+$"
 """An issue's browse link on a Jira site: https, a host, ``/browse/KEY-12``.
 
@@ -148,7 +153,11 @@ class AgendaIssue(ContractModel):
     What a brief line needs and nothing else: no assignee, no description body.
     """
 
-    title: str = Field(min_length=1, description="The issue's summary: masked item text.")
+    title: str = Field(
+        min_length=1,
+        max_length=AGENDA_TITLE_MAX,
+        description="The issue's summary: masked item text, one line.",
+    )
     key: str | None = Field(default=None, pattern=r"^[A-Z][A-Z0-9_]*-[0-9]+$")
     status: str | None = Field(default=None, description="A display name, e.g. 진행 중.")
     url: str | None = Field(default=None, pattern=JIRA_ISSUE_URL)
@@ -163,5 +172,7 @@ class TeamAgenda(TeamPayload):
     order (most pressing first) and caps the list; a consumer shows the head.
     """
 
-    as_of: datetime
+    as_of: AwareDatetime
+    """With an offset. A consumer compares snapshots by ``as_of``, and a naive
+    time against an aware one raises instead of comparing (#491 review)."""
     issues: list[AgendaIssue] = Field(default_factory=list)

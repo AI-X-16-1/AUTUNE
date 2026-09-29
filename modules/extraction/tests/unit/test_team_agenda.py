@@ -14,7 +14,7 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
-from autune_contracts import EXTRACTION_AGENDA_CHANGED, TeamAgenda
+from autune_contracts import AGENDA_TITLE_MAX, EXTRACTION_AGENDA_CHANGED, TeamAgenda
 from autune_core import Base, Meeting
 from autune_extraction import service, tasks
 from autune_extraction.models import ExtActionItem, ExtExternalRef
@@ -184,3 +184,12 @@ def test_no_team_with_an_issue_publishes_nothing(
     monkeypatch.setattr(tasks, "publish", lambda *_: pytest.fail("nothing to publish"))
 
     tasks.publish_team_agendas()
+
+
+def test_a_long_title_is_cut_to_the_contracts_bound(session: Session) -> None:
+    item(session, "act_long", description="가" * 500)
+
+    (issue,) = service.team_agenda(session, "team_1", now=NOW).issues
+
+    assert len(issue.title) == AGENDA_TITLE_MAX
+    assert issue.title.endswith("…")
