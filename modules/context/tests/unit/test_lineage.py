@@ -104,6 +104,8 @@ def test_neither_entailed_nor_contradicted_is_modified() -> None:
         "모노레포를 접고 저장소를 나누기로 했다.",
         "이번 달로 끝내고 그만두기로 했다.",
         "배포는 하지 말기로 했다.",
+        "재시도 없이 폴백으로 처리하기로 했다.",  # A 없이 B: a replacement
+        "없던 일로 하기로 했다.",
     ],
 )
 def test_negation_and_cancel_words_mark_a_reversal(statement: str) -> None:
@@ -120,6 +122,32 @@ def test_negation_and_cancel_words_mark_a_reversal(statement: str) -> None:
 )
 def test_a_moved_parameter_is_not_a_reversal(statement: str) -> None:
     assert not marks_reversal(statement)
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "배포는 차질 없이 다음 주 화요일로 옮기기로 했다.",
+        "예외 없이 모든 PR은 두 명 승인 후 머지하기로 했다.",
+        "추가 비용 없이 인원을 5명으로 늘리기로 했다.",
+        "추가 예산 없이 10월 출시로 옮기기로 했다.",
+        "문제없이 일정대로 진행하기로 했다.",  # 문제 + 없이, one word
+        "차질이 없도록 일정을 다음 주로 옮기기로 했다.",  # 없- after a subject particle
+    ],
+)
+def test_an_absence_that_means_smoothly_is_not_a_reversal(statement: str) -> None:
+    assert not marks_reversal(statement)
+
+
+def test_a_smooth_absence_does_not_hide_a_real_negation() -> None:
+    assert marks_reversal("차질 없이 정리하고 이번 분기에는 출시하지 않기로 했다.")
+
+
+def test_an_owner_replaced_with_daesin_reads_as_a_reversal_a_known_limit() -> None:
+    """Pinned so a change here is a decision: by the eval set's definitions
+    a new owner is ``modified``, but vocabulary cannot tell a person from a
+    vendor after 대신 (see ``pipeline.change``)."""
+    assert marks_reversal("김민경 대신 강민구가 맡기로 했다.")
 
 
 def test_cosine_is_1_for_identical_and_0_for_orthogonal() -> None:

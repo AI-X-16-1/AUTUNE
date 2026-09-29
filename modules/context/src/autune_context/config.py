@@ -63,10 +63,13 @@ class ContextSettings(BaseSettings):
     closest one, at or above which the link is asserted -- the primary signal
     (see ``service._link_topic``). Set on the evaluation set's dev and first
     held-out splits (docs/modules/context.md, "Metric"): same-topic pairs
-    bottomed out at 0.743, different-topic pairs reached 0.773, so no value
-    separates them all -- 0.74 keeps every same-topic pair and gives up three
-    same-area ones. Measured on short, synthetic meetings; re-check against real
-    meetings before trusting it further."""
+    bottomed out at 0.743, different-topic pairs reached 0.773: the two
+    distributions overlap, so no value separates them all -- 0.74 keeps every
+    same-topic pair and gives up three same-area ones. That three counts this
+    threshold alone; the rule asserts at this similarity *or* at
+    ``link_confidence_threshold``, so the asserted set can only be larger.
+    Measured on short, synthetic meetings; re-check against real meetings
+    before trusting it further."""
     link_confidence_threshold: float = 0.6
     """Cross-encoder score at or above which the link is also asserted,
     whatever its dense similarity. Below both thresholds: store it as
