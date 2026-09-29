@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import secrets
 from typing import Annotated
-from urllib.parse import urljoin
+from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Cookie, Depends, Query, Request
 from fastapi.responses import JSONResponse, RedirectResponse, Response
@@ -46,14 +46,49 @@ STATE_COOKIE = "autune_oauth_state"
 
 
 def _safe_redirect_target(raw: str) -> str:
-    """Only ever redirect to a path on our own web app, never an absolute URL."""
-    if raw.startswith("/") and not raw.startswith("//"):
+    """Only ever redirect to a path on our own web app, never an absolute URL.
+
+    ``//host`` is refused because a browser reads it as an absolute URL on the
+    current scheme. ``\\`` and ``:`` are refused too: browsers have historically
+    treated a backslash as a separator, and a colon is how a scheme starts.
+    Every ``redirect_to`` this app sends is a plain screen path -- ``/``,
+    ``/meetings/<id>``, ``/dashboard`` -- so neither character costs anything
+    (@PARKJAEKYUNG0525 on #425).
+    """
+    if raw.startswith("/") and not raw.startswith("//") and not set(raw) & {"\\", ":"}:
         return raw
     return "/"
 
 
 def _web_url(path: str) -> str:
-    return urljoin(get_settings().web_base_url.rstrip("/") + "/", path.lstrip("/"))
+    """Join a checked path onto the web app's origin, and prove it stayed there.
+
+    **Not ``urljoin``.** It joins a *reference*, and a reference that looks
+    absolute replaces the base entirely. ``_safe_redirect_target`` passes
+    ``/https://evil.example/phish`` -- it starts with one ``/`` -- and stripping
+    that ``/`` for the join leaves ``https://evil.example/phish``, which
+    ``urljoin`` returns unchanged. The callback then answered
+    ``303 Location: https://evil.example/phish`` after a real Google sign-in:
+    an open redirect a person reaches from our own domain, having just done
+    something that looks exactly like signing in (@PARKJAEKYUNG0525 on #425).
+
+    ``path`` is guaranteed to start with exactly one ``/``, so concatenation is
+    the whole join.
+
+    The origin check after it is deliberately unreachable. Nothing this
+    function can be handed today survives concatenation and still lands off
+    origin, so no test covers that branch — which is the honest way to describe
+    it rather than counting it as a third tested layer. It is here because the
+    two layers above are both *arguments* that a value is safe, and this is the
+    only line that *checks*. A future `redirect_to` carrying something nobody
+    thought of gets refused by arithmetic instead of by reasoning.
+    """
+    base = get_settings().web_base_url.rstrip("/")
+    candidate = base + ("/" + path.lstrip("/"))
+    if urlsplit(candidate)[:2] != urlsplit(base)[:2]:  # (scheme, netloc)
+        log.warning("auth_redirect_target_left_the_origin")
+        return base + "/"
+    return candidate
 
 
 @router.get("/google/start")

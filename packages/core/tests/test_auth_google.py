@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import time
+from urllib.parse import urlsplit
 
 import httpx
 import jwt
@@ -17,6 +18,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from autune_core import SESSION_COOKIE, issue_token
+from autune_core import auth_router as auth_router_module
 from autune_core.auth_router import STATE_COOKIE
 from autune_core.auth_router import router as auth_router
 from autune_core.auth_service import upsert_user_from_google
@@ -310,6 +312,106 @@ def test_start_refuses_an_offsite_redirect_target(
     client.get("/api/auth/google/start?redirect_to=https://evil.test/phish")
     ((_expiry, txn),) = holder["state_store"]._entries.values()  # type: ignore[attr-defined]
     assert txn.redirect_to == "/"
+
+
+# --------------------------------------------------------------------------- #
+# redirect_to: three layers, tested one at a time
+#
+# End-to-end the three cover for each other, which is the point of having them
+# and the reason an end-to-end test cannot say which one is working. Removing
+# any single layer left the parametrised callback tests below green. So each
+# layer is also checked at its own door.
+# --------------------------------------------------------------------------- #
+
+HOSTILE_TARGETS = [
+    pytest.param("https://evil.test/phish", id="absolute"),
+    pytest.param("//evil.test/phish", id="scheme-relative"),
+    pytest.param("/https://evil.test/phish", id="one-slash-then-absolute"),
+    pytest.param("/https:evil.test", id="one-slash-then-scheme"),
+    pytest.param("/\\evil.test", id="backslash"),
+]
+
+
+@pytest.mark.parametrize("target", HOSTILE_TARGETS)
+def test_the_redirect_guard_reduces_a_hostile_target_to_root(target: str) -> None:
+    """Layer 1. Four of these five start with a single `/`, which is all the
+    guard used to require."""
+    assert auth_router_module._safe_redirect_target(target) == "/"
+
+
+@pytest.mark.parametrize(
+    "target", ["/", "/dashboard", "/meetings/mtg_1/actions", "/gap?level=high"]
+)
+def test_the_redirect_guard_keeps_a_real_screen_path(target: str) -> None:
+    assert auth_router_module._safe_redirect_target(target) == target
+
+
+@pytest.mark.parametrize("target", HOSTILE_TARGETS)
+def test_the_url_builder_stays_on_our_origin_even_if_the_guard_let_it_past(
+    target: str,
+) -> None:
+    """Layer 2 and 3, called directly with what layer 1 is supposed to stop.
+
+    This is the test the fix actually needs: `_web_url` used `urljoin`, which
+    returns an absolute reference unchanged, so `/https://evil.test/phish`
+    became the `Location` after a real sign-in. Going through
+    `_safe_redirect_target` first would hide that — as it hid it from the
+    end-to-end tests when each layer was removed in turn.
+    """
+    built = auth_router_module._web_url(target)
+    assert built.startswith("http://localhost:3000/")
+    assert "evil.test" not in urlsplit(built).netloc
+
+
+OFFSITE_REDIRECT_TARGETS = [
+    pytest.param("https://evil.test/phish", id="absolute"),
+    pytest.param("//evil.test/phish", id="scheme-relative"),
+    pytest.param("/https://evil.test/phish", id="one-slash-then-absolute"),
+    pytest.param("/https:evil.test", id="one-slash-then-scheme"),
+    pytest.param("/\\evil.test", id="backslash"),
+]
+"""Every shape that has to end up back on our own origin.
+
+The first was the only one tested. The next four all start with a single `/`,
+which is what `_safe_redirect_target` was checking for, and `_web_url` stripped
+that `/` before handing the rest to `urljoin` — which returns an absolute
+reference unchanged. So a link on our domain, a real Google sign-in, and then
+`303` to somebody else's site (@PARKJAEKYUNG0525 on #425).
+"""
+
+
+@pytest.mark.parametrize("target", OFFSITE_REDIRECT_TARGETS)
+def test_an_offsite_redirect_target_never_leaves_our_origin(
+    api: tuple[TestClient, dict[str, object]], target: str
+) -> None:
+    """Driven to the callback, because that is where the `Location` is written.
+
+    `test_start_refuses_an_offsite_redirect_target` checks what was stored,
+    which is necessary and was not enough: the stored value was already `/` for
+    the absolute case and something that *looked* like a path for the rest.
+    What matters is the header the browser is handed at the end.
+    """
+    client, holder = api
+    start = client.get(f"/api/auth/google/start?redirect_to={target}")
+    state = start.headers["location"].split("state=", 1)[1].split("&", 1)[0]
+
+    response = client.get(f"/api/auth/google/callback?state={state}&code=abc")
+
+    assert response.status_code == 303
+    assert response.headers["location"].startswith("http://localhost:3000/")
+
+
+def test_a_legitimate_redirect_target_still_arrives(
+    api: tuple[TestClient, dict[str, object]],
+) -> None:
+    """The guard has to let the product through, which is the other half of it."""
+    client, _ = api
+    start = client.get("/api/auth/google/start?redirect_to=/meetings/mtg_1/actions")
+    state = start.headers["location"].split("state=", 1)[1].split("&", 1)[0]
+
+    response = client.get(f"/api/auth/google/callback?state={state}&code=abc")
+
+    assert response.headers["location"] == "http://localhost:3000/meetings/mtg_1/actions"
 
 
 def _complete_login(client: TestClient, state_store: InMemoryStateStore) -> httpx.Response:
