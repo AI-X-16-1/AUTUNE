@@ -83,7 +83,7 @@ def test_list_events_reads_timed_and_all_day_events_and_skips_cancelled() -> Non
                         "summary": "주간 회의",
                         "start": {"dateTime": "2026-10-01T10:00:00+09:00"},
                         "end": {"dateTime": "2026-10-01T11:00:00+09:00"},
-                        "attendees": [{"email": "a@example.com"}, {"self": True}],
+                        "attendees": [{"email": "guest@else.com"}],
                     },
                     {
                         "id": "e2",
@@ -99,7 +99,7 @@ def test_list_events_reads_timed_and_all_day_events_and_skips_cancelled() -> Non
     events = client(handler).list_events("team_cal", START, END)
 
     assert [e.id for e in events] == ["e1", "e2"]
-    assert events[0].attendees == ["a@example.com"]
+    assert "guest@else.com" not in repr(events[0])  # other people's addresses stay out
     assert not events[0].all_day
     assert events[1].all_day
     assert events[1].start == date(2026, 10, 2)
@@ -261,3 +261,22 @@ def test_a_patch_to_an_event_deleted_by_hand_reports_it_gone() -> None:
 def test_a_patch_to_a_live_event_is_an_update() -> None:
     c = client(lambda request: httpx.Response(200, json={"id": "evt_1", "status": "confirmed"}))
     assert c.update_all_day_event("primary", "evt_1", "제목", date(2026, 10, 2)) is True
+
+
+def test_the_fake_invites_like_the_client_and_checks_the_rest() -> None:
+    fake = FakeCalendar()
+    fake.create_event(
+        "team_cal",
+        "후속 회의",
+        "2026-10-06T10:00:00+09:00",
+        "2026-10-06T11:00:00+09:00",
+        ["a@example.com"],
+    )
+    with pytest.raises(PrivacyViolationError):
+        fake.create_event(
+            "team_cal",
+            "010-1234-5678로 연락",
+            "2026-10-06T10:00:00+09:00",
+            "2026-10-06T11:00:00+09:00",
+            [],
+        )

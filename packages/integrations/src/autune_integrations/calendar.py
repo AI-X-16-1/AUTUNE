@@ -98,13 +98,23 @@ def refresh_access_token(
 
 @dataclass(frozen=True)
 class CalendarEvent:
-    """One event from a connected calendar."""
+    """One event from a connected calendar.
+
+    **No attendees.** Who else is invited -- external guests included -- is
+    other people's data, and no caller needs it (PARKJAEKYUNG0525, review of
+    #438). Adding the field later is additive; removing it from a shared return
+    type would not be.
+
+    **An all-day event's ``start`` and ``end`` are ``date``, a timed event's are
+    ``datetime``,** and the two do not compare: ``event.start > now`` raises
+    ``TypeError`` on an all-day event. Check ``all_day`` first. An all-day
+    ``end`` is exclusive -- an event on the 2nd ends on the 3rd.
+    """
 
     id: str
     summary: str
     start: datetime | date | None
     end: datetime | date | None
-    attendees: list[str] = field(default_factory=list)
     private: dict[str, str] = field(default_factory=dict)
     """``extendedProperties.private`` -- Autune's own tag on events it made."""
     cancelled: bool = False
@@ -132,7 +142,6 @@ def _event(raw: dict[str, Any]) -> CalendarEvent:
         summary=str(raw.get("summary", "")),
         start=_when(raw.get("start")),
         end=_when(raw.get("end")),
-        attendees=[a["email"] for a in raw.get("attendees", []) if "email" in a],
         private=dict(raw.get("extendedProperties", {}).get("private", {})),
         cancelled=raw.get("status") == "cancelled",
     )

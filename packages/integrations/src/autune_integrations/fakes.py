@@ -12,7 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import date, datetime
 
-from .calendar import CalendarEvent
+from .calendar import CalendarClient, CalendarEvent
 from .errors import PermanentIntegrationError
 from .privacy import assert_personal_delivery, check_outbound
 from .slack import SlackClient, slack_body
@@ -167,6 +167,24 @@ class FakeCalendar:
         self, emails: list[str], time_min: datetime, time_max: datetime
     ) -> dict[str, list[tuple[datetime, datetime]] | None]:
         return {email: self.busy.get(email) for email in emails}
+
+    def create_event(
+        self, calendar_id: str, summary: str, start_iso: str, end_iso: str, attendees: list[str]
+    ) -> str:
+        """A timed meeting with invitees (Follow-up's approved meeting), checked
+        with the real client's ``addressing`` so an invitee's address is exempt
+        and everything else is not."""
+        body = {
+            "summary": summary,
+            "start": {"dateTime": start_iso},
+            "end": {"dateTime": end_iso},
+            "attendees": [{"email": email} for email in attendees],
+        }
+        check_outbound(body, destination="google_calendar", addressing=CalendarClient.addressing)
+        self.created += 1
+        event_id = f"evt_{self.created}"
+        self.events[event_id] = {"calendar": calendar_id, **body}
+        return event_id
 
     def create_all_day_event(
         self,
