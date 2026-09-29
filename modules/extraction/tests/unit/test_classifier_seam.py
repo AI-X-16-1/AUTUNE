@@ -218,9 +218,13 @@ def test_the_only_external_classifier_is_llm_and_it_is_opt_in() -> None:
     nothing else, through ``check_outbound``; see ``pipeline.llm``). Asserted as
     the whole key set so adding a *second* one still fails here, where the
     reason is written down, rather than passing as an ordinary feature.
+
+    ``llm_checked`` is not a second one: it wraps ``LlmClassifier`` and sends
+    the same requests; its checker is DeBERTa in process (``pipeline.checked``).
     """
-    assert set(_CLASSIFIERS) == {"local", "hosted", "fake", "llm"}
-    assert ExtractionSettings(_env_file=None).classifier_impl != "llm"  # type: ignore[call-arg]
+    assert set(_CLASSIFIERS) == {"local", "hosted", "fake", "llm", "llm_checked"}
+    default = ExtractionSettings(_env_file=None).classifier_impl  # type: ignore[call-arg]
+    assert default not in {"llm", "llm_checked"}
 
 
 # --- the fake, which everything downstream is built on ----------------------
