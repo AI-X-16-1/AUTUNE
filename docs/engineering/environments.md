@@ -81,7 +81,7 @@ prefix `AUTUNE_<MODULE>_`.
 
 | Variable | Example | Notes |
 | --- | --- | --- |
-| `AUTUNE_GOOGLE_CLIENT_ID` | | Google Cloud OAuth client (W2). Blank disables Google sign-in |
+| `AUTUNE_GOOGLE_CLIENT_ID` | | Google Cloud OAuth client (W2). If any of these three is blank, Google sign-in is off: `/api/auth/providers` reports `google: false` and S01 disables the button |
 | `AUTUNE_GOOGLE_CLIENT_SECRET` | | Never commit |
 | `AUTUNE_GOOGLE_REDIRECT_URI` | `http://localhost:3000/api/auth/google/callback` | The **web** origin, not the API — the browser reaches `/api/*` through the Next proxy, so the callback must land there too. Must match a redirect URI registered in the Google Cloud console exactly, per environment |
 | `API_PROXY_TARGET` | `http://localhost:8000` | Web-only (read by `apps/web/next.config.ts`), where `/api/*` is proxied. Set per environment; not an `autune_core` setting |
@@ -102,7 +102,8 @@ issued; the cookie is what proves to whom.
 clears the cookie; the JWT it held stays valid until it expires. A token that
 leaked cannot be revoked, which is acceptable for a first version and is not
 acceptable for long — it needs a token version on `User`, or a server-side
-session, before this carries real meetings.
+session, before this carries real meetings. Until then the only way to end
+every session at once is rotating `AUTUNE_SECRET_KEY`, which signs everyone out.
 
 ### Web (`apps/web`)
 
