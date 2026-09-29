@@ -12,8 +12,8 @@ import { Button } from "@/shared/ui";
 
 /**
  * One button to install Autune's bot in the team's Slack (#428). The install
- * makes #autune -- or joins it when it exists -- and the team's briefings and
- * reports go there.
+ * makes a private #autune (or #autune-2... when taken), invites whoever
+ * installed, and the team's briefings and reports go there.
  */
 export function SlackConnect({ meetingId }: { meetingId: string }) {
   const [state, setState] = useState<SlackConnection | null>(null);
@@ -27,11 +27,16 @@ export function SlackConnect({ meetingId }: { meetingId: string }) {
       setState(status);
       const url = new URL(window.location.href);
       const result = url.searchParams.get("slack");
-      if (result === "connected") setNote("Slack에 연결했습니다. 알림은 이 채널로 갑니다.");
+      if (result === "connected")
+        setNote(
+          status?.connected && status.channel_name
+            ? `Slack에 연결했습니다. 비공개 채널 #${status.channel_name}에 초대했으니 팀원을 추가해 주세요.`
+            : "Slack에 연결했습니다.",
+        );
       else if (result === "failed")
         setNote(
           url.searchParams.get("reason") === "slack_channel_unavailable"
-            ? "#autune과 #autune-alerts를 쓸 수 없습니다(비공개나 보관된 채널). Autune 봇을 그 채널에 초대하거나 이름을 비워 주세요."
+            ? "알림 채널 이름(#autune ~ #autune-10)이 모두 사용 중입니다. 하나를 비우고 다시 연결해 주세요."
             : "Slack을 연결하지 못했습니다. 다시 시도해 주세요.",
         );
       if (result !== null) {
@@ -75,7 +80,7 @@ export function SlackConnect({ meetingId }: { meetingId: string }) {
     <div className="flex flex-wrap items-center gap-3">
       <span className="text-[var(--color-ink-muted)]" style={meta}>
         Slack 연결됨 · {state.workspace_name ?? "워크스페이스"}
-        {state.channel_name ? ` · #${state.channel_name}` : ""}
+        {state.channel_name ? ` · #${state.channel_name} (비공개)` : ""}
       </span>
       <Button
         tone="quiet"

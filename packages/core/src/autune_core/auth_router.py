@@ -39,13 +39,18 @@ from .auth_service import upsert_user_from_google
 from .db import get_session
 from .entities import Meeting, TeamMember
 from .errors import AutuneError, NotFoundError, PermissionDeniedError
-from .integrations_config import disconnect_integration, load_integration, save_integration
+from .integrations_config import (
+    IntegrationConfig,
+    disconnect_integration,
+    load_integration,
+    save_integration,
+)
 from .jira_connection import JIRA, jira_access
 from .logging import get_logger
 from .oauth.atlassian import AtlassianOAuthClient, get_atlassian_client
 from .oauth.google import CALENDAR_SCOPE, GoogleOAuthClient, get_google_client
 from .oauth.notion import NotionOAuthClient, get_notion_oauth_client
-from .oauth.slack import SlackOAuthClient, get_slack_oauth_client
+from .oauth.slack import SlackChannel, SlackInstall, SlackOAuthClient, get_slack_oauth_client
 from .oauth.state import STATE_TTL_SECONDS, OAuthTransaction, StateStore, get_state_store
 from .settings import get_settings
 from .user_integrations import (
@@ -846,15 +851,24 @@ def _finish_slack_connect(
     code: str | None,
     error: str | None,
 ) -> RedirectResponse:
-    """Store the workspace bot's token and the alert channel the install made or
-    joined -- the ``channel`` key D and E already read -- then back to the
-    screen with ``?slack=connected|failed``."""
+    """Store the workspace bot's token and the private alert channel the install
+    made -- the ``channel`` key D and E already read -- then back to the screen
+    with ``?slack=connected|failed``.
+
+    Tokens are never left alive and unknown to us: one issued by an install that
+    then fails is revoked, and so is the one a re-install to another workspace
+    replaces -- otherwise that bot stays in the old workspace and not even
+    ``/slack/disconnect`` could end it. A token equal to the stored one is kept:
+    re-installing into the same workspace can hand the same token back."""
     assert transaction.team_id is not None
+    install: SlackInstall | None = None
+    previous = None
     try:
         if error or not code:
             raise PermissionDeniedError("Slack install was not approved")
         install = slack.exchange_code(code)
-        channel = slack.ensure_channel(install.access_token, get_settings().slack_channel_name)
+        previous = load_integration(session, transaction.team_id, SLACK)
+        channel = _alert_channel(slack, install, previous)
         save_integration(
             session,
             transaction.team_id,
@@ -869,11 +883,13 @@ def _finish_slack_connect(
             },
             connected_by=transaction.user_id,
         )
-        log.info(
-            "auth_slack_connected", team_id=transaction.team_id, channel_created=channel.created
-        )
+        if previous is not None and previous.secret:
+            _revoke_unless(slack, previous.secret, keep=install.access_token)
+        log.info("auth_slack_connected", team_id=transaction.team_id)
         outcome = "connected"
     except AutuneError as exc:
+        if install is not None:
+            _revoke_unless(slack, install.access_token, keep=previous.secret if previous else None)
         log.info("auth_slack_connect_failed", team_id=transaction.team_id, reason=exc.code)
         # Our own error code, never Slack's text: the screen explains the one
         # case a person can fix (a private #autune) and is generic otherwise.
@@ -881,6 +897,25 @@ def _finish_slack_connect(
     return RedirectResponse(
         _web_url(_with_query(transaction.redirect_to, f"slack={outcome}")), status_code=303
     )
+
+
+def _alert_channel(
+    slack: SlackOAuthClient, install: SlackInstall, previous: IntegrationConfig | None
+) -> SlackChannel:
+    """The team's channel: kept on a re-install into the same workspace, made
+    new (private, installer invited) otherwise."""
+    if previous is not None and previous.config.get("workspace_id") == install.workspace_id:
+        kept = previous.config.get("channel")
+        if kept:
+            return SlackChannel(str(kept), str(previous.config.get("channel_name") or ""))
+    return slack.create_alert_channel(
+        install.access_token, get_settings().slack_channel_name, invite=install.installer_id
+    )
+
+
+def _revoke_unless(slack: SlackOAuthClient, token: str, *, keep: str | None) -> None:
+    if token != keep:
+        slack.revoke(token)
 
 
 @router.get("/slack")

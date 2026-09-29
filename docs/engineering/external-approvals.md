@@ -98,6 +98,8 @@ features:
       usage_hint: "[start|status|results]"
       should_escape: false
 oauth_config:
+  redirect_urls:
+    - https://localhost:3000/api/auth/slack/callback   # "Add to Slack" (#428); HTTPS only
   scopes:
     bot:
       - commands          # /autune
@@ -105,6 +107,7 @@ oauth_config:
       - im:write          # confirmation DMs, speaking-ratio DM
       - channels:read     # resolve the meeting channel
       - groups:read       # same, for private channels
+      - groups:write      # one-click install: make the private alert channel, invite the installer
 settings:
   interactivity:
     is_enabled: true      # buttons on the action-item card
@@ -142,12 +145,30 @@ that state — *"Creation is held back when the assignee is unmapped."* See #70.
 
 Do not widen this list without a reason written down.
 
-**Widened for the one-click install (#428):** `channels:manage` and
-`channels:join`. A team that installs Autune with "Add to Slack" gets an alert
-channel without anyone typing a channel id: the install creates `#autune`, or
-joins it when a channel of that name already exists, and stores it as the
-channel D's briefings and E's reports post to. Both are bot scopes; there is
-still no user scope and no `users:read.email`. Slack accepts only an **HTTPS**
+**Widened for the one-click install (#428):** `groups:write`. A team that
+installs Autune with "Add to Slack" gets an alert channel without anyone typing
+a channel id: the install creates a **private** `#autune` and invites the
+person who installed (their member id comes back with the install, so no
+directory read), and stores it as the channel D's briefings and E's reports
+post to. The installer adds the rest of the team.
+
+It never joins an existing channel. D posts decision statements and E posts
+meeting reports; joining a `#autune` that already exists would hand them to
+whoever is in it -- a second Autune team in the same workspace, or a company
+channel that happens to share the name (review of #468). A taken name becomes
+`#autune-2`, `#autune-3` and so on. An earlier draft asked for
+`channels:manage` and `channels:join` to create or join a *public* channel;
+both are gone.
+
+What `groups:write` allows is wider than what we use, and that is written here
+so whoever approves the scope knows: Slack grants with it `conversations.create`
+and `.invite` -- the two we call -- and also `.rename`, `.archive`, `.kick`,
+`.setTopic` and `.setPurpose` on private channels the bot is a member of. We
+call `.archive` only on the channel we just made when the installer could not
+be invited to it. Slack offers no narrower scope for creating a private
+channel.
+
+Still no user scope and no `users:read.email`. Slack accepts only an **HTTPS**
 redirect URL for this flow, so it cannot be finished on plain
 `http://localhost` -- a local test needs the web app served over HTTPS.
 

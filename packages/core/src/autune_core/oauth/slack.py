@@ -5,17 +5,21 @@ click and gets an alert channel made for it (#428).
    scopes below.
 2. ``exchange_code`` trades the code for the workspace's bot token
    (``oauth.v2.access``).
-3. ``ensure_channel`` makes ``#autune`` -- or joins it when the name is taken --
-   so the modules that post (D's briefing, E's report) have a channel without
-   anyone typing an id.
+3. ``create_alert_channel`` makes a **private** ``#autune`` and invites the
+   person who installed, so the modules that post (D's briefing, E's report)
+   have a channel without anyone typing an id. It never joins a channel that
+   already exists: two Autune teams in one workspace, or a company channel that
+   happens to be called ``#autune``, would otherwise read one team's decisions
+   (review of #468). A taken name becomes ``#autune-2``, ``#autune-3``...
 
 **The token is the workspace bot's**, as Notion's is: bot scopes survive the
 installer leaving (``external-approvals.md``). Only bot scopes are asked for.
 
-**Two scopes beyond the manifest's, with the reason written down**
-(``external-approvals.md`` asks for that): ``channels:manage`` to create the
-alert channel and ``channels:join`` to join an existing one of that name. No
-user scope and no ``users:read.email`` -- the directory stays unread (#70).
+**One scope beyond the manifest's, with the reason written down**
+(``external-approvals.md`` asks for that): ``groups:write``, to create the
+private channel and invite the installer. No user scope and no
+``users:read.email`` -- the installer's member id comes with the install, and
+the directory stays unread (#70).
 
 Slack requires an **HTTPS** redirect URL, so this flow cannot finish on plain
 ``http://localhost``; see the environment docs.
@@ -23,6 +27,7 @@ Slack requires an **HTTPS** redirect URL, so this flow cannot finish on plain
 
 from __future__ import annotations
 
+import contextlib
 from dataclasses import dataclass
 from functools import lru_cache
 from typing import Any
@@ -42,15 +47,15 @@ BOT_SCOPES = (
     "im:write",
     "channels:read",
     "groups:read",
-    "channels:manage",
-    "channels:join",
+    "groups:write",
 )
+
+NAME_ATTEMPTS = 10
 
 
 class SlackChannelUnavailableError(AutuneError):
-    """Neither ``#autune`` nor ``#autune-alerts`` can be used: each name is
-    taken by a channel the bot cannot see or join -- a private one, or an
-    archived one. A person has to invite the bot or free a name."""
+    """Every name from ``#autune`` to ``#autune-10`` is taken. A person has to
+    free one, or set another ``AUTUNE_SLACK_CHANNEL_NAME``."""
 
     code = "slack_channel_unavailable"
     status_code = 409
@@ -62,13 +67,14 @@ class SlackInstall:
     bot_user_id: str
     workspace_id: str
     workspace_name: str
+    installer_id: str
+    """The Slack member who clicked Allow -- invited to the private channel."""
 
 
 @dataclass(frozen=True)
 class SlackChannel:
     id: str
     name: str
-    created: bool
 
 
 class SlackOAuthClient:
@@ -118,43 +124,59 @@ class SlackOAuthClient:
             bot_user_id=str(body.get("bot_user_id", "")),
             workspace_id=str(team.get("id", "")),
             workspace_name=str(team.get("name", "")),
+            installer_id=str((body.get("authed_user") or {}).get("id", "")),
         )
 
-    def ensure_channel(self, token: str, name: str) -> SlackChannel:
-        """``#name`` for the team's alerts: made, or joined when a public one of
-        that name exists. When the name belongs to a channel the bot cannot
-        join -- private or archived, found testing on a real workspace where
-        someone had made a private ``#autune`` -- ``#name-alerts`` is tried the
-        same way before giving up."""
-        for candidate in (name, f"{name}-alerts"):
-            channel = self._make_or_join(token, candidate)
-            if channel is not None:
-                return channel
+    def create_alert_channel(self, token: str, name: str, *, invite: str) -> SlackChannel:
+        """A new **private** channel for the team's alerts, with ``invite`` (the
+        installer) in it; they add the rest of the team. ``#name`` first, then
+        ``#name-2`` and on while a name is taken -- whoever holds it, the bot
+        does not join it."""
+        if not invite:
+            raise AutuneError("Slack did not say who installed, so nobody could be invited")
+        for attempt in range(1, NAME_ATTEMPTS + 1):
+            candidate = name if attempt == 1 else f"{name}-{attempt}"
+            created = self._call(
+                "conversations.create",
+                data={"name": candidate, "is_private": "true"},
+                token=token,
+                refused="Slack refused to create the channel",
+                allow={"name_taken"},
+            )
+            if not created.get("ok"):
+                continue
+            channel = SlackChannel(
+                str((created.get("channel") or {}).get("id") or ""),
+                str((created.get("channel") or {}).get("name") or candidate),
+            )
+            if not channel.id:
+                raise AutuneError("Slack made a channel but did not say which")
+            self._invite(token, channel.id, invite)
+            return channel
         raise SlackChannelUnavailableError(
-            f"#{name} and #{name}-alerts are taken by channels the bot cannot join"
+            f"#{name} to #{name}-{NAME_ATTEMPTS} are all taken in this workspace"
         )
 
-    def _make_or_join(self, token: str, name: str) -> SlackChannel | None:
-        created = self._call(
-            "conversations.create",
-            data={"name": name},
-            token=token,
-            refused="Slack refused to create the channel",
-            allow={"name_taken"},
-        )
-        if created.get("ok"):
-            channel = created["channel"]
-            return SlackChannel(str(channel["id"]), str(channel["name"]), created=True)
-        existing = self._find_public_channel(token, name)
-        if existing is None:
-            return None  # taken by a private or archived channel
-        self._call(
-            "conversations.join",
-            data={"channel": existing},
-            token=token,
-            refused="Slack refused to join the channel",
-        )
-        return SlackChannel(existing, name, created=False)
+    def _invite(self, token: str, channel: str, member: str) -> None:
+        try:
+            self._call(
+                "conversations.invite",
+                data={"channel": channel, "users": member},
+                token=token,
+                refused="Slack refused to invite the installer",
+                allow={"already_in_channel"},
+            )
+        except AutuneError:
+            # A private channel only the bot can see is no use to anyone.
+            with contextlib.suppress(AutuneError):
+                self._call(
+                    "conversations.archive",
+                    data={"channel": channel},
+                    token=token,
+                    refused="archive refused",
+                    allow={"already_archived"},
+                )
+            raise
 
     def revoke(self, token: str) -> bool:
         """End the install's token at Slack (``auth.revoke``)."""
@@ -163,28 +185,6 @@ class SlackOAuthClient:
         except AutuneError:
             return False
         return bool(body.get("revoked"))
-
-    def _find_public_channel(self, token: str, name: str) -> str | None:
-        cursor = ""
-        for _ in range(20):
-            body = self._call(
-                "conversations.list",
-                data={
-                    "types": "public_channel",
-                    "exclude_archived": "true",
-                    "limit": "200",
-                    **({"cursor": cursor} if cursor else {}),
-                },
-                token=token,
-                refused="Slack refused to list channels",
-            )
-            for channel in body.get("channels", []):
-                if channel.get("name") == name:
-                    return str(channel["id"])
-            cursor = str((body.get("response_metadata") or {}).get("next_cursor") or "")
-            if not cursor:
-                return None
-        return None
 
     def _call(
         self,
@@ -202,7 +202,12 @@ class SlackOAuthClient:
             raise AutuneError("could not reach Slack") from exc
         if response.status_code >= 400:
             raise AutuneError(f"Slack answered {response.status_code}")
-        body: dict[str, Any] = response.json()
+        try:
+            body: dict[str, Any] = response.json()
+        except ValueError as exc:
+            raise AutuneError(f"Slack's {method} answer was not JSON") from exc
+        if not isinstance(body, dict):
+            raise AutuneError(f"Slack's {method} answer was not an object")
         if not body.get("ok") and body.get("error") not in (allow or set()):
             # Slack's error code names the problem and carries no secret.
             raise PermissionDeniedError(f"{refused}: {body.get('error')}")

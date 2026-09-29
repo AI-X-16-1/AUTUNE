@@ -34,8 +34,11 @@ ME, OUTSIDER, TEAM, MEETING = "user_me", "user_out", "team_1", "mtg_1"
 
 class FakeSlack:
     def __init__(self) -> None:
-        self.install: SlackInstall | Exception = SlackInstall("xoxb-1", "U_BOT", "T1", "Acme")
-        self.channel = SlackChannel("C1", "autune", created=True)
+        self.install: SlackInstall | Exception = SlackInstall(
+            "xoxb-1", "U_BOT", "T1", "Acme", "U_ME"
+        )
+        self.channel: SlackChannel | Exception = SlackChannel("C1", "autune")
+        self.made: list[tuple[str, str]] = []
         self.revoked: list[str] = []
 
     def authorization_url(self, *, state: str) -> str:
@@ -46,7 +49,10 @@ class FakeSlack:
             raise self.install
         return self.install
 
-    def ensure_channel(self, token: str, name: str) -> SlackChannel:
+    def create_alert_channel(self, token: str, name: str, *, invite: str) -> SlackChannel:
+        self.made.append((token, invite))
+        if isinstance(self.channel, Exception):
+            raise self.channel
         return self.channel
 
     def revoke(self, token: str) -> bool:
@@ -139,6 +145,58 @@ def test_installing_stores_the_bot_token_and_the_alert_channel(world: dict[str, 
     assert row["config"]["channel"] == "C1"
     assert row["config"]["channel_name"] == "autune"
     assert row["config"]["workspace_name"] == "Acme"
+    # The private channel is made with the installer invited.
+    assert world["slack"].made == [("xoxb-1", "U_ME")]
+    assert world["slack"].revoked == []
+
+
+def test_a_callback_from_another_browser_is_refused(world: dict[str, Any]) -> None:
+    state = start(signed_in(world))
+    other = signed_in(world)  # same person, no state cookie: another browser
+
+    response = other.get(f"/api/auth/slack/callback?state={state}&code=c")
+
+    assert response.status_code == 403
+    assert world["saved"] == {}
+    assert world["slack"].made == []
+
+
+def test_a_token_from_an_install_that_then_fails_is_revoked(world: dict[str, Any]) -> None:
+    from autune_core.oauth.slack import SlackChannelUnavailableError
+
+    world["slack"].channel = SlackChannelUnavailableError("all taken")
+    client = signed_in(world)
+    response = client.get(f"/api/auth/slack/callback?state={start(client)}&code=c")
+
+    assert response.headers["location"].endswith("?slack=failed&reason=slack_channel_unavailable")
+    assert world["saved"] == {}
+    assert world["slack"].revoked == ["xoxb-1"]
+
+
+def test_reinstalling_elsewhere_revokes_the_old_workspaces_token(world: dict[str, Any]) -> None:
+    client = signed_in(world)
+    client.get(f"/api/auth/slack/callback?state={start(client)}&code=c")
+    world["slack"].install = SlackInstall("xoxb-2", "U_BOT2", "T2", "Other", "U_ME2")
+    world["slack"].channel = SlackChannel("C2", "autune")
+
+    client.get(f"/api/auth/slack/callback?state={start(client)}&code=c")
+
+    assert world["saved"][TEAM]["secret"] == "xoxb-2"
+    assert world["saved"][TEAM]["config"]["channel"] == "C2"
+    assert world["slack"].revoked == ["xoxb-1"]
+
+
+def test_reinstalling_into_the_same_workspace_keeps_channel_and_token(
+    world: dict[str, Any],
+) -> None:
+    client = signed_in(world)
+    client.get(f"/api/auth/slack/callback?state={start(client)}&code=c")
+
+    client.get(f"/api/auth/slack/callback?state={start(client)}&code=c")
+
+    assert world["saved"][TEAM]["config"]["channel"] == "C1"
+    assert world["slack"].made == [("xoxb-1", "U_ME")]  # no second channel
+    assert world["slack"].revoked == []  # the same token came back; it stays alive
 
 
 @pytest.mark.parametrize("case", ["declined", "refused"])
@@ -194,29 +252,115 @@ def test_the_install_url_asks_for_bot_scopes_only() -> None:
     assert query["scope"] == [",".join(BOT_SCOPES)]
     assert "user_scope" not in query
     assert "users:read.email" not in query["scope"][0]
+    # Private channel only: nothing that makes or joins a public one.
+    assert "channels:manage" not in BOT_SCOPES
+    assert "channels:join" not in BOT_SCOPES
 
 
-def test_a_new_channel_is_made() -> None:
-    calls: list[str] = []
-    client = _client(
-        {"conversations.create": {"ok": True, "channel": {"id": "C9", "name": "autune"}}}, calls
+def _created(name: str, cid: str) -> dict[str, Any]:
+    return {"ok": True, "channel": {"id": cid, "name": name}}
+
+
+def _slack_at(handler: Any) -> SlackOAuthClient:
+    return SlackOAuthClient(
+        client_id="cid",
+        client_secret="cs",
+        redirect_uri="https://example.test/cb",
+        http=httpx.Client(transport=httpx.MockTransport(handler)),
     )
-    assert client.ensure_channel("xoxb", "autune") == SlackChannel("C9", "autune", created=True)
-    assert calls == ["conversations.create"]
 
 
-def test_an_existing_channel_of_that_name_is_joined() -> None:
-    calls: list[str] = []
-    client = _client(
-        {
-            "conversations.create": {"ok": False, "error": "name_taken"},
-            "conversations.list": {"ok": True, "channels": [{"id": "C7", "name": "autune"}]},
-            "conversations.join": {"ok": True},
-        },
-        calls,
+def _form(request: httpx.Request) -> dict[str, str]:
+    return {k: v[0] for k, v in parse_qs(request.content.decode()).items()}
+
+
+def _scripted(
+    answers: list[dict[str, Any]], sent: list[tuple[str, dict[str, str]]]
+) -> SlackOAuthClient:
+    replies = iter(answers)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        sent.append((request.url.path.rsplit("/", 1)[-1], _form(request)))
+        return httpx.Response(200, json=next(replies))
+
+    return _slack_at(handler)
+
+
+def test_the_channel_is_private_and_the_installer_is_invited() -> None:
+    sent: list[tuple[str, dict[str, str]]] = []
+    client = _scripted([_created("autune", "C9"), {"ok": True}], sent)
+
+    assert client.create_alert_channel("xoxb", "autune", invite="U_ME") == SlackChannel(
+        "C9", "autune"
     )
-    assert client.ensure_channel("xoxb", "autune") == SlackChannel("C7", "autune", created=False)
-    assert calls == ["conversations.create", "conversations.list", "conversations.join"]
+    assert sent == [
+        ("conversations.create", {"name": "autune", "is_private": "true"}),
+        ("conversations.invite", {"channel": "C9", "users": "U_ME"}),
+    ]
+
+
+def test_two_teams_in_one_workspace_get_different_channels() -> None:
+    """Review of #468: the second team used to join the first team's channel."""
+    workspace: dict[str, str] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        method = request.url.path.rsplit("/", 1)[-1]
+        form = _form(request)
+        if method == "conversations.create":
+            if form["name"] in workspace:
+                return httpx.Response(200, json={"ok": False, "error": "name_taken"})
+            workspace[form["name"]] = f"C{len(workspace) + 1}"
+            return httpx.Response(200, json=_created(form["name"], workspace[form["name"]]))
+        assert method == "conversations.invite", method  # never join, never list
+        return httpx.Response(200, json={"ok": True})
+
+    client = _slack_at(handler)
+    team_a = client.create_alert_channel("xoxb", "autune", invite="U_A")
+    team_b = client.create_alert_channel("xoxb", "autune", invite="U_B")
+
+    assert team_a == SlackChannel("C1", "autune")
+    assert team_b == SlackChannel("C2", "autune-2")
+
+
+def test_every_name_taken_is_a_named_failure() -> None:
+    from autune_core.oauth.slack import NAME_ATTEMPTS, SlackChannelUnavailableError
+
+    sent: list[tuple[str, dict[str, str]]] = []
+    client = _scripted([{"ok": False, "error": "name_taken"}] * NAME_ATTEMPTS, sent)
+
+    with pytest.raises(SlackChannelUnavailableError):
+        client.create_alert_channel("xoxb", "autune", invite="U_ME")
+    assert [m for m, _ in sent] == ["conversations.create"] * NAME_ATTEMPTS
+
+
+def test_a_channel_nobody_could_be_invited_to_is_archived() -> None:
+    sent: list[tuple[str, dict[str, str]]] = []
+    client = _scripted(
+        [_created("autune", "C9"), {"ok": False, "error": "user_not_found"}, {"ok": True}], sent
+    )
+
+    with pytest.raises(PermissionDeniedError, match="user_not_found"):
+        client.create_alert_channel("xoxb", "autune", invite="U_GONE")
+    assert [m for m, _ in sent][-1] == "conversations.archive"
+
+
+def test_an_answer_that_is_not_json_is_our_error_not_a_500() -> None:
+    client = _slack_at(lambda request: httpx.Response(200, text="<html>maintenance</html>"))
+    with pytest.raises(AutuneError, match="not JSON"):
+        client.exchange_code("c")
+
+
+def test_the_install_carries_the_installer() -> None:
+    answer = {
+        "ok": True,
+        "access_token": "xoxb-1",
+        "token_type": "bot",
+        "bot_user_id": "U_BOT",
+        "team": {"id": "T1", "name": "Acme"},
+        "authed_user": {"id": "U_ME"},
+    }
+    install = _client({"oauth.v2.access": answer}, []).exchange_code("c")
+    assert install.installer_id == "U_ME"
 
 
 def test_a_refused_code_says_why_without_the_code() -> None:
@@ -225,45 +369,3 @@ def test_a_refused_code_says_why_without_the_code() -> None:
         client.exchange_code("the-secret-code")
     assert "invalid_code" in str(caught.value)
     assert "the-secret-code" not in str(caught.value)
-
-
-def test_a_private_autune_falls_back_to_autune_alerts() -> None:
-    """Found on a real workspace: someone had made a private #autune."""
-    calls: list[str] = []
-    answers = iter(
-        [
-            {"ok": False, "error": "name_taken"},  # create #autune
-            {"ok": True, "channels": []},  # list: not public
-            {"ok": True, "channel": {"id": "C5", "name": "autune-alerts"}},  # create #autune-alerts
-        ]
-    )
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        calls.append(request.url.path.rsplit("/", 1)[-1])
-        return httpx.Response(200, json=next(answers))
-
-    client = SlackOAuthClient(
-        client_id="cid",
-        client_secret="cs",
-        redirect_uri="https://example.test/cb",
-        http=httpx.Client(transport=httpx.MockTransport(handler)),
-    )
-    assert client.ensure_channel("xoxb", "autune") == SlackChannel(
-        "C5", "autune-alerts", created=True
-    )
-    assert calls == ["conversations.create", "conversations.list", "conversations.create"]
-
-
-def test_no_usable_channel_is_a_named_failure(world: dict[str, Any]) -> None:
-    from autune_core.oauth.slack import SlackChannelUnavailableError
-
-    class NoChannel(FakeSlack):
-        def ensure_channel(self, token: str, name: str) -> SlackChannel:
-            raise SlackChannelUnavailableError("both taken")
-
-    world["app"].dependency_overrides[get_slack_oauth_client] = lambda: NoChannel()
-    client = signed_in(world)
-    response = client.get(f"/api/auth/slack/callback?state={start(client)}&code=c")
-
-    assert response.headers["location"].endswith("?slack=failed&reason=slack_channel_unavailable")
-    assert world["saved"] == {}
