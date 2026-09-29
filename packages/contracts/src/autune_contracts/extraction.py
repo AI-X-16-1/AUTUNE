@@ -5,7 +5,7 @@ B -> D. The Jira issues a team has open, for the pre-meeting brief (#436).
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 
 from pydantic import AwareDatetime, Field, model_validator
 
@@ -165,13 +165,28 @@ class AgendaIssue(ContractModel):
     url: str | None = Field(default=None, pattern=JIRA_ISSUE_URL)
 
 
+AGENDA_PUBLISH_EVERY = timedelta(minutes=5)
+"""How often the producer republishes every team's agenda, changed or not."""
+
+AGENDA_STALE_AFTER = timedelta(minutes=30)
+"""A snapshot older than this -- six missed publishes -- is **empty** to a
+consumer, whatever it lists (#491 review). The producer stops publishing for a
+team once nothing of its is left to publish: its last Jira-linked item deleted
+by a person, by a user deleting their own data, or by the retention sweep, all
+of which take the item's Jira link with it. Without this rule the last snapshot
+would keep showing deleted titles for good (invariant 11)."""
+
+
 class TeamAgenda(TeamPayload):
     """Every open issue made from the team's action items, as of ``as_of`` (#436).
 
     A snapshot, not a change: each one replaces the last, and an empty
-    ``issues`` means the team has none open. Events can arrive out of order, so a
-    consumer keeps the one with the latest ``as_of``. The producer decides the
-    order (most pressing first) and caps the list; a consumer shows the head.
+    ``issues`` means the team has none open. Republished every
+    ``AGENDA_PUBLISH_EVERY`` whether or not anything changed. Events can arrive
+    out of order, so a consumer keeps the one with the latest ``as_of`` -- and
+    treats it as empty once it is older than ``AGENDA_STALE_AFTER``. The producer
+    decides the order (most pressing first) and caps the list; a consumer shows
+    the head.
     """
 
     as_of: AwareDatetime

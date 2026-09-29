@@ -15,8 +15,11 @@ GAP_COMPLETED: Final = "autune.gap.completed"
 CONTEXT_COMPLETED: Final = "autune.context.completed"
 INTELLIGENCE_COMPLETED: Final = "autune.intelligence.completed"
 EXTRACTION_AGENDA_CHANGED: Final = "autune.extraction.agenda_changed"
-"""B -> D. A team's open Jira issues changed; the payload is a ``TeamAgenda``.
-About a team, not a meeting, so it is outside the per-meeting pipeline (#436)."""
+"""B -> D. A team's open Jira issues, republished every five minutes, changed or
+not -- the name says what it carries, not that something changed; do not wait
+for a change to arrive. The payload is a ``TeamAgenda``, stale after
+``AGENDA_STALE_AFTER``. About a team, not a meeting, so it is outside the
+per-meeting pipeline (#436)."""
 
 EVENTS: Final = (
     TRANSCRIPT_READY,

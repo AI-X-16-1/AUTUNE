@@ -31,6 +31,8 @@ from .events import (
     TRANSCRIPT_READY,
 )
 from .extraction import (
+    AGENDA_PUBLISH_EVERY,
+    AGENDA_STALE_AFTER,
     AGENDA_TITLE_MAX,
     JIRA_ISSUE_URL,
     STANCE_MIN_IDENTIFIED_PER_ROLE,
@@ -97,6 +99,8 @@ __all__ = [
     "AgendaIssue",
     "JIRA_ISSUE_URL",
     "AGENDA_TITLE_MAX",
+    "AGENDA_PUBLISH_EVERY",
+    "AGENDA_STALE_AFTER",
     # C -> E
     "GapReport",
     "Gap",

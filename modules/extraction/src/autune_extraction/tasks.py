@@ -15,6 +15,7 @@ from celery import shared_task
 from sqlalchemy.orm import Session
 
 from autune_contracts import (
+    AGENDA_PUBLISH_EVERY,
     EXTRACTION_AGENDA_CHANGED,
     EXTRACTION_COMPLETED,
     TranscriptReady,
@@ -454,7 +455,7 @@ def sync_decision_after_confirmation(decision_id: str) -> None:
 
 
 @shared_task(name="autune.extraction.periodic.publish_team_agendas")
-@periodic(timedelta(minutes=5))
+@periodic(AGENDA_PUBLISH_EVERY)
 def publish_team_agendas() -> None:
     """Every five minutes, each team's open Jira issues as one ``TeamAgenda``
     (#436), for the brief D sends ten minutes before a meeting.

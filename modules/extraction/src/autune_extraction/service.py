@@ -2255,8 +2255,11 @@ def _one_line(text: str, limit: int) -> str:
 
 
 def teams_with_jira_issues(session: Session) -> list[str]:
-    """Teams any of whose items ever became a Jira issue -- the teams whose
-    agenda can be non-empty, or was and must now be published empty."""
+    """Teams with an item that became a Jira issue and still exists -- the teams
+    whose agenda can be non-empty, or whose issues all closed and must now be
+    published empty. A team whose last such item was *deleted* drops out (its
+    Jira link goes with it); its last snapshot then goes stale for D under
+    ``AGENDA_STALE_AFTER`` (#491 review)."""
     return sorted(
         session.scalars(
             select(Meeting.team_id)

@@ -14,7 +14,13 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
-from autune_contracts import AGENDA_TITLE_MAX, EXTRACTION_AGENDA_CHANGED, TeamAgenda
+from autune_contracts import (
+    AGENDA_PUBLISH_EVERY,
+    AGENDA_STALE_AFTER,
+    AGENDA_TITLE_MAX,
+    EXTRACTION_AGENDA_CHANGED,
+    TeamAgenda,
+)
 from autune_core import Base, Meeting
 from autune_extraction import service, tasks
 from autune_extraction.models import ExtActionItem, ExtExternalRef
@@ -193,3 +199,19 @@ def test_a_long_title_is_cut_to_the_contracts_bound(session: Session) -> None:
 
     assert len(issue.title) == AGENDA_TITLE_MAX
     assert issue.title.endswith("…")
+
+
+def test_a_team_whose_last_issue_was_deleted_drops_out_and_goes_stale(
+    session: Session,
+) -> None:
+    """#491 review: deleting an item takes its Jira link with it, so the team is
+    no longer published -- its last snapshot must expire on D's side."""
+    item(session, "act_1", key="AUT-1")
+    assert service.teams_with_jira_issues(session) == ["team_1"]
+
+    # The item goes, and its Jira link with it (the CASCADE, done by hand here).
+    session.execute(ExtExternalRef.__table__.delete())
+    session.execute(ExtActionItem.__table__.delete())
+
+    assert service.teams_with_jira_issues(session) == []
+    assert AGENDA_STALE_AFTER >= 3 * AGENDA_PUBLISH_EVERY, "a few missed runs are not a gap"
