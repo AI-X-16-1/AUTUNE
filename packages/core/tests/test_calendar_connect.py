@@ -168,11 +168,17 @@ def test_a_callback_from_another_browser_stores_nothing(world: dict[str, Any]) -
     assert world["grants"] == {}
 
 
+def _failed_back_to_the_screen(response: httpx.Response) -> bool:
+    return response.status_code == 303 and response.headers["location"].endswith(
+        "/meetings/m1/actions?calendar=failed"
+    )
+
+
 def test_an_unticked_calendar_scope_stores_nothing(world: dict[str, Any]) -> None:
     world["google"].grant = GoogleGrant("id-token", "1//refresh", frozenset({"openid"}))
     client = signed_in(world)
 
-    assert callback(client, start(client)).status_code == 403
+    assert _failed_back_to_the_screen(callback(client, start(client)))
     assert world["grants"] == {}
 
 
@@ -180,7 +186,18 @@ def test_no_refresh_token_stores_nothing(world: dict[str, Any]) -> None:
     world["google"].grant = GoogleGrant("id-token", None, frozenset({"openid", CALENDAR_SCOPE}))
     client = signed_in(world)
 
-    assert callback(client, start(client)).status_code == 403
+    assert _failed_back_to_the_screen(callback(client, start(client)))
+    assert world["grants"] == {}
+
+
+def test_declining_on_googles_screen_goes_back_to_the_screen(world: dict[str, Any]) -> None:
+    """Google answers a decline with ``error=access_denied`` and no code."""
+    client = signed_in(world)
+    state = start(client)
+
+    response = client.get(f"/api/auth/google/callback?state={state}&error=access_denied")
+
+    assert _failed_back_to_the_screen(response)
     assert world["grants"] == {}
 
 
@@ -277,6 +294,9 @@ def test_a_transaction_from_before_this_change_reads_as_sign_in() -> None:
     old = json.dumps({"nonce": "n", "redirect_to": "/", "created_at": 1.0})
     txn = OAuthTransaction.from_json(old)
     assert (txn.purpose, txn.user_id) == ("sign_in", None)
-    assert OAuthTransaction.from_json(
-        OAuthTransaction("n", "/", purpose="calendar", user_id=ME).to_json()
-    ).user_id == ME
+    assert (
+        OAuthTransaction.from_json(
+            OAuthTransaction("n", "/", purpose="calendar", user_id=ME).to_json()
+        ).user_id
+        == ME
+    )

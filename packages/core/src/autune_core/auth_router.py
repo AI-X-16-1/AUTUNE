@@ -162,9 +162,6 @@ def _complete_sign_in(
     code: str | None,
     error: str | None,
 ) -> RedirectResponse:
-    if error or not code:
-        raise PermissionDeniedError("Google sign-in did not complete")
-
     # Checked before Redis, so a request from another browser never spends it.
     if state_cookie is None or not secrets.compare_digest(state_cookie.encode(), state.encode()):
         raise PermissionDeniedError("sign-in was not started in this browser")
@@ -174,7 +171,10 @@ def _complete_sign_in(
         raise PermissionDeniedError("sign-in state is unknown or has expired")
 
     if transaction.purpose == "calendar":
-        return _complete_calendar_connect(transaction, google, session, code=code)
+        return _finish_calendar_connect(transaction, google, session, code=code, error=error)
+
+    if error or not code:
+        raise PermissionDeniedError("Google sign-in did not complete")
 
     identity = google.verify(google.exchange_code(code), nonce=transaction.nonce)
     if not identity.email_verified:
@@ -253,6 +253,36 @@ def google_calendar_start(
     return response
 
 
+def _finish_calendar_connect(
+    transaction: OAuthTransaction,
+    google: GoogleOAuthClient,
+    session: Session,
+    *,
+    code: str | None,
+    error: str | None,
+) -> RedirectResponse:
+    """A calendar connect that fails goes back to the screen it started from
+    with ``?calendar=failed``, not to a JSON error: the person pressed a button
+    on that screen and is still signed in there. Declining on Google's screen,
+    unticking the calendar box, or Google withholding a refresh token all land
+    here. Sign-in's own failures are unchanged."""
+    try:
+        if error or not code:
+            raise PermissionDeniedError("Google calendar access was not granted")
+        return _complete_calendar_connect(transaction, google, session, code=code)
+    except AutuneError as exc:
+        log.info(
+            "auth_google_calendar_connect_failed", user_id=transaction.user_id, reason=exc.code
+        )
+        return RedirectResponse(
+            _web_url(_with_query(transaction.redirect_to, "calendar=failed")), status_code=303
+        )
+
+
+def _with_query(path: str, pair: str) -> str:
+    return path + ("&" if "?" in path else "?") + pair
+
+
 def _complete_calendar_connect(
     transaction: OAuthTransaction,
     google: GoogleOAuthClient,
@@ -278,9 +308,9 @@ def _complete_calendar_connect(
         config={"calendar_id": "primary"},
     )
     log.info("auth_google_calendar_connected", user_id=transaction.user_id)
-    target = transaction.redirect_to
-    target += ("&" if "?" in target else "?") + "calendar=connected"
-    return RedirectResponse(_web_url(target), status_code=303)
+    return RedirectResponse(
+        _web_url(_with_query(transaction.redirect_to, "calendar=connected")), status_code=303
+    )
 
 
 @router.get("/google/calendar")

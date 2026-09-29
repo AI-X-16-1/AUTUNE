@@ -32,8 +32,13 @@ export function CalendarConnect() {
       if (!alive || status === null) return;
       setConnected(status.connected);
       const url = new URL(window.location.href);
-      if (status.connected && url.searchParams.get("calendar") === "connected") {
+      const result = url.searchParams.get("calendar");
+      if (result === "connected" && status.connected) {
         setNote("캘린더를 연결했습니다. 내가 담당인 항목의 마감일이 내 캘린더에 들어갑니다.");
+      } else if (result === "failed") {
+        setNote("캘린더를 연결하지 못했습니다. Google 화면에서 캘린더 권한에 체크한 채로 다시 시도해 주세요.");
+      }
+      if (result !== null) {
         url.searchParams.delete("calendar");
         window.history.replaceState(null, "", url.toString());
       }
