@@ -42,6 +42,7 @@ from sqlalchemy.orm import Session
 
 from autune_contracts.enums import ActionStatus
 from autune_core import Meeting, TeamMember, User, get_logger
+from autune_integrations import PermanentIntegrationError
 
 from .models import ExtActionItem, ExtExternalRef
 from .service import _insert_if_absent_into
@@ -171,8 +172,17 @@ def close_for_deleted_item(session: Session, jira: JiraIssues, *, action_item_id
     if ref is None or not ref.external_id:
         return False
     key = str(ref.external_id)
-    if not jira.move_to_category(key, "done"):
-        log.info("extraction_jira_no_transition", action_item_id=action_item_id, category="done")
-    jira.add_comment(key, DELETED_NOTE)
+    try:
+        if not jira.move_to_category(key, "done"):
+            log.info(
+                "extraction_jira_no_transition", action_item_id=action_item_id, category="done"
+            )
+        jira.add_comment(key, DELETED_NOTE)
+    except PermanentIntegrationError as exc:
+        # Already gone -- deleted in Jira, or with its project. Nothing to close.
+        if exc.details.get("upstream_status") != 404:
+            raise
+        log.info("extraction_jira_already_gone", action_item_id=action_item_id)
+        return False
     log.info("extraction_jira_closed_with_item", action_item_id=action_item_id)
     return True

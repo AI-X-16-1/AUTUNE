@@ -344,3 +344,19 @@ def test_the_sync_task_checks_the_project_still_exists(
     monkeypatch.setattr(tasks, "jira_access", access)
     tasks.sync_action_item_jira(item(wired).id)
     assert asked == [{"check_project": True}]
+
+
+def test_closing_an_issue_that_is_already_gone_is_not_a_failure(session: Session) -> None:
+    """Its project was deleted, or the issue was: nothing to close (#458)."""
+    from autune_integrations import PermanentIntegrationError
+
+    class Gone(FakeJira):
+        def move_to_category(self, issue_key: str, category: str) -> bool:
+            raise PermanentIntegrationError("gone", upstream_status=404)
+
+    jira = Gone()
+    row = item(session)
+    sync_action_item_to_jira(session, FakeJira(), action_item_id=row.id, project_key="AUT")
+
+    assert close_for_deleted_item(session, jira, action_item_id=row.id) is False
+    assert jira.comments == {}
