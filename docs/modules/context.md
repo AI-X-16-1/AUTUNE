@@ -13,8 +13,9 @@
 ## Responsibility
 
 Keep context alive across meetings. Link the current meeting's topics to past
-meetings, and track how a decision changed over time. In Phase 2, analyze
-uploaded material into an agenda and send pre-meeting briefs.
+meetings, and track how a decision changed over time. Shortly before a
+scheduled meeting, send a brief that recaps the meeting it follows. In Phase 2,
+analyze uploaded material into an agenda.
 
 D is what makes Autune more than a transcription tool. Everything else processes
 "this meeting"; D connects meetings to one another.
@@ -26,7 +27,10 @@ D is what makes Autune more than a transcription tool. Everything else processes
 - Detecting what was missing within one meeting — that is C.
 - Team-level analytics — that is E.
 - Building any Phase 2 feature during the six weeks (material analysis, agenda
-  generation, briefs, the S22 relationship graph).
+  generation, the S22 relationship graph). The pre-meeting brief moved into the
+  build on 2026-09-29 — see "Pre-meeting brief".
+- Calling Jira. B owns the Jira integration; the brief's agenda comes from B
+  through a contract, not from D calling Jira itself.
 
 ## Inputs
 
@@ -44,7 +48,7 @@ D is what makes Autune more than a transcription tool. Everything else processes
 | --- | --- | --- |
 | E | `ContextLinks` | `autune.context.completed` |
 | Slack | Topic-link notice, decision-drift warning | — |
-| Slack | Pre-meeting brief | Phase 2 |
+| Slack | Pre-meeting brief | — (on a clock: `autune.context.periodic.send_due_briefs`) |
 
 `ContextLinks` carries only `asserted` and user-`confirmed` links. `pending`
 links (below the confidence threshold, awaiting user confirmation) live in
@@ -62,7 +66,8 @@ and are self-hosted. The LLM is Phase 2 and is declared as an interface only.
 | Lexical retrieval | BM25 over a kiwipiepy tokenization | In application code | `rank-bm25`, `kiwipiepy` pinned in the manifest |
 | Re-ranking | `dragonkue/bge-reranker-v2-m3-ko` | Self-hosted HTTP | HF revision, recorded per row |
 | Decision-change detection | `klue/roberta` fine-tuned on KorNLI (in-house) | Self-hosted HTTP | Training job in `modules/context/scripts/`; checkpoint id recorded per row |
-| Agenda and brief generation | LLM | Phase 2, through `autune_integrations` | — |
+| Agenda generation | LLM | Phase 2, through `autune_integrations` | — |
+| Pre-meeting brief | Template over D's own rows; the previous-meeting choice reuses retrieval and re-ranking | — | — |
 
 PostgreSQL full-text search has no Korean analyzer without a further extension,
 so hybrid retrieval is **not** a single query: the vector similarity plus its
@@ -375,6 +380,79 @@ late-lineage republish already has, and not closed here. Closing it needs E to
 tell an older payload from a newer one, and `ContextLinks` carries no version or
 timestamp to do that with — a contract change (invariant 5), not a D-side fix.
 
+### Pre-meeting brief — `autune.context.periodic.send_due_briefs`
+
+A clock, not an event: every minute, `send_due_briefs` finds meetings with
+`status = 'scheduled'` whose `started_at` falls within the next
+`brief_lead_minutes` (default 10) and that have no `ctx_briefs` row, and
+enqueues `send_brief` for each, expiring at the meeting's start so a send still queued behind heavy `cpu_heavy` work is dropped rather than posted late. A scheduled meeting is one module A created
+ahead of time (`POST` with a future `started_at`); D reads it and writes
+nothing to it. A meeting already started — its start has passed, or A moved
+its status on because a recording began — gets no brief, so a brief missed
+while the worker was down stays missed rather than arriving mid-meeting.
+
+**Which past meeting it recaps**, first match wins:
+
+1. `series` — the team's most recent analyzed meeting with the same title
+   (whitespace and case normalized). A recurring meeting is the common case,
+   and its title names the series rather than a topic, so retrieval alone
+   would miss it.
+2. `topic` — the title and agenda run through the same hybrid retrieval and
+   re-ranking as topic linking, and a candidate is asserted on the same rule a
+   topic link is: dense similarity ≥ `link_similarity_threshold` or re-rank
+   score ≥ `link_confidence_threshold`. The stronger of the two picks among
+   the confident candidates.
+3. `latest` — the team's most recent analyzed meeting. Also the fallback when
+   a model call in step 2 fails: a brief retried until the meeting starts is
+   one that never arrives.
+
+   Nothing ties a `latest` meeting to this one — it may be another group's —
+   so the Slack brief names it as "팀의 최근 회의" and posts none of its topics
+   or decisions; the app, which shows `match_reason` beside it, carries the
+   full recap.
+
+"Analyzed" means `ctx_meeting_status.topic_linking_done`, and every candidate
+passes `visible_meeting_clauses` — a meeting past its retention window is never
+recapped.
+
+**What it says.** The past meeting's topic labels (`ctx_embeddings`) and
+decision statements with their change type (`ctx_decision_versions` —
+"(번복)", "(변경)"), then the issues this meeting is expected to take up.
+Nothing is generated. Every list is capped and every item clipped
+(`notify.MAX_BRIEF_*`, `BRIEF_*_CHARS`) so the largest possible brief stays
+under `autune_integrations`' 4,000-character outbound limit, which refuses a
+post outright rather than trimming it.
+
+**The agenda comes from Jira, through B.** Jira is module B's integration, and
+D neither calls Jira nor reads B's tables. The interface is not agreed yet, so
+`briefs.agenda_for` returns nothing and the brief says "이번 회의에 연결된 안건이
+없습니다". What D needs, per scheduled meeting or per team: an issue's title,
+key, status and URL. That is a contract addition in `packages/contracts`
+agreed with B's owner — see "Open questions".
+
+**Stores the choice, not the recap.** `ctx_briefs` keeps `previous_meeting_id`
+and `match_reason`; the recap is rendered from the past meeting's rows every
+time it is read (the Slack post, `GET /briefs/{meeting_id}`). A copy would
+outlive the meeting it quotes — the problem `previous_statement` already needs
+a sweep for. When the past meeting is deleted (`SET NULL`) or expires, the
+brief reads "지난 회의는 보존 기간이 지나 삭제되었습니다" instead;
+`match_reason` set with no readable recap is how that case is told apart from
+"there was no past meeting".
+
+**Claim, then send.** `compose_due_brief` inserts the `ctx_briefs` row with
+`ON CONFLICT DO NOTHING` — the insert is the claim, so overlapping periodic
+runs and a meeting enqueued on several ticks send once — and stamps `sent_at`
+in the same commit, before the Slack post. A failure before that commit rolls
+the claim back and the next tick retries; a worker lost after it loses the
+brief rather than sending it twice, the trade the other notices make. A team
+with no Slack channel still gets the row (readable in the app) with `sent_at`
+left `NULL`.
+
+**In the app**, the same brief sits at the top of S15's context tab
+(`features/context` `BriefPanel`), rendered from `GET /briefs/{meeting_id}`. A
+meeting with no brief — every finished meeting, and a scheduled one until its
+brief is composed — draws nothing there, and the tab reads as it did before.
+
 ## Storage
 
 PostgreSQL only. Every row is reachable from a `meeting_id`, a `team_id`, or is
@@ -387,6 +465,7 @@ cleaned up by a deletion hook (see "Deletion").
 | `ctx_decisions` | Decision threads (lineage identity, spans meetings) | `id` (`thr_`), `topic_label` | `team_id` FK `CASCADE`; orphan sweep deferred (#87) |
 | `ctx_decision_versions` | Each version of a decision | `source_decision_id` (`dec_`, no FK), `previous_version_id` (self-FK), `current_statement`, `previous_statement`, `previous_meeting_id` (no FK), `change_type`, `nli_label`, `confidence`, `key_stakeholders_absent` (JSONB), `nli_version` | `thread_id` FK `CASCADE`, `meeting_id` FK `CASCADE` |
 | `ctx_meeting_status` | Completion tracking for the two halves | `topic_linking_done`, `lineage_done`, `extraction_seen`, `deadline_at`, `published_at`, `notified_at` | `meeting_id` FK `CASCADE` |
+| `ctx_briefs` | One pre-meeting brief per scheduled meeting: which past meeting it recaps, and whether it went out. The choice, never the recap | `previous_meeting_id`, `match_reason` (`series`/`topic`/`latest`), `sent_at` | `meeting_id` FK `CASCADE`; `previous_meeting_id` FK `ON DELETE SET NULL` |
 | `ctx_materials` | Uploaded documents and chunk metadata | — | Phase 2 — not created in the MVP |
 
 Notes:
@@ -489,7 +568,7 @@ one mutation.
 | GET | `/decisions/{thread_id}` | Full lineage timeline, oldest version first |
 | GET | `/decisions` | Filter by team, topic, change type |
 | POST | `/materials` | Upload material — Phase 2 |
-| GET | `/briefs/{meeting_id}` | Pre-meeting brief — Phase 2 |
+| GET | `/briefs/{meeting_id}` | A scheduled meeting's pre-meeting brief, to a member of its team (`CurrentUser`; anyone else gets the same 404 as an unknown id). 404 until it is composed (`brief_lead_minutes` before the start) |
 
 **Every route but `/health` takes `CurrentUser`** and checks, on its first
 line, that the caller belongs to the team behind the id it names — the
@@ -539,7 +618,8 @@ meeting itself that the two decision routes already applied.
 | `autune.context.notify_context_events` | after the first publish (`FIRST`, or the B-timeout fallback) | `default` |
 | `autune.context.notify_late_drift` | after a `LATE` republish; never after `republish` | `default` |
 | `autune.context.index_material` | material upload | `cpu_heavy` — Phase 2 |
-| `autune.context.send_brief` | 30 minutes before a meeting | `default` — Phase 2 |
+| `autune.context.periodic.send_due_briefs` | every minute (`@periodic`) | `cpu_heavy` |
+| `autune.context.send_brief` | enqueued by `send_due_briefs`, once per due meeting | `cpu_heavy` — the previous-meeting choice embeds and re-ranks |
 
 Every task is idempotent: writes are keyed by `meeting_id` and applied as
 delete-then-insert within one transaction, and `publish_if_ready` checks
@@ -570,8 +650,10 @@ lands, the one `send_task` call here moves behind it.
   (fallback-then-late-lineage, or a backfilled recording) otherwise reads as
   "just now" regardless of when the meeting actually happened. Omits the date
   when the meeting has none set (see PR #263's discussion, issue #257).
-- **Pre-meeting brief** — 30 minutes before the meeting. Phase 2. Contains
-  summaries, never transcript excerpts beyond what the brief needs.
+- **Pre-meeting brief** — `AUTUNE_CONTEXT_BRIEF_LEAD_MINUTES` (default 10)
+  before a scheduled meeting, to the team channel. The past meeting's topic
+  labels and decision statements, and the issues this meeting takes up; never
+  transcript excerpts. See "Pre-meeting brief".
 
 Handlers acknowledge and delegate to `service`; no business logic in `slack.py`.
 
@@ -656,11 +738,18 @@ To run it on a laptop without the team's inference endpoints, use the
 | **5** | Slack notice and drift warning. Threshold tuning from dismissals. Push the metric to 0.75+. |
 
 **Out of the six-week scope:** `ctx_materials`, material analysis, agenda
-generation (S08), pre-meeting briefs, the S22 relationship graph, and the
-self-hosted LLM.
+generation (S08), the S22 relationship graph, and the self-hosted LLM. The
+pre-meeting brief was added to the build on 2026-09-29.
 
 ## Open questions
 
+- How the brief's agenda reaches D from B's Jira integration: a contract
+  carrying an issue's title, key, status and URL, either per scheduled meeting
+  or as a team snapshot D keeps in its own table (#436). Until it lands, briefs go out
+  with an empty agenda section.
+- `send_brief` runs on `cpu_heavy` because the previous-meeting choice may
+  embed and re-rank; its Slack post shares that worker. Moving the post onto
+  `default` is a `TASK_ROUTES` line in `packages/core` plus a second task.
 - The thresholds for asserting a link versus asking the user
   (`link_similarity_threshold = 0.74`, `link_confidence_threshold = 0.6`) come
   from short, synthetic evaluation meetings, with a thin margin between same-

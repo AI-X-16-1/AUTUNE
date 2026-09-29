@@ -35,6 +35,7 @@ _CHANGE_TYPES = ("unchanged", "modified", "reversed", "new")
 _NLI_LABELS = ("entailment", "contradiction", "neutral")
 _EMBEDDING_KINDS = ("topic", "material")
 _LINK_STATUSES = ("asserted", "pending", "confirmed", "rejected")
+_BRIEF_MATCHES = ("series", "topic", "latest")
 
 
 class TimestampMixin:
@@ -232,3 +233,45 @@ class CtxMeetingStatus(Base, TimestampMixin):
     commit and before the post loses the notice for good. That is the
     accept-a-lost-notice-over-a-duplicate trade ``notified_at`` already
     makes, kept here on purpose."""
+
+
+class CtxBrief(Base, TimestampMixin):
+    """The pre-meeting brief for one scheduled meeting: which past meeting it
+    recaps, and whether it went out.
+
+    One row per scheduled meeting, inserted when the brief is composed; the
+    insert is the claim that keeps overlapping periodic runs from sending it
+    twice (``briefs.compose_due_brief``).
+
+    **Stores a choice, never content.** The recap -- the past meeting's topics
+    and decisions -- is rendered from that meeting's live rows each time it is
+    read. A copied recap would outlive the meeting it quotes, which is the
+    retention problem ``CtxDecisionVersion.previous_statement`` already needs a
+    sweep for. ``previous_meeting_id`` is ``SET NULL`` on delete, so a recap
+    whose meeting was swept reads as gone rather than being reconstructed.
+    """
+
+    __tablename__ = "ctx_briefs"
+    __table_args__ = (
+        CheckConstraint(
+            f"match_reason IS NULL OR match_reason IN {_BRIEF_MATCHES!r}",
+            name="ck_ctx_briefs_match_reason",
+        ),
+    )
+
+    meeting_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("meetings.id", ondelete="CASCADE"), primary_key=True
+    )
+    previous_meeting_id: Mapped[str | None] = mapped_column(
+        String(64), ForeignKey("meetings.id", ondelete="SET NULL")
+    )
+    match_reason: Mapped[str | None] = mapped_column(String(16))
+    """How ``previous_meeting_id`` was chosen: ``series`` (same title),
+    ``topic`` (hybrid retrieval over the title and agenda), ``latest`` (the
+    team's most recent analyzed meeting). ``None`` when there was nothing to
+    choose from -- which, with ``previous_meeting_id`` also ``None``, is how a
+    reader tells "no past meeting" from "the past meeting was deleted"."""
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    """Set in the same commit as the row, *before* the Slack post -- the
+    duplicate-over-loss trade ``CtxMeetingStatus.notified_at`` makes. ``None``
+    when the team has no Slack channel: the brief is still readable in the app."""

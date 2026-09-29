@@ -16,23 +16,35 @@ notice and the decision-drift warning, docs/modules/context.md "Slack surface".
 A rerun of either half after that (a module A reprocess) goes out through
 ``republish`` instead, with no notice.
 
+Separately, on a clock: ``periodic.send_due_briefs`` finds scheduled meetings
+about to start and ``send_brief`` posts each one's pre-meeting brief
+(``autune_context.briefs``).
+
 See docs/architecture/async-pipeline.md.
 """
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import sqlalchemy as sa
 from celery import shared_task
 from sqlalchemy.orm import Session
 
 import autune_context.pipeline  # noqa: F401  (registers the worker_process_init warm-up hook)
-from autune_context import service
+from autune_context import briefs, service
 from autune_context.config import get_settings
 from autune_context.models import CtxMeetingStatus
+from autune_context.notify import build_pre_meeting_brief
 from autune_contracts import ExtractionResult, TranscriptReady, validate_major_version
-from autune_core import IntegrationConfig, Meeting, get_logger, load_integration, session_scope
+from autune_core import (
+    IntegrationConfig,
+    Meeting,
+    get_logger,
+    load_integration,
+    periodic,
+    session_scope,
+)
 from autune_integrations import SlackClient
 
 log = get_logger(__name__)
@@ -276,3 +288,55 @@ def notify_late_drift(meeting_id: str) -> None:
     slack = SlackClient(config.require_secret())
     drift_sent = service.send_decision_drift_notices(slack, channel, drift_notices)
     log.info("context_late_drift_sent", meeting_id=meeting_id, drift_warnings=drift_sent)
+
+
+@shared_task(name="autune.context.periodic.send_due_briefs", acks_late=True)
+@periodic(timedelta(minutes=1))
+def send_due_briefs() -> None:
+    """Enqueue a brief for every scheduled meeting now inside the lead time.
+
+    Every minute, so a brief lands within a minute of ``brief_lead_minutes``
+    before the start. Only finds meetings; ``send_brief`` claims and sends, so
+    one meeting's failure does not hold up another's, and a meeting enqueued
+    twice (this run overlapping the last, or ``send_brief`` still queued from
+    it) is claimed once.
+    """
+    with session_scope() as session:
+        due = briefs.due_meeting_starts(session, datetime.now(tz=UTC))
+    for meeting_id, starts_at in due:
+        # A send still queued at the start is noise -- and on a stalled
+        # cpu_heavy worker, one more per tick. Celery drops it unrun instead.
+        send_brief.apply_async((meeting_id,), expires=starts_at)
+    if due:
+        log.info("context_briefs_due", count=len(due))
+
+
+@shared_task(name="autune.context.send_brief", acks_late=True)
+def send_brief(meeting_id: str) -> None:
+    """Compose one meeting's pre-meeting brief and post it to the team channel.
+
+    Composed even when the team has no Slack channel -- the brief is still
+    readable at ``GET /api/context/briefs/{meeting_id}`` -- but then not
+    marked sent. Claimed and composed in one session that closes before the
+    Slack call, the "gather in session, send after" shape
+    ``notify_context_events`` uses.
+    """
+    now = datetime.now(tz=UTC)
+    with session_scope() as session:
+        target = _slack_target(session, meeting_id, event_prefix="context_brief")
+        brief = briefs.compose_due_brief(session, meeting_id, now=now, will_send=target is not None)
+    if brief is None or target is None or brief.starts_at is None:
+        return
+    channel, config = target
+
+    fallback, blocks = build_pre_meeting_brief(
+        title=brief.title,
+        starts_at=brief.starts_at,
+        minutes_until=briefs.minutes_until(brief.starts_at, now),
+        recap=brief.recap,
+        recap_gone=brief.recap_gone,
+        agenda=brief.agenda,
+        recap_is_related=brief.match_reason != briefs.LATEST,
+    )
+    SlackClient(config.require_secret()).post_message(channel, fallback, blocks)
+    log.info("context_brief_sent", meeting_id=meeting_id, match_reason=brief.match_reason)

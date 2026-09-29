@@ -113,3 +113,46 @@ class DecisionSummaryRead(BaseModel):
     change_type: str
     confidence: float
     updated_at: datetime
+
+
+class BriefDecisionRead(BaseModel):
+    statement: str
+    change_type: str
+
+
+class BriefRecapRead(BaseModel):
+    """The past meeting a brief recaps, rendered from its live rows."""
+
+    meeting_id: str
+    title: str
+    day: date | None
+    topics: list[str]
+    decisions: list[BriefDecisionRead]
+
+
+class AgendaItemRead(BaseModel):
+    title: str
+    key: str | None
+    status: str | None
+    url: str | None
+
+
+class BriefRead(BaseModel):
+    """A scheduled meeting's pre-meeting brief.
+
+    ``recap`` is ``None`` when there was no past meeting to recap, or when the
+    one chosen has since been deleted or expired -- ``recap_gone`` tells the
+    two apart, so the UI can say "the past meeting is gone" rather than "there
+    was none". ``match_reason`` is how the past meeting was chosen:
+    ``series``, ``topic`` or ``latest`` (see ``autune_context.briefs``).
+    ``sent_at`` is ``None`` for a team with no Slack channel.
+    """
+
+    meeting_id: str
+    title: str
+    starts_at: datetime | None
+    recap: BriefRecapRead | None
+    recap_gone: bool
+    match_reason: str | None
+    agenda: list[AgendaItemRead]
+    sent_at: datetime | None

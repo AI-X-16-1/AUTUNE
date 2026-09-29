@@ -1,17 +1,43 @@
 "use client";
 
+import { BriefPanel } from "./BriefPanel";
 import { TopicLinkRow } from "./TopicLinkRow";
+import { useBrief } from "../hooks/useBrief";
 import { useTopicLinks } from "../hooks/useTopicLinks";
 
 /**
- * S15's "context" tab: this meeting's topic links to past meetings.
+ * S15's "context" tab: the pre-meeting brief when the meeting has one, then
+ * this meeting's topic links to past meetings.
+ *
+ * The brief draws nothing for a meeting without one, so a finished meeting's
+ * tab reads exactly as it did before briefs existed.
+ */
+export function ContextTab({ meetingId }: { meetingId: string }) {
+  const { brief, error } = useBrief(meetingId);
+  return (
+    <div style={{ display: "grid", gap: "var(--space-page)" }}>
+      <BriefPanel brief={brief} error={error} />
+      <TopicLinks meetingId={meetingId} quietWhenEmpty={brief !== null} />
+    </div>
+  );
+}
+
+/**
+ * This meeting's topic links to past meetings.
  *
  * Pending links need a decision before they count as a link at all — E never
  * sees one until it is `asserted` or `confirmed` (`_PUBLISHABLE` in
  * `service.py`) — so they sit in their own section rather than mixed in,
  * ochre and un-decided rather than settled.
  */
-export function ContextTab({ meetingId }: { meetingId: string }) {
+function TopicLinks({
+  meetingId,
+  quietWhenEmpty,
+}: {
+  meetingId: string;
+  /** A meeting that has a brief has not happened yet; "no linked meetings" says nothing there. */
+  quietWhenEmpty: boolean;
+}) {
   const { asserted, pending, loading, error, decide } = useTopicLinks(meetingId);
 
   if (loading) {
@@ -31,6 +57,7 @@ export function ContextTab({ meetingId }: { meetingId: string }) {
   }
 
   if (asserted.length === 0 && pending.length === 0) {
+    if (quietWhenEmpty) return null;
     return (
       <p className="text-[var(--color-ink-muted)]" style={{ fontSize: "var(--text-rowBody)" }}>
         이 회의와 연결된 과거 회의가 없습니다.
