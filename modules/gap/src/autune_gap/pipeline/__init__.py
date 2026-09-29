@@ -18,6 +18,7 @@ from .base import (
     Relation,
     RelationExtractor,
     SentenceEmbedder,
+    TemplateVerifier,
 )
 from .embedder import FakeEmbedder, LocalKureEmbedder
 from .ner import FakeNer, SpacyNer
@@ -25,9 +26,11 @@ from .registry import (
     get_entity_extractor,
     get_relation_extractor,
     get_sentence_embedder,
+    get_template_verifier,
     reset_cache,
 )
 from .relations import RuleRelations
+from .verifier import FakeVerifier, GeminiVerifier
 
 __all__ = [
     "ENTITY_LABELS",
@@ -37,14 +40,18 @@ __all__ = [
     "EntityExtractor",
     "FakeEmbedder",
     "FakeNer",
+    "FakeVerifier",
+    "GeminiVerifier",
     "LocalKureEmbedder",
     "Relation",
     "RelationExtractor",
     "RuleRelations",
     "SentenceEmbedder",
     "SpacyNer",
+    "TemplateVerifier",
     "get_entity_extractor",
     "get_relation_extractor",
     "get_sentence_embedder",
+    "get_template_verifier",
     "reset_cache",
 ]

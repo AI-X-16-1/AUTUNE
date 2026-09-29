@@ -11,6 +11,7 @@ import pytest
 
 from autune_gap import semantic, template
 from autune_gap.eval.dataset import DEFAULT_DATASET, load_cases
+from autune_gap.eval.probes import load_probes
 from autune_gap.pipeline import FakeEmbedder
 
 OWNER = [1.0, 0.0, 0.0]
@@ -126,6 +127,7 @@ def test_no_example_is_a_line_of_the_eval_set() -> None:
     makes the harness grade its own answer key, and the number stops meaning
     anything."""
     said = {line.text.strip() for case in load_cases(DEFAULT_DATASET) for line in case.lines}
+    said |= {probe.text.strip() for probe in load_probes()}
     written = {
         example for one in template.available() for item in one.items for example in item.examples
     }

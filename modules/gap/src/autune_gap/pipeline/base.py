@@ -19,7 +19,10 @@ stop reopening.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
+
+if TYPE_CHECKING:
+    from autune_gap.verification import Question
 
 ENTITY_LABELS: tuple[str, ...] = ("feature", "system", "metric", "person", "date", "term")
 """What module C looks for. ``docs/modules/gap.md`` step 1 names the first five.
@@ -219,4 +222,39 @@ class SentenceEmbedder(Protocol):
     def embed(self, texts: list[str]) -> list[list[float]]:
         """One vector per input, in order, each unit-normalised so a dot product
         is a cosine similarity."""
+        ...
+
+
+@runtime_checkable
+class TemplateVerifier(Protocol):
+    """Checks whether one utterance really discussed each of a few template
+    items the embedder could not decide between (``autune_gap.verification``).
+
+    **The only step in this module that may send meeting text off the
+    machine.** An external implementation receives, per ambiguous utterance,
+    the utterance text as module A masked it — names spoken aloud are *not*
+    masked — together with the candidate items' names, questions and example
+    sentences from the template files. It never receives the rest of the
+    meeting, a speaker, a time or an id. That is still transcript content
+    leaving our infrastructure, which ``privacy.md`` section 6 permits only
+    masked and only as much as the feature needs; so every implementation goes
+    through ``autune_integrations.HttpClient`` (``check_outbound`` reads the
+    body), none is the default, and enabling one for real meetings is a team
+    decision, as it is for module B's ``llm`` classifier (#392).
+
+    The verifier answers yes or no per offered candidate. It does not see the
+    whole template, cannot add an item, and does not decide coverage or risk.
+    """
+
+    @property
+    def model_version(self) -> str:
+        """Which model answered, so a run can say what verified what."""
+        ...
+
+    def verify(self, questions: list[Question]) -> list[frozenset[str] | None]:
+        """One answer per question, in order: the candidate keys the utterance
+        discussed, or ``None`` when that question could not be answered (the
+        provider failed, or the outbound check refused the request). An
+        implementation never raises for a failed request — the caller falls
+        back to the embedding's own answer for that utterance."""
         ...

@@ -204,6 +204,13 @@ Where that token comes from, and the two ways to give it to the browser:
 | `AUTUNE_GAP_EMBEDDER_DEVICE` | C | `cpu` (default) · `cuda`. Never inferred from the machine |
 | `AUTUNE_GAP_SEMANTIC_FLOOR` | C | Default `0.55`. The cosine an utterance needs with an item's nearest example to count as saying it |
 | `AUTUNE_GAP_SEMANTIC_MARGIN` | C | Default `0`. How far the winning item must lead the runner-up |
+| `AUTUNE_GAP_VERIFIER_IMPL` | C | `off` (default) · `fake` · `gemini`. Checks the utterances the embedder is unsure of. **`gemini` is external** and opt-in — see below. Needs the embedder on |
+| `AUTUNE_GAP_VERIFIER_API_KEY` | C | Provider key for `gemini`, sent as a header only. **Blank by default**; `gemini` refuses to start without one |
+| `AUTUNE_GAP_VERIFIER_MODEL` · `_FALLBACK_MODEL` | C | Defaults `gemini-3.8-flash` · `gemini-3.5-flash-lite`, module B's. Blank fallback disables it |
+| `AUTUNE_GAP_VERIFIER_BASE_URL` · `_TIMEOUT_SEC` | C | Google's Generative Language API root · `60` |
+| `AUTUNE_GAP_VERIFY_CONFIDENT_SCORE` · `_CONFIDENT_LEAD` | C | Defaults `0.6` · `0.05`. An item winning by both is taken without asking; a background win by the lead is dismissed without asking |
+| `AUTUNE_GAP_VERIFY_CANDIDATE_SCORE` · `_CANDIDATES` · `_EXAMPLES` | C | Defaults `0.45` · `3` · `2`. Which items one question offers, and how many example sentences each carries |
+| `AUTUNE_GAP_VERIFY_MAX_UTTERANCES` | C | Default `30`. At most this many utterances of one meeting are sent per run; the rest keep the embedding's answer |
 | `AUTUNE_CONTEXT_EMBEDDER_IMPL` | D | `kure_v1_http` (default), `kure_v1_local`, `fake` |
 | `AUTUNE_CONTEXT_RERANKER_IMPL` | D | `bge_reranker_v2_m3_ko_http` (default), `..._local`, `fake` |
 | `AUTUNE_CONTEXT_NLI_IMPL` | D | `klue_kornli_http` (default), `klue_kornli_local`, `fake` |
@@ -352,6 +359,16 @@ version travels with the rows it produced.
 Without the extra the extractor raises a `RuntimeError` naming the command —
 the default implementation failing with `No module named 'spacy'` tells the
 reader nothing about the extra existing.
+
+### Module C's template verifier is opt-in and external
+
+`AUTUNE_GAP_VERIFIER_IMPL=gemini` sends the utterances the embedder could not
+decide, one line each and masked by module A, to Google — with their candidate
+checklist items and nothing else from the meeting. **Names said aloud are not
+masked** and go with them. Same standing as module B's `llm` classifier (#392):
+never the default, dummy meetings only until the team decides, and a free-tier
+key may let the provider keep what it is sent. What a request carries is listed
+in `../modules/gap.md`, "Verifying what the embedder was unsure of".
 
 ### The gap classifier has no external or hosted option
 

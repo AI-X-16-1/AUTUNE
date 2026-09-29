@@ -9,6 +9,7 @@ Never imports another module.
 from __future__ import annotations
 
 from collections import defaultdict
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
@@ -30,7 +31,7 @@ from autune_core import (
 )
 from autune_core.errors import NotFoundError
 from autune_core.events import publish
-from autune_gap import detect, graph, semantic, template
+from autune_gap import detect, graph, semantic, template, verification
 from autune_gap.config import GapSettings, get_settings
 from autune_gap.models import (
     GapGap,
@@ -45,6 +46,7 @@ from autune_gap.pipeline import (
     get_entity_extractor,
     get_relation_extractor,
     get_sentence_embedder,
+    get_template_verifier,
 )
 from autune_gap.schemas import (
     GapDismissal,
@@ -286,6 +288,13 @@ def detect_gaps(meeting_id: str) -> int:
     the cascade takes ``gap_related_topics`` with them, and this puts them back.
     Between the two a report read shows its gaps with no related topics, which
     is why the pipeline runs them back to back and the publish comes after.
+
+    **Reading and writing are two transactions, and the models run between
+    them.** The embedder is seconds of CPU on a long meeting and the verifier is
+    a network round trip; neither should hold a database connection open
+    (raised in review of #454). One task runs the graph build and this back to
+    back, and a graph rebuilt in between would fail the write on its foreign
+    keys rather than store gaps against topics that no longer exist.
     """
     settings = get_settings()
 
@@ -296,10 +305,13 @@ def detect_gaps(meeting_id: str) -> int:
         chosen = template.get_template(selected_template_key(session, meeting_id))
         topics = _topic_views(session, meeting_id)
         speech = _speech(session, meeting_id)
-        # An empty graph raises nothing whatever was said (`detect.compare`),
-        # so the speech is not embedded for a meeting that cannot use it.
-        heard = _heard(chosen, speech, settings) if topics else frozenset()
-        findings = detect.compare(chosen, topics, speech, _thresholds(settings), heard)
+
+    # An empty graph raises nothing whatever was said (`detect.compare`), so the
+    # speech is not embedded, or sent anywhere, for a meeting that cannot use it.
+    hearing = _hear(chosen, speech, settings) if topics else Hearing()
+    findings = detect.compare(chosen, topics, speech, _thresholds(settings), hearing.heard)
+
+    with session_scope() as session:
         _store_gaps(session, meeting_id, chosen, findings)
 
     # Counts and keys only. A gap title is composed from a template file and a
@@ -313,7 +325,12 @@ def detect_gaps(meeting_id: str) -> int:
         gaps=len(findings),
         high=sum(1 for finding in findings if finding.severity == "high"),
         embedder=settings.embedder_impl,
-        heard=len(heard),
+        verifier=settings.verifier_impl,
+        heard=len(hearing.heard),
+        confident=hearing.confident,
+        ambiguous=hearing.ambiguous,
+        asked=hearing.asked,
+        unanswered=hearing.unanswered,
     )
     return len(findings)
 
@@ -359,28 +376,107 @@ def set_dismissed(session: Session, gap_id: str, reader: User, *, dismissed: boo
     return GapDismissal(gap_id=gap_id, meeting_id=row.meeting_id, dismissed=dismissed)
 
 
-def _heard(chosen: template.Template, speech: list[str], settings: GapSettings) -> frozenset[str]:
-    """Template items the speech said by meaning, or nothing when the embedder
-    is off. See ``semantic``.
+@dataclass(frozen=True)
+class Hearing:
+    """Which template items the speech said by meaning, and how that was decided.
 
-    The utterances go to an embedder in this process and nowhere else
-    (``pipeline.base.SentenceEmbedder``). Their vectors are not stored: they
-    decide which items were said and are dropped with this frame.
+    Counts only, beside the keys: they are logged, and a count of utterances is
+    not meeting content."""
+
+    heard: frozenset[str] = frozenset()
+    confident: int = 0
+    """Utterances triage decided on the embedding alone (verifier on)."""
+    ambiguous: int = 0
+    """Utterances triage could not decide on the embedding."""
+    asked: int = 0
+    """Of those, how many were sent to the verifier."""
+    unanswered: int = 0
+    """Asked and not answered: the provider failed or the outbound check refused.
+    These keep the embedding's own answer."""
+
+
+def _hear(chosen: template.Template, speech: list[str], settings: GapSettings) -> Hearing:
+    """Template items the speech said by meaning. See ``semantic`` and
+    ``verification``.
+
+    - Embedder off: nothing is heard; comparison reads keywords only.
+    - Embedder on, verifier off: every utterance is decided by the embedding
+      (``semantic.nearest_item`` with ``semantic_floor`` and ``semantic_margin``),
+      exactly as before the verifier existed.
+    - Both on: triage takes the clear utterances on the embedding and asks the
+      verifier about the ambiguous ones. An ambiguous utterance that was not
+      asked (past ``verify_max_utterances``) or not answered keeps the
+      embedding's own answer: the verifier is a check on the embedding, and its
+      absence leaves the embedding standing.
+
+    What the verifier confirms only fills ``heard``. Coverage and risk are
+    ``detect``'s, and a heard item is partial at most there.
+
+    Utterances are embedded in this process. With ``gemini`` the ambiguous ones,
+    and only they, leave it; see ``pipeline.verifier``. Nothing here is stored.
     """
     embedder = get_sentence_embedder()
     if embedder is None or not speech:
-        return frozenset()
+        return Hearing()
 
     examples = semantic.examples_for(chosen)
     if not any(label != semantic.BACKGROUND_KEY for label in examples.labels):
-        return frozenset()
+        return Hearing()
 
-    return semantic.heard(
-        embedder.embed(speech),
-        embedder.embed(list(examples.texts)),
-        examples.labels,
-        floor=settings.semantic_floor,
-        margin=settings.semantic_margin,
+    rankings = semantic.rank(
+        embedder.embed(speech), embedder.embed(list(examples.texts)), examples.labels
+    )
+    on_embedding = [
+        semantic.nearest_item(
+            ranking, floor=settings.semantic_floor, margin=settings.semantic_margin
+        )
+        for ranking in rankings
+    ]
+
+    verifier = get_template_verifier()
+    if verifier is None:
+        return Hearing(heard=frozenset(key for key in on_embedding if key is not None))
+
+    decisions = verification.triage(
+        rankings,
+        verification.TriageThresholds(
+            confident_score=settings.verify_confident_score,
+            confident_lead=settings.verify_confident_lead,
+            candidate_score=settings.verify_candidate_score,
+            candidates=settings.verify_candidates,
+        ),
+    )
+    asked = verification.questions(
+        decisions,
+        speech,
+        chosen,
+        examples_per_candidate=settings.verify_examples,
+        limit=settings.verify_max_utterances,
+    )
+    answers = verifier.verify([question for _, question in asked]) if asked else []
+
+    answered = [
+        (pair, answer) for pair, answer in zip(asked, answers, strict=True) if answer is not None
+    ]
+    heard = set(
+        verification.resolve(
+            decisions, [pair for pair, _ in answered], [answer for _, answer in answered]
+        )
+    )
+
+    settled = {index for (index, _), _ in answered}
+    for decision in decisions:
+        if decision.triage is verification.Triage.AMBIGUOUS and decision.index not in settled:
+            fallback = on_embedding[decision.index]
+            if fallback is not None:
+                heard.add(fallback)
+
+    return Hearing(
+        heard=frozenset(heard),
+        confident=sum(1 for d in decisions if d.triage is verification.Triage.CONFIDENT),
+        ambiguous=sum(1 for d in decisions if d.triage is verification.Triage.AMBIGUOUS),
+        asked=len(asked),
+        unanswered=len(asked) - len(answered),
     )
 
 

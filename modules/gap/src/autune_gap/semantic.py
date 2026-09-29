@@ -36,10 +36,15 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import numpy as np
 
-from autune_gap.template import Template
+if TYPE_CHECKING:
+    # Types only: ``template`` imports ``pipeline.base`` (#456), so a runtime import
+    # here would close a cycle through ``pipeline.registry``.
+    from autune_gap.template import Template
+
 
 BACKGROUND_KEY = "_background"
 """The class an utterance lands in when it settles nothing on the checklist.
@@ -67,7 +72,7 @@ answer key. They are shared by every template, because what counts as
 @dataclass(frozen=True)
 class Examples:
     """Every example sentence the comparison reads, flattened, with the class
-    each one belongs to. Built once per template and embedder; see ``service``."""
+    each one belongs to. Built per meeting from the template; see ``service``."""
 
     labels: tuple[str, ...]
     texts: tuple[str, ...]
@@ -91,31 +96,45 @@ def examples_for(template: Template) -> Examples:
     return Examples(labels=tuple(labels), texts=tuple(texts))
 
 
-def heard(
+@dataclass(frozen=True)
+class Ranking:
+    """One utterance's classes, nearest first: ``(class, score)`` pairs, where a
+    class's score is the utterance's best cosine with any of its examples.
+
+    Every class appears, ``BACKGROUND_KEY`` included, so the runner-up is always
+    there to measure a lead against. ``heard`` and ``verification.triage`` both
+    read this; neither recomputes the similarity."""
+
+    classes: tuple[tuple[str, float], ...]
+
+    @property
+    def winner(self) -> str:
+        return self.classes[0][0]
+
+    @property
+    def score(self) -> float:
+        return self.classes[0][1]
+
+    @property
+    def lead(self) -> float:
+        """How far the winner is ahead of the runner-up."""
+        return self.classes[0][1] - self.classes[1][1]
+
+
+def rank(
     utterances: Sequence[Sequence[float]],
     examples: Sequence[Sequence[float]],
     labels: Sequence[str],
-    *,
-    floor: float,
-    margin: float,
-) -> frozenset[str]:
-    """Item keys at least one utterance was nearest to.
+) -> list[Ranking]:
+    """Every utterance's classes, nearest first, in utterance order.
 
     ``utterances`` and ``examples`` are unit vectors (``SentenceEmbedder.embed``
-    returns them so), and ``labels`` names the class of each example. An
-    utterance's score for a class is its best cosine with any of that class's
-    examples. It counts for the winning class when that class is an item, the
-    score reaches ``floor``, and it leads the runner-up by at least ``margin``.
-
-    One class per utterance. "재색인 일정은 인프라팀에 확인하고 다음 회의에서
-    공유하죠" arguably settles a dependency and a next step at once, and it will
-    count for one of them; letting it count for every class above the floor
-    would bring back the shared-ending problem this module exists to avoid.
+    returns them so), and ``labels`` names the class of each example.
     """
     if len(examples) != len(labels):
         raise ValueError(f"{len(examples)} example vectors for {len(labels)} labels")
     if not len(utterances) or not len(examples):
-        return frozenset()
+        return []
 
     classes = sorted(set(labels))
     if len(classes) < 2:
@@ -129,13 +148,44 @@ def heard(
         [similarity[:, label_array == name].max(axis=1) for name in classes], axis=1
     )
 
-    found: set[str] = set()
+    rankings = []
     for row in per_class:
         order = np.argsort(row)[::-1]
-        best, runner_up = row[order[0]], row[order[1]]
-        winner = classes[order[0]]
-        if winner == BACKGROUND_KEY:
-            continue
-        if best >= floor and best - runner_up >= margin:
-            found.add(winner)
-    return frozenset(found)
+        rankings.append(
+            Ranking(classes=tuple((classes[index], float(row[index])) for index in order))
+        )
+    return rankings
+
+
+def heard(
+    utterances: Sequence[Sequence[float]],
+    examples: Sequence[Sequence[float]],
+    labels: Sequence[str],
+    *,
+    floor: float,
+    margin: float,
+) -> frozenset[str]:
+    """Item keys at least one utterance was nearest to.
+
+    An utterance counts for the winning class of its ``rank`` when that class is
+    an item, the score reaches ``floor``, and it leads the runner-up by at least
+    ``margin``. This is the embedding-only decision; ``verification`` layers an
+    LLM check over the utterances it leaves uncertain.
+
+    One class per utterance. "재색인 일정은 인프라팀에 확인하고 다음 회의에서
+    공유하죠" arguably settles a dependency and a next step at once, and it will
+    count for one of them; letting it count for every class above the floor
+    would bring back the shared-ending problem this module exists to avoid.
+    """
+    found = (
+        nearest_item(ranking, floor=floor, margin=margin)
+        for ranking in rank(utterances, examples, labels)
+    )
+    return frozenset(key for key in found if key is not None)
+
+
+def nearest_item(ranking: Ranking, *, floor: float, margin: float) -> str | None:
+    """The item one utterance counts for on the embedding alone, or ``None``."""
+    if ranking.winner != BACKGROUND_KEY and ranking.score >= floor and ranking.lead >= margin:
+        return ranking.winner
+    return None
