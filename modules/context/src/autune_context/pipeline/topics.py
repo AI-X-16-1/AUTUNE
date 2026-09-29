@@ -152,22 +152,31 @@ def _label(text: str, *, max_words: int = 4) -> str:
     not a content noun breaks it -- a verb (확정할게요), a number with its
     counter (5장, 2시), a one-letter noun (장, 안), a name with an honorific
     (민재님), a word in ``_GENERIC_NOUNS``. Every contiguous sub-phrase of up to
-    ``max_words`` words is a candidate. Only repeated candidates compete when
-    there are any, and the score is words x occurrences, so a phrase said twice
-    (결제 모듈 연동) beats one of its words said three times (결제). Ties go to
-    the longer phrase, then to the one said first.
+    ``max_words`` words is a candidate. The score is words x occurrences among
+    the repeated candidates, so a phrase said twice (결제 모듈 연동) beats one of
+    its words said three times (결제). Ties go to the longer phrase, then to the
+    one said first.
+
+    When nothing repeats, frequency says nothing, and the label is the
+    segment's first phrase: a segment starts where the conversation turned,
+    and the turn is usually someone raising the subject ("민구님 디자인 쪽은
+    어떤가요?"). Picking the longest phrase instead named whatever happened to
+    be said in two words (마무리 단계), and picking the phrase closest to the
+    segment's embedding was tried and chose generic words (예상, 변경, 완료) --
+    on a real meeting every candidate scored within 0.04 of the others.
     """
+    phrases = _noun_phrases(text)
     counts: dict[str, int] = {}
     first_seen: dict[str, int] = {}
-    for phrase in _noun_phrases(text):
+    for phrase in phrases:
         for size in range(1, min(len(phrase), max_words) + 1):
             for i in range(len(phrase) - size + 1):
                 candidate = " ".join(phrase[i : i + size])
                 counts[candidate] = counts.get(candidate, 0) + 1
                 first_seen.setdefault(candidate, len(first_seen))
-    if not counts:
-        return ""
-    repeated = [c for c in counts if counts[c] > 1] or list(counts)
+    repeated = [c for c in counts if counts[c] > 1]
+    if not repeated:
+        return " ".join(phrases[0][:max_words]) if phrases else ""
     return max(
         repeated,
         key=lambda c: (counts[c] * len(c.split()), len(c.split()), -first_seen[c]),

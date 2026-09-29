@@ -76,6 +76,16 @@ def test_ties_go_to_the_longer_phrase_then_the_one_said_first():
     assert _label(text) == "이벤트 예산"
 
 
+def test_when_nothing_repeats_the_phrase_that_opens_the_segment_names_it():
+    # a real segment where every candidate was said once; the old tie-break
+    # picked the first two-word phrase, 마무리 단계
+    text = (
+        "좋습니다. 민구님 디자인 쪽은 어떤가요? 거의 마무리 단계예요. "
+        "다만 로그인 화면이 지금 네 장인데 세 장으로 줄이는 게 좋을 것 같습니다."
+    )
+    assert _label(text) == "디자인"
+
+
 def test_numbers_counters_names_and_meeting_talk_never_label_a_segment():
     for text in (
         "2번이요 2번. 10분 뒤에 다시 할까요? 오늘은 2시까지만 하죠.",

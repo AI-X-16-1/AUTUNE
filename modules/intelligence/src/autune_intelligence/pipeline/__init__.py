@@ -16,9 +16,19 @@ from celery.signals import worker_process_init
 from autune_core import get_logger
 from autune_intelligence.config import get_settings
 
-from .registry import get_gap_classifier, get_misalignment_predictor, reset_cache
+from .registry import (
+    get_gap_classifier,
+    get_misalignment_predictor,
+    predictor_fits_from_history,
+    reset_cache,
+)
 
-__all__ = ["get_gap_classifier", "get_misalignment_predictor", "reset_cache"]
+__all__ = [
+    "get_gap_classifier",
+    "get_misalignment_predictor",
+    "predictor_fits_from_history",
+    "reset_cache",
+]
 
 log = get_logger(__name__)
 
@@ -27,10 +37,28 @@ log = get_logger(__name__)
 def _warm_models(**_: object) -> None:
     if not get_settings().warm_models_on_worker_init:
         return
-    classifier = get_gap_classifier()
-    # GapClassifier has no separate "load" step in its protocol — classify() is
-    # the only call that trains SetFit's head (FakeGapClassifier no-ops here).
-    # The placeholder text and its result are both discarded; only the training
-    # side effect is wanted.
-    classifier.classify(["warmup"])
-    log.info("model_ready", getter="get_gap_classifier", version=classifier.model_version)
+    # Warmed in separate blocks on purpose. Celery logs and swallows whatever a
+    # worker_process_init handler raises, so one shared try would let a failed
+    # classifier warm silently skip the predictor -- putting the first fit back
+    # under a meeting's row lock, which is the whole thing this hook avoids.
+    try:
+        classifier = get_gap_classifier()
+        # GapClassifier has no separate "load" step in its protocol — classify()
+        # is the only call that trains SetFit's head (FakeGapClassifier no-ops
+        # here). The placeholder text and its result are both discarded; only
+        # the training side effect is wanted.
+        classifier.classify(["warmup"])
+        log.info("model_ready", getter="get_gap_classifier", version=classifier.model_version)
+    except Exception:
+        log.exception("model_warm_failed", getter="get_gap_classifier")
+
+    # Same reason for the predictor: with impl=local the first call reads
+    # labeled history and fits XGBoost, which should not happen under a
+    # meeting's row lock either.
+    try:
+        predictor = get_misalignment_predictor()
+        log.info(
+            "model_ready", getter="get_misalignment_predictor", version=predictor.model_version
+        )
+    except Exception:
+        log.exception("model_warm_failed", getter="get_misalignment_predictor")

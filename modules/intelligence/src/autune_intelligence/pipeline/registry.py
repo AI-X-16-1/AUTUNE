@@ -8,13 +8,23 @@ aggregation a worker does and not on every meeting.
 from __future__ import annotations
 
 from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
 from functools import lru_cache
+from typing import Final
 
+from autune_core import get_logger
 from autune_intelligence.config import IntelligenceSettings, get_settings
 
 from .base import GapClassifier, MisalignmentPredictor
 from .classifier import FakeGapClassifier, SetFitGapClassifier
-from .predictor import HeuristicMisalignmentPredictor
+from .predictor import (
+    HeuristicMisalignmentPredictor,
+    InsufficientHistoryError,
+    XGBoostMisalignmentPredictor,
+    require_xgboost,
+)
+
+log = get_logger(__name__)
 
 _CLASSIFIERS: dict[str, Callable[[IntelligenceSettings], GapClassifier]] = {
     "local": lambda settings: SetFitGapClassifier(settings.gap_classifier_backbone),
@@ -42,17 +52,82 @@ def get_gap_classifier() -> GapClassifier:
     return factory(settings)
 
 
-@lru_cache
-def get_misalignment_predictor() -> MisalignmentPredictor:
-    """The heuristic baseline, until there is reversal history to fit XGBoost on.
+_predictor: MisalignmentPredictor | None = None
+_predictor_expires_at: datetime | None = None
 
-    No config switch yet: with one implementation a setting would only be a
-    way to misspell it. One arrives with the second implementation.
+
+def _fit_local(now: datetime) -> MisalignmentPredictor:
+    """XGBoost on labeled history, or the heuristic when there is not enough yet."""
+    from autune_core import session_scope  # noqa: PLC0415
+    from autune_intelligence.history import labeled_examples  # noqa: PLC0415
+
+    # Before the database read, so a worker configured for `local` without the
+    # extra fails at startup rather than on the day history crosses the floor.
+    require_xgboost()
+    with session_scope() as session:
+        examples = labeled_examples(session, now=now)
+    try:
+        predictor = XGBoostMisalignmentPredictor.fit(examples, fitted_at=now)
+    except InsufficientHistoryError as exc:
+        log.info("misalignment_predictor_fallback", reason=str(exc))
+        return HeuristicMisalignmentPredictor()
+    # The per-fit facts live here, not in model_version -- see MODEL_VERSION.
+    log.info(
+        "misalignment_predictor_fitted",
+        version=predictor.model_version,
+        fitted_at=predictor.fitted_at.isoformat(),
+        examples=predictor.training_size,
+    )
+    return predictor
+
+
+def get_misalignment_predictor(*, now: datetime | None = None) -> MisalignmentPredictor:
+    """The configured predictor, refit from history every ``misalignment_refit_hours``.
+
+    ``heuristic`` never touches the database. ``local`` reads labeled history
+    in its own short session — read-only, and separate from the caller's
+    transaction — and keeps the result (fitted model or fallback) until it
+    expires, so a team's first labeled meetings are picked up within a day.
     """
-    return HeuristicMisalignmentPredictor()
+    global _predictor, _predictor_expires_at
+    settings = get_settings()
+    impl = settings.misalignment_predictor_impl
+    if impl not in _PREDICTORS:
+        raise ValueError(
+            f"unknown AUTUNE_INTELLIGENCE_MISALIGNMENT_PREDICTOR_IMPL={impl!r}; "
+            f"known: {sorted(_PREDICTORS)}"
+        )
+    now = now or datetime.now(UTC)
+    if _predictor is None or (_predictor_expires_at is not None and now >= _predictor_expires_at):
+        _predictor = _PREDICTORS[impl](now)
+        _predictor_expires_at = (
+            now + timedelta(hours=settings.misalignment_refit_hours) if impl == "local" else None
+        )
+    return _predictor
+
+
+FITTED_IMPLS: Final = frozenset({"local"})
+"""Implementations that learn from labeled meetings rather than hand-set weights.
+
+``eval`` asks for this through ``predictor_fits_from_history``: one of these
+scored over the window it was fit on reports an **in-sample** number, which
+cannot be compared with the stored predictions' out-of-sample ones."""
+
+
+def predictor_fits_from_history() -> bool:
+    """Whether the configured predictor learns from labeled meetings."""
+    return get_settings().misalignment_predictor_impl in FITTED_IMPLS
+
+
+_PREDICTORS: dict[str, Callable[[datetime], MisalignmentPredictor]] = {
+    "heuristic": lambda _now: HeuristicMisalignmentPredictor(),
+    "local": _fit_local,
+}
 
 
 def reset_cache() -> None:
     """Drop the cached models. For tests that switch implementations."""
+    global _predictor, _predictor_expires_at
     get_gap_classifier.cache_clear()
-    get_misalignment_predictor.cache_clear()
+    _predictor = None
+    _predictor_expires_at = None

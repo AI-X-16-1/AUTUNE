@@ -53,8 +53,20 @@ export const listMeetings = () => api.audio<MeetingSummary[]>("/meetings");
 /** The teams this person may open a meeting for. Feeds `createMeeting`. */
 export const listTeams = () => api.audio<TeamSummary[]>("/teams");
 
-/** Open a meeting before there is any audio for it (S06, the file-upload path). */
-export const createMeeting = (body: { title: string; team_id: string }) =>
+/**
+ * Open a meeting before there is any audio for it (S06, the file-upload path).
+ *
+ * `started_at` is when the meeting happened, and leaving it out is not free:
+ * module B reads `meetings.started_at` to anchor a relative due date, so
+ * without it "이번 주 금요일까지" produces an action item with no date at all
+ * (#340). Optional here because the backend allows a recording uploaded with
+ * no known start; the screen always sends one.
+ */
+export const createMeeting = (body: {
+  title: string;
+  team_id: string;
+  started_at?: string;
+}) =>
   api.audio<{ meeting_id: string; status: string }>("/meetings", {
     method: "POST",
     body: JSON.stringify(body),

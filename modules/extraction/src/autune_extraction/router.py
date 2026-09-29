@@ -44,8 +44,9 @@ def dev_routes_enabled() -> bool:
     """The local-only page for connecting Notion by hand, until S28 exists.
 
     It has no auth, so it needs both ``AUTUNE_ENV=local`` and an explicit
-    ``AUTUNE_EXTRACTION_DEV_ROUTES=true``: ``local`` is also the env's default,
-    and forgetting to set it must not be enough to serve this. See
+    ``AUTUNE_EXTRACTION_DEV_ROUTES=true``: ``local`` is what every checkout and
+    the demo stack run under, and being one must not be enough to serve this.
+    (A deployment that forgets ``AUTUNE_ENV`` is ``production`` since #446.) See
     ``dev/routes.py`` and #401 for why a module may write team_integrations
     here at all."""
     return get_core_settings().env == "local" and get_settings().dev_routes

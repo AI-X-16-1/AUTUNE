@@ -225,10 +225,12 @@ class ExtractionSettings(BaseSettings):
     dev_routes: bool = False
     """Mount the local-only page for connecting Notion by hand (``dev/``, #401).
 
-    Needed on top of ``AUTUNE_ENV=local``: that env is also the default, so a
-    deployment that forgot to set it would otherwise serve an unauthenticated
-    route that stores any team's Notion token (lsh2217, review of #402). Off
-    unless someone asks for it by name."""
+    Needed on top of ``AUTUNE_ENV=local``. Since #446 a deployment that forgets
+    ``AUTUNE_ENV`` is ``production``, so that is no longer the reason; this is:
+    ``local`` is what every checkout, ``scripts/up.sh`` and the demo stack set,
+    including a demo machine other people can reach, and ``local`` alone should
+    not serve an unauthenticated route that stores any team's Notion token
+    (lsh2217, review of #402). Off unless someone asks for it by name."""
 
     @field_validator("resolver_min_similarity", mode="before")
     @classmethod
