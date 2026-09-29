@@ -305,22 +305,36 @@ def _complete_calendar_connect(
     # The ID token proves this code answered *our* request (nonce), not which
     # Google account it was: someone may keep their calendar on another account,
     # and the consent asks for no ``email``, so none is required (#452 review).
-    google.verify_request(grant.id_token, nonce=transaction.nonce)
+    claims = google.verify_request(grant.id_token, nonce=transaction.nonce)
+    account = str(claims["sub"])
     if CALENDAR_SCOPE not in grant.scopes:
         raise PermissionDeniedError("calendar access was not granted")
     if not grant.refresh_token:
         raise PermissionDeniedError("Google granted no offline access; connect again")
     previous = load_user_integration(session, transaction.user_id, "calendar")
-    if previous is not None and previous.secret and previous.secret != grant.refresh_token:
-        # A reconnect replaces the grant; the old refresh token is ended rather
-        # than left valid and unknown to us.
+    previous_account = previous.config.get("google_sub") if previous is not None else None
+    if (
+        previous is not None
+        and previous.secret
+        and previous_account is not None
+        and previous_account != account
+    ):
+        # A calendar moved to another Google account: end the grant it replaces
+        # rather than leave it valid and unknown to us. Never for the same
+        # account -- Google's revoke ends everything that account granted
+        # Autune, the refresh token just received included, and ``prompt=
+        # consent`` hands out a new token on every connect, so comparing tokens
+        # cannot tell the two apart (#452 review). A grant saved before the
+        # account was recorded is left alone for the same reason.
         google.revoke(previous.secret)
     save_user_integration(
         session,
         transaction.user_id,
         "calendar",
         secret=grant.refresh_token,
-        config={"calendar_id": "primary"},
+        # ``sub`` is Google's stable account id, not a credential; it is kept
+        # only so the next connect can tell a new account from the same one.
+        config={"calendar_id": "primary", "google_sub": account},
     )
     log.info("auth_google_calendar_connected", user_id=transaction.user_id)
     return RedirectResponse(

@@ -80,15 +80,18 @@ def world(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     db.commit()
 
     grants: dict[str, str] = {}
+    configs: dict[str, dict[str, Any]] = {}
 
     def save(_s: Session, user_id: str, service: str, *, secret: str, config: dict) -> None:
         assert service == "calendar"
-        assert config == {"calendar_id": "primary"}
         grants[user_id] = secret
+        configs[user_id] = config
 
     def load(_s: Session, user_id: str, service: str) -> UserIntegrationConfig | None:
         secret = grants.get(user_id)
-        return None if secret is None else UserIntegrationConfig(service, user_id, secret)
+        if secret is None:
+            return None
+        return UserIntegrationConfig(service, user_id, secret, dict(configs.get(user_id, {})))
 
     monkeypatch.setattr(auth_router_module, "save_user_integration", save)
     monkeypatch.setattr(auth_router_module, "load_user_integration", load)
@@ -110,7 +113,7 @@ def world(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     app.dependency_overrides[get_session] = lambda: db
     app.dependency_overrides[get_state_store] = lambda: store
     app.dependency_overrides[get_google_client] = lambda: google
-    return {"app": app, "store": store, "google": google, "grants": grants}
+    return {"app": app, "store": store, "google": google, "grants": grants, "configs": configs}
 
 
 def signed_in(world: dict[str, Any], user_id: str = ME) -> TestClient:
@@ -236,14 +239,52 @@ def test_a_calendar_on_an_account_without_an_email_claim_connects(
     assert world["grants"] == {ME: "1//refresh"}
 
 
-def test_reconnecting_revokes_the_grant_it_replaces(world: dict[str, Any]) -> None:
+def test_a_connect_records_which_google_account_it_is(world: dict[str, Any]) -> None:
+    client = signed_in(world)
+
+    callback(client, start(client))
+
+    assert world["configs"][ME] == {
+        "calendar_id": "primary",
+        "google_sub": "another-google-account",
+    }
+
+
+def test_reconnecting_the_same_google_account_revokes_nothing(world: dict[str, Any]) -> None:
+    """#452 review: consent hands out a new refresh token every time, and
+    Google's revoke ends the whole account's grant -- the new token with it."""
     world["grants"][ME] = "1//old"
+    world["configs"][ME] = {"calendar_id": "primary", "google_sub": "another-google-account"}
+    client = signed_in(world)
+
+    callback(client, start(client))
+
+    assert world["google"].revoked == []
+    assert world["grants"] == {ME: "1//refresh"}
+
+
+def test_moving_to_another_google_account_revokes_the_old_grant(world: dict[str, Any]) -> None:
+    world["grants"][ME] = "1//old"
+    world["configs"][ME] = {"calendar_id": "primary", "google_sub": "first-account"}
     client = signed_in(world)
 
     callback(client, start(client))
 
     assert world["google"].revoked == ["1//old"]
     assert world["grants"] == {ME: "1//refresh"}
+
+
+def test_a_grant_saved_before_the_account_was_recorded_is_not_revoked(
+    world: dict[str, Any],
+) -> None:
+    world["grants"][ME] = "1//old"
+    world["configs"][ME] = {"calendar_id": "primary"}
+    client = signed_in(world)
+
+    callback(client, start(client))
+
+    assert world["google"].revoked == []
+    assert world["configs"][ME]["google_sub"] == "another-google-account"
 
 
 def test_reconnecting_with_the_same_token_keeps_it(world: dict[str, Any]) -> None:
