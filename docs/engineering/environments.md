@@ -89,6 +89,21 @@ prefix `AUTUNE_<MODULE>_`.
 Google *sign-in* is identity only (`openid email profile`) and is unrelated to
 `AUTUNE_GOOGLE_CALENDAR_CREDENTIALS`, which grants module D calendar access.
 
+**Two cookies, two jobs.** `autune_session` is the signed session (7 days,
+`HttpOnly`, `SameSite=Lax`, `Secure` outside local). `autune_oauth_state` lives
+only for the 600 seconds of one sign-in, is scoped to the callback's own path,
+and holds the OAuth `state`: the callback refuses a request whose cookie does
+not match the `state` in the query, so a callback URL opened in somebody else's
+browser cannot sign them in as whoever started it. Redis proves a state was
+issued; the cookie is what proves to whom.
+`packages/core/src/autune_core/auth_router.py` has the reasoning.
+
+**A signed-out session is signed out in the browser only.** `POST /logout`
+clears the cookie; the JWT it held stays valid until it expires. A token that
+leaked cannot be revoked, which is acceptable for a first version and is not
+acceptable for long — it needs a token version on `User`, or a server-side
+session, before this carries real meetings.
+
 ### Web (`apps/web`)
 
 `NEXT_PUBLIC_` variables are inlined into the browser bundle at build time, so
