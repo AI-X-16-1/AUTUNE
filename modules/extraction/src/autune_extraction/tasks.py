@@ -22,9 +22,11 @@ from autune_contracts import (
     validate_major_version,
 )
 from autune_core import (
+    AutuneError,
     Meeting,
     PrivacyViolationError,
     get_logger,
+    jira_access,
     load_integration,
     load_user_integration,
     periodic,
@@ -36,12 +38,13 @@ from autune_core.settings import get_settings as get_core_settings
 from autune_integrations import (
     CalendarClient,
     IntegrationError,
+    JiraClient,
     NotionClient,
     PermanentIntegrationError,
     refresh_access_token,
 )
 
-from . import calendar_sync, service
+from . import calendar_sync, jira_sync, service
 from .models import ExtActionItem, ExtCalendarPoll, ExtDecision
 from .pipeline.registry import get_classifier, get_nli, get_resolver
 
@@ -252,6 +255,47 @@ def sync_after_confirmation(action_item_id: str) -> None:
         log.warning(
             "extraction_calendar_sync_blocked_by_privacy_guard", action_item_id=action_item_id
         )
+    # And Jira on its own too. ``AutuneError`` covers a refused Jira grant
+    # (``JiraReconnectRequiredError``) as well as integration errors.
+    try:
+        sync_action_item_jira(action_item_id)
+    except AutuneError as exc:
+        log.warning("extraction_jira_sync_failed", action_item_id=action_item_id, error=exc.code)
+
+
+@shared_task(name="autune.extraction.sync_action_item_jira", acks_late=True)
+def sync_action_item_jira(action_item_id: str) -> None:
+    """Step 7's Jira half (#82): the item as one issue in the team's chosen
+    project -- ``jira_sync.sync_action_item_to_jira``.
+
+    Skipped, not failed, for a team that has not connected Jira, has not chosen
+    a project, or whose connection needs someone to reconnect
+    (``autune_core.jira_access`` answers ``None``). The access token is fetched
+    fresh for the run; the refresh token never reaches this module. Like the
+    Notion sync it does not retry itself: a timed-out create may have made the
+    issue, and a retry would make a second.
+    """
+    with session_scope() as session:
+        item = session.get(ExtActionItem, action_item_id)
+        meeting = session.get(Meeting, item.meeting_id) if item is not None else None
+        if item is None or meeting is None:
+            return
+        access = jira_access(meeting.team_id)
+        if access is None or not access.project_key:
+            log.info("extraction_jira_not_connected", action_item_id=action_item_id)
+            return
+        config = load_integration(session, meeting.team_id, jira_sync.JIRA)
+        client = JiraClient.for_cloud(access.access_token, access.cloud_id)
+        try:
+            jira_sync.sync_action_item_to_jira(
+                session,
+                client,
+                action_item_id=action_item_id,
+                project_key=access.project_key,
+                site_url=config.config.get("site_url") if config is not None else None,
+            )
+        finally:
+            client.close()
 
 
 @contextmanager

@@ -129,6 +129,56 @@ class FakeJira:
     def transition(self, issue_key: str, transition_id: str) -> None:
         self.transitions.append((issue_key, transition_id))
 
+    # The 3LO surface (``JiraClient.for_cloud``), recorded by key.
+    tasks: dict[str, dict] = field(default_factory=dict)
+    accounts: dict[str, str] = field(default_factory=dict)
+    """email -> account id; a missing email is someone Jira will not reveal."""
+    categories: dict[str, str] = field(default_factory=dict)
+    searched: list[str] = field(default_factory=list)
+
+    def find_account_id(self, email: str) -> str | None:
+        self.searched.append(email)
+        return self.accounts.get(email)
+
+    def create_task(
+        self,
+        project_key: str,
+        summary: str,
+        *,
+        description: str = "",
+        due_date: date | None = None,
+        assignee_account_id: str | None = None,
+        issue_type: str = "Task",
+    ) -> str:
+        check_outbound({"summary": summary, "description": description}, destination="jira")
+        key = f"{project_key}-{len(self.tasks) + 1}"
+        self.tasks[key] = {
+            "project": project_key,
+            "summary": summary,
+            "due": due_date,
+            "assignee": assignee_account_id,
+        }
+        self.categories[key] = "new"
+        return key
+
+    def update_task(
+        self,
+        issue_key: str,
+        summary: str,
+        *,
+        due_date: date | None,
+        assignee_account_id: str | None,
+    ) -> bool:
+        check_outbound({"summary": summary}, destination="jira")
+        if issue_key not in self.tasks:
+            return False
+        self.tasks[issue_key].update(summary=summary, due=due_date, assignee=assignee_account_id)
+        return True
+
+    def move_to_category(self, issue_key: str, category: str) -> bool:
+        self.categories[issue_key] = category
+        return True
+
 
 @dataclass
 class FakeCalendar:
