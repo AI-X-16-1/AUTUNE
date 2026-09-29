@@ -135,9 +135,11 @@ class ExtractionResult(Payload):
 
 
 AGENDA_TITLE_MAX = 200
-"""Characters in one issue title. Up to twenty titles go into a brief that is
-posted to Slack under ``check_outbound``'s 4,000-character cap, and a brief
-over it is refused, not cut (#491 review). The producer shortens to this."""
+"""Characters in one issue title: the largest value a consumer will receive,
+so it can size what it renders against a known bound. The producer shortens to
+this. It is a bound, not a display length -- a consumer still cuts to its own
+(D's brief shows six issues and cuts a title at 100), and that cut stays
+necessary (#491 review)."""
 
 JIRA_ISSUE_URL = r"^https://[A-Za-z0-9.-]+/browse/[A-Z][A-Z0-9_]*-[0-9]+$"
 """An issue's browse link on a Jira site: https, a host, ``/browse/KEY-12``.
