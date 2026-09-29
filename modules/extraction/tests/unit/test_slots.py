@@ -379,3 +379,76 @@ def test_a_named_verbs_relative_past_before_a_later_event_is_not_the_past(text: 
     keeps its date exactly as on ``main`` (review by lsh2217 on #333, three
     rounds, reproduced against all four verbs)."""
     assert parse_due(text, WEDNESDAY) == DueDate(text="월요일", date=date(2026, 9, 14))
+
+
+# --- a month, a half, a quarter or a year, by its last day (#197) ------------------
+
+
+@pytest.mark.parametrize(
+    ("text", "phrase", "due"),
+    [
+        ("10월 말까지 마무리하겠습니다", "10월 말", date(2026, 10, 31)),
+        ("10월말에 드리겠습니다", "10월말", date(2026, 10, 31)),
+        ("10월까지 하겠습니다", "10월", date(2026, 10, 31)),
+        ("11월 중으로 정리하겠습니다", "11월", date(2026, 11, 30)),
+        ("11월에 공유드릴게요", "11월", date(2026, 11, 30)),
+        ("이번 달까지 끝내겠습니다", "이번 달", date(2026, 9, 30)),
+        ("다음 달 중에 하겠습니다", "다음 달", date(2026, 10, 31)),
+        ("다음 달에 보고드리겠습니다", "다음 달", date(2026, 10, 31)),
+        ("연말까지 하겠습니다", "연말", date(2026, 12, 31)),
+        ("올해 안에 배포하겠습니다", "올해 안", date(2026, 12, 31)),
+        ("하반기에 출시하겠습니다", "하반기", date(2026, 12, 31)),
+        ("2027년 상반기까지 이전하겠습니다", "2027년 상반기", date(2027, 6, 30)),
+        ("내년 상반기 중에 하겠습니다", "내년 상반기", date(2027, 6, 30)),
+        ("3분기 안에 끝내겠습니다", "3분기", date(2026, 9, 30)),
+        ("내년 1분기까지 하겠습니다", "내년 1분기", date(2027, 3, 31)),
+        # A month long past, with a deadline word, is next year's -- _next's rule.
+        ("3월까지 드리겠습니다", "3월", date(2027, 3, 31)),
+    ],
+)
+def test_a_period_is_due_by_its_last_day(text: str, phrase: str, due: date) -> None:
+    """Said on Wednesday 2026-09-09."""
+    assert parse_due(text, WEDNESDAY) == DueDate(text=phrase, date=due)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # A month or a half with nothing after it that makes it a deadline.
+        "5월 자료 기준으로 정리하겠습니다",
+        "다음 달 일정은 제가 잡겠습니다",
+        "하반기 실적 보고서 정리하겠습니다",
+        # A month long past with 에 and no deadline word stays in the past.
+        "5월에 나온 이슈 정리하겠습니다",
+        "3월에 드리겠습니다",
+        # 말 that is 말씀.
+        "10월 말씀드린 건 제가 하겠습니다",
+        "올해 말씀드린 대로 하겠습니다",
+        # This month, said of the past.
+        "9월에 공유드렸는데 다시 보내겠습니다",
+        "9월에 공유한 자료 다시 보내겠습니다",
+        "상반기에 했던 거 다시 하겠습니다",
+        # A count of months is not a month.
+        "3개월 뒤에 다시 보죠",
+    ],
+)
+def test_a_period_that_is_not_a_deadline_has_no_date(text: str) -> None:
+    assert parse_due(text, WEDNESDAY) is None
+
+
+def test_a_named_year_needs_no_meeting_day_and_a_relative_period_does() -> None:
+    assert parse_due("2027년 상반기까지 이전하겠습니다", None) == DueDate(
+        text="2027년 상반기", date=date(2027, 6, 30)
+    )
+    assert parse_due("하반기에 출시하겠습니다", None) == DueDate(text="하반기", date=None)
+    assert parse_due("내년 1분기까지 하겠습니다", None) == DueDate(text="내년 1분기", date=None)
+
+
+def test_a_longer_phrase_still_wins_over_its_month() -> None:
+    """ "10월 3일" and "다음 달 말" are not read as the month's end."""
+    assert parse_due("10월 3일까지 하겠습니다", WEDNESDAY) == DueDate(
+        text="10월 3일", date=date(2026, 10, 3)
+    )
+    assert parse_due("다음 달 말까지 하겠습니다", WEDNESDAY) == DueDate(
+        text="다음 달 말", date=date(2026, 10, 31)
+    )
