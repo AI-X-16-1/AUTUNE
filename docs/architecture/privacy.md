@@ -233,7 +233,9 @@ the feature needs.
 - What was delivered can outlive its source, for different reasons per
   destination, which is why each carries only what it needs:
   - **Notion:** a page in a team's workspace belongs to that team once written.
-    Autune does not remove it when retention or a deletion removes its source.
+    Deleting the item in Autune moves its page to Notion's trash, where the
+    team can restore it for 30 days. Retention and meeting deletion do not
+    reach it.
   - **Jira (#82):** an issue lives in the team's site. Deleting the item in
     Autune closes its issue with a note rather than deleting it, so the
     team's own comments and work on it stay. The issue carries the item's

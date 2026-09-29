@@ -45,6 +45,17 @@ class NotionClient(HttpClient):
         ``create_page`` against its database."""
         self.request("PATCH", f"/pages/{page_id}", json={"properties": properties})
 
+    def trash_page(self, page_id: str) -> bool:
+        """Move a page to the workspace's trash, where a person can restore it
+        for 30 days. ``False`` when the page is already gone (404)."""
+        try:
+            self.request("PATCH", f"/pages/{page_id}", json={"in_trash": True})
+        except PermanentIntegrationError as exc:
+            if exc.details.get("upstream_status") == 404:
+                return False
+            raise
+        return True
+
     def page_state(self, page_id: str) -> PageState:
         """``"deleted"``, ``"archived"`` or ``"live"`` -- for a caller whose
         ``update_page`` was refused.

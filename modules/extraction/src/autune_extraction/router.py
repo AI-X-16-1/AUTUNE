@@ -172,13 +172,15 @@ def delete_action_item(action_item_id: str, session: SessionDep, reader: Current
     keeping what was deleted.
 
     Its due-date event comes off its assignee's calendar first
-    (``tasks.remove_calendar_event``, #435) and its Jira issue is closed with a
-    note (``tasks.close_jira_issue``, #82): once the rows cascade away neither
-    can be found again.
+    (``tasks.remove_calendar_event``, #435), its Jira issue is closed with a
+    note (``tasks.close_jira_issue``, #82) and its Notion page goes to Notion's
+    trash (``tasks.trash_notion_page``, #467): once the rows cascade away none
+    of them can be found again.
     """
     item = service.readable_action_item(session, action_item_id, reader)
     tasks.remove_calendar_event(item.id)
     tasks.close_jira_issue(item.id)
+    tasks.trash_notion_page(item.id)
     service.delete_action_item(session, item)
     session.commit()
 

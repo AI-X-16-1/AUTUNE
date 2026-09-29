@@ -101,6 +101,12 @@ class FakeNotion:
             )
         self.updates.append((page_id, properties))
 
+    def trash_page(self, page_id: str) -> bool:
+        if page_id in self.deleted:
+            return False
+        self.archived.add(page_id)
+        return True
+
     def page_state(self, page_id: str) -> str:
         if page_id in self.deleted:
             return "deleted"

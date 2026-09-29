@@ -47,7 +47,7 @@ from autune_integrations import (
 )
 
 from . import calendar_sync, jira_sync, notion_setup, service
-from .models import ExtActionItem, ExtCalendarPoll, ExtDecision
+from .models import ExtActionItem, ExtCalendarPoll, ExtDecision, ExtExternalRef
 from .pipeline.registry import get_classifier, get_nli, get_resolver
 
 log = get_logger(__name__)
@@ -493,6 +493,35 @@ def backfill_jira(team_id: str) -> dict[str, int]:
         client.close()
     log.info("extraction_jira_backfilled", team_id=team_id, **counts)
     return counts
+
+
+def trash_notion_page(action_item_id: str) -> None:
+    """Before the board deletes an item: its Notion page to the workspace's
+    trash, restorable there for 30 days (decided with the user, #467). Runs in
+    the deleting request, best effort -- an unreachable Notion never blocks a
+    deletion. Jira closes instead (``close_jira_issue``): Jira has no trash."""
+    try:
+        with session_scope() as session:
+            ref = session.get(ExtExternalRef, (action_item_id, "notion"))
+            item = session.get(ExtActionItem, action_item_id)
+            meeting = session.get(Meeting, item.meeting_id) if item is not None else None
+            if ref is None or not ref.external_id or meeting is None:
+                return
+            config = load_integration(session, meeting.team_id, "notion")
+            if config is None or not config.secret:
+                return
+            client = NotionClient(config.secret)
+            try:
+                client.trash_page(str(ref.external_id))
+            finally:
+                client.close()
+            log.info("extraction_notion_trashed_with_item", action_item_id=action_item_id)
+    except Exception as exc:  # noqa: BLE001 -- a deletion must not fail on Notion
+        log.warning(
+            "extraction_notion_trash_failed",
+            action_item_id=action_item_id,
+            error=type(exc).__name__,
+        )
 
 
 def close_jira_issue(action_item_id: str) -> None:

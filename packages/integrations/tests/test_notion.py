@@ -3,6 +3,7 @@ mock transport -- no network calls."""
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import httpx
@@ -45,3 +46,28 @@ def test_any_other_refusal_is_raised_not_read_as_a_state() -> None:
     with pytest.raises(PermanentIntegrationError) as caught:
         client_answering(401).page_state("page_1")
     assert caught.value.details["upstream_status"] == 401
+
+
+def test_trashing_a_page_puts_it_in_notions_trash() -> None:
+    sent: list[dict[str, Any]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "PATCH"
+        sent.append(json.loads(request.content))
+        return httpx.Response(200, json={"id": "page_1", "in_trash": True})
+
+    client = NotionClient("token")
+    client._client = httpx.Client(
+        base_url="https://api.notion.com/v1", transport=httpx.MockTransport(handler)
+    )
+    assert client.trash_page("page_1") is True
+    assert sent == [{"in_trash": True}]
+
+
+def test_trashing_a_page_that_is_gone_says_so() -> None:
+    client = NotionClient("token")
+    client._client = httpx.Client(
+        base_url="https://api.notion.com/v1",
+        transport=httpx.MockTransport(lambda r: httpx.Response(404, json={})),
+    )
+    assert client.trash_page("page_1") is False
