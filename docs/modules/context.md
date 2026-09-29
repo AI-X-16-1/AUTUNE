@@ -491,6 +491,17 @@ one mutation.
 | POST | `/materials` | Upload material — Phase 2 |
 | GET | `/briefs/{meeting_id}` | Pre-meeting brief — Phase 2 |
 
+**Every route but `/health` takes `CurrentUser`** and checks, on its first
+line, that the caller belongs to the team behind the id it names — the
+meeting's team, the link's meeting's team, the thread's `team_id`, or the
+`team_id` query parameter (`service.require_readable_*`,
+`require_writable_link`; #189). A caller outside that team gets the same 404 as
+an unknown id, never a 403, so a refusal does not confirm the id exists — the
+rule module C set in #276. It matters most for `POST /links/{link_id}/confirm`:
+the one write, keyed by an integer that can be counted. `tests/unit/
+test_route_auth.py` fails for any new route that does not depend on
+`current_user`.
+
 `GET /decisions/{thread_id}` orders a thread's versions by meeting time
 (`service._meeting_time`), the same key `_rethread` chains by — not by walking
 `previous_version_id` from the chronologically-first version. A walk from the

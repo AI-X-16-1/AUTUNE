@@ -23,8 +23,9 @@ from autune_context import router, service
 from autune_context.config import get_settings
 from autune_context.models import CtxDecision, CtxDecisionVersion, CtxTopicLink
 from autune_context.pipeline import reset_cache
+from autune_context.schemas import LinkConfirmRequest
 from autune_contracts.extraction import Decision, ExtractionResult
-from autune_core import Meeting, Team, session_scope
+from autune_core import Meeting, Team, TeamMember, User, session_scope
 from autune_core.errors import ConflictError, NotFoundError
 
 _D1 = "검색 정렬은 최신순으로 한다"
@@ -51,6 +52,42 @@ def team_id(db_engine: object) -> Iterator[str]:  # db_engine ensures migrations
     yield tid
     with session_scope() as s:
         s.execute(delete(Team).where(Team.id == tid))
+
+
+def _user(team_id: str | None, email: str) -> User:
+    """A user, in ``team_id`` if given -- what ``CurrentUser`` resolves to."""
+    with session_scope() as s:
+        user = User(email=email, display_name="읽기 테스트")
+        s.add(user)
+        s.flush()
+        if team_id is not None:
+            s.add(TeamMember(team_id=team_id, user_id=user.id))
+            s.flush()
+        s.expunge(user)
+    return user
+
+
+@pytest.fixture
+def member(team_id: str) -> Iterator[User]:
+    user = _user(team_id, f"member-{team_id}@read.test")
+    yield user
+    with session_scope() as s:
+        s.execute(delete(User).where(User.id == user.id))
+
+
+@pytest.fixture
+def outsider(team_id: str) -> Iterator[User]:
+    """Signed in, and a member of some other team -- never of ``team_id``."""
+    with session_scope() as s:
+        other = Team(name="read-api-outsider")
+        s.add(other)
+        s.flush()
+        other_id = other.id
+    user = _user(other_id, f"outsider-{team_id}@read.test")
+    yield user
+    with session_scope() as s:
+        s.execute(delete(User).where(User.id == user.id))
+        s.execute(delete(Team).where(Team.id == other_id))
 
 
 def _meeting(team_id: str, *, days_ago: int = 0, expires_at: datetime | None = None) -> str:
@@ -249,7 +286,9 @@ def test_lineage_of_a_fully_expired_thread_404s(team_id: str) -> None:
         service.get_decision_lineage(s, thread_id)
 
 
-def test_router_masks_previous_statement_only_for_an_expired_predecessor(team_id: str) -> None:
+def test_router_masks_previous_statement_only_for_an_expired_predecessor(
+    team_id: str, member: User
+) -> None:
     """kjfcvx12's #185 review: disabling router.get_decision_thread's masking
     branch entirely left every other test passing, since none of them called
     the router and checked previous_statement/previous_meeting_id on the
@@ -268,7 +307,7 @@ def test_router_masks_previous_statement_only_for_an_expired_predecessor(team_id
         s.get(Meeting, first).expires_at = datetime.now(tz=UTC) - timedelta(days=1)
 
     with session_scope() as s:
-        result = router.get_decision_thread(thread_id, s)
+        result = router.get_decision_thread(thread_id, s, member)
         by_meeting = {v.meeting_id: v for v in result.versions}
         assert set(by_meeting) == {second, third}  # `first`'s own row is gone too
 
@@ -400,23 +439,25 @@ def _thread_with_a_since_expired_head(
     return thread_id, a_statement, b_statement
 
 
-def test_lineage_topic_label_uses_the_visible_head_not_the_stale_cache(team_id: str) -> None:
+def test_lineage_topic_label_uses_the_visible_head_not_the_stale_cache(
+    team_id: str, member: User
+) -> None:
     thread_id, a_statement, b_statement = _thread_with_a_since_expired_head(team_id)
 
     with session_scope() as s:
-        result = router.get_decision_thread(thread_id, s)
+        result = router.get_decision_thread(thread_id, s, member)
         assert result.topic_label == a_statement
         assert result.topic_label != b_statement
         assert [v.current_statement for v in result.versions] == [a_statement]
 
 
 def test_list_decisions_topic_label_uses_the_visible_head_not_the_stale_cache(
-    team_id: str,
+    team_id: str, member: User
 ) -> None:
     thread_id, a_statement, _b_statement = _thread_with_a_since_expired_head(team_id)
 
     with session_scope() as s:
-        results = router.list_decision_threads(team_id, s)
+        results = router.list_decision_threads(team_id, s, member)
         match = next(r for r in results if r.thread_id == thread_id)
         assert match.topic_label == a_statement
 
@@ -471,3 +512,54 @@ def test_topic_link_date_survives_linked_meeting_deletion(team_id: str) -> None:
         # reconstructed content — see docs/modules/context.md, "Deletion").
         assert row.linked_meeting_id is None
         assert row.linked_meeting_date is not None
+
+
+# --------------------------------------------------------------------------- #
+# Who may read (#189)
+# --------------------------------------------------------------------------- #
+
+
+def test_a_member_reads_everything_a_route_names(team_id: str, member: User) -> None:
+    meeting = _meeting(team_id)
+    link_id = _topic_link(meeting, status="pending")
+    service.build_decision_lineage(_extraction(meeting, [("dec_1", _D1, 0.9)]))
+    thread_id = _thread_id_for(meeting)
+
+    with session_scope() as s:
+        service.require_readable_team(s, team_id, member)
+        service.require_readable_meeting(s, meeting, member)
+        service.require_writable_link(s, link_id, member)
+        service.require_readable_thread(s, thread_id, member)
+
+
+def test_an_outsider_gets_the_same_404_as_an_unknown_id(team_id: str, outsider: User) -> None:
+    meeting = _meeting(team_id)
+    link_id = _topic_link(meeting, status="pending")
+    service.build_decision_lineage(_extraction(meeting, [("dec_1", _D1, 0.9)]))
+    thread_id = _thread_id_for(meeting)
+
+    checks = [
+        (service.require_readable_team, team_id, "team_does_not_exist"),
+        (service.require_readable_meeting, meeting, "mtg_does_not_exist"),
+        (service.require_writable_link, link_id, 999_999_999),
+        (service.require_readable_thread, thread_id, "thr_does_not_exist"),
+    ]
+    for check, real, unknown in checks:
+        with session_scope() as s:
+            with pytest.raises(NotFoundError) as theirs:
+                check(s, real, outsider)
+            with pytest.raises(NotFoundError) as missing:
+                check(s, unknown, outsider)
+        # Same kind of answer, so the refusal does not confirm the id exists.
+        assert theirs.value.details.get("resource") == missing.value.details.get("resource")
+
+
+def test_an_outsider_cannot_confirm_a_link_by_counting(team_id: str, outsider: User) -> None:
+    meeting = _meeting(team_id)
+    link_id = _topic_link(meeting, status="pending")
+
+    with session_scope() as s, pytest.raises(NotFoundError):
+        router.confirm_link(link_id, LinkConfirmRequest(status="confirmed"), s, outsider)
+    with session_scope() as s:
+        link = s.get(CtxTopicLink, link_id)
+        assert link is not None and link.status == "pending"
