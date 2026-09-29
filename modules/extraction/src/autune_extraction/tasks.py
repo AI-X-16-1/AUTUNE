@@ -7,7 +7,12 @@ docs/architecture/async-pipeline.md.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
+from datetime import UTC, datetime, timedelta
+
 from celery import shared_task
+from sqlalchemy.orm import Session
 
 from autune_contracts import EXTRACTION_COMPLETED, TranscriptReady, validate_major_version
 from autune_core import (
@@ -15,13 +20,23 @@ from autune_core import (
     PrivacyViolationError,
     get_logger,
     load_integration,
+    load_user_integration,
+    periodic,
     publish,
     session_scope,
+    users_with_integration,
 )
-from autune_integrations import IntegrationError, NotionClient
+from autune_core.settings import get_settings as get_core_settings
+from autune_integrations import (
+    CalendarClient,
+    IntegrationError,
+    NotionClient,
+    PermanentIntegrationError,
+    refresh_access_token,
+)
 
-from . import service
-from .models import ExtActionItem, ExtDecision
+from . import calendar_sync, service
+from .models import ExtActionItem, ExtCalendarPoll, ExtDecision
 from .pipeline.registry import get_classifier, get_nli, get_resolver
 
 log = get_logger(__name__)
@@ -220,6 +235,169 @@ def sync_after_confirmation(action_item_id: str) -> None:
     except PrivacyViolationError:
         log.warning(
             "extraction_notion_sync_blocked_by_privacy_guard", action_item_id=action_item_id
+        )
+    # Separately, so a Notion failure never costs the calendar its event and
+    # the other way round.
+    try:
+        sync_action_item_calendar(action_item_id)
+    except IntegrationError:
+        log.warning("extraction_calendar_sync_failed", action_item_id=action_item_id)
+    except PrivacyViolationError:
+        log.warning(
+            "extraction_calendar_sync_blocked_by_privacy_guard", action_item_id=action_item_id
+        )
+
+
+@contextmanager
+def _calendars(session: Session) -> Iterator[calendar_sync.CalendarFor]:
+    """A lookup from a person to their own calendar client and calendar id --
+    ``None`` for someone who has not connected one -- with every client it
+    opened closed on the way out.
+
+    Each person's own grant (``user_integrations``, #444) is refreshed with the
+    deployment's Google client (core's ``google_client_id``/``google_client_secret``,
+    #425); a deployment without them has nobody connected as far as this is
+    concerned. A refused refresh token raises ``ReconnectRequiredError`` -- an
+    ``IntegrationError`` -- for the caller to handle.
+    """
+    core = get_core_settings()
+    client_id = core.google_client_id
+    client_secret = core.google_client_secret
+    opened: dict[str, tuple[calendar_sync.CalendarEvents, str]] = {}
+    clients: list[CalendarClient] = []
+
+    def calendar_for(user_id: str) -> tuple[calendar_sync.CalendarEvents, str] | None:
+        if user_id in opened:
+            return opened[user_id]
+        config = load_user_integration(session, user_id, calendar_sync.CALENDAR)
+        if config is None or not config.secret or not client_id or not client_secret:
+            return None
+        token = refresh_access_token(
+            client_id=client_id, client_secret=client_secret, refresh_token=config.secret
+        )
+        client = CalendarClient(token)
+        clients.append(client)
+        opened[user_id] = (client, str(config.config.get("calendar_id") or "primary"))
+        return opened[user_id]
+
+    try:
+        yield calendar_for
+    finally:
+        for client in clients:
+            client.close()
+
+
+@shared_task(name="autune.extraction.sync_action_item_calendar", acks_late=True)
+def sync_action_item_calendar(action_item_id: str) -> None:
+    """Step 7's calendar half (#435): the item's due date on its assignee's own
+    calendar -- ``calendar_sync.sync_due_date_to_calendar``.
+
+    Skipped, not failed, for an assignee who has not connected a calendar and
+    for a deployment without Google client credentials (``_calendars``). Like
+    the Notion sync it does not retry itself: a timed-out create may have made
+    the event, and a retry would make a second.
+    """
+    with session_scope() as session, _calendars(session) as calendar_for:
+        calendar_sync.sync_due_date_to_calendar(
+            session, calendar_for, action_item_id=action_item_id
+        )
+
+
+CALENDAR_POLL_OVERLAP = timedelta(minutes=2)
+"""Each read starts this far before the last one ended, so an edit saved while
+the previous read was running is not missed. Reading an event twice is
+harmless: a date equal to ``synced_due_date`` is ignored."""
+
+CALENDAR_FIRST_LOOKBACK = timedelta(days=1)
+
+
+@shared_task(name="autune.extraction.periodic.pull_calendar_changes")
+@periodic(timedelta(minutes=10))
+def pull_calendar_changes() -> None:
+    """Every ten minutes, read back what each connected person changed on their
+    own calendar (#435): a task they dragged to another day has a new due date.
+    One person at a time, each with their own grant and their own transaction,
+    so one person's revoked token does not stop anyone else's read.
+
+    **Anything one person's read raises is theirs alone** -- not only an
+    integration error but a database error or an answer that did not parse
+    (PARKJAEKYUNG0525, review of #441). It is logged by the error's type and the
+    user id, never its message: an exception string is treated as published
+    (privacy.md section 6), and a database error carries its parameters.
+    """
+    with session_scope() as session:
+        user_ids = users_with_integration(session, calendar_sync.CALENDAR)
+    for user_id in user_ids:
+        try:
+            moved = _pull_one(user_id)
+        except Exception as exc:  # noqa: BLE001 -- one person's failure is theirs alone
+            log.warning(
+                "extraction_calendar_pull_failed", user_id=user_id, error=type(exc).__name__
+            )
+            continue
+        # Committed; now Notion follows the new date, the way it follows an
+        # edit on the board.
+        for action_item_id in moved:
+            try:
+                sync_action_item(action_item_id)
+            except (IntegrationError, PrivacyViolationError):
+                log.warning("extraction_notion_sync_failed", action_item_id=action_item_id)
+
+
+def _pull_one(user_id: str) -> list[str]:
+    started = datetime.now(UTC)
+    with session_scope() as session, _calendars(session) as calendar_for:
+        connection = calendar_for(user_id)
+        if connection is None:
+            return []
+        client, calendar_id = connection
+        cursor = session.get(ExtCalendarPoll, user_id)
+        since = (
+            cursor.polled_at - CALENDAR_POLL_OVERLAP
+            if cursor is not None
+            else started - CALENDAR_FIRST_LOOKBACK
+        )
+        try:
+            moved = calendar_sync.pull_calendar_changes(
+                session, client, user_id=user_id, calendar_id=calendar_id, since=since
+            )
+        except PermanentIntegrationError as exc:
+            # 410 updatedMinTooLongAgo: the cursor is older than Google keeps
+            # changes for -- a person back after a week-long lapsed grant. Read
+            # from the first-connection lookback instead, or the cursor never
+            # moves again (mminjae97, review of #441).
+            if exc.details.get("upstream_status") != 410:
+                raise
+            moved = calendar_sync.pull_calendar_changes(
+                session,
+                client,
+                user_id=user_id,
+                calendar_id=calendar_id,
+                since=started - CALENDAR_FIRST_LOOKBACK,
+            )
+        # An upsert: two overlapping runs for someone just connected would
+        # otherwise both insert, and the second would fail on the key (review
+        # of #441; ``autune_core.periodic`` requires overlap safety).
+        session.execute(
+            service._insert_if_absent_into(session, ExtCalendarPoll)
+            .values(user_id=user_id, polled_at=started)
+            .on_conflict_do_update(index_elements=["user_id"], set_={"polled_at": started})
+        )
+        return moved
+
+
+def remove_calendar_event(action_item_id: str) -> None:
+    """Before the board deletes an item: its event off its assignee's calendar
+    (``calendar_sync.remove_event``). Runs in the deleting request, best effort
+    -- an unreachable calendar never blocks a deletion."""
+    try:
+        with session_scope() as session, _calendars(session) as calendar_for:
+            calendar_sync.remove_event(session, calendar_for, action_item_id=action_item_id)
+    except Exception as exc:  # noqa: BLE001 -- a deletion must not fail on a calendar
+        log.warning(
+            "extraction_calendar_remove_failed",
+            action_item_id=action_item_id,
+            error=type(exc).__name__,
         )
 
 

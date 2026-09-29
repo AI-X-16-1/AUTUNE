@@ -1,7 +1,14 @@
 /** Calls to /api/gap. This feature calls no other module's endpoints. */
 import { api } from "@/shared/api/client";
 
-import type { GapReport, TemplateComparison, TopicGraph } from "./types";
+import type {
+  GapDismissal,
+  GapReport,
+  TemplateComparison,
+  TemplateOption,
+  TemplateSelection,
+  TopicGraph,
+} from "./types";
 
 export { api };
 
@@ -44,3 +51,28 @@ export const getTopicGraph = (meetingId: string) =>
  */
 export const getTemplateComparison = (meetingId: string) =>
   api.gap<TemplateComparison>(`/templates/${meetingId}`);
+
+/** Every template a meeting can be held to, for the rail's picker. */
+export const listTemplates = () => api.gap<TemplateOption[]>("/templates");
+
+/**
+ * Hold this meeting to another template. The server re-runs the comparison
+ * before it answers, so the report and the rail read afterwards already reflect
+ * the new checklist; it does not re-score the meeting in module E.
+ */
+export const chooseTemplate = (meetingId: string, templateKey: string) =>
+  api.gap<TemplateSelection>(`/templates/${meetingId}`, {
+    method: "PUT",
+    body: JSON.stringify({ template_key: templateKey } satisfies TemplateSelection),
+  });
+
+/**
+ * "해당 없음": this gap is a false positive. It leaves the report and stays in
+ * the table, marked — threshold tuning reads the mark (ADR 0006).
+ */
+export const dismissGap = (gapId: string) =>
+  api.gap<GapDismissal>(`/gaps/${gapId}/dismiss`, { method: "POST" });
+
+/** Take a dismissal back; the gap returns to the report as it was raised. */
+export const undoDismissGap = (gapId: string) =>
+  api.gap<GapDismissal>(`/gaps/${gapId}/dismiss`, { method: "DELETE" });

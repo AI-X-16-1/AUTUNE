@@ -289,6 +289,7 @@ dependencies = [
     { name = "fastapi" },
     { name = "faster-whisper" },
     { name = "huggingface-hub" },
+    { name = "pgvector" },
     { name = "pyannote-audio" },
     { name = "pyarrow" },
     { name = "python-multipart" },
@@ -312,6 +313,7 @@ requires-dist = [
     { name = "faster-whisper", specifier = ">=1.1" },
     { name = "huggingface-hub", specifier = ">=0.25" },
     { name = "mlx-whisper", marker = "platform_machine == 'arm64' and sys_platform == 'darwin' and extra == 'mlx'", specifier = ">=0.4" },
+    { name = "pgvector", specifier = ">=0.3" },
     { name = "pyannote-audio", specifier = ">=3.3" },
     { name = "pyarrow", specifier = ">=18" },
     { name = "python-multipart", specifier = ">=0.0.20" },
@@ -503,6 +505,7 @@ dependencies = [
     { name = "celery" },
     { name = "fastapi" },
     { name = "networkx" },
+    { name = "numpy" },
     { name = "pyyaml" },
     { name = "scipy" },
     { name = "sqlalchemy" },
@@ -511,7 +514,9 @@ dependencies = [
 [package.optional-dependencies]
 local-models = [
     { name = "ko-core-news-lg" },
+    { name = "sentence-transformers" },
     { name = "spacy" },
+    { name = "torch" },
 ]
 
 [package.metadata]
@@ -523,10 +528,13 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.115" },
     { name = "ko-core-news-lg", marker = "extra == 'local-models'", url = "https://github.com/explosion/spacy-models/releases/download/ko_core_news_lg-3.8.0/ko_core_news_lg-3.8.0-py3-none-any.whl" },
     { name = "networkx", specifier = ">=3.4" },
+    { name = "numpy", specifier = ">=1.26" },
     { name = "pyyaml", specifier = ">=6" },
     { name = "scipy", specifier = ">=1.13" },
+    { name = "sentence-transformers", marker = "extra == 'local-models'", specifier = ">=3.0" },
     { name = "spacy", marker = "extra == 'local-models'", specifier = ">=3.8" },
     { name = "sqlalchemy", specifier = ">=2.0" },
+    { name = "torch", marker = "extra == 'local-models'", specifier = ">=2.2" },
 ]
 provides-extras = ["local-models"]
 

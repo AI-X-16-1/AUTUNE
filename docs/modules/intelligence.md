@@ -176,6 +176,7 @@ See `../architecture/async-pipeline.md`.
 | `intel_predictions` | Predictions with horizon and probability |
 | `intel_reports` | Generated weekly reports |
 | `intel_completion` | Which of B, C, D have reported per meeting |
+| `intel_meeting_reports` | One summary report per meeting, composed by the agent layer's Report subagent; posted once, deleted with its meeting |
 
 There is no speaking-ratio table, and there will not be one.
 
@@ -261,7 +262,8 @@ honest skill is zero at best — that procedure reported a Brier skill of **+0.6
 where the held-out score was **-0.120**: it would have promoted a model that had
 learned nothing.
 
-**Two things must hold before the default becomes `local`, not one.**
+**Three things must hold before the default becomes `local`.** Two are about
+whether the comparison can be trusted at all; only the third is the comparison.
 
 1. **#445 is fixed.** `labeled_examples` only sees meetings E has already
    aggregated, so a later meeting of the same team that exists in `meetings`
@@ -269,20 +271,26 @@ learned nothing.
    before it is labelled negative although nothing looked for a reversal. Where
    module A failed, that false negative is permanent. The holdout splits the same
    label set, so the fit and the comparison below would both rest on it.
-2. **`current:xgb-* (out of sample)` beats `stored:heuristic-v1` on Brier
-   skill.** Compare the skill, not the raw Brier: the two rows cover different
-   meetings — the fitted one only the holdout window — and skill normalises each
-   against its own base rate.
+2. **#450 is fixed.** The two rows below are scored on different meetings:
+   `current:` on the holdout window alone (a fortnight under the defaults),
+   `stored:` on the whole training window. Brier skill normalises each against its
+   own base rate, so a difference in reversal rate does not decide it — but
+   nothing corrects for a fortnight simply being easier to call than a quarter.
+   #450 adds a `stored:` row over the same holdout meetings, which is the
+   comparison this rule means.
+3. **`current:xgb-*` beats `stored:heuristic-v1` on Brier skill**, over the same
+   meetings once #450 lands. Compare the skill, not the raw Brier.
 
-Until both hold, the default stays `heuristic`.
+Until all three hold, the default stays `heuristic`.
 
 Known blind spots in the label itself:
 
 - A decision modified and then reversed in a third meeting names the modifying
   meeting, so the original stays negative.
-- A later meeting E has not aggregated is invisible to `labeled_examples`
-  entirely, so it cannot withhold the earlier meeting's label the way a measured
-  one with a missing extraction source does — #445.
+- A later meeting E has not aggregated withholds the earlier meeting's label
+  the same way a measured one with a missing extraction source does, but the two
+  need different fixes, so the blind-spot log counts them apart
+  (`unmeasured_lineage` and `unaggregated`).
 
 ## Privacy notes
 

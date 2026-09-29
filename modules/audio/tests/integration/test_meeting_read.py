@@ -66,11 +66,12 @@ def client(app_for, member: User) -> Iterator[TestClient]:
 
 
 def test_a_member_reads_the_meetings_status_and_flags(
-    client: TestClient, db_session: Session, meeting: str
+    client: TestClient, db_session: Session, meeting: str, team: str
 ) -> None:
     """What S12 polls. The two flags are what the pipeline actually wrote, so
     the screen can say "original deleted" and "masked" from stored state
-    rather than from having reached a stage."""
+    rather than from having reached a stage. ``team_id`` is the meeting's own
+    row -- the speaker picker needs it and should not make a second call."""
     row = db_session.get(Meeting, meeting)
     row.status = "complete"
     row.original_audio_deleted = True
@@ -85,6 +86,7 @@ def test_a_member_reads_the_meetings_status_and_flags(
         "status": "complete",
         "original_audio_deleted": True,
         "pii_masked": True,
+        "team_id": team,
     }
 
 

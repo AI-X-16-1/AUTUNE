@@ -26,7 +26,13 @@ from autune_contracts.gap import GapReport
 from autune_core import CurrentUser, get_session
 
 from . import service
-from .schemas import TemplateComparison, TemplateRead, TemplateSelection, TopicGraphRead
+from .schemas import (
+    GapDismissal,
+    TemplateComparison,
+    TemplateRead,
+    TemplateSelection,
+    TopicGraphRead,
+)
 
 router = APIRouter()
 
@@ -66,6 +72,33 @@ def get_topic_graph(meeting_id: str, session: SessionDep, reader: CurrentUser) -
     """
     service.require_readable_meeting(session, meeting_id, reader)
     return service.topic_graph(session, meeting_id)
+
+
+@router.post("/gaps/{gap_id}/dismiss", response_model=GapDismissal)
+def dismiss_gap(gap_id: str, session: SessionDep, reader: CurrentUser) -> GapDismissal:
+    """Mark one gap a false positive — "해당 없음" on S20.
+
+    The gap leaves the report and stays in the table, marked; threshold tuning
+    reads the mark (ADR 0006). The rail keeps the item and says it was
+    dismissed, because a false positive is a judgement about the gap and not
+    evidence the meeting covered the item.
+
+    Named by the gap rather than the meeting, so the membership check is the
+    service's: an unknown gap and a gap on another team's meeting are the same
+    404 — see ``service.set_dismissed``.
+    """
+    return service.set_dismissed(session, gap_id, reader, dismissed=True)
+
+
+@router.delete("/gaps/{gap_id}/dismiss", response_model=GapDismissal)
+def undo_dismiss_gap(gap_id: str, session: SessionDep, reader: CurrentUser) -> GapDismissal:
+    """Take a dismissal back. The gap returns to the report as it was raised.
+
+    A button pressed by mistake has to be undoable from the screen, or the only
+    way to correct it is a row nobody can see — and the mistake would sit in the
+    data threshold tuning reads.
+    """
+    return service.set_dismissed(session, gap_id, reader, dismissed=False)
 
 
 @router.get("/templates", response_model=list[TemplateRead])
@@ -118,9 +151,9 @@ def set_meeting_template(
     this returns. It does not republish ``autune.gap.completed`` — see
     ``service.set_template``.
 
-    The only write under ``/api/gap``, so it is the one route where an
-    unauthenticated caller could have changed what a team sees rather than just
-    read it.
+    One of the writes under ``/api/gap``, with the dismissal routes above: the
+    routes where an unauthenticated caller could have changed what a team sees
+    rather than just read it.
     """
     service.require_readable_meeting(session, meeting_id, reader)
     chosen = service.set_template(session, meeting_id, selection.template_key)

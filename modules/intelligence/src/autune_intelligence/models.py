@@ -137,6 +137,29 @@ class IntelPrediction(Base, TimestampMixin):
     model_version: Mapped[str | None] = mapped_column(String(64))
 
 
+class IntelMeetingReport(Base, TimestampMixin):
+    """One summary report per meeting, composed by the Report subagent.
+
+    agent-layer.md section 3.1: the subagent writes the body, E stores and posts
+    it (section 8 rule 2). Keyed by meeting so a meeting is reported once, and
+    cascaded from ``meetings`` so deleting a meeting deletes its report -- the
+    per-meeting deletion path ``intel_reports`` lacks (#86).
+    """
+
+    __tablename__ = "intel_meeting_reports"
+
+    meeting_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("meetings.id", ondelete="CASCADE"), primary_key=True
+    )
+    team_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    body_markdown: Mapped[str] = mapped_column(Text, nullable=False)
+    slack_channel: Mapped[str | None] = mapped_column(String(64))
+    slack_ts: Mapped[str | None] = mapped_column(String(64))
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    """Set when a task claims the report, before it posts: a set value means
+    never post again, even if that post failed (at most once)."""
+
+
 class IntelReport(Base, TimestampMixin):
     """One generated weekly report per team per period."""
 

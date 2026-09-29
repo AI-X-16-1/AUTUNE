@@ -107,6 +107,47 @@ def test_the_other_korean_word_order_reads_the_same_way() -> None:
     ]
 
 
+def test_a_thing_that_has_to_finish_first_is_needed() -> None:
+    """ "먼저 끝나야" carries none of the plain need words, and it is how a
+    meeting most often says one piece of work waits on another."""
+    assert triples(
+        "인덱스 재색인이 먼저 끝나야 정렬 로직을 붙일 수 있습니다", "인덱스 재색인", "정렬 로직"
+    ) == [("정렬 로직", "인덱스 재색인", "depends_on")]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "디자인이 나와야 검색 화면을 만들 수 있습니다",
+        "결제 모듈을 끝내야 검색 화면을 붙입니다",
+        "결제 모듈을 마쳐야 검색 화면을 시작합니다",
+    ],
+)
+def test_every_finish_word_reads_as_a_condition(text: str) -> None:
+    names = ("디자인", "결제 모듈", "검색 화면")
+    assert [relation for _, _, relation in triples(text, *names)] == ["depends_on"]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "검색 기능은 정렬 로직이 끝나야 합니다",
+        "검색 기능은 정렬 로직이 끝나야 해요",
+        "검색 기능은 정렬 로직이 끝나야 돼요",
+        "검색 기능은 정렬 로직이 끝나야겠네요",
+        "검색 기능은 정렬 로직이 끝나야.",
+    ],
+)
+def test_a_finish_that_is_owed_is_a_deadline_not_a_dependency(text: str) -> None:
+    """The ending that makes a condition also closes an obligation, and an
+    obliged finish is a date somebody promised."""
+    assert triples(text, "검색 기능", "정렬 로직") == []
+
+
+def test_a_finish_asked_about_asserts_nothing() -> None:
+    assert triples("인덱스가 끝나야 정렬 로직을 붙일 수 있나요?", "인덱스", "정렬 로직") == []
+
+
 def test_a_need_with_only_one_topic_asserts_nothing() -> None:
     """Something is needed and the utterance does not say what for. A rule that
     guessed would attach the dependency to whatever topic came last."""
@@ -591,6 +632,35 @@ def test_a_name_from_another_utterance_is_still_a_name() -> None:
     ]
 
 
+def test_a_date_is_never_the_thing_needed() -> None:
+    """금요일까지 sits right before the marker, where the rule looks for what
+    is needed, and the rule read 정렬 로직 depends_on 금요일까지."""
+    found = RuleRelations().extract(
+        [("utt_1", "인덱스가 금요일까지 있어야 정렬 로직을 붙입니다")],
+        [
+            Entity(text="인덱스", label="term", utterance_id="utt_1"),
+            Entity(text="금요일까지", label="date", utterance_id="utt_1"),
+            Entity(text="정렬 로직", label="term", utterance_id="utt_1"),
+        ],
+    )
+
+    assert [(r.source, r.target, r.relation) for r in found] == [
+        ("정렬 로직", "인덱스", "depends_on")
+    ]
+
+
+def test_a_quantity_is_never_an_end() -> None:
+    found = RuleRelations().extract(
+        [("utt_1", "검색 기능은 15%가 필요합니다")],
+        [
+            Entity(text="검색 기능", label="term", utterance_id="utt_1"),
+            Entity(text="15%", label="metric", utterance_id="utt_1"),
+        ],
+    )
+
+    assert found == []
+
+
 def test_a_meeting_with_no_entities_yields_no_relations() -> None:
     assert RuleRelations().extract([("utt_1", "인덱스가 필요합니다")], []) == []
 
@@ -598,7 +668,7 @@ def test_a_meeting_with_no_entities_yields_no_relations() -> None:
 def test_the_extractor_names_itself() -> None:
     """What decides this implementation's output is the marker lists in
     ``relations.py``, and they change without anything else changing."""
-    assert RuleRelations().model_version == "rules-2"
+    assert RuleRelations().model_version == "rules-3"
 
 
 # --- the vocabulary ---------------------------------------------------------

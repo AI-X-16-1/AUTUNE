@@ -44,8 +44,8 @@ def test_an_extending_template_names_both_files_in_its_version() -> None:
     ``general`` would then be averaged together with one raised after it — the
     thing ``template_version`` exists to keep apart.
     """
-    assert template.get_template("general").version == "general.2"
-    assert template.get_template("feature_planning").version == "general.2+feature_planning.1"
+    assert template.get_template("general").version == "general.4"
+    assert template.get_template("feature_planning").version == "general.4+feature_planning.2"
 
 
 def test_every_shipped_item_can_raise_a_usable_gap() -> None:
@@ -132,6 +132,51 @@ def test_a_weight_outside_the_unit_range_is_refused() -> None:
             },
             "test",
         )
+
+
+def _entry(**extra: object) -> dict[str, object]:
+    return {
+        "key": "k",
+        "category": "c",
+        "item": "i",
+        "weight": 0.5,
+        "question": "q?",
+        "question_about": "{topic}의 q?",
+        "keywords": ["성능"],
+        **extra,
+    }
+
+
+def test_the_dependency_item_is_matched_by_a_stated_dependency() -> None:
+    """A dependency is a relation between two topics, and no label says it."""
+    dependency = next(
+        item for item in template.get_template("general").items if item.key == "dependency"
+    )
+
+    assert set(dependency.relations) == {"depends_on", "blocked_by"}
+
+
+def test_relations_default_to_none() -> None:
+    assert template._item(_entry(), "test").relations == ()
+
+
+def test_co_occurrence_is_refused_as_a_relation() -> None:
+    """Two topics said in one breath say nothing about how they relate, and an
+    item matched on that would be covered by any meeting that named two things."""
+    with pytest.raises(ConfigurationError, match="does not extract"):
+        template._item(_entry(relations=["co_occurs"]), "test")
+
+
+def test_an_unknown_relation_is_refused() -> None:
+    """A typo would match nothing, silently, and the item would raise its gap in
+    every meeting that stated the relation."""
+    with pytest.raises(ConfigurationError, match="does not extract"):
+        template._item(_entry(relations=["depend_on"]), "test")
+
+
+def test_relations_given_as_a_bare_string_are_refused() -> None:
+    with pytest.raises(ConfigurationError, match="not a list"):
+        template._item(_entry(relations="depends_on"), "test")
 
 
 def test_a_template_may_not_redefine_an_inherited_item() -> None:
@@ -235,3 +280,39 @@ def raw_item(**overrides: object) -> dict[str, object]:
         "question_about": "{topic}의 질문?",
         "keywords": ["성능"],
     } | overrides
+
+
+def _entry(**overrides: object) -> dict[str, object]:
+    entry: dict[str, object] = {
+        "key": "k",
+        "category": "c",
+        "item": "i",
+        "weight": 0.5,
+        "question": "q?",
+        "question_about": "{topic}의 q?",
+        "keywords": ["성능"],
+    }
+    entry.update(overrides)
+    return entry
+
+
+def test_examples_are_optional() -> None:
+    assert template._item(_entry(), "test").examples == ()
+
+
+def test_examples_are_read_in_order() -> None:
+    loaded = template._item(_entry(examples=["제가 맡겠습니다", "금요일까지 끝냅니다"]), "test")
+
+    assert loaded.examples == ("제가 맡겠습니다", "금요일까지 끝냅니다")
+
+
+def test_examples_written_as_one_string_are_refused() -> None:
+    """A bare string would be iterated one character at a time, and every
+    character would become an example sentence."""
+    with pytest.raises(ConfigurationError, match="not a list"):
+        template._item(_entry(examples="제가 맡겠습니다"), "test")
+
+
+def test_an_empty_example_is_refused() -> None:
+    with pytest.raises(ConfigurationError, match="empty example"):
+        template._item(_entry(examples=["제가 맡겠습니다", "  "]), "test")

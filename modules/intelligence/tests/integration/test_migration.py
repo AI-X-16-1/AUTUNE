@@ -16,6 +16,7 @@ INTEL_TABLES = {
     "intel_alignment",
     "intel_predictions",
     "intel_reports",
+    "intel_meeting_reports",
 }
 
 

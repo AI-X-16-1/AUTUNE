@@ -1,8 +1,13 @@
-import { StatusDot } from "@/shared/ui";
+import { Button, StatusDot } from "@/shared/ui";
 import type { StatusVariant } from "@/shared/ui";
 
 import { COVERAGE_LABELS } from "../types";
-import type { Coverage, TemplateChecklistItem, TemplateComparison } from "../types";
+import type {
+  Coverage,
+  TemplateChecklistItem,
+  TemplateComparison,
+  TemplateOption,
+} from "../types";
 
 /**
  * The right rail of S20: the checklist the meeting was held to, and how far it
@@ -21,8 +26,31 @@ import type { Coverage, TemplateChecklistItem, TemplateComparison } from "../typ
  * the server saying nothing has been compared, and the alternative reading —
  * no gap row, therefore covered — is a full checklist of green dots for a
  * meeting nobody has processed.
+ *
+ * **Two writes live here.** The picker holds the meeting to another checklist —
+ * the server re-runs the comparison before it answers, so the list and the rail
+ * redraw against the new one. And a dismissed item is where "해당 없음" is taken
+ * back: the gap has left the list by then, so the rail is the only place it is
+ * still visible. Both are optional props, so a rail with no writes wired
+ * renders as a plain read.
  */
-export function TemplateRail({ comparison }: { comparison: TemplateComparison }) {
+export function TemplateRail({
+  comparison,
+  templates = [],
+  onChoose,
+  onUndoDismiss,
+  pending = null,
+}: {
+  comparison: TemplateComparison;
+  /** What the picker offers. One template or none draws no picker. */
+  templates?: readonly TemplateOption[];
+  onChoose?: (templateKey: string) => void;
+  onUndoDismiss?: (gapId: string) => void;
+  /** What is in flight: a gap id, or `"template"`. */
+  pending?: string | null;
+}) {
+  const picking = onChoose !== undefined && templates.length > 1;
+
   return (
     <div className="flex flex-col" style={{ gap: "var(--space-24)" }}>
       <section>
@@ -35,6 +63,32 @@ export function TemplateRail({ comparison }: { comparison: TemplateComparison })
         >
           템플릿 대조 · {comparison.name}
         </h2>
+        {picking ? (
+          <label className="mt-2 block">
+            <span className="sr-only">대조할 템플릿</span>
+            <select
+              value={comparison.template_key}
+              disabled={pending === "template"}
+              aria-busy={pending === "template" || undefined}
+              onChange={(event) => onChoose(event.target.value)}
+              className="w-full border bg-transparent"
+              style={{
+                height: "var(--control-h-default)",
+                paddingInline: "var(--control-px-text)",
+                borderRadius: "var(--radius)",
+                // As in actions/ActionDetailDrawer: `--border-input` has no dark value.
+                border: "1px solid var(--color-hairline)",
+                fontSize: "var(--text-body)",
+              }}
+            >
+              {templates.map((option) => (
+                <option key={option.key} value={option.key}>
+                  {option.name} · {option.items}개 항목
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : null}
         <p
           className="mt-1 text-[var(--color-ink-muted)]"
           style={{ fontSize: "var(--text-metaSmall)" }}
@@ -48,7 +102,12 @@ export function TemplateRail({ comparison }: { comparison: TemplateComparison })
 
         <div className="mt-3 border-t border-[var(--color-hairline)]">
           {comparison.items.map((item) => (
-            <ChecklistRow key={item.key} item={item} />
+            <ChecklistRow
+              key={item.key}
+              item={item}
+              onUndoDismiss={onUndoDismiss}
+              pending={item.gap_id !== null && pending === item.gap_id}
+            />
           ))}
         </div>
 
@@ -72,7 +131,16 @@ export function TemplateRail({ comparison }: { comparison: TemplateComparison })
 }
 
 /** One checklist item: state on the left, what it asked for, verdict on the right. */
-function ChecklistRow({ item }: { item: TemplateChecklistItem }) {
+function ChecklistRow({
+  item,
+  onUndoDismiss,
+  pending,
+}: {
+  item: TemplateChecklistItem;
+  onUndoDismiss?: (gapId: string) => void;
+  pending: boolean;
+}) {
+  const gapId = item.dismissed ? item.gap_id : null;
   return (
     <div
       className="grid items-center border-b border-[var(--color-hairline)]"
@@ -99,6 +167,18 @@ function ChecklistRow({ item }: { item: TemplateChecklistItem }) {
         }}
       >
         {verdict(item)}
+        {gapId !== null && onUndoDismiss ? (
+          <Button
+            tone="text"
+            size="compact"
+            className="ml-1"
+            disabled={pending}
+            aria-busy={pending || undefined}
+            onClick={() => onUndoDismiss(gapId)}
+          >
+            {pending ? "처리 중" : "되돌리기"}
+          </Button>
+        ) : null}
       </span>
     </div>
   );

@@ -28,6 +28,7 @@ absence of a prefix is what marks a table as shared.
 | `teams` | An organization or squad |
 | `team_members` | User ↔ team membership and role |
 | `team_integrations` | One team's connection to Notion, Slack or Calendar |
+| `user_integrations` | One person's own connection to their Google Calendar |
 | `meetings` | One analysis unit |
 | `participants` | One voice at a meeting, identified or not — usually one person, not always; see below |
 | `utterances` | One continuous stretch of speech, PII-masked |
@@ -55,6 +56,13 @@ if config is None:
     return  # this team has not connected Notion; skip the feature
 client = NotionClient(config.require_secret())
 ```
+
+`user_integrations` is the per-person counterpart (#59, #435): a person's own
+calendar, which only they can grant and which is deleted with their
+account (`ON DELETE CASCADE`). The same rule applies — written by `packages/core`,
+read by modules through `load_user_integration`, and only ever read by code
+acting for that person. A module's own sync state for it goes in its own
+prefixed table.
 
 The one exception, until S28 ships, is a route for connecting an integration
 by hand (#401). It is mounted only under `AUTUNE_ENV=local` **and** an explicit

@@ -11,13 +11,32 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, String, func
+from pgvector.sqlalchemy import Vector
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Integer, String, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from autune_core import Base, Meeting
 from autune_core.ids import JOB, new_id
 
 JOB_STATUSES = ("queued", "running", "done", "failed", "superseded")
+
+
+class TimestampMixin:
+    """``created_at``/``updated_at`` shared by this module's tables.
+
+    Duplicated rather than imported: every module defines this locally
+    (``autune_context``, ``autune_gap``, ``autune_extraction``,
+    ``autune_intelligence`` all do) instead of importing it from
+    ``autune_core.entities``, where it backs the shared entities themselves
+    but is not part of ``autune_core``'s public surface.
+    """
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
 
 
 class TranscriptionJob(Base):
@@ -112,3 +131,63 @@ class AudConsentAttestation(Base):
     attested_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+
+
+EMBEDDING_DIM = 256
+"""Width of ``pyannote/wespeaker-voxceleb-resnet34-LM``'s output -- the model
+``live/embedder.py`` already runs, so a live vector and a stored one are
+comparable."""
+
+
+class AudSpeakerEmbedding(Base, TimestampMixin):
+    """One voice, as a vector: ``aud_speaker_embeddings``.
+
+    Two kinds of row, and the check constraint below is what keeps them apart:
+
+    - an **observation** (``meeting_id`` + ``speaker_label``, no ``user_id``):
+      what ``화자 2`` sounded like in one meeting. Written by the worker while
+      the recording still exists -- it is deleted the moment transcription
+      finishes (invariant 11), so a vector not taken then can never be taken.
+      Cascades with the meeting.
+    - a **profile** (``user_id``, no meeting): a voice somebody confirmed is
+      theirs. Lives on the person, because cascading it with the meeting would
+      reset identification every retention window. ``privacy.md`` section 4
+      allows a table reachable by ``user_id``.
+
+    ``source_meeting_id``/``source_speaker_label`` are provenance, not a link:
+    ``SET NULL`` so the profile outlives the meeting it came from, and there so
+    that confirming the same (meeting, label) twice replaces the row the first
+    confirmation produced. Without them one wrong pick stays in a person's
+    profile for good and drags every later match.
+
+    Vectors are only ever compared within one ``model_version``: a different
+    checkpoint puts the same voice somewhere else in the space.
+    """
+
+    __tablename__ = "aud_speaker_embeddings"
+    __table_args__ = (
+        CheckConstraint(
+            "(meeting_id IS NOT NULL AND speaker_label IS NOT NULL AND user_id IS NULL)"
+            " OR (meeting_id IS NULL AND speaker_label IS NULL AND user_id IS NOT NULL)",
+            name="ck_aud_speaker_embeddings_observation_or_profile",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    meeting_id: Mapped[str | None] = mapped_column(
+        String(64), ForeignKey("meetings.id", ondelete="CASCADE"), index=True
+    )
+    speaker_label: Mapped[str | None] = mapped_column(String(100))
+    user_id: Mapped[str | None] = mapped_column(
+        String(64), ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    vector: Mapped[list[float]] = mapped_column(Vector(EMBEDDING_DIM), nullable=False)
+    model_version: Mapped[str] = mapped_column(String(200), nullable=False)
+    source_meeting_id: Mapped[str | None] = mapped_column(
+        String(64), ForeignKey("meetings.id", ondelete="SET NULL")
+    )
+    source_speaker_label: Mapped[str | None] = mapped_column(String(100))
+    confirmed_by: Mapped[str | None] = mapped_column(
+        String(64), ForeignKey("users.id", ondelete="SET NULL")
+    )
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

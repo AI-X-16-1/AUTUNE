@@ -183,7 +183,7 @@ asking the extractor.
 
 | Relation | Marker | Reads |
 | --- | --- | --- |
-| `depends_on` | 필요, 있어야, 되어야, 선행, 전제, 없이는, 없으면 | "정렬 로직은 인덱스가 필요합니다" |
+| `depends_on` | 필요, 있어야, 되어야, 선행, 전제, 없이는, 없으면; and 끝나야, 끝내야, 나와야, 마쳐야 **only when another clause follows** | "정렬 로직은 인덱스가 필요합니다", "인덱스 재색인이 먼저 **끝나야** 정렬 로직을 붙일 수 있습니다" |
 | `blocked_by` | a blocker word (안 잡, 미정, 막혀, 무리, 이슈, …) **and** a causal connective in the same clause, on either side of it | "실시간은 콜드스타트가 **안 잡혀 있어서** 무리입니다", "검색 기능은 캐시 **때문에** 막혀 있습니다" |
 | `alternative_to` | 대신, 말고, 보다는, 아니라, 반면, `vs` | "인기순 정렬 대신 실시간 개인화로" |
 | `part_of` | — **no rule** | |
@@ -310,6 +310,29 @@ the same review:
   실시간은 and 실시간으로 have to stay mentions, and telling 실시간성 from those
   needs the tagger rather than a boundary.
 
+**A finish is a condition only when something follows it.** "인덱스 재색인이
+먼저 끝나야 정렬 로직을 붙일 수 있습니다" is the commonest way a meeting says one
+piece of work waits on another, and none of the plain need words is in it —
+gap_detection_v1's search-personalisation case lost its dependency to exactly
+this. The same ending also closes an obligation: "정렬 로직이 금요일까지
+끝나야 합니다" is a deadline, and read as a need it would assert that 정렬 로직
+depends on whatever was named before it. So 끝나야, 끝내야, 나와야 and 마쳐야
+count only when a clause follows; 합니다, 해요, 돼요, 겠-, 할 and the end of the
+utterance refuse them. 있어야 and 되어야 take no such guard, because "캐시가
+있어야 합니다" is a need either way — what is obliged there is the thing
+existing, not a date somebody promised. `rules-3`.
+
+**A date or a quantity is never an end.** Entities labelled `date` or `metric`
+are left out of the names the rules search for. They sit exactly where the
+thing needed is looked for — "인덱스가 금요일까지 있어야 정렬 로직을 붙입니다"
+read as `정렬 로직 depends_on 금요일까지` — and neither is a thing another thing
+waits on. They are still topics; only the relation step stops seeing them.
+`rules-3`.
+
+With #456 reading `depends_on` as evidence for the dependency item, the two
+together close search-personalisation's dependency false positive:
+gap_detection_v1 `high` precision 0.842 → 0.889, recall 1.0.
+
 **The cue words themselves are not topics.** 필요 and 이슈 join 대신, 말고 and
 반면 in `spoken.STOP_TERMS`: the model tags all of them as ordinary nouns, so a
 noun run welds them into a label, and "인덱스가 필요 없습니다" produced a topic
@@ -419,8 +442,31 @@ three side by side.
 - **Matching is containment either way**, over `graph.topic_key`'s
   normalisation: a keyword inside a longer label, and a label inside a longer
   keyword. Deliberately dumb, and the rule v1 measures precision against — what
-  replaces it (embeddings over the items) is then a change with a number
-  attached rather than a better idea.
+  replaces it is then a change with a number attached rather than a better idea.
+- **A stated relation matches too.** An item may name step-2 relations
+  (`relations` in the template file), and a topic at either end of such an edge
+  in `gap_topic_edges` matches the item the way a keyword hit does — ranked by
+  centrality, so it can cover the item or leave it partial. `general`'s
+  `dependency` names `depends_on` and `blocked_by` (version 3). A dependency is
+  how two things stand to each other, and no topic label says it: "마이그레이션
+  검증 스크립트가 먼저 있어야 롤백 절차가 의미가 있습니다" already came out of
+  step 2 as `롤백 절차 depends_on 마이그레이션 검증 스크립트`, and the item
+  was still reported missing because neither label contains 의존 or 선행. On
+  gap_detection_v1 the change closed that false positive — `high` precision
+  0.800 → 0.842, recall unchanged at 1.0. `co_occurs` is refused at load: two
+  topics said together say nothing about how they relate. The two dependency
+  false positives left are a marker the rules do not know yet ("먼저 끝나야")
+  and a sentence with only one topic in it, which no relation can reach.
+- **Embeddings over the topic labels were measured and not built.** KURE-v1
+  between each item's display name and each topic label, over the same set:
+  of the five settled items keyword matching missed, it placed no correct topic
+  nearest to any — they were settled with a verb or by a relation, and the
+  nearest label was an unrelated one ("성공 기준" for `dependency`). It also
+  scored real gaps above true matches (`ownership` against "보관 기간" at
+  0.546; `performance` against "응답 시간", a true match, at 0.500), so no
+  floor separates them. A label match can cover an item, which makes every
+  such error a real gap hidden. Reading the *speech* by meaning is a different
+  mechanism with a different ceiling, and is where sentence embeddings go.
 - **Two sources of evidence, ranked: the graph, then the speech.** A topic match
   carries a centrality, so it decides between covered and partial. A keyword
   that appears in an utterance with no topic behind it is weaker — the words
@@ -448,6 +494,8 @@ three side by side.
   negations are not detected, and detecting them is its own judgement rather
   than a one-liner; the fixture labels disagree with the code on exactly this
   case and it is the open question of the rule.
+- **The speech can also be read by meaning** (`AUTUNE_GAP_EMBEDDER_IMPL=local`,
+  off by default). See "Speech read by meaning" below.
 - **A missing item scores exactly its template weight.** There is no topic to
   read a centrality off and none to read a silence off, so the weight is the
   only measured input and the score is it. Charging it a full 1.0 for "no
@@ -501,6 +549,64 @@ deletes the meeting's topics first and the cascade takes those rows with them.
 Every threshold and weight is in `config.py` (#35): the two severity bands, the
 centrality below which a match is partial, the damping, and the three risk
 weights.
+
+### Speech read by meaning
+
+A keyword is a noun, and the eval set's false positives were all `no-noun`: the
+meeting settled the item with a verb and a date — "정렬 로직은 이건우님이 맡고
+다음 주 금요일까지 초안을 봅니다" — and said no noun a keyword list or a better
+extractor could reach. `autune_gap.semantic` reads the same consenting speech a
+second way, through a sentence embedder (KURE-v1, in process, the model B and D
+already run).
+
+- **Every item carries example sentences** (`examples` in the template files) —
+  what settling it sounds like in a meeting. An utterance is compared against
+  every item's examples and against `semantic.BACKGROUND`, sentences that
+  settle nothing ("네 좋습니다", "오늘은 진행 상황만 공유드릴게요"), and counts
+  for the class it is nearest to if that is an item and the cosine reaches
+  `AUTUNE_GAP_SEMANTIC_FLOOR`.
+- **Nearest class, because a cutoff does not separate.** Item names and
+  example sentences were both measured against the eval set with a per-item
+  cutoff first, and the distributions overlapped: "네 알겠습니다. 그럼 여기서
+  마치겠습니다" is 0.65 from "그 작업은 제가 맡겠습니다" on the shared ending
+  alone, above the 0.61 of the utterance that really did settle an owner in
+  `search-personalisation`. Against the background class the same sentence
+  lands at 0.86 and counts for nothing.
+- **A heard item is exactly as strong as a spoken keyword.** It makes a missing
+  item *partial*, never covered, and `detect.classify`'s ranking is unchanged.
+  So the change closes a `no-noun` false positive by moving it below `high`
+  rather than by claiming the item was settled — the row stays, a reader who
+  opens `medium` sees it, and precision over every severity does not move.
+- **Examples are never taken from the eval set**, and a test compares the two.
+  The harness would otherwise be grading its own answer key.
+- **Nothing leaves the process and nothing is stored.** The embedder is
+  `local` or `fake`; there is no external option, for the reason the entity
+  extractor has none. The vectors decide which items were said and are dropped.
+
+`python -m autune_gap.eval --compare` runs the set twice, embedder off and then
+on, and prints what became of every baseline false positive. On the four
+authored cases, with spaCy:
+
+| | off | local |
+| --- | --- | --- |
+| precision (`high`) | 0.80 | 0.88 |
+| recall (`high`) | 1.00 | 0.94 |
+| false positives (all `no-noun`) | 4 | 2 |
+| true positives | 16 | 15 |
+
+Closed: `deploy-retro:ownership` and `outbound-privacy:dependency`. Still
+raised: `search-personalisation:dependency` — "인덱스 재색인이 먼저 끝나야
+정렬 로직을 붙일 수 있습니다" reaches only 0.51 with the dependency examples,
+under the floor — and `deploy-retro:dependency`, whose utterance is nearer the
+`risk` examples, and one utterance counts for one item. Lost: `search-personalisation:cold_start`, a real gap, because "인기순
+정렬 대신 실시간 개인화로 가는 거죠" is nearest the cold-start examples.
+
+**Off by default, and that is the finding rather than caution.** The floor
+(0.55) and margin (0) were chosen by looking at these four meetings, so the
+table says the mechanism does what it claims on them and nothing about whether
+it holds. The W5 meetings decide; `--compare` is the command to run on them.
+LLM verification of what the embedder heard is a separate, later step and a
+privacy decision of its own (`../architecture/privacy.md` section 6).
 
 ### Step 8 as built
 
@@ -629,13 +735,14 @@ here, so the no-deletion-hook sentence above still holds.
 | GET | `/reports/{meeting_id}` | Full gap report |
 | GET | `/topics/{meeting_id}` | Topic graph for visualization |
 | POST | `/gaps/{id}/dismiss` | Mark a gap as a false positive (feeds threshold tuning) |
+| DELETE | `/gaps/{id}/dismiss` | Take a dismissal back |
 | GET | `/templates` | Available domain templates |
 | GET | `/templates/{meeting_id}` | Which template this meeting is held to, and how far it got with each item |
 | PUT | `/templates/{meeting_id}` | Point this meeting at a template and re-compare |
 
 ### The read API as built
 
-Everything above is built except `POST /gaps/{id}/dismiss`.
+Everything above is built.
 `/reports/{meeting_id}` and `/topics/{meeting_id}` read the stored rows; nothing
 was added to `apps/` to mount them.
 
@@ -713,8 +820,24 @@ the pipeline produced, and a template somebody is trying out on S20 should not
 silently rewrite that. A key no template file defines is a 422, not a 404 — what
 is wrong is the value, not the address.
 
-`POST /gaps/{id}/dismiss` is still not built. It now has rows to act on, and
-what it needs is the screen that calls it (#48).
+`POST /gaps/{id}/dismiss` sets `dismissed_at` and nothing else; `DELETE` on the
+same path clears it, because a button pressed by mistake has to be undoable from
+the screen or the mistake sits in the data tuning reads. Both return the state
+the server settled on (`schemas.GapDismissal`). Dismissing twice keeps the first
+timestamp. The routes are named by the gap, so the membership check is the
+service's own: an unknown gap and a gap on another team's meeting are the same
+404, and neither names the meeting. Neither republishes `autune.gap.completed`,
+for the reason `PUT /templates` does not.
+
+A dismissal made under one template survives a switch to another. Switching
+drops the old checklist's gaps, but a dismissed one stays — marked, out of the
+report, and not on the rail, which reads only the template in force — so tuning
+keeps its input and switching back finds the judgement where it was left.
+
+S20 calls all of this (#48): "해당 없음" on a HIGH gap, "되돌리기" on the rail
+item it leaves behind, and the rail's template picker. The screen re-reads the
+report, graph and rail after each write rather than patching its own copy, and
+polls them every five seconds while the rail says `analysed: false`.
 
 ## Celery tasks
 
@@ -733,6 +856,7 @@ what it needs is the screen that calls it (#48).
 | --- | --- |
 | Entity extraction | spaCy NER (Korean model) |
 | Relation extraction | Rule-based patterns plus LLM assistance |
+| Spoken evidence by meaning | KURE-v1 sentence embeddings, in process, off by default |
 | Graph | NetworkX, in memory |
 | Topic importance | PageRank, betweenness centrality |
 | Risk scoring | Weighted heuristic; thresholds in `config.py` |
@@ -813,6 +937,7 @@ and dismissals feed threshold tuning.
 
 ```bash
 uv run --package autune-gap python -m autune_gap.eval
+uv run --package autune-gap python -m autune_gap.eval --compare   # embedder off vs local
 ```
 
 Precision is measured over the `high` band, because that is what a reader

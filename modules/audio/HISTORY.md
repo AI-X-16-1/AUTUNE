@@ -40,14 +40,17 @@ halves are separated deliberately — see section 3.
 | Raw-audio deletion | `storage.py` | merged (#117) |
 | Diarize | `diarization.py` | merged (#136) |
 | Assign speakers to words | `speakers.py` | merged (#136) |
+| Speaker identification | `identification.py`, `tasks.py`, `service.py`, `router.py` | open, branch `audio/speaker-identification` (#6) |
 | PII masking — patterns | `masking.py` + `autune_integrations.privacy` | merged (#138) |
 | PII masking — spoken numbers | `recognition.py` | open, PR #158 |
 | Persist + publish | `persistence.py`, `tasks.py` | merged (#184) |
 | Event publishing | `autune_core.events` | merged (#145) |
 
-Speaker **identification** (matching a voice to a person, #6) is not built. Every
-`participants.user_id` is `NULL` today, and several downstream bugs are waiting
-on that changing — see section 6.
+Speaker **identification** (matching a voice to a person, #6) is built —
+`docs/modules/audio-speaker-identification.md`. A confirmed speaker fills
+`participants.user_id`; an unconfirmed one still keeps `NULL`. The downstream
+bugs section 6 describes as waiting on that column are live from here, not
+latent — see that section.
 
 ---
 
@@ -448,6 +451,92 @@ the demo runs `--pool=solo` (#329), and pyannote on Metal inherits that risk
 untested — which is why the setting is empty by default and only the demo opts
 in.
 
+### Speaker identification (`docs/modules/audio-speaker-identification.md`)
+
+`speaker_id` was null on every utterance the module had ever produced: voices
+were separated and never named. This adds the missing half — a confirmed
+speaker becomes a voice profile, and the next meeting offers that person as a
+candidate for the same voice.
+
+The threshold is **0.70, provisional** — higher than the live tracker's 0.55
+because that one asks whether a voice is the same as a moment ago and this one
+asks whether it is a particular person. The evaluation that settles it needs
+several meetings with the same people, which the in-house recording does not
+have; it is the next thing this feature owes.
+
+**First measurement, 2026-09-26 — the threshold has a floor now, and still no
+ceiling.** A six-person 5m27s recording (`오튠회의샘플_6인.m4a`, local only:
+`*.m4a` is git-ignored, and invariant 11 keeps a recording out of durable
+storage) diarized into 6 speakers over 77 turns and produced a vector for all
+six — nobody fell under the 3-second floor. Comparing the six against each
+other gives 15 pairs of **different people recorded in the same room, on the
+same microphone**:
+
+| | Cosine similarity |
+| --- | --- |
+| Closest pair (화자 2 / 화자 6) | **0.382** |
+| Mean of 15 pairs | 0.207 |
+| Furthest pair | 0.100 |
+
+So 0.70 sits **0.32 above the closest false match** on this recording. Same
+mic, same room, same session is the hardest case for telling people apart —
+channel and noise are identical, so only the voices differ — which makes 0.382
+a meaningful upper bound on the false-match region rather than a lucky number.
+
+A second, weaker check the same day: a profile confirmed from an unrelated
+60-second two-person clip was offered to **none** of the six. Correct, and
+what the threshold is for.
+
+**What is still unmeasured is the half that matters more.** These numbers bound
+the threshold from *below* — they say 0.70 will not confuse two people. They say
+nothing about whether it is too *high*, which is the question of how low the
+**same** person scores across two different recordings, and that still needs two
+meetings with the same people. A threshold that never confuses anyone and also
+never recognises anyone is the failure these numbers cannot see.
+
+The vector itself is taken from **3 to 10 seconds** of a speaker's own turns
+(`speaker_embedding_min_s` / `speaker_embedding_max_s`) — long enough to embed,
+short enough that one straggler turn cannot pull the average toward noise.
+Embedding model: `pyannote/wespeaker-voxceleb-resnet34-LM`, 256 dimensions —
+the same model `audio-live-speakers.md` already uses for the live path, so a
+live vector and a stored vector are comparable without a second download.
+
+**`voice_profiles_enabled` is `False` by default** — the one setting here that
+is not a tuning knob but a legal gate. ADR 0007's Q4 (#92) asks whether a
+voice embedding is biometric information (sensitive information) under PIPA
+Article 23 and whether collecting it needs
+its own separate consent, and that question was still open when this feature
+shipped.
+
+**It gated only the profile write, and that was the wrong line.** Four
+reviewers read the flag as "no biometric data is collected" because the PR said
+so; the code stored an observation vector per speaker on every consented
+meeting regardless of it (@PARKJAEKYUNG0525, @lsh2217 on #370). Those vectors
+are the same data Q4 asks about. They become attributable to a person the
+moment a speaker is confirmed. The consent behind them is one checkbox reading
+"녹음과 분석", which does not mention voice characteristics. And they outlived
+the flag: turning it on later and confirming a speaker copied a vector recorded
+before anyone could have consented to enrolment straight into that person's
+profile.
+
+So the gate moved to collection. With the flag off the embedder is never
+loaded, no vector is taken, and a meeting reprocessed after it goes off gives
+back the vectors it had — the DELETE now runs whether or not anything replaces
+it, which also fixes a re-run leaving a first pass's vectors under labels a
+second diarization had reassigned. `Participant.user_id` is still written (that
+is attendance), and deleting a profile is never gated — a flag that limits
+collection must not block its own undo.
+
+The lesson is narrower than the fix: **a privacy claim in a PR description is
+not a test.** "Merging this collects no biometric data" was written in good
+faith about a gate that existed, one layer away from the collection it was
+describing. What settles it now is `test_the_flag_being_off_collects_no_vectors_even_with_consent`,
+which asserts the embedder was never even loaded.
+
+Turning it on is expected to wait for authentication to exist and carry a
+separate, refusable biometric consent (#268); until then the cost of having
+shipped identification ahead of the legal answer is a flag flip, not a rebuild.
+
 ---
 
 ## 3. Decisions, and the ones that reversed
@@ -752,7 +841,7 @@ side).
 
 ## 6. What is open, and why it matters
 
-### Blocked on speaker identification (#6)
+### Speaker identification shipped (#6) — the two bugs it wakes up are live now
 
 `participants` holds **one row per diarization label**, and splitting one voice
 into two clusters is diarization's characteristic failure. Once `user_id` is
@@ -766,11 +855,12 @@ broken two other modules and each fixed it locally:
   been silent on it; a participation gap raised on that silence is a false
   statement about somebody who spoke.
 
-Both are latent today because `user_id` is always `NULL`. **They go live the day
-#6 ships.** #167 writes the rule down once, in
-`docs/architecture/data-model.md` under "A participant row is a voice, not a
-person" — **open, not merged**, so until it lands the rule is still two local
-fixes and no statement.
+Both were latent while `user_id` was always `NULL`. **They are live now**, on
+`audio/speaker-identification`: the day a real meeting gets a confirmed
+speaker, both bugs are reachable, not hypothetical. #167 wrote the rule down
+once, in `docs/architecture/data-model.md` under "A participant row is a
+voice, not a person" — **merged** (2026-09-15), so the rule was already a
+statement, not just two local fixes, before this feature shipped.
 
 `TranscriptMetadata.participants` still has no description in the contract, and
 the same trap reaches B and C through the payload rather than the table. **#184
@@ -796,7 +886,7 @@ exists, not fixed one at a time.**
 
 | | |
 | --- | --- |
-| #92 | Legal review of ADR 0007 — Q4 gates whether embedding collection needs separate consent, which gates #6 |
+| #92 | Legal review of ADR 0007 — Q4 gates whether embedding collection needs separate consent. #6 shipped without waiting for the answer, gated instead on the meeting's existing consent attestation; whether that is enough is still #92's open question |
 | #155 | S13's spec asks for live classification counts; the architecture deliberately has no path to fill them |
 | #106 | No frontend test infrastructure — the S13 components have no component tests |
 
@@ -830,8 +920,10 @@ Ordered by what the measurements say, not by what is pleasant.
    mode. Four open detector issues cannot be resolved without one, and the
    `#61` target argument is about what a number means under which conditions.
 
-4. **Speaker identification (#6)**, once #92 answers. It closes two latent bugs in
-   other modules as a side effect.
+4. ~~**Speaker identification (#6)**, once #92 answers.~~ Shipped on
+   `audio/speaker-identification` without waiting for #92 — see the table
+   above and section 6. The threshold evaluation section 2 describes is what
+   this feature still owes, not the identification itself.
 
 5. **Overlapping speech.** DER is measured on one-speaker-at-a-time audio. The
    next recording needs per-speaker tracks — that is the case the two pyannote
