@@ -70,7 +70,7 @@ PAGE = """<!doctype html>
 
   <section>
     <h2>Notion</h2>
-    <p class="hint">페이지 하나를 integration에 먼저 공유하세요. 그 아래에 "액션 아이템"·"결정" DB를 만들고, 이후 확정한 항목이 그 DB에 페이지로 생깁니다.</p>
+    <p class="hint">페이지 하나를 integration에 먼저 공유하세요. 그 아래에 "액션 아이템"·"결정"·"회의록" DB를 만들고, 이후 확정한 항목이 그 DB에 페이지로 생깁니다.</p>
     <label>team_id</label>
     <input id="notion-team" placeholder="team_...">
     <label>Integration token</label>
@@ -96,14 +96,17 @@ function card(kind, title, lines) {
 }
 
 function connected(data) {
-  const made = data.databases === "created";
+  const said = {
+    created: "페이지 아래에 “액션 아이템”·“결정”·“회의록” DB를 새로 만들었습니다.",
+    added: "이 페이지에 전에 만든 DB는 그대로 쓰고, 없던 DB만 새로 만들었습니다.",
+    reused: "이 페이지에 전에 만든 DB가 있어서 그대로 씁니다. 새로 만들지 않았습니다.",
+  };
   return card("ok", "✓ Notion에 연결했습니다", [
-    node("p", {}, [made
-      ? "페이지 아래에 “액션 아이템”·“결정” DB를 새로 만들었습니다."
-      : "이 페이지에 전에 만든 DB가 있어서 그대로 씁니다. 새로 만들지 않았습니다."]),
+    node("p", {}, [said[data.databases] || said.created]),
     node("div", { class: "links" }, [
       node("a", { href: data.action_db_url, target: "_blank", rel: "noopener" }, ["액션 아이템 DB 열기 ↗"]),
       node("a", { href: data.decision_db_url, target: "_blank", rel: "noopener" }, ["결정 DB 열기 ↗"]),
+      node("a", { href: data.minutes_db_url, target: "_blank", rel: "noopener" }, ["회의록 DB 열기 ↗"]),
     ]),
     node("p", { class: "next" }, ["이제 액션 보드에서 항목을 확정하면 이 DB에 페이지가 생깁니다."]),
   ]);
