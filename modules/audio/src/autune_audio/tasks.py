@@ -22,7 +22,7 @@ from sqlalchemy.orm import Session
 from autune_audio import service
 from autune_audio.config import get_settings
 from autune_audio.decoding import decode
-from autune_audio.diarization import get_diarizer
+from autune_audio.diarization import get_diarizer, resolve_device
 from autune_audio.glossary import build_prompt
 from autune_audio.live.embedder import Embedder
 from autune_audio.masking import mask
@@ -159,6 +159,23 @@ def process_recording(job_id: str) -> None:
 
     try:
         with adopt(upload_path(job_id, settings)) as recording:
+            # First line of the block, before `decode`. Reached from `_load`
+            # instead, a device this process cannot use raises after
+            # `transcribe` -- about thirteen minutes of Whisper on the measured
+            # recording -- for a mistake that was knowable before the file was
+            # opened (@PARKJAEKYUNG0525, @lsh2217, @mminjae97, @kjfcvx12 on
+            # #394). One `torch.cuda.is_available()` here fails in
+            # milliseconds instead.
+            #
+            # Inside `adopt`, not in front of it. Outside, a failure left the
+            # upload on disk for the sweep to find -- but the sweep is for a
+            # task that was *lost*, and this one failed; a `failed` job is
+            # never re-run and recovery is a re-upload, which is a new job with
+            # a new file. So the old one had no reader and no owner, which is
+            # the durable copy invariant 11 exists to prevent
+            # (@PARKJAEKYUNG0525). In here, `adopt`'s `finally` deletes it.
+            resolve_device()
+
             waveform = decode(recording.path)
             transcription = transcribe(waveform, glossary=build_prompt())
             named = rename_speakers(get_diarizer().diarize(waveform))

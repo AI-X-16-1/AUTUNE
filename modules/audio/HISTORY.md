@@ -362,6 +362,95 @@ conclusion does not move — beam 1 costs 6.6 accuracy points and 151 deletions
 against 27, and nothing needs that speed — but the number was comparing
 configurations rather than beams (@lsh2217 on #389).
 
+#### Diarization was 171 s because nobody moved it off the CPU
+
+Measured 2026-09-28 on the same six-person 5m27s recording (327.4 s),
+`num_speakers=6`, one process, one waveform, so this is **one recording** and
+not a benchmark:
+
+| Device | Time | ×audio |
+| --- | --- | --- |
+| `cpu` | 163.4 s | 0.50× |
+| `mps` | **11.5 s** | **0.035×** |
+
+163.4 s here against the 169–176 s in the runs above is the same stage's
+run-to-run spread on the same machine; the row to read is the other one.
+
+`PyannoteDiarizer._load` called `Pipeline.from_pretrained` and never `.to()`.
+pyannote builds its pipeline on CPU and stays there, so the 171 s in the table
+above is a CPU number on a machine with a GPU — and on a CUDA box the same bug
+sent Whisper to the GPU through `AUTUNE_AUDIO_DEVICE` and left diarization
+beside it on the processor. One line, 14.3×.
+
+**The 0 ms boundary agreement is what makes it safe to take.** 77 turns and 6
+speakers both times, the same label on all 77, maximum drift 0 ms on start
+boundaries and 0 ms on end boundaries, total speech 297.4 s against 297.4 s.
+Equal counts would not have been enough: `speakers` assigns each word to the
+turn containing it, so a device that moved a boundary by 40 ms would move words
+between speakers downstream. Nothing moved.
+
+The device is its own setting, `AUTUNE_AUDIO_DIARIZATION_DEVICE`, and not a
+third value for `AUTUNE_AUDIO_DEVICE` — that one is handed to faster-whisper,
+whose CTranslate2 backend has no Metal support, so `mps` there would break
+transcription. Empty follows `AUTUNE_AUDIO_DEVICE`, so a CUDA deployment gets
+both stages on the GPU from the variable it already sets.
+
+An unavailable device raises `ConfigurationError` instead of falling back to
+CPU with a warning. CPU works, which is exactly the problem: a fallback turns
+14.3× into a log line, and section 4 below is a list of failures that looked
+like successes until somebody measured.
+
+**That rule cost a working deployment, and review caught it before it shipped.**
+Four reviewers converged on the same hole (#394). `uv sync` installs a CPU torch
+wheel on Windows while faster-whisper reaches the GPU through CTranslate2's own
+CUDA, so `AUTUNE_AUDIO_DEVICE=cuda` is a configuration that works today with
+`torch.cuda.is_available()` False — measured by @kjfcvx12 on an RTX 3060. An
+empty `DIARIZATION_DEVICE` inherits that `cuda`, so the rule as written would
+have failed every meeting on a box that changed no setting of its own, and the
+troubleshooting table in `environments.md` recommends exactly that setting.
+
+The distinction the rule was missing is between a device you asked for and one
+you inherited. An explicit `DIARIZATION_DEVICE` is a promise and still raises.
+An empty one takes CPU and logs `diarization_device_unavailable` naming the
+variable — which regresses nothing, because diarization has run on CPU since it
+shipped. What it removes is the silence, not the speed.
+
+**And it raised after thirteen minutes of Whisper.** `resolve_device` was
+reached only from `_load`, the last step inside the `adopt` block, so the error
+arrived after transcription — a mistake knowable before the file was opened,
+charged the whole recording. `process` resolves it as the **first line inside**
+`adopt` now, before `decode`.
+
+Inside, not in front of it, and that distinction took a second round of review.
+The first fix put the call ahead of `adopt`, which left the upload on disk when
+it failed; the reasoning was "the sweep will collect it". It would not have:
+`sweep_orphans` is for a task that was *lost*, and this one failed. A `failed`
+job is never re-run, recovery is a re-upload with a new job and a new file, so
+the one left behind had no reader and no owner — the durable copy invariant 11
+exists to prevent (@PARKJAEKYUNG0525). Inside the block both things hold: the
+failure costs milliseconds, and `adopt`'s `finally` still deletes. Two integration tests hold the
+order: one asserts `resolve_device → decode → transcribe`, the other that an
+unusable device decodes nothing and leaves the file.
+
+**CUDA is still unmeasured.** The 0 ms agreement is CPU against MPS. Whether a
+CUDA box produces the same turns, and how pyannote shares VRAM with Whisper
+`large-v3` in fp16, are open; `=cpu` is the way out.
+
+**This is what brings the module inside its processing-time target**, which was
+not obvious when it was written: at the time the baseline was thought to be 3.0×
+and this looked like an improvement from 3.0× to 2.5×. The baseline was wrong —
+it divided by a run that had been asleep — and with it corrected the shipped
+configuration was about 1.78×, so moving diarization to the GPU is the
+difference between over and under. The whole meeting is **434 s for 327 s of
+audio, 1.32×**, and transcription is now 95% of it. Nothing was traded for it:
+the transcript is identical to the millisecond.
+
+**What it does not settle.** `mps` has only been measured in-process. Module E's
+SetFit aborts on Metal under prefork and threaded Celery workers, which is why
+the demo runs `--pool=solo` (#329), and pyannote on Metal inherits that risk
+untested — which is why the setting is empty by default and only the demo opts
+in.
+
 ### Speaker identification (`docs/modules/audio-speaker-identification.md`)
 
 `speaker_id` was null on every utterance the module had ever produced: voices

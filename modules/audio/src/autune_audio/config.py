@@ -124,6 +124,53 @@ class AudioSettings(BaseSettings):
     diarization_model: str = "pyannote/speaker-diarization-3.1"
     """Pinned explicitly. Never load a floating "latest"."""
 
+    diarization_device: str = ""
+    """Where pyannote runs. Empty follows ``device``; ``cpu``, ``mps``, ``cuda``.
+
+    Until #394 the pipeline never moved the loaded pipeline off CPU,
+    so diarization ran on CPU even where ``device=cuda`` sent Whisper to the GPU.
+    Measured on the same six-person 5m27s recording (327.4 s) as the rest of
+    HISTORY.md section 2, ``num_speakers=6``, one process, one waveform:
+
+    | Device | Time | ×audio |
+    | --- | --- | --- |
+    | ``cpu`` | 163.4 s | 0.50× |
+    | ``mps`` | 11.5 s | 0.035× |
+
+    14.3× faster for an output that is identical to the millisecond: 77 turns
+    and 6 speakers both times, 0 ms maximum drift on both start and end
+    boundaries, the same label on all 77 turns, 297.4 s of speech either way.
+    Boundaries matter more than counts here — ``speakers`` assigns each word to
+    the turn that contains it, so identical edges mean nothing downstream moves.
+
+    **A separate setting rather than a third value for ``device``.** ``device``
+    is read by ``pipeline._model_for`` and handed to faster-whisper, whose
+    CTranslate2 backend has no Metal support; ``AUTUNE_AUDIO_DEVICE=mps`` would
+    break transcription to speed up diarization. This is the same split as the
+    live path's own model, threads and beam width.
+
+    **``mps`` is not known to be safe under a prefork or threaded Celery
+    worker.** Module E's SetFit aborts on Metal in exactly that setting, which
+    is why the demo worker runs ``--pool=solo`` (#329); putting pyannote on
+    Metal inherits the risk and nobody has run it under prefork. Measured
+    in-process only.
+
+    **CUDA is unmeasured.** The 0 ms agreement above is CPU against MPS. Nobody
+    has checked that a CUDA box produces the same turns, or how pyannote shares
+    VRAM with Whisper ``large-v3`` in fp16 beside it. ``=cpu`` is the way out if
+    it does not.
+
+    **Setting this explicitly is a promise; leaving it empty is not.** An
+    explicit device that torch cannot reach raises ``ConfigurationError`` — the
+    14.3× is why a silent fallback would be worse than a failure. An empty
+    setting inherits ``device``, which is the *transcriber's* device and may
+    name an accelerator torch cannot see while CTranslate2 can (a Windows CPU
+    torch wheel with ``AUTUNE_AUDIO_DEVICE=cuda`` is a working deployment
+    today). There it takes CPU and logs ``diarization_device_unavailable``,
+    because refusing to start would break a deployment that changed nothing.
+    See ``diarization.resolve_device``.
+    """
+
     diarization_num_speakers: int | None = Field(default=None, ge=1)
     """Exactly how many people spoke, when the room knows. On a muffled
     microphone pyannote split one voice into four clusters (#325); with this
@@ -278,10 +325,22 @@ class AudioSettings(BaseSettings):
 
     @model_validator(mode="after")
     def _warn_on_cuda_without_token(self) -> AudioSettings:
-        """A GPU with no token is a configuration someone meant to finish."""
-        if self.device == "cuda" and not self.hf_token:
+        """A GPU with no token is a configuration someone meant to finish.
+
+        Read from the device diarization will actually use, not from ``device``
+        alone: ``AUTUNE_AUDIO_DIARIZATION_DEVICE=cuda`` with an empty token used
+        to load cleanly and fail at the pipeline (@PARKJAEKYUNG0525 on #394,
+        item 4). The index is dropped so ``cuda:1`` is caught with ``cuda``.
+        """
+        chosen = self.diarization_device.strip() or self.device
+        setting = (
+            "AUTUNE_AUDIO_DIARIZATION_DEVICE"
+            if self.diarization_device.strip()
+            else "AUTUNE_AUDIO_DEVICE"
+        )
+        if chosen.split(":", 1)[0].lower() == "cuda" and not self.hf_token:
             raise ValueError(
-                "AUTUNE_AUDIO_DEVICE=cuda but AUTUNE_AUDIO_HF_TOKEN is empty; "
+                f"{setting}={chosen} but AUTUNE_AUDIO_HF_TOKEN is empty; "
                 "diarization would fail after the recording was already uploaded"
             )
         return self
