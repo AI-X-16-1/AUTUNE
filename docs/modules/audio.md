@@ -291,10 +291,13 @@ compared to published ones is not worth having. Scoring uses a 0.25s collar,
 which is the convention those published figures use.
 
 The evaluation corpus is `002. 주요 영역별 회의 음성인식 데이터` from AI Hub —
-the same one module B uses, so it is downloaded once. It is committee and
-broadcast discussion with a chair, while Autune is for team meetings without
-one, so a DER measured here reads optimistically: those meetings have less
-overlapping speech than ours will.
+the same one module B uses, but **not the same copy**: AI Hub's 09-28 answer
+says each person applies, is approved and downloads under their own account,
+and that a copy may not be put in a shared store or passed to another
+participant (`docs/engineering/external-approvals.md` §1.9 item 2). It is
+committee and broadcast discussion with a chair, while Autune is for team
+meetings without one, so a DER measured here reads optimistically: those
+meetings have less overlapping speech than ours will.
 
 `original_form` is unmasked personal data. Read it in memory to produce a
 masking hypothesis and never write it, log it, or commit anything derived from
