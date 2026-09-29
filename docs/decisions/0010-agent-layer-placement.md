@@ -132,6 +132,21 @@ modules = [
 ]
 ```
 
+And a sixth, found in review on #432: the layers contract above lets a
+subagent import a module directly, which would skip its allow-list and the
+run's budget. A subagent reaches a module only through the tool registry:
+
+```toml
+[[tool.importlinter.contracts]]
+name = "Subagents reach modules only through tools"
+type = "forbidden"
+source_modules = ["autune_agent.subagents"]
+forbidden_modules = [
+    "autune_audio", "autune_extraction", "autune_gap",
+    "autune_context", "autune_intelligence",
+]
+```
+
 Tables created by the layer take the `agent_` prefix, exactly as a module's do
 (invariant 3). `agent_` is registered in `../architecture/data-model.md` as a
 layer prefix rather than a module prefix.
@@ -182,8 +197,8 @@ agent as well.
 
 - One more top-level directory, one more workspace member, one more line in
   every path-based config (ruff `src`, mypy `files`, pytest paths, CI).
-- Reviewers must learn a fourth and a fifth contract. They are stated in one
-  place, but they are two more things.
+- Reviewers must learn three more contracts. They are stated in one place,
+  but they are three more things.
 - `agent/` importing all five modules means its test suite pulls in every
   module's dependencies, including torch. Its unit tests must run against the
   tool registry with mock tools, not against real modules, or CI slows for

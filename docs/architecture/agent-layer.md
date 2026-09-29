@@ -179,7 +179,9 @@ every subagent and needs the main agent's owner.
 **Subagents never import each other**, for the same reason modules do not
 (invariant 2). If Follow-up needs what Workload knows, it asks the main agent,
 which routes. A fifth import-linter contract, alongside ADR 0010's fourth,
-makes the `subagents.*` packages independent.
+makes the `subagents.*` packages independent, and a sixth forbids a subagent
+importing a module at all: it reads through its `Toolbox`, which holds its
+allow-list and the run's budget, or not at all.
 
 Each subagent directory exports one thing, collected the way tools are — by
 iterating the subagent list, never by appending to a registry:
@@ -236,37 +238,50 @@ rule 1). The model name is configuration, not code.
 
 ## 4. Tools — how a module becomes callable
 
-A module owner adds one file and changes nothing else:
+A module owner adds one file and changes nothing else. **It imports nothing
+from `autune_agent`** — ADR 0010's layers contract forbids a module importing
+the layer — so a tool is a plain function returning a plain dict, and the
+registry validates the dict into `ToolResult` when it calls it. B's `tools.py`
+(#399) is the first one and the pattern:
 
 ```python
 # modules/gap/src/autune_gap/tools.py
-from autune_agent.tools import tool
+def unresolved_topics(session: Session, meeting_id: str) -> dict[str, Any]:
+    """Use this when asked which topics a meeting left open, or before
+    proposing a follow-up meeting. Do not use it for what was decided --
+    that is D's decision thread.
 
-
-@tool
-def detect_gaps(session: Session, meeting_id: str, template: str = "auto") -> GapReport:
-    """Find what this meeting should have covered and did not.
-
-    Use this after a meeting has been transcribed, or when asked which
-    discussions a meeting missed. Do not use it to find what *was* said —
-    that is `list_action_items`.
-
-    Returns GapReport(gaps=[{topic, missing_field, risk_score, suggested_question}]).
+    Returns the open topics, most central first, at most five.
     """
-    return service.detect_gaps(session, meeting_id, template)
+    ...
+    return {"ok": True, "reason": None, "summary": ..., "items": [...],
+            "evidence": ["utt_…"], "confidence": 1.0, "truncated": False}
 
 
-TOOLS = [detect_gaps, build_topic_graph, score_risk]
+TOOLS = [unresolved_topics, ...]
+PERSONAL_ONLY_TOOLS = []   # reads that return one person's own data
 ```
 
 Collected the way `apps/api` collects routers — by iterating the module list,
-never by appending to a registry (invariant 6):
+never by appending to a registry (invariant 6). `autune_agent.main.registry`
+names each tool `<module>.<function>`:
 
 ```python
 for name in MODULES:
-    for tool in import_module(f"autune_{name}.tools").TOOLS:
-        REGISTRY[tool.name] = tool
+    module = import_module(f"autune_{name}.tools")     # skipped if absent
+    for fn in module.TOOLS:
+        if fn in module.PERSONAL_ONLY_TOOLS:
+            continue                                     # never registered
+        REGISTRY[f"{name}.{fn.__name__}"] = Tool(fn)
 ```
+
+**`PERSONAL_ONLY_TOOLS` keeps a speaking ratio out of the layer entirely.** A
+read that returns one person's own data goes to that person and nobody else
+(invariant 11), and the agent always answers on someone else's behalf, so the
+registry never loads such a tool — it is not a matter of each subagent leaving
+it off its allow-list. An undeclared tool whose name says `speaking_ratio`
+fails collection, and `Subagent` refuses the name too, as a net under the
+declaration rather than instead of it (#432 review).
 
 ### The return contract — what every tool hands back
 
@@ -1170,7 +1185,7 @@ one owner's; a date is when it is merged, not started.
 
 | By | Main agent (김민경) | Every subagent owner |
 | --- | --- | --- |
-| **10/1** | `agent/` skeleton merged: workspace member, the fourth and fifth import-linter contracts, `ToolResult`, `Subagent`, the registry, a supervisor graph running one mock subagent over mock tools | confirm with the integration's owner what your subagent needs from Calendar or Jira; open an issue for anything missing |
+| **10/1** | `agent/` skeleton merged: workspace member, the fourth to sixth import-linter contracts, `ToolResult`, `Subagent`, the registry, a supervisor graph running one mock subagent over mock tools | confirm with the integration's owner what your subagent needs from Calendar or Jira; open an issue for anything missing |
 | **10/5** | `agent_work_items`, `agent_runs`, `agent_approvers` and their migration; the chat endpoint; the run-timeline screen | your module's `tools.py` returns real data; your subagent runs against mock tools with its own tests; Calendar (강민구) and Jira (문민재) reads work |
 | **10/9** | plan mode and the approval screen; triggers from section 6; the morning briefing | your subagent runs against real tools, end to end on one real meeting |
 | **10/12** | demo run of all five subagents; the fixed pipeline still works with the layer off | fixes only |
