@@ -360,8 +360,11 @@ have the download refused.
 **This constrains 1.7:** a local machine is the only option that needs no
 checking. An instance in a Korean region is an option whose IP has to be
 verified and re-verified when it changes. It is also the reason not to hand
-corpus text to a hosted LLM for label generation without knowing where that
-endpoint runs — and B's plan does exactly that for the *training* labels.
+corpus text to a hosted LLM for label generation. Module B's first-pass
+*training* labels on AI Hub rows are made by a local model on the approved
+person's own machine for exactly this reason, and must stay that way. B's
+hosted classifier option (`classifier_impl=llm`, #392) is a different path: it
+reads meeting utterances, never the AI Hub corpus.
 
 **5. A trained model — usable, including commercially.** *(answer, 09-28)*
 This document previously said ownership of a model trained on the data was
