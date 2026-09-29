@@ -113,3 +113,10 @@ def test_a_workflow_without_that_category_leaves_the_issue_alone() -> None:
 def test_an_unknown_category_is_a_bug_not_a_request() -> None:
     with pytest.raises(ValueError):
         client(lambda r: httpx.Response(200, json={})).move_to_category("AUT-1", "closed")
+
+
+def test_generic_key_names_are_not_exempt_from_the_check() -> None:
+    """#458 review: ``key`` and ``id`` would exempt any later field named so."""
+    from autune_integrations.jira import JiraClient
+
+    assert not {"key", "id", "accountId"} & JiraClient.addressing

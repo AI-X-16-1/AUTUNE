@@ -32,9 +32,12 @@ STATUS_CATEGORIES = frozenset({"new", "indeterminate", "done"})
 class JiraClient(HttpClient):
     service = "jira"
 
-    addressing = frozenset({"query", "accountId", "key", "id"})
-    """Keys whose values address the request: a user search's email, an account
-    id, a project or transition key. Everything else is checked."""
+    addressing = frozenset({"query", "project", "issuetype", "assignee", "transition"})
+    """Keys whose values address the request: a user search's email, and the
+    objects naming a project, an issue type, an assignee's account or a
+    transition. Named by their parents rather than by ``key``/``id``, which are
+    generic enough that a later field carrying content under one of them would
+    go unchecked (#458 review). Everything else is checked."""
 
     def __init__(self, base_url: str, email: str, token: str) -> None:
         credentials = b64encode(f"{email}:{token}".encode()).decode()
