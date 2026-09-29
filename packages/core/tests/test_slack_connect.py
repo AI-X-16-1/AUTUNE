@@ -40,6 +40,7 @@ class FakeSlack:
         self.channel: SlackChannel | Exception = SlackChannel("C1", "autune")
         self.made: list[tuple[str, str]] = []
         self.revoked: list[str] = []
+        self.usable = True
 
     def authorization_url(self, *, state: str) -> str:
         return f"https://slack.com/oauth/v2/authorize?state={state}"
@@ -58,6 +59,9 @@ class FakeSlack:
     def revoke(self, token: str) -> bool:
         self.revoked.append(token)
         return True
+
+    def channel_usable(self, token: str, channel: str) -> bool:
+        return self.usable
 
 
 @pytest.fixture
@@ -95,6 +99,13 @@ def world(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     monkeypatch.setattr(auth_router_module, "load_integration", load)
     monkeypatch.setattr(
         auth_router_module, "disconnect_integration", lambda _s, t, _svc: saved.pop(t)
+    )
+    monkeypatch.setattr(
+        auth_router_module,
+        "teams_with",
+        lambda _s, _svc, key, value: [
+            t for t, row in saved.items() if row["config"].get(key) == value
+        ],
     )
     store = InMemoryStateStore()
     slack = FakeSlack()
@@ -199,6 +210,83 @@ def test_reinstalling_into_the_same_workspace_keeps_channel_and_token(
     assert world["slack"].revoked == []  # the same token came back; it stays alive
 
 
+# --- one workspace, several Autune teams, one bot token (review of #468) -----------
+
+
+def _other_team_on(world: dict[str, Any], workspace: str, token: str = "xoxb-1") -> None:
+    world["saved"]["team_other"] = {
+        "secret": token,
+        "config": {"channel": "C0", "channel_name": "autune", "workspace_id": workspace},
+    }
+
+
+def test_a_failed_install_leaves_the_token_another_team_uses(world: dict[str, Any]) -> None:
+    from autune_core.oauth.slack import SlackChannelUnavailableError
+
+    _other_team_on(world, "T1")
+    world["slack"].channel = SlackChannelUnavailableError("all taken")
+    client = signed_in(world)
+
+    response = client.get(f"/api/auth/slack/callback?state={start(client)}&code=c")
+
+    assert "slack=failed" in response.headers["location"]
+    assert world["slack"].revoked == []  # team_other still posts with it
+    assert TEAM not in world["saved"]
+
+
+def test_a_failure_that_is_not_ours_still_revokes_then_raises(world: dict[str, Any]) -> None:
+    class Broken(FakeSlack):
+        def create_alert_channel(self, token: str, name: str, *, invite: str) -> SlackChannel:
+            raise RuntimeError("database went away")
+
+    broken = Broken()
+    world["app"].dependency_overrides[get_slack_oauth_client] = lambda: broken
+    client = signed_in(world)
+    state = start(client)
+
+    with pytest.raises(RuntimeError):
+        client.get(f"/api/auth/slack/callback?state={state}&code=c")
+    assert broken.revoked == ["xoxb-1"]
+
+
+def test_reinstalling_elsewhere_keeps_a_token_the_old_workspace_still_uses(
+    world: dict[str, Any],
+) -> None:
+    client = signed_in(world)
+    client.get(f"/api/auth/slack/callback?state={start(client)}&code=c")
+    _other_team_on(world, "T1")
+    world["slack"].install = SlackInstall("xoxb-2", "U_BOT2", "T2", "Other", "U_ME2")
+
+    client.get(f"/api/auth/slack/callback?state={start(client)}&code=c")
+
+    assert world["saved"][TEAM]["secret"] == "xoxb-2"
+    assert world["slack"].revoked == []
+
+
+def test_disconnecting_leaves_the_bot_for_another_team(world: dict[str, Any]) -> None:
+    client = signed_in(world)
+    client.get(f"/api/auth/slack/callback?state={start(client)}&code=c")
+    _other_team_on(world, "T1")
+
+    body = client.post(f"/api/auth/slack/disconnect?meeting_id={MEETING}").json()
+
+    assert body == {"connected": False, "revoked": False, "shared": True}
+    assert world["slack"].revoked == []
+    assert TEAM not in world["saved"]
+
+
+def test_a_kept_channel_that_was_archived_is_replaced(world: dict[str, Any]) -> None:
+    client = signed_in(world)
+    client.get(f"/api/auth/slack/callback?state={start(client)}&code=c")
+    world["slack"].usable = False
+    world["slack"].channel = SlackChannel("C3", "autune-2")
+
+    client.get(f"/api/auth/slack/callback?state={start(client)}&code=c")
+
+    assert world["saved"][TEAM]["config"]["channel"] == "C3"
+    assert len(world["slack"].made) == 2
+
+
 @pytest.mark.parametrize("case", ["declined", "refused"])
 def test_a_failed_install_goes_back_to_the_screen(world: dict[str, Any], case: str) -> None:
     client = signed_in(world)
@@ -224,7 +312,7 @@ def test_status_and_disconnect_revoke_the_token(world: dict[str, Any]) -> None:
     }
     body = client.post(f"/api/auth/slack/disconnect?meeting_id={MEETING}").json()
 
-    assert body == {"connected": False, "revoked": True}
+    assert body == {"connected": False, "revoked": True, "shared": False}
     assert world["slack"].revoked == ["xoxb-1"]
     assert world["saved"] == {}
 
@@ -336,12 +424,21 @@ def test_every_name_taken_is_a_named_failure() -> None:
 def test_a_channel_nobody_could_be_invited_to_is_archived() -> None:
     sent: list[tuple[str, dict[str, str]]] = []
     client = _scripted(
-        [_created("autune", "C9"), {"ok": False, "error": "user_not_found"}, {"ok": True}], sent
+        [
+            _created("autune", "C9"),
+            {"ok": False, "error": "user_not_found"},
+            {"ok": True},
+            {"ok": True},
+        ],
+        sent,
     )
 
     with pytest.raises(PermissionDeniedError, match="user_not_found"):
         client.create_alert_channel("xoxb", "autune", invite="U_GONE")
-    assert [m for m, _ in sent][-1] == "conversations.archive"
+    # Renamed before it is archived, so the failed install does not keep
+    # holding #autune and push the next one to #autune-2.
+    assert [m for m, _ in sent][-2:] == ["conversations.rename", "conversations.archive"]
+    assert sent[-2][1]["name"].startswith("autune-unused-")
 
 
 def test_an_answer_that_is_not_json_is_our_error_not_a_500() -> None:

@@ -28,6 +28,7 @@ Slack requires an **HTTPS** redirect URL, so this flow cannot finish on plain
 from __future__ import annotations
 
 import contextlib
+import secrets
 from dataclasses import dataclass
 from functools import lru_cache
 from typing import Any
@@ -167,16 +168,44 @@ class SlackOAuthClient:
                 allow={"already_in_channel"},
             )
         except AutuneError:
-            # A private channel only the bot can see is no use to anyone.
-            with contextlib.suppress(AutuneError):
-                self._call(
-                    "conversations.archive",
-                    data={"channel": channel},
-                    token=token,
-                    refused="archive refused",
-                    allow={"already_archived"},
-                )
+            self._discard(token, channel)
             raise
+
+    def _discard(self, token: str, channel: str) -> None:
+        """Put away a private channel nobody could be invited to. An archived
+        channel keeps its name, so it is renamed first: otherwise every failed
+        install would use up ``#autune``, then ``#autune-2``, and the tenth
+        would blame the workspace for names Autune itself is holding."""
+        with contextlib.suppress(AutuneError):
+            self._call(
+                "conversations.rename",
+                data={"channel": channel, "name": f"autune-unused-{secrets.token_hex(4)}"},
+                token=token,
+                refused="rename refused",
+            )
+        with contextlib.suppress(AutuneError):
+            self._call(
+                "conversations.archive",
+                data={"channel": channel},
+                token=token,
+                refused="archive refused",
+                allow={"already_archived"},
+            )
+
+    def channel_usable(self, token: str, channel: str) -> bool:
+        """Whether a kept channel can still take posts: it exists, is not
+        archived, and the bot is in it (``conversations.info``, ``groups:read``)."""
+        try:
+            body = self._call(
+                "conversations.info",
+                data={"channel": channel},
+                token=token,
+                refused="Slack refused to describe the channel",
+            )
+        except AutuneError:
+            return False
+        info = body.get("channel") or {}
+        return bool(info) and not info.get("is_archived") and info.get("is_member", True)
 
     def revoke(self, token: str) -> bool:
         """End the install's token at Slack (``auth.revoke``)."""

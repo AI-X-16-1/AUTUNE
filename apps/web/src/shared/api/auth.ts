@@ -250,7 +250,7 @@ export async function getSlackConnection(meetingId: string): Promise<SlackConnec
   }
 }
 
-export async function disconnectSlack(meetingId: string): Promise<{ revoked: boolean }> {
+export async function disconnectSlack(meetingId: string): Promise<{ revoked: boolean; shared?: boolean }> {
   const response = await fetch(
     authUrl(`/slack/disconnect?meeting_id=${encodeURIComponent(meetingId)}`),
     { method: "POST", credentials: "include" },
@@ -258,5 +258,5 @@ export async function disconnectSlack(meetingId: string): Promise<{ revoked: boo
   if (!response.ok) {
     throw new ApiError(response.status, "slack_disconnect_failed", "disconnect failed");
   }
-  return (await response.json()) as { revoked: boolean };
+  return (await response.json()) as { revoked: boolean; shared?: boolean };
 }

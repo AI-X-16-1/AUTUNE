@@ -89,12 +89,14 @@ export function SlackConnect({ meetingId }: { meetingId: string }) {
         onClick={() => {
           setBusy(true);
           void disconnectSlack(meetingId)
-            .then(({ revoked }) => {
+            .then(({ revoked, shared }) => {
               setState({ connected: false });
               setNote(
-                revoked
-                  ? "Slack 연결을 해제했습니다."
-                  : "연결을 해제했습니다. Slack 앱 관리에서 Autune도 확인해 주세요.",
+                shared
+                  ? "연결을 해제했습니다. 같은 워크스페이스의 다른 팀이 Autune을 쓰고 있어 봇은 남겨 두었습니다."
+                  : revoked
+                    ? "Slack 연결을 해제했습니다."
+                    : "연결을 해제했습니다. Slack 앱 관리에서 Autune도 확인해 주세요.",
               );
             })
             .catch(() => setNote("연결을 해제하지 못했습니다."))

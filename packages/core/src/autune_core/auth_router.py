@@ -44,6 +44,7 @@ from .integrations_config import (
     disconnect_integration,
     load_integration,
     save_integration,
+    teams_with,
 )
 from .jira_connection import JIRA, jira_access
 from .logging import get_logger
@@ -858,16 +859,26 @@ def _finish_slack_connect(
     Tokens are never left alive and unknown to us: one issued by an install that
     then fails is revoked, and so is the one a re-install to another workspace
     replaces -- otherwise that bot stays in the old workspace and not even
-    ``/slack/disconnect`` could end it. A token equal to the stored one is kept:
-    re-installing into the same workspace can hand the same token back."""
+    ``/slack/disconnect`` could end it.
+
+    Two things stop a revoke. A token equal to the stored one: re-installing
+    into the same workspace can hand the same token back. And **another team on
+    the same workspace**: Slack issues one bot token per app and workspace, so
+    every Autune team installed there holds that token, and revoking it for one
+    would silence the others (review of #468)."""
     assert transaction.team_id is not None
+    team_id = transaction.team_id
     install: SlackInstall | None = None
-    previous = None
+    previous: IntegrationConfig | None = None
+    shared = False
     try:
         if error or not code:
             raise PermissionDeniedError("Slack install was not approved")
         install = slack.exchange_code(code)
-        previous = load_integration(session, transaction.team_id, SLACK)
+        previous = load_integration(session, team_id, SLACK)
+        # Decided before anything else can fail, so a failure path never has
+        # to ask a session that may be broken.
+        shared = _workspace_used_elsewhere(session, install.workspace_id, team_id)
         channel = _alert_channel(slack, install, previous)
         save_integration(
             session,
@@ -883,14 +894,27 @@ def _finish_slack_connect(
             },
             connected_by=transaction.user_id,
         )
-        if previous is not None and previous.secret:
-            _revoke_unless(slack, previous.secret, keep=install.access_token)
-        log.info("auth_slack_connected", team_id=transaction.team_id)
+        if (
+            previous is not None
+            and previous.secret
+            and previous.secret != install.access_token
+            and not _workspace_used_elsewhere(
+                session, str(previous.config.get("workspace_id") or ""), team_id
+            )
+        ):
+            slack.revoke(previous.secret)
+        log.info("auth_slack_connected", team_id=team_id)
         outcome = "connected"
-    except AutuneError as exc:
-        if install is not None:
-            _revoke_unless(slack, install.access_token, keep=previous.secret if previous else None)
-        log.info("auth_slack_connect_failed", team_id=transaction.team_id, reason=exc.code)
+    except Exception as exc:
+        if (
+            install is not None
+            and not shared
+            and install.access_token != (previous.secret if previous else None)
+        ):
+            slack.revoke(install.access_token)
+        if not isinstance(exc, AutuneError):
+            raise
+        log.info("auth_slack_connect_failed", team_id=team_id, reason=exc.code)
         # Our own error code, never Slack's text: the screen explains the one
         # case a person can fix (a private #autune) and is generic otherwise.
         outcome = f"failed&reason={exc.code}"
@@ -902,20 +926,25 @@ def _finish_slack_connect(
 def _alert_channel(
     slack: SlackOAuthClient, install: SlackInstall, previous: IntegrationConfig | None
 ) -> SlackChannel:
-    """The team's channel: kept on a re-install into the same workspace, made
-    new (private, installer invited) otherwise."""
+    """The team's channel: kept on a re-install into the same workspace while it
+    can still take posts, made new (private, installer invited) otherwise."""
     if previous is not None and previous.config.get("workspace_id") == install.workspace_id:
         kept = previous.config.get("channel")
-        if kept:
+        if kept and slack.channel_usable(install.access_token, str(kept)):
             return SlackChannel(str(kept), str(previous.config.get("channel_name") or ""))
     return slack.create_alert_channel(
         install.access_token, get_settings().slack_channel_name, invite=install.installer_id
     )
 
 
-def _revoke_unless(slack: SlackOAuthClient, token: str, *, keep: str | None) -> None:
-    if token != keep:
-        slack.revoke(token)
+def _workspace_used_elsewhere(session: Session, workspace_id: str, team_id: str) -> bool:
+    """Another Autune team is installed on this Slack workspace -- and so holds
+    the same bot token."""
+    if not workspace_id:
+        return False
+    return any(
+        other != team_id for other in teams_with(session, SLACK, "workspace_id", workspace_id)
+    )
 
 
 @router.get("/slack")
@@ -943,10 +972,17 @@ def slack_disconnect(
     meeting_id: Annotated[str, Query()],
 ) -> dict[str, bool]:
     """Revoke the bot token at Slack (``auth.revoke``), then forget it. Our copy
-    goes even when Slack does not answer; ``revoked`` says which."""
+    goes even when Slack does not answer; ``revoked`` says which. When another
+    team on the same workspace still uses the bot, the token is left alive for
+    it and ``shared`` says so."""
     team_id = _team_of(session, user.id, meeting_id)
     config = load_integration(session, team_id, SLACK)
-    revoked = bool(config and config.secret and slack.revoke(config.secret))
+    shared = config is not None and _workspace_used_elsewhere(
+        session, str(config.config.get("workspace_id") or ""), team_id
+    )
+    revoked = bool(config and config.secret and not shared and slack.revoke(config.secret))
     disconnect_integration(session, team_id, SLACK)
-    log.info("auth_slack_disconnected", team_id=team_id, user_id=user.id, revoked=revoked)
-    return {"connected": False, "revoked": revoked}
+    log.info(
+        "auth_slack_disconnected", team_id=team_id, user_id=user.id, revoked=revoked, shared=shared
+    )
+    return {"connected": False, "revoked": revoked, "shared": shared}

@@ -164,8 +164,9 @@ What `groups:write` allows is wider than what we use, and that is written here
 so whoever approves the scope knows: Slack grants with it `conversations.create`
 and `.invite` -- the two we call -- and also `.rename`, `.archive`, `.kick`,
 `.setTopic` and `.setPurpose` on private channels the bot is a member of. We
-call `.archive` only on the channel we just made when the installer could not
-be invited to it. Slack offers no narrower scope for creating a private
+call `.rename` and `.archive` only on the channel we just made when the
+installer could not be invited to it -- renamed first, because an archived
+channel keeps its name and would push the next install to `#autune-2`. Slack offers no narrower scope for creating a private
 channel.
 
 Still no user scope and no `users:read.email`. Slack accepts only an **HTTPS**
