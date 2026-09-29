@@ -97,7 +97,26 @@ def install_fakes(
 
 
 def use_settings(monkeypatch: pytest.MonkeyPatch, **settings: object) -> None:
-    monkeypatch.setattr(diarization, "get_settings", lambda: AudioSettings(**settings))  # type: ignore[arg-type]
+    """Settings for one test, built from the keywords alone.
+
+    ``hf_token`` defaults to a value because ``AudioSettings`` refuses to load
+    when a cuda device has no token, and a test about device *resolution*
+    should not have to know that. A test that wants the empty token passes
+    ``hf_token=""`` explicitly.
+
+    ``_env_file=None`` is the part that matters for CI. ``AudioSettings``
+    declares ``env_file=".env"``, so without this the values come partly from
+    whatever the developer has in their own ``.env`` -- which is how
+    ``test_a_device_index_is_checked_by_its_kind`` passed on a laptop with a
+    Hugging Face token exported and failed in CI, where there is no file. A
+    unit test's settings must come from its own arguments and nowhere else.
+    """
+    settings.setdefault("hf_token", "hf_x")
+    monkeypatch.setattr(
+        diarization,
+        "get_settings",
+        lambda: AudioSettings(_env_file=None, **settings),  # type: ignore[arg-type,call-arg]
+    )
 
 
 def _diarize(diarizer: diarization.PyannoteDiarizer) -> None:
