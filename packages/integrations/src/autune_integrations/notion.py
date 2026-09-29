@@ -47,12 +47,17 @@ class NotionClient(HttpClient):
 
     def trash_page(self, page_id: str) -> bool:
         """Move a page to the workspace's trash, where a person can restore it
-        for 30 days. ``False`` when the page is already gone (404)."""
+        for 30 days. ``True`` when it is in the trash afterwards -- including a
+        page someone had already put there, which Notion refuses to edit with a
+        400. ``False`` when the page is gone (404)."""
         try:
             self.request("PATCH", f"/pages/{page_id}", json={"in_trash": True})
         except PermanentIntegrationError as exc:
-            if exc.details.get("upstream_status") == 404:
+            status = exc.details.get("upstream_status")
+            if status == 404:
                 return False
+            if status == 400 and self.page_state(page_id) == "archived":
+                return True
             raise
         return True
 

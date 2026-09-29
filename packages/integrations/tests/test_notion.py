@@ -71,3 +71,19 @@ def test_trashing_a_page_that_is_gone_says_so() -> None:
         transport=httpx.MockTransport(lambda r: httpx.Response(404, json={})),
     )
     assert client.trash_page("page_1") is False
+
+
+def test_trashing_a_page_already_in_the_trash_is_done() -> None:
+    """Notion answers an edit to a trashed page with 400; the page is where it
+    was asked to go."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "PATCH":
+            return httpx.Response(400, json={"code": "validation_error"})
+        return httpx.Response(200, json={"id": "page_1", "in_trash": True})
+
+    client = NotionClient("token")
+    client._client = httpx.Client(
+        base_url="https://api.notion.com/v1", transport=httpx.MockTransport(handler)
+    )
+    assert client.trash_page("page_1") is True
