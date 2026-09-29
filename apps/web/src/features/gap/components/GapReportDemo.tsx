@@ -2,7 +2,13 @@
 
 import { useState } from "react";
 
-import { DEMO_COMPARISON, DEMO_GRAPH, DEMO_MEETING_ID, DEMO_REPORT } from "../fixtures/report-demo";
+import {
+  DEMO_COMPARISON,
+  DEMO_GRAPH,
+  DEMO_MEETING_ID,
+  DEMO_REPORT,
+  DEMO_TEMPLATES,
+} from "../fixtures/report-demo";
 import { GapReportScreen } from "./GapReportScreen";
 
 /**
@@ -35,7 +41,7 @@ function installDemoApi(): true {
   const real = window.fetch.bind(window);
   window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-    const body = demoBody(url);
+    const body = demoBody(url, init?.method ?? "GET");
     if (body === undefined) return real(input, init);
 
     // A small delay so the loading state is visible rather than theoretical.
@@ -48,7 +54,20 @@ function installDemoApi(): true {
   return true;
 }
 
-function demoBody(url: string): unknown {
+/**
+ * The fixture's answer to one call. A write answers the way the server would
+ * and changes nothing — the demo shows what the controls send, not what the
+ * data becomes, and a stateful stub would be a second copy of the service.
+ */
+function demoBody(url: string, method: string): unknown {
+  const dismissal = /\/api\/gap\/gaps\/([^/]+)\/dismiss$/.exec(url);
+  if (dismissal) {
+    return { gap_id: dismissal[1], meeting_id: DEMO_MEETING_ID, dismissed: method === "POST" };
+  }
+  if (method === "PUT" && url.includes(`/api/gap/templates/${DEMO_MEETING_ID}`)) {
+    return { template_key: DEMO_COMPARISON.template_key };
+  }
+  if (url.endsWith("/api/gap/templates")) return DEMO_TEMPLATES;
   if (url.includes(`/api/gap/reports/${DEMO_MEETING_ID}`)) return DEMO_REPORT;
   if (url.includes(`/api/gap/topics/${DEMO_MEETING_ID}`)) return DEMO_GRAPH;
   if (url.includes(`/api/gap/templates/${DEMO_MEETING_ID}`)) return DEMO_COMPARISON;

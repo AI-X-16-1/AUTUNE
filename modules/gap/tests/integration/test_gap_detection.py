@@ -289,6 +289,36 @@ def test_switching_templates_drops_the_rows_the_old_one_raised(team_id: str) -> 
     assert {gap.template_key for gap in stored(meeting_id).values()} == {"general"}
 
 
+def test_switching_templates_keeps_what_was_dismissed_under_the_old_one(team_id: str) -> None:
+    """A dismissal is threshold tuning's input (ADR 0006), and S20's picker makes
+    trying another template one click. Switching away must not throw the
+    judgement out, and switching back must find it where it was left."""
+    meeting_id = seed(team_id, COVERS_TWO)
+    service.detect_gaps(meeting_id)
+    dismissed_id = stored(meeting_id)["risk"].id
+    with session_scope() as s:
+        s.get(GapGap, dismissed_id).dismissed_at = datetime.now(UTC)
+
+    with session_scope() as s:
+        service.set_template(s, meeting_id, "feature_planning")
+    service.detect_gaps(meeting_id)
+
+    with session_scope() as s:
+        kept = s.get(GapGap, dismissed_id)
+        assert kept is not None and kept.template_key == "general"
+        assert kept.dismissed_at is not None
+        report = service.build_report(s, meeting_id)
+    assert dismissed_id not in {gap.id for gap in report.gaps}
+
+    with session_scope() as s:
+        service.set_template(s, meeting_id, "general")
+    service.detect_gaps(meeting_id)
+
+    back = stored(meeting_id)["risk"]
+    assert back.id == dismissed_id
+    assert back.dismissed_at is not None
+
+
 def test_an_override_naming_a_template_that_no_longer_exists_falls_back(team_id: str) -> None:
     """A deleted template file is the deployment's problem, and refusing to
     analyse the meeting does not make it less so."""
