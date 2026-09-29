@@ -92,6 +92,16 @@ def test_recap_says_so_when_the_past_meeting_recorded_no_decision() -> None:
     assert "지난 회의에서 기록된 결정이 없습니다." in _text(blocks)
 
 
+def test_an_unrelated_latest_meeting_is_named_but_not_quoted() -> None:
+    _, blocks = _build(recap_is_related=False)
+    text = _text(blocks)
+
+    assert "*팀의 최근 회의* — 2026년 9월 23일 「주간 회의」" in text
+    assert "이어지는 지난 회의를 찾지 못해" in text
+    assert "검색 정렬" not in text
+    assert "결제 모듈 출시는 10월로 미룬다" not in text
+
+
 def test_no_past_meeting_and_a_deleted_one_read_differently() -> None:
     _, none_blocks = _build(recap=None, recap_gone=False)
     _, gone_blocks = _build(recap=None, recap_gone=True)

@@ -13,7 +13,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
-from autune_core import get_session
+from autune_core import CurrentUser, get_session
 
 from . import briefs, service
 from .schemas import (
@@ -119,13 +119,14 @@ def list_decision_threads(
 
 
 @router.get("/briefs/{meeting_id}", response_model=BriefRead)
-def get_brief(meeting_id: str, session: SessionDep) -> BriefRead:
+def get_brief(meeting_id: str, session: SessionDep, reader: CurrentUser) -> BriefRead:
     """A scheduled meeting's pre-meeting brief, once it has been composed.
 
     404 until ``brief_lead_minutes`` before the start -- the brief is composed
-    by the worker then, not on request.
+    by the worker then, not on request -- and to anyone outside the meeting's
+    team. The first route here to check its caller; the rest are #189.
     """
-    brief = briefs.get_brief(session, meeting_id)
+    brief = briefs.get_brief(session, meeting_id, reader)
     recap = brief.recap
     return BriefRead(
         meeting_id=brief.meeting_id,

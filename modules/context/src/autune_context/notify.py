@@ -261,8 +261,17 @@ def build_pre_meeting_brief(
     recap: BriefRecap | None,
     recap_gone: bool,
     agenda: Sequence[AgendaItem],
+    recap_is_related: bool = True,
 ) -> tuple[str, list[dict]]:
     """The team-channel brief for a meeting about to start.
+
+    ``recap_is_related`` is ``False`` when the recap is the team's latest
+    meeting rather than one this meeting follows (``briefs.LATEST``): nothing
+    tied the two, so the brief names that meeting and says it found no related
+    one, and posts none of its topics or decisions. Another group's meeting
+    content in this meeting's brief is more than the feature needs to send to
+    a third party (privacy.md sections 6-7). The app, where ``match_reason``
+    is shown beside it, still carries the full recap.
 
     ``recap`` is ``None`` either because the team has no analyzed meeting
     before this one or because the one chosen has since been deleted by the
@@ -282,7 +291,11 @@ def build_pre_meeting_brief(
         _section(f"*{meeting_title}*"),
     ]
 
-    if recap is not None:
+    if recap is not None and not recap_is_related:
+        when = f"{_korean_date(recap.day)} " if recap.day is not None else ""
+        blocks.append(_section(f"*팀의 최근 회의* — {when}「{_clip(recap.title)}」"))
+        blocks.append(_context("이어지는 지난 회의를 찾지 못해 내용은 싣지 않았습니다."))
+    elif recap is not None:
         when = f"{_korean_date(recap.day)} " if recap.day is not None else ""
         blocks.append(_section(f"*지난 회의* — {when}「{_clip(recap.title)}」"))
         if recap.topics:

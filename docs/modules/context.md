@@ -381,7 +381,7 @@ timestamp to do that with — a contract change (invariant 5), not a D-side fix.
 A clock, not an event: every minute, `send_due_briefs` finds meetings with
 `status = 'scheduled'` whose `started_at` falls within the next
 `brief_lead_minutes` (default 10) and that have no `ctx_briefs` row, and
-enqueues `send_brief` for each. A scheduled meeting is one module A created
+enqueues `send_brief` for each, expiring at the meeting's start so a send still queued behind heavy `cpu_heavy` work is dropped rather than posted late. A scheduled meeting is one module A created
 ahead of time (`POST` with a future `started_at`); D reads it and writes
 nothing to it. A meeting already started — its start has passed, or A moved
 its status on because a recording began — gets no brief, so a brief missed
@@ -401,6 +401,11 @@ while the worker was down stays missed rather than arriving mid-meeting.
 3. `latest` — the team's most recent analyzed meeting. Also the fallback when
    a model call in step 2 fails: a brief retried until the meeting starts is
    one that never arrives.
+
+   Nothing ties a `latest` meeting to this one — it may be another group's —
+   so the Slack brief names it as "팀의 최근 회의" and posts none of its topics
+   or decisions; the app, which shows `match_reason` beside it, carries the
+   full recap.
 
 "Analyzed" means `ctx_meeting_status.topic_linking_done`, and every candidate
 passes `visible_meeting_clauses` — a meeting past its retention window is never
@@ -559,7 +564,7 @@ one mutation.
 | GET | `/decisions/{thread_id}` | Full lineage timeline, oldest version first |
 | GET | `/decisions` | Filter by team, topic, change type |
 | POST | `/materials` | Upload material — Phase 2 |
-| GET | `/briefs/{meeting_id}` | A scheduled meeting's pre-meeting brief. 404 until it is composed (`brief_lead_minutes` before the start) |
+| GET | `/briefs/{meeting_id}` | A scheduled meeting's pre-meeting brief, to a member of its team (`CurrentUser`; anyone else gets the same 404 as an unknown id). 404 until it is composed (`brief_lead_minutes` before the start) |
 
 `GET /decisions/{thread_id}` orders a thread's versions by meeting time
 (`service._meeting_time`), the same key `_rethread` chains by — not by walking

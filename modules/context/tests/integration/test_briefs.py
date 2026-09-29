@@ -26,7 +26,7 @@ from autune_context.models import (
 )
 from autune_context.pipeline import get_embedder, reset_cache
 from autune_contracts import ChangeType
-from autune_core import Meeting, Team, session_scope
+from autune_core import Meeting, Team, TeamMember, User, session_scope
 from autune_core.errors import NotFoundError
 
 NOW = datetime(2026, 9, 30, 5, 50, tzinfo=UTC)
@@ -53,6 +53,21 @@ def team_id(db_engine: object) -> Iterator[str]:  # db_engine ensures migrations
     yield tid
     with session_scope() as s:
         s.execute(delete(Team).where(Team.id == tid))
+
+
+@pytest.fixture
+def member(team_id: str) -> Iterator[User]:
+    """A user in ``team_id``, as the API's ``CurrentUser`` would be."""
+    with session_scope() as s:
+        user = User(email=f"{team_id}@brief.test", display_name="브리프 팀원")
+        s.add(user)
+        s.flush()
+        s.add(TeamMember(team_id=team_id, user_id=user.id))
+        s.flush()
+        s.expunge(user)
+    yield user
+    with session_scope() as s:
+        s.execute(delete(User).where(User.id == user.id))
 
 
 def _scheduled(
@@ -143,7 +158,7 @@ def test_due_is_a_scheduled_meeting_inside_the_lead_time(team_id: str) -> None:
     recording = _scheduled(team_id, status="recording")
 
     with session_scope() as s:
-        ids = set(briefs.due_meeting_ids(s, NOW))
+        ids = {meeting_id for meeting_id, _ in briefs.due_meeting_starts(s, NOW)}
 
     assert {due, soon} <= ids
     assert not {later, started, recording} & ids
@@ -154,7 +169,7 @@ def test_a_meeting_with_a_brief_is_no_longer_due(team_id: str) -> None:
     _compose(meeting)
 
     with session_scope() as s:
-        assert meeting not in briefs.due_meeting_ids(s, NOW)
+        assert meeting not in {m for m, _ in briefs.due_meeting_starts(s, NOW)}
 
 
 # --------------------------------------------------------------------------- #
@@ -281,7 +296,9 @@ def test_a_meeting_that_already_started_gets_no_brief(team_id: str) -> None:
         assert s.get(CtxBrief, meeting) is None
 
 
-def test_the_recap_is_read_live_and_shows_a_deleted_meeting_as_gone(team_id: str) -> None:
+def test_the_recap_is_read_live_and_shows_a_deleted_meeting_as_gone(
+    team_id: str, member: User
+) -> None:
     previous = _analyzed(team_id, title="주간 회의", days_ago=7, topics=("검색 정렬",))
     meeting = _scheduled(team_id)
     _compose(meeting)
@@ -290,30 +307,48 @@ def test_the_recap_is_read_live_and_shows_a_deleted_meeting_as_gone(team_id: str
         s.execute(delete(Meeting).where(Meeting.id == previous))
 
     with session_scope() as s:
-        brief = briefs.get_brief(s, meeting, now=NOW)
+        brief = briefs.get_brief(s, meeting, member, now=NOW)
         row = s.get(CtxBrief, meeting)
         assert row is not None and row.previous_meeting_id is None  # SET NULL
     assert brief.recap is None
     assert brief.recap_gone is True
 
 
-def test_an_expired_past_meeting_is_gone_before_the_sweep_runs(team_id: str) -> None:
+def test_an_expired_past_meeting_is_gone_before_the_sweep_runs(team_id: str, member: User) -> None:
     _analyzed(team_id, title="주간 회의", days_ago=7, expires_at=NOW + timedelta(hours=1))
     meeting = _scheduled(team_id)
     _compose(meeting)
 
     with session_scope() as s:
-        brief = briefs.get_brief(s, meeting, now=NOW + timedelta(hours=2))
+        brief = briefs.get_brief(s, meeting, member, now=NOW + timedelta(hours=2))
 
     assert brief.recap is None
     assert brief.recap_gone is True
 
 
-def test_no_brief_is_readable_before_it_is_composed(team_id: str) -> None:
+def test_no_brief_is_readable_before_it_is_composed(team_id: str, member: User) -> None:
     meeting = _scheduled(team_id)
 
     with session_scope() as s, pytest.raises(NotFoundError):
-        briefs.get_brief(s, meeting, now=NOW)
+        briefs.get_brief(s, meeting, member, now=NOW)
+
+
+def test_another_teams_brief_reads_as_missing(team_id: str, member: User) -> None:
+    # Same answer as an unknown id: a 403 would confirm the meeting exists.
+    with session_scope() as s:
+        other = Team(name="brief-test-other")
+        s.add(other)
+        s.flush()
+        other_team = other.id
+    try:
+        meeting = _scheduled(other_team)
+        _compose(meeting)
+
+        with session_scope() as s, pytest.raises(NotFoundError):
+            briefs.get_brief(s, meeting, member, now=NOW)
+    finally:
+        with session_scope() as s:
+            s.execute(delete(Team).where(Team.id == other_team))
 
 
 def test_deleting_the_scheduled_meeting_deletes_its_brief(team_id: str) -> None:

@@ -49,7 +49,7 @@ from autune_context.pipeline import get_embedder, get_reranker
 from autune_context.pipeline.retrieval import HybridRetriever, visible_meeting_clauses
 from autune_context.pipeline.topics import TopicSegment
 from autune_contracts import ChangeType
-from autune_core import Meeting, get_logger
+from autune_core import Meeting, TeamMember, User, get_logger
 from autune_core.errors import NotFoundError
 
 log = get_logger(__name__)
@@ -96,8 +96,10 @@ def minutes_until(starts_at: datetime, now: datetime) -> int:
 # --------------------------------------------------------------------------- #
 
 
-def due_meeting_ids(session: Session, now: datetime) -> list[str]:
-    """Scheduled meetings starting within the lead time that have no brief yet.
+def due_meeting_starts(session: Session, now: datetime) -> list[tuple[str, datetime]]:
+    """``(meeting_id, started_at)`` of scheduled meetings starting within the
+    lead time that have no brief yet -- the start too, so the task sent for
+    each can expire at it.
 
     A meeting whose start has already passed is not due: a brief after the
     meeting began is noise, so a brief missed while the worker was down stays
@@ -106,19 +108,18 @@ def due_meeting_ids(session: Session, now: datetime) -> list[str]:
     """
     lead = timedelta(minutes=get_settings().brief_lead_minutes)
     has_brief = select(CtxBrief.meeting_id).where(CtxBrief.meeting_id == Meeting.id).exists()
-    return list(
-        session.scalars(
-            select(Meeting.id)
-            .where(
-                Meeting.status == "scheduled",
-                Meeting.started_at > now,
-                Meeting.started_at <= now + lead,
-                or_(Meeting.expires_at.is_(None), Meeting.expires_at > now),
-                ~has_brief,
-            )
-            .order_by(Meeting.started_at, Meeting.id)
+    rows = session.execute(
+        select(Meeting.id, Meeting.started_at)
+        .where(
+            Meeting.status == "scheduled",
+            Meeting.started_at > now,
+            Meeting.started_at <= now + lead,
+            or_(Meeting.expires_at.is_(None), Meeting.expires_at > now),
+            ~has_brief,
         )
+        .order_by(Meeting.started_at, Meeting.id)
     )
+    return [(meeting_id, started_at) for meeting_id, started_at in rows if started_at is not None]
 
 
 # --------------------------------------------------------------------------- #
@@ -368,17 +369,42 @@ def compose_due_brief(
     return _render(session, meeting, row, agenda, now)
 
 
-def get_brief(session: Session, meeting_id: str, *, now: datetime | None = None) -> Brief:
-    """A composed brief, as the app shows it.
+def _is_team_member(session: Session, *, user_id: str, team_id: str) -> bool:
+    return (
+        session.scalar(
+            select(TeamMember.id).where(
+                TeamMember.user_id == user_id, TeamMember.team_id == team_id
+            )
+        )
+        is not None
+    )
+
+
+def get_brief(
+    session: Session, meeting_id: str, reader: User, *, now: datetime | None = None
+) -> Brief:
+    """A composed brief, as the app shows it, to a member of the meeting's team.
 
     Raises ``NotFoundError`` before the brief is composed (it is composed at
     ``brief_lead_minutes`` before the start, not on request -- composing needs
-    the models, which the API process does not load) and once the meeting
-    itself has expired.
+    the models, which the API process does not load), once the meeting itself
+    has expired, and for a reader outside the meeting's team. **An unknown
+    meeting and another team's meeting get the same answer**, never a 403 -- a
+    403 confirms the id exists (``autune_gap.service.require_readable_meeting``
+    draws the same line, #276). The log keeps the reason; ids only, since a
+    title is meeting content.
     """
     now = now or datetime.now(tz=UTC)
     meeting = session.get(Meeting, meeting_id)
+    if meeting is None or not _is_team_member(session, user_id=reader.id, team_id=meeting.team_id):
+        log.info(
+            "context_brief_read_refused",
+            meeting_id=meeting_id,
+            reader_id=reader.id,
+            reason="no_such_meeting" if meeting is None else "not_a_member",
+        )
+        raise NotFoundError("brief", meeting_id)
     row = session.get(CtxBrief, meeting_id)
-    if meeting is None or row is None or not _is_visible(meeting, now):
+    if row is None or not _is_visible(meeting, now):
         raise NotFoundError("brief", meeting_id)
     return _render(session, meeting, row, agenda_for(session, meeting), now)

@@ -302,9 +302,11 @@ def send_due_briefs() -> None:
     it) is claimed once.
     """
     with session_scope() as session:
-        due = briefs.due_meeting_ids(session, datetime.now(tz=UTC))
-    for meeting_id in due:
-        send_brief.delay(meeting_id)
+        due = briefs.due_meeting_starts(session, datetime.now(tz=UTC))
+    for meeting_id, starts_at in due:
+        # A send still queued at the start is noise -- and on a stalled
+        # cpu_heavy worker, one more per tick. Celery drops it unrun instead.
+        send_brief.apply_async((meeting_id,), expires=starts_at)
     if due:
         log.info("context_briefs_due", count=len(due))
 
@@ -334,6 +336,7 @@ def send_brief(meeting_id: str) -> None:
         recap=brief.recap,
         recap_gone=brief.recap_gone,
         agenda=brief.agenda,
+        recap_is_related=brief.match_reason != briefs.LATEST,
     )
     SlackClient(config.require_secret()).post_message(channel, fallback, blocks)
     log.info("context_brief_sent", meeting_id=meeting_id, match_reason=brief.match_reason)
