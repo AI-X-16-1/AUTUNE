@@ -183,7 +183,22 @@ it**, which is what the agent reads.
 
 **Orchestrator (오케스트레이터)**
 The loop that decides which tools to call for a given trigger, in what order,
-and what to do with the answers.
+and what to do with the answers. In the agent layer this is the **main agent**.
+
+**Main agent (메인 에이전트)**
+The agent people chat with. It receives every trigger and every chat message,
+answers from tools or hands the task to one subagent, combines the answer, and
+owns the work-item store and the approval gate.
+
+**Subagent (서브에이전트)**
+One feature of the agent layer with its own owner — Research, Briefing,
+Follow-up, Workload, Report. It reads tools from several modules and makes a
+judgement between the reads; it returns a summary like a tool does and never
+sends or writes at L2 itself. Not one per module: a module is a tool.
+
+**Approver (승인자)**
+The person a subagent's proposals go to — the team lead for Follow-up, the
+manager for Workload. Stored in `agent_approvers`.
 
 **Trigger (트리거)**
 A reason to wake up: a schedule, an event, a due `next_check_at`, or a person

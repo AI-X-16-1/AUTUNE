@@ -139,7 +139,7 @@ Every table a module owns is named `<prefix>_<name>`.
 | C. gap | `gap_` | `gap_topics`, `gap_gaps`, `gap_participation` |
 | D. context | `ctx_` | `ctx_materials`, `ctx_topic_links`, `ctx_decisions`, `ctx_decision_versions` |
 | E. intelligence | `intel_` | `intel_scores`, `intel_predictions`, `intel_reports` |
-| *(proposed #260)* agent layer | `agent_` | `agent_work_items`, `agent_runs` |
+| *(proposed #260)* agent layer | `agent_` | `agent_work_items`, `agent_runs`, `agent_approvers` |
 
 `agent_` is proposed in #260 and is the one prefix that does not belong to a
 module. A prefix marks an owner; under that proposal an owner is a module *or*
@@ -147,8 +147,10 @@ the agent layer (ADR 0010). Everything else about the rule is the same — the
 tables are owned by one party, nobody else writes them, and they need a
 deletion path by `meeting_id` or `user_id` like any other derived table.
 
-Both proposed tables need that path, and **`agent_runs` needs it as much as
-`agent_work_items` does**: its `steps`, `decisions` and suspended `messages`
+`agent_approvers` records who approves a subagent's proposals for a team; it
+holds no meeting content and is deleted by `user_id`. The other two proposed
+tables are meeting content and need the meeting path, and **`agent_runs` needs
+it as much as `agent_work_items` does**: its `steps`, `decisions` and suspended `messages`
 hold copies of what the modules' tools returned, so it carries `meeting_id`,
 cascades from `meetings`, and is swept at retention expiry. A copy that outlives
 what it copied is how a value one module blanked comes back alive somewhere

@@ -101,8 +101,36 @@ Two consequences of that contract are the point of writing it down:
 `apps/api` and `apps/worker` may import `autune_agent`, as they already import
 every module, and continue to do so by iteration rather than by name.
 
-CODEOWNERS: `/agent/ @mkkim68`. The `tools.py` file in each module stays with
-that module's owner.
+CODEOWNERS splits `agent/` the way the work is split
+(`../architecture/agent-layer.md` section 3.1): the main agent and the rest of
+the directory to its owner, each subagent to the person building it. The
+`tools.py` file in each module stays with that module's owner.
+
+```
+/agent/                                        @mkkim68
+/agent/src/autune_agent/subagents/research/    @mkkim68
+/agent/src/autune_agent/subagents/briefing/    @mminjae97
+/agent/src/autune_agent/subagents/followup/    @PARKJAEKYUNG0525
+/agent/src/autune_agent/subagents/workload/    @kjfcvx12
+/agent/src/autune_agent/subagents/report/      @lsh2217
+```
+
+A fifth import-linter contract keeps the subagents apart, as the first keeps
+the modules apart — one subagent never imports another; delegation goes
+through the main agent:
+
+```toml
+[[tool.importlinter.contracts]]
+name = "Subagents are independent"
+type = "independence"
+modules = [
+    "autune_agent.subagents.research",
+    "autune_agent.subagents.briefing",
+    "autune_agent.subagents.followup",
+    "autune_agent.subagents.workload",
+    "autune_agent.subagents.report",
+]
+```
 
 Tables created by the layer take the `agent_` prefix, exactly as a module's do
 (invariant 3). `agent_` is registered in `../architecture/data-model.md` as a
@@ -154,8 +182,8 @@ agent as well.
 
 - One more top-level directory, one more workspace member, one more line in
   every path-based config (ruff `src`, mypy `files`, pytest paths, CI).
-- Reviewers must learn a fourth contract. It is stated in one place, but it is
-  a fourth thing.
+- Reviewers must learn a fourth and a fifth contract. They are stated in one
+  place, but they are two more things.
 - `agent/` importing all five modules means its test suite pulls in every
   module's dependencies, including torch. Its unit tests must run against the
   tool registry with mock tools, not against real modules, or CI slows for
@@ -163,23 +191,25 @@ agent as well.
 
 **Accepted costs**
 
-- The layer is a single owner's surface for six weeks. If 김민경 is
-  unavailable, the agent layer stops. This is why the fixed pipeline is kept
-  and why the demo does not depend on the agent — stated as a risk in #260,
-  accepted here.
+- The main agent is a single owner's surface. If 김민경 is unavailable, no
+  subagent can run, because every trigger and every send passes through it.
+  This is why the fixed pipeline is kept and why the demo does not depend on
+  the agent — stated as a risk in #260, accepted here. The five subagents
+  spread the rest of the work across the team, so one person's absence costs
+  one feature rather than the layer.
 - `agent_` occupies a prefix that is not a module's, which makes invariant 3's
   sentence slightly longer than it was: a prefix marks an owner, and an owner
   is now a module *or* the agent layer.
 
 ## Not decided here
 
-Two questions in `../architecture/agent-layer.md` section 13 remain open and
-are not settled by this ADR: the **beat schedule** a periodic trigger would
-register against (#207, #227 — #258 is closed by #300), and **which outbound
-providers the team is willing to use** for the Research subagent's open-web
-step. Neither depends on where the layer lives.
+Two questions in `../architecture/agent-layer.md` section 13 were left open by
+this ADR and neither depends on where the layer lives. The **beat schedule** is
+answered since: a task declares `@periodic` (#374). **Which outbound providers
+the team is willing to use** for the Research subagent's open-web step is still
+open.
 
-**Neither of them is #92, and neither blocks the orchestrator's own LLM call.**
+**Neither was #92, and neither blocks the orchestrator's own LLM call.**
 An earlier draft of this ADR said content derived from a transcript may not go
 to an LLM provider until #92 answers. That was wrong twice: `privacy.md`
 section 6 already governs outbound transfer and already permits masked text,

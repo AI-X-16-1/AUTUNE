@@ -3,9 +3,11 @@
 > **Status: Proposed.** Nothing described here is built. The direction is under
 > discussion in issue #260 and the layer's location is ADR 0010, still
 > `Proposed`. Read this as a design under review, not as how the system works.
-> Two questions in section 13 block the first line of code: where the layer
-> lives (13.1) and how a periodic trigger is registered (13.2). 13.3 and 13.4
-> shape the work without blocking it.
+> The two questions that blocked the first line of code are answered: the
+> layer lives in a top-level `agent/` (13.1, agreed on #260 on 2026-09-26), and
+> a periodic trigger is a `@periodic` task (13.2, #374). **Who builds what is in
+> section 3.1, and the dates are in section 14** — start there if you are
+> picking up a subagent.
 
 Modules A–E are exposed as **tools**. An agent layer above them decides which
 tools to call, when to wake up, and what it is allowed to do with the answer.
@@ -56,51 +58,181 @@ permitted actions — and no new machine learning.
 
 - Each module gains one new file, `modules/<name>/src/autune_<name>/tools.py`,
   listing three to five callable tools. Nothing else in the module is touched.
-- A new layer, location pending ADR 0010, holds the orchestrator, the tool
-  registry, the work-item store and the triggers.
-- Two new tables with an `agent_` prefix (section 5, and `data-model.md`).
+- A new layer in `agent/` (ADR 0010) holds the main agent, five feature
+  subagents, the tool registry, the work-item store and the triggers. The main
+  agent has one owner and each subagent has one owner (section 3.1).
+- New tables with an `agent_` prefix (section 5, and `data-model.md`).
 
 ## 3. Shape
 
 ```
-  triggers                ┌──────────────────────────────────┐
-  ─────────               │       Orchestrator               │
-  scheduler ─────────────>│   sense → plan → act → log       │
-  meeting completed ─────>│   "what should happen now?"      │
-  user request ──────────>└──────────────┬───────────────────┘
-                                         │
-                       ┌─────────────────┴──────────────────┐
-                       │                                    │
-                       ▼                                    ▼
-              tool registry                           Research agent
-                       │                        (LLM + uploaded material)
-        ┌──────┬───────┼───────┬────────┐                   │
-        ▼      ▼       ▼       ▼        ▼                   ▼
-      [A]    [B]     [C]     [D]      [E]           integrations/privacy
-       └──────┴───────┴───────┴────────┘             (outbound boundary)
-            modules, unchanged                    every prompt and every
-                       │                          message, section 8 rule 1
-                       ▼
-            agent_work_items · agent_runs
+  triggers                  ┌─────────────────────────────────────┐
+  ─────────                 │  Main agent (orchestrator)          │
+  scheduler ───────────────>│  route → delegate → combine → log   │
+  meeting completed ───────>│  chat, work items, approval gate    │
+  chat message ────────────>└──────────────────┬──────────────────┘
+                                               │ delegates one task
+         ┌──────────────┬──────────────┬───────┴──────┬──────────────┐
+         ▼              ▼              ▼              ▼              ▼
+     Research        Briefing      Follow-up      Workload        Report
+     (김민경)         (문민재)       (박재경)        (강민구)        (이승환)
+         │              │              │              │              │
+         └──────────────┴──────┬───────┴──────────────┴──────────────┘
+                               │ every subagent calls tools; none calls another
+                               ▼
+                         tool registry
+                               │
+        ┌──────┬───────┬───────┼───────┬────────┐
+        ▼      ▼       ▼       ▼       ▼        ▼
+       [A]    [B]     [C]     [D]     [E]   integrations
+        modules, unchanged           (Slack, Notion, Jira, Calendar;
+                                      outbound boundary, section 8 rule 1)
+                               │
+                               ▼
+              agent_work_items · agent_runs · agent_approvers
 ```
 
-Note what is *not* in the diagram: a per-module subagent. An earlier draft had
-six subagents, one wrapping each module, and gave the right reason for them —
-**context isolation**: a gap detector that reads three hundred utterances and
-finds forty-seven gaps must not hand all forty-seven to the orchestrator, or the
-orchestrator has no room left to think. That reason is right and the mechanism
-is wrong. Isolation is a property of what a tool *returns*, not of whether an
-LLM loop sits in front of it. A tool that returns a three-sentence summary,
-five ranked items and evidence ids (section 4, the return contract) isolates
-exactly as well as a subagent would, at zero extra model calls and with nothing
-to debug in between.
+**Modules are tools; features are subagents.** A module answers questions
+about what it already computed — B's action items, C's topic graph, D's links
+— through its `tools.py`, and gains no loop. A subagent is a feature: it reads
+from several modules and makes a judgement between the reads, and that is the
+test an earlier draft of this document set for when a subagent earns its cost.
+"Detect gaps for this meeting" is one call and stays a tool. "Decide whether
+this team needs another meeting" reads open items from B, unresolved topics from
+C and the last decision thread from D, then weighs them — that is a subagent.
 
-A subagent — its own reasoning loop — earns its cost only when the sub-task
-needs several tool calls *and a judgement between them*. "Detect gaps for this
-meeting" is one call. "Find out what a stuck decision is missing" is a search,
-a read, another search and a comparison, and that is **Research**: the one
-subagent, the one that reasons over several sources, and the one that talks to
-the outside world.
+An earlier draft had one subagent per *module* and rejected it for the right
+reason: a loop in front of a single tool call is cost without benefit, and the
+return contract (section 4) already gives the orchestrator context isolation.
+That argument still holds and still rules out a per-module subagent. What
+changed is that the product now has five features that each span modules, and
+each one of them passes the test on its own.
+
+### 3.1 Who builds what
+
+One owner per box. The main agent's owner builds the loop every subagent runs
+inside; each subagent's owner builds that subagent, its prompts and its tests,
+and keeps their module's `tools.py`.
+
+| Part | Owner | What it does | Wakes on | Reads (tools) | Leaves the building as |
+| --- | --- | --- | --- | --- | --- |
+| **Main agent** | 김민경 | Chat entry point; routes a request or a trigger to one subagent, or answers from tools directly; combines the answer; owns the work-item store, the trigger scheduler, the approval gate and `agent_runs` | every trigger, every chat message | any | the chat answer; L2 plans to the approval screen |
+| **Research** | 김민경 | When a meeting raises an idea or argues over a fact nobody could confirm, gathers what is known into a short document and proposes sending it to the people involved | meeting completed; `autune.transcript.ready`; a chat request | D (links, decisions), B (open questions), uploaded material | a Slack message to the meeting's participants — L2 |
+| **Briefing** | 문민재 | Ten minutes before a meeting, sends the previous meeting's summary and the issues this one should settle; links Jira issues | time, from Google Calendar | D (links, decision threads), B (open items), C (unresolved topics), Jira | D's pre-meeting brief — D's own surface, rule 2 |
+| **Follow-up** | 박재경 | Watches progress and unresolved topics; when a follow-up meeting looks needed, proposes one — to the team lead only | state, `@periodic` | C (topics, per-role participation), B (open items), D (decision threads), Calendar (free slots) | a proposal on the lead's approval screen; the calendar event only after approval — L2 |
+| **Workload** | 강민구 | Notices that one person is overloaded while another has finished, and proposes a redistribution — to the manager only; owns the Gmail and Google Calendar integration | state, `@periodic` | B (items per owner and their state), Jira (assignments) | a proposal on the manager's approval screen; any reassignment only after approval — L2 |
+| **Report** | 이승환 | After a meeting, writes the summary minutes report and sends it | `autune.intelligence.completed` | E (scores, trend), B, C, D (their summaries) | E's report delivery — E's own surface, rule 2 |
+
+Three things in that table are decisions, not descriptions:
+
+- **A proposal to a lead is the approval request itself.** Follow-up and
+  Workload do not DM the lead and then ask someone to approve the DM. The
+  proposal lands on the lead's approval screen (section 8, plan mode), and what
+  it proposes — a calendar event, a reassignment, a message to the people
+  affected — happens only when the lead approves it item by item.
+- **Workload and Follow-up read counts of work, never speech.** How many open
+  items a person owns and how late they are is work state, which a manager
+  already sees in Jira. How much a person spoke, or whether they were silent on
+  a topic, is not: privacy.md section 3 keeps a speaking ratio with its speaker
+  and forbids per-person speaking patterns to anyone else, managers included.
+  Follow-up reads C's participation **per role**, as section 7's charter does.
+  Neither subagent calls E's speaking-ratio read, and the tool registry does
+  not offer it to them.
+- **Research reads what we hold, not the open web.** Uploaded material, past
+  meetings through D and open questions through B. Open-web search is still out
+  of scope (section 13.3); a subagent owner who wants it raises it there rather
+  than adding a search tool.
+
+**Integration work runs ahead of the subagents that need it.** Briefing and
+Follow-up both need Google Calendar, which Workload's owner builds; Workload
+needs Jira, which Briefing's owner builds. `packages/integrations` already has
+a `CalendarClient` and a `JiraClient`, and what each subagent needs from them
+is the first thing its owner confirms with the integration's owner (section 14,
+first milestone). Gmail is new, and a new client in `packages/integrations` is
+a shared-package change that needs the team's approval (section 13.6).
+
+### 3.2 Where the code goes
+
+```
+agent/
+├── pyproject.toml                 autune-agent; LangGraph and the LLM SDK live here
+└── src/autune_agent/
+    ├── main/                      main agent — 김민경
+    │   ├── graph.py               the supervisor graph, section 3.3
+    │   ├── registry.py            tools, collected by iterating the module list
+    │   ├── triggers.py            @periodic and event subscriptions
+    │   ├── approval.py            plan mode, suspend and resume
+    │   └── store.py               agent_work_items, agent_runs, agent_approvers
+    └── subagents/
+        ├── research/              김민경
+        ├── briefing/              문민재
+        ├── followup/              박재경
+        ├── workload/              강민구
+        └── report/                이승환
+```
+
+CODEOWNERS follows the tree: `/agent/src/autune_agent/main/` to the main
+agent's owner and each `subagents/<name>/` to its owner, so a subagent change
+needs its owner's approval and nobody else's. A change under `main/` touches
+every subagent and needs the main agent's owner.
+
+**Subagents never import each other**, for the same reason modules do not
+(invariant 2). If Follow-up needs what Workload knows, it asks the main agent,
+which routes. A fifth import-linter contract, alongside ADR 0010's fourth,
+makes the `subagents.*` packages independent.
+
+Each subagent directory exports one thing, collected the way tools are — by
+iterating the subagent list, never by appending to a registry:
+
+```python
+# agent/src/autune_agent/subagents/followup/__init__.py
+SUBAGENT = Subagent(
+    name="followup",
+    description="""Use when deciding whether a team needs another meeting ...""",
+    tools=[...],                # names from C's, B's and D's own tools.py
+    build=build_graph,          # returns a compiled LangGraph subgraph
+    triggers=[Periodic(hours=6)],
+)
+```
+
+`description` is what the main agent routes on, so it says **when to use it**
+first, like a tool's docstring (section 4, rule 2). `tools` is an allow-list:
+a subagent sees only the tools it names, which is how section 3.1's rule that
+Workload never sees a speaking ratio is enforced rather than hoped for.
+
+A subagent hands back the same `ToolResult` a tool does (section 4) — a
+summary, at most five items, evidence ids — plus, when it wants something done
+at L2, a list of `ProposedAction` for the main agent to put through plan mode.
+**A subagent never calls a write tool itself.** The main agent owns the gate.
+
+### 3.3 LangGraph, and what it is not allowed to do
+
+The main agent is a LangGraph supervisor graph; each subagent is a compiled
+subgraph the supervisor delegates to. An earlier draft said "no framework — a
+hand-written loop of about 200 lines", and with one orchestrator and one
+subagent that was right. With five subagents built by five people it is not:
+a shared graph shape is what lets each owner build a subagent without
+re-inventing routing, tool calling and interruption, and LangGraph's
+`interrupt` is plan mode's pause point (section 8).
+
+Two uses of LangGraph are **not** allowed, because each would bypass a rule
+this repository already enforces:
+
+- **No LangGraph checkpointer tables.** Its Postgres checkpointer creates
+  unprefixed tables that hold the full message state — copies of tool results —
+  with no deletion path by `meeting_id`. That fails invariant 3 and
+  privacy.md section 7 at once. The run persists to `agent_runs.messages`
+  (section 5), and resume rebuilds the graph state from that row; an in-memory
+  checkpointer inside a single run is fine.
+- **No LangChain tools or retrievers that reach outside.** Every tool the graph
+  calls comes from the registry in section 4. A prebuilt web-search tool, a
+  document loader that fetches a URL or a LangChain retriever over our database
+  would each be an outbound path or a read that skips a module's own visibility
+  rules.
+
+The LLM behind the graph is Gemini, through the same `check_outbound` /
+`assert_masked` path B's `classifier_impl=llm` already uses (#393; section 8
+rule 1). The model name is configuration, not code.
 
 ## 4. Tools — how a module becomes callable
 
@@ -272,7 +404,26 @@ CREATE TABLE agent_runs (
   token_cost  INT,
   created_at  TIMESTAMPTZ
 );
+
+CREATE TABLE agent_approvers (
+  team_id     TEXT,    -- team_…
+  user_id     TEXT,    -- user_…, ON DELETE CASCADE
+  scope       TEXT,    -- research | followup | workload | any
+  created_at  TIMESTAMPTZ,
+  PRIMARY KEY (team_id, user_id, scope)
+);
 ```
+
+**`agent_approvers` is who "the team lead" and "the manager" are.** Follow-up
+reports to the lead only and Workload to the manager only (section 3.1), and
+nothing in the repository says who either is: `packages/core` has a job role
+(`PM`, `Dev`, `Design`, `Data`) and deliberately no administrator. Adding one to
+`Team` or `User` would be a shared-entity change owned by module A (invariant
+4), for a fact only the agent layer reads. So the layer keeps its own row, set
+by the team in the web settings, and a proposal whose scope has no approver is
+not sent to anyone — it stays on the run timeline. The table holds a role
+assignment, not meeting content, so it is deleted with its user rather than with
+a meeting.
 
 **Ids are prefixed `TEXT`, in the SQL as well as in the prose.** Primary keys in
 this repository are prefixed strings from `autune_core.ids.new_id` —
@@ -377,23 +528,31 @@ shipping them.
 
 ## 6. Triggers
 
-| Kind | Example | Mechanism |
-| --- | --- | --- |
-| Time | 09:00 team briefing; 30 minutes before a meeting (see below) | Celery beat |
-| State | `next_check_at` due; deadline tomorrow and no signal in three days | 5-minute poll |
-| Event | Meeting analysis finished; bot mentioned | Existing events + webhooks |
-| Request | "Summarise last week's decisions" | Slash command |
+| Kind | Example | Owner | Mechanism |
+| --- | --- | --- | --- |
+| Time | 09:00 morning briefing | main agent | `@periodic` (#374) |
+| Time | 10 minutes before a meeting on the team's Google Calendar | Briefing | `@periodic` poll of the calendar, every minute |
+| State | `next_check_at` due; deadline tomorrow and no signal in three days | main agent | `@periodic`, every 5 minutes |
+| State | work piling up on one person; unresolved topics across two meetings | Workload, Follow-up | `@periodic`, a few times a day |
+| Event | a meeting's analysis finished | Research, Report | `autune.transcript.ready`, `autune.intelligence.completed` |
+| Request | "What did we decide about search last week?" | main agent, which may delegate | chat message |
 
-For the first release, **event + state** is enough. Event triggers work today —
-the existing events are published and consumed. State triggers depend on the
-question in section 13.2: their 5-minute poll needs a beat schedule, and this
-repository has none that a module may add.
+**Every trigger enters through the main agent.** A subagent declares the
+triggers it wants (section 3.2) and the main agent's scheduler registers them,
+so a subagent owner never writes a `@periodic` task or an event subscription of
+their own, and every run — whoever it was for — is one `agent_runs` row with
+the same shape.
 
-**The 30-minutes-before trigger does not send a message.** Module D already owns
-the pre-meeting brief (`notify.py`, #234), and section 8 rule 2 is that outbound
-goes out through the module that owns the content. If the agent has something to
-add half an hour before a meeting it adds it to D's brief; it does not post a
-second one into the same slot.
+A periodic task is a `@periodic` declaration beside the task itself
+(`async-pipeline.md`, #374); nothing edits `apps/worker`. The agent layer's
+tasks are named `autune.agent.periodic.<name>`.
+
+**The brief ten minutes before a meeting is D's surface, and D's owner builds
+it.** Module D already owns the pre-meeting brief (`slack.py`, #234) and section
+8 rule 2 is that outbound goes out through the module that owns the content.
+The Briefing subagent is where the brief is *composed* — it reads B, C and Jira
+as well as D — and D's surface is where it is *sent*, so one brief goes out,
+not two. The earlier "30 minutes" in `prd.md` is now ten.
 
 ## 7. The team charter — judgement the team writes down
 
@@ -551,7 +710,7 @@ B's Notion sync and D's Slack notices as much as of this layer — it is the
 system's existing masking scope, not something the agent layer introduces, and
 #92 lists it among the things to put to a reviewer.
 
-#### Rule 2 — outbound goes out through the module that owns the content
+#### Rule 2 — outbound goes out through whoever owns the content: a module, or the subagent that wrote it
 
 **The agent reads state and puts it in a briefing. It does not send the DM,
 create the Notion page, or re-date the item.** Every module already does its
@@ -565,14 +724,31 @@ duplicate message and a bypassed check at the same time:
 | An item's due date | B | `ext_action_items.due_date` is B's column; "re-date" is not the agent's verb |
 | Topic-link notice, decision-drift warning, pre-meeting brief | D | `notify.py`, capped and de-duplicated, implementation in #234 |
 | Speaking ratio | E | `feedback.build_speaking_ratio_dm`, DM to the subject only |
+| Meeting summary report | E | the Report subagent composes it; E's report delivery sends it |
 
 So an L2 action is never "the agent sends X". It is "the agent asks the owning
-module to send X, and the module's own guard decides". Two consequences worth
-naming:
+module to send X, and the module's own guard decides".
 
-- **Section 6's "30 minutes before a meeting" trigger does not send anything.**
-  D's pre-meeting brief already occupies that slot. If the agent has something
-  to add there it goes to D's brief, or it waits for the morning briefing.
+**Content no module owns is owned by the subagent that wrote it**, and that
+subagent's owner builds the send — still through `packages/integrations` and
+its guard, never a client of its own:
+
+| Surface | Owner | Level |
+| --- | --- | --- |
+| Research document to the meeting's participants | Research | L2 — an approver with scope `research` |
+| A proposed follow-up meeting, and the calendar event | Follow-up | L2 — an approver with scope `followup` |
+| A proposed redistribution, and any Jira reassignment or message it implies | Workload | L2 — an approver with scope `workload` |
+
+Consequences worth naming:
+
+- **Section 6's ten-minutes-before trigger sends one brief, D's.** The Briefing
+  subagent composes it and D's surface sends it. Nothing else posts into that
+  slot.
+- **"Sent as soon as it exists" means proposed as soon as it exists.** Research
+  may finish mid-meeting; its document is on the approver's screen then, and
+  goes out on one click. Section 8's rule that a DM is never demoted to L1
+  applies to it like any other. `meetings` has no organiser column, which
+  is why the approver comes from `agent_approvers` and not from the meeting.
 - **The confirmation DM is B's, once.** An agent DMing the same speaker about
   the same utterance is a duplicate, and the speaker cannot tell which of the
   two to answer.
@@ -746,6 +922,13 @@ they are a decision and not a discovery.
 | Tokens per run | a ceiling, then observed in `agent_runs.token_cost` | cost has to be predictable before it can be reduced |
 | Wall clock per run | 2 minutes | |
 
+**The caps are per run, and a delegation is part of its parent's run.** When
+the main agent hands a task to a subagent, the subagent's tool calls, tokens
+and wall clock count against the same run, and the subagent returns a
+`ToolResult` (section 3.2) rather than its whole conversation — that is what
+keeps five subagents from filling the main agent's context. A subagent may set
+tighter caps for itself; none may raise them.
+
 **The agent does not choose the three past meetings by searching.** Cross-meeting
 links are computed at pipeline time and stored in D's tables; `links_for_meeting`
 reads them and the agent takes the top three D ranked. An earlier draft said
@@ -851,6 +1034,14 @@ implementation there sends an utterance to a third party and that adding an
 This experiment does not reopen it. `hosted` — our own server — is what T2 and
 T3 mean.
 
+**Stale since #393, and not this document's call to settle.** Module B has
+since added `classifier_impl=llm`, which sends masked utterance windows to
+Gemini through `check_outbound`, so the door the paragraph above describes is
+open in B's own code. Whether that meets section 6's second condition is B's
+owner's decision, recorded in B's docs; this section keeps the old wording
+only so the history reads straight, and T2 now has a running implementation
+to measure.
+
 **One task, not three.** Utterance classification has a measured baseline (#149)
 and an evaluation set. Gap detection has neither — no risk-scoring implementation
 to measure and no labelled gaps. Topic linking is the second task and is
@@ -871,16 +1062,19 @@ table is what was measured, not what worked.
 
 - **A per-module subagent for A, B, C, D and E.** Context isolation is the
   return contract; a loop in front of a single tool call is cost without
-  benefit. Section 3.
+  benefit. The five subagents are per *feature*, and each spans modules.
+  Section 3.
+- **A subagent calling another subagent.** Delegation goes through the main
+  agent, one level deep. Section 3.2.
 - **Open-web search in Research, for now.** Research reads uploaded material.
   Section 13.3.
-- **The agent sending anything itself.** Outbound goes out through the module
-  that owns the content, section 8 rule 2.
+- **The agent sending anything itself.** Outbound goes out through whoever owns
+  the content — a module, or the subagent that wrote it — and always through
+  `packages/integrations`. Section 8 rule 2.
 - **A classifier behind a third-party API.** Section 11.
 - **A charter that can grant anything.** It tightens only. Section 7.
-- **A framework.** A hand-written loop plus function calling, on the order of
-  200 lines. A graph library makes this harder to debug and harder to explain,
-  and explaining it is half the value.
+- **LangGraph's persistence and prebuilt tools.** The graph is LangGraph; its
+  checkpointer tables and its outbound tools are not. Section 3.3.
 - **Replacing the fixed pipeline.** It stays. The agent is an added path, and
   the demo has a version that does not need it.
 - **Autonomy over external systems.** Everything at L2 waits for a person.
@@ -890,28 +1084,25 @@ table is what was measured, not what worked.
 The context budget, section 9. Past any cap the run stops and hands over to a
 person, with the partial trace kept in `agent_runs`.
 
-## 13. Open questions — these block the work
+## 13. Open questions
 
-### 13.1 Where does the layer live? — ADR 0010
+13.1 and 13.2 blocked the first line of code and are answered. 13.3 to 13.6
+shape the work without blocking it.
+
+### 13.1 Where does the layer live? — answered: top-level `agent/`
 
 `packages/agent/` breaks the import-linter contract *Packages do not depend on
 modules*. `apps/agent/` breaks invariant 6, *apps is assembly only*. A new
-top-level `agent/` breaks neither but adds a layer. Proposed: the third.
+top-level `agent/` breaks neither but adds a layer. The owners of B, C, D and E
+each agreed to the third on #260; ADR 0010 records it and moves to `Accepted`
+when #261 merges.
 
-### 13.2 How is a periodic trigger registered? — #207, #227
+### 13.2 How is a periodic trigger registered? — answered: `@periodic` (#374)
 
-Half of this is solved since the draft was written: #258 closed with #300, so
-one Celery app is built once and is current in every process, including the
-API's. Reaching Celery from outside a worker is no longer the question.
-
-What is left is the **beat schedule**. There is none, and a module may not edit
-`apps/worker` to add one. Every time trigger in section 6 stands on that, and so
-does the 5-minute poll the state triggers use. Plan mode's suspend-and-resume
-(section 8) needs it too, because the resume is a scheduled wake rather than a
-blocked task.
-
-#207 and #227 are the same question asked twice — a module-neutral way to
-register a periodic task — and should be decided together.
+A task declares its own period with `@periodic` beside `@shared_task`, and
+`make_celery_app` builds the beat schedule from the task registry
+(`async-pipeline.md`). Nobody edits `apps/worker`. Every time and state trigger
+in section 6 stands on this, and so does plan mode's resume on a timeout.
 
 ### 13.3 Which outbound providers, on what terms — not #92, and not a blocker
 
@@ -929,11 +1120,12 @@ What is actually undecided is narrower and is procurement rather than
 architecture: **which providers we send to, and under what agreement.** Two
 parts, and only the second holds anything back:
 
-- **The LLM provider.** Open, in the sense that a provider has to be named and
-  its data-processing terms recorded before the first real run — the same
-  question every third-party integration in `packages/integrations` answers.
-  See `../engineering/environments.md` for where a credential and its terms are
-  recorded. It does not block design or the first mock-tool milestone.
+- **The LLM provider: Gemini.** Module B already calls it through
+  `check_outbound` (#393), so the agent layer adds no new provider. What is
+  still owed is the data-processing terms recorded next to the credential in
+  `../engineering/environments.md`, as for every third-party integration, and
+  the free tier's rate limit — B hit it (#419) — which five subagents sharing
+  one key will hit sooner. It does not block design or the mock-tool milestone.
 - **Open-web search.** This one stays out of scope for the release. A search
   query *is* the payload — there is no feature-scoped subset of it to send the
   way there is for a prompt — and a general search engine is not a processor we
@@ -953,6 +1145,47 @@ question: a team admin, any member, a reviewer? `agent_charters` needs an
 owner column and a version, and the answer decides whether a charter edit is
 an L1 or an L2 action of the person making it. Not decided.
 
+### 13.5 Who sets the approvers
+
+`agent_approvers` (section 5) says who the lead and the manager are, and a
+wrong row sends a workload proposal to the wrong person. Setting a row is
+therefore itself a permission question, the same one as 13.4, and should be
+answered with it. Until then the first member of a team sets it and every
+change is written to `agent_runs`.
+
+### 13.6 Gmail is a new integration
+
+Workload's owner builds the mail side. `packages/integrations` has Slack,
+Notion, Jira and Calendar clients and no mail client; a new one is a
+shared-package change (invariant 10) with the team's approval, and it goes
+through `privacy.py` like every other client. Mail is also the one surface
+that reaches people outside the team, which is L3 in section 8 today — so the
+first version reads mail and drafts replies, and sends nothing.
+
+## 14. Build plan — from 2026-09-29 to 2026-10-12
+
+The mentor's dates on #260: the base features run end to end by **9/30**, and
+development closes on **10/12**. The agent layer fits between them. Each row is
+one owner's; a date is when it is merged, not started.
+
+| By | Main agent (김민경) | Every subagent owner |
+| --- | --- | --- |
+| **10/1** | `agent/` skeleton merged: workspace member, the fourth and fifth import-linter contracts, `ToolResult`, `Subagent`, the registry, a supervisor graph running one mock subagent over mock tools | confirm with the integration's owner what your subagent needs from Calendar or Jira; open an issue for anything missing |
+| **10/5** | `agent_work_items`, `agent_runs`, `agent_approvers` and their migration; the chat endpoint; the run-timeline screen | your module's `tools.py` returns real data; your subagent runs against mock tools with its own tests; Calendar (강민구) and Jira (문민재) reads work |
+| **10/9** | plan mode and the approval screen; triggers from section 6; the morning briefing | your subagent runs against real tools, end to end on one real meeting |
+| **10/12** | demo run of all five subagents; the fixed pipeline still works with the layer off | fixes only |
+
+**Gate on 10/9.** A subagent that has not run end to end on a real meeting by
+then is left out of the demo, and the demo shows the rest. The chat answer and
+the morning briefing are the minimum; if those do not run, the fixed pipeline is
+what gets presented. One finished thing beats five half-built ones.
+
+**How to start a subagent.** Read sections 3.1 to 3.3 for the shape, section 4
+for the return contract, section 8 for what you may send, and section 9 for the
+budget. Build against the mock tools the 10/1 skeleton ships, so you are not
+waiting on anyone's module. Put your dependencies in `agent/pyproject.toml`
+only if the main agent does not already have them, and say so in the PR.
+
 ---
 
 ## Appendix — where each pattern comes from
@@ -966,7 +1199,7 @@ the design's justification: nothing here is invented for the demo.
 | `grep` and `read`, not an index | A module's own reads, exposed one per question, section 4 | A tool per question the module can already answer beats one tool with a mode flag |
 | A rules file at the project root | The team charter, section 7 | The cheapest way to change behaviour without training |
 | Reading intent (issues, docs) against reality (code, tests) | Charter against transcript = gap detection | "What should happen next" is the difference between the two |
-| Subagents for context isolation | The return contract, section 4 | The point is protecting the parent's context, not dividing labour |
+| Subagents for context isolation | The return contract, section 4, and one subagent per feature, section 3 | A subagent returns a summary, not its conversation; it earns its own loop only when a task needs several reads and a judgement between them |
 | Plan mode | `submit_work_plan` and the gate, section 8 | Removing write tools raises the quality of the investigation |
 | A todo-list tool | `agent_work_items`, section 5 | In a domain with no codebase, the state has to be built |
 | An execution trace | `agent_runs`, section 5 | Without observability there is no debugging and no trust |

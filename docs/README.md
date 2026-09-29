@@ -43,7 +43,7 @@ documents cover how it is built.
 | `async-pipeline.md` | Celery event flow A → B/C/D → E, retries, idempotency |
 | `privacy.md` | Raw-audio deletion, PII masking, speaking-ratio confidentiality, retention |
 | `integrations.md` | Slack, Notion, Calendar wrappers and the outbound privacy boundary |
-| `agent-layer.md` | **Proposed (#260).** Modules as tools, work-item state, triggers, action permission levels |
+| `agent-layer.md` | **Proposed (#260).** Main agent and five subagents with their owners, modules as tools, work-item state, triggers, action permission levels, build plan to 10/12 |
 
 ### engineering/
 | Document | Contents |

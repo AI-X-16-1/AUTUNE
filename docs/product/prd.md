@@ -53,7 +53,7 @@ carries them. Everything in the table below is still what the modules do:
 
 | Phase | What Autune does |
 | --- | --- |
-| Before | Analyze uploaded material → draft agenda → pre-meeting brief (Phase 2) |
+| Before | Analyze uploaded material → draft agenda (Phase 2) → pre-meeting brief (proposed, 5.7) |
 | During | Real-time transcription, interim summaries, undecided-item alerts (Phase 2) |
 | After | Action extraction and tracking, gap detection, context linking, personal speaking-ratio feedback, Slack/Notion delivery |
 | Over time | Decision lineage, dashboard, influence map, topic linking |
@@ -117,8 +117,9 @@ reports) → VP/CTO (dashboard).
   automatically — "this came up in the meeting on 2026-09-04" with a link.
 - **Decision lineage:** track how a single decision mutated across meetings as a
   timeline; warn when it changed while a key stakeholder was absent.
-- **Pre-meeting brief:** 30 minutes before a meeting, send incomplete actions,
-  unresolved gaps, and a decision-lineage summary to Slack (Phase 2).
+- **Pre-meeting brief:** 10 minutes before a meeting, send the previous
+  meeting's summary and the issues this one should settle to Slack. Proposed
+  (#260) for the MVP as the Briefing subagent, 5.7; it goes out through D.
 
 ### 5.5 Intelligence dashboard (E)
 - Meeting quality score (A–F) trend.
@@ -139,54 +140,57 @@ reports) → VP/CTO (dashboard).
 
 ### 5.7 Agent layer (proposed for the MVP — #260)
 
-The part of this section that was Phase 2 and is now proposed for the six
-weeks, in the reduced form agreed in #260:
+A chat assistant that moves first: it tells the team what is due and what is
+stuck before anyone asks, and answers questions about any meeting the team has
+held. One **main agent** talks to people and routes; five **subagents**, one
+per feature and one owner each, do the work. Design and ownership:
+`../architecture/agent-layer.md` section 3.
+
+| Subagent | Owner | What the user gets |
+| --- | --- | --- |
+| Main agent | 김민경 | A chat that answers from every meeting, and a morning briefing of what is due and what is stuck — the top five, not everything |
+| Research | 김민경 | When a meeting floats an idea or argues over a fact nobody could confirm, a short document of what is known, proposed to the people involved during or right after the meeting |
+| Briefing | 문민재 | Ten minutes before a meeting, the previous meeting's summary and the issues this one should settle, with the linked Jira issues |
+| Follow-up | 박재경 | When progress and unresolved topics say another meeting is needed, a proposal to the team lead only |
+| Workload | 강민구 | When one person is overloaded and another is free, a redistribution proposal to the manager only; Gmail and Google Calendar integration |
+| Report | 이승환 | After a meeting, the summary minutes report |
+
+What holds for all of them:
 
 - **Work-item state.** Every action, gap, open question and decision gets a row
   that outlives the meeting, carrying status, owner, deadline, confidence and
-  the utterance it came from.
-- **Waking up.** The agent runs when a meeting finishes and when an item's own
-  `next_check_at` comes due — a deadline approaching with no signal, a gap
-  unresolved across two meetings.
-- **One scenario for the release: the morning briefing.** Quality and trend
-  from E, C's topic graph and per-role participation, today's meetings and
-  their cross-meeting links from D, ranked, and **only the top five sent** — an
-  assistant chooses, a notification bot lists. C's *risk* scores are not in
-  this list: `GapReport.gaps` has no value yet (blocked on #22), while C's topic
-  graph and participation do.
-- **Research.** When a decision is blocked for want of information, gather it
-  from uploaded material and present the options. Open-web search is out of
-  scope for the release — a query is its own payload and there is no
-  feature-scoped subset of it to send. Not blocked on #92; see
-  `../architecture/agent-layer.md` section 13.3.
-- **Nothing goes out except through the module that owns it.** B sends the
-  confirmation DM and creates the Notion page, D sends the pre-meeting brief
-  and the drift warning, E sends the speaking ratio. The agent reads their
-  state into a briefing and sends nothing itself, so no message arrives twice
-  and no module's own guard is bypassed. `../architecture/agent-layer.md`
-  section 8, rule 2.
-- **The team writes the standard.** A short charter — what a meeting must
-  settle, who must be in the room — is the checklist gap detection runs
-  against and the policy the agent follows. Tuning is editing a paragraph.
+  the utterances it came from.
+- **Waking up.** On a schedule, when a meeting finishes, and when an item's own
+  `next_check_at` comes due.
 - **Nothing acts on a person without approval.** Grades L0–L3 in
-  `../architecture/agent-layer.md` section 8; an L2 action goes through plan
-  mode — the agent investigates with its write tools removed, submits a plan,
-  and a person approves it item by item. L0 and L1 do not ask.
+  `../architecture/agent-layer.md` section 8. Anything that moves a person — a
+  message, a calendar event, a reassignment — goes through plan mode and a
+  person approves it item by item. The lead's and the manager's proposals *are*
+  that approval request.
+- **Workload reads work, never speech.** Counts of open and late items, as a
+  manager already sees in Jira — never a speaking ratio or a per-person
+  participation figure (5.6, `../architecture/privacy.md` section 3).
+- **Research reads what we hold.** Uploaded material and past meetings.
+  Open-web search is out of scope for the release
+  (`../architecture/agent-layer.md` section 13.3).
+- **Nothing goes out except through its owner.** A module sends what it owns —
+  B the confirmation DM and Notion page, D the brief, E the report and the
+  speaking ratio — and a subagent sends what only it wrote, through
+  `packages/integrations`.
 - **Nothing acts on a low-confidence or unreviewed signal.** The agent reads the
   owning module's own confidence and review state and asks a person rather than
-  acting when either falls short; it does not invent a threshold of its own.
-  Module B's classifier is weak today (#149 is an English AMI figure, not a
-  Korean one; there is no agreed Korean evaluation set yet, #10) and B leaves
-  `candidate_confidence` unset on purpose, so **everything from B is a candidate
-  and stays internal until a person confirms it.** The design routes around the
-  weakness rather than hiding it.
+  acting when either falls short. Everything from B is a candidate and stays
+  internal until a person confirms it.
+- **The team writes the standard.** A short charter — what a meeting must
+  settle, who must be in the room — is the checklist gap detection runs
+  against and the policy the agent follows.
 
 Still Phase 2, unchanged:
 
 - Meeting-room discovery and booking through the company system or Microsoft
   Teams API; learn occupancy patterns and recommend open slots.
-- Predict that a meeting is needed, propose a time from participants' calendars
-  and book it.
+- Booking a meeting without a person approving it. Follow-up proposes; a lead
+  books.
 
 ## 6. Privacy and legal compliance
 
@@ -247,12 +251,13 @@ Proposed (#260) — an optional layer on top. The pipeline above is unchanged an
 keeps running if this is switched off:
 
 ```
-  triggers ──→ ┌──────────────┐ ──→ tools over [A][B][C][D][E]
-  (schedule,   │ Orchestrator │ ──→ Research (LLM, material)
-   event,      └──────┬───────┘ ──→ actions, L2+ gated by approval
-   state)             │
-                      ▼
-          agent_work_items · agent_runs
+  triggers ──→ ┌────────────┐ ──→ subagents: Research · Briefing · Follow-up
+  (schedule,   │ Main agent │                 Workload · Report
+   event,      │  + chat    │ ──→ tools over [A][B][C][D][E]
+   state,      └─────┬──────┘ ──→ actions, L2+ gated by approval
+   chat)             │
+                     ▼
+     agent_work_items · agent_runs · agent_approvers
 ```
 
 Detail: `../architecture/async-pipeline.md`, `../architecture/agent-layer.md`.
@@ -280,8 +285,9 @@ keep the team building real models rather than prompt chains.
 | Database | PostgreSQL | Structured data and history |
 | Vector search | pgvector, inside PostgreSQL | Embedding search, topic matching, material retrieval — no separate service |
 | Slack | Bolt for Python | Bot framework |
-| External | Notion API, Google Calendar API | Action item and schedule sync |
-| Infra | Railway / AWS with GPU instances | STT inference |
+| External | Notion API, Jira API, Google Calendar API, Gmail API (proposed) | Action item, issue, schedule and mail sync |
+| Agent (proposed, #260) | LangGraph, Gemini | Supervisor graph over five subagents; plan-mode interrupt. `../architecture/agent-layer.md` section 3.3 |
+| Infra | Vercel (frontend); a self-hosted desktop server (RTX 3060) running Docker Compose behind Cloudflare Tunnel (backend) | STT inference on our own GPU; HTTPS and WebSocket without opening a port |
 | Desktop (Phase 2) | Electron | System audio capture |
 
 ## 10. Roadmap
@@ -296,19 +302,21 @@ keep the team building real models rather than prompt chains.
 | W6 | Bug fixes, performance, landing page, demo video, pitch deck | Deployable MVP |
 
 Proposed (#260) — the agent layer runs alongside the rows above, not instead of
-them. Module owners' only added work is one `tools.py` per module in W3; the
-rest is a single owner's.
+them, on the dates the mentor set: base features running end to end by 9/30,
+development closed on 10/12. Every owner builds one subagent and keeps their
+module's `tools.py`; the main agent's owner builds the loop they run in.
 
-| Week | Agent layer (김민경) |
-| --- | --- |
-| W3 | Tool spec published · registry · orchestrator loop · `agent_work_items` and `agent_runs` · **mock tools only**, so the loop is provable before the modules are ready |
-| W4 | Real tools replace mocks as modules land · morning-briefing scenario end to end · run-timeline screen |
-| W5 | Triggers and the approval model · validated against real meetings |
-| W6 | NLP vs LLM comparison on utterance classification · demo recording |
+| By | Main agent (김민경) | Subagent owners |
+| --- | --- | --- |
+| 10/1 | `agent/` skeleton with mock tools and one mock subagent | agree Calendar and Jira needs with their owners |
+| 10/5 | state tables, chat endpoint, run timeline | real `tools.py`; subagent on mock tools; Calendar and Jira reads |
+| 10/9 | plan mode, approval screen, triggers, morning briefing | subagent end to end on one real meeting |
+| 10/12 | demo of all five | fixes only |
 
-**Gate, end of W4:** if the morning briefing does not run end to end even on a
-manual trigger, the agent layer is cut from the demo and the fixed pipeline is
-what gets presented. One finished thing beats three half-built ones.
+**Gate, 10/9:** a subagent that does not run end to end on a real meeting is
+left out of the demo. If the chat and the morning briefing do not run, the
+fixed pipeline is what gets presented. One finished thing beats five
+half-built ones. Detail: `../architecture/agent-layer.md` section 14.
 
 ## 11. MVP scope
 
@@ -317,17 +325,18 @@ automatic PII masking; immediate raw-audio deletion; action item extraction and
 tracking; Notion integration; gap detection; Slack integration; past-topic
 linking; basic decision lineage; personal speaking-ratio DM; basic dashboard.
 
-**Proposed addition (#260), in this reduced form and no larger:** work-item
-state with self-scheduled checks; two triggers (meeting finished, item due);
-**one** agent scenario (morning briefing); the L0–L3 action permission model
-with approval on anything that moves a person; a research step over uploaded
-material. Explicitly *not* in it: a subagent per module, more than one
-scenario, web search, and autonomous external writes.
+**Proposed addition (#260), and no larger:** the main agent with chat and the
+morning briefing; five subagents — Research, Briefing, Follow-up, Workload,
+Report (5.7); work-item state with self-scheduled checks; the L0–L3 action
+permission model with approval on anything that moves a person. Explicitly
+*not* in it: a subagent per module, a subagent calling another, web search,
+sending mail, and autonomous external writes.
 
-**Phase 2:** material upload → agenda generation; pre-meeting brief; influence
-map; desktop app; role-specific summaries; in-meeting undecided-item alerts;
-action automation; proactive agent (room booking, meeting-need prediction);
-advanced dashboard and decision lineage.
+**Phase 2:** material upload → agenda generation; influence map; desktop app;
+role-specific summaries; in-meeting undecided-item alerts; action automation;
+room booking and booking without approval; advanced dashboard and decision
+lineage. The pre-meeting brief and meeting-need prediction moved into the
+proposed addition above as Briefing and Follow-up.
 
 Do not build Phase 2 features during the six weeks. If a Phase 2 feature seems
 necessary to make an MVP feature work, that is a scoping conversation, not an
@@ -367,7 +376,7 @@ able to report it on demand from an evaluation script in their module's
 | Gap detection false positives | Medium | Threshold tuning from feedback. Only HIGH severity shown by default |
 | Topic mis-linking | Medium | Cross-encoder re-ranking + user confirmation UI |
 | GPU cost | Medium | whisper.cpp CPU inference + batch processing |
-| Six weeks is not enough | Medium | Explicit MVP scope. Briefs and influence map are deprioritized |
+| Six weeks is not enough | Medium | Explicit MVP scope. Influence map is deprioritized; a subagent not running end to end by 10/9 is left out of the demo |
 | Privacy legal exposure | High | No raw retention + PII masking + retention limits + user deletion |
 
 ## 14. Differentiation
