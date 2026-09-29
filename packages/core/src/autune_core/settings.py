@@ -69,6 +69,12 @@ class Settings(BaseSettings):
     it a connection ends in an hour. No admin scope: nothing here configures
     Jira (#82)."""
 
+    notion_client_id: str = ""
+    notion_client_secret: str = ""
+    notion_redirect_uri: str = ""
+    """The /api/auth/notion/callback URL on the web origin, per environment. Must
+    match a redirect URI of the Notion public integration exactly."""
+
     retention_days: int = 90
     """Analysis results are deleted after this many days.
     See docs/architecture/privacy.md section 4."""
