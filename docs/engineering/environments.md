@@ -67,7 +67,7 @@ prefix `AUTUNE_<MODULE>_`.
 
 | Variable | Example | Notes |
 | --- | --- | --- |
-| `AUTUNE_ENV` | `local` | `local`, `staging`, `production` |
+| `AUTUNE_ENV` | `local` | `local`, `staging`, `production`. **Unset means `production`** (#408), so a deployment that forgets it gets production's startup checks instead of running as a dev box. `.env.example`, CI and `scripts/up.sh` set `local` |
 | `AUTUNE_DATABASE_URL` | `postgresql+psycopg://autune:autune@localhost:5432/autune` | |
 | `AUTUNE_REDIS_URL` | `redis://localhost:6379/0` | |
 | `AUTUNE_SECRET_KEY` | | JWT signing. Never commit |

@@ -25,7 +25,7 @@ section 6, marked *seen*.
 | `AUTUNE_AUDIO_HF_TOKEN` | pyannote is gated. The licence must be accepted on **three** repos — `speaker-diarization-3.1`, `segmentation-3.0`, `speaker-diarization-community-1` — or diarization fails partway through loading, naming a model you never asked for | `.env` has it |
 | Whisper weights | `large-v3` downloads on first use, several GB | run the worker once, early, and wait |
 | A recording | mp3 / wav / m4a, a few minutes, **people who have agreed to be the demo** | you have the file |
-| `AUTUNE_ENV=local` | the token route and the dev page exist only under it | `.env` (it is the default) |
+| `AUTUNE_ENV=local` | the token route and the dev page exist only under it | `.env` (from `.env.example`; unset means `production`, #408) |
 | `AUTUNE_CORS_ALLOWED_ORIGINS=http://localhost:3000` | the page sends `Authorization`, so the browser preflights, and the API answers a preflight only for listed origins (#241, opt-in) | `.env`. **Without it the page says "Failed to fetch"** and `curl` works fine — seen |
 
 ```bash
