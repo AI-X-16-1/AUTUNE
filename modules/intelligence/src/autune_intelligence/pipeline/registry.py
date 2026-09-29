@@ -85,9 +85,12 @@ def get_misalignment_predictor(*, now: datetime | None = None) -> MisalignmentPr
     """The configured predictor, refit from history every ``misalignment_refit_hours``.
 
     ``heuristic`` never touches the database. ``local`` reads labeled history
-    in its own short session — read-only, and separate from the caller's
-    transaction — and keeps the result (fitted model or fallback) until it
-    expires, so a team's first labeled meetings are picked up within a day.
+    in its own short session, separate from the caller's transaction, and keeps
+    the result (fitted model or fallback) until it expires, so a team's first
+    labeled meetings are picked up within a day. The session is not a read-only
+    one — ``autune_core.session_scope`` commits at the end of the block, and this
+    repository has no read-only variant. What holds is narrower and is the
+    caller's job to keep: ``history.labeled_examples`` only issues ``SELECT``.
     """
     global _predictor, _predictor_expires_at
     settings = get_settings()
