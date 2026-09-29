@@ -165,8 +165,14 @@ def delete_action_item(action_item_id: str, session: SessionDep) -> None:
     Real deletion. ``privacy.md`` allows no soft deletes and no tombstones
     holding content; the edit-cost counter records that it happened without
     keeping what was deleted.
+
+    Its due-date event comes off its assignee's calendar first
+    (``tasks.remove_calendar_event``, #435): once the row cascades away the
+    event can no longer be found.
     """
-    service.delete_action_item(session, _load(session, action_item_id))
+    item = _load(session, action_item_id)
+    tasks.remove_calendar_event(item.id)
+    service.delete_action_item(session, item)
     session.commit()
 
 

@@ -230,6 +230,18 @@ the feature needs.
 - Never send raw audio anywhere.
 - Error tracking must scrub message bodies; assume anything in an exception
   string is published.
+- What was delivered can outlive its source, for different reasons per
+  destination, which is why each carries only what it needs:
+  - **Notion:** a page in a team's workspace belongs to that team once written.
+    Autune does not remove it when retention or a deletion removes its source.
+  - **A person's own calendar (#435):** Autune *can* remove its events — they
+    carry its tag, and `delete_event` exists. Deleting an item deletes its
+    event first. A meeting deleted or expired by the retention sweep does not
+    yet: its rows cascade in the database with no call to each person's
+    calendar (a deletion hook is the follow-up). A deleted account cannot: its
+    grant goes with it (`user_integrations`, `ON DELETE CASCADE`), so no token
+    is left to reach the calendar with. Each event is only the item's
+    description and date, with no attendees and nothing from the transcript.
 
 ## 7. Review checklist
 
