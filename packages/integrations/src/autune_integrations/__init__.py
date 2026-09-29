@@ -5,12 +5,17 @@ directly, so retries, error handling and — most importantly — the outbound
 privacy checks live in one place instead of five.
 
 W1 defines the boundary and the guards. The full API surface is filled in
-during W3 by the owners who need it: extraction for Notion and Jira, context
-for Calendar.
+during W3 by the owners who need it: extraction for Notion and Jira; Calendar
+by the Workload subagent's owner (#260, #435).
 """
 
 from . import fakes, privacy
-from .calendar import CalendarClient
+from .calendar import (
+    CalendarClient,
+    CalendarEvent,
+    ReconnectRequiredError,
+    refresh_access_token,
+)
 from .errors import (
     IntegrationError,
     PermanentIntegrationError,
@@ -32,6 +37,9 @@ __all__ = [
     "NotionClient",
     "JiraClient",
     "CalendarClient",
+    "CalendarEvent",
+    "ReconnectRequiredError",
+    "refresh_access_token",
     "IntegrationError",
     "TransientIntegrationError",
     "PermanentIntegrationError",

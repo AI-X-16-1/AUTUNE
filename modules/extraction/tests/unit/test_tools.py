@@ -7,7 +7,7 @@ SQLite in memory, the way ``test_read_endpoints`` builds B's tables.
 from __future__ import annotations
 
 from collections.abc import Iterator
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 import pytest
 from sqlalchemy import create_engine
@@ -137,7 +137,7 @@ def classification(s: Session, uid: str, kind: str) -> None:
 
 def test_every_tool_returns_the_tool_result_shape(session: Session) -> None:
     for tool in tools.TOOLS:
-        args = (TEAM,) if tool is tools.open_action_items else (MEETING,)
+        args = (TEAM,) if tool in (tools.open_action_items, tools.workload_by_owner) else (MEETING,)
         assert set(tool(session, *args)) == KEYS, tool.__name__
 
 
@@ -273,3 +273,117 @@ def test_review_state_counts_what_waits_and_quotes_none_of_it(session: Session) 
     assert {i["id"] for i in result["items"]} == {"dec_1", "act_draft"}
     assert all(i["body"] == "" for i in result["items"])
     assert result["evidence"] == ["utt_d"]
+
+
+# --- workload_by_owner (#261 section 3.1, Workload) ----------------------------------
+
+
+def member(s: Session, uid: str, name: str, team: str = TEAM) -> str:
+    s.add(User(id=uid, email=f"{uid}@example.com", display_name=name))
+    s.add(TeamMember(team_id=team, user_id=uid))
+    s.flush()
+    return uid
+
+
+def rows(result: dict) -> dict[str, str]:
+    return {i["id"]: i["body"] for i in result["items"]}
+
+
+def test_the_loaded_come_first_and_the_free_are_shown(session: Session) -> None:
+    member(session, "user_busy", "김바쁨")
+    member(session, "user_idle", "최한가")
+    for n in range(4):
+        item(session, f"act_busy_{n}", assignee="user_busy")
+    item(session, "act_idle_done", assignee="user_idle", status="done")
+    item(session, "act_in", assignee="user_in")
+
+    result = tools.workload_by_owner(session, TEAM)
+
+    ids = [i["id"] for i in result["items"]]
+    assert ids[0] == "user_busy"
+    assert rows(result)["user_busy"] == "진행 중 4 · 기한 지남 0 · 완료 0 · 몰림"
+    assert rows(result)["user_idle"] == "진행 중 0 · 기한 지남 0 · 완료 1 · 여유"
+    assert "몰림 1명" in result["summary"]
+
+
+def test_two_overdue_items_are_enough_to_be_loaded(session: Session) -> None:
+    for n in range(2):
+        item(session, f"act_late_{n}", due=TODAY - timedelta(days=3))
+
+    result = tools.workload_by_owner(session, TEAM)
+
+    assert rows(result)["user_in"].endswith("· 몰림")
+    assert "기한 지남 2" in rows(result)["user_in"]
+
+
+def test_a_member_with_no_items_is_free_too(session: Session) -> None:
+    member(session, "user_new", "정새로")
+
+    result = tools.workload_by_owner(session, TEAM)
+
+    assert rows(result)["user_new"] == "진행 중 0 · 기한 지남 0 · 완료 0 · 여유"
+
+
+def test_open_work_nobody_on_the_team_holds_is_one_row(session: Session) -> None:
+    """A departed assignee's id is cleared at read (ADR 0007), so the item is
+    counted as the team's to hand out, not as the departed person's."""
+    item(session, "act_orphan", assignee="user_gone")
+    item(session, "act_nobody", assignee=None)
+    item(session, "act_gone_done", assignee="user_gone", status="done")
+
+    result = tools.workload_by_owner(session, TEAM)
+
+    assert rows(result)["unowned"] == "진행 중 2 · 기한 지남 0"
+    assert "user_gone" not in rows(result)
+    assert "담당 없는 진행 중 항목 2건" in result["summary"]
+
+
+def test_unconfirmed_items_are_nobodys_work_yet(session: Session) -> None:
+    item(session, "act_draft", status="needs_confirmation")
+
+    result = tools.workload_by_owner(session, TEAM)
+
+    assert rows(result)["user_in"] == "진행 중 0 · 기한 지남 0 · 완료 0 · 여유"
+
+
+def test_other_teams_and_old_meetings_are_left_out(session: Session) -> None:
+    session.add(
+        Meeting(
+            id="mtg_old",
+            team_id=TEAM,
+            title="석 달 전 회의",
+            started_at=datetime.now(UTC) - timedelta(days=90),
+        )
+    )
+    session.flush()
+    item(session, "act_old", meeting="mtg_old")
+    item(session, "act_other_team", meeting=OTHER_MEETING)
+
+    result = tools.workload_by_owner(session, TEAM)
+
+    assert rows(result)["user_in"].startswith("진행 중 0 ")
+
+
+def test_both_ends_fit_inside_five(session: Session) -> None:
+    for n in range(6):
+        uid = member(session, f"user_busy_{n}", f"바쁨{n}")
+        for k in range(4):
+            item(session, f"act_{n}_{k}", assignee=uid)
+    member(session, "user_idle", "최한가")
+
+    result = tools.workload_by_owner(session, TEAM)
+
+    assert len(result["items"]) == 5
+    assert result["truncated"] is True
+    assert "user_idle" in rows(result)
+
+
+def test_workload_cites_no_utterance_and_quotes_no_item(session: Session) -> None:
+    """Counts only: no utterance id, no item text reaches the manager's subagent."""
+    said = utterance(session, "utt_said", "금요일까지 제가 정리할게요", 1.0)
+    item(session, "act_1", source=said)
+
+    result = tools.workload_by_owner(session, TEAM)
+
+    assert result["evidence"] == []
+    assert all("할 일" not in i["body"] and "할 일" not in i["title"] for i in result["items"])

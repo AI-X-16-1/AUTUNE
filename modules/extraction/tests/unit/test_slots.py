@@ -35,6 +35,15 @@ WEDNESDAY = date(2026, 9, 9)
         # A week and no day: the working week's end.
         ("이번 주까지 끝내겠습니다", "이번 주", date(2026, 9, 11)),
         ("다음 주 중으로 하겠습니다", "다음 주", date(2026, 9, 18)),
+        ("다음 주 말씀드리겠습니다", "다음 주", date(2026, 9, 18)),
+        ("다음 주 초안 드릴게요", "다음 주", date(2026, 9, 18)),
+        # Part of a week, by its last weekday: 초 Mon-Tue, 중반 Wed-Thu, 말 Fri.
+        ("다음 주 초에 드릴게요", "다음 주 초", date(2026, 9, 15)),
+        ("다음 주초까지 하겠습니다", "다음 주초", date(2026, 9, 15)),
+        ("다음 주 초반에 공유할게요", "다음 주 초반", date(2026, 9, 15)),
+        ("다음 주 중반까지 하겠습니다", "다음 주 중반", date(2026, 9, 17)),
+        ("이번 주 중반까지 드릴게요", "이번 주 중반", date(2026, 9, 10)),
+        ("다음 주 말까지 하겠습니다", "다음 주 말", date(2026, 9, 18)),
         # Weekends end on Sunday.
         ("주말까지 보겠습니다", "주말", date(2026, 9, 13)),
         ("이번 주말에 정리하겠습니다", "이번 주말", date(2026, 9, 13)),
@@ -60,6 +69,11 @@ WEDNESDAY = date(2026, 9, 9)
 )
 def test_a_phrase_resolves_to_a_day(text: str, phrase: str, due: date) -> None:
     assert parse_due(text, WEDNESDAY) == DueDate(text=phrase, date=due)
+
+
+def test_early_this_week_said_on_a_friday_has_passed() -> None:
+    """Early this week ended on Tuesday; said on Friday it is not a deadline."""
+    assert parse_due("이번 주 초에 드릴게요", date(2026, 9, 11)) is None
 
 
 def test_an_utterance_with_no_date_has_none() -> None:

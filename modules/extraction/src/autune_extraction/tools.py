@@ -1,6 +1,6 @@
 """Module B as tools an agent can call (#260/#261, docs/architecture/agent-layer.md section 4).
 
-Four tools over B's existing reads -- no new query paths, no new tables, no
+Five tools over B's existing reads -- no new query paths, no new tables, no
 contract change. Each returns a dict in the shape agent-layer.md calls
 ``ToolResult``::
 
@@ -31,14 +31,16 @@ internally (L0) and must not post them anywhere without a person's review.
 
 from __future__ import annotations
 
-from datetime import date, timedelta
+from collections.abc import Sequence
+from dataclasses import dataclass
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from autune_contracts.enums import ActionStatus, UtteranceKind
-from autune_core import Meeting, Utterance
+from autune_core import Meeting, TeamMember, User, Utterance
 
 from . import service
 from .schemas import ActionItemRead
@@ -191,6 +193,128 @@ def open_action_items(session: Session, team_id: str, *, within_days: int = 7) -
     )
 
 
+@dataclass(eq=False)
+class _Load:
+    """One person's confirmed work, counted -- or, with ``user_id`` ``None``, the
+    open items nobody on the team holds."""
+
+    user_id: str | None
+    name: str
+    open: int = 0
+    overdue: int = 0
+    done: int = 0
+
+    @property
+    def weight(self) -> int:
+        """Open work, with a late item counted twice: late work is what makes a
+        person the one to take something from."""
+        return self.open + self.overdue
+
+
+OVERLOADED_MIN_OPEN = 3
+"""A person is "몰림" with at least this many open items *and* at least twice the
+team's mean open count, or with two or more overdue. Routing hints for the
+Workload subagent (#261 section 3.1), not a measured threshold: the subagent
+reads the counts beside them and the manager approves any move."""
+
+
+def workload_by_owner(session: Session, team_id: str, *, days: int = 30) -> dict[str, Any]:
+    """Use this when deciding whether work should move between people -- who holds
+    too much open work and who has finished theirs or holds none. Do not use it
+    for which items are late or due soon -- that is ``open_action_items``.
+
+    Returns one row per team member: how many confirmed items from the team's
+    meetings in the last ``days`` days they hold open, how many of those are
+    overdue, and how many they finished. The most loaded come first, then open
+    items nobody on the team holds (one "담당 없음" row), then members with
+    nothing open. Counts of work only, never speech (#261 section 3.1): nothing
+    here says who spoke, how much, or what anyone said. Unconfirmed items are
+    not counted -- nobody has agreed yet that they are anyone's work.
+    """
+    today = date.today()
+    cutoff = datetime.now(UTC) - timedelta(days=days)
+    meeting_ids = set(
+        session.scalars(
+            select(Meeting.id).where(
+                Meeting.team_id == team_id,
+                # An upload with no start time cannot be placed in the window;
+                # leaving it out would hide its items from everyone.
+                or_(Meeting.started_at.is_(None), Meeting.started_at >= cutoff),
+            )
+        )
+    )
+    members: dict[str, _Load] = {
+        user_id: _Load(user_id=user_id, name=name)
+        for user_id, name in session.execute(
+            select(User.id, User.display_name)
+            .join(TeamMember, TeamMember.user_id == User.id)
+            .where(TeamMember.team_id == team_id)
+        )
+    }
+    unowned = _Load(user_id=None, name="담당 없음")
+    for status in (*_OPEN, ActionStatus.DONE):
+        for i in service.list_action_items(session, status=status):
+            if i.meeting_id not in meeting_ids:
+                continue
+            # A non-member's id is cleared at read time (``needs_reassignment``),
+            # so ``None`` here is exactly "nobody on the team holds it".
+            load = members.get(i.assignee_id) if i.assignee_id else None
+            if status == ActionStatus.DONE:
+                if load is not None:
+                    load.done += 1
+                continue
+            load = load or unowned
+            load.open += 1
+            load.overdue += _overdue(i, today)
+
+    people = list(members.values())
+    mean_open = sum(p.open for p in people) / len(people) if people else 0.0
+    overloaded = sorted(
+        (
+            p
+            for p in people
+            if (p.open >= OVERLOADED_MIN_OPEN and p.open >= 2 * mean_open) or p.overdue >= 2
+        ),
+        key=lambda p: p.weight,
+        reverse=True,
+    )
+    free = sorted((p for p in people if p.open == 0), key=lambda p: p.done, reverse=True)
+    rest = sorted(
+        (p for p in people if p not in overloaded and p not in free),
+        key=lambda p: p.weight,
+        reverse=True,
+    )
+    # Both ends inside the five, so a team with many loaded people still shows
+    # someone who could take work.
+    head = overloaded[:3] + ([unowned] if unowned.open else []) + free[:2]
+    ordered = head + [p for p in (*overloaded[3:], *free[2:], *rest) if p not in head]
+    return _result(
+        summary=(
+            f"최근 {days}일 회의의 확정 액션아이템 기준, 팀원 {len(people)}명 중 "
+            f"몰림 {len(overloaded)}명, 진행 중 0건 {len(free)}명, "
+            f"담당 없는 진행 중 항목 {unowned.open}건."
+        ),
+        items=[_load_finding(p, overloaded, free) for p in ordered],
+        # Per-person counts cite no utterance: evidence is for what was said.
+        evidence=[],
+    )
+
+
+def _load_finding(
+    load: _Load, overloaded: Sequence[_Load], free: Sequence[_Load]
+) -> dict[str, Any]:
+    tag = " · 몰림" if load in overloaded else " · 여유" if load in free else ""
+    body = f"진행 중 {load.open} · 기한 지남 {load.overdue}"
+    if load.user_id is not None:
+        body += f" · 완료 {load.done}"
+    return {
+        "title": load.name,
+        "body": body + tag,
+        "score": float(load.weight),
+        "id": load.user_id or "unowned",
+    }
+
+
 def unresolved_questions(session: Session, meeting_id: str) -> dict[str, Any]:
     """Use this after a meeting to list what was asked or objected to and may
     need a follow-up -- "what should someone check or look into". Do not use it
@@ -269,5 +393,11 @@ def review_state(session: Session, meeting_id: str) -> dict[str, Any]:
     )
 
 
-TOOLS = [meeting_action_items, open_action_items, unresolved_questions, review_state]
+TOOLS = [
+    meeting_action_items,
+    open_action_items,
+    workload_by_owner,
+    unresolved_questions,
+    review_state,
+]
 """Collected by the agent layer by iterating modules (invariant 6), never registered by hand."""

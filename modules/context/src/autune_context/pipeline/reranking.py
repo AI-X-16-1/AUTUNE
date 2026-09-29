@@ -22,6 +22,13 @@ if TYPE_CHECKING:
 class BgeRerankerKoHttp:
     """Expects ``POST {endpoint}/rerank {"query": str, "passages": [str]}`` ->
     ``{"scores": [float]}`` (sigmoid-normalised, ``[0, 1]``) and ``GET {endpoint}/info``.
+
+    A module-local ``httpx`` client, not ``autune_integrations.HttpClient``: the
+    endpoint is our own inference server, and ``check_outbound`` guards traffic
+    that leaves our infrastructure. The passages are past meetings' masked
+    segment text, not labels, so if this endpoint is ever hosted outside our
+    infrastructure, move this client onto ``HttpClient`` in the same change --
+    the same rule ``LlmClient`` already follows (see ``base.py``).
     """
 
     def __init__(self, settings: ContextSettings) -> None:

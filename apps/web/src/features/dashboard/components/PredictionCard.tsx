@@ -1,4 +1,3 @@
-import { stepFor } from "./chartScale";
 import { DashboardCard } from "./DashboardCard";
 import { HoverPreview, PredictionMockup } from "./HoverPreview";
 import type { PredictionsRead } from "../types";
@@ -57,8 +56,21 @@ export function PredictionCard({ predictions }: { predictions: PredictionsRead |
           overflow: "hidden",
         }}
       >
+        {/*
+          A fixed fill, like ActionCompletionRate and GapDistributionBars: the
+          length carries the value and the colour carries nothing. Ramping the
+          fill by value (stepFor) made this bar the only one on S26 that did,
+          and it broke twice over. It vanished at low risk -- 33% lands on
+          step2, which is 1.34:1 against this track -- and it read backwards
+          against its neighbours, where a darker bar means a *better* number
+          while here it would mean a worse one.
+        */}
         <div
-          style={{ height: "100%", width: `${percent}%`, background: stepFor(prediction.probability) }}
+          style={{
+            height: "100%",
+            width: `${percent}%`,
+            background: "var(--color-chart-step4)",
+          }}
         />
       </div>
       {heuristic ? (
