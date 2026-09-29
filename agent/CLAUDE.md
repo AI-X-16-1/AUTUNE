@@ -24,14 +24,16 @@ to its owner.
 2. **Nothing below imports `autune_agent`.** Modules expose `tools.py` returning
    plain dicts; the registry validates them into `ToolResult`.
 3. **Read through the `Toolbox` only.** It holds your allow-list and the run's
-   budget. No direct query against another module's tables.
+   budget. import-linter refuses a subagent importing a module.
 4. **Never call a write yourself.** Return `ProposedAction`s; the main agent
    puts L2 through plan mode.
-5. **No speaking-ratio tool in any allow-list.** `Subagent` refuses one at
-   construction (invariant 11).
-6. **No LangGraph checkpointer and no LangChain tool that reaches outside.**
-   Every outbound call goes through `packages/integrations` and its privacy
-   guard.
+5. **No personal-only tool anywhere in the layer.** A module declares a
+   speaking-ratio read in `PERSONAL_ONLY_TOOLS` and the registry never loads
+   it; `Subagent` also refuses the name (invariant 11).
+6. **No LangGraph checkpointer, no LangChain tool that reaches outside, no
+   LangSmith tracing.** Every outbound call goes through `packages/integrations`
+   and its privacy guard. The graph refuses to build with
+   `LANGSMITH_TRACING` or `LANGCHAIN_TRACING_V2` on.
 7. **Return at most five items, evidence as ids.** `ToolResult` cuts and
    refuses the rest.
 

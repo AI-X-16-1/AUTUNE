@@ -16,14 +16,19 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 MAX_ITEMS = 5
 """A tool ranks what it found and keeps five; the rest stay in the module's tables."""
 
-_ID = re.compile(r"^[a-z]+_[A-Za-z0-9]+$")
-"""The shape ``autune_core.ids.new_id`` produces: a prefix, an underscore, a hex tail."""
+_ID = re.compile(r"[a-z]+_[A-Za-z0-9]+")
+"""The shape ``autune_core.ids.new_id`` produces: a prefix, an underscore, a hex tail.
+Matched with ``fullmatch``: ``$`` under ``match`` would let a trailing newline through."""
+
+_QUIET = ConfigDict(hide_input_in_errors=True)
+"""A refused value is refused because it may be text -- so it stays out of the
+exception message, and out of every log line that prints one (invariant 11)."""
 
 
 class Finding(BaseModel):
     """One ranked item. Extra keys a module adds (``id``, ``meeting_id``) are kept."""
 
-    model_config = ConfigDict(extra="allow")
+    model_config = ConfigDict(extra="allow", hide_input_in_errors=True)
 
     title: str
     body: str = ""
@@ -31,6 +36,8 @@ class Finding(BaseModel):
 
 
 class ToolResult(BaseModel):
+    model_config = _QUIET
+
     ok: bool
     reason: str | None = None
     """When ``ok`` is False: why, in one line, so the agent can take another route."""
@@ -48,7 +55,7 @@ class ToolResult(BaseModel):
     def _ids_only(cls, value: list[str]) -> list[str]:
         # An id is the one thing that keeps a transcript out of a prompt by
         # accident, so a sentence here is refused rather than passed along.
-        bad = [v for v in value if not _ID.match(v)]
+        bad = [v for v in value if not _ID.fullmatch(v)]
         if bad:
             raise ValueError(f"evidence holds ids only; got {len(bad)} non-id value(s)")
         return value
@@ -72,6 +79,8 @@ class ProposedAction(BaseModel):
     agent puts every L2 action through plan mode before anything happens.
     """
 
+    model_config = _QUIET
+
     kind: str
     title: str
     body: str = ""
@@ -85,6 +94,8 @@ class ProposedAction(BaseModel):
 
 class SubagentResult(BaseModel):
     """What a subagent's graph leaves in its ``outcome`` key."""
+
+    model_config = _QUIET
 
     result: ToolResult
     proposed: list[ProposedAction] = Field(default_factory=list)

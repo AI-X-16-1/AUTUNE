@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import inspect
 import logging
+import os
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from importlib import import_module
@@ -26,6 +27,26 @@ MAX_TOOL_CALLS = 15
 """Per run, a delegation included (agent-layer.md section 9)."""
 
 ToolFn = Callable[..., Mapping[str, Any]]
+
+
+PERSONAL_ONLY_BACKSTOP = "speakingratio"
+"""Caught in a tool name with case, ``_`` and ``-`` removed, when a module forgot
+to declare the tool. The declaration below is the rule; this is the net."""
+
+TRACING_VARIABLES = ("LANGSMITH_TRACING", "LANGSMITH_TRACING_V2", "LANGCHAIN_TRACING_V2")
+"""langsmith arrives with langgraph. Any of these set sends the graph's state --
+requests and tool results -- to LangSmith, outside ``packages/integrations`` and
+its privacy guard. Refused, not warned about."""
+
+
+def is_personal_only(name: str) -> bool:
+    return PERSONAL_ONLY_BACKSTOP in name.lower().replace("_", "").replace("-", "")
+
+
+def refuse_tracing(environ: Mapping[str, str] = os.environ) -> None:
+    on = [v for v in TRACING_VARIABLES if environ.get(v, "").strip().lower() in {"1", "true"}]
+    if on:
+        raise RuntimeError(f"agent layer refuses to run with tracing on: unset {', '.join(on)}")
 
 
 class ToolContractError(RuntimeError):
@@ -53,6 +74,14 @@ class Tool:
 
 
 def collect_tools(modules: Iterable[str] = MODULES) -> dict[str, Tool]:
+    """Every module's agent tools, minus its personal-only reads.
+
+    A module lists a read that returns one person's own data -- a speaking
+    ratio -- in ``PERSONAL_ONLY_TOOLS`` in its ``tools.py``. Invariant 11 sends
+    that data to its subject and nobody else, and the agent always answers on
+    someone else's behalf, so such a tool is never registered at all. An
+    undeclared tool whose name gives it away is a mistake and raises.
+    """
     tools: dict[str, Tool] = {}
     for module in modules:
         path = f"autune_{module}.tools"
@@ -62,7 +91,14 @@ def collect_tools(modules: Iterable[str] = MODULES) -> dict[str, Tool]:
             if exc.name != path:
                 raise  # tools.py exists and something it imports does not
             continue
+        personal = set(getattr(loaded, "PERSONAL_ONLY_TOOLS", []))
         for fn in getattr(loaded, "TOOLS", []):
+            if fn in personal:
+                continue
+            if is_personal_only(fn.__name__):
+                raise ToolContractError(
+                    f"{path}.{fn.__name__} looks personal-only; list it in PERSONAL_ONLY_TOOLS"
+                )
             doc = inspect.getdoc(fn)
             if not doc:
                 raise ToolContractError(f"{path}.{fn.__name__} has no docstring to route on")
@@ -97,9 +133,12 @@ class Toolbox:
         tools: Mapping[str, Tool],
         session: Session,
         budget: CallBudget,
-        allowed: Iterable[str] | None = None,
+        *,
+        allowed: Iterable[str],
     ) -> None:
-        wanted = set(tools) if allowed is None else set(allowed)
+        # Required, with no "everything" default: a caller that forgets it
+        # must fail to construct, not get every tool (review on #432).
+        wanted = set(allowed)
         missing = sorted(wanted - set(tools))
         if missing:
             # A subagent may name a tool its module owner has not shipped yet.

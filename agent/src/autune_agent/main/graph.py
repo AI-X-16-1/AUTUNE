@@ -22,7 +22,7 @@ from sqlalchemy.orm import Session
 
 from autune_agent.results import SubagentResult, ToolResult
 
-from .registry import CallBudget, Tool, Toolbox, collect_tools
+from .registry import CallBudget, Tool, Toolbox, collect_tools, refuse_tracing
 from .router import Router
 from .subagents import CompiledSubagent, Subagent, collect_subagents
 
@@ -42,6 +42,7 @@ def build_main_graph(
     tools: Mapping[str, Tool],
     budget: CallBudget,
 ) -> Any:
+    refuse_tracing()
     compiled: dict[str, CompiledSubagent] = {
         name: sub.build(Toolbox(tools, session, budget, allowed=sub.tools))
         for name, sub in subagents.items()

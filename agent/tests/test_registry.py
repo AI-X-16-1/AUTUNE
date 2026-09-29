@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import sys
+import types
 from typing import Any
 
 import pytest
@@ -14,6 +16,7 @@ from autune_agent.main import (
     Toolbox,
     ToolContractError,
     collect_tools,
+    refuse_tracing,
 )
 from autune_agent.results import MAX_ITEMS, ToolResult
 from autune_agent.testing import mock_tool
@@ -91,10 +94,75 @@ def test_a_named_tool_nobody_has_shipped_yet_is_not_an_error() -> None:
 def test_the_budget_is_shared_and_stops_the_run() -> None:
     tools = {"extraction.x": mock_tool("extraction.x", _payload())}
     budget = CallBudget(limit=2)
-    first = Toolbox(tools, SESSION, budget)
-    second = Toolbox(tools, SESSION, budget)
+    first = Toolbox(tools, SESSION, budget, allowed=tools)
+    second = Toolbox(tools, SESSION, budget, allowed=tools)
 
     first.call("extraction.x")
     second.call("extraction.x")
     with pytest.raises(BudgetExceededError):
         first.call("extraction.x")
+
+
+def test_evidence_with_a_trailing_newline_is_refused() -> None:
+    with pytest.raises(ValidationError):
+        ToolResult.model_validate(_payload(evidence=["utt_ab\n"]))
+
+
+def test_a_refused_value_stays_out_of_the_error_message() -> None:
+    sentence = "김 팀장 010-1234-5678"
+    with pytest.raises(ValidationError) as caught:
+        ToolResult.model_validate(_payload(evidence=[sentence]))
+
+    assert sentence not in str(caught.value)
+
+
+def test_toolbox_has_no_everything_default() -> None:
+    with pytest.raises(TypeError):
+        Toolbox({}, SESSION, CallBudget())  # type: ignore[call-arg]
+
+
+def _fake_tools_module(monkeypatch: pytest.MonkeyPatch, **attrs: Any) -> None:
+    package = types.ModuleType("autune_fake")
+    module = types.ModuleType("autune_fake.tools")
+    for key, value in attrs.items():
+        setattr(module, key, value)
+    monkeypatch.setitem(sys.modules, "autune_fake", package)
+    monkeypatch.setitem(sys.modules, "autune_fake.tools", module)
+
+
+def my_speaking_ratio(_session: Any) -> dict[str, Any]:
+    """Use this for the subject only."""
+    return _payload()
+
+
+def team_items(_session: Any) -> dict[str, Any]:
+    """Use this for the team's open items."""
+    return _payload()
+
+
+def test_a_declared_personal_only_tool_is_never_registered(monkeypatch: pytest.MonkeyPatch) -> None:
+    _fake_tools_module(
+        monkeypatch, TOOLS=[my_speaking_ratio, team_items], PERSONAL_ONLY_TOOLS=[my_speaking_ratio]
+    )
+
+    assert list(collect_tools(["fake"])) == ["fake.team_items"]
+
+
+def test_an_undeclared_tool_that_looks_personal_only_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _fake_tools_module(monkeypatch, TOOLS=[my_speaking_ratio])
+
+    with pytest.raises(ToolContractError, match="PERSONAL_ONLY_TOOLS"):
+        collect_tools(["fake"])
+
+
+@pytest.mark.parametrize("value", ["true", "1", "True"])
+def test_the_graph_refuses_to_run_with_tracing_on(value: str) -> None:
+    with pytest.raises(RuntimeError, match="LANGSMITH_TRACING"):
+        refuse_tracing({"LANGSMITH_TRACING": value})
+
+
+def test_tracing_off_or_unset_is_fine() -> None:
+    refuse_tracing({})
+    refuse_tracing({"LANGCHAIN_TRACING_V2": "false"})

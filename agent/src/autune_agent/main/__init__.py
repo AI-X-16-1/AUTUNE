@@ -9,6 +9,8 @@ from .registry import (
     Toolbox,
     ToolContractError,
     collect_tools,
+    is_personal_only,
+    refuse_tracing,
 )
 from .router import Router
 from .subagents import SUBAGENT_NAMES, Subagent, SubagentState, collect_subagents
@@ -28,5 +30,7 @@ __all__ = [
     "build_main_graph",
     "collect_subagents",
     "collect_tools",
+    "is_personal_only",
+    "refuse_tracing",
     "run",
 ]

@@ -142,3 +142,14 @@ modules = [
     "autune_agent.subagents.workload",
     "autune_agent.subagents.report",
 ]
+
+# A subagent reads a module only through the Toolbox, which holds its allow-list
+# and the run's budget. A direct import would bypass both.
+[[tool.importlinter.contracts]]
+name = "Subagents reach modules only through tools"
+type = "forbidden"
+source_modules = ["autune_agent.subagents"]
+forbidden_modules = [
+    "autune_audio", "autune_extraction", "autune_gap",
+    "autune_context", "autune_intelligence",
+]

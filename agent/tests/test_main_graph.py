@@ -77,11 +77,14 @@ def test_no_subagent_is_built_yet_so_none_is_collected() -> None:
     assert SUBAGENT_NAMES == ("research", "briefing", "followup", "workload", "report")
 
 
-def test_a_subagent_cannot_list_a_speaking_ratio_tool() -> None:
+@pytest.mark.parametrize(
+    "tool", ["intelligence.speaking_ratio", "intelligence.SpeakingRatio", "e.my-speaking-ratio"]
+)
+def test_a_subagent_cannot_list_a_speaking_ratio_tool(tool: str) -> None:
     with pytest.raises(ValueError, match="personal-only"):
         Subagent(
             name="workload",
             description="Use this never.",
-            tools=("intelligence.speaking_ratio",),
+            tools=(tool,),
             build=lambda _box: None,  # type: ignore[arg-type, return-value]
         )

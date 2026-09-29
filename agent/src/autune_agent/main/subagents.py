@@ -15,15 +15,10 @@ from typing import Any, Protocol, TypedDict
 
 from autune_agent.results import SubagentResult
 
-from .registry import Toolbox
+from .registry import Toolbox, is_personal_only
 
 SUBAGENT_NAMES = ("research", "briefing", "followup", "workload", "report")
 """Owners in agent-layer.md section 3.1 and CODEOWNERS."""
-
-PERSONAL_ONLY = "speaking_ratio"
-"""A tool whose name contains this returns one person's own data. Invariant 11:
-it goes to that person and nobody else, and a subagent answers on behalf of
-someone else (a lead, a manager, a channel), so none may list one."""
 
 
 class SubagentState(TypedDict, total=False):
@@ -51,7 +46,9 @@ class Subagent:
     """Given its toolbox, return the compiled subgraph."""
 
     def __post_init__(self) -> None:
-        personal = [tool for tool in self.tools if PERSONAL_ONLY in tool]
+        # The registry never holds a declared personal-only tool; this refuses
+        # the name as well, so the mistake surfaces where it was written.
+        personal = [tool for tool in self.tools if is_personal_only(tool)]
         if personal:
             raise ValueError(f"subagent {self.name} may not read personal-only tools: {personal}")
 
