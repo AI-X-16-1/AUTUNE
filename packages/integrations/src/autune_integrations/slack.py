@@ -13,7 +13,10 @@ from __future__ import annotations
 from typing import Any, Protocol
 
 from .base import HttpClient
+from .errors import PermanentIntegrationError
 from .privacy import assert_personal_delivery
+
+AUTUNE_USER_PREFIX = "user_"
 
 DESTINATION = "slack"
 
@@ -64,16 +67,29 @@ class SlackClient(HttpClient):
         )
 
     def post_message(self, channel: str, text: str, blocks: list[dict] | None = None) -> str:
-        body = slack_body(channel, text, blocks)
-        return str(self.request("POST", "/chat.postMessage", json=body).get("ts", ""))
+        return self._post(slack_body(channel, text, blocks))
 
     def reply_in_thread(self, channel: str, thread_ts: str, text: str) -> str:
-        body = slack_body(channel, text, thread_ts=thread_ts)
-        return str(self.request("POST", "/chat.postMessage", json=body).get("ts", ""))
+        return self._post(slack_body(channel, text, thread_ts=thread_ts))
 
     def send_dm(self, user_id: str, text: str, blocks: list[dict] | None = None) -> str:
-        body = slack_body(user_id, text, blocks)
-        return str(self.request("POST", "/chat.postMessage", json=body).get("ts", ""))
+        """A direct message to one person.
+
+        Callers pass an Autune user id (``user_...``) -- every DM in the repo
+        does -- and Slack needs a member id (``U...``). The id the person linked
+        with "Sign in with Slack" is looked up here, once for every module
+        (#255). Someone who has not linked is refused by name rather than sent
+        to ``channel_not_found``; a Slack member id is passed through."""
+        return self._post(slack_body(_member_id(user_id), text, blocks))
+
+    def _post(self, body: dict[str, Any]) -> str:
+        """``chat.postMessage``, whose failures arrive as HTTP 200 with
+        ``ok: false``. Those were recorded as sent (#280); now they raise, with
+        Slack's error code and no content."""
+        answer = self.request("POST", "/chat.postMessage", json=body)
+        if not answer.get("ok", True):
+            raise PermanentIntegrationError(f"slack refused the message: {answer.get('error')}")
+        return str(answer.get("ts", ""))
 
     def send_personal(self, *, subject_id: str, recipient_id: str, text: str) -> str:
         """Deliver data that describes exactly one person.
@@ -83,3 +99,16 @@ class SlackClient(HttpClient):
         """
         assert_personal_delivery(subject_id=subject_id, recipient_id=recipient_id, is_direct=True)
         return self.send_dm(recipient_id, text)
+
+
+def _member_id(recipient: str) -> str:
+    if not recipient.startswith(AUTUNE_USER_PREFIX):
+        return recipient
+    from autune_core.user_integrations import slack_member_id
+
+    member = slack_member_id(recipient)
+    if member is None:
+        raise PermanentIntegrationError(
+            "this person has not linked a Slack account for direct messages"
+        )
+    return member

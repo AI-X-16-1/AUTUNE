@@ -123,7 +123,7 @@ class UserIntegration(Base, TimestampMixin):
     __table_args__ = (
         UniqueConstraint("user_id", "service", name="uq_user_integrations_user_service"),
         CheckConstraint(
-            "service IN ('calendar')",
+            "service IN ('calendar','slack')",
             name="ck_user_integrations_service",
         ),
     )

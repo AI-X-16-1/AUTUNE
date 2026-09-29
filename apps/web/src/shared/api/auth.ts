@@ -260,3 +260,31 @@ export async function disconnectSlack(meetingId: string): Promise<{ revoked: boo
   }
   return (await response.json()) as { revoked: boolean; shared?: boolean };
 }
+
+/**
+ * Where the browser goes to link the signed-in person's own Slack account, so
+ * direct messages can reach them (#255): "Sign in with Slack", member id only.
+ */
+export function slackMeConnectUrl(redirectTo = "/"): string {
+  return authUrl(`/slack/me/start?redirect_to=${encodeURIComponent(redirectTo)}`);
+}
+
+export async function getSlackMe(): Promise<{ linked: boolean } | null> {
+  try {
+    const response = await fetch(authUrl("/slack/me"), { credentials: "include" });
+    if (!response.ok) return null;
+    return (await response.json()) as { linked: boolean };
+  } catch {
+    return null;
+  }
+}
+
+export async function unlinkSlackMe(): Promise<void> {
+  const response = await fetch(authUrl("/slack/me/disconnect"), {
+    method: "POST",
+    credentials: "include",
+  });
+  if (!response.ok) {
+    throw new ApiError(response.status, "slack_me_unlink_failed", "unlink failed");
+  }
+}

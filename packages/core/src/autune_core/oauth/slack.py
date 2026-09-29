@@ -73,6 +73,14 @@ class SlackInstall:
 
 
 @dataclass(frozen=True)
+class SlackIdentity:
+    """Who a person is in Slack -- their member id and workspace, nothing more."""
+
+    user_id: str
+    team_id: str
+
+
+@dataclass(frozen=True)
 class SlackChannel:
     id: str
     name: str
@@ -104,6 +112,46 @@ class SlackOAuthClient:
             }
         )
         return f"{AUTHORIZE_ENDPOINT}?{query}"
+
+    def identity_url(self, *, state: str, nonce: str) -> str:
+        """ "Sign in with Slack" asking for ``openid`` only: the member id and
+        workspace, no email, no profile (#70)."""
+        query = urlencode(
+            {
+                "response_type": "code",
+                "scope": "openid",
+                "client_id": self._client_id,
+                "redirect_uri": self._redirect_uri,
+                "state": state,
+                "nonce": nonce,
+            }
+        )
+        return f"https://slack.com/openid/connect/authorize?{query}"
+
+    def identify(self, code: str) -> SlackIdentity:
+        """Trade a Sign-in-with-Slack code for the person's member id and
+        workspace. The user token is used once for ``userInfo`` and dropped."""
+        token = self._call(
+            "openid.connect.token",
+            data={
+                "code": code,
+                "redirect_uri": self._redirect_uri,
+                "client_id": self._client_id,
+                "client_secret": self._client_secret,
+                "grant_type": "authorization_code",
+            },
+            refused="Slack rejected the sign-in code",
+        ).get("access_token")
+        if not token:
+            raise PermissionDeniedError("Slack returned no sign-in token")
+        info = self._call(
+            "openid.connect.userInfo", data={}, token=str(token), refused="Slack refused userInfo"
+        )
+        user_id = info.get("https://slack.com/user_id") or info.get("sub")
+        team_id = info.get("https://slack.com/team_id", "")
+        if not user_id:
+            raise PermissionDeniedError("Slack returned no user id")
+        return SlackIdentity(user_id=str(user_id), team_id=str(team_id))
 
     def exchange_code(self, code: str) -> SlackInstall:
         body = self._call(

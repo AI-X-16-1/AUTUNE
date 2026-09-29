@@ -466,3 +466,66 @@ def test_a_refused_code_says_why_without_the_code() -> None:
         client.exchange_code("the-secret-code")
     assert "invalid_code" in str(caught.value)
     assert "the-secret-code" not in str(caught.value)
+
+
+# --- a person's own Slack account, for DMs (#255) --------------------------------------
+
+
+def test_linking_needs_a_signed_in_person(world: dict[str, Any]) -> None:
+    anonymous = TestClient(world["app"], follow_redirects=False)
+    assert anonymous.get("/api/auth/slack/me/start").status_code in (401, 403)
+
+
+def test_linking_stores_only_the_persons_own_member_id(
+    world: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from autune_core.oauth.slack import SlackIdentity
+
+    linked: dict[str, Any] = {}
+    monkeypatch.setattr(
+        auth_router_module,
+        "save_user_integration",
+        lambda _s, uid, svc, **kw: linked.update(kw, user_id=uid, service=svc),
+    )
+
+    class Identifying(FakeSlack):
+        def identity_url(self, *, state: str, nonce: str) -> str:
+            return f"https://slack.com/openid/connect/authorize?state={state}"
+
+        def identify(self, code: str) -> SlackIdentity:
+            return SlackIdentity(user_id="U42", team_id="T1")
+
+    world["app"].dependency_overrides[get_slack_oauth_client] = lambda: Identifying()
+    client = signed_in(world)
+    response = client.get("/api/auth/slack/me/start?redirect_to=/meetings/m/actions")
+    state = parse_qs(urlsplit(response.headers["location"]).query)["state"][0]
+
+    back = client.get(f"/api/auth/slack/callback?state={state}&code=c")
+
+    assert back.headers["location"].endswith("/meetings/m/actions?slack_me=connected")
+    assert linked == {
+        "user_id": ME,
+        "service": "slack",
+        "config": {"slack_user_id": "U42", "slack_team_id": "T1"},
+    }
+
+
+def test_identify_asks_for_openid_only_and_reads_the_member_id() -> None:
+    calls: list[str] = []
+    client = _client(
+        {
+            "openid.connect.token": {"ok": True, "access_token": "xoxp-once"},
+            "openid.connect.userInfo": {
+                "ok": True,
+                "sub": "U42",
+                "https://slack.com/user_id": "U42",
+                "https://slack.com/team_id": "T1",
+            },
+        },
+        calls,
+    )
+    url = client.identity_url(state="s", nonce="n")
+    assert parse_qs(urlsplit(url).query)["scope"] == ["openid"]
+    identity = client.identify("c")
+    assert (identity.user_id, identity.team_id) == ("U42", "T1")
+    assert calls == ["openid.connect.token", "openid.connect.userInfo"]

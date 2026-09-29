@@ -831,7 +831,9 @@ def slack_callback(
         )
     else:
         transaction = store.pop(state)
-        if transaction is None or transaction.purpose != "slack" or not transaction.team_id:
+        if transaction is not None and transaction.purpose == "slack_identity":
+            response = _finish_slack_identity(transaction, slack, session, code=code, error=error)
+        elif transaction is None or transaction.purpose != "slack" or not transaction.team_id:
             response = JSONResponse(
                 status_code=403,
                 content=PermissionDeniedError(
@@ -986,3 +988,89 @@ def slack_disconnect(
         "auth_slack_disconnected", team_id=team_id, user_id=user.id, revoked=revoked, shared=shared
     )
     return {"connected": False, "revoked": revoked, "shared": shared}
+
+
+# --------------------------------------------------------------------------- #
+# A person's own Slack account, for direct messages (#255, #280)
+# --------------------------------------------------------------------------- #
+
+
+@router.get("/slack/me/start")
+def slack_identity_start(
+    request: Request,
+    user: CurrentUser,
+    store: Annotated[StateStore, Depends(get_state_store)],
+    slack: Annotated[SlackOAuthClient, Depends(get_slack_oauth_client)],
+    redirect_to: Annotated[str, Query()] = "/",
+) -> RedirectResponse:
+    """ "Sign in with Slack" so direct messages can reach this person. Only their
+    own member id comes back -- no email, no directory (#70). The shared Slack
+    callback finishes it; the id is stored for the person of *this* session."""
+    state = secrets.token_urlsafe(32)
+    nonce = secrets.token_urlsafe(24)
+    store.put(
+        state,
+        OAuthTransaction(
+            nonce=nonce,
+            redirect_to=_safe_redirect_target(redirect_to),
+            purpose="slack_identity",
+            user_id=user.id,
+        ),
+    )
+    response = RedirectResponse(slack.identity_url(state=state, nonce=nonce), status_code=307)
+    response.set_cookie(
+        STATE_COOKIE,
+        state,
+        max_age=STATE_TTL_SECONDS,
+        httponly=True,
+        secure=get_settings().session_cookie_secure,
+        samesite="lax",
+        path=_slack_callback_path(request),
+    )
+    return response
+
+
+def _finish_slack_identity(
+    transaction: OAuthTransaction,
+    slack: SlackOAuthClient,
+    session: Session,
+    *,
+    code: str | None,
+    error: str | None,
+) -> RedirectResponse:
+    try:
+        if error or not code or not transaction.user_id:
+            raise PermissionDeniedError("Slack sign-in was not approved")
+        identity = slack.identify(code)
+        save_user_integration(
+            session,
+            transaction.user_id,
+            "slack",
+            config={"slack_user_id": identity.user_id, "slack_team_id": identity.team_id},
+        )
+        log.info("auth_slack_identity_linked", user_id=transaction.user_id)
+        outcome = "connected"
+    except AutuneError as exc:
+        log.info("auth_slack_identity_failed", user_id=transaction.user_id, reason=exc.code)
+        outcome = "failed"
+    return RedirectResponse(
+        _web_url(_with_query(transaction.redirect_to, f"slack_me={outcome}")), status_code=303
+    )
+
+
+@router.get("/slack/me")
+def slack_identity_status(
+    user: CurrentUser, session: Annotated[Session, Depends(get_session)]
+) -> dict[str, bool]:
+    """Whether the signed-in person linked their Slack account -- theirs only."""
+    linked = load_user_integration(session, user.id, "slack")
+    return {"linked": bool(linked and linked.config.get("slack_user_id"))}
+
+
+@router.post("/slack/me/disconnect")
+def slack_identity_disconnect(
+    user: CurrentUser, session: Annotated[Session, Depends(get_session)]
+) -> dict[str, bool]:
+    """Forget the person's Slack id. No token was kept, so nothing to revoke."""
+    disconnect_user_integration(session, user.id, "slack")
+    return {"linked": False}

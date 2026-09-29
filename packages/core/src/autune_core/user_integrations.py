@@ -23,9 +23,10 @@ from .crypto import decrypt, encrypt
 from .entities import UserIntegration
 from .errors import ValidationError
 
-USER_SERVICES: Final = ("calendar",)
+USER_SERVICES: Final = ("calendar", "slack")
 """Kept in step with the check constraint on ``user_integrations.service``.
-``gmail`` is added with #431's decision, not before it."""
+``slack`` is a person's own Slack identity for direct messages (#255); ``gmail``
+is added with #431's decision, not before it."""
 
 
 @dataclass(frozen=True)
@@ -129,3 +130,16 @@ def _check_service(service: str) -> None:
             f"unknown personal integration {service!r}; expected one of {', '.join(USER_SERVICES)}",
             field="service",
         )
+
+
+def slack_member_id(user_id: str) -> str | None:
+    """The Slack member id a person linked for direct messages (#255), or
+    ``None`` when they have not linked one. Its own short session: the Slack
+    client asks at the moment it addresses a DM, from inside whatever the
+    caller is doing."""
+    from .db import session_scope
+
+    with session_scope() as session:
+        linked = load_user_integration(session, user_id, "slack")
+    member = linked.config.get("slack_user_id") if linked is not None else None
+    return str(member) if member else None
