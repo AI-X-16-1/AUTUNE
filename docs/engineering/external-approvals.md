@@ -188,9 +188,14 @@ Someone who has not linked is refused by name
 (`SlackRecipientNotLinkedError`) rather than sent to `channel_not_found`.
 A link is refused when the browser signed in to a workspace none of the
 person's teams installed Autune in, or when that Slack account is already
-linked to another Autune person -- a shared browser's leftover session would
-otherwise receive their DMs, speaking ratio included. The ID token's nonce is
-checked and the sign-in's user token is revoked right after `userInfo`.
+linked to another Autune person. **A new link is pending until the Slack
+account confirms it**: the team's bot DMs that member a one-time link, good
+for 30 minutes, that confirms only in the Autune session that started (#478
+review). A shared browser's leftover Slack session -- someone who never linked
+-- therefore gets a link it cannot use, and no DM, speaking ratio included,
+goes to it meanwhile. The bot needs `chat:write` for that DM, which it already
+has. The ID token's nonce is checked and the sign-in's user token is revoked
+right after `userInfo`.
 
 ### Notion
 

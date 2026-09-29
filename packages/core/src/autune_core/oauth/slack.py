@@ -85,6 +85,13 @@ class SlackAccountTakenError(SlackIdentityRefusedError):
     code = "slack_account_taken"
 
 
+class SlackLinkNotConfirmedError(SlackIdentityRefusedError):
+    """The confirmation link was not this person's, was used up, or expired.
+    A link is confirmed only by the Autune session that started it (#478)."""
+
+    code = "slack_link_not_confirmed"
+
+
 class SlackChannelUnavailableError(AutuneError):
     """Every name from ``#autune`` to ``#autune-10`` is taken. A person has to
     free one, or set another ``AUTUNE_SLACK_CHANNEL_NAME``."""
@@ -306,6 +313,20 @@ class SlackOAuthClient:
             return False
         info = body.get("channel") or {}
         return bool(info) and not info.get("is_archived") and info.get("is_member", True)
+
+    def send_link_confirmation(self, token: str, member_id: str, text: str) -> None:
+        """One direct message from the team's bot to ``member_id`` --
+        ``chat.postMessage`` to a member id opens the DM (``chat:write``).
+
+        The only message core sends: fixed words and a link, never meeting
+        content. That is why it does not go through ``autune_integrations``'
+        outbound guard, which core cannot import (the guard imports core)."""
+        self._call(
+            "chat.postMessage",
+            data={"channel": member_id, "text": text},
+            token=token,
+            refused="Slack refused the confirmation message",
+        )
 
     def revoke(self, token: str) -> bool:
         """End the install's token at Slack (``auth.revoke``)."""

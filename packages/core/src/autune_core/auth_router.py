@@ -25,7 +25,10 @@ Flow:
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import secrets
+from datetime import UTC, datetime, timedelta
 from typing import Annotated
 from urllib.parse import urlsplit
 
@@ -55,6 +58,7 @@ from .oauth.slack import (
     SlackAccountTakenError,
     SlackChannel,
     SlackInstall,
+    SlackLinkNotConfirmedError,
     SlackOAuthClient,
     SlackTeamNotConnectedError,
     SlackWrongWorkspaceError,
@@ -841,7 +845,9 @@ def slack_callback(
     else:
         transaction = store.pop(state)
         if transaction is not None and transaction.purpose == "slack_identity":
-            response = _finish_slack_identity(transaction, slack, session, code=code, error=error)
+            response = _finish_slack_identity(
+                request, transaction, slack, session, code=code, error=error
+            )
         elif transaction is None or transaction.purpose != "slack" or not transaction.team_id:
             response = JSONResponse(
                 status_code=403,
@@ -1039,7 +1045,24 @@ def slack_identity_start(
     return response
 
 
+SLACK_CONFIRM_TTL = timedelta(minutes=30)
+"""How long the confirmation link a new Slack link waits on stays good."""
+
+_PENDING_KEYS = (
+    "pending_slack_user_id",
+    "pending_slack_team_id",
+    "confirm_digest",
+    "confirm_expires_at",
+    "confirm_redirect_to",
+)
+
+
+def _digest(token: str) -> str:
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
 def _finish_slack_identity(
+    request: Request,
     transaction: OAuthTransaction,
     slack: SlackOAuthClient,
     session: Session,
@@ -1047,6 +1070,17 @@ def _finish_slack_identity(
     code: str | None,
     error: str | None,
 ) -> RedirectResponse:
+    """Hold the Slack account the browser signed in with as *pending*, and ask
+    that account to confirm (#478 review).
+
+    The browser may carry someone else's Slack session -- a shared computer,
+    before that person ever linked theirs -- and nothing in the sign-in says
+    whose it is. So the team's bot DMs a one-time link to the member id that
+    came back, and only opening it in *this* Autune session makes the link
+    real. The owner of a leftover session gets a link they cannot use; the
+    person who started never sees it. Until then ``slack_member_id`` answers
+    ``None`` and no DM, speaking ratio included, goes to that account. An
+    earlier confirmed link keeps working while a new one waits."""
     try:
         if error or not code or not transaction.user_id:
             raise PermissionDeniedError("Slack sign-in was not approved")
@@ -1063,19 +1097,98 @@ def _finish_slack_identity(
         ]
         if others:
             raise SlackAccountTakenError("that Slack account is linked to another person")
+        bot = _slack_bot_for_workspace(session, transaction.user_id, identity.team_id)
+        token = secrets.token_urlsafe(32)
+        link = str(request.url_for("slack_identity_confirm").include_query_params(token=token))
+        slack.send_link_confirmation(
+            bot,
+            identity.user_id,
+            "Autune 개인 알림을 이 Slack 계정으로 받으려면, Slack 연결을 시작한 "
+            f"브라우저에서 이 링크를 열어 주세요: {link}\n"
+            "직접 요청한 적이 없다면 무시하세요. 30분 뒤 만료됩니다.",
+        )
+        existing = load_user_integration(session, transaction.user_id, "slack")
+        kept = {
+            k: v
+            for k, v in (existing.config.items() if existing is not None else [])
+            if k in ("slack_user_id", "slack_team_id")
+        }
         save_user_integration(
             session,
             transaction.user_id,
             "slack",
-            config={"slack_user_id": identity.user_id, "slack_team_id": identity.team_id},
+            config={
+                **kept,
+                "pending_slack_user_id": identity.user_id,
+                "pending_slack_team_id": identity.team_id,
+                "confirm_digest": _digest(token),
+                "confirm_expires_at": (datetime.now(UTC) + SLACK_CONFIRM_TTL).isoformat(),
+                "confirm_redirect_to": transaction.redirect_to,
+            },
         )
-        log.info("auth_slack_identity_linked", user_id=transaction.user_id)
-        outcome = "connected"
+        log.info("auth_slack_identity_pending", user_id=transaction.user_id)
+        outcome = "pending"
     except AutuneError as exc:
         log.info("auth_slack_identity_failed", user_id=transaction.user_id, reason=exc.code)
         outcome = f"failed&reason={exc.code}"
     return RedirectResponse(
         _web_url(_with_query(transaction.redirect_to, f"slack_me={outcome}")), status_code=303
+    )
+
+
+def _slack_bot_for_workspace(session: Session, user_id: str, workspace: str) -> str:
+    """The bot token of a team of this person installed in ``workspace`` --
+    the bot that will DM them, so the one to ask them to confirm."""
+    team_ids = session.scalars(select(TeamMember.team_id).where(TeamMember.user_id == user_id))
+    for team_id in team_ids:
+        installed = load_integration(session, team_id, SLACK)
+        if (
+            installed is not None
+            and installed.secret
+            and installed.config.get("workspace_id") == workspace
+        ):
+            return installed.secret
+    raise SlackWrongWorkspaceError("signed in to a workspace no team of theirs installed")
+
+
+@router.get("/slack/me/confirm", name="slack_identity_confirm")
+def slack_identity_confirm(
+    token: Annotated[str, Query()],
+    user: CurrentUser,
+    session: Annotated[Session, Depends(get_session)],
+) -> RedirectResponse:
+    """The link the bot DMed. Confirms the pending Slack account only for the
+    Autune person whose connect is pending -- their session, their digest, in
+    time (#478 review). Anyone else, a second use, or a late one changes
+    nothing."""
+    linked = load_user_integration(session, user.id, "slack")
+    config = dict(linked.config) if linked is not None else {}
+    redirect_to = str(config.get("confirm_redirect_to") or "/")
+    try:
+        pending = config.get("pending_slack_user_id")
+        expires = config.get("confirm_expires_at")
+        digest = str(config.get("confirm_digest") or "")
+        if (
+            not pending
+            or not expires
+            or datetime.fromisoformat(str(expires)) <= datetime.now(UTC)
+            or not hmac.compare_digest(digest, _digest(token))
+        ):
+            raise SlackLinkNotConfirmedError("no pending Slack link matches this link")
+        others = [u for u in users_linked_to_slack_member(session, str(pending)) if u != user.id]
+        if others:
+            raise SlackAccountTakenError("that Slack account is linked to another person")
+        confirmed = {k: v for k, v in config.items() if k not in _PENDING_KEYS}
+        confirmed["slack_user_id"] = str(pending)
+        confirmed["slack_team_id"] = str(config.get("pending_slack_team_id") or "")
+        save_user_integration(session, user.id, "slack", config=confirmed)
+        log.info("auth_slack_identity_linked", user_id=user.id)
+        outcome = "connected"
+    except AutuneError as exc:
+        log.info("auth_slack_identity_failed", user_id=user.id, reason=exc.code)
+        outcome = f"failed&reason={exc.code}"
+    return RedirectResponse(
+        _web_url(_with_query(redirect_to, f"slack_me={outcome}")), status_code=303
     )
 
 
@@ -1100,7 +1213,11 @@ def slack_identity_status(
     workspace -- theirs only, so a person can see a link that is not theirs."""
     linked = load_user_integration(session, user.id, "slack")
     if linked is None or not linked.config.get("slack_user_id"):
-        return {"linked": False}
+        # A link waiting for its confirmation DM is not a link yet.
+        return {
+            "linked": False,
+            "pending": bool(linked and linked.config.get("pending_slack_user_id")),
+        }
     workspace = str(linked.config.get("slack_team_id") or "")
     return {
         "linked": True,

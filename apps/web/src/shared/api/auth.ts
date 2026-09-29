@@ -39,7 +39,9 @@ export interface Providers {
  */
 export async function getProviders(): Promise<Providers | null> {
   try {
-    const response = await fetch(authUrl("/providers"), { credentials: "include" });
+    const response = await fetch(authUrl("/providers"), {
+      credentials: "include",
+    });
     if (!response.ok) return null;
     return (await response.json()) as Providers;
   } catch {
@@ -98,13 +100,19 @@ export async function requestMagicLink(email: string): Promise<void> {
  * with `?calendar=connected`.
  */
 export function googleCalendarConnectUrl(redirectTo = "/"): string {
-  return authUrl(`/google/calendar/start?redirect_to=${encodeURIComponent(redirectTo)}`);
+  return authUrl(
+    `/google/calendar/start?redirect_to=${encodeURIComponent(redirectTo)}`,
+  );
 }
 
 /** Whether the signed-in person has connected their own calendar. */
-export async function getCalendarConnection(): Promise<{ connected: boolean } | null> {
+export async function getCalendarConnection(): Promise<{
+  connected: boolean;
+} | null> {
   try {
-    const response = await fetch(authUrl("/google/calendar"), { credentials: "include" });
+    const response = await fetch(authUrl("/google/calendar"), {
+      credentials: "include",
+    });
     if (!response.ok) return null;
     return (await response.json()) as { connected: boolean };
   } catch {
@@ -122,11 +130,14 @@ export async function disconnectCalendar(): Promise<{ revoked: boolean }> {
     credentials: "include",
   });
   if (!response.ok) {
-    throw new ApiError(response.status, "calendar_disconnect_failed", "disconnect failed");
+    throw new ApiError(
+      response.status,
+      "calendar_disconnect_failed",
+      "disconnect failed",
+    );
   }
   return (await response.json()) as { revoked: boolean };
 }
-
 
 /** A team's Jira connection, as a member of the meeting's team sees it. */
 export interface JiraConnection {
@@ -148,11 +159,16 @@ export function jiraConnectUrl(meetingId: string, redirectTo = "/"): string {
   );
 }
 
-export async function getJiraConnection(meetingId: string): Promise<JiraConnection | null> {
+export async function getJiraConnection(
+  meetingId: string,
+): Promise<JiraConnection | null> {
   try {
-    const response = await fetch(authUrl(`/jira?meeting_id=${encodeURIComponent(meetingId)}`), {
-      credentials: "include",
-    });
+    const response = await fetch(
+      authUrl(`/jira?meeting_id=${encodeURIComponent(meetingId)}`),
+      {
+        credentials: "include",
+      },
+    );
     if (!response.ok) return null;
     return (await response.json()) as JiraConnection;
   } catch {
@@ -160,14 +176,21 @@ export async function getJiraConnection(meetingId: string): Promise<JiraConnecti
   }
 }
 
-export async function chooseJiraProject(meetingId: string, projectKey: string): Promise<void> {
+export async function chooseJiraProject(
+  meetingId: string,
+  projectKey: string,
+): Promise<void> {
   const query = `meeting_id=${encodeURIComponent(meetingId)}&project_key=${encodeURIComponent(projectKey)}`;
   const response = await fetch(authUrl(`/jira/project?${query}`), {
     method: "POST",
     credentials: "include",
   });
   if (!response.ok) {
-    throw new ApiError(response.status, "jira_project_failed", "choosing a project failed");
+    throw new ApiError(
+      response.status,
+      "jira_project_failed",
+      "choosing a project failed",
+    );
   }
 }
 
@@ -177,7 +200,11 @@ export async function disconnectJira(meetingId: string): Promise<void> {
     { method: "POST", credentials: "include" },
   );
   if (!response.ok) {
-    throw new ApiError(response.status, "jira_disconnect_failed", "disconnect failed");
+    throw new ApiError(
+      response.status,
+      "jira_disconnect_failed",
+      "disconnect failed",
+    );
   }
 }
 
@@ -198,11 +225,16 @@ export function notionConnectUrl(meetingId: string, redirectTo = "/"): string {
   );
 }
 
-export async function getNotionConnection(meetingId: string): Promise<NotionConnection | null> {
+export async function getNotionConnection(
+  meetingId: string,
+): Promise<NotionConnection | null> {
   try {
-    const response = await fetch(authUrl(`/notion?meeting_id=${encodeURIComponent(meetingId)}`), {
-      credentials: "include",
-    });
+    const response = await fetch(
+      authUrl(`/notion?meeting_id=${encodeURIComponent(meetingId)}`),
+      {
+        credentials: "include",
+      },
+    );
     if (!response.ok) return null;
     return (await response.json()) as NotionConnection;
   } catch {
@@ -216,7 +248,11 @@ export async function disconnectNotion(meetingId: string): Promise<void> {
     { method: "POST", credentials: "include" },
   );
   if (!response.ok) {
-    throw new ApiError(response.status, "notion_disconnect_failed", "disconnect failed");
+    throw new ApiError(
+      response.status,
+      "notion_disconnect_failed",
+      "disconnect failed",
+    );
   }
 }
 
@@ -238,11 +274,16 @@ export function slackConnectUrl(meetingId: string, redirectTo = "/"): string {
   );
 }
 
-export async function getSlackConnection(meetingId: string): Promise<SlackConnection | null> {
+export async function getSlackConnection(
+  meetingId: string,
+): Promise<SlackConnection | null> {
   try {
-    const response = await fetch(authUrl(`/slack?meeting_id=${encodeURIComponent(meetingId)}`), {
-      credentials: "include",
-    });
+    const response = await fetch(
+      authUrl(`/slack?meeting_id=${encodeURIComponent(meetingId)}`),
+      {
+        credentials: "include",
+      },
+    );
     if (!response.ok) return null;
     return (await response.json()) as SlackConnection;
   } catch {
@@ -250,13 +291,19 @@ export async function getSlackConnection(meetingId: string): Promise<SlackConnec
   }
 }
 
-export async function disconnectSlack(meetingId: string): Promise<{ revoked: boolean; shared?: boolean }> {
+export async function disconnectSlack(
+  meetingId: string,
+): Promise<{ revoked: boolean; shared?: boolean }> {
   const response = await fetch(
     authUrl(`/slack/disconnect?meeting_id=${encodeURIComponent(meetingId)}`),
     { method: "POST", credentials: "include" },
   );
   if (!response.ok) {
-    throw new ApiError(response.status, "slack_disconnect_failed", "disconnect failed");
+    throw new ApiError(
+      response.status,
+      "slack_disconnect_failed",
+      "disconnect failed",
+    );
   }
   return (await response.json()) as { revoked: boolean; shared?: boolean };
 }
@@ -266,17 +313,27 @@ export async function disconnectSlack(meetingId: string): Promise<{ revoked: boo
  * direct messages can reach them (#255): "Sign in with Slack", member id only.
  */
 export function slackMeConnectUrl(redirectTo = "/"): string {
-  return authUrl(`/slack/me/start?redirect_to=${encodeURIComponent(redirectTo)}`);
+  return authUrl(
+    `/slack/me/start?redirect_to=${encodeURIComponent(redirectTo)}`,
+  );
 }
 
 export async function getSlackMe(): Promise<{
   linked: boolean;
+  /** A link waiting for the Slack account to confirm it (#478). */
+  pending?: boolean;
   workspace_name?: string | null;
 } | null> {
   try {
-    const response = await fetch(authUrl("/slack/me"), { credentials: "include" });
+    const response = await fetch(authUrl("/slack/me"), {
+      credentials: "include",
+    });
     if (!response.ok) return null;
-    return (await response.json()) as { linked: boolean; workspace_name?: string | null };
+    return (await response.json()) as {
+      linked: boolean;
+      pending?: boolean;
+      workspace_name?: string | null;
+    };
   } catch {
     return null;
   }
@@ -288,6 +345,10 @@ export async function unlinkSlackMe(): Promise<void> {
     credentials: "include",
   });
   if (!response.ok) {
-    throw new ApiError(response.status, "slack_me_unlink_failed", "unlink failed");
+    throw new ApiError(
+      response.status,
+      "slack_me_unlink_failed",
+      "unlink failed",
+    );
   }
 }
