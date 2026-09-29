@@ -23,7 +23,13 @@ def _meeting(session: Session, team: str, days_ago: float) -> str:
     return m.id
 
 
-def _aggregate(session: Session, meeting_id: str, reverses: str | None = None) -> None:
+def _aggregate(
+    session: Session,
+    meeting_id: str,
+    reverses: str | None = None,
+    *,
+    missing_extraction: bool = False,
+) -> None:
     lineage = (
         [
             {
@@ -39,7 +45,11 @@ def _aggregate(session: Session, meeting_id: str, reverses: str | None = None) -
         if reverses
         else []
     )
-    payload = ContextLinks(meeting_id=meeting_id, decision_lineage=lineage).model_dump(mode="json")
+    payload = ContextLinks(
+        meeting_id=meeting_id,
+        decision_lineage=lineage,
+        missing_sources=["extraction"] if missing_extraction else [],
+    ).model_dump(mode="json")
     service.record_completion(session, meeting_id, "context", payload)
     for source in ("extraction", "gap"):
         service.record_completion(session, meeting_id, source, {"meeting_id": meeting_id})
@@ -115,25 +125,52 @@ def test_a_seen_reversal_survives_an_unaggregated_later_meeting(
     assert examples[earlier].reversed_within_horizon is True
 
 
+def _blind_spot_log(db_session: Session) -> dict:
+    with capture_logs() as logs:
+        labeled_examples(db_session, now=NOW)
+    entries = [e for e in logs if e["event"] == "intelligence_history_labels_blocked_by_blind_spot"]
+    assert len(entries) == 1
+    return entries[0]
+
+
 def test_the_blind_spot_log_separates_its_two_causes(db_session: Session, team: str) -> None:
-    """ "0 labeled meetings" has two causes now, and they need different fixes.
+    """Which of the two causes withheld a label decides where an operator goes.
 
     A measured meeting whose lineage came back without B's decisions is B not
     reaching D; a meeting E never aggregated is a stalled or failed pipeline.
-    One count cannot tell an operator which one they have.
+    One count cannot tell them apart.
     """
     earlier = _meeting(db_session, team, days_ago=30)
     _aggregate(db_session, earlier)
     _meeting(db_session, team, days_ago=25)  # unaggregated, inside earlier's horizon
 
-    with capture_logs() as logs:
-        labeled_examples(db_session, now=NOW)
+    entry = _blind_spot_log(db_session)
 
-    blocked = [e for e in logs if e["event"] == "intelligence_history_labels_blocked_by_blind_spot"]
-    assert len(blocked) == 1
-    assert blocked[0]["meetings"] == 1
-    assert blocked[0]["unaggregated"] == 1
-    assert blocked[0]["unmeasured_lineage"] == 0
+    assert entry["meetings"] == 1
+    assert entry["blocked_by_unaggregated"] == 1
+    assert entry["blocked_by_unmeasured_lineage"] == 0
+
+
+def test_the_blind_spot_log_counts_causes_that_blocked_something(
+    db_session: Session, team: str
+) -> None:
+    """A blind spot that withheld nothing must not be reported as a cause.
+
+    Counting blind spots instead of what they blocked sends an operator after a
+    stalled meeting that is doing no harm. All three numbers are meetings whose
+    label was withheld, so they answer "where do I go to fix this".
+    """
+    earlier = _meeting(db_session, team, days_ago=30)
+    blocker = _meeting(db_session, team, days_ago=25)
+    _aggregate(db_session, earlier)
+    _aggregate(db_session, blocker, missing_extraction=True)
+    _meeting(db_session, team, days_ago=3)  # unaggregated, but past earlier's horizon
+
+    entry = _blind_spot_log(db_session)
+
+    assert entry["meetings"] == 1
+    assert entry["blocked_by_unmeasured_lineage"] == 1
+    assert entry["blocked_by_unaggregated"] == 0
 
 
 def test_recent_meetings_are_not_labeled_yet(db_session: Session, team: str) -> None:

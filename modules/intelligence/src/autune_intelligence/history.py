@@ -163,9 +163,21 @@ def _unvisited_meetings(
 
     Teams are limited to those the query did return — a team with nothing
     aggregated has no label to withhold, so scanning it buys nothing.
-    ``created_at`` stands in for a missing ``started_at`` the way
-    ``first_seen_at`` does above, so a meeting that was never scheduled still
-    lands somewhere in time instead of being skipped.
+
+    ``created_at`` stands in for a missing ``started_at``, because a meeting with
+    no time at all could not be placed inside anyone's horizon and would be
+    dropped — putting the bug back for the meetings most likely to be stuck. It
+    is **not** the same clock as the ``first_seen_at`` the query above falls back
+    to: ``created_at`` is when A created the row, ``first_seen_at`` is when E
+    first saw it, and transcription and analysis sit in between. There is no
+    choice here — an unvisited meeting has no ``intel_completion`` row, which is
+    what makes it unvisited — and it is arguably the better clock, since a
+    meeting that was never processed really did happen nearer ``created_at``.
+
+    The bias runs one way, which is worth knowing: placing such a meeting
+    *earlier* means ``reversal_labels``' ``m.at < at <= deadline`` stops
+    withholding labels for meetings that fall between the two clocks. The gap is
+    one analysis delay wide and only affects meetings with no ``started_at``.
     """
     teams = {team_id for _, team_id, _, _ in rows}
     if not teams:
@@ -183,6 +195,22 @@ def _unvisited_meetings(
         )
         if mid not in visited
     ]
+
+
+def _blocked_by(
+    withheld: Sequence[MeetingPoint], blind_spots: Sequence[MeetingPoint], horizon: timedelta
+) -> int:
+    """How many of ``withheld`` have one of these blind spots inside their horizon.
+
+    Mirrors ``reversal_labels``' own test so the attribution cannot disagree with
+    the decision it explains.
+    """
+    by_team: dict[str, list[datetime]] = {}
+    for b in blind_spots:
+        by_team.setdefault(b.team_id, []).append(b.at)
+    return sum(
+        1 for m in withheld if any(m.at < at <= m.at + horizon for at in by_team.get(m.team_id, ()))
+    )
 
 
 def labeled_examples(
@@ -229,22 +257,28 @@ def labeled_examples(
                 if c.change_type == ChangeType.REVERSED and c.previous_meeting_id
             )
 
-    unmeasured_lineage = len(unmeasured)
+    unmeasured_lineage = list(unmeasured)
     unvisited = _unvisited_meetings(session, rows, since=since, now=now)
     unmeasured.extend(unvisited)
 
     labels = reversal_labels(points, reversals, unmeasured=unmeasured, now=now, horizon=horizon)
-    blocked = sum(1 for p in points if p.at + horizon <= now and p.meeting_id not in labels)
-    if blocked:
+    withheld = [p for p in points if p.at + horizon <= now and p.meeting_id not in labels]
+    if withheld:
         # Otherwise "0 labeled meetings" reads as "history is too young". The two
         # causes are counted apart because they are fixed in different places: an
         # unmeasured lineage is B not reaching D, an unaggregated meeting is a
         # pipeline that stalled or failed before E ever saw it.
+        #
+        # All three numbers count *withheld meetings*, not blind spots. A blind
+        # spot can withhold several labels or none at all, so counting blind
+        # spots would send someone after a stalled meeting that is doing no harm.
+        # The two causes can overlap on one meeting, so they need not sum to
+        # ``meetings``.
         log.info(
             "intelligence_history_labels_blocked_by_blind_spot",
-            meetings=blocked,
-            unmeasured_lineage=unmeasured_lineage,
-            unaggregated=len(unvisited),
+            meetings=len(withheld),
+            blocked_by_unmeasured_lineage=_blocked_by(withheld, unmeasured_lineage, horizon),
+            blocked_by_unaggregated=_blocked_by(withheld, unvisited, horizon),
         )
     if not labels:
         return []
