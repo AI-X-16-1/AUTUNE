@@ -19,10 +19,11 @@ from functools import lru_cache
 
 from autune_gap.config import get_settings
 
-from .base import EntityExtractor, RelationExtractor, SentenceEmbedder
+from .base import EntityExtractor, RelationExtractor, SentenceEmbedder, TemplateVerifier
 from .embedder import FakeEmbedder, LocalKureEmbedder
 from .ner import FakeNer, SpacyNer
 from .relations import RuleRelations
+from .verifier import FakeVerifier, GeminiVerifier
 
 _EXTRACTORS: dict[str, str] = {
     "spacy": "a Korean spaCy pipeline in this process",
@@ -97,8 +98,50 @@ def get_sentence_embedder() -> SentenceEmbedder | None:
     raise ValueError(f"unknown AUTUNE_GAP_EMBEDDER_IMPL={impl!r}; known: {sorted(_EMBEDDERS)}")
 
 
+_VERIFIERS: dict[str, str] = {
+    "off": "the embedding's answer stands for every utterance",
+    "fake": "deterministic, for tests -- confirms the embedder's nearest candidate",
+    "gemini": "EXTERNAL: ambiguous utterances go to Google's Gemini API",
+}
+"""Known template verifiers. ``gemini`` is the one external entry in this module,
+and it is opt-in: see ``base.TemplateVerifier`` and ``verifier`` for what it
+sends. Another provider is another entry here."""
+
+
+@lru_cache
+def get_template_verifier() -> TemplateVerifier | None:
+    """The configured verifier, or ``None`` when ``AUTUNE_GAP_VERIFIER_IMPL=off``.
+
+    A verifier checks what the embedder ranked, so one without the embedder
+    would have nothing to check. That combination is refused rather than
+    silently running as ``off``: somebody who set the variable expects it to
+    do something."""
+    settings = get_settings()
+    impl = settings.verifier_impl
+
+    if impl == "off":
+        return None
+    if impl not in _VERIFIERS:
+        raise ValueError(f"unknown AUTUNE_GAP_VERIFIER_IMPL={impl!r}; known: {sorted(_VERIFIERS)}")
+    if settings.embedder_impl == "off":
+        raise ValueError(
+            f"AUTUNE_GAP_VERIFIER_IMPL={impl} needs AUTUNE_GAP_EMBEDDER_IMPL=local or fake: "
+            "it verifies what the embedder could not decide"
+        )
+    if impl == "fake":
+        return FakeVerifier()
+    return GeminiVerifier(
+        api_key=settings.verifier_api_key,
+        model=settings.verifier_model,
+        base_url=settings.verifier_base_url,
+        timeout_sec=settings.verifier_timeout_sec,
+        fallback_model=settings.verifier_fallback_model,
+    )
+
+
 def reset_cache() -> None:
     """Drop the cached models. For tests and the eval, which switch implementations."""
     get_entity_extractor.cache_clear()
     get_relation_extractor.cache_clear()
     get_sentence_embedder.cache_clear()
+    get_template_verifier.cache_clear()

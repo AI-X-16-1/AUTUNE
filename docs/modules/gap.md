@@ -605,8 +605,102 @@ under the floor — and `deploy-retro:dependency`, whose utterance is nearer the
 (0.55) and margin (0) were chosen by looking at these four meetings, so the
 table says the mechanism does what it claims on them and nothing about whether
 it holds. The W5 meetings decide; `--compare` is the command to run on them.
-LLM verification of what the embedder heard is a separate, later step and a
+LLM verification of what the embedder heard is the next section, and a
 privacy decision of its own (`../architecture/privacy.md` section 6).
+
+### Verifying what the embedder was unsure of
+
+`AUTUNE_GAP_VERIFIER_IMPL=gemini` (off by default, and needing the embedder on)
+adds one step between the embedding and `detect`. It does not re-judge the
+meeting; it asks about the utterances the embedding could not decide.
+
+**Triage** (`autune_gap.verification`) files every utterance by its ranking:
+
+| | when | what happens |
+| --- | --- | --- |
+| confident | an item wins with score >= `VERIFY_CONFIDENT_SCORE` and lead >= `VERIFY_CONFIDENT_LEAD` | heard, nothing asked |
+| ignored | the background class wins by >= `VERIFY_CONFIDENT_LEAD`, or no item reaches `VERIFY_CANDIDATE_SCORE` | not heard, nothing asked |
+| ambiguous | anything else | asked, with the `VERIFY_CANDIDATES` nearest items at or above `VERIFY_CANDIDATE_SCORE` |
+
+**The verifier checks candidates and nothing else.** For each ambiguous
+utterance it sees the utterance and its lettered candidates — each item's name,
+question and `VERIFY_EXAMPLES` example sentences — and answers which letters
+the utterance actually discussed. A letter the line was not offered is dropped,
+so it cannot add an item or reach past the embedder's shortlist. What it
+confirms joins `heard`, and `heard` enters `detect.compare` exactly as the
+embedding's answer did: partial at most. Coverage, severity and risk are
+`detect`'s and did not change.
+
+**When it cannot answer, the embedding stands.** A failed request, an
+unparseable answer, an utterance too long to send, or one past
+`VERIFY_MAX_UTTERANCES` keeps the embedding-only decision
+(`semantic.nearest_item`), and `gap_detection_complete` logs how many were
+asked and how many went unanswered.
+
+**A privacy refusal is not "cannot answer".** When `check_outbound` finds an
+unmasked value in a request, `PrivacyViolationError` propagates and the task
+fails. It means a stored transcript holds what module A should have masked;
+falling back would keep the product running while hiding that. Raised in
+review of #484.
+
+**What leaves, with `gemini`.** Per request, under the 4,000-character outbound
+cap and through `autune_integrations.HttpClient` (`check_outbound` scans the
+body):
+
+- the fixed instruction text;
+- the candidate items offered in that request — template-file content;
+- the ambiguous utterances, numbered, **as module A stored them**. Module A masks
+  resident registration, card, phone and account numbers and e-mail addresses
+  written in digits. **It does not mask names, and on the batch path it does
+  not mask numbers read out as words** ("공일공 일이삼사…" — the spoken-number
+  recogniser runs on the live path only; module A's to fix, raised in review
+  of #484). Either goes to Google with its line. No speaker, time, meeting or
+  utterance id, and no neighbouring line.
+
+A meeting with no topics sends nothing, since it raises no gaps. At most
+`VERIFY_MAX_UTTERANCES` utterances of one meeting leave per run. This is the
+exposure module B's `llm` classifier has (#392) at a smaller size, and it
+takes the same answer: opt-in, never the default, dummy meetings only until
+the team decides otherwise. A free-tier key may let the provider keep what it
+is sent.
+
+**Another provider** is another class behind `pipeline.base.TemplateVerifier`
+and an entry in `registry._VERIFIERS`; nothing outside `pipeline` names one.
+Tests use `FakeVerifier`, which takes a decision function or confirms the
+embedder's nearest candidate. Relation extraction has no LLM yet; this
+verifier is for template matching only.
+
+```bash
+uv run --package autune-gap python -m autune_gap.eval --compare --verifier gemini  # off / local / +gemini
+uv run --package autune-gap python -m autune_gap.eval --probe --verifier gemini    # single utterances
+```
+
+The probes (`eval/fixtures/verification_probes_v1.json`) are the utterances the
+embedding got wrong or nearly wrong: "인덱스 재색인이 먼저 끝나야…" (dependency),
+"인기순 정렬 대신 실시간 개인화로…" (not cold start), an owner and a date with no
+noun, and "네 알겠습니다, 마치겠습니다" (nothing).
+
+Measured on 2026-09-29 with `gemini-3.5-flash` (fallback never used), spaCy,
+the four authored meetings, templates `general.4` / `feature_planning.2`:
+
+| | off | local | local + gemini |
+| --- | --- | --- | --- |
+| precision (`high`) | 0.89 | 1.00 | 0.94 |
+| recall (`high`) | 1.00 | 0.94 | 1.00 |
+| false positives (all `no-noun`) | 2 | 0 | 1 |
+| verifier requests / utterances sent | 0 / 0 | 0 / 0 | 4 / 10 |
+
+**The verifier trades precision for recall here, not both up.** It restored
+the cold-start gap the embedding lost ("인기순 정렬 대신 실시간 개인화로…" is
+not a cold-start plan) and so brought recall back to 1.00. It also reopened a
+false positive the embedding had closed: it did not confirm "개인정보 마스킹이
+먼저 끝나야 전송할 수 있습니다" as a dependency, which it is. On four meetings
+that is one utterance either way, and it says nothing about which way real
+meetings lean — the W5 set decides whether the verifier is worth its request.
+
+Probes: 3/5 on the embedding alone, 5/5 with Gemini (2 requests). Requests ran
+765-1,543 characters; no body carried the key, a speaker, an id or a line that
+triage had not marked ambiguous.
 
 ### Step 8 as built
 
@@ -857,6 +951,7 @@ polls them every five seconds while the rail says `analysed: false`.
 | Entity extraction | spaCy NER (Korean model) |
 | Relation extraction | Rule-based patterns plus LLM assistance |
 | Spoken evidence by meaning | KURE-v1 sentence embeddings, in process, off by default |
+| Verifying ambiguous matches | Gemini, **external**, opt-in and off by default |
 | Graph | NetworkX, in memory |
 | Topic importance | PageRank, betweenness centrality |
 | Risk scoring | Weighted heuristic; thresholds in `config.py` |

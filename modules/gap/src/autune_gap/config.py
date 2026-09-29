@@ -111,6 +111,62 @@ class GapSettings(BaseSettings):
     background class. ``0`` means the nearest one wins outright; raising it
     makes an utterance close to two items count for neither."""
 
+    verifier_impl: str = "off"
+    """Which verifier checks the utterances the embedder is unsure of: ``off``,
+    ``fake`` or ``gemini``. Needs the embedder on (``embedder_impl``).
+
+    ``off`` keeps the embedding's own answer for every utterance. **``gemini``
+    sends each ambiguous utterance, masked but with any name or spoken-out number in it, to
+    Google** along with its candidate items — never the rest of the meeting.
+    That is privacy.md section 6's design conversation, so it is never the
+    default and belongs on dummy meetings until the team decides otherwise
+    (module B's ``llm`` classifier is the same case, #392). See
+    ``pipeline.verifier`` for exactly what a request carries."""
+
+    verifier_model: str = "gemini-3.8-flash"
+    """The model ``gemini`` calls. Module B's default."""
+
+    verifier_fallback_model: str = "gemini-3.5-flash-lite"
+    """Answers a batch when ``verifier_model`` stays unavailable (429, 5xx,
+    timeout after retries). Blank disables it."""
+
+    verifier_api_key: str = ""
+    """Provider key for ``gemini``, sent as a header only. Blank by default, and
+    ``gemini`` refuses to start without one. A free-tier key may let the
+    provider keep what it is sent."""
+
+    verifier_base_url: str = "https://generativelanguage.googleapis.com/v1beta"
+    """The provider's API root."""
+
+    verifier_timeout_sec: float = 60.0
+    """Per request, connect and read. Module B measured 12-20 s a request for a
+    thinking model, past the shared client's 10 s."""
+
+    verify_confident_score: float = 0.6
+    """An item that wins with at least this cosine, and ``verify_confident_lead``
+    ahead of the runner-up, is taken without asking the verifier."""
+
+    verify_confident_lead: float = 0.05
+    """The lead a winner needs to be taken without asking — an item's to be
+    heard, the background class's to be dismissed."""
+
+    verify_candidate_score: float = 0.45
+    """An item below this cosine is not offered to the verifier, and an
+    utterance with no item at or above it is not asked about at all."""
+
+    verify_candidates: int = 3
+    """How many items, at most, one utterance is checked against — the
+    embedder's nearest. The verifier cannot answer outside them."""
+
+    verify_examples: int = 2
+    """Example sentences sent per candidate item. Template content, not meeting
+    content, but it counts against the outbound size cap."""
+
+    verify_max_utterances: int = 30
+    """At most this many utterances of one meeting are sent in a run. The rest
+    of the ambiguous ones keep the embedding's own answer. A bound on how much of
+    a meeting can leave, not a tuning knob."""
+
 
 @lru_cache
 def get_settings() -> GapSettings:

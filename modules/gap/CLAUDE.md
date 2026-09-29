@@ -74,6 +74,14 @@ comparison can also read the speech by meaning with KURE-v1 in process
 (`AUTUNE_GAP_EMBEDDER_IMPL`, off by default); the example sentences it compares
 against live in the template files and must never be copied from the eval set.
 
+The utterances the embedder cannot decide may be checked by an LLM
+(`AUTUNE_GAP_VERIFIER_IMPL`, off by default). **`gemini` is this module's only
+external call**: it sends each ambiguous utterance, masked but with any name or
+number said aloud, and its candidate items. The verifier confirms candidates
+and nothing else; coverage and risk stay in `detect`. Keep it that way, keep
+every request going through `autune_integrations`, and never catch the
+`PrivacyViolationError` its outbound check raises.
+
 The graph is one meeting's worth — tens of nodes — so it is built in memory from
 rows each run. At that size PageRank and betweenness take single-digit
 milliseconds; a graph database would buy nothing.
