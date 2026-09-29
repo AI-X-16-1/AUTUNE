@@ -85,7 +85,7 @@ permitted actions — and no new machine learning.
         ┌──────┬───────┬───────┼───────┬────────┐
         ▼      ▼       ▼       ▼       ▼        ▼
        [A]    [B]     [C]     [D]     [E]   integrations
-        modules, unchanged           (Slack, Notion, Jira, Calendar;
+        modules, unchanged           (Slack, Notion, Calendar;
                                       outbound boundary, section 8 rule 1)
                                │
                                ▼
@@ -98,7 +98,7 @@ about what it already computed — B's action items, C's topic graph, D's links
 from several modules and makes a judgement between the reads, and that is the
 test an earlier draft of this document set for when a subagent earns its cost.
 "Detect gaps for this meeting" is one call and stays a tool. "Decide whether
-this team needs another meeting" reads open items from B, unresolved topics from
+this team needs another meeting" reads open items from B, undismissed gaps from
 C and the last decision thread from D, then weighs them — that is a subagent.
 
 An earlier draft had one subagent per *module* and rejected it for the right
@@ -118,9 +118,9 @@ and keeps their module's `tools.py`.
 | --- | --- | --- | --- | --- | --- |
 | **Main agent** | 김민경 | Chat entry point; routes a request or a trigger to one subagent, or answers from tools directly; combines the answer; owns the work-item store, the trigger scheduler, the approval gate and `agent_runs` | every trigger, every chat message | any | the chat answer; L2 plans to the approval screen |
 | **Research** | 김민경 | When a meeting raises an idea or argues over a fact nobody could confirm, gathers what is known into a short document and proposes sending it to the people involved | meeting completed; `autune.transcript.ready`; a chat request | D (links, decisions), B (open questions), uploaded material | a Slack message to the meeting's participants — L2 |
-| **Briefing** | 문민재 | Ten minutes before a meeting, sends the previous meeting's summary and the issues this one should settle; links Jira issues | time, from Google Calendar | D (links, decision threads), B (open items), C (unresolved topics), Jira | D's pre-meeting brief — D's own surface, rule 2 |
-| **Follow-up** | 박재경 | Watches progress and unresolved topics; when a follow-up meeting looks needed, proposes one — to the team lead only | state, `@periodic` | C (topics, per-role participation), B (open items), D (decision threads), Calendar (free slots) | a proposal on the lead's approval screen; the calendar event only after approval — L2 |
-| **Workload** | 강민구 | Notices that one person is overloaded while another has finished, and proposes a redistribution — to the manager only; owns the Gmail and Google Calendar integration | state, `@periodic` | B (items per owner and their state), Jira (assignments) | a proposal on the manager's approval screen; any reassignment only after approval — L2 |
+| **Briefing** | 문민재 | Ten minutes before a meeting, sends the previous meeting's summary and the issues this one should settle; links Jira issues **if #82 brings Jira back** | time, from Google Calendar (`list_events`) | D (links, decision threads), B (open items), C (undismissed gaps and their questions), Jira only after #82 | D's pre-meeting brief — D's own surface, rule 2 |
+| **Follow-up** | 박재경 | Watches progress and gaps nobody closed; when a follow-up meeting looks needed, proposes one — to the team lead only | state, `@periodic` | C's topic-level aggregates only (a topic's `silent_share`, undismissed gaps), B (open items), D (decision threads, topic links), Calendar (`free_busy`) | a proposal on the lead's approval screen; the calendar event only after approval — L2 |
+| **Workload** | 강민구 | Notices that one person is overloaded while another has finished, and proposes a redistribution — to the manager only; owns the Gmail and Google Calendar integration | state, `@periodic` | B (items per owner and their state), Calendar (`free_busy`), Jira only after #82 | a proposal on the manager's approval screen; any reassignment only after approval — L2 |
 | **Report** | 이승환 | After a meeting, writes the summary minutes report and sends it | `autune.intelligence.completed` | E (scores, trend), B, C, D (their summaries) | E's report delivery — E's own surface, rule 2 |
 
 Three things in that table are decisions, not descriptions:
@@ -132,24 +132,32 @@ Three things in that table are decisions, not descriptions:
   affected — happens only when the lead approves it item by item.
 - **Workload and Follow-up read counts of work, never speech.** How many open
   items a person owns and how late they are is work state, which a manager
-  already sees in Jira. How much a person spoke, or whether they were silent on
-  a topic, is not: privacy.md section 3 keeps a speaking ratio with its speaker
-  and forbids per-person speaking patterns to anyone else, managers included.
-  Follow-up reads C's participation **per role**, as section 7's charter does.
-  Neither subagent calls E's speaking-ratio read, and the tool registry does
-  not offer it to them.
+  already sees on a task board. How much a person spoke, or whether they were
+  silent on a topic, is not: privacy.md section 3 keeps a speaking ratio with
+  its speaker and forbids per-person speaking patterns to anyone else, managers
+  included. **Per role is no better**: in a team with one person per role, a
+  role is a person, and the reader is the lead. So Follow-up reads C's
+  topic-level aggregates only — a topic's `silent_share`, the gaps nobody
+  dismissed — and never participation per role or per person. No speaking-ratio
+  tool is registered at all (section 4, `PERSONAL_ONLY_TOOLS`).
 - **Research reads what we hold, not the open web.** Uploaded material, past
   meetings through D and open questions through B. Open-web search is still out
   of scope (section 13.3); a subagent owner who wants it raises it there rather
   than adding a search tool.
 
-**Integration work runs ahead of the subagents that need it.** Briefing and
-Follow-up both need Google Calendar, which Workload's owner builds; Workload
-needs Jira, which Briefing's owner builds. `packages/integrations` already has
-a `CalendarClient` and a `JiraClient`, and what each subagent needs from them
-is the first thing its owner confirms with the integration's owner (section 14,
-first milestone). Gmail is new, and a new client in `packages/integrations` is
-a shared-package change that needs the team's approval (section 13.6).
+**Integration work runs ahead of the subagents that need it.**
+
+- **Google Calendar is in place.** #438 (#435) gave `CalendarClient` the reads
+  these subagents need: `list_events` for Briefing's upcoming meetings,
+  `free_busy` for Follow-up and Workload, `create_event` for an approved
+  follow-up. It reads **busy windows only** — never titles, attendees or places
+  of other people's events — and returns `None` for a calendar it could not
+  read, which a subagent must not treat as free.
+- **Jira is not.** `integrations.md` records it as evaluated and dropped, and
+  #82 — whose credentials, and whether it is in the six weeks at all — is open.
+  Briefing's issue links and anything Workload would read from Jira are
+  **conditional on #82**; both subagents are specified to work without it.
+- **Gmail is new** (section 13.6).
 
 ### 3.2 Where the code goes
 
@@ -191,8 +199,8 @@ iterating the subagent list, never by appending to a registry:
 SUBAGENT = Subagent(
     name="followup",
     description="""Use when deciding whether a team needs another meeting ...""",
-    tools=[...],                # names from C's, B's and D's own tools.py
-    build=build_graph,          # returns a compiled LangGraph subgraph
+    tools=[...],  # names from C's, B's and D's own tools.py
+    build=build_graph,  # returns a compiled LangGraph subgraph
     triggers=[Periodic(hours=6)],
 )
 ```
@@ -254,12 +262,19 @@ def unresolved_topics(session: Session, meeting_id: str) -> dict[str, Any]:
     Returns the open topics, most central first, at most five.
     """
     ...
-    return {"ok": True, "reason": None, "summary": ..., "items": [...],
-            "evidence": ["utt_…"], "confidence": 1.0, "truncated": False}
+    return {
+        "ok": True,
+        "reason": None,
+        "summary": ...,
+        "items": [...],
+        "evidence": ["utt_…"],
+        "confidence": 1.0,
+        "truncated": False,
+    }
 
 
 TOOLS = [unresolved_topics, ...]
-PERSONAL_ONLY_TOOLS = []   # reads that return one person's own data
+PERSONAL_ONLY_TOOLS = []  # reads that return one person's own data
 ```
 
 Collected the way `apps/api` collects routers — by iterating the module list,
@@ -268,10 +283,10 @@ names each tool `<module>.<function>`:
 
 ```python
 for name in MODULES:
-    module = import_module(f"autune_{name}.tools")     # skipped if absent
+    module = import_module(f"autune_{name}.tools")  # skipped if absent
     for fn in module.TOOLS:
         if fn in module.PERSONAL_ONLY_TOOLS:
-            continue                                     # never registered
+            continue  # never registered
         REGISTRY[f"{name}.{fn.__name__}"] = Tool(fn)
 ```
 
@@ -288,12 +303,12 @@ declaration rather than instead of it (#432 review).
 ```python
 class ToolResult(BaseModel):
     ok: bool
-    reason: str | None = None        # when ok is False: why, in one line
-    summary: str                     # three sentences at most; the orchestrator reads this
-    items: list[Finding]             # at most five, ranked by importance
-    evidence: list[str]              # utterance ids only, never text
+    reason: str | None = None  # when ok is False: why, in one line
+    summary: str  # three sentences at most; the orchestrator reads this
+    items: list[Finding]  # at most five, ranked by importance
+    evidence: list[str]  # utterance ids only, never text
     confidence: float
-    truncated: bool                  # True when the cap cut something off
+    truncated: bool  # True when the cap cut something off
 ```
 
 This is the whole of context isolation (section 3). Three things are enforced
@@ -342,15 +357,18 @@ says.
 | Module | What it can already answer | Note |
 | --- | --- | --- |
 | B | its action items; the stored classifications; an item's review state | B's read API, nothing new. `list_action_items` exists today |
-| C | gaps against a checklist; the topic graph; per-role participation | one argument added to `detect_gaps`; risk scores pending #22 |
+| C | a meeting's gaps with `risk_score` and `suggested_question`; the topic graph; a topic's `silent_share` | all four of C's steps produce values; what is left is measuring precision on real meetings (#22). Tools are C's owner's, in topic-level form |
 | D | this meeting's links; a decision thread; the team's decisions | `links_for_meeting`, `decision_thread`, `list_decisions` over #185's read routes, named by D's owner |
 | E | the quality score; the trend | E's aggregate reads |
 
-- **C — `detect_gaps` takes a `checklist: list[str] | None`.** When given, the
-  meeting is checked against it; when absent, the built-in domain template
-  applies. The team charter (section 7) arrives through this argument, and it
-  is what lets gap detection be tuned by a person rather than retrained. This
-  is the one signature change the design asks any module for.
+- **C — the charter reaching gap detection is a proposal, to be agreed with
+  C.** An earlier draft said `detect_gaps` would take a `checklist: list[str]`
+  and called it "the one signature change". It is not one: `detect.compare`
+  judges a template item by its `keywords`, `weight`, `question` and
+  `category`, without a model or a network, so a line of prose does not run
+  through it. Per-meeting template choice already exists (`set_template`,
+  `gap_meeting_templates`, S20 in #303). How a team's charter becomes a template
+  is C's design, tied to #22, in an issue C's owner opens.
 - **D — search is not a tool.** An earlier draft asked for `search_exact`
   (BM25) and `search_semantic` (embeddings) as two tools, on the reasoning that
   the agent should choose between exact match and meaning. D does not work that
@@ -548,7 +566,7 @@ shipping them.
 | Time | 09:00 morning briefing | main agent | `@periodic` (#374) |
 | Time | 10 minutes before a meeting on the team's Google Calendar | Briefing | `@periodic` poll of the calendar, every minute |
 | State | `next_check_at` due; deadline tomorrow and no signal in three days | main agent | `@periodic`, every 5 minutes |
-| State | work piling up on one person; unresolved topics across two meetings | Workload, Follow-up | `@periodic`, a few times a day |
+| State | work piling up on one person; a gap nobody dismissed, on a topic D links across two meetings in a row | Workload, Follow-up | `@periodic`, a few times a day |
 | Event | a meeting's analysis finished | Research, Report | `autune.transcript.ready`, `autune.intelligence.completed` |
 | Request | "What did we decide about search last week?" | main agent, which may delegate | chat message |
 
@@ -565,16 +583,18 @@ tasks are named `autune.agent.periodic.<name>`.
 **The brief ten minutes before a meeting is D's surface, and D's owner builds
 it.** Module D already owns the pre-meeting brief (`slack.py`, #234) and section
 8 rule 2 is that outbound goes out through the module that owns the content.
-The Briefing subagent is where the brief is *composed* — it reads B, C and Jira
-as well as D — and D's surface is where it is *sent*, so one brief goes out,
+The Briefing subagent is where the brief is *composed* — it reads B and C as
+well as D — and D's surface is where it is *sent*, so one brief goes out,
 not two. The earlier "30 minutes" in `prd.md` is now ten.
 
 ## 7. The team charter — judgement the team writes down
 
-Gap detection compares a meeting against a domain template, and the template
-is code. That is the wrong place for it twice over: every team gets the same
-one, and when it is wrong the only person who can fix it is the module's
-owner, by retraining or editing source.
+Gap detection compares a meeting against a domain template. The templates are
+YAML reference data (`general.yaml`, `feature_planning.yaml`), a meeting's can
+be chosen in S20 (#303), and the comparison is rule-based, so there is nothing
+to retrain. What is missing is narrower: **there is no team-level template.**
+Every team starts from the same two, and a team's own standard has nowhere to
+live.
 
 Coding agents solve the same problem with a file at the root of the project —
 a document the team writes in prose, read into the prompt on every run. It is
@@ -604,15 +624,16 @@ the judgement of "what counts as a problem" to the people whose problem it is.
 
 ### How it is used
 
-1. **As the checklist for gap detection.** Each line under *A meeting must
-   settle* becomes an item in `detect_gaps(checklist=…)` (section 4). The
-   domain template becomes the default that the charter overrides.
+1. **As input to gap detection — proposed, to be agreed with C.** How a line
+   under *A meeting must settle* becomes a template item with keywords and a
+   weight is C's design (section 4). Until it is agreed, the charter reaches
+   the agent's prompt and policy only.
 2. **In the orchestrator's system prompt, on every run.** The judgement is
    present each time a plan is made.
 3. **As policy for the action model** (section 8). "At most two posts a day"
    is enforced, not suggested.
-4. **As the tuning knob.** When gap detection is wrong for a team, the team
-   edits a paragraph. No retraining, no issue to another module's owner.
+4. **As the tuning knob.** When the agent's judgement is wrong for a team, the
+   team edits a paragraph.
 
 ### Three constraints, because a prompt that drives actions is an attack surface
 
@@ -621,12 +642,15 @@ the judgement of "what counts as a problem" to the people whose problem it is.
   or name a destination. Anything in a charter that reads as an instruction to
   a tool is data for judgement, not an instruction — the same rule the
   orchestrator applies to transcript text.
-- **"Who must be in the room" is checked at the role level, never the
-  person.** "The backend lead was silent on the spec discussion" is a
-  per-person speaking-pattern statement about somebody other than the reader,
-  which privacy.md section 3 forbids. The check is "no one with the backend
-  role spoke on this topic", which is what S20 draws (topic × role, never per
-  person), and it is C's per-role participation matrix that answers it.
+- **"Who must be in the room" is not checked against who spoke — open.** "The
+  backend lead was silent on the spec discussion" is a per-person
+  speaking-pattern statement about somebody other than the reader, which
+  privacy.md section 3 forbids, and checking it per role does not escape that:
+  in a team with one person per role, a role is a person. Nothing fills
+  `participants.role` in production today either. Whether this line can be
+  checked at all — against attendance rather than speech, or only at a
+  team size where a role is several people — is undecided and C's owner's to
+  weigh.
 - **The charter is stored, versioned and per team.** An `agent_charters` row
   with the text and a version, not a file on a disk somewhere. A run records
   which version it read, because "why did it say that last week" has to be
@@ -737,6 +761,7 @@ duplicate message and a bypassed check at the same time:
 | Ambiguous-agreement confirmation DM | B | `ext_confirmations` + `send_confirmations`, to the speaker only |
 | Notion or Jira page for an item | B | once per (item, system) at confirmation time, recorded in `ext_external_refs` (#294) |
 | An item's due date | B | `ext_action_items.due_date` is B's column; "re-date" is not the agent's verb |
+| Gap report thread, generated question cards | C | `slack.py`; Briefing and Follow-up quote a gap or question into their own output, never post it separately |
 | Topic-link notice, decision-drift warning, pre-meeting brief | D | `notify.py`, capped and de-duplicated, implementation in #234 |
 | Speaking ratio | E | `feedback.build_speaking_ratio_dm`, DM to the subject only |
 | Meeting summary report | E | the Report subagent composes it; E's report delivery sends it |
@@ -752,7 +777,7 @@ its guard, never a client of its own:
 | --- | --- | --- |
 | Research document to the meeting's participants | Research | L2 — an approver with scope `research` |
 | A proposed follow-up meeting, and the calendar event | Follow-up | L2 — an approver with scope `followup` |
-| A proposed redistribution, and any Jira reassignment or message it implies | Workload | L2 — an approver with scope `workload` |
+| A proposed redistribution, and any reassignment or message it implies | Workload | L2 — an approver with scope `workload` |
 
 Consequences worth naming:
 
@@ -966,14 +991,12 @@ and not a Korean one.** There is no agreed Korean evaluation set yet (#10) and
 Korean figure can be quoted here — an earlier draft of this document read 0.225
 as "a real meeting distribution" as though it were ours.
 
-Module C's **risk-scoring step (`gaps`) doesn't produce a value yet — topic
-graph and participation already do** (#249 relation extraction is in review;
-risk scoring is blocked on #22). An earlier draft said C's pipeline produces
-nothing at all, which is not true: `tasks.py` calls `build_topic_graph()` then
-`detect_gaps()` then `publish_report()`, writes four tables and publishes
-`gap.completed`. Only `GapReport.gaps` comes back empty. This matters beyond
-accuracy, because `prd.md` section 5.7's morning briefing names C as a data
-source and the two statements have to describe the same module.
+Module C's **four steps all produce values**: relation extraction (#249),
+template comparison (#266), question generation (#291) and the S20 checklist
+(#303) are on `main`, and `detect_gaps` stores each gap with a `risk_score` and
+a `suggested_question` in `gap_gaps`, so `GapReport.gaps` is filled. What is
+left is measuring precision on real meetings (#22). Earlier drafts of this
+document said C's risk scoring did not exist; that was a week out of date.
 
 An agent built on the assumption that its tools are right would be confidently
 wrong several times per meeting. So the loop treats confidence as a first-class
@@ -1006,23 +1029,19 @@ because it is a harder thing to build.
 
 The scenario an earlier draft led with — an ambiguous agreement ("that
 performance is probably fine") caught after the meeting, researched, and put
-to the owner as a choice — stood on the two weakest points in the repository:
-the ambiguous-agreement classifier catches 17% (#115), and C's risk scoring
-does not exist yet. The morning briefing was recommended instead because E's
-aggregation and D's read API actually work.
+to the owner as a choice — leans on the weakest point in the repository: the
+ambiguous-agreement classifier catches 17% (#115). C is no longer the weak
+point — its gaps carry risk scores and suggested questions — so the scenario
+can take the gap side from C as it is.
 
-The charter changes that arithmetic. "A performance requirement is a number"
-is a checklist line, and checking a transcript against a checklist line is a
-prompt over masked utterances, not a topic graph with PageRank on it. It needs
-`detect_gaps(checklist=…)` to accept the argument and, until C's risk scoring
-lands behind it, a model to answer the question. That is the "T2" track of
-section 11 doing real work — on our own inference server, per the constraint
-stated there — and it is the first thing in this design that lets the flagship
-scenario run against a real meeting in W4.
+What the charter would add — "a performance requirement is a number" checked
+against a meeting — is the proposal in section 4 and is C's to design. C's
+comparison uses no model by design (`detect.py`), so putting an LLM judgement
+inside C is C's decision, not this document's.
 
-So the recommendation is now: **both scenarios, in this order.** The morning
+So the recommendation is: **both scenarios, in this order.** The morning
 briefing first, because it runs on modules that exist and it demonstrates the
-loop *not* asking. The charter-driven ambiguous-agreement scenario second,
+loop *not* asking. The ambiguous-agreement scenario second,
 because it demonstrates plan mode and the charter together, and it is the one
 that shows what the product is for. The W4 gate cuts the second, never the
 first.
@@ -1058,8 +1077,8 @@ only so the history reads straight, and T2 now has a running implementation
 to measure.
 
 **One task, not three.** Utterance classification has a measured baseline (#149)
-and an evaluation set. Gap detection has neither — no risk-scoring implementation
-to measure and no labelled gaps. Topic linking is the second task and is
+and an evaluation set. Gap detection has an implementation but no labelled
+gaps to measure it against yet (#22). Topic linking is the second task and is
 **ready now**: D's harness merged to `main` with #240 (`e15ded1`), carrying both
 the `topic_linking_v1` and `decision_lineage` evaluation sets, so an earlier
 draft's "when that harness merges" is stale. Writing a three-by-three table
@@ -1168,14 +1187,19 @@ therefore itself a permission question, the same one as 13.4, and should be
 answered with it. Until then the first member of a team sets it and every
 change is written to `agent_runs`.
 
-### 13.6 Gmail is a new integration
+### 13.6 Gmail is a new integration, and Jira waits on #82
 
 Workload's owner builds the mail side. `packages/integrations` has Slack,
-Notion, Jira and Calendar clients and no mail client; a new one is a
+Notion and Calendar clients and no mail client; a new one is a
 shared-package change (invariant 10) with the team's approval, and it goes
 through `privacy.py` like every other client. Mail is also the one surface
 that reaches people outside the team, which is L3 in section 8 today — so the
 first version reads mail and drafts replies, and sends nothing.
+
+Jira is not a client today: `integrations.md` records it as evaluated and
+dropped, and #82 — whose credentials it runs on, and whether it is in the six
+weeks at all — is open. Briefing's issue links and any Jira read by Workload
+wait on #82, and neither subagent depends on them.
 
 ## 14. Build plan — from 2026-09-29 to 2026-10-12
 
@@ -1183,10 +1207,17 @@ The mentor's dates on #260: the base features run end to end by **9/30**, and
 development closes on **10/12**. The agent layer fits between them. Each row is
 one owner's; a date is when it is merged, not started.
 
+**No agent code merges before #260 is decided and ADR 0010 is `Accepted`.**
+That is what the root `CLAUDE.md` note says, and merging this document alone
+does not do it — it merges ADR 0010 as `Proposed`. So the skeleton waits in
+review as a draft (#432), subagent owners can build against its branch, and
+every date below assumes #260 is decided by 10/1. If it is not, the dates move
+with it.
+
 | By | Main agent (김민경) | Every subagent owner |
 | --- | --- | --- |
-| **10/1** | `agent/` skeleton merged: workspace member, the fourth to sixth import-linter contracts, `ToolResult`, `Subagent`, the registry, a supervisor graph running one mock subagent over mock tools | confirm with the integration's owner what your subagent needs from Calendar or Jira; open an issue for anything missing |
-| **10/5** | `agent_work_items`, `agent_runs`, `agent_approvers` and their migration; the chat endpoint; the run-timeline screen | your module's `tools.py` returns real data; your subagent runs against mock tools with its own tests; Calendar (강민구) and Jira (문민재) reads work |
+| **10/1** | `agent/` skeleton ready for review (#432): workspace member, the fourth to sixth import-linter contracts, `ToolResult`, `Subagent`, the registry, a supervisor graph running one mock subagent over mock tools | confirm with the integration's owner what your subagent needs from Calendar; open an issue for anything missing |
+| **10/5** | `agent_work_items`, `agent_runs`, `agent_approvers` and their migration; the chat endpoint; the run-timeline screen | your module's `tools.py` returns real data; your subagent runs against mock tools with its own tests |
 | **10/9** | plan mode and the approval screen; triggers from section 6; the morning briefing | your subagent runs against real tools, end to end on one real meeting |
 | **10/12** | demo run of all five subagents; the fixed pipeline still works with the layer off | fixes only |
 

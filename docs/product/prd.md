@@ -150,7 +150,7 @@ per feature and one owner each, do the work. Design and ownership:
 | --- | --- | --- |
 | Main agent | 김민경 | A chat that answers from every meeting, and a morning briefing of what is due and what is stuck — the top five, not everything |
 | Research | 김민경 | When a meeting floats an idea or argues over a fact nobody could confirm, a short document of what is known, proposed to the people involved during or right after the meeting |
-| Briefing | 문민재 | Ten minutes before a meeting, the previous meeting's summary and the issues this one should settle, with the linked Jira issues |
+| Briefing | 문민재 | Ten minutes before a meeting, the previous meeting's summary and the issues this one should settle (Jira links only if #82 brings Jira back) |
 | Follow-up | 박재경 | When progress and unresolved topics say another meeting is needed, a proposal to the team lead only |
 | Workload | 강민구 | When one person is overloaded and another is free, a redistribution proposal to the manager only; Gmail and Google Calendar integration |
 | Report | 이승환 | After a meeting, the summary minutes report |
@@ -168,8 +168,11 @@ What holds for all of them:
   person approves it item by item. The lead's and the manager's proposals *are*
   that approval request.
 - **Workload reads work, never speech.** Counts of open and late items, as a
-  manager already sees in Jira — never a speaking ratio or a per-person
+  manager already sees on a task board — never a speaking ratio or a per-person
   participation figure (5.6, `../architecture/privacy.md` section 3).
+- **Follow-up reads topics, never people or roles.** A topic's silent share
+  and the gaps nobody dismissed — not participation per role, which in a team
+  with one person per role is participation per person.
 - **Research reads what we hold.** Uploaded material and past meetings.
   Open-web search is out of scope for the release
   (`../architecture/agent-layer.md` section 13.3).
@@ -285,7 +288,7 @@ keep the team building real models rather than prompt chains.
 | Database | PostgreSQL | Structured data and history |
 | Vector search | pgvector, inside PostgreSQL | Embedding search, topic matching, material retrieval — no separate service |
 | Slack | Bolt for Python | Bot framework |
-| External | Notion API, Jira API, Google Calendar API, Gmail API (proposed) | Action item, issue, schedule and mail sync |
+| External | Notion API, Google Calendar API, Gmail API (proposed); Jira pending #82 | Action item, schedule and mail sync |
 | Agent (proposed, #260) | LangGraph, Gemini | Supervisor graph over five subagents; plan-mode interrupt. `../architecture/agent-layer.md` section 3.3 |
 | Infra | Vercel (frontend); a self-hosted desktop server (RTX 3060) running Docker Compose behind Cloudflare Tunnel (backend) | STT inference on our own GPU; HTTPS and WebSocket without opening a port |
 | Desktop (Phase 2) | Electron | System audio capture |
@@ -308,8 +311,8 @@ module's `tools.py`; the main agent's owner builds the loop they run in.
 
 | By | Main agent (김민경) | Subagent owners |
 | --- | --- | --- |
-| 10/1 | `agent/` skeleton with mock tools and one mock subagent | agree Calendar and Jira needs with their owners |
-| 10/5 | state tables, chat endpoint, run timeline | real `tools.py`; subagent on mock tools; Calendar and Jira reads |
+| 10/1 | `agent/` skeleton with mock tools and one mock subagent (#432, draft until #260 is decided) | agree Calendar needs with its owner |
+| 10/5 | state tables, chat endpoint, run timeline | real `tools.py`; subagent on mock tools |
 | 10/9 | plan mode, approval screen, triggers, morning briefing | subagent end to end on one real meeting |
 | 10/12 | demo of all five | fixes only |
 
