@@ -16,7 +16,19 @@ import type { Gap } from "../types";
  * "목표 응답 시간을 정하셨나요?" is the thing they can act on in the meeting
  * thread.
  */
-export function GapList({ gaps, showLow = false }: { gaps: readonly Gap[]; showLow?: boolean }) {
+export function GapList({
+  gaps,
+  showLow = false,
+  onDismiss,
+  pendingGapId = null,
+}: {
+  gaps: readonly Gap[];
+  showLow?: boolean;
+  /** "해당 없음" on a HIGH gap. Without it the button is drawn disabled. */
+  onDismiss?: (gapId: string) => void;
+  /** The gap whose write is in flight, so only its button shows it. */
+  pendingGapId?: string | null;
+}) {
   if (gaps.length === 0) {
     return <EmptyGaps />;
   }
@@ -30,7 +42,12 @@ export function GapList({ gaps, showLow = false }: { gaps: readonly Gap[]; showL
       {high.length > 0 ? (
         <section className="border-t border-[var(--color-hairline)]">
           {high.map((gap) => (
-            <ExpandedGap key={gap.id} gap={gap} />
+            <ExpandedGap
+              key={gap.id}
+              gap={gap}
+              onDismiss={onDismiss}
+              pending={pendingGapId === gap.id}
+            />
           ))}
         </section>
       ) : null}
@@ -65,13 +82,25 @@ export function lowCount(gaps: readonly Gap[]): number {
  * One HIGH gap, opened: what is missing, how sure we are, and the question
  * that would settle it.
  *
- * The three actions are drawn and disabled. `POST /gaps/{id}/dismiss` and the
- * Slack question card do not exist yet — a button that looked live and did
- * nothing would teach a reader to distrust the rest of the screen, and the
- * dismissal is the input ADR 0006's threshold tuning reads, so it is worth
- * shipping as a real write rather than as a stub.
+ * "해당 없음" is a real write: `POST /gaps/{id}/dismiss` marks the gap a false
+ * positive, it leaves the report, and the rail keeps the item marked — which is
+ * where it can be taken back. The dismissal is the input ADR 0006's threshold
+ * tuning reads.
+ *
+ * The other two stay drawn and disabled. Carrying a question to the next
+ * meeting's agenda or to one person needs surfaces this module has not built
+ * (#36), and a button that looked live and did nothing would teach a reader to
+ * distrust the rest of the screen.
  */
-function ExpandedGap({ gap }: { gap: Gap }) {
+function ExpandedGap({
+  gap,
+  onDismiss,
+  pending,
+}: {
+  gap: Gap;
+  onDismiss?: (gapId: string) => void;
+  pending: boolean;
+}) {
   return (
     <article
       className="grid border-b border-[var(--color-hairline)]"
@@ -149,8 +178,15 @@ function ExpandedGap({ gap }: { gap: Gap }) {
           <Button tone="text" size="compact" disabled title={PENDING}>
             담당자 지정해 질문
           </Button>
-          <Button tone="quiet" size="compact" disabled title={PENDING}>
-            해당 없음
+          <Button
+            tone="quiet"
+            size="compact"
+            disabled={!onDismiss || pending}
+            aria-busy={pending || undefined}
+            title={onDismiss ? UNDO_HINT : PENDING}
+            onClick={() => onDismiss?.(gap.id)}
+          >
+            {pending ? "처리 중" : "해당 없음"}
           </Button>
         </div>
       </div>
@@ -159,6 +195,8 @@ function ExpandedGap({ gap }: { gap: Gap }) {
 }
 
 const PENDING = "아직 연결되지 않은 동작입니다";
+
+const UNDO_HINT = "오탐으로 표시합니다. 오른쪽 템플릿 대조에서 되돌릴 수 있습니다.";
 
 function CollapsedGap({ gap }: { gap: Gap }) {
   return (

@@ -1,12 +1,15 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import type { ReactNode } from "react";
 
 import { Button, Tabs } from "@/shared/ui";
 
+import { useGapActions } from "../hooks/useGapActions";
 import { useGapReport } from "../hooks/useGapReport";
+import { usePollUntilAnalysed } from "../hooks/usePollUntilAnalysed";
 import { useTemplateComparison } from "../hooks/useTemplateComparison";
+import { useTemplates } from "../hooks/useTemplates";
 import { useTopicGraph } from "../hooks/useTopicGraph";
 import { GapList, lowCount } from "./GapList";
 import { TemplateRail } from "./TemplateRail";
@@ -47,11 +50,43 @@ type Tab = "gaps" | "topics";
  * them. What it does carry is the two views module C owns — the findings and
  * the graph behind them — so the tab band sits where the design puts it
  * without any tab on it being a control that cannot work.
+ *
+ * **A meeting still being analysed is read again until it is not.** The three
+ * endpoints answer 200 with nothing for a meeting the pipeline has not reached,
+ * so a screen opened straight after an upload would otherwise stay empty until
+ * somebody reloaded it. The rail's `analysed` flag decides — see
+ * `usePollUntilAnalysed`.
+ *
+ * **The writes re-read, they do not patch.** Dismissing a gap, taking it back
+ * and choosing a template each end in a fresh read of all three sections,
+ * because the server is what decides how a dismissal moves between the list
+ * and the rail and what a new checklist raises — see `useGapActions`.
  */
 export function GapReportScreen({ meetingId }: { meetingId: string }) {
-  const { report, loading: reportLoading, error: reportError } = useGapReport(meetingId);
-  const { graph, loading: graphLoading, error: graphError } = useTopicGraph(meetingId);
-  const { comparison, loading: railLoading, error: railError } = useTemplateComparison(meetingId);
+  const {
+    report,
+    loading: reportLoading,
+    error: reportError,
+    reload: reloadReport,
+  } = useGapReport(meetingId);
+  const { graph, loading: graphLoading, error: graphError, reload: reloadGraph } =
+    useTopicGraph(meetingId);
+  const {
+    comparison,
+    loading: railLoading,
+    error: railError,
+    reload: reloadRail,
+  } = useTemplateComparison(meetingId);
+  const templates = useTemplates();
+
+  const reloadAll = useCallback(() => {
+    void reloadReport();
+    void reloadGraph();
+    void reloadRail();
+  }, [reloadReport, reloadGraph, reloadRail]);
+
+  usePollUntilAnalysed(comparison ? comparison.analysed : null, reloadAll);
+  const { pending, failure, dismiss, undoDismiss, choose } = useGapActions(reloadAll);
 
   const [tab, setTab] = useState<Tab>("gaps");
   const [showLow, setShowLow] = useState(false);
@@ -76,6 +111,19 @@ export function GapReportScreen({ meetingId }: { meetingId: string }) {
           질문 카드 Slack 전송
         </Button>
       </TopBar>
+
+      {failure ? (
+        <p
+          role="alert"
+          className="text-[var(--color-signal-critical)]"
+          style={{
+            fontSize: "var(--text-metaSmall)",
+            padding: "var(--space-8) var(--space-page) 0",
+          }}
+        >
+          {failure}
+        </p>
+      ) : null}
 
       <div style={{ paddingInline: "var(--space-page)" }}>
         <Tabs<Tab>
@@ -109,7 +157,14 @@ export function GapReportScreen({ meetingId }: { meetingId: string }) {
             >
               {/* `gaps` carries `default_factory=list`, so the contract marks it
                   optional and a report can arrive without the key. */}
-              {(loaded) => <GapList gaps={loaded.gaps ?? []} showLow={showLow} />}
+              {(loaded) => (
+                <GapList
+                  gaps={loaded.gaps ?? []}
+                  showLow={showLow}
+                  onDismiss={(gapId) => void dismiss(gapId)}
+                  pendingGapId={pending}
+                />
+              )}
             </ReadSection>
           ) : (
             <div className="flex flex-col" style={{ gap: "var(--space-32)" }}>
@@ -136,7 +191,15 @@ export function GapReportScreen({ meetingId }: { meetingId: string }) {
           }}
         >
           <ReadSection data={comparison} loading={railLoading} error={railError}>
-            {(loaded) => <TemplateRail comparison={loaded} />}
+            {(loaded) => (
+              <TemplateRail
+                comparison={loaded}
+                templates={templates}
+                onChoose={(templateKey) => void choose(meetingId, templateKey)}
+                onUndoDismiss={(gapId) => void undoDismiss(gapId)}
+                pending={pending}
+              />
+            )}
           </ReadSection>
         </aside>
       </div>
