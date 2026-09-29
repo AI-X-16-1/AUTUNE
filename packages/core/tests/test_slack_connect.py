@@ -568,6 +568,23 @@ def test_linking_waits_for_the_slack_account_to_confirm(
     assert world["identifying"].nonces and world["identifying"].nonces[0]
 
 
+def test_the_confirmation_link_is_on_the_web_origin(
+    world: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#478 review: built from the Host the API saw, the link pointed at the
+    proxy's target -- unreachable, or without the session cookie."""
+    from autune_core.settings import get_settings
+
+    _link(world, monkeypatch, signed_in_as=ME)
+    (_, _, text) = world["identifying"].dms[-1]
+    url = next(word for word in text.split() if "/slack/me/confirm" in word)
+
+    assert url.startswith(
+        get_settings().web_base_url.rstrip("/") + "/api/auth/slack/me/confirm?token="
+    )
+    assert "testserver" not in url
+
+
 def test_the_link_confirms_in_the_session_that_started_it(
     world: dict[str, Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:

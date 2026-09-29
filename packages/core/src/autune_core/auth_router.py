@@ -1099,13 +1099,18 @@ def _finish_slack_identity(
             raise SlackAccountTakenError("that Slack account is linked to another person")
         bot = _slack_bot_for_workspace(session, transaction.user_id, identity.team_id)
         token = secrets.token_urlsafe(32)
-        link = str(request.url_for("slack_identity_confirm").include_query_params(token=token))
+        # The web origin, like every other address this file hands a browser:
+        # the Host the API saw is the proxy's target, which a person's browser
+        # may not reach and where the session cookie is not sent (#478 review).
+        path = request.url_for("slack_identity_confirm").path
+        link = _web_url(f"{path}?token={token}")
         slack.send_link_confirmation(
             bot,
             identity.user_id,
-            "Autune 개인 알림을 이 Slack 계정으로 받으려면, Slack 연결을 시작한 "
-            f"브라우저에서 이 링크를 열어 주세요: {link}\n"
-            "직접 요청한 적이 없다면 무시하세요. 30분 뒤 만료됩니다.",
+            "Autune에서 이 Slack 계정으로 개인 알림을 받겠다는 연결 요청이 왔습니다. "
+            f"이 Slack 계정의 주인 본인이 요청한 경우에만 이 링크를 여세요: {link}\n"
+            "요청한 적이 없다면 열지 말고 무시하세요. 다른 사람이 이 브라우저에 남은 "
+            "Slack 로그인으로 연결을 시도한 것일 수 있습니다. 30분 뒤 만료됩니다.",
         )
         existing = load_user_integration(session, transaction.user_id, "slack")
         kept = {
