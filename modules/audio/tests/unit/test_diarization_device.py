@@ -217,6 +217,33 @@ def test_an_explicit_device_torch_cannot_reach_still_raises(
     assert loaded == []
 
 
+def test_an_inherited_name_torch_does_not_know_takes_cpu(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The same asking/inheriting split, applied to the name and not just its
+    availability.
+
+    `device` belongs to the transcriber, and faster-whisper has words torch does
+    not -- `auto` is the obvious one. Refusing it would fail every meeting over
+    a value this setting was never given, which is the shape of the bug review
+    caught in the availability check (@PARKJAEKYUNG0525 on #394). Nobody typed
+    it here, so nobody is told they cannot have it; CPU, and a line saying so.
+    """
+    install_fakes(monkeypatch, cuda=True, mps=True)
+    use_settings(monkeypatch, device="auto", hf_token="hf_x")
+    seen: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        diarization.log, "warning", lambda event, **kw: seen.append({"event": event, **kw})
+    )
+
+    device = diarization.resolve_device()
+
+    assert device.name == "cpu"
+    line = next(e for e in seen if e["event"] == "diarization_device_unavailable")
+    assert line["requested"] == "auto"
+    assert line["inherited_from"] == "AUTUNE_AUDIO_DEVICE"
+
+
 def test_a_name_torch_does_not_know_is_refused_before_the_download(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

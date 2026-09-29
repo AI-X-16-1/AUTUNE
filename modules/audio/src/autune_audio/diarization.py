@@ -99,13 +99,34 @@ def resolve_device() -> torch.device:
     # torch does not know (`gpu`, `auto`), and refusing it before the caller
     # downloads half a gigabyte of weights is the whole point of resolving
     # early. Returning the object also leaves one place that knows the string.
+    #
+    # The same asking/inheriting split as above, for the same reason. An
+    # unknown name somebody typed into `DIARIZATION_DEVICE` is a mistake to
+    # report. An unknown name *inherited* from `device` is a value that belongs
+    # to the transcriber -- faster-whisper takes `auto`, torch does not -- and
+    # refusing it would fail meetings over a word this setting was never given
+    # (@PARKJAEKYUNG0525 on #394).
     try:
         return torch.device(name)
     except (RuntimeError, TypeError, ValueError) as exc:
-        raise ConfigurationError(
-            f"{setting} is '{name}', which torch does not recognise as a device. "
-            f"Use 'cpu', 'cuda', 'cuda:<n>' or 'mps'."
-        ) from exc
+        if requested:
+            raise ConfigurationError(
+                f"{setting} is '{name}', which torch does not recognise as a device. "
+                f"Use 'cpu', 'cuda', 'cuda:<n>' or 'mps'."
+            ) from exc
+        log.warning(
+            "diarization_device_unavailable",
+            inherited_from=setting,
+            requested=name,
+            using="cpu",
+            hint=(
+                "torch does not recognise this device name, which is normal "
+                "where the transcriber has its own vocabulary. Diarization runs "
+                "on CPU, 14x slower than an accelerator. Set "
+                "AUTUNE_AUDIO_DIARIZATION_DEVICE to make this a decision."
+            ),
+        )
+        return torch.device("cpu")
 
 
 @runtime_checkable
