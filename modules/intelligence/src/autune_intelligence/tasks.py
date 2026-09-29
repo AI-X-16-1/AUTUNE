@@ -182,12 +182,14 @@ def generate_weekly_report(team_id: str, period_end: str | None = None) -> None:
 
 @shared_task(name="autune.intelligence.deliver_meeting_report", acks_late=True)
 def deliver_meeting_report(meeting_id: str) -> None:
-    """Post a meeting's stored report to its team's Slack channel.
+    """Post a meeting's stored report to its team's Slack channel, at most once.
 
     Takes the meeting id only -- the body is read from ``intel_meeting_reports``,
     never carried in the payload (decision #275's rule for Celery arguments).
-    Without a connected Slack or a configured ``channel`` the report stays
-    stored and unsent, the same as the weekly report.
+    The claim commits before the post, so a retry or a worker lost after the
+    post finds the report claimed and sends nothing. Without a connected Slack
+    or a configured ``channel`` the report stays stored and unclaimed, the same
+    as the weekly report.
     """
     with session_scope() as session:
         report = session.get(IntelMeetingReport, meeting_id)
@@ -203,7 +205,13 @@ def deliver_meeting_report(meeting_id: str) -> None:
                 slack_connected=config is not None,
             )
             return
-        sent = service.deliver_meeting_report(
-            session, SlackClient(config.require_secret()), meeting_id, channel
-        )
-    log.info("intelligence_meeting_report_delivered", meeting_id=meeting_id, posted=sent)
+        secret = config.require_secret()
+        claimed = service.claim_meeting_report(session, meeting_id)
+
+    if claimed is None:
+        log.info("intelligence_meeting_report_already_claimed", meeting_id=meeting_id)
+        return
+    slack_ts = service.post_meeting_report(SlackClient(secret), channel, claimed)
+    with session_scope() as session:
+        service.record_meeting_report_post(session, meeting_id, channel, slack_ts)
+    log.info("intelligence_meeting_report_posted", meeting_id=meeting_id)

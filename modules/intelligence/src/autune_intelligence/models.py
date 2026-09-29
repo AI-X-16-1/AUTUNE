@@ -156,7 +156,8 @@ class IntelMeetingReport(Base, TimestampMixin):
     slack_channel: Mapped[str | None] = mapped_column(String(64))
     slack_ts: Mapped[str | None] = mapped_column(String(64))
     sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    """Set once the channel post succeeded; a set value means never post again."""
+    """Set when a task claims the report, before it posts: a set value means
+    never post again, even if that post failed (at most once)."""
 
 
 class IntelReport(Base, TimestampMixin):

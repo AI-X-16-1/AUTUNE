@@ -91,24 +91,54 @@ def test_save_refuses_to_change_a_report_people_have_already_seen(
     db_session: Session, meeting: str
 ) -> None:
     service.save_meeting_report(db_session, meeting, BODY)
-    service.deliver_meeting_report(db_session, FakeSlack(), meeting, "C123")
+    service.claim_meeting_report(db_session, meeting)
 
     with pytest.raises(ConflictError):
         service.save_meeting_report(db_session, meeting, "고친 본문")
 
 
-# --- deliver ------------------------------------------------------------------
+# --- claim: at most once --------------------------------------------------------
 
 
-def test_deliver_posts_once_with_a_details_button(
+def test_claim_hands_out_the_report_once(db_session: Session, meeting: str) -> None:
+    service.save_meeting_report(db_session, meeting, BODY)
+
+    first = service.claim_meeting_report(db_session, meeting)
+    second = service.claim_meeting_report(db_session, meeting)
+
+    assert first is not None and first.body_markdown == BODY
+    assert first.title == "Test Meeting"
+    assert second is None
+    row = db_session.get(IntelMeetingReport, meeting)
+    assert row is not None and row.sent_at is not None
+
+
+def test_claim_is_not_found_before_a_report_was_saved(db_session: Session, meeting: str) -> None:
+    with pytest.raises(NotFoundError):
+        service.claim_meeting_report(db_session, meeting)
+
+
+# --- post -----------------------------------------------------------------------
+
+
+def _claimed(db_session: Session, meeting: str, body: str = BODY) -> service.ClaimedReport:
+    service.save_meeting_report(db_session, meeting, body)
+    claimed = service.claim_meeting_report(db_session, meeting)
+    assert claimed is not None
+    return claimed
+
+
+def test_post_carries_the_body_once_and_the_title_as_the_preview(
     db_session: Session, meeting: str, web_base_url: str
 ) -> None:
-    service.save_meeting_report(db_session, meeting, BODY)
     slack = BlockRecordingSlack()
 
-    assert service.deliver_meeting_report(db_session, slack, meeting, "C123") is True
+    service.post_meeting_report(slack, "C123", _claimed(db_session, meeting))
 
-    assert [(m.channel, m.text) for m in slack.sent] == [("C123", BODY)]
+    # Block Kit's top-level text is the notification preview, not the message.
+    assert [(m.channel, m.text) for m in slack.sent] == [("C123", "Test Meeting 회의 리포트")]
+    sections = [b["text"]["text"] for b in slack.blocks[0] or [] if b["type"] == "section"]
+    assert sections == [BODY]
     buttons = [
         element
         for block in slack.blocks[0] or []
@@ -116,35 +146,26 @@ def test_deliver_posts_once_with_a_details_button(
         for element in block["elements"]
     ]
     assert [b["url"] for b in buttons] == [f"{web_base_url}/meetings/{meeting}"]
-    row = db_session.get(IntelMeetingReport, meeting)
-    assert row is not None
-    assert (row.slack_channel, row.slack_ts) == ("C123", "1.000000")
-    assert row.sent_at is not None
 
 
-def test_deliver_a_second_time_posts_nothing(db_session: Session, meeting: str) -> None:
-    service.save_meeting_report(db_session, meeting, BODY)
-    slack = FakeSlack()
-    service.deliver_meeting_report(db_session, slack, meeting, "C123")
+def test_a_report_at_the_length_cap_passes_the_outbound_size_check(
+    db_session: Session, meeting: str, web_base_url: str
+) -> None:
+    """save accepts MEETING_REPORT_MAX_CHARS, so post must be able to send it."""
+    body = "가" * service.MEETING_REPORT_MAX_CHARS
+    slack = FakeSlack()  # runs check_outbound, size included
 
-    assert service.deliver_meeting_report(db_session, slack, meeting, "C123") is False
+    service.post_meeting_report(slack, "C123", _claimed(db_session, meeting, body))
+
     assert len(slack.sent) == 1
 
 
-def test_deliver_without_a_web_url_posts_the_body_without_a_button(
-    db_session: Session, meeting: str
-) -> None:
-    service.save_meeting_report(db_session, meeting, BODY)
+def test_post_without_a_web_url_has_no_button(db_session: Session, meeting: str) -> None:
     slack = BlockRecordingSlack()
 
-    service.deliver_meeting_report(db_session, slack, meeting, "C123")
+    service.post_meeting_report(slack, "C123", _claimed(db_session, meeting))
 
     assert all(block["type"] != "actions" for block in slack.blocks[0] or [])
-
-
-def test_deliver_is_not_found_before_a_report_was_saved(db_session: Session, meeting: str) -> None:
-    with pytest.raises(NotFoundError):
-        service.deliver_meeting_report(db_session, FakeSlack(), meeting, "C123")
 
 
 # --- deletion -----------------------------------------------------------------
@@ -208,6 +229,32 @@ def test_task_posts_to_the_teams_configured_channel(
         tasks.deliver_meeting_report(meeting)
 
     assert slack_client_cls.return_value.sent[0].channel == "C123"
+    row = db_session.get(IntelMeetingReport, meeting)
+    assert row is not None
+    assert (row.slack_channel, row.slack_ts) == ("C123", "1.000000")
+
+
+@pytest.mark.usefixtures("use_test_session", "fake_encryption_key")
+def test_task_rerun_after_a_failed_post_posts_nothing(
+    db_session: Session, team: str, meeting: str
+) -> None:
+    """Claimed before posting: a failure costs one report, never a second copy."""
+    service.save_meeting_report(db_session, meeting, BODY)
+    _connect_slack(db_session, team, config={"channel": "C123"})
+    failing = FakeSlack()
+
+    with (
+        patch.object(tasks, "SlackClient", return_value=failing),
+        patch.object(failing, "post_message", side_effect=RuntimeError("slack down")),
+        pytest.raises(RuntimeError),
+    ):
+        tasks.deliver_meeting_report(meeting)
+
+    retry = FakeSlack()
+    with patch.object(tasks, "SlackClient", return_value=retry):
+        tasks.deliver_meeting_report(meeting)
+
+    assert retry.sent == []
 
 
 @pytest.mark.usefixtures("use_test_session", "fake_encryption_key")

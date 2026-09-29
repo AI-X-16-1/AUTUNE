@@ -14,6 +14,7 @@ timeout elapses. The Celery glue that enqueues the aggregate task lives in
 from __future__ import annotations
 
 from collections import Counter
+from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from typing import Final
 
@@ -827,7 +828,12 @@ def generate_weekly_report(
 
 MEETING_REPORT_MAX_CHARS: Final = 3000
 """Slack's limit for one section block's text. A longer body is refused rather
-than cut, because a cut summary reads as a finished one."""
+than cut, because a cut summary reads as a finished one.
+
+It also has to fit ``autune_integrations.privacy.MAX_OUTBOUND_CHARS`` (4000),
+which counts every string in the request: the body once, the title (at most
+400) as the preview, and the button's scaffolding. ``post_meeting_report``
+therefore never sends the body twice."""
 
 MEETING_REPORT_OPEN_ACTION: Final = "intel_meeting_report_open"
 """The button's ``action_id``. slack.py acknowledges it so Slack shows no error."""
@@ -886,26 +892,64 @@ def _meeting_report_blocks(meeting_id: str, body_markdown: str) -> list[dict]:
     return blocks
 
 
-def deliver_meeting_report(
-    session: Session, slack: SlackApi, meeting_id: str, channel: str
-) -> bool:
-    """Post the stored report to ``channel`` once. Returns whether it posted.
+@dataclass(frozen=True)
+class ClaimedReport:
+    """What ``post_meeting_report`` needs, read while the claim held the row."""
 
-    A report already posted is skipped, so a retried task or a repeated
-    approval does not post the same meeting twice.
+    meeting_id: str
+    title: str
+    body_markdown: str
+
+
+def claim_meeting_report(session: Session, meeting_id: str) -> ClaimedReport | None:
+    """Mark the report sent and hand it out, or ``None`` if it was already claimed.
+
+    The claim comes **before** the post and its transaction must commit before
+    the post is made: at most once, the rule B's Notion sync (#342) and D's
+    brief (#437) follow. The row is locked, so two tasks for the same meeting
+    (a retry, a second approval) cannot both see it unsent. A post that fails
+    after the claim costs this meeting its report; it never sends a second copy.
     """
-    row = session.get(IntelMeetingReport, meeting_id)
+    row = session.execute(
+        sa.select(IntelMeetingReport)
+        .where(IntelMeetingReport.meeting_id == meeting_id)
+        .with_for_update()
+    ).scalar_one_or_none()
     if row is None:
         raise NotFoundError("meeting report", meeting_id)
     if row.sent_at is not None:
-        return False
-    row.slack_ts = slack.post_message(
-        channel, row.body_markdown, _meeting_report_blocks(meeting_id, row.body_markdown)
-    )
-    row.slack_channel = channel
+        return None
     row.sent_at = datetime.now(UTC)
     session.flush()
-    return True
+    title = session.scalar(sa.select(Meeting.title).where(Meeting.id == meeting_id)) or ""
+    return ClaimedReport(meeting_id=meeting_id, title=title, body_markdown=row.body_markdown)
+
+
+def post_meeting_report(slack: SlackApi, channel: str, report: ClaimedReport) -> str:
+    """Post a claimed report. Returns Slack's message ts.
+
+    The body goes out once, in the section block. The top-level ``text`` is
+    Slack's notification preview (see ``autune_integrations.privacy.strings_in``),
+    so it carries the title; putting the body there as well sent it twice and
+    pushed a body above ~1,940 characters past ``MAX_OUTBOUND_CHARS``.
+    """
+    return slack.post_message(
+        channel,
+        f"{report.title} 회의 리포트",
+        _meeting_report_blocks(report.meeting_id, report.body_markdown),
+    )
+
+
+def record_meeting_report_post(
+    session: Session, meeting_id: str, channel: str, slack_ts: str
+) -> None:
+    """Remember where the report went, so a later edit or thread can find it."""
+    row = session.get(IntelMeetingReport, meeting_id)
+    if row is None:  # the meeting was deleted while the post was in flight
+        return
+    row.slack_channel = channel
+    row.slack_ts = slack_ts
+    session.flush()
 
 
 # --- Speaking ratio (pipeline step 7) -----------------------------------
