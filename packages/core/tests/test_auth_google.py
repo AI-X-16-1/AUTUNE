@@ -16,6 +16,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
+from structlog.testing import capture_logs
 
 from autune_core import SESSION_COOKIE, issue_token
 from autune_core import auth_router as auth_router_module
@@ -194,6 +195,43 @@ def test_exchange_code_maps_a_google_rejection_to_permission_denied(
     http = httpx.Client(transport=httpx.MockTransport(lambda _r: httpx.Response(400, json={})))
     with pytest.raises(PermissionDeniedError):
         _client(rsa_key, http=http).exchange_code("auth-code")
+
+
+@pytest.mark.parametrize(
+    ("body", "logged"),
+    [
+        pytest.param(
+            {
+                "error": "invalid_client",
+                "error_description": "The provided client secret is invalid.",
+            },
+            "invalid_client",
+            id="wrong-secret",
+        ),
+        pytest.param({"error": "invalid_grant"}, "invalid_grant", id="spent-code"),
+        pytest.param({"error": "code=4/abc secret"}, "unrecognised", id="not-an-error-code"),
+        pytest.param(None, "unparseable", id="not-json"),
+    ],
+)
+def test_a_google_rejection_logs_only_its_error_code(
+    rsa_key: rsa.RSAPrivateKey, body: dict[str, str] | None, logged: str
+) -> None:
+    """A wrong client secret and a spent code both read as the same 403; the
+    log says which, and nothing from the request or Google's description."""
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        if body is None:
+            return httpx.Response(401, text="<html>nope</html>")
+        return httpx.Response(401, json=body)
+
+    http = httpx.Client(transport=httpx.MockTransport(handler))
+    with capture_logs() as logs, pytest.raises(PermissionDeniedError):
+        _client(rsa_key, http=http).exchange_code("auth-code")
+
+    (entry,) = [e for e in logs if e["event"] == "auth_google_token_rejected"]
+    assert entry["error"] == logged
+    assert entry["status"] == 401
+    assert "auth-code" not in repr(entry) and "secret is invalid" not in repr(entry)
 
 
 # --------------------------------------------------------------------------- #
