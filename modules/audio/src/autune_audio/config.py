@@ -81,9 +81,12 @@ class AudioSettings(BaseSettings):
     rather than just mishearing it.
 
     **With diarization on a GPU, 5 reaches the processing-time target.** That
-    condition comes first because it is doing the work: 434 s total for 327 s of
-    audio is 1.32×, against the 1.5× in ``modules/audio/CLAUDE.md``, and the
-    same meeting with diarization on CPU is about 1.78× and over. The GPU path
+    condition comes first because it is doing the work: 443 s total for 327 s of
+    audio is 1.35×, against the 1.5× in ``modules/audio/CLAUDE.md`` — and the
+    *first* meeting after a worker starts is 483 s, 1.47×, because loading
+    pyannote onto Metal costs about 50 s once per process (HISTORY.md §2). The
+    same meeting with diarization on CPU is **1.93×**, measured the same day.
+    The GPU path
     is ``diarization_device`` (#394); it is not the default, only MPS has been
     measured, and MPS is unverified under a prefork worker (#329). On the
     configuration that ships today the target is missed, and beam width is not

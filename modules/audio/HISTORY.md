@@ -451,6 +451,43 @@ the demo runs `--pool=solo` (#329), and pyannote on Metal inherits that risk
 untested — which is why the setting is empty by default and only the demo opts
 in.
 
+#### Measured again on the shipped configuration, and the first meeting costs more
+
+The 434 s above was measured on #394's own branch, before #370 put speaker
+identification in the same task. Re-run 2026-09-29 on `main` (`438c498`) with
+`AUTUNE_AUDIO_DIARIZATION_DEVICE=mps`, a `--pool=solo` worker started fresh,
+and the same 327.4 s recording — twice in a row, in one worker:
+
+| | Total | ×audio | Whisper | pyannote load | Diarization |
+| --- | --- | --- | --- | --- | --- |
+| First meeting after the worker starts | 482.6 s | **1.47×** | 413 s | 50 s | 11 s |
+| Every meeting after that | 442.9 s | **1.35×** | 431 s | — | 11 s |
+
+Both are inside the 1.5× the module signed up for, and the 11 s diarization is
+the 11.5 s #394 measured, so nothing regressed when identification landed on
+top. Transcripts matched the CPU runs from the same day: 45 utterances, 6
+speakers, no tracebacks.
+
+**The CPU figure is now measured rather than reconstructed.** Three runs on the
+same `main` and the same recording with the setting left empty took 630.9 s,
+637.9 s and 654 s — **1.93×**, not the 1.78× this file arrived at by adding a
+separately-timed diarization stage to a separately-timed Whisper. Reconstruction
+under-counted by about 0.15×, which is the sort of error that only shows up when
+somebody runs the whole thing.
+
+**The first meeting is the one to quote.** 434 s was a warm process; loading
+pyannote onto Metal takes about 50 s and happens once per worker, so a demo
+that starts a worker and uploads one meeting is at 1.47×, not 1.32×. That is
+inside the target with about 20 s to spare, which is less margin than a single
+number suggests. Uploading anything before the demo pays that cost early and
+the meeting that matters runs at 1.35×.
+
+Whisper moved 413 s → 431 s between the two runs on the same machine and the
+same file. That spread is larger than the whole diarization stage now, which is
+the other thing the single number hides: **transcription is 93–97% of the run,
+and everything else is noise around it.** The next real saving is a different
+transcription engine or a smaller model, not another stage.
+
 ### Speaker identification (`docs/modules/audio-speaker-identification.md`)
 
 `speaker_id` was null on every utterance the module had ever produced: voices
