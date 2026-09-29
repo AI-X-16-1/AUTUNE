@@ -8,10 +8,12 @@ something went wrong, because those are the ones a `finally` exists for.
 from __future__ import annotations
 
 import io
+import os
 from pathlib import Path
 
 import pytest
 
+from autune_audio import storage
 from autune_audio.config import AudioSettings
 from autune_audio.storage import (
     RecordingTooLargeError,
@@ -357,3 +359,84 @@ class TestHandingAFileToTheWorker:
 
         assert not written.exists()
         assert not upload_path("job_abc", settings).exists()
+
+
+class TestTheScratchDirectoryIsOwnerOnly:
+    """#351. The recordings are already `0600`; this is about listing them.
+
+    Another account on the machine cannot read a meeting, and should not be
+    able to read off who uploaded one, when, and how long it ran.
+    """
+
+    def test_a_directory_this_process_creates_is_owner_only(self, tmp_path: Path) -> None:
+        settings = AudioSettings(temp_dir=str(tmp_path / "scratch"))
+
+        with recording_on_disk(io.BytesIO(b"audio"), settings=settings):
+            pass
+
+        assert (Path(settings.temp_dir).stat().st_mode & 0o777) == 0o700
+
+    def test_a_permissive_umask_cannot_widen_it(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """`mode` is masked by umask, and umask only ever clears bits.
+
+        The test that would have caught the original code: it passed no mode at
+        all, so the directory came out at whatever `0777 & ~umask` gives --
+        `0755` on a normal machine.
+        """
+        settings = AudioSettings(temp_dir=str(tmp_path / "scratch"))
+        previous = os.umask(0)
+        try:
+            with recording_on_disk(io.BytesIO(b"audio"), settings=settings):
+                pass
+        finally:
+            os.umask(previous)
+
+        assert (Path(settings.temp_dir).stat().st_mode & 0o777) == 0o700
+
+    def test_an_existing_directory_keeps_its_mode_and_is_reported(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Not `chmod`-ed, because we may not own it.
+
+        `AUTUNE_AUDIO_TEMP_DIR` could be `/tmp`, and tightening that breaks the
+        machine. `_reject_persistent` refuses a directory a recording could
+        survive in; it does not promise this process owns it.
+        """
+        scratch = tmp_path / "scratch"
+        scratch.mkdir(mode=0o755)
+        settings = AudioSettings(temp_dir=str(scratch))
+        seen: list[dict[str, object]] = []
+        monkeypatch.setattr(
+            storage.log, "warning", lambda event, **kw: seen.append({"event": event, **kw})
+        )
+
+        with recording_on_disk(io.BytesIO(b"audio"), settings=settings):
+            pass
+
+        assert (scratch.stat().st_mode & 0o777) == 0o755
+        line = next(e for e in seen if e["event"] == "audio_temp_dir_is_listable")
+        assert line["mode"] == "0755"
+        assert "AUTUNE_AUDIO_TEMP_DIR" in str(line["hint"])
+
+    def test_an_existing_private_directory_says_nothing(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        scratch = tmp_path / "scratch"
+        scratch.mkdir(mode=0o700)
+        settings = AudioSettings(temp_dir=str(scratch))
+        seen: list[str] = []
+        monkeypatch.setattr(storage.log, "warning", lambda event, **kw: seen.append(event))
+
+        with recording_on_disk(io.BytesIO(b"audio"), settings=settings):
+            pass
+
+        assert "audio_temp_dir_is_listable" not in seen
+
+    def test_the_recording_itself_is_unreadable_by_anyone_else(
+        self, settings: AudioSettings
+    ) -> None:
+        """The half that already held, pinned so it keeps holding."""
+        with recording_on_disk(io.BytesIO(b"audio"), settings=settings) as recording:
+            assert (recording.path.stat().st_mode & 0o777) == 0o600
