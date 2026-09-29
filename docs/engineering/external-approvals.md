@@ -142,6 +142,15 @@ that state — *"Creation is held back when the assignee is unmapped."* See #70.
 
 Do not widen this list without a reason written down.
 
+**Widened for the one-click install (#428):** `channels:manage` and
+`channels:join`. A team that installs Autune with "Add to Slack" gets an alert
+channel without anyone typing a channel id: the install creates `#autune`, or
+joins it when a channel of that name already exists, and stores it as the
+channel D's briefings and E's reports post to. Both are bot scopes; there is
+still no user scope and no `users:read.email`. Slack accepts only an **HTTPS**
+redirect URL for this flow, so it cannot be finished on plain
+`http://localhost` -- a local test needs the web app served over HTTPS.
+
 ### Notion
 
 Notion needs three steps and each one fails differently. Creating the integration

@@ -75,6 +75,14 @@ class Settings(BaseSettings):
     """The /api/auth/notion/callback URL on the web origin, per environment. Must
     match a redirect URI of the Notion public integration exactly."""
 
+    slack_client_id: str = ""
+    slack_client_secret: str = ""
+    slack_redirect_uri: str = ""
+    """The /api/auth/slack/callback URL on the web origin. Slack accepts only an
+    **HTTPS** redirect URL, so plain http://localhost cannot finish the flow."""
+    slack_channel_name: str = "autune"
+    """The alert channel a one-click install makes, or joins when it exists."""
+
     retention_days: int = 90
     """Analysis results are deleted after this many days.
     See docs/architecture/privacy.md section 4."""
