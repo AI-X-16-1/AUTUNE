@@ -2,9 +2,30 @@
 
 When one person is overloaded and another is free, proposes a redistribution
 to an approver with scope ``workload`` only. Reads counts of work, never
-speech: no speaking-ratio tool may be in its allow-list (privacy.md section 3).
+speech: no speaking-ratio tool may be in its allow-list (privacy.md section 3),
+and ``Subagent`` refuses one.
 
-Not built yet. Define ``SUBAGENT = Subagent(...)`` here when it is; until then
-the main agent skips this package. ``autune_agent.testing.example_subagent``
-is the shape to start from.
+The rules are in ``plan.py``, the subgraph in ``graph.py``. Google Calendar
+(``free_busy``) and Jira reads are not in the allow-list yet: the first needs a
+tool in B's ``tools.py``, the second waits on #82.
 """
+
+from __future__ import annotations
+
+from autune_agent.main.subagents import Subagent
+
+from .graph import TOOLS, build
+
+SUBAGENT = Subagent(
+    name="workload",
+    description=(
+        "Use this when asked whether work is piling up on someone, whether it "
+        "should be spread differently, or on the periodic workload check. It "
+        "proposes moving a few open action items from the most loaded people to "
+        "people with little or none open, for the manager to approve one by one. "
+        "Do not use it for which items are late or due soon, or for one "
+        "meeting's outcome -- those are direct reads of module B."
+    ),
+    tools=TOOLS,
+    build=build,
+)
