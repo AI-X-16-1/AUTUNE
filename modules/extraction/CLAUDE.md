@@ -16,8 +16,11 @@ Full detail: `/docs/modules/extraction.md`.
 
 Classify utterances five ways → build action-item cards → verify ambiguous
 agreement with NLI → sync to Notion, and put a confirmed item's due date on its
-assignee's own Google Calendar, reading back a date they move there (#435). (Jira was dropped from the product, #82:
-both its credential paths tie a workspace to whoever set it up.)
+assignee's own Google Calendar, reading back a date they move there (#435), and
+make each confirmed item one issue in the team's Jira project (#82, #458).
+Jira is connected with one click over OAuth 3LO; its grant is person-bound, so
+a revoked or expired grant asks the team to reconnect rather than failing
+silently.
 
 ## Consumes
 

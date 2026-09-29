@@ -296,6 +296,7 @@ def sync_action_item_jira(action_item_id: str) -> None:
                 client,
                 action_item_id=action_item_id,
                 project_key=access.project_key,
+                site=access.cloud_id,
                 site_url=config.config.get("site_url") if config is not None else None,
             )
         finally:
@@ -477,6 +478,7 @@ def backfill_jira(team_id: str) -> dict[str, int]:
                         client,
                         action_item_id=action_item_id,
                         project_key=access.project_key,
+                        site=access.cloud_id,
                         site_url=site_url,
                     )
                 counts["synced"] += 1
@@ -508,7 +510,9 @@ def close_jira_issue(action_item_id: str) -> None:
                 return
             client = JiraClient.for_cloud(access.access_token, access.cloud_id)
             try:
-                jira_sync.close_for_deleted_item(session, client, action_item_id=action_item_id)
+                jira_sync.close_for_deleted_item(
+                    session, client, action_item_id=action_item_id, site=access.cloud_id
+                )
             finally:
                 client.close()
     except Exception as exc:  # noqa: BLE001 -- a deletion must not fail on Jira

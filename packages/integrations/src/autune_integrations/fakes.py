@@ -134,6 +134,8 @@ class FakeJira:
     accounts: dict[str, str] = field(default_factory=dict)
     """email -> account id; a missing email is someone Jira will not reveal."""
     categories: dict[str, str] = field(default_factory=dict)
+    moves: list[tuple[str, str]] = field(default_factory=list)
+    """Transitions actually made -- none for an issue already in the category."""
     searched: list[str] = field(default_factory=list)
     comments: dict[str, list[str]] = field(default_factory=dict)
 
@@ -169,11 +171,14 @@ class FakeJira:
         *,
         due_date: date | None,
         assignee_account_id: str | None,
+        keep_assignee: bool = False,
     ) -> bool:
         check_outbound({"summary": summary}, destination="jira")
         if issue_key not in self.tasks:
             return False
-        self.tasks[issue_key].update(summary=summary, due=due_date, assignee=assignee_account_id)
+        self.tasks[issue_key].update(summary=summary, due=due_date)
+        if not keep_assignee:
+            self.tasks[issue_key]["assignee"] = assignee_account_id
         return True
 
     def add_comment(self, issue_key: str, text: str) -> None:
@@ -181,7 +186,10 @@ class FakeJira:
         self.comments.setdefault(issue_key, []).append(text)
 
     def move_to_category(self, issue_key: str, category: str) -> bool:
+        if self.categories.get(issue_key) == category:
+            return True
         self.categories[issue_key] = category
+        self.moves.append((issue_key, category))
         return True
 
 

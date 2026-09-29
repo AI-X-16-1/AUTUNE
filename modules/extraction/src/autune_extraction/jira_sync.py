@@ -20,7 +20,9 @@ person with no account there, leaves the issue unassigned rather than guessed.
 **One issue per item**, claimed in ``ext_external_refs`` (``system = 'jira'``)
 before it is created -- the Notion page's pattern -- so a confirmation
 delivered twice makes one issue. An issue deleted in Jira is made again on the
-next edit.
+next edit. The ref records the **site** (cloud id) with the key: a key is
+unique only within a site, so after a reconnect to another site the old key is
+never written to -- the item gets a new issue there (#458 review).
 
 **Deleting the item in Autune closes its issue, it does not delete it**
 (``close_for_deleted_item``): the issue moves to a ``done`` status and gets a
@@ -29,7 +31,12 @@ sit in the team's open work, and the team may have commented or worked on the
 issue, which a delete would take with it (decided with the user, #458).
 
 Status moves go through whatever transition the team's workflow offers into
-that category; a workflow without one leaves the issue where it is.
+that category; a workflow without one leaves the issue where it is, and so
+does an issue already in a status of that category -- a person's "In Review"
+stays. A status move that fails does not lose the issue: its key is kept.
+
+The summary is one line of at most 255 characters, Jira's limit; a longer
+description goes whole into the issue's description when it is made.
 """
 
 from __future__ import annotations
@@ -42,7 +49,7 @@ from sqlalchemy.orm import Session
 
 from autune_contracts.enums import ActionStatus
 from autune_core import Meeting, TeamMember, User, get_logger
-from autune_integrations import PermanentIntegrationError
+from autune_integrations import IntegrationError, PermanentIntegrationError
 
 from .models import ExtActionItem, ExtExternalRef
 from .service import _insert_if_absent_into
@@ -50,6 +57,7 @@ from .service import _insert_if_absent_into
 log = get_logger(__name__)
 
 JIRA = "jira"
+SUMMARY_LIMIT = 255
 
 CATEGORY = {
     ActionStatus.TODO.value: "new",
@@ -81,6 +89,7 @@ class JiraIssues(Protocol):
         *,
         due_date: date | None,
         assignee_account_id: str | None,
+        keep_assignee: bool = False,
     ) -> bool: ...
 
     def move_to_category(self, issue_key: str, category: str) -> bool: ...
@@ -109,12 +118,20 @@ def _assignee_account(session: Session, jira: JiraIssues, item: ExtActionItem) -
     return jira.find_account_id(user.email)
 
 
+def _summary(text: str) -> str:
+    """One line, within Jira's limit -- a newline or a 256th character makes
+    Jira answer 400."""
+    line = " ".join(text.split())
+    return line if len(line) <= SUMMARY_LIMIT else line[: SUMMARY_LIMIT - 1] + "…"
+
+
 def sync_action_item_to_jira(
     session: Session,
     jira: JiraIssues,
     *,
     action_item_id: str,
     project_key: str,
+    site: str,
     site_url: str | None = None,
 ) -> ExtExternalRef | None:
     """Create the item's issue the first time, rewrite it every time after, and
@@ -142,34 +159,69 @@ def sync_action_item_to_jira(
         )
         assert ref is not None
 
+    if ref.external_id and ref.site != site:
+        # A key from another site (a reconnect since) names an issue that is
+        # not ours here: never written, the item gets one on this site.
+        log.info("extraction_jira_other_site", action_item_id=item.id)
+    ours = bool(ref.external_id) and ref.site == site
+
     account = _assignee_account(session, jira, item)
-    updated = bool(ref.external_id) and jira.update_task(
-        str(ref.external_id), item.description, due_date=item.due_date, assignee_account_id=account
+    summary = _summary(item.description)
+    updated = ours and jira.update_task(
+        str(ref.external_id),
+        summary,
+        due_date=item.due_date,
+        assignee_account_id=account,
+        # Someone Autune could not find in Jira may have been assigned there by
+        # hand; only an item with no assignee in Autune clears Jira's.
+        keep_assignee=account is None and item.assignee_id is not None,
     )
     if not updated:
-        # First send, or an issue deleted in Jira since: make it.
+        # First send, an issue deleted in Jira since, or another site: make it.
         ref.external_id = jira.create_task(
-            project_key, item.description, due_date=item.due_date, assignee_account_id=account
+            project_key,
+            summary,
+            description=item.description if summary != item.description else "",
+            due_date=item.due_date,
+            assignee_account_id=account,
         )
+        ref.site = site
         ref.url = f"{site_url.rstrip('/')}/browse/{ref.external_id}" if site_url else None
         log.info("extraction_jira_created", action_item_id=item.id)
     else:
         log.info("extraction_jira_updated", action_item_id=item.id)
 
     category = CATEGORY.get(item.status)
-    if category is not None and not jira.move_to_category(str(ref.external_id), category):
-        log.info("extraction_jira_no_transition", action_item_id=item.id, category=category)
+    if category is not None:
+        try:
+            if not jira.move_to_category(str(ref.external_id), category):
+                log.info("extraction_jira_no_transition", action_item_id=item.id, category=category)
+        except IntegrationError as exc:
+            # The issue exists; losing its key here would make a second one on
+            # the next edit (#458 review). The status waits for that edit.
+            log.warning(
+                "extraction_jira_move_failed",
+                action_item_id=item.id,
+                category=category,
+                error=type(exc).__name__,
+            )
     return ref
 
 
 DELETED_NOTE = "Autune에서 삭제된 액션 아이템입니다. 이슈 기록은 남기고 닫았습니다."
 
 
-def close_for_deleted_item(session: Session, jira: JiraIssues, *, action_item_id: str) -> bool:
+def close_for_deleted_item(
+    session: Session, jira: JiraIssues, *, action_item_id: str, site: str
+) -> bool:
     """Before the board deletes an item: close its issue with a note. ``False``
-    when the item never became an issue. The ref row goes with the item."""
+    when the item never became an issue on this site -- a key from another site
+    names someone else's issue. The ref row goes with the item."""
     ref = session.get(ExtExternalRef, (action_item_id, JIRA))
     if ref is None or not ref.external_id:
+        return False
+    if ref.site != site:
+        log.info("extraction_jira_other_site", action_item_id=action_item_id)
         return False
     key = str(ref.external_id)
     try:

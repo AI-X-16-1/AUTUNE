@@ -111,14 +111,19 @@ class JiraClient(HttpClient):
         *,
         due_date: date | None,
         assignee_account_id: str | None,
+        keep_assignee: bool = False,
     ) -> bool:
         """Rewrite the fields Autune owns. ``False`` when the issue is gone --
-        deleted in Jira -- so the caller can make a new one."""
-        fields = {
+        deleted in Jira -- so the caller can make a new one.
+
+        ``keep_assignee`` leaves Jira's assignee as it is: for a person Autune
+        could not find in Jira, whom someone may have assigned by hand there."""
+        fields: dict[str, Any] = {
             "summary": summary,
             "duedate": due_date.isoformat() if due_date else None,
-            "assignee": {"accountId": assignee_account_id} if assignee_account_id else None,
         }
+        if not keep_assignee:
+            fields["assignee"] = {"accountId": assignee_account_id} if assignee_account_id else None
         try:
             self.request("PUT", f"/issue/{issue_key}", json={"fields": fields})
         except PermanentIntegrationError as exc:
@@ -135,13 +140,28 @@ class JiraClient(HttpClient):
     def add_comment(self, issue_key: str, text: str) -> None:
         self.request("POST", f"/issue/{issue_key}/comment", json={"body": _doc(text)})
 
+    def status_category(self, issue_key: str) -> str | None:
+        """The category (``new``, ``indeterminate``, ``done``) of the status
+        the issue is in now."""
+        found = self.request("GET", f"/issue/{issue_key}", params={"fields": "status"})
+        status = (found.get("fields") or {}).get("status") or {}
+        key = (status.get("statusCategory") or {}).get("key")
+        return str(key) if key else None
+
     def move_to_category(self, issue_key: str, category: str) -> bool:
         """Move the issue into a status of ``category`` (``new``,
         ``indeterminate``, ``done``) through whatever transition its workflow
         offers. ``False`` when the workflow offers none -- the issue stays where
-        it is, which is the team's workflow to decide."""
+        it is, which is the team's workflow to decide.
+
+        An issue already in a status of that category is left alone. A category
+        can hold several statuses -- In Progress and In Review, Backlog and
+        Selected for Development -- and the one a person chose in Jira is theirs
+        (#458 review)."""
         if category not in STATUS_CATEGORIES:
             raise ValueError(f"unknown status category {category!r}")
+        if self.status_category(issue_key) == category:
+            return True
         found = self.request("GET", f"/issue/{issue_key}/transitions")
         for option in found.get("transitions", []):
             to = option.get("to", {})

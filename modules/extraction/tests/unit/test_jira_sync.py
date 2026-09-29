@@ -33,6 +33,7 @@ from .conftest import CLOSE_JIRA_ISSUE, SYNC_ACTION_ITEM_JIRA
 MEETING, ME, GONE = "mtg_1", "user_me", "user_gone"
 SAID = "제가 금요일까지 스펙 초안 공유하겠습니다"
 SITE = "https://acme.atlassian.net"
+CLOUD = "cloud-1"
 
 TABLES = [
     Meeting.__table__,
@@ -89,7 +90,7 @@ def item(session: Session, *, status: str = "todo", **fields: Any) -> ExtActionI
 
 def sync(session: Session, jira: FakeJira, row: ExtActionItem) -> ExtExternalRef | None:
     return sync_action_item_to_jira(
-        session, jira, action_item_id=row.id, project_key="AUT", site_url=SITE
+        session, jira, action_item_id=row.id, project_key="AUT", site=CLOUD, site_url=SITE
     )
 
 
@@ -258,7 +259,7 @@ def test_deleting_an_item_closes_its_issue_with_a_note(session: Session) -> None
     row = item(session)
     sync(session, jira, row)
 
-    assert close_for_deleted_item(session, jira, action_item_id=row.id) is True
+    assert close_for_deleted_item(session, jira, action_item_id=row.id, site=CLOUD) is True
 
     assert jira.categories["AUT-1"] == "done"
     assert jira.comments["AUT-1"] == [DELETED_NOTE]
@@ -268,7 +269,7 @@ def test_deleting_an_item_closes_its_issue_with_a_note(session: Session) -> None
 def test_an_item_that_never_became_an_issue_closes_nothing(session: Session) -> None:
     jira = FakeJira()
     row = item(session, status="needs_confirmation")
-    assert close_for_deleted_item(session, jira, action_item_id=row.id) is False
+    assert close_for_deleted_item(session, jira, action_item_id=row.id, site=CLOUD) is False
     assert jira.comments == {}
 
 
@@ -300,7 +301,13 @@ def test_choosing_a_new_project_brings_every_confirmed_item_back(
     fake = Closable()
     kept = item(wired, description="이미 보냈던 작업")
     wired.add(
-        ExtExternalRef(action_item_id=kept.id, system=JIRA, meeting_id=MEETING, external_id="OLD-1")
+        ExtExternalRef(
+            action_item_id=kept.id,
+            system=JIRA,
+            meeting_id=MEETING,
+            external_id="OLD-1",
+            site="cloud-1",
+        )
     )
     never_sent = item(wired, description="보내지 못했던 작업", status="done")
     item(wired, description="확인 대기", status="needs_confirmation")
@@ -356,7 +363,112 @@ def test_closing_an_issue_that_is_already_gone_is_not_a_failure(session: Session
 
     jira = Gone()
     row = item(session)
-    sync_action_item_to_jira(session, FakeJira(), action_item_id=row.id, project_key="AUT")
+    sync_action_item_to_jira(
+        session, FakeJira(), action_item_id=row.id, project_key="AUT", site=CLOUD
+    )
 
-    assert close_for_deleted_item(session, jira, action_item_id=row.id) is False
+    assert close_for_deleted_item(session, jira, action_item_id=row.id, site=CLOUD) is False
     assert jira.comments == {}
+
+
+# --- the team's workflow and the team's site are theirs (#458 review) ---------------
+
+
+def test_an_edit_leaves_a_status_the_team_chose_within_the_category(session: Session) -> None:
+    """A person moved the issue to "In Review" (indeterminate); an Autune edit
+    to the due date of an in-progress item must not pull it back."""
+    jira = FakeJira()
+    row = item(session, status="in_progress")
+    sync(session, jira, row)
+    moved = list(jira.moves)
+
+    row.due_date = date(2026, 10, 9)
+    sync(session, jira, row)
+
+    assert jira.moves == moved  # no second transition
+    assert moved == [("AUT-1", "indeterminate")]
+
+
+def test_a_new_todo_issue_is_not_moved_out_of_its_first_status(session: Session) -> None:
+    jira = FakeJira()
+    sync(session, jira, item(session))
+    assert jira.moves == []  # created in a "new" status, left there
+
+
+def test_a_key_from_another_site_is_never_written_to(session: Session) -> None:
+    """After a reconnect to another site, its own KAN-1 is someone else's issue."""
+    old_site, new_site = FakeJira(), FakeJira()
+    row = item(session)
+    sync(session, old_site, row)
+    new_site.tasks["AUT-1"] = {
+        "project": "AUT",
+        "summary": "남의 이슈",
+        "due": None,
+        "assignee": "x",
+    }
+
+    ref = sync_action_item_to_jira(
+        session, new_site, action_item_id=row.id, project_key="AUT", site="cloud-2"
+    )
+
+    assert new_site.tasks["AUT-1"]["summary"] == "남의 이슈"  # untouched
+    assert ref is not None and ref.site == "cloud-2" and ref.external_id == "AUT-2"
+    assert close_for_deleted_item(session, old_site, action_item_id=row.id, site=CLOUD) is False
+
+
+def test_deleting_does_not_close_another_sites_issue(session: Session) -> None:
+    jira = FakeJira()
+    row = item(session)
+    sync(session, jira, row)
+
+    assert close_for_deleted_item(session, jira, action_item_id=row.id, site="cloud-2") is False
+    assert jira.comments == {}
+    assert jira.categories["AUT-1"] == "new"
+
+
+def test_a_failed_move_keeps_the_issue_it_just_made(session: Session) -> None:
+    """Rolling the key back would make a second issue on the next edit."""
+    from autune_integrations import TransientIntegrationError
+
+    class Busy(FakeJira):
+        def move_to_category(self, issue_key: str, category: str) -> bool:
+            raise TransientIntegrationError("429")
+
+    jira = Busy()
+    ref = sync(session, jira, item(session, status="done"))
+
+    assert ref is not None and ref.external_id == "AUT-1"
+    assert list(jira.tasks) == ["AUT-1"]
+
+
+def test_an_assignee_jira_cannot_find_does_not_clear_one_set_by_hand(session: Session) -> None:
+    jira = FakeJira()  # me@example.com is not visible
+    row = item(session)
+    sync(session, jira, row)
+    jira.tasks["AUT-1"]["assignee"] = "acc-set-by-hand"
+
+    row.description = "스펙 최종본 공유"
+    sync(session, jira, row)
+
+    assert jira.tasks["AUT-1"]["assignee"] == "acc-set-by-hand"
+
+
+def test_no_assignee_in_autune_clears_jiras(session: Session) -> None:
+    jira = FakeJira(accounts={"me@example.com": "acc-me"})
+    row = item(session)
+    sync(session, jira, row)
+
+    row.assignee_id = None
+    sync(session, jira, row)
+
+    assert jira.tasks["AUT-1"]["assignee"] is None
+
+
+def test_the_summary_is_one_line_within_jiras_limit(session: Session) -> None:
+    jira = FakeJira()
+    long = "가" * 300
+    sync(session, jira, item(session, description=f"첫 줄\n둘째 줄 {long}"))
+
+    summary = jira.tasks["AUT-1"]["summary"]
+    assert "\n" not in summary
+    assert len(summary) == 255 and summary.endswith("…")
