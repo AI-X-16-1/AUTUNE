@@ -87,8 +87,16 @@ For the MVP, topics are extracted without an LLM:
 1. **Segment** the transcript with an embedding-based TextTiling: a sliding
    window over consecutive utterance embeddings, cut at local similarity minima,
    with sub-minimum-length segments merged.
-2. **Label** each segment with kiwipiepy noun-phrase candidates scored by
-   in-segment frequency against rarity in a background corpus of past meetings.
+2. **Label** each segment with its most repeated noun phrase. Phrases are
+   runs of whitespace-separated words that kiwipiepy reads as starting with a
+   content noun — word-level, so a word missing from its dictionary (온보딩)
+   survives whole. Numbers with counters (5장), one-letter nouns, names with an
+   honorific (민재님) and nouns every meeting shares (오늘, 회의, 확인) break a
+   phrase. The score is words × occurrences among the repeated phrases, so a
+   phrase said twice outranks one of its words said three times (#352: one-word
+   labels such as `장` or `10` gave the re-ranker nothing to score). A segment
+   with no noun phrase at all is small talk and is dropped, not labelled with a
+   snippet of itself. There is no background-corpus weighting.
 3. **Represent** each topic for matching as the segment's mean-pooled embedding,
    plus its top utterances for BM25 and the re-ranker.
 
