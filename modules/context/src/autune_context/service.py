@@ -35,6 +35,7 @@ from autune_context.notify import (
     build_topic_link_rollup_notice,
 )
 from autune_context.pipeline import get_embedder, get_nli, get_reranker
+from autune_context.pipeline.change import classify_change, strip_keep_words
 from autune_context.pipeline.retrieval import HybridRetriever, visible_meeting_clauses
 from autune_context.pipeline.topics import extract_topics
 from autune_contracts import ChangeType, ContextLinks, DecisionChange, NliLabel, TopicLink
@@ -133,6 +134,7 @@ def run_topic_linking(transcript: TranscriptReady) -> bool:
                     meeting_id=transcript.meeting_id,
                     kind="topic",
                     ref_label=topic.label,
+                    utterance_ids=topic.utterance_ids,
                     embedding=topic.vector,
                     model_version=embedder.model_version,
                 )
@@ -187,8 +189,24 @@ def _link_topic(
 ) -> int:
     if not candidates:
         return 0
-    scores = reranker.score(topic.text, [c.topic_label for c in candidates])
-    ranked = sorted(zip(candidates, scores, strict=True), key=lambda cs: cs[1], reverse=True)
+    scores = reranker.score(topic.text, [c.passage for c in candidates])
+    # Two signals, either of which is enough to assert. The cross-encoder
+    # answers "does this passage answer this query", so a past meeting on the
+    # same topic but with different content -- the plan vs. its status update,
+    # the same issue in other words -- scores near zero; dense similarity
+    # between the two segments is what separates same-topic from
+    # different-topic (docs/modules/context.md, "Metric"). The reranker stays
+    # as a second way in: on the evaluation set it asserted nothing wrong.
+    # ``confidence`` is the stronger of the two, and orders the trim below.
+    confidence = {
+        c.linked_meeting_id: max(c.similarity, float(s))
+        for c, s in zip(candidates, scores, strict=True)
+    }
+    ranked = sorted(
+        zip(candidates, scores, strict=True),
+        key=lambda cs: confidence[cs[0].linked_meeting_id],
+        reverse=True,
+    )
 
     written = 0
     for candidate, rerank_score in ranked[: settings.rerank_top_k]:
@@ -199,7 +217,10 @@ def _link_topic(
                 linked_meeting_id=candidate.linked_meeting_id,
             )
             continue
-        status = "asserted" if rerank_score >= settings.link_confidence_threshold else "pending"
+        confident = (
+            candidate.similarity >= settings.link_similarity_threshold
+            or rerank_score >= settings.link_confidence_threshold
+        )
         session.add(
             CtxTopicLink(
                 meeting_id=meeting_id,
@@ -208,8 +229,8 @@ def _link_topic(
                 linked_meeting_date=candidate.linked_meeting_date,
                 similarity=_clamp(candidate.similarity),
                 rerank_score=_clamp(float(rerank_score)),
-                confidence=_clamp(float(rerank_score)),
-                status=status,
+                confidence=_clamp(confidence[candidate.linked_meeting_id]),
+                status="asserted" if confident else "pending",
                 retriever_version=f"hybrid-rrf+{embedder.model_version}",
                 reranker_version=reranker.model_version,
             )
@@ -222,14 +243,8 @@ def _link_topic(
 # Decision lineage — off autune.extraction.completed, after B
 # --------------------------------------------------------------------------- #
 
-# NLI reads the previous statement as the premise and the current one as the
-# hypothesis: entailment means the decision still holds, contradiction means it
-# was reversed, neutral means it moved without being undone.
-_NLI_TO_CHANGE: dict[NliLabel, ChangeType] = {
-    NliLabel.ENTAILMENT: ChangeType.UNCHANGED,
-    NliLabel.CONTRADICTION: ChangeType.REVERSED,
-    NliLabel.NEUTRAL: ChangeType.MODIFIED,
-}
+# How NLI output becomes a change type — both directions, plus a
+# negation/cancellation cue for contradictions — is ``pipeline.change``.
 
 
 def mark_extraction_seen(meeting_id: str) -> None:
@@ -596,11 +611,12 @@ def _rethread(session: Session, thread_id: str, nli: NliModel) -> None:
     ``previous_*``, ``change_type``, ``nli_label``, ``confidence`` and
     ``key_stakeholders_absent`` all depend on which meeting a version follows, so
     a version that arrived out of order can only be placed by rebuilding the
-    chain. NLI is re-run for every adjacent pair (one batched call): it is
-    deterministic given the model, and ``nli_version`` is refreshed, so a
-    re-chain does not drift. ``confidence`` on the first version keeps B's
-    decision confidence; on every later version it is the NLI score of the
-    winning label, and it is not recomputed back to B's number if the version
+    chain. NLI is re-run for every adjacent pair, in both directions (one
+    batched call): it is deterministic given the model, and ``nli_version`` is
+    refreshed, so a re-chain does not drift. ``confidence`` on the first
+    version keeps B's decision confidence; on every later version it is the
+    NLI score ``pipeline.change.classify_change`` decided on, and it is not
+    recomputed back to B's number if the version
     later becomes the head of its thread (same stance as
     ``sweep_dangling_previous_statements``: what changed survives).
 
@@ -638,7 +654,21 @@ def _rethread(session: Session, thread_id: str, nli: NliModel) -> None:
         (versions[i - 1].current_statement, versions[i].current_statement)
         for i in range(1, len(versions))
     ]
-    scored = nli.classify(pairs) if pairs else []
+    # One batch: forward, then each pair reversed, then forward against the
+    # later statement with its keep-words stripped (only where it had any).
+    stripped = {
+        i: text
+        for i, (_earlier, later) in enumerate(pairs)
+        if (text := strip_keep_words(later)) is not None
+    }
+    batch = [
+        *pairs,
+        *[(later, earlier) for earlier, later in pairs],
+        *[(pairs[i][0], text) for i, text in stripped.items()],
+    ]
+    out = nli.classify(batch) if pairs else []
+    scored, scored_back = out[: len(pairs)], out[len(pairs) : 2 * len(pairs)]
+    scored_kept = dict(zip(stripped, out[2 * len(pairs) :], strict=True))
 
     prior_meeting_ids: list[str] = []
     for index, version in enumerate(versions):
@@ -651,13 +681,21 @@ def _rethread(session: Session, thread_id: str, nli: NliModel) -> None:
             version.key_stakeholders_absent = []
         else:
             prev = versions[index - 1]
-            label = NliLabel(scored[index - 1].label)
+            change, score = classify_change(
+                scored[index - 1],
+                scored_back[index - 1],
+                version.current_statement,
+                prev.current_statement,
+                scored_kept.get(index - 1),
+            )
             version.previous_version_id = prev.id
             version.previous_statement = prev.current_statement
             version.previous_meeting_id = prev.meeting_id
-            version.change_type = _NLI_TO_CHANGE[label].value
-            version.nli_label = label.value
-            version.confidence = _clamp(float(getattr(scored[index - 1], label.value)))
+            version.change_type = change.value
+            # The model's own forward verdict, kept as-is: ``change_type`` is
+            # derived from it, not the same thing (see ``pipeline.change``).
+            version.nli_label = NliLabel(scored[index - 1].label).value
+            version.confidence = _clamp(score)
             present = _confirmed_attendance(session, version.meeting_id)
             if present is None:
                 version.key_stakeholders_absent = []

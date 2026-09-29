@@ -73,11 +73,16 @@ class CaseResult:
         "linked" here, matching ``link_confidence_threshold``'s own meaning."""
         return self.asserted == self.expected
 
-    def asserted_at(self, threshold: float) -> frozenset[str]:
-        """What ``asserted`` would have been with ``link_confidence_threshold``
-        at ``threshold`` — every candidate row is already written, pending or
-        not, so this needs no re-run."""
-        return frozenset(m for m, score in self.best_rerank.items() if score >= threshold)
+    def asserted_at(self, similarity: float, rerank: float) -> frozenset[str]:
+        """What ``asserted`` would have been with ``link_similarity_threshold``
+        at ``similarity`` and ``link_confidence_threshold`` at ``rerank`` —
+        every candidate row is already written, pending or not, so this needs
+        no re-run."""
+        return frozenset(
+            m
+            for m in self.best_similarity
+            if self.best_similarity[m] >= similarity or self.best_rerank[m] >= rerank
+        )
 
     def index(self, meeting_id: str) -> int:
         return self.past_ids.index(meeting_id)
@@ -138,8 +143,9 @@ def run_case(case: EvalCase) -> CaseResult:
 
 def _seed_meeting(team_id: str, meeting: EvalMeeting) -> str:
     """The meeting row plus its ``utterances``, as module A leaves them before
-    publishing ``TranscriptReady``, so anything that reads a past meeting's
-    utterances back finds them. Deleted with the team, by cascade."""
+    publishing ``TranscriptReady`` -- the re-ranker reads a past topic's text
+    back from ``utterances``, so a meeting seeded without them would be scored
+    against its label alone. Deleted with the team, by cascade."""
     with session_scope() as s:
         row = Meeting(
             team_id=team_id,
@@ -225,7 +231,8 @@ def report(results: list[CaseResult]) -> str:
         "",
         accuracy_line("topic linking accuracy", correct, total)
         + f" (target {_TARGET_ACCURACY}) -- {verdict}",
-        f"link_confidence_threshold = {settings.link_confidence_threshold}",
+        f"link_similarity_threshold = {settings.link_similarity_threshold}, "
+        f"link_confidence_threshold (rerank) = {settings.link_confidence_threshold}",
         "",
         "by category:",
         *by_category(results),
@@ -237,8 +244,9 @@ def report(results: list[CaseResult]) -> str:
         f"  surfaced  {ratio(surfaced, tp + fn)}  (asserted or pending: reached the user)",
         f"  no-link cases with any asserted link: {ratio(false_linked, len(negatives))}",
         "",
-        "threshold sweep (accuracy if link_confidence_threshold were t):",
-        *_sweep(results, settings.link_confidence_threshold),
+        "threshold sweep (accuracy if link_similarity_threshold were t,",
+        " link_confidence_threshold held as configured):",
+        *_sweep(results, settings.link_similarity_threshold, settings.link_confidence_threshold),
     ]
     return "\n".join(lines)
 
@@ -258,13 +266,13 @@ def _case_line(r: CaseResult) -> str:
     )
 
 
-def _sweep(results: list[CaseResult], current: float) -> list[str]:
+def _sweep(results: list[CaseResult], current: float, rerank: float) -> list[str]:
     if not results:
         return []
-    points = sweep_points()
+    points = sweep_points(0.50, 0.95, 0.025)
 
     def correct_at(t: float) -> int:
-        return sum(r.asserted_at(t) == r.expected for r in results)
+        return sum(r.asserted_at(t, rerank) == r.expected for r in results)
 
     rows = []
     best = max(points, key=correct_at)

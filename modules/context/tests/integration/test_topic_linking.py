@@ -26,6 +26,7 @@ from autune_contracts import (
     Utterance,
 )
 from autune_core import Meeting, Team, session_scope
+from autune_core import Utterance as UtteranceRow
 
 
 @pytest.fixture(autouse=True)
@@ -142,6 +143,86 @@ def test_an_expired_past_meeting_is_not_a_link_candidate(team_id: str) -> None:
     with session_scope() as s:
         links = s.scalars(select(CtxTopicLink).where(CtxTopicLink.meeting_id == current)).all()
         assert all(link.linked_meeting_id != expired for link in links)
+
+
+class _RecordingReranker:
+    """Scores everything 0.9 and remembers what it was asked to compare."""
+
+    model_version = "recording-reranker"
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, list[str]]] = []
+
+    def score(self, query: str, passages: list[str]) -> list[float]:
+        self.calls.append((query, list(passages)))
+        return [0.9] * len(passages)
+
+
+def _persist_utterances(meeting_id: str, lines: list[str]) -> None:
+    """What module A writes before publishing -- ids matching ``_transcript``'s."""
+    with session_scope() as s:
+        s.add_all(
+            UtteranceRow(
+                id=f"utt_{meeting_id}_{i}",
+                meeting_id=meeting_id,
+                speaker_label="화자",
+                start_sec=float(i),
+                end_sec=float(i) + 1,
+                text=line,
+                confidence=0.9,
+            )
+            for i, line in enumerate(lines)
+        )
+
+
+def test_the_reranker_reads_the_past_segments_text_not_its_label(
+    team_id: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Each past meeting is judged on its topic segment closest to the query,
+    read back from ``utterances`` -- not on a one-word label, which scored real
+    matches near zero against a full segment of text."""
+    past = _meeting(team_id, days_ago=10)
+    current = _meeting(team_id, days_ago=0)
+    _persist_utterances(past, _SEARCH + _SORT)
+    service.run_topic_linking(_transcript(past, _SEARCH + _SORT))
+
+    reranker = _RecordingReranker()
+    monkeypatch.setattr(service, "get_reranker", lambda: reranker)
+    service.run_topic_linking(_transcript(current, _SEARCH + _SORT))
+
+    assert len(reranker.calls) == 2  # one per topic segment
+    for query, passages in reranker.calls:
+        # The fake embedder maps identical text to an identical vector, so the
+        # closest past segment is the one with the same lines as the query.
+        assert passages == [query]
+
+    with session_scope() as s:
+        stored = s.scalars(
+            select(CtxEmbedding.utterance_ids).where(CtxEmbedding.meeting_id == past)
+        ).all()
+    assert sorted(len(ids or []) for ids in stored) == [5, 5]
+
+
+def test_the_reranker_falls_back_to_the_label_without_utterances(
+    team_id: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A past row whose utterances are gone (or which predates
+    ``utterance_ids``) is still a candidate, scored against its label."""
+    past = _meeting(team_id, days_ago=10)
+    current = _meeting(team_id, days_ago=0)
+    service.run_topic_linking(_transcript(past, _SEARCH + _SORT))  # no utterance rows
+
+    reranker = _RecordingReranker()
+    monkeypatch.setattr(service, "get_reranker", lambda: reranker)
+    service.run_topic_linking(_transcript(current, _SEARCH + _SORT))
+
+    with session_scope() as s:
+        labels = set(
+            s.scalars(select(CtxEmbedding.ref_label).where(CtxEmbedding.meeting_id == past)).all()
+        )
+    assert reranker.calls
+    for _query, passages in reranker.calls:
+        assert passages and set(passages) <= labels
 
 
 def test_topic_linking_is_idempotent(team_id: str) -> None:

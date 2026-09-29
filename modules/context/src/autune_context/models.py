@@ -75,6 +75,12 @@ class CtxEmbedding(Base, TimestampMixin):
     kind: Mapped[str] = mapped_column(String(16), nullable=False)
     ref_label: Mapped[str] = mapped_column(String(400), nullable=False)
     """The topic label this vector represents, for debugging and for BM25 pairing."""
+    utterance_ids: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True)
+    """The ``utterances.id`` values this topic segment was cut from, in
+    transcript order. The re-ranker reads their text back from ``utterances``
+    rather than from a copy here, so masking and retention stay A's and the
+    meeting cascade's. ``None`` on rows written before this column existed;
+    those re-rank against ``ref_label`` instead."""
     embedding: Mapped[list[float]] = mapped_column(Vector(EMBEDDING_DIM), nullable=False)
     model_version: Mapped[str] = mapped_column(String(200), nullable=False)
 
