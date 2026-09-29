@@ -344,7 +344,7 @@ def test_the_diarization_device_is_resolved_before_the_recording_is_opened(
     assert pipeline["steps"] == ["resolve_device", "decode", "transcribe"]
 
 
-def test_an_unusable_device_costs_no_transcription_and_leaves_the_upload(
+def test_an_unusable_device_costs_no_transcription_and_deletes_the_upload(
     pipeline: dict,
     db_session: Session,
     job: str,
@@ -353,11 +353,17 @@ def test_an_unusable_device_costs_no_transcription_and_leaves_the_upload(
     monkeypatch: pytest.MonkeyPatch,
     published: list[tuple[str, dict]],
 ) -> None:
-    """The failure lands before ``adopt``, so nothing decodes and nothing is deleted.
+    """Nothing decodes, and the recording still goes.
 
-    The upload stays for ``sweep_orphans``, which collects the files of jobs
-    that are ``failed`` — the attempt is over, and this is the one failure that
-    did not have to spend a recording to discover itself.
+    An earlier version of this test asserted the opposite — the check sat in
+    front of ``adopt`` and the upload was left for ``sweep_orphans``. That
+    sweep is for a task that was *lost*; this one failed. A ``failed`` job is
+    never re-run and recovery is a re-upload, which is a new job with a new
+    file, so the one left behind had no reader and no owner — the durable copy
+    invariant 11 exists to prevent (@PARKJAEKYUNG0525 on #394).
+
+    Inside the block, both things hold: the failure costs milliseconds instead
+    of thirteen minutes of Whisper, and ``adopt``'s ``finally`` still deletes.
     """
 
     def unusable() -> str:
@@ -369,7 +375,7 @@ def test_an_unusable_device_costs_no_transcription_and_leaves_the_upload(
         tasks.process_recording(job)
 
     assert pipeline["steps"] == []
-    assert recording.exists()
+    assert not recording.exists()
     assert db_session.get(Meeting, meeting).status == "failed"
     assert db_session.get(TranscriptionJob, job).status == "failed"
     assert published == []

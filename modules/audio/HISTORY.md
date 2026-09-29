@@ -414,10 +414,18 @@ shipped. What it removes is the silence, not the speed.
 
 **And it raised after thirteen minutes of Whisper.** `resolve_device` was
 reached only from `_load`, the last step inside the `adopt` block, so the error
-arrived after transcription and the block deleted the upload on the way out —
-a mistake knowable before the file was opened, charged the whole recording.
-`process` now resolves the device before `adopt`, so it fails in milliseconds
-with the upload still on disk for the sweep. Two integration tests hold the
+arrived after transcription — a mistake knowable before the file was opened,
+charged the whole recording. `process` resolves it as the **first line inside**
+`adopt` now, before `decode`.
+
+Inside, not in front of it, and that distinction took a second round of review.
+The first fix put the call ahead of `adopt`, which left the upload on disk when
+it failed; the reasoning was "the sweep will collect it". It would not have:
+`sweep_orphans` is for a task that was *lost*, and this one failed. A `failed`
+job is never re-run, recovery is a re-upload with a new job and a new file, so
+the one left behind had no reader and no owner — the durable copy invariant 11
+exists to prevent (@PARKJAEKYUNG0525). Inside the block both things hold: the
+failure costs milliseconds, and `adopt`'s `finally` still deletes. Two integration tests hold the
 order: one asserts `resolve_device → decode → transcribe`, the other that an
 unusable device decodes nothing and leaves the file.
 

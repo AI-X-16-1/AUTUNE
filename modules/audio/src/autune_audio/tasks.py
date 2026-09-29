@@ -125,17 +125,24 @@ def process_recording(job_id: str) -> None:
     log.info("audio_process_started", meeting_id=meeting_id, job_id=job_id)
 
     try:
-        # Before `adopt`, not inside it. A device this process cannot use is a
-        # configuration error, and `_load` raising it would raise it after
-        # `transcribe` -- about thirteen minutes of Whisper on the measured
-        # recording -- inside the block that deletes the upload on the way out.
-        # The meeting would be lost to a mistake that was knowable before the
-        # file was opened (@PARKJAEKYUNG0525, @lsh2217, @mminjae97, @kjfcvx12 on
-        # #394). Resolving here costs one `torch.cuda.is_available()` and fails
-        # in milliseconds, with the upload still on disk for the sweep.
-        resolve_device()
-
         with adopt(upload_path(job_id, settings)) as recording:
+            # First line of the block, before `decode`. Reached from `_load`
+            # instead, a device this process cannot use raises after
+            # `transcribe` -- about thirteen minutes of Whisper on the measured
+            # recording -- for a mistake that was knowable before the file was
+            # opened (@PARKJAEKYUNG0525, @lsh2217, @mminjae97, @kjfcvx12 on
+            # #394). One `torch.cuda.is_available()` here fails in
+            # milliseconds instead.
+            #
+            # Inside `adopt`, not in front of it. Outside, a failure left the
+            # upload on disk for the sweep to find -- but the sweep is for a
+            # task that was *lost*, and this one failed; a `failed` job is
+            # never re-run and recovery is a re-upload, which is a new job with
+            # a new file. So the old one had no reader and no owner, which is
+            # the durable copy invariant 11 exists to prevent
+            # (@PARKJAEKYUNG0525). In here, `adopt`'s `finally` deletes it.
+            resolve_device()
+
             waveform = decode(recording.path)
             transcription = transcribe(waveform, glossary=build_prompt())
             turns = get_diarizer().diarize(waveform)
