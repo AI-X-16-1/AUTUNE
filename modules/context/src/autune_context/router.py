@@ -15,8 +15,12 @@ from sqlalchemy.orm import Session
 
 from autune_core import get_session
 
-from . import service
+from . import briefs, service
 from .schemas import (
+    AgendaItemRead,
+    BriefDecisionRead,
+    BriefRead,
+    BriefRecapRead,
     DecisionLineageRead,
     DecisionSummaryRead,
     DecisionVersionRead,
@@ -112,3 +116,40 @@ def list_decision_threads(
         )
         for thread, version in pairs
     ]
+
+
+@router.get("/briefs/{meeting_id}", response_model=BriefRead)
+def get_brief(meeting_id: str, session: SessionDep) -> BriefRead:
+    """A scheduled meeting's pre-meeting brief, once it has been composed.
+
+    404 until ``brief_lead_minutes`` before the start -- the brief is composed
+    by the worker then, not on request.
+    """
+    brief = briefs.get_brief(session, meeting_id)
+    recap = brief.recap
+    return BriefRead(
+        meeting_id=brief.meeting_id,
+        title=brief.title,
+        starts_at=brief.starts_at,
+        recap=(
+            BriefRecapRead(
+                meeting_id=recap.meeting_id,
+                title=recap.title,
+                day=recap.day,
+                topics=list(recap.topics),
+                decisions=[
+                    BriefDecisionRead(statement=d.statement, change_type=d.change_type.value)
+                    for d in recap.decisions
+                ],
+            )
+            if recap is not None
+            else None
+        ),
+        recap_gone=brief.recap_gone,
+        match_reason=brief.match_reason,
+        agenda=[
+            AgendaItemRead(title=item.title, key=item.key, status=item.status, url=item.url)
+            for item in brief.agenda
+        ],
+        sent_at=brief.sent_at,
+    )
