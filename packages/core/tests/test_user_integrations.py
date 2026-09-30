@@ -54,3 +54,20 @@ def test_one_row_per_person_and_service() -> None:
 
 def test_table_is_shared_not_module_owned() -> None:
     assert not TABLE.startswith(("aud_", "ext_", "gap_", "ctx_", "intel_"))
+
+
+def test_one_slack_member_is_one_person() -> None:
+    """#478: a partial unique index over confirmed Slack links, so two people
+    confirming one Slack account at once cannot both hold it."""
+    from autune_core.entities import UserIntegration
+
+    (index,) = [
+        i
+        for i in UserIntegration.__table__.indexes
+        if i.name == "uq_user_integrations_slack_member"
+    ]
+    where = str(index.dialect_options["postgresql"]["where"])
+
+    assert index.unique
+    assert "slack_user_id" in str(list(index.expressions)[0])
+    assert "service = 'slack'" in where
