@@ -597,15 +597,11 @@ the first deploy:
 
 - `DEV_PUBLIC_HOST` is a private address (LAN or VPN), never a public one.
   Compose binds 3000 and 8000 to that address alone.
-- The host firewall admits 3000 and 8000 from the team's subnet only. On
-  Windows, from an administrator PowerShell:
-
-  ```powershell
-  New-NetFirewallRule -DisplayName "Autune dev (3000, 8000)" -Direction Inbound `
-    -Protocol TCP -LocalPort 3000,8000 -Action Allow -RemoteAddress LocalSubnet
-  ```
-
 - No router forwards either port.
+
+These two are the boundary. The Windows firewall is not: Docker Desktop
+installs its own inbound allow rule, and Windows allows a connection that any
+allow rule matches, so adding a narrower rule next to it narrows nothing.
 
 Configuration lives in the repository, not on the host:
 
