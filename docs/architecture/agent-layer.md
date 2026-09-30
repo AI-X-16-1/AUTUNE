@@ -139,8 +139,7 @@ Three things in that table are decisions, not descriptions:
   topic-level aggregates only — a topic's `silent_share`, the gaps nobody
   dismissed — and never participation per role or per person. No speaking-ratio
   tool is registered at all (section 4, `PERSONAL_ONLY_TOOLS`).
-- **Research reads what we hold, not the open web.** Uploaded material, past
-  meetings through D and open questions through B. Open-web search is still out
+- **Research reads what we hold, not the open web.** The team's past meetings through A's tools and open questions through B; past meetings through D once D ships its `tools.py`. Uploaded material would belong here too, but there is no store for it yet. Open-web search is still out
   of scope (section 13.3); a subagent owner who wants it raises it there rather
   than adding a search tool.
 
@@ -1120,7 +1119,7 @@ table is what was measured, not what worked.
   Section 3.
 - **A subagent calling another subagent.** Delegation goes through the main
   agent, one level deep. Section 3.2.
-- **Open-web search in Research, for now.** Research reads uploaded material.
+- **Open-web search in Research, for now.** Research reads what the team already holds; uploaded material has no store yet.
   Section 13.3.
 - **The agent sending anything itself.** Outbound goes out through whoever owns
   the content — a module, or the subagent that wrote it — and always through
@@ -1192,7 +1191,7 @@ to, and under what agreement.** Two parts, and each carries a condition:
 - **Open-web search.** This one stays out of scope for the release. A search
   query *is* the payload — there is no feature-scoped subset of it to send the
   way there is for a prompt — and a general search engine is not a processor we
-  have terms with. So **Research reads uploaded material only**, which is enough
+  have terms with. So **Research reads only what the team already holds** — its own meetings today, uploaded material once there is a store for it — which is enough
   for the scenario in section 10 and asks nothing of anyone.
 
 One thing is worth restating rather than rediscovering: `privacy.md` section 2's
