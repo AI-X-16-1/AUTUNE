@@ -1,47 +1,14 @@
 # Local development services. See docs/engineering/environments.md.
-# Two services, both needed by everyone. `docker compose up` starts only these.
+# Two services, both needed by everyone: this file is what scripts/up.sh starts.
 #
-# The `app` profile adds the application itself -- api, worker, web and a
-# one-shot `migrate` -- for DEV-SERVER1 (#517), where .github/workflows/dev.yml
-# runs `--profile app`. On a laptop, scripts/up.sh runs the three processes
-# outside Docker instead.
+# On DEV-SERVER1 this is also the database stack, a compose project of its
+# own. The application is a second project, infra/docker-compose.app.yml,
+# joined to this one's network, so redeploying or stopping the application
+# never restarts the database (#517).
 name: autune
-# Containers are named <project>-<service> (autune-postgres, autune-api, ...)
+# Containers are named <project>-<service> (autune-postgres, autune-redis)
 # rather than compose's <project>-<service>-1. The project name stays in front,
-# so `-p <other>` still runs a second copy beside this one. `migrate` is left
-# unnamed: it only ever runs as a one-off `compose run`.
-
-# What the api, worker and migrate containers share. `.env.example` is the base,
-# so a container sees what `cp .env.example .env` gives a laptop; `environment`
-# then overrides it, the way scripts/up.sh overrides a sourced `.env`.
-x-python: &python
-  build: {context: .., dockerfile: infra/docker/python.Dockerfile}
-  image: autune-python:dev
-  profiles: ["app"]
-  env_file: [../.env.example]
-  environment: &python-env
-    # Team-only http host with dummy meetings only (#517). This mounts
-    # /api/audio/dev/token, which issues a token for any email.
-    AUTUNE_ENV: local
-    # A password holding URL-reserved characters (@ : / ?) would break this URL.
-    AUTUNE_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-autune}:${POSTGRES_PASSWORD:-autune}@postgres:5432/${POSTGRES_DB:-autune}
-    AUTUNE_REDIS_URL: redis://redis:6379/0
-    AUTUNE_WEB_BASE_URL: http://${DEV_PUBLIC_HOST:-localhost}
-    AUTUNE_AUDIO_HF_TOKEN: ${AUTUNE_AUDIO_HF_TOKEN:-}
-    AUTUNE_AGENT_LLM_API_KEY: ${AUTUNE_AGENT_LLM_API_KEY:-}
-    # The implementations scripts/up.sh runs without --real-models, for the
-    # same reasons it gives: B's checkpoints are unpublished (#112) and both NLI
-    # checkpoints are a private repo (#172).
-    AUTUNE_EXTRACTION_CLASSIFIER_IMPL: fake
-    AUTUNE_EXTRACTION_NLI_IMPL: fake
-    AUTUNE_CONTEXT_NLI_IMPL: fake
-    AUTUNE_CONTEXT_EMBEDDER_IMPL: kure_v1_local
-    AUTUNE_CONTEXT_RERANKER_IMPL: bge_reranker_v2_m3_ko_local
-    AUTUNE_GAP_NER_IMPL: spacy
-    AUTUNE_INTELLIGENCE_GAP_CLASSIFIER_IMPL: local
-  depends_on:
-    postgres: {condition: service_healthy}
-    redis: {condition: service_healthy}
+# so `-p <other>` still runs a second copy beside this one.
 
 services:
   postgres:
@@ -49,6 +16,8 @@ services:
     # pgvector, not plain postgres: embeddings live here rather than in a
     # separate vector database. See docs/decisions/0004-pgvector-over-chroma.md
     image: pgvector/pgvector:pg16
+    # Back after a reboot or a Docker restart, unless someone stopped it.
+    restart: unless-stopped
     environment:
       # Deployed hosts pass their own credentials; local runs keep the
       # defaults that AUTUNE_DATABASE_URL in .env.example expects.
@@ -68,6 +37,7 @@ services:
   redis:
     container_name: ${COMPOSE_PROJECT_NAME}-redis
     image: redis:7-alpine
+    restart: unless-stopped
     # Loopback only, as above. Redis has no password and is the Celery broker.
     ports: ["127.0.0.1:6379:6379"]
     healthcheck:
@@ -76,79 +46,5 @@ services:
       timeout: 3s
       retries: 10
 
-  migrate:
-    <<: *python
-    # Run on its own before `up` (dev.yml): `up --wait` counts a container that
-    # exits, even with 0, as a failure.
-    profiles: ["migrate"]
-    # `heads`, plural: each module owns an independent branch (invariant 7).
-    command: ["alembic", "-c", "infra/alembic.ini", "upgrade", "heads"]
-
-  api:
-    container_name: ${COMPOSE_PROJECT_NAME}-api
-    <<: *python
-    command: ["uvicorn", "autune_api.main:app", "--host", "0.0.0.0", "--port", "8000"]
-    # No published port: the browser reaches it through nginx.
-    volumes: ["audio-tmp:/tmp/autune-audio"]
-    # Starlette writes each multipart upload to the OS temp directory before
-    # module A's code runs (docs/engineering/environments.md); keep that copy
-    # in memory too.
-    tmpfs: ["/tmp"]
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
-      interval: 10s
-      timeout: 5s
-      retries: 6
-      # Importing every module (torch among them) takes a while on a CPU.
-      start_period: 120s
-
-  worker:
-    container_name: ${COMPOSE_PROJECT_NAME}-worker
-    <<: *python
-    # --pool=solo: E's classifier aborts under prefork or threads (#329), as in
-    # scripts/up.sh.
-    command: ["celery", "-A", "autune_worker.celery_app", "worker",
-              "-Q", "default,cpu_heavy,gpu", "-l", "info", "--pool=solo"]
-    volumes:
-      # The API writes an upload here and the worker transcribes it, so the
-      # two share it. tmpfs: raw audio never lands on a disk (invariant 11).
-      - audio-tmp:/tmp/autune-audio
-      # Whisper, pyannote, KURE-v1 and the re-ranker download on first use
-      # (several GB); a named volume keeps them across redeploys.
-      - models:/models
-
-  web:
-    container_name: ${COMPOSE_PROJECT_NAME}-web
-    build:
-      context: ..
-      dockerfile: infra/docker/web.Dockerfile
-      args:
-        # Empty: the browser calls the page's own origin, which nginx splits
-        # between web and api.
-        NEXT_PUBLIC_API_URL: ""
-        API_PROXY_TARGET: http://api:8000
-    image: autune-web:dev
-    profiles: ["app"]
-    depends_on:
-      api: {condition: service_healthy}
-
-  nginx:
-    container_name: ${COMPOSE_PROJECT_NAME}-nginx
-    build: {context: .., dockerfile: infra/docker/nginx.Dockerfile}
-    image: autune-nginx:dev
-    profiles: ["app"]
-    # The only published port of the app. Bound to the address teammates use,
-    # loopback when unset. /api/*/dev/ takes the team's password (default.conf).
-    ports: ["${DEV_PUBLIC_HOST:-127.0.0.1}:80:80"]
-    environment:
-      DEV_BASIC_AUTH_PASSWORD: ${DEV_BASIC_AUTH_PASSWORD:-}
-    depends_on:
-      api: {condition: service_healthy}
-      web: {condition: service_started}
-
 volumes:
   pgdata:
-  models:
-  audio-tmp:
-    # Shared between api and worker, and in memory only.
-    driver_opts: {type: tmpfs, device: tmpfs, o: "uid=1000,gid=1000,mode=0700"}

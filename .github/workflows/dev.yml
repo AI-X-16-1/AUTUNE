@@ -49,22 +49,25 @@ jobs:
           if not defined DEV_PUBLIC_HOST (echo DEV_PUBLIC_HOST repository variable is not set & exit /b 1)
           docker version || exit /b 1
 
-      # Checkout alone starts nothing: the services only run once compose
-      # brings them up on the runner. --wait fails the job when a container
-      # does not reach healthy, so a green run means the services are up.
+      # The database is its own compose project, so the steps below never
+      # restart it. --remove-orphans clears containers of this project that
+      # the file no longer defines: the application ran here before it moved
+      # to infra/docker-compose.app.yml.
       - name: Start database and broker
-        run: docker compose -f infra/docker-compose.yml up -d --wait
+        run: docker compose -f infra/docker-compose.yml up -d --wait --remove-orphans
 
       - name: Migrate
-        run: docker compose -f infra/docker-compose.yml run --rm --build migrate
+        run: docker compose -f infra/docker-compose.app.yml run --rm --build migrate
 
       - name: Start application
-        run: docker compose -f infra/docker-compose.yml --profile app up -d --build --wait --wait-timeout 600
+        run: docker compose -f infra/docker-compose.app.yml up -d --build --wait --wait-timeout 600
 
       - name: Show services
         if: always()
-        run: docker compose -f infra/docker-compose.yml --profile app ps -a
+        run: |
+          docker compose -f infra/docker-compose.yml ps -a
+          docker compose -f infra/docker-compose.app.yml ps -a
 
       - name: Show application logs on failure
         if: failure()
-        run: docker compose -f infra/docker-compose.yml --profile app logs --tail 100 api worker web nginx
+        run: docker compose -f infra/docker-compose.app.yml logs --tail 100 api worker web nginx

@@ -556,7 +556,7 @@ commands at the top of this file), so they share `AUTUNE_AUDIO_TEMP_DIR` by
 construction: `AudioSettings` reads `.env` relative to the working directory,
 and both are started from the repository root. On a laptop
 `infra/docker-compose.yml` runs only PostgreSQL and Redis, and no volume is
-involved. On the dev server its `app` profile runs both processes in
+involved. On the dev server `infra/docker-compose.app.yml` runs both processes in
 containers, sharing the tmpfs volume `audio-tmp` (see "The dev server" below).
 
 Containerising either process means both must see one **local** directory at
@@ -578,16 +578,24 @@ folder" rule applies to `TMPDIR` on a developer machine.
 ## The dev server
 
 A push to `dev` runs `.github/workflows/dev.yml` on the self-hosted Windows
-runner DEV-SERVER1. It starts PostgreSQL and Redis, runs `alembic upgrade
-heads`, then builds and starts the `app` profile of `infra/docker-compose.yml`:
+runner DEV-SERVER1. It runs two compose projects:
+
+- `autune`, from `infra/docker-compose.yml`: PostgreSQL and Redis, the same
+  file a laptop uses. The deploy only starts it if it is not running; nothing
+  in the application's deploy restarts it.
+- `autune-app`, from `infra/docker-compose.app.yml`: `alembic upgrade heads`
+  as a one-off, then the containers below, on the `autune` project's network.
+
+Every long-running container has `restart: unless-stopped`, so all of them come
+back after a reboot, provided Docker Desktop itself starts at sign-in.
 
 | Container | Published port | What it runs |
 | --- | --- | --- |
-| `nginx` | 80, on `DEV_PUBLIC_HOST` only | one origin: `/api/` (and the live WebSocket) to `api`, everything else to `web` |
-| `api` | none | `uvicorn autune_api.main:app` |
-| `worker` | none | Celery, queues `default,cpu_heavy,gpu`, `--pool=solo` |
-| `web` | none | `next start`, built with an empty `NEXT_PUBLIC_API_URL`, so the browser calls its own origin |
-| `postgres`, `redis` | 5432, 6379, loopback only | as locally |
+| `autune-app-nginx` | 80, on `DEV_PUBLIC_HOST` only | one origin: `/api/` (and the live WebSocket) to `api`, everything else to `web` |
+| `autune-app-api` | none | `uvicorn autune_api.main:app` |
+| `autune-app-worker` | none | Celery, queues `default,cpu_heavy,gpu`, `--pool=solo` |
+| `autune-app-web` | none | `next start`, built with an empty `NEXT_PUBLIC_API_URL`, so the browser calls its own origin |
+| `autune-postgres`, `autune-redis` | 5432, 6379, loopback only | as locally |
 
 It runs with `AUTUNE_ENV=local` and the implementations `scripts/up.sh` picks
 without `--real-models` (#517), so it holds **dummy meetings only**. Every
