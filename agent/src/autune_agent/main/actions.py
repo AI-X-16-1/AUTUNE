@@ -59,9 +59,18 @@ log = logging.getLogger(__name__)
 NOT_DECLARED = "not a declared action"
 KEPT_FOR_APPROVAL = "its module declares it L2; it waits for approval"
 FAILED = "the action failed"
+ARGUMENT_REFUSED = "arguments hold more than ids and short values"
 OUT_OF_SCOPE = ("team_id is outside this run's team", "meeting not found")
 OWN_REASONS = frozenset(
-    {NOT_DECLARED, KEPT_FOR_APPROVAL, FAILED, NO_MEETING, UNEXPECTED_ARGUMENT, *OUT_OF_SCOPE}
+    {
+        NOT_DECLARED,
+        KEPT_FOR_APPROVAL,
+        FAILED,
+        ARGUMENT_REFUSED,
+        NO_MEETING,
+        UNEXPECTED_ARGUMENT,
+        *OUT_OF_SCOPE,
+    }
 )
 """Reasons this layer wrote, and so knows hold no meeting or model text. A
 ``MISSING_ARGUMENT`` reason is also ours: it names parameters from the code."""
