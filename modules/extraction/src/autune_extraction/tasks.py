@@ -236,6 +236,42 @@ def reextract_consent_changes() -> list[str]:
     return done
 
 
+@shared_task(name="autune.extraction.periodic.fill_identified_assignees")
+@periodic(timedelta(minutes=10))
+def fill_identified_assignees() -> list[str]:
+    """Items whose speaker was identified after extraction get that person as
+    their assignee (#360; ``service.fill_identified_assignees``). Returns the
+    items' ids.
+
+    Then, after the commit, an item already confirmed goes through
+    ``sync_after_confirmation`` -- the same call the router makes after a board
+    edit -- so its Notion page and Jira issue name the person, and a due date
+    goes on their own calendar.
+
+    ``ExtractionResult`` is **not** published again, the way a board edit does
+    not publish it: D and E read the assignee on the meeting's next run. A
+    republish here would reopen E's aggregation for just these meetings, days
+    later, and for no other kind of correction (lsh2217's review of #536).
+
+    Every ten minutes because identifying a speaker is a person on a screen,
+    and a run that finds nothing is one query. Safe to overlap: the update is
+    conditional on the assignee and label as read, so a second run changes
+    nothing the first did.
+    """
+    with session_scope() as session:
+        filled = service.fill_identified_assignees(session)
+        confirmed = [
+            item.id for item in filled if item.status != ActionStatus.NEEDS_CONFIRMATION.value
+        ]
+        filled_ids = [item.id for item in filled]
+
+    for action_item_id in confirmed:
+        sync_after_confirmation(action_item_id)
+    # Ids and counts only: the assignee is a person.
+    log.info("extraction_assignees_filled", items=len(filled_ids), synced=len(confirmed))
+    return filled_ids
+
+
 @shared_task(name="autune.extraction.sync_action_item", acks_late=True)
 def sync_action_item(action_item_id: str) -> None:
     """Step 7 for one item past confirmation: create its Notion page the
