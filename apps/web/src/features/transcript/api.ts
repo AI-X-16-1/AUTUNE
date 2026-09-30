@@ -1,4 +1,9 @@
-/** Calls to /api/audio. This feature calls no other module's endpoints. */
+/**
+ * Calls to /api/audio. This feature calls no other module's endpoints, with one
+ * exception: /api/agent/research, where the research card on the meeting screen
+ * reads the agent layer's documents for this meeting (Research subagent spec,
+ * section 4 ④).
+ */
 import { api, ApiError, authHeaders } from "@/shared/api/client";
 
 export { api };

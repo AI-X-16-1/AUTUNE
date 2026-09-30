@@ -107,7 +107,12 @@ export async function request<T>(path: string, init: RequestInit = {}): Promise<
   return (await response.json()) as T;
 }
 
-/** Each module is served under /api/<module>; features call their own only. */
+/**
+ * Each module is served under /api/<module>; features call their own only. The
+ * one exception: the transcript feature calls /api/agent/research, because the
+ * research card on the meeting screen reads the agent layer's documents for
+ * that meeting (Research subagent spec, section 4 ④).
+ */
 export const api = {
   audio: <T>(path: string, init?: RequestInit) => request<T>(`/api/audio${path}`, init),
   extraction: <T>(path: string, init?: RequestInit) => request<T>(`/api/extraction${path}`, init),

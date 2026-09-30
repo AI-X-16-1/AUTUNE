@@ -13,11 +13,19 @@ import type { ResearchDocument } from "../types";
  * as preformatted text rather than rendered Markdown: no Markdown dependency in
  * the app yet, and the headings read fine as they are.
  */
-export function ResearchCard({ meetingId, teamId }: { meetingId: string; teamId: string }) {
+export function ResearchCard({
+  meetingId,
+  teamId,
+}: {
+  meetingId: string;
+  teamId: string;
+}) {
   const [docs, setDocs] = useState<ResearchDocument[]>([]);
 
   useEffect(() => {
     let current = true;
+    // Never show another meeting's documents while this one loads or fails.
+    setDocs([]);
     getResearch(teamId, meetingId)
       .then((list) => {
         if (current) setDocs(list.filter((d) => d.status === "approved"));
