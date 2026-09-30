@@ -190,3 +190,56 @@ def test_a_privacy_violation_fails_the_task_after_the_others_ran(
     assert seen == [INTELLIGENCE_COMPLETED]  # report still ran
     assert "research" in str(caught.value)
     assert "010" not in str(caught.value)
+
+
+def test_the_same_task_is_skipped_and_a_new_task_runs_again(
+    session: Session, team: dict[str, str]
+) -> None:
+    seen: list[str] = []
+    subagents = {"report": _woken("report", (INTELLIGENCE_COMPLETED,), seen)}
+
+    on_event(
+        INTELLIGENCE_COMPLETED,
+        team["meeting"],
+        session=session,
+        subagents=subagents,
+        tools={},
+        task_id="t1",
+    )
+    on_event(
+        INTELLIGENCE_COMPLETED,
+        team["meeting"],
+        session=session,
+        subagents=subagents,
+        tools={},
+        task_id="t1",
+    )
+    on_event(
+        INTELLIGENCE_COMPLETED,
+        team["meeting"],
+        session=session,
+        subagents=subagents,
+        tools={},
+        task_id="t2",
+    )
+
+    assert len(seen) == 2
+    tasks = sorted(r.trigger["task_id"] for r in session.scalars(select(AgentRun)))
+    assert tasks == ["t1", "t2"]
+
+
+def test_a_failed_run_is_retried_by_its_redelivery(session: Session, team: dict[str, str]) -> None:
+    seen: list[str] = []
+    subagents = {"research": _woken("research", (INTELLIGENCE_COMPLETED,), seen, fail=True)}
+
+    for _ in range(2):
+        on_event(
+            INTELLIGENCE_COMPLETED,
+            team["meeting"],
+            session=session,
+            subagents=subagents,
+            tools={},
+            task_id="t1",
+        )
+
+    assert len(seen) == 2
