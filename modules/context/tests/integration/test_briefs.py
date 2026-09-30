@@ -23,9 +23,10 @@ from autune_context.models import (
     CtxDecisionVersion,
     CtxEmbedding,
     CtxMeetingStatus,
+    CtxTeamAgenda,
 )
 from autune_context.pipeline import get_embedder, reset_cache
-from autune_contracts import ChangeType
+from autune_contracts import AGENDA_STALE_AFTER, AgendaIssue, ChangeType, TeamAgenda
 from autune_core import (
     Meeting,
     Participant,
@@ -450,3 +451,110 @@ def test_deleting_the_scheduled_meeting_deletes_its_brief(team_id: str) -> None:
 
     with session_scope() as s:
         assert s.get(CtxBrief, meeting) is None
+
+
+# --------------------------------------------------------------------------- #
+# The agenda, from B's TeamAgenda (#436)
+# --------------------------------------------------------------------------- #
+
+
+def _store(team_id: str, *titles: str, as_of: datetime = NOW) -> bool:
+    agenda = TeamAgenda(
+        team_id=team_id,
+        as_of=as_of,
+        issues=[
+            AgendaIssue(
+                title=title,
+                key=f"AUT-{i}",
+                status="진행 중",
+                url=f"https://example.atlassian.net/browse/AUT-{i}",
+            )
+            for i, title in enumerate(titles, start=1)
+        ],
+    )
+    with session_scope() as s:
+        return briefs.store_team_agenda(s, agenda)
+
+
+def _agenda_titles(team_id: str, *, now: datetime = NOW) -> list[str]:
+    meeting_id = _scheduled(team_id)
+    with session_scope() as s:
+        meeting = s.get(Meeting, meeting_id)
+        assert meeting is not None
+        return [item.title for item in briefs.agenda_for(s, meeting, now=now)]
+
+
+def test_the_brief_carries_the_teams_open_issues_in_bs_order(team_id: str) -> None:
+    _store(team_id, "결제 모듈 API 명세 정리", "온보딩 화면 시안 공유")
+    meeting_id = _scheduled(team_id)
+
+    brief = _compose(meeting_id)
+
+    assert brief is not None
+    assert [item.title for item in brief.agenda] == [
+        "결제 모듈 API 명세 정리",
+        "온보딩 화면 시안 공유",
+    ]
+    assert brief.agenda[0].key == "AUT-1"
+    assert brief.agenda[0].url == "https://example.atlassian.net/browse/AUT-1"
+
+
+def test_a_snapshot_delivered_late_does_not_replace_a_newer_one(team_id: str) -> None:
+    assert _store(team_id, "새 목록", as_of=NOW)
+    assert not _store(team_id, "옛 목록", as_of=NOW - timedelta(minutes=5))
+
+    assert _agenda_titles(team_id) == ["새 목록"]
+
+
+def test_an_empty_snapshot_clears_the_agenda(team_id: str) -> None:
+    """B's way of saying the team's last issue closed."""
+    _store(team_id, "끝난 일", as_of=NOW - timedelta(minutes=5))
+    _store(team_id, as_of=NOW)
+
+    assert _agenda_titles(team_id) == []
+
+
+def test_a_snapshot_b_stopped_refreshing_is_not_shown(team_id: str) -> None:
+    max_age = AGENDA_STALE_AFTER
+    _store(team_id, "오래된 이슈", as_of=NOW - max_age - timedelta(minutes=1))
+
+    assert _agenda_titles(team_id) == []
+
+
+def test_stale_snapshots_are_deleted_and_fresh_ones_kept(team_id: str) -> None:
+    max_age = AGENDA_STALE_AFTER
+    _store(team_id, "오래된 이슈", as_of=NOW - max_age - timedelta(minutes=1))
+    with session_scope() as s:
+        other = Team(name="agenda-fresh")
+        s.add(other)
+        s.flush()
+        fresh_team = other.id
+    _store(fresh_team, "지금 이슈", as_of=NOW)
+
+    with session_scope() as s:
+        briefs.purge_stale_agendas(s, NOW)
+    with session_scope() as s:
+        assert s.get(CtxTeamAgenda, team_id) is None
+        assert s.get(CtxTeamAgenda, fresh_team) is not None
+        s.execute(delete(Team).where(Team.id == fresh_team))
+
+
+def test_an_agenda_for_a_team_that_does_not_exist_is_dropped(db_engine: object) -> None:
+    assert not _store("team_gone", "아무 이슈")
+
+    with session_scope() as s:
+        assert s.get(CtxTeamAgenda, "team_gone") is None
+
+
+def test_deleting_the_team_deletes_its_agenda(db_engine: object) -> None:
+    with session_scope() as s:
+        row = Team(name="agenda-cascade")
+        s.add(row)
+        s.flush()
+        doomed = row.id
+    _store(doomed, "팀과 함께 사라질 이슈")
+
+    with session_scope() as s:
+        s.execute(delete(Team).where(Team.id == doomed))
+    with session_scope() as s:
+        assert s.get(CtxTeamAgenda, doomed) is None

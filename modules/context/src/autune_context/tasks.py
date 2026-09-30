@@ -18,7 +18,8 @@ A rerun of either half after that (a module A reprocess) goes out through
 
 Separately, on a clock: ``periodic.send_due_briefs`` finds scheduled meetings
 about to start and ``send_brief`` posts each one's pre-meeting brief
-(``autune_context.briefs``).
+(``autune_context.briefs``). Its agenda comes from ``autune.extraction.agenda_changed``
+-- B's ``TeamAgenda``, kept by ``on_extraction_agenda_changed`` (#436).
 
 See docs/architecture/async-pipeline.md.
 """
@@ -36,7 +37,12 @@ from autune_context import briefs, service
 from autune_context.config import get_settings
 from autune_context.models import CtxMeetingStatus
 from autune_context.notify import build_pre_meeting_brief
-from autune_contracts import ExtractionResult, TranscriptReady, validate_major_version
+from autune_contracts import (
+    ExtractionResult,
+    TeamAgenda,
+    TranscriptReady,
+    validate_major_version,
+)
 from autune_core import (
     IntegrationConfig,
     Meeting,
@@ -126,6 +132,21 @@ def on_extraction_completed(payload: dict) -> None:
         republish.delay(result.meeting_id)
         return
     publish_if_ready.delay(result.meeting_id, force=outcome is service.LineageOutcome.LATE)
+
+
+@shared_task(name="autune.context.on_extraction_agenda_changed", acks_late=True)
+def on_extraction_agenda_changed(payload: dict) -> None:
+    """Keep a team's open Jira issues for its next pre-meeting brief (#436).
+
+    B republishes every team's ``TeamAgenda`` every five minutes, so a lost or
+    refused one is replaced shortly; a late one older than the stored snapshot
+    is ignored (``briefs.store_team_agenda``). Nothing is sent from here -- the
+    brief reads the stored snapshot when it is composed.
+    """
+    agenda = TeamAgenda.model_validate(payload)
+    validate_major_version(agenda)
+    with session_scope() as session:
+        briefs.store_team_agenda(session, agenda)
 
 
 @shared_task(name="autune.context.publish_if_ready", acks_late=True)
@@ -300,9 +321,15 @@ def send_due_briefs() -> None:
     one meeting's failure does not hold up another's, and a meeting enqueued
     twice (this run overlapping the last, or ``send_brief`` still queued from
     it) is claimed once.
+
+    Also deletes team agendas B stopped refreshing (``briefs.purge_stale_agendas``):
+    a snapshot is text copied from B, and this is the clock that bounds how long
+    a copy outlives its source.
     """
+    now = datetime.now(tz=UTC)
     with session_scope() as session:
-        due = briefs.due_meeting_starts(session, datetime.now(tz=UTC))
+        briefs.purge_stale_agendas(session, now)
+        due = briefs.due_meeting_starts(session, now)
     for meeting_id, starts_at in due:
         # A send still queued at the start is noise -- and on a stalled
         # cpu_heavy worker, one more per tick. Celery drops it unrun instead.
