@@ -581,42 +581,45 @@ A push to `dev` runs `.github/workflows/dev.yml` on the self-hosted Windows
 runner DEV-SERVER1. It starts PostgreSQL and Redis, runs `alembic upgrade
 heads`, then builds and starts the `app` profile of `infra/docker-compose.yml`:
 
-| Container | Port | What it runs |
+| Container | Published port | What it runs |
 | --- | --- | --- |
-| `api` | 8000, on `DEV_PUBLIC_HOST` only | `uvicorn autune_api.main:app` |
+| `nginx` | 80, on `DEV_PUBLIC_HOST` only | one origin: `/api/` (and the live WebSocket) to `api`, everything else to `web` |
+| `api` | none | `uvicorn autune_api.main:app` |
 | `worker` | none | Celery, queues `default,cpu_heavy,gpu`, `--pool=solo` |
-| `web` | 3000, on `DEV_PUBLIC_HOST` only | `next start`, built with `NEXT_PUBLIC_API_URL=http://<DEV_PUBLIC_HOST>:8000` |
+| `web` | none | `next start`, built with an empty `NEXT_PUBLIC_API_URL`, so the browser calls its own origin |
 | `postgres`, `redis` | 5432, 6379, loopback only | as locally |
 
 It runs with `AUTUNE_ENV=local` and the implementations `scripts/up.sh` picks
-without `--real-models` (#517). That makes it a **team-only host for dummy
-meetings**: `/api/audio/dev/token` is mounted and issues a token for any email,
-so anyone who reaches port 3000 or 8000 can read any user's meetings and act
-as them through the team's integrations. Put no real meeting on it, and before
-the first deploy:
+without `--real-models` (#517), so it holds **dummy meetings only**. Every
+`/dev` router is mounted, and `/api/audio/dev/token` issues a token for any
+email. nginx therefore puts `/api/*/dev/` behind a password (user `autune`):
+port 80 may be reachable from beyond the team network, through the domain in
+front of this host. Before the first deploy:
 
-- `DEV_PUBLIC_HOST` is a private address (LAN or VPN), never a public one.
-  Compose binds 3000 and 8000 to that address alone.
-- No router forwards either port.
-
-These two are the boundary. The Windows firewall is not: Docker Desktop
-installs its own inbound allow rule, and Windows allows a connection that any
-allow rule matches, so adding a narrower rule next to it narrows nothing.
+- `DEV_PUBLIC_HOST` is a private IP address (LAN or VPN), never a public one
+  and never a hostname: compose binds port 80 to it.
+- No router forwards 3000 or 8000, and nothing but nginx publishes a port.
 
 Configuration lives in the repository, not on the host:
 
 | Name | Kind | Required |
 | --- | --- | --- |
 | `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` | secret | yes; the deploy stops without them |
-| `DEV_PUBLIC_HOST` | variable | yes; the address teammates type into a browser, inlined into the web build |
+| `DEV_PUBLIC_HOST` | variable | yes; the IP port 80 is bound to |
+| `DEV_BASIC_AUTH_PASSWORD` | secret | yes; the password for `/api/*/dev/` |
 | `AUTUNE_AUDIO_HF_TOKEN` | secret | yes; pyannote is gated, so every upload fails after transcription without it ("Pyannote and its three gated repositories" above) |
 | `AUTUNE_AGENT_LLM_API_KEY` | secret | no; without it the agent chat refuses |
 
-Sign in the way section "A token for the browser" describes, against
-`http://<DEV_PUBLIC_HOST>:8000`, and set the token with `localStorage` in the
-browser console. The first upload downloads Whisper and the first context task
-KURE-v1 and its re-ranker (several GB) into the `models` volume, which survives
-redeploys.
+To sign in, get a token with the password, then set it in the browser console
+on the site (`localStorage.setItem("autune.token", "<token>")`):
+
+```bash
+curl -s -u autune:<password> -X POST http://<DEV_PUBLIC_HOST>/api/audio/dev/token \
+  -H 'content-type: application/json' -d '{"email": "you@example.com"}'
+```
+
+The first upload downloads Whisper and the first context task KURE-v1 and its
+re-ranker (several GB) into the `models` volume, which survives redeploys.
 
 ## Environments
 

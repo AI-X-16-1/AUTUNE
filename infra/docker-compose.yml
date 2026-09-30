@@ -22,8 +22,7 @@ x-python: &python
     # A password holding URL-reserved characters (@ : / ?) would break this URL.
     AUTUNE_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-autune}:${POSTGRES_PASSWORD:-autune}@postgres:5432/${POSTGRES_DB:-autune}
     AUTUNE_REDIS_URL: redis://redis:6379/0
-    AUTUNE_WEB_BASE_URL: http://${DEV_PUBLIC_HOST:-localhost}:3000
-    AUTUNE_CORS_ALLOWED_ORIGINS: http://${DEV_PUBLIC_HOST:-localhost}:3000
+    AUTUNE_WEB_BASE_URL: http://${DEV_PUBLIC_HOST:-localhost}
     AUTUNE_AUDIO_HF_TOKEN: ${AUTUNE_AUDIO_HF_TOKEN:-}
     AUTUNE_AGENT_LLM_API_KEY: ${AUTUNE_AGENT_LLM_API_KEY:-}
     # The implementations scripts/up.sh runs without --real-models, for the
@@ -82,12 +81,7 @@ services:
   api:
     <<: *python
     command: ["uvicorn", "autune_api.main:app", "--host", "0.0.0.0", "--port", "8000"]
-    # The browser uploads and opens the live socket here directly, so it
-    # cannot be loopback like Postgres and Redis. Bound to the one address
-    # teammates use, not every interface: /api/audio/dev/token is mounted
-    # (AUTUNE_ENV=local). The host firewall must still limit it to the team
-    # network (docs/engineering/environments.md). Loopback when unset.
-    ports: ["${DEV_PUBLIC_HOST:-127.0.0.1}:8000:8000"]
+    # No published port: the browser reaches it through nginx.
     volumes: ["audio-tmp:/tmp/autune-audio"]
     # Starlette writes each multipart upload to the OS temp directory before
     # module A's code runs (docs/engineering/environments.md); keep that copy
@@ -120,14 +114,27 @@ services:
       context: ..
       dockerfile: infra/docker/web.Dockerfile
       args:
-        NEXT_PUBLIC_API_URL: http://${DEV_PUBLIC_HOST:-localhost}:8000
+        # Empty: the browser calls the page's own origin, which nginx splits
+        # between web and api.
+        NEXT_PUBLIC_API_URL: ""
         API_PROXY_TARGET: http://api:8000
     image: autune-web:dev
     profiles: ["app"]
-    # As api above.
-    ports: ["${DEV_PUBLIC_HOST:-127.0.0.1}:3000:3000"]
     depends_on:
       api: {condition: service_healthy}
+
+  nginx:
+    build: {context: .., dockerfile: infra/docker/nginx.Dockerfile}
+    image: autune-nginx:dev
+    profiles: ["app"]
+    # The only published port of the app. Bound to the address teammates use,
+    # loopback when unset. /api/*/dev/ takes the team's password (default.conf).
+    ports: ["${DEV_PUBLIC_HOST:-127.0.0.1}:80:80"]
+    environment:
+      DEV_BASIC_AUTH_PASSWORD: ${DEV_BASIC_AUTH_PASSWORD:-}
+    depends_on:
+      api: {condition: service_healthy}
+      web: {condition: service_started}
 
 volumes:
   pgdata:

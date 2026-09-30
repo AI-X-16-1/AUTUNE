@@ -25,6 +25,8 @@ jobs:
       DEV_PUBLIC_HOST: ${{ vars.DEV_PUBLIC_HOST }}
       # Pyannote is gated: without this every upload fails after Whisper.
       AUTUNE_AUDIO_HF_TOKEN: ${{ secrets.AUTUNE_AUDIO_HF_TOKEN }}
+      # The team's password for /api/*/dev/ behind nginx (user `autune`).
+      DEV_BASIC_AUTH_PASSWORD: ${{ secrets.DEV_BASIC_AUTH_PASSWORD }}
       # Optional: without it /api/agent/chat refuses and the rest works.
       AUTUNE_AGENT_LLM_API_KEY: ${{ secrets.AUTUNE_AGENT_LLM_API_KEY }}
     steps:
@@ -43,6 +45,7 @@ jobs:
           if not defined POSTGRES_PASSWORD (echo POSTGRES_PASSWORD secret is not set & exit /b 1)
           if not defined POSTGRES_DB (echo POSTGRES_DB secret is not set & exit /b 1)
           if not defined AUTUNE_AUDIO_HF_TOKEN (echo AUTUNE_AUDIO_HF_TOKEN secret is not set & exit /b 1)
+          if not defined DEV_BASIC_AUTH_PASSWORD (echo DEV_BASIC_AUTH_PASSWORD secret is not set & exit /b 1)
           if not defined DEV_PUBLIC_HOST (echo DEV_PUBLIC_HOST repository variable is not set & exit /b 1)
           docker version || exit /b 1
 
@@ -64,4 +67,4 @@ jobs:
 
       - name: Show application logs on failure
         if: failure()
-        run: docker compose -f infra/docker-compose.yml --profile app logs --tail 100 api worker web
+        run: docker compose -f infra/docker-compose.yml --profile app logs --tail 100 api worker web nginx
