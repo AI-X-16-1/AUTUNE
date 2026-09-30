@@ -6,6 +6,10 @@
 # runs `--profile app`. On a laptop, scripts/up.sh runs the three processes
 # outside Docker instead.
 name: autune
+# Containers are named <project>-<service> (autune-postgres, autune-api, ...)
+# rather than compose's <project>-<service>-1. The project name stays in front,
+# so `-p <other>` still runs a second copy beside this one. `migrate` is left
+# unnamed: it only ever runs as a one-off `compose run`.
 
 # What the api, worker and migrate containers share. `.env.example` is the base,
 # so a container sees what `cp .env.example .env` gives a laptop; `environment`
@@ -41,6 +45,7 @@ x-python: &python
 
 services:
   postgres:
+    container_name: ${COMPOSE_PROJECT_NAME}-postgres
     # pgvector, not plain postgres: embeddings live here rather than in a
     # separate vector database. See docs/decisions/0004-pgvector-over-chroma.md
     image: pgvector/pgvector:pg16
@@ -61,6 +66,7 @@ services:
       retries: 10
 
   redis:
+    container_name: ${COMPOSE_PROJECT_NAME}-redis
     image: redis:7-alpine
     # Loopback only, as above. Redis has no password and is the Celery broker.
     ports: ["127.0.0.1:6379:6379"]
@@ -79,6 +85,7 @@ services:
     command: ["alembic", "-c", "infra/alembic.ini", "upgrade", "heads"]
 
   api:
+    container_name: ${COMPOSE_PROJECT_NAME}-api
     <<: *python
     command: ["uvicorn", "autune_api.main:app", "--host", "0.0.0.0", "--port", "8000"]
     # No published port: the browser reaches it through nginx.
@@ -96,6 +103,7 @@ services:
       start_period: 120s
 
   worker:
+    container_name: ${COMPOSE_PROJECT_NAME}-worker
     <<: *python
     # --pool=solo: E's classifier aborts under prefork or threads (#329), as in
     # scripts/up.sh.
@@ -110,6 +118,7 @@ services:
       - models:/models
 
   web:
+    container_name: ${COMPOSE_PROJECT_NAME}-web
     build:
       context: ..
       dockerfile: infra/docker/web.Dockerfile
@@ -124,6 +133,7 @@ services:
       api: {condition: service_healthy}
 
   nginx:
+    container_name: ${COMPOSE_PROJECT_NAME}-nginx
     build: {context: .., dockerfile: infra/docker/nginx.Dockerfile}
     image: autune-nginx:dev
     profiles: ["app"]
