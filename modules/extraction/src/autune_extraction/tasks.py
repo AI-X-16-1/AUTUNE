@@ -7,7 +7,7 @@ docs/architecture/async-pipeline.md.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 
@@ -23,6 +23,7 @@ from autune_contracts import (
     validate_major_version,
 )
 from autune_contracts.enums import ActionStatus
+from autune_contracts.transcript import Utterance as TranscriptUtterance
 from autune_core import (
     AutuneError,
     Meeting,
@@ -105,15 +106,20 @@ def on_transcript_ready(payload: dict) -> None:
         meeting_id=transcript.meeting_id,
         utterances=len(transcript.utterances),
     )
+    _extract(transcript.meeting_id, transcript.utterances)
 
+
+def _extract(meeting_id: str, utterances: Sequence[TranscriptUtterance]) -> None:
+    """Everything ``on_transcript_ready`` does after the payload is checked;
+    ``reextract_consent_changes`` runs it too, on the stored transcript."""
     with session_scope() as session:
-        consented = service.consented_utterance_ids(session, transcript.meeting_id)
-        roster = service.team_roster(session, transcript.meeting_id)
+        consented = service.consented_utterance_ids(session, meeting_id)
+        roster = service.team_roster(session, meeting_id)
 
     classifier = get_classifier()
     # A classifier that sends text out replaces these names first (#411).
     give_roster(classifier, roster)
-    classified = service.classify_utterances(classifier, transcript.utterances, consented=consented)
+    classified = service.classify_utterances(classifier, utterances, consented=consented)
     classified = service.verify_utterances(get_nli(), classified)
 
     resolver = get_resolver()
@@ -122,31 +128,31 @@ def on_transcript_ready(payload: dict) -> None:
     with session_scope() as session:
         stored = service.store_classifications(
             session,
-            meeting_id=transcript.meeting_id,
+            meeting_id=meeting_id,
             utterances=classified,
             model_version=classifier.model_version,
         )
-        decisions = service.build_decisions(
-            session, meeting_id=transcript.meeting_id, utterances=classified
-        )
+        decisions = service.build_decisions(session, meeting_id=meeting_id, utterances=classified)
         items = service.build_action_items(
             session,
-            meeting_id=transcript.meeting_id,
-            utterances=transcript.utterances,
+            meeting_id=meeting_id,
+            utterances=utterances,
             classified=classified,
             resolved=resolved_descriptions,
         )
         ambiguous = service.record_ambiguous_agreements(
-            session, meeting_id=transcript.meeting_id, classified=classified
+            session, meeting_id=meeting_id, classified=classified
         )
-        result = service.result_for_meeting(session, transcript.meeting_id)
+        # With the rows it describes: a rollback takes both (#518).
+        service.record_extraction(session, meeting_id=meeting_id, consented=consented)
+        result = service.result_for_meeting(session, meeting_id)
 
     # Counts and ids only. The utterances are meeting content.
     log.info(
         "extraction_classified",
-        meeting_id=transcript.meeting_id,
+        meeting_id=meeting_id,
         utterances=len(classified),
-        excluded=sum(1 for u in transcript.utterances if u.id not in consented),
+        excluded=sum(1 for u in utterances if u.id not in consented),
         classified=stored,
         decisions=len(decisions),
         action_items=len(items) if items is not None else "kept",
@@ -164,6 +170,70 @@ def on_transcript_ready(payload: dict) -> None:
     # Step 8, after the writes have committed. The payload is never logged:
     # decision statements and item descriptions are meeting content.
     publish(EXTRACTION_COMPLETED, result.model_dump(mode="json"))
+
+
+@shared_task(name="autune.extraction.periodic.reextract_consent_changes")
+@periodic(timedelta(minutes=10))
+def reextract_consent_changes() -> list[str]:
+    """Extract again every meeting whose consenting speech changed after its
+    last extraction (#518). Returns those meetings' ids.
+
+    B extracts when ``TranscriptReady`` arrives, and the consent filter reads
+    ``participants.consented`` at that moment. A team that records consent
+    after the recording was analysed -- A's ``attest_consent`` -- would
+    otherwise keep an empty result for that meeting for good: nothing announces
+    the change (#360), so this compares ``ext_extraction_runs`` with the
+    consent as it is now, the way C's ``rescore_changed_people`` does (#506).
+
+    The transcript is read back from the shared tables (``stored_transcript``).
+    The extraction is the event's own (``_extract``): model rows are replaced,
+    an item list a person has edited is kept, and ``ExtractionResult`` is
+    published again, so D and E see the new result. Speech that lost consent
+    leaves B's model rows the same way; what a person already edited or sent
+    out from it is the second half of #518, which waits on per-person
+    withdrawal (S10/S11).
+
+    Every ten minutes because a consent attestation is a person on a screen,
+    and a run that finds nothing changed is two queries. Safe to overlap: two
+    runs that see the same change both extract, and the second writes what the
+    first did. One meeting failing does not stop the rest -- its row still
+    disagrees, so the next run tries it again -- **except a privacy violation**,
+    which is raised once the others are done, ids only, as C's sweep does.
+    """
+    with session_scope() as session:
+        changed = service.meetings_with_changed_consent(session)
+
+    done: list[str] = []
+    violations: list[str] = []
+    for meeting_id in changed:
+        try:
+            with session_scope() as session:
+                utterances = service.stored_transcript(session, meeting_id)
+            _extract(meeting_id, utterances)
+        except PrivacyViolationError:
+            violations.append(meeting_id)
+            continue
+        except Exception as exc:  # noqa: BLE001 - one meeting must not stop the rest
+            # The class name only: an exception over stored rows can carry
+            # transcript text in its message.
+            log.warning(
+                "extraction_reextract_failed", meeting_id=meeting_id, reason=type(exc).__name__
+            )
+            continue
+        done.append(meeting_id)
+
+    log.info(
+        "extraction_consent_swept",
+        changed=len(changed),
+        reextracted=len(done),
+        violations=len(violations),
+    )
+    if violations:
+        raise PrivacyViolationError(
+            f"unmasked value on re-extraction in {len(violations)} meeting(s): "
+            f"{', '.join(violations)}"
+        )
+    return done
 
 
 @shared_task(name="autune.extraction.sync_action_item", acks_late=True)

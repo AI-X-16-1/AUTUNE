@@ -371,19 +371,34 @@ def rescore_where_people_changed() -> list[str]:
     both rescore, and the second writes what the first did.
 
     One meeting failing does not stop the rest; it is logged by id and tried on
-    the next run, because its row still disagrees. **Except a privacy
+    the next run, because its row still disagrees. **Only so many times**: after
+    ``rescore_max_attempts`` failures in a row at the same grouping, the meeting
+    is skipped until its people move again, which is a new question worth one
+    more try. Without the cap a meeting that always fails was retried every ten
+    minutes for good, spending a hosted verifier's quota each time (#516).
+    **Except a privacy
     violation**: the verifier raises ``PrivacyViolationError`` on purpose when a
     stored row would leave unmasked (``pipeline/base.py``), and that is a broken
     invariant, not a hiccup. The other meetings are still rescored, then it is
     raised so the task fails the way ``on_transcript_ready`` does, instead of
-    ending in a warning every ten minutes (#506 review).
+    ending in a warning every ten minutes (#506 review). It does not count
+    towards the cap: ``check_outbound`` refused the request before it left, so
+    no quota was spent, and a broken invariant should keep failing loudly.
     """
+    max_attempts = get_settings().rescore_max_attempts
     with session_scope() as session:
-        scored: dict[str, str] = {
-            meeting_id: key
-            for meeting_id, key in session.execute(
-                select(GapScoring.meeting_id, GapScoring.people_key)
-            ).all()
+        rows_scored = session.execute(
+            select(
+                GapScoring.meeting_id,
+                GapScoring.people_key,
+                GapScoring.failed_people_key,
+                GapScoring.rescore_failures,
+            )
+        ).all()
+        scored: dict[str, str] = {meeting_id: key for meeting_id, key, _, _ in rows_scored}
+        failed: dict[str, tuple[str | None, int]] = {
+            meeting_id: (failed_key, failures)
+            for meeting_id, _, failed_key, failures in rows_scored
         }
         rows = session.execute(
             select(Participant.meeting_id, Participant.id, Participant.user_id).where(
@@ -394,15 +409,22 @@ def rescore_where_people_changed() -> list[str]:
     by_meeting: dict[str, list[tuple[str, str | None]]] = defaultdict(list)
     for meeting_id, participant_id, user_id in rows:
         by_meeting[meeting_id].append((participant_id, user_id))
-    changed = sorted(
+    current = {
+        meeting_id: _people_key(_group_people(by_meeting[meeting_id])) for meeting_id in scored
+    }
+    changed = sorted(meeting_id for meeting_id, key in scored.items() if current[meeting_id] != key)
+    # Given up on: the same grouping failed ``max_attempts`` times already.
+    held = {
         meeting_id
-        for meeting_id, key in scored.items()
-        if _people_key(_group_people(by_meeting[meeting_id])) != key
-    )
+        for meeting_id in changed
+        if failed[meeting_id][0] == current[meeting_id] and failed[meeting_id][1] >= max_attempts
+    }
 
     rescored = []
     violations: list[str] = []
     for meeting_id in changed:
+        if meeting_id in held:
+            continue
         try:
             detect_gaps(meeting_id)
             republish_report(meeting_id)
@@ -410,9 +432,16 @@ def rescore_where_people_changed() -> list[str]:
             violations.append(meeting_id)
             continue
         except Exception as exc:
+            attempts = _record_rescore_failure(meeting_id, current[meeting_id])
             # The class name only, as the verifier logs it: an exception raised
             # over stored rows can carry transcript text in its message.
-            log.warning("gap_rescore_failed", meeting_id=meeting_id, reason=type(exc).__name__)
+            log.warning(
+                "gap_rescore_failed",
+                meeting_id=meeting_id,
+                reason=type(exc).__name__,
+                attempts=attempts,
+                gave_up=attempts >= max_attempts,
+            )
             continue
         rescored.append(meeting_id)
 
@@ -421,6 +450,7 @@ def rescore_where_people_changed() -> list[str]:
         scored=len(scored),
         changed=len(changed),
         rescored=len(rescored),
+        held=len(held),
         violations=len(violations),
     )
     if violations:
@@ -872,12 +902,33 @@ def _store_gaps(
 
 
 def _record_scoring(session: Session, meeting_id: str, people_key: str) -> None:
-    """Remember the grouping a meeting's gaps were just scored against."""
+    """Remember the grouping a meeting's gaps were just scored against, and
+    forget any failed rescore: this detection is the one that succeeded."""
     row = session.get(GapScoring, meeting_id)
     if row is None:
         session.add(GapScoring(meeting_id=meeting_id, people_key=people_key))
     else:
         row.people_key = people_key
+        row.failed_people_key = None
+        row.rescore_failures = 0
+        row.last_failed_at = None
+
+
+def _record_rescore_failure(meeting_id: str, people_key: str) -> int:
+    """Count one failed rescore of ``meeting_id`` at the grouping ``people_key``,
+    and return the count. A different grouping from the last failure starts the
+    count again. Its own transaction: the one the failure happened in is gone."""
+    with session_scope() as session:
+        row = session.get(GapScoring, meeting_id)
+        if row is None:
+            # The meeting went while it was being rescored; nothing to count.
+            return 0
+        if row.failed_people_key != people_key:
+            row.failed_people_key = people_key
+            row.rescore_failures = 0
+        row.rescore_failures += 1
+        row.last_failed_at = datetime.now(UTC)
+        return row.rescore_failures
 
 
 def publish_report(meeting_id: str) -> GapReport:
