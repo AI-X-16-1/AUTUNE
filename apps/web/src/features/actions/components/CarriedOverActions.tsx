@@ -182,13 +182,23 @@ function CarriedRow({ item }: { item: CarriedOverItem }) {
             {item.status === "in_progress" ? "진행 중" : "진행 전"} ·{" "}
             {item.meeting_title}
             {item.meeting_started_at
-              ? ` (${item.meeting_started_at.slice(0, 10)})`
+              ? ` (${localDate(item.meeting_started_at)})`
               : ""}
           </span>
         </div>
       </div>
     </li>
   );
+}
+
+/**
+ * The day a meeting was held, in the viewer's own time zone, as YYYY-MM-DD.
+ * The server sends UTC; cutting its string would put a meeting held before
+ * 09:00 in Seoul on the previous day. `sv-SE` is the locale whose date reads
+ * that way.
+ */
+function localDate(iso: string): string {
+  return new Date(iso).toLocaleDateString("sv-SE");
 }
 
 const SEEN_PREFIX = "autune.actions.carriedOverSeen.";
