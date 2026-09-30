@@ -99,7 +99,14 @@ Two consequences of that contract are the point of writing it down:
   working when the agent is switched off.
 
 `apps/api` and `apps/worker` may import `autune_agent`, as they already import
-every module, and continue to do so by iteration rather than by name.
+every module. Modules are still mounted by iterating `MODULES`. The agent layer
+is not a module and is not in that list, so `apps/api` mounts its one router by
+name at `/api/agent` — the second fixed exception beside `/api/auth`
+(`../architecture/monorepo.md` section 1). It stays one line because the layer
+is one package: subagents are collected inside it, by iterating
+`SUBAGENT_NAMES`, and a subagent never touches `apps/`. (Amended in #449; the
+text accepted on #260 said "by iteration rather than by name", which no code
+could satisfy for a layer that is not in the module list.)
 
 CODEOWNERS splits `agent/` the way the work is split
 (`../architecture/agent-layer.md` section 3.1): the main agent and the rest of

@@ -73,8 +73,9 @@ def create_app(*, origins: list[str] | None = None) -> FastAPI:
 
     # Sign-in is not a module. It belongs to no owner in the map and every
     # module's routes depend on it, so it is registered here by name rather
-    # than discovered — the one exception invariant 6 allows itself, and the
-    # reason it is written out instead of appended to the loop below.
+    # than discovered — one of the two exceptions invariant 6 allows itself
+    # (monorepo.md section 1), and the reason it is written out instead of
+    # appended to the loop below.
     app.include_router(auth_router, prefix="/api/auth", tags=["auth"])
     log.info("router_registered", module="auth", prefix="/api/auth")
 
@@ -83,8 +84,9 @@ def create_app(*, origins: list[str] | None = None) -> FastAPI:
         app.include_router(router, prefix=f"/api/{name}", tags=[name])
         log.info("router_registered", module=name, prefix=f"/api/{name}")
 
-    # The agent layer is not a module and is not in MODULES; ADR 0010 lets
-    # apps import it. One layer, one router, mounted the same way.
+    # The other exception: the agent layer is not a module and is not in
+    # MODULES (ADR 0010). One layer, one router; its subagents are collected
+    # inside it, so a new one never lands here.
     app.include_router(
         import_module("autune_agent.router").router, prefix="/api/agent", tags=["agent"]
     )
