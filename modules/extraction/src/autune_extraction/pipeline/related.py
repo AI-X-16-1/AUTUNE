@@ -66,7 +66,11 @@ def related_ids(
     limit: int = MAX_RELATED,
     min_score: float = MIN_SCORE,
 ) -> list[str]:
-    """The ids of the lines most like ``target_id``'s, in spoken order.
+    """The ids of the lines most like ``target_id``'s, the most alike first.
+
+    Best first because a request that has to shrink to fit the outbound limit
+    drops candidates from the end (``resolver._fitted``); the reader is shown
+    only the lines the model cites, in spoken order, from the table.
 
     ``lines`` is the meeting in spoken order as ``(id, text)``, blank lines and
     non-consenting speakers' lines already removed by the caller -- the same
@@ -106,4 +110,4 @@ def related_ids(
         if score >= min_score:
             scored.append((score, position, line_id))
     best = sorted(scored, key=lambda s: (-s[0], s[1]))[:limit]
-    return [line_id for _, _, line_id in sorted(best, key=lambda s: s[1])]
+    return [line_id for _, _, line_id in best]

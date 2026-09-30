@@ -26,6 +26,7 @@ from autune_core import get_logger
 from autune_core.errors import PrivacyViolationError
 from autune_extraction.slots import parse_due
 from autune_integrations.errors import TransientIntegrationError
+from autune_integrations.privacy import MAX_OUTBOUND_CHARS
 
 from .base import Embedder, Resolution, ResolutionRequest
 from .classifier import RETRY_BACKOFF_SEC
@@ -707,12 +708,41 @@ def _summary_prompt(numbered: list[tuple[str, str, str]], purpose: str = "commit
     return template.format(lines=lines)
 
 
+_CITED_NUMBER = re.compile(r"\D*(\d+)\D*")
+"""A citation written as a string: "1", "발화 1", "1번"."""
+
+
+def _line_number(cited: Any) -> int | None:
+    """One entry of "used" as a line number, however the model wrote it.
+
+    An int, an integral float (``1.0``), or a string holding one number ("1",
+    "발화 1") -- the shapes C met from the same models (#503, #523). A bool, a
+    fraction, or a string with no number or two is not a citation.
+    """
+    if isinstance(cited, bool):
+        return None
+    if isinstance(cited, int):
+        return cited
+    if isinstance(cited, float):
+        return int(cited) if cited.is_integer() else None
+    if isinstance(cited, str):
+        match = _CITED_NUMBER.fullmatch(cited)
+        return int(match.group(1)) if match else None
+    return None
+
+
 def _read_summary(answer: str, numbered: list[tuple[str, str, str]]) -> tuple[str, tuple[str, ...]]:
     """The model's summary and the ids of the lines it says it used.
 
     Only numbers of lines that exist and carry an id count, never the target's
-    own; the ids come back in spoken order, at most ``MAX_USED``. Anything
-    unreadable is an empty summary, which the caller treats as no answer.
+    own. At most ``MAX_USED`` are kept, **the first the model listed** -- the
+    ones it leaned on, not the earliest said -- then put in spoken order for
+    the reader. Anything unreadable is an empty summary, which the caller
+    treats as no answer.
+
+    A summary that cites nothing is still accepted when it passes the checks:
+    what it added must already be in the window (``_passes_grounding``), and
+    the original sits beneath it on the screen.
     """
     match = re.search(r"\{.*\}", answer, re.S)
     try:
@@ -723,16 +753,76 @@ def _read_summary(answer: str, numbered: list[tuple[str, str, str]]) -> tuple[st
         return "", ()
     cited = data.get("used")
     used: list[str] = []
-    for number in cited if isinstance(cited, list) else []:
-        if isinstance(number, bool) or not isinstance(number, int):
-            continue
-        if not 1 <= number <= len(numbered):
+    for entry in cited if isinstance(cited, list) else []:
+        number = _line_number(entry)
+        if number is None or not 1 <= number <= len(numbered):
             continue
         line_id, label, _ = numbered[number - 1]
         if line_id and label != _LABELS[1] and line_id not in used:
             used.append(line_id)
     order = {line_id: n for n, (line_id, _, _) in enumerate(numbered)}
-    return data["summary"], tuple(sorted(used, key=lambda i: order[i])[:MAX_USED])
+    return data["summary"], tuple(sorted(used[:MAX_USED], key=lambda i: order[i]))
+
+
+_PROMPT_BUDGET = MAX_OUTBOUND_CHARS - 200
+"""What the prompt may take of the outbound limit. ``check_outbound`` counts
+every string in the body, and the rest ("user", the MIME type) is a few dozen
+characters; the margin covers them."""
+
+
+def _fitted(
+    request: ResolutionRequest, render: Any, budget: int = _PROMPT_BUDGET
+) -> ResolutionRequest | None:
+    """The request cut down until ``render(request)`` fits ``budget``, or
+    ``None`` when even the target alone does not (#530 review).
+
+    Over the limit, ``check_outbound`` raises ``PrivacyViolationError`` -- on
+    purpose, and never caught -- and the meeting's extraction fails. So the
+    request shrinks before it is sent: the least alike candidate first
+    (``related`` is best first), then the context line farthest from the
+    target, the one after it on a tie (what a pronoun points at was usually
+    said before). A target too long on its own is not sent: the item keeps
+    its raw quote. Nothing is truncated mid-line.
+    """
+    fitted = request
+    while len(render(fitted)) > budget:
+        if fitted.related:
+            fitted = replace(fitted, related=fitted.related[:-1])
+            continue
+        before, after = len(fitted.context), len(fitted.context_after)
+        if before == 0 and after == 0:
+            return None
+        if before > after:
+            ids = fitted.context_ids[1:] if len(fitted.context_ids) == before else ()
+            fitted = replace(fitted, context=fitted.context[1:], context_ids=ids)
+        else:
+            keep = after - 1
+            ids = fitted.context_after_ids[:keep] if len(fitted.context_after_ids) == after else ()
+            fitted = replace(
+                fitted, context_after=fitted.context_after[:keep], context_after_ids=ids
+            )
+    return fitted
+
+
+def _cut_like(request: ResolutionRequest, fitted: ResolutionRequest) -> ResolutionRequest:
+    """``request`` cut to the lines ``fitted`` kept -- the same cut on the text
+    before names were replaced, so the answer is checked against what was
+    sent and not against lines the model never saw."""
+    before, after = len(fitted.context), len(fitted.context_after)
+    return replace(
+        request,
+        context=request.context[len(request.context) - before :] if before else (),
+        context_ids=fitted.context_ids,
+        context_after=request.context_after[:after],
+        context_after_ids=fitted.context_after_ids,
+        related=request.related[: len(fitted.related)],
+    )
+
+
+MAX_ESCALATIONS = 5
+"""Second-model calls per meeting at most. The second model's free tier allows
+twenty a day (#530 review); one meeting of unsound first answers must not spend
+all of them. Past this, an unsound first answer is the raw quote."""
 
 
 class LlmResolver(GeminiClient):
@@ -826,11 +916,14 @@ class LlmResolver(GeminiClient):
             return _answer_text(self._post_to(model, body, index=index))
         except PrivacyViolationError:
             raise
-        except Exception:  # noqa: BLE001 - #175: one bad call must not fail the meeting
-            log.warning("extraction_resolver_call_failed", exc_info=True)
+        except Exception as exc:  # noqa: BLE001 - #175: one bad call must not fail the meeting
+            # The class name only: a traceback can carry the request's text.
+            log.warning("extraction_resolver_call_failed", error=type(exc).__name__)
             return None
 
-    def _resolve_one(self, request: ResolutionRequest, index: int) -> Resolution:
+    def _resolve_one(
+        self, request: ResolutionRequest, index: int, escalations: list[int] | None = None
+    ) -> Resolution:
         """The cheap model first; the second model once if its answer is not sound.
 
         The first model (``model``) answers everything. When its answer fails a
@@ -845,11 +938,20 @@ class LlmResolver(GeminiClient):
         it used, and answers as JSON. One without is the plain rewrite it always
         was.
         """
-        sent, surface = _scrubbed(request, self._roster)
+        scrubbed, surface = _scrubbed(request, self._roster)
+
+        def render(r: ResolutionRequest) -> str:
+            return _summary_prompt(_numbered(r), r.purpose) if r.target_id else _prompt(r)
+
+        sent = _fitted(scrubbed, render)
+        raw = Resolution(request.target)
+        if sent is None:
+            # Ids only: the line is meeting content.
+            log.info("extraction_resolver_target_too_long", target_id=request.target_id)
+            return raw
+        request = _cut_like(request, sent)
         numbered = _numbered(sent) if request.target_id else None
-        prompt = (
-            _summary_prompt(numbered, request.purpose) if numbered is not None else _prompt(sent)
-        )
+        prompt = render(sent)
         generation: dict[str, Any] = {"temperature": 0}
         if numbered is not None:
             generation["responseMimeType"] = "application/json"
@@ -857,7 +959,6 @@ class LlmResolver(GeminiClient):
             "contents": [{"role": "user", "parts": [{"text": prompt}]}],
             "generationConfig": generation,
         }
-        raw = Resolution(request.target)
         first = self._ask(None, body, index)
         if first is None:
             return raw
@@ -866,13 +967,22 @@ class LlmResolver(GeminiClient):
             return accepted
         if not self._fallback or self.last_model == self._fallback:
             return raw
+        if escalations is not None:
+            if escalations[0] >= MAX_ESCALATIONS:
+                return raw
+            escalations[0] += 1
         log.info("extraction_resolver_escalated", model=self._model, second=self._fallback)
         second = self._ask(self._fallback, body, index)
         accepted = self._accept(second, request, surface, numbered) if second is not None else None
         return accepted if accepted is not None else raw
 
     def resolve_with_evidence(self, requests: list[ResolutionRequest]) -> list[Resolution]:
-        return [self._resolve_one(request, index) for index, request in enumerate(requests)]
+        """One meeting's requests. The second model is asked at most
+        ``MAX_ESCALATIONS`` times across them."""
+        escalations = [0]
+        return [
+            self._resolve_one(request, index, escalations) for index, request in enumerate(requests)
+        ]
 
     def resolve(self, requests: list[ResolutionRequest]) -> list[str]:
         return [resolution.text for resolution in self.resolve_with_evidence(requests)]

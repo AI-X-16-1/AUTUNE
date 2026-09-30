@@ -16,7 +16,7 @@ from autune_core.errors import PrivacyViolationError
 from autune_extraction.config import ExtractionSettings
 from autune_extraction.pipeline import registry
 from autune_extraction.pipeline.base import ResolutionRequest, give_roster
-from autune_extraction.pipeline.resolver import LlmResolver
+from autune_extraction.pipeline.resolver import MAX_ESCALATIONS, LlmResolver
 from autune_integrations.errors import TransientIntegrationError
 
 ROSTER = ["박 재경", "김민경"]
@@ -253,6 +253,19 @@ def test_when_the_second_model_fails_the_checks_too_the_raw_quote_stands() -> No
 
     assert out == TARGET
     assert len(provider.bodies) == 2, "asked twice, never a third time"
+
+
+def test_one_meeting_asks_the_second_model_at_most_max_escalations_times() -> None:
+    """Its free tier allows twenty a day (#530 review): one meeting of unsound
+    first answers must not spend them all."""
+    bad = "그럼 제가 [덧붙인 절] 다음 주 화요일까지 볼게요"
+    n = MAX_ESCALATIONS + 3
+    provider = Provider(*([bad] * (2 * n)))
+
+    out = two_models(provider).resolve([request() for _ in range(n)])
+
+    assert out == [TARGET] * n
+    assert models_asked(provider).count("second") == MAX_ESCALATIONS
 
 
 def test_a_sound_first_answer_never_reaches_the_second_model() -> None:

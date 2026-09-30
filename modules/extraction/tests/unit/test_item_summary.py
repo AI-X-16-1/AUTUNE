@@ -10,6 +10,7 @@ is still consented and non-blank.
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Iterator
 from typing import Any
 
@@ -36,6 +37,7 @@ from autune_extraction.models import (
     ExtEditEvent,
     ExtExternalRef,
 )
+from autune_extraction.pipeline import resolver as resolver_module
 from autune_extraction.pipeline.base import Resolution, ResolutionRequest
 from autune_extraction.pipeline.related import related_ids
 from autune_extraction.pipeline.resolver import LlmResolver
@@ -52,12 +54,20 @@ MEETING_LINES = [
 ]
 
 
-def test_related_lines_are_the_ones_about_the_same_thing_in_spoken_order() -> None:
-    found = related_ids("u6", MEETING_LINES, min_score=0.0)
+def test_related_lines_come_most_alike_first() -> None:
+    """Best first, not spoken order, so a request that must shrink drops the
+    least alike."""
+    lines = [
+        ("weak", "갱신 일정은 다음 주에 다시 보기로 했습니다"),
+        *FILLER[:6],
+        ("strong", "그 갱신 버그는 이번 빌드 전에 꼭 고쳐야 합니다"),
+        ("t", "그 갱신 버그는 제가 이번 빌드에 넣어 볼게요"),
+    ]
 
-    assert "u6" not in found, "never the target itself"
-    order = [line_id for line_id, _ in MEETING_LINES]
-    assert found == sorted(found, key=order.index), "spoken order, not score order"
+    found = related_ids("t", lines, min_score=0.0)
+
+    assert "t" not in found, "never the target itself"
+    assert found.index("strong") < found.index("weak")
 
 
 FILLER = [
@@ -90,7 +100,7 @@ def test_a_shared_subject_ranks_above_a_shared_ending() -> None:
         ("t", "그 갱신 버그는 제가 이번 빌드에 넣어 볼게요"),
     ]
 
-    assert related_ids("t", lines, limit=2) == ["a", "c"]
+    assert set(related_ids("t", lines, limit=2)) == {"a", "c"}
     assert not set(related_ids("t", lines)) & {line_id for line_id, _ in FILLER}
 
 
@@ -259,13 +269,22 @@ def test_the_lines_the_model_cites_come_back_as_ids_in_spoken_order() -> None:
 
 @pytest.mark.parametrize(
     "used",
-    [[3], [99, 0, -1], ["1"], [True], "all", None],
+    [[3], [99, 0, -1], [True], [1.5], ["1, 2"], ["없음"], "all", None],
 )
 def test_the_target_a_missing_line_and_nonsense_are_never_cited(used: Any) -> None:
     (out,) = resolver(Provider(answer(SUMMARY, used))).resolve_with_evidence([REQUEST])
 
     assert out.text == SUMMARY
     assert out.used == ()
+
+
+@pytest.mark.parametrize("used", [["1"], ["발화 1"], ["1번"], [1.0]])
+def test_a_number_written_as_text_or_a_float_is_still_a_citation(used: Any) -> None:
+    """The shapes C met from the same models (#503, #523): dropping them lost
+    the evidence while keeping the rewrite (#530 review)."""
+    (out,) = resolver(Provider(answer(SUMMARY, used))).resolve_with_evidence([REQUEST])
+
+    assert out == Resolution(SUMMARY, ("c1",))
 
 
 def test_an_answer_that_is_not_json_is_the_raw_quote() -> None:
@@ -290,6 +309,85 @@ def test_at_most_four_lines_are_kept() -> None:
     (out,) = resolver(Provider(answer(SUMMARY, [2, 3, 4, 5, 6, 7]))).resolve_with_evidence([many])
 
     assert len(out.used) == 4
+
+
+def test_the_four_kept_are_the_first_the_model_listed_in_spoken_order() -> None:
+    """Not the four said earliest: the ones the model listed first (#530 review)."""
+    many = ResolutionRequest(
+        target=TARGET,
+        target_id="t",
+        related=tuple((f"r{i}", f"갱신 버그 얘기 {i}번째 줄입니다") for i in range(6)),
+    )
+
+    # 1 is the target; r0..r5 are 2..7.
+    (out,) = resolver(Provider(answer(SUMMARY, [7, 6, 5, 4, 2]))).resolve_with_evidence([many])
+
+    assert out.used == ("r2", "r3", "r4", "r5")
+
+
+# --- what fits in one request (#530 review) ----------------------------------------
+
+LONG = "갱신 버그 원인을 따라가 보면 캐시 계층과 클라이언트 동기화가 엇갈리는 지점이 있습니다 " * 6
+
+
+def test_a_window_over_the_outbound_limit_is_cut_before_it_is_sent() -> None:
+    """Over ``MAX_OUTBOUND_CHARS`` the outbound check raises -- by design, and
+    nobody catches it -- so the meeting would fail. The least alike candidates
+    go first, then the farthest context; the request that leaves fits."""
+    big = ResolutionRequest(
+        target=TARGET,
+        target_id="t",
+        context=(LONG, LONG, LONG, LONG),
+        context_ids=("c1", "c2", "c3", "c4"),
+        context_after=(LONG, LONG),
+        context_after_ids=("a1", "a2"),
+        related=tuple((f"r{i}", LONG) for i in range(8)),
+    )
+    provider = Provider(answer(SUMMARY, [1]))
+
+    (out,) = resolver(provider).resolve_with_evidence([big])
+
+    (body,) = provider.bodies
+    prompt = body["contents"][0]["parts"][0]["text"]
+    assert len(prompt) <= resolver_module._PROMPT_BUDGET
+    # The prompt's worked examples have numbered lines too; count ours only.
+    labels = [
+        re.match(r"\d+ \[(\S+)\]", line).group(1)  # type: ignore[union-attr]
+        for line in prompt.splitlines()
+        if LONG[:20] in line or TARGET in line
+    ]
+    assert labels.count("관련") < 8, "candidates were dropped"
+    assert (labels.count("앞"), labels.count("뒤")) == (4, 2), "before any context line"
+    assert labels.count("대상") == 1
+    assert out.text == SUMMARY
+
+
+def test_the_farthest_context_goes_first_and_the_line_before_wins_a_tie() -> None:
+    fitted = resolver_module._fitted(
+        ResolutionRequest(
+            target="대상",
+            context=("앞3", "앞2", "앞1"),
+            context_after=("뒤1", "뒤2"),
+            related=(("r0", "관련"),),
+        ),
+        lambda r: "x" * (len(r.related) + len(r.context) + len(r.context_after)),
+        budget=3,
+    )
+
+    assert fitted is not None
+    assert (fitted.related, fitted.context, fitted.context_after) == ((), ("앞2", "앞1"), ("뒤1",))
+
+
+def test_a_target_too_long_on_its_own_is_not_sent_and_keeps_its_quote() -> None:
+    huge = "그 갱신 버그는 제가 이번 빌드에 넣어 볼게요 " * 200
+    provider = Provider(answer(SUMMARY, []))
+
+    (out,) = resolver(provider).resolve_with_evidence(
+        [ResolutionRequest(target=huge, target_id="t")]
+    )
+
+    assert provider.bodies == []
+    assert out == Resolution(huge)
 
 
 def test_a_name_in_a_candidate_never_leaves_and_is_restored_in_the_summary() -> None:

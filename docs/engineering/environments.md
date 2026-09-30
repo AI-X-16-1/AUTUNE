@@ -189,7 +189,7 @@ Where that token comes from, and the two ways to give it to the browser:
 | `AUTUNE_EXTRACTION_RESOLVER_CHECKPOINT` | B | Local model path/hub id, or the hosted model's recorded version. Required for `local`/`hosted` |
 | `AUTUNE_EXTRACTION_RESOLVER_ENDPOINT` | B | Our own inference server. Required when `RESOLVER_IMPL=hosted` |
 | `AUTUNE_EXTRACTION_RESOLVER_MODEL` | B | The model `RESOLVER_IMPL=llm` asks first. Default `gemini-3.5-flash-lite`. Its own setting, apart from `LLM_MODEL` (the classifier's) |
-| `AUTUNE_EXTRACTION_RESOLVER_SECOND_MODEL` | B | Asked once when the first model's answer fails a check (a bracketed clause of its own, the deadline dropped, a runaway length), and instead of it when it stays unavailable. Default `gemini-3.8-flash`; blank turns both off. On a free-tier key it allows 5 requests a minute and 20 a day |
+| `AUTUNE_EXTRACTION_RESOLVER_SECOND_MODEL` | B | Asked once when the first model's answer fails a check (a bracketed clause of its own, the deadline dropped, a runaway length), and instead of it when it stays unavailable. Default `gemini-3.8-flash`; blank turns both off. On a free-tier key it allows 5 requests a minute and 20 a day, so one meeting asks it at most 5 times (`MAX_ESCALATIONS`). Every request is cut to fit the outbound limit before it is sent -- least alike candidates first, then the farthest context -- and a line too long on its own is not sent |
 | `AUTUNE_EXTRACTION_RESOLVER_DEVICE` | B | `cpu` · `cuda`. Default `cpu`. Mirrors `AUTUNE_EXTRACTION_CLASSIFIER_DEVICE` |
 | `AUTUNE_EXTRACTION_EMBEDDER_IMPL` | B | `local` · `fake` (#175, #366). **No `hosted` yet.** Default `fake`, same reason as `RESOLVER_IMPL` |
 | `AUTUNE_EXTRACTION_EMBEDDER_CHECKPOINT` | B | Default `nlpai-lab/KURE-v1` — module D's already-shipped choice, not a candidate awaiting evaluation |
@@ -287,8 +287,12 @@ often spaced ("박 재경", "재경 박"), so a Hangul name of two words is also
 joined and swapped ("박재경", "재경박") and by its given name ("재경") — the word
 of two syllables or more beside a one-syllable surname; with two longer words
 only the joined forms. Whichever form matched, the same person gets the same number
-within one meeting's requests, never stored and never mapped back. Only the request changes; the
-database, the reference resolver and Notion keep the text as it was.
+within one meeting's requests. The classifier's placeholders are never stored and
+never mapped back: it answers with labels only, and the database and Notion keep
+the text as it was. The `llm` reference resolver is the one that maps back -- its
+answer is a sentence stored as a description, so each `[사람N]` is restored to the
+name it stood for, and an answer holding a placeholder that was never sent is
+dropped for the raw quote.
 
 What still goes out, and is the exposure #392 and #92 ask about:
 
