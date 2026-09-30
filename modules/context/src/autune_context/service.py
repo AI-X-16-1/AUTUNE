@@ -16,7 +16,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING
 
 from celery import current_app
-from sqlalchemy import delete, func, select, text, update
+from sqlalchemy import delete, func, or_, select, text, update
 from sqlalchemy.orm import Session
 
 from autune_context.config import get_settings
@@ -39,6 +39,7 @@ from autune_context.pipeline.change import classify_change, strip_keep_words
 from autune_context.pipeline.retrieval import HybridRetriever, visible_meeting_clauses
 from autune_context.pipeline.topics import extract_topics
 from autune_contracts import ChangeType, ContextLinks, DecisionChange, NliLabel, TopicLink
+from autune_contracts import Utterance as UtteranceContract
 from autune_core import (
     Meeting,
     Participant,
@@ -56,6 +57,9 @@ if TYPE_CHECKING:
     from autune_contracts import ExtractionResult, TranscriptReady
 
 log = get_logger(__name__)
+
+# The two answers a user gives a ``pending`` link (``POST /links/{id}/confirm``).
+_HUMAN_LINK_STATUSES = ("confirmed", "rejected")
 
 # D publishes to E's consumer task directly — the async pipeline has no broker
 # abstraction (docs/architecture/async-pipeline.md, "Payloads"). A string, not an
@@ -95,7 +99,9 @@ def run_topic_linking(transcript: TranscriptReady) -> bool:
     """Extract this meeting's topics, link them to past meetings, persist.
 
     Idempotent: a re-run replaces every ``ctx_*`` row this task owns for the
-    meeting. Does not publish — that is ``publish_if_ready``.
+    meeting, except that a link a user confirmed or rejected keeps that answer
+    when the same topic label links to the same meeting again. Does not
+    publish — that is ``publish_if_ready``.
 
     Returns whether ``ContextLinks`` had already been published for this
     meeting, in which case the links just rebuilt are not what E holds and
@@ -109,17 +115,203 @@ def run_topic_linking(transcript: TranscriptReady) -> bool:
     A meeting where nobody consented gets no topics and no links -- and a
     re-run after a speaker withdraws drops what their speech produced.
     """
+    return _link_topics(transcript.meeting_id, list(transcript.utterances))
+
+
+def rederive_topics(meeting_id: str) -> bool | None:
+    """Re-run topic linking for an analysed meeting from its stored utterances.
+
+    For when the consent behind a meeting's topics has changed after D
+    analysed it -- which ``run_topic_linking`` alone never sees, because no
+    event arrives:
+
+    - **Topics derived before #439.** Every utterance was analysed then, so
+      ``ctx_embeddings.ref_label``, its vector and ``ctx_topic_links
+      .topic_label`` can carry a non-consenting speaker's speech. privacy.md
+      section 5 says excluded speech is not stored, not merely hidden, and the
+      read-time filter on the re-ranker's passages cannot reach a label.
+    - **Consent attested after analysis.** ``autune_audio.service
+      .attest_consent`` can land once the meeting is analysed and tells no
+      consumer, so D kept no topics for speech that is now allowed.
+
+    Reads the utterances module A stored (already PII-masked before their first
+    write) and runs them through the same path as the event, so the consent
+    filter and everything after it are one code path, not two.
+
+    Returns ``None`` -- and touches nothing -- for a meeting D has not analysed
+    (``topic_linking_done`` unset: the event path has not run, and this must
+    not stand in for it), one past its retention window, or one whose row does
+    not carry module A's privacy guarantees (the checks ``TranscriptReady
+    .require_privacy_guarantees`` makes on the event). Otherwise returns what
+    ``run_topic_linking`` does: whether ``ContextLinks`` had already been
+    published, so the caller can route the same way ``on_transcript_ready``
+    does.
+
+    **One meeting is not the whole cleanup.** This replaces the links *out of*
+    ``meeting_id``. A later meeting's link *into* it (``linked_meeting_id ==
+    meeting_id``) stays, and was scored against the topics this run just
+    dropped, so after a withdrawal it still says "discussed in that meeting"
+    for speech that is gone. Re-derive the team's later meetings too --
+    ``rederivable_meeting_ids`` finds them, oldest first -- a caller of this
+    one alone has to.
+    """
+    now = datetime.now(tz=UTC)
+    with session_scope() as session:
+        meeting = session.get(Meeting, meeting_id)
+        status = session.get(CtxMeetingStatus, meeting_id)
+        refusal = (
+            "no_such_meeting"
+            if meeting is None
+            else "not_analysed"
+            if status is None or not status.topic_linking_done
+            else "expired"
+            if meeting.expires_at is not None and meeting.expires_at <= now
+            else "no_privacy_guarantees"
+            if not (meeting.pii_masked and meeting.original_audio_deleted)
+            else None
+        )
+        if refusal is not None:
+            log.info("context_rederive_skipped", meeting_id=meeting_id, reason=refusal)
+            return None
+        rows = session.execute(
+            select(
+                Utterance.id,
+                Utterance.speaker_label,
+                Utterance.participant_id,
+                Utterance.start_sec,
+                Utterance.end_sec,
+                Utterance.text,
+                Utterance.confidence,
+            )
+            .where(Utterance.meeting_id == meeting_id)
+            .order_by(Utterance.start_sec, Utterance.id)
+        ).all()
+    # ``model_construct``: these rows were validated as a contract when module
+    # A published them; one bad legacy row must not stop a backfill. It does
+    # not complain about a field left out, so every column that has a contract
+    # counterpart is passed -- the event path and this one must hand
+    # ``_link_topics`` the same thing. ``role`` has no column and stays unset.
+    utterances = [
+        UtteranceContract.model_construct(
+            id=uid,
+            speaker=speaker,
+            speaker_id=participant_id,
+            start=start,
+            end=end,
+            text=text_,
+            confidence=confidence,
+        )
+        for uid, speaker, participant_id, start, end, text_, confidence in rows
+    ]
+    return _link_topics(meeting_id, utterances)
+
+
+def rederivable_meeting_ids(session: Session, *, team_id: str | None = None) -> list[str]:
+    """The meetings a backfill has to re-derive, oldest first.
+
+    Not every analysed meeting: re-deriving replaces a meeting's links, and a
+    meeting whose result cannot change has nothing to gain from it. Two kinds
+    are in:
+
+    - **Meetings that may hold excluded speech.** Some utterance's speaker did
+      not consent, and a topic row was cut from it (``ctx_embeddings
+      .utterance_ids`` names it) or cannot say what it was cut from (``None``,
+      a row from before #397). Where the excluded speech was never analysed, or
+      the meeting has none, the result would be the same, so it is left alone.
+    - **Meetings that link to those.** A link into a re-derived meeting was
+      scored against topics that no longer exist. Their own topics do not
+      change, only what they are scored against, so one step is enough -- no
+      further chain.
+
+    Only meetings ``rederive_topics`` would act on: analysed, unexpired, and
+    carrying module A's privacy flags. Consent attested *after* analysis is not
+    found here -- nothing stored says which meetings that happened to, and
+    re-deriving one produces topics rather than cleaning any up -- so that case
+    is ``rederive_topics`` on the meeting.
+
+    Oldest first because each meeting's links are scored against the topics of
+    the meetings before it: re-deriving in time order means every meeting is
+    linked against predecessors that are already re-derived.
+    """
+    now = datetime.now(tz=UTC)
+    stmt = (
+        select(Meeting.id)
+        .join(CtxMeetingStatus, CtxMeetingStatus.meeting_id == Meeting.id)
+        .where(
+            CtxMeetingStatus.topic_linking_done.is_(True),
+            or_(Meeting.expires_at.is_(None), Meeting.expires_at > now),
+            Meeting.pii_masked.is_(True),
+            Meeting.original_audio_deleted.is_(True),
+        )
+    )
+    if team_id is not None:
+        stmt = stmt.where(Meeting.team_id == team_id)
+    eligible = set(session.scalars(stmt))
+
+    exposed = {mid for mid in eligible if _holds_excluded_speech(session, mid)}
+    if not exposed:
+        return []
+    linking_in = set(
+        session.scalars(
+            select(CtxTopicLink.meeting_id).where(CtxTopicLink.linked_meeting_id.in_(exposed))
+        )
+    )
+    chosen = exposed | (linking_in & eligible)
+    return list(
+        session.scalars(
+            select(Meeting.id).where(Meeting.id.in_(chosen)).order_by(_meeting_time(), Meeting.id)
+        )
+    )
+
+
+def _holds_excluded_speech(session: Session, meeting_id: str) -> bool:
+    """Whether a topic of this meeting may have been cut from speech that is
+    excluded from analysis -- see ``rederivable_meeting_ids``."""
+    excluded = set(
+        session.scalars(select(Utterance.id).where(Utterance.meeting_id == meeting_id))
+    ) - consented_utterance_ids(session, meeting_id)
+    if not excluded:
+        return False
+    provenance = session.scalars(
+        select(CtxEmbedding.utterance_ids).where(
+            CtxEmbedding.meeting_id == meeting_id, CtxEmbedding.kind == "topic"
+        )
+    )
+    return any(not ids or excluded.intersection(ids) for ids in provenance)
+
+
+def human_verdict_count(session: Session, meeting_ids: list[str]) -> int:
+    """How many links on these meetings a user settled (``confirmed`` or
+    ``rejected``) -- what re-deriving puts at risk. A verdict survives when the
+    same topic label still links to the same meeting (``_link_topics``) and is
+    gone otherwise."""
+    return (
+        session.scalar(
+            select(func.count())
+            .select_from(CtxTopicLink)
+            .where(
+                CtxTopicLink.meeting_id.in_(meeting_ids),
+                CtxTopicLink.status.in_(_HUMAN_LINK_STATUSES),
+            )
+        )
+        or 0
+    )
+
+
+def _link_topics(meeting_id: str, utterances: list[UtteranceContract]) -> bool:
+    """``run_topic_linking``'s work, for utterances from the event or the
+    database alike -- see its docstring."""
     settings = get_settings()
     embedder = get_embedder()
     reranker = get_reranker()
 
     with session_scope() as session:
-        meeting = session.get(Meeting, transcript.meeting_id)
+        meeting = session.get(Meeting, meeting_id)
         if meeting is None:
-            raise ValueError(f"{transcript.meeting_id}: meeting row not found")
+            raise ValueError(f"{meeting_id}: meeting row not found")
 
-        consented = consented_utterance_ids(session, transcript.meeting_id)
-        analysed = [u for u in transcript.utterances if u.id in consented]
+        consented = consented_utterance_ids(session, meeting_id)
+        analysed = [u for u in utterances if u.id in consented]
         topics = extract_topics(
             analysed,
             embedder,
@@ -129,27 +321,37 @@ def run_topic_linking(transcript: TranscriptReady) -> bool:
         )
         log.info(
             "context_topics_extracted",
-            meeting_id=transcript.meeting_id,
+            meeting_id=meeting_id,
             topics=len(topics),
             utterances=len(analysed),
-            excluded=len(transcript.utterances) - len(analysed),
+            excluded=len(utterances) - len(analysed),
         )
 
         session.execute(
             delete(CtxEmbedding).where(
-                CtxEmbedding.meeting_id == transcript.meeting_id,
+                CtxEmbedding.meeting_id == meeting_id,
                 CtxEmbedding.kind == "topic",
             )
         )
-        session.execute(
-            delete(CtxTopicLink).where(CtxTopicLink.meeting_id == transcript.meeting_id)
-        )
+        # A user's answer to a ``pending`` link is theirs, not this run's: read
+        # them before the delete, and ``_link_topic`` puts each back on a link
+        # to the same meeting under the same label.
+        verdicts = {
+            (link.linked_meeting_id, link.topic_label): link.status
+            for link in session.scalars(
+                select(CtxTopicLink).where(
+                    CtxTopicLink.meeting_id == meeting_id,
+                    CtxTopicLink.status.in_(_HUMAN_LINK_STATUSES),
+                )
+            )
+        }
+        session.execute(delete(CtxTopicLink).where(CtxTopicLink.meeting_id == meeting_id))
         session.flush()
 
         for topic in topics:
             session.add(
                 CtxEmbedding(
-                    meeting_id=transcript.meeting_id,
+                    meeting_id=meeting_id,
                     kind="topic",
                     ref_label=topic.label,
                     utterance_ids=topic.utterance_ids,
@@ -169,27 +371,27 @@ def run_topic_linking(transcript: TranscriptReady) -> bool:
                 topic,
                 team_id=meeting.team_id,
                 before=before,
-                exclude_meeting_id=transcript.meeting_id,
+                exclude_meeting_id=meeting_id,
             )
             links_written += _link_topic(
-                session, transcript.meeting_id, topic, candidates, reranker, settings, embedder
+                session, meeting_id, topic, candidates, reranker, settings, embedder, verdicts
             )
 
         # Under the row lock publish_if_ready takes: either a publish committed
         # first and this run republishes, or it waits and publishes these links.
         prior = session.get(
-            CtxMeetingStatus, transcript.meeting_id, with_for_update=True, populate_existing=True
+            CtxMeetingStatus, meeting_id, with_for_update=True, populate_existing=True
         )
         already_published = prior is not None and prior.published_at is not None
         _upsert_status(
             session,
-            transcript.meeting_id,
+            meeting_id,
             topic_linking_done=True,
             deadline_at=datetime.now(tz=UTC) + timedelta(seconds=settings.publish_timeout_s),
         )
         log.info(
             "context_topic_linking_done",
-            meeting_id=transcript.meeting_id,
+            meeting_id=meeting_id,
             links=links_written,
             already_published=already_published,
         )
@@ -226,6 +428,7 @@ def _link_topic(
     reranker,
     settings,
     embedder,
+    verdicts: dict[tuple[str | None, str], str],
 ) -> int:
     if not candidates:
         return 0
@@ -270,7 +473,10 @@ def _link_topic(
                 similarity=_clamp(candidate.similarity),
                 rerank_score=_clamp(float(rerank_score)),
                 confidence=_clamp(confidence[candidate.linked_meeting_id]),
-                status="asserted" if confident else "pending",
+                status=verdicts.get(
+                    (candidate.linked_meeting_id, topic.label),
+                    "asserted" if confident else "pending",
+                ),
                 retriever_version=f"hybrid-rrf+{embedder.model_version}",
                 reranker_version=reranker.model_version,
             )

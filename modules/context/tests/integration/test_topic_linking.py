@@ -431,3 +431,209 @@ def test_the_reranker_never_reads_a_withdrawn_speakers_past_text(
     assert reranker.calls
     for _query, passages in reranker.calls:
         assert passages and set(passages) <= labels
+
+
+# --------------------------------------------------------------------------- #
+# rederive_topics -- the backfill after consent changed behind a meeting
+# --------------------------------------------------------------------------- #
+
+
+def _as_module_a_leaves_it(meeting_id: str) -> None:
+    """The privacy flags module A sets on the row once it has transcribed."""
+    with session_scope() as s:
+        row = s.get(Meeting, meeting_id)
+        assert row is not None
+        row.pii_masked = True
+        row.original_audio_deleted = True
+
+
+def _analysed(
+    team_id: str, lines: list[str], *, days_ago: int = 0, **transcript_kwargs: object
+) -> str:
+    meeting = _meeting(team_id, days_ago=days_ago)
+    service.run_topic_linking(_transcript(meeting, lines, **transcript_kwargs))  # type: ignore[arg-type]
+    _as_module_a_leaves_it(meeting)
+    return meeting
+
+
+def _utterance_ids_behind_topics(meeting_id: str) -> set[str]:
+    return {uid for row in _topic_rows(meeting_id) for uid in (row.utterance_ids or [])}
+
+
+def test_rederive_drops_what_a_non_consenting_speaker_said(team_id: str) -> None:
+    # Before #439 every utterance was analysed: stand that state up by
+    # analysing while both speakers count, then record the refusal.
+    lines = _SEARCH + _SORT
+    speakers = ["동의"] * 5 + ["거부"] * 5
+    meeting = _analysed(team_id, lines, speakers=speakers)
+    assert _utterance_ids_behind_topics(meeting) & {f"utt_{meeting}_{i}" for i in range(5, 10)}
+    with session_scope() as s:
+        s.execute(
+            update(Participant)
+            .where(Participant.meeting_id == meeting, Participant.speaker_label == "거부")
+            .values(consented=False)
+        )
+
+    assert service.rederive_topics(meeting) is False  # analysed, not yet published
+
+    kept = _utterance_ids_behind_topics(meeting)
+    assert kept and kept <= {f"utt_{meeting}_{i}" for i in range(5)}
+
+
+def test_rederive_picks_up_consent_attested_after_analysis(team_id: str) -> None:
+    meeting = _analysed(team_id, _SEARCH + _SORT, refusing=frozenset({"화자"}))
+    assert _topic_rows(meeting) == []
+    with session_scope() as s:  # what autune_audio.service.attest_consent does
+        s.execute(
+            update(Participant).where(Participant.meeting_id == meeting).values(consented=True)
+        )
+
+    service.rederive_topics(meeting)
+
+    assert _topic_rows(meeting)
+
+
+def test_rederive_reports_a_published_meeting_so_it_is_republished(team_id: str) -> None:
+    meeting = _analysed(team_id, _SEARCH + _SORT)
+    with session_scope() as s:
+        status = s.get(CtxMeetingStatus, meeting)
+        assert status is not None
+        status.published_at = datetime.now(tz=UTC)
+
+    assert service.rederive_topics(meeting) is True
+
+
+@pytest.mark.parametrize("state", ["not_analysed", "expired", "no_privacy_guarantees"])
+def test_rederive_leaves_alone_what_it_must_not_stand_in_for(team_id: str, state: str) -> None:
+    meeting = _analysed(team_id, _SEARCH + _SORT)
+    before = sorted(row.id for row in _topic_rows(meeting))
+    with session_scope() as s:
+        row = s.get(Meeting, meeting)
+        assert row is not None
+        if state == "not_analysed":
+            s.execute(delete(CtxMeetingStatus).where(CtxMeetingStatus.meeting_id == meeting))
+        elif state == "expired":
+            row.expires_at = datetime.now(tz=UTC) - timedelta(minutes=1)
+        else:
+            row.pii_masked = False
+
+    assert service.rederive_topics(meeting) is None
+    assert sorted(row.id for row in _topic_rows(meeting)) == before
+
+
+def _withdraw(meeting_id: str, label: str) -> None:
+    with session_scope() as s:
+        s.execute(
+            update(Participant)
+            .where(Participant.meeting_id == meeting_id, Participant.speaker_label == label)
+            .values(consented=False)
+        )
+
+
+_TWO_SPEAKERS = ["동의"] * 5 + ["거부"] * 5
+
+
+def test_only_meetings_that_may_hold_excluded_speech_are_rederived(team_id: str) -> None:
+    lines = _SEARCH + _SORT
+    # All older than the exposed meeting, so none of them links into it.
+    unaffected_because_all_consented = _analysed(team_id, _SEARCH, days_ago=9)
+    clean_since_439 = _analysed(
+        team_id, lines, days_ago=8, speakers=_TWO_SPEAKERS, refusing=frozenset({"거부"})
+    )
+    never_analysed = _meeting(team_id, days_ago=7)
+    # Analysed before #439 while every speaker counted, refused since.
+    exposed = _analysed(team_id, lines, days_ago=1, speakers=_TWO_SPEAKERS)
+    _withdraw(exposed, "거부")
+
+    with session_scope() as s:
+        ids = service.rederivable_meeting_ids(s, team_id=team_id)
+
+    assert ids == [exposed]
+    assert {unaffected_because_all_consented, clean_since_439, never_analysed}.isdisjoint(ids)
+
+
+def test_a_meeting_linking_into_a_rederived_one_is_rederived_after_it(team_id: str) -> None:
+    lines = _SEARCH + _SORT
+    exposed = _analysed(team_id, lines, days_ago=5, speakers=_TWO_SPEAKERS)
+    _withdraw(exposed, "거부")
+    later = _analysed(team_id, _SEARCH, days_ago=1)  # consents fully, links into ``exposed``
+    unrelated = _analysed(team_id, _SORT, days_ago=0, refusing=frozenset({"화자"}))
+    with session_scope() as s:
+        assert s.scalars(
+            select(CtxTopicLink).where(
+                CtxTopicLink.meeting_id == later, CtxTopicLink.linked_meeting_id == exposed
+            )
+        ).all()
+
+    with session_scope() as s:
+        ids = service.rederivable_meeting_ids(s, team_id=team_id)
+
+    assert ids == [exposed, later]
+    assert unrelated not in ids
+
+
+def test_a_meeting_the_rederive_would_refuse_is_not_listed(team_id: str) -> None:
+    exposed = _analysed(team_id, _SEARCH + _SORT, speakers=_TWO_SPEAKERS)
+    _withdraw(exposed, "거부")
+    with session_scope() as s:
+        row = s.get(Meeting, exposed)
+        assert row is not None
+        row.original_audio_deleted = False
+
+    with session_scope() as s:
+        assert service.rederivable_meeting_ids(s, team_id=team_id) == []
+
+
+def _link_verdicts(meeting_id: str) -> dict[tuple[str | None, str], str]:
+    with session_scope() as s:
+        return {
+            (link.linked_meeting_id, link.topic_label): link.status
+            for link in s.scalars(select(CtxTopicLink).where(CtxTopicLink.meeting_id == meeting_id))
+        }
+
+
+def test_a_rerun_keeps_what_a_user_answered_on_a_link(team_id: str) -> None:
+    past = _meeting(team_id, days_ago=10)
+    current = _meeting(team_id, days_ago=0)
+    service.run_topic_linking(_transcript(past, _SEARCH + _SORT))
+    transcript = _transcript(current, _SEARCH + _SORT)
+    service.run_topic_linking(transcript)
+    with session_scope() as s:
+        links = s.scalars(
+            select(CtxTopicLink).where(CtxTopicLink.meeting_id == current).order_by(CtxTopicLink.id)
+        ).all()
+        assert links
+        links[0].status = "rejected"
+        if len(links) > 1:
+            links[1].status = "confirmed"
+    answered = {
+        key: status
+        for key, status in _link_verdicts(current).items()
+        if status in ("confirmed", "rejected")
+    }
+    assert answered
+
+    service.run_topic_linking(transcript)
+
+    after = _link_verdicts(current)
+    assert {key: after.get(key) for key in answered} == answered
+
+
+def test_rederive_hands_over_what_the_event_carries(
+    team_id: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    meeting = _analysed(team_id, _SEARCH + _SORT)
+    handed: list = []
+    monkeypatch.setattr(
+        service, "_link_topics", lambda _meeting_id, utterances: handed.extend(utterances) or False
+    )
+
+    service.rederive_topics(meeting)
+
+    with session_scope() as s:
+        stored = {
+            row.id: row.participant_id
+            for row in s.scalars(select(UtteranceRow).where(UtteranceRow.meeting_id == meeting))
+        }
+    assert stored and all(stored.values())
+    assert {u.id: u.speaker_id for u in handed} == stored
