@@ -203,14 +203,6 @@ export async function uploadRecording(meetingId: string, file: File) {
 }
 
 /**
- * The API's own origin, for the live socket only. A WebSocket does not go
- * through the Next rewrite, so it cannot use the same-origin base the HTTP
- * calls do. The browser still sends the `localhost` session cookie on the
- * handshake: cookies are scoped by host, not port.
- */
-const LIVE_SOCKET_ORIGIN = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
-
-/**
  * The bearer token this browser holds, or null — for the live socket only.
  *
  * A `WebSocket` cannot carry request headers, so the live channel sends the
@@ -228,14 +220,18 @@ export function getToken(): string | null {
   return header?.startsWith("Bearer ") ? header.slice("Bearer ".length) : null;
 }
 
-/** The API's origin, for the one URL that cannot go through `request()`: the live socket. */
-export function apiBase(): string {
-  return LIVE_SOCKET_ORIGIN;
-}
-
-/** `ws://` or `wss://` for the live channel, from the same origin as the API. */
+/**
+ * `ws://` or `wss://` for the live channel, on the page's own origin.
+ *
+ * Through the same `/api` rewrite as every HTTP call: Next proxies the
+ * WebSocket upgrade too (probed against `next dev` — the API logged the
+ * handshake as accepted). Same origin keeps the session cookie first-party on
+ * the handshake, which is how a Google-signed-in browser authenticates the
+ * socket, and leaves no second API address to configure per environment.
+ */
 export function liveSocketUrl(meetingId: string): string {
-  return `${apiBase().replace(/^http/, "ws")}/api/audio/live/${meetingId}`;
+  const { protocol, host } = window.location;
+  return `${protocol === "https:" ? "wss" : "ws"}://${host}/api/audio/live/${meetingId}`;
 }
 
 /** The meeting's research documents the reader may see: approved ones for any member. */
