@@ -87,6 +87,12 @@ agreement, and sync the result to Notion.
    tagged events on each connected calendar, and a date the person moved there
    becomes the due date through the board's edit path (`ext_calendar_events`,
    `ext_calendar_polls`).
+   A confirmed item is also one issue in the team's Jira project (#82, #458),
+   and every ten minutes `pull_jira_changes` reads back the status people moved
+   their issues to: an issue dragged to Done makes its item done, through the
+   same edit path. `ext_external_refs.synced_category` records what Autune last
+   left the issue in, so a board edit that has not reached Jira yet is never
+   undone; when both moved, the board wins.
 8. **Publish** — emit `ExtractionResult`.
 
 Classification runs before reference resolution, which is worth stating because
