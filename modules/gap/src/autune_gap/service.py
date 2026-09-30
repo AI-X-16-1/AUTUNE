@@ -31,7 +31,7 @@ from autune_core import (
     new_id,
     session_scope,
 )
-from autune_core.errors import NotFoundError
+from autune_core.errors import NotFoundError, PrivacyViolationError
 from autune_core.events import publish
 from autune_gap import detect, graph, semantic, template, verification
 from autune_gap.config import GapSettings, get_settings
@@ -324,6 +324,11 @@ def detect_gaps(meeting_id: str) -> int:
         _store_gaps(session, meeting_id, chosen, findings)
         if topics:
             _record_scoring(session, meeting_id, people_key)
+        else:
+            # A rerun that left no graph has nothing to rescore. A row left at
+            # the old grouping would disagree forever and rerun this, and
+            # republish, every ten minutes (#506 review).
+            session.execute(delete(GapScoring).where(GapScoring.meeting_id == meeting_id))
 
     # Counts and keys only. A gap title is composed from a template file and a
     # topic label is transcript text; neither goes in a log line.
@@ -366,7 +371,12 @@ def rescore_where_people_changed() -> list[str]:
     both rescore, and the second writes what the first did.
 
     One meeting failing does not stop the rest; it is logged by id and tried on
-    the next run, because its row still disagrees.
+    the next run, because its row still disagrees. **Except a privacy
+    violation**: the verifier raises ``PrivacyViolationError`` on purpose when a
+    stored row would leave unmasked (``pipeline/base.py``), and that is a broken
+    invariant, not a hiccup. The other meetings are still rescored, then it is
+    raised so the task fails the way ``on_transcript_ready`` does, instead of
+    ending in a warning every ten minutes (#506 review).
     """
     with session_scope() as session:
         scored: dict[str, str] = {
@@ -391,10 +401,14 @@ def rescore_where_people_changed() -> list[str]:
     )
 
     rescored = []
+    violations: list[str] = []
     for meeting_id in changed:
         try:
             detect_gaps(meeting_id)
             republish_report(meeting_id)
+        except PrivacyViolationError:
+            violations.append(meeting_id)
+            continue
         except Exception as exc:
             # The class name only, as the verifier logs it: an exception raised
             # over stored rows can carry transcript text in its message.
@@ -402,7 +416,18 @@ def rescore_where_people_changed() -> list[str]:
             continue
         rescored.append(meeting_id)
 
-    log.info("gap_rescore_swept", scored=len(scored), changed=len(changed), rescored=len(rescored))
+    log.info(
+        "gap_rescore_swept",
+        scored=len(scored),
+        changed=len(changed),
+        rescored=len(rescored),
+        violations=len(violations),
+    )
+    if violations:
+        # Ids only: the message of the one caught can quote the value.
+        raise PrivacyViolationError(
+            f"unmasked value on rescore in {len(violations)} meeting(s): {', '.join(violations)}"
+        )
     return rescored
 
 

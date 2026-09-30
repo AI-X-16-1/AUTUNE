@@ -20,6 +20,7 @@ import pytest
 from sqlalchemy import delete, select
 
 from autune_core import Meeting, Participant, Team, User, Utterance, session_scope
+from autune_core.errors import PrivacyViolationError
 from autune_gap import service
 from autune_gap.config import get_settings
 from autune_gap.models import (
@@ -542,6 +543,57 @@ def test_a_rescore_keeps_a_dismissal(team_id: str, user_id: str, rescore_sent: l
     service.rescore_where_people_changed()
 
     assert stored(meeting_id)["risk"].dismissed_at is not None
+
+
+def test_a_privacy_violation_on_rescore_is_raised_after_the_rest(
+    team_id: str, user_id: str, rescore_sent: list[dict], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#506 review: the verifier raises ``PrivacyViolationError`` on purpose, and
+    the rescore's catch-all turned it into a warning every ten minutes. The
+    other meetings are still rescored; then the sweep fails with ids only."""
+    first, first_people = split_voice(team_id)
+    second, second_people = split_voice(team_id)
+    service.detect_gaps(first)
+    service.detect_gaps(second)
+    confirm(first_people + second_people, user_id)
+    # The sweep goes in id order, so the first call is the leaking meeting.
+    leaking, fine = sorted([first, second])
+
+    real_hear = service._hear
+    calls: list[int] = []
+
+    def hear(chosen, speech, settings):  # type: ignore[no-untyped-def]
+        calls.append(1)
+        if len(calls) == 1:
+            raise PrivacyViolationError("unmasked 010-1234-5678 in a verifier request")
+        return real_hear(chosen, speech, settings)
+
+    monkeypatch.setattr(service, "_hear", hear)
+
+    with pytest.raises(PrivacyViolationError) as raised:
+        service.rescore_where_people_changed()
+
+    assert leaking in str(raised.value)
+    assert "010" not in str(raised.value)
+    assert {payload["meeting_id"] for payload in rescore_sent} == {fine}
+
+
+def test_a_rerun_that_leaves_no_topics_forgets_the_scoring(
+    team_id: str, user_id: str, rescore_sent: list[dict]
+) -> None:
+    """#506 review: a row left at the old grouping would disagree forever, and
+    rerun and republish the meeting every ten minutes."""
+    meeting_id, people = split_voice(team_id)
+    service.detect_gaps(meeting_id)
+    with session_scope() as s:
+        s.execute(delete(GapTopic).where(GapTopic.meeting_id == meeting_id))
+
+    service.detect_gaps(meeting_id)
+    confirm(people, user_id)
+
+    with session_scope() as s:
+        assert s.get(GapScoring, meeting_id) is None
+    assert meeting_id not in service.rescore_where_people_changed()
 
 
 # --- speech read by meaning ---------------------------------------------------
