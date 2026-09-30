@@ -3,6 +3,9 @@
 - ``POST /chat`` -- one chat turn: route, delegate, answer, record.
 - ``GET /runs`` -- a team's run timeline, newest first.
 - ``GET /research`` -- a meeting's research documents, by who may see which.
+- ``GET /pending`` -- L2 proposals waiting for a decision the caller may make.
+- ``POST /pending/{id}/approve`` -- approve one; the action runs.
+- ``POST /pending/{id}/reject`` -- reject one, with a reason from a fixed list.
 
 Every route needs a signed-in member of the team it names. The layer answers on
 behalf of a team, so a non-member gets 403 rather than someone else's work.
@@ -10,8 +13,9 @@ behalf of a team, so a non-member gets 403 rather than someone else's work.
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
@@ -19,16 +23,22 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from autune_core import CurrentUser, TeamMember, get_session
-from autune_core.errors import ConfigurationError, PermissionDeniedError
+from autune_core.errors import ConfigurationError, PermissionDeniedError, PrivacyViolationError
 
 from .config import get_agent_settings
+from .main.actions import collect_actions
 from .main.gemini import GeminiRouter
+from .main.own_tools import collect_own_actions, collect_own_tools
+from .main.pending import approve, approver_scopes, can_decide, reject
+from .main.preview import preview
+from .main.registry import collect_tools
 from .main.router import Router
 from .main.store import run_and_record
-from .models import AgentApprover, AgentResearchDocument, AgentRun
+from .models import AgentApprover, AgentPendingAction, AgentResearchDocument, AgentRun
 from .results import Finding
 
 router = APIRouter()
+log = logging.getLogger(__name__)
 
 SessionDep = Annotated[Session, Depends(get_session)]
 
@@ -169,3 +179,100 @@ def list_research(
             .order_by(AgentResearchDocument.created_at.desc())
         )
     )
+
+
+class PendingRead(BaseModel):
+    id: str
+    team_id: str
+    meeting_id: str | None
+    subagent: str
+    kind: str
+    tool: str
+    status: str
+    reject_reason: str | None
+    result_ok: bool | None
+    created_at: datetime
+    decided_at: datetime | None
+    title: str
+    body: str
+
+
+class RejectRequest(BaseModel):
+    reason: Literal["wrong_evidence", "not_now", "handled_elsewhere", "other"]
+
+
+PREVIEW_FAILED = "미리보기를 만들지 못했습니다"
+PENDING_COLUMNS = (
+    "id",
+    "team_id",
+    "meeting_id",
+    "subagent",
+    "kind",
+    "tool",
+    "status",
+    "reject_reason",
+    "result_ok",
+    "created_at",
+    "decided_at",
+)
+
+
+def _read(session: Session, row: AgentPendingAction) -> PendingRead:
+    try:
+        shown = preview(session, row, tools={**collect_tools(), **collect_own_tools()})
+    except PrivacyViolationError:
+        raise
+    except Exception as exc:
+        # One unreadable row must not hide the others. Log the type only: the
+        # message may quote transcript text.
+        log.warning("pending preview failed: %s", type(exc).__name__)
+        shown = {"title": row.kind, "body": PREVIEW_FAILED}
+    fields: dict[str, Any] = {c: getattr(row, c) for c in PENDING_COLUMNS}
+    fields.update(shown)
+    return PendingRead(**fields)
+
+
+@router.get("/pending", response_model=list[PendingRead])
+def list_pending(
+    user: CurrentUser, session: SessionDep, team_id: str | None = None
+) -> list[PendingRead]:
+    """Pending L2 proposals the caller may decide, in every team or in ``team_id``."""
+    if team_id is not None:
+        _require_member(session, team_id, user.id)
+        team_ids = [team_id]
+    else:
+        team_ids = list(
+            session.scalars(
+                select(AgentApprover.team_id).where(AgentApprover.user_id == user.id).distinct()
+            )
+        )
+    # approver_scopes counts only current members, so a removed member keeps nothing.
+    scopes = {t: approver_scopes(session, t, user.id) for t in team_ids}
+    scopes = {t: s for t, s in scopes.items() if s}
+    if not scopes:
+        return []
+    rows = session.scalars(
+        select(AgentPendingAction)
+        .where(AgentPendingAction.team_id.in_(scopes), AgentPendingAction.status == "pending")
+        .order_by(AgentPendingAction.created_at.desc())
+    ).all()
+    return [_read(session, r) for r in rows if can_decide(scopes[r.team_id], r)]
+
+
+@router.post("/pending/{pending_id}/approve", response_model=PendingRead)
+def approve_pending(pending_id: str, user: CurrentUser, session: SessionDep) -> PendingRead:
+    # approve() commits its own claim before the action runs; we commit the outcome.
+    row = approve(
+        session, pending_id, user_id=user.id, actions={**collect_actions(), **collect_own_actions()}
+    )
+    session.commit()
+    return _read(session, row)
+
+
+@router.post("/pending/{pending_id}/reject", response_model=PendingRead)
+def reject_pending(
+    pending_id: str, body: RejectRequest, user: CurrentUser, session: SessionDep
+) -> PendingRead:
+    row = reject(session, pending_id, user_id=user.id, reason=body.reason)
+    session.commit()
+    return _read(session, row)
