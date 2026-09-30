@@ -182,3 +182,42 @@ export async function disconnectJira(meetingId: string): Promise<void> {
     throw new ApiError(response.status, "jira_disconnect_failed", "disconnect failed");
   }
 }
+
+/** A team's Notion connection, as a member of the meeting's team sees it. */
+export interface NotionConnection {
+  connected: boolean;
+  workspace_name?: string | null;
+}
+
+/**
+ * Where the browser goes to connect the team's Notion workspace (#428): Notion's
+ * consent screen (where the person also picks the pages Autune may see), then
+ * back to `redirectTo` with `?notion=connected|failed`.
+ */
+export function notionConnectUrl(meetingId: string, redirectTo = "/"): string {
+  return authUrl(
+    `/notion/start?meeting_id=${encodeURIComponent(meetingId)}&redirect_to=${encodeURIComponent(redirectTo)}`,
+  );
+}
+
+export async function getNotionConnection(meetingId: string): Promise<NotionConnection | null> {
+  try {
+    const response = await fetch(authUrl(`/notion?meeting_id=${encodeURIComponent(meetingId)}`), {
+      credentials: "include",
+    });
+    if (!response.ok) return null;
+    return (await response.json()) as NotionConnection;
+  } catch {
+    return null;
+  }
+}
+
+export async function disconnectNotion(meetingId: string): Promise<void> {
+  const response = await fetch(
+    authUrl(`/notion/disconnect?meeting_id=${encodeURIComponent(meetingId)}`),
+    { method: "POST", credentials: "include" },
+  );
+  if (!response.ok) {
+    throw new ApiError(response.status, "notion_disconnect_failed", "disconnect failed");
+  }
+}

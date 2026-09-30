@@ -47,7 +47,7 @@ class OAuthTransaction:
         """``sign_in``, or ``calendar`` for a signed-in person connecting their own
         calendar (#435) -- the callback is shared, so it asks what it is finishing."""
         self.team_id = team_id
-        """For a ``jira`` connect: the team whose Jira is being connected, checked
+        """For a ``jira`` or ``notion`` connect: the team being connected, checked
         against the starting person's membership at start."""
         self.user_id = user_id
         """Who started a ``calendar`` or ``jira`` connect. Set from their session at start and

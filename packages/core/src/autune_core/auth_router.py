@@ -44,6 +44,7 @@ from .jira_connection import JIRA, jira_access
 from .logging import get_logger
 from .oauth.atlassian import AtlassianOAuthClient, get_atlassian_client
 from .oauth.google import CALENDAR_SCOPE, GoogleOAuthClient, get_google_client
+from .oauth.notion import NotionOAuthClient, get_notion_oauth_client
 from .oauth.state import STATE_TTL_SECONDS, OAuthTransaction, StateStore, get_state_store
 from .settings import get_settings
 from .user_integrations import (
@@ -595,4 +596,158 @@ def jira_disconnect(
     team_id = _team_of(session, user.id, meeting_id)
     disconnect_integration(session, team_id, JIRA)
     log.info("auth_jira_disconnected", team_id=team_id, user_id=user.id)
+    return {"connected": False, "revoked": False}
+
+
+# --------------------------------------------------------------------------- #
+# A team's Notion workspace (#428): one click, Notion's public-integration OAuth
+# --------------------------------------------------------------------------- #
+
+NOTION = "notion"
+
+
+def _notion_callback_path(request: Request) -> str:
+    return request.url_for("notion_callback").path
+
+
+@router.get("/notion/start")
+def notion_start(
+    request: Request,
+    user: CurrentUser,
+    session: Annotated[Session, Depends(get_session)],
+    store: Annotated[StateStore, Depends(get_state_store)],
+    notion: Annotated[NotionOAuthClient, Depends(get_notion_oauth_client)],
+    meeting_id: Annotated[str, Query()],
+    redirect_to: Annotated[str, Query()] = "/",
+) -> RedirectResponse:
+    """Send a team member to Notion to connect the team's workspace. On Notion's
+    screen they also pick the pages Autune may see -- one of those becomes the
+    parent of Autune's databases (module B)."""
+    team_id = _team_of(session, user.id, meeting_id)
+    state = secrets.token_urlsafe(32)
+    store.put(
+        state,
+        OAuthTransaction(
+            nonce="",
+            redirect_to=_safe_redirect_target(redirect_to),
+            purpose="notion",
+            user_id=user.id,
+            team_id=team_id,
+        ),
+    )
+    response = RedirectResponse(notion.authorization_url(state=state), status_code=307)
+    response.set_cookie(
+        STATE_COOKIE,
+        state,
+        max_age=STATE_TTL_SECONDS,
+        httponly=True,
+        secure=get_settings().session_cookie_secure,
+        samesite="lax",
+        path=_notion_callback_path(request),
+    )
+    return response
+
+
+@router.get("/notion/callback")
+def notion_callback(
+    request: Request,
+    state: Annotated[str, Query()],
+    store: Annotated[StateStore, Depends(get_state_store)],
+    notion: Annotated[NotionOAuthClient, Depends(get_notion_oauth_client)],
+    session: Annotated[Session, Depends(get_session)],
+    code: Annotated[str | None, Query()] = None,
+    error: Annotated[str | None, Query()] = None,
+    autune_oauth_state: Annotated[str | None, Cookie()] = None,
+) -> Response:
+    response: Response
+    if autune_oauth_state is None or not secrets.compare_digest(
+        autune_oauth_state.encode(), state.encode()
+    ):
+        response = JSONResponse(
+            status_code=403,
+            content=PermissionDeniedError(
+                "Notion connect was not started in this browser"
+            ).to_dict(),
+        )
+    else:
+        transaction = store.pop(state)
+        if transaction is None or transaction.purpose != "notion" or not transaction.team_id:
+            response = JSONResponse(
+                status_code=403,
+                content=PermissionDeniedError(
+                    "Notion connect state is unknown or expired"
+                ).to_dict(),
+            )
+        else:
+            response = _finish_notion_connect(transaction, notion, session, code=code, error=error)
+    response.delete_cookie(STATE_COOKIE, path=_notion_callback_path(request))
+    return response
+
+
+def _finish_notion_connect(
+    transaction: OAuthTransaction,
+    notion: NotionOAuthClient,
+    session: Session,
+    *,
+    code: str | None,
+    error: str | None,
+) -> RedirectResponse:
+    """Store the workspace's bot token, then back to the screen with
+    ``?notion=connected`` (the screen asks module B to set up the databases) or
+    ``?notion=failed``. A new connection replaces the old config whole: ids from
+    another workspace would point at nothing."""
+    assert transaction.team_id is not None
+    try:
+        if error or not code:
+            raise PermissionDeniedError("Notion access was not granted")
+        grant = notion.exchange_code(code)
+        save_integration(
+            session,
+            transaction.team_id,
+            NOTION,
+            secret=grant.access_token,
+            config={
+                "workspace_id": grant.workspace_id,
+                "workspace_name": grant.workspace_name,
+                "bot_id": grant.bot_id,
+            },
+            connected_by=transaction.user_id,
+        )
+        log.info("auth_notion_connected", team_id=transaction.team_id)
+        outcome = "connected"
+    except AutuneError as exc:
+        log.info("auth_notion_connect_failed", team_id=transaction.team_id, reason=exc.code)
+        outcome = "failed"
+    return RedirectResponse(
+        _web_url(_with_query(transaction.redirect_to, f"notion={outcome}")), status_code=303
+    )
+
+
+@router.get("/notion")
+def notion_status(
+    user: CurrentUser,
+    session: Annotated[Session, Depends(get_session)],
+    meeting_id: Annotated[str, Query()],
+) -> dict[str, object]:
+    """The team's Notion connection as a member sees it. Which page and which
+    databases are module B's to answer (``/api/extraction/notion/setup``)."""
+    team_id = _team_of(session, user.id, meeting_id)
+    config = load_integration(session, team_id, NOTION)
+    if config is None or not config.secret:
+        return {"connected": False}
+    return {"connected": True, "workspace_name": config.config.get("workspace_name")}
+
+
+@router.post("/notion/disconnect")
+def notion_disconnect(
+    user: CurrentUser,
+    session: Annotated[Session, Depends(get_session)],
+    meeting_id: Annotated[str, Query()],
+) -> dict[str, bool]:
+    """Forget the team's Notion token. The pages and databases stay in Notion --
+    they are the team's -- and the person removes Autune under Notion's
+    Settings > Connections to end the grant there (``revoked: false``)."""
+    team_id = _team_of(session, user.id, meeting_id)
+    disconnect_integration(session, team_id, NOTION)
+    log.info("auth_notion_disconnected", team_id=team_id, user_id=user.id)
     return {"connected": False, "revoked": False}
