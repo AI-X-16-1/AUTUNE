@@ -275,8 +275,12 @@ masks resident registration, card, phone and account numbers and email
 addresses, and has no pattern or model for names, **so `llm` replaces the
 meeting team's names itself before sending (#411):** each member's display
 name, and the given name of a three-syllable Korean name ("김민경" and "민경"),
-becomes `[사람N]` — the same person the same number within one meeting's
-requests, never stored and never mapped back. Only the request changes; the
+becomes `[사람N]`. A display name comes from the account's `name` claim and is
+often spaced ("박 재경", "재경 박"), so a Hangul name of two words is also matched
+joined and swapped ("박재경", "재경박") and by its given name ("재경") — the word
+of two syllables or more beside a one-syllable surname; with two longer words
+only the joined forms. Whichever form matched, the same person gets the same number
+within one meeting's requests, never stored and never mapped back. Only the request changes; the
 database, the reference resolver and Notion keep the text as it was.
 
 What still goes out, and is the exposure #392 and #92 ask about:

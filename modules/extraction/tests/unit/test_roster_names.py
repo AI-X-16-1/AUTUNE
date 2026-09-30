@@ -61,6 +61,63 @@ def test_a_given_name_two_members_share_is_its_own_person() -> None:
     assert out == "[사람1], [사람2], 그리고 [사람3] 님"
 
 
+def test_a_display_name_with_a_space_is_replaced_as_speech_to_text_writes_it() -> None:
+    """The account's `name` claim is often "박 재경"; the transcript says "박재경"
+    and "재경님" (PARK's review of #500)."""
+    texts = [
+        "재경님이 정리해 주세요",
+        "박재경 님 의견은요?",
+        "박 재경 님 확인해 주세요",
+        "재경씨가 할게요",
+    ]
+
+    assert substitute_names(texts, ["박 재경"]) == [
+        "[사람1]님이 정리해 주세요",
+        "[사람1] 님 의견은요?",
+        "[사람1] 님 확인해 주세요",
+        "[사람1]씨가 할게요",
+    ]
+
+
+def test_a_display_name_written_given_name_first_is_replaced_too() -> None:
+    texts = ["민구씨가 할게요", "강민구 님도요", "민구강 님", "재경님이 정리해 주세요"]
+
+    assert substitute_names(texts, ["재경 박", "민구 강"]) == [
+        "[사람1]씨가 할게요",
+        "[사람1] 님도요",
+        "[사람1] 님",
+        "[사람2]님이 정리해 주세요",
+    ]
+
+
+def test_extra_whitespace_in_a_roster_name_does_not_matter() -> None:
+    assert substitute_names(["재경님"], ["  박   재경 "]) == ["[사람1]님"]
+    assert substitute_names(["박재경 님"], ["박 재경", "박재경"]) == ["[사람1] 님"]
+
+
+def test_a_spaced_given_name_two_members_share_is_its_own_person() -> None:
+    (out,) = substitute_names(["박 재경, 김재경, 재경님"], ["박 재경", "김재경"])
+
+    assert "재경" not in out
+    assert out == "[사람1], [사람2], [사람3]님"
+
+
+def test_syllables_written_apart_are_joined() -> None:
+    assert substitute_names(["민경 님, 김민경"], ["김 민 경"]) == ["[사람1] 님, [사람1]"]
+
+
+def test_a_two_word_name_with_no_single_syllable_word_has_no_given_name() -> None:
+    """ "선우 재경": either word could be the surname, so only the joined forms."""
+    assert substitute_names(["선우재경 님과 재경 님"], ["선우 재경"]) == ["[사람1] 님과 재경 님"]
+
+
+def test_an_english_two_word_name_is_replaced_whole_only() -> None:
+    assert substitute_names(["Alex Kim will send it", "Alex sent"], ["Alex Kim"]) == [
+        "[사람1] will send it",
+        "Alex sent",
+    ]
+
+
 def test_no_roster_changes_nothing() -> None:
     texts = ["김민경 님이 하시고"]
     assert substitute_names(texts, []) == texts

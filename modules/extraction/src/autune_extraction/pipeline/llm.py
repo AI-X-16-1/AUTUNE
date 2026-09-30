@@ -171,22 +171,53 @@ PLACEHOLDER = "[사람{n}]"
 """What a roster name becomes in a request (#411)."""
 
 _HANGUL_FULL_NAME = re.compile(r"[가-힣]{3}")
+_HANGUL_WORD = re.compile(r"[가-힣]+")
 
 
 def _variants(name: str) -> list[str]:
-    """The forms a person is called by: the whole name, and for a three-syllable
-    Korean name also the given name ("김민경" -> "민경"). Nothing shorter than two
-    characters -- a one-letter "name" would replace letters everywhere."""
+    """The forms a person is called by, from the display name as stored.
+
+    A three-syllable Korean name is also called by its given name ("김민경" ->
+    "민경"). A display name comes from the account's ``name`` claim, and Korean
+    accounts often carry it with a space, in either order ("박 재경", "재경 박")
+    while the speech-to-text writes "박재경" and "재경님". So a name of Hangul
+    words is also matched joined, and in the other order, and by its given name:
+    the word of two syllables or more beside a one-syllable surname. Two-word
+    names where neither word is a single syllable get the joined forms but no
+    given name -- there is no telling which word it is.
+
+    Over-matching is the cheap mistake here (a surname replaced where it stands
+    alone is still a name) and under-matching is the leak, so where the split is
+    a guess the guess errs toward replacing.
+
+    Nothing shorter than two characters -- a one-letter "name" would replace
+    letters everywhere.
+    """
     forms = [name]
-    if _HANGUL_FULL_NAME.fullmatch(name):
+    words = name.split()
+    if len(words) >= 2 and all(_HANGUL_WORD.fullmatch(word) for word in words):
+        joined = "".join(words)
+        forms.append(joined)
+        if len(words) == 2:
+            first, second = words
+            forms.append(second + first)
+            if len(first) == 1 and len(second) >= 2:
+                forms.append(second)
+            elif len(second) == 1 and len(first) >= 2:
+                forms.append(first)
+        elif _HANGUL_FULL_NAME.fullmatch(joined):
+            forms.append(joined[1:])
+    elif _HANGUL_FULL_NAME.fullmatch(name):
         forms.append(name[1:])
-    return [form for form in forms if len(form) >= 2]
+    return [form for form in dict.fromkeys(forms) if len(form) >= 2]
 
 
 def substitute_names(texts: list[str], roster: Sequence[str]) -> list[str]:
     """``texts`` with every roster name replaced by ``[사람N]`` (#411).
 
-    Longest form first, so "김민경" never leaves "김[사람1]". Whatever follows a
+    Longest form first, so "김민경" never leaves "김[사람1]". A name is taken with
+    its whitespace collapsed, and a spaced one is matched in its joined and
+    swapped forms too (``_variants``). Whatever follows a
     name -- 님, 씨, a particle -- stays. The same person is the same number
     throughout, numbered by first appearance so the numbers say nothing about
     the roster's order or size. A given name two members share is its own
@@ -194,7 +225,7 @@ def substitute_names(texts: list[str], roster: Sequence[str]) -> list[str]:
     would still be a name. No roster, no change.
     """
     owners: dict[str, set[str]] = {}
-    for name in {n.strip() for n in roster if n and n.strip()}:
+    for name in {" ".join(n.split()) for n in roster if n and n.strip()}:
         for form in _variants(name):
             owners.setdefault(form, set()).add(name)
     if not owners:
