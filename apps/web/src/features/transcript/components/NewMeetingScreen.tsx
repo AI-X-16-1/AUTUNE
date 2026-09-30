@@ -59,6 +59,18 @@ function asInstant(value: string): string | undefined {
  * yet (identification #6, integrations per meeting). What is here is what
  * makes a recording reach the pipeline from a browser instead of from `curl`.
  *
+ * A meeting can also be opened with no recording at all — "예정으로 만들기",
+ * beside the upload button. It stops after the first call and leaves the
+ * meeting `scheduled`, which is what D's pre-meeting brief waits on: a
+ * `scheduled` meeting whose `started_at` is ahead gets a brief ten minutes
+ * before it (#437, #469). The upload path cannot produce one, because it moves
+ * the meeting to `analyzing` in the same submit. The recording arrives later
+ * through the stored meeting's "녹음 파일 올리기", which comes back here with
+ * `?meeting=`. One form rather than two screens: a meeting that already
+ * happened and one that is about to are the same title, time and team, and the
+ * only difference is whether there is a file yet. Consent is not asked on this
+ * path — there is no recording to attest to, and the upload asks for it.
+ *
  * `?meeting=` re-uploads to an existing meeting — the retry S12 offers when a
  * run failed. The backend accepts a recording for a `failed` meeting and
  * refuses one for a meeting that is `analyzing` or `complete`, and its 409 is
@@ -86,7 +98,7 @@ export function NewMeetingScreen({
   const [consented, setConsented] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [step, setStep] = useState<
-    "idle" | "creating" | "consenting" | "uploading"
+    "idle" | "creating" | "consenting" | "uploading" | "scheduling"
   >("idle");
 
   useEffect(() => {
@@ -117,6 +129,15 @@ export function NewMeetingScreen({
     consented &&
     (existingMeetingId !== undefined ||
       (title.trim().length > 0 && teamId !== ""));
+  // No file, no consent: only what the meeting row itself needs. The start is
+  // required here, unlike on the upload path's API call, because a scheduled
+  // meeting with no time is one the brief can never be sent for.
+  const canSchedule =
+    existingMeetingId === undefined &&
+    title.trim().length > 0 &&
+    teamId !== "" &&
+    asInstant(startedAt) !== undefined &&
+    step === "idle";
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -142,6 +163,23 @@ export function NewMeetingScreen({
     } catch (e: unknown) {
       setStep("idle");
       setError(e instanceof Error ? e.message : "업로드에 실패했습니다");
+    }
+  }
+
+  async function schedule() {
+    if (!canSchedule) return;
+    setError(null);
+    try {
+      setStep("scheduling");
+      const { meeting_id } = await createMeeting({
+        title: title.trim(),
+        team_id: teamId,
+        started_at: asInstant(startedAt),
+      });
+      router.push(`/meetings/${meeting_id}`);
+    } catch (e: unknown) {
+      setStep("idle");
+      setError(e instanceof Error ? e.message : "회의를 만들지 못했습니다");
     }
   }
 
@@ -194,7 +232,9 @@ export function NewMeetingScreen({
                 style={{ fontSize: "var(--text-metaSmall)" }}
               >
                 &quot;이번 주 금요일까지&quot; 같은 표현을 언제 기준으로 읽을지
-                정합니다. 지난 회의 녹음이면 그때로 고쳐 주세요.
+                정합니다. 지난 회의 녹음이면 그때로 고쳐 주세요. 앞으로 열
+                회의는 그 시각으로 &quot;예정으로 만들기&quot;를 누르면 시작
+                10분 전에 브리프가 옵니다.
               </p>
             </Field>
             <Field label="팀">
@@ -313,11 +353,22 @@ export function NewMeetingScreen({
           <Button
             tone="primary"
             type="submit"
-            disabled={!ready}
-            loading={step !== "idle"}
+            disabled={!ready || step === "scheduling"}
+            loading={step !== "idle" && step !== "scheduling"}
           >
-            {STEP_LABEL[step]}
+            {STEP_LABEL[step === "scheduling" ? "idle" : step]}
           </Button>
+          {existingMeetingId ? null : (
+            <Button
+              tone="secondary"
+              type="button"
+              onClick={schedule}
+              disabled={!canSchedule}
+              loading={step === "scheduling"}
+            >
+              {step === "scheduling" ? "만드는 중…" : "예정으로 만들기"}
+            </Button>
+          )}
           <span
             className="text-[var(--color-ink-muted)]"
             style={{ fontSize: "var(--text-metaSmall)" }}

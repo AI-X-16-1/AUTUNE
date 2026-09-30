@@ -17,6 +17,7 @@ switched on outside a demo is the team's call; the issue opened with it asks.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
@@ -208,3 +209,16 @@ class Embedder(Protocol):
         """One vector per input, in order, each already unit-normalised so a
         dot product is a cosine similarity."""
         ...
+
+
+def give_roster(classifier: object, names: Sequence[str]) -> None:
+    """Hand the meeting team's names to a classifier that sends text out of our
+    infrastructure, so it can replace them first (#411).
+
+    Not part of ``Classifier``: a model that runs here has no reason to see a
+    roster, and every implementation and fake would have to accept one. A
+    classifier that sends text defines ``use_roster``; the rest are left alone.
+    """
+    setter = getattr(classifier, "use_roster", None)
+    if callable(setter):
+        setter(names)

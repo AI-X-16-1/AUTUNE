@@ -5,7 +5,9 @@ import { useState } from "react";
 import { ActionBoard } from "./ActionBoard";
 import { ActionDetailDrawer } from "./ActionDetailDrawer";
 import { CalendarConnect } from "./CalendarConnect";
+import { SlackMeConnect } from "./SlackMeConnect";
 import { JiraConnect } from "./JiraConnect";
+import { SlackConnect } from "./SlackConnect";
 import { NotionConnect } from "./NotionConnect";
 import { DecisionReview } from "./DecisionReview";
 import { useActionItems } from "../hooks/useActionItems";
@@ -73,7 +75,9 @@ export function ActionItemsScreen({ meetingId }: { meetingId: string }) {
 
         <div className="mt-3 flex flex-col gap-2">
           <CalendarConnect />
+          <SlackMeConnect />
           <JiraConnect meetingId={meetingId} />
+          <SlackConnect meetingId={meetingId} />
           <NotionConnect meetingId={meetingId} />
         </div>
 

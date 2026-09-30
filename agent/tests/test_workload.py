@@ -11,13 +11,14 @@ from typing import Any
 
 import pytest
 
-from autune_agent.main import CallBudget, collect_subagents, run
+from autune_agent.main import CallBudget, RunScope, collect_subagents, run
 from autune_agent.main.registry import Tool, Toolbox
 from autune_agent.subagents.workload import SUBAGENT, plan
 from autune_agent.subagents.workload.graph import ITEMS, LOAD, REASSIGN
 from autune_agent.testing import FakeRouter, mock_tool
 
 SESSION: Any = object()
+SCOPE = RunScope(team_id="team_a")
 
 
 def person(
@@ -82,7 +83,7 @@ def tools_for(
 
 
 def invoke(tools: dict[str, Tool], budget: CallBudget | None = None) -> Any:
-    box = Toolbox(tools, SESSION, budget or CallBudget(), allowed=SUBAGENT.tools)
+    box = Toolbox(tools, SESSION, budget or CallBudget(), allowed=SUBAGENT.tools, scope=SCOPE)
     return SUBAGENT.build(box).invoke({"request": "업무 몰린 사람 있어?"})["outcome"]
 
 
@@ -210,7 +211,7 @@ def test_it_reads_only_its_allow_list() -> None:
     assert SUBAGENT.tools == (LOAD, ITEMS)
     assert not any("speaking" in t or t.startswith("intelligence.") for t in SUBAGENT.tools)
     tools, _ = tools_for(load(*TEAM), {})
-    box = Toolbox(tools, SESSION, CallBudget(), allowed=SUBAGENT.tools)
+    box = Toolbox(tools, SESSION, CallBudget(), allowed=SUBAGENT.tools, scope=SCOPE)
     assert set(box.describe()) == {LOAD, ITEMS}
     assert box.call("intelligence.quality_score").ok is False
 
@@ -222,6 +223,7 @@ def test_the_main_agent_collects_it_and_routes_to_it() -> None:
     state = run(
         "업무 몰린 사람 있어?",
         session=SESSION,
+        scope=SCOPE,
         router=FakeRouter({"업무": "workload"}),
         subagents={"workload": SUBAGENT},
         tools=tools,
