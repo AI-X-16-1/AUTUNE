@@ -6,12 +6,21 @@ broken by a bug. The budget case keeps the trace up to the call that stopped it
 (section 9), which a bare exception out of ``graph.invoke`` would lose.
 
 **What the row holds, and what it does not.** ``steps`` are tool names and
-evidence ids. The answer text is stored only when the run is about a meeting,
-because then ``meeting_id`` cascades it away with the meeting (privacy.md
-section 7). A chat run about no meeting may still quote one in its answer, and
-that copy would outlive the meeting it quoted -- so it is returned to the person
-who asked and not kept, and a proposed action keeps its kind, tool, level and
-evidence ids but not its title or body.
+evidence ids; a proposed action keeps its kind, tool, level and evidence ids;
+``actions`` keeps what ran. **No run keeps its answer, or a proposal's title,
+body or arguments** -- a run about a meeting included.
+
+An earlier version kept them for a run with a ``meeting_id``, on the reasoning
+that the cascade from ``meetings`` would delete them with the meeting (privacy.md
+section 7). That holds only if every sentence in the answer came from *that*
+meeting, and it does not: B's ``open_action_items`` reads every meeting of the
+team, and D's links and decision threads exist to return past meetings. A run
+about meeting M quoting meeting M1 would keep M1's words after M1 was deleted
+(#449 review). Keeping text only when every evidence id belongs to M was the
+other option, and it cannot be checked here: an ``act_`` or ``dec_`` id's
+meeting is known only to the module that owns it. The answer still goes back
+to whoever asked; it is just not stored. Plan mode, which must keep a proposal
+until a person approves it, has to answer this again for ``messages``.
 """
 
 from __future__ import annotations
@@ -109,14 +118,9 @@ def _finish(
     row.steps = list(budget.steps)
     outcome = state.get("outcome")
     proposed = outcome.proposed if outcome else []
-    if meeting_id:
-        row.proposed = [a.model_dump(mode="json") for a in proposed]
-        row.answer = state.get("answer")
-    else:
-        # Same reason as the answer: a title or body may quote a meeting.
-        row.proposed = [
-            {"kind": a.kind, "tool": a.tool, "level": a.level, "evidence": a.evidence}
-            for a in proposed
-        ]
-        row.answer = None
+    # A title, body or argument may quote any meeting; see the module docstring.
+    row.proposed = [
+        {"kind": a.kind, "tool": a.tool, "level": a.level, "evidence": a.evidence} for a in proposed
+    ]
+    row.answer = None
     row.latency_ms = int((time.monotonic() - started) * 1000)

@@ -239,3 +239,32 @@ def _fake_module(monkeypatch: pytest.MonkeyPatch, **attrs: Any) -> None:
         setattr(module, key, value)
     monkeypatch.setitem(sys.modules, "autune_fake", package)
     monkeypatch.setitem(sys.modules, "autune_fake.tools", module)
+
+
+def test_a_modules_own_refusal_reason_is_not_kept() -> None:
+    """It may repeat what the model wrote; only this layer's reasons are stored."""
+
+    def set_due(team_id: str, due_date: str) -> dict[str, Any]:
+        return {"ok": False, "reason": f"not a date: {due_date!r}", "summary": "날짜가 아닙니다."}
+
+    done = execute_l1(
+        [_proposal("fake.set_due", due_date="김 팀장 생일")],
+        actions={"fake.set_due": Action("fake.set_due", set_due, "L1")},
+        session=SESSION,
+        scope=SCOPE,
+    )
+
+    assert done[0]["ok"] is False
+    assert done[0]["reason"] is None
+
+
+def test_a_proposals_evidence_is_ids_only() -> None:
+    with pytest.raises(ValueError):
+        ProposedAction(
+            kind="note",
+            title="t",
+            tool="x.y",
+            level="L1",
+            rationale="r",
+            evidence=["김 팀장이 말함"],
+        )

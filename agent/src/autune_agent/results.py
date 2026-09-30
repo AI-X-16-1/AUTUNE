@@ -91,6 +91,13 @@ class ProposedAction(BaseModel):
     rationale: str
     evidence: list[str] = Field(default_factory=list)
 
+    @field_validator("evidence")
+    @classmethod
+    def _ids_only(cls, value: list[str]) -> list[str]:
+        # Stored on every run, meeting or not (#449 review), so held to the
+        # same rule as a tool result's evidence.
+        return ToolResult._ids_only(value)
+
 
 class SubagentResult(BaseModel):
     """What a subagent's graph leaves in its ``outcome`` key."""

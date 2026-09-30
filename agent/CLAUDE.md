@@ -38,9 +38,10 @@ to its owner.
    `LANGSMITH_TRACING` or `LANGCHAIN_TRACING_V2` on.
 7. **Return at most five items, evidence as ids.** `ToolResult` cuts and
    refuses the rest.
-8. **A stored row keeps no text a meeting deletion would miss.** `agent_runs`
-   stores tool names and evidence ids; the answer and a proposal's title and
-   body only when the run has a `meeting_id` to cascade from.
+8. **A stored row keeps no meeting text at all.** `agent_runs` stores tool
+   names, evidence ids, and what ran -- never the answer, a proposal's title,
+   body or arguments, even for a run about a meeting, because that answer may
+   quote another meeting the cascade would miss (`main/store.py`).
 
 ## Starting a subagent
 

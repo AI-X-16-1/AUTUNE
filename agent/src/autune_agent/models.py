@@ -116,7 +116,7 @@ class AgentRun(Base):
     trigger: Mapped[dict[str, Any]] = mapped_column(Json, nullable=False)
     route: Mapped[str | None] = mapped_column(String(32))
     steps: Mapped[list[dict[str, Any]]] = mapped_column(Json, nullable=False, default=list)
-    """Tool calls in order: name, ok, reason, evidence ids. Never tool text."""
+    """Tool calls in order: name, ok, evidence ids, truncated. Never tool text."""
     proposed: Mapped[list[dict[str, Any]]] = mapped_column(Json, nullable=False, default=list)
     decisions: Mapped[list[dict[str, Any]]] = mapped_column(Json, nullable=False, default=list)
     actions: Mapped[list[dict[str, Any]]] = mapped_column(Json, nullable=False, default=list)
@@ -124,6 +124,7 @@ class AgentRun(Base):
     outcome: Mapped[str] = mapped_column(String(32), nullable=False)
     """``answered`` | ``unrouted`` | ``budget_exceeded`` | ``failed``."""
     answer: Mapped[str | None] = mapped_column(Text)
+    """Not written today (``main/store.py``): an answer may quote another meeting."""
     latency_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     token_cost: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[datetime] = mapped_column(

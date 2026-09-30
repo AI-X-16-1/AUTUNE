@@ -19,8 +19,10 @@ action, and it simply waits with the L2s.
 model is refused, and another team's meeting reads as missing.
 
 **What is kept is what a tool step keeps**: the action's name, its level,
-whether it worked, the refusal's reason, evidence ids. Never the arguments --
-a report body is meeting text, and the row may belong to no meeting.
+whether it worked, evidence ids, and a reason only when it is one of this
+file's own. Never the arguments -- a report body is meeting text -- and never a
+module's reason, which may repeat a value the model wrote
+(``not a date: '...'``).
 """
 
 from __future__ import annotations
@@ -41,6 +43,13 @@ from autune_contracts import MODULES
 from .registry import RunScope, ToolContractError, ToolFn, bind_scope, is_personal_only
 
 log = logging.getLogger(__name__)
+
+NOT_DECLARED = "not a declared action"
+KEPT_FOR_APPROVAL = "its module declares it L2; it waits for approval"
+FAILED = "the action failed"
+OUT_OF_SCOPE = ("team_id is outside this run's team", "meeting not found")
+OWN_REASONS = frozenset({NOT_DECLARED, KEPT_FOR_APPROVAL, FAILED, *OUT_OF_SCOPE})
+"""Reasons this layer wrote, and so knows hold no meeting or model text."""
 
 Level = Literal["L1", "L2"]
 
@@ -112,9 +121,9 @@ def execute_l1(
             continue
         action = actions.get(proposal.tool)
         if action is None:
-            result = ToolResult.failure("not a declared action")
+            result = ToolResult.failure(NOT_DECLARED)
         elif action.level != "L1":
-            result = ToolResult.failure("its module declares it L2; it waits for approval")
+            result = ToolResult.failure(KEPT_FOR_APPROVAL)
         else:
             result = _run(action, proposal, session=session, scope=scope)
         done.append(
@@ -122,7 +131,7 @@ def execute_l1(
                 "tool": proposal.tool,
                 "level": "L1",
                 "ok": result.ok,
-                "reason": result.reason,
+                "reason": result.reason if result.reason in OWN_REASONS else None,
                 "evidence": result.evidence,
             }
         )
@@ -139,4 +148,4 @@ def _run(
         return action(session, **bound)
     except Exception as exc:  # noqa: BLE001 - one broken write must not lose the rest
         log.error("agent_action_failed action=%s error=%s", action.name, type(exc).__name__)
-        return ToolResult.failure("the action failed")
+        return ToolResult.failure(FAILED)

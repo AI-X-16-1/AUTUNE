@@ -61,7 +61,7 @@ def test_only_the_subagents_that_asked_are_woken(session: Session, team: dict[st
     assert row.meeting_id == team["meeting"]
     assert row.team_id == team["team"]
     assert row.trigger == {"kind": "event", "event": INTELLIGENCE_COMPLETED}
-    assert row.answer == "report 요약."  # the summary, no model call
+    assert row.answer is None  # no run keeps its answer (main/store.py)
     assert seen == [INTELLIGENCE_COMPLETED]
 
 
@@ -139,3 +139,11 @@ def test_the_payload_is_read_for_its_meeting_id_only() -> None:
 def test_a_payload_from_another_major_version_is_refused() -> None:
     with pytest.raises(ValueError):
         tasks._meeting_id({"contract_version": "99.0", "meeting_id": "mtg_abc"})
+
+
+def test_a_woken_run_answers_with_the_summary_and_routes_nothing() -> None:
+    router = triggers_module.SummaryRouter()
+    outcome = SubagentResult(result=ToolResult(ok=True, summary="요약."))
+
+    assert router.route("anything", {"report": "Use this."}) is None
+    assert router.compose("anything", outcome) == "요약."
