@@ -578,6 +578,110 @@ def test_a_privacy_violation_on_rescore_is_raised_after_the_rest(
     assert {payload["meeting_id"] for payload in rescore_sent} == {fine}
 
 
+@pytest.fixture
+def max_attempts() -> Iterator[int]:
+    settings = get_settings()
+    original = settings.rescore_max_attempts
+    settings.rescore_max_attempts = 2
+    try:
+        yield 2
+    finally:
+        settings.rescore_max_attempts = original
+
+
+REAL_HEAR = service._hear
+
+
+def failing_hear(monkeypatch: pytest.MonkeyPatch) -> list[int]:
+    """Make every detection fail the way a provider outage would, and count the
+    tries. Not a privacy violation: those are raised, not counted."""
+    calls: list[int] = []
+
+    def hear(chosen, speech, settings):  # type: ignore[no-untyped-def]
+        calls.append(1)
+        raise RuntimeError("provider unavailable")
+
+    monkeypatch.setattr(service, "_hear", hear)
+    return calls
+
+
+def test_a_meeting_that_keeps_failing_is_left_alone_after_the_cap(
+    team_id: str,
+    user_id: str,
+    rescore_sent: list[dict],
+    max_attempts: int,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#516: without a cap the sweep retried it every ten minutes forever,
+    spending a hosted verifier's quota each time."""
+    meeting_id, people = split_voice(team_id)
+    service.detect_gaps(meeting_id)
+    confirm(people, user_id)
+    calls = failing_hear(monkeypatch)
+
+    for _ in range(max_attempts + 2):
+        assert meeting_id not in service.rescore_where_people_changed()
+
+    assert len(calls) == max_attempts
+    with session_scope() as s:
+        row = s.get(GapScoring, meeting_id)
+        assert row is not None
+        assert row.rescore_failures == max_attempts
+        assert row.last_failed_at is not None
+    assert rescore_sent == []
+
+
+def test_a_meeting_given_up_on_is_tried_again_when_its_people_move(
+    team_id: str,
+    user_id: str,
+    rescore_sent: list[dict],
+    max_attempts: int,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The cap belongs to one grouping. A later change of people is a new
+    question, and a fixed provider should get to answer it. The change here is
+    a withdrawn consent: with two participants, splitting them apart again
+    would only restore the grouping the gaps were scored at, which is no
+    change at all."""
+    meeting_id, people = split_voice(team_id)
+    service.detect_gaps(meeting_id)
+    confirm(people, user_id)
+    calls = failing_hear(monkeypatch)
+    for _ in range(max_attempts):
+        service.rescore_where_people_changed()
+    assert len(calls) == max_attempts
+
+    monkeypatch.setattr(service, "_hear", REAL_HEAR)
+    with session_scope() as s:
+        withdrawn = s.get(Participant, people[1])
+        assert withdrawn is not None
+        withdrawn.consented = False
+
+    assert meeting_id in service.rescore_where_people_changed()
+
+
+def test_a_rescore_that_succeeds_forgets_the_failures(
+    team_id: str,
+    user_id: str,
+    rescore_sent: list[dict],
+    max_attempts: int,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    meeting_id, people = split_voice(team_id)
+    service.detect_gaps(meeting_id)
+    confirm(people, user_id)
+    failing_hear(monkeypatch)
+    service.rescore_where_people_changed()
+
+    monkeypatch.setattr(service, "_hear", REAL_HEAR)
+    assert meeting_id in service.rescore_where_people_changed()
+
+    with session_scope() as s:
+        row = s.get(GapScoring, meeting_id)
+        assert row is not None
+        assert (row.failed_people_key, row.rescore_failures, row.last_failed_at) == (None, 0, None)
+
+
 def test_a_rerun_that_leaves_no_topics_forgets_the_scoring(
     team_id: str, user_id: str, rescore_sent: list[dict]
 ) -> None:
