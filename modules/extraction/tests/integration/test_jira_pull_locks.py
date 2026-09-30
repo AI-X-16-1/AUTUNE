@@ -84,6 +84,16 @@ def waiting_on_a_lock(engine: sa.Engine, pid: int) -> bool:
         )
 
 
+def pull(session: Session, jira: ReadableJira, team_id: str) -> list[str]:
+    """One run in one session, so a test sees it wait; the task gives each issue
+    its own transaction (``tasks._pull_jira_team``)."""
+    return [
+        item_id
+        for item_id, key in jira_sync.pull_candidates(session, team_id=team_id, site=SITE)
+        if jira_sync.read_back(session, jira, item_id=item_id, key=key, site=SITE)
+    ]
+
+
 def pull_behind(
     engine: sa.Engine, team_id: str, jira: ReadableJira, holder: Session, hold: Callable[[], None]
 ) -> tuple[list[str], list[BaseException]]:
@@ -97,7 +107,7 @@ def pull_behind(
 
     def run() -> None:
         try:
-            moved.extend(jira_sync.pull_status_changes(puller, jira, team_id=team_id, site=SITE))
+            moved.extend(pull(puller, jira, team_id))
             puller.commit()
         except BaseException as caught:  # surfaced to the test thread below
             puller.rollback()
@@ -179,9 +189,7 @@ def test_a_ref_with_no_baseline_gets_one_and_the_board_is_kept(
         session.commit()
 
     with Session(db_engine) as session:
-        moved = jira_sync.pull_status_changes(
-            session, ReadableJira(categories={"KAN-1": "indeterminate"}), team_id=team_id, site=SITE
-        )
+        moved = pull(session, ReadableJira(categories={"KAN-1": "indeterminate"}), team_id)
         session.commit()
 
     assert moved == []
