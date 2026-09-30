@@ -68,7 +68,10 @@ class ChatReply(BaseModel):
     answer: str
     items: list[Finding]
     proposed: int
-    """How many actions the subagent proposed. None runs until plan mode exists."""
+    """How many actions the subagent proposed, at any level."""
+    executed: int
+    """How many L1 proposals ran and worked -- the "notify after" of section 8.
+    L2 proposals wait for plan mode and are not counted here."""
 
 
 class RunRead(BaseModel):
@@ -77,6 +80,8 @@ class RunRead(BaseModel):
     outcome: str
     steps: list[dict[str, Any]]
     proposed: list[dict[str, Any]]
+    actions: list[dict[str, Any]]
+    """What ran at L1: name, level, ok, reason, evidence ids. Never arguments."""
     latency_ms: int
     requested_by: str | None
     meeting_id: str | None
@@ -107,6 +112,7 @@ def chat(
         answer=state.get("answer", ""),
         items=outcome.result.items if outcome else [],
         proposed=len(outcome.proposed) if outcome else 0,
+        executed=sum(1 for a in row.actions if a.get("ok")),
     )
 
 

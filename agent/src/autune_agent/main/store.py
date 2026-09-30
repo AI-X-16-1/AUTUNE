@@ -24,6 +24,7 @@ from sqlalchemy.orm import Session
 
 from autune_agent.models import AgentRun
 
+from .actions import Action, collect_actions, execute_l1
 from .graph import MainState, run
 from .registry import BudgetExceededError, CallBudget, RunScope, Tool
 from .router import Router
@@ -44,8 +45,17 @@ def run_and_record(
     subagents: Mapping[str, Subagent] | None = None,
     tools: Mapping[str, Tool] | None = None,
     budget: CallBudget | None = None,
+    actions: Mapping[str, Action] | None = None,
+    route_to: str | None = None,
 ) -> tuple[AgentRun, MainState]:
+    """Run, carry out what the run proposed at L1, and record both.
+
+    ``route_to`` skips the router, for a trigger that already knows which
+    subagent it woke. L1 runs after the graph and before the row is written,
+    so the row says what was done; L2 stays proposed (``main/actions.py``).
+    """
     budget = budget or CallBudget()
+    scope = RunScope(team_id=team_id, meeting_id=meeting_id)
     started = time.monotonic()
     state: MainState = {"request": request}
     row = AgentRun(
@@ -59,17 +69,29 @@ def run_and_record(
             request,
             session=session,
             router=router,
-            scope=RunScope(team_id=team_id, meeting_id=meeting_id),
+            scope=scope,
             subagents=subagents,
             tools=tools,
             budget=budget,
+            route_to=route_to,
         )
         row.outcome = "answered" if state.get("route") else "unrouted"
+        outcome = state.get("outcome")
+        if outcome is not None and outcome.proposed:
+            row.actions = execute_l1(
+                outcome.proposed,
+                actions=collect_actions() if actions is None else actions,
+                session=session,
+                scope=scope,
+            )
     except BudgetExceededError:
         row.outcome = "budget_exceeded"
         state["answer"] = BUDGET_ANSWER
     except Exception:
         row.outcome = "failed"
+        # The graph never returned a state, so without this a triggered run
+        # that crashed would not say which subagent it was for.
+        state["route"] = route_to
         _finish(row, state, budget, started, meeting_id)
         session.add(row)
         session.commit()

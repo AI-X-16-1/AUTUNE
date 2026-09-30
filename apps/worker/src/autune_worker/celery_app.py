@@ -14,4 +14,7 @@ from autune_core.celery_app import make_celery_app
 
 configure_logging()
 
-celery_app = make_celery_app(include_tasks=True)
+# The agent layer is not a module and is not in MODULES. Its task module is the
+# worker's one include by name, as /api/agent is the API's (ADR 0010,
+# monorepo.md section 1); subagents never add one of their own.
+celery_app = make_celery_app(include_tasks=True, extra_include=("autune_agent.tasks",))

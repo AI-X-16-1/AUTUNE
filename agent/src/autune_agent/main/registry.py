@@ -198,7 +198,7 @@ class Toolbox:
             # A route to correct, not a crash.
             result = ToolResult.failure(f"{name} is not available here")
         else:
-            scoped = self._in_scope(tool, arguments)
+            scoped = bind_scope(tool.parameters, arguments, self._scope, self._session)
             result = scoped if isinstance(scoped, ToolResult) else tool(self._session, **scoped)
         self._budget.steps.append(
             {
@@ -210,21 +210,29 @@ class Toolbox:
         )
         return result
 
-    def _in_scope(self, tool: Tool, arguments: dict[str, Any]) -> dict[str, Any] | ToolResult:
-        """The arguments with the run's scope written in, or the refusal."""
-        scope = self._scope
-        arguments = dict(arguments)
-        team_id = arguments.get("team_id")
-        if team_id is not None and team_id != scope.team_id:
-            # Not echoed back: the id is whatever the model wrote.
-            return ToolResult.failure("team_id is outside this run's team")
-        if "team_id" in tool.parameters:
-            arguments["team_id"] = scope.team_id
-        meeting_id = arguments.get("meeting_id")
-        if meeting_id is None and scope.meeting_id and "meeting_id" in tool.parameters:
-            arguments["meeting_id"] = meeting_id = scope.meeting_id
-        if meeting_id is not None:
-            meeting = self._session.get(Meeting, meeting_id)
-            if meeting is None or meeting.team_id != scope.team_id:
-                return ToolResult.failure("meeting not found")
-        return arguments
+
+def bind_scope(
+    parameters: frozenset[str], arguments: Mapping[str, Any], scope: RunScope, session: Session
+) -> dict[str, Any] | ToolResult:
+    """``arguments`` with the run's scope written in, or the refusal.
+
+    One function for a tool call and for an action's execution
+    (``main/actions.py``), so the rule cannot drift between reading and
+    writing: a model that could not read another team's work cannot change it
+    either (#449, answered on its review).
+    """
+    bound = dict(arguments)
+    team_id = bound.get("team_id")
+    if team_id is not None and team_id != scope.team_id:
+        # Not echoed back: the id is whatever the model wrote.
+        return ToolResult.failure("team_id is outside this run's team")
+    if "team_id" in parameters:
+        bound["team_id"] = scope.team_id
+    meeting_id = bound.get("meeting_id")
+    if meeting_id is None and scope.meeting_id and "meeting_id" in parameters:
+        bound["meeting_id"] = meeting_id = scope.meeting_id
+    if meeting_id is not None:
+        meeting = session.get(Meeting, meeting_id)
+        if meeting is None or meeting.team_id != scope.team_id:
+            return ToolResult.failure("meeting not found")
+    return bound

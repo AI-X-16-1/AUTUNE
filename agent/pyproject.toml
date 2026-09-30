@@ -21,6 +21,8 @@ dependencies = [
     "pydantic>=2.10",
     "pydantic-settings>=2.7",
     "sqlalchemy>=2.0",
+    # The two event subscriptions in tasks.py (agent-layer.md section 6).
+    "celery>=5.4",
 ]
 
 [build-system]
