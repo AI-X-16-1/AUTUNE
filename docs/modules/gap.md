@@ -409,7 +409,11 @@ line. **Names and numbers read out as words are not masked**, as with the
 verifier. No speaker, time, meeting or utterance id, and no neighbouring line.
 It shares the verifier's provider settings (`AUTUNE_GAP_VERIFIER_API_KEY`,
 `_MODEL`, `_FALLBACK_MODEL`, `_BASE_URL`, `_TIMEOUT_SEC`) and its standing:
-opt-in, never the default, dummy meetings only until the team decides.
+opt-in, never the default, dummy meetings only until the team decides. That
+decision is #392, open. Both of C's callers send names unmasked until then. #500
+replaces a team's names before module B's classifier sends; once that moves to
+`packages/integrations`, the verifier and this path take it too. Raised in
+review of #499.
 
 **The model answers with names, not letters.** Asked to answer with the
 letters, `gemini-3.5-flash` and `gemini-3.8-flash` both wrote the topic names

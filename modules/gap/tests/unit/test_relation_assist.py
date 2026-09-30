@@ -246,6 +246,18 @@ def test_an_answer_naming_the_mentions_is_read_like_letters() -> None:
     assert parsed == {1: frozenset({("정렬 로직", "blocked_by", "캐시")})}
 
 
+def test_a_topic_named_like_another_mentions_letter_is_refused() -> None:
+    """``B`` is the letter of 정렬 로직 and the name of the topic lettered ``A``.
+    Either reading is possible, so neither is taken."""
+    lettered_b = PairQuestion("B 때문에 정렬 로직이 막혀 있습니다", (("B", "정렬 로직"),))
+    _, lettered = render([lettered_b])
+
+    parsed = parse('{"answers": {"1": [["정렬 로직", "blocked_by", "B"]]}}', [lettered_b], lettered)
+
+    assert lettered == {1: {"A": "B", "B": "정렬 로직"}}
+    assert parsed == {1: frozenset()}
+
+
 def test_a_mention_outside_the_offered_pairs_is_not_related() -> None:
     three = PairQuestion("A B C", (("가", "나"), ("나", "다")))
     _, lettered = render([three])

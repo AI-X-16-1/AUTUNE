@@ -126,7 +126,9 @@ class GeminiCaller:
                     model=model,
                     batch=index,
                     attempt=attempt,
-                    reason=str(exc),
+                    # The class name only: a provider message can echo the
+                    # request, which is utterances. Raised in review of #499.
+                    reason=type(exc).__name__,
                 )
                 time.sleep(wait)
         self.requests += 1

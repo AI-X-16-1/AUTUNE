@@ -45,7 +45,7 @@ from autune_integrations.privacy import MAX_OUTBOUND_CHARS
 
 from .base import RELATION_LABELS, SYMMETRIC_RELATIONS, Entity, Relation
 from .gemini import GeminiCaller, answer_text
-from .relations import RuleRelations, hard_pairs, mention_spans, relation_names, relations_in
+from .relations import RuleRelations, hard_pairs, read_utterance, relation_names
 
 log = get_logger(__name__)
 
@@ -126,8 +126,7 @@ class AssistedRelations:
         found: list[Relation] = []
         asking: list[tuple[str, PairQuestion]] = []
         for utterance_id, text in utterances:
-            spans = mention_spans(text, names)
-            typed = relations_in(text, spans)
+            spans, typed = read_utterance(text, names)
             found.extend(
                 Relation(source, target, relation, utterance_id, asserted_by=rules)
                 for source, target, relation in typed
@@ -256,10 +255,17 @@ def _mention(lettered: dict[str, str], said: str) -> str | None:
     zero relations, indistinguishable from a model that found none. A name is
     accepted only if it is one of this line's own mentions, so it widens
     nothing the letters did not already offer.
+
+    **A string that is a letter for one mention and the name of another is
+    refused.** A topic called ``B`` beside a second mention lettered ``B``
+    cannot be told apart, and a wrong end is worse than no relation. Raised in
+    review of #499.
     """
-    if said in lettered:
-        return lettered[said]
-    return said if said in lettered.values() else None
+    by_letter = lettered.get(said)
+    by_name = said if said in lettered.values() else None
+    if by_letter is not None and by_name is not None and by_letter != by_name:
+        return None
+    return by_letter or by_name
 
 
 def batches(questions: list[PairQuestion], budget: int) -> list[list[PairQuestion]]:

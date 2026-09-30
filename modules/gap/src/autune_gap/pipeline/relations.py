@@ -732,6 +732,21 @@ def relation_names(entities: Iterable[Entity]) -> set[str]:
     return {entity.text for entity in entities if entity.label not in _NOT_AN_END}
 
 
+def read_utterance(
+    text: str, names: Iterable[str]
+) -> tuple[list[Mention], list[tuple[str, str, str]]]:
+    """One utterance through the rules: where each name was said, and the
+    triples the markers assert.
+
+    The one pass both ``RuleRelations`` and the assisted extractor run. A step
+    added to the rules goes here, so "the rules' relations stand" under
+    assistance cannot drift from what the rules alone produce. Raised in review
+    of #499.
+    """
+    spans = mention_spans(text, names)
+    return spans, relations_in(text, spans)
+
+
 class RuleRelations:
     """The rules above, over a meeting's entities. Deterministic, local, no model.
 
@@ -764,9 +779,9 @@ class RuleRelations:
         names = relation_names(entities)
         found: list[Relation] = []
         for utterance_id, text in utterances:
-            spans = mention_spans(text, names)
+            _, typed = read_utterance(text, names)
             found.extend(
                 Relation(source=source, target=target, relation=relation, utterance_id=utterance_id)
-                for source, target, relation in relations_in(text, spans)
+                for source, target, relation in typed
             )
         return found
