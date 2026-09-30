@@ -12,9 +12,10 @@ import { AppTopBar } from "../_components/AppTopBar";
  * The sidebar lists the sections that have no screen yet as well, muted and
  * unlinked; see AppSidebar.
  *
- * It wraps every screen a signed-in person sees and nothing else. `/login`
- * sits outside this group on purpose: it is where somebody stands before they
- * are anybody, and it brings its own header. The group changes no URL —
+ * It wraps every screen a signed-in person sees, with two exceptions that sit
+ * outside this group on purpose. `/login` is where somebody stands before they
+ * are anybody, and it brings its own header. The live transcript (S13) is
+ * drawn without the sidebar in its design file and lives under `(focus)`. The group changes no URL —
  * `(app)` is a folder name Next.js does not route on, the same device
  * `(review)` uses one level down.
  *

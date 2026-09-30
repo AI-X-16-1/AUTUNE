@@ -57,7 +57,6 @@ export function LiveRail({
     <aside
       className="flex flex-col gap-6"
       aria-label="녹음"
-      style={{ width: 240 }}
     >
       <div className="flex items-center gap-2">
         {state === "recording" ? (

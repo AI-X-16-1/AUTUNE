@@ -9,6 +9,7 @@ import { attestConsent } from "../api";
 import { useLiveSession, type LivePhase } from "../hooks/useLiveSession";
 import { useMicrophone } from "../hooks/useMicrophone";
 import type { RecordingState } from "../types";
+import { LiveTopBar } from "./LiveTopBar";
 import { LiveTranscript } from "./LiveTranscript";
 
 /** The phases in which closing the tab loses audio that is not yet uploaded. */
@@ -113,8 +114,25 @@ export function LiveMeetingScreen({ meetingId }: { meetingId: string }) {
     return null;
   }
 
+  const recording: RecordingState | null =
+    live.phase === "recording" || live.phase === "connecting"
+      ? "recording"
+      : live.phase === "paused"
+        ? "paused"
+        : null;
+
+  // S13 is drawn without the app's sidebar; this bar is the screen's whole
+  // frame, in every phase, so the gate before recording and the upload after
+  // it sit in the same place the transcript does.
+  const frame = (body: React.ReactNode) => (
+    <div className="flex min-h-screen flex-col bg-[var(--color-surface-panel)]">
+      <LiveTopBar meetingId={meetingId} state={recording} elapsedSeconds={live.elapsedSeconds} />
+      {body}
+    </div>
+  );
+
   if (live.phase === "idle" || live.phase === "error") {
-    return (
+    return frame(
       <main className="max-w-[776px] px-[var(--space-page)] py-[var(--space-24)]">
         <h1
           className="text-ink-strong"
@@ -154,12 +172,12 @@ export function LiveMeetingScreen({ meetingId }: { meetingId: string }) {
             녹음 시작
           </Button>
         </div>
-      </main>
+      </main>,
     );
   }
 
   if (live.phase === "uploading" || live.phase === "upload_failed") {
-    return (
+    return frame(
       <main className="max-w-[776px] px-[var(--space-page)] py-[var(--space-24)]">
         <p style={{ fontSize: "var(--text-body)" }}>
           {live.phase === "uploading" ? "녹음을 올리는 중입니다…" : "업로드에 실패했습니다."}
@@ -174,7 +192,7 @@ export function LiveMeetingScreen({ meetingId }: { meetingId: string }) {
             </Button>
           </>
         )}
-      </main>
+      </main>,
     );
   }
 
@@ -182,10 +200,14 @@ export function LiveMeetingScreen({ meetingId }: { meetingId: string }) {
   // reached ready yet, or it is live.
   const state: RecordingState = live.phase === "paused" ? "paused" : "recording";
 
-  return (
+  return frame(
     <>
       {live.liveLost && (
-        <p role="status" className="text-ink-muted" style={{ fontSize: "var(--text-meta)" }}>
+        <p
+          role="status"
+          className="text-ink-muted"
+          style={{ fontSize: "var(--text-meta)", padding: "var(--space-12) var(--space-24) 0" }}
+        >
           라이브 전사가 끊겼습니다. 녹음은 계속되고, 정지하면 전체 녹음이 올라갑니다.
         </p>
       )}
@@ -198,6 +220,6 @@ export function LiveMeetingScreen({ meetingId }: { meetingId: string }) {
         onResume={live.resume}
         onStop={() => void onStop()}
       />
-    </>
+    </>,
   );
 }
