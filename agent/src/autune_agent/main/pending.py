@@ -3,7 +3,9 @@
 An L2 proposal becomes an ``agent_pending_actions`` row and waits for a person
 with the right scope. Its arguments must be ids and short scalars: text a
 proposal needs lives in the owning store first and is pointed at by id, so the
-row holds nothing a meeting deletion could miss.
+row holds nothing a meeting deletion could miss. A proposal's ``kind`` and
+``tool`` are already code names (``ProposedAction`` refuses anything else);
+this module checks the arguments and the run's subagent name.
 """
 
 from __future__ import annotations
@@ -27,8 +29,6 @@ from .registry import RunScope
 _ID = re.compile(r"[a-z]+_[A-Za-z0-9]+")
 _DATE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
 _ENUM = re.compile(r"[a-z_]{1,32}")
-_KIND = re.compile(r"[a-z_]{1,64}")
-_TOOL = re.compile(r"[a-z_.]{1,128}")
 _SUBAGENT = re.compile(r"[a-z_]{0,32}")
 
 SCOPES = {
@@ -57,15 +57,6 @@ def scope_for(subagent: str | None) -> str:
     return SCOPES.get(subagent or "", "any")
 
 
-def _names_ok(proposal: ProposedAction, subagent: str) -> bool:
-    """The row's own names are code names, never text a model could fill with a sentence."""
-    return bool(
-        _KIND.fullmatch(proposal.kind)
-        and _TOOL.fullmatch(proposal.tool)
-        and _SUBAGENT.fullmatch(subagent)
-    )
-
-
 def _needs_approval(proposal: ProposedAction, actions: Mapping[str, Action]) -> bool:
     """L2 by the proposal, or by the level its module declared (a proposal cannot demote)."""
     if proposal.level == "L2":
@@ -92,7 +83,7 @@ def queue_l2(
     for proposal in proposed:
         if not _needs_approval(proposal, actions):
             continue
-        if not (_names_ok(proposal, subagent) and arguments_ok(proposal.arguments)):
+        if not (_SUBAGENT.fullmatch(subagent) and arguments_ok(proposal.arguments)):
             refused.append(
                 {
                     "tool": proposal.tool,

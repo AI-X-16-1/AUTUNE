@@ -70,7 +70,7 @@ def test_scope_follows_the_subagent() -> None:
 
 def test_l2_is_queued_and_l1_is_not(session: Session, team: dict[str, str]) -> None:
     run = _run(session, team, "research", team["meeting"])
-    l1 = ProposedAction(kind="k", title="t", tool="fake.l1", level="L1", rationale="r")
+    l1 = ProposedAction(kind="k", title="t", tool="fake.level_one", level="L1", rationale="r")
 
     refused = queue_l2(
         session,
@@ -234,24 +234,17 @@ def test_a_proposal_marked_l1_whose_module_declared_l2_is_queued(
     ]
 
 
-@pytest.mark.parametrize(
-    ("kind", "tool", "route"),
-    [
-        ("김 팀장 알림", "agent.share_research_document", "research"),
-        ("k" * 65, "agent.share_research_document", "research"),
-        ("research_share", "agent.share 김 팀장", "research"),
-        ("research_share", "Agent.Share", "research"),
-        ("research_share", "agent.share_research_document", "Research"),
-        ("research_share", "agent.share_research_document", "r" * 33),
-    ],
-)
-def test_a_kind_tool_or_subagent_that_is_not_a_code_name_is_refused(
-    session: Session, team: dict[str, str], kind: str, tool: str, route: str
+@pytest.mark.parametrize("route", ["Research", "r" * 33])
+def test_a_subagent_that_is_not_a_code_name_is_refused(
+    session: Session, team: dict[str, str], route: str
 ) -> None:
     run = _run(session, team, route, team["meeting"])
 
     refused = queue_l2(
-        session, run=run, proposed=[_l2(tool, kind=kind, document_id="rdoc_1")], actions={}
+        session,
+        run=run,
+        proposed=[_l2("agent.share_research_document", document_id="rdoc_1")],
+        actions={},
     )
 
     assert session.scalars(select(AgentPendingAction)).all() == []
