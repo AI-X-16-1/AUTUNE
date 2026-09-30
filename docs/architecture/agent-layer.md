@@ -116,7 +116,7 @@ and keeps their module's `tools.py`.
 | Part | Owner | What it does | Wakes on | Reads (tools) | Leaves the building as |
 | --- | --- | --- | --- | --- | --- |
 | **Main agent** | 김민경 | Chat entry point; routes a request or a trigger to one subagent, or answers from tools directly; combines the answer; owns the work-item store, the trigger scheduler, the approval gate and `agent_runs` | every trigger, every chat message | any | the chat answer; L2 plans to the approval screen |
-| **Research** | 김민경 | When a meeting raises an idea or argues over a fact nobody could confirm, gathers what is known into a short document and proposes sending it to the people involved | `autune.intelligence.completed`; a chat request | A (the team's meetings), B (open questions); D once it ships tools.py. Uploaded material has no store yet | a Slack message to the meeting's participants — L2 |
+| **Research** | 김민경 | When a meeting raises an idea or argues over a fact nobody could confirm, gathers what is known into a short document and proposes sending it to the people involved | `autune.intelligence.completed`; a chat request | A (the team's meetings), B (open questions); D once it ships tools.py. Uploaded material has no store yet | a document shown to the team in the app after an approver with scope `research` approves it — L2; a Slack DM to participants follows #478 |
 | **Briefing** | 문민재 | Ten minutes before a meeting, sends the previous meeting's summary and the issues this one should settle; links Jira issues **if #82 brings Jira back** | time, from Google Calendar (`list_events`) | D (links, decision threads), B (open items), C (undismissed gaps and their questions), Jira only after #82 | D's pre-meeting brief — D's own surface, rule 2 |
 | **Follow-up** | 박재경 | Watches progress and gaps nobody closed; when a follow-up meeting looks needed, proposes one — to the team lead only | state, `@periodic` | C's topic-level aggregates only (a topic's `silent_share`, undismissed gaps), B (open items), D (decision threads, topic links), Calendar (`free_busy`) | a proposal on the lead's approval screen; the calendar event only after approval — L2 |
 | **Workload** | 강민구 | Notices that one person is overloaded while another has finished, and proposes a redistribution — to the manager only; owns the Gmail, Google Calendar and Jira integrations | state, `@periodic` | B (items per owner and their state), Calendar (`free_busy`), Jira only after #82 | a proposal on the manager's approval screen; any reassignment only after approval — L2 |
@@ -1193,6 +1193,15 @@ to, and under what agreement.** Two parts, and each carries a condition:
   way there is for a prompt — and a general search engine is not a processor we
   have terms with. So **Research reads only what the team already holds** — its own meetings today, uploaded material once there is a store for it — which is enough
   for the scenario in section 10 and asks nothing of anyone.
+
+Research changes when that call happens. With the agent layer on
+(`router_impl=gemini`, the default) and a key configured, **every analysed
+meeting now sends its raised questions and the matching past utterances to the
+model automatically**, through Research on `autune.intelligence.completed` —
+not only when someone chats. What is sent is masked text plus each quoted
+meeting's title and date; the speaker label is stripped before the prompt is
+built, so no speaker name is sent. The rule above applies unchanged: until #392
+is decided and the key is paid, demo meetings only.
 
 One thing is worth restating rather than rediscovering: `privacy.md` section 2's
 masking scope does not include a person's name, so a name does reach every
