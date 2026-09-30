@@ -26,6 +26,7 @@ from autune_gap.pipeline.spoken import (
     masked_spans,
     noun_stem,
     noun_terms,
+    person_name,
 )
 
 
@@ -689,6 +690,34 @@ def test_a_one_letter_person_is_not_a_person() -> None:
     connected nodes of the typical fixture's graph."""
     assert not is_plausible("person", "A")
     assert is_plausible("person", "민경")
+
+
+@pytest.mark.parametrize(
+    ("span", "name"),
+    [
+        ("이건우님이", "이건우"),  # one token, npp+jcs: what S20 showed
+        ("민구님", "민구"),
+        ("서연님은", "서연"),
+        ("이건우님께서", "이건우"),
+        ("재경 씨가", "재경"),
+        ("이건우", "이건우"),
+    ],
+)
+def test_a_person_is_the_name_without_the_honorific(span: str, name: str) -> None:
+    """One colleague was as many topics as the ways the meeting addressed
+    them."""
+    assert person_name(span) == name
+
+
+def test_an_honorific_followed_by_more_than_a_particle_is_left_alone() -> None:
+    """Only a name the honorific closes is cut; 님 elsewhere in a span is not
+    this rule's to judge."""
+    assert person_name("님비 현상") == "님비 현상"
+    assert person_name("김씨네 가게") == "김씨네 가게"
+
+
+def test_a_surname_with_an_honorific_is_refused_as_one_letter() -> None:
+    assert not is_plausible("person", person_name("김씨"))
 
 
 def test_a_metric_without_a_number_is_not_a_metric() -> None:

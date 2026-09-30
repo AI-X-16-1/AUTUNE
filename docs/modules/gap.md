@@ -1098,7 +1098,7 @@ extractor has no external option".
 
 Every row a topic produces records `extractor_version` — the pipeline name, its
 version and the version of `pipeline.spoken`'s rules,
-`ko_core_news_lg-3.8.0+spoken-3`. The rules are half the extractor: the same
+`ko_core_news_lg-3.8.0+spoken-4`. The rules are half the extractor: the same
 parse gives a different graph once a rule there changes, so `spoken.RULES_VERSION`
 is bumped with any change to what it keeps. The name alone is not a version: the
 pipeline ships a new release with every spaCy minor, so a graph built with 3.7
