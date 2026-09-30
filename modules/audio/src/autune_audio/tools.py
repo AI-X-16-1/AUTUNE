@@ -1,6 +1,6 @@
 """Module A as tools an agent can call (#260/#261, docs/architecture/agent-layer.md section 4).
 
-Four reads over what A already stores, and no writes. A exposes reads and the
+Five reads over what A already stores, and no writes. A exposes reads and the
 transcript, not a re-transcribe: ``process_recording`` deletes the recording in
 a ``finally`` (invariant 11), so it is not safe to call twice and is not a tool
 (section 4, rule 4).
@@ -12,6 +12,8 @@ a ``finally`` (invariant 11), so it is not safe to call twice and is not a tool
 - ``find_utterances`` and ``quote_utterances`` -- ``grep`` and ``read`` over one
   meeting's transcript. The agent gets ids first and text only for what a step
   needs (section 10: "a transcript never enters a prompt").
+- ``search_team_meetings`` -- the same ``grep`` across the team's recent meetings,
+  for "was this said before".
 
 Each returns a plain dict in the ``ToolResult`` shape, which ``autune_agent``
 validates when it collects ``TOOLS``. This module may not import
@@ -244,6 +246,7 @@ def recent_meetings(session: Session, team_id: str, *, days: int = 30) -> dict[s
             "body": f"{_when(m.started_at)} · {STATUS_LABEL.get(m.status, m.status)}",
             "score": 0.0,
             "meeting_id": m.id,
+            "status": m.status,
         }
         for m in rows
     ]
@@ -327,7 +330,75 @@ def quote_utterances(
     )
 
 
-TOOLS = [meeting_overview, recent_meetings, find_utterances, quote_utterances]
+def search_team_meetings(
+    session: Session,
+    team_id: str,
+    query: str,
+    *,
+    days: int = 90,
+    exclude_meeting_id: str | None = None,
+) -> dict[str, Any]:
+    """Use this to check whether something came up in the team's other meetings --
+    what was said before about a question raised today. Do not use it for one
+    meeting; that is ``find_utterances``.
+
+    Matches ``query`` as plain text, ignoring case, in utterances from speakers
+    who consented, across the team's meetings from the last ``days`` days,
+    leaving out ``exclude_meeting_id``. Returns five, newest meeting first, each
+    with the meeting's date and title, the time, the speaker and masked text.
+    """
+    term = query.strip()
+    if not term:
+        return _refused("empty query", "찾을 말이 비어 있습니다.")
+    if len(term) > MAX_QUERY_CHARS:
+        return _refused("query too long", f"검색어는 {MAX_QUERY_CHARS}자까지입니다.")
+    days = max(1, min(days, 365))
+    when = sa.func.coalesce(Meeting.started_at, Meeting.created_at)
+    since = datetime.now(UTC) - timedelta(days=days)
+    matched = (
+        sa.select(Utterance, Meeting)
+        .join(Participant, Participant.id == Utterance.participant_id)
+        .join(Meeting, Meeting.id == Utterance.meeting_id)
+        .where(
+            Meeting.team_id == team_id,
+            when >= since,
+            Participant.consented.is_(True),
+            Utterance.text.icontains(term, autoescape=True),
+        )
+    )
+    if exclude_meeting_id is not None:
+        matched = matched.where(Meeting.id != exclude_meeting_id)
+    count = session.scalar(sa.select(sa.func.count()).select_from(matched.subquery())) or 0
+    if not count:
+        return _result(
+            summary="팀의 다른 회의에서 일치하는 발언이 없습니다.", items=[], evidence=[]
+        )
+    rows = session.execute(
+        matched.order_by(when.desc(), Utterance.start_sec).limit(MAX_ITEMS)
+    ).all()
+    items = []
+    for utterance, meeting in rows:
+        speakers = _speakers(session, meeting.id)
+        item = _utterance_item(utterance, speakers)
+        item["title"] = f"{_when(meeting.started_at)[:10]} {meeting.title} · {item['title']}"
+        item["meeting_id"] = meeting.id
+        items.append(item)
+    return _result(
+        summary=f"팀의 다른 회의에서 일치하는 발언 {count}건."
+        + (" 최근 다섯 건입니다." if count > MAX_ITEMS else ""),
+        items=items,
+        evidence=[u.id for u, _ in rows],
+        truncated=count > MAX_ITEMS,
+    )
+
+
+TOOLS = [
+    meeting_overview,
+    recent_meetings,
+    find_utterances,
+    quote_utterances,
+    search_team_meetings,
+]
 
 PERSONAL_ONLY_TOOLS: list[Any] = []
 """None. Nothing above returns one person's own data; a speaking ratio is never
