@@ -36,7 +36,12 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from autune_core import Meeting, get_logger, session_scope
-from autune_core.errors import ConflictError, NotFoundError, ValidationError
+from autune_core.errors import (
+    ConflictError,
+    NotFoundError,
+    PrivacyViolationError,
+    ValidationError,
+)
 
 from . import service, tasks
 from .service import _gap_burden
@@ -247,12 +252,12 @@ def publish_meeting_report(
     """Store a meeting's finished report and schedule its post to the team channel
     -- what the Report subagent proposes after a meeting's analysis finishes.
 
-    L1 as proposed on #261 (runs without approval, the person is told after); L2
-    if the team decides a channel post needs one. Never call it with text another
-    meeting said. Adds the header (title, date) and the "자동 생성" footer; the
-    title is left out when it holds personal data. ``pending_review`` adds a
-    button to B's review board. Refused for another team's meeting, a report
-    already posted, or one over the length cap.
+    L1 -- runs without approval; the person is told after (proposed on #261).
+    Never call it with text another meeting said. Adds the header (title, date)
+    and the "자동 생성" footer; the title is left out when it holds personal
+    data. ``pending_review`` adds a button to B's review board. Refused for
+    another team's meeting, a report already posted, one over the length cap,
+    or a body that still holds personal data (by category, never the text).
     """
     with session_scope() as session:
         meeting = session.get(Meeting, meeting_id)
@@ -271,6 +276,13 @@ def publish_meeting_report(
             return _refused(
                 "report too long", f"리포트가 {service.MEETING_REPORT_MAX_CHARS}자를 넘습니다."
             )
+        except PrivacyViolationError as exc:
+            # A model wrote the body, so a phone number in it is a route to
+            # correct, not a bug in E. Nothing was written; name categories only.
+            categories = ", ".join(exc.details.get("categories", []))
+            return _refused(
+                f"unmasked personal data: {categories}", "리포트에 개인정보가 남아 있습니다."
+            )
     # The transaction has committed: a worker that picks this up finds the row.
     try:
         tasks.deliver_meeting_report.apply_async((meeting_id,))
@@ -281,7 +293,11 @@ def publish_meeting_report(
             meeting_id=meeting_id,
             error=type(exc).__name__,
         )
-    return _result(summary="리포트를 저장했고 발송을 예약했습니다.", items=[])
+    summary = "리포트를 저장했고 발송을 예약했습니다."
+    # B's actions answer with the changed thing by id; an executor reads both alike.
+    return _result(
+        summary=summary, items=[{"title": summary, "body": "", "score": 1.0, "id": meeting_id}]
+    )
 
 
 ACTIONS = [publish_meeting_report]

@@ -876,7 +876,9 @@ def save_meeting_report(
         )
     assert_masked(body_markdown, destination="intel_meeting_reports")
 
-    row = session.get(IntelMeetingReport, meeting_id)
+    # Locked: a re-publish racing the deliver task's claim waits for it, then sees
+    # sent_at and refuses, instead of overwriting a report people have read.
+    row = session.get(IntelMeetingReport, meeting_id, with_for_update=True)
     if row is None:
         row = IntelMeetingReport(
             meeting_id=meeting_id,
