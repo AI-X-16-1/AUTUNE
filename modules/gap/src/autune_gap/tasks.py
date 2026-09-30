@@ -7,10 +7,12 @@ docs/architecture/async-pipeline.md.
 
 from __future__ import annotations
 
+from datetime import timedelta
+
 from celery import shared_task
 
 from autune_contracts import TranscriptReady, validate_major_version
-from autune_core import get_logger
+from autune_core import get_logger, periodic
 from autune_gap import service
 from autune_gap.enqueue import PUBLISH_REPORT
 
@@ -46,3 +48,17 @@ def publish_report(meeting_id: str) -> None:
     ``service.republish_report``.
     """
     service.republish_report(meeting_id)
+
+
+@shared_task(name="autune.gap.periodic.rescore_changed_people")
+@periodic(timedelta(minutes=10))
+def rescore_changed_people() -> None:
+    """Rescore the meetings whose speakers were confirmed, or whose consent
+    changed, after their gaps were scored (#415). See
+    ``service.rescore_where_people_changed``.
+
+    Every ten minutes because a confirmation is a person on a screen, and the
+    report beside the stale score already shows the new participation. A run
+    that finds nothing changed is one query.
+    """
+    service.rescore_where_people_changed()

@@ -8,7 +8,9 @@ Never imports another module.
 
 from __future__ import annotations
 
+import hashlib
 from collections import defaultdict
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
@@ -38,6 +40,7 @@ from autune_gap.models import (
     GapMeetingTemplate,
     GapParticipation,
     GapRelatedTopic,
+    GapScoring,
     GapTopic,
     GapTopicEdge,
     GapTopicUtterance,
@@ -310,6 +313,7 @@ def detect_gaps(meeting_id: str) -> int:
         chosen = template.get_template(selected_template_key(session, meeting_id))
         topics = _topic_views(session, meeting_id)
         speech = _speech(session, meeting_id)
+        people_key = _people_key(_people(session, meeting_id))
 
     # An empty graph raises nothing whatever was said (`detect.compare`), so the
     # speech is not embedded, or sent anywhere, for a meeting that cannot use it.
@@ -318,6 +322,8 @@ def detect_gaps(meeting_id: str) -> int:
 
     with session_scope() as session:
         _store_gaps(session, meeting_id, chosen, findings)
+        if topics:
+            _record_scoring(session, meeting_id, people_key)
 
     # Counts and keys only. A gap title is composed from a template file and a
     # topic label is transcript text; neither goes in a log line.
@@ -338,6 +344,66 @@ def detect_gaps(meeting_id: str) -> int:
         unanswered=hearing.unanswered,
     )
     return len(findings)
+
+
+def rescore_where_people_changed() -> list[str]:
+    """Re-run detection and republish for every meeting whose grouping of
+    participants into people has moved since its gaps were scored. Returns
+    those meetings' ids.
+
+    Module A fills ``participants.user_id`` when somebody confirms a speaker,
+    and that merges two diarization labels into one person, or splits a
+    mistaken merge back apart (#415). ``build_report`` shows the new
+    participation on its next read, but ``risk_score`` and ``severity`` were
+    stored at detection and read the old one. There is no event for a
+    confirmation (#360), so this compares ``gap_scorings`` against the
+    participants as they are now. A consent withdrawal moves the grouping too,
+    and is picked up the same way.
+
+    ``detect_gaps`` keeps each gap's id and dismissal, and records the new
+    grouping, so a meeting rescored once is not rescored again until the
+    grouping moves again. Safe to overlap: two runs that both see the change
+    both rescore, and the second writes what the first did.
+
+    One meeting failing does not stop the rest; it is logged by id and tried on
+    the next run, because its row still disagrees.
+    """
+    with session_scope() as session:
+        scored: dict[str, str] = {
+            meeting_id: key
+            for meeting_id, key in session.execute(
+                select(GapScoring.meeting_id, GapScoring.people_key)
+            ).all()
+        }
+        rows = session.execute(
+            select(Participant.meeting_id, Participant.id, Participant.user_id).where(
+                Participant.meeting_id.in_(scored), Participant.consented.is_(True)
+            )
+        ).all()
+
+    by_meeting: dict[str, list[tuple[str, str | None]]] = defaultdict(list)
+    for meeting_id, participant_id, user_id in rows:
+        by_meeting[meeting_id].append((participant_id, user_id))
+    changed = sorted(
+        meeting_id
+        for meeting_id, key in scored.items()
+        if _people_key(_group_people(by_meeting[meeting_id])) != key
+    )
+
+    rescored = []
+    for meeting_id in changed:
+        try:
+            detect_gaps(meeting_id)
+            republish_report(meeting_id)
+        except Exception as exc:
+            # The class name only, as the verifier logs it: an exception raised
+            # over stored rows can carry transcript text in its message.
+            log.warning("gap_rescore_failed", meeting_id=meeting_id, reason=type(exc).__name__)
+            continue
+        rescored.append(meeting_id)
+
+    log.info("gap_rescore_swept", scored=len(scored), changed=len(changed), rescored=len(rescored))
+    return rescored
 
 
 def set_dismissed(session: Session, gap_id: str, reader: User, *, dismissed: bool) -> GapDismissal:
@@ -780,6 +846,15 @@ def _store_gaps(
         session.delete(gap)
 
 
+def _record_scoring(session: Session, meeting_id: str, people_key: str) -> None:
+    """Remember the grouping a meeting's gaps were just scored against."""
+    row = session.get(GapScoring, meeting_id)
+    if row is None:
+        session.add(GapScoring(meeting_id=meeting_id, people_key=people_key))
+    else:
+        row.people_key = people_key
+
+
 def publish_report(meeting_id: str) -> GapReport:
     """Publish what is stored for the meeting as ``GapReport`` on
     ``autune.gap.completed``, and return it.
@@ -1097,6 +1172,13 @@ def _people(session: Session, meeting_id: str) -> dict[str, str]:
             Participant.meeting_id == meeting_id, Participant.consented.is_(True)
         )
     ).all()
+    return _group_people([(participant_id, user_id) for participant_id, user_id in rows])
+
+
+def _group_people(rows: Sequence[tuple[str, str | None]]) -> dict[str, str]:
+    """``_people`` over rows already read: ``(participant id, user id)`` for
+    each consenting participant. Separate so the rescore can group every
+    scored meeting from one query."""
     first: dict[str, str] = {}
     for participant_id, user_id in rows:
         if user_id is not None:
@@ -1105,3 +1187,10 @@ def _people(session: Session, meeting_id: str) -> dict[str, str]:
         participant_id: participant_id if user_id is None else first[user_id]
         for participant_id, user_id in rows
     }
+
+
+def _people_key(people: dict[str, str]) -> str:
+    """A digest of a meeting's participant -> person grouping, in a fixed
+    order, for ``gap_scorings``. See ``GapScoring`` for why not the grouping."""
+    joined = "\n".join(f"{participant}={person}" for participant, person in sorted(people.items()))
+    return hashlib.sha256(joined.encode()).hexdigest()
