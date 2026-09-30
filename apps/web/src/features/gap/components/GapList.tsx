@@ -227,6 +227,16 @@ function SectionTitle({ children }: { children: string }) {
   );
 }
 
+/** Nothing above the threshold, and the LOW ones hidden: say where they are. */
+function OnlyLowGaps({ count }: { count: number }) {
+  return (
+    <p className="text-[var(--color-ink-muted)]" style={{ fontSize: "var(--text-metaSmall)" }}>
+      기본 기준 이상인 갭은 없습니다. 낮음으로 분류된 갭 {count}건은 위의 &quot;LOW {count}건
+      보기&quot;에서 볼 수 있습니다.
+    </p>
+  );
+}
+
 /**
  * No gaps, said without claiming the meeting had none.
  *
@@ -237,15 +247,6 @@ function SectionTitle({ children }: { children: string }) {
  * team that trusts it once will not read the next report. The rail beside this
  * is what distinguishes them: it says whether anything was compared at all.
  */
-function OnlyLowGaps({ count }: { count: number }) {
-  return (
-    <p className="text-[var(--color-ink-muted)]" style={{ fontSize: "var(--text-metaSmall)" }}>
-      기본 기준 이상인 갭은 없습니다. 낮음으로 분류된 갭 {count}건은 위의 &quot;LOW {count}건
-      보기&quot;에서 볼 수 있습니다.
-    </p>
-  );
-}
-
 function EmptyGaps() {
   return (
     <p className="text-[var(--color-ink-muted)]" style={{ fontSize: "var(--text-metaSmall)" }}>
