@@ -319,13 +319,14 @@ def test_an_edge_the_model_added_names_the_model(
     meeting_id = build(team_id, lines)
 
     with session_scope() as s:
-        versions = dict(
-            s.execute(
+        versions = {
+            relation: version
+            for relation, version in s.execute(
                 select(GapTopicEdge.relation, GapTopicEdge.extractor_version).where(
                     GapTopicEdge.meeting_id == meeting_id
                 )
             ).tuples()
-        )
+        }
 
     assert versions == {"blocked_by": "fake", "depends_on": RuleRelations.model_version}
     assert [question.utterance for question in asker.asked] == [lines[0].text]
