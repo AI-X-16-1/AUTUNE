@@ -113,3 +113,13 @@ export type SpeakerEntry = {
 };
 
 export type TeamMember = { user_id: string; name: string };
+
+/** One research document (`GET /api/agent/research`). `body` is masked text. */
+export type ResearchDocument = {
+  id: string;
+  meeting_id: string;
+  status: "proposed" | "approved" | "rejected";
+  body: string;
+  created_at: string;
+  decided_at: string | null;
+};
