@@ -19,6 +19,14 @@
 /modules/context/                   @mminjae97
 /modules/intelligence/              @lsh2217
 
+# The agent layer (ADR 0010): the main agent's owner, and each subagent its own.
+/agent/                                        @mkkim68
+/agent/src/autune_agent/subagents/research/    @mkkim68
+/agent/src/autune_agent/subagents/briefing/    @mminjae97
+/agent/src/autune_agent/subagents/followup/    @PARKJAEKYUNG0525
+/agent/src/autune_agent/subagents/workload/    @kjfcvx12
+/agent/src/autune_agent/subagents/report/      @lsh2217
+
 # Frontend is cut along the same axis; one person owns both halves.
 /apps/web/src/features/transcript/  @mkkim68
 /apps/web/src/features/actions/     @kjfcvx12

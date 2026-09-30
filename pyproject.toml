@@ -12,7 +12,7 @@ dependencies = []
 package = false
 
 [tool.uv.workspace]
-members = ["packages/*", "modules/*", "apps/api", "apps/worker", "apps/bot"]
+members = ["packages/*", "modules/*", "agent", "apps/api", "apps/worker", "apps/bot"]
 
 [tool.uv.sources]
 autune-contracts = { workspace = true }
@@ -23,6 +23,7 @@ autune-extraction = { workspace = true }
 autune-gap = { workspace = true }
 autune-context = { workspace = true }
 autune-intelligence = { workspace = true }
+autune-agent = { workspace = true }
 
 [dependency-groups]
 dev = [
@@ -37,7 +38,10 @@ dev = [
 [tool.ruff]
 line-length = 100
 target-version = "py312"
-src = ["packages/*/src", "modules/*/src", "apps/api/src", "apps/worker/src", "apps/bot/src"]
+src = [
+    "packages/*/src", "modules/*/src", "agent/src",
+    "apps/api/src", "apps/worker/src", "apps/bot/src",
+]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "UP", "B", "SIM", "TID"]
@@ -52,6 +56,7 @@ known-first-party = [
     "autune_contracts", "autune_core", "autune_integrations",
     "autune_audio", "autune_extraction", "autune_gap",
     "autune_context", "autune_intelligence",
+    "autune_agent",
 ]
 
 [tool.mypy]
@@ -63,12 +68,15 @@ ignore_missing_imports = true
 # Source only. Every module has its own tests/ package, so type-checking them
 # together makes mypy see several packages all named "tests".
 # Python apps only — apps/web and apps/bot are JavaScript.
-files = ["packages/*/src", "modules/*/src", "apps/api/src", "apps/worker/src", "apps/bot/src"]
+files = [
+    "packages/*/src", "modules/*/src", "agent/src",
+    "apps/api/src", "apps/worker/src", "apps/bot/src",
+]
 explicit_package_bases = true
-mypy_path = "packages/contracts/src:packages/core/src:packages/integrations/src:modules/audio/src:modules/extraction/src:modules/gap/src:modules/context/src:modules/intelligence/src:apps/api/src:apps/worker/src:apps/bot/src"
+mypy_path = "packages/contracts/src:packages/core/src:packages/integrations/src:modules/audio/src:modules/extraction/src:modules/gap/src:modules/context/src:modules/intelligence/src:agent/src:apps/api/src:apps/worker/src:apps/bot/src"
 
 [tool.pytest.ini_options]
-testpaths = ["packages", "modules", "apps"]
+testpaths = ["packages", "modules", "agent", "apps"]
 markers = [
     "model: needs downloaded model weights; excluded from the default run",
 ]
@@ -83,6 +91,7 @@ root_packages = [
     "autune_contracts", "autune_core", "autune_integrations",
     "autune_audio", "autune_extraction", "autune_gap",
     "autune_context", "autune_intelligence",
+    "autune_agent",
 ]
 
 [[tool.importlinter.contracts]]
@@ -107,3 +116,40 @@ name = "Contracts depend on nothing of ours"
 type = "forbidden"
 source_modules = ["autune_contracts"]
 forbidden_modules = ["autune_core", "autune_integrations"]
+
+# ADR 0010. The agent layer may import every module; nothing below may import it.
+# integrations and core are separate layers because integrations imports core.
+[[tool.importlinter.contracts]]
+name = "The agent layer imports modules; nothing imports the agent layer"
+type = "layers"
+layers = [
+    "autune_agent",
+    "autune_audio | autune_extraction | autune_gap | autune_context | autune_intelligence",
+    "autune_integrations",
+    "autune_core",
+    "autune_contracts",
+]
+
+# One subagent never imports another; delegation goes through the main agent.
+# See docs/architecture/agent-layer.md section 3.2.
+[[tool.importlinter.contracts]]
+name = "Subagents are independent"
+type = "independence"
+modules = [
+    "autune_agent.subagents.research",
+    "autune_agent.subagents.briefing",
+    "autune_agent.subagents.followup",
+    "autune_agent.subagents.workload",
+    "autune_agent.subagents.report",
+]
+
+# A subagent reads a module only through the Toolbox, which holds its allow-list
+# and the run's budget. A direct import would bypass both.
+[[tool.importlinter.contracts]]
+name = "Subagents reach modules only through tools"
+type = "forbidden"
+source_modules = ["autune_agent.subagents"]
+forbidden_modules = [
+    "autune_audio", "autune_extraction", "autune_gap",
+    "autune_context", "autune_intelligence",
+]
