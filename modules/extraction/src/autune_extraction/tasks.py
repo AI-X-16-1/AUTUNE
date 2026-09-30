@@ -505,8 +505,16 @@ def pull_calendar_changes() -> None:
         for action_item_id in moved:
             try:
                 sync_action_item(action_item_id)
-            except (IntegrationError, PrivacyViolationError):
+            except IntegrationError:
                 log.warning("extraction_notion_sync_failed", action_item_id=action_item_id)
+            except PrivacyViolationError:
+                # Blocked, not failed: the outbound check refused the send and
+                # nothing left. Its own event, as ``sync_after_confirmation``
+                # logs it, so a privacy block never reads as a flaky Notion.
+                log.warning(
+                    "extraction_notion_sync_blocked_by_privacy_guard",
+                    action_item_id=action_item_id,
+                )
 
 
 def _pull_one(user_id: str) -> list[str]:
