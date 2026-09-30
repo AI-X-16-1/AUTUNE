@@ -62,6 +62,12 @@ jobs:
       - name: Start application
         run: docker compose -f infra/docker-compose.app.yml up -d --build --wait --wait-timeout 600
 
+      # Every deploy rebuilds the images, and the python one is over 10 GB;
+      # the one it replaced is left untagged. Only untagged images go: the
+      # build cache (uv and pnpm downloads) stays, so the next build is fast.
+      - name: Remove replaced images
+        run: docker image prune -f
+
       - name: Show services
         if: always()
         run: |
