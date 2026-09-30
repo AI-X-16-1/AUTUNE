@@ -236,6 +236,15 @@ def test_an_answer_that_names_no_line_asked_is_refused() -> None:
         parse('{"answers": {"첫째": [["B", "blocked_by", "A"]]}}', [QUESTION], lettered)
 
 
+def test_an_answer_whose_values_are_not_lists_is_refused() -> None:
+    """The rules' answer stands for the batch, rather than a line read as
+    stating nothing (#503 review)."""
+    _, lettered = render([QUESTION])
+
+    with pytest.raises(ValueError):
+        parse('{"answers": {"1": "B blocked_by A"}}', [QUESTION], lettered)
+
+
 @pytest.mark.parametrize(
     "stated",
     [

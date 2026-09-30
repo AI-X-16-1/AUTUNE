@@ -105,6 +105,24 @@ def test_an_answer_that_names_no_line_asked_is_refused() -> None:
         parse('{"answers": {"첫째": ["B"], "7": ["A"]}}', offered)
 
 
+def test_an_answer_whose_values_are_not_lists_is_refused() -> None:
+    """``{"1": "A"}`` names the line but not in the shape either caller reads.
+    Taken as read, it became "not this item" and overrode the embedding (#503
+    review)."""
+    _, offered = render([REINDEX, CLOSING])
+
+    with pytest.raises(ValueError):
+        parse('{"answers": {"1": "B", "2": "C"}}', offered)
+
+
+def test_a_list_beside_a_non_list_still_answers_its_line() -> None:
+    _, offered = render([REINDEX, CLOSING])
+
+    parsed = parse('{"answers": {"1": ["B"], "2": "C"}}', offered)
+
+    assert parsed == {1: {"dependency"}, 2: frozenset()}
+
+
 def test_an_empty_mapping_is_every_line_answered_empty() -> None:
     _, offered = render([REINDEX, CLOSING])
 
