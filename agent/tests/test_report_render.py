@@ -84,6 +84,22 @@ def test_a_truncated_list_says_there_is_more() -> None:
     assert "더 있어요 — 상세보기에서" in render(actions, None, None, None)
 
 
+def test_over_budget_the_other_modules_go_before_the_confirmed_items() -> None:
+    """The confirmed items are the report; C's and D's lines are context."""
+    long_links = _r(
+        "",
+        [{"title": "x", "meeting_title": "T" * 400, "date": "9/22"} for _ in range(5)],
+    )
+    long_gaps = _r("💬" * 300, [{"title": "G" * 300, "body": "b"} for _ in range(5)])
+
+    body = render(ACTIONS, REVIEW, long_gaps, long_links)
+
+    assert len(body) <= BODY_MAX_CHARS
+    assert "• 결제 API 스펙 초안" in body and "• 결제 화면 시안" in body
+    # Whole lines only: no line is cut in the middle.
+    assert all(line.endswith("(9/22)") for line in body.splitlines() if line.startswith("🔗"))
+
+
 def test_the_body_stays_under_the_budget() -> None:
     long_items = [{"title": "가" * 600, "body": "나"} for _ in range(5)]
     body = render(_r("확정 5건.", long_items), REVIEW, GAPS, LINKS)

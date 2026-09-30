@@ -84,16 +84,36 @@ def render(
     gaps: ToolResult | None,
     links: ToolResult | None,
 ) -> str:
-    """The report body from B's items and review state, C's gaps, D's links."""
+    """The report body from B's items and review state, C's gaps, D's links.
+
+    Over budget, whole lines go in this order: D's links, then C's gap lines,
+    then B's action bullets (with "더 있어요" said once). The confirmed items
+    are the report; the other modules' lines are context.
+    """
     pending = _pending(review)
     head = _actions(actions) + pending
-    tail = [_gaps(gaps), _links(links)]
-    body = _join([head, *tail])
-    # Over budget: drop action bullets from the end, then say there is more.
+    gap_lines, link_lines = _gaps(gaps), _links(links)
+
+    def body() -> str:
+        return _join([head, gap_lines, link_lines])
+
+    text = body()
+    for lines in (link_lines, gap_lines):
+        while len(text) > BODY_MAX_CHARS and lines:
+            lines.pop()
+            text = body()
     bullets = [line for line in head if line.startswith("• ")]
-    while len(body) > BODY_MAX_CHARS and bullets:
+    while len(text) > BODY_MAX_CHARS and bullets:
         head.remove(bullets.pop())
         if MORE not in head:
             head.insert(len(head) - len(pending), MORE)
-        body = _join([head, *tail])
-    return body[:BODY_MAX_CHARS]
+        text = body()
+    return _whole_lines(text)
+
+
+def _whole_lines(text: str) -> str:
+    """Last resort (one line longer than the budget): cut at a line break."""
+    if len(text) <= BODY_MAX_CHARS:
+        return text
+    cut = text[:BODY_MAX_CHARS]
+    return cut[: cut.rfind("\n")] if "\n" in cut else cut

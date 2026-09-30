@@ -13,8 +13,9 @@ SUBAGENT = Subagent(
     name="report",
     description=(
         "Use this when a meeting's analysis has just finished, or when asked to "
-        "write or resend that one meeting's summary report. Do not use it for "
-        "anything across several meetings or for a team overview."
+        "write that one meeting's summary report. Do not use it for anything "
+        "across several meetings or for a team overview, and not to send a "
+        "report again: one already posted is not posted twice."
     ),
     tools=TOOLS,
     build=build,

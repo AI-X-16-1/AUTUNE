@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from autune_agent.main import CallBudget, Toolbox
+from autune_agent.main import CallBudget, Tool, Toolbox
 from autune_agent.results import SubagentResult
 from autune_agent.subagents.report import SUBAGENT
 from autune_agent.subagents.report.graph import (
@@ -80,9 +80,61 @@ def test_at_most_four_tool_calls() -> None:
     assert budget.used == 4
 
 
+def test_a_korean_particle_after_the_id_still_finds_the_meeting() -> None:
+    outcome = _run("mtg_ab12cd의 리포트 다시 만들어줘", _all_tools())
+
+    assert outcome.proposed[0].arguments["meeting_id"] == "mtg_ab12cd"
+
+
+def test_two_different_meeting_ids_are_refused_not_guessed() -> None:
+    outcome = _run("mtg_aaa1 와 mtg_bbb2 비교", _all_tools())
+
+    assert outcome.result.ok is False
+    assert outcome.proposed == []
+
+
+def test_an_optional_tool_that_raises_drops_only_its_section() -> None:
+    """A bug in C's or D's tool must not cost the meeting its confirmed items."""
+
+    def broken(_session: object, **_kw: object) -> dict[str, Any]:
+        raise RuntimeError("gap tool bug")
+
+    tools = _all_tools()
+    tools[GAPS_TOOL] = Tool(name=GAPS_TOOL, description="Use this in tests.", fn=broken)
+
+    outcome = _run("mtg_ab12cd", tools)
+
+    body = outcome.proposed[0].arguments["body_markdown"]
+    assert "💬" not in body and "✅ 확정된 액션 아이템" in body
+
+
+def test_an_unknown_meeting_is_a_failure_with_no_proposal() -> None:
+    missing = {"ok": False, "reason": "no meeting", "summary": "회의를 찾을 수 없습니다."}
+    tools = _all_tools()
+    tools[ACTIONS_TOOL] = mock_tool(ACTIONS_TOOL, missing)
+    tools[REVIEW_TOOL] = mock_tool(REVIEW_TOOL, missing)
+
+    outcome = _run("mtg_ab12cd", tools)
+
+    assert outcome.result.ok is False
+    assert outcome.proposed == []
+
+
+def test_an_unregistered_tool_is_not_called_and_spends_nothing() -> None:
+    tools = _all_tools()
+    del tools[GAPS_TOOL], tools[LINKS_TOOL]
+    budget = CallBudget()
+
+    _run("mtg_ab12cd", tools, budget)
+
+    assert budget.used == 2
+
+
 def test_the_allow_list_is_exactly_the_four_reads() -> None:
     assert SUBAGENT.name == "report"
     assert set(SUBAGENT.tools) == {ACTIONS_TOOL, REVIEW_TOOL, GAPS_TOOL, LINKS_TOOL}
     assert "extraction.unresolved_questions" not in SUBAGENT.tools
     assert "extraction.open_action_items" not in SUBAGENT.tools
     assert SUBAGENT.description.startswith("Use this")
+    # E refuses a report already posted, so the subagent must not promise a resend.
+    assert "resend" not in SUBAGENT.description
