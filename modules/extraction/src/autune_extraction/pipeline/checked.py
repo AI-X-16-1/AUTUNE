@@ -31,10 +31,11 @@ sending exactly what ``classifier_impl=llm`` sends; DeBERTa runs in process.
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Sequence
 
 from autune_contracts.enums import UtteranceKind
 
-from .base import Classifier, Prediction
+from .base import Classifier, Prediction, give_roster
 from .classifier import MODEL_VERSION_MAX
 
 AGREED_CONFIDENCE = 0.9
@@ -62,6 +63,10 @@ class CheckedClassifier:
         if len(joined) <= MODEL_VERSION_MAX:
             return joined
         return f"checked:{hashlib.sha256(joined.encode('utf-8')).hexdigest()[:16]}"
+
+    def use_roster(self, names: Sequence[str]) -> None:
+        """Only the proposer sends text out (#411); the checker runs here."""
+        give_roster(self._proposer, names)
 
     def classify(self, texts: list[str]) -> list[Prediction]:
         if not texts:

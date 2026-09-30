@@ -30,7 +30,7 @@ from autune_contracts.transcript import (
     TranscriptSource,
     Utterance,
 )
-from autune_core import Base, Meeting, Participant
+from autune_core import Base, Meeting, Participant, TeamMember, User
 from autune_core import Utterance as StoredUtterance
 from autune_extraction import service, tasks
 from autune_extraction.models import (
@@ -51,6 +51,9 @@ MEETING = "mtg_1"
 
 TABLES = [
     Meeting.__table__,
+    # The task reads the team's roster for an outbound classifier (#411).
+    User.__table__,
+    TeamMember.__table__,
     Participant.__table__,
     StoredUtterance.__table__,
     ExtClassification.__table__,
@@ -391,6 +394,29 @@ def wired(session: Session, monkeypatch: pytest.MonkeyPatch) -> Session:
     monkeypatch.setattr(tasks, "get_classifier", FakeClassifier)
     monkeypatch.setattr(tasks, "get_nli", FakeNli)
     return session
+
+
+def test_the_task_hands_the_teams_names_to_the_classifier(
+    wired: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#411: an outbound classifier gets the meeting team's roster before it
+    classifies, so it can replace those names in what it sends."""
+    stored(wired)
+    team_id = wired.get(Meeting, MEETING).team_id  # type: ignore[union-attr]
+    wired.add(User(id="user_1", email="u1@example.com", display_name="김민경"))
+    wired.add(TeamMember(team_id=team_id, user_id="user_1"))
+    wired.flush()
+    rosters: list[list[str]] = []
+
+    class Outbound(FakeClassifier):
+        def use_roster(self, names: list[str]) -> None:
+            rosters.append(list(names))
+
+    monkeypatch.setattr(tasks, "get_classifier", Outbound)
+
+    tasks.on_transcript_ready(transcript())
+
+    assert rosters == [["김민경"]]
 
 
 def test_the_task_classifies_and_groups_a_meeting(wired: Session) -> None:
