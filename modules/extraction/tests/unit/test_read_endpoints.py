@@ -24,7 +24,7 @@ from sqlalchemy.pool import StaticPool
 from autune_contracts.extraction import ExtractionResult
 from autune_core import AutuneError, Base, Meeting, TeamMember, User, Utterance, get_session
 from autune_core.auth import current_user
-from autune_extraction import service
+from autune_extraction import service, tasks
 from autune_extraction.config import ExtractionSettings
 from autune_extraction.confirmations import WEAK_ASSENT
 from autune_extraction.models import (
@@ -457,7 +457,7 @@ def test_the_detail_carries_everything_the_list_does(client: TestClient, session
     (listed,) = client.get(f"{PREFIX}/action-items").json()
     detail = client.get(f"{PREFIX}/action-items/act_1").json()
 
-    assert {k: v for k, v in detail.items() if k != "sources"} == listed
+    assert {k: v for k, v in detail.items() if k not in ("sources", "history")} == listed
 
 
 def test_a_confirmed_items_notion_status_reaches_both_the_card_and_the_drawer(
@@ -758,3 +758,74 @@ def test_no_session_is_refused_before_anything_is_read(client: TestClient) -> No
     assert client.get(f"{PREFIX}/results/{MEETING}").status_code == 403
     assert client.get(f"{PREFIX}/action-items").status_code == 403
     assert client.get(f"{PREFIX}/health").status_code == 200
+
+
+# --- the drawer's history (S18, #109) -------------------------------------------
+
+
+@pytest.fixture
+def no_sync(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An edit past needs_confirmation queues the Notion sync, which opens its own
+    session_scope on a real database; these tests are about the history row."""
+    monkeypatch.setattr(tasks, "sync_after_confirmation", lambda _action_item_id: None)
+
+
+@pytest.mark.usefixtures("no_sync")
+def test_history_names_the_fields_an_edit_changed_and_keeps_no_value(
+    client: TestClient, session: Session
+) -> None:
+    action_item(session, "act_1", status="todo", due_date=date(2026, 10, 2))
+
+    client.patch(f"{PREFIX}/action-items/act_1", json={"due_date": "2026-10-09"})
+    client.patch(
+        f"{PREFIX}/action-items/act_1", json={"description": "고친 설명", "status": "in_progress"}
+    )
+    detail = client.get(f"{PREFIX}/action-items/act_1").json()
+
+    assert [(h["kind"], h["fields"]) for h in detail["history"]] == [
+        ("edited", ["due_date"]),
+        ("edited", ["description", "status"]),
+    ]
+    stored = [(e.kind, e.fields) for e in session.query(ExtEditEvent).order_by(ExtEditEvent.id)]
+    assert "act_1 할 일" not in str(stored), "the sentence a person replaced is not kept"
+    assert "2026-10-02" not in str(stored)
+
+
+def test_a_hand_added_item_starts_its_history_with_being_added(
+    client: TestClient, session: Session
+) -> None:
+    created = client.post(
+        f"{PREFIX}/action-items", json={"meeting_id": MEETING, "description": "새 항목"}
+    ).json()
+
+    history = client.get(f"{PREFIX}/action-items/{created['id']}").json()["history"]
+
+    assert [(h["kind"], h["fields"]) for h in history] == [("created", [])]
+
+
+@pytest.mark.usefixtures("no_sync")
+def test_an_untouched_extracted_item_has_no_history(client: TestClient, session: Session) -> None:
+    action_item(session, "act_1")
+    action_item(session, "act_2")
+    client.patch(f"{PREFIX}/action-items/act_2", json={"status": "todo"})
+
+    assert client.get(f"{PREFIX}/action-items/act_1").json()["history"] == []
+
+
+def test_an_empty_edit_records_nothing(client: TestClient, session: Session) -> None:
+    action_item(session, "act_1")
+
+    client.patch(f"{PREFIX}/action-items/act_1", json={})
+
+    assert client.get(f"{PREFIX}/action-items/act_1").json()["history"] == []
+
+
+@pytest.mark.usefixtures("no_sync")
+def test_history_carries_no_person(client: TestClient, session: Session) -> None:
+    """ADR 0003: who corrected the model is per-person conduct; not stored, not sent."""
+    action_item(session, "act_1")
+    client.patch(f"{PREFIX}/action-items/act_1", json={"status": "todo"})
+
+    (entry,) = client.get(f"{PREFIX}/action-items/act_1").json()["history"]
+
+    assert set(entry) == {"kind", "fields", "at"}

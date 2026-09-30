@@ -96,7 +96,8 @@ def test_the_edit_event_table_has_no_person_on_it() -> None:
     """
     columns = set(ExtEditEvent.__table__.columns.keys())
 
-    assert columns == {"id", "meeting_id", "action_item_id", "kind", "created_at"}
+    # ``fields`` names what an edit changed -- field names, never a person (#109).
+    assert columns == {"id", "meeting_id", "action_item_id", "kind", "fields", "created_at"}
     assert not any("user" in name or "speaker" in name for name in columns)
 
 

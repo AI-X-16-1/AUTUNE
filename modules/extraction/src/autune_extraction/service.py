@@ -64,6 +64,7 @@ from .schemas import (
     ActionItemUpdate,
     DecisionCreate,
     DecisionReviewUpdate,
+    EditHistoryEntry,
     ExternalRefRead,
     MeetingReview,
     Outbound,
@@ -635,6 +636,7 @@ def read_detail(session: Session, item: ExtActionItem) -> ActionItemDetail:
             item, assignee_name=name, summary=summary, sync_refs=refs, assignee_departed=departed
         ).model_dump(),
         sources=source_utterances(session, item.id),
+        history=edit_history(session, item.id),
     )
 
 
@@ -780,7 +782,13 @@ def update_action_item(
         # corrected (#109).
         item.due_text = None
 
-    _record_edit(session, meeting_id=item.meeting_id, action_item_id=item.id, kind="edited")
+    _record_edit(
+        session,
+        meeting_id=item.meeting_id,
+        action_item_id=item.id,
+        kind="edited",
+        fields=list(changes),
+    )
     return item
 
 
@@ -800,15 +808,44 @@ def delete_action_item(session: Session, item: ExtActionItem) -> None:
 
 
 def _record_edit(
-    session: Session, *, meeting_id: str, action_item_id: str | None, kind: str
+    session: Session,
+    *,
+    meeting_id: str,
+    action_item_id: str | None,
+    kind: str,
+    fields: Sequence[str] = (),
 ) -> None:
     """One correction, counted and not attributed.
 
     No user id is passed in because none is stored. ADR 0003 forbids per-person
     metrics, and "who corrected the model most" is the same shape of data as a
-    speaking ratio.
+    speaking ratio. ``fields`` names what an edit changed and never holds a
+    value (#109).
     """
-    session.add(ExtEditEvent(meeting_id=meeting_id, action_item_id=action_item_id, kind=kind))
+    session.add(
+        ExtEditEvent(
+            meeting_id=meeting_id,
+            action_item_id=action_item_id,
+            kind=kind,
+            fields=",".join(sorted(fields)) or None,
+        )
+    )
+
+
+def edit_history(session: Session, action_item_id: str) -> list[EditHistoryEntry]:
+    """What happened to one item, oldest first, for the drawer (S18, #109):
+    added by a person, and each edit with the fields it changed. No values and
+    no people -- see ``ExtEditEvent``. An item the model extracted and nobody
+    touched has no entries."""
+    rows = session.execute(
+        select(ExtEditEvent.kind, ExtEditEvent.fields, ExtEditEvent.created_at)
+        .where(ExtEditEvent.action_item_id == action_item_id)
+        .order_by(ExtEditEvent.created_at, ExtEditEvent.id)
+    )
+    return [
+        EditHistoryEntry(kind=kind, fields=fields.split(",") if fields else [], at=at)
+        for kind, fields, at in rows
+    ]
 
 
 def edit_cost_for_meeting(session: Session, meeting_id: str) -> EditCost:

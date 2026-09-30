@@ -7,7 +7,7 @@ import { Button, MaskedText, Quote, StatusDot } from "@/shared/ui";
 import { ConfirmDelete } from "./ConfirmDelete";
 import { useSourceUtterances } from "../hooks/useSourceUtterances";
 import { COLUMNS, COLUMN_LABELS, isCandidate } from "../types";
-import type { ActionItemRead, ActionStatus } from "../types";
+import type { ActionItemRead, ActionStatus, EditHistoryEntry } from "../types";
 
 /**
  * S18. Why this item exists, and the two things a person does about it.
@@ -43,7 +43,18 @@ export function ActionDetailDrawer({
   const [changing, setChanging] = useState(false);
   // The quotation is fetched when the drawer opens (GET /action-items/{id});
   // the list the board holds carries utterance ids, never their words.
-  const quotation = useSourceUtterances(item);
+  // History follows an edit made here or on the board: the item's editable
+  // fields are the revision the hook refetches on.
+  const quotation = useSourceUtterances(
+    item,
+    [
+      item.status,
+      item.due_date,
+      item.assignee_id,
+      item.assignee_label,
+      item.description,
+    ].join("|"),
+  );
 
   return (
     <aside
@@ -71,7 +82,10 @@ export function ActionDetailDrawer({
         <div className="min-w-0 flex-1">
           <h2
             className="text-[var(--color-ink-strong)]"
-            style={{ fontSize: "var(--text-title)", fontWeight: "var(--text-title-weight)" }}
+            style={{
+              fontSize: "var(--text-title)",
+              fontWeight: "var(--text-title-weight)",
+            }}
           >
             {item.description}
           </h2>
@@ -84,11 +98,16 @@ export function ActionDetailDrawer({
               className="text-[var(--color-ink-muted)]"
               style={{ fontSize: "var(--text-metaSmall)" }}
             >
-              {isCandidate(item) ? "후보" : COLUMN_LABELS[item.status ?? "needs_confirmation"]}
+              {isCandidate(item)
+                ? "후보"
+                : COLUMN_LABELS[item.status ?? "needs_confirmation"]}
             </span>
             <span
               className="text-[var(--color-ink-muted)]"
-              style={{ fontFamily: "var(--font-mono)", fontSize: "var(--text-metaSmall)" }}
+              style={{
+                fontFamily: "var(--font-mono)",
+                fontSize: "var(--text-metaSmall)",
+              }}
             >
               {item.confidence.toFixed(2)}
             </span>
@@ -108,7 +127,10 @@ export function ActionDetailDrawer({
         </Button>
       </header>
 
-      <div className="flex-1 overflow-y-auto" style={{ padding: "var(--space-card)" }}>
+      <div
+        className="flex-1 overflow-y-auto"
+        style={{ padding: "var(--space-card)" }}
+      >
         <Field label="담당">
           {item.needs_reassignment
             ? "재배정 필요 · 담당자가 이 팀에 없습니다"
@@ -134,7 +156,9 @@ export function ActionDetailDrawer({
               try {
                 await onStatusChange?.(event.target.value as ActionStatus);
               } catch {
-                setFailure("상태를 바꾸지 못했습니다. 잠시 후 다시 시도해 주세요.");
+                setFailure(
+                  "상태를 바꾸지 못했습니다. 잠시 후 다시 시도해 주세요.",
+                );
               } finally {
                 setChanging(false);
               }
@@ -196,7 +220,9 @@ export function ActionDetailDrawer({
                   style={{ fontSize: "var(--text-metaSmall)" }}
                 >
                   <StatusDot variant={ref.url ? "confirmed" : "progress"} />
-                  <span className="text-[var(--color-ink-body)]">{ref.system}</span>
+                  <span className="text-[var(--color-ink-body)]">
+                    {ref.system}
+                  </span>
                   {ref.external_id ? (
                     <span
                       className="text-[var(--color-ink-muted)]"
@@ -215,11 +241,46 @@ export function ActionDetailDrawer({
                       열기
                     </a>
                   ) : (
-                    <span className="ml-auto text-[var(--color-ink-muted)]">동기화 확인 중</span>
+                    <span className="ml-auto text-[var(--color-ink-muted)]">
+                      동기화 확인 중
+                    </span>
                   )}
                 </div>
               ))}
             </div>
+          </section>
+        ) : null}
+
+        {quotation.history ? (
+          <section className="mt-6">
+            <SectionTitle>이력</SectionTitle>
+            {quotation.history.length > 0 ? (
+              <ol
+                className="mt-2 grid gap-1"
+                style={{ fontSize: "var(--text-metaSmall)" }}
+              >
+                {quotation.history.map((entry, index) => (
+                  <li key={`${entry.at}-${index}`} className="flex gap-2">
+                    <span
+                      className="text-[var(--color-ink-muted)]"
+                      style={{ fontFamily: "var(--font-mono)" }}
+                    >
+                      {historyTime(entry.at)}
+                    </span>
+                    <span className="text-[var(--color-ink-body)]">
+                      {historyText(entry)}
+                    </span>
+                  </li>
+                ))}
+              </ol>
+            ) : (
+              <p
+                className="mt-2 text-[var(--color-ink-muted)]"
+                style={{ fontSize: "var(--text-metaSmall)" }}
+              >
+                모델이 추출한 뒤로 고친 적이 없습니다.
+              </p>
+            )}
           </section>
         ) : null}
       </div>
@@ -299,11 +360,40 @@ function quotationNote(
   return "근거 발화가 삭제되어 더 이상 볼 수 없습니다.";
 }
 
+/** Field names as a person reads them. Only names are kept, never values (#109). */
+const FIELD_LABELS: Record<string, string> = {
+  description: "설명",
+  assignee_id: "담당자",
+  assignee_label: "담당자",
+  due_date: "기한",
+  status: "상태",
+};
+
+function historyText(entry: EditHistoryEntry): string {
+  if (entry.kind === "created") return "직접 추가함";
+  const labels = [
+    ...new Set(entry.fields.map((field) => FIELD_LABELS[field] ?? field)),
+  ];
+  return labels.length > 0 ? `${labels.join("·")} 수정` : "수정함";
+}
+
+function historyTime(at: string): string {
+  return new Date(at).toLocaleString("ko-KR", {
+    month: "numeric",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
 function SectionTitle({ children }: { children: string }) {
   return (
     <h3
       className="text-[var(--color-ink-strong)]"
-      style={{ fontSize: "var(--text-status)", fontWeight: "var(--text-status-weight)" }}
+      style={{
+        fontSize: "var(--text-status)",
+        fontWeight: "var(--text-status-weight)",
+      }}
     >
       {children}
     </h3>
