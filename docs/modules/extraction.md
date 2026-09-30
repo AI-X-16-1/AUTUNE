@@ -152,6 +152,19 @@ alone. Speech that loses consent drops out of the model's rows the same way;
 what a person already edited or sent out from it waits on per-person
 withdrawal (S10/S11), the second half of #518.
 
+**A speaker identified after the run (#360).** A commitment by an unidentified
+speaker keeps only the label ("Speaker 2"). When A later fills
+`participants.user_id`, nothing announces it, so every ten minutes
+`fill_identified_assignees` gives each model item from the last 30 days still
+holding only the label it was drafted with the account of the one identified,
+consenting speaker behind its sources, and clears the label. An item whose
+assignee a person may have edited -- an edit naming an assignee field, or an
+older edit row naming no fields -- or whose label a person renamed is left
+alone. The fill is write-once: a later re-identification of the speaker is a
+person's reassignment on the board. A confirmed item is synced to Notion,
+Jira and the calendar the way the router syncs a board edit; like a board
+edit, no `ExtractionResult` is published.
+
 `ext_action_items.due_text` is the phrase a model item's due date was read from,
 for S18. It is cleared when a person sets the date themselves: the phrase no
 longer explains the value (#109).
