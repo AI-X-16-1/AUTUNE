@@ -54,8 +54,21 @@ def test_collects_module_b_tools_by_iterating_the_module_list() -> None:
     assert tools["extraction.open_action_items"].description.startswith("Use this")
 
 
-def test_a_module_without_tools_py_contributes_nothing() -> None:
-    assert collect_tools(["audio"]) == {}
+def test_a_module_without_tools_py_contributes_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A package with no tools submodule. Not a real module: which of the five
+    # has shipped its tools.py changes as they land.
+    monkeypatch.setitem(sys.modules, "autune_fake", types.ModuleType("autune_fake"))
+
+    assert collect_tools(["fake"]) == {}
+
+
+def test_module_a_tools_are_collected() -> None:
+    assert sorted(collect_tools(["audio"])) == [
+        "audio.find_utterances",
+        "audio.meeting_overview",
+        "audio.quote_utterances",
+        "audio.recent_meetings",
+    ]
 
 
 def test_more_than_five_items_is_cut_to_five_and_marked_truncated() -> None:
