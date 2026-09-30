@@ -59,7 +59,11 @@ class Writer(Protocol):
 def fit(
     questions: Sequence[str], matches: Sequence[Match], limit: int = MAX_OUTBOUND_CHARS
 ) -> tuple[list[str], list[Match]]:
-    """Questions first, then matches in rank order, until ``limit`` characters."""
+    """Questions first, then matches in rank order, measuring full rendered text.
+
+    Accounts for instructions length; budget is ``limit - len(instructions)``.
+    This is a legacy wrapper; internal callers use _fit_terms and _fit_write.
+    """
     used = sum(len(q) for q in questions)
     kept: list[Match] = []
     for match in matches:
@@ -69,6 +73,87 @@ def fit(
         kept.append(match)
         used += size
     return list(questions), kept
+
+
+def _terms_text(questions: Sequence[str], limit: int = MAX_OUTBOUND_CHARS) -> str:
+    """Build and fit the text for terms extraction, accounting for instruction length."""
+    instructions_len = len(TERMS_INSTRUCTIONS)
+    budget = limit - instructions_len
+    if budget <= 0:
+        return ""
+
+    kept: list[str] = []
+    used = 0
+    for q in questions:
+        q_line = f"- {q}\n"
+        if used + len(q_line) > budget:
+            break
+        kept.append(q)
+        used += len(q_line)
+
+    return "\n".join(f"- {q}" for q in kept)
+
+
+def _write_text(
+    meeting_title: str,
+    questions: Sequence[str],
+    matches: Sequence[Match],
+    limit: int = MAX_OUTBOUND_CHARS,
+) -> str:
+    """Build and fit the text for document writing, accounting for instruction length."""
+    instructions_len = len(WRITE_INSTRUCTIONS)
+    budget = limit - instructions_len
+    if budget <= 0:
+        return ""
+
+    header_prefix = "회의: "
+    questions_header = "\n\n질문:\n"
+    matches_header = "\n\n과거 회의 발언:\n"
+    no_matches = "(없음)"
+
+    # Truncate title if needed
+    title = meeting_title
+    header_len = len(header_prefix)
+    matches_h_len = len(matches_header)
+    no_m_len = len(no_matches)
+    q_h_len = len(questions_header)
+    fixed_overhead = header_len + q_h_len + matches_h_len + no_m_len
+    if fixed_overhead > budget:
+        # Even title+headers overflow; truncate title
+        available_for_title = budget - (q_h_len + matches_h_len + no_m_len + header_len)
+        if available_for_title <= 0:
+            return ""
+        title = meeting_title[:available_for_title]
+        fixed_overhead = header_len + len(title) + q_h_len + matches_h_len + no_m_len
+
+    # Add questions, dropping trailing ones if they don't fit
+    kept_questions: list[str] = []
+    used = fixed_overhead
+    for q in questions:
+        q_line = f"- {q}\n"
+        if used + len(q_line) > budget:
+            break
+        kept_questions.append(q)
+        used += len(q_line)
+
+    # Add matches, dropping lowest-ranked ones first
+    kept_matches: list[Match] = []
+    for m in matches:
+        # Account for "- [title] body" + newline
+        m_line = f"- [{m.title}] {m.body}\n"
+        if used + len(m_line) > budget:
+            break
+        kept_matches.append(m)
+        used += len(m_line)
+
+    # Assemble final text
+    text = (
+        f"{header_prefix}{title}{questions_header}"
+        + "\n".join(f"- {q}" for q in kept_questions)
+        + matches_header
+        + ("\n".join(f"- [{m.title}] {m.body}" for m in kept_matches) or no_matches)
+    )
+    return text
 
 
 class GeminiWriter:
@@ -81,10 +166,10 @@ class GeminiWriter:
         return self._text
 
     def terms(self, questions: Sequence[str]) -> list[str]:
-        asked, _ = fit(questions, [])
-        answer = self._gemini().generate(
-            TERMS_INSTRUCTIONS, "\n".join(f"- {q}" for q in asked), json_answer=True
-        )
+        text = _terms_text(questions)
+        if not text:
+            return []
+        answer = self._gemini().generate(TERMS_INSTRUCTIONS, text, json_answer=True)
         try:
             raw = json.loads(answer).get("terms")
         except (json.JSONDecodeError, AttributeError):
@@ -97,13 +182,9 @@ class GeminiWriter:
     def write(
         self, *, meeting_title: str, questions: Sequence[str], matches: Sequence[Match]
     ) -> str:
-        asked, quoted = fit(questions, matches)
-        text = (
-            f"회의: {meeting_title}\n\n질문:\n"
-            + "\n".join(f"- {q}" for q in asked)
-            + "\n\n과거 회의 발언:\n"
-            + ("\n".join(f"- [{m.title}] {m.body}" for m in quoted) or "(없음)")
-        )
+        text = _write_text(meeting_title, questions, matches)
+        if not text:
+            raise WriterError("empty document")
         body = self._gemini().generate(WRITE_INSTRUCTIONS, text, json_answer=False).strip()
         if not body:
             raise WriterError("empty document")

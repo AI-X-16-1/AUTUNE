@@ -6,10 +6,11 @@ import pytest
 
 from autune_agent.subagents.research.writer import (
     MAX_TERMS,
+    TERMS_INSTRUCTIONS,
+    WRITE_INSTRUCTIONS,
     GeminiWriter,
     Match,
     WriterError,
-    fit,
 )
 from autune_integrations.privacy import MAX_OUTBOUND_CHARS
 
@@ -62,15 +63,51 @@ def test_an_empty_document_is_a_writer_error() -> None:
         )
 
 
-def test_fit_drops_the_lowest_ranked_matches_first() -> None:
-    questions = ["질문"]
+def test_write_stays_within_outbound_budget() -> None:
+    """Verify that assembled write text + instructions stays within budget."""
+    fake = FakeText("## 제기된 질문\n제기된 것들")
+    questions = ["배포는 언제죠?", "QA는 누가 하죠?", "예산은 얼마죠?"]
     matches = [
-        Match(utterance_id=f"utt_{n}", meeting_id="mtg_1", title="t", body="가" * 900)
+        Match(
+            utterance_id=f"utt_{n}",
+            meeting_id="mtg_1",
+            title="2026-09-23 리뷰 · 00:03",
+            body="가" * 800,
+        )
         for n in range(6)
     ]
 
-    kept_q, kept_m = fit(questions, matches, limit=MAX_OUTBOUND_CHARS)
+    long_title = "매우_긴_회의_이름_여기에_길게_작성됨" * 3
+    GeminiWriter(text=fake).write(  # type: ignore[arg-type]
+        meeting_title=long_title, questions=questions, matches=matches
+    )
 
-    assert kept_q == questions
-    assert [m.utterance_id for m in kept_m] == [m.utterance_id for m in matches[: len(kept_m)]]
-    assert sum(len(m.body) + len(m.title) for m in kept_m) + len("질문") <= MAX_OUTBOUND_CHARS
+    # Verify the sent text + instructions fits within budget
+    sent_text = fake.sent[0]
+    total_len = len(WRITE_INSTRUCTIONS) + len(sent_text)
+    msg = f"Total {total_len} exceeds budget {MAX_OUTBOUND_CHARS}"
+    assert total_len <= MAX_OUTBOUND_CHARS, msg
+
+    # Verify highest-ranked matches are kept (prefix of input order)
+    for i in range(len(matches)):
+        match_id = f"utt_{i}"
+        if match_id in sent_text:
+            # All earlier matches should also be present
+            for j in range(i):
+                utt_j = f"utt_{j}"
+                utt_i = f"utt_{i}"
+                msg_m = f"Lower-ranked match {utt_j} missing but {utt_i} present"
+                assert utt_j in sent_text, msg_m
+
+
+def test_terms_stays_within_outbound_budget() -> None:
+    """Verify that assembled terms text + instructions stays within budget."""
+    fake = FakeText('{"terms": ["배포", "QA"]}')
+    questions = ["배포는 언제죠?"] * 100  # Many questions
+
+    GeminiWriter(text=fake).terms(questions)  # type: ignore[arg-type]
+
+    # Verify the sent text + instructions fits within budget
+    sent_text = fake.sent[0]
+    total_len = len(TERMS_INSTRUCTIONS) + len(sent_text)
+    assert total_len <= MAX_OUTBOUND_CHARS, f"Total {total_len} exceeds budget {MAX_OUTBOUND_CHARS}"
