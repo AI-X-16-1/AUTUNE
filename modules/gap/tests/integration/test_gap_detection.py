@@ -409,7 +409,7 @@ def test_the_override_goes_when_the_meeting_does(team_id: str) -> None:
 
 
 @pytest.fixture
-def sent(monkeypatch: pytest.MonkeyPatch) -> list[dict]:
+def rescore_sent(monkeypatch: pytest.MonkeyPatch) -> list[dict]:
     """What the rescore hands to ``publish``. E's task is not registered here
     (invariant 2), so the send itself is replaced."""
     captured: list[dict] = []
@@ -489,7 +489,7 @@ def test_a_meeting_with_no_topics_records_no_scoring(team_id: str) -> None:
 
 
 def test_a_confirmed_speaker_rescores_the_stored_gap(
-    team_id: str, user_id: str, sent: list[dict]
+    team_id: str, user_id: str, rescore_sent: list[dict]
 ) -> None:
     """Two labels confirmed as one person: that person spoke on the topic, so
     the stored risk must stop counting half the room as silent on it, and
@@ -504,13 +504,13 @@ def test_a_confirmed_speaker_rescores_the_stored_gap(
     after = stored(meeting_id)["risk"].risk_score
     assert meeting_id in rescored
     assert after < before
-    assert meeting_id in {payload["meeting_id"] for payload in sent}
+    assert meeting_id in {payload["meeting_id"] for payload in rescore_sent}
     service.detect_gaps(meeting_id)
     assert stored(meeting_id)["risk"].risk_score == after
 
 
 def test_a_rescored_meeting_is_not_rescored_again(
-    team_id: str, user_id: str, sent: list[dict]
+    team_id: str, user_id: str, rescore_sent: list[dict]
 ) -> None:
     meeting_id, people = split_voice(team_id)
     service.detect_gaps(meeting_id)
@@ -520,15 +520,17 @@ def test_a_rescored_meeting_is_not_rescored_again(
     assert meeting_id not in service.rescore_where_people_changed()
 
 
-def test_a_meeting_whose_people_did_not_move_is_left_alone(team_id: str, sent: list[dict]) -> None:
+def test_a_meeting_whose_people_did_not_move_is_left_alone(
+    team_id: str, rescore_sent: list[dict]
+) -> None:
     meeting_id = seed(team_id, COVERS_TWO)
     service.detect_gaps(meeting_id)
 
     assert meeting_id not in service.rescore_where_people_changed()
-    assert meeting_id not in {payload["meeting_id"] for payload in sent}
+    assert meeting_id not in {payload["meeting_id"] for payload in rescore_sent}
 
 
-def test_a_rescore_keeps_a_dismissal(team_id: str, user_id: str, sent: list[dict]) -> None:
+def test_a_rescore_keeps_a_dismissal(team_id: str, user_id: str, rescore_sent: list[dict]) -> None:
     meeting_id, people = split_voice(team_id)
     service.detect_gaps(meeting_id)
     with session_scope() as s:
