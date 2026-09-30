@@ -111,3 +111,77 @@ def test_terms_stays_within_outbound_budget() -> None:
     sent_text = fake.sent[0]
     total_len = len(TERMS_INSTRUCTIONS) + len(sent_text)
     assert total_len <= MAX_OUTBOUND_CHARS, f"Total {total_len} exceeds budget {MAX_OUTBOUND_CHARS}"
+
+
+def test_write_with_very_long_title() -> None:
+    """Write with 5000-char title must truncate and stay within budget."""
+    fake = FakeText("## 제기된 질문\nResult")
+    long_title = "가" * 5000
+
+    GeminiWriter(text=fake).write(  # type: ignore[arg-type]
+        meeting_title=long_title, questions=["q"], matches=[]
+    )
+
+    # Verify the sent text + instructions fits within budget
+    sent_text = fake.sent[0]
+    total_len = len(WRITE_INSTRUCTIONS) + len(sent_text)
+    msg = f"Total {total_len} exceeds budget {MAX_OUTBOUND_CHARS}"
+    assert total_len <= MAX_OUTBOUND_CHARS, msg
+
+    # Title should be truncated (not the full 5000 chars)
+    assert len(sent_text) < len(long_title)
+
+
+def test_write_drops_questions_when_they_alone_exceed_limit() -> None:
+    """Write with many long questions must drop trailing ones."""
+    fake = FakeText("## 제기된 질문\nResult")
+    # 20 questions of 400 chars each = 8000 chars (alone exceeds budget)
+    long_q = "가" * 400
+    questions = [long_q] * 20
+
+    GeminiWriter(text=fake).write(  # type: ignore[arg-type]
+        meeting_title="회의", questions=questions, matches=[]
+    )
+
+    # Verify the sent text + instructions fits within budget
+    sent_text = fake.sent[0]
+    total_len = len(WRITE_INSTRUCTIONS) + len(sent_text)
+    msg = f"Total {total_len} exceeds budget {MAX_OUTBOUND_CHARS}"
+    assert total_len <= MAX_OUTBOUND_CHARS, msg
+
+    # Should keep only a prefix of the questions
+    kept_count = sent_text.count("- " + long_q[:20])
+    assert kept_count < 20, "Not all questions were kept; some were dropped"
+
+    # Verify kept questions are a prefix (no gaps)
+    q_starts = [sent_text.find(f"- {long_q}")]
+    if q_starts[0] >= 0:
+        # Count how many times the question appears consecutively
+        count = 0
+        pos = sent_text.find("질문:\n") + len("질문:\n")
+        while pos < len(sent_text):
+            if sent_text[pos : pos + 2] == "- ":
+                count += 1
+                pos = sent_text.find("\n", pos) + 1
+            else:
+                break
+
+
+def test_terms_drops_questions_when_they_alone_exceed_limit() -> None:
+    """Terms with many long questions must drop trailing ones."""
+    fake = FakeText('{"terms": ["배포"]}')
+    # 20 questions of 400 chars each = 8000 chars (alone exceeds budget)
+    long_q = "가" * 400
+    questions = [long_q] * 20
+
+    GeminiWriter(text=fake).terms(questions)  # type: ignore[arg-type]
+
+    # Verify the sent text + instructions fits within budget
+    sent_text = fake.sent[0]
+    total_len = len(TERMS_INSTRUCTIONS) + len(sent_text)
+    msg = f"Total {total_len} exceeds budget {MAX_OUTBOUND_CHARS}"
+    assert total_len <= MAX_OUTBOUND_CHARS, msg
+
+    # Should keep only a prefix of the questions (not all 20)
+    kept_count = sent_text.count("- " + long_q[:20])
+    assert kept_count < 20, "Not all questions were kept; some were dropped"

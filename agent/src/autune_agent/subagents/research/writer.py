@@ -56,25 +56,6 @@ class Writer(Protocol):
     ) -> str: ...
 
 
-def fit(
-    questions: Sequence[str], matches: Sequence[Match], limit: int = MAX_OUTBOUND_CHARS
-) -> tuple[list[str], list[Match]]:
-    """Questions first, then matches in rank order, measuring full rendered text.
-
-    Accounts for instructions length; budget is ``limit - len(instructions)``.
-    This is a legacy wrapper; internal callers use _fit_terms and _fit_write.
-    """
-    used = sum(len(q) for q in questions)
-    kept: list[Match] = []
-    for match in matches:
-        size = len(match.title) + len(match.body)
-        if used + size > limit:
-            break
-        kept.append(match)
-        used += size
-    return list(questions), kept
-
-
 def _terms_text(questions: Sequence[str], limit: int = MAX_OUTBOUND_CHARS) -> str:
     """Build and fit the text for terms extraction, accounting for instruction length."""
     instructions_len = len(TERMS_INSTRUCTIONS)
@@ -111,16 +92,20 @@ def _write_text(
     matches_header = "\n\n과거 회의 발언:\n"
     no_matches = "(없음)"
 
-    # Truncate title if needed
-    title = meeting_title
+    # Calculate header lengths
     header_len = len(header_prefix)
+    q_h_len = len(questions_header)
     matches_h_len = len(matches_header)
     no_m_len = len(no_matches)
-    q_h_len = len(questions_header)
-    fixed_overhead = header_len + q_h_len + matches_h_len + no_m_len
+    other_overhead = header_len + q_h_len + matches_h_len + no_m_len
+
+    # Start with full title
+    title = meeting_title
+    fixed_overhead = header_len + len(title) + q_h_len + matches_h_len + no_m_len
+
+    # Truncate title if fixed overhead already exceeds budget
     if fixed_overhead > budget:
-        # Even title+headers overflow; truncate title
-        available_for_title = budget - (q_h_len + matches_h_len + no_m_len + header_len)
+        available_for_title = budget - other_overhead
         if available_for_title <= 0:
             return ""
         title = meeting_title[:available_for_title]
@@ -146,7 +131,7 @@ def _write_text(
         kept_matches.append(m)
         used += len(m_line)
 
-    # Assemble final text
+    # Assemble final text (must match what we measured)
     text = (
         f"{header_prefix}{title}{questions_header}"
         + "\n".join(f"- {q}" for q in kept_questions)
