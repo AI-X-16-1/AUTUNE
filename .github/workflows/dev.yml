@@ -29,7 +29,13 @@ jobs:
           POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
           POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
           POSTGRES_DB: ${{ secrets.POSTGRES_DB }}
+        # An unset secret reaches compose as an empty string, which the
+        # compose defaults would turn into autune/autune. Refuse instead.
+        # "not defined" also avoids quoting a password that holds " or &.
         run: |
+          if not defined POSTGRES_USER (echo POSTGRES_USER secret is not set & exit /b 1)
+          if not defined POSTGRES_PASSWORD (echo POSTGRES_PASSWORD secret is not set & exit /b 1)
+          if not defined POSTGRES_DB (echo POSTGRES_DB secret is not set & exit /b 1)
           docker version || exit /b 1
           docker compose -f infra/docker-compose.yml up -d --wait
 
