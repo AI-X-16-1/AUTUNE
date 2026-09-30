@@ -1,0 +1,4 @@
+# Everything under infra/ runs on Linux, in a container, even when the
+# checkout is on Windows (the DEV-SERVER1 runner). A CRLF shebang makes the
+# kernel look for `sh\r` and the entrypoint fails with "not found".
+* text=auto eol=lf
