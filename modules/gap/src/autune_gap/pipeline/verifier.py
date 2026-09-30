@@ -32,8 +32,6 @@ the check cannot be what fires.
 
 from __future__ import annotations
 
-import json
-import re
 import string
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
@@ -42,7 +40,7 @@ from autune_core import get_logger
 from autune_integrations.errors import IntegrationError
 from autune_integrations.privacy import MAX_OUTBOUND_CHARS
 
-from .gemini import GeminiCaller, answer_text
+from .gemini import ANSWER_FORMAT, GeminiCaller, answer_text, answers_by_line
 
 if TYPE_CHECKING:
     # Types only: ``template`` imports ``pipeline.base`` (#456), so a runtime import
@@ -86,7 +84,7 @@ INSTRUCTIONS = (
     "방향만 말하고 항목 내용이 없는 말은 어떤 후보도 아닙니다.\n"
     "- 여러 후보를 고를 수 있고, 하나도 고르지 않을 수 있습니다.\n"
     "- 목록에 없는 글자나 새 항목은 쓰지 마세요.\n"
-    'JSON 한 줄로만 답하세요: {"answers": {"발화번호": ["후보글자", ...]}}'
+    'JSON 한 줄로만 답하세요. 예: {"answers": {"1": ["A"], "2": []}} ' + ANSWER_FORMAT
 )
 """The whole of what the model is told. Korean, because the utterances and the
 items are; kept short because ``check_outbound`` counts it against the same
@@ -131,23 +129,15 @@ def render(questions: list[Question]) -> tuple[str, dict[int, dict[str, str]]]:
 def parse(answer: str, offered: dict[int, dict[str, str]]) -> dict[int, frozenset[str]]:
     """``{"answers": {"1": ["A"]}}`` -> ``{1: {"dependency"}}``.
 
-    A line the answer skips is an empty answer for it. A letter the line was not
-    offered, a line number that was not asked, and anything that is not the
-    JSON shape are dropped rather than guessed at — the model checks candidates
-    and cannot add to them. An answer that is not JSON at all answers nothing,
-    and the caller treats the batch as unanswered.
+    Keys are read by ``gemini.answers_by_line``, which is where an answer that
+    names no line asked is refused. A line the answer skips is an empty answer
+    for it. A letter the line was not offered and anything that is not a list
+    are dropped rather than guessed at — the model checks candidates and cannot
+    add to them.
     """
-    match = re.search(r"\{.*\}", answer, re.S)
-    if not match:
-        raise ValueError("no JSON object in the answer")
-    answers = json.loads(match.group(0)).get("answers")
-    if not isinstance(answers, dict):
-        raise ValueError("the answer has no 'answers' mapping")
-
     out = {number: frozenset[str]() for number in offered}
-    for key, letters in answers.items():
-        number = int(key) if str(key).strip().isdigit() else None
-        if number not in offered or not isinstance(letters, list):
+    for number, letters in answers_by_line(answer, offered).items():
+        if not isinstance(letters, list):
             continue
         out[number] = frozenset(
             offered[number][str(letter).strip()]

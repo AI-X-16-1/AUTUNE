@@ -32,8 +32,6 @@ gives (review of #484).
 
 from __future__ import annotations
 
-import json
-import re
 import string
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -44,7 +42,7 @@ from autune_integrations.errors import IntegrationError
 from autune_integrations.privacy import MAX_OUTBOUND_CHARS
 
 from .base import RELATION_LABELS, SYMMETRIC_RELATIONS, Entity, Relation
-from .gemini import GeminiCaller, answer_text
+from .gemini import ANSWER_FORMAT, GeminiCaller, answer_text, answers_by_line
 from .relations import RuleRelations, hard_pairs, read_utterance, relation_names
 
 log = get_logger(__name__)
@@ -173,7 +171,8 @@ INSTRUCTIONS = (
     "관계가 아닙니다.\n"
     "- 부정하거나, 묻거나, 이미 해결됐다고 말한 관계는 답하지 마세요. "
     "확실하지 않으면 비워 두세요.\n"
-    'JSON 한 줄로만 답하세요: {"answers": {"발화번호": [["X글자", "관계", "Y글자"], ...]}}'
+    'JSON 한 줄로만 답하세요. 예: {"answers": {"1": [["B", "blocked_by", "A"]], "2": []}} '
+    + ANSWER_FORMAT
 )
 """The whole of what the model is told. Korean, because the utterances are;
 short, because ``check_outbound`` counts it against the same 4,000 characters.
@@ -215,20 +214,13 @@ def parse(
     Kept only when both ends are on that line, the two form a pair the line
     offered (either direction), and the label is one of ``RELATION_LABELS``.
     Anything else is dropped rather than guessed at. A line the answer skips
-    states nothing. An answer that is not the JSON shape raises ``ValueError``
-    and the caller leaves the batch unanswered.
+    states nothing. Keys are read by ``gemini.answers_by_line``: an answer that
+    is not the JSON shape, or names no line asked, raises ``ValueError`` and the
+    caller leaves the batch unanswered.
     """
-    match = re.search(r"\{.*\}", answer, re.S)
-    if not match:
-        raise ValueError("no JSON object in the answer")
-    answers = json.loads(match.group(0)).get("answers")
-    if not isinstance(answers, dict):
-        raise ValueError("the answer has no 'answers' mapping")
-
     out = {number: frozenset[Triple]() for number in lettered}
-    for key, stated in answers.items():
-        number = int(key) if str(key).strip().isdigit() else None
-        if number not in lettered or not isinstance(stated, list):
+    for number, stated in answers_by_line(answer, lettered).items():
+        if not isinstance(stated, list):
             continue
         offered = {frozenset(pair) for pair in questions[number - 1].pairs}
         kept: set[Triple] = set()
