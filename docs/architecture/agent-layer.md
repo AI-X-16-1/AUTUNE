@@ -116,7 +116,7 @@ and keeps their module's `tools.py`.
 | Part | Owner | What it does | Wakes on | Reads (tools) | Leaves the building as |
 | --- | --- | --- | --- | --- | --- |
 | **Main agent** | 김민경 | Chat entry point; routes a request or a trigger to one subagent, or answers from tools directly; combines the answer; owns the work-item store, the trigger scheduler, the approval gate and `agent_runs` | every trigger, every chat message | any | the chat answer; L2 plans to the approval screen |
-| **Research** | 김민경 | When a meeting raises an idea or argues over a fact nobody could confirm, gathers what is known into a short document and proposes sending it to the people involved | meeting completed; `autune.transcript.ready`; a chat request | D (links, decisions), B (open questions), uploaded material | a Slack message to the meeting's participants — L2 |
+| **Research** | 김민경 | When a meeting raises an idea or argues over a fact nobody could confirm, gathers what is known into a short document and proposes sending it to the people involved | `autune.intelligence.completed`; a chat request | A (the team's meetings), B (open questions); D once it ships tools.py. Uploaded material has no store yet | a Slack message to the meeting's participants — L2 |
 | **Briefing** | 문민재 | Ten minutes before a meeting, sends the previous meeting's summary and the issues this one should settle; links Jira issues **if #82 brings Jira back** | time, from Google Calendar (`list_events`) | D (links, decision threads), B (open items), C (undismissed gaps and their questions), Jira only after #82 | D's pre-meeting brief — D's own surface, rule 2 |
 | **Follow-up** | 박재경 | Watches progress and gaps nobody closed; when a follow-up meeting looks needed, proposes one — to the team lead only | state, `@periodic` | C's topic-level aggregates only (a topic's `silent_share`, undismissed gaps), B (open items), D (decision threads, topic links), Calendar (`free_busy`) | a proposal on the lead's approval screen; the calendar event only after approval — L2 |
 | **Workload** | 강민구 | Notices that one person is overloaded while another has finished, and proposes a redistribution — to the manager only; owns the Gmail, Google Calendar and Jira integrations | state, `@periodic` | B (items per owner and their state), Calendar (`free_busy`), Jira only after #82 | a proposal on the manager's approval screen; any reassignment only after approval — L2 |
@@ -578,8 +578,10 @@ shipping them.
 | Time | 10 minutes before a meeting on the team's Google Calendar | Briefing | `@periodic` poll of the calendar, every minute |
 | State | `next_check_at` due; deadline tomorrow and no signal in three days | main agent | `@periodic`, every 5 minutes |
 | State | work piling up on one person; a gap nobody dismissed, on a topic D links across two meetings in a row | Workload, Follow-up | `@periodic`, a few times a day |
-| Event | a meeting's analysis finished | Research, Report | `autune.transcript.ready`, `autune.intelligence.completed` |
+| Event | a meeting's analysis finished | Research, Report | `autune.intelligence.completed` |
 | Request | "What did we decide about search last week?" | main agent, which may delegate | chat message |
+
+Research does not wake on `autune.transcript.ready`: that event reaches B at the same moment, so B's questions do not exist yet (`agent/docs/specs/2026-09-30-research-subagent-design.md` section 2).
 
 **Every trigger enters through the main agent.** A subagent declares the
 triggers it wants (section 3.2) and the main agent's scheduler registers them,
