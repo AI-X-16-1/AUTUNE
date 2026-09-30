@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 
-from autune_agent.main import CallBudget, RunScope, Tool, Toolbox
+from autune_agent.main import BudgetExceededError, CallBudget, RunScope, Tool, Toolbox
 from autune_agent.main.subagents import TRIGGER_EVENTS
 from autune_agent.results import SubagentResult
 from autune_agent.subagents.report import SUBAGENT
@@ -117,11 +117,46 @@ def test_a_korean_particle_after_the_id_still_finds_the_meeting() -> None:
     assert outcome.proposed[0].arguments["meeting_id"] == MEETING
 
 
-def test_a_chat_request_with_no_meeting_id_proposes_nothing() -> None:
-    outcome = _run("리포트 써줘", _all_tools())
+def _per_meeting_tools(seen: list[str]) -> dict[str, Any]:
+    """B's two reads with their real signature: ``meeting_id`` is required, so
+    the Toolbox fills it from the run's scope or refuses the call."""
+
+    def actions(_session: object, meeting_id: str) -> dict[str, Any]:
+        seen.append(meeting_id)
+        return ACTIONS
+
+    def review(_session: object, meeting_id: str) -> dict[str, Any]:
+        return REVIEW
+
+    return {
+        ACTIONS_TOOL: Tool(name=ACTIONS_TOOL, description="Use this in tests.", fn=actions),
+        REVIEW_TOOL: Tool(name=REVIEW_TOOL, description="Use this in tests.", fn=review),
+    }
+
+
+def test_asked_on_a_meetings_screen_it_reports_the_runs_meeting() -> None:
+    """ "리포트 써줘" names no id; the run about that meeting already carries it."""
+    seen: list[str] = []
+
+    outcome = _run("리포트 써줘", _per_meeting_tools(seen), scope_meeting=MEETING)
+
+    assert seen == [MEETING]
+    draft, post = outcome.proposed
+    assert set(draft.arguments) == {"body_markdown", "pending_review"}
+    assert post.arguments == {}
+
+
+def test_a_chat_request_about_no_meeting_proposes_nothing() -> None:
+    outcome = _run("리포트 써줘", _per_meeting_tools([]))
 
     assert outcome.result.ok is False
     assert outcome.proposed == []
+
+
+def test_running_out_of_tool_calls_is_not_swallowed_as_a_missing_section() -> None:
+    """The budget is the run's stop; only a tool's own failure drops a section."""
+    with pytest.raises(BudgetExceededError):
+        _run(EVENT, _all_tools(), scope_meeting=MEETING, budget=CallBudget(limit=2))
 
 
 def test_two_different_meeting_ids_are_refused_not_guessed() -> None:

@@ -7,11 +7,14 @@ person approves). The main agent runs them (agent-layer.md section 8 rule 2).
 
 Where the meeting comes from:
 
-- **Woken by ``autune.intelligence.completed``** (#509): the request is the event
-  name and the run's scope carries the meeting, so neither the tool calls nor
-  the proposals name it -- the Toolbox and the executor fill it in.
-- **Asked in chat:** the request must name exactly one ``mtg_...`` id. It is
-  passed on, and the scope still holds it to the run's team.
+- **The request names no ``mtg_...`` id** -- a run woken by
+  ``autune.intelligence.completed`` (#509), or "write the report" asked on a
+  meeting's screen: the run's scope carries the meeting, so neither the tool
+  calls nor the proposals name it; the Toolbox and the executor fill it in. A
+  run about no meeting gets the Toolbox's own refusal from B's read.
+- **The request names exactly one id:** it is passed on, and the scope still
+  holds it to the run's team.
+- **Several different ids:** refused rather than guessed.
 """
 
 from __future__ import annotations
@@ -22,9 +25,10 @@ from typing import Any
 
 from langgraph.graph import END, START, StateGraph
 
-from autune_agent.main import SubagentState, Toolbox
+from autune_agent.main import BudgetExceededError, SubagentState, Toolbox
 from autune_agent.main.subagents import CompiledSubagent
 from autune_agent.results import ProposedAction, SubagentResult, ToolResult
+from autune_contracts import INTELLIGENCE_COMPLETED
 
 from .render import has_pending, render
 
@@ -45,17 +49,12 @@ DRAFT_ACTION = "intelligence.draft_meeting_report"
 PUBLISH_ACTION = "intelligence.publish_meeting_report"
 """E posts the stored report to the team channel. L2: a channel post moves people."""
 
-TRIGGER = "autune.intelligence.completed"
+TRIGGER = INTELLIGENCE_COMPLETED
+"""B, C and D have all reported (or timed out) only by this event."""
 
 # ASCII boundaries, not \b: in a str pattern \b is Unicode-aware, so a Korean
 # particle right after the id ("mtg_ab12cd의") would count as part of the word.
 _MEETING_ID = re.compile(r"(?<![A-Za-z0-9_])mtg_[A-Za-z0-9]+(?![A-Za-z0-9_])")
-
-
-def _meeting_id(request: str) -> str | None:
-    """The one meeting the request names; None for none or for several."""
-    found = set(_MEETING_ID.findall(request))
-    return found.pop() if len(found) == 1 else None
 
 
 def _read(toolbox: Toolbox, name: str, meeting: dict[str, Any]) -> ToolResult | None:
@@ -65,6 +64,8 @@ def _read(toolbox: Toolbox, name: str, meeting: dict[str, Any]) -> ToolResult | 
         return toolbox.call(name, **meeting)
     try:
         return toolbox.call(name, **meeting)
+    except BudgetExceededError:
+        raise  # the run's stop, not this tool's failure
     except Exception as exc:  # a bug in C's or D's tool costs its section only
         log.warning("report_optional_tool_failed tool=%s error=%s", name, type(exc).__name__)
         return None
@@ -76,14 +77,11 @@ def _failed(reason: str) -> SubagentState:
 
 def build(toolbox: Toolbox) -> CompiledSubagent:
     def report(state: SubagentState) -> SubagentState:
-        request = state.get("request", "")
-        if request == TRIGGER:
-            meeting: dict[str, Any] = {}  # the run's scope carries it
-        else:
-            meeting_id = _meeting_id(request)
-            if meeting_id is None:
-                return _failed("the request names no single meeting id")
-            meeting = {"meeting_id": meeting_id}
+        named = set(_MEETING_ID.findall(state.get("request", "")))
+        if len(named) > 1:
+            return _failed("the request names several meetings")
+        # None named: the run's scope carries the meeting (or the Toolbox refuses).
+        meeting: dict[str, Any] = {"meeting_id": named.pop()} if named else {}
 
         results = {name: _read(toolbox, name, meeting) for name in TOOLS}
         actions = results[ACTIONS_TOOL]
