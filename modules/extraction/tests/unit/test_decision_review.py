@@ -35,6 +35,7 @@ from autune_extraction.models import (
     ExtDecisionSource,
     ExtEditEvent,
     ExtExternalRef,
+    ExtNotionTarget,
 )
 from autune_extraction.router import router
 from autune_extraction.schemas import DecisionReviewUpdate
@@ -60,6 +61,7 @@ TABLES = [
     ExtConfirmation.__table__,
     ExtEditEvent.__table__,
     ExtExternalRef.__table__,
+    ExtNotionTarget.__table__,
 ]
 
 

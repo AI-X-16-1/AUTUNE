@@ -17,19 +17,20 @@ only with ``AUTUNE_ENV=local`` and its own opt-in (see ``dev_routes_enabled``).
 from __future__ import annotations
 
 from datetime import date
-from typing import Annotated
+from typing import Annotated, Any
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from autune_contracts.enums import ActionStatus
 from autune_contracts.extraction import ExtractionResult
-from autune_core import CurrentUser, Meeting, get_session
+from autune_core import CurrentUser, Meeting, User, get_session
 from autune_core.settings import get_settings as get_core_settings
 
-from . import service, tasks
+from . import notion_connect, service, tasks
 from .config import get_settings
+from .notion_setup import NotionSetupError
 from .schemas import (
     ActionItemCreate,
     ActionItemDetail,
@@ -171,13 +172,15 @@ def delete_action_item(action_item_id: str, session: SessionDep, reader: Current
     keeping what was deleted.
 
     Its due-date event comes off its assignee's calendar first
-    (``tasks.remove_calendar_event``, #435) and its Jira issue is closed with a
-    note (``tasks.close_jira_issue``, #82): once the rows cascade away neither
-    can be found again.
+    (``tasks.remove_calendar_event``, #435), its Jira issue is closed with a
+    note (``tasks.close_jira_issue``, #82) and its Notion page goes to Notion's
+    trash (``tasks.trash_notion_page``, #467): once the rows cascade away none
+    of them can be found again.
     """
     item = service.readable_action_item(session, action_item_id, reader)
     tasks.remove_calendar_event(item.id)
     tasks.close_jira_issue(item.id)
+    tasks.trash_notion_page(item.id)
     service.delete_action_item(session, item)
     session.commit()
 
@@ -245,13 +248,41 @@ def delete_decision(decision_id: str, session: SessionDep, reader: CurrentUser) 
     session.commit()
 
 
+def _member_team(session: Session, reader: User, meeting_id: str) -> str:
+    """The team of a meeting the caller belongs to -- the check every
+    integration-setup route shares. Anyone else gets the 404 an unknown meeting
+    gets (#189)."""
+    service.require_readable_meeting(session, meeting_id, reader)
+    team_id = session.scalar(select(Meeting.team_id).where(Meeting.id == meeting_id))
+    assert team_id is not None  # the check above found it
+    return team_id
+
+
 @router.post("/jira/backfill")
 def backfill_jira(meeting_id: str, session: SessionDep, reader: CurrentUser) -> dict[str, int]:
     """Put every confirmed item of this meeting's team into its Jira project now
     -- what the screen calls right after a project is chosen, so a project that
     replaces a deleted one holds everything the old one did (#458). Members of
     the team only: anyone else gets the 404 an unknown meeting gets (#189)."""
-    service.require_readable_meeting(session, meeting_id, reader)
-    team_id = session.scalar(select(Meeting.team_id).where(Meeting.id == meeting_id))
-    assert team_id is not None  # the check above found it
-    return tasks.backfill_jira(team_id)
+    return tasks.backfill_jira(_member_team(session, reader, meeting_id))
+
+
+@router.get("/notion/setup")
+def notion_setup_state(meeting_id: str, session: SessionDep, reader: CurrentUser) -> dict[str, Any]:
+    """After a one-click Notion connection (#428): the pages the team shared with
+    Autune, and where its databases are now, if anywhere."""
+    return notion_connect.pages_for(_member_team(session, reader, meeting_id))
+
+
+@router.post("/notion/setup")
+def notion_set_up(
+    meeting_id: str, page_id: str, session: SessionDep, reader: CurrentUser
+) -> dict[str, Any]:
+    """Make Autune's databases under ``page_id`` and fill them with every
+    confirmed action item and decision of the team (#428). Notion's own message
+    comes back when it refuses the page."""
+    team_id = _member_team(session, reader, meeting_id)
+    try:
+        return notion_connect.set_up(team_id, page_id)
+    except NotionSetupError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from None

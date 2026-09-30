@@ -29,6 +29,7 @@ from autune_extraction.models import (
     ExtDecisionSource,
     ExtEditEvent,
     ExtExternalRef,
+    ExtNotionTarget,
 )
 
 TEAM, OTHER_TEAM = "team_1", "team_2"
@@ -51,6 +52,7 @@ TABLES = [
     ExtConfirmation.__table__,
     ExtEditEvent.__table__,
     ExtExternalRef.__table__,
+    ExtNotionTarget.__table__,
 ]
 
 

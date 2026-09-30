@@ -644,3 +644,33 @@ class ExtCalendarPoll(Base):
         String(64), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
     )
     polled_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class ExtNotionTarget(Base):
+    """Where a team's Notion sync writes: the page Autune's databases were made
+    under and the three database ids (#428).
+
+    B's own table rather than keys in ``team_integrations.config``, which is the
+    settings layer's and which modules never write (data-model.md). A one-click
+    connection stores the token there; B makes the databases and records them
+    here. A team connected through the local dev page still has the ids in its
+    config; ``notion_setup.database_id`` reads this table first and that second.
+
+    Keyed by team, deleted with it.
+    """
+
+    __tablename__ = "ext_notion_targets"
+
+    team_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("teams.id", ondelete="CASCADE"), primary_key=True
+    )
+    parent_page_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    action_db_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    decision_db_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    minutes_db_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    workspace_id: Mapped[str | None] = mapped_column(String(64))
+    """The Notion workspace these databases live in. A row naming another
+    workspace than the team's current connection is ignored (#467 review)."""
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )

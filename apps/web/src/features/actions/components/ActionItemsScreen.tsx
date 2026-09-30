@@ -8,6 +8,7 @@ import { CalendarConnect } from "./CalendarConnect";
 import { SlackMeConnect } from "./SlackMeConnect";
 import { JiraConnect } from "./JiraConnect";
 import { SlackConnect } from "./SlackConnect";
+import { NotionConnect } from "./NotionConnect";
 import { DecisionReview } from "./DecisionReview";
 import { useActionItems } from "../hooks/useActionItems";
 
@@ -77,6 +78,7 @@ export function ActionItemsScreen({ meetingId }: { meetingId: string }) {
           <SlackMeConnect />
           <JiraConnect meetingId={meetingId} />
           <SlackConnect meetingId={meetingId} />
+          <NotionConnect meetingId={meetingId} />
         </div>
 
         <div className="mt-6">

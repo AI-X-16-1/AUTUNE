@@ -46,8 +46,8 @@ from autune_integrations import (
     refresh_access_token,
 )
 
-from . import calendar_sync, jira_sync, service
-from .models import ExtActionItem, ExtCalendarPoll, ExtDecision
+from . import calendar_sync, jira_sync, notion_setup, service
+from .models import ExtActionItem, ExtCalendarPoll, ExtDecision, ExtExternalRef
 from .pipeline.base import give_roster
 from .pipeline.registry import get_classifier, get_nli, get_resolver
 
@@ -198,7 +198,7 @@ def sync_action_item(action_item_id: str) -> None:
             log.info("extraction_notion_item_gone", action_item_id=action_item_id)
             return
         config = load_integration(session, meeting.team_id, "notion")
-        database_id = config.config.get("action_db_id") if config is not None else None
+        database_id = notion_setup.database_id(session, meeting.team_id, config, "action_db_id")
         if config is None or not config.secret or not database_id:
             # Asked for, not required: a team that connected Notion for decisions
             # only, or whose token is gone, is skipped. ``require_secret()`` and
@@ -499,6 +499,35 @@ def backfill_jira(team_id: str) -> dict[str, int]:
     return counts
 
 
+def trash_notion_page(action_item_id: str) -> None:
+    """Before the board deletes an item: its Notion page to the workspace's
+    trash, restorable there for 30 days (decided with the user, #467). Runs in
+    the deleting request, best effort -- an unreachable Notion never blocks a
+    deletion. Jira closes instead (``close_jira_issue``): Jira has no trash."""
+    try:
+        with session_scope() as session:
+            ref = session.get(ExtExternalRef, (action_item_id, "notion"))
+            item = session.get(ExtActionItem, action_item_id)
+            meeting = session.get(Meeting, item.meeting_id) if item is not None else None
+            if ref is None or not ref.external_id or meeting is None:
+                return
+            config = load_integration(session, meeting.team_id, "notion")
+            if config is None or not config.secret:
+                return
+            client = NotionClient(config.secret)
+            try:
+                client.trash_page(str(ref.external_id))
+            finally:
+                client.close()
+            log.info("extraction_notion_trashed_with_item", action_item_id=action_item_id)
+    except Exception as exc:  # noqa: BLE001 -- a deletion must not fail on Notion
+        log.warning(
+            "extraction_notion_trash_failed",
+            action_item_id=action_item_id,
+            error=type(exc).__name__,
+        )
+
+
 def close_jira_issue(action_item_id: str) -> None:
     """Before the board deletes an item: its Jira issue closed with a note
     (``jira_sync.close_for_deleted_item``). Runs in the deleting request, best
@@ -556,7 +585,7 @@ def sync_decision(decision_id: str) -> None:
             log.info("extraction_notion_decision_gone", decision_id=decision_id)
             return
         config = load_integration(session, meeting.team_id, "notion")
-        database_id = config.config.get("decision_db_id") if config is not None else None
+        database_id = notion_setup.database_id(session, meeting.team_id, config, "decision_db_id")
         if config is None or not config.secret or not database_id:
             log.info(
                 "extraction_notion_decisions_not_connected",
