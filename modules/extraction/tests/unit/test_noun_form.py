@@ -75,3 +75,62 @@ def test_tidying_is_stable() -> None:
     """What a person confirmed is not rewritten by a second pass."""
     once = tidy("제가 자료 정리해서 공유하겠습니다")
     assert tidy(once) == once
+
+
+@pytest.mark.parametrize(
+    ("said", "tidied"),
+    [
+        # ㄷ, ㅂ and ㅅ irregular verbs change before the ㄹ.
+        ("오늘 저녁에 듣겠습니다", "오늘 저녁에 들을 예정"),
+        ("같이 걷겠습니다", "같이 걸을 예정"),
+        ("제가 옆에서 돕겠습니다", "옆에서 도울 예정"),
+        ("이름은 제가 짓겠습니다", "이름은 지을 예정"),
+        # Regular verbs with the same final consonants are not touched.
+        ("제가 웃겠습니다", "웃을 예정"),
+        ("파일을 씻겠습니다", "파일을 씻을 예정"),
+        ("먹겠습니다", "먹을 예정"),
+        # An intention.
+        ("제가 화면 녹화된 거 몇 개 보려고요", "화면 녹화된 거 몇 개 볼 예정"),
+        ("메일은 제가 두려고요", "메일은 둘 예정"),
+        ("점심은 먹으려고요", "점심은 먹을 예정"),
+        ("서버 확인해 보려고 해요", "서버 확인 예정"),
+        ("표는 제가 만들려고요", "표는 만들 예정"),
+        # An agreement that was made.
+        (
+            "그거 제가 이번 주까지 표 정리해 드리기로 했었죠",
+            "그거 이번 주까지 표 정리해 드리기로 함",
+        ),
+    ],
+)
+def test_irregular_verbs_and_intentions(said: str, tidied: str) -> None:
+    assert tidy(said) == tidied
+
+
+def test_a_verb_whose_form_the_spelling_does_not_settle_is_left_alone() -> None:
+    """묻다 is "ask" (물을) and "bury" (묻을): either could be wrong."""
+    said = "제가 그 건은 묻겠습니다"
+    assert tidy(said) == said
+
+
+@pytest.mark.parametrize(
+    ("said", "tidied"),
+    [
+        # "말하다" is a verb of its own: the noun 말 alone says nothing.
+        ("그건 제가 센터장님께 말해 둘게요", "그건 센터장님께 말해 둘 예정"),
+        ("그렇게 말할게요", "그렇게 말할 예정"),
+        ("제가 일하겠습니다", "일할 예정"),
+        # "-야겠다" is "has to", not "will".
+        ("그건 보고서 앞쪽에 넣어야겠다", "그건 보고서 앞쪽에 넣어야 함"),
+        ("제가 다시 확인해야겠습니다", "다시 확인해야 함"),
+        # 하다 after a noun of two syllables or more is the noun.
+        ("이건 제가 요청해 볼게요", "이건 요청 예정"),
+    ],
+)
+def test_a_verb_of_its_own_and_a_must(said: str, tidied: str) -> None:
+    assert tidy(said) == tidied
+
+
+@pytest.mark.parametrize("said", ["네 그럴게요", "할게요", "제가 하겠습니다"])
+def test_an_answer_that_points_at_something_said_before_is_left_alone(said: str) -> None:
+    """ "그럴 예정" would say nothing; the person reads the line before it."""
+    assert tidy(said) == said
