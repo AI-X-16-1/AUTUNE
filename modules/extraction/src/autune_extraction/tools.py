@@ -1,6 +1,6 @@
 """Module B as tools an agent can call (#260/#261, docs/architecture/agent-layer.md section 4).
 
-Nine read tools (``TOOLS``) over B's existing reads, and six writes
+Eight read tools (``TOOLS``) over B's existing reads, and six writes
 (``ACTIONS``) over B's existing service calls, so that everything a person does
 with B on the board -- read items and decisions, confirm, reassign, re-date,
 close, add, review a decision -- can also be asked for in words. No new tables,
@@ -46,19 +46,9 @@ from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from autune_contracts.enums import ActionStatus, UtteranceKind
-from autune_core import (
-    Meeting,
-    TeamMember,
-    User,
-    Utterance,
-    load_integration,
-    session_scope,
-)
-from autune_core.settings import get_settings as get_core_settings
-from autune_integrations import CalendarClient, IntegrationError, refresh_access_token
+from autune_core import Meeting, TeamMember, User, Utterance, session_scope
 
 from . import service, tasks
-from .calendar_sync import CALENDAR
 from .models import ExtActionItem, ExtDecision
 from .schemas import ActionItemCreate, ActionItemRead, ActionItemUpdate, DecisionReviewUpdate
 
@@ -534,111 +524,6 @@ def _not_found(kind: str, ident: str) -> dict[str, Any]:
     )
 
 
-BUSY_DAY_HOURS = 8
-"""Working hours in a day, for ``busy_share``. A rough scale, not a schedule."""
-
-
-def _busy_hours(windows: list[tuple[datetime, datetime]], start: datetime, end: datetime) -> float:
-    """Busy time inside ``[start, end)``, overlapping windows counted once."""
-    clipped = sorted((max(a, start), min(b, end)) for a, b in windows if b > start and a < end)
-    total = 0.0
-    cursor = start
-    for a, b in clipped:
-        a = max(a, cursor)
-        if b > a:
-            total += (b - a).total_seconds()
-            cursor = b
-    return total / 3600
-
-
-def team_busy_hours(
-    session: Session, team_id: str, user_ids: list[str] | None = None, days: int = 5
-) -> dict[str, Any]:
-    """Use this before proposing that someone take on more work: how much of the
-    next ``days`` days each member's calendar is already booked. Do not use it
-    to find a meeting time, or for what anyone's events are.
-
-    Returns one row per member asked about (``user_ids``, or the whole team):
-    busy hours and their share of ``days`` working days. **Busy windows only**,
-    through the team's calendar connection -- never an event's title, attendees
-    or place. A calendar Google could not read is ``busy_hours`` ``None``:
-    unknown, which must never be read as free (#59). ``ok`` is False when the
-    team has no calendar connection.
-
-    The team's connection, never a member's own: a person's own grant is used
-    only for their own work (``load_user_integration``), and this answers a
-    manager's question about them.
-    """
-    config = load_integration(session, team_id, CALENDAR)
-    core = get_core_settings()
-    if (
-        config is None
-        or not config.secret
-        or not core.google_client_id
-        or not core.google_client_secret
-    ):
-        return _result(
-            ok=False,
-            reason="the team has no calendar connection",
-            summary="팀 캘린더가 연결되어 있지 않아 일정을 확인하지 못했습니다.",
-            items=[],
-            evidence=[],
-            confidence=0.0,
-        )
-    query = (
-        select(User.id, User.display_name, User.email)
-        .join(TeamMember, TeamMember.user_id == User.id)
-        .where(TeamMember.team_id == team_id)
-    )
-    if user_ids is not None:
-        query = query.where(User.id.in_(user_ids))
-    members = list(session.execute(query))
-    start = datetime.now(UTC)
-    end = start + timedelta(days=days)
-    try:
-        token = refresh_access_token(
-            client_id=core.google_client_id,
-            client_secret=core.google_client_secret,
-            refresh_token=config.secret,
-        )
-        client = CalendarClient(token)
-        try:
-            answer = client.free_busy([email for _, _, email in members], start, end)
-        finally:
-            client.close()
-    except IntegrationError as exc:
-        return _result(
-            ok=False,
-            reason=f"calendar unreadable: {type(exc).__name__}",
-            summary="팀 캘린더를 읽지 못했습니다.",
-            items=[],
-            evidence=[],
-            confidence=0.0,
-        )
-    rows = []
-    for user_id, name, email in members:
-        windows = answer.get(email)
-        hours = None if windows is None else round(_busy_hours(windows, start, end), 1)
-        rows.append(
-            {
-                "title": name,
-                "body": f"앞으로 {days}일 중 {hours}시간 일정"
-                if hours is not None
-                else "캘린더 확인 불가",
-                "score": hours if hours is not None else -1.0,
-                "id": user_id,
-                "busy_hours": hours,
-                "busy_share": None if hours is None else round(hours / (days * BUSY_DAY_HOURS), 2),
-            }
-        )
-    unknown = sum(r["busy_hours"] is None for r in rows)
-    return _result(
-        summary=f"팀원 {len(rows)}명의 앞으로 {days}일 일정, 확인 불가 {unknown}명.",
-        items=sorted(rows, key=lambda r: r["score"], reverse=True),
-        evidence=[],
-    )
-
-
 TOOLS = [
     meeting_action_items,
     open_action_items,
@@ -648,7 +533,6 @@ TOOLS = [
     meeting_decisions,
     person_action_items,
     action_item_status,
-    team_busy_hours,
 ]
 """Collected by the agent layer by iterating modules (invariant 6), never registered by hand."""
 

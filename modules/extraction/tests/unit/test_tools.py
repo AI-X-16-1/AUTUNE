@@ -9,7 +9,6 @@ from __future__ import annotations
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, date, datetime, timedelta
-from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import create_engine
@@ -17,7 +16,6 @@ from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
 from autune_core import Base, Meeting, TeamMember, User, Utterance
-from autune_core.integrations_config import IntegrationConfig
 from autune_extraction import service, tools
 from autune_extraction.config import ExtractionSettings
 from autune_extraction.models import (
@@ -32,8 +30,6 @@ from autune_extraction.models import (
     ExtEditEvent,
     ExtExternalRef,
 )
-from autune_integrations.calendar import ReconnectRequiredError
-from autune_integrations.fakes import FakeCalendar
 
 TEAM, OTHER_TEAM = "team_1", "team_2"
 MEETING, OTHER_MEETING = "mtg_1", "mtg_9"
@@ -145,15 +141,10 @@ ARGS = {
     tools.workload_by_owner: (TEAM,),
     tools.person_action_items: (TEAM, "user_in"),
     tools.action_item_status: (TEAM, "act_missing"),
-    tools.team_busy_hours: (TEAM,),
 }
 
 
-def test_every_tool_returns_the_tool_result_shape(
-    session: Session, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    # No team calendar here; team_busy_hours answers ok=False in the same shape.
-    monkeypatch.setattr(tools, "load_integration", lambda *_: None)
+def test_every_tool_returns_the_tool_result_shape(session: Session) -> None:
     for tool in tools.TOOLS:
         assert set(tool(session, *ARGS.get(tool, (MEETING,)))) == KEYS, tool.__name__
 
@@ -647,104 +638,3 @@ def test_item_rows_say_whether_they_are_late(session: Session) -> None:
     (row,) = tools.person_action_items(session, TEAM, "user_in")["items"]
 
     assert (row["overdue"], row["needs_reassignment"]) == (True, False)
-
-
-# --- team_busy_hours ----------------------------------------------------------------
-
-
-class _Calendar(FakeCalendar):
-    closed = False
-
-    def close(self) -> None:
-        self.closed = True
-
-
-@pytest.fixture
-def calendar(session: Session, monkeypatch: pytest.MonkeyPatch) -> _Calendar:
-    """The team's calendar connection, answered by a fake; the refresh records
-    which grant it was given."""
-    fake = _Calendar()
-    grants: list[str] = []
-
-    def connection(_session: Session, team_id: str, service: str) -> IntegrationConfig | None:
-        assert service == "calendar"
-        return IntegrationConfig(service=service, team_id=team_id, secret="team-refresh")
-
-    def refresh(*, client_id: str, client_secret: str, refresh_token: str) -> str:
-        grants.append(refresh_token)
-        return "access"
-
-    monkeypatch.setattr(tools, "load_integration", connection)
-    monkeypatch.setattr(
-        tools,
-        "get_core_settings",
-        lambda: SimpleNamespace(google_client_id="id", google_client_secret="secret"),
-    )
-    monkeypatch.setattr(tools, "refresh_access_token", refresh)
-    monkeypatch.setattr(tools, "CalendarClient", lambda _token: fake)
-    fake.grants = grants  # type: ignore[attr-defined]
-    return fake
-
-
-def test_busy_hours_from_the_teams_calendar_and_unknown_is_not_free(
-    session: Session, calendar: _Calendar
-) -> None:
-    member(session, "user_free", "최여유")
-    soon = datetime.now(UTC) + timedelta(hours=1)
-    calendar.busy = {
-        "user_in@example.com": [
-            (soon, soon + timedelta(hours=2)),
-            (soon, soon + timedelta(hours=3)),
-        ]
-    }
-
-    result = tools.team_busy_hours(session, TEAM)
-
-    rows = {r["id"]: r for r in result["items"]}
-    assert rows["user_in"]["busy_hours"] == 3.0, "overlapping windows count once"
-    assert rows["user_in"]["busy_share"] == round(3 / 40, 2)
-    assert rows["user_free"]["busy_hours"] is None
-    assert rows["user_free"]["body"] == "캘린더 확인 불가"
-    assert "확인 불가 1명" in result["summary"]
-    assert calendar.grants == ["team-refresh"]  # type: ignore[attr-defined]
-    assert calendar.closed is True
-
-
-def test_only_the_members_asked_about(session: Session, calendar: _Calendar) -> None:
-    member(session, "user_free", "최여유")
-
-    result = tools.team_busy_hours(session, TEAM, user_ids=["user_free"])
-
-    assert [r["id"] for r in result["items"]] == ["user_free"]
-
-
-def test_busy_hours_never_carry_an_event(session: Session, calendar: _Calendar) -> None:
-    soon = datetime.now(UTC) + timedelta(hours=1)
-    calendar.busy = {"user_in@example.com": [(soon, soon + timedelta(hours=1))]}
-
-    (row,) = tools.team_busy_hours(session, TEAM)["items"]
-
-    assert set(row) == {"title", "body", "score", "id", "busy_hours", "busy_share"}
-
-
-def test_no_team_calendar_is_ok_false(session: Session, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(tools, "load_integration", lambda *_: None)
-
-    result = tools.team_busy_hours(session, TEAM)
-
-    assert result["ok"] is False
-    assert result["items"] == []
-
-
-def test_an_unreadable_calendar_is_ok_false(
-    session: Session, calendar: _Calendar, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    def refused(**_: str) -> str:
-        raise ReconnectRequiredError("refresh token revoked")
-
-    monkeypatch.setattr(tools, "refresh_access_token", refused)
-
-    result = tools.team_busy_hours(session, TEAM)
-
-    assert result["ok"] is False
-    assert result["reason"] == "calendar unreadable: ReconnectRequiredError"
