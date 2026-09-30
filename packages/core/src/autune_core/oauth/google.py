@@ -10,7 +10,11 @@ Authorization Code flow, confidential client:
    ``aud`` / ``iss`` / ``exp`` / ``nonce`` claims, then hands back the identity.
 
 No Google access token is kept — sign-in needs the ID token and nothing else.
-Calendar access (module D, Phase 2) is a separate grant with its own storage.
+
+**Calendar is a second request on the same client** (#435): a signed-in person
+asks for ``calendar.events`` with ``access_type=offline``, and the refresh token
+Google returns is theirs, stored in ``user_integrations``. Same client id, same
+redirect URI -- nothing new to register in the Google Cloud console.
 """
 
 from __future__ import annotations
@@ -37,6 +41,23 @@ TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token"
 JWKS_URI = "https://www.googleapis.com/oauth2/v3/certs"
 VALID_ISSUERS = frozenset({"https://accounts.google.com", "accounts.google.com"})
 SCOPE = "openid email profile"
+
+CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar.events"
+"""Read and write events -- a person's own due dates on their primary calendar.
+Not ``calendar``: nothing here manages calendars or sharing."""
+
+REVOKE_ENDPOINT = "https://oauth2.googleapis.com/revoke"
+
+
+class GoogleGrant:
+    """What a code exchange returns that we act on."""
+
+    __slots__ = ("id_token", "refresh_token", "scopes")
+
+    def __init__(self, id_token: str, refresh_token: str | None, scopes: frozenset[str]) -> None:
+        self.id_token = id_token
+        self.refresh_token = refresh_token
+        self.scopes = scopes
 
 
 class GoogleIdentity:
@@ -77,23 +98,35 @@ class GoogleOAuthClient:
         self._http = http or httpx.Client(timeout=10.0)
         self._jwks_client = jwks_client or jwt.PyJWKClient(JWKS_URI)
 
-    def authorization_url(self, *, state: str, nonce: str) -> str:
-        query = urlencode(
-            {
-                "client_id": self._client_id,
-                "redirect_uri": self._redirect_uri,
-                "response_type": "code",
-                "scope": SCOPE,
-                "state": state,
-                "nonce": nonce,
-                "access_type": "online",
-                "prompt": "select_account",
-            }
-        )
-        return f"{AUTHORIZE_ENDPOINT}?{query}"
+    def authorization_url(
+        self, *, state: str, nonce: str, scope: str = SCOPE, offline: bool = False
+    ) -> str:
+        """Sign-in by default. ``offline`` asks for a refresh token as well:
+        ``prompt=consent`` because Google hands one out only on a consent screen,
+        and ``include_granted_scopes`` so connecting a calendar keeps sign-in's
+        scopes rather than replacing them."""
+        params = {
+            "client_id": self._client_id,
+            "redirect_uri": self._redirect_uri,
+            "response_type": "code",
+            "scope": scope,
+            "state": state,
+            "nonce": nonce,
+            "access_type": "offline" if offline else "online",
+            "prompt": "consent" if offline else "select_account",
+        }
+        if offline:
+            params["include_granted_scopes"] = "true"
+        return f"{AUTHORIZE_ENDPOINT}?{urlencode(params)}"
 
     def exchange_code(self, code: str) -> str:
         """Trade an authorization code for an ID token (a signed JWT string)."""
+        return self.exchange_grant(code).id_token
+
+    def exchange_grant(self, code: str) -> GoogleGrant:
+        """Trade an authorization code for everything the exchange returns that we
+        use: the ID token, a refresh token when one was asked for, and the scopes
+        the person actually granted -- Google lets them untick one."""
         try:
             response = self._http.post(
                 TOKEN_ENDPOINT,
@@ -122,12 +155,48 @@ class GoogleOAuthClient:
             )
             raise PermissionDeniedError("Google rejected the authorization code")
 
-        id_token = response.json().get("id_token")
+        body = response.json()
+        id_token = body.get("id_token")
         if not id_token:
             raise PermissionDeniedError("Google response carried no ID token")
-        return str(id_token)
+        refresh = body.get("refresh_token")
+        return GoogleGrant(
+            id_token=str(id_token),
+            refresh_token=str(refresh) if refresh else None,
+            scopes=frozenset(str(body.get("scope", "")).split()),
+        )
+
+    def revoke(self, token: str) -> bool:
+        """Revoke a grant at Google. ``False`` when Google could not be reached or
+        refused -- a disconnect removes our copy either way, and says so."""
+        try:
+            response = self._http.post(REVOKE_ENDPOINT, data={"token": token})
+        except httpx.HTTPError:
+            return False
+        return response.status_code == httpx.codes.OK
 
     def verify(self, id_token: str, *, nonce: str) -> GoogleIdentity:
+        """Who signed in: a verified ID token that also names an email -- the
+        sign-in path upserts the user by it."""
+        claims = self.verify_request(id_token, nonce=nonce)
+        email = claims.get("email")
+        if not email:
+            raise PermissionDeniedError("Google account exposes no email address")
+
+        return GoogleIdentity(
+            sub=str(claims["sub"]),
+            email=str(email),
+            email_verified=bool(claims.get("email_verified", False)),
+            name=claims.get("name"),
+            picture=claims.get("picture"),
+        )
+
+    def verify_request(self, id_token: str, *, nonce: str) -> dict[str, Any]:
+        """That this ID token answers *our* request: signature, audience,
+        issuer, expiry and nonce. It asks nothing about the account, so it
+        holds for a grant without the ``email`` scope -- the calendar connect,
+        which may be on another Google account than the one that signed in
+        (#452 review)."""
         try:
             signing_key = self._jwks_client.get_signing_key_from_jwt(id_token)
             claims: dict[str, Any] = jwt.decode(
@@ -144,18 +213,7 @@ class GoogleOAuthClient:
             raise PermissionDeniedError("Google ID token has an unexpected issuer")
         if claims.get("nonce") != nonce:
             raise PermissionDeniedError("Google ID token nonce does not match the request")
-
-        email = claims.get("email")
-        if not email:
-            raise PermissionDeniedError("Google account exposes no email address")
-
-        return GoogleIdentity(
-            sub=str(claims["sub"]),
-            email=str(email),
-            email_verified=bool(claims.get("email_verified", False)),
-            name=claims.get("name"),
-            picture=claims.get("picture"),
-        )
+        return claims
 
 
 def _oauth_error(response: httpx.Response) -> str:

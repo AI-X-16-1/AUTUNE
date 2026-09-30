@@ -624,3 +624,17 @@ def test_logout_clears_the_cookie(api: tuple[TestClient, dict[str, object]]) -> 
     assert 'autune_session=""' in response.headers.get("set-cookie", "") or (
         "autune_session=;" in response.headers.get("set-cookie", "")
     )
+
+
+def test_verify_request_holds_for_a_token_without_an_email(rsa_key: rsa.RSAPrivateKey) -> None:
+    """The calendar consent has no ``email`` scope (#452 review)."""
+    token = _id_token(rsa_key, email=None, email_verified=None)
+    claims = _client(rsa_key).verify_request(token, nonce="the-nonce")
+    assert claims["sub"] == "google-sub-1"
+    with pytest.raises(PermissionDeniedError, match="no email"):
+        _client(rsa_key).verify(token, nonce="the-nonce")
+
+
+def test_verify_request_still_checks_the_nonce(rsa_key: rsa.RSAPrivateKey) -> None:
+    with pytest.raises(PermissionDeniedError, match="nonce"):
+        _client(rsa_key).verify_request(_id_token(rsa_key, email=None), nonce="different")
