@@ -42,6 +42,8 @@ const NAV: NavItem[] = [
   { label: "결정 계보", href: "/decisions", isCurrent: (p) => p.startsWith("/decisions") },
   { label: "자료", phase2: true },
   { label: "대시보드", href: "/dashboard", isCurrent: (p) => p.startsWith("/dashboard") },
+  // The agent layer's approval queue: L2 proposals wait here for a person.
+  { label: "승인 대기", href: "/approvals", isCurrent: (p) => p.startsWith("/approvals") },
 ];
 
 const itemText = {
