@@ -10,6 +10,17 @@ nothing to route, and nobody is waiting for a chat answer, so the answer is the
 subagent's own summary (``SummaryRouter``). What the subagent calls inside its
 own graph is its business and goes through the same guard as anything else.
 
+**A privacy violation fails the task.** Any other exception in one subagent's
+run is logged and the others still run -- its ``failed`` row lets a redelivery
+retry it. A ``PrivacyViolationError`` is never downgraded that way: the other
+subagents still run, then the task raises with their names (#509 review, the
+same shape as #506), so the worker shows a failed task rather than a log line.
+
+**Subagents that read B, C or D wake on ``intelligence.completed``.**
+``transcript.ready`` reaches B, C and D at the same moment it reaches this
+layer, so their results do not exist yet; only ``intelligence.completed``
+arrives after all three have finished.
+
 **Safe to deliver twice.** Tasks are ``acks_late``, so a worker that dies
 mid-run gets the event again. A subagent that already has a finished run for
 this event and meeting is skipped, which is what keeps an L1 write from
@@ -29,6 +40,7 @@ from autune_agent.config import get_agent_settings
 from autune_agent.models import AgentRun
 from autune_agent.results import SubagentResult
 from autune_core import Meeting
+from autune_core.errors import PrivacyViolationError
 
 from .actions import Action
 from .registry import Tool
@@ -72,6 +84,7 @@ def on_event(
     everyone = collect_subagents() if subagents is None else subagents
     woken = [s for s in everyone.values() if event in s.triggers]
     rows: list[AgentRun] = []
+    violations: list[str] = []
     for sub in woken:
         if _already_ran(session, event=event, meeting_id=meeting_id, route=sub.name):
             log.info("agent_trigger_redelivered event=%s subagent=%s", event, sub.name)
@@ -89,6 +102,11 @@ def on_event(
                 actions=actions,
                 route_to=sub.name,
             )
+        except PrivacyViolationError:
+            log.error("agent_trigger_privacy_violation subagent=%s", sub.name)
+            session.rollback()
+            violations.append(sub.name)
+            continue
         except Exception as exc:  # noqa: BLE001 - one subagent's bug must not stop the others
             # The failed row is already written by run_and_record; logged by
             # type only, the message may carry meeting text.
@@ -96,6 +114,10 @@ def on_event(
             session.rollback()
             continue
         rows.append(row)
+    if violations:
+        raise PrivacyViolationError(
+            f"unmasked value in {len(violations)} subagent run(s): {', '.join(violations)}"
+        )
     return rows
 
 

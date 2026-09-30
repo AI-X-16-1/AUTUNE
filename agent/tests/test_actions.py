@@ -8,6 +8,7 @@ from typing import Any
 
 import pytest
 from langgraph.graph import END, START, StateGraph
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from autune_agent.main import (
@@ -21,6 +22,7 @@ from autune_agent.main import (
     execute_l1,
 )
 from autune_agent.main.store import run_and_record
+from autune_agent.models import AgentRun
 from autune_agent.results import ProposedAction, SubagentResult, ToolResult
 from autune_agent.testing import FakeRouter
 from autune_core import Meeting, Team
@@ -282,3 +284,71 @@ def test_an_action_missing_its_meeting_in_a_chat_run_is_refused_and_the_reason_k
     )
 
     assert done[0]["reason"] == "this run is about no meeting; pass meeting_id"
+
+
+def test_a_privacy_violation_is_raised_after_the_other_actions_ran() -> None:
+    """Never downgraded to a log line (#509 review, the shape #506 uses)."""
+    from autune_agent.main.actions import ActionPrivacyViolationError
+    from autune_core.errors import PrivacyViolationError
+
+    def leaks(team_id: str) -> dict[str, Any]:
+        raise PrivacyViolationError("refused 010-1234-5678")
+
+    calls: list[dict[str, Any]] = []
+    actions = {
+        "fake.leaks": Action("fake.leaks", leaks, "L1"),
+        "fake.draft_note": Action("fake.draft_note", _recorder(calls), "L1"),
+    }
+
+    with pytest.raises(ActionPrivacyViolationError) as caught:
+        execute_l1(
+            [_proposal("fake.leaks"), _proposal("fake.draft_note", body="x")],
+            actions=actions,
+            session=SESSION,
+            scope=SCOPE,
+        )
+
+    assert calls == [{"team_id": "team_a", "body": "x"}]  # the next action still ran
+    assert [(d["tool"], d["ok"]) for d in caught.value.done] == [
+        ("fake.leaks", False),
+        ("fake.draft_note", True),
+    ]
+    assert "010" not in str(caught.value)
+    assert "fake.leaks" in str(caught.value)
+
+
+def test_a_run_whose_action_leaks_is_failed_and_keeps_what_ran(
+    session: Session, team: dict[str, str]
+) -> None:
+    from autune_core.errors import PrivacyViolationError
+
+    def leaks(team_id: str) -> dict[str, Any]:
+        raise PrivacyViolationError("refused")
+
+    calls: list[dict[str, Any]] = []
+    actions = {
+        "fake.leaks": Action("fake.leaks", leaks, "L1"),
+        "fake.draft_note": Action("fake.draft_note", _recorder(calls), "L1"),
+    }
+    proposals = [_proposal("fake.leaks"), _proposal("fake.draft_note", body="초안")]
+
+    with pytest.raises(PrivacyViolationError):
+        run_and_record(
+            "보고서",
+            session=session,
+            router=FakeRouter({"보고서": "report"}),
+            team_id=team["team"],
+            meeting_id=team["meeting"],
+            trigger={"kind": "chat"},
+            subagents={"report": _proposing("report", proposals)},
+            tools={},
+            actions=actions,
+        )
+
+    row = session.scalars(select(AgentRun)).one()
+    assert row.outcome == "failed"
+    assert row.route == "report"
+    assert [(a["tool"], a["ok"]) for a in row.actions] == [
+        ("fake.leaks", False),
+        ("fake.draft_note", True),
+    ]

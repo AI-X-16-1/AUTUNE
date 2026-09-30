@@ -33,7 +33,7 @@ from sqlalchemy.orm import Session
 
 from autune_agent.models import AgentRun
 
-from .actions import Action, collect_actions, execute_l1
+from .actions import Action, ActionPrivacyViolationError, collect_actions, execute_l1
 from .graph import MainState, run
 from .registry import BudgetExceededError, CallBudget, RunScope, Tool
 from .router import Router
@@ -87,20 +87,26 @@ def run_and_record(
         row.outcome = "answered" if state.get("route") else "unrouted"
         outcome = state.get("outcome")
         if outcome is not None and outcome.proposed:
-            row.actions = execute_l1(
-                outcome.proposed,
-                actions=collect_actions() if actions is None else actions,
-                session=session,
-                scope=scope,
-            )
+            try:
+                row.actions = execute_l1(
+                    outcome.proposed,
+                    actions=collect_actions() if actions is None else actions,
+                    session=session,
+                    scope=scope,
+                )
+            except ActionPrivacyViolationError as exc:
+                # The other actions ran; the row says so, then the run fails.
+                row.actions = exc.done
+                raise
     except BudgetExceededError:
         row.outcome = "budget_exceeded"
         state["answer"] = BUDGET_ANSWER
     except Exception:
         row.outcome = "failed"
-        # The graph never returned a state, so without this a triggered run
-        # that crashed would not say which subagent it was for.
-        state["route"] = route_to
+        # When the graph itself raised it returned no state, so without this a
+        # triggered run that crashed would not say which subagent it was for.
+        # A graph that returned and then failed in its actions keeps its route.
+        state.setdefault("route", route_to)
         _finish(row, state, budget, started, meeting_id)
         session.add(row)
         session.commit()

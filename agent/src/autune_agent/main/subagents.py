@@ -23,7 +23,11 @@ SUBAGENT_NAMES = ("research", "briefing", "followup", "workload", "report")
 TRIGGER_EVENTS = (TRANSCRIPT_READY, INTELLIGENCE_COMPLETED)
 """The pipeline events the main agent listens to on everyone's behalf -- section
 6's two event rows. ``autune_agent.tasks`` has one task per entry, and a test
-holds the two lists together; a subagent may name only these."""
+holds the two lists together; a subagent may name only these.
+
+A subagent that reads B's, C's or D's results wakes on
+``INTELLIGENCE_COMPLETED``. ``TRANSCRIPT_READY`` reaches those modules at the
+same moment it reaches this layer, so their results do not exist yet."""
 """Owners in agent-layer.md section 3.1 and CODEOWNERS."""
 
 

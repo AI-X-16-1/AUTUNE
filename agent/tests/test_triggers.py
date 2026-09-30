@@ -147,3 +147,46 @@ def test_a_woken_run_answers_with_the_summary_and_routes_nothing() -> None:
 
     assert router.route("anything", {"report": "Use this."}) is None
     assert router.compose("anything", outcome) == "요약."
+
+
+def test_a_privacy_violation_fails_the_task_after_the_others_ran(
+    session: Session, team: dict[str, str]
+) -> None:
+    """Other exceptions are logged; this one is raised, names only (#509 review)."""
+    from autune_core.errors import PrivacyViolationError
+
+    seen: list[str] = []
+
+    def leaking(toolbox: Toolbox) -> Any:
+        def act(state: SubagentState) -> SubagentState:
+            raise PrivacyViolationError("refused 010-1234-5678")
+
+        graph = StateGraph(SubagentState)
+        graph.add_node("act", act)
+        graph.add_edge(START, "act")
+        graph.add_edge("act", END)
+        return graph.compile()
+
+    subagents = {
+        "research": Subagent(
+            name="research",
+            description="Use this in tests.",
+            tools=(),
+            build=leaking,
+            triggers=(INTELLIGENCE_COMPLETED,),
+        ),
+        "report": _woken("report", (INTELLIGENCE_COMPLETED,), seen),
+    }
+
+    with pytest.raises(PrivacyViolationError) as caught:
+        on_event(
+            INTELLIGENCE_COMPLETED,
+            team["meeting"],
+            session=session,
+            subagents=subagents,
+            tools={},
+        )
+
+    assert seen == [INTELLIGENCE_COMPLETED]  # report still ran
+    assert "research" in str(caught.value)
+    assert "010" not in str(caught.value)

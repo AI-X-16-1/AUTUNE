@@ -39,6 +39,7 @@ from sqlalchemy.orm import Session
 
 from autune_agent.results import ProposedAction, ToolResult
 from autune_contracts import MODULES
+from autune_core.errors import PrivacyViolationError
 
 from .registry import (
     MISSING_ARGUMENT,
@@ -125,6 +126,18 @@ def collect_actions(modules: Iterable[str] = MODULES) -> dict[str, Action]:
     return actions
 
 
+class ActionPrivacyViolationError(PrivacyViolationError):
+    """One or more L1 actions hit a privacy guard. Raised after every other
+    action has run, carrying their record, so the run keeps what did happen and
+    still fails loudly (#509 review, the same shape as #506)."""
+
+    def __init__(self, done: list[dict[str, Any]], names: list[str]) -> None:
+        # Names only: they come from the code. The guard's own message may
+        # quote the value it refused.
+        super().__init__(f"unmasked value in {len(names)} action(s): {', '.join(names)}")
+        self.done = done
+
+
 def execute_l1(
     proposed: Sequence[ProposedAction],
     *,
@@ -138,8 +151,15 @@ def execute_l1(
     record says which worked. An action that raises is a bug in its module; it
     is logged by name only (the message may carry meeting text) and recorded as
     failed.
+
+    **Except a privacy violation, which is never downgraded.**
+    ``PrivacyViolationError`` means a guard refused an unmasked value -- an
+    invariant broken, not a module bug to log and move past. The remaining
+    actions still run, then ``ActionPrivacyViolationError`` is raised with the
+    record and the names of the actions that hit it.
     """
     done: list[dict[str, Any]] = []
+    violations: list[str] = []
     for proposal in proposed:
         if proposal.level != "L1":
             continue
@@ -149,7 +169,11 @@ def execute_l1(
         elif action.level != "L1":
             result = ToolResult.failure(KEPT_FOR_APPROVAL)
         else:
-            result = _run(action, proposal, session=session, scope=scope)
+            try:
+                result = _run(action, proposal, session=session, scope=scope)
+            except PrivacyViolationError:
+                violations.append(action.name)
+                result = ToolResult.failure(FAILED)
         done.append(
             {
                 "tool": proposal.tool,
@@ -159,6 +183,8 @@ def execute_l1(
                 "evidence": result.evidence,
             }
         )
+    if violations:
+        raise ActionPrivacyViolationError(done, violations)
     return done
 
 
@@ -177,6 +203,9 @@ def _run(
         return bound
     try:
         return action(session, **bound)
+    except PrivacyViolationError:
+        log.error("agent_action_privacy_violation action=%s", action.name)
+        raise
     except Exception as exc:  # noqa: BLE001 - one broken write must not lose the rest
         log.error("agent_action_failed action=%s error=%s", action.name, type(exc).__name__)
         return ToolResult.failure(FAILED)
