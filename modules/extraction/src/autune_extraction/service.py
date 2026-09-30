@@ -67,6 +67,8 @@ from .schemas import (
     ActionItemDetail,
     ActionItemRead,
     ActionItemUpdate,
+    CarriedOver,
+    CarriedOverItem,
     DecisionCreate,
     DecisionReviewUpdate,
     EditHistoryEntry,
@@ -620,6 +622,80 @@ def list_action_items(
         )
         for item in items
     ]
+
+
+CARRIED_OVER_SHOWN = 10
+"""How many carried-over items the popup lists. It counts all of them; past
+ten, a list stops being read and the board is the place to work through it."""
+
+
+def carried_over(session: Session, meeting_id: str, *, today: date | None = None) -> CarriedOver:
+    """The open items earlier meetings of this meeting's team left (WBS 4.8).
+
+    Open is *to do* or *in progress*: confirmed work nobody has finished. An
+    item still in *needs confirmation* is a draft of its own meeting's review,
+    and a finished one is not carried anywhere. "Earlier" is by when the
+    meeting was held, or uploaded when nobody recorded a start -- so reviewing
+    an old meeting today does not show it the work of the weeks after it.
+
+    Reads only what the board already shows the same team: descriptions,
+    assignees and dates, never an utterance.
+    """
+    meeting = session.get(Meeting, meeting_id)
+    if meeting is None:
+        raise NotFoundError("meeting", meeting_id)
+    held = func.coalesce(Meeting.started_at, Meeting.created_at)
+    this_held = meeting.started_at or meeting.created_at
+    earlier = {
+        row.id: row
+        for row in session.scalars(
+            select(Meeting).where(
+                Meeting.team_id == meeting.team_id, Meeting.id != meeting_id, held < this_held
+            )
+        )
+    }
+    if not earlier:
+        return CarriedOver(open=0, overdue=0, items=[])
+
+    day = today or date.today()
+    rows = list(
+        session.scalars(
+            select(ExtActionItem)
+            .options(selectinload(ExtActionItem.sources))
+            .where(
+                ExtActionItem.meeting_id.in_(earlier),
+                ExtActionItem.status.in_([ActionStatus.TODO.value, ActionStatus.IN_PROGRESS.value]),
+            )
+        )
+    )
+
+    def late(item: ExtActionItem) -> bool:
+        return item.due_date is not None and item.due_date < day
+
+    rows.sort(key=lambda i: (not late(i), i.due_date or date.max, i.created_at, i.id))
+    shown = rows[:CARRIED_OVER_SHOWN]
+    names = assignee_names(session, shown)
+    departed = departed_assignees(session, shown)
+    summaries = action_item_summaries(session, shown)
+    refs = action_item_external_refs(session, [item.id for item in shown])
+    return CarriedOver(
+        open=len(rows),
+        overdue=sum(1 for item in rows if late(item)),
+        items=[
+            CarriedOverItem(
+                **read_model(
+                    item,
+                    assignee_name=names.get(item.assignee_id) if item.assignee_id else None,
+                    summary=summaries.get(item.id),
+                    sync_refs=refs.get(item.id, []),
+                    assignee_departed=item.id in departed,
+                ).model_dump(),
+                meeting_title=earlier[item.meeting_id].title,
+                meeting_started_at=earlier[item.meeting_id].started_at,
+            )
+            for item in shown
+        ],
+    )
 
 
 def read_detail(session: Session, item: ExtActionItem) -> ActionItemDetail:

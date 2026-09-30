@@ -158,6 +158,22 @@ export interface ActionItemDetail extends ActionItemRead {
   history?: EditHistoryEntry[];
 }
 
+/** `CarriedOverItem`: an open item from an earlier meeting of the same team. */
+export interface CarriedOverItem extends ActionItemRead {
+  meeting_title: string;
+  meeting_started_at: string | null;
+}
+
+/**
+ * `CarriedOver` (`GET /carried-over/{meeting_id}`, WBS 4.8). `open` and
+ * `overdue` count everything; `items` is the most urgent part, overdue first.
+ */
+export interface CarriedOver {
+  open: number;
+  overdue: number;
+  items: CarriedOverItem[];
+}
+
 /**
  * An item the model was unsure about.
  *

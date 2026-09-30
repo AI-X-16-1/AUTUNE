@@ -5,6 +5,7 @@ import type {
   ActionItemDetail,
   ActionItemRead,
   ActionStatus,
+  CarriedOver,
   DecisionStatus,
   ExtractionResult,
   MeetingReview,
@@ -102,6 +103,13 @@ async function withoutBody(path: string): Promise<void> {
     throw cause;
   }
 }
+
+/**
+ * What the team's earlier meetings left open, for the popup a review opens with
+ * (WBS 4.8). Counts cover everything; `items` is the most urgent ten.
+ */
+export const getCarriedOver = (meetingId: string) =>
+  api.extraction<CarriedOver>(`/carried-over/${encodeURIComponent(meetingId)}`);
 
 /** Everything in one meeting that needs a person before it goes anywhere (#246). */
 export const getReview = (meetingId: string) =>

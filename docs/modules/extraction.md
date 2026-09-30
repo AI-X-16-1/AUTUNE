@@ -134,6 +134,14 @@ which is what makes a redelivered task safe. The one exception is the draft:
 once a person has edited anything in the meeting, a rerun leaves its items
 alone, because ADR 0006 makes the list theirs to finish.
 
+**What earlier meetings left open (PRD 5.2, WBS 4.8).** `GET
+/carried-over/{meeting_id}` answers a member of the meeting's team with the
+open items -- *to do* or *in progress* -- of the team's meetings held before
+this one: counts of all of them and the ten most urgent, overdue first. The
+review screen opens with a popup listing them the first time a meeting is
+reviewed in a browser, and keeps a one-line reminder above the board after.
+Drafts still in *needs confirmation* and finished items are not carried.
+
 `ext_action_items.due_text` is the phrase a model item's due date was read from,
 for S18. It is cleared when a person sets the date themselves: the phrase no
 longer explains the value (#109).

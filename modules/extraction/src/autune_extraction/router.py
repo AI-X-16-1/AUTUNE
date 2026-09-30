@@ -36,6 +36,7 @@ from .schemas import (
     ActionItemDetail,
     ActionItemRead,
     ActionItemUpdate,
+    CarriedOver,
     DecisionCreate,
     DecisionReviewUpdate,
     MeetingReview,
@@ -103,6 +104,14 @@ def list_action_items(
         due_before=due_before,
         visible_to=reader.id,
     )
+
+
+@router.get("/carried-over/{meeting_id}", response_model=CarriedOver)
+def get_carried_over(meeting_id: str, session: SessionDep, reader: CurrentUser) -> CarriedOver:
+    """What the team's earlier meetings left open, for the popup this
+    meeting's review opens with (WBS 4.8). Members of the meeting's team only."""
+    service.require_readable_meeting(session, meeting_id, reader)
+    return service.carried_over(session, meeting_id)
 
 
 @router.get("/action-items/{action_item_id}", response_model=ActionItemDetail)
