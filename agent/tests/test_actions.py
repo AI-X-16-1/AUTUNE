@@ -268,3 +268,17 @@ def test_a_proposals_evidence_is_ids_only() -> None:
             rationale="r",
             evidence=["김 팀장이 말함"],
         )
+
+
+def test_an_action_missing_its_meeting_in_a_chat_run_is_refused_and_the_reason_kept() -> None:
+    def attach(team_id: str, meeting_id: str) -> dict[str, Any]:
+        raise AssertionError("must not run")
+
+    done = execute_l1(
+        [_proposal("fake.attach")],
+        actions={"fake.attach": Action("fake.attach", attach, "L1")},
+        session=SESSION,
+        scope=SCOPE,
+    )
+
+    assert done[0]["reason"] == "this run is about no meeting; pass meeting_id"

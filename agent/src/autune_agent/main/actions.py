@@ -40,7 +40,18 @@ from sqlalchemy.orm import Session
 from autune_agent.results import ProposedAction, ToolResult
 from autune_contracts import MODULES
 
-from .registry import RunScope, ToolContractError, ToolFn, bind_scope, is_personal_only
+from .registry import (
+    MISSING_ARGUMENT,
+    NO_MEETING,
+    UNEXPECTED_ARGUMENT,
+    RunScope,
+    ToolContractError,
+    ToolFn,
+    bind_scope,
+    is_personal_only,
+    required_parameters,
+    takes_any_keyword,
+)
 
 log = logging.getLogger(__name__)
 
@@ -48,8 +59,16 @@ NOT_DECLARED = "not a declared action"
 KEPT_FOR_APPROVAL = "its module declares it L2; it waits for approval"
 FAILED = "the action failed"
 OUT_OF_SCOPE = ("team_id is outside this run's team", "meeting not found")
-OWN_REASONS = frozenset({NOT_DECLARED, KEPT_FOR_APPROVAL, FAILED, *OUT_OF_SCOPE})
-"""Reasons this layer wrote, and so knows hold no meeting or model text."""
+OWN_REASONS = frozenset(
+    {NOT_DECLARED, KEPT_FOR_APPROVAL, FAILED, NO_MEETING, UNEXPECTED_ARGUMENT, *OUT_OF_SCOPE}
+)
+"""Reasons this layer wrote, and so knows hold no meeting or model text. A
+``MISSING_ARGUMENT`` reason is also ours: it names parameters from the code."""
+
+
+def _own(reason: str | None) -> bool:
+    return reason is not None and (reason in OWN_REASONS or reason.startswith(MISSING_ARGUMENT))
+
 
 Level = Literal["L1", "L2"]
 
@@ -65,6 +84,11 @@ class Action:
     @property
     def parameters(self) -> frozenset[str]:
         return frozenset(inspect.signature(self.fn).parameters)
+
+    @property
+    def required(self) -> frozenset[str]:
+        takes_session = list(inspect.signature(self.fn).parameters)[:1] == ["session"]
+        return required_parameters(self.fn, skip_first=takes_session)
 
     def __call__(self, session: Session, **arguments: Any) -> ToolResult:
         # B's writes open their own session (they commit through B's service,
@@ -131,7 +155,7 @@ def execute_l1(
                 "tool": proposal.tool,
                 "level": "L1",
                 "ok": result.ok,
-                "reason": result.reason if result.reason in OWN_REASONS else None,
+                "reason": result.reason if _own(result.reason) else None,
                 "evidence": result.evidence,
             }
         )
@@ -141,7 +165,14 @@ def execute_l1(
 def _run(
     action: Action, proposal: ProposedAction, *, session: Session, scope: RunScope
 ) -> ToolResult:
-    bound = bind_scope(action.parameters, proposal.arguments, scope, session)
+    bound = bind_scope(
+        action.parameters,
+        proposal.arguments,
+        scope,
+        session,
+        required=action.required,
+        open_ended=takes_any_keyword(action.fn),
+    )
     if isinstance(bound, ToolResult):
         return bound
     try:
