@@ -8,13 +8,15 @@ services:
     # separate vector database. See docs/decisions/0004-pgvector-over-chroma.md
     image: pgvector/pgvector:pg16
     environment:
-      POSTGRES_USER: autune
-      POSTGRES_PASSWORD: autune
-      POSTGRES_DB: autune
+      # Deployed hosts pass their own credentials; local runs keep the
+      # defaults that AUTUNE_DATABASE_URL in .env.example expects.
+      POSTGRES_USER: ${POSTGRES_USER:-autune}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-autune}
+      POSTGRES_DB: ${POSTGRES_DB:-autune}
     ports: ["5432:5432"]
     volumes: ["pgdata:/var/lib/postgresql/data"]
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U autune"]
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
       interval: 5s
       timeout: 3s
       retries: 10
