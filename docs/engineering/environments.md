@@ -216,6 +216,7 @@ Where that token comes from, and the two ways to give it to the browser:
 | `AUTUNE_GAP_VERIFY_CONFIDENT_SCORE` · `_CONFIDENT_LEAD` | C | Defaults `0.6` · `0.05`. An item winning by both is taken without asking; a background win by the lead is dismissed without asking |
 | `AUTUNE_GAP_VERIFY_CANDIDATE_SCORE` · `_CANDIDATES` · `_EXAMPLES` | C | Defaults `0.45` · `3` · `2`. Which items one question offers, and how many example sentences each carries |
 | `AUTUNE_GAP_VERIFY_MAX_UTTERANCES` | C | Default `30`. At most this many utterances of one meeting are sent per run; the rest keep the embedding's answer |
+| `AUTUNE_GAP_RESCORE_MAX_ATTEMPTS` | C | Default `5`. Failed rescores in a row at one grouping of people before the ten-minute sweep leaves the meeting until the grouping moves (#516) |
 | `AUTUNE_CONTEXT_EMBEDDER_IMPL` | D | `kure_v1_http` (default), `kure_v1_local`, `fake` |
 | `AUTUNE_CONTEXT_RERANKER_IMPL` | D | `bge_reranker_v2_m3_ko_http` (default), `..._local`, `fake` |
 | `AUTUNE_CONTEXT_NLI_IMPL` | D | `klue_kornli_http` (default), `klue_kornli_local`, `fake` |

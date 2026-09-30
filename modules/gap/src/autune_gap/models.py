@@ -375,3 +375,14 @@ class GapScoring(Base, TimestampMixin):
         String(64), ForeignKey("meetings.id", ondelete="CASCADE"), primary_key=True
     )
     people_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    failed_people_key: Mapped[str | None] = mapped_column(String(64))
+    """The grouping the rescore last failed against, or NULL. A failure count
+    belongs to one grouping: when the people move again the meeting is a new
+    question and is tried again (#516)."""
+    rescore_failures: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    """Failures in a row against ``failed_people_key``. At
+    ``AUTUNE_GAP_RESCORE_MAX_ATTEMPTS`` the sweep stops trying that grouping, so
+    one broken meeting cannot spend a hosted verifier's quota every ten minutes."""
+    last_failed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

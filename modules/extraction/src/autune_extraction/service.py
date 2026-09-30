@@ -8,6 +8,7 @@ Never imports another module.
 
 from __future__ import annotations
 
+import hashlib
 import re
 from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
@@ -64,6 +65,7 @@ from .models import (
     ExtDecisionSource,
     ExtEditEvent,
     ExtExternalRef,
+    ExtExtractionRun,
 )
 from .pipeline.base import Classifier, NliModel, ReferenceResolver, ResolutionRequest
 from .pipeline.resolver import MAX_CONTEXT_AFTER, MAX_CONTEXT_UTTERANCES
@@ -1186,6 +1188,101 @@ def team_roster(session: Session, meeting_id: str) -> list[str]:
             .order_by(User.id)
         )
     )
+
+
+# --- consent that changes after extraction (#518) ------------------------------
+
+
+def consent_key(consented: Iterable[str]) -> str:
+    """A digest of the utterance ids an extraction was allowed to read, in a
+    fixed order, for ``ExtExtractionRun``."""
+    return hashlib.sha256("\n".join(sorted(consented)).encode()).hexdigest()
+
+
+def record_extraction(session: Session, *, meeting_id: str, consented: Iterable[str]) -> None:
+    """Remember which speech this extraction read, in the extraction's own
+    transaction, so a later consent change can be told apart from none.
+
+    An upsert: a redelivered task and the consent sweep can both write it.
+    """
+    now = datetime.now(UTC)
+    key = consent_key(consented)
+    session.execute(
+        _insert_if_absent_into(session, ExtExtractionRun)
+        .values(meeting_id=meeting_id, consent_key=key, extracted_at=now)
+        .on_conflict_do_update(
+            index_elements=["meeting_id"], set_={"consent_key": key, "extracted_at": now}
+        )
+    )
+
+
+def meetings_with_changed_consent(session: Session) -> list[str]:
+    """Meetings whose consenting speech is not what their last extraction read.
+
+    Compares each ``ExtExtractionRun.consent_key`` with the key of the
+    utterances ``consented_utterance_ids`` would give now, for every recorded
+    meeting in one query. A meeting that has no row is not here: it has not
+    been extracted yet, and extracting it is ``on_transcript_ready``'s job.
+    """
+    recorded = {
+        meeting_id: key
+        for meeting_id, key in session.execute(
+            select(ExtExtractionRun.meeting_id, ExtExtractionRun.consent_key)
+        )
+    }
+    if not recorded:
+        return []
+    consented: dict[str, list[str]] = {meeting_id: [] for meeting_id in recorded}
+    for meeting_id, utterance_id in session.execute(
+        select(Utterance.meeting_id, Utterance.id)
+        .join(Participant, Participant.id == Utterance.participant_id)
+        .where(Utterance.meeting_id.in_(recorded), Participant.consented.is_(True))
+    ):
+        consented[meeting_id].append(utterance_id)
+    return sorted(
+        meeting_id
+        for meeting_id, key in recorded.items()
+        if consent_key(consented[meeting_id]) != key
+    )
+
+
+def stored_transcript(session: Session, meeting_id: str) -> list[TranscriptUtterance]:
+    """The meeting's utterances as ``TranscriptReady`` carries them, read back
+    from the shared tables module A wrote -- for a re-extraction that has no
+    event to read them from.
+
+    The text is what A stored, masked before its first write (invariant 11), so
+    it is the same text the event would carry. ``speaker_id`` and ``role`` come
+    from the participant behind each line, as A builds them when it publishes.
+    """
+    people = {
+        participant_id: (user_id, role)
+        for participant_id, user_id, role in session.execute(
+            select(Participant.id, Participant.user_id, Participant.role).where(
+                Participant.meeting_id == meeting_id
+            )
+        )
+    }
+    rows = session.scalars(
+        select(Utterance)
+        .where(Utterance.meeting_id == meeting_id)
+        .order_by(Utterance.start_sec, Utterance.id)
+    )
+    return [
+        TranscriptUtterance(
+            id=row.id,
+            speaker=row.speaker_label,
+            speaker_id=people.get(row.participant_id, (None, None))[0]
+            if row.participant_id
+            else None,
+            role=people.get(row.participant_id, (None, None))[1] if row.participant_id else None,
+            start=row.start_sec,
+            end=row.end_sec,
+            text=row.text,
+            confidence=row.confidence,
+        )
+        for row in rows
+    ]
 
 
 def classify_utterances(
