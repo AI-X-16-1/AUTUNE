@@ -191,7 +191,7 @@ function MemoEditor({
           {error
             ? "저장하지 못했습니다. 다시 시도해 주세요."
             : summary.note_updated_at
-              ? `마지막 저장 ${summary.note_updated_at.slice(0, 16).replace("T", " ")}`
+              ? `마지막 저장 ${localTime(summary.note_updated_at)}`
               : `${draft.length}/${MAX_NOTE_CHARS}`}
         </span>
         <Button
@@ -206,6 +206,15 @@ function MemoEditor({
       </div>
     </section>
   );
+}
+
+/**
+ * When the memo was saved, in the viewer's own time zone, as YYYY-MM-DD HH:MM.
+ * The server sends UTC; cutting its string showed Seoul's 18:10 as 09:10
+ * (found in a browser check). `sv-SE` is the locale that reads that way.
+ */
+function localTime(iso: string): string {
+  return new Date(iso).toLocaleString("sv-SE").slice(0, 16);
 }
 
 function ItemLine({ item }: { item: ActionItemRead }) {
