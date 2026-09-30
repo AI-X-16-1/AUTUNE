@@ -251,20 +251,46 @@ republish with no notice if the meeting had published, otherwise re-arm the
 publish check. It declines, touching nothing, a meeting D never analysed, one
 past its retention window, or one whose row lacks A's privacy flags.
 
-**Operational procedure.** After #439 is deployed, and after any change to
-consent on meetings D has already analysed, run
+**One meeting is not the whole cleanup.** Re-deriving replaces the links *out
+of* that meeting. A later meeting's link *into* it was scored against the
+topics that were just dropped and stays, so it keeps saying "discussed in that
+meeting" for speech that is gone. After a withdrawal, re-derive the team's later
+meetings as well; the backfill below does.
+
+**A user's answers survive.** A link a user confirmed or rejected keeps that
+answer when the same topic label links to the same meeting again — which is
+what happens for every topic whose speech was not excluded. An answer on a topic
+that no longer comes out, or now links elsewhere, is gone with the topic.
+
+**Operational procedure.** After #439 is deployed, run
 
 ```bash
-uv run --package autune-context python -m autune_context.rederive [--team TEAM_ID]
+uv run --package autune-context python -m autune_context.rederive [--team TEAM_ID] [--dry-run]
 ```
 
 where a `cpu_heavy` worker's settings apply (database, model endpoints,
-broker). It re-derives one meeting at a time, oldest first, in this process —
-each meeting's links are scored against the meetings before it, so a fan-out to
-concurrent workers would score some against predecessors not yet re-derived.
-`--dry-run` lists the meetings. The pre-meeting brief (#437) recaps
-`ref_label` to Slack, so this runs **before** briefs are enabled for real
-meetings.
+broker). It re-derives only the meetings that need it, not every analysed
+one: a meeting where some utterance's speaker did not consent *and* a stored
+topic was cut from it (or cannot say what it was cut from — rows from before
+#397 carry no `utterance_ids`), plus every meeting that links into one of
+those. A meeting with nothing excluded, or whose topics never touched the
+excluded speech, would come out the same, so it is left alone. It goes one
+meeting at a time, oldest first, in this process — each meeting's links are
+scored against the meetings before it, so a fan-out to concurrent workers would
+score some against predecessors not yet re-derived.
+
+Run `--dry-run` first: it lists the meetings and says how many links on them a
+user confirmed or rejected, which is what could be lost (only where a topic's
+label changes). Consent *attested* after analysis is not found by the backfill —
+nothing stored says which meetings it happened to, and re-deriving one produces
+topics rather than removing any. For that case run the
+`autune.context.rederive_topics` task on the meeting.
+
+The pre-meeting brief (#437) already filters by consent when it reads a label,
+so a non-consenting label is not sent without this. What the backfill adds:
+rows from before #397 have no `utterance_ids`, so the brief's recap leaves them
+out until they are re-derived, and the label, vector and BM25 input for excluded
+speech are removed from storage, not only hidden on read.
 
 Triggering it automatically when consent changes needs an event from module A;
 none exists yet.
