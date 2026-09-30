@@ -104,6 +104,13 @@ def answers_by_line(answer: str, asked: Collection[int]) -> dict[int, Any]:
     as an answer that is not JSON does, and the caller leaves the batch
     unanswered. That shape is the parse failing, not the model deciding. An
     empty mapping is still every line answered empty.
+
+    **A key counts only with a list for its value.** Both callers read a list,
+    of letters or of triples, and treat anything else as an empty answer for
+    that line. ``{"1": "A"}`` then passed this check as if it had been read,
+    and the verifier overrode the embedding with "not this item". An answer
+    whose only keys hold something else is the same parse failure as one whose
+    keys name no line. Raised in review of #503.
     """
     match = re.search(r"\{.*\}", answer, re.S)
     if not match:
@@ -115,10 +122,10 @@ def answers_by_line(answer: str, asked: Collection[int]) -> dict[int, Any]:
     out: dict[int, Any] = {}
     for key, value in answers.items():
         found = _LINE_NUMBER.fullmatch(str(key))
-        if found and int(found.group(1)) in asked:
+        if found and int(found.group(1)) in asked and isinstance(value, list):
             out[int(found.group(1))] = value
     if answers and not out:
-        raise ValueError("no key in the answer names a line that was asked")
+        raise ValueError("no key in the answer names a line that was asked with a list")
     return out
 
 

@@ -1,4 +1,9 @@
-/** Calls to /api/audio. This feature calls no other module's endpoints. */
+/**
+ * Calls to /api/audio. This feature calls no other module's endpoints, with one
+ * exception: /api/agent/research, where the research card on the meeting screen
+ * reads the agent layer's documents for this meeting (Research subagent spec,
+ * section 4 ④).
+ */
 import { api, ApiError, authHeaders } from "@/shared/api/client";
 
 export { api };
@@ -6,6 +11,7 @@ export { api };
 import type {
   MeetingDetail,
   MeetingSummary,
+  ResearchDocument,
   SpeakerEntry,
   TeamMember,
   TeamSummary,
@@ -215,3 +221,9 @@ export function apiBase(): string {
 export function liveSocketUrl(meetingId: string): string {
   return `${apiBase().replace(/^http/, "ws")}/api/audio/live/${meetingId}`;
 }
+
+/** The meeting's research documents the reader may see: approved ones for any member. */
+export const getResearch = (teamId: string, meetingId: string) =>
+  api.agent<ResearchDocument[]>(
+    `/research?team_id=${encodeURIComponent(teamId)}&meeting_id=${encodeURIComponent(meetingId)}`,
+  );

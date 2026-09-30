@@ -910,8 +910,16 @@ way.
   logged by id and retried on the next run. A `PrivacyViolationError` from the
   verifier is a broken invariant (`pipeline/base.py`). The sweep finishes the
   other meetings, then raises it with the meeting ids and never the value.
-- **No retry cap yet.** A meeting that keeps failing is retried every ten
-  minutes. With a hosted verifier, that spends its quota each time.
+- **Retries are capped per grouping (#516).** A failed rescore is counted on
+  the row (`rescore_failures`, `failed_people_key`, `last_failed_at`). After
+  `AUTUNE_GAP_RESCORE_MAX_ATTEMPTS` (5) failures in a row at the same grouping,
+  the sweep skips the meeting until its people move again. That is a new
+  question, so the count starts over. A successful detection clears all three.
+  Before the cap, a meeting that always failed was retried every ten minutes
+  for good, spending a hosted verifier's quota each time. A privacy violation is
+  not counted, because `check_outbound` refused it before anything was sent. The
+  sweep logs `held` for the meetings it skipped, and each failure logs its
+  attempt number and whether that was the last.
 - **No backfill.** A meeting scored before the table existed has no row and is
   left alone until its detection runs again. Speaker confirmation landed days
   earlier, so few meetings have a `user_id` to be stale about.

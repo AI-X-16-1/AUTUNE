@@ -123,16 +123,30 @@ the overlap the question turns on.
 | `ext_decision_refs` | The Notion page a confirmed decision became, one per decision and system |
 | `ext_calendar_events` | The event an item's due date became on its assignee's own calendar, and the date last synced |
 | `ext_calendar_polls` | When each person's calendar was last read back |
+| `ext_notion_targets` | The page and three databases a team's Notion sync writes to, one row per team (#428) |
 | `ext_confirmations` | Every ambiguous agreement, the DM once sent, and the response |
 | `ext_decisions` | Decision entities, their statements and source utterances. `origin` is `model` or `user`; a rerun rebuilds only the model's |
 | `ext_decision_sources` | Which utterances a decision was settled in, in order |
 | `ext_decision_reviews` | A person's verdict on each proposed decision (pending, confirmed, rejected) and an optional rewording, keyed by `dec_` id so a rerun over the same sources keeps it (#246). No reviewer column |
+| `ext_extraction_runs` | One row per extracted meeting: a digest of the consenting utterances the last run read, and when (#518) |
 
 A meeting that is processed again replaces its model-made rows —
 classifications, decisions, and draft items — rather than adding a second set,
 which is what makes a redelivered task safe. The one exception is the draft:
 once a person has edited anything in the meeting, a rerun leaves its items
 alone, because ADR 0006 makes the list theirs to finish.
+
+**Consent that changes after the run (#518).** The consent filter reads
+`participants.consented` when the run starts, and consent can be recorded
+later (A's `attest_consent`). Nothing announces that (#360), so every ten
+minutes `reextract_consent_changes` compares each meeting's
+`ext_extraction_runs` digest with the consenting utterances now, and extracts
+the meetings that differ again from the stored transcript — the same run as
+the event's, so it follows the rules above and publishes `ExtractionResult`
+again. A meeting extracted before the table existed has no row and is left
+alone. Speech that loses consent drops out of the model's rows the same way;
+what a person already edited or sent out from it waits on per-person
+withdrawal (S10/S11), the second half of #518.
 
 **A speaker identified after the run (#360).** A commitment by an unidentified
 speaker keeps only the label ("Speaker 2"). When A later fills
