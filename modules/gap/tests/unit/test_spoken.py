@@ -27,6 +27,7 @@ from autune_gap.pipeline.spoken import (
     noun_stem,
     noun_terms,
     person_name,
+    quantity_text,
 )
 
 
@@ -212,8 +213,10 @@ def test_a_marker_step_two_keys_on_is_not_a_topic() -> None:
 
 def test_the_stoplist_holds_only_what_speech_repeats() -> None:
     """Every entry is a topic the graph can no longer raise a gap about, which
-    is the expensive direction — so the list stays short and single words."""
-    assert len(STOP_TERMS) < 50
+    is the expensive direction — so the list stays short and single words.
+    The bound moved from 50 to 55 with 의미 (#315), the first entry measured
+    as the most central node of a meeting it said nothing about."""
+    assert len(STOP_TERMS) < 55
     assert all(" " not in term for term in STOP_TERMS)
 
 
@@ -725,7 +728,36 @@ def test_a_metric_without_a_number_is_not_a_metric() -> None:
     worth graphing is the quantity."""
     assert not is_plausible("metric", "한번")
     assert not is_plausible("metric", "네,")
-    assert is_plausible("metric", "3초")
+    assert is_plausible("metric", "응답 3초")
+
+
+@pytest.mark.parametrize(
+    ("label", "text"), [("metric", "15%"), ("metric", "0건"), ("date", "30초"), ("date", "90일")]
+)
+def test_a_bare_quantity_is_not_a_topic(label: str, text: str) -> None:
+    """#315: a number and a unit name no thing. The noun beside it is the topic."""
+    assert not is_plausible(label, text)
+
+
+@pytest.mark.parametrize("text", ["다음 주 금요일", "10월 1일", "응답 3초"])
+def test_a_quantity_with_a_word_in_it_stays(text: str) -> None:
+    assert is_plausible("date", text) or is_plausible("metric", text)
+
+
+@pytest.mark.parametrize(
+    ("span", "text"),
+    [
+        ("0건입니다", "0건"),
+        ("90일이고", "90일"),
+        ("다음 주 금요일까지", "다음 주 금요일"),
+        ("다음 주에", "다음 주"),
+        ("10월 1일부터", "10월 1일"),
+        ("다음 주 화요일", "다음 주 화요일"),
+        ("보관 기간까지", "보관 기간까지"),  # not a quantity: left whole
+    ],
+)
+def test_a_quantity_loses_the_copula_and_particle_on_its_end(span: str, text: str) -> None:
+    assert quantity_text(span) == text
 
 
 @pytest.mark.parametrize("label", ["feature", "system", "date", "term"])

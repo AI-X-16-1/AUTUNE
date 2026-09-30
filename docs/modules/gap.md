@@ -142,6 +142,25 @@ a 500MB pipeline is a judgement nobody tests.
   will not cut on a noun (차이, 아이). After 님 it cannot be anything else, so
   `spoken.person_name` cuts 님/씨 and the particle after it. Before this one
   colleague was 이건우님이, 이건우님 and 이건우 — three topics.
+- **A date or a quantity is read by its ending, and a bare one is refused**
+  (#315). An entity span ending in the copula kept it — 0건입니다, 90일이고 —
+  because `noun_stem` does not read through `jp`; and 다음 주 금요일까지 kept
+  its 까지 whenever the model tagged it as a noun. `spoken.quantity_text` cuts
+  the copula and a particle from a `date` or `metric` span when what is left
+  ends in a number, a unit or a day. What is left, if it is only a number and
+  one unit (15%, 30초, 0건, 90일), is not a topic: the noun beside it is. 응답
+  3초, 다음 주 금요일 and 10월 1일 stay. 의미 joined `STOP_TERMS`, the most
+  central node of `deploy-retro`; 진행 and 공유 did not, because 진행 is a
+  `next_step` keyword and 공유 is the only topic of a status meeting.
+
+  | Labels over the two shared fixtures and the four authored meetings | before | after |
+  | --- | --- | --- |
+  | topics | 57 | 52 |
+  | with a copula or particle on the end | 0건입니다 · 90일이고 · 다음 주 화요일까지 · 다음 주 금요일까지 | none |
+  | a bare quantity | 15% · 30초 | none |
+
+  Precision and recall on the authored set are unchanged in every
+  configuration, measured before and after on the same run.
 - **Both paths cut the particle and ask the same stoplist.** 오늘은 used to be
   a `DT` node, particle and all, while 오늘 was refused as a term — one word,
   two answers (#230). An entity span now loses the particle on its last word
