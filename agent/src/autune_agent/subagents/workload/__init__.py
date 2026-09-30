@@ -5,10 +5,13 @@ to an approver with scope ``workload`` only. Reads counts of work, never
 speech: no speaking-ratio tool may be in its allow-list (privacy.md section 3),
 and ``Subagent`` refuses one.
 
-The rules are in ``plan.py``, the subgraph in ``graph.py``. Google Calendar
-comes through B's ``team_busy_hours`` (busy windows only, the team's own
-connection); without one the subagent decides on work alone. Jira reads wait
-on #82.
+The rules are in ``plan.py``, the subgraph in ``graph.py``. It decides from
+Autune's own data -- open, overdue and finished confirmed items -- and reads no
+calendar (#435, 2026-09-30): a team Google account sees only members of one
+Workspace, a calendar Autune creates holds only what Autune wrote, and a
+person's own grant serves only their own work. Busy hours from a person's own
+calendar, with their consent, are a later decision there. Jira reads wait on
+#82.
 """
 
 from __future__ import annotations

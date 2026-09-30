@@ -14,7 +14,7 @@ import pytest
 from autune_agent.main import CallBudget, collect_subagents, run
 from autune_agent.main.registry import Tool, Toolbox
 from autune_agent.subagents.workload import SUBAGENT, plan
-from autune_agent.subagents.workload.graph import BUSY, ITEMS, LOAD, REASSIGN
+from autune_agent.subagents.workload.graph import ITEMS, LOAD, REASSIGN
 from autune_agent.testing import FakeRouter, mock_tool
 
 SESSION: Any = object()
@@ -65,39 +65,19 @@ def items(*ids: str, late: tuple[str, ...] = (), flagged: tuple[str, ...] = ()) 
 
 
 def tools_for(
-    workload: dict[str, Any],
-    by_person: Mapping[str, dict[str, Any]],
-    busy: Mapping[str, float | None] | None = None,
+    workload: dict[str, Any], by_person: Mapping[str, dict[str, Any]]
 ) -> tuple[dict[str, Tool], list[dict[str, Any]]]:
-    """Mock tools. ``busy`` is each member's ``busy_share`` (``None`` for an
-    unreadable calendar); leaving it out is a team with no calendar connection,
-    whose tool is not registered at all."""
     calls: list[dict[str, Any]] = []
 
     def person_items(_session: Any, **arguments: Any) -> dict[str, Any]:
         calls.append(arguments)
         return by_person.get(arguments["user_id"], items())
 
-    def busy_hours(_session: Any, **arguments: Any) -> dict[str, Any]:
-        calls.append(arguments)
-        assert busy is not None
-        return {
-            "ok": True,
-            "summary": "일정",
-            "items": [
-                {"title": uid, "id": uid, "busy_share": busy.get(uid), "busy_hours": None}
-                for uid in arguments["user_ids"]
-            ],
-            "evidence": [],
-        }
-
     tools = {
         LOAD: mock_tool(LOAD, workload),
         ITEMS: Tool(name=ITEMS, description="Use this in tests.", fn=person_items),
         "intelligence.quality_score": mock_tool("intelligence.quality_score", load()),
     }
-    if busy is not None:
-        tools[BUSY] = Tool(name=BUSY, description="Use this in tests.", fn=busy_hours)
     return tools, calls
 
 
@@ -128,7 +108,6 @@ def test_a_loaded_persons_most_urgent_items_go_to_someone_free() -> None:
     ]
     assert calls == [{"user_id": "user_a"}]
     assert "재배정 제안 2건" in outcome.result.summary
-    assert "팀 캘린더 없이" in outcome.result.summary
     assert outcome.result.evidence == ["act_1", "act_2"]
 
 
@@ -228,11 +207,11 @@ def test_an_unreadable_load_is_a_failed_result_not_a_crash() -> None:
 
 
 def test_it_reads_only_its_allow_list() -> None:
-    assert SUBAGENT.tools == (LOAD, ITEMS, BUSY)
+    assert SUBAGENT.tools == (LOAD, ITEMS)
     assert not any("speaking" in t or t.startswith("intelligence.") for t in SUBAGENT.tools)
     tools, _ = tools_for(load(*TEAM), {})
     box = Toolbox(tools, SESSION, CallBudget(), allowed=SUBAGENT.tools)
-    assert set(box.describe()) == {LOAD, ITEMS}, "no calendar connection registered here"
+    assert set(box.describe()) == {LOAD, ITEMS}
     assert box.call("intelligence.quality_score").ok is False
 
 
@@ -275,48 +254,3 @@ def test_the_plan_itself_stops_at_five() -> None:
     }
 
     assert len(plan.plan_moves(people, items_of)) == plan.MAX_MOVES
-
-
-# --- the team calendar ---------------------------------------------------------------
-
-
-def test_a_taker_whose_week_is_full_is_passed_over() -> None:
-    tools, _ = tools_for(
-        load(*TEAM), {"user_a": items("act_1", "act_2")}, busy={"user_c": 0.8, "user_b": 0.1}
-    )
-
-    outcome = invoke(tools)
-
-    assert [p.arguments["assignee_id"] for p in outcome.proposed] == ["user_b", "user_b"]
-    assert "일정 10%" in outcome.proposed[0].rationale
-    assert "팀 캘린더 없이" not in outcome.result.summary
-
-
-def test_an_unreadable_calendar_is_not_free_and_not_full() -> None:
-    tools, _ = tools_for(
-        load(*TEAM), {"user_a": items("act_1")}, busy={"user_c": None, "user_b": None}
-    )
-
-    (proposal,) = invoke(tools).proposed
-
-    assert proposal.arguments["assignee_id"] == "user_c", "still the one with nothing open"
-    assert "캘린더 확인 불가" in proposal.rationale
-
-
-def test_the_calendar_is_asked_about_takers_only() -> None:
-    tools, calls = tools_for(load(*TEAM), {"user_a": items("act_1")}, busy={})
-
-    invoke(tools)
-
-    assert calls[-1] == {"user_ids": ["user_c", "user_b"]}, "not the loaded person"
-
-
-def test_everyone_booked_proposes_nothing() -> None:
-    tools, _ = tools_for(
-        load(*TEAM), {"user_a": items("act_1")}, busy={"user_c": 0.9, "user_b": 0.75}
-    )
-
-    outcome = invoke(tools)
-
-    assert outcome.proposed == []
-    assert "넘겨받을 수 있는 사람이 없어" in outcome.result.summary

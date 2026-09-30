@@ -25,19 +25,17 @@ from . import plan
 
 LOAD = "extraction.workload_by_owner"
 ITEMS = "extraction.person_action_items"
-BUSY = "extraction.team_busy_hours"
 REASSIGN = "extraction.reassign_action_item"
 """The write each proposal names. B's ``ACTIONS``; the main agent runs it only
 after approval."""
 
-TOOLS = (LOAD, ITEMS, BUSY)
+TOOLS = (LOAD, ITEMS)
 
 
 class WorkloadState(SubagentState, total=False):
     load: ToolResult
     people: list[plan.Person]
     items_of: dict[str, list[plan.Candidate]]
-    busy: plan.Busy | None
 
 
 def _stop(reason: str, summary: str) -> dict[str, Any]:
@@ -53,25 +51,17 @@ def build(toolbox: Toolbox) -> CompiledSubagent:
 
     def read_items(state: WorkloadState) -> dict[str, Any]:
         items_of: dict[str, list[plan.Candidate]] = {}
-        busy: plan.Busy | None = None
-        takers = plan.takers(state["people"])
-        # Only when someone loaded could give to someone: otherwise the calls buy nothing.
-        if takers and plan.givers(state["people"]):
+        # Only when someone could take work: otherwise the calls buy nothing.
+        if plan.takers(state["people"]):
             for giver in plan.givers(state["people"]):
                 result = toolbox.call(ITEMS, user_id=giver.user_id)
                 if result.ok:
                     items_of[giver.user_id] = plan.candidates_from(result)
-            # The takers' calendars, if the team has one; without it, decide on
-            # work alone and say so.
-            calendar = toolbox.call(BUSY, user_ids=[t.user_id for t in takers][: plan.MAX_MOVES])
-            if calendar.ok:
-                busy = plan.busy_from(calendar)
-        return {"items_of": items_of, "busy": busy}
+        return {"items_of": items_of}
 
     def propose(state: WorkloadState) -> dict[str, Any]:
         people = state["people"]
-        busy = state.get("busy")
-        moves = plan.plan_moves(people, state["items_of"], busy)
+        moves = plan.plan_moves(people, state["items_of"])
         loaded = plan.givers(people)
         free = [p for p in people if p.state == "free"]
         summary = f"팀원 {len(people)}명 중 몰림 {len(loaded)}명, 여유 {len(free)}명."
@@ -81,8 +71,6 @@ def build(toolbox: Toolbox) -> CompiledSubagent:
             summary += " 넘겨받을 수 있는 사람이 없어 재배정을 제안하지 않습니다."
         else:
             summary += f" 재배정 제안 {len(moves)}건, 관리자가 하나씩 승인해야 실행됩니다."
-        if loaded and busy is None:
-            summary += " 팀 캘린더 없이 업무량만으로 판단했습니다."
         result = ToolResult(
             ok=True,
             summary=summary,
