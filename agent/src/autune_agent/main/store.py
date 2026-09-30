@@ -35,6 +35,7 @@ from autune_agent.models import AgentRun
 
 from .actions import Action, ActionPrivacyViolationError, collect_actions, execute_l1
 from .graph import MainState, run
+from .own_tools import collect_own_actions
 from .registry import BudgetExceededError, CallBudget, RunScope, Tool
 from .router import Router
 from .subagents import Subagent
@@ -90,7 +91,9 @@ def run_and_record(
             try:
                 row.actions = execute_l1(
                     outcome.proposed,
-                    actions=collect_actions() if actions is None else actions,
+                    actions={**collect_actions(), **collect_own_actions()}
+                    if actions is None
+                    else actions,
                     session=session,
                     scope=scope,
                 )

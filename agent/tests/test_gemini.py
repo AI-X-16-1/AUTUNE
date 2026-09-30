@@ -77,3 +77,23 @@ def test_compose_keeps_a_title_that_ends_in_a_colon() -> None:
     _router("답변", sent).compose("질문", SubagentResult(result=result))
 
     assert "- 다음 안건:" in json.dumps(sent[0]["body"], ensure_ascii=False)
+
+
+def test_gemini_text_sends_through_the_privacy_guard() -> None:
+    from autune_agent.main.gemini import GeminiText
+
+    sent: list[dict[str, Any]] = []
+    text = GeminiText(api_key="k", model="gemini-test", base_url="https://llm.test/v1beta")
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        sent.append(json.loads(request.content))
+        return httpx.Response(200, json={"candidates": [{"content": {"parts": [{"text": "ok"}]}}]})
+
+    text._client._client = httpx.Client(  # noqa: SLF001
+        base_url="https://llm.test/v1beta", transport=httpx.MockTransport(handle)
+    )
+
+    assert text.generate("지시", "본문", json_answer=False) == "ok"
+    with pytest.raises(PrivacyViolationError):
+        text.generate("지시", "연락처 010-1234-5678", json_answer=False)
+    assert len(sent) == 1

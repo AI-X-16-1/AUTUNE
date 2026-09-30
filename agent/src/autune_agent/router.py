@@ -2,6 +2,7 @@
 
 - ``POST /chat`` -- one chat turn: route, delegate, answer, record.
 - ``GET /runs`` -- a team's run timeline, newest first.
+- ``GET /research`` -- a meeting's research documents, by who may see which.
 
 Every route needs a signed-in member of the team it names. The layer answers on
 behalf of a team, so a non-member gets 403 rather than someone else's work.
@@ -24,7 +25,7 @@ from .config import get_agent_settings
 from .main.gemini import GeminiRouter
 from .main.router import Router
 from .main.store import run_and_record
-from .models import AgentRun
+from .models import AgentApprover, AgentResearchDocument, AgentRun
 from .results import Finding
 
 router = APIRouter()
@@ -88,6 +89,15 @@ class RunRead(BaseModel):
     created_at: datetime
 
 
+class ResearchRead(BaseModel):
+    id: str
+    meeting_id: str
+    status: str
+    body: str
+    created_at: datetime
+    decided_at: datetime | None
+
+
 @router.post("/chat", response_model=ChatReply)
 def chat(
     body: ChatRequest,
@@ -130,5 +140,32 @@ def list_runs(
             .where(AgentRun.team_id == team_id)
             .order_by(AgentRun.created_at.desc())
             .limit(limit)
+        )
+    )
+
+
+@router.get("/research", response_model=list[ResearchRead])
+def list_research(
+    user: CurrentUser, session: SessionDep, team_id: str, meeting_id: str
+) -> list[AgentResearchDocument]:
+    """Approved documents for any member; proposals too for a research approver."""
+    _require_member(session, team_id, user.id)
+    approver = session.scalar(
+        select(AgentApprover.user_id).where(
+            AgentApprover.team_id == team_id,
+            AgentApprover.user_id == user.id,
+            AgentApprover.scope.in_(("research", "any")),
+        )
+    )
+    visible = ("approved", "proposed") if approver else ("approved",)
+    return list(
+        session.scalars(
+            select(AgentResearchDocument)
+            .where(
+                AgentResearchDocument.team_id == team_id,
+                AgentResearchDocument.meeting_id == meeting_id,
+                AgentResearchDocument.status.in_(visible),
+            )
+            .order_by(AgentResearchDocument.created_at.desc())
         )
     )

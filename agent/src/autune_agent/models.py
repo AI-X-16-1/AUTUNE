@@ -150,3 +150,55 @@ class AgentApprover(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+
+
+RESEARCH_DOC = "rdoc"
+"""Id prefix for ``agent_research_documents``. Kept here rather than in
+``autune_core.ids`` so the layer adds no core change for its own table."""
+RESEARCH_STATUSES = ("proposed", "approved", "rejected")
+
+
+class AgentResearchDocument(Base):
+    """What Research wrote for one meeting (spec section 5). Masked text only."""
+
+    __tablename__ = "agent_research_documents"
+    __table_args__ = (
+        CheckConstraint(_in("status", RESEARCH_STATUSES), name="ck_agent_research_status"),
+    )
+
+    id: Mapped[str] = mapped_column(
+        String(64), primary_key=True, default=lambda: new_id(RESEARCH_DOC)
+    )
+    team_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("teams.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    meeting_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("meetings.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="proposed")
+    run_id: Mapped[str | None] = mapped_column(
+        String(64), ForeignKey("agent_runs.id", ondelete="SET NULL")
+    )
+    decided_by: Mapped[str | None] = mapped_column(
+        String(64), ForeignKey("users.id", ondelete="SET NULL")
+    )
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class AgentResearchSource(Base):
+    """Every meeting a document quotes. Deleting a row deletes the document (trigger)."""
+
+    __tablename__ = "agent_research_sources"
+
+    document_id: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("agent_research_documents.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    meeting_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("meetings.id", ondelete="CASCADE"), primary_key=True, index=True
+    )
