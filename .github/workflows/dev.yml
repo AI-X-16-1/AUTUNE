@@ -8,6 +8,12 @@ on:
 jobs:
   build:
     runs-on: self-hosted
+    # The runner's default shell is Windows PowerShell, and the host's
+    # execution policy refuses the .ps1 file the runner writes for each step.
+    # cmd has no execution policy.
+    defaults:
+      run:
+        shell: cmd
     steps:
 
       - name: Checkout repository
@@ -24,7 +30,7 @@ jobs:
           POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
           POSTGRES_DB: ${{ secrets.POSTGRES_DB }}
         run: |
-          docker version
+          docker version || exit /b 1
           docker compose -f infra/docker-compose.yml up -d --wait
 
       - name: Show services
