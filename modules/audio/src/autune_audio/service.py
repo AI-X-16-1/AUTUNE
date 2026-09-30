@@ -188,41 +188,29 @@ def create_team(
     owner: User,
     name: str,
     role: str | None = None,
-    invite_emails: list[str] | None = None,
 ) -> Team:
-    """S02: make a team, put its creator on it, and invite others by email.
+    """S02: make a team with its creator on it, and nobody else.
 
     **Why A.** ``teams`` and ``team_members`` are shared entities and invariant
     4 gives module A the write. Until this, a person who signed in with Google
     and belonged to no team could not open a meeting — ``POST /meetings`` takes
     a ``team_id`` — and the only thing that made teams was the dev-token route.
 
-    **An invitation is a membership, made now.** An address with no account
-    gets a ``users`` row with no ``google_sub``; Google sign-in adopts a row by
-    email (``autune_core.auth_service.upsert_user_from_google``), so the invited
-    person is on the team from their first sign-in. No email is sent — there is
-    no mail sender yet — and the screen says so. The creator's own address in
-    the list is skipped rather than refused: it is already a member.
-
-    ``invite_emails`` arrives lowercased and de-duplicated (``TeamCreate``).
+    **No invitations.** The first version of this took invited addresses and
+    made them members on the spot. Review of #539 showed why that cannot stand:
+    team membership is the read boundary for every module's team-level data,
+    so a membership nobody accepted let anyone be put on any team — learning
+    from the member list whether an address had an account and its real name,
+    and making the inviter's team the invitee's default for new meetings, with
+    no way to leave. An invitation has to be one the invitee accepts, and that
+    is its own change.
     """
     team = Team(name=name)
     session.add(team)
     session.flush()
     session.add(TeamMember(team_id=team.id, user_id=owner.id, role=role))
-
-    for email in invite_emails or []:
-        if email == owner.email.lower():
-            continue
-        invited = session.scalar(sa.select(User).where(sa.func.lower(User.email) == email))
-        if invited is None:
-            invited = User(email=email, display_name=email.split("@", 1)[0])
-            session.add(invited)
-            session.flush()
-        session.add(TeamMember(team_id=team.id, user_id=invited.id))
-
     session.flush()
-    log.info("team_created", team_id=team.id, invited=len(invite_emails or []))
+    log.info("team_created", team_id=team.id)
     return team
 
 

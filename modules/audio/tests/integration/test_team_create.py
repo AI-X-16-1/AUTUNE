@@ -1,14 +1,16 @@
-"""Creating a workspace (S02): a team, its creator's membership, and invitations.
+"""Creating a workspace (S02): a team with its creator on it, and nobody else.
 
 A person who signs in with Google and belongs to no team could do nothing: the
 create-meeting call takes a ``team_id`` and there was no way to make a team
 outside the dev-token route. ``POST /teams`` is that way. Teams and
 memberships are shared entities module A writes (invariant 4).
 
-An invitation is a membership for an email address. When the invited person
-has no account yet, a ``users`` row is made for the address; Google sign-in
-adopts a row by email (``upsert_user_from_google``), so the first time they
-sign in they are already on the team. No email is sent.
+**No invitations here, on purpose.** A first version added invited addresses
+as members at once, and review of #539 showed what that does: membership is
+the read boundary for every module's team-level data, so anyone could be put
+on a team without agreeing -- revealing whether they had an account and their
+real name through the member list, and making the inviter's team their
+default for new meetings. Invitations come back as ones the invitee accepts.
 """
 
 from __future__ import annotations
@@ -83,58 +85,27 @@ def test_the_new_team_is_listed_for_its_creator(client: TestClient) -> None:
     assert client.get("/api/audio/teams").json() == [{"team_id": team_id, "name": "검색 스쿼드"}]
 
 
-def test_an_invited_address_with_no_account_gets_one_on_the_team(
+@pytest.mark.parametrize("name", ["", "a", " ", "x" * 41])
+def test_a_name_outside_two_to_forty_characters_is_refused(client: TestClient, name: str) -> None:
+    assert client.post("/api/audio/teams", json={"name": name}).status_code == 422
+
+
+def test_invite_addresses_in_the_body_put_nobody_else_on_the_team(
     client: TestClient, db_session: Session
 ) -> None:
-    team_id = client.post(
-        "/api/audio/teams",
-        json={"name": "검색 스쿼드", "invite_emails": ["Lee.Dev@Corp.com"]},
-    ).json()["team_id"]
-
-    invited = db_session.scalar(sa.select(User).where(User.email == "lee.dev@corp.com"))
-    assert invited is not None
-    assert invited.google_sub is None
-    assert "lee.dev@corp.com" in _members(db_session, team_id)
-
-
-def test_an_invited_address_with_an_account_joins_without_a_second_row(
-    client: TestClient, db_session: Session
-) -> None:
+    """An older client that still sends ``invite_emails`` gets a team with only
+    its creator, and no ``users`` row is made for the address."""
     existing = User(email="choi@corp.com", display_name="최디자인")
     db_session.add(existing)
     db_session.flush()
 
     team_id = client.post(
         "/api/audio/teams",
-        json={"name": "검색 스쿼드", "invite_emails": ["choi@corp.com", "CHOI@corp.com"]},
+        json={"name": "검색 스쿼드", "invite_emails": ["choi@corp.com", "new@corp.com"]},
     ).json()["team_id"]
 
-    count = db_session.scalar(
-        sa.select(sa.func.count()).select_from(User).where(User.email == "choi@corp.com")
-    )
-    assert count == 1
-    assert set(_members(db_session, team_id)) == {"founder@example.com", "choi@corp.com"}
-
-
-def test_inviting_yourself_does_not_add_you_twice(client: TestClient, db_session: Session) -> None:
-    team_id = client.post(
-        "/api/audio/teams",
-        json={"name": "검색 스쿼드", "role": "Data", "invite_emails": ["founder@example.com"]},
-    ).json()["team_id"]
-
-    assert _members(db_session, team_id) == {"founder@example.com": "Data"}
-
-
-@pytest.mark.parametrize("name", ["", "a", " ", "x" * 41])
-def test_a_name_outside_two_to_forty_characters_is_refused(client: TestClient, name: str) -> None:
-    assert client.post("/api/audio/teams", json={"name": name}).status_code == 422
-
-
-def test_a_malformed_invite_address_is_refused(client: TestClient) -> None:
-    response = client.post(
-        "/api/audio/teams", json={"name": "검색 스쿼드", "invite_emails": ["not-an-email"]}
-    )
-    assert response.status_code == 422
+    assert _members(db_session, team_id) == {"founder@example.com": None}
+    assert db_session.scalar(sa.select(User).where(User.email == "new@corp.com")) is None
 
 
 def test_creating_a_team_without_a_token_is_refused(app_for) -> None:

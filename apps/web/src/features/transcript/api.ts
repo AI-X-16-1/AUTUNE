@@ -59,11 +59,8 @@ export const listMeetings = () => api.audio<MeetingSummary[]>("/meetings");
 /** The teams this person may open a meeting for. Feeds `createMeeting`. */
 export const listTeams = () => api.audio<TeamSummary[]>("/teams");
 
-/**
- * S02: make a workspace with this person on it. Invited addresses become
- * members now and join on their first Google sign-in; no email is sent.
- */
-export const createTeam = (body: { name: string; role?: string; invite_emails?: string[] }) =>
+/** S02: make a workspace with this person on it, and nobody else. */
+export const createTeam = (body: { name: string; role?: string }) =>
   api.audio<TeamSummary>("/teams", { method: "POST", body: JSON.stringify(body) });
 
 /**

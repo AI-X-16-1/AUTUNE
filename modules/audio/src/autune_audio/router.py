@@ -114,7 +114,6 @@ def create_team(body: TeamCreate, user: CurrentUser, session: SessionDep) -> Tea
         owner=user,
         name=body.name,
         role=body.role,
-        invite_emails=body.invite_emails,
     )
     return TeamSummary(team_id=team.id, name=team.name)
 

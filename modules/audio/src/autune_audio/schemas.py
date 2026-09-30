@@ -7,7 +7,6 @@ transcriber returns before speakers are attached.
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal
@@ -191,38 +190,24 @@ class MeetingSummary(BaseModel):
     started_at: datetime | None
 
 
-_EMAIL = r"^[^@\s]+@[^@\s]+\.[^@\s]+$"
-"""Shape-checked only, like the dev token route: ``EmailStr`` would pull in
-``email-validator`` for one field. Whether the address works is learned when
-its owner signs in with it."""
-
-
 class TeamCreate(BaseModel):
-    """S02: a workspace, the creator's job role, and who else is on it."""
+    """S02: a workspace and the creator's job role. Nobody else is added.
+
+    Invitations are not part of this: see ``service.create_team``. A body that
+    still carries ``invite_emails`` is accepted and the field ignored, as
+    Pydantic does with any unknown key.
+    """
 
     name: str = Field(min_length=2, max_length=40)
     """2-40 characters after trimming, the limit S02 states."""
     role: str | None = Field(default=None, min_length=1, max_length=50)
     """The creator's job role — PM, Backend, Design... Stored on their
     membership and used for role-level analytics only."""
-    invite_emails: list[str] = Field(default_factory=list, max_length=50)
 
     @field_validator("name", mode="before")
     @classmethod
     def _trim_name(cls, value: object) -> object:
         return value.strip() if isinstance(value, str) else value
-
-    @field_validator("invite_emails")
-    @classmethod
-    def _check_emails(cls, value: list[str]) -> list[str]:
-        normalised: list[str] = []
-        for raw in value:
-            email = raw.strip().lower()
-            if not re.match(_EMAIL, email) or len(email) > 320:
-                raise ValueError(f"not an email address: {raw!r}")
-            if email not in normalised:
-                normalised.append(email)
-        return normalised
 
 
 class TeamSummary(BaseModel):
