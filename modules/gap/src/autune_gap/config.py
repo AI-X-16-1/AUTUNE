@@ -178,6 +178,13 @@ class GapSettings(BaseSettings):
     of the ambiguous ones keep the embedding's own answer. A bound on how much of
     a meeting can leave, not a tuning knob."""
 
+    rescore_max_attempts: int = 5
+    """How many times in a row the periodic rescore tries one meeting at one
+    grouping of people before leaving it until the grouping moves again (#516).
+    Five tries is fifty minutes at the ten-minute sweep: enough for a provider
+    outage to pass, and a bound on the quota a meeting that always fails can
+    spend."""
+
 
 @lru_cache
 def get_settings() -> GapSettings:
