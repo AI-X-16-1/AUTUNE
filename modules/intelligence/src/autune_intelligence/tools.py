@@ -170,9 +170,11 @@ def recurring_gaps(session: Session, team_id: str) -> dict[str, Any]:
 
     Returns the team's gap patterns, most frequent first (at most five), each
     with a few of the high-severity gap titles behind it. Titles below high
-    severity are not quoted. A gap the team dismissed in C after the meeting
-    may still be quoted: C does not republish ``autune.gap.completed`` on a
-    dismissal, so E's stored payload never learns of it.
+    severity are not quoted. A gap the team dismissed in C after the meeting,
+    or one a template switch removed, drops out once C's republished
+    ``GapReport`` reaches E and the meeting is re-aggregated (#471). Until
+    then -- and, rarely, if two republishes arrive out of order or one is lost
+    (see C's ``republish_report``) -- it may still be quoted.
     """
     distribution = service.get_dashboard(session, team_id).gap_distribution
     if not distribution:
