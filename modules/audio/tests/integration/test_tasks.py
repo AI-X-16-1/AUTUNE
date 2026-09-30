@@ -1246,3 +1246,37 @@ def test_the_periodic_sweep_collects_what_no_upload_would_have(
     tasks.sweep_orphans()
 
     assert not leftover.exists()
+
+
+def test_the_steps_are_reported_in_the_order_they_run(
+    pipeline: dict,
+    job: str,
+    recording: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """S12's percentage is drawn from these. ``masking`` is reported after the
+    recording is gone -- `adopt` closes when diarization ends -- so the screen
+    can say the original is deleted by the time masking starts."""
+    reported: list[tuple[str, bool]] = []
+
+    class Recorder:
+        def __init__(self, job_id: str) -> None:
+            assert job_id == job
+
+        def stage(self, name: str) -> None:
+            reported.append((name, recording.exists()))
+
+        def update(self, fraction: float) -> None:
+            pass
+
+    monkeypatch.setattr(tasks, "ProgressReporter", Recorder)
+
+    tasks.process_recording(job)
+
+    assert reported == [
+        ("decoding", True),
+        ("transcribing", True),
+        ("diarizing", True),
+        ("masking", False),
+        ("saving", False),
+    ]

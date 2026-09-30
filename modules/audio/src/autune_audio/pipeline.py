@@ -10,6 +10,7 @@ timelines are joined afterwards, which is why nothing here mentions one.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -117,6 +118,7 @@ def _decode(
     settings: AudioSettings,
     model: WhisperModel | None = None,
     beam_size: int | None = None,
+    on_progress: Callable[[float], None] | None = None,
     **bias: Any,
 ) -> Transcription:
     """One pass over the waveform. ``bias`` is whatever steers the decoder.
@@ -137,20 +139,26 @@ def _decode(
         beam_size=beam_size if beam_size is not None else settings.beam_size,
         **bias,
     )
-    segments = tuple(
-        Segment(
-            start=s.start,
-            end=s.end,
-            text=s.text.strip(),
-            words=tuple(
-                Word(start=w.start, end=w.end, text=w.word.strip(), probability=w.probability)
-                for w in (s.words or ())
-            ),
+    # faster-whisper decodes lazily: each segment is produced as the loop
+    # reaches it, so where the last one ended over the audio's length is how
+    # far the pass has got. VAD-skipped silence makes it jump, never go back.
+    segments: list[Segment] = []
+    for s in segments_iter:
+        segments.append(
+            Segment(
+                start=s.start,
+                end=s.end,
+                text=s.text.strip(),
+                words=tuple(
+                    Word(start=w.start, end=w.end, text=w.word.strip(), probability=w.probability)
+                    for w in (s.words or ())
+                ),
+            )
         )
-        for s in segments_iter
-    )
+        if on_progress is not None and info.duration > 0:
+            on_progress(s.end / info.duration)
     return Transcription(
-        segments=segments,
+        segments=tuple(segments),
         language=info.language,
         language_probability=info.language_probability,
         duration=waveform.duration,
@@ -158,7 +166,11 @@ def _decode(
 
 
 def transcribe(
-    waveform: Waveform, *, language: str | None = "ko", glossary: str = ""
+    waveform: Waveform,
+    *,
+    language: str | None = "ko",
+    glossary: str = "",
+    on_progress: Callable[[float], None] | None = None,
 ) -> Transcription:
     """Transcribe a decoded waveform, retrying once if the decoder loops.
 
@@ -196,6 +208,7 @@ def transcribe(
         settings=settings,
         model=None,
         beam_size=None,
+        on_progress=on_progress,
         **_glossary_kwargs(glossary, settings.glossary_mode),
     )
     repetition = detect_repetition(transcription)
@@ -211,6 +224,7 @@ def transcribe(
             waveform,
             language=language,
             settings=settings,
+            on_progress=on_progress,
             condition_on_previous_text=False,
         )
         repetition = detect_repetition(transcription)
@@ -269,6 +283,9 @@ def transcribe_live(
         settings=settings,
         model=_live_model(),
         beam_size=settings.live_beam_size,
+        # Named, not left to the default: the glossary dict is splatted next
+        # to it, and a live segment reports no progress of its own.
+        on_progress=None,
         **_glossary_kwargs(glossary, settings.glossary_mode),
     )
     log_live_transcription(transcription)
