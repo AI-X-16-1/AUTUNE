@@ -70,6 +70,7 @@ from .oauth.slack import (
     SlackOAuthClient,
     SlackTeamNotConnectedError,
     SlackWrongWorkspaceError,
+    dm_open_url,
     get_slack_oauth_client,
 )
 from .oauth.state import STATE_TTL_SECONDS, OAuthTransaction, StateStore, get_state_store
@@ -1062,6 +1063,7 @@ _PENDING_KEYS = (
     "confirm_digest",
     "confirm_expires_at",
     "confirm_redirect_to",
+    "confirm_dm_url",
 )
 
 
@@ -1112,7 +1114,7 @@ def _finish_slack_identity(
         # may not reach and where the session cookie is not sent (#478 review).
         path = request.url_for("slack_identity_confirm").path
         link = _web_url(f"{path}?token={token}")
-        slack.send_link_confirmation(
+        dm_channel = slack.send_link_confirmation(
             bot,
             identity.user_id,
             "Autune에서 이 Slack 계정으로 개인 알림을 받겠다는 연결 요청이 왔습니다. "
@@ -1139,6 +1141,10 @@ def _finish_slack_identity(
                 "confirm_digest": _digest(token),
                 "confirm_expires_at": (datetime.now(UTC) + SLACK_CONFIRM_TTL).isoformat(),
                 "confirm_redirect_to": transaction.redirect_to,
+                # Where the screen's "open the DM in Slack" goes -- the DM, not
+                # the confirmation link: showing that link here would let this
+                # browser confirm an account it only borrowed.
+                "confirm_dm_url": dm_open_url(identity.team_id, dm_channel),
             },
         )
         log.info("auth_slack_identity_pending", user_id=transaction.user_id)
@@ -1253,9 +1259,15 @@ def slack_identity_status(
     linked = load_user_integration(session, user.id, "slack")
     if linked is None or not linked.config.get("slack_user_id"):
         # A link waiting for its confirmation DM is not a link yet.
+        config = linked.config if linked is not None else {}
+        expires = config.get("confirm_expires_at")
+        waiting = bool(config.get("pending_slack_user_id")) and bool(
+            expires and datetime.fromisoformat(str(expires)) > datetime.now(UTC)
+        )
         return {
             "linked": False,
-            "pending": bool(linked and linked.config.get("pending_slack_user_id")),
+            "pending": waiting,
+            "dm_url": config.get("confirm_dm_url") if waiting else None,
         }
     workspace = str(linked.config.get("slack_team_id") or "")
     return {

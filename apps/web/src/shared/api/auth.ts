@@ -322,6 +322,8 @@ export async function getSlackMe(): Promise<{
   linked: boolean;
   /** A link waiting for the Slack account to confirm it (#478). */
   pending?: boolean;
+  /** While pending: Slack's redirect that opens the confirmation DM. */
+  dm_url?: string | null;
   workspace_name?: string | null;
 } | null> {
   try {
@@ -332,6 +334,7 @@ export async function getSlackMe(): Promise<{
     return (await response.json()) as {
       linked: boolean;
       pending?: boolean;
+      dm_url?: string | null;
       workspace_name?: string | null;
     };
   } catch {

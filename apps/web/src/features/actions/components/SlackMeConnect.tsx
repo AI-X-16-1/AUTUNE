@@ -35,6 +35,9 @@ const PENDING =
 export function SlackMeConnect() {
   const [linked, setLinked] = useState<boolean | null>(null);
   const [pending, setPending] = useState(false);
+  // Slack's own redirect to the DM the bot just sent -- never the confirmation
+  // link itself: this browser may hold someone else's Slack session (#478).
+  const [dmUrl, setDmUrl] = useState<string | null>(null);
   const [workspace, setWorkspace] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
 
@@ -44,6 +47,7 @@ export function SlackMeConnect() {
       if (!alive || status === null) return;
       setLinked(status.linked);
       setPending(Boolean(status.pending));
+      setDmUrl(status.pending ? (status.dm_url ?? null) : null);
       setWorkspace(status.workspace_name ?? null);
       const url = new URL(window.location.href);
       const result = url.searchParams.get("slack_me");
@@ -110,6 +114,17 @@ export function SlackMeConnect() {
         >
           {note}
         </span>
+      ) : null}
+      {pending && dmUrl ? (
+        <a
+          href={dmUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-[var(--color-accent-default)] underline"
+          style={meta}
+        >
+          Slack에서 확인 DM 열기
+        </a>
       ) : null}
     </div>
   );
