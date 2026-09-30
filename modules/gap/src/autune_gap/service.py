@@ -357,9 +357,9 @@ def set_dismissed(session: Session, gap_id: str, reader: User, *, dismissed: boo
     function is not called here because its 404 names the *meeting*, which
     would tell a caller that the gap id they guessed is real.
 
-    It does not republish ``autune.gap.completed``, for the reason
-    ``set_template`` gives: E scored the meeting the pipeline produced, and a
-    judgement made on S20 afterwards does not rewrite that score.
+    It does not publish. The route commits the mark and then queues
+    ``autune.gap.publish_report``, so E stops quoting a gap the team has called
+    wrong (#471) — see ``republish_report``.
     """
     row = session.get(GapGap, gap_id)
     meeting = session.get(Meeting, row.meeting_id) if row is not None else None
@@ -513,17 +513,15 @@ def selected_template_key(session: Session, meeting_id: str) -> str:
 
 
 def set_template(session: Session, meeting_id: str, template_key: str) -> str:
-    """Point this meeting at a template and re-compare against it.
+    """Point this meeting at a template.
 
     ``get_template`` rejects a key no file defines, so the row that lands is
-    always resolvable. Detection runs again immediately — the alternative is a
-    screen where choosing a template appears to do nothing until the meeting is
-    reprocessed.
-
-    It does **not** republish ``autune.gap.completed``. E scores the meeting the
-    pipeline produced, and a template somebody is trying out on S20 should not
-    silently rewrite that; the endpoint returns the key and the report endpoint
-    shows the new gaps.
+    always resolvable. The route re-runs detection as soon as this commits —
+    the alternative is a screen where choosing a template appears to do nothing
+    until the meeting is reprocessed — and then queues
+    ``autune.gap.publish_report``, so E scores the meeting against the template
+    in force rather than the one it was first compared to (#316). Publishing
+    happens on the worker, not in the request: see ``republish_report``.
     """
     chosen = template.get_template(template_key)
 
@@ -569,12 +567,7 @@ def template_comparison(session: Session, meeting_id: str) -> TemplateComparison
     """
     chosen = template.get_template(selected_template_key(session, meeting_id))
 
-    analysed = (
-        session.scalar(
-            select(func.count()).select_from(GapTopic).where(GapTopic.meeting_id == meeting_id)
-        )
-        or 0
-    ) > 0
+    analysed = _analysed(session, meeting_id)
 
     raised = {
         row.template_item_key: row
@@ -604,6 +597,19 @@ def template_comparison(session: Session, meeting_id: str) -> TemplateComparison
         analysed=analysed,
         items=items,
     )
+
+
+def _analysed(session: Session, meeting_id: str) -> bool:
+    """Whether the pipeline has stored a topic graph for this meeting.
+
+    A run that extracted nothing stores no topics either, and reads the same
+    as no run at all. Nothing is lost by that: an empty graph raises no gaps
+    (``detect.compare``), so there is nothing on it to show or to republish.
+    """
+    count = session.scalar(
+        select(func.count()).select_from(GapTopic).where(GapTopic.meeting_id == meeting_id)
+    )
+    return (count or 0) > 0
 
 
 def _thresholds(settings: GapSettings) -> detect.Thresholds:
@@ -798,6 +804,36 @@ def publish_report(meeting_id: str) -> GapReport:
         gaps=len(report.gaps),
     )
     return report
+
+
+def republish_report(meeting_id: str) -> GapReport | None:
+    """Publish the meeting's ``GapReport`` again after S20 changed what it holds,
+    and return it — or ``None`` for a meeting the pipeline has not analysed.
+
+    A template switch or a dismissal rewrites ``gap_gaps`` after E has stored
+    the pipeline's report, and E scores the meeting and quotes gap titles from
+    what it stored (#316, #471). This sends the rows as they are now, and E
+    takes the latest payload for a meeting and re-aggregates it without
+    re-sending the personal DM.
+
+    **It never performs a first publish.** Choosing a template on a meeting
+    still in the pipeline, or one whose transcript never arrived, would
+    otherwise hand E an empty report and start E's timeout countdown for a
+    meeting B and D have not reached. The pipeline's own ``publish_report`` is
+    the first one.
+
+    Built from committed rows when it runs, not when it was queued, so two
+    changes in a row end with a publish of the second. Two workers taking the
+    pair out of order could still leave E with the older one: ``GapReport``
+    carries nothing E could order two payloads by, and adding that is a
+    contract change. ``autune.context.republish`` has the same exposure.
+    """
+    with session_scope() as session:
+        if not _analysed(session, meeting_id):
+            log.info("gap_report_republish_skipped", meeting_id=meeting_id)
+            return None
+
+    return publish_report(meeting_id)
 
 
 def build_report(session: Session, meeting_id: str) -> GapReport:

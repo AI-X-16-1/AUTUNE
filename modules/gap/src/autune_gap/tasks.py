@@ -12,6 +12,7 @@ from celery import shared_task
 from autune_contracts import TranscriptReady, validate_major_version
 from autune_core import get_logger
 from autune_gap import service
+from autune_gap.enqueue import PUBLISH_REPORT
 
 log = get_logger(__name__)
 
@@ -36,3 +37,12 @@ def on_transcript_ready(payload: dict) -> None:
     service.build_topic_graph(transcript)
     service.detect_gaps(transcript.meeting_id)
     service.publish_report(transcript.meeting_id)
+
+
+@shared_task(name=PUBLISH_REPORT, acks_late=True)
+def publish_report(meeting_id: str) -> None:
+    """Send E the report as S20 left it, after a template switch or a
+    dismissal (#316, #471). Queued by ``router``; see
+    ``service.republish_report``.
+    """
+    service.republish_report(meeting_id)

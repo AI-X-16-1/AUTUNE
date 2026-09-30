@@ -478,3 +478,62 @@ def test_the_embedder_reads_only_consenting_speech(team_id: str, fake_embedder: 
     service.detect_gaps(meeting_id)
 
     assert stored(meeting_id)["dependency"].coverage == "missing"
+
+
+# --- sending E the report again after S20 changed it (#316, #471) -----------
+
+
+@pytest.fixture
+def sent(monkeypatch: pytest.MonkeyPatch) -> list[dict]:
+    """What ``republish_report`` hands to ``publish``. E's task is not
+    registered here (invariant 2), so the send itself is replaced."""
+    captured: list[dict] = []
+
+    def capture(event: str, payload: dict) -> list[str]:
+        captured.append(payload)
+        return ["autune.intelligence.on_gap_completed"]
+
+    monkeypatch.setattr(service, "publish", capture)
+    return captured
+
+
+def test_a_dismissed_gap_leaves_the_report_e_is_sent_again(team_id: str, sent: list[dict]) -> None:
+    meeting_id = seed(team_id, COVERS_TWO)
+    service.detect_gaps(meeting_id)
+    dismissed = stored(meeting_id)["risk"].id
+    with session_scope() as s:
+        gap = s.get(GapGap, dismissed)
+        assert gap is not None
+        gap.dismissed_at = datetime.now(UTC)
+
+    report = service.republish_report(meeting_id)
+
+    assert report is not None
+    assert len(sent) == 1
+    assert dismissed not in {gap["id"] for gap in sent[0]["gaps"]}
+    assert len(sent[0]["gaps"]) == 2
+
+
+def test_a_template_switch_reaches_e_as_the_new_checklist(team_id: str, sent: list[dict]) -> None:
+    meeting_id = seed(team_id, COVERS_TWO)
+    service.detect_gaps(meeting_id)
+    with session_scope() as s:
+        service.set_template(s, meeting_id, "feature_planning")
+    service.detect_gaps(meeting_id)
+
+    service.republish_report(meeting_id)
+
+    items = {item.item for item in get_template("feature_planning").items}
+    assert sent[0]["gaps"]
+    assert {gap["template_item"] for gap in sent[0]["gaps"]} <= items
+
+
+def test_a_meeting_the_pipeline_has_not_analysed_is_not_published(
+    team_id: str, sent: list[dict]
+) -> None:
+    """A first publish would start E's countdown for a meeting B and D have
+    not reached."""
+    meeting_id = seed(team_id, {})
+
+    assert service.republish_report(meeting_id) is None
+    assert sent == []

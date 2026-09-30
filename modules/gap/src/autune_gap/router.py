@@ -23,9 +23,10 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from autune_contracts.gap import GapReport
-from autune_core import CurrentUser, get_session
+from autune_core import CurrentUser, User, get_session
 
 from . import service
+from .enqueue import enqueue_publish_report
 from .schemas import (
     GapDismissal,
     TemplateComparison,
@@ -86,8 +87,11 @@ def dismiss_gap(gap_id: str, session: SessionDep, reader: CurrentUser) -> GapDis
     Named by the gap rather than the meeting, so the membership check is the
     service's: an unknown gap and a gap on another team's meeting are the same
     404 — see ``service.set_dismissed``.
+
+    E is sent the report again, so a gap the team called wrong stops being
+    quoted and scored (#471).
     """
-    return service.set_dismissed(session, gap_id, reader, dismissed=True)
+    return _dismiss(session, gap_id, reader, dismissed=True)
 
 
 @router.delete("/gaps/{gap_id}/dismiss", response_model=GapDismissal)
@@ -98,7 +102,20 @@ def undo_dismiss_gap(gap_id: str, session: SessionDep, reader: CurrentUser) -> G
     way to correct it is a row nobody can see — and the mistake would sit in the
     data threshold tuning reads.
     """
-    return service.set_dismissed(session, gap_id, reader, dismissed=False)
+    return _dismiss(session, gap_id, reader, dismissed=False)
+
+
+def _dismiss(session: Session, gap_id: str, reader: User, *, dismissed: bool) -> GapDismissal:
+    """Set the mark, commit it, then queue the republish.
+
+    Committed here rather than left to ``get_session``, which commits after the
+    route returns: a worker that picked the task up first would publish the
+    report as it was before the mark.
+    """
+    result = service.set_dismissed(session, gap_id, reader, dismissed=dismissed)
+    session.commit()
+    enqueue_publish_report(result.meeting_id)
+    return result
 
 
 @router.get("/templates", response_model=list[TemplateRead])
@@ -148,7 +165,7 @@ def set_meeting_template(
     """Point this meeting at a template, and re-compare against it.
 
     The gaps on ``/reports/{meeting_id}`` reflect the new template as soon as
-    this returns. It does not republish ``autune.gap.completed`` — see
+    this returns, and E is sent the report again on the worker — see
     ``service.set_template``.
 
     One of the writes under ``/api/gap``, with the dismissal routes above: the
@@ -164,5 +181,6 @@ def set_meeting_template(
     # Without this the re-comparison would run against the previous template.
     session.commit()
     service.detect_gaps(meeting_id)
+    enqueue_publish_report(meeting_id)
 
     return TemplateSelection(template_key=chosen)
