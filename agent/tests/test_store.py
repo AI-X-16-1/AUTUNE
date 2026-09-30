@@ -101,7 +101,9 @@ def test_a_run_about_no_meeting_keeps_no_text(session: Session, team: dict[str, 
     assert "김 팀장" not in stored
 
 
-def test_a_run_about_a_meeting_keeps_its_text(session: Session, team: dict[str, str]) -> None:
+def test_a_run_about_a_meeting_keeps_no_text_either(session: Session, team: dict[str, str]) -> None:
+    """Its answer may quote another meeting of the team, which the cascade from
+    this one would not delete (#449 review)."""
     row, _ = run_and_record(
         "업무",
         session=session,
@@ -113,8 +115,9 @@ def test_a_run_about_a_meeting_keeps_its_text(session: Session, team: dict[str, 
         tools=TOOLS,
     )
 
-    assert row.answer == "알림을 제안합니다."
-    assert row.proposed[0]["title"] == "김 팀장에게 마감 알림"
+    assert row.answer is None
+    assert "title" not in row.proposed[0]
+    assert "김 팀장" not in repr([row.steps, row.proposed, row.actions])
 
 
 def test_the_budget_stops_the_run_and_keeps_the_trace(

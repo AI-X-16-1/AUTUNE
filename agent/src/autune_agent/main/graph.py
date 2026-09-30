@@ -42,6 +42,7 @@ def build_main_graph(
     tools: Mapping[str, Tool],
     budget: CallBudget,
     scope: RunScope,
+    route_to: str | None = None,
 ) -> Any:
     refuse_tracing()
     compiled: dict[str, CompiledSubagent] = {
@@ -51,7 +52,8 @@ def build_main_graph(
     options = {name: sub.description for name, sub in subagents.items()}
 
     def route(state: MainState) -> MainState:
-        name = router.route(state["request"], options)
+        # A trigger names its subagent; only a chat message is routed by a model.
+        name = route_to if route_to is not None else router.route(state["request"], options)
         return {"route": name if name in compiled else None}
 
     def delegate(state: MainState) -> MainState:
@@ -91,6 +93,7 @@ def run(
     subagents: Mapping[str, Subagent] | None = None,
     tools: Mapping[str, Tool] | None = None,
     budget: CallBudget | None = None,
+    route_to: str | None = None,
 ) -> MainState:
     """One chat turn or one trigger, start to finish.
 
@@ -104,6 +107,7 @@ def run(
         tools=collect_tools() if tools is None else tools,
         budget=budget or CallBudget(),
         scope=scope,
+        route_to=route_to,
     )
     state: MainState = graph.invoke({"request": request})
     return state

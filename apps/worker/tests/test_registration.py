@@ -88,3 +88,13 @@ def test_the_rule_holds_for_every_event_and_consumer(task_names: set[str]) -> No
     reachable = {n for n in task_names if n.rsplit(".", 1)[-1] in set(by_event.values())}
     on_tasks = {n for n in task_names if n.rsplit(".", 1)[-1].startswith("on_")}
     assert reachable == on_tasks
+
+
+@pytest.mark.parametrize(
+    "task_name", ["autune.agent.on_transcript_ready", "autune.agent.on_intelligence_completed"]
+)
+def test_the_agent_layer_listens_on_the_default_queue(task_name: str, task_names: set[str]) -> None:
+    """The one task module included by name (ADR 0010, monorepo.md section 1).
+    A woken run reads through tools, so it is not compute-bound work."""
+    assert task_name in task_names
+    assert celery_app.amqp.router.route({}, task_name)["queue"].name == "default"
