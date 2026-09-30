@@ -12,13 +12,15 @@ from __future__ import annotations
 import inspect
 from typing import Any
 
+from autune_agent.research_store import save_research_document, share_research_document
+
 from .actions import Action
 from .registry import Tool, ToolContractError, is_personal_only
 
 PREFIX = "agent"
 
-TOOLS: list[Any] = []
-ACTIONS: list[Any] = []
+TOOLS: list[Any] = [save_research_document]
+ACTIONS: list[Any] = [share_research_document]
 L1_ACTIONS: list[Any] = []
 
 
@@ -39,9 +41,10 @@ def collect_own_actions() -> dict[str, Action]:
     stray = [fn.__name__ for fn in L1_ACTIONS if fn not in ACTIONS]
     if stray:
         raise ToolContractError(f"own L1_ACTIONS not in ACTIONS: {', '.join(stray)}")
-    return {
-        f"{PREFIX}.{fn.__name__}": Action(
-            name=f"{PREFIX}.{fn.__name__}", fn=fn, level="L1" if fn in L1_ACTIONS else "L2"
-        )
-        for fn in ACTIONS
-    }
+    actions: dict[str, Action] = {}
+    for fn in ACTIONS:
+        if is_personal_only(fn.__name__):
+            raise ToolContractError(f"{PREFIX}.{fn.__name__} looks personal-only")
+        name = f"{PREFIX}.{fn.__name__}"
+        actions[name] = Action(name=name, fn=fn, level="L1" if fn in L1_ACTIONS else "L2")
+    return actions

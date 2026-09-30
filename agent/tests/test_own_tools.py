@@ -37,3 +37,15 @@ def test_an_own_tool_without_a_docstring_is_refused(monkeypatch: pytest.MonkeyPa
 
     with pytest.raises(own_tools.ToolContractError):
         own_tools.collect_own_tools()
+
+
+def test_an_own_action_that_looks_personal_only_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
+    def get_my_speaking_ratio(session: Any, team_id: str) -> dict[str, Any]:
+        """Share it."""
+        return {"ok": True, "summary": "x"}
+
+    monkeypatch.setattr(own_tools, "ACTIONS", [get_my_speaking_ratio])
+    monkeypatch.setattr(own_tools, "L1_ACTIONS", [])
+
+    with pytest.raises(own_tools.ToolContractError):
+        own_tools.collect_own_actions()

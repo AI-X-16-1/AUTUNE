@@ -14,8 +14,14 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
-from autune_agent.models import AgentApprover, AgentRun, AgentWorkItem
-from autune_core import Base, Meeting, Team, TeamMember, User
+from autune_agent.models import (
+    AgentApprover,
+    AgentResearchDocument,
+    AgentResearchSource,
+    AgentRun,
+    AgentWorkItem,
+)
+from autune_core import Base, Meeting, Team, TeamMember, User, Utterance
 
 TABLES = [
     Team.__table__,
@@ -25,6 +31,9 @@ TABLES = [
     AgentWorkItem.__table__,
     AgentRun.__table__,
     AgentApprover.__table__,
+    Utterance.__table__,
+    AgentResearchDocument.__table__,
+    AgentResearchSource.__table__,
 ]
 
 
