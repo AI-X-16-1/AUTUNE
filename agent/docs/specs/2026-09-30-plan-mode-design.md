@@ -56,7 +56,7 @@ not allow. Section 8 is updated to say this (PR C).
    - Any earlier `pending` proposal with the same subagent and the same
      `meeting_id` becomes `superseded`. A proposal about no meeting supersedes
      nothing.
-2. **List.** `GET /api/agent/pending?team_id=` returns the pending proposals
+2. **List.** `GET /api/agent/pending` returns the pending proposals
    the caller may approve, each with a preview (section 6).
 3. **Approve.** `POST /api/agent/pending/{id}/approve` re-checks the caller,
    rebuilds the run's scope (`RunScope(team_id, meeting_id)` from the row), and
@@ -118,11 +118,11 @@ scope `any` approves everything in the team.
 
 | Route | Who | Returns |
 | --- | --- | --- |
-| `GET /api/agent/pending?team_id=` | any member | pending rows whose scope the caller holds, newest first, each with `preview`; an empty list for a member who is no approver |
+| `GET /api/agent/pending` (optional `team_id`) | any signed-in user | pending rows in every team where the caller is an approver with the row's scope (or only `team_id`'s when given), newest first, each with `preview`; an empty list for a non-approver |
 | `POST /api/agent/pending/{id}/approve` | an approver with the row's scope or `any` | the row after execution |
 | `POST /api/agent/pending/{id}/reject` `{reason}` | same | the row |
 
-A non-member gets 403. An id of another team, or one that does not exist, is
+With `team_id`, a non-member gets 403; without it there is nothing to refuse — the list is the caller's own approver rows. The approvals page calls it without `team_id`, so the agent feature needs no other feature's endpoint for a team list. An id of another team, or one that does not exist, is
 404, and the response never echoes it. A row that is no longer `pending` is
 409.
 
