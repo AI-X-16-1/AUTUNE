@@ -21,7 +21,7 @@ from autune_agent.results import ProposedAction
 from .actions import ARGUMENT_REFUSED
 
 _ID = re.compile(r"[a-z]+_[A-Za-z0-9]+")
-_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
+_DATE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
 _ENUM = re.compile(r"[a-z_]{1,32}")
 
 SCOPES = {
@@ -34,7 +34,9 @@ SCOPES = {
 
 def arguments_ok(arguments: Mapping[str, Any]) -> bool:
     """Ids, ISO dates, booleans and short lowercase enums; nothing else."""
-    for value in arguments.values():
+    for key, value in arguments.items():
+        if not _ENUM.fullmatch(key):
+            return False
         if isinstance(value, bool):
             continue
         if not isinstance(value, str):

@@ -47,6 +47,10 @@ def _l2(tool: str, **arguments: Any) -> ProposedAction:
         ({"description": "김 팀장이 금요일까지 배포"}, False),
         ({"status": "x" * 33}, False),
         ({"ids": ["act_1"]}, False),
+        ({"김 팀장이 금요일까지 배포": True}, False),
+        ({"Status": "in_progress"}, False),
+        ({"k" * 33: True}, False),
+        ({"due_date": "٢٠٢٦-١٠-٠٩"}, False),
     ],
 )
 def test_only_ids_and_short_values_pass(arguments: dict[str, Any], ok: bool) -> None:
