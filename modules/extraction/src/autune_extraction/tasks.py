@@ -166,6 +166,49 @@ def on_transcript_ready(payload: dict) -> None:
     publish(EXTRACTION_COMPLETED, result.model_dump(mode="json"))
 
 
+@shared_task(name="autune.extraction.periodic.fill_identified_assignees")
+@periodic(timedelta(minutes=10))
+def fill_identified_assignees() -> list[str]:
+    """Items whose speaker was identified after extraction get that person as
+    their assignee (#360; ``service.fill_identified_assignees``). Returns the
+    items' ids.
+
+    Then, after the commit, what a board edit of the assignee would do: each
+    changed meeting's ``ExtractionResult`` is published again, so D and E see
+    the assignee, and an item already confirmed goes through
+    ``sync_after_confirmation`` -- its Notion page names the person, and a due
+    date goes on their own calendar.
+
+    Every ten minutes because identifying a speaker is a person on a screen,
+    and a run that finds nothing is one query. Safe to overlap: the update is
+    conditional on the assignee still being empty, so a second run changes
+    nothing the first did.
+    """
+    with session_scope() as session:
+        filled = service.fill_identified_assignees(session)
+        confirmed = [
+            item.id for item in filled if item.status != ActionStatus.NEEDS_CONFIRMATION.value
+        ]
+        results = {
+            meeting_id: service.result_for_meeting(session, meeting_id)
+            for meeting_id in sorted({item.meeting_id for item in filled})
+        }
+        filled_ids = [item.id for item in filled]
+
+    for result in results.values():
+        publish(EXTRACTION_COMPLETED, result.model_dump(mode="json"))
+    for action_item_id in confirmed:
+        sync_after_confirmation(action_item_id)
+    # Ids and counts only: the assignee is a person.
+    log.info(
+        "extraction_assignees_filled",
+        items=len(filled_ids),
+        meetings=len(results),
+        synced=len(confirmed),
+    )
+    return filled_ids
+
+
 @shared_task(name="autune.extraction.sync_action_item", acks_late=True)
 def sync_action_item(action_item_id: str) -> None:
     """Step 7 for one item past confirmation: create its Notion page the

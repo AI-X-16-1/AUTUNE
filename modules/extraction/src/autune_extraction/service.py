@@ -1183,6 +1183,75 @@ def team_roster(session: Session, meeting_id: str) -> list[str]:
     )
 
 
+# --- a speaker identified after extraction (#360) ------------------------------
+
+
+def fill_identified_assignees(session: Session) -> list[ExtActionItem]:
+    """Give an item its speaker's account once A has identified the speaker.
+
+    A commitment by an unidentified speaker is drafted with only the label
+    ("Speaker 2", ``slots.assignee_of``). When somebody later confirms who that
+    was, A fills ``participants.user_id``, and nothing announces it -- #360
+    settled on consumers reading it back rather than on a new event. This
+    finds the model's items still holding only a label whose source utterances
+    all belong to one identified, consenting participant, and sets that
+    account as the assignee, clearing the label, as a fresh extraction would.
+
+    **A person's choice is never overwritten.** An item whose assignee a person
+    has edited -- set, cleared or relabelled -- is left alone, and the update
+    is conditional on ``assignee_id`` still being empty, so an edit committed
+    while this ran wins. No ``ext_edit_events`` row: that table counts a
+    person's corrections (ADR 0006), and this is neither.
+
+    Returns the items it changed.
+    """
+    assignee_edited = (
+        select(ExtEditEvent.id)
+        .where(
+            ExtEditEvent.action_item_id == ExtActionItem.id,
+            ExtEditEvent.fields.like("%assignee%"),
+        )
+        .exists()
+    )
+    rows = session.execute(
+        select(ExtActionItem.id, Participant.user_id)
+        .join(ExtActionItemSource, ExtActionItemSource.action_item_id == ExtActionItem.id)
+        .join(Utterance, Utterance.id == ExtActionItemSource.utterance_id)
+        .join(Participant, Participant.id == Utterance.participant_id)
+        .join(User, User.id == Participant.user_id)
+        .where(
+            ExtActionItem.assignee_id.is_(None),
+            ExtActionItem.assignee_label.is_not(None),
+            ExtActionItem.origin == "model",
+            Participant.consented.is_(True),
+            ~assignee_edited,
+        )
+    ).all()
+    speakers: dict[str, set[str]] = {}
+    for item_id, user_id in rows:
+        speakers.setdefault(item_id, set()).add(user_id)
+
+    filled: list[ExtActionItem] = []
+    for item_id, users in sorted(speakers.items()):
+        if len(users) != 1:
+            # Sources spoken by two people: whose promise it is was never the
+            # speaker's alone, and a person decides.
+            continue
+        (user_id,) = users
+        changed = session.scalar(
+            update(ExtActionItem)
+            .where(ExtActionItem.id == item_id, ExtActionItem.assignee_id.is_(None))
+            .values(assignee_id=user_id, assignee_label=None)
+            .returning(ExtActionItem.id)
+        )
+        if changed is None:
+            continue
+        item = session.get(ExtActionItem, item_id, populate_existing=True)
+        if item is not None:
+            filled.append(item)
+    return filled
+
+
 def classify_utterances(
     classifier: Classifier,
     utterances: Sequence[TranscriptUtterance],

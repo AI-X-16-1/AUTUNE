@@ -134,6 +134,16 @@ which is what makes a redelivered task safe. The one exception is the draft:
 once a person has edited anything in the meeting, a rerun leaves its items
 alone, because ADR 0006 makes the list theirs to finish.
 
+**A speaker identified after the run (#360).** A commitment by an unidentified
+speaker keeps only the label ("Speaker 2"). When A later fills
+`participants.user_id`, nothing announces it, so every ten minutes
+`fill_identified_assignees` gives each model item still holding only a label
+the account of the one identified, consenting speaker behind its sources, and
+clears the label. An item whose assignee a person has edited is left alone,
+and so is one whose sources two people spoke. A changed meeting's
+`ExtractionResult` is published again, and a confirmed item is synced as a
+board edit would be.
+
 `ext_action_items.due_text` is the phrase a model item's due date was read from,
 for S18. It is cleared when a person sets the date themselves: the phrase no
 longer explains the value (#109).
