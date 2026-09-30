@@ -4,6 +4,12 @@ This is the engineering-facing summary of the product plan. Pricing, go-to-marke
 market sizing, and revenue projections are deliberately omitted — they do not
 affect implementation decisions. Ask the product owner if you need them.
 
+> **The direction changed on #260 (closed 2026-09-29).** Sections 2, 5.7, 7,
+> 10, 11 and 14 below carry the agent layer, marked `#260` where it differs from
+> what the team agreed in W1. Modules A–E, their contracts and their six-week
+> scope are **unchanged** by it. Design: `../architecture/agent-layer.md`.
+> Placement: ADR 0010.
+
 ---
 
 ## 1. Problem
@@ -30,17 +36,28 @@ tracking, and gap detection are entirely manual.
 
 ## 2. Product
 
-> One meeting recording in — automatic tracking of who committed to what, plus
-> the discussions that were missed.
+> Work that started in a meeting, followed until it is finished.
 
-Autune covers the full meeting lifecycle:
+**Since #260.** The product is not the meeting. A meeting is one input
+channel; the product is the **life of a work item born in one** — a commitment,
+a decision, an unanswered question, a gap. Autune's job is to carry that item
+from the sentence that created it to the moment it is resolved, and to push
+when it stops moving.
+
+This reading of the name is the wider one: Autune (Auto + Attune) tunes
+mismatched communication *and* stalled work.
+
+The modules do not change under it. A–E become the **senses** that produce work
+items; the agent layer (`../architecture/agent-layer.md`) is the body that
+carries them. Everything in the table below is still what the modules do:
 
 | Phase | What Autune does |
 | --- | --- |
-| Before | Analyze uploaded material → draft agenda → pre-meeting brief (Phase 2) |
+| Before | Analyze uploaded material → draft agenda (Phase 2) → pre-meeting brief (5.7) |
 | During | Real-time transcription, interim summaries, undecided-item alerts (Phase 2) |
 | After | Action extraction and tracking, gap detection, context linking, personal speaking-ratio feedback, Slack/Notion delivery |
 | Over time | Decision lineage, dashboard, influence map, topic linking |
+| **Continuously (#260)** | **Track every open work item, wake up when one stalls, gather what a stuck decision is missing, and escalate — with a person approving anything that moves another person** |
 
 ## 3. Users
 
@@ -100,8 +117,9 @@ reports) → VP/CTO (dashboard).
   automatically — "this came up in the meeting on 2026-09-04" with a link.
 - **Decision lineage:** track how a single decision mutated across meetings as a
   timeline; warn when it changed while a key stakeholder was absent.
-- **Pre-meeting brief:** 30 minutes before a meeting, send incomplete actions,
-  unresolved gaps, and a decision-lineage summary to Slack (Phase 2).
+- **Pre-meeting brief:** 10 minutes before a meeting, send the previous
+  meeting's summary and the issues this one should settle to Slack. In the MVP
+  as the Briefing subagent (#260, 5.7); it goes out through D.
 
 ### 5.5 Intelligence dashboard (E)
 - Meeting quality score (A–F) trend.
@@ -120,12 +138,62 @@ reports) → VP/CTO (dashboard).
 - Purpose is self-calibration, not measurement. This is a hard product
   constraint; see `../architecture/privacy.md`.
 
-### 5.7 Proactive agent (Phase 2)
+### 5.7 Agent layer (in the MVP — #260)
+
+A chat assistant that moves first: it tells the team what is due and what is
+stuck before anyone asks, and answers questions about any meeting the team has
+held. One **main agent** talks to people and routes; five **subagents**, one
+per feature and one owner each, do the work. Design and ownership:
+`../architecture/agent-layer.md` section 3.
+
+| Subagent | Owner | What the user gets |
+| --- | --- | --- |
+| Main agent | 김민경 | A chat that answers from every meeting, and a morning briefing of what is due and what is stuck — the top five, not everything |
+| Research | 김민경 | When a meeting floats an idea or argues over a fact nobody could confirm, a short document of what is known, proposed to the people involved during or right after the meeting |
+| Briefing | 문민재 | Ten minutes before a meeting, the previous meeting's summary and the issues this one should settle (Jira links only if #82 brings Jira back) |
+| Follow-up | 박재경 | When progress and unresolved topics say another meeting is needed, a proposal to the team lead only |
+| Workload | 강민구 | When one person is overloaded and another is free, a redistribution proposal to the manager only; Gmail, Google Calendar and Jira integration (Jira per #82) |
+| Report | 이승환 | After a meeting, the summary minutes report |
+
+What holds for all of them:
+
+- **Work-item state.** Every action, gap, open question and decision gets a row
+  that outlives the meeting, carrying status, owner, deadline, confidence and
+  the utterances it came from.
+- **Waking up.** On a schedule, when a meeting finishes, and when an item's own
+  `next_check_at` comes due.
+- **Nothing acts on a person without approval.** Grades L0–L3 in
+  `../architecture/agent-layer.md` section 8. Anything that moves a person — a
+  message, a calendar event, a reassignment — goes through plan mode and a
+  person approves it item by item. The lead's and the manager's proposals *are*
+  that approval request.
+- **Workload reads work, never speech.** Counts of open and late items, as a
+  manager already sees on a task board — never a speaking ratio or a per-person
+  participation figure (5.6, `../architecture/privacy.md` section 3).
+- **Follow-up reads topics, never people or roles.** A topic's silent share
+  and the gaps nobody dismissed — not participation per role, which in a team
+  with one person per role is participation per person.
+- **Research reads what we hold.** Uploaded material and past meetings.
+  Open-web search is out of scope for the release
+  (`../architecture/agent-layer.md` section 13.3).
+- **Nothing goes out except through its owner.** A module sends what it owns —
+  B the confirmation DM and Notion page, D the brief, E the report and the
+  speaking ratio — and a subagent sends what only it wrote, through
+  `packages/integrations`.
+- **Nothing acts on a low-confidence or unreviewed signal.** The agent reads the
+  owning module's own confidence and review state and asks a person rather than
+  acting when either falls short. Everything from B is a candidate and stays
+  internal until a person confirms it.
+- **The team writes the standard.** A short charter — what a meeting must
+  settle, who must be in the room — is the checklist gap detection runs
+  against and the policy the agent follows.
+
+Still Phase 2, unchanged:
+
 - Meeting-room discovery and booking through the company system or Microsoft
   Teams API; learn occupancy patterns and recommend open slots.
-- Predict that a meeting is needed — when unresolved gaps pass a threshold or
-  action items approach their deadline — then propose a time from participants'
-  calendars and book it.
+- Booking a meeting without a person approving it. Follow-up proposes; a lead
+  books.
 
 ## 6. Privacy and legal compliance
 
@@ -182,7 +250,20 @@ Implementation rules: `../architecture/privacy.md`.
                  └──────────┘
 ```
 
-Detail: `../architecture/async-pipeline.md`.
+Since #260 — an optional layer on top. The pipeline above is unchanged and
+keeps running if this is switched off:
+
+```
+  triggers ──→ ┌────────────┐ ──→ subagents: Research · Briefing · Follow-up
+  (schedule,   │ Main agent │                 Workload · Report
+   event,      │  + chat    │ ──→ tools over [A][B][C][D][E]
+   state,      └─────┬──────┘ ──→ actions, L2+ gated by approval
+   chat)             │
+                     ▼
+     agent_work_items · agent_runs · agent_approvers
+```
+
+Detail: `../architecture/async-pipeline.md`, `../architecture/agent-layer.md`.
 
 ## 8. AI stack per module
 
@@ -207,8 +288,9 @@ keep the team building real models rather than prompt chains.
 | Database | PostgreSQL | Structured data and history |
 | Vector search | pgvector, inside PostgreSQL | Embedding search, topic matching, material retrieval — no separate service |
 | Slack | Bolt for Python | Bot framework |
-| External | Notion API, Google Calendar API | Action item and schedule sync |
-| Infra | Railway / AWS with GPU instances | STT inference |
+| External | Notion API, Google Calendar API, Gmail API (proposed); Jira pending #82 | Action item, schedule and mail sync |
+| Agent (#260) | LangGraph, Gemini | Supervisor graph over five subagents; plan-mode interrupt. `../architecture/agent-layer.md` section 3.3 |
+| Infra | Vercel (frontend); a self-hosted desktop server (RTX 3060) running Docker Compose behind Cloudflare Tunnel (backend) | STT inference on our own GPU; HTTPS and WebSocket without opening a port |
 | Desktop (Phase 2) | Electron | System audio capture |
 
 ## 10. Roadmap
@@ -222,6 +304,23 @@ keep the team building real models rather than prompt chains.
 | W5 | Dashboard + internal beta on 5–10 real meetings. Model tuning | Real-meeting E2E validation |
 | W6 | Bug fixes, performance, landing page, demo video, pitch deck | Deployable MVP |
 
+Since #260 — the agent layer runs alongside the rows above, not instead of
+them, on the dates the mentor set: base features running end to end by 9/30,
+development closed on 10/12. Every owner builds one subagent and keeps their
+module's `tools.py`; the main agent's owner builds the loop they run in.
+
+| By | Main agent (김민경) | Subagent owners |
+| --- | --- | --- |
+| 10/1 | `agent/` skeleton with mock tools and one mock subagent (#432) | agree Calendar and Jira needs with 강민구 |
+| 10/5 | state tables, chat endpoint, run timeline | real `tools.py`; subagent on mock tools |
+| 10/9 | plan mode, approval screen, triggers, morning briefing | subagent end to end on one real meeting |
+| 10/12 | demo of all five | fixes only |
+
+**Gate, 10/9:** a subagent that does not run end to end on a real meeting is
+left out of the demo. If the chat and the morning briefing do not run, the
+fixed pipeline is what gets presented. One finished thing beats five
+half-built ones. Detail: `../architecture/agent-layer.md` section 14.
+
 ## 11. MVP scope
 
 **In the 6-week MVP:** recording upload; STT + diarization + live transcript;
@@ -229,10 +328,18 @@ automatic PII masking; immediate raw-audio deletion; action item extraction and
 tracking; Notion integration; gap detection; Slack integration; past-topic
 linking; basic decision lineage; personal speaking-ratio DM; basic dashboard.
 
-**Phase 2:** material upload → agenda generation; pre-meeting brief; influence
-map; desktop app; role-specific summaries; in-meeting undecided-item alerts;
-action automation; proactive agent (room booking, meeting-need prediction);
-advanced dashboard and decision lineage.
+**Added by #260, and no larger:** the main agent with chat and the
+morning briefing; five subagents — Research, Briefing, Follow-up, Workload,
+Report (5.7); work-item state with self-scheduled checks; the L0–L3 action
+permission model with approval on anything that moves a person. Explicitly
+*not* in it: a subagent per module, a subagent calling another, web search,
+sending mail, and autonomous external writes.
+
+**Phase 2:** material upload → agenda generation; influence map; desktop app;
+role-specific summaries; in-meeting undecided-item alerts; action automation;
+room booking and booking without approval; advanced dashboard and decision
+lineage. The pre-meeting brief and meeting-need prediction moved into the
+addition above as Briefing and Follow-up.
 
 Do not build Phase 2 features during the six weeks. If a Phase 2 feature seems
 necessary to make an MVP feature work, that is a scoping conversation, not an
@@ -272,7 +379,7 @@ able to report it on demand from an evaluation script in their module's
 | Gap detection false positives | Medium | Threshold tuning from feedback. Only HIGH severity shown by default |
 | Topic mis-linking | Medium | Cross-encoder re-ranking + user confirmation UI |
 | GPU cost | Medium | whisper.cpp CPU inference + batch processing |
-| Six weeks is not enough | Medium | Explicit MVP scope. Briefs and influence map are deprioritized |
+| Six weeks is not enough | Medium | Explicit MVP scope. Influence map is deprioritized; a subagent not running end to end by 10/9 is left out of the demo |
 | Privacy legal exposure | High | No raw retention + PII masking + retention limits + user deletion |
 
 ## 14. Differentiation
@@ -283,3 +390,14 @@ Autune covers the entire meeting lifecycle, links context across meetings, and
 protects personal data by design. The moat is a data network effect: the more
 meetings accumulate, the more accurate context linking, gap patterns, and
 prediction become.
+
+Since #260 — two differences that are about behaviour rather than coverage:
+
+- **The record is not the deliverable.** Competitors end at an artefact a person
+  must then act on. Autune keeps the work item after the meeting is forgotten
+  and pushes when it stalls.
+- **It knows what it does not know.** Every derived item carries a confidence,
+  and below the threshold the system asks a person instead of acting. An
+  assistant that is honest about a weak signal is more useful than one that is
+  confidently wrong — and every judgement it made is replayable from
+  `agent_runs`.
