@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from typing import Any
 
 import pytest
 from fastapi import FastAPI
@@ -10,7 +11,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from autune_agent import router as routes
-from autune_agent.models import AgentRun
+from autune_agent.models import AgentApprover, AgentResearchDocument, AgentRun
 from autune_agent.testing import FakeRouter
 from autune_core import AutuneError, User, current_user, get_session
 
@@ -93,3 +94,43 @@ def test_without_a_key_the_layer_says_so(
     assert reply.status_code == 500
     assert "AUTUNE_AGENT_LLM_API_KEY" in reply.text
     routes.get_agent_settings.cache_clear()
+
+
+def _doc(session: Session, team: dict[str, str], status: str) -> str:
+    doc = AgentResearchDocument(
+        team_id=team["team"], meeting_id=team["meeting"], body=f"{status} 본문", status=status
+    )
+    session.add(doc)
+    session.commit()
+    return doc.id
+
+
+def _research(client: TestClient, team: dict[str, str]) -> Any:
+    return client.get(
+        "/api/agent/research", params={"team_id": team["team"], "meeting_id": team["meeting"]}
+    )
+
+
+def test_a_member_sees_approved_documents_only(
+    member: TestClient, session: Session, team: dict[str, str]
+) -> None:
+    _doc(session, team, "approved")
+    _doc(session, team, "proposed")
+
+    assert [d["status"] for d in _research(member, team).json()] == ["approved"]
+
+
+def test_a_research_approver_also_sees_proposals(
+    member: TestClient, session: Session, team: dict[str, str]
+) -> None:
+    session.add(AgentApprover(team_id=team["team"], user_id=team["member"], scope="research"))
+    session.commit()
+    _doc(session, team, "proposed")
+
+    assert [d["status"] for d in _research(member, team).json()] == ["proposed"]
+
+
+def test_research_is_refused_to_a_non_member(session: Session, team: dict[str, str]) -> None:
+    outsider = _client(session, team["outsider"], chat_router=FakeRouter())
+
+    assert _research(outsider, team).status_code == 403
