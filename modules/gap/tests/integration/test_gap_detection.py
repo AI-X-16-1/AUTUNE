@@ -19,13 +19,15 @@ from datetime import UTC, datetime
 import pytest
 from sqlalchemy import delete, select
 
-from autune_core import Meeting, Participant, Team, Utterance, session_scope
+from autune_core import Meeting, Participant, Team, User, Utterance, session_scope
+from autune_core.errors import PrivacyViolationError
 from autune_gap import service
 from autune_gap.config import get_settings
 from autune_gap.models import (
     GapGap,
     GapMeetingTemplate,
     GapParticipation,
+    GapScoring,
     GapTopic,
     GapTopicEdge,
 )
@@ -402,6 +404,196 @@ def test_the_override_goes_when_the_meeting_does(team_id: str) -> None:
 
     with session_scope() as s:
         assert s.get(GapMeetingTemplate, meeting_id) is None
+
+
+# --- a speaker confirmed after scoring (#415) --------------------------------
+
+
+@pytest.fixture
+def rescore_sent(monkeypatch: pytest.MonkeyPatch) -> list[dict]:
+    """What the rescore hands to ``publish``. E's task is not registered here
+    (invariant 2), so the send itself is replaced."""
+    captured: list[dict] = []
+
+    def capture(event: str, payload: dict) -> list[str]:
+        captured.append(payload)
+        return ["autune.intelligence.on_gap_completed"]
+
+    monkeypatch.setattr(service, "publish", capture)
+    return captured
+
+
+@pytest.fixture
+def user_id(db_engine: object) -> Iterator[str]:
+    with session_scope() as s:
+        row = User(email="gap-rescore@example.com", display_name="rescore")
+        s.add(row)
+        s.flush()
+        uid = row.id
+    yield uid
+    with session_scope() as s:
+        s.execute(delete(User).where(User.id == uid))
+
+
+def split_voice(team_id: str) -> tuple[str, list[str]]:
+    """One person diarization split into two labels: on "리스크", the partial
+    finding's topic, one label spoke and the other did not. Returns the meeting
+    and its participant ids."""
+    meeting_id = seed(team_id, {**COVERS_TWO, "리스크": 0.1})
+    with session_scope() as s:
+        people = list(
+            s.scalars(
+                select(Participant.id)
+                .where(Participant.meeting_id == meeting_id)
+                .order_by(Participant.speaker_label)
+            )
+        )
+        risk = s.scalar(
+            select(GapTopic.id).where(GapTopic.meeting_id == meeting_id, GapTopic.label == "리스크")
+        )
+        row = s.scalar(
+            select(GapParticipation).where(
+                GapParticipation.topic_id == risk, GapParticipation.participant_id == people[0]
+            )
+        )
+        assert row is not None
+        row.spoke = True
+    return meeting_id, people
+
+
+def confirm(participant_ids: list[str], user_id: str) -> None:
+    """What module A writes when somebody confirms who a speaker is."""
+    with session_scope() as s:
+        for participant_id in participant_ids:
+            participant = s.get(Participant, participant_id)
+            assert participant is not None
+            participant.user_id = user_id
+
+
+def test_scoring_records_the_grouping_it_read(team_id: str) -> None:
+    meeting_id = seed(team_id, COVERS_TWO)
+
+    service.detect_gaps(meeting_id)
+
+    with session_scope() as s:
+        assert s.get(GapScoring, meeting_id) is not None
+
+
+def test_a_meeting_with_no_topics_records_no_scoring(team_id: str) -> None:
+    """So the rescore never publishes a meeting the pipeline has not."""
+    meeting_id = seed(team_id, {})
+
+    service.detect_gaps(meeting_id)
+
+    with session_scope() as s:
+        assert s.get(GapScoring, meeting_id) is None
+
+
+def test_a_confirmed_speaker_rescores_the_stored_gap(
+    team_id: str, user_id: str, rescore_sent: list[dict]
+) -> None:
+    """Two labels confirmed as one person: that person spoke on the topic, so
+    the stored risk must stop counting half the room as silent on it, and
+    match what a fresh detection over the same rows stores."""
+    meeting_id, people = split_voice(team_id)
+    service.detect_gaps(meeting_id)
+    before = stored(meeting_id)["risk"].risk_score
+
+    confirm(people, user_id)
+    rescored = service.rescore_where_people_changed()
+
+    after = stored(meeting_id)["risk"].risk_score
+    assert meeting_id in rescored
+    assert after < before
+    assert meeting_id in {payload["meeting_id"] for payload in rescore_sent}
+    service.detect_gaps(meeting_id)
+    assert stored(meeting_id)["risk"].risk_score == after
+
+
+def test_a_rescored_meeting_is_not_rescored_again(
+    team_id: str, user_id: str, rescore_sent: list[dict]
+) -> None:
+    meeting_id, people = split_voice(team_id)
+    service.detect_gaps(meeting_id)
+    confirm(people, user_id)
+    service.rescore_where_people_changed()
+
+    assert meeting_id not in service.rescore_where_people_changed()
+
+
+def test_a_meeting_whose_people_did_not_move_is_left_alone(
+    team_id: str, rescore_sent: list[dict]
+) -> None:
+    meeting_id = seed(team_id, COVERS_TWO)
+    service.detect_gaps(meeting_id)
+
+    assert meeting_id not in service.rescore_where_people_changed()
+    assert meeting_id not in {payload["meeting_id"] for payload in rescore_sent}
+
+
+def test_a_rescore_keeps_a_dismissal(team_id: str, user_id: str, rescore_sent: list[dict]) -> None:
+    meeting_id, people = split_voice(team_id)
+    service.detect_gaps(meeting_id)
+    with session_scope() as s:
+        gap = s.get(GapGap, stored(meeting_id)["risk"].id)
+        assert gap is not None
+        gap.dismissed_at = datetime.now(UTC)
+
+    confirm(people, user_id)
+    service.rescore_where_people_changed()
+
+    assert stored(meeting_id)["risk"].dismissed_at is not None
+
+
+def test_a_privacy_violation_on_rescore_is_raised_after_the_rest(
+    team_id: str, user_id: str, rescore_sent: list[dict], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#506 review: the verifier raises ``PrivacyViolationError`` on purpose, and
+    the rescore's catch-all turned it into a warning every ten minutes. The
+    other meetings are still rescored; then the sweep fails with ids only."""
+    first, first_people = split_voice(team_id)
+    second, second_people = split_voice(team_id)
+    service.detect_gaps(first)
+    service.detect_gaps(second)
+    confirm(first_people + second_people, user_id)
+    # The sweep goes in id order, so the first call is the leaking meeting.
+    leaking, fine = sorted([first, second])
+
+    real_hear = service._hear
+    calls: list[int] = []
+
+    def hear(chosen, speech, settings):  # type: ignore[no-untyped-def]
+        calls.append(1)
+        if len(calls) == 1:
+            raise PrivacyViolationError("unmasked 010-1234-5678 in a verifier request")
+        return real_hear(chosen, speech, settings)
+
+    monkeypatch.setattr(service, "_hear", hear)
+
+    with pytest.raises(PrivacyViolationError) as raised:
+        service.rescore_where_people_changed()
+
+    assert leaking in str(raised.value)
+    assert "010" not in str(raised.value)
+    assert {payload["meeting_id"] for payload in rescore_sent} == {fine}
+
+
+def test_a_rerun_that_leaves_no_topics_forgets_the_scoring(
+    team_id: str, user_id: str, rescore_sent: list[dict]
+) -> None:
+    """#506 review: a row left at the old grouping would disagree forever, and
+    rerun and republish the meeting every ten minutes."""
+    meeting_id, people = split_voice(team_id)
+    service.detect_gaps(meeting_id)
+    with session_scope() as s:
+        s.execute(delete(GapTopic).where(GapTopic.meeting_id == meeting_id))
+
+    service.detect_gaps(meeting_id)
+    confirm(people, user_id)
+
+    with session_scope() as s:
+        assert s.get(GapScoring, meeting_id) is None
+    assert meeting_id not in service.rescore_where_people_changed()
 
 
 # --- speech read by meaning ---------------------------------------------------

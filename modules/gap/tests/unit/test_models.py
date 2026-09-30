@@ -18,6 +18,7 @@ from autune_gap.models import (
     GapMeetingTemplate,
     GapParticipation,
     GapRelatedTopic,
+    GapScoring,
     GapTopic,
     GapTopicEdge,
     GapTopicUtterance,
@@ -31,6 +32,7 @@ ALL_TABLES: tuple[Table, ...] = (
     GapGap.__table__,
     GapRelatedTopic.__table__,
     GapMeetingTemplate.__table__,
+    GapScoring.__table__,
 )
 
 

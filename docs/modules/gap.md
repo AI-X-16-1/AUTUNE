@@ -842,6 +842,7 @@ gaps off a transcript nothing was read out of.
 | PostgreSQL `gap_gaps` | Detected gaps, category, coverage, severity, risk score, question |
 | PostgreSQL `gap_related_topics` | Which topics a gap was inferred from |
 | PostgreSQL `gap_meeting_template` | Which template one meeting is compared against, when somebody chose one |
+| PostgreSQL `gap_scorings` | A digest of who counted as one person when a meeting's gaps were last scored |
 | PostgreSQL `gap_templates` | Domain templates and their items — **not built, and not needed**, see below |
 
 Everything that exists cascades from `meetings.id`, so no deletion hook is
@@ -863,6 +864,42 @@ threshold tuning has to read what was dismissed, and soft deletes are forbidden
 (`../architecture/data-model.md`). No dismisser is recorded: which teammate
 pressed the button is not something tuning needs, and storing it would be a
 per-person record of conduct that ADR 0003 refuses.
+
+### A speaker confirmed after scoring — `gap_scorings`
+
+A gap's risk reads how much of the room was silent on a topic, and who is one
+person comes from `participants.user_id`: two diarization labels that share a
+user are one person, and having spoken as either counts as having spoken.
+Module A fills `user_id` when somebody confirms a speaker (#370), which can be
+long after the gaps were scored. `build_report` recomputes participation on
+every read, but the stored `risk_score` and `severity` do not, so the report
+could show a person who spoke next to a gap scored on their silence (#415).
+
+A confirmation publishes no event (#360 settled on consumers re-reading), so
+`detect_gaps` records a digest of the participant → person grouping it scored
+against, and `autune.gap.periodic.rescore_changed_people` compares it against
+the participants every ten minutes. A meeting whose grouping moved is detected
+again and its `GapReport` republished. Gap ids and dismissals survive, as on any
+re-run. A consent withdrawal moves the grouping too and is picked up the same
+way.
+
+- **A digest, not the grouping.** A comparison needs nothing more, and a digest
+  cannot be read back into who was merged with whom.
+- **Only a meeting with a topic graph gets a row**, so the rescore never sends E
+  a first report for a meeting the pipeline has not published. A re-run that
+  leaves no graph deletes the row, so it is not rescored every ten minutes
+  against a grouping it can never record.
+- **A privacy violation fails the sweep.** A meeting that fails otherwise is
+  logged by id and retried on the next run. A `PrivacyViolationError` from the
+  verifier is a broken invariant (`pipeline/base.py`). The sweep finishes the
+  other meetings, then raises it with the meeting ids and never the value.
+- **No retry cap yet.** A meeting that keeps failing is retried every ten
+  minutes. With a hosted verifier, that spends its quota each time.
+- **No backfill.** A meeting scored before the table existed has no row and is
+  left alone until its detection runs again. Speaker confirmation landed days
+  earlier, so few meetings have a `user_id` to be stale about.
+- **Naming a speaker who merges with nobody does not rescore.** It changes no
+  silent share.
 
 ### Templates are files, so `gap_templates` never had to be built
 
@@ -1023,6 +1060,7 @@ polls them every five seconds while the rail says `analysed: false`.
 | --- | --- | --- |
 | `autune.gap.on_transcript_ready` | `autune.transcript.ready` | `cpu_heavy` |
 | `autune.gap.publish_report` | `PUT /templates/{meeting_id}`, `POST`/`DELETE /gaps/{id}/dismiss` | `cpu_heavy` |
+| `autune.gap.periodic.rescore_changed_people` | every 10 minutes | `cpu_heavy` |
 
 ## Slack surface
 
