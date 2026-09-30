@@ -277,3 +277,31 @@ def test_a_rerun_makes_nothing_for_an_agreement_answered_otherwise(session: Sess
     rerun(session, kind=UtteranceKind.AMBIGUOUS)
 
     assert items(session) == []
+
+
+@pytest.mark.parametrize("said", [UtteranceKind.CONCERN, UtteranceKind.DECISION])
+def test_a_rerun_that_still_reads_a_commitment_does_not_undo_the_speakers_no(
+    session: Session, said: UtteranceKind
+) -> None:
+    """#529 review: the speaker said "not a commitment", which took the draft
+    back. The classifier still calls the line a commitment on the next rerun;
+    the speaker's answer outranks it, so no item comes back."""
+    seed(session)
+    service.resolve_confirmation(session, answer(UtteranceKind.COMMITMENT))
+    service.resolve_confirmation(session, answer(said))
+    assert items(session) == []
+
+    rebuilt = rerun(session, kind=UtteranceKind.COMMITMENT)
+
+    assert rebuilt == []
+    assert items(session) == []
+
+
+def test_a_rerun_still_drafts_a_commitment_nobody_was_asked_about(session: Session) -> None:
+    """Only an answer holds a commitment back: a row still waiting for one does
+    not."""
+    seed(session)
+
+    rebuilt = rerun(session, kind=UtteranceKind.COMMITMENT)
+
+    assert rebuilt is not None and len(rebuilt) == 1

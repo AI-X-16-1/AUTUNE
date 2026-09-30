@@ -245,8 +245,18 @@ def resolve_confirmation(
     DM went out, so no row means the meeting was deleted underneath it. Creating
     one here would write meeting-scoped data back after the cascade that was
     meant to remove it.
+
+    **The row is locked for the rest of the transaction.** The draft below is
+    looked up before it is inserted, and nothing unique stops a second insert
+    for the same utterance. A click landing while a rerun rebuilds the
+    meeting's items could not see the rerun's uncommitted item and would make
+    its own, and E would count the promise twice (#529 review);
+    ``build_action_items`` takes the same locks, so one waits for the other. A
+    Slack retry already waited behind the first answer's update of this row,
+    but only because autoflush sends that update before the lookup -- the lock
+    says it outright.
     """
-    row = session.get(ExtConfirmation, response.utterance_id)
+    row = session.get(ExtConfirmation, response.utterance_id, with_for_update=True)
     if row is None:
         log.info("extraction_confirmation_orphaned", utterance_id=response.utterance_id)
         return None
@@ -1878,6 +1888,19 @@ def build_action_items(
         else set()
     )
 
+    # Locked before anything is deleted, in one order, so a speaker's click on
+    # this meeting's DM waits for the rebuild or the rebuild for the click --
+    # never both writing a draft (``resolve_confirmation``).
+    answers = {
+        row.utterance_id: row.resolved_kind
+        for row in session.scalars(
+            select(ExtConfirmation)
+            .where(ExtConfirmation.meeting_id == meeting_id)
+            .order_by(ExtConfirmation.utterance_id)
+            .with_for_update()
+        )
+    }
+
     for stale in session.scalars(
         select(ExtActionItem).where(
             ExtActionItem.meeting_id == meeting_id, ExtActionItem.origin == "model"
@@ -1888,6 +1911,12 @@ def build_action_items(
     items = []
     for utterance in classified:
         if utterance.kind is not UtteranceKind.COMMITMENT:
+            continue
+        answer = answers.get(utterance.id)
+        if answer is not None and answer != UtteranceKind.COMMITMENT.value:
+            # Its speaker said it was not a promise. ``withdraw_confirmed_draft``
+            # took the item back; a rerun that still reads a commitment must not
+            # bring it back (#529 review).
             continue
         said = spoken[utterance.id]
         assignee = assignee_of(said.speaker_id, said.speaker, known=known)
