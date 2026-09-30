@@ -60,6 +60,13 @@ export const listMeetings = () => api.audio<MeetingSummary[]>("/meetings");
 export const listTeams = () => api.audio<TeamSummary[]>("/teams");
 
 /**
+ * S02: make a workspace with this person on it. Invited addresses become
+ * members now and join on their first Google sign-in; no email is sent.
+ */
+export const createTeam = (body: { name: string; role?: string; invite_emails?: string[] }) =>
+  api.audio<TeamSummary>("/teams", { method: "POST", body: JSON.stringify(body) });
+
+/**
  * Open a meeting before there is any audio for it (S06, the file-upload path).
  *
  * `started_at` is when the meeting happened, and leaving it out is not free:

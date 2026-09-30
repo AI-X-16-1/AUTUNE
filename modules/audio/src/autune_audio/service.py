@@ -182,6 +182,50 @@ def teams_for(session: Session, *, member: User) -> list[Team]:
     )
 
 
+def create_team(
+    session: Session,
+    *,
+    owner: User,
+    name: str,
+    role: str | None = None,
+    invite_emails: list[str] | None = None,
+) -> Team:
+    """S02: make a team, put its creator on it, and invite others by email.
+
+    **Why A.** ``teams`` and ``team_members`` are shared entities and invariant
+    4 gives module A the write. Until this, a person who signed in with Google
+    and belonged to no team could not open a meeting — ``POST /meetings`` takes
+    a ``team_id`` — and the only thing that made teams was the dev-token route.
+
+    **An invitation is a membership, made now.** An address with no account
+    gets a ``users`` row with no ``google_sub``; Google sign-in adopts a row by
+    email (``autune_core.auth_service.upsert_user_from_google``), so the invited
+    person is on the team from their first sign-in. No email is sent — there is
+    no mail sender yet — and the screen says so. The creator's own address in
+    the list is skipped rather than refused: it is already a member.
+
+    ``invite_emails`` arrives lowercased and de-duplicated (``TeamCreate``).
+    """
+    team = Team(name=name)
+    session.add(team)
+    session.flush()
+    session.add(TeamMember(team_id=team.id, user_id=owner.id, role=role))
+
+    for email in invite_emails or []:
+        if email == owner.email.lower():
+            continue
+        invited = session.scalar(sa.select(User).where(sa.func.lower(User.email) == email))
+        if invited is None:
+            invited = User(email=email, display_name=email.split("@", 1)[0])
+            session.add(invited)
+            session.flush()
+        session.add(TeamMember(team_id=team.id, user_id=invited.id))
+
+    session.flush()
+    log.info("team_created", team_id=team.id, invited=len(invite_emails or []))
+    return team
+
+
 _ACCEPTS_A_RECORDING = frozenset({"scheduled", "failed", "recording"})
 """Meeting statuses a recording may be submitted for.
 
