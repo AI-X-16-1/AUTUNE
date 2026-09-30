@@ -1,5 +1,6 @@
 import { AppSidebar } from "../_components/AppSidebar";
 import { AppTopBar } from "../_components/AppTopBar";
+import { SessionGate } from "../_components/SessionGate";
 
 /**
  * The app shell every design file is drawn in: a 200px paper sidebar beside a
@@ -25,15 +26,17 @@ import { AppTopBar } from "../_components/AppTopBar";
  */
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   return (
-    <div
-      className="grid min-h-screen bg-[var(--color-surface-paper)]"
-      style={{ gridTemplateColumns: "var(--space-sidebar) minmax(0, 1fr)" }}
-    >
-      <AppSidebar />
-      <div className="flex min-w-0 flex-col bg-[var(--color-surface-panel)]">
-        <AppTopBar />
-        <div className="min-w-0 flex-1">{children}</div>
+    <SessionGate>
+      <div
+        className="grid min-h-screen bg-[var(--color-surface-paper)]"
+        style={{ gridTemplateColumns: "var(--space-sidebar) minmax(0, 1fr)" }}
+      >
+        <AppSidebar />
+        <div className="flex min-w-0 flex-col bg-[var(--color-surface-panel)]">
+          <AppTopBar />
+          <div className="min-w-0 flex-1">{children}</div>
+        </div>
       </div>
-    </div>
+    </SessionGate>
   );
 }

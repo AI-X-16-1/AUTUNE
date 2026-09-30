@@ -44,6 +44,7 @@ function sectionTitle(pathname: string): string {
   if (pathname === "/") return "홈";
   if (pathname === "/meetings/new") return "새 회의";
   if (pathname.startsWith("/meetings/")) return "회의";
+  if (pathname.startsWith("/decisions")) return "결정 계보";
   if (pathname.startsWith("/dev-")) return "개발용 미리보기";
   return "";
 }

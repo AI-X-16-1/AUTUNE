@@ -148,19 +148,22 @@ export function LiveRail({
         </dl>
       )}
 
-      <div className="flex items-center gap-2">
+      {/* Two equal 40px halves across the rail, as S13 draws them: the
+          controls someone reaches for mid-meeting, sized to be hit without
+          looking. */}
+      <div className="flex items-center gap-1">
         {state === "recording" ? (
-          <Button tone="secondary" size="compact" onClick={onPause}>
+          <Button tone="secondary" className="flex-1" onClick={onPause}>
             일시정지
           </Button>
         ) : null}
         {state === "paused" ? (
-          <Button tone="secondary" size="compact" onClick={onResume}>
+          <Button tone="secondary" className="flex-1" onClick={onResume}>
             이어서 녹음
           </Button>
         ) : null}
         {state === "ended" ? null : (
-          <Button tone="primary" size="compact" onClick={onStop}>
+          <Button tone="primary" className="flex-1" onClick={onStop}>
             녹음 종료
           </Button>
         )}

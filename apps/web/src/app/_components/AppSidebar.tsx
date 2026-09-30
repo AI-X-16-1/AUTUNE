@@ -3,9 +3,8 @@
 import type { Route } from "next";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useState } from "react";
 
-import { getSession, type SessionUser } from "@/shared/api/auth";
+import { useSessionUser } from "./SessionGate";
 
 /**
  * The left column every design file draws: 200px of paper, the wordmark, one
@@ -40,7 +39,7 @@ const NAV: NavItem[] = [
   { label: "회의", href: "/", isCurrent: (p) => p.startsWith("/meetings") },
   { label: "액션아이템" },
   { label: "갭 리포트" },
-  { label: "결정 계보" },
+  { label: "결정 계보", href: "/decisions", isCurrent: (p) => p.startsWith("/decisions") },
   { label: "자료", phase2: true },
   { label: "대시보드" },
 ];
@@ -154,19 +153,4 @@ function NavEntry({ item, current }: { item: NavItem; current: boolean }) {
       {item.label}
     </Link>
   );
-}
-
-/** The signed-in person, once known. Nothing is drawn until then. */
-function useSessionUser(): SessionUser | null {
-  const [user, setUser] = useState<SessionUser | null>(null);
-  useEffect(() => {
-    let cancelled = false;
-    void getSession().then((session) => {
-      if (!cancelled) setUser(session);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-  return user;
 }
