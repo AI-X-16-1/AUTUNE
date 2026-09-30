@@ -52,6 +52,7 @@ def tools_for(
     matches: list[dict[str, Any]] | None = None,
     recent: list[dict[str, Any]] | None = None,
     calls: list[str] | None = None,
+    saved: dict[str, Any] | None = None,
 ) -> dict[str, Tool]:
     log = [] if calls is None else calls
     qs = (
@@ -95,7 +96,7 @@ def tools_for(
         session: Any, team_id: str, meeting_id: str, body: str, utterance_ids: list[str]
     ) -> dict[str, Any]:
         log.append(SAVE)
-        return {"ok": True, "summary": "저장", "evidence": ["rdoc_1"]}
+        return saved or {"ok": True, "summary": "저장", "evidence": ["rdoc_1"]}
 
     return {
         OVERVIEW: _tool(OVERVIEW, overview),
@@ -293,3 +294,46 @@ def test_a_privacy_refusal_from_the_writer_fails_the_run(session, team) -> None:
             team_id=team["team"],
             meeting=team["meeting"],
         )
+
+
+def test_a_refused_save_ends_without_a_proposal(session, team) -> None:
+    refused = {
+        "ok": False,
+        "reason": "source changed",
+        "summary": "인용한 발언이 바뀌어 저장하지 않았습니다.",
+        "confidence": 0.0,
+    }
+
+    outcome = invoke(
+        tools_for(saved=refused),
+        FakeWriter(),
+        session=session,
+        team_id=team["team"],
+        meeting=team["meeting"],
+    )
+
+    assert outcome.result.ok is False
+    assert outcome.result.reason == "source changed"
+    assert outcome.proposed == []
+
+
+def test_the_writer_gets_the_meeting_of_a_quote_but_never_its_speaker(session, team) -> None:
+    writer = FakeWriter()
+    quote = {
+        "title": "2026-09-23 리뷰 · 배포 · 00:03 김팀장",
+        "body": "금요일 배포",
+        "id": "utt_p1",
+        "meeting_id": "mtg_past",
+    }
+
+    invoke(
+        tools_for(matches=[quote]),
+        writer,
+        session=session,
+        team_id=team["team"],
+        meeting=team["meeting"],
+    )
+
+    [match] = writer.written[0]["matches"]
+    assert match.title == "2026-09-23 리뷰 · 배포"
+    assert "김팀장" not in match.title

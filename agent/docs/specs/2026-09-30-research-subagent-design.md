@@ -164,8 +164,9 @@ anyone spoke (invariant 11, #361).
   source meeting deletes the document**; `GET /research` shows `proposed` only
   to a research approver.
 - **End to end** (10/6–10/8): one real recording through A–E; the document is
-  `proposed`; approving it through the API before the approval screen exists
-  shows it on the card.
+  `proposed`; until plan mode lands there is no approval endpoint, so approval
+  is a direct `share_research_document` call from a Python shell (plan Task 10
+  step 4), after which the card shows it.
 
 ## 7. Delivery
 

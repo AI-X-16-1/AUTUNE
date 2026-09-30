@@ -29,21 +29,27 @@ def save_research_document(
 
     Keeps ``body`` as the meeting's one proposed document, replacing an earlier
     proposal that nobody has decided on. Its sources are the meetings of
-    ``utterance_ids`` within this team, and the meeting itself.
+    ``utterance_ids`` and the meeting itself. Refuses, writing nothing, when any
+    of ``utterance_ids`` no longer exists or is not this team's.
     """
     if not body.strip():
         return _refused("empty document", "빈 문서는 저장하지 않습니다.")
     meeting = session.get(Meeting, meeting_id)
     if meeting is None or meeting.team_id != team_id:
         return _refused("meeting not found", "그 회의를 찾을 수 없습니다.")
-    quoted = set(
-        session.scalars(
-            sa.select(Utterance.meeting_id)
-            .join(Meeting, Meeting.id == Utterance.meeting_id)
-            .where(Utterance.id.in_(list(utterance_ids)), Meeting.team_id == team_id)
-        )
-    )
-    sources = quoted | {meeting_id}
+    wanted = set(utterance_ids)
+    found = session.execute(
+        sa.select(Utterance.id, Utterance.meeting_id)
+        .join(Meeting, Meeting.id == Utterance.meeting_id)
+        .where(Utterance.id.in_(list(wanted)), Meeting.team_id == team_id)
+    ).all()
+    if len(found) < len(wanted):
+        # Fail closed: an id that is gone (its meeting was reprocessed or deleted
+        # since the search) or belongs to another team would leave its words in
+        # the body without its meeting as a source, and the document would
+        # outlive that meeting.
+        return _refused("source changed", "인용한 발언이 바뀌어 저장하지 않았습니다.")
+    sources = {m for _, m in found} | {meeting_id}
     doc = session.scalars(
         sa.select(AgentResearchDocument).where(
             AgentResearchDocument.meeting_id == meeting_id,

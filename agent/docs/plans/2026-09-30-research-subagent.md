@@ -132,9 +132,7 @@ def test_team_search_skips_non_consented_speakers_and_the_excluded_meeting(
     assert result["items"] == []
 
 
-def test_team_search_ignores_meetings_older_than_the_window(
-    db_session: Session, team: str
-) -> None:
+def test_team_search_ignores_meetings_older_than_the_window(db_session: Session, team: str) -> None:
     old = _past_meeting(db_session, team, "석 달 전", 120)
     who = _participant(db_session, old, "SPEAKER_00", consented=True)
     _say(db_session, old, who, 1.0, "배포")
@@ -212,7 +210,9 @@ def search_team_meetings(
         matched = matched.where(Meeting.id != exclude_meeting_id)
     count = session.scalar(sa.select(sa.func.count()).select_from(matched.subquery())) or 0
     if not count:
-        return _result(summary="팀의 다른 회의에서 일치하는 발언이 없습니다.", items=[], evidence=[])
+        return _result(
+            summary="팀의 다른 회의에서 일치하는 발언이 없습니다.", items=[], evidence=[]
+        )
     rows = session.execute(
         matched.order_by(when.desc(), Utterance.start_sec).limit(MAX_ITEMS)
     ).all()
@@ -592,9 +592,9 @@ def test_an_approved_document_is_never_overwritten(session: Session, team: dict[
 def test_sharing_another_teams_document_reads_as_missing(
     session: Session, team: dict[str, str]
 ) -> None:
-    doc_id = save_research_document(session, team["team"], team["meeting"], "본문", [])[
-        "evidence"
-    ][0]
+    doc_id = save_research_document(session, team["team"], team["meeting"], "본문", [])["evidence"][
+        0
+    ]
 
     result = share_research_document(session, "team_other", doc_id)
 
@@ -1316,7 +1316,9 @@ class FakeWriter:
     def terms(self, questions: Sequence[str]) -> list[str]:
         return self._terms
 
-    def write(self, *, meeting_title: str, questions: Sequence[str], matches: Sequence[Match]) -> str:
+    def write(
+        self, *, meeting_title: str, questions: Sequence[str], matches: Sequence[Match]
+    ) -> str:
         if self.fail:
             raise WriterError("empty document")
         self.written.append({"questions": list(questions), "matches": list(matches)})
@@ -1335,7 +1337,11 @@ def tools_for(
     calls: list[str] | None = None,
 ) -> dict[str, Tool]:
     log = [] if calls is None else calls
-    qs = [{"title": "질문", "body": "배포는 언제죠?", "id": "utt_q1"}] if questions is None else questions
+    qs = (
+        [{"title": "질문", "body": "배포는 언제죠?", "id": "utt_q1"}]
+        if questions is None
+        else questions
+    )
 
     def overview(session: Any, meeting_id: str) -> dict[str, Any]:
         log.append(OVERVIEW)
@@ -1350,14 +1356,27 @@ def tools_for(
         items = recent if recent is not None else []
         return {"ok": True, "summary": "회의", "items": items, "evidence": []}
 
-    def search(session: Any, team_id: str, query: str, exclude_meeting_id: str | None = None) -> dict[str, Any]:
+    def search(
+        session: Any, team_id: str, query: str, exclude_meeting_id: str | None = None
+    ) -> dict[str, Any]:
         log.append(SEARCH)
-        ms = matches if matches is not None else [
-            {"title": "2026-09-23 리뷰 · 00:03 김팀장", "body": "금요일 배포", "id": "utt_p1", "meeting_id": "mtg_past"}
-        ]
+        ms = (
+            matches
+            if matches is not None
+            else [
+                {
+                    "title": "2026-09-23 리뷰 · 00:03 김팀장",
+                    "body": "금요일 배포",
+                    "id": "utt_p1",
+                    "meeting_id": "mtg_past",
+                }
+            ]
+        )
         return {"ok": True, "summary": "발언", "items": ms, "evidence": [m["id"] for m in ms]}
 
-    def save(session: Any, team_id: str, meeting_id: str, body: str, utterance_ids: list[str]) -> dict[str, Any]:
+    def save(
+        session: Any, team_id: str, meeting_id: str, body: str, utterance_ids: list[str]
+    ) -> dict[str, Any]:
         log.append(SAVE)
         return {"ok": True, "summary": "저장", "evidence": ["rdoc_1"]}
 
@@ -1407,12 +1426,22 @@ def test_a_meeting_with_questions_gets_a_document_and_one_l2_proposal(session, t
     calls: list[str] = []
     writer = FakeWriter()
 
-    outcome = invoke(tools_for(calls=calls), writer, session=session, team_id=team["team"], meeting=team["meeting"])
+    outcome = invoke(
+        tools_for(calls=calls),
+        writer,
+        session=session,
+        team_id=team["team"],
+        meeting=team["meeting"],
+    )
 
     assert outcome.result.ok is True
     assert outcome.result.evidence == ["rdoc_1"]
     [proposal] = outcome.proposed
-    assert (proposal.tool, proposal.level, proposal.arguments) == (SHARE, "L2", {"document_id": "rdoc_1"})
+    assert (proposal.tool, proposal.level, proposal.arguments) == (
+        SHARE,
+        "L2",
+        {"document_id": "rdoc_1"},
+    )
     assert calls == [OVERVIEW, QUESTIONS, SEARCH, SAVE]
     assert writer.written[0]["questions"] == ["배포는 언제죠?"]
 
@@ -1420,7 +1449,13 @@ def test_a_meeting_with_questions_gets_a_document_and_one_l2_proposal(session, t
 def test_no_questions_means_no_document_and_no_proposal(session, team) -> None:
     calls: list[str] = []
 
-    outcome = invoke(tools_for(questions=[], calls=calls), FakeWriter(), session=session, team_id=team["team"], meeting=team["meeting"])
+    outcome = invoke(
+        tools_for(questions=[], calls=calls),
+        FakeWriter(),
+        session=session,
+        team_id=team["team"],
+        meeting=team["meeting"],
+    )
 
     assert outcome.result.ok is True
     assert outcome.proposed == []
@@ -1428,7 +1463,13 @@ def test_no_questions_means_no_document_and_no_proposal(session, team) -> None:
 
 
 def test_questions_with_empty_text_count_as_none(session, team) -> None:
-    outcome = invoke(tools_for(questions=[{"title": "질문", "body": "", "id": "utt_q1"}]), FakeWriter(), session=session, team_id=team["team"], meeting=team["meeting"])
+    outcome = invoke(
+        tools_for(questions=[{"title": "질문", "body": "", "id": "utt_q1"}]),
+        FakeWriter(),
+        session=session,
+        team_id=team["team"],
+        meeting=team["meeting"],
+    )
 
     assert outcome.proposed == []
 
@@ -1437,7 +1478,13 @@ def test_no_terms_still_writes_from_the_questions(session, team) -> None:
     calls: list[str] = []
     writer = FakeWriter(terms=[])
 
-    outcome = invoke(tools_for(calls=calls), writer, session=session, team_id=team["team"], meeting=team["meeting"])
+    outcome = invoke(
+        tools_for(calls=calls),
+        writer,
+        session=session,
+        team_id=team["team"],
+        meeting=team["meeting"],
+    )
 
     assert SEARCH not in calls
     assert writer.written[0]["matches"] == []
@@ -1447,7 +1494,13 @@ def test_no_terms_still_writes_from_the_questions(session, team) -> None:
 def test_a_writer_failure_ends_without_a_proposal(session, team) -> None:
     calls: list[str] = []
 
-    outcome = invoke(tools_for(calls=calls), FakeWriter(fail=True), session=session, team_id=team["team"], meeting=team["meeting"])
+    outcome = invoke(
+        tools_for(calls=calls),
+        FakeWriter(fail=True),
+        session=session,
+        team_id=team["team"],
+        meeting=team["meeting"],
+    )
 
     assert outcome.result.ok is False
     assert outcome.proposed == []
@@ -1457,7 +1510,14 @@ def test_a_writer_failure_ends_without_a_proposal(session, team) -> None:
 def test_the_trigger_path_stays_within_eight_calls(session, team) -> None:
     budget = CallBudget()
 
-    invoke(tools_for(), FakeWriter(terms=["a", "b", "c", "d", "e"]), session=session, team_id=team["team"], meeting=team["meeting"], budget=budget)
+    invoke(
+        tools_for(),
+        FakeWriter(terms=["a", "b", "c", "d", "e"]),
+        session=session,
+        team_id=team["team"],
+        meeting=team["meeting"],
+        budget=budget,
+    )
 
     assert budget.used <= 8
 
@@ -1470,7 +1530,14 @@ def test_a_chat_run_researches_the_latest_analysed_meeting(session, team) -> Non
     ]
     budget = CallBudget()
 
-    outcome = invoke(tools_for(recent=recent, calls=calls), FakeWriter(), session=session, team_id=team["team"], meeting=None, budget=budget)
+    outcome = invoke(
+        tools_for(recent=recent, calls=calls),
+        FakeWriter(),
+        session=session,
+        team_id=team["team"],
+        meeting=None,
+        budget=budget,
+    )
 
     assert calls == [RECENT, OVERVIEW, QUESTIONS, SEARCH, SAVE]
     assert len(outcome.proposed) == 1
@@ -1481,7 +1548,13 @@ def test_a_chat_run_researches_the_latest_analysed_meeting(session, team) -> Non
 def test_a_chat_run_with_no_analysed_meeting_says_so(session, team) -> None:
     calls: list[str] = []
 
-    outcome = invoke(tools_for(recent=[], calls=calls), FakeWriter(), session=session, team_id=team["team"], meeting=None)
+    outcome = invoke(
+        tools_for(recent=[], calls=calls),
+        FakeWriter(),
+        session=session,
+        team_id=team["team"],
+        meeting=None,
+    )
 
     assert outcome.result.ok is False
     assert outcome.result.summary == "조사할 회의가 없습니다."
@@ -1647,7 +1720,13 @@ def build_with(writer: Writer) -> Any:
             return lambda s: END if "outcome" in s else node
 
         graph = StateGraph(ResearchState)
-        for name, fn in (("read", read), ("terms", terms), ("search", search), ("write", write), ("save", save)):
+        for name, fn in (
+            ("read", read),
+            ("terms", terms),
+            ("search", search),
+            ("write", write),
+            ("save", save),
+        ):
             graph.add_node(name, fn)
         graph.add_edge(START, "read")
         graph.add_conditional_edges("read", next_after("terms"), ["terms", END])

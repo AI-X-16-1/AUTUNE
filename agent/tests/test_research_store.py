@@ -58,11 +58,34 @@ def test_an_utterance_of_another_team_never_becomes_a_source(
     session.flush()
     foreign = _utterance(session, theirs.id)
 
-    doc_id = save_research_document(session, team["team"], team["meeting"], "본문", [foreign])[
-        "evidence"
-    ][0]
+    result = save_research_document(session, team["team"], team["meeting"], "본문", [foreign])
 
-    assert _sources(session, doc_id) == {team["meeting"]}
+    assert result["ok"] is False
+    assert result["reason"] == "source changed"
+    assert session.scalars(select(AgentResearchDocument)).all() == []
+    assert session.scalars(select(AgentResearchSource)).all() == []
+
+
+def test_an_utterance_that_no_longer_exists_refuses_the_save(
+    session: Session, team: dict[str, str]
+) -> None:
+    kept = _utterance(session, team["meeting"])
+
+    result = save_research_document(
+        session, team["team"], team["meeting"], "본문", [kept, "utt_gone"]
+    )
+
+    assert result["ok"] is False
+    assert result["reason"] == "source changed"
+    assert session.scalars(select(AgentResearchDocument)).all() == []
+
+
+def test_a_repeated_utterance_id_counts_once(session: Session, team: dict[str, str]) -> None:
+    kept = _utterance(session, team["meeting"])
+
+    result = save_research_document(session, team["team"], team["meeting"], "본문", [kept, kept])
+
+    assert result["ok"] is True
 
 
 def test_a_second_save_before_a_decision_overwrites_the_proposal(

@@ -7,6 +7,7 @@ only argument is the document id, so ``agent_runs`` keeps no text.
 
 from __future__ import annotations
 
+import logging
 from typing import Any, cast
 
 from langgraph.graph import END, START, StateGraph
@@ -28,6 +29,8 @@ SHARE = "agent.share_research_document"
 TOOLS = (OVERVIEW, RECENT, QUESTIONS, SEARCH, SAVE)
 ANALYSED = ("awaiting_confirmation", "complete", "delivered")
 
+log = logging.getLogger(__name__)
+
 
 class ResearchState(SubagentState, total=False):
     meeting_id: str
@@ -45,6 +48,16 @@ def _stop(reason: str, summary: str) -> dict[str, Any]:
 
 def _done(summary: str) -> dict[str, Any]:
     return {"outcome": SubagentResult(result=ToolResult(ok=True, summary=summary))}
+
+
+def _meeting_part(title: str) -> str:
+    """``"<date> <meeting title> · <mm:ss> <speaker>"`` without the speaker.
+
+    Keeps only what comes before the last ``" · "``: the date and the meeting
+    title. A speaker's name never goes to the writer's model.
+    """
+    head, sep, _ = title.rpartition(" · ")
+    return head if sep else title
 
 
 def build_with(writer: Writer) -> Any:
@@ -82,7 +95,9 @@ def build_with(writer: Writer) -> Any:
                 return {"terms": writer.terms(state["questions"])}
             except PrivacyViolationError:
                 raise
-            except Exception:  # noqa: BLE001 - no terms is a document without past quotes
+            except Exception as exc:  # noqa: BLE001 - no terms is a document without past quotes
+                # The type only: the message may carry meeting text.
+                log.warning("research_terms_failed error=%s", type(exc).__name__)
                 return {"terms": []}
 
         def search(state: ResearchState) -> dict[str, Any]:
@@ -98,7 +113,7 @@ def build_with(writer: Writer) -> Any:
                             Match(
                                 utterance_id=uid,
                                 meeting_id=getattr(item, "meeting_id", ""),
-                                title=item.title,
+                                title=_meeting_part(item.title),
                                 body=item.body,
                             )
                         )
@@ -115,7 +130,8 @@ def build_with(writer: Writer) -> Any:
                 return _stop("document not written", "리서치 문서를 쓰지 못했습니다.")
             except PrivacyViolationError:
                 raise
-            except Exception:  # noqa: BLE001 - an outbound refusal or a timeout
+            except Exception as exc:  # noqa: BLE001 - an outbound refusal or a timeout
+                log.warning("research_write_failed error=%s", type(exc).__name__)
                 return _stop("document not written", "리서치 문서를 쓰지 못했습니다.")
             return {"body": body}
 
