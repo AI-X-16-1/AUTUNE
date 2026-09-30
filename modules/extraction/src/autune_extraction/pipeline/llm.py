@@ -217,30 +217,47 @@ def substitute_names(texts: list[str], roster: Sequence[str]) -> list[str]:
 
     Longest form first, so "김민경" never leaves "김[사람1]". A name is taken with
     its whitespace collapsed, and a spaced one is matched in its joined and
-    swapped forms too (``_variants``). Whatever follows a
-    name -- 님, 씨, a particle -- stays. The same person is the same number
-    throughout, numbered by first appearance so the numbers say nothing about
-    the roster's order or size. A given name two members share is its own
-    person here: it cannot be told which of them was meant, and either answer
-    would still be a name. No roster, no change.
+    swapped forms too (``_variants``). Whatever follows a name -- 님, 씨, a
+    particle -- stays. The same person is the same number throughout, numbered by
+    first appearance so the numbers say nothing about the roster's order or size.
+    A given name two members share is its own person here: it cannot be told
+    which of them was meant, and either answer would still be a name. No roster,
+    no change.
+    """
+    return substitute_names_mapped(texts, roster)[0]
+
+
+def substitute_names_mapped(
+    texts: list[str], roster: Sequence[str]
+) -> tuple[list[str], dict[str, str]]:
+    """``substitute_names`` and what each placeholder stood for.
+
+    The second value maps ``[사람N]`` to the form of that person first written in
+    ``texts`` -- what the reference resolver needs to put a name back into the
+    sentence it stores, since a description is read by the team and a
+    placeholder in it would be nonsense. The classifier never reads it: a label
+    has no name in it to restore.
     """
     owners: dict[str, set[str]] = {}
     for name in {" ".join(n.split()) for n in roster if n and n.strip()}:
         for form in _variants(name):
             owners.setdefault(form, set()).add(name)
     if not owners:
-        return list(texts)
+        return list(texts), {}
     person = {
         form: next(iter(p)) if len(p) == 1 else f"shared:{form}" for form, p in owners.items()
     }
     pattern = re.compile("|".join(re.escape(f) for f in sorted(owners, key=len, reverse=True)))
     numbers: dict[str, int] = {}
+    surface: dict[str, str] = {}
 
     def placeholder(match: re.Match[str]) -> str:
         who = person[match.group(0)]
-        return PLACEHOLDER.format(n=numbers.setdefault(who, len(numbers) + 1))
+        marked = PLACEHOLDER.format(n=numbers.setdefault(who, len(numbers) + 1))
+        surface.setdefault(marked, match.group(0))
+        return marked
 
-    return [pattern.sub(placeholder, text) for text in texts]
+    return [pattern.sub(placeholder, text) for text in texts], surface
 
 
 def windows(texts: list[str], budget: int) -> list[tuple[int, int]]:
@@ -312,8 +329,14 @@ def _prediction(kind: UtteranceKind | None) -> Prediction:
     )
 
 
-class LlmClassifier:
-    """Gemini's ``generateContent`` over masked utterances, one window at a time."""
+class GeminiClient:
+    """Gemini's ``generateContent``: the client, the retry, the fallback model and
+    the roster every request is scrubbed with (#411).
+
+    Shared by ``LlmClassifier`` and ``LlmResolver`` so that both retry, fall back
+    and record ``model_version`` the same way -- and so that neither can send a
+    request the other's guard would have refused.
+    """
 
     def __init__(
         self,
@@ -376,6 +399,10 @@ class LlmClassifier:
                 "extraction_llm_fallback", model=self._model, fallback=self._fallback, window=index
             )
             return self._post_to(self._fallback, body, index=index)
+
+
+class LlmClassifier(GeminiClient):
+    """Gemini's ``generateContent`` over masked utterances, one window at a time."""
 
     def classify(self, texts: list[str]) -> list[Prediction]:
         if not texts:

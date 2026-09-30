@@ -1,9 +1,12 @@
-"""The reference resolver: in-process weights, our own inference server, a fake.
+"""The reference resolver: in-process weights, our own inference server, a cloud
+LLM API, a fake.
 
-Same three implementations as ``pipeline.classifier``, same reason -- no
-external-API option, because handing a commitment's context to somebody else's
-model is a decision about where personal data goes (privacy.md section 6), not
-a value of ``AUTUNE_EXTRACTION_RESOLVER_IMPL``.
+The first, second and last mirror ``pipeline.classifier``. The cloud one
+(``LlmResolver``, ``resolver_impl=llm``) is the exception to that file's rule and
+is opt-in the way ``classifier_impl=llm`` is: handing a commitment's context to
+somebody else's model is a decision about where personal data goes (privacy.md
+section 6), so it is never the default, sends masked text with the team's names
+replaced, and belongs to dummy meetings until #392 is answered.
 
 ``torch`` and ``transformers`` are imported inside the class that needs them,
 same reason as ``LocalDeberta``: importing at module scope would make
@@ -14,6 +17,8 @@ from __future__ import annotations
 
 import re
 import time
+from collections.abc import Sequence
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
 from autune_core import get_logger
@@ -22,6 +27,7 @@ from autune_integrations.errors import TransientIntegrationError
 
 from .base import Embedder, ResolutionRequest
 from .classifier import RETRY_BACKOFF_SEC
+from .llm import GeminiClient, _answer_text, substitute_names_mapped
 
 if TYPE_CHECKING:
     pass
@@ -483,3 +489,116 @@ class HostedResolver:
                 continue
             resolved.append(answer)
         return resolved
+
+
+_PLACEHOLDER = re.compile(r"\[사람\d+\]")
+
+
+def _scrubbed(
+    request: ResolutionRequest, roster: Sequence[str]
+) -> tuple[ResolutionRequest, dict[str, str]]:
+    """The request with the team's names replaced, and what each placeholder stood for.
+
+    The three parts go through one substitution, so a person is the same number in
+    the target and in the lines around it -- "[사람1]" in the context and in the
+    target is one person, which is what lets the model resolve "그분" to them.
+    """
+    texts = [*request.context, request.target, *request.context_after]
+    replaced, surface = substitute_names_mapped(texts, roster)
+    before = len(request.context)
+    return (
+        replace(
+            request,
+            target=replaced[before],
+            context=tuple(replaced[:before]),
+            context_after=tuple(replaced[before + 1 :]),
+        ),
+        surface,
+    )
+
+
+def _restored(answer: str, surface: dict[str, str]) -> str | None:
+    """The answer with each placeholder put back as the name it stood for.
+
+    The sentence is stored as an item's description and read by the team, so a
+    "[사람1]" left in it would be nonsense -- and the reverse of the classifier,
+    whose labels carry no name to restore. ``None`` when the model wrote a
+    placeholder that was never sent: it invented a person.
+    """
+    for marked in _PLACEHOLDER.findall(answer):
+        if marked not in surface:
+            return None
+    return _PLACEHOLDER.sub(lambda m: surface[m.group(0)], answer)
+
+
+class LlmResolver(GeminiClient):
+    """The same rewrite as ``LocalQwenResolver``, by a cloud LLM API (#175).
+
+    Exists because the local model needs a GPU and ``hosted`` needs a server of
+    ours, and the mentoring of 2026-09-23 says to use an LLM wherever a trained
+    model costs more than it earns. Opt-in and never the default
+    (``resolver_impl=llm``): it sends the commitment and up to four lines before
+    and two after it out of our infrastructure.
+
+    **What leaves, and what stops it** -- the same as ``LlmClassifier``: masked
+    utterance text only, no speaker, no id, no meeting; only consenting speakers'
+    lines (``resolve_commitment_references`` filters before this is called); the
+    team's names replaced by ``[사람N]`` and restored in the answer, so a name
+    never reaches the provider and never stays a placeholder in a description;
+    every request through ``HttpClient``, whose outbound check refuses an
+    unmasked number, address or account. A free-tier key may let the provider
+    keep what it is sent, so it is for dummy meetings only (#392).
+
+    **One bad answer degrades to the raw quote**, exactly as the other
+    resolvers: a failed call, a blank or multi-line answer, an invented
+    placeholder, or a sentence that fails the groundedness checks all return the
+    target unchanged. A privacy refusal is the exception -- it is raised, never
+    downgraded.
+    """
+
+    def __init__(
+        self,
+        *,
+        api_key: str,
+        model: str,
+        base_url: str = "https://generativelanguage.googleapis.com/v1beta",
+        timeout_sec: float = 60.0,
+        fallback_model: str = "",
+        embedder: Embedder | None = None,
+        min_similarity: float | None = None,
+    ) -> None:
+        super().__init__(
+            api_key=api_key,
+            model=model,
+            base_url=base_url,
+            timeout_sec=timeout_sec,
+            fallback_model=fallback_model,
+        )
+        self._embedder = embedder
+        self._min_similarity = min_similarity
+
+    def _resolve_one(self, request: ResolutionRequest, index: int) -> str:
+        sent, surface = _scrubbed(request, self._roster)
+        body = {
+            "contents": [{"role": "user", "parts": [{"text": _prompt(sent)}]}],
+            "generationConfig": {"temperature": 0},
+        }
+        try:
+            answer = _answer_text(self._post(body, index=index)).strip().strip("\"'“”‘’").strip()
+        except PrivacyViolationError:
+            # errors.py: never caught and downgraded.
+            raise
+        except Exception:  # noqa: BLE001 - #175: one bad call must not fail the meeting
+            log.warning("extraction_resolver_call_failed", exc_info=True)
+            return request.target
+        if not answer or "\n" in answer:
+            return request.target
+        restored = _restored(answer, surface)
+        if restored is None or not _passes_grounding(
+            restored, request, self._embedder, self._min_similarity
+        ):
+            return request.target
+        return restored
+
+    def resolve(self, requests: list[ResolutionRequest]) -> list[str]:
+        return [self._resolve_one(request, index) for index, request in enumerate(requests)]

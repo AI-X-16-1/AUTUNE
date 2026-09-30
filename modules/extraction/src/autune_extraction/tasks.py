@@ -123,6 +123,8 @@ def _extract(meeting_id: str, utterances: Sequence[TranscriptUtterance]) -> None
     classified = service.verify_utterances(get_nli(), classified)
 
     resolver = get_resolver()
+    # The resolver sends text out too, when it is the ``llm`` one (#411).
+    give_roster(resolver, roster)
     resolved_descriptions = service.resolve_commitment_references(resolver, classified)
 
     with session_scope() as session:

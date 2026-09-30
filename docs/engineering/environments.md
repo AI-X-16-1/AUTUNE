@@ -185,7 +185,7 @@ Where that token comes from, and the two ways to give it to the browser:
 | `AUTUNE_EXTRACTION_NLI_ENDPOINT` | B | Our own inference server. Required when `NLI_IMPL=hosted` |
 | `AUTUNE_EXTRACTION_NLI_DEVICE` | B | `cpu` · `cuda`. Default `cpu`. Mirrors `AUTUNE_EXTRACTION_CLASSIFIER_DEVICE` |
 | `AUTUNE_EXTRACTION_CANDIDATE_CONFIDENCE` | B | Below this, an item is a candidate rather than asserted. **Blank by default** — the number comes from the evaluation set (#10), and blank means nothing is a candidate |
-| `AUTUNE_EXTRACTION_RESOLVER_IMPL` | B | `local` · `hosted` · `fake` (#175). **Default `fake`** — unlike the classifier, since the model candidate is not yet confirmed. **No `external`**, same reason as the classifier |
+| `AUTUNE_EXTRACTION_RESOLVER_IMPL` | B | `local` · `hosted` · `llm` · `fake` (#175). **Default `fake`** — unlike the classifier, since the model candidate is not yet confirmed. `llm` is the Gemini API through the same `AUTUNE_EXTRACTION_LLM_*` settings as `CLASSIFIER_IMPL=llm`: opt-in, needs `LLM_API_KEY` and no checkpoint, sends the commitment and the lines around it with the team's names replaced, and a free-tier key is for dummy meetings only. **No `external`**, same reason as the classifier |
 | `AUTUNE_EXTRACTION_RESOLVER_CHECKPOINT` | B | Local model path/hub id, or the hosted model's recorded version. Required for `local`/`hosted` |
 | `AUTUNE_EXTRACTION_RESOLVER_ENDPOINT` | B | Our own inference server. Required when `RESOLVER_IMPL=hosted` |
 | `AUTUNE_EXTRACTION_RESOLVER_DEVICE` | B | `cpu` · `cuda`. Default `cpu`. Mirrors `AUTUNE_EXTRACTION_CLASSIFIER_DEVICE` |
@@ -294,7 +294,7 @@ What still goes out, and is the exposure #392 and #92 ask about:
   names and names the speech recogniser misheard;
 - a roster name that is also an ordinary word ("하늘", "보람") is replaced where
   it is only a word — the cost is classification accuracy, not data;
-- the reference resolver's own LLM calls (#366), which this does not cover.
+- the reference resolver's context lines when `RESOLVER_IMPL=llm`, which goes through the same name replacement and the same outbound guard but is an additional request per commitment — a name not on the roster leaves in them too; the `local` and `hosted` resolvers send nothing to a provider.
 
 `hosted` points at an inference server we run. It still goes through
 `autune_integrations.HttpClient` so the outbound guard reads the request body:
