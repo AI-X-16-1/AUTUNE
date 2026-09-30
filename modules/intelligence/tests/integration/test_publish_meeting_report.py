@@ -106,6 +106,9 @@ def test_a_draft_for_another_teams_meeting_is_refused(db_session: Session, team:
     result = tools.draft_meeting_report(team, meeting, BODY)
 
     assert result["ok"] is False
+    # The same answer as #449's scope check, and never the id the model wrote.
+    assert result["reason"] == "meeting not found"
+    assert meeting not in str(result) and team not in str(result)
     assert db_session.get(IntelMeetingReport, meeting) is None
 
 

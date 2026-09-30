@@ -256,9 +256,11 @@ def _acted(summary: str, meeting_id: str) -> dict[str, Any]:
     )
 
 
-def _not_found(meeting_id: str, team_id: str) -> dict[str, Any]:
-    # Unknown and other-team read the same, so the answer does not reveal which.
-    return _refused(f"no meeting {meeting_id} on team {team_id}", "회의를 찾을 수 없습니다.")
+def _not_found() -> dict[str, Any]:
+    # Unknown and other-team read the same, so the answer does not reveal which,
+    # and it never echoes the id: the model wrote it. #449's scope check says the
+    # same words.
+    return _refused("meeting not found", "회의를 찾을 수 없습니다.")
 
 
 def draft_meeting_report(
@@ -278,7 +280,7 @@ def draft_meeting_report(
     with session_scope() as session:
         meeting = session.get(Meeting, meeting_id)
         if meeting is None or meeting.team_id != team_id:
-            return _not_found(meeting_id, team_id)
+            return _not_found()
         document = service.meeting_report_document(meeting, body_markdown)
         try:
             service.save_meeting_report(
@@ -312,7 +314,7 @@ def publish_meeting_report(team_id: str, meeting_id: str) -> dict[str, Any]:
     with session_scope() as session:
         meeting = session.get(Meeting, meeting_id)
         if meeting is None or meeting.team_id != team_id:
-            return _not_found(meeting_id, team_id)
+            return _not_found()
         row = session.get(IntelMeetingReport, meeting_id)
         if row is None:
             return _refused("no draft", "게시할 리포트 초안이 없습니다.")
