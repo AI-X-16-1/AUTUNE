@@ -37,13 +37,13 @@ def confirmation(**overrides: object) -> ExtConfirmation:
     return ExtConfirmation(**fields)
 
 
-# --- the 24-hour rule -------------------------------------------------------
+# --- the 72-hour rule -------------------------------------------------------
 
 
 def test_an_unanswered_question_is_pending_before_the_deadline() -> None:
     row = confirmation()
 
-    assert row.outcome_at(SENT + timedelta(hours=23, minutes=59)) == PENDING
+    assert row.outcome_at(SENT + timedelta(hours=71, minutes=59)) == PENDING
 
 
 def test_silence_resolves_itself_at_the_deadline() -> None:
@@ -59,9 +59,9 @@ def test_silence_resolves_itself_at_the_deadline() -> None:
     assert row.outcome_at(SENT + timedelta(days=7)) == UNDECIDED
 
 
-def test_the_deadline_is_twenty_four_hours() -> None:
+def test_the_deadline_is_seventy_two_hours() -> None:
     """#12 and ui-spec S19. Pinned so changing it is a deliberate edit."""
-    assert timedelta(hours=24) == CONFIRMATION_TIMEOUT
+    assert timedelta(hours=72) == CONFIRMATION_TIMEOUT
 
 
 def test_an_answer_outlives_the_deadline() -> None:

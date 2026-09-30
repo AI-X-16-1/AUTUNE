@@ -66,7 +66,7 @@ agreement, and sync the result to Notion.
 6. **Confirm** — every ambiguous agreement is recorded in `ext_confirmations`
    first, then the speaker gets a Slack DM. Until the DM goes out the row is
    *not asked* and `AmbiguousAgreement.confirmation_sent` is false. Every five
-   minutes `ask_confirmations` asks each one recorded within the 24-hour window
+   minutes `ask_confirmations` asks each one recorded within the 72-hour window
    whose speaker is identified and consented, through the team's Slack bot to
    the account that person linked (#255, #478), and to nobody else. A team
    without Slack, or a speaker who has not linked, is looked at again on the

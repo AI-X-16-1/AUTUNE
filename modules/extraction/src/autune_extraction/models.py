@@ -485,7 +485,7 @@ class ExtConfirmation(Base, TimestampMixin):
     **No outcome is stored, only the two timestamps it is derived from.** A
     ``status`` column and a clock can disagree, and the one that would be wrong
     is the column — nothing runs at the deadline to update it. Deriving the
-    answer on read means the 24-hour rule holds whether or not a periodic job is
+    answer on read means the 72-hour rule holds whether or not a periodic job is
     alive.
 
     **There is no responder column.** The DM goes to one person and comes back

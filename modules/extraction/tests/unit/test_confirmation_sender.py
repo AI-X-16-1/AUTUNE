@@ -148,7 +148,7 @@ def test_nobody_but_an_identified_consenting_speaker_is_asked(
 
 
 def test_a_question_older_than_its_window_is_not_put(session: Session, slack: FakeSlack) -> None:
-    agreement(session, "utt_1", recorded=datetime.now(UTC) - timedelta(hours=25))
+    agreement(session, "utt_1", recorded=datetime.now(UTC) - timedelta(hours=73))
 
     assert tasks.ask_confirmations() == []
     assert slack.sent == []

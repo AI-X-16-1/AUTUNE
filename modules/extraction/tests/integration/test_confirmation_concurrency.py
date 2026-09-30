@@ -136,7 +136,7 @@ def test_a_second_sender_waits_for_the_first_and_then_sends_nothing(
     The row is already there with ``sent_at`` empty -- the state the pipeline
     leaves behind. Both senders see it. Before the conditional update both wrote
     their own timestamp and both sent, so the speaker got the same question
-    twice and the 24-hour deadline ran from the later one.
+    twice and the deadline ran from the later one.
     """
     meeting_id, utterance_id = meeting
     errors: list[BaseException] = []
