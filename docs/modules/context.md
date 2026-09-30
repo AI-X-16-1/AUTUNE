@@ -38,6 +38,7 @@ D is what makes Autune more than a transcription tool. Everything else processes
 | --- | --- | --- |
 | A | `TranscriptReady` via `autune.transcript.ready` | Topic linking. Needs only the transcript, so it runs in parallel with B and C. |
 | B | `ExtractionResult` via `autune.extraction.completed` | Decision lineage. Needs `result.decisions`, so it runs after B. |
+| B | `TeamAgenda` via `autune.extraction.agenda_changed` | The pre-meeting brief's agenda. B republishes every team's open Jira issues every five minutes; D keeps the latest in `ctx_team_agendas`. |
 | `packages/core` | `meetings`, `participants`, `utterances` | Read-only. Never `INSERT`/`UPDATE`/`DELETE`. |
 | Own history | `ctx_decisions`, `ctx_decision_versions`, `ctx_embeddings` | Past meetings' topic embeddings and decision threads. |
 | Web upload | Material documents (PDF, docx, markdown) | Phase 2 only. |
@@ -424,11 +425,30 @@ under `autune_integrations`' 4,000-character outbound limit, which refuses a
 post outright rather than trimming it.
 
 **The agenda comes from Jira, through B.** Jira is module B's integration, and
-D neither calls Jira nor reads B's tables. The interface is not agreed yet, so
-`briefs.agenda_for` returns nothing and the brief says "이번 회의에 연결된 안건이
-없습니다". What D needs, per scheduled meeting or per team: an issue's title,
-key, status and URL. That is a contract addition in `packages/contracts`
-agreed with B's owner — see "Open questions".
+D neither calls Jira nor reads B's tables. B publishes a `TeamAgenda` for every
+team on `autune.extraction.agenda_changed` (#436): a snapshot of the team's open
+Jira issues, each with a title, key, status and URL, most pressing first.
+`autune.context.on_extraction_agenda_changed` validates it and
+`briefs.store_team_agenda` keeps it in `ctx_team_agendas`, one row per team.
+`briefs.agenda_for` reads only that row, so a brief never waits on B and never
+calls it.
+
+- **Latest wins, in one statement.** The upsert is guarded on `as_of`, so a
+  snapshot that arrives after a newer one leaves the newer one standing;
+  nothing orders the deliveries. An empty `issues` is stored like any other — it
+  is B saying the team has none open.
+- **Stale means empty.** B republishes every `AGENDA_PUBLISH_EVERY` (five
+  minutes). A snapshot older than the contract's `AGENDA_STALE_AFTER` (30
+  minutes) is one B stopped refreshing, and `agenda_for` treats it as none: the
+  brief says "이번 회의에 연결된 안건이 없습니다" rather than list issues that are
+  no longer known to be open.
+- **The one `ctx_` table that copies another module's text.** The titles are B's
+  masked item descriptions. A copy outlives its source, so this one is bounded:
+  `send_due_briefs` deletes every snapshot past `AGENDA_STALE_AFTER`
+  (`briefs.purge_stale_agendas`, each minute), and the row cascades with its
+  team. B stops publishing a team whose last Jira-linked item is gone, so
+  without the purge the last snapshot would keep quoting a deleted item for good.
+- Logs carry counts only, never a title.
 
 **Stores the choice, not the recap.** `ctx_briefs` keeps `previous_meeting_id`
 and `match_reason`; the recap is rendered from the past meeting's rows every
@@ -466,6 +486,7 @@ cleaned up by a deletion hook (see "Deletion").
 | `ctx_decision_versions` | Each version of a decision | `source_decision_id` (`dec_`, no FK), `previous_version_id` (self-FK), `current_statement`, `previous_statement`, `previous_meeting_id` (no FK), `change_type`, `nli_label`, `confidence`, `key_stakeholders_absent` (JSONB), `nli_version` | `thread_id` FK `CASCADE`, `meeting_id` FK `CASCADE` |
 | `ctx_meeting_status` | Completion tracking for the two halves | `topic_linking_done`, `lineage_done`, `extraction_seen`, `deadline_at`, `published_at`, `notified_at` | `meeting_id` FK `CASCADE` |
 | `ctx_briefs` | One pre-meeting brief per scheduled meeting: which past meeting it recaps, and whether it went out. The choice, never the recap | `previous_meeting_id`, `match_reason` (`series`/`topic`/`latest`), `sent_at` | `meeting_id` FK `CASCADE`; `previous_meeting_id` FK `ON DELETE SET NULL` |
+| `ctx_team_agendas` | The latest `TeamAgenda` B published for a team: its open Jira issues, for the brief's agenda. Holds B's masked item titles, so it is short-lived | `as_of`, `issues` (JSONB: `title`, `key`, `status`, `url`) | `team_id` PK and FK `CASCADE`; purged once older than `AGENDA_STALE_AFTER` |
 | `ctx_materials` | Uploaded documents and chunk metadata | — | Phase 2 — not created in the MVP |
 
 Notes:
@@ -701,6 +722,11 @@ To run it on a laptop without the team's inference endpoints, use the
 - Retention interacts directly with this module: a linked past meeting may be
   deleted by the retention sweep. Handle a dangling link gracefully — show that
   the meeting is gone, never resurrect its content from an embedding.
+- `ctx_team_agendas` is the one table here that holds another module's text: B's
+  masked issue titles, copied so a brief never waits on B. Nothing in it is D's
+  own derivation, so it is bounded instead — replaced whole by each snapshot,
+  ignored and deleted once older than `AGENDA_STALE_AFTER`, and gone with its
+  team. Its titles are never logged.
 - Embeddings are derived from masked text and are rows that cascade from
   `meetings.id`; an embedding outliving its meeting is a retention violation.
 - The three self-hosted models receive masked transcript text within our
@@ -752,10 +778,6 @@ pre-meeting brief was added to the build on 2026-09-29.
 
 ## Open questions
 
-- How the brief's agenda reaches D from B's Jira integration: a contract
-  carrying an issue's title, key, status and URL, either per scheduled meeting
-  or as a team snapshot D keeps in its own table (#436). Until it lands, briefs go out
-  with an empty agenda section.
 - `send_brief` runs on `cpu_heavy` because the previous-meeting choice may
   embed and re-rank; its Slack post shares that worker. Moving the post onto
   `default` is a `TASK_ROUTES` line in `packages/core` plus a second task.

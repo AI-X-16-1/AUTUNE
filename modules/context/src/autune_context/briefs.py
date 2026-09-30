@@ -9,10 +9,10 @@ two things:
   earlier one. Both come from D's own rows (``ctx_embeddings``,
   ``ctx_decision_versions``); nothing is generated, so the brief quotes only
   what the context tab already shows.
-- **The issues this meeting is expected to take up** -- from Jira, which
-  module B integrates. That interface is not agreed yet, so ``agenda_for``
-  returns none and the brief says so (docs/modules/context.md, "Pre-meeting
-  brief").
+- **The issues this meeting is expected to take up** -- the team's open Jira
+  issues, which module B publishes as a ``TeamAgenda`` every five minutes and
+  ``store_team_agenda`` keeps (``ctx_team_agendas``, #436). D never calls Jira
+  (docs/modules/context.md, "Pre-meeting brief").
 
 Which past meeting, in order:
 
@@ -28,7 +28,7 @@ Which past meeting, in order:
 recap is rendered from the chosen meeting's rows each time it is read, so a
 meeting swept by retention takes its recap with it.
 
-Reads shared entities; writes only ``ctx_briefs``.
+Reads shared entities; writes only ``ctx_briefs`` and ``ctx_team_agendas``.
 """
 
 from __future__ import annotations
@@ -37,19 +37,25 @@ import math
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from autune_context.config import get_settings
 from autune_context.dates import meeting_day
-from autune_context.models import CtxBrief, CtxDecisionVersion, CtxEmbedding, CtxMeetingStatus
+from autune_context.models import (
+    CtxBrief,
+    CtxDecisionVersion,
+    CtxEmbedding,
+    CtxMeetingStatus,
+    CtxTeamAgenda,
+)
 from autune_context.notify import AgendaItem, BriefDecision, BriefRecap
 from autune_context.pipeline import get_embedder, get_reranker
 from autune_context.pipeline.retrieval import HybridRetriever, visible_meeting_clauses
 from autune_context.pipeline.topics import TopicSegment
-from autune_contracts import ChangeType
-from autune_core import Meeting, Participant, TeamMember, User, Utterance, get_logger
+from autune_contracts import AGENDA_STALE_AFTER, AgendaIssue, ChangeType, TeamAgenda
+from autune_core import Meeting, Participant, Team, TeamMember, User, Utterance, get_logger
 from autune_core.errors import NotFoundError
 
 log = get_logger(__name__)
@@ -127,15 +133,85 @@ def due_meeting_starts(session: Session, now: datetime) -> list[tuple[str, datet
 # --------------------------------------------------------------------------- #
 
 
-def agenda_for(session: Session, meeting: Meeting) -> list[AgendaItem]:
-    """The issues ``meeting`` is expected to take up.
+def agenda_for(session: Session, meeting: Meeting, *, now: datetime) -> list[AgendaItem]:
+    """The issues ``meeting`` is expected to take up: its team's open Jira issues,
+    as module B last reported them (``ctx_team_agendas``, #436).
 
-    Jira is module B's integration, and how its issues reach D is not agreed
-    yet -- D never calls Jira itself and never reads another module's tables.
-    Until that interface lands in ``packages/contracts`` (#436), there is no agenda,
-    and the brief says "no linked issues" rather than guessing one.
+    D never calls Jira and never reads B's tables; B publishes a ``TeamAgenda``
+    and ``store_team_agenda`` keeps the latest one. In B's order, most pressing
+    first -- ``notify`` shows the head (``MAX_BRIEF_AGENDA``).
+
+    A snapshot older than the contract's ``AGENDA_STALE_AFTER`` counts as none: B
+    republishes every ``AGENDA_PUBLISH_EVERY``, so an old one is one B stopped
+    refreshing, and its issues are no longer known to be open. The brief then says "no
+    linked issues" rather than show a list that may be stale.
     """
-    return []
+    row = session.get(CtxTeamAgenda, meeting.team_id)
+    if row is None or row.as_of < _agenda_cutoff(now):
+        return []
+    return [AgendaItem(**AgendaIssue.model_validate(issue).model_dump()) for issue in row.issues]
+
+
+def _agenda_cutoff(now: datetime) -> datetime:
+    return now - AGENDA_STALE_AFTER
+
+
+def store_team_agenda(session: Session, agenda: TeamAgenda) -> bool:
+    """Keep ``agenda`` as its team's agenda if it is newer than the one stored.
+    ``False`` when it was not kept: an older snapshot delivered late, or a team
+    that no longer exists.
+
+    One statement: the insert, or an update guarded on ``as_of`` so a snapshot
+    that arrives after a newer one leaves the newer one standing -- B publishes
+    every five minutes and nothing orders the deliveries. An empty ``issues`` is
+    stored like any other: it is B saying the team has none open.
+    """
+    if session.get(Team, agenda.team_id) is None:
+        log.info("context_agenda_team_gone", team_id=agenda.team_id)
+        return False
+    issues = [issue.model_dump(mode="json") for issue in agenda.issues]
+    statement = insert(CtxTeamAgenda).values(
+        team_id=agenda.team_id, as_of=agenda.as_of, issues=issues
+    )
+    kept = session.scalar(
+        statement.on_conflict_do_update(
+            index_elements=[CtxTeamAgenda.team_id],
+            set_={
+                "as_of": statement.excluded.as_of,
+                "issues": statement.excluded.issues,
+                "updated_at": func.now(),
+            },
+            where=CtxTeamAgenda.as_of < statement.excluded.as_of,
+        ).returning(CtxTeamAgenda.team_id)
+    )
+    # Counts only: the titles are B's item descriptions, meeting content.
+    log.info(
+        "context_agenda_stored" if kept else "context_agenda_older_ignored",
+        team_id=agenda.team_id,
+        issues=len(issues),
+    )
+    return kept is not None
+
+
+def purge_stale_agendas(session: Session, now: datetime) -> int:
+    """Delete every team agenda past ``AGENDA_STALE_AFTER``. Returns how many.
+
+    ``agenda_for`` already ignores these; deleting them is about the text they
+    hold. B stops publishing a team whose Jira-backed items are all gone -- the
+    team deleted them, or its meetings expired and took them -- so the last
+    snapshot, quoting items that no longer exist anywhere else, would otherwise
+    stay in this table for good. Run by ``tasks.send_due_briefs``, every minute.
+    """
+    purged = len(
+        session.scalars(
+            delete(CtxTeamAgenda)
+            .where(CtxTeamAgenda.as_of < _agenda_cutoff(now))
+            .returning(CtxTeamAgenda.team_id)
+        ).all()
+    )
+    if purged:
+        log.info("context_agenda_purged", teams=purged)
+    return purged
 
 
 def _normalize_title(title: str) -> str:
@@ -376,7 +452,7 @@ def compose_due_brief(
     row = session.get(CtxBrief, meeting_id)
     assert row is not None
 
-    agenda = agenda_for(session, meeting)
+    agenda = agenda_for(session, meeting, now=now)
     previous_meeting_id, match_reason = choose_previous_meeting(session, meeting, agenda, now=now)
     row.previous_meeting_id = previous_meeting_id
     row.match_reason = match_reason
@@ -431,4 +507,4 @@ def get_brief(
     row = session.get(CtxBrief, meeting_id)
     if row is None or not _is_visible(meeting, now):
         raise NotFoundError("brief", meeting_id)
-    return _render(session, meeting, row, agenda_for(session, meeting), now)
+    return _render(session, meeting, row, agenda_for(session, meeting, now=now), now)

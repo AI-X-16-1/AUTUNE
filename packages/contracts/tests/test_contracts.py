@@ -11,6 +11,8 @@ from autune_contracts import (
     GapReport,
     IntelligenceSnapshot,
     Payload,
+    TeamAgenda,
+    TeamPayload,
     TranscriptReady,
     TranscriptSource,
     UtteranceKind,
@@ -18,7 +20,7 @@ from autune_contracts import (
     validate_major_version,
 )
 
-FIXTURE_MODELS: dict[str, type[Payload]] = {
+FIXTURE_MODELS: dict[str, type[Payload] | type[TeamPayload]] = {
     "transcript_ready.short": TranscriptReady,
     "transcript_ready.typical": TranscriptReady,
     "transcript_ready.unidentified": TranscriptReady,
@@ -26,6 +28,7 @@ FIXTURE_MODELS: dict[str, type[Payload]] = {
     "gap_report": GapReport,
     "context_links": ContextLinks,
     "intelligence_snapshot": IntelligenceSnapshot,
+    "team_agenda": TeamAgenda,
 }
 
 

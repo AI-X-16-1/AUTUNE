@@ -8,6 +8,7 @@ Never imports another module.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from dataclasses import replace
 from datetime import UTC, date, datetime
@@ -19,11 +20,15 @@ from sqlalchemy.orm import Session, selectinload
 
 from autune_contracts.enums import ActionStatus, UtteranceKind
 from autune_contracts.extraction import (
+    AGENDA_TITLE_MAX,
+    JIRA_ISSUE_URL,
     ActionItem,
+    AgendaIssue,
     AmbiguousAgreement,
     Classification,
     Decision,
     ExtractionResult,
+    TeamAgenda,
 )
 from autune_contracts.transcript import Utterance as TranscriptUtterance
 from autune_core import (
@@ -2336,3 +2341,93 @@ def _insert_if_absent_into(session: Session, model: type[Any]) -> postgresql.Ins
     if session.get_bind().dialect.name == "postgresql":
         return postgresql.insert(model)
     return sqlite.insert(model)
+
+
+# --- the team's open Jira issues, for D's brief (#436) ---------------------------
+
+AGENDA_LIMIT = 20
+"""Issues per snapshot. D shows six; the rest is headroom, not a promise."""
+
+_AGENDA_STATUSES = {
+    ActionStatus.TODO.value: "할 일",
+    ActionStatus.IN_PROGRESS.value: "진행 중",
+}
+"""The item's status as the brief shows it. B moves the issue to the matching
+Jira status category on every edit, so this is Jira's state as far as Autune
+set it; a status changed in Jira alone is not read back."""
+
+_JIRA_KEY = re.compile(r"^[A-Z][A-Z0-9_]*-[0-9]+$")
+_JIRA_URL = re.compile(JIRA_ISSUE_URL)
+
+
+def _one_line(text: str, limit: int) -> str:
+    """Whitespace collapsed, and cut to ``limit`` characters with an ellipsis."""
+    line = " ".join(text.split())
+    return line if len(line) <= limit else line[: limit - 1].rstrip() + "…"
+
+
+def teams_with_jira_issues(session: Session) -> list[str]:
+    """Teams with an item that became a Jira issue and still exists -- the teams
+    whose agenda can be non-empty, or whose issues all closed and must now be
+    published empty. A team whose last such item was *deleted* drops out (its
+    Jira link goes with it); its last snapshot then goes stale for D under
+    ``AGENDA_STALE_AFTER`` (#491 review)."""
+    return sorted(
+        session.scalars(
+            select(Meeting.team_id)
+            .join(ExtExternalRef, ExtExternalRef.meeting_id == Meeting.id)
+            .where(ExtExternalRef.system == "jira", ExtExternalRef.external_id.is_not(None))
+            .distinct()
+        )
+    )
+
+
+def team_agenda(session: Session, team_id: str, *, now: datetime) -> TeamAgenda:
+    """The team's open issues made from its action items, most pressing first:
+    the soonest due date, then undated ones, oldest first (#436).
+
+    Only what Autune made -- an item confirmed and sent to Jira -- so there is
+    no call to Jira here and nothing a person wrote in Jira alone leaves it. The
+    title is the item's description, which is stored masked. A key or a link
+    that does not have the shape the contract requires is left out rather than
+    failing the whole snapshot; the title still goes.
+    """
+    rows = session.execute(
+        select(
+            ExtActionItem.description,
+            ExtActionItem.status,
+            ExtExternalRef.external_id,
+            ExtExternalRef.url,
+        )
+        .join(
+            ExtExternalRef,
+            (ExtExternalRef.action_item_id == ExtActionItem.id) & (ExtExternalRef.system == "jira"),
+        )
+        .join(Meeting, Meeting.id == ExtActionItem.meeting_id)
+        .where(
+            Meeting.team_id == team_id,
+            ExtExternalRef.external_id.is_not(None),
+            ExtActionItem.status.in_(_AGENDA_STATUSES),
+        )
+        .order_by(
+            ExtActionItem.due_date.is_(None),
+            ExtActionItem.due_date,
+            ExtActionItem.created_at,
+            ExtActionItem.id,
+        )
+        .limit(AGENDA_LIMIT)
+    )
+    issues = []
+    for description, status, key, url in rows:
+        title = _one_line(description, AGENDA_TITLE_MAX)
+        if not title:
+            continue
+        issues.append(
+            AgendaIssue(
+                title=title,
+                key=key if key and _JIRA_KEY.match(key) else None,
+                status=_AGENDA_STATUSES[status],
+                url=url if url and _JIRA_URL.match(url) else None,
+            )
+        )
+    return TeamAgenda(team_id=team_id, as_of=now, issues=issues)

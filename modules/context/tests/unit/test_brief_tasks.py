@@ -121,3 +121,47 @@ def test_a_brief_claimed_elsewhere_or_no_longer_due_posts_nothing() -> None:
         tasks.send_brief(MEETING)
 
     slack_client.assert_not_called()
+
+
+# --------------------------------------------------------------------------- #
+# B's agenda (#436)
+# --------------------------------------------------------------------------- #
+
+
+def _agenda_payload(**overrides: object) -> dict:
+    payload: dict = {
+        "contract_version": "2.2",
+        "team_id": "team_001",
+        "as_of": "2026-09-30T05:45:00Z",
+        "issues": [{"title": "결제 모듈 API 명세 정리", "key": "AUT-12"}],
+    }
+    return payload | overrides
+
+
+def test_an_agenda_event_is_stored() -> None:
+    with patch.object(tasks.briefs, "store_team_agenda") as store:
+        tasks.on_extraction_agenda_changed(_agenda_payload())
+
+    (_, agenda), _ = store.call_args
+    assert agenda.team_id == "team_001"
+    assert [issue.key for issue in agenda.issues] == ["AUT-12"]
+
+
+def test_an_agenda_from_an_incompatible_producer_is_refused() -> None:
+    with (
+        patch.object(tasks.briefs, "store_team_agenda") as store,
+        pytest.raises(ValueError),
+    ):
+        tasks.on_extraction_agenda_changed(_agenda_payload(contract_version="3.0"))
+
+    store.assert_not_called()
+
+
+def test_the_brief_clock_also_purges_stale_agendas() -> None:
+    with (
+        patch.object(tasks.briefs, "due_meeting_starts", return_value=[]),
+        patch.object(tasks.briefs, "purge_stale_agendas") as purge,
+    ):
+        tasks.send_due_briefs()
+
+    purge.assert_called_once()

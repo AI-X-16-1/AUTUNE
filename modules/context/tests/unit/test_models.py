@@ -14,6 +14,7 @@ CTX_TABLES = {
     "ctx_decision_versions",
     "ctx_meeting_status",
     "ctx_briefs",
+    "ctx_team_agendas",
 }
 _MODEL_CLASSES = (
     models.CtxEmbedding,
@@ -22,6 +23,7 @@ _MODEL_CLASSES = (
     models.CtxDecisionVersion,
     models.CtxMeetingStatus,
     models.CtxBrief,
+    models.CtxTeamAgenda,
 )
 
 

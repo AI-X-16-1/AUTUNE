@@ -1,12 +1,15 @@
-"""B -> E. Classifications, action items, and unresolved agreement."""
+"""B -> E. Classifications, action items, and unresolved agreement.
+
+B -> D. The Jira issues a team has open, for the pre-meeting brief (#436).
+"""
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 
-from pydantic import Field, model_validator
+from pydantic import AwareDatetime, Field, model_validator
 
-from ._base import ContractModel, Payload
+from ._base import ContractModel, Payload, TeamPayload
 from .enums import ActionStatus, ExternalSystem, UtteranceKind
 
 
@@ -129,3 +132,64 @@ class ExtractionResult(Payload):
     )
     classifications: list[Classification] = Field(default_factory=list)
     ambiguous_agreements: list[AmbiguousAgreement] = Field(default_factory=list)
+
+
+AGENDA_TITLE_MAX = 200
+"""Characters in one issue title: the largest value a consumer will receive,
+so it can size what it renders against a known bound. The producer shortens to
+this. It is a bound, not a display length -- a consumer still cuts to its own
+(D's brief shows six issues and cuts a title at 100), and that cut stays
+necessary (#491 review)."""
+
+JIRA_ISSUE_URL = r"^https://[A-Za-z0-9.-]+/browse/[A-Z][A-Z0-9_]*-[0-9]+$"
+"""An issue's browse link on a Jira site: https, a host, ``/browse/KEY-12``.
+
+A consumer puts ``url`` in an ``href`` (D's brief panel does), so anything but
+this shape -- a ``javascript:`` URL above all -- is refused at validation rather
+than trusted to every renderer."""
+
+
+class AgendaIssue(ContractModel):
+    """One open Jira issue a team's meetings may take up.
+
+    What a brief line needs and nothing else: no assignee, no description body.
+    """
+
+    title: str = Field(
+        min_length=1,
+        max_length=AGENDA_TITLE_MAX,
+        description="The issue's summary: masked item text, one line.",
+    )
+    key: str | None = Field(default=None, pattern=r"^[A-Z][A-Z0-9_]*-[0-9]+$")
+    status: str | None = Field(default=None, description="A display name, e.g. 진행 중.")
+    url: str | None = Field(default=None, pattern=JIRA_ISSUE_URL)
+
+
+AGENDA_PUBLISH_EVERY = timedelta(minutes=5)
+"""How often the producer republishes every team's agenda, changed or not."""
+
+AGENDA_STALE_AFTER = timedelta(minutes=30)
+"""A snapshot older than this -- six missed publishes -- is **empty** to a
+consumer, whatever it lists (#491 review). The producer stops publishing for a
+team once nothing of its is left to publish: its last Jira-linked item deleted
+by a person, by a user deleting their own data, or by the retention sweep, all
+of which take the item's Jira link with it. Without this rule the last snapshot
+would keep showing deleted titles for good (invariant 11)."""
+
+
+class TeamAgenda(TeamPayload):
+    """Every open issue made from the team's action items, as of ``as_of`` (#436).
+
+    A snapshot, not a change: each one replaces the last, and an empty
+    ``issues`` means the team has none open. Republished every
+    ``AGENDA_PUBLISH_EVERY`` whether or not anything changed. Events can arrive
+    out of order, so a consumer keeps the one with the latest ``as_of`` -- and
+    treats it as empty once it is older than ``AGENDA_STALE_AFTER``. The producer
+    decides the order (most pressing first) and caps the list; a consumer shows
+    the head.
+    """
+
+    as_of: AwareDatetime
+    """With an offset. A consumer compares snapshots by ``as_of``, and a naive
+    time against an aware one raises instead of comparing (#491 review)."""
+    issues: list[AgendaIssue] = Field(default_factory=list)

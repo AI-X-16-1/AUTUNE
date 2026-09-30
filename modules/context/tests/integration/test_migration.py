@@ -25,6 +25,7 @@ CTX_TABLES = {
     "ctx_decision_versions",
     "ctx_meeting_status",
     "ctx_briefs",
+    "ctx_team_agendas",
 }
 
 

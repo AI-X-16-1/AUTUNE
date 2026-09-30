@@ -1,5 +1,5 @@
 /**
- * Generated from packages/contracts (contract version 2.1).
+ * Generated from packages/contracts (contract version 2.2).
  * Do not edit. Run `pnpm run gen:contracts` and commit the result.
  */
 

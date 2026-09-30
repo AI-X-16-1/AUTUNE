@@ -36,6 +36,20 @@ CODEOWNERS requires approval from the whole team for changes to this package.
 | `ContextLinks` | D | E | `autune.context.completed` |
 | `IntelligenceSnapshot` | E | apps (dashboard, Slack) | `autune.intelligence.completed` |
 
+Outside the per-meeting pipeline, one payload is about a team rather than a
+meeting, so it extends `TeamPayload` (`team_id`) instead of `Payload`
+(`meeting_id`):
+
+| Contract | From | To | Event |
+| --- | --- | --- | --- |
+| `TeamAgenda` | B | D | `autune.extraction.agenda_changed` |
+
+`TeamAgenda` (#436, version 2.2) is a snapshot of the team's open Jira issues
+made from its action items, republished every five minutes, for the brief D
+sends before a scheduled meeting. Each one replaces the last; keep the latest
+`as_of`. `AgendaIssue.url` must be an https `/browse/KEY-N` link, because D
+renders it as an `href`.
+
 ### 1. `TranscriptReady` — A → B, C, D
 
 The canonical meeting record. Everything downstream is derived from it.

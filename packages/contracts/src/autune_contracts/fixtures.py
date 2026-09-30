@@ -20,6 +20,7 @@ NAMES = (
     "gap_report",
     "context_links",
     "intelligence_snapshot",
+    "team_agenda",
 )
 
 

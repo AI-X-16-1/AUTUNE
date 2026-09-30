@@ -47,14 +47,17 @@ links: publish `ContextLinks` with an empty `decision_lineage` and
 
 The pre-meeting brief goes to Slack only, on a clock
 (`autune.context.periodic.send_due_briefs`). Its agenda is Jira issues, which
-are B's integration: D never calls Jira, and until B's side lands in
-`packages/contracts` the brief has no agenda.
+are B's integration: D never calls Jira. B publishes a `TeamAgenda` every five
+minutes, `on_extraction_agenda_changed` keeps the latest per team, and a
+snapshot older than `AGENDA_STALE_AFTER` counts as no agenda.
 
 ## Owns
 
 PostgreSQL only: `ctx_topic_links`, `ctx_decisions`, `ctx_decision_versions`,
 `ctx_embeddings` (a `vector` column, via pgvector), `ctx_meeting_status`,
-`ctx_briefs` (which past meeting a brief recaps — never the recap itself).
+`ctx_briefs` (which past meeting a brief recaps — never the recap itself),
+`ctx_team_agendas` (B's latest open-issue snapshot per team; the one table that
+copies text from another module, so it is purged once stale).
 `ctx_materials` is Phase 2.
 
 Four of those cascade from `meetings.id`. `ctx_decisions` is anchored on
