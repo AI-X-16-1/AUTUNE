@@ -146,6 +146,15 @@ class ExtActionItem(Base, TimestampMixin):
     paraphrase wrong often enough to matter.
     """
 
+    related: Mapped[list[ExtActionItemRelated]] = relationship(
+        back_populates="action_item",
+        cascade="all, delete-orphan",
+        # The database deletes them with the item (ondelete=CASCADE); the ORM need
+        # not load them first just to delete them.
+        passive_deletes=True,
+        order_by="ExtActionItemRelated.id",
+    )
+
     sources: Mapped[list[ExtActionItemSource]] = relationship(
         back_populates="action_item",
         cascade="all, delete-orphan",
@@ -195,6 +204,48 @@ class ExtActionItemSource(Base):
     """NULL once the utterance is deleted. Never written NULL by this module."""
 
     action_item: Mapped[ExtActionItem] = relationship(back_populates="sources")
+
+
+class ExtActionItemRelated(Base):
+    """The other lines of the meeting an item's summary was written from.
+
+    ``ext_action_item_sources`` is the utterance a commitment was said in; this is
+    what the model said it drew on besides -- a turn earlier that names the thing,
+    a line elsewhere about the same subject (``LlmResolver``, ``Resolution.used``).
+    The drawer shows them beneath the summary so a person can check the sentence
+    against what it was made from and correct it.
+
+    **A table of its own, not more rows in ``ext_action_item_sources``.** Sources
+    are what an item *is* -- ``ActionItem.source_utterance_ids`` reaches D and E,
+    and a count of them means something there. These are what a summary
+    *consulted*, decided by a model, and mixing the two would change what D and E
+    read without anyone deciding it.
+
+    Deleting an utterance deletes its row here: unlike a source, a consulted line
+    that is gone leaves nothing worth keeping. Only consenting speakers' lines are
+    ever written, and the reader filters on consent again.
+    """
+
+    __tablename__ = "ext_action_item_related"
+    __table_args__ = (
+        UniqueConstraint("action_item_id", "utterance_id", name="uq_ext_action_item_related"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    action_item_id: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("ext_action_items.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    utterance_id: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("utterances.id", ondelete="CASCADE", name="fk_ext_action_item_related_utt"),
+        nullable=False,
+        index=True,
+    )
+
+    action_item: Mapped[ExtActionItem] = relationship(back_populates="related")
 
 
 class ExtExternalRef(Base):

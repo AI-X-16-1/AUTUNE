@@ -9,12 +9,18 @@ import type { SourceUtterance } from "../types";
  * Not a quotation of the item's sources — those keep the `Quote` treatment
  * beneath — and it says so, so nobody reads a neighbouring line as the evidence.
  */
-export function ContextLines({ lines }: { lines: SourceUtterance[] }) {
+export function ContextLines({
+  lines,
+  label = "앞선 발화 (맥락)",
+}: {
+  lines: SourceUtterance[];
+  label?: string;
+}) {
   if (lines.length === 0) return null;
   return (
-    <div className="grid gap-0.5" role="group" aria-label="앞선 발화">
+    <div className="grid gap-0.5" role="group" aria-label={label}>
       <p className="text-[var(--color-ink-muted)]" style={{ fontSize: "var(--text-metaSmall)" }}>
-        앞선 발화 (맥락)
+        {label}
       </p>
       {lines.map((line) => (
         <p

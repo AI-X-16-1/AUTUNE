@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 from autune_core import Meeting, Team, User, Utterance
 from autune_extraction.models import (
     ExtActionItem,
+    ExtActionItemRelated,
     ExtActionItemSource,
     ExtClassification,
     ExtConfirmation,
@@ -32,6 +33,7 @@ from autune_extraction.models import (
 B_TABLES = (
     "ext_action_items",
     "ext_action_item_sources",
+    "ext_action_item_related",
     "ext_edit_events",
     "ext_decisions",
     "ext_decision_sources",
@@ -74,6 +76,7 @@ def meeting(db_session: Session) -> dict[str, str]:
         origin="model",
     )
     item.sources = [ExtActionItemSource(utterance_id=said.id)]
+    item.related = [ExtActionItemRelated(utterance_id=agreed.id)]
     decision = ExtDecision(meeting_id=meeting.id, statement="정리하기로", confidence=0.7)
     decision.sources = [ExtDecisionSource(utterance_id=said.id, position=0)]
     db_session.add_all(

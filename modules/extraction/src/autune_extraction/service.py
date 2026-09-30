@@ -51,6 +51,7 @@ from .decisions import DEFAULT_MAX_GAP, ClassifiedUtterance, decision_id, group_
 from .edit_cost import EditCost
 from .models import (
     ExtActionItem,
+    ExtActionItemRelated,
     ExtActionItemSource,
     ExtClassification,
     ExtConfirmation,
@@ -63,7 +64,14 @@ from .models import (
     ExtExtractionRun,
 )
 from .noun_form import tidy
-from .pipeline.base import Classifier, NliModel, ReferenceResolver, ResolutionRequest
+from .pipeline.base import (
+    Classifier,
+    NliModel,
+    ReferenceResolver,
+    Resolution,
+    ResolutionRequest,
+)
+from .pipeline.related import related_ids
 from .pipeline.resolver import MAX_CONTEXT_AFTER, MAX_CONTEXT_UTTERANCES
 from .schemas import (
     ActionItemCreate,
@@ -787,6 +795,27 @@ def context_before(session: Session, source_ids: Sequence[str]) -> list[SourceUt
     return [SourceUtterance(id=uid, text=text) for uid, text in reversed(rows)]
 
 
+def related_utterances(session: Session, item_id: str) -> list[SourceUtterance]:
+    """The lines an item's summary says it was written from, in spoken order.
+
+    Only consenting speakers' and non-blank lines, the filter every read of the
+    transcript draws: consent can be withdrawn after the summary was written, and
+    the line must disappear from the screen when it does.
+    """
+    rows = session.execute(
+        select(Utterance.id, Utterance.text)
+        .join(ExtActionItemRelated, ExtActionItemRelated.utterance_id == Utterance.id)
+        .join(Participant, Participant.id == Utterance.participant_id)
+        .where(
+            ExtActionItemRelated.action_item_id == item_id,
+            Participant.consented.is_(True),
+            func.length(func.trim(Utterance.text)) > 0,
+        )
+        .order_by(Utterance.start_sec, Utterance.id)
+    ).all()
+    return [SourceUtterance(id=uid, text=text) for uid, text in rows]
+
+
 def read_detail(session: Session, item: ExtActionItem) -> ActionItemDetail:
     """One item with the text of the utterances it was drawn from.
 
@@ -807,6 +836,7 @@ def read_detail(session: Session, item: ExtActionItem) -> ActionItemDetail:
         ).model_dump(),
         sources=source_utterances(session, item.id),
         context=context_before(session, [s.utterance_id for s in item.sources if s.utterance_id]),
+        related=related_utterances(session, item.id),
         history=edit_history(session, item.id),
     )
 
@@ -1815,23 +1845,67 @@ def resolve_commitment_references(
     quote rather than failing the meeting) is what makes a generated sentence an
     acceptable draft here rather than a silent record.
     """
+    return {
+        utterance_id: resolution.text
+        for utterance_id, resolution in resolve_commitment_summaries(resolver, classified).items()
+    }
+
+
+def resolve_commitment_summaries(
+    resolver: ReferenceResolver,
+    classified: Sequence[ClassifiedUtterance],
+) -> dict[str, Resolution]:
+    """``resolve_commitment_references`` with the lines each sentence was written from.
+
+    The same window as before -- ``MAX_CONTEXT_UTTERANCES`` lines before a
+    commitment and ``MAX_CONTEXT_AFTER`` after, blank turns dropped -- and, for a
+    resolver that can say which lines it used (``resolve_with_evidence``), up to
+    ``related.MAX_RELATED`` more from the rest of the meeting that are about the
+    same thing. Those are candidates the model may cite, never lines anyone is
+    shown until it does. A resolver that cannot cite is not handed them: the
+    retrieval is skipped, not run for nothing.
+
+    Read from ``classified`` for the reason ``resolve_commitment_references``
+    gives: it is already ordered, and an excluded speaker's turn is already
+    blank. Both the window and the candidates come out of the same filtered
+    sequence, so a line from a speaker who did not consent is in neither.
+    """
     commitments = [u for u in classified if u.kind is UtteranceKind.COMMITMENT]
     if not commitments:
         return {}
 
+    cites = callable(getattr(resolver, "resolve_with_evidence", None))
+    lines = [(u.id, u.text) for u in classified if u.text]
+    said = dict(lines)
     position = {utterance.id: index for index, utterance in enumerate(classified)}
     requests = []
     for utterance in commitments:
         index = position[utterance.id]
         start = max(0, index - MAX_CONTEXT_UTTERANCES)
-        context = tuple(u.text for u in classified[start:index] if u.text)
+        before = [u for u in classified[start:index] if u.text]
         after_end = index + 1 + MAX_CONTEXT_AFTER
-        context_after = tuple(u.text for u in classified[index + 1 : after_end] if u.text)
+        after = [u for u in classified[index + 1 : after_end] if u.text]
+        offered = (
+            related_ids(utterance.id, lines, exclude={u.id for u in (*before, *after)})
+            if cites
+            else []
+        )
         requests.append(
-            ResolutionRequest(target=utterance.text, context=context, context_after=context_after)
+            ResolutionRequest(
+                target=utterance.text,
+                context=tuple(u.text for u in before),
+                context_after=tuple(u.text for u in after),
+                target_id=utterance.id,
+                context_ids=tuple(u.id for u in before),
+                context_after_ids=tuple(u.id for u in after),
+                related=tuple((line_id, said[line_id]) for line_id in offered),
+            )
         )
 
-    resolved = resolver.resolve(requests)
+    if cites:
+        resolved = resolver.resolve_with_evidence(requests)  # type: ignore[attr-defined]
+    else:
+        resolved = [Resolution(text) for text in resolver.resolve(requests)]
     return dict(zip((u.id for u in commitments), resolved, strict=True))
 
 
@@ -1842,6 +1916,7 @@ def build_action_items(
     utterances: Sequence[TranscriptUtterance],
     classified: Sequence[ClassifiedUtterance],
     resolved: Mapping[str, str] | None = None,
+    related: Mapping[str, Sequence[str]] | None = None,
 ) -> list[ExtActionItem] | None:
     """One draft item per commitment, replacing the model's previous draft.
 
@@ -1867,8 +1942,15 @@ def build_action_items(
     resolved one.** ``parse_due`` depends on the exact verb ending the speaker
     used, and a resolver rewriting the sentence for a human reader is not
     obliged to preserve it.
+
+    ``related`` maps a commitment's utterance id to the other lines its summary
+    was written from (``resolve_commitment_summaries``); they are kept in
+    ``ext_action_item_related`` for the drawer. Only ids of this meeting's
+    utterances are kept, and an id that is the commitment itself is not a
+    "related" line.
     """
     resolved = resolved or {}
+    related = related or {}
     edited = session.scalar(
         select(func.count()).select_from(ExtEditEvent).where(ExtEditEvent.meeting_id == meeting_id)
     )
@@ -1925,6 +2007,7 @@ def build_action_items(
         # is a fixed rule, not a model's paraphrase, and the original is beside it.
         rewritten = resolved.get(utterance.id, said.text)
         description = tidy(rewritten)
+        cited = [u for u in related.get(utterance.id, ()) if u in spoken and u != utterance.id]
         items.append(
             ExtActionItem(
                 meeting_id=meeting_id,
@@ -1938,6 +2021,7 @@ def build_action_items(
                 confidence=utterance.confidence,
                 origin="model",
                 sources=[ExtActionItemSource(utterance_id=utterance.id)],
+                related=[ExtActionItemRelated(utterance_id=u) for u in cited],
             )
         )
     session.add_all(items)

@@ -160,6 +160,12 @@ export interface ActionItemDetail extends ActionItemRead {
    * Not what the item was drawn from.
    */
   context?: SourceUtterance[];
+  /**
+   * The lines the summary says it was written from, beyond the commitment itself
+   * (`ext_action_item_related`), in spoken order — shown beneath the summary so a
+   * person can check the sentence against them and correct it.
+   */
+  related?: SourceUtterance[];
   /** Oldest first. Empty for an item the model extracted and nobody touched. */
   history?: EditHistoryEntry[];
 }

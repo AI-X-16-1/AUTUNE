@@ -15,6 +15,7 @@ same reason as ``LocalDeberta``: importing at module scope would make
 
 from __future__ import annotations
 
+import json
 import re
 import time
 from collections.abc import Sequence
@@ -26,7 +27,7 @@ from autune_core.errors import PrivacyViolationError
 from autune_extraction.slots import parse_due
 from autune_integrations.errors import TransientIntegrationError
 
-from .base import Embedder, ResolutionRequest
+from .base import Embedder, Resolution, ResolutionRequest
 from .classifier import RETRY_BACKOFF_SEC
 from .llm import GeminiClient, _answer_text, substitute_names_mapped
 
@@ -162,7 +163,12 @@ def _retains_target_ending(resolved: str, target: str) -> bool:
 
 
 def _window_lines(request: ResolutionRequest) -> list[str]:
-    return [*request.context, request.target, *request.context_after]
+    return [
+        *request.context,
+        request.target,
+        *request.context_after,
+        *(text for _, text in request.related),
+    ]
 
 
 def _window_text(request: ResolutionRequest) -> str:
@@ -504,15 +510,25 @@ def _scrubbed(
     the target and in the lines around it -- "[사람1]" in the context and in the
     target is one person, which is what lets the model resolve "그분" to them.
     """
-    texts = [*request.context, request.target, *request.context_after]
+    texts = [
+        *request.context,
+        request.target,
+        *request.context_after,
+        *(text for _, text in request.related),
+    ]
     replaced, surface = substitute_names_mapped(texts, roster)
     before = len(request.context)
+    after = before + 1 + len(request.context_after)
     return (
         replace(
             request,
             target=replaced[before],
             context=tuple(replaced[:before]),
-            context_after=tuple(replaced[before + 1 :]),
+            context_after=tuple(replaced[before + 1 : after]),
+            related=tuple(
+                (line_id, text)
+                for (line_id, _), text in zip(request.related, replaced[after:], strict=True)
+            ),
         ),
         surface,
     )
@@ -531,6 +547,12 @@ def _restored(answer: str, surface: dict[str, str]) -> str | None:
             return None
     return _PLACEHOLDER.sub(lambda m: surface[m.group(0)], answer)
 
+
+_SENTENCE_BREAK = re.compile(r"(?:습니다|어요|아요|여요|이요|이에요|예요|죠|네요|군요)\s+\S")
+"""A finished sentence with more text after it. A rewrite that contains one the
+target does not is two sentences pasted into one -- "패키지 사고 우편함에 안 들어가는
+건이요 서버 쪽은 고쳤는데 ..." -- which is what a model does when it merges lines of
+two different subjects."""
 
 _BRACKETED = re.compile(r"\[[^\]]*\]|\([^)]*\)")
 MAX_GROWTH = 3
@@ -552,14 +574,99 @@ def _sound(answer: str, request: ResolutionRequest) -> bool:
     - The deadline phrase the target carries, if any, is still there.
     - No longer than ``MAX_GROWTH`` times the target, with 80 characters as the
       floor.
+    - No finished sentence followed by more text that the target does not already
+      have (``_SENTENCE_BREAK``): two lines merged into one is not a resolved
+      reference.
     """
-    window = " ".join([*request.context, request.target, *request.context_after])
+    window = " ".join(_window_lines(request))
     if any(span not in window for span in _BRACKETED.findall(answer)):
         return False
     due = parse_due(request.target, None)
     if due is not None and due.text and due.text not in answer:
         return False
+    if len(_SENTENCE_BREAK.findall(answer)) > len(_SENTENCE_BREAK.findall(request.target)):
+        return False
     return len(answer) <= max(80, MAX_GROWTH * len(request.target))
+
+
+_SUMMARY_PROMPT = """\
+다음은 회의 발화 목록입니다. 앞의 번호는 이 목록 안에서만 쓰는 번호이고, [대상]이 정리할 \
+문장입니다. [앞]과 [뒤]는 대상 바로 앞뒤의 발화, [관련]은 회의의 다른 곳에서 비슷한 \
+말을 한 발화입니다 (관련 없는 것도 섞여 있을 수 있습니다).
+
+{lines}
+
+[대상] 문장에서 "그거", "그건", "이거", "저희 팀", "표", "이번 빌드" 같은 대명사나 빠져 있는 \
+대상을, 위 발화들([앞], [뒤], [관련] 모두)이 실제로 가리키는 것으로 채워 한 문장으로 다시 \
+쓰세요.
+
+규칙:
+- 위 발화에 없는 새로운 사실(날짜, 숫자, 이름 등)을 만들어내지 마세요.
+- 마스킹된 토큰(예: 대괄호로 묶인 표현)은 그대로 두세요.
+- [대상]의 화자 시점과 문장 끝 어미("~할게요", "~하겠습니다", "~보려고요")를 그대로 유지하세요. \
+"제가"/"저는"을 3인칭으로 바꾸지 마세요.
+- [대상]에 있는 날짜·기한·수량 표현은 그대로 두세요.
+- 지시어나 빠진 대상만 구체적인 말로 채우세요. 다른 발화의 내용을 새 문장으로 덧붙이거나 \
+통째로 바꾸지 말고, 괄호나 대괄호는 새로 쓰지 마세요. 서로 다른 주제의 발화를 섞지 마세요.
+- 대상이 여러 가지로 읽히면 [대상] 바로 앞 발화에서 언급된 것을 우선하세요.
+- 채우는 데 실제로 쓴 발화의 번호를 "used"에 적으세요. [대상] 자신의 번호는 적지 \
+마세요. 발화들로 풀리지 않거나 이미 분명하면 [대상] 문장을 그대로 "summary"에 쓰고 "used"는 \
+빈 목록으로 두세요.
+
+JSON 하나만 출력하세요: {{"summary": "다시 쓴 한 문장", "used": [번호, ...]}}
+"""
+MAX_USED = 4
+_LABELS = ("앞", "대상", "뒤", "관련")
+
+
+def _numbered(request: ResolutionRequest) -> list[tuple[str, str, str]]:
+    """The window and the candidates as ``(utterance id, label, text)``, in the order
+    the prompt numbers them. An id is empty for a line the caller gave no id for --
+    such a line can be read but never cited."""
+
+    def ids(given: tuple[str, ...], n: int) -> list[str]:
+        return list(given) if len(given) == n else [""] * n
+
+    before = ids(request.context_ids, len(request.context))
+    after = ids(request.context_after_ids, len(request.context_after))
+    lines = [(i, _LABELS[0], t) for i, t in zip(before, request.context, strict=True)]
+    lines.append((request.target_id, _LABELS[1], request.target))
+    lines += [(i, _LABELS[2], t) for i, t in zip(after, request.context_after, strict=True)]
+    lines += [(i, _LABELS[3], t) for i, t in request.related]
+    return lines
+
+
+def _summary_prompt(numbered: list[tuple[str, str, str]]) -> str:
+    lines = "\n".join(f"{n} [{label}] {text}" for n, (_, label, text) in enumerate(numbered, 1))
+    return _SUMMARY_PROMPT.format(lines=lines)
+
+
+def _read_summary(answer: str, numbered: list[tuple[str, str, str]]) -> tuple[str, tuple[str, ...]]:
+    """The model's summary and the ids of the lines it says it used.
+
+    Only numbers of lines that exist and carry an id count, never the target's
+    own; the ids come back in spoken order, at most ``MAX_USED``. Anything
+    unreadable is an empty summary, which the caller treats as no answer.
+    """
+    match = re.search(r"\{.*\}", answer, re.S)
+    try:
+        data = json.loads(match.group(0)) if match else {}
+    except ValueError:
+        data = {}
+    if not isinstance(data, dict) or not isinstance(data.get("summary"), str):
+        return "", ()
+    cited = data.get("used")
+    used: list[str] = []
+    for number in cited if isinstance(cited, list) else []:
+        if isinstance(number, bool) or not isinstance(number, int):
+            continue
+        if not 1 <= number <= len(numbered):
+            continue
+        line_id, label, _ = numbered[number - 1]
+        if line_id and label != _LABELS[1] and line_id not in used:
+            used.append(line_id)
+    order = {line_id: n for n, (line_id, _, _) in enumerate(numbered)}
+    return data["summary"], tuple(sorted(used, key=lambda i: order[i])[:MAX_USED])
 
 
 class LlmResolver(GeminiClient):
@@ -609,23 +716,34 @@ class LlmResolver(GeminiClient):
         self._min_similarity = min_similarity
 
     def _accept(
-        self, answer: str, request: ResolutionRequest, surface: dict[str, str]
-    ) -> str | None:
-        """The answer as the sentence to store, or ``None`` when it should not be.
+        self,
+        answer: str,
+        request: ResolutionRequest,
+        surface: dict[str, str],
+        numbered: list[tuple[str, str, str]] | None,
+    ) -> Resolution | None:
+        """The answer as the sentence to store and the lines it cites, or ``None``
+        when it should not be used.
 
-        Checks that need no model, in the order they are cheapest: one line, no
-        placeholder the model invented, then ``_sound`` (what the sentence adds
-        and drops) and the groundedness checks every resolver passes.
+        Checks that need no model, cheapest first: one line, no placeholder the
+        model invented, then ``_sound`` (what the sentence adds and drops) and the
+        groundedness checks every resolver passes. A sentence that came back
+        unchanged cites nothing -- there is nothing it was written from.
         """
-        answer = answer.strip().strip("\"'“”‘’").strip()
-        if not answer or "\n" in answer:
+        used: tuple[str, ...] = ()
+        if numbered is None:
+            text = answer
+        else:
+            text, used = _read_summary(answer, numbered)
+        text = text.strip().strip("\"'“”‘’").strip()
+        if not text or "\n" in text:
             return None
-        restored = _restored(answer, surface)
+        restored = _restored(text, surface)
         if restored is None or not _sound(restored, request):
             return None
         if not _passes_grounding(restored, request, self._embedder, self._min_similarity):
             return None
-        return restored
+        return Resolution(restored, used if restored != request.target else ())
 
     def _ask(self, model: str | None, body: dict[str, Any], index: int) -> str | None:
         """One model's answer text; ``None`` if the call failed. A privacy refusal is
@@ -640,7 +758,7 @@ class LlmResolver(GeminiClient):
             log.warning("extraction_resolver_call_failed", exc_info=True)
             return None
 
-    def _resolve_one(self, request: ResolutionRequest, index: int) -> str:
+    def _resolve_one(self, request: ResolutionRequest, index: int) -> Resolution:
         """The cheap model first; the second model once if its answer is not sound.
 
         The first model (``model``) answers everything. When its answer fails a
@@ -649,24 +767,38 @@ class LlmResolver(GeminiClient):
         quote stands. A busy first model already falls through to the second
         (``GeminiClient._post``), so a second model that has answered is not asked
         again for the same request.
+
+        **Two modes.** A request that carries ids (``target_id``) is asked to
+        summarise from the numbered window and candidates and to say which lines
+        it used, and answers as JSON. One without is the plain rewrite it always
+        was.
         """
         sent, surface = _scrubbed(request, self._roster)
+        numbered = _numbered(sent) if request.target_id else None
+        prompt = _summary_prompt(numbered) if numbered is not None else _prompt(sent)
+        generation: dict[str, Any] = {"temperature": 0}
+        if numbered is not None:
+            generation["responseMimeType"] = "application/json"
         body = {
-            "contents": [{"role": "user", "parts": [{"text": _prompt(sent)}]}],
-            "generationConfig": {"temperature": 0},
+            "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+            "generationConfig": generation,
         }
+        raw = Resolution(request.target)
         first = self._ask(None, body, index)
         if first is None:
-            return request.target
-        accepted = self._accept(first, request, surface)
+            return raw
+        accepted = self._accept(first, request, surface, numbered)
         if accepted is not None:
             return accepted
         if not self._fallback or self.last_model == self._fallback:
-            return request.target
+            return raw
         log.info("extraction_resolver_escalated", model=self._model, second=self._fallback)
         second = self._ask(self._fallback, body, index)
-        accepted = self._accept(second, request, surface) if second is not None else None
-        return accepted if accepted is not None else request.target
+        accepted = self._accept(second, request, surface, numbered) if second is not None else None
+        return accepted if accepted is not None else raw
+
+    def resolve_with_evidence(self, requests: list[ResolutionRequest]) -> list[Resolution]:
+        return [self._resolve_one(request, index) for index, request in enumerate(requests)]
 
     def resolve(self, requests: list[ResolutionRequest]) -> list[str]:
-        return [self._resolve_one(request, index) for index, request in enumerate(requests)]
+        return [resolution.text for resolution in self.resolve_with_evidence(requests)]

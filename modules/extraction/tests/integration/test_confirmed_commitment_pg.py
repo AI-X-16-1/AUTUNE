@@ -22,7 +22,13 @@ from autune_core import Meeting, Participant, Team, User, Utterance
 from autune_extraction import service
 from autune_extraction.confirmations import ConfirmationResponse
 from autune_extraction.decisions import ClassifiedUtterance
-from autune_extraction.models import ExtActionItem, ExtConfirmation, ExtEditEvent
+from autune_extraction.models import (
+    ExtActionItem,
+    ExtActionItemRelated,
+    ExtActionItemSource,
+    ExtConfirmation,
+    ExtEditEvent,
+)
 
 STARTED = datetime(2026, 9, 9, 1, 0, tzinfo=UTC)  # a Wednesday, 10:00 in Seoul
 
@@ -237,3 +243,32 @@ def test_an_items_detail_carries_its_context_on_postgres(
 
     assert [s.text for s in detail.sources] == ["그럼 제가 다음 주 화요일까지 볼게요"]
     assert [c.text for c in detail.context] == ["지난주 고객 인터뷰 결과가 아직 정리가 안 됐어요"]
+
+
+def test_the_lines_a_summary_used_are_read_in_spoken_order_and_only_if_consented(
+    db_session: Session, scene: dict[str, str]
+) -> None:
+    """``ext_action_item_related`` on PostgreSQL: the join through participants, the
+    blank filter, and the order. The second line is a speaker who did not consent,
+    the third is blank -- neither may appear."""
+    lines = list(
+        db_session.scalars(
+            sa.select(Utterance)
+            .where(Utterance.meeting_id == scene["meeting"])
+            .order_by(Utterance.start_sec)
+        )
+    )
+    item = ExtActionItem(
+        meeting_id=scene["meeting"],
+        description="다음 주 화요일까지 볼 예정",
+        confidence=0.9,
+        origin="model",
+        sources=[ExtActionItemSource(utterance_id=scene["ask"])],
+        related=[ExtActionItemRelated(utterance_id=line.id) for line in reversed(lines[:3])],
+    )
+    db_session.add(item)
+    db_session.flush()
+
+    related = service.related_utterances(db_session, item.id)
+
+    assert [r.text for r in related] == ["지난주 고객 인터뷰 결과가 아직 정리가 안 됐어요"]

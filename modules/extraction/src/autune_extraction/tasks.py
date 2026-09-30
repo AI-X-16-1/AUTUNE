@@ -125,7 +125,9 @@ def _extract(meeting_id: str, utterances: Sequence[TranscriptUtterance]) -> None
     resolver = get_resolver()
     # The resolver sends text out too, when it is the ``llm`` one (#411).
     give_roster(resolver, roster)
-    resolved_descriptions = service.resolve_commitment_references(resolver, classified)
+    summaries = service.resolve_commitment_summaries(resolver, classified)
+    resolved_descriptions = {uid: resolution.text for uid, resolution in summaries.items()}
+    related_lines = {uid: resolution.used for uid, resolution in summaries.items()}
 
     with session_scope() as session:
         stored = service.store_classifications(
@@ -141,6 +143,7 @@ def _extract(meeting_id: str, utterances: Sequence[TranscriptUtterance]) -> None
             utterances=utterances,
             classified=classified,
             resolved=resolved_descriptions,
+            related=related_lines,
         )
         ambiguous = service.record_ambiguous_agreements(
             session, meeting_id=meeting_id, classified=classified
