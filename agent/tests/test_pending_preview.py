@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from autune_agent.main.preview import GONE, preview
 from autune_agent.main.registry import Tool
 from autune_agent.models import AgentPendingAction, AgentResearchDocument
-from autune_core import User
+from autune_core import Meeting, User
 
 
 def _row(team: dict[str, str], tool: str, arguments: dict[str, Any]) -> AgentPendingAction:
@@ -42,6 +42,21 @@ def test_a_research_share_shows_the_document(session: Session, team: dict[str, s
 def test_a_missing_document_says_so(session: Session, team: dict[str, str]) -> None:
     shown = preview(
         session, _row(team, "agent.share_research_document", {"document_id": "rdoc_x"}), tools={}
+    )
+
+    assert shown["body"] == GONE
+
+
+def test_a_document_of_another_meeting_is_not_shown(session: Session, team: dict[str, str]) -> None:
+    other = Meeting(team_id=team["team"], title="다른 회의")
+    session.add(other)
+    session.flush()
+    doc = AgentResearchDocument(team_id=team["team"], meeting_id=other.id, body="다른 회의 본문")
+    session.add(doc)
+    session.flush()
+
+    shown = preview(
+        session, _row(team, "agent.share_research_document", {"document_id": doc.id}), tools={}
     )
 
     assert shown["body"] == GONE

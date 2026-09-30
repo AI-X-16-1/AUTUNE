@@ -19,7 +19,7 @@ from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session
 
 from autune_core import CurrentUser, TeamMember, get_session
@@ -81,8 +81,9 @@ class ChatReply(BaseModel):
     proposed: int
     """How many actions the subagent proposed, at any level."""
     executed: int
-    """How many L1 proposals ran and worked -- the "notify after" of section 8.
-    L2 proposals wait for plan mode and are not counted here."""
+    """How many L1 actions ran and worked -- the "notify after" of section 8.
+    An L2 proposal, or one marked L1 whose module declared it L2, is queued for
+    approval (``GET /pending``) and not counted here."""
 
 
 class RunRead(BaseModel):
@@ -195,6 +196,9 @@ class PendingRead(BaseModel):
     decided_at: datetime | None
     title: str
     body: str
+    needs_check: bool
+    """Approved, but the action's outcome was never recorded: something raised
+    after the claim. It is never re-run; a person checks what happened."""
 
 
 class RejectRequest(BaseModel):
@@ -229,6 +233,7 @@ def _read(session: Session, row: AgentPendingAction) -> PendingRead:
         shown = {"title": row.kind, "body": PREVIEW_FAILED}
     fields: dict[str, Any] = {c: getattr(row, c) for c in PENDING_COLUMNS}
     fields.update(shown)
+    fields["needs_check"] = row.status == "approved" and row.result_ok is None
     return PendingRead(**fields)
 
 
@@ -236,7 +241,11 @@ def _read(session: Session, row: AgentPendingAction) -> PendingRead:
 def list_pending(
     user: CurrentUser, session: SessionDep, team_id: str | None = None
 ) -> list[PendingRead]:
-    """Pending L2 proposals the caller may decide, in every team or in ``team_id``."""
+    """Pending L2 proposals the caller may decide, in every team or in ``team_id``.
+
+    Also an approval that was interrupted -- ``approved`` with no outcome, see
+    ``main/pending.approve`` -- marked ``needs_check``, so it is not hidden.
+    """
     if team_id is not None:
         _require_member(session, team_id, user.id)
         team_ids = [team_id]
@@ -253,7 +262,16 @@ def list_pending(
         return []
     rows = session.scalars(
         select(AgentPendingAction)
-        .where(AgentPendingAction.team_id.in_(scopes), AgentPendingAction.status == "pending")
+        .where(
+            AgentPendingAction.team_id.in_(scopes),
+            or_(
+                AgentPendingAction.status == "pending",
+                and_(
+                    AgentPendingAction.status == "approved",
+                    AgentPendingAction.result_ok.is_(None),
+                ),
+            ),
+        )
         .order_by(AgentPendingAction.created_at.desc())
     ).all()
     return [_read(session, r) for r in rows if can_decide(scopes[r.team_id], r)]

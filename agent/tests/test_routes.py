@@ -163,9 +163,41 @@ def test_an_approver_lists_pending_with_previews(
 
     got = member.get("/api/agent/pending").json()
 
-    assert [(p["tool"], p["title"], p["body"]) for p in got] == [
-        ("agent.share_research_document", "리서치 문서 공유", "본문")
+    assert [(p["tool"], p["title"], p["body"], p["needs_check"]) for p in got] == [
+        ("agent.share_research_document", "리서치 문서 공유", "본문", False)
     ]
+
+
+def _interrupted(session: Session, team: dict[str, str]) -> AgentPendingAction:
+    """Claimed, then something raised before the outcome was written (pending.approve)."""
+    row = _queue(session, team)
+    row.status, row.decided_by, row.result_ok = "approved", team["member"], None
+    session.commit()
+    return row
+
+
+def test_an_interrupted_approval_lists_as_needing_a_check(
+    member: TestClient, session: Session, team: dict[str, str]
+) -> None:
+    session.add(AgentApprover(team_id=team["team"], user_id=team["member"], scope="research"))
+    row = _interrupted(session, team)
+    finished = _queue(session, team)
+    finished.status, finished.result_ok = "approved", True
+    session.commit()
+
+    got = member.get("/api/agent/pending").json()
+
+    assert [(p["id"], p["status"], p["needs_check"]) for p in got] == [(row.id, "approved", True)]
+
+
+def test_an_interrupted_approval_is_not_listed_to_a_non_approver(
+    member: TestClient, session: Session, team: dict[str, str]
+) -> None:
+    session.add(AgentApprover(team_id=team["team"], user_id=team["member"], scope="workload"))
+    _interrupted(session, team)
+
+    assert member.get("/api/agent/pending").json() == []
+    assert member.get("/api/agent/pending", params={"team_id": team["team"]}).json() == []
 
 
 def test_a_member_who_is_no_approver_gets_an_empty_list(

@@ -46,18 +46,23 @@ not allow. Section 8 is updated to say this (PR C).
 ## 3. Flow
 
 1. **Queue.** At the end of `run_and_record`, after L1 has run, each L2
-   proposal is checked:
+   proposal -- marked L2, or marked L1 for an action its module declared L2 --
+   is checked:
    - Its arguments must all be ids (`[a-z]+_[A-Za-z0-9]+`), ISO dates, booleans,
      or short enum strings (`[a-z_]{1,32}`). Anything else is refused: the
      proposal is not queued, and the run's `actions` record says so with a
-     reason this layer wrote.
+     reason this layer wrote. The same holds for a `kind` outside
+     `[a-z_]{1,64}`, a `tool` outside `[a-z_.]{1,128}`, or a subagent name
+     outside `[a-z_]{0,32}`.
    - A proposal that passes is inserted as `pending`, with its approver scope
      (section 4).
    - Any earlier `pending` proposal with the same subagent and the same
      `meeting_id` becomes `superseded`. A proposal about no meeting supersedes
      nothing.
 2. **List.** `GET /api/agent/pending` returns the pending proposals
-   the caller may approve, each with a preview (section 6).
+   the caller may approve, each with a preview (section 6), and, under the
+   same rules, every `approved` row whose `result_ok` is unset -- an approval
+   interrupted after its claim -- marked `needs_check` so it is not hidden.
 3. **Approve.** `POST /api/agent/pending/{id}/approve` re-checks the caller,
    rebuilds the run's scope (`RunScope(team_id, meeting_id)` from the row), and
    runs the action through the same path L1 uses (`bind_scope`, the action's

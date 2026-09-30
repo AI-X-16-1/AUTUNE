@@ -24,7 +24,9 @@ def preview(
     args = row.arguments
     if row.tool == "agent.share_research_document":
         doc = session.get(AgentResearchDocument, args.get("document_id", ""))
-        ok = doc is not None and doc.team_id == row.team_id
+        # The document must be this row's team's and this row's meeting's: an id
+        # pointing elsewhere shows nothing rather than another meeting's text.
+        ok = doc is not None and doc.team_id == row.team_id and doc.meeting_id == row.meeting_id
         return {"title": "리서치 문서 공유", "body": doc.body if ok and doc else GONE}
     if row.tool == "extraction.reassign_action_item":
         status = tools.get("extraction.action_item_status")

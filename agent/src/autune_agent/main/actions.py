@@ -2,17 +2,19 @@
 
 A subagent never writes. It returns ``ProposedAction``s, and this is where the
 ones at L1 -- reversible writes, "automatic, notify after" -- are carried out
-at the end of the run. L2 is not run here or anywhere yet: it waits for plan
-mode and the approval screen, and until then it stays in ``agent_runs.proposed``
-as a proposal.
+at the end of the run. L2 is not run here: plan mode queues it
+(``main/pending.py``) and it runs only when an approver approves it, through
+``run_action`` below. A proposal marked L1 whose action the module declared L2
+is recorded here as kept for approval and queued there with the same mapping.
 
 **The module decides the level, not the subagent.** A module lists its writes
 in ``ACTIONS`` and the reversible ones among them in ``L1_ACTIONS``; everything
 else in ``ACTIONS`` is L2. A proposal marked L1 whose action the module did not
 declare L1 is refused, never run -- a subagent cannot demote a write that moves
 a person (section 8 rule 2: the module that owns the content owns what happens
-to it). The reverse is harmless: a subagent may ask for approval of an L1
-action, and it simply waits with the L2s.
+to it). One the module declared L2 is queued for approval instead; one it did
+not declare at all goes nowhere. The reverse is harmless: a subagent may ask
+for approval of an L1 action, and it simply waits with the L2s.
 
 **Scope is bound the way a tool call's is** (``registry.bind_scope``):
 ``team_id`` and ``meeting_id`` come from the run, a different one from the

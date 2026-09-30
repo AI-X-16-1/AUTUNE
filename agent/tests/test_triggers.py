@@ -13,8 +13,9 @@ from autune_agent import tasks
 from autune_agent.config import AgentSettings
 from autune_agent.main import TRIGGER_EVENTS, Subagent, SubagentState, Toolbox, on_event
 from autune_agent.main import triggers as triggers_module
-from autune_agent.models import AgentRun
-from autune_agent.results import SubagentResult, ToolResult
+from autune_agent.main.actions import Action
+from autune_agent.models import AgentPendingAction, AgentRun
+from autune_agent.results import ProposedAction, SubagentResult, ToolResult
 from autune_contracts import (
     CONTRACT_VERSION,
     EXTRACTION_COMPLETED,
@@ -25,14 +26,21 @@ from autune_core import consumer_task_suffix
 
 
 def _woken(
-    name: str, triggers: tuple[str, ...], seen: list[str], *, fail: bool = False
+    name: str,
+    triggers: tuple[str, ...],
+    seen: list[str],
+    *,
+    fail: bool = False,
+    proposes: ProposedAction | None = None,
 ) -> Subagent:
     def build(toolbox: Toolbox) -> Any:
         def act(state: SubagentState) -> SubagentState:
             seen.append(state["request"])
             if fail:
                 raise RuntimeError("bug")
-            return {"outcome": SubagentResult(result=ToolResult(ok=True, summary=f"{name} 요약."))}
+            result = ToolResult(ok=True, summary=f"{name} 요약.")
+            proposed = [proposes] if proposes is not None else []
+            return {"outcome": SubagentResult(result=result, proposed=proposed)}
 
         graph = StateGraph(SubagentState)
         graph.add_node("act", act)
@@ -196,36 +204,37 @@ def test_the_same_task_is_skipped_and_a_new_task_runs_again(
     session: Session, team: dict[str, str]
 ) -> None:
     seen: list[str] = []
-    subagents = {"report": _woken("report", (INTELLIGENCE_COMPLETED,), seen)}
+    publish = ProposedAction(
+        kind="meeting_report_post",
+        title="t",
+        tool="fake.publish",
+        arguments={"meeting_id": team["meeting"]},
+        level="L2",
+        rationale="r",
+    )
+    subagents = {"report": _woken("report", (INTELLIGENCE_COMPLETED,), seen, proposes=publish)}
+    actions = {
+        "fake.publish": Action("fake.publish", lambda **_: {"ok": True, "summary": "."}, "L2")
+    }
 
-    on_event(
-        INTELLIGENCE_COMPLETED,
-        team["meeting"],
-        session=session,
-        subagents=subagents,
-        tools={},
-        task_id="t1",
-    )
-    on_event(
-        INTELLIGENCE_COMPLETED,
-        team["meeting"],
-        session=session,
-        subagents=subagents,
-        tools={},
-        task_id="t1",
-    )
-    on_event(
-        INTELLIGENCE_COMPLETED,
-        team["meeting"],
-        session=session,
-        subagents=subagents,
-        tools={},
-        task_id="t2",
-    )
+    for task_id in ("t1", "t1", "t2"):
+        on_event(
+            INTELLIGENCE_COMPLETED,
+            team["meeting"],
+            session=session,
+            subagents=subagents,
+            tools={},
+            actions=actions,
+            task_id=task_id,
+        )
 
     assert len(seen) == 2
     tasks = sorted(r.trigger["task_id"] for r in session.scalars(select(AgentRun)))
     assert tasks == ["t1", "t2"]
+    # E's re-publish (t2) supersedes the proposal the first run (t1) left pending.
+    by_task = {r.id: r.trigger["task_id"] for r in session.scalars(select(AgentRun))}
+    queued = {by_task[p.run_id]: p.status for p in session.scalars(select(AgentPendingAction))}
+    assert queued == {"t1": "superseded", "t2": "pending"}
 
 
 def test_a_failed_run_is_retried_by_its_redelivery(session: Session, team: dict[str, str]) -> None:

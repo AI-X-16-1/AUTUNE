@@ -13,7 +13,7 @@ from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from typing import Any, cast
 
-from sqlalchemy import CursorResult, select, update
+from sqlalchemy import CursorResult, or_, select, update
 from sqlalchemy.orm import Session
 
 from autune_agent.models import REJECT_REASONS, AgentApprover, AgentPendingAction, AgentRun
@@ -27,6 +27,9 @@ from .registry import RunScope
 _ID = re.compile(r"[a-z]+_[A-Za-z0-9]+")
 _DATE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
 _ENUM = re.compile(r"[a-z_]{1,32}")
+_KIND = re.compile(r"[a-z_]{1,64}")
+_TOOL = re.compile(r"[a-z_.]{1,128}")
+_SUBAGENT = re.compile(r"[a-z_]{0,32}")
 
 SCOPES = {
     "research": "research",
@@ -54,15 +57,42 @@ def scope_for(subagent: str | None) -> str:
     return SCOPES.get(subagent or "", "any")
 
 
+def _names_ok(proposal: ProposedAction, subagent: str) -> bool:
+    """The row's own names are code names, never text a model could fill with a sentence."""
+    return bool(
+        _KIND.fullmatch(proposal.kind)
+        and _TOOL.fullmatch(proposal.tool)
+        and _SUBAGENT.fullmatch(subagent)
+    )
+
+
+def _needs_approval(proposal: ProposedAction, actions: Mapping[str, Action]) -> bool:
+    """L2 by the proposal, or by the level its module declared (a proposal cannot demote)."""
+    if proposal.level == "L2":
+        return True
+    action = actions.get(proposal.tool)
+    return action is not None and action.level == "L2"
+
+
 def queue_l2(
-    session: Session, *, run: AgentRun, proposed: Sequence[ProposedAction]
+    session: Session,
+    *,
+    run: AgentRun,
+    proposed: Sequence[ProposedAction],
+    actions: Mapping[str, Action],
 ) -> list[dict[str, Any]]:
-    """Queue the L2 proposals of ``run``; return a record for each refused one."""
+    """Queue the L2 proposals of ``run``; return a record for each refused one.
+
+    A proposal is L2 when it says so or when its module declared the action L2.
+    ``actions`` is the mapping ``execute_l1`` was given, so a proposal marked L1
+    that ``execute_l1`` kept for approval is queued here rather than dropped.
+    """
     refused: list[dict[str, Any]] = []
+    subagent = run.route or ""
     for proposal in proposed:
-        if proposal.level != "L2":
+        if not _needs_approval(proposal, actions):
             continue
-        if not arguments_ok(proposal.arguments):
+        if not (_names_ok(proposal, subagent) and arguments_ok(proposal.arguments)):
             refused.append(
                 {
                     "tool": proposal.tool,
@@ -79,10 +109,11 @@ def queue_l2(
                 .where(
                     AgentPendingAction.team_id == run.team_id,
                     AgentPendingAction.meeting_id == run.meeting_id,
-                    AgentPendingAction.subagent == (run.route or ""),
+                    AgentPendingAction.subagent == subagent,
                     AgentPendingAction.status == "pending",
-                    AgentPendingAction.run_id
-                    != run.id,  # one run's proposals never supersede each other
+                    # One run's proposals never supersede each other; a row whose
+                    # run was deleted (run_id NULL) is older than any run.
+                    or_(AgentPendingAction.run_id.is_(None), AgentPendingAction.run_id != run.id),
                 )
                 .values(status="superseded")
             )
@@ -91,7 +122,7 @@ def queue_l2(
                 team_id=run.team_id,
                 meeting_id=run.meeting_id,
                 run_id=run.id,
-                subagent=run.route or "",
+                subagent=subagent,
                 tool=proposal.tool,
                 kind=proposal.kind,
                 arguments=dict(proposal.arguments),
