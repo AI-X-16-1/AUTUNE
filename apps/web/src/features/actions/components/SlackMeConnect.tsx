@@ -30,14 +30,11 @@ const REFUSED: Record<string, string> = {
 
 /** The link waits until the Slack account itself confirms it (#478). */
 const PENDING =
-  "Slack DM으로 확인 링크를 보냈습니다. 이 브라우저에서 그 링크를 열면 연결이 끝납니다. DM이 오지 않았다면 브라우저에 다른 사람의 Slack 로그인이 남아 있는지 확인해 주세요.";
+  "본인 Slack(평소 쓰는 Slack 앱이나 휴대폰)에서 Autune 봇의 DM을 확인해 주세요. 그 안의 링크를 이 브라우저에서 열면 연결이 끝납니다. DM이 오지 않았다면 이 브라우저에 다른 사람의 Slack 로그인이 남아 있는지 확인해 주세요.";
 
 export function SlackMeConnect() {
   const [linked, setLinked] = useState<boolean | null>(null);
   const [pending, setPending] = useState(false);
-  // Slack's own redirect to the DM the bot just sent -- never the confirmation
-  // link itself: this browser may hold someone else's Slack session (#478).
-  const [dmUrl, setDmUrl] = useState<string | null>(null);
   const [workspace, setWorkspace] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
 
@@ -47,7 +44,6 @@ export function SlackMeConnect() {
       if (!alive || status === null) return;
       setLinked(status.linked);
       setPending(Boolean(status.pending));
-      setDmUrl(status.pending ? (status.dm_url ?? null) : null);
       setWorkspace(status.workspace_name ?? null);
       const url = new URL(window.location.href);
       const result = url.searchParams.get("slack_me");
@@ -114,17 +110,6 @@ export function SlackMeConnect() {
         >
           {note}
         </span>
-      ) : null}
-      {pending && dmUrl ? (
-        <a
-          href={dmUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="text-[var(--color-accent-default)] underline"
-          style={meta}
-        >
-          Slack에서 확인 DM 열기
-        </a>
       ) : null}
     </div>
   );

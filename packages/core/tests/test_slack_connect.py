@@ -490,9 +490,8 @@ class Identifying(FakeSlack):
         self.nonces.append(nonce)
         return self.identity
 
-    def send_link_confirmation(self, token: str, member_id: str, text: str) -> str | None:
+    def send_link_confirmation(self, token: str, member_id: str, text: str) -> None:
         self.dms.append((token, member_id, text))
-        return "D0DMCHAN"
 
 
 def _link(
@@ -710,11 +709,7 @@ def test_status_says_linked_only_once_confirmed(
     _link(world, monkeypatch, signed_in_as=ME)
     me = signed_in(world, ME)
 
-    assert me.get("/api/auth/slack/me").json() == {
-        "linked": False,
-        "pending": True,
-        "dm_url": "https://slack.com/app_redirect?team=T1&channel=D0DMCHAN",
-    }
+    assert me.get("/api/auth/slack/me").json() == {"linked": False, "pending": True}
     me.get(_confirm_link(world))
     assert me.get("/api/auth/slack/me").json() == {"linked": True, "workspace_name": "Acme"}
 
@@ -731,12 +726,11 @@ def test_the_confirmation_dm_is_one_chat_postmessage_to_the_member() -> None:
                 request.headers["authorization"],
             )
         )
-        return httpx.Response(200, json={"ok": True, "channel": "D0DMCHAN", "ts": "1.2"})
+        return httpx.Response(200, json={"ok": True})
 
-    channel = _slack_at(handler).send_link_confirmation("xoxb-1", "U42", "링크")
+    _slack_at(handler).send_link_confirmation("xoxb-1", "U42", "링크")
 
     assert calls == [("chat.postMessage", {"channel": "U42", "text": "링크"}, "Bearer xoxb-1")]
-    assert channel == "D0DMCHAN"
 
 
 def _signin_client(answers: list[dict[str, Any]], calls: list[str]) -> SlackOAuthClient:
@@ -793,46 +787,3 @@ def test_a_nonce_from_another_flow_is_refused_and_the_token_still_revoked() -> N
     with pytest.raises(PermissionDeniedError, match="nonce"):
         client.identify("c", nonce="n1")
     assert calls == ["openid.connect.token", "auth.revoke"]
-
-
-def test_the_screen_gets_a_link_to_the_dm_not_to_the_confirmation(
-    world: dict[str, Any], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The person is sent straight to the DM in Slack. The confirmation link
-    itself never reaches the screen: this browser may hold someone else's Slack
-    session, and a link it could open would confirm that account."""
-    _link(world, monkeypatch, signed_in_as=ME)
-
-    status = signed_in(world, ME).get("/api/auth/slack/me").json()
-
-    assert status["dm_url"] == "https://slack.com/app_redirect?team=T1&channel=D0DMCHAN"
-    assert "confirm" not in status["dm_url"]
-
-
-def test_a_late_link_is_neither_pending_nor_offered(
-    world: dict[str, Any], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    _, people = _link(world, monkeypatch, signed_in_as=ME)
-    people[ME]["confirm_expires_at"] = "2020-01-01T00:00:00+00:00"
-
-    status = signed_in(world, ME).get("/api/auth/slack/me").json()
-
-    assert status == {"linked": False, "pending": False, "dm_url": None}
-
-
-@pytest.mark.parametrize(
-    ("workspace", "channel", "url"),
-    [
-        ("T1AB", "D0DMCHAN", "https://slack.com/app_redirect?team=T1AB&channel=D0DMCHAN"),
-        ("T1AB", "C0CHANNEL", None),
-        ("T1AB", "D0&x=1", None),
-        ("javascript:", "D0DMCHAN", None),
-        ("T1AB", None, None),
-    ],
-)
-def test_the_dm_link_is_built_from_ids_of_the_right_shape(
-    workspace: str, channel: str | None, url: str | None
-) -> None:
-    from autune_core.oauth.slack import dm_open_url
-
-    assert dm_open_url(workspace, channel) == url

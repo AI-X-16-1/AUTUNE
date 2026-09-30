@@ -28,7 +28,6 @@ Slack requires an **HTTPS** redirect URL, so this flow cannot finish on plain
 from __future__ import annotations
 
 import contextlib
-import re
 import secrets
 from dataclasses import dataclass
 from functools import lru_cache
@@ -42,22 +41,6 @@ from autune_core.errors import AutuneError, PermissionDeniedError
 from autune_core.settings import get_settings
 
 AUTHORIZE_ENDPOINT = "https://slack.com/oauth/v2/authorize"
-
-_DM_CHANNEL = re.compile(r"D[A-Z0-9]+")
-_WORKSPACE = re.compile(r"T[A-Z0-9]+")
-
-
-def dm_open_url(workspace_id: str, channel_id: str | None) -> str | None:
-    """Slack's own redirect that opens a conversation in the app, or on the web
-    when the app is not installed -- for the screen's "open the DM" link. Ids
-    only, checked for shape, since the result goes into an ``href``."""
-    if not channel_id or not _DM_CHANNEL.fullmatch(channel_id):
-        return None
-    if not _WORKSPACE.fullmatch(workspace_id):
-        return None
-    return f"https://slack.com/app_redirect?team={workspace_id}&channel={channel_id}"
-
-
 API = "https://slack.com/api"
 
 BOT_SCOPES = (
@@ -331,23 +314,19 @@ class SlackOAuthClient:
         info = body.get("channel") or {}
         return bool(info) and not info.get("is_archived") and info.get("is_member", True)
 
-    def send_link_confirmation(self, token: str, member_id: str, text: str) -> str | None:
+    def send_link_confirmation(self, token: str, member_id: str, text: str) -> None:
         """One direct message from the team's bot to ``member_id`` --
         ``chat.postMessage`` to a member id opens the DM (``chat:write``).
-        Returns the DM's channel id (``D...``) so the screen can open it, or
-        ``None`` if Slack's answer did not carry one that looks like it.
 
         The only message core sends: fixed words and a link, never meeting
         content. That is why it does not go through ``autune_integrations``'
         outbound guard, which core cannot import (the guard imports core)."""
-        body = self._call(
+        self._call(
             "chat.postMessage",
             data={"channel": member_id, "text": text},
             token=token,
             refused="Slack refused the confirmation message",
         )
-        channel = str(body.get("channel") or "")
-        return channel if _DM_CHANNEL.fullmatch(channel) else None
 
     def revoke(self, token: str) -> bool:
         """End the install's token at Slack (``auth.revoke``)."""
