@@ -263,11 +263,116 @@ def resolve_confirmation(
         utterance_id=response.utterance_id,
         resolved_kind=response.resolved_kind.value,
     )
-    # TODO(강민구): #10 — reclassify the utterance in ext_classifications, which
-    # does not exist until the classifier lands. #11 — build an action item from
-    # a confirmed commitment; the description and due date come from slot
-    # filling, and inventing them here would put a guess where a parse belongs.
+    # The later answer wins here too: a commitment makes a draft, any other answer
+    # takes an untouched one back. ``ext_classifications`` is not rewritten -- it
+    # records what the model said, ``resolved_kind`` records what the speaker
+    # said, and the two stay comparable (#10's evaluation reads both).
+    if response.is_commitment:
+        draft_confirmed_commitment(session, row)
+    else:
+        withdraw_confirmed_draft(session, row)
     return row
+
+
+def draft_confirmed_commitment(
+    session: Session, confirmation: ExtConfirmation
+) -> ExtActionItem | None:
+    """The draft item for an agreement its speaker confirmed was a commitment.
+
+    Slot-filled from the stored utterance exactly like a model-classified
+    commitment -- the speaker is the assignee, the first date phrase the due
+    date, the utterance's own text the description -- and it starts in *needs
+    confirmation* like every model item: the speaker said the words were a
+    promise, and a team still accepts the item before it leaves for Notion or a
+    calendar (ADR 0006).
+
+    ``confidence`` is 1.0, the same rule as a hand-added item: the speaker's
+    answer is the certainty, and a model score would put an item its own author
+    confirmed under S15's "below the candidate line".
+
+    **Returns the existing item when there is one** for this utterance, so a
+    Slack retry, a changed-then-restored answer and a rerun all land on one item.
+    Returns ``None`` -- and writes nothing -- when the utterance is gone, blank,
+    or its speaker did not consent to analysis (privacy.md section 5: excluded
+    speech is not stored, so there is nothing to quote and no one to assign).
+    """
+    existing = session.scalar(
+        select(ExtActionItem)
+        .join(ExtActionItemSource, ExtActionItemSource.action_item_id == ExtActionItem.id)
+        .where(ExtActionItemSource.utterance_id == confirmation.utterance_id)
+    )
+    if existing is not None:
+        return existing
+
+    utterance = session.get(Utterance, confirmation.utterance_id)
+    if utterance is None or not utterance.text.strip():
+        return None
+    participant = (
+        session.get(Participant, utterance.participant_id)
+        if utterance.participant_id is not None
+        else None
+    )
+    if participant is None or not participant.consented:
+        return None
+
+    meeting = session.get(Meeting, confirmation.meeting_id)
+    day = meeting_day(meeting.started_at if meeting is not None else None)
+    user_id = participant.user_id
+    known = {user_id} if user_id is not None and session.get(User, user_id) is not None else set()
+    assignee = assignee_of(user_id, utterance.speaker_label, known=known)
+    due = parse_due(utterance.text, day)
+    item = ExtActionItem(
+        meeting_id=confirmation.meeting_id,
+        description=utterance.text,
+        description_resolved=False,
+        assignee_id=assignee.user_id,
+        assignee_label=assignee.label,
+        due_date=due.date if due is not None else None,
+        due_text=due.text if due is not None else None,
+        status=ActionStatus.NEEDS_CONFIRMATION.value,
+        confidence=1.0,
+        origin="model",
+        sources=[ExtActionItemSource(utterance_id=confirmation.utterance_id)],
+    )
+    session.add(item)
+    session.flush()
+    log.info(
+        "extraction_confirmed_commitment_drafted",
+        action_item_id=item.id,
+        utterance_id=confirmation.utterance_id,
+    )
+    return item
+
+
+def withdraw_confirmed_draft(session: Session, confirmation: ExtConfirmation) -> int:
+    """Take back the draft this utterance made, if nobody has touched it since.
+
+    A speaker who answered *commitment* and then *not a commitment* has changed
+    their mind, and the item they made should go with the first answer. Only an
+    untouched draft goes: one still in *needs confirmation*, with no edit
+    recorded against it. Once a person has moved or corrected it, it is theirs,
+    and a later click on a DM does not get to delete their work.
+
+    Writes no ``ext_edit_events`` row: that table counts a *person's* corrections
+    (ADR 0006), and this is neither. Returns how many items were removed.
+    """
+    drafts = session.scalars(
+        select(ExtActionItem)
+        .join(ExtActionItemSource, ExtActionItemSource.action_item_id == ExtActionItem.id)
+        .where(
+            ExtActionItemSource.utterance_id == confirmation.utterance_id,
+            ExtActionItem.status == ActionStatus.NEEDS_CONFIRMATION.value,
+            ExtActionItem.origin == "model",
+            ~select(ExtEditEvent.id)
+            .where(ExtEditEvent.action_item_id == ExtActionItem.id)
+            .exists(),
+        )
+    ).all()
+    for draft in drafts:
+        session.delete(draft)
+    if drafts:
+        session.flush()
+    return len(drafts)
 
 
 def ambiguous_agreements_for_meeting(
@@ -1756,6 +1861,19 @@ def build_action_items(
         )
     session.add_all(items)
     session.flush()
+    # A draft a speaker's own answer made was one of the rows deleted above.
+    # ``ext_confirmations`` is what outlives a rerun, so the draft is derived
+    # from it again -- and an utterance the classifier now calls a commitment
+    # already has its item, which ``draft_confirmed_commitment`` returns as is.
+    for confirmation in session.scalars(
+        select(ExtConfirmation).where(
+            ExtConfirmation.meeting_id == meeting_id,
+            ExtConfirmation.resolved_kind == UtteranceKind.COMMITMENT.value,
+        )
+    ):
+        drafted = draft_confirmed_commitment(session, confirmation)
+        if drafted is not None and drafted not in items:
+            items.append(drafted)
     return items
 
 
