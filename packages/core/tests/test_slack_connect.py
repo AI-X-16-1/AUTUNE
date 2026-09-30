@@ -787,3 +787,37 @@ def test_a_nonce_from_another_flow_is_refused_and_the_token_still_revoked() -> N
     with pytest.raises(PermissionDeniedError, match="nonce"):
         client.identify("c", nonce="n1")
     assert calls == ["openid.connect.token", "auth.revoke"]
+
+
+def test_a_late_link_is_not_pending_any_more(
+    world: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Past its 30 minutes the screen should offer to start again, not "check
+    your DM" (mkkim68, review of #478)."""
+    _, people = _link(world, monkeypatch, signed_in_as=ME)
+    people[ME]["confirm_expires_at"] = "2020-01-01T00:00:00+00:00"
+
+    status = signed_in(world, ME).get("/api/auth/slack/me").json()
+
+    assert status == {"linked": False, "pending": False}
+
+
+def test_two_confirmations_racing_for_one_account_leave_one_link(
+    world: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Both pass the route's check; the unique index refuses the second, and the
+    person is told the account is taken rather than shown a 500."""
+    from sqlalchemy.exc import IntegrityError
+
+    _, people = _link(world, monkeypatch, signed_in_as=ME)
+    before = dict(people[ME])
+    link = _confirm_link(world)
+
+    def refused(*_: Any, **__: Any) -> None:
+        raise IntegrityError("INSERT", {}, Exception("uq_user_integrations_slack_member"))
+
+    monkeypatch.setattr(auth_router_module, "save_user_integration", refused)
+    back = signed_in(world, ME).get(link)
+
+    assert back.headers["location"].endswith("slack_me=failed&reason=slack_account_taken")
+    assert people[ME] == before

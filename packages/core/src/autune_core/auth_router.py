@@ -35,6 +35,7 @@ from urllib.parse import urlsplit
 from fastapi import APIRouter, Cookie, Depends, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .auth import (
@@ -1220,7 +1221,14 @@ def slack_identity_confirm(
         confirmed = {k: v for k, v in config.items() if k not in _PENDING_KEYS}
         confirmed["slack_user_id"] = str(pending)
         confirmed["slack_team_id"] = str(config.get("pending_slack_team_id") or "")
-        save_user_integration(session, user.id, "slack", config=confirmed)
+        try:
+            save_user_integration(session, user.id, "slack", config=confirmed)
+            session.flush()
+        except IntegrityError:
+            # Two people confirming the same Slack account at once both pass
+            # the check above; the unique index lets only the first through.
+            session.rollback()
+            raise SlackAccountTakenError("that Slack account is linked to another person") from None
         log.info("auth_slack_identity_linked", user_id=user.id)
         outcome = "connected"
     except AutuneError as exc:
@@ -1252,11 +1260,15 @@ def slack_identity_status(
     workspace -- theirs only, so a person can see a link that is not theirs."""
     linked = load_user_integration(session, user.id, "slack")
     if linked is None or not linked.config.get("slack_user_id"):
-        # A link waiting for its confirmation DM is not a link yet.
-        return {
-            "linked": False,
-            "pending": bool(linked and linked.config.get("pending_slack_user_id")),
-        }
+        # A link waiting for its confirmation DM is not a link yet -- and one
+        # past its 30 minutes is not waiting any more, so the screen offers to
+        # start again instead of "check your DM" (mkkim68, review of #478).
+        config = linked.config if linked is not None else {}
+        expires = config.get("confirm_expires_at")
+        waiting = bool(config.get("pending_slack_user_id")) and bool(
+            expires and datetime.fromisoformat(str(expires)) > datetime.now(UTC)
+        )
+        return {"linked": False, "pending": waiting}
     workspace = str(linked.config.get("slack_team_id") or "")
     return {
         "linked": True,
