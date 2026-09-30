@@ -1,6 +1,6 @@
 "use client";
 
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { createContext, useContext, useEffect, useState } from "react";
 
 import { getSession, type SessionUser } from "@/shared/api/auth";
@@ -21,6 +21,13 @@ import { authHeaders } from "@/shared/api/client";
  * still succeeds. Redirecting it would lock out the dev setup
  * environments.md describes; the token is checked first.
  *
+ * **The `/dev-*` preview routes are let through unchecked.** `/dev-gap`,
+ * `/dev-context` and `/dev-dashboard` exist to show a layout with no backend,
+ * no worker and no recording (`dev-gap/page.tsx`), and `getSession` returns
+ * null when the fetch fails — so the gate sent them to `/login` exactly when
+ * they were being used as intended. Each of them already calls `notFound()`
+ * in production, so skipping the check here opens nothing in a deployment.
+ *
  * Nothing is drawn while the check is in flight, so a signed-out visitor never
  * sees a screen fail before the redirect. The session it finds is shared
  * through `useSessionUser` so the sidebar does not ask again.
@@ -37,9 +44,11 @@ type GateState = { status: "checking" } | { status: "in"; user: SessionUser | nu
 
 export function SessionGate({ children }: { children: React.ReactNode }) {
   const router = useRouter();
+  const devPreview = usePathname().startsWith("/dev-");
   const [state, setState] = useState<GateState>({ status: "checking" });
 
   useEffect(() => {
+    if (devPreview) return;
     let current = true;
     const hasDevToken = "authorization" in authHeaders();
     void getSession().then((user) => {
@@ -58,6 +67,9 @@ export function SessionGate({ children }: { children: React.ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  if (devPreview) {
+    return <SessionContext.Provider value={null}>{children}</SessionContext.Provider>;
+  }
   if (state.status === "checking") return null;
 
   return (
