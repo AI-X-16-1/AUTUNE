@@ -421,6 +421,13 @@ instead, and a letters-only parser dropped every answer — indistinguishable
 from a model that found nothing. A name is accepted when it is one of that
 line's own mentions, so this widens nothing the letters did not offer.
 
+**Nor always with bare line numbers.** The template verifier's answers came
+back keyed `"발화 1"`, the label the request shows, and a digits-only key
+reader dropped every one. Both callers now read keys through
+`gemini.answers_by_line`, which takes a key for its number and refuses an
+answer that names no line asked, so the batch falls back rather than reading
+as "nothing stated".
+
 **Measured** on 2026-09-30, one request per model:
 
 - **The authored eval set sends nothing.** Over `gap_detection_v1` with spaCy,
@@ -752,6 +759,14 @@ the four authored meetings, templates `general.4` / `feature_planning.2`:
 | recall (`high`) | 1.00 | 0.94 | 1.00 |
 | false positives (all `no-noun`) | 2 | 0 | 1 |
 | verifier requests / utterances sent | 0 / 0 | 0 / 0 | 4 / 10 |
+
+**The `local + gemini` column was measured through a parse bug, and does not
+say what the verifier does.** The model keyed its answers by the line label it
+was shown (`"발화 1"`), `parse` accepted only a bare digit, and every line came
+back answered empty, which overrides the embedding with "not this item" on
+every ambiguous utterance. Fixed in `pipeline.verifier.parse`; the column has
+to be measured again with `--compare` before anything below is relied on. The
+paragraph is kept as what was concluded at the time.
 
 **The verifier trades precision for recall here, not both up.** It restored
 the cold-start gap the embedding lost ("인기순 정렬 대신 실시간 개인화로…" is

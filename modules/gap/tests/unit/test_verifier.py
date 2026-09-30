@@ -85,6 +85,32 @@ def test_an_answer_maps_letters_back_to_item_keys() -> None:
     assert parsed == {1: {"dependency"}, 2: frozenset()}
 
 
+@pytest.mark.parametrize("key", ["발화 1", "[발화 1]", " 1 "])
+def test_a_key_is_read_for_its_line_number(key: str) -> None:
+    """``gemini-3.5-flash`` echoes the ``[발화 1]`` label as the key. Reading
+    only a bare digit turned every such answer into "no item"."""
+    _, offered = render([REINDEX, CLOSING])
+
+    parsed = parse(f'{{"answers": {{"{key}": ["B"]}}}}', offered)
+
+    assert parsed[1] == {"dependency"}
+
+
+def test_an_answer_that_names_no_line_asked_is_refused() -> None:
+    """Refused, so the batch falls back to the embedding, rather than read as
+    empty answers that override it."""
+    _, offered = render([REINDEX, CLOSING])
+
+    with pytest.raises(ValueError):
+        parse('{"answers": {"첫째": ["B"], "7": ["A"]}}', offered)
+
+
+def test_an_empty_mapping_is_every_line_answered_empty() -> None:
+    _, offered = render([REINDEX, CLOSING])
+
+    assert parse('{"answers": {}}', offered) == {1: frozenset(), 2: frozenset()}
+
+
 def test_a_letter_the_line_was_not_offered_is_dropped() -> None:
     """Line 2 was offered C and B. "A" is next_step, offered only to line 1, and
     "Z" is nothing at all; neither may reach line 2."""

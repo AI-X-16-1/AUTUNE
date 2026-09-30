@@ -13,7 +13,10 @@ stored transcript holds an unmasked value, and the task fails (review of #484).
 
 from __future__ import annotations
 
+import json
+import re
 import time
+from collections.abc import Collection
 from typing import Any
 
 from autune_core import get_logger
@@ -77,6 +80,46 @@ def answer_text(body: Any) -> str:
         return "".join(part.get("text", "") for part in parts if isinstance(part, dict))
     except (KeyError, IndexError, TypeError):
         return ""
+
+
+ANSWER_FORMAT = "키는 발화 번호 숫자만 씁니다."
+"""Said beside each caller's JSON example, which shows a bare number. The line
+label the request shows (``[발화 1]``) is what the model reached for without it."""
+
+_LINE_NUMBER = re.compile(r"\D*?(\d+)\D*")
+"""``"1"``, ``"발화 1"``, ``"[발화 1]"`` -> 1. One number and nothing else numeric."""
+
+
+def answers_by_line(answer: str, asked: Collection[int]) -> dict[int, Any]:
+    """``{"answers": {"발화 1": [...]}}`` -> ``{1: [...]}``, for the lines asked.
+
+    **A key is read for its number.** Both callers label a line ``[발화 1]``,
+    and ``gemini-3.5-flash`` keys its answer with that label as often as with
+    ``"1"``. Reading only a bare digit dropped every such key, so every line
+    came back answered empty: the template verifier said "not this item" to all
+    it was asked and overrode the embedding with it, and the relation assistant
+    stated nothing.
+
+    **An answer none of whose keys names a line asked raises ``ValueError``**,
+    as an answer that is not JSON does, and the caller leaves the batch
+    unanswered. That shape is the parse failing, not the model deciding. An
+    empty mapping is still every line answered empty.
+    """
+    match = re.search(r"\{.*\}", answer, re.S)
+    if not match:
+        raise ValueError("no JSON object in the answer")
+    answers = json.loads(match.group(0)).get("answers")
+    if not isinstance(answers, dict):
+        raise ValueError("the answer has no 'answers' mapping")
+
+    out: dict[int, Any] = {}
+    for key, value in answers.items():
+        found = _LINE_NUMBER.fullmatch(str(key))
+        if found and int(found.group(1)) in asked:
+            out[int(found.group(1))] = value
+    if answers and not out:
+        raise ValueError("no key in the answer names a line that was asked")
+    return out
 
 
 class GeminiCaller:

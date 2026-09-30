@@ -216,6 +216,26 @@ def test_an_answer_maps_letters_back_to_mentions() -> None:
     assert parsed == {1: frozenset({("정렬 로직", "blocked_by", "캐시")})}
 
 
+@pytest.mark.parametrize("key", ["발화 1", "[발화 1]"])
+def test_a_key_is_read_for_its_line_number(key: str) -> None:
+    """The model echoes the ``[발화 1]`` label as the key. Reading only a bare
+    digit dropped the answer and the line stated nothing."""
+    _, lettered = render([QUESTION])
+
+    answer = json.dumps({"answers": {key: [["B", "blocked_by", "A"]]}}, ensure_ascii=False)
+
+    assert parse(answer, [QUESTION], lettered) == {
+        1: frozenset({("정렬 로직", "blocked_by", "캐시")})
+    }
+
+
+def test_an_answer_that_names_no_line_asked_is_refused() -> None:
+    _, lettered = render([QUESTION])
+
+    with pytest.raises(ValueError):
+        parse('{"answers": {"첫째": [["B", "blocked_by", "A"]]}}', [QUESTION], lettered)
+
+
 @pytest.mark.parametrize(
     "stated",
     [
