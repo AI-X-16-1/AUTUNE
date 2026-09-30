@@ -22,6 +22,7 @@ from sqlalchemy.orm import Session
 
 from autune_agent.results import SubagentResult, ToolResult
 
+from .own_tools import collect_own_tools
 from .registry import CallBudget, RunScope, Tool, Toolbox, collect_tools, refuse_tracing
 from .router import Router
 from .subagents import CompiledSubagent, Subagent, collect_subagents
@@ -104,7 +105,7 @@ def run(
         session=session,
         router=router,
         subagents=collect_subagents() if subagents is None else subagents,
-        tools=collect_tools() if tools is None else tools,
+        tools={**collect_tools(), **collect_own_tools()} if tools is None else tools,
         budget=budget or CallBudget(),
         scope=scope,
         route_to=route_to,
