@@ -85,6 +85,19 @@ services:
       # (several GB); a named volume keeps them across redeploys.
       - models:/models
 
+  beat:
+    <<: *python
+    container_name: ${COMPOSE_PROJECT_NAME}-beat
+    restart: unless-stopped
+    # Sends the autune.<module>.periodic.* tasks on their clocks; the worker
+    # runs them. Exactly one beat per broker, or every task fires twice: the
+    # fixed container name keeps a second one from starting on this host.
+    # The schedule's state goes to /tmp because /app is not writable by the
+    # image's user; losing it on restart only restarts the clocks, and periodic
+    # tasks must be safe to run twice (docs/architecture/async-pipeline.md).
+    command: ["celery", "-A", "autune_worker.celery_app", "beat", "-l", "info",
+              "-s", "/tmp/celerybeat-schedule"]
+
   web:
     container_name: ${COMPOSE_PROJECT_NAME}-web
     build:

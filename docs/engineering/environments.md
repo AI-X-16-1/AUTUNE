@@ -594,6 +594,7 @@ back after a reboot, provided Docker Desktop itself starts at sign-in.
 | `autune-app-nginx` | 80, on `DEV_PUBLIC_HOST` only | one origin: `/api/` (and the live WebSocket) to `api`, everything else to `web` |
 | `autune-app-api` | 8000, on `DEV_PUBLIC_HOST` only | `uvicorn autune_api.main:app`, also reached directly for `/docs` and curl; no password on `/dev` routes here, LAN only |
 | `autune-app-worker` | none | Celery, queues `default,cpu_heavy,gpu`, `--pool=solo` |
+| `autune-app-beat` | none | Celery beat: sends the `autune.<module>.periodic.*` tasks on their schedules |
 | `autune-app-web` | none | `next start`, built with an empty `NEXT_PUBLIC_API_URL`, so the browser calls its own origin |
 | `autune-postgres`, `autune-redis` | 5432, 6379, loopback only | as locally |
 
