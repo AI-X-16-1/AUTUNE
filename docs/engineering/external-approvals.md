@@ -261,8 +261,13 @@ enforced, and it is the file to change if that ever needs to move — not the
 call site.
 
 Jira was evaluated and dropped from the product (#82, 2026-09-10) — see "Who
-owns a credential when its creator leaves" below for why. Nothing further to
-register for it.
+owns a credential when its creator leaves" below for why — and **brought back
+on 2026-09-29** (#457, #458): a team connects its Jira with one click over
+OAuth 3LO, and the person-bound failure below is handled rather than avoided.
+A dead grant marks the connection `needs_reconnect` and the screen asks the
+team to connect again; nothing fails silently. Register an OAuth 2.0 (3LO) app
+in the Atlassian developer console with `read:jira-work`, `write:jira-work`,
+`read:jira-user` and `offline_access`.
 
 ---
 
@@ -277,7 +282,7 @@ real problem.
 | --- | --- | --- |
 | Slack | Yes, for bot scopes | Bot users, slash commands and incoming webhooks *"will remain active"* when a member is deactivated. Only *"apps that require member-specific permissions"* deactivate, and *"API tokens are revoked"* refers to that member's own user tokens |
 | Notion | Yes, guaranteed in writing | An internal connection is *"its own bot user"* scoped to the workspace, and *"Access persists independently of users. If the user who shared a page leaves the workspace, the connection retains access to that page."* Every Workspace Owner sees every internal connection in the Developer portal, *"including connections created by others"* |
-| Jira | **No** — dropped (#82) | Both auth paths are personal. An API token pairs with `AUTUNE_JIRA_EMAIL` — that pairing *is* the personal identity. OAuth 2.0 (3LO) is no better: it accesses the API *"on a user's behalf"*, constrained by that user's permissions |
+| Jira | **No** — person-bound; reconnect on failure (#82, #458) | Both auth paths are personal. An API token pairs with `AUTUNE_JIRA_EMAIL` — that pairing *is* the personal identity. OAuth 2.0 (3LO) is no better: it accesses the API *"on a user's behalf"*, constrained by that user's permissions |
 
 So the practical rules for W1:
 
@@ -295,7 +300,8 @@ their account, and the surviving connection then has access to nothing. So creat
 the action-item database in a **teamspace**, not a private page. This is the actual
 failure mode, and it is not a credential problem at all.
 
-**Jira — this is why it was dropped, not deferred (#82).** The failure is not
+**Jira — this is why it was dropped in W2 (#82), and what bringing it back
+accepts (#458).** The failure is not
 hypothetical: Atlassian's own docs say a 3LO refresh token dies if *"The user's
 Atlassian account password has been changed"*, and the only remedies offered
 are *"Change the password back to the original password, or initiate the

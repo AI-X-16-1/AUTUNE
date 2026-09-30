@@ -12,6 +12,7 @@ from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 
 from celery import shared_task
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from autune_contracts import (
@@ -21,10 +22,13 @@ from autune_contracts import (
     TranscriptReady,
     validate_major_version,
 )
+from autune_contracts.enums import ActionStatus
 from autune_core import (
+    AutuneError,
     Meeting,
     PrivacyViolationError,
     get_logger,
+    jira_access,
     load_integration,
     load_user_integration,
     periodic,
@@ -36,12 +40,13 @@ from autune_core.settings import get_settings as get_core_settings
 from autune_integrations import (
     CalendarClient,
     IntegrationError,
+    JiraClient,
     NotionClient,
     PermanentIntegrationError,
     refresh_access_token,
 )
 
-from . import calendar_sync, service
+from . import calendar_sync, jira_sync, service
 from .models import ExtActionItem, ExtCalendarPoll, ExtDecision
 from .pipeline.base import give_roster
 from .pipeline.registry import get_classifier, get_nli, get_resolver
@@ -256,6 +261,50 @@ def sync_after_confirmation(action_item_id: str) -> None:
         log.warning(
             "extraction_calendar_sync_blocked_by_privacy_guard", action_item_id=action_item_id
         )
+    # And Jira on its own too. ``AutuneError`` covers a refused Jira grant
+    # (``JiraReconnectRequiredError``) as well as integration errors.
+    try:
+        sync_action_item_jira(action_item_id)
+    except AutuneError as exc:
+        log.warning("extraction_jira_sync_failed", action_item_id=action_item_id, error=exc.code)
+
+
+@shared_task(name="autune.extraction.sync_action_item_jira", acks_late=True)
+def sync_action_item_jira(action_item_id: str) -> None:
+    """Step 7's Jira half (#82): the item as one issue in the team's chosen
+    project -- ``jira_sync.sync_action_item_to_jira``.
+
+    Skipped, not failed, for a team that has not connected Jira, has not chosen
+    a project, or whose connection needs someone to reconnect
+    (``autune_core.jira_access`` answers ``None``). The access token is fetched
+    fresh for the run; the refresh token never reaches this module. Like the
+    Notion sync it does not retry itself: a timed-out create may have made the
+    issue, and a retry would make a second.
+    """
+    with session_scope() as session:
+        item = session.get(ExtActionItem, action_item_id)
+        meeting = session.get(Meeting, item.meeting_id) if item is not None else None
+        if item is None or meeting is None:
+            return
+        # ``check_project``: a project deleted in Jira comes back as no project,
+        # recorded for the screen to ask for a new one (#458).
+        access = jira_access(meeting.team_id, check_project=True)
+        if access is None or not access.project_key:
+            log.info("extraction_jira_not_connected", action_item_id=action_item_id)
+            return
+        config = load_integration(session, meeting.team_id, jira_sync.JIRA)
+        client = JiraClient.for_cloud(access.access_token, access.cloud_id)
+        try:
+            jira_sync.sync_action_item_to_jira(
+                session,
+                client,
+                action_item_id=action_item_id,
+                project_key=access.project_key,
+                site=access.cloud_id,
+                site_url=config.config.get("site_url") if config is not None else None,
+            )
+        finally:
+            client.close()
 
 
 @contextmanager
@@ -394,6 +443,86 @@ def _pull_one(user_id: str) -> list[str]:
             .on_conflict_do_update(index_elements=["user_id"], set_={"polled_at": started})
         )
         return moved
+
+
+def backfill_jira(team_id: str) -> dict[str, int]:
+    """Every confirmed item of the team into its Jira project -- after a project
+    is chosen, including a new one chosen because the old was deleted (#458).
+
+    Each item goes through ``sync_action_item_to_jira``: an issue that still
+    exists is rewritten, one that went with a deleted project answers 404 and
+    is made again in the chosen project, one never sent is created. One access
+    token for the run; one item's failure is counted and does not stop the rest.
+    """
+    counts = {"synced": 0, "failed": 0}
+    access = jira_access(team_id, check_project=True)
+    if access is None or not access.project_key:
+        return counts
+    with session_scope() as session:
+        config = load_integration(session, team_id, jira_sync.JIRA)
+        site_url = config.config.get("site_url") if config is not None else None
+        item_ids = list(
+            session.scalars(
+                select(ExtActionItem.id)
+                .join(Meeting, Meeting.id == ExtActionItem.meeting_id)
+                .where(
+                    Meeting.team_id == team_id,
+                    ExtActionItem.status != ActionStatus.NEEDS_CONFIRMATION.value,
+                )
+                .order_by(ExtActionItem.id)
+            )
+        )
+    client = JiraClient.for_cloud(access.access_token, access.cloud_id)
+    try:
+        for action_item_id in item_ids:
+            try:
+                with session_scope() as session:
+                    jira_sync.sync_action_item_to_jira(
+                        session,
+                        client,
+                        action_item_id=action_item_id,
+                        project_key=access.project_key,
+                        site=access.cloud_id,
+                        site_url=site_url,
+                    )
+                counts["synced"] += 1
+            except Exception as exc:  # noqa: BLE001 -- one item's failure is its own
+                counts["failed"] += 1
+                log.warning(
+                    "extraction_jira_backfill_item_failed",
+                    action_item_id=action_item_id,
+                    error=type(exc).__name__,
+                )
+    finally:
+        client.close()
+    log.info("extraction_jira_backfilled", team_id=team_id, **counts)
+    return counts
+
+
+def close_jira_issue(action_item_id: str) -> None:
+    """Before the board deletes an item: its Jira issue closed with a note
+    (``jira_sync.close_for_deleted_item``). Runs in the deleting request, best
+    effort -- an unreachable Jira never blocks a deletion."""
+    try:
+        with session_scope() as session:
+            item = session.get(ExtActionItem, action_item_id)
+            meeting = session.get(Meeting, item.meeting_id) if item is not None else None
+            if meeting is None:
+                return
+            access = jira_access(meeting.team_id)
+            if access is None:
+                return
+            client = JiraClient.for_cloud(access.access_token, access.cloud_id)
+            try:
+                jira_sync.close_for_deleted_item(
+                    session, client, action_item_id=action_item_id, site=access.cloud_id
+                )
+            finally:
+                client.close()
+    except Exception as exc:  # noqa: BLE001 -- a deletion must not fail on Jira
+        log.warning(
+            "extraction_jira_close_failed", action_item_id=action_item_id, error=type(exc).__name__
+        )
 
 
 def remove_calendar_event(action_item_id: str) -> None:

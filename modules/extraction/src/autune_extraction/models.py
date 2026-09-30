@@ -229,6 +229,10 @@ class ExtExternalRef(Base):
     )
     external_id: Mapped[str | None] = mapped_column(String(64))
     url: Mapped[str | None] = mapped_column(Text)
+    site: Mapped[str | None] = mapped_column(String(64))
+    """For Jira, the cloud id of the site ``external_id`` lives on. An issue key
+    like ``KAN-1`` is unique only within a site; after a reconnect to another
+    site, a key without its site would name someone else's issue (#458)."""
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
