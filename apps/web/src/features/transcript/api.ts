@@ -116,8 +116,11 @@ export async function assignSpeaker(
   speakerLabel: string,
   userId: string,
 ): Promise<void> {
+  // Same origin, like the upload below: a direct call to the API's own port is
+  // cross-origin, so the browser sent a CORS preflight the API answers 405 and
+  // the assignment never left the page.
   const response = await fetch(
-    `${API_BASE}/api/audio/meetings/${meetingId}/speakers/${encodeURIComponent(speakerLabel)}`,
+    `${SAME_ORIGIN_BASE}/api/audio/meetings/${meetingId}/speakers/${encodeURIComponent(speakerLabel)}`,
     {
       method: "POST",
       headers: { "content-type": "application/json", ...authHeaders() },
@@ -205,7 +208,7 @@ export async function uploadRecording(meetingId: string, file: File) {
  * calls do. The browser still sends the `localhost` session cookie on the
  * handshake: cookies are scoped by host, not port.
  */
-const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+const LIVE_SOCKET_ORIGIN = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 /**
  * The bearer token this browser holds, or null — for the live socket only.
@@ -227,7 +230,7 @@ export function getToken(): string | null {
 
 /** The API's origin, for the one URL that cannot go through `request()`: the live socket. */
 export function apiBase(): string {
-  return API_BASE;
+  return LIVE_SOCKET_ORIGIN;
 }
 
 /** `ws://` or `wss://` for the live channel, from the same origin as the API. */
