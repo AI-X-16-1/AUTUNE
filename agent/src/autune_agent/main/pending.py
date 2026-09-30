@@ -11,13 +11,14 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 
 from sqlalchemy import CursorResult, select, update
 from sqlalchemy.orm import Session
 
 from autune_agent.models import REJECT_REASONS, AgentApprover, AgentPendingAction, AgentRun
 from autune_agent.results import ProposedAction
+from autune_core import TeamMember
 from autune_core.errors import AutuneError, ConflictError, NotFoundError, PermissionDeniedError
 
 from .actions import ARGUMENT_REFUSED, NOT_DECLARED, Action, own_reason, run_action
@@ -122,9 +123,13 @@ class NotAnApproverError(PermissionDeniedError):
 def approver_scopes(session: Session, team_id: str, user_id: str) -> set[str]:
     return set(
         session.scalars(
-            select(AgentApprover.scope).where(
-                AgentApprover.team_id == team_id, AgentApprover.user_id == user_id
+            select(AgentApprover.scope)
+            .join(
+                TeamMember,
+                (TeamMember.team_id == AgentApprover.team_id)
+                & (TeamMember.user_id == AgentApprover.user_id),
             )
+            .where(AgentApprover.team_id == team_id, AgentApprover.user_id == user_id)
         )
     )
 
@@ -147,20 +152,33 @@ def _load(session: Session, pending_id: str, user_id: str) -> AgentPendingAction
 
 def _claim(session: Session, row: AgentPendingAction, user_id: str, **values: Any) -> None:
     """Move a row out of ``pending`` exactly once; a concurrent decider loses."""
-    outcome: CursorResult[Any] = session.execute(  # type: ignore[assignment]
-        update(AgentPendingAction)
-        .where(AgentPendingAction.id == row.id, AgentPendingAction.status == "pending")
-        .values(decided_by=user_id, decided_at=datetime.now(UTC), **values)
+    outcome = cast(
+        CursorResult[Any],
+        session.execute(
+            update(AgentPendingAction)
+            .where(AgentPendingAction.id == row.id, AgentPendingAction.status == "pending")
+            .values(decided_by=user_id, decided_at=datetime.now(UTC), **values)
+        ),
     )
     if outcome.rowcount != 1:
+        session.rollback()
         raise PendingDecidedError()
+    session.commit()  # the claim outlives whatever happens to the action below
     session.refresh(row)
 
 
 def approve(
     session: Session, pending_id: str, *, user_id: str, actions: Mapping[str, Action]
 ) -> AgentPendingAction:
-    """Run the proposal under its own run's scope; the outcome refines the status."""
+    """Run the proposal under its own run's scope; the outcome refines the status.
+
+    Execution is at-most-once. The claim is committed before the action runs,
+    because other modules' actions commit in their own sessions: were the claim
+    to roll back after the action committed, the row would read ``pending`` and
+    a second approval would repeat a write that moves a person. A raise or a
+    crash after the claim leaves ``approved`` with ``result_ok`` unset -- visible,
+    never re-run. The caller commits the outcome.
+    """
     row = _load(session, pending_id, user_id)
     _claim(session, row, user_id, status="approved")
     action = actions.get(row.tool)

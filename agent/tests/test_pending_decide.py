@@ -16,6 +16,7 @@ from autune_agent.main.pending import (
     reject,
 )
 from autune_agent.models import AgentApprover, AgentPendingAction
+from autune_core import Meeting, Team, TeamMember
 from autune_core.errors import PrivacyViolationError
 
 
@@ -147,3 +148,78 @@ def test_reject_takes_a_fixed_reason_only(session: Session, team: dict[str, str]
         reject(session, row.id, user_id=team["member"], reason="김 팀장이 싫어함")
     done = reject(session, row.id, user_id=team["member"], reason="handled_elsewhere")
     assert (done.status, done.reject_reason) == ("rejected", "handled_elsewhere")
+
+
+def test_another_teams_row_reads_as_missing(session: Session, team: dict[str, str]) -> None:
+    _approver(session, team)
+    other = Team(name="다른 팀")
+    session.add(other)
+    session.flush()
+    meeting = Meeting(team_id=other.id, title="다른 회의")
+    session.add(meeting)
+    session.flush()
+    foreign = _pending(session, {"team": other.id, "meeting": meeting.id})
+    calls: list[dict[str, Any]] = []
+
+    with pytest.raises(PendingNotFoundError):
+        approve(session, foreign.id, user_id=team["member"], actions={"fake.share": _share(calls)})
+    assert calls == []
+
+
+def test_a_removed_member_with_an_approver_row_reads_as_missing(
+    session: Session, team: dict[str, str]
+) -> None:
+    _approver(session, team)
+    row = _pending(session, team)
+    session.query(TeamMember).filter_by(team_id=team["team"], user_id=team["member"]).delete()
+    session.flush()
+    calls: list[dict[str, Any]] = []
+
+    with pytest.raises(PendingNotFoundError):
+        approve(session, row.id, user_id=team["member"], actions={"fake.share": _share(calls)})
+    assert calls == []
+
+
+def test_a_raise_after_the_claim_leaves_the_row_approved_not_pending(
+    session: Session, team: dict[str, str]
+) -> None:
+    _approver(session, team)
+    row = _pending(session, team)
+    row_id = row.id
+
+    def leaks(session: Any, team_id: str, document_id: str) -> dict[str, Any]:
+        raise PrivacyViolationError("refused")
+
+    with pytest.raises(PrivacyViolationError):
+        approve(
+            session,
+            row_id,
+            user_id=team["member"],
+            actions={"fake.share": Action("fake.share", leaks, "L2")},
+        )
+    session.rollback()
+
+    after = session.get(AgentPendingAction, row_id)
+    assert after is not None
+    assert (after.status, after.result_ok) == ("approved", None)
+
+
+def test_a_plain_exception_is_recorded_as_failed(session: Session, team: dict[str, str]) -> None:
+    _approver(session, team)
+    row = _pending(session, team)
+
+    def breaks(session: Any, team_id: str, document_id: str) -> dict[str, Any]:
+        raise RuntimeError("boom 김")
+
+    done = approve(
+        session,
+        row.id,
+        user_id=team["member"],
+        actions={"fake.share": Action("fake.share", breaks, "L2")},
+    )
+
+    assert (done.status, done.result_ok, done.result_reason) == (
+        "failed",
+        False,
+        "the action failed",
+    )
