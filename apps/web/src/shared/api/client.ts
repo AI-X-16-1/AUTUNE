@@ -113,6 +113,7 @@ export const api = {
   extraction: <T>(path: string, init?: RequestInit) => request<T>(`/api/extraction${path}`, init),
   gap: <T>(path: string, init?: RequestInit) => request<T>(`/api/gap${path}`, init),
   context: <T>(path: string, init?: RequestInit) => request<T>(`/api/context${path}`, init),
+  agent: <T>(path: string, init?: RequestInit) => request<T>(`/api/agent${path}`, init),
   intelligence: <T>(path: string, init?: RequestInit) =>
     request<T>(`/api/intelligence${path}`, init),
 };

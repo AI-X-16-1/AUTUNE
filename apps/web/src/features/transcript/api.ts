@@ -6,6 +6,7 @@ export { api };
 import type {
   MeetingDetail,
   MeetingSummary,
+  ResearchDocument,
   SpeakerEntry,
   TeamMember,
   TeamSummary,
@@ -215,3 +216,9 @@ export function apiBase(): string {
 export function liveSocketUrl(meetingId: string): string {
   return `${apiBase().replace(/^http/, "ws")}/api/audio/live/${meetingId}`;
 }
+
+/** The meeting's research documents the reader may see: approved ones for any member. */
+export const getResearch = (teamId: string, meetingId: string) =>
+  api.agent<ResearchDocument[]>(
+    `/research?team_id=${encodeURIComponent(teamId)}&meeting_id=${encodeURIComponent(meetingId)}`,
+  );
