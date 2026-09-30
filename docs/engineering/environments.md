@@ -592,7 +592,7 @@ back after a reboot, provided Docker Desktop itself starts at sign-in.
 | Container | Published port | What it runs |
 | --- | --- | --- |
 | `autune-app-nginx` | 80, on `DEV_PUBLIC_HOST` only | one origin: `/api/` (and the live WebSocket) to `api`, everything else to `web` |
-| `autune-app-api` | none | `uvicorn autune_api.main:app` |
+| `autune-app-api` | 8000, on `DEV_PUBLIC_HOST` only | `uvicorn autune_api.main:app`, also reached directly for `/docs` and curl; no password on `/dev` routes here, LAN only |
 | `autune-app-worker` | none | Celery, queues `default,cpu_heavy,gpu`, `--pool=solo` |
 | `autune-app-web` | none | `next start`, built with an empty `NEXT_PUBLIC_API_URL`, so the browser calls its own origin |
 | `autune-postgres`, `autune-redis` | 5432, 6379, loopback only | as locally |
@@ -606,7 +606,7 @@ front of this host. Before the first deploy:
 
 - `DEV_PUBLIC_HOST` is a private IP address (LAN or VPN), never a public one
   and never a hostname: compose binds port 80 to it.
-- No router forwards 3000 or 8000, and nothing but nginx publishes a port.
+- No router forwards 8000. Only nginx (80) and the api (8000) publish a port.
 
 Configuration lives in the repository, not on the host:
 

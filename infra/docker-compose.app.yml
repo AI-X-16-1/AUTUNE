@@ -51,7 +51,11 @@ services:
     container_name: ${COMPOSE_PROJECT_NAME}-api
     restart: unless-stopped
     command: ["uvicorn", "autune_api.main:app", "--host", "0.0.0.0", "--port", "8000"]
-    # No published port: the browser reaches it through nginx.
+    # Published as well as behind nginx, for calling the API directly (Swagger
+    # at /docs, curl). Bound to DEV_PUBLIC_HOST, a LAN address, so it is not
+    # reachable through the domain. It bypasses nginx, so /api/*/dev/ has no
+    # password here: anyone on the LAN can mint a token (#517's original terms).
+    ports: ["${DEV_PUBLIC_HOST:-127.0.0.1}:8000:8000"]
     volumes: ["audio-tmp:/tmp/autune-audio"]
     # Starlette writes each multipart upload to the OS temp directory before
     # module A's code runs (docs/engineering/environments.md); keep that copy
