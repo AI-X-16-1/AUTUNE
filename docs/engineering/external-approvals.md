@@ -108,6 +108,8 @@ oauth_config:
       - channels:read     # resolve the meeting channel
       - groups:read       # same, for private channels
       - groups:write      # one-click install: make the private alert channel, invite the installer
+    user:
+      - openid            # "link my Slack account" for DMs (#255): member id only
 settings:
   interactivity:
     is_enabled: true      # buttons on the action-item card
@@ -172,6 +174,28 @@ channel.
 Still no user scope and no `users:read.email`. Slack accepts only an **HTTPS**
 redirect URL for this flow, so it cannot be finished on plain
 `http://localhost` -- a local test needs the web app served over HTTPS.
+
+**Direct messages: each person links their own Slack account (#255).** Every
+DM in the repo is addressed to an Autune user id, and Slack needs a member id.
+A person clicks "link my Slack account" and signs in with Slack (OpenID
+Connect); core stores only the member id and workspace id it returns, in
+`user_integrations`, and `SlackClient.send_dm` resolves `user_...` ids to it.
+This needs the user scope **`openid`** under *User Token Scopes* -- and only
+that one: not `email`, not `profile`, and still no `users:read` or
+`users:read.email`. We learn the identity of whoever linked and never read the
+directory (#70). The user token Slack issues for the sign-in is not kept.
+Someone who has not linked is refused by name
+(`SlackRecipientNotLinkedError`) rather than sent to `channel_not_found`.
+A link is refused when the browser signed in to a workspace none of the
+person's teams installed Autune in, or when that Slack account is already
+linked to another Autune person. **A new link is pending until the Slack
+account confirms it**: the team's bot DMs that member a one-time link, good
+for 30 minutes, that confirms only in the Autune session that started (#478
+review). A shared browser's leftover Slack session -- someone who never linked
+-- therefore gets a link it cannot use, and no DM, speaking ratio included,
+goes to it meanwhile. The bot needs `chat:write` for that DM, which it already
+has. The ID token's nonce is checked and the sign-in's user token is revoked
+right after `userInfo`.
 
 ### Notion
 

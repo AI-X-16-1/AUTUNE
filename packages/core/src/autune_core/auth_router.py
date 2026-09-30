@@ -25,16 +25,27 @@ Flow:
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import secrets
+from datetime import UTC, datetime, timedelta
 from typing import Annotated
 from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Cookie, Depends, Query, Request
-from fastapi.responses import JSONResponse, RedirectResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .auth import CurrentUser, clear_session_cookie, issue_token, set_session_cookie
+from .auth import (
+    SESSION_COOKIE,
+    CurrentUser,
+    _session_token,
+    clear_session_cookie,
+    current_user,
+    issue_token,
+    set_session_cookie,
+)
 from .auth_service import upsert_user_from_google
 from .db import get_session
 from .entities import Meeting, TeamMember
@@ -51,13 +62,23 @@ from .logging import get_logger
 from .oauth.atlassian import AtlassianOAuthClient, get_atlassian_client
 from .oauth.google import CALENDAR_SCOPE, GoogleOAuthClient, get_google_client
 from .oauth.notion import NotionOAuthClient, get_notion_oauth_client
-from .oauth.slack import SlackChannel, SlackInstall, SlackOAuthClient, get_slack_oauth_client
+from .oauth.slack import (
+    SlackAccountTakenError,
+    SlackChannel,
+    SlackInstall,
+    SlackLinkNotConfirmedError,
+    SlackOAuthClient,
+    SlackTeamNotConnectedError,
+    SlackWrongWorkspaceError,
+    get_slack_oauth_client,
+)
 from .oauth.state import STATE_TTL_SECONDS, OAuthTransaction, StateStore, get_state_store
 from .settings import get_settings
 from .user_integrations import (
     disconnect_user_integration,
     load_user_integration,
     save_user_integration,
+    users_linked_to_slack_member,
 )
 
 log = get_logger(__name__)
@@ -831,7 +852,11 @@ def slack_callback(
         )
     else:
         transaction = store.pop(state)
-        if transaction is None or transaction.purpose != "slack" or not transaction.team_id:
+        if transaction is not None and transaction.purpose == "slack_identity":
+            response = _finish_slack_identity(
+                request, transaction, slack, session, code=code, error=error
+            )
+        elif transaction is None or transaction.purpose != "slack" or not transaction.team_id:
             response = JSONResponse(
                 status_code=403,
                 content=PermissionDeniedError(
@@ -986,3 +1011,263 @@ def slack_disconnect(
         "auth_slack_disconnected", team_id=team_id, user_id=user.id, revoked=revoked, shared=shared
     )
     return {"connected": False, "revoked": revoked, "shared": shared}
+
+
+# --------------------------------------------------------------------------- #
+# A person's own Slack account, for direct messages (#255, #280)
+# --------------------------------------------------------------------------- #
+
+
+@router.get("/slack/me/start")
+def slack_identity_start(
+    request: Request,
+    user: CurrentUser,
+    store: Annotated[StateStore, Depends(get_state_store)],
+    slack: Annotated[SlackOAuthClient, Depends(get_slack_oauth_client)],
+    redirect_to: Annotated[str, Query()] = "/",
+) -> RedirectResponse:
+    """ "Sign in with Slack" so direct messages can reach this person. Only their
+    own member id comes back -- no email, no directory (#70). The shared Slack
+    callback finishes it; the id is stored for the person of *this* session."""
+    state = secrets.token_urlsafe(32)
+    nonce = secrets.token_urlsafe(24)
+    store.put(
+        state,
+        OAuthTransaction(
+            nonce=nonce,
+            redirect_to=_safe_redirect_target(redirect_to),
+            purpose="slack_identity",
+            user_id=user.id,
+        ),
+    )
+    response = RedirectResponse(slack.identity_url(state=state, nonce=nonce), status_code=307)
+    response.set_cookie(
+        STATE_COOKIE,
+        state,
+        max_age=STATE_TTL_SECONDS,
+        httponly=True,
+        secure=get_settings().session_cookie_secure,
+        samesite="lax",
+        path=_slack_callback_path(request),
+    )
+    return response
+
+
+SLACK_CONFIRM_TTL = timedelta(minutes=30)
+"""How long the confirmation link a new Slack link waits on stays good."""
+
+_PENDING_KEYS = (
+    "pending_slack_user_id",
+    "pending_slack_team_id",
+    "confirm_digest",
+    "confirm_expires_at",
+    "confirm_redirect_to",
+)
+
+
+def _digest(token: str) -> str:
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
+def _finish_slack_identity(
+    request: Request,
+    transaction: OAuthTransaction,
+    slack: SlackOAuthClient,
+    session: Session,
+    *,
+    code: str | None,
+    error: str | None,
+) -> RedirectResponse:
+    """Hold the Slack account the browser signed in with as *pending*, and ask
+    that account to confirm (#478 review).
+
+    The browser may carry someone else's Slack session -- a shared computer,
+    before that person ever linked theirs -- and nothing in the sign-in says
+    whose it is. So the team's bot DMs a one-time link to the member id that
+    came back, and only opening it in *this* Autune session makes the link
+    real. The owner of a leftover session gets a link they cannot use; the
+    person who started never sees it. Until then ``slack_member_id`` answers
+    ``None`` and no DM, speaking ratio included, goes to that account. An
+    earlier confirmed link keeps working while a new one waits."""
+    try:
+        if error or not code or not transaction.user_id:
+            raise PermissionDeniedError("Slack sign-in was not approved")
+        identity = slack.identify(code, nonce=transaction.nonce)
+        workspaces = _slack_workspaces_of(session, transaction.user_id)
+        if not workspaces:
+            raise SlackTeamNotConnectedError("no team of this person has installed Autune in Slack")
+        if identity.team_id not in workspaces:
+            raise SlackWrongWorkspaceError("signed in to a workspace no team of theirs installed")
+        others = [
+            uid
+            for uid in users_linked_to_slack_member(session, identity.user_id)
+            if uid != transaction.user_id
+        ]
+        if others:
+            raise SlackAccountTakenError("that Slack account is linked to another person")
+        bot = _slack_bot_for_workspace(session, transaction.user_id, identity.team_id)
+        token = secrets.token_urlsafe(32)
+        # The web origin, like every other address this file hands a browser:
+        # the Host the API saw is the proxy's target, which a person's browser
+        # may not reach and where the session cookie is not sent (#478 review).
+        path = request.url_for("slack_identity_confirm").path
+        link = _web_url(f"{path}?token={token}")
+        slack.send_link_confirmation(
+            bot,
+            identity.user_id,
+            "Autune에서 이 Slack 계정으로 개인 알림을 받겠다는 연결 요청이 왔습니다. "
+            f"이 Slack 계정의 주인 본인이 요청한 경우에만 이 링크를 여세요: {link}\n"
+            "Autune에 로그인한 브라우저에서 열어야 합니다. Slack 앱에서 누르면 다른 "
+            "브라우저가 열릴 수 있으니, 그때는 링크를 복사해 그 브라우저에 붙여 넣으세요.\n"
+            "요청한 적이 없다면 열지 말고 무시하세요. 다른 사람이 이 브라우저에 남은 "
+            "Slack 로그인으로 연결을 시도한 것일 수 있습니다. 30분 뒤 만료됩니다.",
+        )
+        existing = load_user_integration(session, transaction.user_id, "slack")
+        kept = {
+            k: v
+            for k, v in (existing.config.items() if existing is not None else [])
+            if k in ("slack_user_id", "slack_team_id")
+        }
+        save_user_integration(
+            session,
+            transaction.user_id,
+            "slack",
+            config={
+                **kept,
+                "pending_slack_user_id": identity.user_id,
+                "pending_slack_team_id": identity.team_id,
+                "confirm_digest": _digest(token),
+                "confirm_expires_at": (datetime.now(UTC) + SLACK_CONFIRM_TTL).isoformat(),
+                "confirm_redirect_to": transaction.redirect_to,
+            },
+        )
+        log.info("auth_slack_identity_pending", user_id=transaction.user_id)
+        outcome = "pending"
+    except AutuneError as exc:
+        log.info("auth_slack_identity_failed", user_id=transaction.user_id, reason=exc.code)
+        outcome = f"failed&reason={exc.code}"
+    return RedirectResponse(
+        _web_url(_with_query(transaction.redirect_to, f"slack_me={outcome}")), status_code=303
+    )
+
+
+def _slack_bot_for_workspace(session: Session, user_id: str, workspace: str) -> str:
+    """The bot token of a team of this person installed in ``workspace`` --
+    the bot that will DM them, so the one to ask them to confirm."""
+    team_ids = session.scalars(select(TeamMember.team_id).where(TeamMember.user_id == user_id))
+    for team_id in team_ids:
+        installed = load_integration(session, team_id, SLACK)
+        if (
+            installed is not None
+            and installed.secret
+            and installed.config.get("workspace_id") == workspace
+        ):
+            return installed.secret
+    raise SlackWrongWorkspaceError("signed in to a workspace no team of theirs installed")
+
+
+SLACK_CONFIRM_NEEDS_SESSION = """<!doctype html>
+<html lang="ko"><head><meta charset="utf-8"><title>Autune</title>
+<meta name="viewport" content="width=device-width, initial-scale=1"></head>
+<body style="font-family: sans-serif; max-width: 32rem; margin: 3rem auto; padding: 0 1rem">
+<h1 style="font-size: 1.25rem">이 브라우저에서는 연결을 확정할 수 없습니다</h1>
+<p>이 링크는 Slack 연결을 시작한 브라우저에서, Autune에 로그인한 상태로 열어야 합니다.
+Slack 앱에서 링크를 누르면 다른 브라우저가 열릴 수 있습니다.</p>
+<p>Slack의 메시지에서 링크를 복사해, Autune이 열려 있는 브라우저의 주소창에 붙여 넣어 주세요.</p>
+</body></html>"""
+"""What a browser without an Autune session gets from the confirmation link.
+Slack's desktop app opens links in the default browser, which is often not the
+one signed in to Autune; a JSON 403 there told a person nothing (found clicking
+through with real Slack, #478)."""
+
+
+@router.get("/slack/me/confirm", name="slack_identity_confirm", response_model=None)
+def slack_identity_confirm(
+    request: Request,
+    token: Annotated[str, Query()],
+    session: Annotated[Session, Depends(get_session)],
+) -> RedirectResponse | HTMLResponse:
+    """The link the bot DMed. Confirms the pending Slack account only for the
+    Autune person whose connect is pending -- their session, their digest, in
+    time (#478 review). Anyone else, a second use, or a late one changes
+    nothing. A browser with no session gets a page saying where to open it."""
+    try:
+        user = current_user(
+            _session_token(
+                request.headers.get("authorization"), request.cookies.get(SESSION_COOKIE)
+            ),
+            session,
+        )
+    except AutuneError:
+        return HTMLResponse(SLACK_CONFIRM_NEEDS_SESSION, status_code=401)
+    linked = load_user_integration(session, user.id, "slack")
+    config = dict(linked.config) if linked is not None else {}
+    redirect_to = str(config.get("confirm_redirect_to") or "/")
+    try:
+        pending = config.get("pending_slack_user_id")
+        expires = config.get("confirm_expires_at")
+        digest = str(config.get("confirm_digest") or "")
+        if (
+            not pending
+            or not expires
+            or datetime.fromisoformat(str(expires)) <= datetime.now(UTC)
+            or not hmac.compare_digest(digest, _digest(token))
+        ):
+            raise SlackLinkNotConfirmedError("no pending Slack link matches this link")
+        others = [u for u in users_linked_to_slack_member(session, str(pending)) if u != user.id]
+        if others:
+            raise SlackAccountTakenError("that Slack account is linked to another person")
+        confirmed = {k: v for k, v in config.items() if k not in _PENDING_KEYS}
+        confirmed["slack_user_id"] = str(pending)
+        confirmed["slack_team_id"] = str(config.get("pending_slack_team_id") or "")
+        save_user_integration(session, user.id, "slack", config=confirmed)
+        log.info("auth_slack_identity_linked", user_id=user.id)
+        outcome = "connected"
+    except AutuneError as exc:
+        log.info("auth_slack_identity_failed", user_id=user.id, reason=exc.code)
+        outcome = f"failed&reason={exc.code}"
+    return RedirectResponse(
+        _web_url(_with_query(redirect_to, f"slack_me={outcome}")), status_code=303
+    )
+
+
+def _slack_workspaces_of(session: Session, user_id: str) -> dict[str, str]:
+    """``{workspace id: name}`` for every Slack workspace a team of this
+    person installed Autune in -- the only places their DMs can come from."""
+    team_ids = session.scalars(select(TeamMember.team_id).where(TeamMember.user_id == user_id))
+    workspaces: dict[str, str] = {}
+    for team_id in team_ids:
+        installed = load_integration(session, team_id, SLACK)
+        workspace = str(installed.config.get("workspace_id") or "") if installed else ""
+        if installed is not None and installed.secret and workspace:
+            workspaces[workspace] = str(installed.config.get("workspace_name") or "")
+    return workspaces
+
+
+@router.get("/slack/me")
+def slack_identity_status(
+    user: CurrentUser, session: Annotated[Session, Depends(get_session)]
+) -> dict[str, object]:
+    """Whether the signed-in person linked their Slack account, and in which
+    workspace -- theirs only, so a person can see a link that is not theirs."""
+    linked = load_user_integration(session, user.id, "slack")
+    if linked is None or not linked.config.get("slack_user_id"):
+        # A link waiting for its confirmation DM is not a link yet.
+        return {
+            "linked": False,
+            "pending": bool(linked and linked.config.get("pending_slack_user_id")),
+        }
+    workspace = str(linked.config.get("slack_team_id") or "")
+    return {
+        "linked": True,
+        "workspace_name": _slack_workspaces_of(session, user.id).get(workspace),
+    }
+
+
+@router.post("/slack/me/disconnect")
+def slack_identity_disconnect(
+    user: CurrentUser, session: Annotated[Session, Depends(get_session)]
+) -> dict[str, bool]:
+    """Forget the person's Slack id. No token was kept, so nothing to revoke."""
+    disconnect_user_integration(session, user.id, "slack")
+    return {"linked": False}

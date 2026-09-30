@@ -35,6 +35,7 @@ from typing import Any
 from urllib.parse import urlencode
 
 import httpx
+import jwt
 
 from autune_core.errors import AutuneError, PermissionDeniedError
 from autune_core.settings import get_settings
@@ -54,6 +55,43 @@ BOT_SCOPES = (
 NAME_ATTEMPTS = 10
 
 
+class SlackIdentityRefusedError(AutuneError):
+    """A Slack account that cannot be linked for this person; the subclass's
+    code tells the screen which case it is."""
+
+    status_code = 409
+
+
+class SlackTeamNotConnectedError(SlackIdentityRefusedError):
+    """None of the person's teams has installed Autune in Slack yet, so no bot
+    could send them anything."""
+
+    code = "slack_team_not_connected"
+
+
+class SlackWrongWorkspaceError(SlackIdentityRefusedError):
+    """The browser signed in to a workspace none of the person's teams
+    installed Autune in -- a personal workspace, say. Linking it would say
+    "linked" while every DM went nowhere."""
+
+    code = "slack_wrong_workspace"
+
+
+class SlackAccountTakenError(SlackIdentityRefusedError):
+    """That Slack account is already linked to another Autune person -- most
+    likely a Slack session left in a shared browser. Linking it again would
+    send this person's DMs, speaking ratio included, to someone else."""
+
+    code = "slack_account_taken"
+
+
+class SlackLinkNotConfirmedError(SlackIdentityRefusedError):
+    """The confirmation link was not this person's, was used up, or expired.
+    A link is confirmed only by the Autune session that started it (#478)."""
+
+    code = "slack_link_not_confirmed"
+
+
 class SlackChannelUnavailableError(AutuneError):
     """Every name from ``#autune`` to ``#autune-10`` is taken. A person has to
     free one, or set another ``AUTUNE_SLACK_CHANNEL_NAME``."""
@@ -70,6 +108,14 @@ class SlackInstall:
     workspace_name: str
     installer_id: str
     """The Slack member who clicked Allow -- invited to the private channel."""
+
+
+@dataclass(frozen=True)
+class SlackIdentity:
+    """Who a person is in Slack -- their member id and workspace, nothing more."""
+
+    user_id: str
+    team_id: str
 
 
 @dataclass(frozen=True)
@@ -104,6 +150,67 @@ class SlackOAuthClient:
             }
         )
         return f"{AUTHORIZE_ENDPOINT}?{query}"
+
+    def identity_url(self, *, state: str, nonce: str) -> str:
+        """ "Sign in with Slack" asking for ``openid`` only: the member id and
+        workspace, no email, no profile (#70)."""
+        query = urlencode(
+            {
+                "response_type": "code",
+                "scope": "openid",
+                "client_id": self._client_id,
+                "redirect_uri": self._redirect_uri,
+                "state": state,
+                "nonce": nonce,
+            }
+        )
+        return f"https://slack.com/openid/connect/authorize?{query}"
+
+    def identify(self, code: str, *, nonce: str) -> SlackIdentity:
+        """Trade a Sign-in-with-Slack code for the person's member id and
+        workspace.
+
+        The ID token's ``nonce`` must be the one this flow sent. Its signature
+        is not checked: it came straight from Slack's token endpoint over TLS,
+        in answer to our client secret, which OpenID Connect Core 3.1.3.7
+        accepts in place of a signature check. The user token is used once for
+        ``userInfo`` and then revoked -- nothing personal is kept but the ids."""
+        answer = self._call(
+            "openid.connect.token",
+            data={
+                "code": code,
+                "redirect_uri": self._redirect_uri,
+                "client_id": self._client_id,
+                "client_secret": self._client_secret,
+                "grant_type": "authorization_code",
+            },
+            refused="Slack rejected the sign-in code",
+        )
+        token = answer.get("access_token")
+        if not token:
+            raise PermissionDeniedError("Slack returned no sign-in token")
+        try:
+            try:
+                claims = jwt.decode(
+                    str(answer.get("id_token") or ""), options={"verify_signature": False}
+                )
+            except jwt.InvalidTokenError as exc:
+                raise PermissionDeniedError("Slack returned no usable ID token") from exc
+            if not nonce or claims.get("nonce") != nonce:
+                raise PermissionDeniedError("Slack ID token nonce does not match the request")
+            info = self._call(
+                "openid.connect.userInfo",
+                data={},
+                token=str(token),
+                refused="Slack refused userInfo",
+            )
+        finally:
+            self.revoke(str(token))
+        user_id = info.get("https://slack.com/user_id") or info.get("sub")
+        team_id = info.get("https://slack.com/team_id", "")
+        if not user_id:
+            raise PermissionDeniedError("Slack returned no user id")
+        return SlackIdentity(user_id=str(user_id), team_id=str(team_id))
 
     def exchange_code(self, code: str) -> SlackInstall:
         body = self._call(
@@ -206,6 +313,20 @@ class SlackOAuthClient:
             return False
         info = body.get("channel") or {}
         return bool(info) and not info.get("is_archived") and info.get("is_member", True)
+
+    def send_link_confirmation(self, token: str, member_id: str, text: str) -> None:
+        """One direct message from the team's bot to ``member_id`` --
+        ``chat.postMessage`` to a member id opens the DM (``chat:write``).
+
+        The only message core sends: fixed words and a link, never meeting
+        content. That is why it does not go through ``autune_integrations``'
+        outbound guard, which core cannot import (the guard imports core)."""
+        self._call(
+            "chat.postMessage",
+            data={"channel": member_id, "text": text},
+            token=token,
+            refused="Slack refused the confirmation message",
+        )
 
     def revoke(self, token: str) -> bool:
         """End the install's token at Slack (``auth.revoke``)."""
