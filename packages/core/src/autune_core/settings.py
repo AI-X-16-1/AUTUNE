@@ -59,6 +59,16 @@ class Settings(BaseSettings):
     """The /api/auth/google/callback URL, per environment. Must match a redirect
     URI registered in the Google Cloud console exactly."""
 
+    jira_client_id: str = ""
+    jira_client_secret: str = ""
+    jira_redirect_uri: str = ""
+    """The /api/auth/jira/callback URL on the web origin, per environment. Must
+    match the callback URL in the Atlassian developer console exactly."""
+    jira_scopes: str = "read:jira-work write:jira-work read:jira-user offline_access"
+    """``offline_access`` is what makes Atlassian return a refresh token; without
+    it a connection ends in an hour. No admin scope: nothing here configures
+    Jira (#82)."""
+
     retention_days: int = 90
     """Analysis results are deleted after this many days.
     See docs/architecture/privacy.md section 4."""

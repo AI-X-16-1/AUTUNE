@@ -28,7 +28,7 @@ _KEY_PREFIX = "oauth:state:"
 class OAuthTransaction:
     """What ``/google/start`` needs to remember until the callback returns."""
 
-    __slots__ = ("nonce", "redirect_to", "created_at", "purpose", "user_id")
+    __slots__ = ("nonce", "redirect_to", "created_at", "purpose", "user_id", "team_id")
 
     def __init__(
         self,
@@ -38,6 +38,7 @@ class OAuthTransaction:
         *,
         purpose: str = "sign_in",
         user_id: str | None = None,
+        team_id: str | None = None,
     ) -> None:
         self.nonce = nonce
         self.redirect_to = redirect_to
@@ -45,8 +46,11 @@ class OAuthTransaction:
         self.purpose = purpose
         """``sign_in``, or ``calendar`` for a signed-in person connecting their own
         calendar (#435) -- the callback is shared, so it asks what it is finishing."""
+        self.team_id = team_id
+        """For a ``jira`` connect: the team whose Jira is being connected, checked
+        against the starting person's membership at start."""
         self.user_id = user_id
-        """Who started a ``calendar`` connect. Set from their session at start and
+        """Who started a ``calendar`` or ``jira`` connect. Set from their session at start and
         never from the callback's request, so the grant lands on the person who
         asked for it."""
 
@@ -58,6 +62,7 @@ class OAuthTransaction:
                 "created_at": self.created_at,
                 "purpose": self.purpose,
                 "user_id": self.user_id,
+                "team_id": self.team_id,
             }
         )
 
@@ -69,6 +74,7 @@ class OAuthTransaction:
             redirect_to=data["redirect_to"],
             purpose=data.get("purpose", "sign_in"),
             user_id=data.get("user_id"),
+            team_id=data.get("team_id"),
             created_at=data.get("created_at"),
         )
 

@@ -127,3 +127,56 @@ export async function disconnectCalendar(): Promise<{ revoked: boolean }> {
   return (await response.json()) as { revoked: boolean };
 }
 
+
+/** A team's Jira connection, as a member of the meeting's team sees it. */
+export interface JiraConnection {
+  connected: boolean;
+  needs_reconnect?: boolean;
+  site_name?: string | null;
+  project_key?: string | null;
+  projects?: { key: string; name: string }[];
+}
+
+/**
+ * Where the browser goes to connect the team's Jira (#82, #428): Atlassian's
+ * consent screen, then back to `redirectTo` with `?jira=connected|failed`. The
+ * team is the meeting's, checked against the person's membership.
+ */
+export function jiraConnectUrl(meetingId: string, redirectTo = "/"): string {
+  return authUrl(
+    `/jira/start?meeting_id=${encodeURIComponent(meetingId)}&redirect_to=${encodeURIComponent(redirectTo)}`,
+  );
+}
+
+export async function getJiraConnection(meetingId: string): Promise<JiraConnection | null> {
+  try {
+    const response = await fetch(authUrl(`/jira?meeting_id=${encodeURIComponent(meetingId)}`), {
+      credentials: "include",
+    });
+    if (!response.ok) return null;
+    return (await response.json()) as JiraConnection;
+  } catch {
+    return null;
+  }
+}
+
+export async function chooseJiraProject(meetingId: string, projectKey: string): Promise<void> {
+  const query = `meeting_id=${encodeURIComponent(meetingId)}&project_key=${encodeURIComponent(projectKey)}`;
+  const response = await fetch(authUrl(`/jira/project?${query}`), {
+    method: "POST",
+    credentials: "include",
+  });
+  if (!response.ok) {
+    throw new ApiError(response.status, "jira_project_failed", "choosing a project failed");
+  }
+}
+
+export async function disconnectJira(meetingId: string): Promise<void> {
+  const response = await fetch(
+    authUrl(`/jira/disconnect?meeting_id=${encodeURIComponent(meetingId)}`),
+    { method: "POST", credentials: "include" },
+  );
+  if (!response.ok) {
+    throw new ApiError(response.status, "jira_disconnect_failed", "disconnect failed");
+  }
+}
