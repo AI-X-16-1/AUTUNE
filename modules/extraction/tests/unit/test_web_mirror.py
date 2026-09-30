@@ -68,5 +68,5 @@ def test_the_web_decision_detail_mirror_is_current() -> None:
 
     added = set(DecisionDetail.model_fields) - set(ReviewDecision.model_fields)
 
-    assert added == {"sources", "context"}
+    assert added == {"sources", "context", "related"}
     assert ts_fields("DecisionDetail") == added, f"update {TYPES_TS}"

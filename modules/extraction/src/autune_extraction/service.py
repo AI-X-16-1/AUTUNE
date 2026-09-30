@@ -47,7 +47,13 @@ from autune_integrations.privacy import find_unmasked
 
 from .config import get_settings
 from .confirmations import WEAK_ASSENT, ConfirmationResponse, build_confirmation_dm
-from .decisions import DEFAULT_MAX_GAP, ClassifiedUtterance, decision_id, group_decisions
+from .decisions import (
+    DEFAULT_MAX_GAP,
+    ClassifiedUtterance,
+    decision_id,
+    group_decisions,
+    needs_write_up,
+)
 from .edit_cost import EditCost
 from .models import (
     ExtActionItem,
@@ -57,6 +63,7 @@ from .models import (
     ExtConfirmation,
     ExtDecision,
     ExtDecisionRef,
+    ExtDecisionRelated,
     ExtDecisionReview,
     ExtDecisionSource,
     ExtEditEvent,
@@ -1092,8 +1099,16 @@ def build_decisions(
     meeting_id: str,
     utterances: Sequence[ClassifiedUtterance],
     max_gap: int = DEFAULT_MAX_GAP,
+    summaries: Mapping[str, Resolution] | None = None,
 ) -> list[ExtDecision]:
     """Rebuild this meeting's decisions from its classified utterances.
+
+    ``summaries`` maps a ``dec_`` id to a model's summary of it
+    (``resolve_decision_summaries``, run before any session): its text, tidied and
+    followed by the owner and deadline, replaces the line a person sees and that
+    leaves, and the lines it says it used are stored in ``ext_decision_related``.
+    **``original_statement`` is always the assembled sentence, never the summary**
+    -- it is what module D is sent.
 
     ``utterances`` is every utterance of the meeting in ``start_sec`` order; see
     ``group_decisions`` for why the non-decision ones have to be there.
@@ -1152,6 +1167,20 @@ def build_decisions(
         decision_id(meeting_id, group.source_utterance_ids): group
         for group in group_decisions(utterances, max_gap=max_gap, day=day)
     }
+    summaries = summaries or {}
+    heard = {u.id for u in utterances}
+    shown: dict[str, str] = {}
+    cited: dict[str, list[str]] = {}
+    for id_, group in fresh.items():
+        summary = summaries.get(id_)
+        line = group.statement
+        if summary is not None and summary.text.strip() and summary.text != group.core_text:
+            head = tidy(summary.text.strip())
+            line = f"{head} ({group.suffix})" if group.suffix else head
+            cited[id_] = [
+                u for u in summary.used if u in heard and u not in group.source_utterance_ids
+            ]
+        shown[id_] = line
 
     # Only the model's decisions are rebuilt. One a person added is not derived
     # from labels, so no rerun can recompute it (#246).
@@ -1163,6 +1192,7 @@ def build_decisions(
         session.execute(delete(ExtDecisionReview).where(ExtDecisionReview.decision_id.in_(gone)))
         session.execute(delete(ExtDecisionRef).where(ExtDecisionRef.decision_id.in_(gone)))
         session.execute(delete(ExtDecisionSource).where(ExtDecisionSource.decision_id.in_(gone)))
+        session.execute(delete(ExtDecisionRelated).where(ExtDecisionRelated.decision_id.in_(gone)))
         session.execute(delete(ExtDecision).where(ExtDecision.id.in_(gone)))
 
     if fresh:
@@ -1171,7 +1201,8 @@ def build_decisions(
                 {
                     "id": id_,
                     "meeting_id": meeting_id,
-                    "statement": group.statement,
+                    "statement": shown[id_],
+                    "original_statement": group.original_statement or group.statement,
                     "confidence": group.confidence,
                     "origin": "model",
                 }
@@ -1183,6 +1214,7 @@ def build_decisions(
                 index_elements=["id"],
                 set_={
                     "statement": upsert.excluded.statement,
+                    "original_statement": upsert.excluded.original_statement,
                     "confidence": upsert.excluded.confidence,
                 },
             )
@@ -1205,6 +1237,21 @@ def build_decisions(
                         for position, utterance_id in enumerate(fresh[id_].source_utterance_ids)
                     ]
                 )
+                .on_conflict_do_nothing(index_elements=["decision_id", "utterance_id"])
+            )
+
+        # The lines a summary used can differ between two runs over the same
+        # sources, so they are replaced, not kept: the summary they belong to was.
+        session.execute(delete(ExtDecisionRelated).where(ExtDecisionRelated.decision_id.in_(fresh)))
+        related_rows = [
+            {"decision_id": id_, "utterance_id": utterance_id}
+            for id_, lines in cited.items()
+            for utterance_id in lines
+        ]
+        if related_rows:
+            session.execute(
+                _insert_if_absent_into(session, ExtDecisionRelated)
+                .values(related_rows)
                 .on_conflict_do_nothing(index_elements=["decision_id", "utterance_id"])
             )
 
@@ -1269,7 +1316,7 @@ def decisions_for_meeting(session: Session, meeting_id: str) -> list[Decision]:
     return [
         Decision(
             id=row.id,
-            statement=_confirmed_statement(row, reviews.get(row.id)),
+            statement=_lineage_statement(row, reviews.get(row.id)),
             source_utterance_ids=[
                 source.utterance_id for source in sorted(row.sources, key=lambda s: s.position)
             ],
@@ -1278,6 +1325,22 @@ def decisions_for_meeting(session: Session, meeting_id: str) -> list[Decision]:
         for row in rows
         if (review := reviews.get(row.id)) is None or review.status != "rejected"
     ]
+
+
+def _lineage_statement(decision: ExtDecision, review: ExtDecisionReview | None) -> str:
+    """What module D is sent: the person's wording if they reworded it, otherwise
+    the sentence *as assembled from what was said* -- not the tidied or summarised
+    line the screen shows.
+
+    D embeds this and compares it with earlier statements against a threshold
+    tuned on that shape (``context.config``); a rewrite made to read well on a
+    screen would move every score. A person's own wording is deliberate and is
+    sent as they wrote it. A decision they typed has no original and falls back to
+    its statement.
+    """
+    if review is not None and review.statement:
+        return review.statement
+    return decision.original_statement or decision.statement
 
 
 def _confirmed_statement(decision: ExtDecision, review: ExtDecisionReview | None) -> str:
@@ -1909,6 +1972,73 @@ def resolve_commitment_summaries(
     return dict(zip((u.id for u in commitments), resolved, strict=True))
 
 
+def decision_day(session: Session, meeting_id: str) -> date | None:
+    """The meeting's date in Korea, for a run that has to read it before any
+    decision is built (``resolve_decision_summaries`` runs outside a session)."""
+    meeting = session.get(Meeting, meeting_id)
+    return meeting_day(meeting.started_at if meeting is not None else None)
+
+
+def resolve_decision_summaries(
+    resolver: ReferenceResolver,
+    classified: Sequence[ClassifiedUtterance],
+    *,
+    meeting_id: str,
+    day: date | None = None,
+    max_gap: int = DEFAULT_MAX_GAP,
+) -> dict[str, Resolution]:
+    """A model's write-up of each decision, keyed by its ``dec_`` id.
+
+    Only a resolver that can cite (``resolve_with_evidence``) writes one, and only
+    for a decision whose settling turn does not say what was decided
+    (``decisions.needs_write_up``); for any other this is empty and the decision
+    keeps the assembled, tidied line. Like
+    ``resolve_commitment_summaries`` it runs before any session -- it is model
+    inference -- and reads only ``classified``: ordered, and with a non-consenting
+    speaker's turn already blank.
+
+    What the model is given for a decision: the turn that carries its substance
+    (``DecisionGroup.core_text``) as the target; the lines around the whole run of
+    decision turns, from ``MAX_CONTEXT_UTTERANCES`` before its first to
+    ``MAX_CONTEXT_AFTER`` after its last, the other decision turns included; and up
+    to ``related.MAX_RELATED`` more from elsewhere in the meeting. It writes what
+    was decided and says which numbered lines it used.
+    """
+    if not callable(getattr(resolver, "resolve_with_evidence", None)):
+        return {}
+    groups = [g for g in group_decisions(classified, max_gap=max_gap, day=day) if needs_write_up(g)]
+    if not groups:
+        return {}
+
+    lines = [(u.id, u.text) for u in classified if u.text]
+    said = dict(lines)
+    position = {u.id: index for index, u in enumerate(classified)}
+    requests = []
+    keys = []
+    for group in groups:
+        here = position[group.substance_id]
+        first = min(group.first_position, here)
+        last = max(group.last_position, here)
+        before = [u for u in classified[max(0, first - MAX_CONTEXT_UTTERANCES) : here] if u.text]
+        after = [u for u in classified[here + 1 : last + 1 + MAX_CONTEXT_AFTER] if u.text]
+        offered = related_ids(group.substance_id, lines, exclude={u.id for u in (*before, *after)})
+        requests.append(
+            ResolutionRequest(
+                target=group.core_text,
+                context=tuple(u.text for u in before),
+                context_after=tuple(u.text for u in after),
+                target_id=group.substance_id,
+                context_ids=tuple(u.id for u in before),
+                context_after_ids=tuple(u.id for u in after),
+                purpose="decision",
+                related=tuple((line_id, said[line_id]) for line_id in offered),
+            )
+        )
+        keys.append(decision_id(meeting_id, group.source_utterance_ids))
+    resolved = resolver.resolve_with_evidence(requests)  # type: ignore[attr-defined]
+    return dict(zip(keys, resolved, strict=True))
+
+
 def build_action_items(
     session: Session,
     *,
@@ -2200,6 +2330,23 @@ def _read_decision(
     return _review_decision_row(decision, review, refs, summary)
 
 
+def decision_related_utterances(session: Session, decision_id_: str) -> list[SourceUtterance]:
+    """The lines a decision's write-up says it used, in spoken order, consenting
+    speakers' and non-blank only (see ``related_utterances``)."""
+    rows = session.execute(
+        select(Utterance.id, Utterance.text)
+        .join(ExtDecisionRelated, ExtDecisionRelated.utterance_id == Utterance.id)
+        .join(Participant, Participant.id == Utterance.participant_id)
+        .where(
+            ExtDecisionRelated.decision_id == decision_id_,
+            Participant.consented.is_(True),
+            func.length(func.trim(Utterance.text)) > 0,
+        )
+        .order_by(Utterance.start_sec, Utterance.id)
+    ).all()
+    return [SourceUtterance(id=uid, text=text) for uid, text in rows]
+
+
 def read_decision_detail(session: Session, decision: ExtDecision) -> DecisionDetail:
     """One decision with the utterances it was settled in, in spoken order.
 
@@ -2218,6 +2365,7 @@ def read_decision_detail(session: Session, decision: ExtDecision) -> DecisionDet
         **row.model_dump(),
         sources=[SourceUtterance(id=uid, text=text) for uid, text in quoted],
         context=context_before(session, [uid for uid, _ in quoted]),
+        related=decision_related_utterances(session, decision.id),
     )
 
 

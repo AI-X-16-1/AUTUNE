@@ -29,6 +29,8 @@ from autune_extraction.models import (
     ExtClassification,
     ExtConfirmation,
     ExtDecision,
+    ExtDecisionRef,
+    ExtDecisionRelated,
     ExtDecisionReview,
     ExtDecisionSource,
     ExtEditEvent,
@@ -373,6 +375,8 @@ TABLES = [
     StoredUtterance.__table__,
     ExtClassification.__table__,
     ExtDecision.__table__,
+    ExtDecisionRef.__table__,
+    ExtDecisionRelated.__table__,
     ExtDecisionSource.__table__,
     ExtDecisionReview.__table__,
     ExtActionItem.__table__,
@@ -516,3 +520,225 @@ def test_a_related_line_of_a_speaker_who_withdrew_consent_is_not_shown(session: 
     detail = service.read_detail(session, item)
 
     assert [r.text for r in detail.related] == ["동의한 사람의 설명 줄입니다"]
+
+
+# --- a decision's write-up ---------------------------------------------------------
+
+DECISION_ROWS = [
+    ("utt_1", "검색 결과 정렬을 인기순으로 할지 최신순으로 할지 아직 못 정했어요", None),
+    ("utt_2", "인기순이 클릭률이 더 높다는 지난 실험 결과가 있어요", None),
+    ("utt_3", "그럼 그 방향으로 다음 주 금요일까지 진행합시다", UtteranceKind.DECISION),
+    ("utt_4", "네 그렇게 하죠", UtteranceKind.DECISION),
+]
+
+
+def decision_classified() -> list[ClassifiedUtterance]:
+    return [
+        ClassifiedUtterance(id=i, kind=k, confidence=0.9, text=t, speaker="김민경")
+        for i, t, k in DECISION_ROWS
+    ]
+
+
+def test_the_screen_gets_the_tidy_line_and_d_gets_what_was_said(session: Session) -> None:
+    """The contract ``Decision.statement`` D embeds is the sentence as assembled from
+    the utterances -- not the noun-ended line the screen shows and Notion gets."""
+    (decision,) = service.build_decisions(
+        session, meeting_id=MEETING, utterances=decision_classified()
+    )
+
+    assert decision.statement != decision.original_statement
+    assert "진행합시다" not in decision.statement and "진행함" in decision.statement
+    (sent_to_d,) = service.decisions_for_meeting(session, MEETING)
+    assert sent_to_d.statement == decision.original_statement
+    assert "진행합시다" in sent_to_d.statement, "the wording D was always sent, untidied"
+    detail = service.read_decision_detail(session, decision)
+    assert detail.statement == decision.statement, "the screen reads the tidy line"
+
+
+def test_a_persons_rewording_is_what_d_gets(session: Session) -> None:
+    from autune_extraction.schemas import DecisionReviewUpdate
+
+    (decision,) = service.build_decisions(
+        session, meeting_id=MEETING, utterances=decision_classified()
+    )
+    service.review_decision(
+        session,
+        decision,
+        DecisionReviewUpdate(status="confirmed", statement="정렬은 인기순으로 확정"),
+    )
+
+    (sent_to_d,) = service.decisions_for_meeting(session, MEETING)
+
+    assert sent_to_d.statement == "정렬은 인기순으로 확정"
+
+
+def test_a_summary_replaces_the_line_but_never_the_original_d_is_sent(session: Session) -> None:
+    from autune_extraction.decisions import decision_id, group_decisions
+
+    rows = decision_classified()
+    for n, text, _ in DECISION_ROWS:
+        say(session, int(n.split("_")[1]), text)
+    session.flush()
+    (group,) = group_decisions(rows)
+    dec_id = decision_id(MEETING, group.source_utterance_ids)
+    summary = Resolution(
+        "검색 결과 정렬은 클릭률이 높은 인기순으로 진행하기로 했습니다",
+        ("utt_2", "utt_3", "utt_99"),
+    )
+
+    (decision,) = service.build_decisions(
+        session, meeting_id=MEETING, utterances=rows, summaries={dec_id: summary}
+    )
+
+    assert decision.statement.startswith("검색 결과 정렬은 클릭률이 높은 인기순으로 진행하기로 함")
+    assert decision.statement.endswith(f"({group.suffix})")
+    assert decision.original_statement == group.original_statement
+    (sent_to_d,) = service.decisions_for_meeting(session, MEETING)
+    assert sent_to_d.statement == group.original_statement
+    # the turns it was settled in and an id in no utterance are not "related"
+    shown = service.decision_related_utterances(session, decision.id)
+    assert [r.id for r in shown] == ["utt_2"]
+
+
+def test_a_summary_that_changes_nothing_keeps_the_tidy_line(session: Session) -> None:
+    from autune_extraction.decisions import decision_id, group_decisions
+
+    rows = decision_classified()
+    (group,) = group_decisions(rows)
+    dec_id = decision_id(MEETING, group.source_utterance_ids)
+
+    (decision,) = service.build_decisions(
+        session,
+        meeting_id=MEETING,
+        utterances=rows,
+        summaries={dec_id: Resolution(group.core_text, ("utt_2",))},
+    )
+
+    assert decision.statement == group.statement
+    assert service.decision_related_utterances(session, decision.id) == []
+
+
+def test_a_rerun_replaces_what_the_summary_used(session: Session) -> None:
+    from autune_extraction.decisions import decision_id, group_decisions
+
+    rows = decision_classified()
+    for n, text, _ in DECISION_ROWS:
+        say(session, int(n.split("_")[1]), text)
+    session.flush()
+    (group,) = group_decisions(rows)
+    dec_id = decision_id(MEETING, group.source_utterance_ids)
+    first = Resolution("정렬은 인기순으로 진행하기로 했습니다", ("utt_1",))
+    second = Resolution("정렬은 인기순으로 진행하기로 했습니다", ("utt_2",))
+
+    service.build_decisions(session, meeting_id=MEETING, utterances=rows, summaries={dec_id: first})
+    (decision,) = service.build_decisions(
+        session, meeting_id=MEETING, utterances=rows, summaries={dec_id: second}
+    )
+
+    assert [r.id for r in service.decision_related_utterances(session, decision.id)] == ["utt_2"]
+
+
+def test_the_decision_request_is_the_substance_turn_with_the_whole_run_around_it() -> None:
+    resolver = Citing()
+
+    service.resolve_decision_summaries(resolver, decision_classified(), meeting_id=MEETING)
+
+    (request,) = resolver.received
+    assert request.purpose == "decision"
+    assert request.target == "그럼 그 방향으로 다음 주 금요일까지 진행합시다"
+    assert request.target_id == "utt_3"
+    assert request.context_ids == ("utt_1", "utt_2")
+    assert request.context_after_ids == ("utt_4",), "the other decision turn is context too"
+
+
+def test_a_resolver_that_cannot_cite_writes_no_decision_summaries() -> None:
+    summaries = service.resolve_decision_summaries(
+        Plain(), decision_classified(), meeting_id=MEETING
+    )
+
+    assert summaries == {}
+
+
+def test_a_decision_is_written_up_without_keeping_the_turns_verb_ending() -> None:
+    request = ResolutionRequest(
+        target="그럼 인기순으로 진행합시다",
+        context=("인기순이 클릭률이 더 높다는 실험 결과가 있어요",),
+        purpose="decision",
+        target_id="t",
+        context_ids=("c1",),
+    )
+    provider = Provider(answer("클릭률이 더 높은 인기순으로 진행하기로 했습니다", [1]))
+
+    (out,) = resolver(provider).resolve_with_evidence([request])
+
+    assert out == Resolution("클릭률이 더 높은 인기순으로 진행하기로 했습니다", ("c1",))
+    assert "무엇이 결정되었는지" in provider.sent
+
+
+def test_a_commitments_summary_still_has_to_keep_its_verb_ending() -> None:
+    request = ResolutionRequest(target="그건 다음 빌드에 넣을게요", target_id="t")
+    provider = Provider(answer("결제 로그 필드 추가를 다음 빌드에 넣기로 했습니다", []))
+
+    (out,) = resolver(provider).resolve_with_evidence([request])
+
+    assert out == Resolution("그건 다음 빌드에 넣을게요")
+
+
+def test_the_lines_a_decision_used_are_read_only_if_consented(session: Session) -> None:
+    say(session, 1, "동의한 사람의 설명 줄입니다")
+    say(session, 2, "동의하지 않은 사람의 줄입니다", who="par_no")
+    say(session, 3, "그럼 인기순으로 진행합시다")
+    session.add(
+        ExtDecision(id="dec_x", meeting_id=MEETING, statement="인기순 진행함", confidence=0.9)
+    )
+    session.flush()
+    session.add_all(
+        [ExtDecisionRelated(decision_id="dec_x", utterance_id=f"utt_{n}") for n in (1, 2)]
+    )
+    session.flush()
+
+    assert [r.text for r in service.decision_related_utterances(session, "dec_x")] == [
+        "동의한 사람의 설명 줄입니다"
+    ]
+
+
+def test_a_sentence_that_differs_only_in_its_full_stop_resolved_nothing() -> None:
+    provider = Provider(answer("그 갱신 버그는 제가 이번 빌드에 넣어 볼게요", [5]))
+
+    (out,) = resolver(provider).resolve_with_evidence([REQUEST])
+
+    assert out == Resolution(TARGET), "no change, so no citation either"
+
+
+def test_a_decision_that_already_says_what_was_decided_is_not_sent_to_the_model() -> None:
+    resolver = Citing()
+    rows = [
+        ClassifiedUtterance(
+            id="utt_1",
+            kind=UtteranceKind.DECISION,
+            confidence=0.9,
+            text="검색 결과 정렬은 다음 주 월요일부터 인기순으로 바꾸는 걸로 합시다",
+            speaker="김민경",
+        )
+    ]
+
+    assert service.resolve_decision_summaries(resolver, rows, meeting_id=MEETING) == {}
+    assert resolver.received == []
+
+
+@pytest.mark.parametrize(
+    ("core", "asked"),
+    [
+        ("그럼 그 방향으로 진행합시다", True),  # points at something said before
+        ("인기순으로 가요", True),  # too short to say much
+        ("검색 결과 정렬은 다음 주 월요일부터 인기순으로 바꾸는 걸로 합시다", False),
+    ],
+)
+def test_which_decisions_are_worth_a_call(core: str, asked: bool) -> None:
+    from autune_extraction.decisions import DecisionGroup, needs_write_up
+
+    group = DecisionGroup(
+        statement=core, source_utterance_ids=("utt_1",), confidence=0.9, core_text=core
+    )
+
+    assert needs_write_up(group) is asked

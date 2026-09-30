@@ -384,6 +384,12 @@ class DecisionDetail(ReviewDecision):
     why it is apart from ``sources``. A speaker who did not consent is never here
     -- the line every read of the transcript draws (privacy.md section 5)."""
 
+    related: list[SourceUtterance] = Field(default_factory=list)
+    """The lines the model's write-up of this decision says it used, beyond the turns
+    it was settled in (``ext_decision_related``), in spoken order. Empty when the
+    statement is the assembled line or a person's own wording. Same consent filter
+    as ``context``."""
+
 
 class MeetingReview(BaseModel):
     """Everything in one meeting that needs a person before it goes anywhere."""

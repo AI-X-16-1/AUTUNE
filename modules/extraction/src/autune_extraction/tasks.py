@@ -115,6 +115,7 @@ def _extract(meeting_id: str, utterances: Sequence[TranscriptUtterance]) -> None
     with session_scope() as session:
         consented = service.consented_utterance_ids(session, meeting_id)
         roster = service.team_roster(session, meeting_id)
+        day = service.decision_day(session, meeting_id)
 
     classifier = get_classifier()
     # A classifier that sends text out replaces these names first (#411).
@@ -128,6 +129,9 @@ def _extract(meeting_id: str, utterances: Sequence[TranscriptUtterance]) -> None
     summaries = service.resolve_commitment_summaries(resolver, classified)
     resolved_descriptions = {uid: resolution.text for uid, resolution in summaries.items()}
     related_lines = {uid: resolution.used for uid, resolution in summaries.items()}
+    decision_summaries = service.resolve_decision_summaries(
+        resolver, classified, meeting_id=meeting_id, day=day
+    )
 
     with session_scope() as session:
         stored = service.store_classifications(
@@ -136,7 +140,12 @@ def _extract(meeting_id: str, utterances: Sequence[TranscriptUtterance]) -> None
             utterances=classified,
             model_version=classifier.model_version,
         )
-        decisions = service.build_decisions(session, meeting_id=meeting_id, utterances=classified)
+        decisions = service.build_decisions(
+            session,
+            meeting_id=meeting_id,
+            utterances=classified,
+            summaries=decision_summaries,
+        )
         items = service.build_action_items(
             session,
             meeting_id=meeting_id,

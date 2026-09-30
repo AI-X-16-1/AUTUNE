@@ -77,7 +77,22 @@ agreement, and sync the result to Notion.
    description is editable like any other. The candidates are only offered: a
    line nobody cites is neither stored nor shown, and a citation the model
    invents (a number that is no line, the commitment itself) is dropped.
-   Decisions are not summarised this way yet. A sentence that names nothing ("다음 주
+   A decision is written up the same way (`ext_decision_related`, "요약에 쓴
+   발화" on S15) -- but only when its settling turn does not say what was decided:
+   short, or pointing at something said before ("그렇게 하죠"). Asked about every
+   decision, the model rewrote all of them and cited a line for about a quarter;
+   the rest it only put into "~하기로 했습니다", which `noun_form.tidy` does without
+   a model.
+
+   **What module D is sent is not what the screen shows.** `ext_decisions.statement`
+   is the line a person sees and that leaves for Notion -- noun-ended, or the
+   write-up. `original_statement` is the sentence as assembled from the utterances
+   (the turn that settles it, plus owner and deadline), and that is the
+   `Decision.statement` in the contract, unless a person reworded the decision, in
+   which case it is their wording. D embeds statements and compares them against a
+   similarity threshold tuned on that shape (`context.config`), so nothing made for
+   the screen may reach it; D reads the utterances themselves through
+   `source_utterance_ids` as before. The contract is unchanged. A sentence that names nothing ("다음 주
    화요일까지 볼 예정") is read with up to three lines said just before it, shown
    apart from the sources as "앞선 발화 (맥락)"; nothing fills the missing object
    into the line itself unless the reference resolver is switched on
@@ -158,6 +173,7 @@ the overlap the question turns on.
 | `ext_classifications` | Per-utterance kind, confidence, model version, NLI result. Kinds only — no row for `none` |
 | `ext_action_items` | Assignee, description, due date, status, origin |
 | `ext_action_item_sources` | Which utterances an item came from |
+| `ext_decision_related` | The other lines of the meeting a decision's summary was written from, as the model said it used them; shown beneath the summary, never read by D |
 | `ext_action_item_related` | The other lines of the meeting the item's summary was written from, as the model said it used them (`LlmResolver`); shown beneath the summary, never read by D or E |
 | `ext_edit_events` | One row per correction. Counts only — no person on it |
 | `ext_external_refs` | The Notion page an action item became, one per item and system |

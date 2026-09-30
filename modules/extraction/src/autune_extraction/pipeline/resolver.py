@@ -210,6 +210,8 @@ def _passes_grounding(
     request: ResolutionRequest,
     embedder: Embedder | None,
     min_similarity: float | None,
+    *,
+    keep_ending: bool = True,
 ) -> bool:
     """The digit, named-person and target-ending checks always apply; the
     embedding check only once both an embedder and a threshold are configured
@@ -217,7 +219,7 @@ def _passes_grounding(
     before this existed)."""
     if not _grounded(answer, _window_text(request)):
         return False
-    if not _retains_target_ending(answer, request.target):
+    if keep_ending and not _retains_target_ending(answer, request.target):
         return False
     if embedder is None or min_similarity is None:
         return True
@@ -548,6 +550,11 @@ def _restored(answer: str, surface: dict[str, str]) -> str | None:
     return _PLACEHOLDER.sub(lambda m: surface[m.group(0)], answer)
 
 
+def _ends_the_same(answer: str, target: str) -> bool:
+    """The answer is the target with, at most, its closing punctuation changed."""
+    return answer.strip().rstrip(" .!?…") == target.strip().rstrip(" .!?…")
+
+
 _SENTENCE_BREAK = re.compile(r"(?:습니다|어요|아요|여요|이요|이에요|예요|죠|네요|군요)\s+\S")
 """A finished sentence with more text after it. A rewrite that contains one the
 target does not is two sentences pasted into one -- "패키지 사고 우편함에 안 들어가는
@@ -606,14 +613,72 @@ _SUMMARY_PROMPT = """\
 - [대상]의 화자 시점과 문장 끝 어미("~할게요", "~하겠습니다", "~보려고요")를 그대로 유지하세요. \
 "제가"/"저는"을 3인칭으로 바꾸지 마세요.
 - [대상]에 있는 날짜·기한·수량 표현은 그대로 두세요.
-- 지시어나 빠진 대상만 구체적인 말로 채우세요. 다른 발화의 내용을 새 문장으로 덧붙이거나 \
-통째로 바꾸지 말고, 괄호나 대괄호는 새로 쓰지 마세요. 서로 다른 주제의 발화를 섞지 마세요.
-- 대상이 여러 가지로 읽히면 [대상] 바로 앞 발화에서 언급된 것을 우선하세요.
+- 지시어나 빠진 대상만 구체적인 말로 채우세요. 채우는 말은 짧은 명사구 하나로 하고, 다른 \
+발화의 문장을 통째로 옮겨 오지 마세요. 괄호나 대괄호는 새로 쓰지 마세요.
+- 서로 다른 주제의 발화를 섞지 마세요. 여러 주제가 보이면 [대상] 바로 앞 발화의 주제 하나만 \
+쓰고, 나머지는 무시하세요.
+- 이미 분명한 문장은 그대로 "summary"에 쓰세요.
 - 채우는 데 실제로 쓴 발화의 번호를 "used"에 적으세요. [대상] 자신의 번호는 적지 \
-마세요. 발화들로 풀리지 않거나 이미 분명하면 [대상] 문장을 그대로 "summary"에 쓰고 "used"는 \
-빈 목록으로 두세요.
+마세요. 발화들로 풀리지 않으면 [대상] 문장을 그대로 "summary"에 쓰고 "used"는 빈 목록으로 \
+두세요.
+
+예시 1
+1 [앞] 지난주에 만든 온보딩 문서가 아직 초안 상태예요
+2 [대상] 그건 제가 금요일까지 마무리할게요
+{{"summary": "온보딩 문서는 제가 금요일까지 마무리할게요", "used": [1]}}
+
+예시 2 (이미 분명한 문장)
+1 [앞] 회의 끝나고 점심 먹으러 가요
+2 [대상] 제가 내일까지 견적서를 보낼게요
+{{"summary": "제가 내일까지 견적서를 보낼게요", "used": []}}
+
+예시 3 (주제가 섞여 있을 때는 바로 앞 주제 하나만)
+1 [관련] 주차 공간이 부족하다는 얘기가 있었어요
+2 [앞] 로그인 오류는 서버 쪽에서 고쳤어요
+3 [대상] 그건 제가 이번 배포에 넣을게요
+{{"summary": "로그인 오류 수정은 제가 이번 배포에 넣을게요", "used": [2]}}
 
 JSON 하나만 출력하세요: {{"summary": "다시 쓴 한 문장", "used": [번호, ...]}}
+"""
+_DECISION_PROMPT = """\
+다음은 회의 발화 목록입니다. 앞의 번호는 이 목록 안에서만 쓰는 번호이고, [대상]은 회의에서 \
+무언가를 하기로 정한 말입니다. [앞]과 [뒤]는 대상 바로 앞뒤의 발화, [관련]은 회의의 다른 \
+곳에서 비슷한 말을 한 발화입니다 (관련 없는 것도 섞여 있을 수 있습니다).
+
+{lines}
+
+이 회의에서 무엇이 결정되었는지를 한 문장으로 쓰세요. [대상]이 "그렇게 하죠", "그 방향으로 \
+가요"처럼 가리키기만 하면, 위 발화들에서 가리키는 것을 찾아 구체적으로 쓰세요.
+
+규칙:
+- 위 발화에 없는 새로운 사실(날짜, 숫자, 이름 등)을 만들어내지 마세요.
+- 마스킹된 토큰(예: 대괄호로 묶인 표현)은 그대로 두세요.
+- 결정된 내용만 쓰세요. 누가 말했는지, 누가 동의했는지는 쓰지 마세요. "~하기로 했습니다" \
+또는 "~로 정했습니다"로 끝내세요.
+- [대상]에 있는 날짜·기한·수량 표현은 그대로 두세요.
+- 괄호나 대괄호는 새로 쓰지 마세요. 결정은 하나만 쓰고, 서로 다른 주제의 발화를 한 문장에 \
+섞지 마세요.
+- 결정된 내용을 고른 발화의 번호를 "used"에 적으세요. [대상] 자신의 번호는 적지 마세요. \
+발화들로 더 구체적으로 쓸 수 없으면 [대상]의 뜻을 그대로 "~하기로 했습니다" 형태로 쓰고 \
+"used"는 빈 목록으로 두세요.
+
+예시 1
+1 [앞] 검색 결과를 인기순으로 할지 최신순으로 할지 고민이에요
+2 [앞] 인기순이 클릭률이 더 높아요
+3 [대상] 그럼 그렇게 하죠
+{{"summary": "검색 결과 정렬은 인기순으로 하기로 했습니다", "used": [1, 2]}}
+
+예시 2 (이미 구체적인 대상)
+1 [대상] 배포는 다음 주 화요일로 미루는 걸로 합시다
+{{"summary": "배포는 다음 주 화요일로 미루기로 했습니다", "used": []}}
+
+예시 3 (주제가 섞여 있을 때는 대상이 가리키는 하나만)
+1 [앞] 예산은 이번 분기 동결이에요
+2 [앞] 회의실은 다음 달부터 예약제로 해요
+3 [대상] 네 그걸로 가죠
+{{"summary": "회의실은 다음 달부터 예약제로 운영하기로 했습니다", "used": [2]}}
+
+JSON 하나만 출력하세요: {{"summary": "결정된 내용 한 문장", "used": [번호, ...]}}
 """
 MAX_USED = 4
 _LABELS = ("앞", "대상", "뒤", "관련")
@@ -636,9 +701,10 @@ def _numbered(request: ResolutionRequest) -> list[tuple[str, str, str]]:
     return lines
 
 
-def _summary_prompt(numbered: list[tuple[str, str, str]]) -> str:
+def _summary_prompt(numbered: list[tuple[str, str, str]], purpose: str = "commitment") -> str:
     lines = "\n".join(f"{n} [{label}] {text}" for n, (_, label, text) in enumerate(numbered, 1))
-    return _SUMMARY_PROMPT.format(lines=lines)
+    template = _DECISION_PROMPT if purpose == "decision" else _SUMMARY_PROMPT
+    return template.format(lines=lines)
 
 
 def _read_summary(answer: str, numbered: list[tuple[str, str, str]]) -> tuple[str, tuple[str, ...]]:
@@ -741,9 +807,15 @@ class LlmResolver(GeminiClient):
         restored = _restored(text, surface)
         if restored is None or not _sound(restored, request):
             return None
-        if not _passes_grounding(restored, request, self._embedder, self._min_similarity):
+        decision = request.purpose == "decision"
+        if not _passes_grounding(
+            restored, request, self._embedder, self._min_similarity, keep_ending=not decision
+        ):
             return None
-        return Resolution(restored, used if restored != request.target else ())
+        if _ends_the_same(restored, request.target):
+            # Only the full stop differs: nothing was resolved, so nothing was used.
+            return Resolution(request.target)
+        return Resolution(restored, used)
 
     def _ask(self, model: str | None, body: dict[str, Any], index: int) -> str | None:
         """One model's answer text; ``None`` if the call failed. A privacy refusal is
@@ -775,7 +847,9 @@ class LlmResolver(GeminiClient):
         """
         sent, surface = _scrubbed(request, self._roster)
         numbered = _numbered(sent) if request.target_id else None
-        prompt = _summary_prompt(numbered) if numbered is not None else _prompt(sent)
+        prompt = (
+            _summary_prompt(numbered, request.purpose) if numbered is not None else _prompt(sent)
+        )
         generation: dict[str, Any] = {"temperature": 0}
         if numbered is not None:
             generation["responseMimeType"] = "application/json"

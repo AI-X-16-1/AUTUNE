@@ -255,6 +255,8 @@ export interface DecisionDetail extends ReviewDecision {
   sources: SourceUtterance[];
   /** The lines just before the first source, in spoken order. */
   context?: SourceUtterance[];
+  /** The lines the write-up says it used, beyond the turns it was settled in. */
+  related?: SourceUtterance[];
 }
 
 /** `GET /reviews/{meeting_id}` — everything that needs a person first. */

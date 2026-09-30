@@ -17,15 +17,16 @@ export function useDecisionSources(id: string, sourceCount: number) {
     id: string;
     sources: SourceUtterance[] | null;
     context: SourceUtterance[];
+    related: SourceUtterance[];
     error: Error | null;
-  }>({ id, sources: null, context: [], error: null });
+  }>({ id, sources: null, context: [], related: [], error: null });
 
   useEffect(() => {
     if (sourceCount === 0) return;
     let current = true;
     getDecision(id).then(
       (detail) => {
-        if (current) setState({ id, sources: detail.sources, context: detail.context ?? [], error: null });
+        if (current) setState({ id, sources: detail.sources, context: detail.context ?? [], related: detail.related ?? [], error: null });
       },
       (cause: unknown) => {
         if (current) {
@@ -33,6 +34,7 @@ export function useDecisionSources(id: string, sourceCount: number) {
             id,
             sources: null,
             context: [],
+            related: [],
             error: cause instanceof Error ? cause : new Error(String(cause)),
           });
         }
@@ -43,11 +45,12 @@ export function useDecisionSources(id: string, sourceCount: number) {
     };
   }, [id, sourceCount]);
 
-  if (sourceCount === 0) return { sources: [] as SourceUtterance[], context: [] as SourceUtterance[], loading: false, error: null };
+  if (sourceCount === 0) return { sources: [] as SourceUtterance[], context: [] as SourceUtterance[], related: [] as SourceUtterance[], loading: false, error: null };
   const mine = state.id === id;
   return {
     sources: mine ? state.sources : null,
     context: mine ? state.context : [],
+    related: mine ? state.related : [],
     loading: !mine || (state.sources === null && !state.error),
     error: mine ? state.error : null,
   };

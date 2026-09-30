@@ -108,6 +108,11 @@ class ResolutionRequest:
     target_id: str = ""
     context_ids: tuple[str, ...] = ()
     context_after_ids: tuple[str, ...] = ()
+    purpose: str = "commitment"
+    """``commitment`` for an action item's sentence, ``decision`` for the turn a
+    decision was settled in. Only a resolver that summarises reads it: a decision
+    is written up as what was decided, in the third person, not as the speaker's
+    promise, and need not keep the turn's verb ending."""
     related: tuple[tuple[str, str], ...] = ()
     """``(utterance id, text)`` of lines from elsewhere in the meeting that are about
     the same thing, found by ``pipeline.related``. Only a resolver that can say

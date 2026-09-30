@@ -27,6 +27,8 @@ from autune_extraction.models import (
     ExtActionItemRelated,
     ExtActionItemSource,
     ExtConfirmation,
+    ExtDecision,
+    ExtDecisionRelated,
     ExtEditEvent,
 )
 
@@ -271,4 +273,34 @@ def test_the_lines_a_summary_used_are_read_in_spoken_order_and_only_if_consented
 
     related = service.related_utterances(db_session, item.id)
 
+    assert [r.text for r in related] == ["지난주 고객 인터뷰 결과가 아직 정리가 안 됐어요"]
+
+
+def test_a_decision_keeps_what_d_is_sent_apart_from_the_line_the_screen_shows(
+    db_session: Session, scene: dict[str, str]
+) -> None:
+    """``ext_decisions.original_statement`` and ``ext_decision_related`` on PostgreSQL:
+    the upsert writes both statements, D's contract reads the original, and the lines a
+    summary used come back in spoken order and only if consented."""
+    lines = list(
+        db_session.scalars(
+            sa.select(Utterance)
+            .where(Utterance.meeting_id == scene["meeting"])
+            .order_by(Utterance.start_sec)
+        )
+    )
+    decision = ExtDecision(
+        meeting_id=scene["meeting"],
+        statement="인기순으로 진행함",
+        original_statement="그럼 인기순으로 진행합시다",
+        confidence=0.9,
+    )
+    decision.related = [ExtDecisionRelated(utterance_id=line.id) for line in reversed(lines[:3])]
+    db_session.add(decision)
+    db_session.flush()
+
+    (sent_to_d,) = service.decisions_for_meeting(db_session, scene["meeting"])
+    related = service.decision_related_utterances(db_session, decision.id)
+
+    assert sent_to_d.statement == "그럼 인기순으로 진행합시다"
     assert [r.text for r in related] == ["지난주 고객 인터뷰 결과가 아직 정리가 안 됐어요"]

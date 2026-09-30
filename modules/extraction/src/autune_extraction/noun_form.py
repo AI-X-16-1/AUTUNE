@@ -191,6 +191,7 @@ _DONE = re.compile(
     r"^(?P<noun>.*?[가-힣]{2,}?)(?:했습니다|했어요|했다|합니다|합시다|하시죠|하죠|해요|한다|하자)$"
 )
 _BECAME = re.compile(r"^(?P<noun>.*?[가-힣]{2,}?)(?:됐습니다|되었습니다|됩니다|되겠습니다)$")
+_SETTLED_WORD = re.compile(r"^(?:정했습니다|정했어요|정했다|정했음|정함)$")
 _GO_WITH = re.compile(r"^(?:가시죠|갑시다|가죠|가겠습니다|갑니다|가요|갈게요)$")
 _SETTLE_ON = re.compile(r"^(?:하겠습니다|하죠|합시다|하시죠|할게요|합니다|했습니다)$")
 
@@ -205,6 +206,8 @@ def _record(words: list[str]) -> str | None:
 
     # "A안으로 가시죠" -> "A안으로 진행"; "A안으로 하겠습니다" -> "A안으로 결정".
     if len(words) >= 2 and words[-2].endswith(("로", "으로")):
+        if _SETTLED_WORD.match(last):
+            return " ".join([*words[:-1], "결정"])
         if _GO_WITH.match(last):
             return " ".join([*words[:-1], "진행"])
         if _SETTLE_ON.match(last):
