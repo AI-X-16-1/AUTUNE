@@ -120,7 +120,7 @@ and keeps their module's `tools.py`.
 | **Briefing** | 문민재 | Ten minutes before a meeting, sends the previous meeting's summary and the issues this one should settle; links Jira issues **if #82 brings Jira back** | time, from Google Calendar (`list_events`) | D (links, decision threads), B (open items), C (undismissed gaps and their questions), Jira only after #82 | D's pre-meeting brief — D's own surface, rule 2 |
 | **Follow-up** | 박재경 | Watches progress and gaps nobody closed; when a follow-up meeting looks needed, proposes one — to the team lead only | state, `@periodic` | C's topic-level aggregates only (a topic's `silent_share`, undismissed gaps), B (open items), D (decision threads, topic links), Calendar (`free_busy`) | a proposal on the lead's approval screen; the calendar event only after approval — L2 |
 | **Workload** | 강민구 | Notices that one person is overloaded while another has finished, and proposes a redistribution — to the manager only; owns the Gmail, Google Calendar and Jira integrations | state, `@periodic` | B (items per owner and their state), Calendar (`free_busy`), Jira only after #82 | a proposal on the manager's approval screen; any reassignment only after approval — L2 |
-| **Report** | 이승환 | After a meeting, composes its structured minutes from a template (no LLM) and proposes that E store and post them | `autune.intelligence.completed`; a chat request | B (confirmed action items, review-state counts), C (gaps), D (linked meetings, by title and date only). Not E's scores: the report carries no quality grade | a draft stored by E at L1 (`draft_meeting_report`); the channel post through E's report delivery at L2 (`publish_meeting_report`) — E's own surface, rule 2 |
+| **Report** | 이승환 | After a meeting, composes its structured minutes from a template (no LLM) and proposes that E store and post them | `autune.intelligence.completed`; a chat request | B (confirmed action items, review-state counts) today; C (gaps) and D (linked meetings, by title and date only) once those modules' `tools.py` ship — until then those two sections are absent. Not E's scores: the report carries no quality grade | a draft stored by E at L1 (`draft_meeting_report`); the channel post through E's report delivery at L2 (`publish_meeting_report`) — E's own surface, rule 2 |
 
 Three things in that table are decisions, not descriptions:
 
@@ -1237,6 +1237,24 @@ Jira is not a working client today: `integrations.md` records it as evaluated
 and dropped, and #82 is reopened with 강민구 owning it (3LO, B's sync, and
 Briefing's reads). Briefing's issue links and any Jira read by Workload wait on
 #82, and neither subagent depends on them.
+
+### 13.7 A republished event does not rerun a subagent
+
+`autune.intelligence.completed` is published more than once for a meeting: E
+re-aggregates when a late module reports, and again when C republishes its
+`GapReport` after a dismissal, a template switch (#498) or a rescoring (#506).
+The trigger skips a subagent that already has a finished run for that event and
+meeting (`_already_ran`, `main/triggers.py`), which is what makes a redelivered
+event safe — and also means the second, corrected result is never read.
+
+Two proposals can then go stale while they wait for approval: the Report's
+draft, written before a late B arrived or still quoting a gap the team has
+since dismissed, and Follow-up's proposal, holding the dismissed gap as its
+evidence (reviews of #509 and #531). The choice is between re-reading the
+evidence when a person approves and treating E's republish as a new run. It is
+to be settled with plan mode (section 8), together with pinning an approved
+post to the draft the approver saw (review of #508). Until then a draft is
+whatever the first run wrote.
 
 ## 14. Build plan — from 2026-09-29 to 2026-10-12
 
