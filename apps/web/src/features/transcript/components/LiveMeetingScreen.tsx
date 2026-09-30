@@ -115,7 +115,7 @@ export function LiveMeetingScreen({ meetingId }: { meetingId: string }) {
 
   if (live.phase === "idle" || live.phase === "error") {
     return (
-      <main className="mx-auto max-w-[720px] p-[var(--space-page)]">
+      <main className="max-w-[776px] px-[var(--space-page)] py-[var(--space-24)]">
         <h1
           className="text-ink-strong"
           style={{
@@ -160,7 +160,7 @@ export function LiveMeetingScreen({ meetingId }: { meetingId: string }) {
 
   if (live.phase === "uploading" || live.phase === "upload_failed") {
     return (
-      <main className="mx-auto max-w-[720px] p-[var(--space-page)]">
+      <main className="max-w-[776px] px-[var(--space-page)] py-[var(--space-24)]">
         <p style={{ fontSize: "var(--text-body)" }}>
           {live.phase === "uploading" ? "녹음을 올리는 중입니다…" : "업로드에 실패했습니다."}
         </p>
