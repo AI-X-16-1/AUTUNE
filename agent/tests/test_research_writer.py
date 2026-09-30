@@ -135,9 +135,8 @@ def test_write_with_very_long_title() -> None:
 def test_write_drops_questions_when_they_alone_exceed_limit() -> None:
     """Write with many long questions must drop trailing ones."""
     fake = FakeText("## 제기된 질문\nResult")
-    # 20 questions of 400 chars each = 8000 chars (alone exceeds budget)
-    long_q = "가" * 400
-    questions = [long_q] * 20
+    # Create 20 distinct questions, each ~400 chars (total ~8000, exceeds budget)
+    questions = [f"Q{i:02d}-" + "가" * 400 for i in range(20)]
 
     GeminiWriter(text=fake).write(  # type: ignore[arg-type]
         meeting_title="회의", questions=questions, matches=[]
@@ -149,30 +148,26 @@ def test_write_drops_questions_when_they_alone_exceed_limit() -> None:
     msg = f"Total {total_len} exceeds budget {MAX_OUTBOUND_CHARS}"
     assert total_len <= MAX_OUTBOUND_CHARS, msg
 
-    # Should keep only a prefix of the questions
-    kept_count = sent_text.count("- " + long_q[:20])
-    assert kept_count < 20, "Not all questions were kept; some were dropped"
+    # Parse which question markers appear in sent_text
+    kept_markers = []
+    for i in range(20):
+        marker = f"Q{i:02d}-"
+        if marker in sent_text:
+            kept_markers.append(i)
 
-    # Verify kept questions are a prefix (no gaps)
-    q_starts = [sent_text.find(f"- {long_q}")]
-    if q_starts[0] >= 0:
-        # Count how many times the question appears consecutively
-        count = 0
-        pos = sent_text.find("질문:\n") + len("질문:\n")
-        while pos < len(sent_text):
-            if sent_text[pos : pos + 2] == "- ":
-                count += 1
-                pos = sent_text.find("\n", pos) + 1
-            else:
-                break
+    # Assert they are exactly the first k in order with 1 <= k < 20
+    assert 1 <= len(kept_markers) < 20, f"Expected 1-19 questions, got {len(kept_markers)}"
+    assert kept_markers == list(range(len(kept_markers))), (
+        f"Questions not a prefix of input: expected first {len(kept_markers)}, "
+        f"got indices {kept_markers}"
+    )
 
 
 def test_terms_drops_questions_when_they_alone_exceed_limit() -> None:
     """Terms with many long questions must drop trailing ones."""
     fake = FakeText('{"terms": ["배포"]}')
-    # 20 questions of 400 chars each = 8000 chars (alone exceeds budget)
-    long_q = "가" * 400
-    questions = [long_q] * 20
+    # Create 20 distinct questions, each ~400 chars (total ~8000, exceeds budget)
+    questions = [f"Q{i:02d}-" + "가" * 400 for i in range(20)]
 
     GeminiWriter(text=fake).terms(questions)  # type: ignore[arg-type]
 
@@ -182,6 +177,16 @@ def test_terms_drops_questions_when_they_alone_exceed_limit() -> None:
     msg = f"Total {total_len} exceeds budget {MAX_OUTBOUND_CHARS}"
     assert total_len <= MAX_OUTBOUND_CHARS, msg
 
-    # Should keep only a prefix of the questions (not all 20)
-    kept_count = sent_text.count("- " + long_q[:20])
-    assert kept_count < 20, "Not all questions were kept; some were dropped"
+    # Parse which question markers appear in sent_text
+    kept_markers = []
+    for i in range(20):
+        marker = f"Q{i:02d}-"
+        if marker in sent_text:
+            kept_markers.append(i)
+
+    # Assert they are exactly the first k in order with 1 <= k < 20
+    assert 1 <= len(kept_markers) < 20, f"Expected 1-19 questions, got {len(kept_markers)}"
+    assert kept_markers == list(range(len(kept_markers))), (
+        f"Questions not a prefix of input: expected first {len(kept_markers)}, "
+        f"got indices {kept_markers}"
+    )

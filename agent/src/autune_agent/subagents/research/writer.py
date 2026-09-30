@@ -1,9 +1,11 @@
 """Research's two LLM calls: search terms, then the document (spec section 3).
 
-Both go through ``GeminiText`` and so through ``check_outbound``. What leaves
-is masked text read from the database -- B's questions and A's matches -- and
-the meeting-derived part is kept within ``MAX_OUTBOUND_CHARS`` by ``fit``,
-which drops the lowest-ranked matches first.
+Both go through ``GeminiText`` and so through ``check_outbound``, which joins
+all non-addressing strings in the request (instructions and user text) and
+refuses if total exceeds ``MAX_OUTBOUND_CHARS``. To stay within this limit:
+- Title is truncated first if needed
+- Trailing questions are dropped second
+- Lowest-ranked matches are dropped third
 """
 
 from __future__ import annotations
