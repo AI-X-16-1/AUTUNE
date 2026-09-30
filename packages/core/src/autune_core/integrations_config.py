@@ -131,6 +131,23 @@ def save_integration(
         row.connected_by = connected_by
 
 
+def teams_with(session: Session, service: str, key: str, value: str) -> list[str]:
+    """Teams whose ``service`` config has ``key == value``.
+
+    Every Autune team installed into one Slack workspace holds the same bot
+    token -- Slack issues one per app and workspace -- so revoking it for one
+    team ends it for all of them. This is how the caller finds out first."""
+    _check_service(service)
+    return list(
+        session.scalars(
+            select(TeamIntegration.team_id).where(
+                TeamIntegration.service == service,
+                TeamIntegration.config[key].as_string() == value,
+            )
+        )
+    )
+
+
 def disconnect_integration(session: Session, team_id: str, service: str) -> None:
     """Remove a team's connection. The credential goes with it, not just a flag."""
     _check_service(service)

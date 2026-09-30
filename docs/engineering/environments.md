@@ -133,8 +133,11 @@ Where that token comes from, and the two ways to give it to the browser:
 
 | Variable | Used by |
 | --- | --- |
-| `AUTUNE_SLACK_BOT_TOKEN`, `AUTUNE_SLACK_SIGNING_SECRET` | `apps/bot`, all modules that notify |
+| `AUTUNE_SLACK_BOT_TOKEN`, `AUTUNE_SLACK_SIGNING_SECRET` | `apps/bot` (the `/autune` command and interactivity). A team that connected with "Add to Slack" posts with the bot token stored for it in `team_integrations`, not this one |
 | `AUTUNE_SLACK_APP_TOKEN` | `apps/bot` socket mode, local development only |
+| `AUTUNE_SLACK_CLIENT_ID`, `AUTUNE_SLACK_CLIENT_SECRET` | core, the one-click "Add to Slack" install (#428) |
+| `AUTUNE_SLACK_REDIRECT_URI` | core. The web origin's `/api/auth/slack/callback`; Slack accepts **HTTPS only**, so a local test serves `apps/web` with `next dev --experimental-https` |
+| `AUTUNE_SLACK_CHANNEL_NAME` | core. The private alert channel an install creates (default `autune`; `-2`, `-3`... when taken) |
 
 ### Module-specific
 

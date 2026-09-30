@@ -219,3 +219,44 @@ export async function disconnectNotion(meetingId: string): Promise<void> {
     throw new ApiError(response.status, "notion_disconnect_failed", "disconnect failed");
   }
 }
+
+/** A team's Slack install, as a member of the meeting's team sees it. */
+export interface SlackConnection {
+  connected: boolean;
+  workspace_name?: string | null;
+  channel_name?: string | null;
+}
+
+/**
+ * Where the browser goes to install Autune's bot in the team's Slack (#428):
+ * Slack's install screen, then back to `redirectTo` with `?slack=connected|failed`.
+ * The install makes `#autune` (or joins it) for the team's alerts.
+ */
+export function slackConnectUrl(meetingId: string, redirectTo = "/"): string {
+  return authUrl(
+    `/slack/start?meeting_id=${encodeURIComponent(meetingId)}&redirect_to=${encodeURIComponent(redirectTo)}`,
+  );
+}
+
+export async function getSlackConnection(meetingId: string): Promise<SlackConnection | null> {
+  try {
+    const response = await fetch(authUrl(`/slack?meeting_id=${encodeURIComponent(meetingId)}`), {
+      credentials: "include",
+    });
+    if (!response.ok) return null;
+    return (await response.json()) as SlackConnection;
+  } catch {
+    return null;
+  }
+}
+
+export async function disconnectSlack(meetingId: string): Promise<{ revoked: boolean; shared?: boolean }> {
+  const response = await fetch(
+    authUrl(`/slack/disconnect?meeting_id=${encodeURIComponent(meetingId)}`),
+    { method: "POST", credentials: "include" },
+  );
+  if (!response.ok) {
+    throw new ApiError(response.status, "slack_disconnect_failed", "disconnect failed");
+  }
+  return (await response.json()) as { revoked: boolean; shared?: boolean };
+}
