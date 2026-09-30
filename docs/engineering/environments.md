@@ -583,16 +583,29 @@ heads`, then builds and starts the `app` profile of `infra/docker-compose.yml`:
 
 | Container | Port | What it runs |
 | --- | --- | --- |
-| `api` | 8000, every interface | `uvicorn autune_api.main:app` |
+| `api` | 8000, on `DEV_PUBLIC_HOST` only | `uvicorn autune_api.main:app` |
 | `worker` | none | Celery, queues `default,cpu_heavy,gpu`, `--pool=solo` |
-| `web` | 3000, every interface | `next start`, built with `NEXT_PUBLIC_API_URL=http://<DEV_PUBLIC_HOST>:8000` |
+| `web` | 3000, on `DEV_PUBLIC_HOST` only | `next start`, built with `NEXT_PUBLIC_API_URL=http://<DEV_PUBLIC_HOST>:8000` |
 | `postgres`, `redis` | 5432, 6379, loopback only | as locally |
 
 It runs with `AUTUNE_ENV=local` and the implementations `scripts/up.sh` picks
 without `--real-models` (#517). That makes it a **team-only host for dummy
 meetings**: `/api/audio/dev/token` is mounted and issues a token for any email,
-so anyone who reaches port 3000 or 8000 can read any user's meetings. Keep both
-ports inside the team network, and put no real meeting on it.
+so anyone who reaches port 3000 or 8000 can read any user's meetings and act
+as them through the team's integrations. Put no real meeting on it, and before
+the first deploy:
+
+- `DEV_PUBLIC_HOST` is a private address (LAN or VPN), never a public one.
+  Compose binds 3000 and 8000 to that address alone.
+- The host firewall admits 3000 and 8000 from the team's subnet only. On
+  Windows, from an administrator PowerShell:
+
+  ```powershell
+  New-NetFirewallRule -DisplayName "Autune dev (3000, 8000)" -Direction Inbound `
+    -Protocol TCP -LocalPort 3000,8000 -Action Allow -RemoteAddress LocalSubnet
+  ```
+
+- No router forwards either port.
 
 Configuration lives in the repository, not on the host:
 

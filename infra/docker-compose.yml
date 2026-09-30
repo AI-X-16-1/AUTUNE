@@ -82,9 +82,12 @@ services:
   api:
     <<: *python
     command: ["uvicorn", "autune_api.main:app", "--host", "0.0.0.0", "--port", "8000"]
-    # On every interface, unlike Postgres and Redis: the browser uploads and
-    # opens the live socket here directly. Keep 8000 inside the team network.
-    ports: ["8000:8000"]
+    # The browser uploads and opens the live socket here directly, so it
+    # cannot be loopback like Postgres and Redis. Bound to the one address
+    # teammates use, not every interface: /api/audio/dev/token is mounted
+    # (AUTUNE_ENV=local). The host firewall must still limit it to the team
+    # network (docs/engineering/environments.md). Loopback when unset.
+    ports: ["${DEV_PUBLIC_HOST:-127.0.0.1}:8000:8000"]
     volumes: ["audio-tmp:/tmp/autune-audio"]
     # Starlette writes each multipart upload to the OS temp directory before
     # module A's code runs (docs/engineering/environments.md); keep that copy
@@ -121,7 +124,8 @@ services:
         API_PROXY_TARGET: http://api:8000
     image: autune-web:dev
     profiles: ["app"]
-    ports: ["3000:3000"]
+    # As api above.
+    ports: ["${DEV_PUBLIC_HOST:-127.0.0.1}:3000:3000"]
     depends_on:
       api: {condition: service_healthy}
 

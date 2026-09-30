@@ -1,13 +1,28 @@
-# Build context for infra/docker/*.Dockerfile. Keep it to what an image needs:
-# the context is sent whole on every build, and anything here can end up in a
-# layer.
+# Build context for infra/docker/*.Dockerfile. The Dockerfiles copy named paths
+# only; this file is the second line, for what sits untracked *inside* those
+# paths on a teammate's machine. The runner builds from a clean checkout, but
+# `docker compose --profile app build` on a laptop sends the working tree.
+#
+# Mirrors the data and scratch entries of .gitignore: anything git refuses
+# because of its size, licence or owner must not reach an image layer either.
+# AI Hub corpora may not be shared even inside the team (#517 review).
+
+# Version control, tooling, agent scratch
 .git
 .github
 .githooks
 .claude
+.codex*
 .superpowers
 .logs
 docs
+Claude outputs
+_to_delete
+**/CLAUDE.local.md
+**/*.diff
+**/*.patch
+
+# Build output and caches
 **/node_modules
 **/.next
 **/.venv
@@ -16,13 +31,24 @@ docs
 **/.mypy_cache
 **/.ruff_cache
 
-# Secrets and data never go into an image (docs/architecture/privacy.md).
-.env
-.env.*
+# Secrets
+**/.env
+**/.env.*
 !.env.example
-*.mp3
-*.wav
-*.m4a
-*.flac
-models/
-.cache/
+
+# Audio, models, local data and corpora (docs/architecture/privacy.md)
+**/*.mp3
+**/*.wav
+**/*.m4a
+**/*.flac
+**/models
+**/.cache
+**/*.db
+**/*.sqlite3
+**/data
+**/dataset
+**/datasets
+**/corpus
+**/runs
+modules/intelligence/scripts/mock_payloads.py
+modules/intelligence/scripts/mock_payloads

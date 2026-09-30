@@ -23,7 +23,18 @@ RUN useradd --create-home --uid 1000 autune \
  && chown autune:autune /models /tmp/autune-audio
 
 WORKDIR /app
-COPY . .
+# Named paths, never `COPY . .`: on a teammate's machine the repository root
+# also holds AI Hub corpora and personal files git ignores (#517 review).
+# apps/bot is here only because it is a workspace member uv sync expects.
+COPY pyproject.toml uv.lock .python-version ./
+COPY packages packages
+COPY modules modules
+COPY agent agent
+COPY apps/api apps/api
+COPY apps/worker apps/worker
+COPY apps/bot apps/bot
+COPY infra/alembic.ini infra/alembic.ini
+COPY infra/alembic infra/alembic
 
 # `--all-packages`: the modules are workspace members. `local-models` puts in
 # what C, D and E run in process (spaCy, SetFit, KURE-v1); without it they
