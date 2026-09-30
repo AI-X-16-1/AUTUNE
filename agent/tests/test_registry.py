@@ -8,10 +8,12 @@ from typing import Any
 
 import pytest
 from pydantic import ValidationError
+from sqlalchemy.orm import Session
 
 from autune_agent.main import (
     BudgetExceededError,
     CallBudget,
+    RunScope,
     Tool,
     Toolbox,
     ToolContractError,
@@ -20,9 +22,12 @@ from autune_agent.main import (
 )
 from autune_agent.results import MAX_ITEMS, ToolResult
 from autune_agent.testing import mock_tool
+from autune_core import Meeting, Team
 
 SESSION: Any = object()
 """No tool here touches a database; the toolbox only passes the session through."""
+
+SCOPE = RunScope(team_id="team_a")
 
 
 def _payload(**overrides: Any) -> dict[str, Any]:
@@ -77,7 +82,9 @@ def test_a_subagent_sees_only_the_tools_it_named() -> None:
         "extraction.open_action_items": mock_tool("extraction.open_action_items", _payload()),
         "intelligence.speaking_ratio": mock_tool("intelligence.speaking_ratio", _payload()),
     }
-    box = Toolbox(tools, SESSION, CallBudget(), allowed=["extraction.open_action_items"])
+    box = Toolbox(
+        tools, SESSION, CallBudget(), allowed=["extraction.open_action_items"], scope=SCOPE
+    )
 
     assert list(box.describe()) == ["extraction.open_action_items"]
     refused = box.call("intelligence.speaking_ratio")
@@ -86,7 +93,7 @@ def test_a_subagent_sees_only_the_tools_it_named() -> None:
 
 
 def test_a_named_tool_nobody_has_shipped_yet_is_not_an_error() -> None:
-    box = Toolbox({}, SESSION, CallBudget(), allowed=["gap.unresolved_topics"])
+    box = Toolbox({}, SESSION, CallBudget(), allowed=["gap.unresolved_topics"], scope=SCOPE)
 
     assert box.describe() == {}
 
@@ -94,8 +101,8 @@ def test_a_named_tool_nobody_has_shipped_yet_is_not_an_error() -> None:
 def test_the_budget_is_shared_and_stops_the_run() -> None:
     tools = {"extraction.x": mock_tool("extraction.x", _payload())}
     budget = CallBudget(limit=2)
-    first = Toolbox(tools, SESSION, budget, allowed=tools)
-    second = Toolbox(tools, SESSION, budget, allowed=tools)
+    first = Toolbox(tools, SESSION, budget, allowed=tools, scope=SCOPE)
+    second = Toolbox(tools, SESSION, budget, allowed=tools, scope=SCOPE)
 
     first.call("extraction.x")
     second.call("extraction.x")
@@ -170,8 +177,80 @@ def test_tracing_off_or_unset_is_fine() -> None:
 
 def test_a_refused_call_still_spends_the_budget() -> None:
     budget = CallBudget(limit=1)
-    box = Toolbox({}, SESSION, budget, allowed=[])
+    box = Toolbox({}, SESSION, budget, allowed=[], scope=SCOPE)
 
     box.call("gap.anything")
     with pytest.raises(BudgetExceededError):
         box.call("gap.anything")
+
+
+def _scoped_tool(name: str, seen: list[dict[str, Any]]) -> Tool:
+    """A tool shaped like module B's: its range comes in as arguments."""
+
+    def fn(session: Any, team_id: str, meeting_id: str | None = None) -> dict[str, Any]:
+        seen.append({"team_id": team_id, "meeting_id": meeting_id})
+        return _payload()
+
+    return Tool(name=name, description="Use this in tests.", fn=fn)
+
+
+def test_the_run_writes_the_team_id_the_model_left_out() -> None:
+    seen: list[dict[str, Any]] = []
+    tools = {"extraction.x": _scoped_tool("extraction.x", seen)}
+    box = Toolbox(tools, SESSION, CallBudget(), allowed=tools, scope=SCOPE)
+
+    assert box.call("extraction.x").ok is True
+    assert seen == [{"team_id": "team_a", "meeting_id": None}]
+
+
+def test_a_team_id_the_run_was_not_started_for_is_refused() -> None:
+    seen: list[dict[str, Any]] = []
+    tools = {"extraction.x": _scoped_tool("extraction.x", seen)}
+    budget = CallBudget()
+    box = Toolbox(tools, SESSION, budget, allowed=tools, scope=SCOPE)
+
+    refused = box.call("extraction.x", team_id="team_b")
+
+    assert refused.ok is False
+    assert refused.reason == "team_id is outside this run's team"
+    assert seen == []
+    assert budget.steps == [
+        {"tool": "extraction.x", "ok": False, "evidence": [], "truncated": False}
+    ]
+
+
+def test_another_teams_meeting_reads_as_missing(session: Session, team: dict[str, str]) -> None:
+    other = Team(name="다른 팀")
+    session.add(other)
+    session.flush()
+    theirs = Meeting(team_id=other.id, title="남의 회의")
+    session.add(theirs)
+    session.commit()
+    seen: list[dict[str, Any]] = []
+    tools = {"extraction.x": _scoped_tool("extraction.x", seen)}
+    box = Toolbox(tools, session, CallBudget(), allowed=tools, scope=RunScope(team_id=team["team"]))
+
+    refused = box.call("extraction.x", meeting_id=theirs.id)
+    missing = box.call("extraction.x", meeting_id="mtg_nobody")
+    own = box.call("extraction.x", meeting_id=team["meeting"])
+
+    assert refused.ok is False and missing.ok is False
+    assert refused.reason == missing.reason == "meeting not found"
+    assert own.ok is True
+    assert seen == [{"team_id": team["team"], "meeting_id": team["meeting"]}]
+
+
+def test_a_run_about_a_meeting_fills_it_in(session: Session, team: dict[str, str]) -> None:
+    seen: list[dict[str, Any]] = []
+    tools = {"extraction.x": _scoped_tool("extraction.x", seen)}
+    scope = RunScope(team_id=team["team"], meeting_id=team["meeting"])
+    box = Toolbox(tools, session, CallBudget(), allowed=tools, scope=scope)
+
+    box.call("extraction.x")
+
+    assert seen == [{"team_id": team["team"], "meeting_id": team["meeting"]}]
+
+
+def test_toolbox_has_no_unscoped_default() -> None:
+    with pytest.raises(TypeError):
+        Toolbox({}, SESSION, CallBudget(), allowed=[])  # type: ignore[call-arg]

@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 
 from autune_agent.results import ToolResult
 from autune_contracts import MODULES
+from autune_core import Meeting
 
 log = logging.getLogger(__name__)
 
@@ -58,12 +59,30 @@ class BudgetExceededError(RuntimeError):
 
 
 @dataclass(frozen=True)
+class RunScope:
+    """The team a run answers for, and the meeting it is about if any.
+
+    Set by whoever started the run -- ``/api/agent/chat`` after checking
+    membership, a trigger from the row that fired it -- and never by the model.
+    ``Toolbox.call`` holds every tool call to it (review on #449).
+    """
+
+    team_id: str
+    meeting_id: str | None = None
+
+
+@dataclass(frozen=True)
 class Tool:
     name: str
     """``<module>.<function>``, e.g. ``extraction.open_action_items``."""
     description: str
     """The function's docstring. It is the prompt: when to use it comes first."""
     fn: ToolFn
+
+    @property
+    def parameters(self) -> frozenset[str]:
+        """Named parameters after the session, for filling scope arguments in."""
+        return frozenset(inspect.signature(self.fn).parameters)
 
     def __call__(self, session: Session, **arguments: Any) -> ToolResult:
         raw = self.fn(session, **arguments)
@@ -108,11 +127,19 @@ def collect_tools(modules: Iterable[str] = MODULES) -> dict[str, Tool]:
 
 
 class CallBudget:
-    """One per run. The main agent and every subagent it delegates to spend from it."""
+    """One per run. The main agent and every subagent it delegates to spend from it.
+
+    It also keeps the run's trace, ``steps``: each call's tool name, whether it
+    answered, and its evidence ids -- never a summary, an item or a reason, any
+    of which a tool may fill with meeting text. It lives here rather than in the
+    graph so a run stopped by the cap still has everything up to the call that
+    stopped it.
+    """
 
     def __init__(self, limit: int = MAX_TOOL_CALLS) -> None:
         self.limit = limit
         self.used = 0
+        self.steps: list[dict[str, Any]] = []
 
     def spend(self, name: str) -> None:
         if self.used >= self.limit:
@@ -126,6 +153,16 @@ class Toolbox:
     ``allowed`` is an allow-list: a subagent sees only the tools it named. This
     is how agent-layer.md section 3.1 keeps E's speaking-ratio read away from
     Workload and Follow-up -- enforced here, not asked for in a prompt.
+
+    ``scope`` is the other half of the same idea. Module tools take their range
+    as arguments -- ``open_action_items(session, team_id)`` -- and the model
+    writes the arguments, so without this a member of one team could name
+    another team's id in a sentence and get that team's work back. The toolbox
+    therefore writes ``team_id`` itself, refuses a call that names a different
+    one, and refuses a ``meeting_id`` from another team as if it did not exist
+    (the same 404-not-403 rule as #437). Other ids a tool takes -- an action
+    item, a decision -- are the tool's to check against the ``team_id`` it is
+    handed; every such tool on main already takes one.
     """
 
     def __init__(
@@ -135,6 +172,7 @@ class Toolbox:
         budget: CallBudget,
         *,
         allowed: Iterable[str],
+        scope: RunScope,
     ) -> None:
         # Required, with no "everything" default: a caller that forgets it
         # must fail to construct, not get every tool (review on #432).
@@ -146,6 +184,7 @@ class Toolbox:
         self._tools = {name: tools[name] for name in sorted(wanted & set(tools))}
         self._session = session
         self._budget = budget
+        self._scope = scope
 
     def describe(self) -> dict[str, str]:
         return {name: tool.description for name, tool in self._tools.items()}
@@ -157,5 +196,35 @@ class Toolbox:
         tool = self._tools.get(name)
         if tool is None:
             # A route to correct, not a crash.
-            return ToolResult.failure(f"{name} is not available here")
-        return tool(self._session, **arguments)
+            result = ToolResult.failure(f"{name} is not available here")
+        else:
+            scoped = self._in_scope(tool, arguments)
+            result = scoped if isinstance(scoped, ToolResult) else tool(self._session, **scoped)
+        self._budget.steps.append(
+            {
+                "tool": name,
+                "ok": result.ok,
+                "evidence": result.evidence,
+                "truncated": result.truncated,
+            }
+        )
+        return result
+
+    def _in_scope(self, tool: Tool, arguments: dict[str, Any]) -> dict[str, Any] | ToolResult:
+        """The arguments with the run's scope written in, or the refusal."""
+        scope = self._scope
+        arguments = dict(arguments)
+        team_id = arguments.get("team_id")
+        if team_id is not None and team_id != scope.team_id:
+            # Not echoed back: the id is whatever the model wrote.
+            return ToolResult.failure("team_id is outside this run's team")
+        if "team_id" in tool.parameters:
+            arguments["team_id"] = scope.team_id
+        meeting_id = arguments.get("meeting_id")
+        if meeting_id is None and scope.meeting_id and "meeting_id" in tool.parameters:
+            arguments["meeting_id"] = meeting_id = scope.meeting_id
+        if meeting_id is not None:
+            meeting = self._session.get(Meeting, meeting_id)
+            if meeting is None or meeting.team_id != scope.team_id:
+                return ToolResult.failure("meeting not found")
+        return arguments

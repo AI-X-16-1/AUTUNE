@@ -22,7 +22,7 @@ from sqlalchemy.orm import Session
 
 from autune_agent.results import SubagentResult, ToolResult
 
-from .registry import CallBudget, Tool, Toolbox, collect_tools, refuse_tracing
+from .registry import CallBudget, RunScope, Tool, Toolbox, collect_tools, refuse_tracing
 from .router import Router
 from .subagents import CompiledSubagent, Subagent, collect_subagents
 
@@ -41,10 +41,11 @@ def build_main_graph(
     subagents: Mapping[str, Subagent],
     tools: Mapping[str, Tool],
     budget: CallBudget,
+    scope: RunScope,
 ) -> Any:
     refuse_tracing()
     compiled: dict[str, CompiledSubagent] = {
-        name: sub.build(Toolbox(tools, session, budget, allowed=sub.tools))
+        name: sub.build(Toolbox(tools, session, budget, allowed=sub.tools, scope=scope))
         for name, sub in subagents.items()
     }
     options = {name: sub.description for name, sub in subagents.items()}
@@ -86,17 +87,23 @@ def run(
     *,
     session: Session,
     router: Router,
+    scope: RunScope,
     subagents: Mapping[str, Subagent] | None = None,
     tools: Mapping[str, Tool] | None = None,
     budget: CallBudget | None = None,
 ) -> MainState:
-    """One chat turn or one trigger, start to finish."""
+    """One chat turn or one trigger, start to finish.
+
+    ``scope`` has no default for the reason ``Toolbox.allowed`` has none: a
+    caller that forgets it must fail, not run unscoped.
+    """
     graph = build_main_graph(
         session=session,
         router=router,
         subagents=collect_subagents() if subagents is None else subagents,
         tools=collect_tools() if tools is None else tools,
         budget=budget or CallBudget(),
+        scope=scope,
     )
     state: MainState = graph.invoke({"request": request})
     return state

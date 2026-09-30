@@ -17,7 +17,9 @@ dependencies = [
     # The supervisor graph and each subagent's subgraph. No checkpointer
     # package: agent-layer.md section 3.3 keeps run state in agent_runs.
     "langgraph>=0.6",
+    "fastapi>=0.115",
     "pydantic>=2.10",
+    "pydantic-settings>=2.7",
     "sqlalchemy>=2.0",
 ]
 

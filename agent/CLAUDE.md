@@ -1,14 +1,13 @@
 # CLAUDE.md — the agent layer
 
 Read the root `CLAUDE.md` first. Design: `docs/architecture/agent-layer.md`.
-Placement: ADR 0010. This layer is code only once #260 is decided and ADR 0010
-is `Accepted`; until then the root `CLAUDE.md` invariants apply unchanged.
+Placement: ADR 0010 (`Accepted`; #260 closed 2026-09-29).
 
 ## Who owns what
 
 | Path | Owner |
 | --- | --- |
-| `src/autune_agent/main/`, `results.py`, `testing.py` | 김민경 |
+| `src/autune_agent/main/`, `results.py`, `testing.py`, `models.py`, `router.py`, `config.py`, `migrations/` | 김민경 |
 | `src/autune_agent/subagents/research/` | 김민경 |
 | `src/autune_agent/subagents/briefing/` | 문민재 |
 | `src/autune_agent/subagents/followup/` | 박재경 |
@@ -37,6 +36,9 @@ to its owner.
    `LANGSMITH_TRACING` or `LANGCHAIN_TRACING_V2` on.
 7. **Return at most five items, evidence as ids.** `ToolResult` cuts and
    refuses the rest.
+8. **A stored row keeps no text a meeting deletion would miss.** `agent_runs`
+   stores tool names and evidence ids; the answer and a proposal's title and
+   body only when the run has a `meeting_id` to cascade from.
 
 ## Starting a subagent
 

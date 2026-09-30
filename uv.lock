@@ -264,8 +264,10 @@ dependencies = [
     { name = "autune-gap" },
     { name = "autune-integrations" },
     { name = "autune-intelligence" },
+    { name = "fastapi" },
     { name = "langgraph" },
     { name = "pydantic" },
+    { name = "pydantic-settings" },
     { name = "sqlalchemy" },
 ]
 
@@ -279,8 +281,10 @@ requires-dist = [
     { name = "autune-gap", editable = "modules/gap" },
     { name = "autune-integrations", editable = "packages/integrations" },
     { name = "autune-intelligence", editable = "modules/intelligence" },
+    { name = "fastapi", specifier = ">=0.115" },
     { name = "langgraph", specifier = ">=0.6" },
     { name = "pydantic", specifier = ">=2.10" },
+    { name = "pydantic-settings", specifier = ">=2.7" },
     { name = "sqlalchemy", specifier = ">=2.0" },
 ]
 
@@ -289,6 +293,7 @@ name = "autune-api"
 version = "0.1.0"
 source = { editable = "apps/api" }
 dependencies = [
+    { name = "autune-agent" },
     { name = "autune-audio" },
     { name = "autune-context" },
     { name = "autune-core" },
@@ -301,6 +306,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "autune-agent", editable = "agent" },
     { name = "autune-audio", editable = "modules/audio" },
     { name = "autune-context", editable = "modules/context" },
     { name = "autune-core", editable = "packages/core" },

@@ -6,10 +6,18 @@ from typing import Any
 
 import pytest
 
-from autune_agent.main import SUBAGENT_NAMES, CallBudget, Subagent, collect_subagents, run
+from autune_agent.main import (
+    SUBAGENT_NAMES,
+    CallBudget,
+    RunScope,
+    Subagent,
+    collect_subagents,
+    run,
+)
 from autune_agent.testing import FakeRouter, example_subagent, mock_tool
 
 SESSION: Any = object()
+SCOPE = RunScope(team_id="team_a")
 
 OPEN_ITEMS = {
     "ok": True,
@@ -25,7 +33,12 @@ def test_a_request_goes_to_the_subagent_the_router_picks() -> None:
     subagents = {"workload": example_subagent("workload", ("extraction.open_action_items",))}
 
     state = run(
-        "업무가 몰린 사람 있어?", session=SESSION, router=router, subagents=subagents, tools=TOOLS
+        "업무가 몰린 사람 있어?",
+        session=SESSION,
+        scope=SCOPE,
+        router=router,
+        subagents=subagents,
+        tools=TOOLS,
     )
 
     assert state["route"] == "workload"
@@ -39,7 +52,12 @@ def test_no_fitting_subagent_is_an_answer_not_a_crash() -> None:
     subagents = {"workload": example_subagent("workload", ("extraction.open_action_items",))}
 
     state = run(
-        "점심 뭐 먹지", session=SESSION, router=FakeRouter(), subagents=subagents, tools=TOOLS
+        "점심 뭐 먹지",
+        session=SESSION,
+        scope=SCOPE,
+        router=FakeRouter(),
+        subagents=subagents,
+        tools=TOOLS,
     )
 
     assert state["route"] is None
@@ -49,7 +67,12 @@ def test_no_fitting_subagent_is_an_answer_not_a_crash() -> None:
 
 def test_a_route_to_an_unknown_subagent_is_treated_as_no_route() -> None:
     state = run(
-        "업무", session=SESSION, router=FakeRouter({"업무": "payroll"}), subagents={}, tools=TOOLS
+        "업무",
+        session=SESSION,
+        scope=SCOPE,
+        router=FakeRouter({"업무": "payroll"}),
+        subagents={},
+        tools=TOOLS,
     )
 
     assert state["route"] is None
@@ -62,6 +85,7 @@ def test_a_delegation_spends_the_same_budget() -> None:
     run(
         "리포트",
         session=SESSION,
+        scope=SCOPE,
         router=FakeRouter({"리포트": "report"}),
         subagents=subagents,
         tools=TOOLS,
