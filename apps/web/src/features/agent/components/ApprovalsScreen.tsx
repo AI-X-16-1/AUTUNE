@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { ApiError } from "@/shared/api/client";
 import { Button } from "@/shared/ui/Button";
@@ -31,6 +31,43 @@ const RESULT_LABEL: Record<PendingAction["status"], string> = {
   superseded: "다른 제안으로 대체됨",
 };
 
+const NEEDS_CHECK = "결과를 확인하지 못했습니다 — 직접 확인해 주세요";
+const GONE = "더 이상 없는 제안입니다";
+const TRY_LATER = "처리하지 못했습니다. 잠시 후 다시 시도해 주세요.";
+const LOAD_FAILED = "불러오지 못했습니다. 잠시 후 다시 시도해 주세요.";
+
+/**
+ * Whether the server may have acted even though the request failed: a 5xx or a
+ * lost response on 승인 (the claim is committed before the action runs), or a
+ * 409 on any decision. The list is then re-read rather than a retry offered.
+ */
+function outcomeUnknown(e: unknown, approving: boolean): boolean {
+  if (e instanceof ApiError) {
+    return e.status === 409 || (approving && e.status >= 500);
+  }
+  return approving;
+}
+
+/**
+ * Merge a fresh list into the one on screen. A card the server still lists
+ * takes the server's version; a card settled here stays until the page is left;
+ * any other card the server no longer lists goes.
+ */
+function merge(
+  shown: PendingAction[] | null,
+  fresh: PendingAction[],
+  settled: Record<string, string>,
+): PendingAction[] {
+  const byId = new Map(fresh.map((i) => [i.id, i]));
+  const kept = (shown ?? []).flatMap((i) => {
+    const now = byId.get(i.id);
+    if (now) return [now];
+    return settled[i.id] ? [i] : [];
+  });
+  const keptIds = new Set(kept.map((i) => i.id));
+  return [...fresh.filter((i) => !keptIds.has(i.id)), ...kept];
+}
+
 /**
  * 승인 대기 — every L2 proposal the signed-in person may decide, across their
  * teams. Approving runs it at once; the card then shows the result and leaves.
@@ -41,6 +78,11 @@ export function ApprovalsScreen() {
   const [error, setError] = useState<string | null>(null);
   // Cards that are settled (decided, or found already decided) and what to say.
   const [done, setDone] = useState<Record<string, string>>({});
+  // What `done` was at the last render, for a reload that finishes later.
+  const doneRef = useRef(done);
+  useEffect(() => {
+    doneRef.current = done;
+  }, [done]);
   // A failed attempt leaves the buttons in place; the message sits beside them.
   const [failed, setFailed] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState<Set<string>>(new Set());
@@ -51,15 +93,35 @@ export function ApprovalsScreen() {
     let current = true;
     listPending()
       .then((list) => current && setItems(list))
-      .catch(
-        (e: unknown) =>
-          current &&
-          setError(e instanceof Error ? e.message : "불러오지 못했습니다"),
-      );
+      // Never the API's own message: it is English and meant for a developer.
+      .catch(() => current && setError(LOAD_FAILED));
     return () => {
       current = false;
     };
   }, []);
+
+  /**
+   * Re-read the list after a decision whose outcome is unknown. The card then
+   * reappears as needing a check, goes (someone settled it), or comes back
+   * pending, as the server has it. If even the list cannot be read, the card
+   * says so and offers nothing to press twice.
+   */
+  async function reload(id: string) {
+    try {
+      const fresh = await listPending();
+      const settled = { ...doneRef.current };
+      delete settled[id];
+      setItems((shown) => merge(shown, fresh, settled));
+      setDone((d) => {
+        const rest = { ...d };
+        delete rest[id];
+        return rest;
+      });
+      toggleChoosing(id, false);
+    } catch {
+      setDone((d) => ({ ...d, [id]: NEEDS_CHECK }));
+    }
+  }
 
   function toggleChoosing(id: string, on: boolean) {
     setChoosing((c) => {
@@ -92,13 +154,12 @@ export function ApprovalsScreen() {
         [item.id]: RESULT_LABEL[after.status] ?? "처리했습니다",
       }));
     } catch (e: unknown) {
-      if (e instanceof ApiError && e.status === 409) {
-        setDone((d) => ({ ...d, [item.id]: "이미 결정된 제안입니다" }));
+      if (outcomeUnknown(e, !reason)) {
+        await reload(item.id);
+      } else if (e instanceof ApiError && e.status === 404) {
+        setDone((d) => ({ ...d, [item.id]: GONE }));
       } else {
-        setFailed((f) => ({
-          ...f,
-          [item.id]: e instanceof Error ? e.message : "처리하지 못했습니다",
-        }));
+        setFailed((f) => ({ ...f, [item.id]: TRY_LATER }));
       }
     } finally {
       setBusy((b) => {
@@ -172,9 +233,9 @@ export function ApprovalsScreen() {
               >
                 {item.body}
               </pre>
-              {done[item.id] ? (
+              {done[item.id] || item.needs_check ? (
                 <p className="mt-3" style={{ fontSize: "var(--text-meta)" }}>
-                  {done[item.id]}
+                  {done[item.id] ?? NEEDS_CHECK}
                 </p>
               ) : (
                 <>

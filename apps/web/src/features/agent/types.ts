@@ -13,6 +13,8 @@ export type PendingAction = {
   decided_at: string | null;
   title: string;
   body: string;
+  /** Approved, but the outcome was never recorded; a person must check it. */
+  needs_check: boolean;
 };
 
 export type RejectReason =
