@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from collections import Counter
 from dataclasses import dataclass
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta, timezone
 from typing import Final
 
 import sqlalchemy as sa
@@ -41,8 +41,10 @@ from autune_core.errors import ConflictError, NotFoundError, ValidationError
 from autune_integrations import (
     PermanentIntegrationError,
     SlackApi,
+    SlackClient,
     assert_masked,
     assert_personal_delivery,
+    check_outbound,
     find_unmasked,
 )
 
@@ -844,9 +846,12 @@ therefore never sends the body twice."""
 MEETING_REPORT_OPEN_ACTION: Final = "intel_meeting_report_open"
 """The button's ``action_id``. slack.py acknowledges it so Slack shows no error."""
 
+MEETING_REPORT_REVIEW_ACTION: Final = "intel_meeting_report_review"
+"""The review button's ``action_id``, acknowledged in slack.py like the other."""
+
 
 def save_meeting_report(
-    session: Session, meeting_id: str, body_markdown: str
+    session: Session, meeting_id: str, body_markdown: str, *, pending_review: bool = False
 ) -> IntelMeetingReport:
     """Store the meeting's report body, replacing an unsent one.
 
@@ -871,37 +876,69 @@ def save_meeting_report(
         )
     assert_masked(body_markdown, destination="intel_meeting_reports")
 
-    row = session.get(IntelMeetingReport, meeting_id)
+    # Locked: a re-publish racing the deliver task's claim waits for it, then sees
+    # sent_at and refuses, instead of overwriting a report people have read.
+    row = session.get(IntelMeetingReport, meeting_id, with_for_update=True)
     if row is None:
         row = IntelMeetingReport(
-            meeting_id=meeting_id, team_id=meeting.team_id, body_markdown=body_markdown
+            meeting_id=meeting_id,
+            team_id=meeting.team_id,
+            body_markdown=body_markdown,
+            pending_review=pending_review,
         )
         session.add(row)
     elif row.sent_at is not None:
         raise ConflictError("meeting report was already posted", meeting_id=meeting_id)
     else:
         row.body_markdown = body_markdown
+        row.pending_review = pending_review
     session.flush()
     return row
 
 
-def _meeting_report_blocks(meeting_id: str, body_markdown: str) -> list[dict]:
+_KST: Final = timezone(timedelta(hours=9))
+"""The report's date is the team's calendar date. A fixed offset until a team
+timezone setting exists (#227 is undecided)."""
+
+MEETING_REPORT_FOOTER: Final = "자동 생성된 리포트입니다."
+
+
+def meeting_report_document(meeting: Meeting, body_markdown: str) -> str:
+    """Header, the subagent's body, footer -- the text ``save_meeting_report`` stores.
+
+    The header names the meeting unless its title holds personal data, the
+    same test ``_report_preview`` makes; stored text is checked by
+    ``assert_masked``, so such a title would refuse the whole report.
+    """
+    when = (meeting.started_at or meeting.created_at).astimezone(_KST)
+    title = meeting.title if meeting.title and not find_unmasked(meeting.title) else "회의 리포트"
+    return f"📋 {title} · {when.month}/{when.day}\n\n{body_markdown}\n\n{MEETING_REPORT_FOOTER}"
+
+
+def _meeting_report_blocks(meeting_id: str, body_markdown: str, pending_review: bool) -> list[dict]:
     blocks: list[dict] = [{"type": "section", "text": {"type": "mrkdwn", "text": body_markdown}}]
     base_url = get_settings().web_base_url
-    if base_url:
-        blocks.append(
+    if not base_url:
+        return blocks
+    meeting_url = f"{base_url.rstrip('/')}/meetings/{meeting_id}"
+    buttons = [
+        {
+            "type": "button",
+            "text": {"type": "plain_text", "text": "상세보기"},
+            "url": meeting_url,
+            "action_id": MEETING_REPORT_OPEN_ACTION,
+        }
+    ]
+    if pending_review:
+        buttons.append(
             {
-                "type": "actions",
-                "elements": [
-                    {
-                        "type": "button",
-                        "text": {"type": "plain_text", "text": "상세보기"},
-                        "url": f"{base_url.rstrip('/')}/meetings/{meeting_id}",
-                        "action_id": MEETING_REPORT_OPEN_ACTION,
-                    }
-                ],
+                "type": "button",
+                "text": {"type": "plain_text", "text": "확인하러 가기"},
+                "url": f"{meeting_url}/actions",
+                "action_id": MEETING_REPORT_REVIEW_ACTION,
             }
         )
+    blocks.append({"type": "actions", "elements": buttons})
     return blocks
 
 
@@ -913,6 +950,7 @@ class ClaimedReport:
     preview: str
     """Slack's top-level ``text``: the notification preview, never the body."""
     body_markdown: str
+    pending_review: bool
 
 
 def claim_meeting_report(session: Session, meeting_id: str) -> ClaimedReport | None:
@@ -934,11 +972,26 @@ def claim_meeting_report(session: Session, meeting_id: str) -> ClaimedReport | N
     if row.sent_at is not None:
         return None
     title = session.scalar(sa.select(Meeting.title).where(Meeting.id == meeting_id)) or ""
+    claimed = ClaimedReport(
+        meeting_id=meeting_id,
+        preview=_report_preview(title),
+        body_markdown=row.body_markdown,
+        pending_review=row.pending_review,
+    )
+    # The same check post_message runs, made before sent_at is set: a refusal
+    # here leaves the report unclaimed and retryable (#476 review).
+    check_outbound(
+        {"text": claimed.preview, "blocks": _report_blocks(claimed)},
+        destination="slack",
+        addressing=SlackClient.addressing,
+    )
     row.sent_at = datetime.now(UTC)
     session.flush()
-    return ClaimedReport(
-        meeting_id=meeting_id, preview=_report_preview(title), body_markdown=row.body_markdown
-    )
+    return claimed
+
+
+def _report_blocks(report: ClaimedReport) -> list[dict]:
+    return _meeting_report_blocks(report.meeting_id, report.body_markdown, report.pending_review)
 
 
 def _report_preview(title: str) -> str:
@@ -966,7 +1019,7 @@ def post_meeting_report(slack: SlackApi, channel: str, report: ClaimedReport) ->
     return slack.post_message(
         channel,
         report.preview,
-        _meeting_report_blocks(report.meeting_id, report.body_markdown),
+        _report_blocks(report),
     )
 
 

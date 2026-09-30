@@ -1,24 +1,27 @@
 """Module E as tools an agent can call (#260/#261, docs/architecture/agent-layer.md section 4).
 
-Four tools over E's existing reads -- no new query paths, no new tables, no
-contract change. Each returns a dict in the shape agent-layer.md calls
-``ToolResult``::
+Four reads (``TOOLS``) over E's existing service functions, and one action
+(``ACTIONS``) the main agent runs to carry out a Report subagent's proposal.
+Each returns a dict in the shape agent-layer.md calls ``ToolResult``::
 
     {"ok", "reason", "summary", "items", "evidence", "confidence", "truncated"}
 
 **Plain functions, no decorator, no ``autune_agent`` import**, the same shape as
-module B's ``tools.py``: ADR 0010's fourth import-linter contract forbids a
-module importing ``autune_agent``, so the agent validates these dicts into its
-``ToolResult`` when it collects ``TOOLS``.
+module B's ``tools.py`` (#399, #492): ADR 0010's fourth import-linter contract
+forbids a module importing ``autune_agent``, so the agent validates these dicts
+into its ``ToolResult`` when it collects them.
 
 What is enforced here rather than trusted to the caller:
 
 - ``items`` holds at most ``MAX_ITEMS``; ``truncated`` says when more existed.
 - ``evidence`` is always empty. E aggregates other modules' results and holds
   no utterance ids; an item names its meeting by ``meeting_id`` instead.
-- An expected absence (no score yet, prediction gated) is ``ok=False`` with a
-  reason, not an exception.
-- Synchronous, safe to call twice: every tool only reads.
+- An expected absence (no score yet, prediction gated, another team's meeting)
+  is ``ok=False`` with a reason, not an exception.
+- ``TOOLS`` only read and are safe to call twice. The one action writes, owns
+  its transaction, and is kept out of ``TOOLS``.
+- ``team_id`` is filled by the run's authenticated scope (``RUN_SCOPE``), never
+  chosen by a model.
 
 **No speaking-ratio tool, on purpose.** These tools feed the Report subagent,
 whose output goes to many people, and invariant 11 lets one person's speaking
@@ -32,10 +35,19 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from autune_core.errors import NotFoundError
+from autune_core import Meeting, get_logger, session_scope
+from autune_core.errors import (
+    ConflictError,
+    NotFoundError,
+    PrivacyViolationError,
+    ValidationError,
+)
 
-from . import service
+from . import service, tasks
+from .models import IntelMeetingReport
 from .service import _gap_burden
+
+log = get_logger(__name__)
 
 MAX_ITEMS = 5
 """agent-layer.md section 4: a tool ranks and keeps five; the rest stay in E's tables."""
@@ -216,3 +228,115 @@ def misalignment_risk(session: Session, team_id: str) -> dict[str, Any]:
 
 TOOLS = [meeting_quality, team_trend, recurring_gaps, misalignment_risk]
 """Collected by the agent layer by iterating modules (invariant 6), never registered by hand."""
+
+RUN_SCOPE = ("team_id",)
+"""Arguments the run fills from its authenticated scope, never the model -- the
+convention B's ``tools.py`` set (#492, review of #449). A model that could choose
+``team_id`` could read another team's trend or post into another team's channel."""
+
+
+# --- actions: E's writes, for the main agent to run --------------------------------
+#
+# agent-layer.md section 8, rule 2: the Report subagent never writes; it proposes,
+# and the main agent runs these. Shaped like B's actions: no session argument,
+# each owns its transaction and commits before anything leaves, and none is in
+# ``TOOLS``, so a model never calls one directly. The module sets each one's
+# level (#509): ``L1_ACTIONS`` run without approval, the rest of ``ACTIONS`` only
+# after a person approves.
+
+
+def _refused(reason: str, summary: str) -> dict[str, Any]:
+    return _result(ok=False, reason=reason, summary=summary, items=[], confidence=0.0)
+
+
+def _acted(summary: str, meeting_id: str) -> dict[str, Any]:
+    # B's actions answer with the changed thing by id; an executor reads both alike.
+    return _result(
+        summary=summary, items=[{"title": summary, "body": "", "score": 1.0, "id": meeting_id}]
+    )
+
+
+def _not_found() -> dict[str, Any]:
+    # Unknown and other-team read the same, so the answer does not reveal which,
+    # and it never echoes the id: the model wrote it. #449's scope check says the
+    # same words.
+    return _refused("meeting not found", "회의를 찾을 수 없습니다.")
+
+
+def draft_meeting_report(
+    team_id: str, meeting_id: str, body_markdown: str, pending_review: bool = False
+) -> dict[str, Any]:
+    """Store a meeting's finished report as a draft -- what the Report subagent
+    proposes after a meeting's analysis finishes. Nothing is posted.
+
+    L1 -- runs without approval; the person is told after. Posting is the separate
+    ``publish_meeting_report``. Never call it with text another meeting said.
+    Adds the header (title, date) and the "자동 생성" footer; the title is left out
+    when it holds personal data. ``pending_review`` adds a button to B's review
+    board when the report is posted. Replaces an unposted draft. Refused for
+    another team's meeting, a report already posted, one over the length cap,
+    or a body that still holds personal data (by category, never the text).
+    """
+    with session_scope() as session:
+        meeting = session.get(Meeting, meeting_id)
+        if meeting is None or meeting.team_id != team_id:
+            return _not_found()
+        document = service.meeting_report_document(meeting, body_markdown)
+        try:
+            service.save_meeting_report(
+                session, meeting_id, document, pending_review=pending_review
+            )
+        except ConflictError:
+            return _refused("already posted", "이미 게시된 리포트입니다.")
+        except ValidationError:
+            return _refused(
+                "report too long", f"리포트가 {service.MEETING_REPORT_MAX_CHARS}자를 넘습니다."
+            )
+        except PrivacyViolationError as exc:
+            # A model wrote the body, so a phone number in it is a route to
+            # correct, not a bug in E. Nothing was written; name categories only.
+            categories = ", ".join(exc.details.get("categories", []))
+            return _refused(
+                f"unmasked personal data: {categories}", "리포트에 개인정보가 남아 있습니다."
+            )
+    return _acted("리포트 초안을 저장했습니다.", meeting_id)
+
+
+def publish_meeting_report(team_id: str, meeting_id: str) -> dict[str, Any]:
+    """Post a meeting's stored report draft to the team channel.
+
+    L2 -- runs only after a person approves (a channel post moves people;
+    agent-layer.md section 8). Posts what ``draft_meeting_report`` stored, once:
+    delivery claims the report before it posts, so a second approval or a retry
+    sends nothing. Refused for another team's meeting, a meeting with no draft,
+    or a report already posted.
+    """
+    with session_scope() as session:
+        meeting = session.get(Meeting, meeting_id)
+        if meeting is None or meeting.team_id != team_id:
+            return _not_found()
+        row = session.get(IntelMeetingReport, meeting_id)
+        if row is None:
+            return _refused("no draft", "게시할 리포트 초안이 없습니다.")
+        if row.sent_at is not None:
+            return _refused("already posted", "이미 게시된 리포트입니다.")
+    # The transaction has committed: a worker that picks this up finds the row.
+    try:
+        tasks.deliver_meeting_report.apply_async((meeting_id,))
+    except Exception as exc:  # the draft is stored; the caller must not see a failure
+        # Stored and unclaimed: approving the post again enqueues it.
+        log.warning(
+            "intelligence_meeting_report_enqueue_failed",
+            meeting_id=meeting_id,
+            error=type(exc).__name__,
+        )
+    return _acted("리포트 게시를 예약했습니다.", meeting_id)
+
+
+ACTIONS = [draft_meeting_report, publish_meeting_report]
+"""E's writes. Kept out of ``TOOLS`` on purpose: the registry offers ``TOOLS`` to
+models, and the main agent's executor alone runs these."""
+
+L1_ACTIONS = [draft_meeting_report]
+"""The reversible ones (#509): a draft is not seen by anyone until it is posted,
+and is replaced by the next draft. Everything else in ``ACTIONS`` is L2."""
