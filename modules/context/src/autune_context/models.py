@@ -11,6 +11,7 @@ See docs/architecture/data-model.md and docs/modules/context.md.
 from __future__ import annotations
 
 from datetime import date, datetime
+from typing import Any
 
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
@@ -275,3 +276,34 @@ class CtxBrief(Base, TimestampMixin):
     """Set in the same commit as the row, *before* the Slack post -- the
     duplicate-over-loss trade ``CtxMeetingStatus.notified_at`` makes. ``None``
     when the team has no Slack channel: the brief is still readable in the app."""
+
+
+class CtxTeamAgenda(Base, TimestampMixin):
+    """The latest ``TeamAgenda`` module B published for one team (#436): the open
+    Jira issues made from the team's own action items, for the pre-meeting
+    brief's agenda (``briefs.agenda_for``).
+
+    One row per team, replaced whole by a newer snapshot. B republishes every
+    five minutes and events can arrive out of order, so a snapshot only
+    replaces this row when its ``as_of`` is later (``briefs.store_team_agenda``).
+
+    **The one ``ctx_`` table that holds another module's text.** ``issues``
+    carries B's item descriptions (masked at write, like every stored
+    transcript-derived string), not a choice D made -- unlike ``CtxBrief``,
+    which keeps only which meeting it recaps. A copy outlives its source, so
+    this one is kept short-lived: B's next snapshot drops an item that was
+    deleted, and a snapshot B stopped refreshing is ignored after
+    ``AGENDA_STALE_AFTER`` and deleted by ``send_due_briefs``
+    (``briefs.purge_stale_agendas``). Goes with the team (``CASCADE``).
+    """
+
+    __tablename__ = "ctx_team_agendas"
+
+    team_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("teams.id", ondelete="CASCADE"), primary_key=True
+    )
+    as_of: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    """When B read it, from the payload -- not when D stored it."""
+    issues: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False)
+    """``AgendaIssue`` dumps (``title``, ``key``, ``status``, ``url``) in B's
+    order, most pressing first. Validated by the contract before storing."""
