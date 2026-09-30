@@ -750,31 +750,33 @@ embedding got wrong or nearly wrong: "인덱스 재색인이 먼저 끝나야…
 "인기순 정렬 대신 실시간 개인화로…" (not cold start), an owner and a date with no
 noun, and "네 알겠습니다, 마치겠습니다" (nothing).
 
-Measured on 2026-09-29 with `gemini-3.5-flash` (fallback never used), spaCy,
-the four authored meetings, templates `general.4` / `feature_planning.2`:
+Measured on 2026-09-30 with `gemini-3.5-flash` (fallback never used), spaCy,
+the four authored meetings, templates `general.4` / `feature_planning.2`, after
+the key-reading fix below:
 
 | | off | local | local + gemini |
 | --- | --- | --- | --- |
-| precision (`high`) | 0.89 | 1.00 | 0.94 |
+| precision (`high`) | 0.89 | 1.00 | 1.00 |
 | recall (`high`) | 1.00 | 0.94 | 1.00 |
-| false positives (all `no-noun`) | 2 | 0 | 1 |
+| false positives (all `no-noun`) | 2 | 0 | 0 |
 | verifier requests / utterances sent | 0 / 0 | 0 / 0 | 4 / 10 |
 
-**The `local + gemini` column was measured through a parse bug, and does not
-say what the verifier does.** The model keyed its answers by the line label it
-was shown (`"발화 1"`), `parse` accepted only a bare digit, and every line came
-back answered empty, which overrides the embedding with "not this item" on
-every ambiguous utterance. Fixed in `pipeline.verifier.parse`; the column has
-to be measured again with `--compare` before anything below is relied on. The
-paragraph is kept as what was concluded at the time.
+**On this set the verifier takes recall back without giving up precision.** The
+embedding alone closed both `no-noun` false positives and lost the cold-start
+gap ("인기순 정렬 대신 실시간 개인화로…" is not a cold-start plan); with the
+verifier checking the ambiguous lines, the gap is back and neither false
+positive returns. Four authored meetings and ten asked utterances say the
+mechanism does what it was built for, and nothing about real meetings: the W5
+set decides whether it is worth its request. `--relations gemini` changes
+nothing here, because no utterance in the set holds a pair the rules decline
+(see "Relation assistance").
 
-**The verifier trades precision for recall here, not both up.** It restored
-the cold-start gap the embedding lost ("인기순 정렬 대신 실시간 개인화로…" is
-not a cold-start plan) and so brought recall back to 1.00. It also reopened a
-false positive the embedding had closed: it did not confirm "개인정보 마스킹이
-먼저 끝나야 전송할 수 있습니다" as a dependency, which it is. On four meetings
-that is one utterance either way, and it says nothing about which way real
-meetings lean — the W5 set decides whether the verifier is worth its request.
+**The 2026-09-29 run read 0.94 / 1.00 and was a parse bug.** The model keyed its
+answers by the line label it was shown (`"발화 1"`), the parser accepted only a
+bare digit, and every line came back answered empty — "not this item" on every
+ambiguous utterance, overriding the embedding. That run concluded the verifier
+traded precision for recall; it was measuring the parse. Keys are now read by
+`gemini.answers_by_line`.
 
 Probes: 3/5 on the embedding alone, 5/5 with Gemini (2 requests). Requests ran
 765-1,543 characters; no body carried the key, a speaker, an id or a line that
