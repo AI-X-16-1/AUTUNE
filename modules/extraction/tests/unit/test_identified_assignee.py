@@ -2,14 +2,15 @@
 
 SQLite in memory. What is under test: which items the fill touches -- a label
 only, the model's, one identified and consenting speaker, no assignee edit by
-a person -- and what the task does after it: publish the meeting again, and
-sync an item that has already been confirmed.
+a person -- and what the task does after it: sync an item that has already
+been confirmed, and publish nothing, as a board edit publishes nothing.
 """
 
 from __future__ import annotations
 
 from collections.abc import Iterator
 from contextlib import contextmanager
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy import create_engine
@@ -17,7 +18,6 @@ from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
 import autune_extraction.models  # noqa: F401  (ext_ tables)
-from autune_contracts import EXTRACTION_COMPLETED
 from autune_core import Base, Meeting, Participant, TeamMember, User, Utterance
 from autune_extraction import service, tasks
 from autune_extraction.models import ExtActionItem, ExtActionItemSource, ExtEditEvent
@@ -140,6 +140,40 @@ def test_an_assignee_a_person_edited_is_left_alone(session: Session, fields: str
     assert row.assignee_id is None
 
 
+def test_an_edit_that_names_no_fields_is_read_as_maybe_the_assignee(session: Session) -> None:
+    """Edit rows written before ``fields`` existed are NULL; one of them may
+    have been the edit that relabelled the item (lsh2217's review of #536)."""
+    row = item(session, "act_1", ["utt_1"])
+    session.add(ExtEditEvent(meeting_id=MEETING, action_item_id="act_1", kind="edited"))
+    identify(session, "par_2", "user_kim")
+
+    assert service.fill_identified_assignees(session) == []
+    session.refresh(row)
+    assert row.assignee_id is None
+
+
+def test_a_label_a_person_renamed_keeps_its_name(session: Session) -> None:
+    """ "Speaker 2" became "민경님" on the board: not the label it was drafted
+    with, so whoever typed it decided, whatever the edit log says."""
+    row = item(session, "act_1", ["utt_1"])
+    row.assignee_label = "민경님"
+    session.flush()
+    identify(session, "par_2", "user_kim")
+
+    assert service.fill_identified_assignees(session) == []
+    session.refresh(row)
+    assert (row.assignee_id, row.assignee_label) == (None, "민경님")
+
+
+def test_an_item_older_than_the_window_is_not_scanned(session: Session) -> None:
+    row = item(session, "act_1", ["utt_1"])
+    row.created_at = datetime.now(UTC) - service.FILL_WINDOW - timedelta(days=1)
+    session.flush()
+    identify(session, "par_2", "user_kim")
+
+    assert service.fill_identified_assignees(session) == []
+
+
 def test_an_edit_to_another_field_does_not_hold_it_back(session: Session) -> None:
     item(session, "act_1", ["utt_1"])
     session.add(
@@ -197,9 +231,10 @@ def wired(session: Session, monkeypatch: pytest.MonkeyPatch) -> dict[str, list]:
     return sent
 
 
-def test_the_task_publishes_the_meeting_and_syncs_only_a_confirmed_item(
+def test_the_task_syncs_only_a_confirmed_item_and_publishes_nothing(
     session: Session, wired: dict[str, list]
 ) -> None:
+    """A board edit publishes no ``ExtractionResult``; neither does this."""
     item(session, "act_draft", ["utt_1"])
     item(session, "act_done", ["utt_2"], status="todo")
     identify(session, "par_2", "user_kim")
@@ -207,10 +242,7 @@ def test_the_task_publishes_the_meeting_and_syncs_only_a_confirmed_item(
     filled = tasks.fill_identified_assignees()
 
     assert sorted(filled) == ["act_done", "act_draft"]
-    ((event, payload),) = wired["published"]
-    assert event == EXTRACTION_COMPLETED
-    assignees = {a["id"]: a["assignee_id"] for a in payload["action_items"]}
-    assert assignees == {"act_draft": "user_kim", "act_done": "user_kim"}
+    assert wired["published"] == []
     assert wired["synced"] == ["act_done"]
 
 

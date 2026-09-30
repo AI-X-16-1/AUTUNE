@@ -1,8 +1,9 @@
 """A speaker identified after extraction becomes the assignee, on PostgreSQL.
 
 The unit suite runs the rules on SQLite. What only PostgreSQL shows: the
-correlated ``NOT EXISTS`` over ``ext_edit_events``, the ``UPDATE ... RETURNING``
-and the foreign key the new ``assignee_id`` must satisfy.
+correlated ``NOT EXISTS`` over ``ext_edit_events`` with its NULL ``fields``,
+the label compared against the utterance's, the ``UPDATE ... RETURNING`` and
+the foreign key the new ``assignee_id`` must satisfy.
 """
 
 from __future__ import annotations
@@ -51,25 +52,37 @@ def test_identified_speakers_fill_only_the_untouched_items(db_session: Session) 
         db_session.flush()
         return row
 
-    untouched, cleared = drafted(0.0), drafted(3.0)
-    db_session.add(
-        ExtEditEvent(
-            meeting_id=meeting.id, action_item_id=cleared.id, kind="edited", fields="assignee_id"
-        )
+    untouched, cleared, legacy, renamed = (drafted(s) for s in (0.0, 3.0, 6.0, 9.0))
+    db_session.add_all(
+        [
+            ExtEditEvent(
+                meeting_id=meeting.id,
+                action_item_id=cleared.id,
+                kind="edited",
+                fields="assignee_id",
+            ),
+            # Written before ``fields`` existed: may have been the assignee.
+            ExtEditEvent(meeting_id=meeting.id, action_item_id=legacy.id, kind="edited"),
+        ]
     )
+    renamed.assignee_label = "민경님"
     speaker.user_id = user.id
     db_session.flush()
 
     filled = service.fill_identified_assignees(db_session)
 
     assert [i.id for i in filled] == [untouched.id]
-    rows = dict(
-        db_session.execute(
-            sa.select(ExtActionItem.id, ExtActionItem.assignee_id).where(
-                ExtActionItem.meeting_id == meeting.id
-            )
+    rows = {
+        item_id: (assignee, label)
+        for item_id, assignee, label in db_session.execute(
+            sa.select(
+                ExtActionItem.id, ExtActionItem.assignee_id, ExtActionItem.assignee_label
+            ).where(ExtActionItem.meeting_id == meeting.id)
         )
-        .tuples()
-        .all()
-    )
-    assert rows == {untouched.id: user.id, cleared.id: None}
+    }
+    assert rows == {
+        untouched.id: (user.id, None),
+        cleared.id: (None, "Speaker 2"),
+        legacy.id: (None, "Speaker 2"),
+        renamed.id: (None, "민경님"),
+    }

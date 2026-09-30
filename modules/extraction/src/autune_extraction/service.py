@@ -11,10 +11,10 @@ from __future__ import annotations
 import re
 from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from dataclasses import replace
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import Any, Literal, Protocol
 
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.dialects import postgresql, sqlite
 from sqlalchemy.orm import Session, selectinload
 
@@ -1186,61 +1186,95 @@ def team_roster(session: Session, meeting_id: str) -> list[str]:
 # --- a speaker identified after extraction (#360) ------------------------------
 
 
-def fill_identified_assignees(session: Session) -> list[ExtActionItem]:
+FILL_WINDOW = timedelta(days=30)
+"""How far back ``fill_identified_assignees`` looks. A speaker is identified in
+the days after a meeting; a label still unresolved after a month is one nobody
+is going to resolve, and rescanning it every ten minutes forever buys nothing."""
+
+FILL_CAP = 200
+"""Items filled per run at most, newest first. The first run after a deploy may
+find a backlog; the rest waits ten minutes rather than one run holding locks on
+all of it."""
+
+
+def fill_identified_assignees(
+    session: Session, *, now: datetime | None = None
+) -> list[ExtActionItem]:
     """Give an item its speaker's account once A has identified the speaker.
 
     A commitment by an unidentified speaker is drafted with only the label
     ("Speaker 2", ``slots.assignee_of``). When somebody later confirms who that
     was, A fills ``participants.user_id``, and nothing announces it -- #360
     settled on consumers reading it back rather than on a new event. This
-    finds the model's items still holding only a label whose source utterances
-    all belong to one identified, consenting participant, and sets that
-    account as the assignee, clearing the label, as a fresh extraction would.
+    finds the model's items still holding only the label their source was
+    spoken under, from the last ``FILL_WINDOW``, whose source utterances all
+    belong to one identified, consenting participant, and sets that account as
+    the assignee, clearing the label, as a fresh extraction would.
 
-    **A person's choice is never overwritten.** An item whose assignee a person
-    has edited -- set, cleared or relabelled -- is left alone, and the update
-    is conditional on ``assignee_id`` still being empty, so an edit committed
-    while this ran wins. No ``ext_edit_events`` row: that table counts a
-    person's corrections (ADR 0006), and this is neither.
+    **A person's choice is never overwritten.** An item is left alone when:
 
-    Returns the items it changed.
+    - a person's edit of it names an assignee field, or names no fields at all
+      -- rows written before ``ext_edit_events.fields`` existed are NULL, and
+      may have been exactly that edit (lsh2217's review of #536);
+    - its label is no longer the speaker label it was drafted with -- a person
+      typed a name there;
+    - its assignee or its label changed between the read and the write: the
+      update carries both as they were read.
+
+    **Write-once.** A filled item holds an account, as a person-assigned one
+    does, and nothing here follows a later re-identification of the speaker
+    (A can move a label from X to Y): the item then shows X, and a person
+    reassigns it on the board. Following it would need a record of which
+    assignees this wrote, and would move work a person may already have
+    accepted as X's.
+
+    No ``ext_edit_events`` row: that table counts a person's corrections
+    (ADR 0006), and this is neither. Returns the items it changed.
     """
-    assignee_edited = (
+    moment = now or datetime.now(UTC)
+    maybe_edited = (
         select(ExtEditEvent.id)
         .where(
             ExtEditEvent.action_item_id == ExtActionItem.id,
-            ExtEditEvent.fields.like("%assignee%"),
+            ExtEditEvent.kind == "edited",
+            or_(ExtEditEvent.fields.is_(None), ExtEditEvent.fields.like("%assignee%")),
         )
         .exists()
     )
     rows = session.execute(
-        select(ExtActionItem.id, Participant.user_id)
+        select(ExtActionItem.id, ExtActionItem.assignee_label, Participant.user_id)
         .join(ExtActionItemSource, ExtActionItemSource.action_item_id == ExtActionItem.id)
         .join(Utterance, Utterance.id == ExtActionItemSource.utterance_id)
         .join(Participant, Participant.id == Utterance.participant_id)
         .join(User, User.id == Participant.user_id)
         .where(
             ExtActionItem.assignee_id.is_(None),
-            ExtActionItem.assignee_label.is_not(None),
+            ExtActionItem.assignee_label == Utterance.speaker_label,
             ExtActionItem.origin == "model",
+            ExtActionItem.created_at >= moment - FILL_WINDOW,
             Participant.consented.is_(True),
-            ~assignee_edited,
+            ~maybe_edited,
         )
+        .order_by(ExtActionItem.created_at.desc(), ExtActionItem.id)
     ).all()
-    speakers: dict[str, set[str]] = {}
-    for item_id, user_id in rows:
-        speakers.setdefault(item_id, set()).add(user_id)
+    speakers: dict[str, tuple[str, set[str]]] = {}
+    for item_id, label, user_id in rows:
+        speakers.setdefault(item_id, (label, set()))[1].add(user_id)
 
     filled: list[ExtActionItem] = []
-    for item_id, users in sorted(speakers.items()):
+    for item_id, (label, users) in list(speakers.items())[:FILL_CAP]:
         if len(users) != 1:
-            # Sources spoken by two people: whose promise it is was never the
-            # speaker's alone, and a person decides.
+            # Model items have one source today; one with sources by two
+            # people was never the speaker's alone, and a person decides.
             continue
         (user_id,) = users
         changed = session.scalar(
             update(ExtActionItem)
-            .where(ExtActionItem.id == item_id, ExtActionItem.assignee_id.is_(None))
+            .where(
+                ExtActionItem.id == item_id,
+                ExtActionItem.assignee_id.is_(None),
+                ExtActionItem.assignee_label == label,
+            )
             .values(assignee_id=user_id, assignee_label=None)
             .returning(ExtActionItem.id)
         )
