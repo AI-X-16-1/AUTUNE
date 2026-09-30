@@ -28,9 +28,11 @@ class Provider:
     def __init__(self, *answers: str | Exception) -> None:
         self.answers = list(answers)
         self.bodies: list[dict[str, Any]] = []
+        self.paths: list[str] = []
 
     def request(self, method: str, path: str, *, json: dict[str, Any]) -> dict[str, Any]:  # noqa: A002
         self.bodies.append(json)
+        self.paths.append(path)
         answer = self.answers.pop(0) if self.answers else ""
         if isinstance(answer, Exception):
             raise answer
@@ -196,9 +198,116 @@ def test_llm_without_a_key_is_refused_by_name(configured) -> None:
 
 
 def test_llm_with_a_key_builds_and_needs_no_checkpoint(configured) -> None:
-    configured(resolver_impl="llm", llm_api_key="k", llm_model="m", llm_fallback_model="")
+    configured(resolver_impl="llm", llm_api_key="k", resolver_model="m", resolver_second_model="")
 
     built = registry.get_resolver()
 
     assert isinstance(built, LlmResolver)
     assert built.model_version == "llm:m"
+
+
+# --- the second model --------------------------------------------------------------
+
+
+def two_models(provider: Provider) -> LlmResolver:
+    r = LlmResolver(
+        api_key="k",
+        model="first",
+        base_url="http://llm.invalid",
+        fallback_model="second",
+    )
+    r._client = provider  # type: ignore[assignment]
+    return r
+
+
+GOOD = "그럼 제가 다음 주 화요일까지 고객 인터뷰 결과를 볼게요"
+
+
+def models_asked(provider: Provider) -> list[str]:
+    return [p.split("/models/")[1].split(":")[0] for p in provider.paths]
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "그럼 제가 [디비 작업이 없는 이번 회의는] 다음 주 화요일까지 볼게요",  # a clause of its own
+        "그럼 제가 (고객 인터뷰 결과를) 다음 주 화요일까지 볼게요",
+        "그럼 제가 고객 인터뷰 결과를 볼게요",  # the deadline is gone
+        "그럼 제가 다음 주 화요일까지 " + "지난주 고객 인터뷰 결과를 " * 12 + "볼게요",  # runs on
+    ],
+)
+def test_an_unsound_first_answer_goes_to_the_second_model_once(bad: str) -> None:
+    provider = Provider(bad, GOOD)
+
+    (out,) = two_models(provider).resolve([request()])
+
+    assert out == GOOD
+    assert models_asked(provider) == ["first", "second"]
+
+
+def test_when_the_second_model_fails_the_checks_too_the_raw_quote_stands() -> None:
+    bad = "그럼 제가 [덧붙인 절] 다음 주 화요일까지 볼게요"
+    provider = Provider(bad, bad)
+
+    (out,) = two_models(provider).resolve([request()])
+
+    assert out == TARGET
+    assert len(provider.bodies) == 2, "asked twice, never a third time"
+
+
+def test_a_sound_first_answer_never_reaches_the_second_model() -> None:
+    provider = Provider(GOOD)
+
+    two_models(provider).resolve([request()])
+
+    assert models_asked(provider) == ["first"]
+
+
+def test_without_a_second_model_an_unsound_answer_is_the_raw_quote() -> None:
+    provider = Provider("그럼 제가 [덧붙인 절] 다음 주 화요일까지 볼게요")
+
+    (out,) = resolver(provider).resolve([request()])
+
+    assert out == TARGET
+    assert len(provider.bodies) == 1
+
+
+def test_a_masked_token_the_context_already_has_is_not_a_clause_of_its_own() -> None:
+    req = ResolutionRequest(
+        target="그럼 제가 다음 주 화요일까지 볼게요",
+        context=("[전화번호] 쪽 문의가 아직 정리가 안 됐어요",),
+    )
+    provider = Provider("그럼 제가 다음 주 화요일까지 [전화번호] 쪽 문의를 볼게요")
+
+    (out,) = two_models(provider).resolve([req])
+
+    assert out == "그럼 제가 다음 주 화요일까지 [전화번호] 쪽 문의를 볼게요"
+    assert models_asked(provider) == ["first"]
+
+
+def test_a_second_model_that_already_answered_a_busy_first_is_not_asked_again(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from autune_extraction.pipeline import llm as llm_module
+
+    monkeypatch.setattr(llm_module.time, "sleep", lambda _s: None)
+    busy = TransientIntegrationError("503")
+    provider = Provider(busy, busy, busy, busy, "그럼 제가 [덧붙인 절] 다음 주 화요일까지 볼게요")
+
+    (out,) = two_models(provider).resolve([request()])
+
+    assert out == TARGET
+    assert models_asked(provider) == ["first"] * 4 + ["second"]
+
+
+def test_the_registry_gives_the_resolver_its_own_two_models(configured) -> None:
+    configured(
+        resolver_impl="llm",
+        llm_api_key="k",
+        llm_model="the-classifiers",
+        llm_fallback_model="the-classifiers-second",
+    )
+
+    built = registry.get_resolver()
+
+    assert built.model_version == "llm:gemini-3.5-flash-lite+gemini-3.8-flash"

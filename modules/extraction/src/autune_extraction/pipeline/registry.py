@@ -184,10 +184,10 @@ def get_resolver() -> ReferenceResolver:
             )
         return LlmResolver(
             api_key=settings.llm_api_key,
-            model=settings.llm_model,
+            model=settings.resolver_model,
             base_url=settings.llm_base_url,
             timeout_sec=settings.llm_timeout_sec,
-            fallback_model=settings.llm_fallback_model,
+            fallback_model=settings.resolver_second_model,
             embedder=embedder,
             min_similarity=settings.resolver_min_similarity,
         )

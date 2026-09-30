@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, Any
 
 from autune_core import get_logger
 from autune_core.errors import PrivacyViolationError
+from autune_extraction.slots import parse_due
 from autune_integrations.errors import TransientIntegrationError
 
 from .base import Embedder, ResolutionRequest
@@ -531,6 +532,36 @@ def _restored(answer: str, surface: dict[str, str]) -> str | None:
     return _PLACEHOLDER.sub(lambda m: surface[m.group(0)], answer)
 
 
+_BRACKETED = re.compile(r"\[[^\]]*\]|\([^)]*\)")
+MAX_GROWTH = 3
+"""A sentence more than this many times as long as the one it rewrites (or 80
+characters, whichever is more) is a paragraph, not a resolved reference."""
+
+
+def _sound(answer: str, request: ResolutionRequest) -> bool:
+    """What a resolved sentence must not do that the groundedness checks miss.
+
+    Measured on 24 dummy commitments (2026-09-30), the cheap model answered every
+    one and still: added a bracketed or parenthesised clause of its own, dropped
+    the words a deadline was read from ("매주 월요일에" became "주 단위로"), and now
+    and then ran on to three times the length. None of those is a number or a
+    name, so ``_grounded`` lets them through.
+
+    - No bracketed or parenthesised span that the target and its context do not
+      already contain (a masked token is one of those).
+    - The deadline phrase the target carries, if any, is still there.
+    - No longer than ``MAX_GROWTH`` times the target, with 80 characters as the
+      floor.
+    """
+    window = " ".join([*request.context, request.target, *request.context_after])
+    if any(span not in window for span in _BRACKETED.findall(answer)):
+        return False
+    due = parse_due(request.target, None)
+    if due is not None and due.text and due.text not in answer:
+        return False
+    return len(answer) <= max(80, MAX_GROWTH * len(request.target))
+
+
 class LlmResolver(GeminiClient):
     """The same rewrite as ``LocalQwenResolver``, by a cloud LLM API (#175).
 
@@ -577,28 +608,65 @@ class LlmResolver(GeminiClient):
         self._embedder = embedder
         self._min_similarity = min_similarity
 
+    def _accept(
+        self, answer: str, request: ResolutionRequest, surface: dict[str, str]
+    ) -> str | None:
+        """The answer as the sentence to store, or ``None`` when it should not be.
+
+        Checks that need no model, in the order they are cheapest: one line, no
+        placeholder the model invented, then ``_sound`` (what the sentence adds
+        and drops) and the groundedness checks every resolver passes.
+        """
+        answer = answer.strip().strip("\"'“”‘’").strip()
+        if not answer or "\n" in answer:
+            return None
+        restored = _restored(answer, surface)
+        if restored is None or not _sound(restored, request):
+            return None
+        if not _passes_grounding(restored, request, self._embedder, self._min_similarity):
+            return None
+        return restored
+
+    def _ask(self, model: str | None, body: dict[str, Any], index: int) -> str | None:
+        """One model's answer text; ``None`` if the call failed. A privacy refusal is
+        raised, never downgraded (errors.py)."""
+        try:
+            if model is None:
+                return _answer_text(self._post(body, index=index))
+            return _answer_text(self._post_to(model, body, index=index))
+        except PrivacyViolationError:
+            raise
+        except Exception:  # noqa: BLE001 - #175: one bad call must not fail the meeting
+            log.warning("extraction_resolver_call_failed", exc_info=True)
+            return None
+
     def _resolve_one(self, request: ResolutionRequest, index: int) -> str:
+        """The cheap model first; the second model once if its answer is not sound.
+
+        The first model (``model``) answers everything. When its answer fails a
+        check -- it added a bracketed clause, dropped the deadline, ran on -- the
+        second model gets the same request once, and when that fails too the raw
+        quote stands. A busy first model already falls through to the second
+        (``GeminiClient._post``), so a second model that has answered is not asked
+        again for the same request.
+        """
         sent, surface = _scrubbed(request, self._roster)
         body = {
             "contents": [{"role": "user", "parts": [{"text": _prompt(sent)}]}],
             "generationConfig": {"temperature": 0},
         }
-        try:
-            answer = _answer_text(self._post(body, index=index)).strip().strip("\"'“”‘’").strip()
-        except PrivacyViolationError:
-            # errors.py: never caught and downgraded.
-            raise
-        except Exception:  # noqa: BLE001 - #175: one bad call must not fail the meeting
-            log.warning("extraction_resolver_call_failed", exc_info=True)
+        first = self._ask(None, body, index)
+        if first is None:
             return request.target
-        if not answer or "\n" in answer:
+        accepted = self._accept(first, request, surface)
+        if accepted is not None:
+            return accepted
+        if not self._fallback or self.last_model == self._fallback:
             return request.target
-        restored = _restored(answer, surface)
-        if restored is None or not _passes_grounding(
-            restored, request, self._embedder, self._min_similarity
-        ):
-            return request.target
-        return restored
+        log.info("extraction_resolver_escalated", model=self._model, second=self._fallback)
+        second = self._ask(self._fallback, body, index)
+        accepted = self._accept(second, request, surface) if second is not None else None
+        return accepted if accepted is not None else request.target
 
     def resolve(self, requests: list[ResolutionRequest]) -> list[str]:
         return [self._resolve_one(request, index) for index, request in enumerate(requests)]

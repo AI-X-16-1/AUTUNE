@@ -351,6 +351,9 @@ class GeminiClient:
         self._model = model
         self._fallback = fallback_model
         self._roster: tuple[str, ...] = ()
+        self.last_model = model
+        """The model that answered the latest request -- the second one when the first
+        stayed unavailable, so a caller does not ask it again for the same thing."""
 
     def use_roster(self, names: Sequence[str]) -> None:
         """The meeting team's display names, replaced in every request (#411).
@@ -391,14 +394,18 @@ class GeminiClient:
         request was fine and the model was busy. A 4xx or a privacy refusal is
         about the request itself and would fail the same way on any model."""
         try:
-            return self._post_to(self._model, body, index=index)
+            answer = self._post_to(self._model, body, index=index)
+            self.last_model = self._model
+            return answer
         except TransientIntegrationError:
             if not self._fallback:
                 raise
             log.warning(
                 "extraction_llm_fallback", model=self._model, fallback=self._fallback, window=index
             )
-            return self._post_to(self._fallback, body, index=index)
+            answer = self._post_to(self._fallback, body, index=index)
+            self.last_model = self._fallback
+            return answer
 
 
 class LlmClassifier(GeminiClient):
