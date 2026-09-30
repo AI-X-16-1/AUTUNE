@@ -1,24 +1,27 @@
 """Module E as tools an agent can call (#260/#261, docs/architecture/agent-layer.md section 4).
 
-Four tools over E's existing reads -- no new query paths, no new tables, no
-contract change. Each returns a dict in the shape agent-layer.md calls
-``ToolResult``::
+Four reads (``TOOLS``) over E's existing service functions, and one action
+(``ACTIONS``) the main agent runs to carry out a Report subagent's proposal.
+Each returns a dict in the shape agent-layer.md calls ``ToolResult``::
 
     {"ok", "reason", "summary", "items", "evidence", "confidence", "truncated"}
 
 **Plain functions, no decorator, no ``autune_agent`` import**, the same shape as
-module B's ``tools.py``: ADR 0010's fourth import-linter contract forbids a
-module importing ``autune_agent``, so the agent validates these dicts into its
-``ToolResult`` when it collects ``TOOLS``.
+module B's ``tools.py`` (#399, #492): ADR 0010's fourth import-linter contract
+forbids a module importing ``autune_agent``, so the agent validates these dicts
+into its ``ToolResult`` when it collects them.
 
 What is enforced here rather than trusted to the caller:
 
 - ``items`` holds at most ``MAX_ITEMS``; ``truncated`` says when more existed.
 - ``evidence`` is always empty. E aggregates other modules' results and holds
   no utterance ids; an item names its meeting by ``meeting_id`` instead.
-- An expected absence (no score yet, prediction gated) is ``ok=False`` with a
-  reason, not an exception.
-- Synchronous, safe to call twice: every tool only reads.
+- An expected absence (no score yet, prediction gated, another team's meeting)
+  is ``ok=False`` with a reason, not an exception.
+- ``TOOLS`` only read and are safe to call twice. The one action writes, owns
+  its transaction, and is kept out of ``TOOLS``.
+- ``team_id`` is filled by the run's authenticated scope (``RUN_SCOPE``), never
+  chosen by a model.
 
 **No speaking-ratio tool, on purpose.** These tools feed the Report subagent,
 whose output goes to many people, and invariant 11 lets one person's speaking
@@ -30,10 +33,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from sqlalchemy import event
 from sqlalchemy.orm import Session
 
-from autune_core import Meeting, get_logger
+from autune_core import Meeting, get_logger, session_scope
 from autune_core.errors import ConflictError, NotFoundError, ValidationError
 
 from . import service, tasks
@@ -221,94 +223,67 @@ def misalignment_risk(session: Session, team_id: str) -> dict[str, Any]:
 TOOLS = [meeting_quality, team_trend, recurring_gaps, misalignment_risk]
 """Collected by the agent layer by iterating modules (invariant 6), never registered by hand."""
 
+RUN_SCOPE = ("team_id",)
+"""Arguments the run fills from its authenticated scope, never the model -- the
+convention B's ``tools.py`` set (#492, review of #449). A model that could choose
+``team_id`` could read another team's trend or post into another team's channel."""
+
+
+# --- actions: E's write, for the main agent to run ------------------------------
+#
+# agent-layer.md section 8, rule 2: the Report subagent never posts; it proposes,
+# and the main agent runs this. Shaped like B's actions: no session argument, the
+# action owns its transaction and commits before anything leaves, and it is kept
+# out of ``TOOLS`` so a model never calls it directly.
+
+
+def _refused(reason: str, summary: str) -> dict[str, Any]:
+    return _result(ok=False, reason=reason, summary=summary, items=[], confidence=0.0)
+
 
 def publish_meeting_report(
-    session: Session, meeting_id: str, body_markdown: str, pending_review: bool = False
+    team_id: str, meeting_id: str, body_markdown: str, pending_review: bool = False
 ) -> dict[str, Any]:
-    """Use this only to carry out a Report subagent's proposal: store a finished
-    meeting report and schedule its post to the team channel. Never call it to
-    read anything, and never with text another meeting said.
+    """Store a meeting's finished report and schedule its post to the team channel
+    -- what the Report subagent proposes after a meeting's analysis finishes.
 
-    Adds the header (title, date) and the "자동 생성" footer, stores the report,
-    and enqueues delivery after the transaction commits. ``pending_review``
-    adds a button to B's review board. Returns ``ok=False`` with a reason when
-    the meeting is unknown, the report was already posted, or it is too long.
+    L1 as proposed on #261 (runs without approval, the person is told after); L2
+    if the team decides a channel post needs one. Never call it with text another
+    meeting said. Adds the header (title, date) and the "자동 생성" footer; the
+    title is left out when it holds personal data. ``pending_review`` adds a
+    button to B's review board. Refused for another team's meeting, a report
+    already posted, or one over the length cap.
     """
-    meeting = session.get(Meeting, meeting_id)
-    if meeting is None:
-        return _result(
-            ok=False,
-            reason=f"no meeting {meeting_id}",
-            summary="회의를 찾을 수 없습니다.",
-            items=[],
-            confidence=0.0,
-        )
-    document = service.meeting_report_document(meeting, body_markdown)
-    try:
-        service.save_meeting_report(session, meeting_id, document, pending_review=pending_review)
-    except ConflictError:
-        return _result(
-            ok=False,
-            reason="already posted",
-            summary="이미 게시된 리포트입니다.",
-            items=[],
-            confidence=0.0,
-        )
-    except ValidationError:
-        return _result(
-            ok=False,
-            reason="report too long",
-            summary=f"리포트가 {service.MEETING_REPORT_MAX_CHARS}자를 넘습니다.",
-            items=[],
-            confidence=0.0,
-        )
-    _deliver_after_commit(session, meeting_id)
-    return _result(summary="리포트를 저장했고, 커밋되면 발송합니다.", items=[])
-
-
-_PENDING_DELIVERIES = "autune_intelligence.pending_report_deliveries"
-"""``session.info`` key: meetings published in the session's open transaction."""
-
-
-def _deliver_after_commit(session: Session, meeting_id: str) -> None:
-    """Enqueue delivery when this transaction commits, and never if it rolls back.
-
-    After commit, not now: a worker could pick the task up before the commit,
-    find no row, and drop the report. And not a bare one-shot ``after_commit``
-    listener: that survives a rollback and fires on the session's next,
-    unrelated commit, posting a report whose publish was rolled back. The set
-    also folds two publishes of one meeting in one transaction into one task.
-    """
-    pending = session.info.get(_PENDING_DELIVERIES)
-    if pending is None:
-        pending = session.info[_PENDING_DELIVERIES] = set()
-        event.listen(session, "after_commit", _enqueue_pending)
-        event.listen(session, "after_soft_rollback", _drop_pending)
-    pending.add(meeting_id)
-
-
-def _enqueue_pending(session: Session) -> None:
-    pending: set[str] = session.info.get(_PENDING_DELIVERIES, set())
-    meeting_ids = sorted(pending)
-    pending.clear()
-    for meeting_id in meeting_ids:
-        try:
-            tasks.deliver_meeting_report.apply_async((meeting_id,))
-        except Exception as exc:  # the row is committed; the caller must not see a failure
-            # Stored and unclaimed: publishing the meeting again enqueues it.
-            log.warning(
-                "intelligence_meeting_report_enqueue_failed",
-                meeting_id=meeting_id,
-                error=type(exc).__name__,
+    with session_scope() as session:
+        meeting = session.get(Meeting, meeting_id)
+        if meeting is None or meeting.team_id != team_id:
+            return _refused(
+                f"no meeting {meeting_id} on team {team_id}", "회의를 찾을 수 없습니다."
             )
+        document = service.meeting_report_document(meeting, body_markdown)
+        try:
+            service.save_meeting_report(
+                session, meeting_id, document, pending_review=pending_review
+            )
+        except ConflictError:
+            return _refused("already posted", "이미 게시된 리포트입니다.")
+        except ValidationError:
+            return _refused(
+                "report too long", f"리포트가 {service.MEETING_REPORT_MAX_CHARS}자를 넘습니다."
+            )
+    # The transaction has committed: a worker that picks this up finds the row.
+    try:
+        tasks.deliver_meeting_report.apply_async((meeting_id,))
+    except Exception as exc:  # the report is stored; the caller must not see a failure
+        # Stored and unclaimed: running this action again enqueues it.
+        log.warning(
+            "intelligence_meeting_report_enqueue_failed",
+            meeting_id=meeting_id,
+            error=type(exc).__name__,
+        )
+    return _result(summary="리포트를 저장했고 발송을 예약했습니다.", items=[])
 
 
-def _drop_pending(session: Session, previous_transaction: Any) -> None:
-    if previous_transaction.parent is None:  # the outermost transaction rolled back
-        session.info.get(_PENDING_DELIVERIES, set()).clear()
-
-
-WRITE_TOOLS = [publish_meeting_report]
-"""Writes a proposal may name. Kept out of ``TOOLS``: anything there is reachable
-through a subagent's Toolbox, which would let a subagent write without the
-main agent's gate. How the main agent collects these is asked on #261."""
+ACTIONS = [publish_meeting_report]
+"""E's writes. Kept out of ``TOOLS`` on purpose: the registry offers ``TOOLS`` to
+models, and the main agent's executor alone runs these."""
