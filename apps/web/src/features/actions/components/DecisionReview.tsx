@@ -2,10 +2,11 @@
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
 
-import { Button, StatusDot, type StatusVariant } from "@/shared/ui";
+import { Button, MaskedText, Quote, StatusDot, type StatusVariant } from "@/shared/ui";
 
 import { ConfirmDelete } from "./ConfirmDelete";
 import { useDecisionReview } from "../hooks/useDecisionReview";
+import { useDecisionSources } from "../hooks/useDecisionSources";
 import type { DecisionStatus, ReviewAmbiguous, ReviewDecision } from "../types";
 
 /**
@@ -115,6 +116,9 @@ function DecisionRow({
 
   const status = STATUS[decision.status];
   const reworded = decision.statement !== decision.model_statement;
+  // What was actually said, beneath the line that will be sent: the line is a
+  // tidied noun form, and the person confirming it checks it against these.
+  const quotation = useDecisionSources(decision.id, decision.source_utterance_ids.length);
 
   return (
     <li
@@ -152,6 +156,22 @@ function DecisionRow({
           {reworded && !editing ? (
             <p className="mt-1 text-[var(--color-ink-muted)]" style={{ fontSize: "var(--text-metaSmall)" }}>
               모델 문장: {decision.model_statement}
+            </p>
+          ) : null}
+          {quotation.sources && quotation.sources.length > 0 ? (
+            <div className="mt-2 grid gap-1" role="group" aria-label="원본 발화">
+              <p className="text-[var(--color-ink-muted)]" style={{ fontSize: "var(--text-metaSmall)" }}>
+                원본 발화
+              </p>
+              {quotation.sources.map((source) => (
+                <Quote key={source.id}>
+                  <MaskedText>{source.text}</MaskedText>
+                </Quote>
+              ))}
+            </div>
+          ) : quotation.error ? (
+            <p className="mt-2 text-[var(--color-ink-muted)]" style={{ fontSize: "var(--text-metaSmall)" }}>
+              원본 발화를 불러오지 못했습니다.
             </p>
           ) : null}
           <p className="mt-1 text-[var(--color-ink-muted)]" style={{ fontSize: "var(--text-metaSmall)" }}>

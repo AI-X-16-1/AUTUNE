@@ -3,6 +3,7 @@ import { api } from "@/shared/api/client";
 
 import type {
   ActionItemDetail,
+  DecisionDetail,
   ActionItemRead,
   ActionStatus,
   DecisionStatus,
@@ -44,6 +45,14 @@ export const listActionItems = (filter: ActionItemFilter = {}) => {
  */
 export const getActionItem = (id: string) =>
   api.extraction<ActionItemDetail>(`/action-items/${encodeURIComponent(id)}`);
+
+/**
+ * One decision with the words of the utterances it was settled in. As with
+ * `getActionItem`, the list never carries them — ask for a row's when it is on
+ * screen.
+ */
+export const getDecision = (id: string) =>
+  api.extraction<DecisionDetail>(`/decisions/${encodeURIComponent(id)}`);
 
 export interface ActionItemDraft {
   meeting_id: string;

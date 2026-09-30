@@ -233,6 +233,16 @@ export interface ReviewAmbiguous {
   resolved_kind: string | null;
 }
 
+/**
+ * One decision and the words it was settled in — `DecisionDetail`, from
+ * `GET /decisions/{id}`. The list carries ids and one preview line; the
+ * verbatim quotations come one row at a time.
+ */
+export interface DecisionDetail extends ReviewDecision {
+  /** In the order they were spoken: the proposal first, the settling turn last. */
+  sources: SourceUtterance[];
+}
+
 /** `GET /reviews/{meeting_id}` — everything that needs a person first. */
 export interface MeetingReview {
   meeting_id: string;

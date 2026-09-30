@@ -123,7 +123,7 @@ def test_a_commitment_answer_makes_a_draft_from_the_stored_utterance(session: Se
     service.resolve_confirmation(session, answer(UtteranceKind.COMMITMENT))
 
     (item,) = items(session)
-    assert item.description == TEXT
+    assert item.description == "다음 주 화요일까지 볼 예정"  # noun-ended; TEXT stays the source
     assert item.description_resolved is False
     assert item.assignee_id == "user_001"
     assert item.due_date == date(2026, 9, 15)

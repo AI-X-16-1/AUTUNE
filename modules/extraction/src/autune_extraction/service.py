@@ -62,6 +62,7 @@ from .models import (
     ExtExternalRef,
     ExtExtractionRun,
 )
+from .noun_form import tidy
 from .pipeline.base import Classifier, NliModel, ReferenceResolver, ResolutionRequest
 from .pipeline.resolver import MAX_CONTEXT_AFTER, MAX_CONTEXT_UTTERANCES
 from .schemas import (
@@ -70,6 +71,7 @@ from .schemas import (
     ActionItemRead,
     ActionItemUpdate,
     DecisionCreate,
+    DecisionDetail,
     DecisionReviewUpdate,
     EditHistoryEntry,
     ExternalRefRead,
@@ -321,9 +323,10 @@ def draft_confirmed_commitment(
     known = {user_id} if user_id is not None and session.get(User, user_id) is not None else set()
     assignee = assignee_of(user_id, utterance.speaker_label, known=known)
     due = parse_due(utterance.text, day)
+    description = tidy(utterance.text)
     item = ExtActionItem(
         meeting_id=confirmation.meeting_id,
-        description=utterance.text,
+        description=description,
         description_resolved=False,
         assignee_id=assignee.user_id,
         assignee_label=assignee.label,
@@ -1843,12 +1846,15 @@ def build_action_items(
         said = spoken[utterance.id]
         assignee = assignee_of(said.speaker_id, said.speaker, known=known)
         due = parse_due(said.text, day)
-        description = resolved.get(utterance.id, said.text)
+        # ``description_resolved`` is about the resolver's rewrite alone; tidying
+        # is a fixed rule, not a model's paraphrase, and the original is beside it.
+        rewritten = resolved.get(utterance.id, said.text)
+        description = tidy(rewritten)
         items.append(
             ExtActionItem(
                 meeting_id=meeting_id,
                 description=description,
-                description_resolved=description != said.text,
+                description_resolved=rewritten != said.text,
                 assignee_id=assignee.user_id,
                 assignee_label=assignee.label,
                 due_date=due.date if due is not None else None,
@@ -2033,6 +2039,26 @@ def _read_decision(
         )
     summary = decision_summaries(session, [decision]).get(decision.id)
     return _review_decision_row(decision, review, refs, summary)
+
+
+def read_decision_detail(session: Session, decision: ExtDecision) -> DecisionDetail:
+    """One decision with the utterances it was settled in, in spoken order.
+
+    Reads ``utterances``, which module A owns and this module may only read. An
+    utterance that has been deleted takes its link row with it, so a missing
+    quotation means the speech is gone.
+    """
+    row = _read_decision(session, decision)
+    quoted = session.execute(
+        select(Utterance.id, Utterance.text)
+        .join(ExtDecisionSource, ExtDecisionSource.utterance_id == Utterance.id)
+        .where(ExtDecisionSource.decision_id == decision.id)
+        .order_by(ExtDecisionSource.position)
+    ).all()
+    return DecisionDetail(
+        **row.model_dump(),
+        sources=[SourceUtterance(id=uid, text=text) for uid, text in quoted],
+    )
 
 
 def review_for_meeting(

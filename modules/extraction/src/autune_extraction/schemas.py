@@ -349,6 +349,20 @@ class ReviewAmbiguous(BaseModel):
     resolved_kind: str | None
 
 
+class DecisionDetail(ReviewDecision):
+    """One decision and the words it was settled in, for the row S15 expands.
+
+    The list carries the source utterances' ids and one preview line, never the
+    whole set of quotations -- the same line ``ActionItemDetail`` draws, and for
+    the same reason: a verbatim quotation leaves the server only when one row's
+    is asked for.
+    """
+
+    sources: list[SourceUtterance]
+    """In the order they were spoken -- the proposal first, the sentence that
+    settled it last. Empty for a decision a person added, which has none."""
+
+
 class MeetingReview(BaseModel):
     """Everything in one meeting that needs a person before it goes anywhere."""
 
