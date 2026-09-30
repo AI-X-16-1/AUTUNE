@@ -26,6 +26,7 @@ ENTRY_POINTS = (
     "autune_gap.verification",
     "autune_gap.pipeline",
     "autune_gap.pipeline.verifier",
+    "autune_gap.pipeline.relation_assist",
     "autune_gap.detect",
     "autune_gap.service",
     "autune_gap.tasks",

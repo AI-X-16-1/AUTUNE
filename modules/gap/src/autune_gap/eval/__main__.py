@@ -32,10 +32,15 @@ from autune_gap.eval.metrics import (
 )
 from autune_gap.eval.probes import ProbeResult, format_probes, load_probes, run_probe
 from autune_gap.eval.runner import HarnessInconsistencyError, run_all
-from autune_gap.pipeline.registry import get_sentence_embedder, get_template_verifier
+from autune_gap.pipeline.registry import (
+    get_relation_extractor,
+    get_sentence_embedder,
+    get_template_verifier,
+)
 
 EMBEDDERS = ("off", "local", "fake")
 VERIFIERS = ("off", "fake", "gemini")
+RELATIONS = ("rule", "gemini")
 
 
 def format_report(report: Report, *, extractor: str, embedder: str = "off") -> str:
@@ -236,7 +241,11 @@ def _count(name: str, reports: list[Report], items: Callable[[CaseScore], frozen
     return f"{name:<22}" + "".join(f"{total(report):>14}" for report in reports)
 
 
-_SETTINGS = {"embedder": "AUTUNE_GAP_EMBEDDER_IMPL", "verifier": "AUTUNE_GAP_VERIFIER_IMPL"}
+_SETTINGS = {
+    "embedder": "AUTUNE_GAP_EMBEDDER_IMPL",
+    "verifier": "AUTUNE_GAP_VERIFIER_IMPL",
+    "relations": "AUTUNE_GAP_RELATION_IMPL",
+}
 
 
 def _configured[T](run: Callable[[], T], **impls: str) -> T:
@@ -265,6 +274,7 @@ def _reset() -> None:
     get_settings.cache_clear()
     get_sentence_embedder.cache_clear()
     get_template_verifier.cache_clear()
+    get_relation_extractor.cache_clear()
 
 
 def _verifier_load() -> str:
@@ -277,6 +287,18 @@ def _verifier_load() -> str:
     asked = len(getattr(verifier, "asked", ()))
     requests = getattr(verifier, "requests", None)
     load = f"verifier {verifier.model_version}: {asked} utterance(s) asked"
+    return load + (f" in {requests} request(s)" if requests is not None else "")
+
+
+def _relation_load() -> str:
+    """How much the run sent for relation assistance, or "" under the rules
+    alone. Read off the cached asker, as ``_verifier_load`` reads the verifier."""
+    asker = getattr(get_relation_extractor(), "asker", None)
+    if asker is None:
+        return ""
+    asked = len(getattr(asker, "asked", ()))
+    requests = getattr(asker, "requests", None)
+    load = f"relation assist {asker.model_version}: {asked} utterance(s) asked"
     return load + (f" in {requests} request(s)" if requests is not None else "")
 
 
@@ -305,6 +327,13 @@ def main(argv: list[str] | None = None) -> int:
         "gemini sends the ambiguous utterances of the eval set to Google",
     )
     parser.add_argument(
+        "--relations",
+        choices=RELATIONS,
+        default=None,
+        help="relation extractor for every run (default: AUTUNE_GAP_RELATION_IMPL). "
+        "gemini sends the utterances the rules decline to Google",
+    )
+    parser.add_argument(
         "--compare",
         action="store_true",
         help="run embedder off, then --embedder (default local), then -- when --verifier "
@@ -320,6 +349,7 @@ def main(argv: list[str] | None = None) -> int:
     settings = get_settings()
     embedder = args.embedder or ("local" if args.compare or args.probe else settings.embedder_impl)
     verifier = args.verifier or settings.verifier_impl
+    relations = args.relations or settings.relation_impl
     if (args.compare or args.probe) and embedder == "off":
         parser.error("--compare and --probe need an embedder: local or fake")
 
@@ -332,10 +362,10 @@ def main(argv: list[str] | None = None) -> int:
     def measured(impls: dict[str, str]) -> Callable[[], Report]:
         def run() -> Report:
             report = run_all(args.dataset)
-            loads.append(_verifier_load())
+            loads.append("\n".join(load for load in (_verifier_load(), _relation_load()) if load))
             return report
 
-        return lambda: _configured(run, **impls)
+        return lambda: _configured(run, relations=relations, **impls)
 
     try:
         if args.compare:

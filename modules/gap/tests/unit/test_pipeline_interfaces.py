@@ -86,14 +86,15 @@ def test_there_is_no_external_extractor() -> None:
     assert set(_EXTRACTORS) == {"spacy", "fake"}
 
 
-def test_the_relation_step_has_one_implementation_and_a_seam() -> None:
+def test_the_relation_step_names_its_one_external_entry() -> None:
     """Step 2 is the step promised LLM assistance for its hard cases (#32), and
     unlike entity extraction it may have it — a relation needs the clause, not
-    the transcript. The seam is here so the second entry has somewhere to go;
-    the assertion is whole so adding one is a decision somebody made, not a
+    the transcript. ``gemini`` is that entry, and it sends utterances to Google.
+    The assertion is whole so another one is a decision somebody made, not a
     dictionary key that appeared.
     """
-    assert set(_RELATION_EXTRACTORS) == {"rule"}
+    assert set(_RELATION_EXTRACTORS) == {"rule", "gemini"}
+    assert "EXTERNAL" in _RELATION_EXTRACTORS["gemini"]
 
 
 def test_the_rule_extractor_satisfies_the_protocol() -> None:

@@ -9,8 +9,8 @@ settled on, so the three can be read the same way.
 extraction runs over every utterance of a meeting, so an external option would
 mean handing the whole transcript to somebody else's model; ``privacy.md``
 section 6 makes that a design conversation rather than a value of
-``AUTUNE_GAP_NER_IMPL``. Relation extraction is the one step ``docs/modules/gap.md``
-plans to give LLM assistance, and when it lands it goes through
+``AUTUNE_GAP_NER_IMPL``. Relation extraction is the one extraction step with
+LLM assistance (opt-in, ``relation_assist``), and it goes through
 ``autune_integrations`` so ``check_outbound`` runs on the request body — a
 module-local ``httpx`` client is the hole PR #74 closed and PR #90 was asked to
 stop reopening.
@@ -116,6 +116,12 @@ class Relation:
     target: str
     relation: str
     utterance_id: str
+    asserted_by: str = ""
+    """Which implementation asserted this triple, when an extractor combines
+    more than one — ``rules-3`` or ``gemini:<model>`` under the assisted
+    extractor. Empty means the extractor's own ``model_version``, which is all
+    a single-implementation extractor ever needs. ``gap_topic_edges`` records
+    it, so an edge the model added can be told from one a rule read."""
 
     def __post_init__(self) -> None:
         if self.relation not in RELATION_LABELS:
@@ -164,11 +170,12 @@ class RelationExtractor(Protocol):
     graph would either grow a node with no evidence or drop the relation
     silently.
 
-    **This is the step ``docs/modules/gap.md`` plans to give LLM assistance**,
-    and the only one: a relation needs a clause, not a whole transcript, so the
-    hard cases can be sent without sending the meeting. Nothing sends anything
-    today — ``relations.RuleRelations`` is the only implementation and it runs in
-    this process. When an assisted one lands it goes through
+    **This is the step ``docs/modules/gap.md`` gives LLM assistance**, and the
+    only extraction step that has it: a relation needs a clause, not a whole
+    transcript, so the hard cases can be sent without sending the meeting.
+    ``relations.RuleRelations`` runs in this process and is the default;
+    ``relation_assist.AssistedRelations`` runs the same rules and sends only the
+    utterances holding a pair they decline, opt-in. It goes through
     ``autune_integrations`` so ``check_outbound`` sees the request body, which
     is the rule this module's header states and PR #74 put there.
     """

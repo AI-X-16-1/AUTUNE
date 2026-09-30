@@ -199,7 +199,8 @@ Where that token comes from, and the two ways to give it to the browser:
 | `AUTUNE_GAP_WEIGHT_TEMPLATE` · `_COVERAGE` · `_PARTICIPATION` | C | Defaults `0.4` · `0.4` · `0.2`. The three risk inputs, relative; renormalised over whichever could be measured |
 | `AUTUNE_GAP_NER_IMPL` | C | `spacy` (default) · `fake`. **No `external`** — see below |
 | `AUTUNE_GAP_NER_MODEL` | C | Default `ko_core_news_lg`. The pipeline **name**; the version comes from the pinned wheel and is recorded per row |
-| `AUTUNE_GAP_RELATION_IMPL` | C | `rule` (default), and nothing else yet. Unlike the entity extractor this step **may** grow an assisted option — see below |
+| `AUTUNE_GAP_RELATION_IMPL` | C | `rule` (default) · `gemini`. **`gemini` is external** and opt-in: the rules, then the pairs they decline go to Google — see below. Uses the `AUTUNE_GAP_VERIFIER_*` key, model and URL |
+| `AUTUNE_GAP_RELATION_ASSIST_MAX_UTTERANCES` | C | `30`. At most this many utterances of one meeting leave per run under `gemini` |
 | `AUTUNE_GAP_EMBEDDER_IMPL` | C | `off` (default) · `local` · `fake`. Reads template comparison's speech by meaning. **No `external`**, same reason as the entity extractor; `local` needs the `local-models` extra |
 | `AUTUNE_GAP_EMBEDDER_CHECKPOINT` | C | Default `nlpai-lab/KURE-v1` — module D's and B's choice |
 | `AUTUNE_GAP_EMBEDDER_DEVICE` | C | `cpu` (default) · `cuda`. Never inferred from the machine |
@@ -339,12 +340,17 @@ implementation would mean sending the whole transcript to somebody else's
 model — which section 6 of `../architecture/privacy.md` makes a design
 conversation rather than a value you can set.
 
-Relation extraction is the exception, and `AUTUNE_GAP_RELATION_IMPL` is where
-it would go. A relation is read off one clause, so the hard cases can be sent
-without sending the meeting — and an implementation that did would go through
-`packages/integrations` so `check_outbound` sees the request body, never a
-client of its own. Today there is one value, `rule`: marker rules in process,
-no network. See "Step 2 as built" in `../modules/gap.md`.
+Relation extraction is the exception, and `AUTUNE_GAP_RELATION_IMPL=gemini` is
+it. A relation is read off one clause, so the hard cases can be sent without
+sending the meeting: the marker rules run in process first, and only an
+utterance holding a pair they decline — `는데`/`지만` glue, a bare `의`, a
+reason the resolution guard read as resolved — goes to Google, one line each as
+module A stored it. **Names, and on the batch path numbers read out as words,
+are not masked** and go with it. It goes through `packages/integrations` so
+`check_outbound` sees the request body. Same standing as the template verifier
+below: never the default, dummy meetings only until the team decides. The
+default, `rule`, sends nothing. See "Relation assistance" in
+`../modules/gap.md`.
 
 `spacy` needs a library and a model, and both come from the optional extra:
 
