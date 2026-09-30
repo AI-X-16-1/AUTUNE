@@ -676,6 +676,27 @@ class ExtNotionTarget(Base):
     )
 
 
+class ExtMeetingNote(Base):
+    """The team's own memo on a meeting's summary tab (S15 요약, #421).
+
+    Free text a member types, not anything a model derived: the summary tab's
+    structure comes from B's rows, and this is the part a person writes. One
+    per meeting, deleted with it; a blank memo is no row. No author column,
+    the same rule as ``ext_edit_events`` -- the tab says what the team noted,
+    not who noted it.
+    """
+
+    __tablename__ = "ext_meeting_notes"
+
+    meeting_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("meetings.id", ondelete="CASCADE"), primary_key=True
+    )
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
+    )
+
+
 class ExtExtractionRun(Base):
     """Which speech the last extraction of a meeting was allowed to read (#518).
 

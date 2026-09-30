@@ -142,7 +142,7 @@ function reasonFor(item: ActionItemRead): string {
   return isCandidate(item) ? `후보 · ${base}` : base;
 }
 
-function isOverdue(dueDate: string | null | undefined): boolean {
+export function isOverdue(dueDate: string | null | undefined): boolean {
   if (!dueDate) return false;
   const today = new Date().toISOString().slice(0, 10);
   return dueDate < today;
