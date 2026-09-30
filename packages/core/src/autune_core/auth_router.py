@@ -33,11 +33,19 @@ from typing import Annotated
 from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Cookie, Depends, Query, Request
-from fastapi.responses import JSONResponse, RedirectResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .auth import CurrentUser, clear_session_cookie, issue_token, set_session_cookie
+from .auth import (
+    SESSION_COOKIE,
+    CurrentUser,
+    _session_token,
+    clear_session_cookie,
+    current_user,
+    issue_token,
+    set_session_cookie,
+)
 from .auth_service import upsert_user_from_google
 from .db import get_session
 from .entities import Meeting, TeamMember
@@ -1109,6 +1117,8 @@ def _finish_slack_identity(
             identity.user_id,
             "Autune에서 이 Slack 계정으로 개인 알림을 받겠다는 연결 요청이 왔습니다. "
             f"이 Slack 계정의 주인 본인이 요청한 경우에만 이 링크를 여세요: {link}\n"
+            "Autune에 로그인한 브라우저에서 열어야 합니다. Slack 앱에서 누르면 다른 "
+            "브라우저가 열릴 수 있으니, 그때는 링크를 복사해 그 브라우저에 붙여 넣으세요.\n"
             "요청한 적이 없다면 열지 말고 무시하세요. 다른 사람이 이 브라우저에 남은 "
             "Slack 로그인으로 연결을 시도한 것일 수 있습니다. 30분 뒤 만료됩니다.",
         )
@@ -1156,16 +1166,40 @@ def _slack_bot_for_workspace(session: Session, user_id: str, workspace: str) -> 
     raise SlackWrongWorkspaceError("signed in to a workspace no team of theirs installed")
 
 
-@router.get("/slack/me/confirm", name="slack_identity_confirm")
+SLACK_CONFIRM_NEEDS_SESSION = """<!doctype html>
+<html lang="ko"><head><meta charset="utf-8"><title>Autune</title>
+<meta name="viewport" content="width=device-width, initial-scale=1"></head>
+<body style="font-family: sans-serif; max-width: 32rem; margin: 3rem auto; padding: 0 1rem">
+<h1 style="font-size: 1.25rem">이 브라우저에서는 연결을 확정할 수 없습니다</h1>
+<p>이 링크는 Slack 연결을 시작한 브라우저에서, Autune에 로그인한 상태로 열어야 합니다.
+Slack 앱에서 링크를 누르면 다른 브라우저가 열릴 수 있습니다.</p>
+<p>Slack의 메시지에서 링크를 복사해, Autune이 열려 있는 브라우저의 주소창에 붙여 넣어 주세요.</p>
+</body></html>"""
+"""What a browser without an Autune session gets from the confirmation link.
+Slack's desktop app opens links in the default browser, which is often not the
+one signed in to Autune; a JSON 403 there told a person nothing (found clicking
+through with real Slack, #478)."""
+
+
+@router.get("/slack/me/confirm", name="slack_identity_confirm", response_model=None)
 def slack_identity_confirm(
+    request: Request,
     token: Annotated[str, Query()],
-    user: CurrentUser,
     session: Annotated[Session, Depends(get_session)],
-) -> RedirectResponse:
+) -> RedirectResponse | HTMLResponse:
     """The link the bot DMed. Confirms the pending Slack account only for the
     Autune person whose connect is pending -- their session, their digest, in
     time (#478 review). Anyone else, a second use, or a late one changes
-    nothing."""
+    nothing. A browser with no session gets a page saying where to open it."""
+    try:
+        user = current_user(
+            _session_token(
+                request.headers.get("authorization"), request.cookies.get(SESSION_COOKIE)
+            ),
+            session,
+        )
+    except AutuneError:
+        return HTMLResponse(SLACK_CONFIRM_NEEDS_SESSION, status_code=401)
     linked = load_user_integration(session, user.id, "slack")
     config = dict(linked.config) if linked is not None else {}
     redirect_to = str(config.get("confirm_redirect_to") or "/")

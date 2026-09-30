@@ -639,13 +639,23 @@ def test_a_wrong_or_late_link_confirms_nothing(
     assert "slack_user_id" not in people[ME]
 
 
-def test_confirming_needs_a_signed_in_person(
+def test_a_browser_without_a_session_is_told_where_to_open_the_link(
     world: dict[str, Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    _link(world, monkeypatch, signed_in_as=ME)
+    """Slack's app opens links in the default browser, often not the one
+    signed in to Autune. That browser gets a page saying what to do -- not a
+    JSON 403 -- and the link stays usable where it belongs."""
+    _, people = _link(world, monkeypatch, signed_in_as=ME)
     anonymous = TestClient(world["app"], follow_redirects=False)
 
-    assert anonymous.get(_confirm_link(world)).status_code in (401, 403)
+    page = anonymous.get(_confirm_link(world))
+
+    assert page.status_code == 401
+    assert page.headers["content-type"].startswith("text/html")
+    assert "Autune에 로그인한 상태로" in page.text
+    assert "slack_user_id" not in people[ME]
+    back = signed_in(world, ME).get(_confirm_link(world))
+    assert back.headers["location"].endswith("slack_me=connected")
 
 
 def test_a_personal_workspace_is_not_linked(
