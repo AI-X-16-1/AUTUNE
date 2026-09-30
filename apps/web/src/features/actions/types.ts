@@ -140,9 +140,22 @@ export interface SourceUtterance {
  * One item and its evidence — `ActionItemDetail`, from
  * `GET /action-items/{id}`. The only response that carries utterances verbatim.
  */
+/**
+ * One thing a person did to an item (S18, #109): which fields, when. Never
+ * the value before or after, and never who.
+ */
+export interface EditHistoryEntry {
+  kind: "created" | "edited";
+  /** For `edited`: e.g. `["due_date"]`. Empty for `created` and for old edits. */
+  fields: string[];
+  at: string;
+}
+
 export interface ActionItemDetail extends ActionItemRead {
   /** In the order they were spoken. */
   sources: SourceUtterance[];
+  /** Oldest first. Empty for an item the model extracted and nobody touched. */
+  history?: EditHistoryEntry[];
 }
 
 /**

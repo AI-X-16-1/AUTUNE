@@ -3,42 +3,58 @@
 import { useEffect, useState } from "react";
 
 import { getActionItem } from "../api";
-import type { ActionItemRead, SourceUtterance } from "../types";
+import type {
+  ActionItemRead,
+  EditHistoryEntry,
+  SourceUtterance,
+} from "../types";
 
 /**
- * The quotation for one item, fetched when its drawer opens.
+ * The quotation and the history for one item, fetched when its drawer opens —
+ * one request, since `GET /action-items/{id}` returns both.
  *
- * Only `sources` is taken from the response. Everything else the drawer shows
- * comes from the item the board already holds, which is also what an edit
- * updates — reading the status from here too would show the old one after the
- * user changed it.
+ * Only `sources` and `history` are taken from the response. Everything else the
+ * drawer shows comes from the item the board already holds, which is also what
+ * an edit updates — reading the status from here too would show the old one
+ * after the user changed it.
  *
- * An item with no source utterances — one somebody typed — asks for nothing:
- * there is no quotation to fetch, and the drawer says why.
+ * An item with no source utterances — one somebody typed — has no quotation,
+ * and the drawer says why; it is still fetched, because it has a history.
+ * `revision` changes when the item is edited, so the history follows the edit.
  */
-export function useSourceUtterances(item: Pick<ActionItemRead, "id" | "source_utterance_ids">) {
+export function useSourceUtterances(
+  item: Pick<ActionItemRead, "id" | "source_utterance_ids">,
+  revision = "",
+) {
   const expected = item.source_utterance_ids?.length ?? 0;
   const [state, setState] = useState<{
     id: string;
     sources: SourceUtterance[] | null;
+    history: EditHistoryEntry[] | null;
     error: Error | null;
-  }>({ id: item.id, sources: null, error: null });
+  }>({ id: item.id, sources: null, history: null, error: null });
 
   useEffect(() => {
-    if (expected === 0) return;
     // A quick click from one card to the next must not paint the first card's
     // quotation into the second card's drawer, so a response only lands if it
     // is still the item on screen.
     let current = true;
     getActionItem(item.id).then(
       (detail) => {
-        if (current) setState({ id: item.id, sources: detail.sources, error: null });
+        if (current)
+          setState({
+            id: item.id,
+            sources: detail.sources,
+            history: detail.history ?? [],
+            error: null,
+          });
       },
       (cause: unknown) => {
         if (current) {
           setState({
             id: item.id,
             sources: null,
+            history: null,
             error: cause instanceof Error ? cause : new Error(String(cause)),
           });
         }
@@ -47,10 +63,19 @@ export function useSourceUtterances(item: Pick<ActionItemRead, "id" | "source_ut
     return () => {
       current = false;
     };
-  }, [item.id, expected]);
+  }, [item.id, expected, revision]);
 
-  if (expected === 0) return { sources: [], loading: false, error: null };
   // State left over from the previous item reads as loading, not as its answer.
-  if (state.id !== item.id) return { sources: null, loading: true, error: null };
-  return { sources: state.sources, loading: state.sources === null && !state.error, error: state.error };
+  const mine = state.id === item.id;
+  const history = mine ? state.history : null;
+  if (expected === 0)
+    return { sources: [], loading: false, error: null, history };
+  if (!mine)
+    return { sources: null, loading: true, error: null, history: null };
+  return {
+    sources: state.sources,
+    loading: state.sources === null && !state.error,
+    error: state.error,
+    history,
+  };
 }

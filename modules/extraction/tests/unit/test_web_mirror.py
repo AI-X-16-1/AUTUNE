@@ -16,6 +16,7 @@ from autune_contracts.extraction import ActionItem
 from autune_extraction.schemas import (
     ActionItemDetail,
     ActionItemRead,
+    EditHistoryEntry,
     ExternalRefRead,
     SourceUtterance,
 )
@@ -55,6 +56,7 @@ def test_the_web_read_model_mirror_is_current() -> None:
 def test_the_web_detail_mirror_is_current() -> None:
     added = set(ActionItemDetail.model_fields) - set(ActionItemRead.model_fields)
 
-    assert added == {"sources"}
+    assert added == {"sources", "history"}
     assert ts_fields("ActionItemDetail") == added, f"update {TYPES_TS}"
     assert ts_fields("SourceUtterance") == set(SourceUtterance.model_fields), f"update {TYPES_TS}"
+    assert ts_fields("EditHistoryEntry") == set(EditHistoryEntry.model_fields), f"update {TYPES_TS}"
