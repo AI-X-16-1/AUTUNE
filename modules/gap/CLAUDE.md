@@ -74,13 +74,23 @@ comparison can also read the speech by meaning with KURE-v1 in process
 (`AUTUNE_GAP_EMBEDDER_IMPL`, off by default); the example sentences it compares
 against live in the template files and must never be copied from the eval set.
 
-The utterances the embedder cannot decide may be checked by an LLM
-(`AUTUNE_GAP_VERIFIER_IMPL`, off by default). **`gemini` is this module's only
-external call**: it sends each ambiguous utterance, masked but with any name or
-number said aloud, and its candidate items. The verifier confirms candidates
-and nothing else; coverage and risk stay in `detect`. Keep it that way, keep
-every request going through `autune_integrations`, and never catch the
-`PrivacyViolationError` its outbound check raises.
+This module has **two external calls, both `gemini`, both off by default**,
+sharing one client (`pipeline/gemini.py`):
+
+- `AUTUNE_GAP_VERIFIER_IMPL` checks the utterances the embedder cannot decide.
+  It sends each ambiguous utterance and its candidate items, and confirms
+  candidates and nothing else; coverage and risk stay in `detect`.
+- `AUTUNE_GAP_RELATION_IMPL` asks about the mention pairs the relation rules
+  decline (`relations.hard_pairs`). It sends only utterances holding such a
+  pair, and may add a relation between an offered pair and nothing else; the
+  rules' relations stand.
+
+Each sends utterances masked but with any name or number said aloud (#392 is
+the open decision). Keep both that narrow, keep every request going through
+`autune_integrations`, and never catch the `PrivacyViolationError` its outbound
+check raises. A batch can take minutes in the worst case: four attempts at a
+60 s timeout, then the same on the fallback model, and gap tasks have no Celery
+time limit.
 
 The graph is one meeting's worth — tens of nodes — so it is built in memory from
 rows each run. At that size PageRank and betweenness take single-digit

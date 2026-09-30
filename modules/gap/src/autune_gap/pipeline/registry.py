@@ -22,6 +22,7 @@ from autune_gap.config import get_settings
 from .base import EntityExtractor, RelationExtractor, SentenceEmbedder, TemplateVerifier
 from .embedder import FakeEmbedder, LocalKureEmbedder
 from .ner import FakeNer, SpacyNer
+from .relation_assist import AssistedRelations, GeminiRelationAsker
 from .relations import RuleRelations
 from .verifier import FakeVerifier, GeminiVerifier
 
@@ -48,14 +49,15 @@ def get_entity_extractor() -> EntityExtractor:
 
 _RELATION_EXTRACTORS: dict[str, str] = {
     "rule": "marker rules over the entities already found, in this process",
+    "gemini": "EXTERNAL: the rules, then the pairs they decline go to Google's Gemini API",
 }
-"""Known implementations of step 2. One, and the registry exists anyway.
+"""Known implementations of step 2.
 
-This is the step that is promised LLM assistance for its hard cases
-(``docs/modules/gap.md``, issue #32), so the seam is what a second entry plugs
-into. Unlike entity extraction an assisted implementation here is *allowed* to
-exist — a relation needs a clause, not a transcript — but it goes through
-``autune_integrations`` rather than a client of its own. See ``base``.
+``gemini`` is the LLM assistance ``docs/modules/gap.md`` promised this step for
+its hard cases (issue #32). Unlike entity extraction an assisted implementation
+here is *allowed* to exist — a relation needs a clause, not a transcript — and
+it goes through ``autune_integrations`` rather than a client of its own. It is
+opt-in: see ``relation_assist`` for exactly what it sends.
 """
 
 
@@ -66,6 +68,17 @@ def get_relation_extractor() -> RelationExtractor:
 
     if impl == "rule":
         return RuleRelations()
+    if impl == "gemini":
+        asker = GeminiRelationAsker(
+            api_key=settings.verifier_api_key,
+            model=settings.verifier_model,
+            base_url=settings.verifier_base_url,
+            timeout_sec=settings.verifier_timeout_sec,
+            fallback_model=settings.verifier_fallback_model,
+        )
+        return AssistedRelations(
+            RuleRelations(), asker, max_utterances=settings.relation_assist_max_utterances
+        )
 
     raise ValueError(
         f"unknown AUTUNE_GAP_RELATION_IMPL={impl!r}; known: {sorted(_RELATION_EXTRACTORS)}"

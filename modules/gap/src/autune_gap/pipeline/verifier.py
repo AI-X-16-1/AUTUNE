@@ -19,7 +19,9 @@ here and a registry entry, and nothing outside this package changes.
   of #484). Either goes with its line. No speaker, no timestamp, no meeting or
   utterance id, no neighbouring line.
 
-Every request goes through ``autune_integrations.HttpClient``, so
+The client, its retry and its fallback are ``gemini``'s, shared with the
+relation assistant. Every request goes through
+``autune_integrations.HttpClient``, so
 ``check_outbound`` scans every string in the body and refuses an unmasked phone
 number, e-mail or account number written in digits. **That refusal is not
 caught here.** It means a stored transcript holds an unmasked value — module
@@ -33,14 +35,14 @@ from __future__ import annotations
 import json
 import re
 import string
-import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from autune_core import get_logger
-from autune_core.errors import PrivacyViolationError
-from autune_integrations.errors import IntegrationError, TransientIntegrationError
+from autune_integrations.errors import IntegrationError
 from autune_integrations.privacy import MAX_OUTBOUND_CHARS
+
+from .gemini import GeminiCaller, answer_text
 
 if TYPE_CHECKING:
     # Types only: ``template`` imports ``pipeline.base`` (#456), so a runtime import
@@ -91,8 +93,6 @@ items are; kept short because ``check_outbound`` counts it against the same
 4,000 characters as the utterances."""
 
 _LETTERS = string.ascii_uppercase
-_RETRY_BACKOFF_SEC = (2.0, 5.0, 10.0)
-"""Module B's backoff, for the same provider and the same busy-model 503s."""
 _OVERHEAD = len(INSTRUCTIONS) + 300
 """Instructions plus JSON punctuation and markers the budget leaves room for."""
 
@@ -178,77 +178,19 @@ def batches(questions: list[Question], budget: int) -> list[list[Question]]:
     return out
 
 
-def require_scalar_addressing(value: Any, addressing: frozenset[str]) -> None:
-    """Refuse a body where an ``addressing`` key holds anything but a string.
-
-    ``check_outbound`` skips the whole value under an addressing key, so the
-    exemption is safe only while those keys stay scalars. A copy of module B's
-    guard, not an import of it (invariant 2); raised in review of #405.
-    """
-    if isinstance(value, dict):
-        for key, inner in value.items():
-            if key in addressing and not isinstance(inner, str):
-                raise PrivacyViolationError(
-                    f"{key!r} is exempt from the outbound check only as a string"
-                )
-            require_scalar_addressing(inner, addressing)
-    elif isinstance(value, (list, tuple)):
-        for inner in value:
-            require_scalar_addressing(inner, addressing)
-
-
-def _client(base_url: str, api_key: str, timeout_sec: float) -> Any:
-    """The provider as an ``autune_integrations`` client, the way every outbound
-    one is written. The key travels in a header, never in the body or the URL.
-    The read timeout is this client's own: a thinking model takes longer than
-    the shared 10 s (module B measured 12-20 s a request)."""
-    from autune_integrations.base import HttpClient  # noqa: PLC0415
-
-    class VerifierClient(HttpClient):
-        service = "gap-template-verifier"
-        addressing = frozenset({"role", "responseMimeType"})
-
-        def request(self, method: str, path: str, **kwargs: Any) -> dict[str, Any]:
-            require_scalar_addressing(kwargs.get("json"), self.addressing)
-            return super().request(method, path, **kwargs)
-
-    client = VerifierClient(base_url, headers={"x-goog-api-key": api_key})
-    # Temporary: reaches into the shared client's private httpx instance, as
-    # module B's LLM client does. If HttpClient changes how it holds it, this
-    # stops applying silently and the timeout drops back to 10 s. Needs
-    # HttpClient(timeout=...); see #487.
-    client._client.timeout = timeout_sec  # noqa: SLF001
-    return client
-
-
-class GeminiVerifier:
+class GeminiVerifier(GeminiCaller):
     """Gemini's ``generateContent``, one batch of ambiguous utterances a request."""
 
-    def __init__(
-        self,
-        *,
-        api_key: str,
-        model: str,
-        base_url: str,
-        timeout_sec: float,
-        fallback_model: str = "",
-    ) -> None:
-        if not api_key:
-            raise ValueError(
-                "AUTUNE_GAP_VERIFIER_IMPL=gemini needs AUTUNE_GAP_VERIFIER_API_KEY. It sends "
-                "ambiguous utterances to Google -- see autune_gap.pipeline.verifier."
-            )
-        self._client = _client(base_url, api_key, timeout_sec)
-        self._model = model
-        self._fallback = fallback_model
-        self.requests = 0
-        self.asked: list[Question] = []
+    service = "gap-template-verifier"
+    event = "gap_verifier"
+    key_required = (
+        "AUTUNE_GAP_VERIFIER_IMPL=gemini needs AUTUNE_GAP_VERIFIER_API_KEY. It sends "
+        "ambiguous utterances to Google -- see autune_gap.pipeline.verifier."
+    )
 
-    @property
-    def model_version(self) -> str:
-        """``gemini:<model>``, plus ``+<fallback>`` when one is set — either may
-        have answered any batch."""
-        return f"gemini:{self._model}" + (f"+{self._fallback}" if self._fallback else "")
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.asked: list[Question] = []
 
     def verify(self, questions: list[Question]) -> list[frozenset[str] | None]:
         """Raises ``PrivacyViolationError`` when the outbound check finds an
@@ -274,7 +216,7 @@ class GeminiVerifier:
             "generationConfig": {"temperature": 0, "responseMimeType": "application/json"},
         }
         try:
-            parsed = parse(_answer_text(self._post(body, index=index)), offered)
+            parsed = parse(answer_text(self._post(body, index=index)), offered)
         except (IntegrationError, ValueError) as exc:
             # The provider did not answer usefully: fall back. Not
             # PrivacyViolationError -- that one is an unmasked value in a stored
@@ -290,40 +232,3 @@ class GeminiVerifier:
             )
             return [None] * len(batch)
         return [parsed[number] for number in range(1, len(batch) + 1)]
-
-    def _post_to(self, model: str, body: dict[str, Any], *, index: int) -> Any:
-        path = f"/models/{model}:generateContent"
-        for attempt, wait in enumerate(_RETRY_BACKOFF_SEC, start=1):
-            try:
-                self.requests += 1
-                return self._client.request("POST", path, json=body)
-            except TransientIntegrationError as exc:
-                log.info(
-                    "gap_verifier_retry", model=model, batch=index, attempt=attempt, reason=str(exc)
-                )
-                time.sleep(wait)
-        self.requests += 1
-        return self._client.request("POST", path, json=body)
-
-    def _post(self, body: dict[str, Any], *, index: int) -> Any:
-        """The primary model, then the fallback if it stays unavailable. Only a
-        transient failure falls back; a refused request fails the same anywhere."""
-        try:
-            return self._post_to(self._model, body, index=index)
-        except TransientIntegrationError:
-            if not self._fallback:
-                raise
-            log.warning(
-                "gap_verifier_fallback", model=self._model, fallback=self._fallback, batch=index
-            )
-            return self._post_to(self._fallback, body, index=index)
-
-
-def _answer_text(body: Any) -> str:
-    """The first candidate's text, or "" -- a blocked or empty answer is not JSON,
-    and ``parse`` then leaves the batch unanswered."""
-    try:
-        parts = body["candidates"][0]["content"]["parts"]
-        return "".join(part.get("text", "") for part in parts if isinstance(part, dict))
-    except (KeyError, IndexError, TypeError):
-        return ""

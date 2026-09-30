@@ -29,6 +29,7 @@ from .registry import (
     get_template_verifier,
     reset_cache,
 )
+from .relation_assist import AssistedRelations, FakeRelationAsker, GeminiRelationAsker
 from .relations import RuleRelations
 from .verifier import FakeVerifier, GeminiVerifier
 
@@ -36,11 +37,14 @@ __all__ = [
     "ENTITY_LABELS",
     "RELATION_LABELS",
     "SYMMETRIC_RELATIONS",
+    "AssistedRelations",
     "Entity",
     "EntityExtractor",
     "FakeEmbedder",
     "FakeNer",
+    "FakeRelationAsker",
     "FakeVerifier",
+    "GeminiRelationAsker",
     "GeminiVerifier",
     "LocalKureEmbedder",
     "Relation",

@@ -39,8 +39,7 @@ domain template, and score the risk of each missing item.
 
 1. **NER** — spaCy extracts entities: features, systems, metrics, people, dates.
 2. **Relation extraction** — build subject–relation–object triples. Marker
-   rules today; LLM assistance for the hard cases is the seam, not the
-   implementation.
+   rules, and — opt-in — an LLM for the pairs the rules decline to read.
 3. **Topic graph** — persist nodes and edges as rows (`gap_topics`,
    `gap_topic_edges`), then load them into NetworkX.
 4. **Centrality** — PageRank and betweenness identify which topics carried the
@@ -170,9 +169,10 @@ What this does **not** fix, and what #13 still carries:
 
 Rules only, no model, no network: `pipeline/relations.py`. Issue #32 puts the
 non-LLM share at about 70% and says to exhaust the rules first, so they are
-written and measured before anything is sent anywhere. Today the share is 100%
-— there is no assisted implementation — and what the rules cannot read is a
-named list below rather than a shrug.
+written and measured before anything is sent anywhere. What the rules cannot
+read is a named list below rather than a shrug, and that list is exactly what
+the opt-in assisted implementation asks about ("Relation assistance", below).
+By default the share is 100%: nothing is sent.
 
 **Four relations** are in the vocabulary, each one a thing risk scoring (#35)
 should treat differently: `depends_on`, `blocked_by`, `part_of`,
@@ -365,14 +365,76 @@ What this does **not** do:
 - **A relation needs both topics to exist.** A topic only exists if the meeting
   said it bare at least once, because that is what entity extraction claims. A
   thing referred to only as 그거 is in no relation.
-- **No LLM path exists.** The seam is `RelationExtractor` and
-  `AUTUNE_GAP_RELATION_IMPL`; when one lands it goes through
-  `autune_integrations` so `check_outbound` sees the request body. Unlike step 1
-  an assisted implementation here is *allowed* — a relation needs the clause,
-  not the transcript.
+- **The LLM path is opt-in.** `AUTUNE_GAP_RELATION_IMPL=gemini`, below. Off,
+  nothing here reaches past the rules.
 
 `gap_topic_edges.extractor_version` records which extractor asserted an edge,
-and is NULL exactly when none did — that is the `co_occurs` row.
+and is NULL exactly when none did — that is the `co_occurs` row. Under relation
+assistance it names the half that asserted it: `rules-3` or `gemini:<model>`.
+
+### Relation assistance
+
+`AUTUNE_GAP_RELATION_IMPL=gemini` (off by default) runs the marker rules, then
+asks Gemini about the pairs they decline. It is the LLM assistance #32 asked
+for, kept to the cases this section already names as the rules' limits
+(`pipeline/relation_assist.py`, `relations.hard_pairs`).
+
+**What is asked.** Adjacent mentions in one utterance, no further apart than
+`MAX_MARKER_DISTANCE`, that the rules did not type in either direction, with
+one of these between them:
+
+| Shape | Why the rules decline it |
+| --- | --- |
+| `는데` / `지만` | A contrast as often as not, and sentence glue the rest of the time |
+| nothing but `의` | Composition or possession; no `part_of` rule |
+| a causal connective, in an utterance with a blocker word and a resolution word | "캐시 처리 때문에 막혀" — 처리 names the work, and `_resolved` reads it as the blocker being gone |
+
+**What may come back.** Only a pair the line offered, in either direction, with
+one of the four `RELATION_LABELS`. Anything else in the answer is dropped. The
+rules' relations stand and are listed first, so a triple both found is
+attributed to the rule; the model cannot remove or replace one. A symmetric
+answer is written both ways, as the rules write theirs.
+
+**When it cannot answer, the rules stand.** A failed request, an unparseable
+answer, a line too long to send, or one past
+`AUTUNE_GAP_RELATION_ASSIST_MAX_UTTERANCES` keeps the rules-only result for
+that utterance. `PrivacyViolationError` from `check_outbound` is raised, not
+answered, for the reason the verifier gives (review of #484).
+
+**What leaves.** Per request, under the 4,000-character outbound cap and
+through `autune_integrations.HttpClient`: the fixed instruction text, and each
+asked utterance on its own numbered line as module A stored it, with the
+mentions of its pairs lettered beside it. The mentions are substrings of the
+line. **Names and numbers read out as words are not masked**, as with the
+verifier. No speaker, time, meeting or utterance id, and no neighbouring line.
+It shares the verifier's provider settings (`AUTUNE_GAP_VERIFIER_API_KEY`,
+`_MODEL`, `_FALLBACK_MODEL`, `_BASE_URL`, `_TIMEOUT_SEC`) and its standing:
+opt-in, never the default, dummy meetings only until the team decides. That
+decision is #392, open. Both of C's callers send names unmasked until then. #500
+replaces a team's names before module B's classifier sends; once that moves to
+`packages/integrations`, the verifier and this path take it too. Raised in
+review of #499.
+
+**The model answers with names, not letters.** Asked to answer with the
+letters, `gemini-3.5-flash` and `gemini-3.8-flash` both wrote the topic names
+instead, and a letters-only parser dropped every answer — indistinguishable
+from a model that found nothing. A name is accepted when it is one of that
+line's own mentions, so this widens nothing the letters did not offer.
+
+**Measured** on 2026-09-30, one request per model:
+
+- **The authored eval set sends nothing.** Over `gap_detection_v1` with spaCy,
+  no utterance holds a hard pair, so `gemini` asks nothing and the graph is
+  the rules' graph. The set cannot say whether assistance helps gap precision;
+  the W5 meetings can.
+- **Eight probes, each a case this section names**, three with a relation
+  and five without. Both models got all eight: `alternative_to` across
+  "합의했는데", `정렬 로직 part_of 검색` from "검색의 정렬 로직", and
+  `정렬 로직 blocked_by 캐시` from "캐시 처리 때문에"; nothing for plain `는데`
+  glue, a `지만` that contrasts qualities rather than options, "검색 기능의
+  담당자 일정", or "이슈가 해결되어서". The probes were written alongside the
+  prompt, so 8/8 says the mechanism works on the cases it was built for and
+  nothing about real meetings.
 
 ### Steps 3 to 5 as built
 
@@ -667,8 +729,9 @@ is sent.
 **Another provider** is another class behind `pipeline.base.TemplateVerifier`
 and an entry in `registry._VERIFIERS`; nothing outside `pipeline` names one.
 Tests use `FakeVerifier`, which takes a decision function or confirms the
-embedder's nearest candidate. Relation extraction has no LLM yet; this
-verifier is for template matching only.
+embedder's nearest candidate. The verifier is for template matching only;
+relation extraction's own assistance is "Relation assistance" above, and shares
+only the Gemini client (`pipeline/gemini.py`).
 
 ```bash
 uv run --package autune-gap python -m autune_gap.eval --compare --verifier gemini  # off / local / +gemini

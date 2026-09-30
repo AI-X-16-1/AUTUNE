@@ -231,8 +231,13 @@ def build_topic_graph(transcript: TranscriptReady) -> int:
                 relation=edge.relation,
                 weight=edge.weight,
                 # NULL for co-occurrence: nothing asserted it, the two topics
-                # merely shared an utterance. See the model docstring.
-                extractor_version=None if edge.relation == graph.CO_OCCURS else relation_version,
+                # merely shared an utterance. See the model docstring. An edge
+                # the assisted extractor's model added names the model.
+                extractor_version=(
+                    None
+                    if edge.relation == graph.CO_OCCURS
+                    else edge.asserted_by or relation_version
+                ),
             )
             for edge in edges
         )

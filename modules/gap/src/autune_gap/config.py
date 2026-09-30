@@ -60,12 +60,23 @@ class GapSettings(BaseSettings):
     goes rather than a config value — see ``pipeline.base``."""
 
     relation_impl: str = "rule"
-    """Which relation extractor to run. ``rule`` is the only implementation.
+    """Which relation extractor to run: ``rule`` or ``gemini``.
 
-    Unlike ``ner_impl`` this one may grow an assisted entry: a relation needs
-    the clause it was said in, not the meeting, so the hard cases can be sent
-    without sending the transcript. What it may not grow is a client of its own
-    — see ``pipeline.base``."""
+    ``rule`` is the marker rules alone, in this process. **``gemini`` runs the
+    same rules and then sends the utterances holding a pair the rules decline
+    to read — 는데/지만 glue, a bare 의, a reason read as resolved — to Google**,
+    each masked but with any name or spoken-out number in it, and never the rest
+    of the meeting. Unlike ``ner_impl`` this may have an external entry at all
+    because a relation needs the clause, not the transcript. It is still
+    privacy.md section 6's design conversation, so it is never the default and
+    belongs on dummy meetings until the team decides otherwise, as with
+    ``verifier_impl``. It uses the verifier's provider settings — key, model,
+    fallback, base URL and timeout. See ``pipeline.relation_assist``."""
+
+    relation_assist_max_utterances: int = 30
+    """At most this many utterances of one meeting are sent by ``gemini``
+    relation assistance in a run, in meeting order. The rest keep the rules'
+    answer. A bound on how much of a meeting can leave, not a tuning knob."""
 
     ner_model: str = "ko_core_news_lg"
     """The pipeline to load. A **name**, not a version.

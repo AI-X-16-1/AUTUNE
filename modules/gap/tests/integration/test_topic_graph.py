@@ -39,7 +39,7 @@ from autune_gap.models import (
     GapTopicEdge,
     GapTopicUtterance,
 )
-from autune_gap.pipeline import reset_cache
+from autune_gap.pipeline import AssistedRelations, FakeRelationAsker, reset_cache
 from autune_gap.pipeline.relations import RuleRelations
 
 
@@ -298,6 +298,38 @@ def test_an_edge_says_what_asserted_it_and_co_occurrence_says_nothing(team_id: s
         }
 
     assert versions == {"blocked_by": RuleRelations.model_version, "co_occurs": None}
+
+
+def test_an_edge_the_model_added_names_the_model(
+    team_id: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Under relation assistance a meeting's edges come from two places, and the
+    row says which. "캐시 처리 때문에" is the reason the rules refuse (처리 reads
+    as resolved), so the blocker is the model's; the dependency is the rules'."""
+    asker = FakeRelationAsker(lambda question: frozenset({("정렬 기능", "blocked_by", "캐시")}))
+    monkeypatch.setattr(
+        service,
+        "get_relation_extractor",
+        lambda: AssistedRelations(RuleRelations(), asker, max_utterances=30),
+    )
+    lines = [
+        Line("김서연", "캐시 처리 때문에 정렬 기능이 막혀 있습니다"),
+        Line("이건우", "정렬 기능은 인덱스가 필요합니다"),
+    ]
+    meeting_id = build(team_id, lines)
+
+    with session_scope() as s:
+        versions = {
+            relation: version
+            for relation, version in s.execute(
+                select(GapTopicEdge.relation, GapTopicEdge.extractor_version).where(
+                    GapTopicEdge.meeting_id == meeting_id
+                )
+            ).tuples()
+        }
+
+    assert versions == {"blocked_by": "fake", "depends_on": RuleRelations.model_version}
+    assert [question.utterance for question in asker.asked] == [lines[0].text]
 
 
 # --- consent ----------------------------------------------------------------

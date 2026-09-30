@@ -677,6 +677,76 @@ def _finditer(cue: str, text: str) -> list[re.Match[str]]:
     return list(pattern.finditer(text))
 
 
+_CONTRAST_GLUE = ("는데", "지만")
+"""Connectives that are a contrast sometimes and sentence glue the rest of the
+time. ``_ALTERNATIVES`` leaves them out; ``hard_pairs`` asks about them."""
+
+
+def hard_pairs(
+    text: str, mentions: Sequence[Mention], typed: Iterable[tuple[str, str, str]]
+) -> list[tuple[str, str]]:
+    """Adjacent mention pairs the rules decline to read and did not type.
+
+    Each shape is one this file already names as a case for the assisted
+    implementation rather than for a longer marker list:
+
+    - **contrast glue** — ``는데`` or ``지만`` between the two. A contrast as
+      often as not, and sentence glue the rest of the time (``_ALTERNATIVES``).
+    - **possessive** — nothing but ``의`` between the two. Composition or
+      possession, and the surface string does not say which (the ``part_of``
+      comment above).
+    - **a reason the resolution guard may have refused** — a causal connective
+      between the two, in an utterance holding both a blocker word and a
+      resolution word. "캐시 처리 때문에 정렬 로직이 막혀 있습니다" names the
+      work with 처리, and ``_resolved`` reads it as the blocker being gone.
+
+    ``typed`` is what the rules found in this utterance. A pair they typed in
+    either direction is not asked about: the rules are the precise half, and a
+    model's answer never replaces one.
+
+    Pure, like the rest of this file, so which utterances *would* be sent can be
+    tested without sending any.
+    """
+    done = {frozenset((source, target)) for source, target, _ in typed}
+    blocker = any(_finditer(cue, text) for cue in _BLOCKERS)
+    resolution = any(word in text for word in _RESOLVED)
+    pairs: list[tuple[str, str]] = []
+    for left, right in zip(mentions, mentions[1:], strict=False):
+        if left.text == right.text or frozenset((left.text, right.text)) in done:
+            continue
+        gap = text[left.end : right.start]
+        if len(gap) > MAX_MARKER_DISTANCE:
+            continue
+        if (
+            any(glue in gap for glue in _CONTRAST_GLUE)
+            or gap.strip() == "의"
+            or (blocker and resolution and any(connective in gap for connective in _CAUSAL))
+        ):
+            pairs.append((left.text, right.text))
+    return pairs
+
+
+def relation_names(entities: Iterable[Entity]) -> set[str]:
+    """The names the rules search every utterance for: every entity the meeting
+    produced, less the labels that are never an end (``_NOT_AN_END``)."""
+    return {entity.text for entity in entities if entity.label not in _NOT_AN_END}
+
+
+def read_utterance(
+    text: str, names: Iterable[str]
+) -> tuple[list[Mention], list[tuple[str, str, str]]]:
+    """One utterance through the rules: where each name was said, and the
+    triples the markers assert.
+
+    The one pass both ``RuleRelations`` and the assisted extractor run. A step
+    added to the rules goes here, so "the rules' relations stand" under
+    assistance cannot drift from what the rules alone produce. Raised in review
+    of #499.
+    """
+    spans = mention_spans(text, names)
+    return spans, relations_in(text, spans)
+
+
 class RuleRelations:
     """The rules above, over a meeting's entities. Deterministic, local, no model.
 
@@ -706,12 +776,12 @@ class RuleRelations:
         drops any relation whose ends are not both topics. What this widens is
         only which utterances can *state* a relation between them.
         """
-        names = {entity.text for entity in entities if entity.label not in _NOT_AN_END}
+        names = relation_names(entities)
         found: list[Relation] = []
         for utterance_id, text in utterances:
-            spans = mention_spans(text, names)
+            _, typed = read_utterance(text, names)
             found.extend(
                 Relation(source=source, target=target, relation=relation, utterance_id=utterance_id)
-                for source, target, relation in relations_in(text, spans)
+                for source, target, relation in typed
             )
         return found

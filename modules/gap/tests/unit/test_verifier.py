@@ -221,7 +221,7 @@ def test_gemini_refuses_to_start_without_a_key() -> None:
 
 
 def test_an_addressing_key_holding_an_object_is_refused() -> None:
-    from autune_gap.pipeline.verifier import require_scalar_addressing  # noqa: PLC0415
+    from autune_gap.pipeline.gemini import require_scalar_addressing  # noqa: PLC0415
 
     with pytest.raises(PrivacyViolationError):
         require_scalar_addressing({"role": {"text": "x"}}, frozenset({"role"}))
