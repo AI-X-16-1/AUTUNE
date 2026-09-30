@@ -41,7 +41,10 @@ _ACKNOWLEDGEMENT = re.compile(
     r"^(?:네|넵|예|음|알겠습니다|감사합니다|(?:네|넵|예)[\s,]*알겠습니다)$"
 )
 
-_NEGATION = re.compile(r"(?:(?<=\s)|^)(?:안|못)\s|않|못\s?[가-힣]+(?:겠습니다|겠어요|게요)")
+_NEGATOR = frozenset({"안", "못"})
+"""A word that negates the predicate when it stands right before it: "안 볼게요",
+"못 갈게요". A "안" further back -- "수량 안 맞는 건은 순서 올리겠습니다" -- negates a
+clause inside the sentence, not what the speaker will do."""
 
 _QUESTION_END = re.compile(r"(?:까요|나요|ㄹ까|을까|십니까|입니까|어때요|어떨까요)$")
 
@@ -214,6 +217,14 @@ def _record(words: list[str]) -> str | None:
     return None
 
 
+def _negated(words: list[str]) -> bool:
+    """Whether the sentence says the speaker will *not* do something."""
+    if len(words) >= 2 and words[-2] in _NEGATOR:
+        return True
+    # 하지 않겠습니다, 못하겠습니다: the negation is inside the last word.
+    return "않" in words[-1] or words[-1].startswith("못")
+
+
 def _tidy_sentence(sentence: str) -> str | None:
     """One sentence, tidied; ``None`` when there is nothing to keep of it.
 
@@ -224,7 +235,7 @@ def _tidy_sentence(sentence: str) -> str | None:
     text = said.rstrip(".!…").strip()
     if not text or _ACKNOWLEDGEMENT.match(text):
         return None
-    if text.endswith("?") or _QUESTION_END.search(text) or _NEGATION.search(text):
+    if text.endswith("?") or _QUESTION_END.search(text):
         return said
     text = _LEADING_FILLER.sub("", text)
     text = _FIRST_PERSON.sub("", text).strip()
@@ -232,6 +243,8 @@ def _tidy_sentence(sentence: str) -> str | None:
         return None
 
     words = text.split()
+    if _negated(words):
+        return said
     tidied = _record(words) or _plan(words)
     return tidied if tidied is not None else said
 

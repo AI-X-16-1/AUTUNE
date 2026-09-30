@@ -134,3 +134,23 @@ def test_a_verb_of_its_own_and_a_must(said: str, tidied: str) -> None:
 def test_an_answer_that_points_at_something_said_before_is_left_alone(said: str) -> None:
     """ "그럴 예정" would say nothing; the person reads the line before it."""
     assert tidy(said) == said
+
+
+@pytest.mark.parametrize(
+    ("said", "tidied"),
+    [
+        # A "안" that negates a clause inside the sentence is not the speaker's refusal.
+        ("수량 안 맞는 건은 순서 올리겠습니다", "수량 안 맞는 건은 순서 올릴 예정"),
+        ("안 좋은 결과를 제가 정리하겠습니다", "안 좋은 결과를 정리 예정"),
+    ],
+)
+def test_a_negation_inside_a_clause_does_not_block_the_predicate(said: str, tidied: str) -> None:
+    assert tidy(said) == tidied
+
+
+@pytest.mark.parametrize(
+    "said",
+    ["이건 안 하겠습니다", "다시는 못 볼게요", "그건 하지 않겠습니다", "그건 못하겠습니다"],
+)
+def test_a_negated_predicate_is_left_as_said(said: str) -> None:
+    assert tidy(said) == said
