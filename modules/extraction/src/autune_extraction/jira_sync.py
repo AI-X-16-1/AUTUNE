@@ -225,9 +225,10 @@ STATUS_OF = {category: status for status, category in CATEGORY.items()}
 """A Jira status category as the board's status -- ``CATEGORY`` read backwards."""
 
 PULL_LIMIT = 100
-"""Issues read back per team per run at most, the most recently made first. A
-read is one request per issue; a team with more open work than this is read
-over several runs."""
+"""Issues read back per team per run at most: the most recently made, the same
+ones every run. A read is one request per issue. A team with more issues than
+this -- done ones count too, since a done issue can be reopened in Jira -- has
+its older issues' moves not read back; there is no cursor yet."""
 
 
 def pull_status_changes(
@@ -248,11 +249,20 @@ def pull_status_changes(
       moved on a person's calendar does (#435).
     - **Both changed** -- the board wins and its edit goes out; logged.
 
-    A ref written before this existed has no ``synced_category`` and is taken
-    to be in step with the board. The ref row is locked first, the order the
-    outgoing sync takes, so the two never interleave on one item. An issue
-    deleted in Jira (404) is left alone and logged: the next board edit makes
-    it again, as it always has. Any other failure raises for the caller.
+    A ref with no ``synced_category`` has no baseline to compare with: it was
+    written before the read-back existed, or its issue never took the board's
+    status (no transition in the workflow, or the move failed). Its issue's
+    category is recorded as the baseline and the board is left alone -- the
+    board may hold an edit Jira never got, and only a move made after the
+    baseline is a person's. (#548 review.)
+
+    Both rows are locked, the item first: deleting an item locks it and then
+    its ref (``ON DELETE CASCADE``), so taking them in that order never
+    deadlocks with a deletion, and a board edit cannot land between this read
+    and the write below. The outgoing sync locks only the ref, so waiting on it
+    here reads the ``synced_category`` it left. An issue deleted in Jira (404)
+    is left alone and logged: the next board edit makes it again, as it always
+    has. Any other failure raises for the caller.
     """
     rows = session.execute(
         select(ExtExternalRef.action_item_id)
@@ -271,8 +281,10 @@ def pull_status_changes(
 
     moved: list[str] = []
     for (item_id,) in rows:
-        ref = session.get(ExtExternalRef, (item_id, JIRA), with_for_update=True)
-        item = session.get(ExtActionItem, item_id, populate_existing=True)
+        item = session.get(ExtActionItem, item_id, with_for_update=True, populate_existing=True)
+        ref = session.get(
+            ExtExternalRef, (item_id, JIRA), with_for_update=True, populate_existing=True
+        )
         if ref is None or item is None or not ref.external_id:
             continue
         board = CATEGORY.get(item.status)
@@ -285,8 +297,14 @@ def pull_status_changes(
                 raise
             log.info("extraction_jira_issue_gone", action_item_id=item_id)
             continue
-        synced = ref.synced_category or board
-        if in_jira is None or in_jira == synced or in_jira not in STATUS_OF:
+        if in_jira is None or in_jira not in STATUS_OF:
+            continue
+        synced = ref.synced_category
+        if synced is None:
+            ref.synced_category = in_jira
+            log.info("extraction_jira_baseline_recorded", action_item_id=item_id, category=in_jira)
+            continue
+        if in_jira == synced:
             continue
         if board != synced:
             log.info("extraction_jira_both_moved", action_item_id=item_id)

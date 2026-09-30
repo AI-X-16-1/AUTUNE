@@ -3,7 +3,8 @@
 The Jira read-back compares an issue's status category with the one Autune
 last left it in or last read, to tell a person's move in Jira from a board
 edit that has not reached Jira yet. Nullable: refs written before it have
-none, and the read-back treats them as in step with the board.
+none, and the read-back records Jira's category as their baseline without
+touching the board.
 
 Owner: 강민구. Apply with `alembic upgrade heads` (plural).
 See docs/engineering/migrations.md.

@@ -92,7 +92,9 @@ agreement, and sync the result to Notion.
    their issues to: an issue dragged to Done makes its item done, through the
    same edit path. `ext_external_refs.synced_category` records what Autune last
    left the issue in, so a board edit that has not reached Jira yet is never
-   undone; when both moved, the board wins.
+   undone; when both moved, the board wins. A ref with no baseline yet (made
+   before the read-back, or its issue never took the board's status) gets
+   Jira's category recorded as one, and the board is left alone.
 8. **Publish** — emit `ExtractionResult`.
 
 Classification runs before reference resolution, which is worth stating because

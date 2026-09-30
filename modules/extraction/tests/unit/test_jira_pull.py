@@ -13,8 +13,9 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 
 import pytest
-from sqlalchemy import create_engine, select
-from sqlalchemy.orm import Session
+from sqlalchemy import create_engine, event, select
+from sqlalchemy.dialects import postgresql
+from sqlalchemy.orm import ORMExecuteState, Session
 from sqlalchemy.pool import StaticPool
 
 import autune_extraction.models  # noqa: F401  (ext_ tables)
@@ -148,12 +149,70 @@ def test_when_both_moved_the_board_wins(session: Session) -> None:
     assert status_of(session, "act_1") == "in_progress"
 
 
-def test_a_ref_from_before_the_read_back_is_taken_as_in_step(session: Session) -> None:
-    issued(session, "act_1", status="todo", synced=None)
+def test_a_ref_with_no_baseline_records_jiras_and_leaves_the_board(session: Session) -> None:
+    """A ref from before the read-back: the board may hold an edit Jira never
+    got, so Jira's category becomes the baseline and nothing is read back."""
+    issued(session, "act_1", status="done", synced=None)
     jira = ReadableJira(categories={"KAN-act_1": "indeterminate"})
 
+    assert pull(session, jira) == []
+    assert status_of(session, "act_1") == "done"
+    ref = session.get(ExtExternalRef, ("act_1", jira_sync.JIRA))
+    assert ref is not None and ref.synced_category == "indeterminate"
+
+
+def test_a_move_after_the_baseline_is_read_back(session: Session) -> None:
+    issued(session, "act_1", status="todo", synced=None)
+    jira = ReadableJira(categories={"KAN-act_1": "new"})
+    assert pull(session, jira) == []
+
+    jira.categories["KAN-act_1"] = "done"
+
     assert pull(session, jira) == ["act_1"]
-    assert status_of(session, "act_1") == "in_progress"
+    assert status_of(session, "act_1") == "done"
+
+
+@dataclass
+class NoTransitionJira(ReadableJira):
+    """A workflow with no transition into any other category."""
+
+    def move_to_category(self, issue_key: str, category: str) -> bool:
+        return self.categories.get(issue_key) == category
+
+
+def test_a_board_edit_jira_has_no_transition_for_is_never_undone(session: Session) -> None:
+    """#548 review: the first move finds no transition, so no baseline is written.
+    The read-back must not take the board's status as Jira's and undo it --
+    not on the next run, and not on every run after."""
+    issued(session, "act_1", status="done", synced=None)
+    jira = NoTransitionJira(categories={"KAN-act_1": "indeterminate"}, tasks={"KAN-act_1": {}})
+
+    jira_sync.sync_action_item_to_jira(
+        session, jira, action_item_id="act_1", project_key="KAN", site=SITE
+    )
+    ref = session.get(ExtExternalRef, ("act_1", jira_sync.JIRA))
+    assert ref is not None and ref.synced_category is None
+
+    assert pull(session, jira) == []
+    assert pull(session, jira) == []
+    assert status_of(session, "act_1") == "done"
+
+
+def test_the_item_row_is_locked_and_before_its_ref(session: Session) -> None:
+    """Deleting an item locks it, then its ref by cascade; the read-back takes
+    the same order, and a board edit cannot land between its read and write."""
+    issued(session, "act_1")
+    locked: list[str] = []
+
+    @event.listens_for(session, "do_orm_execute")
+    def _record(state: ORMExecuteState) -> None:
+        sql = str(state.statement.compile(dialect=postgresql.dialect()))
+        if state.is_select and "FOR UPDATE" in sql and state.bind_mapper is not None:
+            locked.append(state.bind_mapper.class_.__name__)
+
+    pull(session, ReadableJira(categories={"KAN-act_1": "new"}))
+
+    assert locked == ["ExtActionItem", "ExtExternalRef"]
 
 
 def test_what_is_not_this_teams_confirmed_issue_on_this_site_is_left_alone(
