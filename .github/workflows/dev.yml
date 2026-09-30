@@ -8,10 +8,37 @@ on:
 jobs:
   build:
     runs-on: self-hosted
+    # The runner's default shell is Windows PowerShell, and the host's
+    # execution policy refuses the .ps1 file the runner writes for each step.
+    # cmd has no execution policy.
+    defaults:
+      run:
+        shell: cmd
     steps:
 
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           path: .
-          
+
+      # Checkout alone starts nothing: the services only run once compose
+      # brings them up on the runner. --wait fails the job when a container
+      # does not reach healthy, so a green run means the services are up.
+      - name: Start services
+        env:
+          POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          POSTGRES_DB: ${{ secrets.POSTGRES_DB }}
+        # An unset secret reaches compose as an empty string, which the
+        # compose defaults would turn into autune/autune. Refuse instead.
+        # "not defined" also avoids quoting a password that holds " or &.
+        run: |
+          if not defined POSTGRES_USER (echo POSTGRES_USER secret is not set & exit /b 1)
+          if not defined POSTGRES_PASSWORD (echo POSTGRES_PASSWORD secret is not set & exit /b 1)
+          if not defined POSTGRES_DB (echo POSTGRES_DB secret is not set & exit /b 1)
+          docker version || exit /b 1
+          docker compose -f infra/docker-compose.yml up -d --wait
+
+      - name: Show services
+        if: always()
+        run: docker compose -f infra/docker-compose.yml ps -a

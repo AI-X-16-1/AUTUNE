@@ -8,20 +8,25 @@ services:
     # separate vector database. See docs/decisions/0004-pgvector-over-chroma.md
     image: pgvector/pgvector:pg16
     environment:
-      POSTGRES_USER: autune
-      POSTGRES_PASSWORD: autune
-      POSTGRES_DB: autune
-    ports: ["5432:5432"]
+      # Deployed hosts pass their own credentials; local runs keep the
+      # defaults that AUTUNE_DATABASE_URL in .env.example expects.
+      POSTGRES_USER: ${POSTGRES_USER:-autune}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-autune}
+      POSTGRES_DB: ${POSTGRES_DB:-autune}
+    # Loopback only: on a deployed host a bare "5432:5432" listens on every
+    # interface. Containers on the same host reach it over the compose network.
+    ports: ["127.0.0.1:5432:5432"]
     volumes: ["pgdata:/var/lib/postgresql/data"]
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U autune"]
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
       interval: 5s
       timeout: 3s
       retries: 10
 
   redis:
     image: redis:7-alpine
-    ports: ["6379:6379"]
+    # Loopback only, as above. Redis has no password and is the Celery broker.
+    ports: ["127.0.0.1:6379:6379"]
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
