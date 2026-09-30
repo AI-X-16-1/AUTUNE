@@ -197,12 +197,18 @@ def execute_l1(
     return done
 
 
-def _run(
-    action: Action, proposal: ProposedAction, *, session: Session, scope: RunScope
+def own_reason(reason: str | None) -> str | None:
+    """``reason`` when it is one of this layer's own, else ``None``."""
+    return reason if _own(reason) else None
+
+
+def run_action(
+    action: Action, arguments: Mapping[str, Any], *, session: Session, scope: RunScope
 ) -> ToolResult:
+    """Run one declared action under ``scope`` -- the L1 path and plan mode's approval."""
     bound = bind_scope(
         action.parameters,
-        proposal.arguments,
+        arguments,
         scope,
         session,
         required=action.required,
@@ -218,3 +224,9 @@ def _run(
     except Exception as exc:  # noqa: BLE001 - one broken write must not lose the rest
         log.error("agent_action_failed action=%s error=%s", action.name, type(exc).__name__)
         return ToolResult.failure(FAILED)
+
+
+def _run(
+    action: Action, proposal: ProposedAction, *, session: Session, scope: RunScope
+) -> ToolResult:
+    return run_action(action, proposal.arguments, session=session, scope=scope)

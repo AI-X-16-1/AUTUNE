@@ -10,15 +10,18 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping, Sequence
+from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import update
+from sqlalchemy import CursorResult, select, update
 from sqlalchemy.orm import Session
 
-from autune_agent.models import AgentPendingAction, AgentRun
+from autune_agent.models import REJECT_REASONS, AgentApprover, AgentPendingAction, AgentRun
 from autune_agent.results import ProposedAction
+from autune_core.errors import AutuneError, ConflictError, NotFoundError, PermissionDeniedError
 
-from .actions import ARGUMENT_REFUSED
+from .actions import ARGUMENT_REFUSED, NOT_DECLARED, Action, own_reason, run_action
+from .registry import RunScope
 
 _ID = re.compile(r"[a-z]+_[A-Za-z0-9]+")
 _DATE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
@@ -97,3 +100,89 @@ def queue_l2(
         )
         session.flush()
     return refused
+
+
+class PendingNotFoundError(NotFoundError):
+    def __init__(self) -> None:
+        # Never the id: it is whatever the caller sent. Skip NotFoundError's
+        # formatting so neither ``str()`` nor ``message`` can carry it.
+        AutuneError.__init__(self, "pending action not found", resource="pending action")
+
+
+class PendingDecidedError(ConflictError):
+    def __init__(self) -> None:
+        super().__init__("this proposal was already decided")
+
+
+class NotAnApproverError(PermissionDeniedError):
+    def __init__(self) -> None:
+        super().__init__("not an approver for this proposal")
+
+
+def approver_scopes(session: Session, team_id: str, user_id: str) -> set[str]:
+    return set(
+        session.scalars(
+            select(AgentApprover.scope).where(
+                AgentApprover.team_id == team_id, AgentApprover.user_id == user_id
+            )
+        )
+    )
+
+
+def can_decide(scopes: set[str], row: AgentPendingAction) -> bool:
+    return "any" in scopes or row.scope in scopes
+
+
+def _load(session: Session, pending_id: str, user_id: str) -> AgentPendingAction:
+    row = session.get(AgentPendingAction, pending_id)
+    if row is None:
+        raise PendingNotFoundError()
+    scopes = approver_scopes(session, row.team_id, user_id)
+    if not scopes:
+        raise PendingNotFoundError()  # another team's row reads as missing
+    if not can_decide(scopes, row):
+        raise NotAnApproverError()
+    return row
+
+
+def _claim(session: Session, row: AgentPendingAction, user_id: str, **values: Any) -> None:
+    """Move a row out of ``pending`` exactly once; a concurrent decider loses."""
+    outcome: CursorResult[Any] = session.execute(  # type: ignore[assignment]
+        update(AgentPendingAction)
+        .where(AgentPendingAction.id == row.id, AgentPendingAction.status == "pending")
+        .values(decided_by=user_id, decided_at=datetime.now(UTC), **values)
+    )
+    if outcome.rowcount != 1:
+        raise PendingDecidedError()
+    session.refresh(row)
+
+
+def approve(
+    session: Session, pending_id: str, *, user_id: str, actions: Mapping[str, Action]
+) -> AgentPendingAction:
+    """Run the proposal under its own run's scope; the outcome refines the status."""
+    row = _load(session, pending_id, user_id)
+    _claim(session, row, user_id, status="approved")
+    action = actions.get(row.tool)
+    if action is None:
+        row.status, row.result_ok, row.result_reason = "failed", False, NOT_DECLARED
+    else:
+        result = run_action(
+            action,
+            row.arguments,
+            session=session,
+            scope=RunScope(team_id=row.team_id, meeting_id=row.meeting_id),
+        )
+        row.result_ok = result.ok
+        row.status = "approved" if result.ok else "failed"
+        row.result_reason = None if result.ok else own_reason(result.reason)
+    session.flush()
+    return row
+
+
+def reject(session: Session, pending_id: str, *, user_id: str, reason: str) -> AgentPendingAction:
+    if reason not in REJECT_REASONS:
+        raise ValueError("reason must be one of " + ", ".join(REJECT_REASONS))
+    row = _load(session, pending_id, user_id)
+    _claim(session, row, user_id, status="rejected", reject_reason=reason)
+    return row
