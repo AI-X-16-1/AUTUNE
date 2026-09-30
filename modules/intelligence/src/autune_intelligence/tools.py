@@ -44,6 +44,7 @@ from autune_core.errors import (
 )
 
 from . import service, tasks
+from .models import IntelMeetingReport
 from .service import _gap_burden
 
 log = get_logger(__name__)
@@ -234,37 +235,50 @@ convention B's ``tools.py`` set (#492, review of #449). A model that could choos
 ``team_id`` could read another team's trend or post into another team's channel."""
 
 
-# --- actions: E's write, for the main agent to run ------------------------------
+# --- actions: E's writes, for the main agent to run --------------------------------
 #
-# agent-layer.md section 8, rule 2: the Report subagent never posts; it proposes,
-# and the main agent runs this. Shaped like B's actions: no session argument, the
-# action owns its transaction and commits before anything leaves, and it is kept
-# out of ``TOOLS`` so a model never calls it directly.
+# agent-layer.md section 8, rule 2: the Report subagent never writes; it proposes,
+# and the main agent runs these. Shaped like B's actions: no session argument,
+# each owns its transaction and commits before anything leaves, and none is in
+# ``TOOLS``, so a model never calls one directly. The module sets each one's
+# level (#509): ``L1_ACTIONS`` run without approval, the rest of ``ACTIONS`` only
+# after a person approves.
 
 
 def _refused(reason: str, summary: str) -> dict[str, Any]:
     return _result(ok=False, reason=reason, summary=summary, items=[], confidence=0.0)
 
 
-def publish_meeting_report(
+def _acted(summary: str, meeting_id: str) -> dict[str, Any]:
+    # B's actions answer with the changed thing by id; an executor reads both alike.
+    return _result(
+        summary=summary, items=[{"title": summary, "body": "", "score": 1.0, "id": meeting_id}]
+    )
+
+
+def _not_found(meeting_id: str, team_id: str) -> dict[str, Any]:
+    # Unknown and other-team read the same, so the answer does not reveal which.
+    return _refused(f"no meeting {meeting_id} on team {team_id}", "회의를 찾을 수 없습니다.")
+
+
+def draft_meeting_report(
     team_id: str, meeting_id: str, body_markdown: str, pending_review: bool = False
 ) -> dict[str, Any]:
-    """Store a meeting's finished report and schedule its post to the team channel
-    -- what the Report subagent proposes after a meeting's analysis finishes.
+    """Store a meeting's finished report as a draft -- what the Report subagent
+    proposes after a meeting's analysis finishes. Nothing is posted.
 
-    L1 -- runs without approval; the person is told after (proposed on #261).
-    Never call it with text another meeting said. Adds the header (title, date)
-    and the "자동 생성" footer; the title is left out when it holds personal
-    data. ``pending_review`` adds a button to B's review board. Refused for
+    L1 -- runs without approval; the person is told after. Posting is the separate
+    ``publish_meeting_report``. Never call it with text another meeting said.
+    Adds the header (title, date) and the "자동 생성" footer; the title is left out
+    when it holds personal data. ``pending_review`` adds a button to B's review
+    board when the report is posted. Replaces an unposted draft. Refused for
     another team's meeting, a report already posted, one over the length cap,
     or a body that still holds personal data (by category, never the text).
     """
     with session_scope() as session:
         meeting = session.get(Meeting, meeting_id)
         if meeting is None or meeting.team_id != team_id:
-            return _refused(
-                f"no meeting {meeting_id} on team {team_id}", "회의를 찾을 수 없습니다."
-            )
+            return _not_found(meeting_id, team_id)
         document = service.meeting_report_document(meeting, body_markdown)
         try:
             service.save_meeting_report(
@@ -283,23 +297,44 @@ def publish_meeting_report(
             return _refused(
                 f"unmasked personal data: {categories}", "리포트에 개인정보가 남아 있습니다."
             )
+    return _acted("리포트 초안을 저장했습니다.", meeting_id)
+
+
+def publish_meeting_report(team_id: str, meeting_id: str) -> dict[str, Any]:
+    """Post a meeting's stored report draft to the team channel.
+
+    L2 -- runs only after a person approves (a channel post moves people;
+    agent-layer.md section 8). Posts what ``draft_meeting_report`` stored, once:
+    delivery claims the report before it posts, so a second approval or a retry
+    sends nothing. Refused for another team's meeting, a meeting with no draft,
+    or a report already posted.
+    """
+    with session_scope() as session:
+        meeting = session.get(Meeting, meeting_id)
+        if meeting is None or meeting.team_id != team_id:
+            return _not_found(meeting_id, team_id)
+        row = session.get(IntelMeetingReport, meeting_id)
+        if row is None:
+            return _refused("no draft", "게시할 리포트 초안이 없습니다.")
+        if row.sent_at is not None:
+            return _refused("already posted", "이미 게시된 리포트입니다.")
     # The transaction has committed: a worker that picks this up finds the row.
     try:
         tasks.deliver_meeting_report.apply_async((meeting_id,))
-    except Exception as exc:  # the report is stored; the caller must not see a failure
-        # Stored and unclaimed: running this action again enqueues it.
+    except Exception as exc:  # the draft is stored; the caller must not see a failure
+        # Stored and unclaimed: approving the post again enqueues it.
         log.warning(
             "intelligence_meeting_report_enqueue_failed",
             meeting_id=meeting_id,
             error=type(exc).__name__,
         )
-    summary = "리포트를 저장했고 발송을 예약했습니다."
-    # B's actions answer with the changed thing by id; an executor reads both alike.
-    return _result(
-        summary=summary, items=[{"title": summary, "body": "", "score": 1.0, "id": meeting_id}]
-    )
+    return _acted("리포트 게시를 예약했습니다.", meeting_id)
 
 
-ACTIONS = [publish_meeting_report]
+ACTIONS = [draft_meeting_report, publish_meeting_report]
 """E's writes. Kept out of ``TOOLS`` on purpose: the registry offers ``TOOLS`` to
 models, and the main agent's executor alone runs these."""
+
+L1_ACTIONS = [draft_meeting_report]
+"""The reversible ones (#509): a draft is not seen by anyone until it is posted,
+and is replaced by the next draft. Everything else in ``ACTIONS`` is L2."""

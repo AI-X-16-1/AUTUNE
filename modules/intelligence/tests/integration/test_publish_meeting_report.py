@@ -1,7 +1,9 @@
-"""E's action for the Report subagent's proposal (agent-layer.md section 8).
+"""E's two actions for the Report subagent (agent-layer.md section 8, #509).
 
-Shaped like B's ``ACTIONS`` (#492): no session argument, the action owns its
-transaction, and ``team_id`` comes from the run's authenticated scope.
+``draft_meeting_report`` stores a report (L1, in ``L1_ACTIONS``);
+``publish_meeting_report`` posts a stored one (L2, approval first). Shaped like
+B's ``ACTIONS`` (#492): no session argument, each owns its transaction, and
+``team_id`` comes from the run's authenticated scope.
 """
 
 from __future__ import annotations
@@ -22,7 +24,7 @@ BODY = "✅ 확정된 액션 아이템\n• 결제 API 스펙 초안 — 백엔�
 
 @pytest.fixture
 def events(db_session: Session, monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str]]:
-    """The action's own transaction is the test session; record commit and enqueue order."""
+    """The actions' own transactions are the test session; record commit and enqueue order."""
     recorded: list[tuple[str, str]] = []
 
     @contextlib.contextmanager
@@ -38,6 +40,10 @@ def events(db_session: Session, monkeypatch: pytest.MonkeyPatch) -> list[tuple[s
     return recorded
 
 
+def _enqueued(events: list[tuple[str, str]]) -> list[str]:
+    return [ident for kind, ident in events if kind == "enqueue"]
+
+
 def _meeting(db_session: Session, team: str, title: str) -> str:
     from autune_core import Meeting
 
@@ -47,22 +53,38 @@ def _meeting(db_session: Session, team: str, title: str) -> str:
     return row.id
 
 
-@pytest.mark.usefixtures("events")
-def test_publish_adds_the_header_and_footer_around_the_body(db_session: Session, team: str) -> None:
+def _other_team_meeting(db_session: Session) -> str:
+    from autune_core import Team
+
+    other = Team(name="Other Team")
+    db_session.add(other)
+    db_session.flush()
+    return _meeting(db_session, other.id, "남의 회의")
+
+
+# --- draft (L1): store only ----------------------------------------------------
+
+
+def test_a_draft_is_stored_with_header_and_footer_and_nothing_is_posted(
+    db_session: Session, team: str, events: list[tuple[str, str]]
+) -> None:
     meeting = _meeting(db_session, team, "결제 기능 기획")
 
-    result = tools.publish_meeting_report(team, meeting, BODY)
+    result = tools.draft_meeting_report(team, meeting, BODY, pending_review=True)
 
     assert result["ok"] is True
     # The same shape as B's actions: the changed thing, by id.
     assert result["items"] == [
-        {"title": "리포트를 저장했고 발송을 예약했습니다.", "body": "", "score": 1.0, "id": meeting}
+        {"title": "리포트 초안을 저장했습니다.", "body": "", "score": 1.0, "id": meeting}
     ]
     row = db_session.get(IntelMeetingReport, meeting)
     assert row is not None
     assert row.body_markdown == (
         "📋 결제 기능 기획 · 9/29\n\n" + BODY + "\n\n자동 생성된 리포트입니다."
     )
+    assert row.pending_review is True
+    assert row.sent_at is None
+    assert _enqueued(events) == []
 
 
 @pytest.mark.usefixtures("events")
@@ -71,94 +93,144 @@ def test_a_title_with_personal_data_is_left_out_of_the_header(
 ) -> None:
     meeting = _meeting(db_session, team, "kim@example.com 1:1")
 
-    tools.publish_meeting_report(team, meeting, BODY)
+    tools.draft_meeting_report(team, meeting, BODY)
 
     row = db_session.get(IntelMeetingReport, meeting)
     assert row is not None and row.body_markdown.startswith("📋 회의 리포트 · 9/29\n")
 
 
-def test_delivery_is_enqueued_after_the_commit_with_the_id_only(
+@pytest.mark.usefixtures("events")
+def test_a_draft_for_another_teams_meeting_is_refused(db_session: Session, team: str) -> None:
+    meeting = _other_team_meeting(db_session)
+
+    result = tools.draft_meeting_report(team, meeting, BODY)
+
+    assert result["ok"] is False
+    assert db_session.get(IntelMeetingReport, meeting) is None
+
+
+@pytest.mark.usefixtures("events")
+def test_a_draft_for_an_unknown_meeting_is_refused(team: str) -> None:
+    assert tools.draft_meeting_report(team, "mtg_doesnotexist", BODY)["ok"] is False
+
+
+@pytest.mark.usefixtures("events")
+def test_a_draft_over_a_posted_report_is_refused(db_session: Session, team: str) -> None:
+    meeting = _meeting(db_session, team, "결제 기능 기획")
+    service.save_meeting_report(db_session, meeting, BODY)
+    service.claim_meeting_report(db_session, meeting)
+
+    result = tools.draft_meeting_report(team, meeting, BODY)
+
+    assert result["ok"] is False and result["reason"] == "already posted"
+
+
+@pytest.mark.usefixtures("events")
+def test_a_draft_over_the_cap_is_refused(db_session: Session, team: str) -> None:
+    meeting = _meeting(db_session, team, "결제 기능 기획")
+
+    result = tools.draft_meeting_report(team, meeting, "가" * 3000)
+
+    assert result["ok"] is False and result["reason"] == "report too long"
+    assert db_session.get(IntelMeetingReport, meeting) is None
+
+
+@pytest.mark.usefixtures("events")
+def test_a_draft_with_personal_data_is_refused_by_category_not_raised(
+    db_session: Session, team: str
+) -> None:
+    """A model-written body failing the mask is an expected route, not a bug in E."""
+    meeting = _meeting(db_session, team, "결제 기능 기획")
+
+    result = tools.draft_meeting_report(team, meeting, "담당 연락처 010-1234-5678")
+
+    assert result["ok"] is False
+    assert result["reason"].startswith("unmasked personal data")
+    assert "010" not in str(result)  # categories only, never the text
+    assert db_session.get(IntelMeetingReport, meeting) is None
+
+
+# --- publish (L2): post the stored draft -----------------------------------------
+
+
+def test_publish_enqueues_after_the_commit_with_the_id_only(
+    db_session: Session, team: str, events: list[tuple[str, str]]
+) -> None:
+    meeting = _meeting(db_session, team, "결제 기능 기획")
+    service.save_meeting_report(db_session, meeting, BODY)
+
+    result = tools.publish_meeting_report(team, meeting)
+
+    assert result["ok"] is True
+    assert result["items"][0]["id"] == meeting
+    assert events == [("commit", ""), ("enqueue", meeting)]
+
+
+def test_publish_without_a_draft_is_refused(
     db_session: Session, team: str, events: list[tuple[str, str]]
 ) -> None:
     meeting = _meeting(db_session, team, "결제 기능 기획")
 
-    tools.publish_meeting_report(team, meeting, BODY, pending_review=True)
+    result = tools.publish_meeting_report(team, meeting)
 
-    assert events == [("commit", ""), ("enqueue", meeting)]
-    row = db_session.get(IntelMeetingReport, meeting)
-    assert row is not None and row.pending_review is True
-
-
-def test_another_teams_meeting_is_refused(
-    db_session: Session, team: str, events: list[tuple[str, str]]
-) -> None:
-    from autune_core import Team
-
-    other = Team(name="Other Team")
-    db_session.add(other)
-    db_session.flush()
-    meeting = _meeting(db_session, other.id, "남의 회의")
-
-    result = tools.publish_meeting_report(team, meeting, BODY)
-
-    assert result["ok"] is False
-    assert db_session.get(IntelMeetingReport, meeting) is None
-    assert ("enqueue", meeting) not in events
-
-
-def _enqueued(events: list[tuple[str, str]]) -> list[str]:
-    return [ident for kind, ident in events if kind == "enqueue"]
-
-
-def test_an_unknown_meeting_is_refused(team: str, events: list[tuple[str, str]]) -> None:
-    result = tools.publish_meeting_report(team, "mtg_doesnotexist", BODY)
-
-    assert result["ok"] is False
+    assert result["ok"] is False and result["reason"] == "no draft"
     assert _enqueued(events) == []
 
 
-def test_a_posted_report_is_refused(
+def test_publish_of_a_posted_report_is_refused(
     db_session: Session, team: str, events: list[tuple[str, str]]
 ) -> None:
     meeting = _meeting(db_session, team, "결제 기능 기획")
     service.save_meeting_report(db_session, meeting, BODY)
     service.claim_meeting_report(db_session, meeting)
 
-    result = tools.publish_meeting_report(team, meeting, BODY)
+    result = tools.publish_meeting_report(team, meeting)
 
     assert result["ok"] is False and result["reason"] == "already posted"
     assert _enqueued(events) == []
 
 
-def test_a_document_over_the_cap_is_refused(
+def test_publish_for_another_teams_meeting_is_refused(
     db_session: Session, team: str, events: list[tuple[str, str]]
 ) -> None:
-    meeting = _meeting(db_session, team, "결제 기능 기획")
+    meeting = _other_team_meeting(db_session)
+    service.save_meeting_report(db_session, meeting, BODY)
 
-    result = tools.publish_meeting_report(team, meeting, "가" * 3000)
-
-    assert result["ok"] is False and result["reason"] == "report too long"
-    assert db_session.get(IntelMeetingReport, meeting) is None
-    assert _enqueued(events) == []
-
-
-def test_a_body_with_personal_data_is_refused_by_category_not_raised(
-    db_session: Session, team: str, events: list[tuple[str, str]]
-) -> None:
-    """A model-written body failing the mask is an expected route, not a bug in E."""
-    meeting = _meeting(db_session, team, "결제 기능 기획")
-
-    result = tools.publish_meeting_report(team, meeting, "담당 연락처 010-1234-5678")
+    result = tools.publish_meeting_report(team, meeting)
 
     assert result["ok"] is False
-    assert result["reason"].startswith("unmasked personal data")
-    assert "010" not in str(result)  # categories only, never the text
-    assert db_session.get(IntelMeetingReport, meeting) is None
     assert _enqueued(events) == []
+
+
+def test_a_broker_failure_is_logged_not_raised(
+    db_session: Session, team: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The draft is committed; the caller must not be told publishing failed outright."""
+
+    @contextlib.contextmanager
+    def scope() -> Iterator[Session]:
+        yield db_session
+
+    def down(_args: tuple[str, ...]) -> None:
+        raise ConnectionError("broker down")
+
+    monkeypatch.setattr(tools, "session_scope", scope)
+    monkeypatch.setattr(tools.tasks.deliver_meeting_report, "apply_async", down)
+    meeting = _meeting(db_session, team, "결제 기능 기획")
+    service.save_meeting_report(db_session, meeting, BODY)
+
+    result = tools.publish_meeting_report(team, meeting)
+
+    assert result["ok"] is True
+    row = db_session.get(IntelMeetingReport, meeting)
+    assert row is not None and row.sent_at is None
+
+
+# --- shared ----------------------------------------------------------------------
 
 
 def test_saving_a_report_locks_its_row(db_session: Session, team: str) -> None:
-    """A re-publish racing the deliver task's claim must wait on the row, not
+    """A re-draft racing the deliver task's claim must wait on the row, not
     overwrite a report that was just posted."""
     meeting = _meeting(db_session, team, "결제 기능 기획")
     service.save_meeting_report(db_session, meeting, BODY)
@@ -177,35 +249,14 @@ def test_saving_a_report_locks_its_row(db_session: Session, team: str) -> None:
     assert any("intel_meeting_reports" in s and "FOR UPDATE" in s for s in statements), statements
 
 
-def test_a_broker_failure_is_logged_not_raised(
-    db_session: Session, team: str, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The row is committed by then; the caller must not be told it failed."""
-
-    @contextlib.contextmanager
-    def scope() -> Iterator[Session]:
-        yield db_session
-
-    def down(_args: tuple[str, ...]) -> None:
-        raise ConnectionError("broker down")
-
-    monkeypatch.setattr(tools, "session_scope", scope)
-    monkeypatch.setattr(tools.tasks.deliver_meeting_report, "apply_async", down)
-    meeting = _meeting(db_session, team, "결제 기능 기획")
-
-    result = tools.publish_meeting_report(team, meeting, BODY)
-
-    assert result["ok"] is True
-    row = db_session.get(IntelMeetingReport, meeting)
-    assert row is not None and row.sent_at is None
-
-
-def test_the_action_is_not_offered_as_a_tool() -> None:
-    """A model calls ``TOOLS``; an action runs only when the main agent executes it."""
-    assert [tools.publish_meeting_report] == tools.ACTIONS
+def test_the_module_sets_the_levels_not_the_subagent() -> None:
+    """#509: a module lists its writes in ACTIONS and the reversible ones in L1_ACTIONS."""
+    assert [tools.draft_meeting_report, tools.publish_meeting_report] == tools.ACTIONS
+    assert [tools.draft_meeting_report] == tools.L1_ACTIONS
     assert not set(tools.ACTIONS) & set(tools.TOOLS)
-    # B's form ("L2 -- runs only after a person approves"), so one reader parses both.
-    assert "L1 -- runs without approval" in (tools.publish_meeting_report.__doc__ or "")
+    # B's form, so one reader parses both modules' docstrings.
+    assert "L1 -- runs without approval" in (tools.draft_meeting_report.__doc__ or "")
+    assert "L2 -- runs only after a person approves" in (tools.publish_meeting_report.__doc__ or "")
 
 
 def test_the_run_fills_team_id_never_the_model() -> None:
