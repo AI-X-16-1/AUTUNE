@@ -1,13 +1,14 @@
 """Report subagent -- 이승환 (@lsh2217). agent-layer.md section 3.1.
 
 After a meeting's analysis finishes, composes its structured minutes from B, C
-and D's tools and proposes that E post them (section 8 rule 2). No LLM: a
-fixed tool order and a template (``render``).
+and D's tools and proposes that E store them (L1) and post them (L2, after a
+person approves) -- section 8 rule 2. No LLM: a fixed tool order and a
+template (``render``).
 """
 
 from autune_agent.main import Subagent
 
-from .graph import TOOLS, build
+from .graph import TOOLS, TRIGGER, build
 
 SUBAGENT = Subagent(
     name="report",
@@ -19,4 +20,5 @@ SUBAGENT = Subagent(
     ),
     tools=TOOLS,
     build=build,
+    triggers=(TRIGGER,),
 )
