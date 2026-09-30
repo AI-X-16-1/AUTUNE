@@ -554,8 +554,10 @@ the worker finds nothing, and the file the endpoint wrote is left with nobody
 to delete it. Locally both run on the host from the same checkout (the two
 commands at the top of this file), so they share `AUTUNE_AUDIO_TEMP_DIR` by
 construction: `AudioSettings` reads `.env` relative to the working directory,
-and both are started from the repository root. `infra/docker-compose.yml` runs
-only PostgreSQL and Redis, and no volume is involved.
+and both are started from the repository root. On a laptop
+`infra/docker-compose.yml` runs only PostgreSQL and Redis, and no volume is
+involved. On the dev server its `app` profile runs both processes in
+containers, sharing the tmpfs volume `audio-tmp` (see "The dev server" below).
 
 Containerising either process means both must see one **local** directory at
 that path: a bind mount of the host directory (the only option when one of the
@@ -572,6 +574,40 @@ Starlette's multipart parser before module A's code runs. It is deleted when
 the request closes. `AUTUNE_AUDIO_TEMP_DIR` is the copy this module owns and
 checks; the other one is the web framework's, and the same "not a synced
 folder" rule applies to `TMPDIR` on a developer machine.
+
+## The dev server
+
+A push to `dev` runs `.github/workflows/dev.yml` on the self-hosted Windows
+runner DEV-SERVER1. It starts PostgreSQL and Redis, runs `alembic upgrade
+heads`, then builds and starts the `app` profile of `infra/docker-compose.yml`:
+
+| Container | Port | What it runs |
+| --- | --- | --- |
+| `api` | 8000, every interface | `uvicorn autune_api.main:app` |
+| `worker` | none | Celery, queues `default,cpu_heavy,gpu`, `--pool=solo` |
+| `web` | 3000, every interface | `next start`, built with `NEXT_PUBLIC_API_URL=http://<DEV_PUBLIC_HOST>:8000` |
+| `postgres`, `redis` | 5432, 6379, loopback only | as locally |
+
+It runs with `AUTUNE_ENV=local` and the implementations `scripts/up.sh` picks
+without `--real-models` (#517). That makes it a **team-only host for dummy
+meetings**: `/api/audio/dev/token` is mounted and issues a token for any email,
+so anyone who reaches port 3000 or 8000 can read any user's meetings. Keep both
+ports inside the team network, and put no real meeting on it.
+
+Configuration lives in the repository, not on the host:
+
+| Name | Kind | Required |
+| --- | --- | --- |
+| `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` | secret | yes; the deploy stops without them |
+| `DEV_PUBLIC_HOST` | variable | yes; the address teammates type into a browser, inlined into the web build |
+| `AUTUNE_AUDIO_HF_TOKEN` | secret | yes; pyannote is gated, so every upload fails after transcription without it ("Pyannote and its three gated repositories" above) |
+| `AUTUNE_AGENT_LLM_API_KEY` | secret | no; without it the agent chat refuses |
+
+Sign in the way section "A token for the browser" describes, against
+`http://<DEV_PUBLIC_HOST>:8000`, and set the token with `localStorage` in the
+browser console. The first upload downloads Whisper and the first context task
+KURE-v1 and its re-ranker (several GB) into the `models` volume, which survives
+redeploys.
 
 ## Environments
 

@@ -1,0 +1,28 @@
+# Build context for infra/docker/*.Dockerfile. Keep it to what an image needs:
+# the context is sent whole on every build, and anything here can end up in a
+# layer.
+.git
+.github
+.githooks
+.claude
+.superpowers
+.logs
+docs
+**/node_modules
+**/.next
+**/.venv
+**/__pycache__
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+
+# Secrets and data never go into an image (docs/architecture/privacy.md).
+.env
+.env.*
+!.env.example
+*.mp3
+*.wav
+*.m4a
+*.flac
+models/
+.cache/

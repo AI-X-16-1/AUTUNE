@@ -1,6 +1,44 @@
 # Local development services. See docs/engineering/environments.md.
-# Two services, both needed by everyone.
+# Two services, both needed by everyone. `docker compose up` starts only these.
+#
+# The `app` profile adds the application itself -- api, worker, web and a
+# one-shot `migrate` -- for DEV-SERVER1 (#517), where .github/workflows/dev.yml
+# runs `--profile app`. On a laptop, scripts/up.sh runs the three processes
+# outside Docker instead.
 name: autune
+
+# What the api, worker and migrate containers share. `.env.example` is the base,
+# so a container sees what `cp .env.example .env` gives a laptop; `environment`
+# then overrides it, the way scripts/up.sh overrides a sourced `.env`.
+x-python: &python
+  build: {context: .., dockerfile: infra/docker/python.Dockerfile}
+  image: autune-python:dev
+  profiles: ["app"]
+  env_file: [../.env.example]
+  environment: &python-env
+    # Team-only http host with dummy meetings only (#517). This mounts
+    # /api/audio/dev/token, which issues a token for any email.
+    AUTUNE_ENV: local
+    # A password holding URL-reserved characters (@ : / ?) would break this URL.
+    AUTUNE_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-autune}:${POSTGRES_PASSWORD:-autune}@postgres:5432/${POSTGRES_DB:-autune}
+    AUTUNE_REDIS_URL: redis://redis:6379/0
+    AUTUNE_WEB_BASE_URL: http://${DEV_PUBLIC_HOST:-localhost}:3000
+    AUTUNE_CORS_ALLOWED_ORIGINS: http://${DEV_PUBLIC_HOST:-localhost}:3000
+    AUTUNE_AUDIO_HF_TOKEN: ${AUTUNE_AUDIO_HF_TOKEN:-}
+    AUTUNE_AGENT_LLM_API_KEY: ${AUTUNE_AGENT_LLM_API_KEY:-}
+    # The implementations scripts/up.sh runs without --real-models, for the
+    # same reasons it gives: B's checkpoints are unpublished (#112) and both NLI
+    # checkpoints are a private repo (#172).
+    AUTUNE_EXTRACTION_CLASSIFIER_IMPL: fake
+    AUTUNE_EXTRACTION_NLI_IMPL: fake
+    AUTUNE_CONTEXT_NLI_IMPL: fake
+    AUTUNE_CONTEXT_EMBEDDER_IMPL: kure_v1_local
+    AUTUNE_CONTEXT_RERANKER_IMPL: bge_reranker_v2_m3_ko_local
+    AUTUNE_GAP_NER_IMPL: spacy
+    AUTUNE_INTELLIGENCE_GAP_CLASSIFIER_IMPL: local
+  depends_on:
+    postgres: {condition: service_healthy}
+    redis: {condition: service_healthy}
 
 services:
   postgres:
@@ -33,5 +71,63 @@ services:
       timeout: 3s
       retries: 10
 
+  migrate:
+    <<: *python
+    # Run on its own before `up` (dev.yml): `up --wait` counts a container that
+    # exits, even with 0, as a failure.
+    profiles: ["migrate"]
+    # `heads`, plural: each module owns an independent branch (invariant 7).
+    command: ["alembic", "-c", "infra/alembic.ini", "upgrade", "heads"]
+
+  api:
+    <<: *python
+    command: ["uvicorn", "autune_api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    # On every interface, unlike Postgres and Redis: the browser uploads and
+    # opens the live socket here directly. Keep 8000 inside the team network.
+    ports: ["8000:8000"]
+    volumes: ["audio-tmp:/tmp/autune-audio"]
+    # Starlette writes each multipart upload to the OS temp directory before
+    # module A's code runs (docs/engineering/environments.md); keep that copy
+    # in memory too.
+    tmpfs: ["/tmp"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      # Importing every module (torch among them) takes a while on a CPU.
+      start_period: 120s
+
+  worker:
+    <<: *python
+    # --pool=solo: E's classifier aborts under prefork or threads (#329), as in
+    # scripts/up.sh.
+    command: ["celery", "-A", "autune_worker.celery_app", "worker",
+              "-Q", "default,cpu_heavy,gpu", "-l", "info", "--pool=solo"]
+    volumes:
+      # The API writes an upload here and the worker transcribes it, so the
+      # two share it. tmpfs: raw audio never lands on a disk (invariant 11).
+      - audio-tmp:/tmp/autune-audio
+      # Whisper, pyannote, KURE-v1 and the re-ranker download on first use
+      # (several GB); a named volume keeps them across redeploys.
+      - models:/models
+
+  web:
+    build:
+      context: ..
+      dockerfile: infra/docker/web.Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: http://${DEV_PUBLIC_HOST:-localhost}:8000
+        API_PROXY_TARGET: http://api:8000
+    image: autune-web:dev
+    profiles: ["app"]
+    ports: ["3000:3000"]
+    depends_on:
+      api: {condition: service_healthy}
+
 volumes:
   pgdata:
+  models:
+  audio-tmp:
+    # Shared between api and worker, and in memory only.
+    driver_opts: {type: tmpfs, device: tmpfs, o: "uid=1000,gid=1000,mode=0700"}
