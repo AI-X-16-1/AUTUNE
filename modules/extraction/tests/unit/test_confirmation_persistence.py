@@ -19,9 +19,18 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from autune_contracts.enums import UtteranceKind
-from autune_core import Base
+from autune_core import Base, Meeting, Participant, User
+from autune_core import Utterance as StoredUtterance
 from autune_extraction.confirmations import WEAK_ASSENT, ConfirmationResponse
-from autune_extraction.models import PENDING, RESOLVED, UNDECIDED, ExtConfirmation
+from autune_extraction.models import (
+    PENDING,
+    RESOLVED,
+    UNDECIDED,
+    ExtActionItem,
+    ExtActionItemSource,
+    ExtConfirmation,
+    ExtEditEvent,
+)
 from autune_extraction.service import (
     ambiguous_agreements_for_meeting,
     open_confirmation,
@@ -35,7 +44,22 @@ UTTERANCE = "utt_1"
 @pytest.fixture
 def session() -> Iterator[Session]:
     engine = create_engine("sqlite://")
-    Base.metadata.create_all(engine, tables=[ExtConfirmation.__table__])
+    # The item tables are here because answering *commitment* reads them: it looks
+    # for the utterance and the draft that answer makes, and this file's rules
+    # must hold beside it. The tables stay empty: no utterance, no draft.
+    Base.metadata.create_all(
+        engine,
+        tables=[
+            User.__table__,
+            Meeting.__table__,
+            Participant.__table__,
+            StoredUtterance.__table__,
+            ExtConfirmation.__table__,
+            ExtActionItem.__table__,
+            ExtActionItemSource.__table__,
+            ExtEditEvent.__table__,
+        ],
+    )
     with Session(engine) as session:
         yield session
 

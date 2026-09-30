@@ -67,6 +67,18 @@ agreement, and sync the result to Notion.
    first, then the speaker gets a Slack DM. Until the DM goes out the row is
    *not asked* and `AmbiguousAgreement.confirmation_sent` is false; sending
    needs the speaker's Slack account (#70) and a team Slack client (#30).
+   **What the answer does.** *Commitment* makes one draft item for that
+   utterance, slot-filled like any commitment (the speaker is the assignee, the
+   first date phrase the due date, the utterance's own text the description),
+   in *needs confirmation* with confidence 1.0 — the speaker's answer is the
+   certainty, and the team still accepts the item before it leaves for Notion
+   or a calendar. Any other answer makes no item; a later answer replaces an
+   earlier one, so changing *commitment* to *not a commitment* takes the draft
+   back unless a person has moved or edited it since. A rerun of the meeting
+   keeps the draft (it is derived from `ext_confirmations` again) and never
+   makes a second one. `ext_classifications` is not rewritten: it records what
+   the model said and `resolved_kind` what the speaker said, and the two stay
+   comparable.
 7. **Sync** — when a person confirms an action item (moves it out of
    `needs_confirmation`), create one page for it in the team's Notion database
    and store the URL in `ext_external_refs` (#30). One page per item: a later
