@@ -28,6 +28,25 @@ export function googleStartUrl(redirectTo = "/"): string {
   return authUrl(`/google/start?redirect_to=${encodeURIComponent(redirectTo)}`);
 }
 
+/** Which providers this server can complete sign-in with. */
+export interface Providers {
+  google: boolean;
+}
+
+/**
+ * Null when the server could not be asked. The caller then leaves the buttons
+ * enabled: a failed probe is not evidence that sign-in is off.
+ */
+export async function getProviders(): Promise<Providers | null> {
+  try {
+    const response = await fetch(authUrl("/providers"), { credentials: "include" });
+    if (!response.ok) return null;
+    return (await response.json()) as Providers;
+  } catch {
+    return null;
+  }
+}
+
 /** The current user, or null when there is no valid session. */
 export async function getSession(): Promise<SessionUser | null> {
   try {
@@ -71,4 +90,93 @@ export async function requestMagicLink(email: string): Promise<void> {
     // keep the default
   }
   throw new ApiError(response.status, "magic_link_failed", message);
+}
+
+/**
+ * Where the browser goes to connect the signed-in person's own Google Calendar
+ * (#435). A full navigation: Google's consent screen, then back to `redirectTo`
+ * with `?calendar=connected`.
+ */
+export function googleCalendarConnectUrl(redirectTo = "/"): string {
+  return authUrl(`/google/calendar/start?redirect_to=${encodeURIComponent(redirectTo)}`);
+}
+
+/** Whether the signed-in person has connected their own calendar. */
+export async function getCalendarConnection(): Promise<{ connected: boolean } | null> {
+  try {
+    const response = await fetch(authUrl("/google/calendar"), { credentials: "include" });
+    if (!response.ok) return null;
+    return (await response.json()) as { connected: boolean };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Revoke the grant at Google and forget it. `revoked` is false when Google did
+ * not confirm -- the connection is gone here either way.
+ */
+export async function disconnectCalendar(): Promise<{ revoked: boolean }> {
+  const response = await fetch(authUrl("/google/calendar/disconnect"), {
+    method: "POST",
+    credentials: "include",
+  });
+  if (!response.ok) {
+    throw new ApiError(response.status, "calendar_disconnect_failed", "disconnect failed");
+  }
+  return (await response.json()) as { revoked: boolean };
+}
+
+
+/** A team's Jira connection, as a member of the meeting's team sees it. */
+export interface JiraConnection {
+  connected: boolean;
+  needs_reconnect?: boolean;
+  site_name?: string | null;
+  project_key?: string | null;
+  projects?: { key: string; name: string }[];
+}
+
+/**
+ * Where the browser goes to connect the team's Jira (#82, #428): Atlassian's
+ * consent screen, then back to `redirectTo` with `?jira=connected|failed`. The
+ * team is the meeting's, checked against the person's membership.
+ */
+export function jiraConnectUrl(meetingId: string, redirectTo = "/"): string {
+  return authUrl(
+    `/jira/start?meeting_id=${encodeURIComponent(meetingId)}&redirect_to=${encodeURIComponent(redirectTo)}`,
+  );
+}
+
+export async function getJiraConnection(meetingId: string): Promise<JiraConnection | null> {
+  try {
+    const response = await fetch(authUrl(`/jira?meeting_id=${encodeURIComponent(meetingId)}`), {
+      credentials: "include",
+    });
+    if (!response.ok) return null;
+    return (await response.json()) as JiraConnection;
+  } catch {
+    return null;
+  }
+}
+
+export async function chooseJiraProject(meetingId: string, projectKey: string): Promise<void> {
+  const query = `meeting_id=${encodeURIComponent(meetingId)}&project_key=${encodeURIComponent(projectKey)}`;
+  const response = await fetch(authUrl(`/jira/project?${query}`), {
+    method: "POST",
+    credentials: "include",
+  });
+  if (!response.ok) {
+    throw new ApiError(response.status, "jira_project_failed", "choosing a project failed");
+  }
+}
+
+export async function disconnectJira(meetingId: string): Promise<void> {
+  const response = await fetch(
+    authUrl(`/jira/disconnect?meeting_id=${encodeURIComponent(meetingId)}`),
+    { method: "POST", credentials: "include" },
+  );
+  if (!response.ok) {
+    throw new ApiError(response.status, "jira_disconnect_failed", "disconnect failed");
+  }
 }

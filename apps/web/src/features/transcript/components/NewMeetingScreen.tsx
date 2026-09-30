@@ -18,6 +18,33 @@ const ACCEPTED = [".mp3", ".wav", ".m4a"];
 const MAX_BYTES = 500 * 1024 * 1024;
 
 /**
+ * `now`, in the shape `<input type="datetime-local">` wants: local wall time,
+ * no zone, minutes precision.
+ *
+ * `toISOString()` would be UTC, which the input renders as a time the person
+ * did not mean. Subtracting the offset first makes the slice come out as what
+ * their own clock reads.
+ */
+function localNow(): string {
+  const now = new Date();
+  return new Date(now.getTime() - now.getTimezoneOffset() * 60_000)
+    .toISOString()
+    .slice(0, 16);
+}
+
+/**
+ * What the browser typed, as an instant the API can store.
+ *
+ * `datetime-local` has no zone, so `new Date(value)` reads it in the browser's
+ * own — which is the intent: somebody typing "14:00" means two in the
+ * afternoon where they are.
+ */
+function asInstant(value: string): string | undefined {
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? undefined : parsed.toISOString();
+}
+
+/**
  * S06's file-upload path, with S03's dropzone and S10's consent, on one page.
  *
  * Three calls in the order the backend needs them: open the meeting, attest
@@ -50,6 +77,11 @@ export function NewMeetingScreen({
   const [teams, setTeams] = useState<TeamSummary[] | null>(null);
   const [teamId, setTeamId] = useState("");
   const [title, setTitle] = useState("");
+  // When the meeting happened, not when the file is being uploaded. It
+  // defaults to now because most uploads follow the meeting closely, and it is
+  // editable because a recording carried over from yesterday is the case that
+  // makes the default wrong (#340).
+  const [startedAt, setStartedAt] = useState(localNow);
   const [file, setFile] = useState<File | null>(null);
   const [consented, setConsented] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -95,7 +127,11 @@ export function NewMeetingScreen({
       if (!meetingId) {
         setStep("creating");
         meetingId = (
-          await createMeeting({ title: title.trim(), team_id: teamId })
+          await createMeeting({
+            title: title.trim(),
+            team_id: teamId,
+            started_at: asInstant(startedAt),
+          })
         ).meeting_id;
       }
       setStep("consenting");
@@ -144,6 +180,22 @@ export function NewMeetingScreen({
                 className={INPUT}
                 style={INPUT_STYLE}
               />
+            </Field>
+            <Field label="회의 시작">
+              <input
+                type="datetime-local"
+                value={startedAt}
+                onChange={(e) => setStartedAt(e.target.value)}
+                className={INPUT}
+                style={INPUT_STYLE}
+              />
+              <p
+                className="mt-1 text-[var(--color-ink-muted)]"
+                style={{ fontSize: "var(--text-metaSmall)" }}
+              >
+                &quot;이번 주 금요일까지&quot; 같은 표현을 언제 기준으로 읽을지
+                정합니다. 지난 회의 녹음이면 그때로 고쳐 주세요.
+              </p>
             </Field>
             <Field label="팀">
               {teams === null ? (

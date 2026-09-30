@@ -106,10 +106,16 @@ for name in MODULES:
 Celery does the same: `include=[f"autune_{m}.tasks" for m in MODULES]`, and
 `apps/bot` calls `autune_{m}.slack.register(app)` for each module.
 
-The one hand-mounted router is `/api/auth` (`autune_core.auth_router`): sign-in
-is cross-cutting, owned by the whole team, and belongs to no module, so
-`main.py` registers it by name next to the loop. This is a fixed exception, not
-a precedent — a *module* feature still goes in that module's `router.py`.
+Two routers are mounted by name next to the loop, and only two:
+
+- `/api/auth` (`autune_core.auth_router`) — sign-in is cross-cutting, owned by
+  the whole team, and belongs to no module.
+- `/api/agent` (`autune_agent.router`) — the agent layer is not a module and is
+  not in `MODULES` (ADR 0010). Its subagents are collected inside the layer, so
+  adding one never touches `main.py`.
+
+Both are fixed exceptions, not a precedent — a *module* feature still goes in
+that module's `router.py`, and a subagent in `agent/`.
 
 `apps/web` is the only JavaScript app; `apps/bot` is Python, because Slack
 integration uses Bolt for Python.

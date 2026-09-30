@@ -7,7 +7,7 @@ nobody else parses.
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -225,6 +225,17 @@ class SourceUtterance(BaseModel):
     text: str
 
 
+class EditHistoryEntry(BaseModel):
+    """One thing a person did to an item: which fields, when -- never the value
+    before or after, and never who (#109, ADR 0003)."""
+
+    kind: Literal["created", "edited"]
+    fields: list[str]
+    """For ``edited``: the fields changed, e.g. ``["due_date"]``. Empty for
+    ``created`` and for edits recorded before fields were kept."""
+    at: datetime
+
+
 class ActionItemDetail(ActionItemRead):
     """One item and its evidence, for S18.
 
@@ -245,6 +256,10 @@ class ActionItemDetail(ActionItemRead):
     the row alone. This list is read from ``utterances`` anyway, so the spoken
     order comes with it at no extra cost.
     """
+
+    history: list[EditHistoryEntry] = Field(default_factory=list)
+    """What people did to the item, oldest first (S18, #109). Empty for an item
+    the model extracted and nobody has touched since."""
 
 
 # --- review before anything leaves (#246) ------------------------------------

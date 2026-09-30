@@ -69,7 +69,28 @@ somebody pointed at a non-default template. Everything here still cascades from
 ## AI stack
 
 spaCy NER (Korean), rule-based relation extraction with LLM assistance,
-NetworkX for PageRank and betweenness, weighted risk scoring.
+NetworkX for PageRank and betweenness, weighted risk scoring. Template
+comparison can also read the speech by meaning with KURE-v1 in process
+(`AUTUNE_GAP_EMBEDDER_IMPL`, off by default); the example sentences it compares
+against live in the template files and must never be copied from the eval set.
+
+This module has **two external calls, both `gemini`, both off by default**,
+sharing one client (`pipeline/gemini.py`):
+
+- `AUTUNE_GAP_VERIFIER_IMPL` checks the utterances the embedder cannot decide.
+  It sends each ambiguous utterance and its candidate items, and confirms
+  candidates and nothing else; coverage and risk stay in `detect`.
+- `AUTUNE_GAP_RELATION_IMPL` asks about the mention pairs the relation rules
+  decline (`relations.hard_pairs`). It sends only utterances holding such a
+  pair, and may add a relation between an offered pair and nothing else; the
+  rules' relations stand.
+
+Each sends utterances masked but with any name or number said aloud (#392 is
+the open decision). Keep both that narrow, keep every request going through
+`autune_integrations`, and never catch the `PrivacyViolationError` its outbound
+check raises. A batch can take minutes in the worst case: four attempts at a
+60 s timeout, then the same on the fallback model, and gap tasks have no Celery
+time limit.
 
 The graph is one meeting's worth — tens of nodes — so it is built in memory from
 rows each run. At that size PageRank and betweenness take single-digit

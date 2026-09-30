@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
 from autune_contracts.enums import UtteranceKind
-from autune_core import AutuneError, Base, Meeting, Utterance, get_session
+from autune_core import AutuneError, Base, Meeting, TeamMember, Utterance, get_session
 from autune_extraction import service, tasks
 from autune_extraction.config import ExtractionSettings
 from autune_extraction.confirmations import WEAK_ASSENT
@@ -40,12 +40,15 @@ from autune_extraction.router import router
 from autune_extraction.schemas import DecisionReviewUpdate
 from autune_integrations.fakes import FakeNotion
 
+from .conftest import sign_in
+
 MEETING = "mtg_1"
 PREFIX = "/api/extraction"
 K = UtteranceKind
 
 TABLES = [
     Meeting.__table__,
+    TeamMember.__table__,
     Utterance.__table__,
     ExtActionItem.__table__,
     ExtActionItemSource.__table__,
@@ -113,6 +116,7 @@ def client(session: Session) -> Iterator[TestClient]:
 
     app.include_router(router, prefix=PREFIX)
     app.dependency_overrides[get_session] = lambda: session
+    sign_in(app, session)
     yield TestClient(app)
 
 

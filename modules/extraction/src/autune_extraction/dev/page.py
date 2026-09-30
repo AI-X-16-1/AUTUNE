@@ -81,6 +81,19 @@ PAGE = """<!doctype html>
     <div id="notion-result" class="result"></div>
   </section>
 
+  <section>
+    <h2>Google Calendar</h2>
+    <p class="hint">사람마다 자기 캘린더를 연결합니다. 그 사람이 담당인 확정 액션의 마감일이 그 사람 캘린더에 종일 일정으로 들어가고(참석자 없음, 초대 메일 없음), 캘린더에서 날짜를 옮기면 10분 안에 Autune 마감일도 바뀝니다. refresh token은 Google OAuth Playground에서 이 배포의 OAuth 클라이언트로, 범위 <code>https://www.googleapis.com/auth/calendar.events</code>를 골라 받습니다.</p>
+    <label>user_id (이 토큰의 주인)</label>
+    <input id="calendar-user" placeholder="user_...">
+    <label>Refresh token</label>
+    <input id="calendar-token" placeholder="1//...">
+    <label>캘린더 id</label>
+    <input id="calendar-id" placeholder="primary 또는 ...@group.calendar.google.com" value="primary">
+    <button id="calendar-connect" onclick="connectCalendar()">Calendar 연결</button>
+    <div id="calendar-result" class="result"></div>
+  </section>
+
 <script>
 // Built with DOM calls rather than innerHTML: the text comes from the server
 // and from Notion's own error messages.
@@ -112,24 +125,38 @@ function connected(data) {
   ]);
 }
 
-function failed(status, message) {
-  const hint = status === 404
-    ? "페이지를 연동에 공유했는지 확인하세요: Notion 페이지 오른쪽 위 ••• → 연결에서 추가."
-    : status === 401
-      ? "Integration token을 다시 확인하세요."
-      : null;
+const NOTION_HINTS = {
+  404: "페이지를 연동에 공유했는지 확인하세요: Notion 페이지 오른쪽 위 ••• → 연결에서 추가.",
+  401: "Integration token을 다시 확인하세요.",
+};
+
+const CALENDAR_HINTS = {
+  400: "API의 .env에 Google OAuth 클라이언트 id와 secret이 있어야 합니다.",
+  401: "OAuth Playground에서 refresh token을 새로 받으세요. 같은 OAuth 클라이언트여야 합니다.",
+  404: "캘린더 id를 확인하세요. 토큰을 만든 계정이 그 캘린더를 볼 수 있어야 합니다.",
+};
+
+function calendarConnected(data) {
+  return card("ok", "✓ Google Calendar에 연결했습니다", [
+    node("p", {}, ["앞으로 7일 일정 " + data.upcoming + "건을 읽었습니다."]),
+    node("p", { class: "next" }, ["이제 이 사람이 담당인 항목을 확정하면 이 사람 캘린더에 마감일이 생기고, 캘린더에서 옮긴 날짜는 Autune에 반영됩니다."]),
+  ]);
+}
+
+function failed(status, message, hints) {
+  const hint = (hints || NOTION_HINTS)[status] || null;
   return card("err", "연결하지 못했습니다", [
     node("p", {}, [message]),
     ...(hint ? [node("p", { class: "next" }, [hint])] : []),
   ]);
 }
 
-async function post(path, body, resultId, buttonId, render) {
+async function post(path, body, resultId, buttonId, render, hints) {
   const el = document.getElementById(resultId);
   const button = document.getElementById(buttonId);
   button.disabled = true;
   el.className = "result busy";
-  el.replaceChildren("연결 중… Notion에 DB를 만드는 데 몇 초 걸립니다.");
+  el.replaceChildren("연결 중… 몇 초 걸립니다.");
   try {
     const res = await fetch(path, {
       method: "POST",
@@ -138,7 +165,7 @@ async function post(path, body, resultId, buttonId, render) {
     });
     const data = await res.json().catch(() => ({}));
     el.className = "result";
-    el.replaceChildren(res.ok ? render(data) : failed(res.status, describe(data)));
+    el.replaceChildren(res.ok ? render(data) : failed(res.status, describe(data), hints));
   } catch (e) {
     el.className = "result";
     el.replaceChildren(failed(0, "API에 닿지 못했습니다: " + String(e)));
@@ -161,6 +188,14 @@ function connectNotion() {
     token: document.getElementById("notion-token").value,
     page_id: document.getElementById("notion-page").value,
   }, "notion-result", "notion-connect", connected);
+}
+
+function connectCalendar() {
+  post("/api/extraction/dev/connect-calendar", {
+    user_id: document.getElementById("calendar-user").value,
+    refresh_token: document.getElementById("calendar-token").value,
+    calendar_id: document.getElementById("calendar-id").value,
+  }, "calendar-result", "calendar-connect", calendarConnected, CALENDAR_HINTS);
 }
 </script>
 </main>

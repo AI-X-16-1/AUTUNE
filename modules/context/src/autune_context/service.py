@@ -39,9 +39,17 @@ from autune_context.pipeline.change import classify_change, strip_keep_words
 from autune_context.pipeline.retrieval import HybridRetriever, visible_meeting_clauses
 from autune_context.pipeline.topics import extract_topics
 from autune_contracts import ChangeType, ContextLinks, DecisionChange, NliLabel, TopicLink
-from autune_core import Meeting, Participant, TeamMember, Utterance, get_logger, session_scope
+from autune_core import (
+    Meeting,
+    Participant,
+    TeamMember,
+    User,
+    Utterance,
+    get_logger,
+    session_scope,
+)
 from autune_core.errors import ConflictError, NotFoundError
-from autune_integrations import SlackApi, assert_personal_delivery
+from autune_integrations import PermanentIntegrationError, SlackApi, assert_personal_delivery
 
 if TYPE_CHECKING:
     from autune_context.pipeline.base import Embedder, NliModel
@@ -1036,31 +1044,58 @@ def collect_drift_notices(session: Session, meeting_id: str) -> list[DriftNotice
     return notices
 
 
+def _post_to_channel(
+    slack: SlackApi, channel: str, fallback: str, blocks: list[dict], *, notice: str
+) -> bool:
+    """Post one channel notice; ``False`` when Slack refuses it for good.
+
+    Every send in this module runs *after* its claim commits
+    (``tasks.notify_context_events``, ``tasks.notify_late_drift``), so a
+    notice that raises out of a loop takes every notice after it with it, and
+    none is ever retried. A permanent refusal -- ``ok: false`` such as
+    ``not_in_channel`` once the bot is removed (#280, #478) -- is therefore
+    logged and skipped, not raised. A transient failure still raises: the task
+    fails loudly rather than a rate limit silently becoming a lost notice. The
+    log carries Slack's error code only, never the message it refused.
+    """
+    try:
+        slack.post_message(channel, fallback, blocks)
+    except PermanentIntegrationError as exc:
+        log.warning("context_channel_notice_refused", notice=notice, error=exc.code)
+        return False
+    return True
+
+
 def send_topic_link_notices(slack: SlackApi, channel: str, notices: list[TopicLinkNotice]) -> int:
     """Post the channel notices for already-collected topic links.
 
     Capped at ``ContextSettings.max_topic_link_notices`` individual messages;
     anything past the cap collapses into one rollup notice instead of posting
     one message per topic, so a meeting with many linked topics does not flood
-    the channel. Returns the total notice count (shown plus rolled up).
+    the channel. Returns how many topic links reached the channel -- shown ones
+    posted, plus the rolled-up count if the rollup posted. A notice Slack
+    refuses is skipped (``_post_to_channel``).
     """
     cap = get_settings().max_topic_link_notices
     shown, overflow = notices[:cap], notices[cap:]
+    sent = 0
     for notice in shown:
         fallback, blocks = build_topic_link_notice(
             topic_label=notice.topic_label, linked_meeting_date=notice.linked_meeting_date
         )
-        slack.post_message(channel, fallback, blocks)
+        sent += _post_to_channel(slack, channel, fallback, blocks, notice="topic_link")
     if overflow:
         fallback, blocks = build_topic_link_rollup_notice(count=len(overflow))
-        slack.post_message(channel, fallback, blocks)
+        if _post_to_channel(slack, channel, fallback, blocks, notice="topic_link_rollup"):
+            sent += len(overflow)
     log.info(
         "context_topic_link_notice_sent",
         count=len(notices),
         shown=len(shown),
         rolled_up=len(overflow),
+        sent=sent,
     )
-    return len(notices)
+    return sent
 
 
 def send_decision_drift_notices(slack: SlackApi, channel: str, notices: list[DriftNotice]) -> int:
@@ -1068,9 +1103,25 @@ def send_decision_drift_notices(slack: SlackApi, channel: str, notices: list[Dri
 
     One channel notice per event (never names the absentees -- see
     ``notify.py``), plus one DM per absent stakeholder (does not need to name
-    anyone -- they are the recipient). Returns the count of drift events sent
-    (not the count of DMs sent).
+    anyone -- they are the recipient). Returns the count of drift events whose
+    channel notice posted (not the count of DMs sent).
+
+    **One unreachable recipient never costs the others theirs.** A channel
+    notice Slack refuses is skipped (``_post_to_channel``) and that event's DMs
+    still go. A DM Slack refuses for good -- the person has not linked a Slack
+    account for direct messages, or ``ok: false`` (#478) -- is counted and
+    skipped, and the next person still gets theirs. Nothing is retried: the
+    claim committed before this ran. ``PrivacyViolationError`` is not a
+    ``PermanentIntegrationError`` and still raises; a transient failure still
+    raises too.
+
+    The skipped-DM log names no one. Each recipient here is someone who was
+    *absent* when the decision changed, which the channel notice deliberately
+    reduces to a count (``notify.py``); a log line keyed by their id would
+    keep the per-person record that notice refuses to publish.
     """
+    posted = dms_sent = 0
+    dms_skipped: dict[str, int] = {}
     for notice in notices:
         channel_fallback, channel_blocks = build_decision_drift_channel_notice(
             thread_label=notice.thread_label,
@@ -1079,7 +1130,9 @@ def send_decision_drift_notices(slack: SlackApi, channel: str, notices: list[Dri
             absent_count=len(notice.absent_user_ids),
             meeting_date=notice.meeting_date,
         )
-        slack.post_message(channel, channel_fallback, channel_blocks)
+        posted += _post_to_channel(
+            slack, channel, channel_fallback, channel_blocks, notice="decision_drift"
+        )
 
         dm_fallback, dm_blocks = build_decision_drift_personal_dm(
             thread_label=notice.thread_label,
@@ -1088,10 +1141,22 @@ def send_decision_drift_notices(slack: SlackApi, channel: str, notices: list[Dri
             meeting_date=notice.meeting_date,
         )
         for user_id in notice.absent_user_ids:
-            _deliver_personal(slack, user_id, dm_fallback, dm_blocks)
+            try:
+                _deliver_personal(slack, user_id, dm_fallback, dm_blocks)
+            except PermanentIntegrationError as exc:
+                dms_skipped[exc.code] = dms_skipped.get(exc.code, 0) + 1
+                continue
+            dms_sent += 1
 
-    log.info("context_decision_drift_notice_sent", count=len(notices))
-    return len(notices)
+    if dms_skipped:
+        log.warning("context_decision_drift_dm_skipped", by_error=dms_skipped)
+    log.info(
+        "context_decision_drift_notice_sent",
+        count=len(notices),
+        posted=posted,
+        dms_sent=dms_sent,
+    )
+    return posted
 
 
 def notify_topic_links(session: Session, slack: SlackApi, channel: str, meeting_id: str) -> int:
@@ -1119,6 +1184,86 @@ def notify_decision_drift(session: Session, slack: SlackApi, channel: str, meeti
 # --------------------------------------------------------------------------- #
 # Reads — served by router.py
 # --------------------------------------------------------------------------- #
+
+
+# --------------------------------------------------------------------------- #
+# Who may read — every route under /api/context that names a meeting, a link,
+# a thread or a team calls one of these first (#189)
+# --------------------------------------------------------------------------- #
+
+
+def _is_team_member(session: Session, *, user_id: str, team_id: str) -> bool:
+    return (
+        session.scalar(
+            select(TeamMember.id).where(
+                TeamMember.user_id == user_id, TeamMember.team_id == team_id
+            )
+        )
+        is not None
+    )
+
+
+def _refuse(kind: str, ident: object, reader: User, reason: str) -> NotFoundError:
+    # Ids only: a title or a topic label is meeting content.
+    log.info(
+        "context_read_refused", kind=kind, ident=str(ident), reader_id=reader.id, reason=reason
+    )
+    return NotFoundError(kind, str(ident))
+
+
+def require_readable_team(session: Session, team_id: str, reader: User) -> None:
+    """Raise unless ``reader`` belongs to ``team_id``.
+
+    A token proves who is asking, not whose meetings they may read. **An
+    unknown id and somebody else's get the same answer**, a ``NotFoundError``
+    and never a 403 -- a 403 confirms the id exists, and ids are all a caller
+    needs to walk the table. Same rule as ``autune_gap.service
+    .require_readable_meeting`` (#276); the log keeps the reason.
+    """
+    if not _is_team_member(session, user_id=reader.id, team_id=team_id):
+        raise _refuse("team", team_id, reader, "not_a_member")
+
+
+def require_readable_meeting(session: Session, meeting_id: str, reader: User) -> None:
+    """Raise unless ``reader`` belongs to this meeting's team. See
+    ``require_readable_team`` for why every refusal is a ``NotFoundError``."""
+    team_id = session.scalar(select(Meeting.team_id).where(Meeting.id == meeting_id))
+    if team_id is None:
+        raise _refuse("meeting", meeting_id, reader, "no_such_meeting")
+    if not _is_team_member(session, user_id=reader.id, team_id=team_id):
+        raise _refuse("meeting", meeting_id, reader, "not_a_member")
+
+
+def require_writable_link(session: Session, link_id: int, reader: User) -> None:
+    """Raise unless ``reader`` belongs to the team of the meeting this link is on.
+
+    The one write under /api/context, and the id most worth guarding: a link id
+    is an integer primary key, so every link can be reached by counting from 1
+    (#189). The refusal says "topic link" either way, so a caller learns nothing
+    about the meeting behind a link it may not touch.
+    """
+    team_id = session.scalar(
+        select(Meeting.team_id)
+        .join(CtxTopicLink, CtxTopicLink.meeting_id == Meeting.id)
+        .where(CtxTopicLink.id == link_id)
+    )
+    if team_id is None:
+        raise _refuse("topic link", link_id, reader, "no_such_link")
+    if not _is_team_member(session, user_id=reader.id, team_id=team_id):
+        raise _refuse("topic link", link_id, reader, "not_a_member")
+
+
+def require_readable_thread(session: Session, thread_id: str, reader: User) -> None:
+    """Raise unless ``reader`` belongs to the team this decision thread is on.
+
+    A thread is anchored on ``team_id``, not on a meeting, so that is the team
+    checked.
+    """
+    team_id = session.scalar(select(CtxDecision.team_id).where(CtxDecision.id == thread_id))
+    if team_id is None:
+        raise _refuse("decision thread", thread_id, reader, "no_such_thread")
+    if not _is_team_member(session, user_id=reader.id, team_id=team_id):
+        raise _refuse("decision thread", thread_id, reader, "not_a_member")
 
 
 def get_topic_links(

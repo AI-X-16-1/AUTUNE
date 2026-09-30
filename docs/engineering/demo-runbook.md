@@ -8,13 +8,18 @@ checklist rather than an afternoon.
 token ──> meeting ──> consent ──> upload ──> queue ──> worker ──> /meetings/{id}
 ```
 
-**Everything in this path is on `main`** as of 2026-09-21 (#300 gave the API a
-Celery app, #283 the consent route, #259 the upload and the job handover, #301
-the browser screens). Two ways through it: **section 3 is the browser** — one
-page, no `curl` — and **section 3b is the same path over HTTP**, for when a
-step needs isolating. The whole path was run end to end from the browser on
-2026-09-21 with a synthesized two-voice recording. What broke on the way is in
-section 6, marked *seen*.
+**Everything in this path is on `main`** as of 2026-09-29. Two ways through
+it: **section 3 is the browser** — one page, no `curl` — and **section 3b is
+the same path over HTTP**, for when a step needs isolating. What broke on the
+way is in section 6, marked *seen*.
+
+Last run end to end on **2026-09-29**, from a fresh checkout of `main`
+(`aa472ed`) with the real 5m27s six-person recording: 45 utterances, 6
+speakers, 9 action items, 1 decision, 15 classifications, 3 gaps, 145 topics,
+grade D, no tracebacks. The screens it walks through changed that day —
+sign-in (#425), the home meeting list (#416), the app shell and S15's tabs
+(#423), the meeting's start time (#461) and speaker identification (#370) all
+landed, and this file describes them.
 
 ## 1. Before anything
 
@@ -25,7 +30,7 @@ section 6, marked *seen*.
 | `AUTUNE_AUDIO_HF_TOKEN` | pyannote is gated. The licence must be accepted on **three** repos — `speaker-diarization-3.1`, `segmentation-3.0`, `speaker-diarization-community-1` — or diarization fails partway through loading, naming a model you never asked for | `.env` has it |
 | Whisper weights | `large-v3` downloads on first use, several GB | run the worker once, early, and wait |
 | A recording | mp3 / wav / m4a, a few minutes, **people who have agreed to be the demo** | you have the file |
-| `AUTUNE_ENV=local` | the token route and the dev page exist only under it | `.env` (it is the default) |
+| `AUTUNE_ENV=local` | the token route and the dev page exist only under it | `.env` (from `.env.example`; unset means `production`, #408) |
 | `AUTUNE_CORS_ALLOWED_ORIGINS=http://localhost:3000` | the page sends `Authorization`, so the browser preflights, and the API answers a preflight only for listed origins (#241, opt-in) | `.env`. **Without it the page says "Failed to fetch"** and `curl` works fine — seen |
 
 ```bash
@@ -99,25 +104,65 @@ and `curl -s localhost:8000/health` returns `"env": "local"` and five modules.
 
 Do 3b.1 once (a token, into the browser), then:
 
-1. Open `http://localhost:3000/meetings/new`.
-2. Title. The team is picked for you — the page reads `/api/audio/teams` for
-   the token's teams; if it says "속한 팀이 없습니다", the token is wrong or
+1. Open `http://localhost:3000`. The home screen lists every meeting the token
+   can see, newest first (#416). A fresh database has none, and it says so
+   with a way to make the first one. `회의 만들기` goes to step 2.
+
+   There is a sign-in screen at `/login` (#425), and it is not what the demo
+   uses: Google sign-in needs an OAuth client that does not exist yet, so the
+   browser still carries the token from 3b.1. Open `/login` to show it; come
+   back to `/` to continue.
+
+2. Title.
+
+3. **회의 시작** — when the meeting happened, defaulting to now (#461). Leave
+   it for a recording you are uploading straight after the meeting; set it back
+   for one from yesterday. It is not decoration: module B anchors a relative
+   due date on it, so with the wrong day "이번 주 금요일까지" becomes the wrong
+   date, and with no day at all it becomes no date.
+
+4. The team is picked for you — the page reads `/api/audio/teams` for the
+   token's teams; if it says "속한 팀이 없습니다", the token is wrong or
    terminal 1 is not up.
-3. Pick the recording (mp3 / wav / m4a, 500 MB). A wrong extension or size is
+
+5. Pick the recording (mp3 / wav / m4a, 500 MB). A wrong extension or size is
    refused under the dropzone before anything is sent.
-4. **Tick the consent line.** The button stays disabled until you do, and that
+
+6. **Tick the consent line.** The button stays disabled until you do, and that
    is the design: the page sends `POST /consent` *before* the upload, because
-   B and C analyse only consented utterances (#190). Skip it and the demo shows
-   a transcript and no action items.
-5. "업로드하고 분석 시작". The page opens the meeting, attests, uploads, and
+   B and C analyse only consented utterances (#190). Skip it — which the
+   browser will not let you, but `curl` will — and the demo shows a transcript,
+   no action items and no gaps, with `excluded=<n>` in the worker log as the
+   only sign of why.
+
+7. "업로드하고 분석 시작". The page opens the meeting, attests, uploads, and
    lands on `/meetings/{id}` — screen S12, six stages, "분석 중".
-6. Wait. The page polls the meeting every 3 s. Stages it cannot see say so
+
+8. Wait. The page polls the meeting every 3 s. Stages it cannot see say so
    ("단계별 진행률은 아직 제공되지 않아 회의 상태로 표시합니다"); per-stage
    progress needs a feed that does not exist. Terminal 2 is where the real
-   progress is (3b.5).
-7. When the worker finishes the page switches to the transcript on its own —
+   progress is (3b.5). About **11 minutes** for a 5m27s recording on an Apple
+   laptop, almost all of it Whisper.
+
+9. When the worker finishes the page switches to the transcript on its own —
    no reload. Rows with a time code, a speaker label (`화자 1`, `화자 2`, …) and
    masked text.
+
+   Above them, one row per speaker: **누구인지 확인이 필요합니다** (#370).
+   Pick a team member and press 지정 — the select alone does not assign, which
+   is deliberate; an arrow key on a closed select used to. There is no undo, so
+   the second control is the point. A team with one member has nothing to offer
+   in the list, which is what a demo on a fresh token looks like.
+
+   No candidate is offered on a first run, and that is not a fault:
+   `AUTUNE_AUDIO_VOICE_PROFILES_ENABLED` is **off by default**, so no voice
+   data is kept at all — not the per-meeting vector, not a profile — until
+   #92's legal review answers whether a voice embedding needs its own consent.
+   Confirming a speaker still names them on the transcript.
+
+10. The tabs above the transcript are the rest of the meeting: **액션** (B),
+    **갭** (C), **컨텍스트** (D), each its own URL (#423). A confirmed action
+    item carries its due date on the card.
 
 If the run fails, S12 goes red and offers "다시 업로드", which goes back to
 `/meetings/new?meeting={id}`: same meeting, new recording. A meeting that
@@ -350,7 +395,7 @@ Written down so the debugging starts from a list, not from nothing.
 | Symptom | Likely cause |
 | --- | --- |
 | **Page says "Failed to fetch"; `curl` with the token works** — *seen* | CORS. The browser preflights because of `Authorization`, and the API answers `OPTIONS` with 405 unless `AUTUNE_CORS_ALLOWED_ORIGINS` lists the page's origin (section 1) |
-| **A phone number is in the transcript in the clear** — *seen* | Whisper wrote `공일공 일이삼사 오육칠팔` as `010 -12345678`: a space and a hyphen, then eight digits run together. On `main` the separator class is one character, so no pattern matches and the storage guard — same patterns — passes it too. **#211 catches it.** Until #211 merges, treat any spoken number in a demo recording as unmasked |
+| **A phone number is in the transcript in the clear** — *seen, fixed* | Whisper wrote `공일공 일이삼사 오육칠팔` as `010 -12345678`: a space and a hyphen, then eight digits run together, which the one-character separator class did not match. #211 merged and catches it. Other shapes are still open — a number read with commas or one syllable at a time (#160), a six-digit pair (#148) — so a spoken number in a demo recording is not guaranteed masked |
 | **Worker: B, C and D each raise on the first utterance; E never aggregates** — *seen* | Section 4.1. Not a bug; each needs a model it cannot find by default |
 | Worker raises an `IntegrityError` on a meeting id you never created, seconds after starting — *seen* | A message left in the shared Redis by somebody else's earlier run. Harmless; `redis-cli FLUSHDB` on a dev box if it annoys |
 | Worker log says `audio_deleted bytes=0` for a file that was not empty — *seen* | The adopted-file path does not count bytes. Cosmetic; the file is gone |
@@ -367,6 +412,8 @@ Written down so the debugging starts from a list, not from nothing.
 | Page says "속한 팀이 없습니다" | The browser's token is for a user on no team, or is stale. Redo 3b.1 |
 | Page: transcript is one long row, one speaker — *seen* | The recording was synthesized (`say`); pyannote groups TTS voices as one speaker. Use a real recording for the demo |
 | Page shows an error state | The browser has no token. `.env.local` needs a restart of terminal 3; `localStorage` does not |
+| API log warns `audio_temp_dir_is_listable` at startup — *expected on any machine that ran Autune before 2026-09-29* | `AUTUNE_AUDIO_TEMP_DIR` was created before #464 and kept its old mode. The recordings in it are `0600` either way; what the warning is about is another account being able to *list* the directory. `chmod 700 /tmp/autune-audio` clears it. Not chmod-ed automatically, because that variable may point at a directory this process does not own |
+| A speaker row offers no 후보, only the picker | `AUTUNE_AUDIO_VOICE_PROFILES_ENABLED` is off by default, so no voice data is kept and nothing can be matched against (#370, #92). Manual 지정 still works and still names the speaker on the transcript |
 
 ## 7. Afterwards
 

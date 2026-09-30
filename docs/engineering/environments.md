@@ -67,7 +67,7 @@ prefix `AUTUNE_<MODULE>_`.
 
 | Variable | Example | Notes |
 | --- | --- | --- |
-| `AUTUNE_ENV` | `local` | `local`, `staging`, `production` |
+| `AUTUNE_ENV` | `local` | `local`, `staging`, `production`. **Unset means `production`** (#408), so a deployment that forgets it gets production's startup checks instead of running as a dev box. `.env.example`, CI and `scripts/up.sh` set `local` |
 | `AUTUNE_DATABASE_URL` | `postgresql+psycopg://autune:autune@localhost:5432/autune` | |
 | `AUTUNE_REDIS_URL` | `redis://localhost:6379/0` | |
 | `AUTUNE_SECRET_KEY` | | JWT signing. Never commit |
@@ -81,7 +81,7 @@ prefix `AUTUNE_<MODULE>_`.
 
 | Variable | Example | Notes |
 | --- | --- | --- |
-| `AUTUNE_GOOGLE_CLIENT_ID` | | Google Cloud OAuth client (W2). Blank disables Google sign-in |
+| `AUTUNE_GOOGLE_CLIENT_ID` | | Google Cloud OAuth client (W2). If any of these three is blank, Google sign-in is off: `/api/auth/providers` reports `google: false` and S01 disables the button |
 | `AUTUNE_GOOGLE_CLIENT_SECRET` | | Never commit |
 | `AUTUNE_GOOGLE_REDIRECT_URI` | `http://localhost:3000/api/auth/google/callback` | The **web** origin, not the API — the browser reaches `/api/*` through the Next proxy, so the callback must land there too. Must match a redirect URI registered in the Google Cloud console exactly, per environment |
 | `API_PROXY_TARGET` | `http://localhost:8000` | Web-only (read by `apps/web/next.config.ts`), where `/api/*` is proxied. Set per environment; not an `autune_core` setting |
@@ -102,7 +102,8 @@ issued; the cookie is what proves to whom.
 clears the cookie; the JWT it held stays valid until it expires. A token that
 leaked cannot be revoked, which is acceptable for a first version and is not
 acceptable for long — it needs a token version on `User`, or a server-side
-session, before this carries real meetings.
+session, before this carries real meetings. Until then the only way to end
+every session at once is rotating `AUTUNE_SECRET_KEY`, which signs everyone out.
 
 ### Web (`apps/web`)
 
@@ -162,6 +163,11 @@ Where that token comes from, and the two ways to give it to the browser:
 | `AUTUNE_AUDIO_DIARIZATION_MIN_SPEAKERS` / `…_MAX_SPEAKERS` | A | Bounds instead of an exact count. Ignored when `…_NUM_SPEAKERS` is set. Each must be ≥ 1; the settings refuse to load otherwise |
 | `NEXT_PUBLIC_AUTUNE_DEV_TOKEN` | A (web) | A bearer token for the browser, local only — see "A token for the browser" below |
 | `AUTUNE_AUDIO_DIARIZATION_MODEL` | A | Default `pyannote/speaker-diarization-3.1` |
+| `AUTUNE_AUDIO_DIARIZATION_DEVICE` | A | Where pyannote runs: empty (default) follows `AUTUNE_AUDIO_DEVICE`, or `cpu` · `mps` · `cuda`. Separate from `AUTUNE_AUDIO_DEVICE` because that one reaches faster-whisper, which has no Metal support. `mps` is 14.3× faster than CPU on the measured recording for a millisecond-identical result (`modules/audio/HISTORY.md` §2), but is untested under a prefork or threaded Celery worker — module E's SetFit aborts on Metal there (#329). **CUDA is unmeasured**: the millisecond agreement is CPU against MPS, and pyannote sharing VRAM with Whisper `large-v3` has not been tried; `=cpu` is the way out. **Setting it is a promise, leaving it empty is not** — an explicit device torch cannot reach refuses the task rather than running 14× slower in silence, while an empty one that cannot be used takes CPU and logs `diarization_device_unavailable`, because `AUTUNE_AUDIO_DEVICE=cuda` with a CPU torch wheel is a deployment that works today |
+| `AUTUNE_AUDIO_IDENTIFICATION_THRESHOLD` | A | Cosine similarity at or above which a voice profile is offered as a speaker's candidate (0.70, provisional). Never assigns; a person confirms |
+| `AUTUNE_AUDIO_SPEAKER_EMBEDDING_MAX_S` | A | Seconds of one speaker that go into their observation vector (10) |
+| `AUTUNE_AUDIO_SPEAKER_EMBEDDING_MIN_S` | A | A speaker with less speech than this in a meeting gets no vector (3) |
+| `AUTUNE_AUDIO_VOICE_PROFILES_ENABLED` | A | **Default `false`, and with it off no voice data is kept at all.** It gates both the worker's per-meeting observation vectors and the profile write in `assign_speaker`; a meeting reprocessed after it goes off gives its existing vectors back. Confirming a speaker still assigns them (`participants.user_id` is attendance, not biometric data), and deleting a profile is never gated by it. Off until #92's Q4 (is a voice embedding sensitive information under PIPA Article 23, and does it need its own refusable consent) is answered, or until auth exists to record that consent (#268) |
 | `AUTUNE_EXTRACTION_CLASSIFIER_IMPL` | B | `local` · `hosted` · `fake` · `llm`. Default `local`. `llm` is opt-in and not signed off for real meetings — see below |
 | `AUTUNE_EXTRACTION_CLASSIFIER_CHECKPOINT` | B | Pinned model, recorded with every classification. Never a floating tag. **Blank by default** — no trained checkpoint is published yet, and `local` / `hosted` refuse to start without one |
 | `AUTUNE_EXTRACTION_CLASSIFIER_ENDPOINT` | B | Our own inference server. Required when `CLASSIFIER_IMPL=hosted` |
@@ -193,7 +199,20 @@ Where that token comes from, and the two ways to give it to the browser:
 | `AUTUNE_GAP_WEIGHT_TEMPLATE` · `_COVERAGE` · `_PARTICIPATION` | C | Defaults `0.4` · `0.4` · `0.2`. The three risk inputs, relative; renormalised over whichever could be measured |
 | `AUTUNE_GAP_NER_IMPL` | C | `spacy` (default) · `fake`. **No `external`** — see below |
 | `AUTUNE_GAP_NER_MODEL` | C | Default `ko_core_news_lg`. The pipeline **name**; the version comes from the pinned wheel and is recorded per row |
-| `AUTUNE_GAP_RELATION_IMPL` | C | `rule` (default), and nothing else yet. Unlike the entity extractor this step **may** grow an assisted option — see below |
+| `AUTUNE_GAP_RELATION_IMPL` | C | `rule` (default) · `gemini`. **`gemini` is external** and opt-in: the rules, then the pairs they decline go to Google — see below. Uses the `AUTUNE_GAP_VERIFIER_*` key, model and URL |
+| `AUTUNE_GAP_RELATION_ASSIST_MAX_UTTERANCES` | C | `30`. At most this many utterances of one meeting leave per run under `gemini` |
+| `AUTUNE_GAP_EMBEDDER_IMPL` | C | `off` (default) · `local` · `fake`. Reads template comparison's speech by meaning. **No `external`**, same reason as the entity extractor; `local` needs the `local-models` extra |
+| `AUTUNE_GAP_EMBEDDER_CHECKPOINT` | C | Default `nlpai-lab/KURE-v1` — module D's and B's choice |
+| `AUTUNE_GAP_EMBEDDER_DEVICE` | C | `cpu` (default) · `cuda`. Never inferred from the machine |
+| `AUTUNE_GAP_SEMANTIC_FLOOR` | C | Default `0.55`. The cosine an utterance needs with an item's nearest example to count as saying it |
+| `AUTUNE_GAP_SEMANTIC_MARGIN` | C | Default `0`. How far the winning item must lead the runner-up |
+| `AUTUNE_GAP_VERIFIER_IMPL` | C | `off` (default) · `fake` · `gemini`. Checks the utterances the embedder is unsure of. **`gemini` is external** and opt-in — see below. Needs the embedder on |
+| `AUTUNE_GAP_VERIFIER_API_KEY` | C | Provider key for `gemini`, sent as a header only. **Blank by default**; `gemini` refuses to start without one |
+| `AUTUNE_GAP_VERIFIER_MODEL` · `_FALLBACK_MODEL` | C | Defaults `gemini-3.8-flash` · `gemini-3.5-flash-lite`, module B's. Blank fallback disables it |
+| `AUTUNE_GAP_VERIFIER_BASE_URL` · `_TIMEOUT_SEC` | C | Google's Generative Language API root · `60` |
+| `AUTUNE_GAP_VERIFY_CONFIDENT_SCORE` · `_CONFIDENT_LEAD` | C | Defaults `0.6` · `0.05`. An item winning by both is taken without asking; a background win by the lead is dismissed without asking |
+| `AUTUNE_GAP_VERIFY_CANDIDATE_SCORE` · `_CANDIDATES` · `_EXAMPLES` | C | Defaults `0.45` · `3` · `2`. Which items one question offers, and how many example sentences each carries |
+| `AUTUNE_GAP_VERIFY_MAX_UTTERANCES` | C | Default `30`. At most this many utterances of one meeting are sent per run; the rest keep the embedding's answer |
 | `AUTUNE_CONTEXT_EMBEDDER_IMPL` | D | `kure_v1_http` (default), `kure_v1_local`, `fake` |
 | `AUTUNE_CONTEXT_RERANKER_IMPL` | D | `bge_reranker_v2_m3_ko_http` (default), `..._local`, `fake` |
 | `AUTUNE_CONTEXT_NLI_IMPL` | D | `klue_kornli_http` (default), `klue_kornli_local`, `fake` |
@@ -218,13 +237,15 @@ Where that token comes from, and the two ways to give it to the browser:
 | `AUTUNE_CONTEXT_LINEAGE_MATCH_THRESHOLD` | D | Decision-to-thread match cutoff (cosine). Default `0.65`, tuned in eval |
 | `AUTUNE_CONTEXT_PUBLISH_TIMEOUT_S` | D | Wait for B before publishing. Default `600` |
 | `AUTUNE_CONTEXT_MAX_TOPIC_LINK_NOTICES` | D | Individual topic-link Slack messages per meeting before the rest roll up into one notice. Default `3` |
+| `AUTUNE_CONTEXT_BRIEF_LEAD_MINUTES` | D | Minutes before a scheduled meeting's start that its pre-meeting brief is posted. Default `10` |
 | `AUTUNE_CONTEXT_WARM_MODELS_ON_WORKER_INIT` | D | `true` only on workers consuming `cpu_heavy`. Default `false` |
 | `AUTUNE_INTELLIGENCE_AGGREGATE_TIMEOUT_SECONDS` | E | Wait for B/C/D before aggregating without the rest. Default `600` |
 | `AUTUNE_INTELLIGENCE_GAP_CLASSIFIER_IMPL` | E | `local` (default) · `fake`. **No `external`, no `hosted`** — see below |
 | `AUTUNE_INTELLIGENCE_GAP_CLASSIFIER_BACKBONE` | E | Sentence-embedding backbone SetFit fits its few-shot head onto. Default `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` |
 | `AUTUNE_INTELLIGENCE_WARM_MODELS_ON_WORKER_INIT` | E | `true` only on workers consuming aggregation tasks — builds the gap classifier and the misalignment predictor at startup. Default `false` |
-| `AUTUNE_INTELLIGENCE_MISALIGNMENT_PREDICTOR_IMPL` | E | `heuristic` (default) · `local` (XGBoost fit on labeled history, heuristic until there is enough). No external option |
+| `AUTUNE_INTELLIGENCE_MISALIGNMENT_PREDICTOR_IMPL` | E | `heuristic` (default) · `local` (XGBoost fit on labeled history, heuristic until there is enough). No external option. Making `local` the default is gated on #450 — see `../modules/intelligence.md` |
 | `AUTUNE_INTELLIGENCE_MISALIGNMENT_REFIT_HOURS` | E | How long a fit (or fallback) is kept before `local` refits. Default `24` |
+| `AUTUNE_INTELLIGENCE_WEB_BASE_URL` | E | Web app origin, e.g. `https://autune.example.com`. The meeting report's details button links to `<this>/meetings/<id>`; unset, the report is posted without the button. Default unset |
 
 Notion and Calendar credentials are **not** environment variables. Each
 team configures its own on screen S28 and they are stored encrypted in
@@ -319,12 +340,17 @@ implementation would mean sending the whole transcript to somebody else's
 model — which section 6 of `../architecture/privacy.md` makes a design
 conversation rather than a value you can set.
 
-Relation extraction is the exception, and `AUTUNE_GAP_RELATION_IMPL` is where
-it would go. A relation is read off one clause, so the hard cases can be sent
-without sending the meeting — and an implementation that did would go through
-`packages/integrations` so `check_outbound` sees the request body, never a
-client of its own. Today there is one value, `rule`: marker rules in process,
-no network. See "Step 2 as built" in `../modules/gap.md`.
+Relation extraction is the exception, and `AUTUNE_GAP_RELATION_IMPL=gemini` is
+it. A relation is read off one clause, so the hard cases can be sent without
+sending the meeting: the marker rules run in process first, and only an
+utterance holding a pair they decline — `는데`/`지만` glue, a bare `의`, a
+reason the resolution guard read as resolved — goes to Google, one line each as
+module A stored it. **Names, and on the batch path numbers read out as words,
+are not masked** and go with it. It goes through `packages/integrations` so
+`check_outbound` sees the request body. Same standing as the template verifier
+below: never the default, dummy meetings only until the team decides. The
+default, `rule`, sends nothing. See "Relation assistance" in
+`../modules/gap.md`.
 
 `spacy` needs a library and a model, and both come from the optional extra:
 
@@ -341,6 +367,16 @@ version travels with the rows it produced.
 Without the extra the extractor raises a `RuntimeError` naming the command —
 the default implementation failing with `No module named 'spacy'` tells the
 reader nothing about the extra existing.
+
+### Module C's template verifier is opt-in and external
+
+`AUTUNE_GAP_VERIFIER_IMPL=gemini` sends the utterances the embedder could not
+decide, one line each as module A stored them, to Google — with their candidate
+checklist items and nothing else from the meeting. **Names, and on the batch
+path numbers read out as words, are not masked** and go with them. Same standing as module B's `llm` classifier (#392):
+never the default, dummy meetings only until the team decides, and a free-tier
+key may let the provider keep what it is sent. What a request carries is listed
+in `../modules/gap.md`, "Verifying what the embedder was unsure of".
 
 ### The gap classifier has no external or hosted option
 
@@ -374,6 +410,21 @@ uv sync --package autune-intelligence --extra local-models
 
 Without the extra the classifier raises a `RuntimeError` naming this command,
 the same shape B's and C's local implementations use.
+
+The misalignment predictor's `local` implementation
+(`AUTUNE_INTELLIGENCE_MISALIGNMENT_PREDICTOR_IMPL`) comes from the same extra, and
+on macOS it needs one thing more. XGBoost's macOS wheel links
+`@rpath/libomp.dylib` without bundling it, so the install succeeds and
+`import xgboost` then fails:
+
+```bash
+brew install libomp   # macOS only, and only for the predictor
+```
+
+That failure is an `XGBoostError`, not an `ImportError`, so it passes straight
+through the check that would otherwise name the extra — the message you get is
+XGBoost's own and it names the library. Nothing else in `local-models` needs
+OpenMP, so a Mac running only the gap classifier can skip this.
 
 ## Secrets
 
@@ -522,5 +573,6 @@ transcript, generate one.
 | `pytest` fails collecting another module's tests | The environment was built with `uv sync --package <yours>`, which installs only your module. Use `uv sync --all-packages`, or run `uv run pytest modules/<yours>` |
 | Celery task never runs | Worker is not listening on that queue. Check `-Q` |
 | import-linter fails | You imported another module. Fix the import, not the config |
-| Whisper is very slow | Running on CPU. Set `AUTUNE_AUDIO_DEVICE=cuda` or use a smaller model locally |
+| Whisper is very slow | Running on CPU. Set `AUTUNE_AUDIO_DEVICE=cuda` or use a smaller model locally. That variable is also what diarization inherits, and `uv sync` installs a CPU torch wheel on Windows while faster-whisper reaches the GPU through CTranslate2 — so diarization stays on CPU there and says so in the log. Set `AUTUNE_AUDIO_DIARIZATION_DEVICE=cuda` to require the GPU for it too |
+| Diarization takes minutes on a Mac | It is on CPU, which is where it stays unless told otherwise. `AUTUNE_AUDIO_DIARIZATION_DEVICE=mps`, in a `--pool=solo` worker (#329) |
 | Generated TS types are stale in CI | Run `pnpm run gen:contracts` and commit the output |

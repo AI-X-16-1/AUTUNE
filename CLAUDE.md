@@ -158,6 +158,26 @@ blocks no merge. Add the reviewers your change needs yourself.
 
 → `docs/architecture/privacy.md`
 
+### The agent layer — a bounded exception to 2, 3 and 6
+
+Decided on #260 (closed 2026-09-29), placed by ADR 0010. An agent layer sits
+above modules A–E in a top-level `agent/` (`autune_agent`), and three
+invariants above read with this exception:
+
+- **2** — `autune_agent` may import every module. No module may import it,
+  modules still may not import one another, the five subagents under
+  `autune_agent.subagents` may not import one another, and a subagent may not
+  import a module — it reads modules only through tools. import-linter
+  enforces all of it.
+- **3** — a table prefix marks an owner, and an owner is a module *or* the
+  agent layer (`agent_`).
+- **6** — unchanged in substance. The layer lives in `agent/`, not `apps/`,
+  precisely so that "apps is assembly only" keeps meaning what it says.
+
+The main agent and each subagent have one owner each; `agent/CLAUDE.md` lists
+them. A module takes part only through its own `tools.py`.
+→ `docs/architecture/agent-layer.md`, `docs/decisions/0010-agent-layer-placement.md`
+
 ---
 
 ## 4. Before you code — where to look

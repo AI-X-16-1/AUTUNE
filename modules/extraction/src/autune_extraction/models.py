@@ -564,6 +564,11 @@ class ExtEditEvent(Base):
 
     ``action_item_id`` is nullable rather than absent: a deletion event outlives
     the row it refers to, and the link is what goes, not the count.
+
+    ``fields`` is which fields an edit changed -- names, never values (#109).
+    The drawer's history (S18) shows "기한 수정됨"; keeping the value before an
+    edit would keep the sentence a person chose to replace, a tombstone by
+    another name (privacy.md section 4).
     """
 
     __tablename__ = "ext_edit_events"
@@ -579,6 +584,59 @@ class ExtEditEvent(Base):
         String(64), ForeignKey("ext_action_items.id", ondelete="SET NULL"), index=True
     )
     kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    fields: Mapped[str | None] = mapped_column(String(200))
+    """Comma-separated names of the fields an ``edited`` event changed, sorted;
+    ``None`` for the other kinds and for rows written before #109."""
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+
+
+class ExtCalendarEvent(Base):
+    """The all-day event a confirmed item's due date became on its assignee's
+    own Google Calendar (#435).
+
+    One per item: the primary key is the item. ``user_id`` is whose calendar
+    holds it, so reassigning the item moves the event from one person's
+    calendar to the other's. ``synced_due_date`` is the date Autune last wrote
+    or read there -- what the read-back compares against, so a date Autune
+    wrote itself is never mistaken for one the person moved.
+
+    ``event_id`` is empty only inside the transaction that claimed the row and
+    is creating the event, the way ``ext_external_refs`` is claimed before its
+    Notion page exists.
+
+    Deleting the item, the meeting or the user deletes the row. The event stays
+    on the person's calendar: Autune does not reach into a calendar to tidy up
+    after a deletion it was not asked to make there.
+    """
+
+    __tablename__ = "ext_calendar_events"
+
+    action_item_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("ext_action_items.id", ondelete="CASCADE"), primary_key=True
+    )
+    meeting_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("meetings.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    user_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    event_id: Mapped[str | None] = mapped_column(String(1024))
+    synced_due_date: Mapped[date] = mapped_column(Date, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class ExtCalendarPoll(Base):
+    """When B last read a person's calendar back (#435) -- the ``updatedMin`` of
+    the next read. B's own sync state, kept here rather than in
+    ``user_integrations``, which modules read and never write."""
+
+    __tablename__ = "ext_calendar_polls"
+
+    user_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    polled_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

@@ -8,7 +8,7 @@ See docs/architecture/contracts.md.
 """
 
 from . import fixtures
-from ._base import CONTRACT_VERSION, ContractModel, Payload, validate_major_version
+from ._base import CONTRACT_VERSION, ContractModel, Payload, TeamPayload, validate_major_version
 from .context import ContextLinks, DecisionChange, TopicLink
 from .enums import (
     ActionStatus,
@@ -22,6 +22,7 @@ from .enums import (
 from .events import (
     CONTEXT_COMPLETED,
     EVENTS,
+    EXTRACTION_AGENDA_CHANGED,
     EXTRACTION_COMPLETED,
     GAP_COMPLETED,
     INTELLIGENCE_COMPLETED,
@@ -30,14 +31,20 @@ from .events import (
     TRANSCRIPT_READY,
 )
 from .extraction import (
+    AGENDA_PUBLISH_EVERY,
+    AGENDA_STALE_AFTER,
+    AGENDA_TITLE_MAX,
+    JIRA_ISSUE_URL,
     STANCE_MIN_IDENTIFIED_PER_ROLE,
     ActionItem,
+    AgendaIssue,
     AmbiguousAgreement,
     Classification,
     Decision,
     ExternalRef,
     ExtractionResult,
     RoleStance,
+    TeamAgenda,
 )
 from .gap import Gap, GapReport, Participation, Topic
 from .intelligence import (
@@ -53,11 +60,13 @@ __all__ = [
     "fixtures",
     "ContractModel",
     "Payload",
+    "TeamPayload",
     "validate_major_version",
     # events
     "TRANSCRIPT_READY",
     "TERMINAL_EVENTS",
     "EXTRACTION_COMPLETED",
+    "EXTRACTION_AGENDA_CHANGED",
     "EVENTS",
     "GAP_COMPLETED",
     "CONTEXT_COMPLETED",
@@ -85,6 +94,13 @@ __all__ = [
     "STANCE_MIN_IDENTIFIED_PER_ROLE",
     "AmbiguousAgreement",
     "ExternalRef",
+    # B -> D
+    "TeamAgenda",
+    "AgendaIssue",
+    "JIRA_ISSUE_URL",
+    "AGENDA_TITLE_MAX",
+    "AGENDA_PUBLISH_EVERY",
+    "AGENDA_STALE_AFTER",
     # C -> E
     "GapReport",
     "Gap",

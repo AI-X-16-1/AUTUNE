@@ -14,11 +14,21 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 Environment = Literal["local", "staging", "production"]
 
+# Appended to every "refused outside local" error: the likeliest reader is a
+# developer whose checkout has no AUTUNE_ENV, now that unset means production.
+_LOCAL_HINT = " If this is a local checkout, set AUTUNE_ENV=local (see .env.example)."
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="AUTUNE_", env_file=".env", extra="ignore")
 
-    env: Environment = "local"
+    env: Environment = "production"
+    """Unset means production, deliberately (#408). A deployment that forgets
+    ``AUTUNE_ENV`` then meets production's startup checks -- a real secret key,
+    an encryption key, an https CORS allowlist -- and mounts no unauthenticated
+    ``/dev`` route, instead of quietly running as a dev box that signs sessions
+    with the shipped key. Local checkouts set ``local`` in ``.env`` (it is in
+    ``.env.example``); CI and ``scripts/up.sh`` set it too."""
     log_level: str = "INFO"
 
     database_url: str = "postgresql+psycopg://autune:autune@localhost:5432/autune"
@@ -49,6 +59,16 @@ class Settings(BaseSettings):
     """The /api/auth/google/callback URL, per environment. Must match a redirect
     URI registered in the Google Cloud console exactly."""
 
+    jira_client_id: str = ""
+    jira_client_secret: str = ""
+    jira_redirect_uri: str = ""
+    """The /api/auth/jira/callback URL on the web origin, per environment. Must
+    match the callback URL in the Atlassian developer console exactly."""
+    jira_scopes: str = "read:jira-work write:jira-work read:jira-user offline_access"
+    """``offline_access`` is what makes Atlassian return a refresh token; without
+    it a connection ends in an hour. No admin scope: nothing here configures
+    Jira (#82)."""
+
     retention_days: int = 90
     """Analysis results are deleted after this many days.
     See docs/architecture/privacy.md section 4."""
@@ -72,7 +92,8 @@ class Settings(BaseSettings):
         if self.env != "local" and self.secret_key.startswith("local-development-only"):
             raise ValueError(
                 f"AUTUNE_SECRET_KEY still holds the development default in env={self.env}. "
-                'Generate one: python -c "import secrets; print(secrets.token_urlsafe(32))"'
+                'Generate one: python -c "import secrets; print(secrets.token_urlsafe(32))".'
+                + _LOCAL_HINT
             )
         return self
 
@@ -87,7 +108,8 @@ class Settings(BaseSettings):
             raise ValueError(
                 f"AUTUNE_ENCRYPTION_KEY is not set in env={self.env}; integration "
                 "credentials cannot be stored. Generate one: python -c "
-                '"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"'
+                '"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())".'
+                + _LOCAL_HINT
             )
         return self
 
@@ -112,6 +134,13 @@ class Settings(BaseSettings):
     @property
     def is_production(self) -> bool:
         return self.env == "production"
+
+    @property
+    def google_sign_in_configured(self) -> bool:
+        """Whether all three Google OAuth values are set, so sign-in can complete."""
+        return bool(
+            self.google_client_id and self.google_client_secret and self.google_redirect_uri
+        )
 
     @property
     def session_cookie_secure(self) -> bool:

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, Field
 
-CONTRACT_VERSION = "2.1"
+CONTRACT_VERSION = "2.2"
 """Bump the minor for an additive change, the major for a breaking one.
 
 A breaking change needs a Slack announcement and approval from every affected
@@ -34,11 +34,22 @@ class Payload(ContractModel):
     meeting_id: str = Field(pattern=r"^mtg_")
 
 
+class TeamPayload(ContractModel):
+    """A payload about a team rather than one meeting.
+
+    ``Payload`` requires a ``meeting_id``, and some state belongs to no single
+    meeting -- the issues a team has open (#436). Same version rule.
+    """
+
+    contract_version: str = Field(default=CONTRACT_VERSION)
+    team_id: str = Field(pattern=r"^team_")
+
+
 def major(version: str) -> str:
     return version.split(".", 1)[0]
 
 
-def validate_major_version(payload: Payload) -> None:
+def validate_major_version(payload: Payload | TeamPayload) -> None:
     """Reject a payload from an incompatible producer, loudly.
 
     Consumers call this before acting on a payload. Guessing at a mismatched

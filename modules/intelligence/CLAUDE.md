@@ -33,7 +33,7 @@ missing. Never block a user-visible result on a failed module.
 ## Owns
 
 `intel_scores`, `intel_gap_patterns`, `intel_alignment`, `intel_predictions`,
-`intel_reports`, `intel_completion`.
+`intel_reports`, `intel_completion`, `intel_meeting_reports`.
 
 Reference B's and C's outputs by plain string ID columns — never a foreign key
 into another module's tables.

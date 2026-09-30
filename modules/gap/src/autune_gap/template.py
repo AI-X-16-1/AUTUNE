@@ -24,6 +24,7 @@ from typing import Any
 import yaml
 
 from autune_core.errors import ConfigurationError, ValidationError
+from autune_gap.pipeline.base import RELATION_LABELS
 
 TEMPLATE_DIR = Path(__file__).parent / "templates"
 
@@ -77,6 +78,29 @@ class TemplateItem:
     question: str
     question_about: str
     """The same question with ``{topic}`` in it, for a partial finding."""
+    relations: tuple[str, ...] = ()
+    """Relations whose presence in the graph is the meeting having raised this
+    item — ``depends_on`` for the dependency item.
+
+    Some items are about how two things stand to each other rather than about a
+    thing, and no topic label carries that. "마이그레이션 검증 스크립트가 먼저
+    있어야 롤백 절차가 의미가 있습니다" is a dependency stated outright, and the
+    rules already read it as ``롤백 절차 depends_on 마이그레이션 검증 스크립트``
+    — but neither label contains 의존 or 선행, so the item came back missing
+    over a graph that held the answer. A topic at either end of an edge named
+    here matches the item the way a keyword hit does, and ``detect.classify``
+    reads its centrality as it reads any match.
+
+    Only step 2's relations, never ``co_occurs``: two topics in one utterance
+    say nothing about how they relate, and an item matched on proximity would
+    be covered by any meeting that named two things at once. Optional — an item
+    without it is matched by its keywords alone."""
+    examples: tuple[str, ...] = ()
+    """Sentences a meeting says when it settles this item — "민수님이 담당해서
+    수요일까지 마무리해 주세요" for ownership. Read by ``semantic`` through a
+    sentence embedder, so an item settled with a verb and a date is heard even
+    when no keyword was said. Optional: an item without them is matched by its
+    keywords alone, and the embedder is off by default."""
 
 
 @dataclass(frozen=True)
@@ -227,4 +251,41 @@ def _item(entry: dict[str, Any], template_key: str) -> TemplateItem:
         keywords=keywords,
         question=str(entry["question"]),
         question_about=_question_about(entry, template_key),
+        relations=_relations(entry, template_key),
+        examples=_examples(entry, template_key),
     )
+
+
+def _relations(entry: dict[str, Any], template_key: str) -> tuple[str, ...]:
+    where = f"template {template_key!r} item {entry.get('key')!r}"
+    raw = entry.get("relations", ())
+    if isinstance(raw, str) or not isinstance(raw, (list, tuple)):
+        # A bare string would be iterated character by character, and no
+        # character is a relation — the item would silently match nothing.
+        raise ConfigurationError(f"{where} has relations that are not a list")
+    relations = tuple(str(name).strip() for name in raw)
+    unknown = sorted(name for name in relations if name not in RELATION_LABELS)
+    if unknown:
+        # ``co_occurs`` lands here too, and is meant to: it is not a relation
+        # anybody asserted. See ``TemplateItem.relations``.
+        raise ConfigurationError(
+            f"{where} names relations step 2 does not extract: {unknown}; "
+            f"known: {list(RELATION_LABELS)}"
+        )
+    return relations
+
+
+def _examples(entry: dict[str, Any], template_key: str) -> tuple[str, ...]:
+    raw = entry.get("examples", ())
+    if isinstance(raw, str) or not isinstance(raw, (list, tuple)):
+        # A bare string would be iterated character by character, and every
+        # character would become an example sentence.
+        raise ConfigurationError(
+            f"template {template_key!r} item {entry.get('key')!r} has examples that are not a list"
+        )
+    examples = tuple(str(sentence).strip() for sentence in raw)
+    if any(not sentence for sentence in examples):
+        raise ConfigurationError(
+            f"template {template_key!r} item {entry.get('key')!r} has an empty example sentence"
+        )
+    return examples

@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
 
-import { AppHeader } from "./_components/AppHeader";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -9,14 +8,14 @@ export const metadata: Metadata = {
 };
 
 /**
- * The app shell: top bar 56 with a hairline only — see docs/design/ui-spec.md
- * section 0. The sidebar the spec also describes is not here; it would list
- * settings screens that do not exist (S28-S30), and a nav of dead links is
- * worse than no nav.
+ * The document, and nothing else.
  *
- * It imposes no width on the page below it. Every screen already declares its
- * own reading width — 720 for a transcript, 1200 for the action board — and a
- * container here would either fight them or force them all to one number.
+ * The chrome moved down to `(app)/layout.tsx`, because there is one screen
+ * that must not wear it: `/login` is where somebody stands before they are
+ * anybody, and the top bar's wordmark links to `/`, which they cannot open
+ * yet. It also drew its own header already, so signing in meant looking at
+ * two — the seam between #423 and #425, neither of which existed when the
+ * other was written.
  *
  * User-facing copy is Korean; code and comments are English.
  */
@@ -29,10 +28,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     // these two elements' own attributes only -- a real mismatch inside the
     // tree is still reported.
     <html lang="ko" suppressHydrationWarning>
-      <body suppressHydrationWarning>
-        <AppHeader />
-        {children}
-      </body>
+      <body suppressHydrationWarning>{children}</body>
     </html>
   );
 }

@@ -5,7 +5,6 @@ import { RecordingFrame } from "@/shared/ui";
 import type { LiveRow, RecordingState, UtteranceKind } from "../types";
 import { LiveRail } from "./LiveRail";
 import { TranscriptRow } from "./TranscriptRow";
-import { UnidentifiedSpeaker } from "./UnidentifiedSpeaker";
 
 /**
  * S13. The meeting as it is being transcribed.
@@ -20,9 +19,17 @@ import { UnidentifiedSpeaker } from "./UnidentifiedSpeaker";
  * unreadable — somebody is reading it while it is written. Corrections land in
  * S15 after the meeting, where re-reading is the point.
  *
- * Unidentified speakers are collected into one prompt above the transcript
- * rather than repeated on every row of theirs. Answering it once answers every
- * row, which is also what the S16 DM does.
+ * **No identification prompt during a recording, on purpose.** Putting a name
+ * to a voice needs a `Participant` row, and none exists for a meeting until
+ * `persist_transcript` writes them (via `_participants_for`) in the same
+ * transaction as the utterances — a meeting that is still `recording` or
+ * still `analyzing` has none at all, so `GET /speakers` for it returns `[]`,
+ * not a list of unidentified labels. This screen used to derive a label list
+ * straight from the rows' `speaker` strings and offer buttons that only
+ * `console.log`ed; removing that was not a regression, because none of it
+ * ever wrote an assignment. `StoredTranscript` is where a name gets attached,
+ * once the meeting is processed and the participants — and, later, their
+ * candidates — exist to attach one to.
  */
 export function LiveTranscript({
   state,
@@ -33,9 +40,6 @@ export function LiveTranscript({
   onPause,
   onResume,
   onStop,
-  onAssignSpeaker,
-  onEnterSpeakerName,
-  onSendConfirmation,
   classified = false,
 }: {
   state: RecordingState;
@@ -46,9 +50,6 @@ export function LiveTranscript({
   onPause?: () => void;
   onResume?: () => void;
   onStop?: () => void;
-  onAssignSpeaker?: (speaker: string) => void;
-  onEnterSpeakerName?: (speaker: string) => void;
-  onSendConfirmation?: (speaker: string) => void;
   /** Whether module B has reported on this meeting.
    *
    * Not derived from the rows: a meeting B analysed and found nothing in looks
@@ -57,7 +58,6 @@ export function LiveTranscript({
    * every kind. */
   classified?: boolean;
 }) {
-  const unidentified = unidentifiedVoices(rows);
   const counts = classified ? countKinds(rows) : undefined;
 
   return (
@@ -71,16 +71,6 @@ export function LiveTranscript({
         }}
       >
         <main className="min-w-0 flex-1">
-          {unidentified.map((speaker) => (
-            <UnidentifiedSpeaker
-              key={speaker}
-              speaker={speaker}
-              onAssign={() => onAssignSpeaker?.(speaker)}
-              onEnterName={() => onEnterSpeakerName?.(speaker)}
-              onSendConfirmation={() => onSendConfirmation?.(speaker)}
-            />
-          ))}
-
           {rows.length === 0 ? (
             <p
               style={{
@@ -112,24 +102,6 @@ export function LiveTranscript({
       </div>
     </>
   );
-}
-
-/**
- * Each unnamed voice once, in the order it first spoke.
- *
- * A list, not a tally. Counting how much each voice said is a per-person speech
- * volume, and a speaker number is not anonymity when everyone was in the room —
- * `privacy.md` section 3 forbids exactly this shape. Listing is also all the
- * prompt needs: it asks who a voice belongs to, and confirming one answers
- * every line that voice spoke.
- */
-function unidentifiedVoices(rows: LiveRow[]): string[] {
-  const seen: string[] = [];
-  for (const { utterance } of rows) {
-    if (utterance.speaker_id != null) continue;
-    if (!seen.includes(utterance.speaker)) seen.push(utterance.speaker);
-  }
-  return seen;
 }
 
 /** Per kind, per meeting. Never per person — `privacy.md` section 3. */

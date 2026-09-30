@@ -175,10 +175,57 @@ def _day_of_month(day: date, dom: int) -> date:
     return date(year, month, dom)
 
 
+def _period_end(day: date | None, month: int, *, by: str | None, year: int | None) -> date | None:
+    """The last day of ``month``: in ``year`` when one was said, otherwise this
+    year's -- or next year's under ``_next``'s rule, only when it is well past
+    and a deadline word says it is due.
+
+    A month, a half or a quarter is due by its end: "10월까지", "하반기에",
+    "3분기 안에" all leave until the period's last day, and a card has to carry
+    one date. A named year needs no meeting day; anything else does.
+    """
+    if year is not None:
+        return date(year, month, calendar.monthrange(year, month)[1])
+    if day is None:
+        return None
+    candidate = date(day.year, month, calendar.monthrange(day.year, month)[1])
+    if candidate >= day or by is None or day - candidate <= RECENT_PAST:
+        return candidate
+    return date(day.year + 1, month, calendar.monthrange(day.year + 1, month)[1])
+
+
+def _named_year(m: re.Match[str], day: date | None) -> int | None:
+    """``2027년`` as said, ``내년`` from the meeting's day, otherwise none."""
+    if m["y"]:
+        return int(m["y"])
+    if m["rel"] == "내년":
+        return None if day is None else day.year + 1
+    if m["rel"] == "올해":
+        return None if day is None else day.year
+    return None
+
+
+def _period(month: Callable[[re.Match[str]], int]) -> Resolver:
+    """A resolver for a month, half or quarter phrase, by its last day."""
+
+    def resolve(m: re.Match[str], day: date | None) -> date | None:
+        if m["rel"] and day is None:
+            return None  # 내년/올해 need the meeting's day
+        return _period_end(day, month(m), by=m["by"], year=_named_year(m, day))
+
+    return resolve
+
+
 Resolver = Callable[[re.Match[str], date | None], date | None]
 
 _BY = r"전까지|까지|전에|내로|내에|안에|이내|중으로|중에|중(?![가-힣])|쯤"
 """Words that make the date before them a deadline: 까지, 안에, 중으로, ..."""
+
+_YEAR = r"(?:(?<!\d)(?P<y>20\d{2})\s*년\s*|(?P<rel>올해|내년)\s*)?"
+"""An optional year before a month, half or quarter: 2027년, 올해, 내년."""
+_PERIOD_BY = rf"(?=\s*(?P<by>{_BY})?)"
+_PERIOD_BY_REQUIRED = rf"(?=\s*(?:(?P<by>{_BY})|에|말(?!씀)))"
+"""A month or a period is a deadline only when something after it says so."""
 
 _DEADLINE_WORD = re.compile(rf"\s*(?:{_BY})")
 _CLAUSE_END = re.compile(r"[,.?!\n]|(?:고|는데|은데|지만|니까|어서|아서|해서|면서|며)(?=\s|$)")
@@ -298,6 +345,46 @@ _PHRASES: tuple[tuple[re.Pattern[str], Resolver], ...] = (
     (
         re.compile(r"다음\s*달\s*말"),
         _needs_day(lambda _, day: _month_end(day, 1)),
+    ),
+    # 이번 달까지, 다음 달 중으로, 다음 달에 -- the month by its last day. Only
+    # with a deadline word or 에 after it: "다음 달 일정" is not a deadline.
+    (
+        re.compile(rf"(?:이번\s*달|이달)(?=\s*(?:{_BY}|에))"),
+        _needs_day(lambda _, day: _month_end(day)),
+    ),
+    (
+        re.compile(rf"다음\s*달(?!\s*\d)(?!\s*말)(?=\s*(?:{_BY}|에))"),
+        _needs_day(lambda _, day: _month_end(day, 1)),
+    ),
+    # 10월 말, 2027년 3월말 -- a named month's last day. Not "10월 말씀드린".
+    (
+        re.compile(_YEAR + r"(?<![\d/])(?P<m>\d{1,2})\s*월\s*말(?!씀)" + _PERIOD_BY),
+        _period(lambda m: int(m["m"])),
+    ),
+    # 10월까지, 11월 중으로, 11월에 -- a named month with no day, by its last
+    # day. Only with a deadline word or 에: "5월 자료 기준" names a month, not
+    # a deadline. A past month said with 에 resolves to the past and is
+    # skipped like any other past phrase (#197, the bare-month misses).
+    (
+        re.compile(
+            _YEAR + r"(?<![\d/])(?P<m>\d{1,2})\s*월(?!\s*\d)(?!\s*말)" + _PERIOD_BY_REQUIRED
+        ),
+        _period(lambda m: int(m["m"])),
+    ),
+    # 연말, 연내, 올해 안에, 올해까지 -- this year's last day.
+    (
+        re.compile(rf"연말|연내|올해\s*(?:말(?!씀)|안|중|내)|올해(?=\s*(?:{_BY}))"),
+        _needs_day(lambda _, day: date(day.year, 12, 31)),
+    ),
+    # 하반기에, 2027년 상반기까지, 내년 상반기 중 -- a half by its last day.
+    (
+        re.compile(_YEAR + r"(?P<h>상반기|하반기)" + _PERIOD_BY_REQUIRED),
+        _period(lambda m: 6 if m["h"] == "상반기" else 12),
+    ),
+    # 3분기 안에, 내년 1분기까지 -- a quarter by its last day.
+    (
+        re.compile(_YEAR + r"(?<!\d)(?P<q>[1-4])\s*분기" + _PERIOD_BY_REQUIRED),
+        _period(lambda m: int(m["q"]) * 3),
     ),
     # 3일 후, 3일 안에 -- before the bare day below, which would read "3일".
     (

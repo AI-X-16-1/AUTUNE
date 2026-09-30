@@ -80,6 +80,9 @@ class Edge:
     weight: float
     """In ``(0, 1]``, the strongest edge of the meeting at 1 — the range
     ``gap_topic_edges`` accepts."""
+    asserted_by: str = ""
+    """``Relation.asserted_by`` of the first relation that made this edge, and
+    empty for co-occurrence. The caller falls back to the extractor's version."""
 
 
 @dataclass(frozen=True)
@@ -167,7 +170,9 @@ def relation_edges(topics: Iterable[Topic], relations: Iterable[Relation]) -> li
 
     The same relation asserted in five utterances is one edge. The table is
     unique on ``(source, target, relation)``, and which utterances said it is
-    evidence the two topics already carry.
+    evidence the two topics already carry. The first relation to state a
+    triple is the one the edge is attributed to, so an extractor that lists its
+    rule relations first keeps a triple both it and a model found on the rule.
 
     A symmetric relation (``pipeline.SYMMETRIC_RELATIONS``) arrives from the
     extractor as two triples, so nothing is mirrored here — the rules produce
@@ -184,7 +189,13 @@ def relation_edges(topics: Iterable[Topic], relations: Iterable[Relation]) -> li
             continue
         seen.add(triple)
         edges.append(
-            Edge(source=source, target=target, relation=relation.relation, weight=RELATION_WEIGHT)
+            Edge(
+                source=source,
+                target=target,
+                relation=relation.relation,
+                weight=RELATION_WEIGHT,
+                asserted_by=relation.asserted_by,
+            )
         )
     return edges
 

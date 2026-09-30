@@ -1,10 +1,12 @@
-"""A local-only page for connecting a team's Notion integration by hand.
+"""A local-only page for connecting a team's Notion and Google Calendar by hand.
 
 Mirrors module A's own ``dev/routes.py``, with one more gate: mounted only
 under ``AUTUNE_ENV=local`` *and* ``AUTUNE_EXTRACTION_DEV_ROUTES=true`` (see
 ``router.dev_routes_enabled``), not in the OpenAPI schema, no auth. Without
-the second gate a deployment that forgot ``AUTUNE_ENV`` would let anyone point
-any team's sync at their own Notion workspace (lsh2217, review of #402).
+the second gate every ``local`` stack -- the demo one included, reachable by
+whoever is on its network -- would let anyone point any team's sync at their
+own Notion workspace (lsh2217, review of #402). A deployment that forgets
+``AUTUNE_ENV`` is ``production`` since #446, so it gets neither gate.
 
 S28 (Settings > Integrations) does not exist yet -- this exists so a developer
 can put a real team_integrations row in the database without one, the same
@@ -17,8 +19,17 @@ creates "액션 아이템", "결정" and "회의록" under the page -- or keeps 
 already made under it. That step lives in ``notion_setup`` because S28's
 one-click connect needs it too (#428); this page is one caller of it.
 
-**It writes team_integrations, which modules otherwise never do.**
-``data-model.md`` reserves that table for the settings layer; #401 makes a
+**Google Calendar: one person's refresh token in, checked, stored as theirs.**
+Calendars are per person (#435): each person's own confirmed tasks go on their
+own calendar, through their own grant in ``user_integrations`` (#444). Until
+S28's OAuth flow exists (#428) a developer gets a refresh token from Google's
+OAuth Playground with the deployment's own client, scope ``calendar.events``,
+and pastes it here with the user id it belongs to. The route refreshes it and
+reads the next week before storing anything, so a wrong token or an unreadable
+calendar is refused here rather than discovered by the first confirmed date.
+
+**It writes team_integrations and user_integrations, which modules otherwise
+never do.** ``data-model.md`` reserves both for the settings layer; #401 makes a
 local-only dev route the one exception until S28 ships.
 
 Deleted the day S28 ships.
@@ -27,6 +38,7 @@ Deleted the day S28 ships.
 from __future__ import annotations
 
 import re
+from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException
@@ -36,12 +48,21 @@ from sqlalchemy.orm import Session
 
 from autune_core import get_session
 from autune_core.integrations_config import load_integration, save_integration
+from autune_core.settings import get_settings as get_core_settings
+from autune_core.user_integrations import save_user_integration
+from autune_extraction.calendar_sync import CALENDAR, forget_calendar_cursor
 from autune_extraction.notion_setup import (
     NotionSetupError,
     notion_client,
     provision_databases,
 )
 from autune_extraction.service import notion_url
+from autune_integrations import (
+    CalendarClient,
+    IntegrationError,
+    ReconnectRequiredError,
+    refresh_access_token,
+)
 
 from .page import PAGE
 
@@ -100,8 +121,17 @@ class ConnectNotion(BaseModel):
     id)."""
 
 
-def _read_body(raw: dict[str, Any]) -> ConnectNotion:
-    """The request as ``ConnectNotion``, refused without repeating what was sent.
+class ConnectCalendar(BaseModel):
+    user_id: str
+    """Whose calendar: the account the refresh token was issued for."""
+    refresh_token: str
+    calendar_id: str = "primary"
+    """``primary`` -- the person's own calendar -- unless they want Autune's
+    events on another calendar of theirs."""
+
+
+def _read_body[Body: BaseModel](raw: dict[str, Any], model: type[Body]) -> Body:
+    """The request as ``model``, refused without repeating what was sent.
 
     Declared as the parameter type, a missing or wrong field made FastAPI's
     default 422, whose ``input`` carries the whole body -- the token included
@@ -110,7 +140,7 @@ def _read_body(raw: dict[str, Any]) -> ConnectNotion:
     what was wrong with it, never a value.
     """
     try:
-        return ConnectNotion.model_validate(raw)
+        return model.model_validate(raw)
     except ValidationError as exc:
         raise HTTPException(
             status_code=422,
@@ -123,7 +153,7 @@ def _read_body(raw: dict[str, Any]) -> ConnectNotion:
 
 @router.post("/connect-notion", include_in_schema=False)
 def connect_notion(raw: Annotated[dict[str, Any], Body()], session: SessionDep) -> dict[str, str]:
-    body = _read_body(raw)
+    body = _read_body(raw, ConnectNotion)
     try:
         page_id = _parse_page_id(body.page_id)
     except ValueError as exc:
@@ -153,4 +183,55 @@ def connect_notion(raw: Annotated[dict[str, Any], Body()], session: SessionDep) 
         "action_db_url": notion_url(config["action_db_id"]),
         "decision_db_url": notion_url(config["decision_db_id"]),
         "minutes_db_url": notion_url(config["minutes_db_id"]),
+    }
+
+
+@router.post("/connect-calendar", include_in_schema=False)
+def connect_calendar(raw: Annotated[dict[str, Any], Body()], session: SessionDep) -> dict[str, str]:
+    body = _read_body(raw, ConnectCalendar)
+    core = get_core_settings()
+    client_id = core.google_client_id
+    client_secret = core.google_client_secret
+    if not client_id or not client_secret:
+        raise HTTPException(
+            status_code=400,
+            detail="AUTUNE_GOOGLE_CLIENT_ID and AUTUNE_GOOGLE_CLIENT_SECRET are not set",
+        )
+    try:
+        token = refresh_access_token(
+            client_id=client_id, client_secret=client_secret, refresh_token=body.refresh_token
+        )
+        client = CalendarClient(token)
+        try:
+            now = datetime.now(UTC)
+            upcoming = client.list_events(body.calendar_id, now, now + timedelta(days=7), limit=20)
+        finally:
+            client.close()
+    except ReconnectRequiredError:
+        raise HTTPException(
+            status_code=401, detail="Google refused the refresh token -- make a new one"
+        ) from None
+    except IntegrationError as exc:
+        status = exc.details.get("upstream_status") or 502
+        raise HTTPException(
+            status_code=int(status), detail=f"Google Calendar answered {status}"
+        ) from None
+
+    save_user_integration(
+        session,
+        body.user_id,
+        CALENDAR,
+        secret=body.refresh_token,
+        config={"calendar_id": body.calendar_id},
+    )
+    # A reconnect starts the read-back afresh: a cursor from before a lapsed
+    # grant may be older than Google keeps changes for (review of #441).
+    forget_calendar_cursor(session, body.user_id)
+    session.commit()
+    return {
+        "status": "connected",
+        "service": CALENDAR,
+        "user_id": body.user_id,
+        "calendar_id": body.calendar_id,
+        "upcoming": str(len(upcoming)),
     }

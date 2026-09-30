@@ -8,6 +8,7 @@ Never imports another module.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from dataclasses import replace
 from datetime import UTC, date, datetime
@@ -19,11 +20,15 @@ from sqlalchemy.orm import Session, selectinload
 
 from autune_contracts.enums import ActionStatus, UtteranceKind
 from autune_contracts.extraction import (
+    AGENDA_TITLE_MAX,
+    JIRA_ISSUE_URL,
     ActionItem,
+    AgendaIssue,
     AmbiguousAgreement,
     Classification,
     Decision,
     ExtractionResult,
+    TeamAgenda,
 )
 from autune_contracts.transcript import Utterance as TranscriptUtterance
 from autune_core import (
@@ -64,6 +69,7 @@ from .schemas import (
     ActionItemUpdate,
     DecisionCreate,
     DecisionReviewUpdate,
+    EditHistoryEntry,
     ExternalRefRead,
     MeetingReview,
     Outbound,
@@ -492,6 +498,71 @@ def assignee_names(session: Session, items: Sequence[ExtActionItem]) -> dict[str
     return {user_id: display_name for user_id, display_name in rows}
 
 
+# --- who may read what (#189) ---------------------------------------------------
+
+
+def _is_team_member(session: Session, *, user_id: str, team_id: str) -> bool:
+    return (
+        session.scalar(
+            select(TeamMember.id).where(
+                TeamMember.user_id == user_id, TeamMember.team_id == team_id
+            )
+        )
+        is not None
+    )
+
+
+def _refuse(kind: str, ident: str, reader: User, reason: str) -> NotFoundError:
+    # Ids only: a description or a decision statement is meeting content.
+    log.info("extraction_read_refused", kind=kind, ident=ident, reader_id=reader.id, reason=reason)
+    return NotFoundError(kind, ident)
+
+
+def _require_member_of_meeting(
+    session: Session, meeting_id: str, reader: User, *, kind: str, ident: str
+) -> None:
+    team_id = session.scalar(select(Meeting.team_id).where(Meeting.id == meeting_id))
+    if team_id is None:
+        raise _refuse(kind, ident, reader, "no_such_meeting")
+    if not _is_team_member(session, user_id=reader.id, team_id=team_id):
+        raise _refuse(kind, ident, reader, "not_a_member")
+
+
+def require_readable_meeting(session: Session, meeting_id: str, reader: User) -> None:
+    """Raise unless ``reader`` belongs to the team that held this meeting.
+
+    A token proves who is asking, not whose meetings they may read. **An unknown
+    id and somebody else's get the same answer**, a ``NotFoundError`` and never
+    a 403: a 403 confirms the id exists. Same rule as module C (#276) and D
+    (#470); the log keeps the reason. Writing is the same check -- anyone on the
+    team may correct its meetings' results, as the review screen assumes.
+    """
+    _require_member_of_meeting(session, meeting_id, reader, kind="meeting", ident=meeting_id)
+
+
+def readable_action_item(session: Session, action_item_id: str, reader: User) -> ExtActionItem:
+    """The item, if ``reader`` is on the team of its meeting; otherwise the same
+    404 an unknown id gets, naming the item and not its meeting."""
+    item = session.get(ExtActionItem, action_item_id)
+    if item is None:
+        raise _refuse("action item", action_item_id, reader, "no_such_item")
+    _require_member_of_meeting(
+        session, item.meeting_id, reader, kind="action item", ident=action_item_id
+    )
+    return item
+
+
+def readable_decision(session: Session, decision_id: str, reader: User) -> ExtDecision:
+    """As ``readable_action_item``, for a decision."""
+    decision = session.get(ExtDecision, decision_id)
+    if decision is None:
+        raise _refuse("decision", decision_id, reader, "no_such_decision")
+    _require_member_of_meeting(
+        session, decision.meeting_id, reader, kind="decision", ident=decision_id
+    )
+    return decision
+
+
 def list_action_items(
     session: Session,
     *,
@@ -499,8 +570,14 @@ def list_action_items(
     assignee_id: str | None = None,
     status: ActionStatus | None = None,
     due_before: date | None = None,
+    visible_to: str | None = None,
 ) -> list[ActionItemRead]:
     """The items S17 and S05 put on screen. Every filter is optional and they AND.
+
+    ``visible_to`` is a user id: only items from meetings of that user's teams
+    come back. The route always passes it (#189); B's own callers, which already
+    hold a meeting or a team, do not. A meeting outside the caller's teams
+    therefore lists nothing, the same answer as a meeting that does not exist.
 
     ``due_before`` is strict: an item due on that day is not before it. That
     makes "overdue" one argument -- today's date -- instead of yesterday's, and
@@ -523,6 +600,10 @@ def list_action_items(
         query = query.where(ExtActionItem.status == status.value)
     if due_before is not None:
         query = query.where(ExtActionItem.due_date < due_before)
+    if visible_to is not None:
+        query = query.join(Meeting, Meeting.id == ExtActionItem.meeting_id).where(
+            Meeting.team_id.in_(select(TeamMember.team_id).where(TeamMember.user_id == visible_to))
+        )
 
     items = list(session.scalars(query))
     names = assignee_names(session, items)
@@ -560,6 +641,7 @@ def read_detail(session: Session, item: ExtActionItem) -> ActionItemDetail:
             item, assignee_name=name, summary=summary, sync_refs=refs, assignee_departed=departed
         ).model_dump(),
         sources=source_utterances(session, item.id),
+        history=edit_history(session, item.id),
     )
 
 
@@ -705,7 +787,13 @@ def update_action_item(
         # corrected (#109).
         item.due_text = None
 
-    _record_edit(session, meeting_id=item.meeting_id, action_item_id=item.id, kind="edited")
+    _record_edit(
+        session,
+        meeting_id=item.meeting_id,
+        action_item_id=item.id,
+        kind="edited",
+        fields=list(changes),
+    )
     return item
 
 
@@ -725,15 +813,44 @@ def delete_action_item(session: Session, item: ExtActionItem) -> None:
 
 
 def _record_edit(
-    session: Session, *, meeting_id: str, action_item_id: str | None, kind: str
+    session: Session,
+    *,
+    meeting_id: str,
+    action_item_id: str | None,
+    kind: str,
+    fields: Sequence[str] = (),
 ) -> None:
     """One correction, counted and not attributed.
 
     No user id is passed in because none is stored. ADR 0003 forbids per-person
     metrics, and "who corrected the model most" is the same shape of data as a
-    speaking ratio.
+    speaking ratio. ``fields`` names what an edit changed and never holds a
+    value (#109).
     """
-    session.add(ExtEditEvent(meeting_id=meeting_id, action_item_id=action_item_id, kind=kind))
+    session.add(
+        ExtEditEvent(
+            meeting_id=meeting_id,
+            action_item_id=action_item_id,
+            kind=kind,
+            fields=",".join(sorted(fields)) or None,
+        )
+    )
+
+
+def edit_history(session: Session, action_item_id: str) -> list[EditHistoryEntry]:
+    """What happened to one item, oldest first, for the drawer (S18, #109):
+    added by a person, and each edit with the fields it changed. No values and
+    no people -- see ``ExtEditEvent``. An item the model extracted and nobody
+    touched has no entries."""
+    rows = session.execute(
+        select(ExtEditEvent.kind, ExtEditEvent.fields, ExtEditEvent.created_at)
+        .where(ExtEditEvent.action_item_id == action_item_id)
+        .order_by(ExtEditEvent.created_at, ExtEditEvent.id)
+    )
+    return [
+        EditHistoryEntry(kind=kind, fields=fields.split(",") if fields else [], at=at)
+        for kind, fields, at in rows
+    ]
 
 
 def edit_cost_for_meeting(session: Session, meeting_id: str) -> EditCost:
@@ -2224,3 +2341,93 @@ def _insert_if_absent_into(session: Session, model: type[Any]) -> postgresql.Ins
     if session.get_bind().dialect.name == "postgresql":
         return postgresql.insert(model)
     return sqlite.insert(model)
+
+
+# --- the team's open Jira issues, for D's brief (#436) ---------------------------
+
+AGENDA_LIMIT = 20
+"""Issues per snapshot. D shows six; the rest is headroom, not a promise."""
+
+_AGENDA_STATUSES = {
+    ActionStatus.TODO.value: "할 일",
+    ActionStatus.IN_PROGRESS.value: "진행 중",
+}
+"""The item's status as the brief shows it. B moves the issue to the matching
+Jira status category on every edit, so this is Jira's state as far as Autune
+set it; a status changed in Jira alone is not read back."""
+
+_JIRA_KEY = re.compile(r"^[A-Z][A-Z0-9_]*-[0-9]+$")
+_JIRA_URL = re.compile(JIRA_ISSUE_URL)
+
+
+def _one_line(text: str, limit: int) -> str:
+    """Whitespace collapsed, and cut to ``limit`` characters with an ellipsis."""
+    line = " ".join(text.split())
+    return line if len(line) <= limit else line[: limit - 1].rstrip() + "…"
+
+
+def teams_with_jira_issues(session: Session) -> list[str]:
+    """Teams with an item that became a Jira issue and still exists -- the teams
+    whose agenda can be non-empty, or whose issues all closed and must now be
+    published empty. A team whose last such item was *deleted* drops out (its
+    Jira link goes with it); its last snapshot then goes stale for D under
+    ``AGENDA_STALE_AFTER`` (#491 review)."""
+    return sorted(
+        session.scalars(
+            select(Meeting.team_id)
+            .join(ExtExternalRef, ExtExternalRef.meeting_id == Meeting.id)
+            .where(ExtExternalRef.system == "jira", ExtExternalRef.external_id.is_not(None))
+            .distinct()
+        )
+    )
+
+
+def team_agenda(session: Session, team_id: str, *, now: datetime) -> TeamAgenda:
+    """The team's open issues made from its action items, most pressing first:
+    the soonest due date, then undated ones, oldest first (#436).
+
+    Only what Autune made -- an item confirmed and sent to Jira -- so there is
+    no call to Jira here and nothing a person wrote in Jira alone leaves it. The
+    title is the item's description, which is stored masked. A key or a link
+    that does not have the shape the contract requires is left out rather than
+    failing the whole snapshot; the title still goes.
+    """
+    rows = session.execute(
+        select(
+            ExtActionItem.description,
+            ExtActionItem.status,
+            ExtExternalRef.external_id,
+            ExtExternalRef.url,
+        )
+        .join(
+            ExtExternalRef,
+            (ExtExternalRef.action_item_id == ExtActionItem.id) & (ExtExternalRef.system == "jira"),
+        )
+        .join(Meeting, Meeting.id == ExtActionItem.meeting_id)
+        .where(
+            Meeting.team_id == team_id,
+            ExtExternalRef.external_id.is_not(None),
+            ExtActionItem.status.in_(_AGENDA_STATUSES),
+        )
+        .order_by(
+            ExtActionItem.due_date.is_(None),
+            ExtActionItem.due_date,
+            ExtActionItem.created_at,
+            ExtActionItem.id,
+        )
+        .limit(AGENDA_LIMIT)
+    )
+    issues = []
+    for description, status, key, url in rows:
+        title = _one_line(description, AGENDA_TITLE_MAX)
+        if not title:
+            continue
+        issues.append(
+            AgendaIssue(
+                title=title,
+                key=key if key and _JIRA_KEY.match(key) else None,
+                status=_AGENDA_STATUSES[status],
+                url=url if url and _JIRA_URL.match(url) else None,
+            )
+        )
+    return TeamAgenda(team_id=team_id, as_of=now, issues=issues)

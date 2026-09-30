@@ -1,0 +1,22 @@
+{
+  "contract_version": "2.2",
+  "team_id": "team_001",
+  "as_of": "2026-09-29T08:50:00Z",
+  "issues": [
+    {
+      "title": "결제 모듈 API 명세 정리",
+      "key": "AUT-12",
+      "status": "진행 중",
+      "url": "https://example.atlassian.net/browse/AUT-12"
+    },
+    {
+      "title": "온보딩 화면 시안 공유",
+      "key": "AUT-15",
+      "status": "할 일",
+      "url": "https://example.atlassian.net/browse/AUT-15"
+    },
+    {
+      "title": "키도 링크도 없는 이슈"
+    }
+  ]
+}

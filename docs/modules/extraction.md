@@ -80,6 +80,13 @@ agreement, and sync the result to Notion.
    A decision goes the same way when a person confirms it (or adds it), to the
    team's decision database, in the wording they confirmed
    (`ext_decision_refs`).
+   A confirmed item with a due date also goes on its **assignee's own Google
+   Calendar** as an all-day event with no attendees, through that person's grant
+   in `user_integrations` (#435, #444); team work is not copied into anyone's
+   calendar. Every ten minutes `pull_calendar_changes` reads back Autune's own
+   tagged events on each connected calendar, and a date the person moved there
+   becomes the due date through the board's edit path (`ext_calendar_events`,
+   `ext_calendar_polls`).
 8. **Publish** — emit `ExtractionResult`.
 
 Classification runs before reference resolution, which is worth stating because
@@ -114,6 +121,8 @@ the overlap the question turns on.
 | `ext_edit_events` | One row per correction. Counts only — no person on it |
 | `ext_external_refs` | The Notion page an action item became, one per item and system |
 | `ext_decision_refs` | The Notion page a confirmed decision became, one per decision and system |
+| `ext_calendar_events` | The event an item's due date became on its assignee's own calendar, and the date last synced |
+| `ext_calendar_polls` | When each person's calendar was last read back |
 | `ext_confirmations` | Every ambiguous agreement, the DM once sent, and the response |
 | `ext_decisions` | Decision entities, their statements and source utterances. `origin` is `model` or `user`; a rerun rebuilds only the model's |
 | `ext_decision_sources` | Which utterances a decision was settled in, in order |

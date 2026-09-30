@@ -9,8 +9,8 @@ settled on, so the three can be read the same way.
 extraction runs over every utterance of a meeting, so an external option would
 mean handing the whole transcript to somebody else's model; ``privacy.md``
 section 6 makes that a design conversation rather than a value of
-``AUTUNE_GAP_NER_IMPL``. Relation extraction is the one step ``docs/modules/gap.md``
-plans to give LLM assistance, and when it lands it goes through
+``AUTUNE_GAP_NER_IMPL``. Relation extraction is the one extraction step with
+LLM assistance (opt-in, ``relation_assist``), and it goes through
 ``autune_integrations`` so ``check_outbound`` runs on the request body — a
 module-local ``httpx`` client is the hole PR #74 closed and PR #90 was asked to
 stop reopening.
@@ -19,7 +19,10 @@ stop reopening.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
+
+if TYPE_CHECKING:
+    from autune_gap.verification import Question
 
 ENTITY_LABELS: tuple[str, ...] = ("feature", "system", "metric", "person", "date", "term")
 """What module C looks for. ``docs/modules/gap.md`` step 1 names the first five.
@@ -113,6 +116,12 @@ class Relation:
     target: str
     relation: str
     utterance_id: str
+    asserted_by: str = ""
+    """Which implementation asserted this triple, when an extractor combines
+    more than one — ``rules-3`` or ``gemini:<model>`` under the assisted
+    extractor. Empty means the extractor's own ``model_version``, which is all
+    a single-implementation extractor ever needs. ``gap_topic_edges`` records
+    it, so an edge the model added can be told from one a rule read."""
 
     def __post_init__(self) -> None:
         if self.relation not in RELATION_LABELS:
@@ -161,11 +170,12 @@ class RelationExtractor(Protocol):
     graph would either grow a node with no evidence or drop the relation
     silently.
 
-    **This is the step ``docs/modules/gap.md`` plans to give LLM assistance**,
-    and the only one: a relation needs a clause, not a whole transcript, so the
-    hard cases can be sent without sending the meeting. Nothing sends anything
-    today — ``relations.RuleRelations`` is the only implementation and it runs in
-    this process. When an assisted one lands it goes through
+    **This is the step ``docs/modules/gap.md`` gives LLM assistance**, and the
+    only extraction step that has it: a relation needs a clause, not a whole
+    transcript, so the hard cases can be sent without sending the meeting.
+    ``relations.RuleRelations`` runs in this process and is the default;
+    ``relation_assist.AssistedRelations`` runs the same rules and sends only the
+    utterances holding a pair they decline, opt-in. It goes through
     ``autune_integrations`` so ``check_outbound`` sees the request body, which
     is the rule this module's header states and PR #74 put there.
     """
@@ -185,4 +195,77 @@ class RelationExtractor(Protocol):
         into thousands, and an assisted implementation would make thousands of
         requests out of one.
         """
+        ...
+
+
+@runtime_checkable
+class SentenceEmbedder(Protocol):
+    """Sentence vectors for template comparison's spoken evidence.
+
+    ``detect`` already reads the speech for an item's keywords, and a keyword is
+    a noun: a meeting that settles an owner with "제가 금요일까지 맡겠습니다" says
+    no noun that could name the item, and the eval set's ``no-noun`` false
+    positives are exactly that shape. A sentence vector compares what an
+    utterance *says* against example sentences of what settling the item sounds
+    like, so the verb and the date count too. See ``autune_gap.semantic``.
+
+    An independent copy of the seam modules B and D already have — modules never
+    import each other — and the same model, KURE-v1, for the same reason D chose
+    it: Korean-tuned and already the team's answer to "do these two sentences
+    say the same thing".
+
+    **In process only.** Every consenting utterance of a meeting goes through
+    this, which is the whole transcript; an implementation that sent it
+    elsewhere is the design conversation ``privacy.md`` section 6 describes, not
+    a value of ``AUTUNE_GAP_EMBEDDER_IMPL``. Nothing it returns is stored: the
+    vectors decide a coverage state and are dropped.
+    """
+
+    @property
+    def model_version(self) -> str:
+        """The checkpoint, so a run can say which model decided what it heard."""
+        ...
+
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        """One vector per input, in order, each unit-normalised so a dot product
+        is a cosine similarity."""
+        ...
+
+
+@runtime_checkable
+class TemplateVerifier(Protocol):
+    """Checks whether one utterance really discussed each of a few template
+    items the embedder could not decide between (``autune_gap.verification``).
+
+    **The only step in this module that may send meeting text off the
+    machine.** An external implementation receives, per ambiguous utterance,
+    the utterance text as module A stored it — names and numbers spoken aloud
+    are *not* masked — together with the candidate items' names, questions and example
+    sentences from the template files. It never receives the rest of the
+    meeting, a speaker, a time or an id. That is still transcript content
+    leaving our infrastructure, which ``privacy.md`` section 6 permits only
+    masked and only as much as the feature needs; so every implementation goes
+    through ``autune_integrations.HttpClient`` (``check_outbound`` reads the
+    body), none is the default, and enabling one for real meetings is a team
+    decision, as it is for module B's ``llm`` classifier (#392).
+
+    The verifier answers yes or no per offered candidate. It does not see the
+    whole template, cannot add an item, and does not decide coverage or risk.
+    """
+
+    @property
+    def model_version(self) -> str:
+        """Which model answered, so a run can say what verified what."""
+        ...
+
+    def verify(self, questions: list[Question]) -> list[frozenset[str] | None]:
+        """One answer per question, in order: the candidate keys the utterance
+        discussed, or ``None`` when that question could not be answered (the
+        provider failed, or the utterance was too long to send). The caller
+        falls back to the embedding's own answer for that utterance.
+
+        **One failure is raised, not answered:** ``PrivacyViolationError``
+        from the outbound check. It means an unmasked value reached a stored
+        transcript, which is a broken invariant to stop on, not a provider
+        hiccup to fall back from."""
         ...

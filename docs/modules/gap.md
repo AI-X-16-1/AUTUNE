@@ -39,8 +39,7 @@ domain template, and score the risk of each missing item.
 
 1. **NER** — spaCy extracts entities: features, systems, metrics, people, dates.
 2. **Relation extraction** — build subject–relation–object triples. Marker
-   rules today; LLM assistance for the hard cases is the seam, not the
-   implementation.
+   rules, and — opt-in — an LLM for the pairs the rules decline to read.
 3. **Topic graph** — persist nodes and edges as rows (`gap_topics`,
    `gap_topic_edges`), then load them into NetworkX.
 4. **Centrality** — PageRank and betweenness identify which topics carried the
@@ -170,9 +169,10 @@ What this does **not** fix, and what #13 still carries:
 
 Rules only, no model, no network: `pipeline/relations.py`. Issue #32 puts the
 non-LLM share at about 70% and says to exhaust the rules first, so they are
-written and measured before anything is sent anywhere. Today the share is 100%
-— there is no assisted implementation — and what the rules cannot read is a
-named list below rather than a shrug.
+written and measured before anything is sent anywhere. What the rules cannot
+read is a named list below rather than a shrug, and that list is exactly what
+the opt-in assisted implementation asks about ("Relation assistance", below).
+By default the share is 100%: nothing is sent.
 
 **Four relations** are in the vocabulary, each one a thing risk scoring (#35)
 should treat differently: `depends_on`, `blocked_by`, `part_of`,
@@ -183,7 +183,7 @@ asking the extractor.
 
 | Relation | Marker | Reads |
 | --- | --- | --- |
-| `depends_on` | 필요, 있어야, 되어야, 선행, 전제, 없이는, 없으면 | "정렬 로직은 인덱스가 필요합니다" |
+| `depends_on` | 필요, 있어야, 되어야, 선행, 전제, 없이는, 없으면; and 끝나야, 끝내야, 나와야, 마쳐야 **only when another clause follows** | "정렬 로직은 인덱스가 필요합니다", "인덱스 재색인이 먼저 **끝나야** 정렬 로직을 붙일 수 있습니다" |
 | `blocked_by` | a blocker word (안 잡, 미정, 막혀, 무리, 이슈, …) **and** a causal connective in the same clause, on either side of it | "실시간은 콜드스타트가 **안 잡혀 있어서** 무리입니다", "검색 기능은 캐시 **때문에** 막혀 있습니다" |
 | `alternative_to` | 대신, 말고, 보다는, 아니라, 반면, `vs` | "인기순 정렬 대신 실시간 개인화로" |
 | `part_of` | — **no rule** | |
@@ -310,6 +310,29 @@ the same review:
   실시간은 and 실시간으로 have to stay mentions, and telling 실시간성 from those
   needs the tagger rather than a boundary.
 
+**A finish is a condition only when something follows it.** "인덱스 재색인이
+먼저 끝나야 정렬 로직을 붙일 수 있습니다" is the commonest way a meeting says one
+piece of work waits on another, and none of the plain need words is in it —
+gap_detection_v1's search-personalisation case lost its dependency to exactly
+this. The same ending also closes an obligation: "정렬 로직이 금요일까지
+끝나야 합니다" is a deadline, and read as a need it would assert that 정렬 로직
+depends on whatever was named before it. So 끝나야, 끝내야, 나와야 and 마쳐야
+count only when a clause follows; 합니다, 해요, 돼요, 겠-, 할 and the end of the
+utterance refuse them. 있어야 and 되어야 take no such guard, because "캐시가
+있어야 합니다" is a need either way — what is obliged there is the thing
+existing, not a date somebody promised. `rules-3`.
+
+**A date or a quantity is never an end.** Entities labelled `date` or `metric`
+are left out of the names the rules search for. They sit exactly where the
+thing needed is looked for — "인덱스가 금요일까지 있어야 정렬 로직을 붙입니다"
+read as `정렬 로직 depends_on 금요일까지` — and neither is a thing another thing
+waits on. They are still topics; only the relation step stops seeing them.
+`rules-3`.
+
+With #456 reading `depends_on` as evidence for the dependency item, the two
+together close search-personalisation's dependency false positive:
+gap_detection_v1 `high` precision 0.842 → 0.889, recall 1.0.
+
 **The cue words themselves are not topics.** 필요 and 이슈 join 대신, 말고 and
 반면 in `spoken.STOP_TERMS`: the model tags all of them as ordinary nouns, so a
 noun run welds them into a label, and "인덱스가 필요 없습니다" produced a topic
@@ -342,14 +365,76 @@ What this does **not** do:
 - **A relation needs both topics to exist.** A topic only exists if the meeting
   said it bare at least once, because that is what entity extraction claims. A
   thing referred to only as 그거 is in no relation.
-- **No LLM path exists.** The seam is `RelationExtractor` and
-  `AUTUNE_GAP_RELATION_IMPL`; when one lands it goes through
-  `autune_integrations` so `check_outbound` sees the request body. Unlike step 1
-  an assisted implementation here is *allowed* — a relation needs the clause,
-  not the transcript.
+- **The LLM path is opt-in.** `AUTUNE_GAP_RELATION_IMPL=gemini`, below. Off,
+  nothing here reaches past the rules.
 
 `gap_topic_edges.extractor_version` records which extractor asserted an edge,
-and is NULL exactly when none did — that is the `co_occurs` row.
+and is NULL exactly when none did — that is the `co_occurs` row. Under relation
+assistance it names the half that asserted it: `rules-3` or `gemini:<model>`.
+
+### Relation assistance
+
+`AUTUNE_GAP_RELATION_IMPL=gemini` (off by default) runs the marker rules, then
+asks Gemini about the pairs they decline. It is the LLM assistance #32 asked
+for, kept to the cases this section already names as the rules' limits
+(`pipeline/relation_assist.py`, `relations.hard_pairs`).
+
+**What is asked.** Adjacent mentions in one utterance, no further apart than
+`MAX_MARKER_DISTANCE`, that the rules did not type in either direction, with
+one of these between them:
+
+| Shape | Why the rules decline it |
+| --- | --- |
+| `는데` / `지만` | A contrast as often as not, and sentence glue the rest of the time |
+| nothing but `의` | Composition or possession; no `part_of` rule |
+| a causal connective, in an utterance with a blocker word and a resolution word | "캐시 처리 때문에 막혀" — 처리 names the work, and `_resolved` reads it as the blocker being gone |
+
+**What may come back.** Only a pair the line offered, in either direction, with
+one of the four `RELATION_LABELS`. Anything else in the answer is dropped. The
+rules' relations stand and are listed first, so a triple both found is
+attributed to the rule; the model cannot remove or replace one. A symmetric
+answer is written both ways, as the rules write theirs.
+
+**When it cannot answer, the rules stand.** A failed request, an unparseable
+answer, a line too long to send, or one past
+`AUTUNE_GAP_RELATION_ASSIST_MAX_UTTERANCES` keeps the rules-only result for
+that utterance. `PrivacyViolationError` from `check_outbound` is raised, not
+answered, for the reason the verifier gives (review of #484).
+
+**What leaves.** Per request, under the 4,000-character outbound cap and
+through `autune_integrations.HttpClient`: the fixed instruction text, and each
+asked utterance on its own numbered line as module A stored it, with the
+mentions of its pairs lettered beside it. The mentions are substrings of the
+line. **Names and numbers read out as words are not masked**, as with the
+verifier. No speaker, time, meeting or utterance id, and no neighbouring line.
+It shares the verifier's provider settings (`AUTUNE_GAP_VERIFIER_API_KEY`,
+`_MODEL`, `_FALLBACK_MODEL`, `_BASE_URL`, `_TIMEOUT_SEC`) and its standing:
+opt-in, never the default, dummy meetings only until the team decides. That
+decision is #392, open. Both of C's callers send names unmasked until then. #500
+replaces a team's names before module B's classifier sends; once that moves to
+`packages/integrations`, the verifier and this path take it too. Raised in
+review of #499.
+
+**The model answers with names, not letters.** Asked to answer with the
+letters, `gemini-3.5-flash` and `gemini-3.8-flash` both wrote the topic names
+instead, and a letters-only parser dropped every answer — indistinguishable
+from a model that found nothing. A name is accepted when it is one of that
+line's own mentions, so this widens nothing the letters did not offer.
+
+**Measured** on 2026-09-30, one request per model:
+
+- **The authored eval set sends nothing.** Over `gap_detection_v1` with spaCy,
+  no utterance holds a hard pair, so `gemini` asks nothing and the graph is
+  the rules' graph. The set cannot say whether assistance helps gap precision;
+  the W5 meetings can.
+- **Eight probes, each a case this section names**, three with a relation
+  and five without. Both models got all eight: `alternative_to` across
+  "합의했는데", `정렬 로직 part_of 검색` from "검색의 정렬 로직", and
+  `정렬 로직 blocked_by 캐시` from "캐시 처리 때문에"; nothing for plain `는데`
+  glue, a `지만` that contrasts qualities rather than options, "검색 기능의
+  담당자 일정", or "이슈가 해결되어서". The probes were written alongside the
+  prompt, so 8/8 says the mechanism works on the cases it was built for and
+  nothing about real meetings.
 
 ### Steps 3 to 5 as built
 
@@ -419,8 +504,31 @@ three side by side.
 - **Matching is containment either way**, over `graph.topic_key`'s
   normalisation: a keyword inside a longer label, and a label inside a longer
   keyword. Deliberately dumb, and the rule v1 measures precision against — what
-  replaces it (embeddings over the items) is then a change with a number
-  attached rather than a better idea.
+  replaces it is then a change with a number attached rather than a better idea.
+- **A stated relation matches too.** An item may name step-2 relations
+  (`relations` in the template file), and a topic at either end of such an edge
+  in `gap_topic_edges` matches the item the way a keyword hit does — ranked by
+  centrality, so it can cover the item or leave it partial. `general`'s
+  `dependency` names `depends_on` and `blocked_by` (version 3). A dependency is
+  how two things stand to each other, and no topic label says it: "마이그레이션
+  검증 스크립트가 먼저 있어야 롤백 절차가 의미가 있습니다" already came out of
+  step 2 as `롤백 절차 depends_on 마이그레이션 검증 스크립트`, and the item
+  was still reported missing because neither label contains 의존 or 선행. On
+  gap_detection_v1 the change closed that false positive — `high` precision
+  0.800 → 0.842, recall unchanged at 1.0. `co_occurs` is refused at load: two
+  topics said together say nothing about how they relate. The two dependency
+  false positives left are a marker the rules do not know yet ("먼저 끝나야")
+  and a sentence with only one topic in it, which no relation can reach.
+- **Embeddings over the topic labels were measured and not built.** KURE-v1
+  between each item's display name and each topic label, over the same set:
+  of the five settled items keyword matching missed, it placed no correct topic
+  nearest to any — they were settled with a verb or by a relation, and the
+  nearest label was an unrelated one ("성공 기준" for `dependency`). It also
+  scored real gaps above true matches (`ownership` against "보관 기간" at
+  0.546; `performance` against "응답 시간", a true match, at 0.500), so no
+  floor separates them. A label match can cover an item, which makes every
+  such error a real gap hidden. Reading the *speech* by meaning is a different
+  mechanism with a different ceiling, and is where sentence embeddings go.
 - **Two sources of evidence, ranked: the graph, then the speech.** A topic match
   carries a centrality, so it decides between covered and partial. A keyword
   that appears in an utterance with no topic behind it is weaker — the words
@@ -448,6 +556,8 @@ three side by side.
   negations are not detected, and detecting them is its own judgement rather
   than a one-liner; the fixture labels disagree with the code on exactly this
   case and it is the open question of the rule.
+- **The speech can also be read by meaning** (`AUTUNE_GAP_EMBEDDER_IMPL=local`,
+  off by default). See "Speech read by meaning" below.
 - **A missing item scores exactly its template weight.** There is no topic to
   read a centrality off and none to read a silence off, so the weight is the
   only measured input and the score is it. Charging it a full 1.0 for "no
@@ -501,6 +611,159 @@ deletes the meeting's topics first and the cascade takes those rows with them.
 Every threshold and weight is in `config.py` (#35): the two severity bands, the
 centrality below which a match is partial, the damping, and the three risk
 weights.
+
+### Speech read by meaning
+
+A keyword is a noun, and the eval set's false positives were all `no-noun`: the
+meeting settled the item with a verb and a date — "정렬 로직은 이건우님이 맡고
+다음 주 금요일까지 초안을 봅니다" — and said no noun a keyword list or a better
+extractor could reach. `autune_gap.semantic` reads the same consenting speech a
+second way, through a sentence embedder (KURE-v1, in process, the model B and D
+already run).
+
+- **Every item carries example sentences** (`examples` in the template files) —
+  what settling it sounds like in a meeting. An utterance is compared against
+  every item's examples and against `semantic.BACKGROUND`, sentences that
+  settle nothing ("네 좋습니다", "오늘은 진행 상황만 공유드릴게요"), and counts
+  for the class it is nearest to if that is an item and the cosine reaches
+  `AUTUNE_GAP_SEMANTIC_FLOOR`.
+- **Nearest class, because a cutoff does not separate.** Item names and
+  example sentences were both measured against the eval set with a per-item
+  cutoff first, and the distributions overlapped: "네 알겠습니다. 그럼 여기서
+  마치겠습니다" is 0.65 from "그 작업은 제가 맡겠습니다" on the shared ending
+  alone, above the 0.61 of the utterance that really did settle an owner in
+  `search-personalisation`. Against the background class the same sentence
+  lands at 0.86 and counts for nothing.
+- **A heard item is exactly as strong as a spoken keyword.** It makes a missing
+  item *partial*, never covered, and `detect.classify`'s ranking is unchanged.
+  So the change closes a `no-noun` false positive by moving it below `high`
+  rather than by claiming the item was settled — the row stays, a reader who
+  opens `medium` sees it, and precision over every severity does not move.
+- **Examples are never taken from the eval set**, and a test compares the two.
+  The harness would otherwise be grading its own answer key.
+- **Nothing leaves the process and nothing is stored.** The embedder is
+  `local` or `fake`; there is no external option, for the reason the entity
+  extractor has none. The vectors decide which items were said and are dropped.
+
+`python -m autune_gap.eval --compare` runs the set twice, embedder off and then
+on, and prints what became of every baseline false positive. On the four
+authored cases, with spaCy:
+
+| | off | local |
+| --- | --- | --- |
+| precision (`high`) | 0.80 | 0.88 |
+| recall (`high`) | 1.00 | 0.94 |
+| false positives (all `no-noun`) | 4 | 2 |
+| true positives | 16 | 15 |
+
+Closed: `deploy-retro:ownership` and `outbound-privacy:dependency`. Still
+raised: `search-personalisation:dependency` — "인덱스 재색인이 먼저 끝나야
+정렬 로직을 붙일 수 있습니다" reaches only 0.51 with the dependency examples,
+under the floor — and `deploy-retro:dependency`, whose utterance is nearer the
+`risk` examples, and one utterance counts for one item. Lost: `search-personalisation:cold_start`, a real gap, because "인기순
+정렬 대신 실시간 개인화로 가는 거죠" is nearest the cold-start examples.
+
+**Off by default, and that is the finding rather than caution.** The floor
+(0.55) and margin (0) were chosen by looking at these four meetings, so the
+table says the mechanism does what it claims on them and nothing about whether
+it holds. The W5 meetings decide; `--compare` is the command to run on them.
+LLM verification of what the embedder heard is the next section, and a
+privacy decision of its own (`../architecture/privacy.md` section 6).
+
+### Verifying what the embedder was unsure of
+
+`AUTUNE_GAP_VERIFIER_IMPL=gemini` (off by default, and needing the embedder on)
+adds one step between the embedding and `detect`. It does not re-judge the
+meeting; it asks about the utterances the embedding could not decide.
+
+**Triage** (`autune_gap.verification`) files every utterance by its ranking:
+
+| | when | what happens |
+| --- | --- | --- |
+| confident | an item wins with score >= `VERIFY_CONFIDENT_SCORE` and lead >= `VERIFY_CONFIDENT_LEAD` | heard, nothing asked |
+| ignored | the background class wins by >= `VERIFY_CONFIDENT_LEAD`, or no item reaches `VERIFY_CANDIDATE_SCORE` | not heard, nothing asked |
+| ambiguous | anything else | asked, with the `VERIFY_CANDIDATES` nearest items at or above `VERIFY_CANDIDATE_SCORE` |
+
+**The verifier checks candidates and nothing else.** For each ambiguous
+utterance it sees the utterance and its lettered candidates — each item's name,
+question and `VERIFY_EXAMPLES` example sentences — and answers which letters
+the utterance actually discussed. A letter the line was not offered is dropped,
+so it cannot add an item or reach past the embedder's shortlist. What it
+confirms joins `heard`, and `heard` enters `detect.compare` exactly as the
+embedding's answer did: partial at most. Coverage, severity and risk are
+`detect`'s and did not change.
+
+**When it cannot answer, the embedding stands.** A failed request, an
+unparseable answer, an utterance too long to send, or one past
+`VERIFY_MAX_UTTERANCES` keeps the embedding-only decision
+(`semantic.nearest_item`), and `gap_detection_complete` logs how many were
+asked and how many went unanswered.
+
+**A privacy refusal is not "cannot answer".** When `check_outbound` finds an
+unmasked value in a request, `PrivacyViolationError` propagates and the task
+fails. It means a stored transcript holds what module A should have masked;
+falling back would keep the product running while hiding that. Raised in
+review of #484.
+
+**What leaves, with `gemini`.** Per request, under the 4,000-character outbound
+cap and through `autune_integrations.HttpClient` (`check_outbound` scans the
+body):
+
+- the fixed instruction text;
+- the candidate items offered in that request — template-file content;
+- the ambiguous utterances, numbered, **as module A stored them**. Module A masks
+  resident registration, card, phone and account numbers and e-mail addresses
+  written in digits. **It does not mask names, and on the batch path it does
+  not mask numbers read out as words** ("공일공 일이삼사…" — the spoken-number
+  recogniser runs on the live path only; module A's to fix, raised in review
+  of #484). Either goes to Google with its line. No speaker, time, meeting or
+  utterance id, and no neighbouring line.
+
+A meeting with no topics sends nothing, since it raises no gaps. At most
+`VERIFY_MAX_UTTERANCES` utterances of one meeting leave per run. This is the
+exposure module B's `llm` classifier has (#392) at a smaller size, and it
+takes the same answer: opt-in, never the default, dummy meetings only until
+the team decides otherwise. A free-tier key may let the provider keep what it
+is sent.
+
+**Another provider** is another class behind `pipeline.base.TemplateVerifier`
+and an entry in `registry._VERIFIERS`; nothing outside `pipeline` names one.
+Tests use `FakeVerifier`, which takes a decision function or confirms the
+embedder's nearest candidate. The verifier is for template matching only;
+relation extraction's own assistance is "Relation assistance" above, and shares
+only the Gemini client (`pipeline/gemini.py`).
+
+```bash
+uv run --package autune-gap python -m autune_gap.eval --compare --verifier gemini  # off / local / +gemini
+uv run --package autune-gap python -m autune_gap.eval --probe --verifier gemini    # single utterances
+```
+
+The probes (`eval/fixtures/verification_probes_v1.json`) are the utterances the
+embedding got wrong or nearly wrong: "인덱스 재색인이 먼저 끝나야…" (dependency),
+"인기순 정렬 대신 실시간 개인화로…" (not cold start), an owner and a date with no
+noun, and "네 알겠습니다, 마치겠습니다" (nothing).
+
+Measured on 2026-09-29 with `gemini-3.5-flash` (fallback never used), spaCy,
+the four authored meetings, templates `general.4` / `feature_planning.2`:
+
+| | off | local | local + gemini |
+| --- | --- | --- | --- |
+| precision (`high`) | 0.89 | 1.00 | 0.94 |
+| recall (`high`) | 1.00 | 0.94 | 1.00 |
+| false positives (all `no-noun`) | 2 | 0 | 1 |
+| verifier requests / utterances sent | 0 / 0 | 0 / 0 | 4 / 10 |
+
+**The verifier trades precision for recall here, not both up.** It restored
+the cold-start gap the embedding lost ("인기순 정렬 대신 실시간 개인화로…" is
+not a cold-start plan) and so brought recall back to 1.00. It also reopened a
+false positive the embedding had closed: it did not confirm "개인정보 마스킹이
+먼저 끝나야 전송할 수 있습니다" as a dependency, which it is. On four meetings
+that is one utterance either way, and it says nothing about which way real
+meetings lean — the W5 set decides whether the verifier is worth its request.
+
+Probes: 3/5 on the embedding alone, 5/5 with Gemini (2 requests). Requests ran
+765-1,543 characters; no body carried the key, a speaker, an id or a line that
+triage had not marked ambiguous.
 
 ### Step 8 as built
 
@@ -629,13 +892,14 @@ here, so the no-deletion-hook sentence above still holds.
 | GET | `/reports/{meeting_id}` | Full gap report |
 | GET | `/topics/{meeting_id}` | Topic graph for visualization |
 | POST | `/gaps/{id}/dismiss` | Mark a gap as a false positive (feeds threshold tuning) |
+| DELETE | `/gaps/{id}/dismiss` | Take a dismissal back |
 | GET | `/templates` | Available domain templates |
 | GET | `/templates/{meeting_id}` | Which template this meeting is held to, and how far it got with each item |
 | PUT | `/templates/{meeting_id}` | Point this meeting at a template and re-compare |
 
 ### The read API as built
 
-Everything above is built except `POST /gaps/{id}/dismiss`.
+Everything above is built.
 `/reports/{meeting_id}` and `/topics/{meeting_id}` read the stored rows; nothing
 was added to `apps/` to mount them.
 
@@ -708,19 +972,57 @@ reads.
 `PUT /templates/{meeting_id}` stores the choice **and re-runs detection**, so the
 gaps on `/reports/{meeting_id}` reflect the new template as soon as it returns —
 the alternative is a control that appears to do nothing until the meeting is
-reprocessed. It does not republish `autune.gap.completed`: E scores the meeting
-the pipeline produced, and a template somebody is trying out on S20 should not
-silently rewrite that. A key no template file defines is a 422, not a 404 — what
+reprocessed. It then queues `autune.gap.publish_report`, so E scores the
+meeting against the template in force rather than the one the pipeline first
+compared it to (#316). A key no template file defines is a 422, not a 404 — what
 is wrong is the value, not the address.
 
-`POST /gaps/{id}/dismiss` is still not built. It now has rows to act on, and
-what it needs is the screen that calls it (#48).
+`POST /gaps/{id}/dismiss` sets `dismissed_at` and nothing else; `DELETE` on the
+same path clears it, because a button pressed by mistake has to be undoable from
+the screen or the mistake sits in the data tuning reads. Both return the state
+the server settled on (`schemas.GapDismissal`). Dismissing twice keeps the first
+timestamp. The routes are named by the gap, so the membership check is the
+service's own: an unknown gap and a gap on another team's meeting are the same
+404, and neither names the meeting. Both commit the mark and queue
+`autune.gap.publish_report`, so E stops quoting and scoring a gap the team
+called wrong (#471).
+
+### Sending E the report again
+
+`autune.gap.publish_report` re-sends `GapReport` built from the rows as they are
+when it runs. E takes the latest payload for a meeting, reopens it and
+re-aggregates without re-sending the personal DM, so a second
+`autune.gap.completed` needs no change on E's side and no contract change.
+
+- **Queued, never published in the request.** The API process is a Celery
+  client, not a worker (#258), and the route returns without waiting on the
+  broker round trip to E.
+- **It never performs a first publish.** A meeting with no topic graph is
+  skipped: a template chosen while the pipeline is still running, or for a
+  meeting whose transcript never arrived, would otherwise hand E an empty
+  report and start its timeout countdown before B and D have reported.
+- **Two changes in a row end with the second, on one worker.** Each run reads
+  committed rows, so the later run sends the later state. Two workers taking
+  the pair out of order could leave E with the older one; `GapReport` carries
+  nothing E could order payloads by, and adding that is a contract change.
+  `autune.context.republish` has the same exposure.
+
+A dismissal made under one template survives a switch to another. Switching
+drops the old checklist's gaps, but a dismissed one stays — marked, out of the
+report, and not on the rail, which reads only the template in force — so tuning
+keeps its input and switching back finds the judgement where it was left.
+
+S20 calls all of this (#48): "해당 없음" on a HIGH gap, "되돌리기" on the rail
+item it leaves behind, and the rail's template picker. The screen re-reads the
+report, graph and rail after each write rather than patching its own copy, and
+polls them every five seconds while the rail says `analysed: false`.
 
 ## Celery tasks
 
 | Task | Trigger | Queue |
 | --- | --- | --- |
 | `autune.gap.on_transcript_ready` | `autune.transcript.ready` | `cpu_heavy` |
+| `autune.gap.publish_report` | `PUT /templates/{meeting_id}`, `POST`/`DELETE /gaps/{id}/dismiss` | `cpu_heavy` |
 
 ## Slack surface
 
@@ -733,6 +1035,8 @@ what it needs is the screen that calls it (#48).
 | --- | --- |
 | Entity extraction | spaCy NER (Korean model) |
 | Relation extraction | Rule-based patterns plus LLM assistance |
+| Spoken evidence by meaning | KURE-v1 sentence embeddings, in process, off by default |
+| Verifying ambiguous matches | Gemini, **external**, opt-in and off by default |
 | Graph | NetworkX, in memory |
 | Topic importance | PageRank, betweenness centrality |
 | Risk scoring | Weighted heuristic; thresholds in `config.py` |
@@ -813,6 +1117,7 @@ and dismissals feed threshold tuning.
 
 ```bash
 uv run --package autune-gap python -m autune_gap.eval
+uv run --package autune-gap python -m autune_gap.eval --compare   # embedder off vs local
 ```
 
 Precision is measured over the `high` band, because that is what a reader

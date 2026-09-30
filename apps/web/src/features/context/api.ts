@@ -2,6 +2,7 @@
 import { api } from "@/shared/api/client";
 
 import type {
+  BriefRead,
   DecisionLineageRead,
   DecisionSummaryRead,
   TopicLinksRead,
@@ -41,3 +42,11 @@ export const listDecisionThreads = (filter: DecisionThreadFilter) => {
   }).toString();
   return api.context<DecisionSummaryRead[]>(`/decisions?${query}`);
 };
+
+/**
+ * A scheduled meeting's pre-meeting brief. 404 until the worker composes it,
+ * `AUTUNE_CONTEXT_BRIEF_LEAD_MINUTES` before the start — and for any meeting
+ * that never had one.
+ */
+export const getBrief = (meetingId: string) =>
+  api.context<BriefRead>(`/briefs/${encodeURIComponent(meetingId)}`);

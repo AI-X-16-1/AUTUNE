@@ -81,9 +81,12 @@ class AudioSettings(BaseSettings):
     rather than just mishearing it.
 
     **With diarization on a GPU, 5 reaches the processing-time target.** That
-    condition comes first because it is doing the work: 434 s total for 327 s of
-    audio is 1.32×, against the 1.5× in ``modules/audio/CLAUDE.md``, and the
-    same meeting with diarization on CPU is about 1.78× and over. The GPU path
+    condition comes first because it is doing the work: 443 s total for 327 s of
+    audio is 1.35×, against the 1.5× in ``modules/audio/CLAUDE.md`` — and the
+    *first* meeting after a worker starts is 483 s, 1.47×, because loading
+    pyannote onto Metal costs about 50 s once per process (HISTORY.md §2). The
+    same meeting with diarization on CPU is **1.93×**, measured the same day.
+    The GPU path
     is ``diarization_device`` (#394); it is not the default, only MPS has been
     measured, and MPS is unverified under a prefork worker (#329). On the
     configuration that ships today the target is missed, and beam width is not
@@ -124,6 +127,53 @@ class AudioSettings(BaseSettings):
     diarization_model: str = "pyannote/speaker-diarization-3.1"
     """Pinned explicitly. Never load a floating "latest"."""
 
+    diarization_device: str = ""
+    """Where pyannote runs. Empty follows ``device``; ``cpu``, ``mps``, ``cuda``.
+
+    Until #394 the pipeline never moved the loaded pipeline off CPU,
+    so diarization ran on CPU even where ``device=cuda`` sent Whisper to the GPU.
+    Measured on the same six-person 5m27s recording (327.4 s) as the rest of
+    HISTORY.md section 2, ``num_speakers=6``, one process, one waveform:
+
+    | Device | Time | ×audio |
+    | --- | --- | --- |
+    | ``cpu`` | 163.4 s | 0.50× |
+    | ``mps`` | 11.5 s | 0.035× |
+
+    14.3× faster for an output that is identical to the millisecond: 77 turns
+    and 6 speakers both times, 0 ms maximum drift on both start and end
+    boundaries, the same label on all 77 turns, 297.4 s of speech either way.
+    Boundaries matter more than counts here — ``speakers`` assigns each word to
+    the turn that contains it, so identical edges mean nothing downstream moves.
+
+    **A separate setting rather than a third value for ``device``.** ``device``
+    is read by ``pipeline._model_for`` and handed to faster-whisper, whose
+    CTranslate2 backend has no Metal support; ``AUTUNE_AUDIO_DEVICE=mps`` would
+    break transcription to speed up diarization. This is the same split as the
+    live path's own model, threads and beam width.
+
+    **``mps`` is not known to be safe under a prefork or threaded Celery
+    worker.** Module E's SetFit aborts on Metal in exactly that setting, which
+    is why the demo worker runs ``--pool=solo`` (#329); putting pyannote on
+    Metal inherits the risk and nobody has run it under prefork. Measured
+    in-process only.
+
+    **CUDA is unmeasured.** The 0 ms agreement above is CPU against MPS. Nobody
+    has checked that a CUDA box produces the same turns, or how pyannote shares
+    VRAM with Whisper ``large-v3`` in fp16 beside it. ``=cpu`` is the way out if
+    it does not.
+
+    **Setting this explicitly is a promise; leaving it empty is not.** An
+    explicit device that torch cannot reach raises ``ConfigurationError`` — the
+    14.3× is why a silent fallback would be worse than a failure. An empty
+    setting inherits ``device``, which is the *transcriber's* device and may
+    name an accelerator torch cannot see while CTranslate2 can (a Windows CPU
+    torch wheel with ``AUTUNE_AUDIO_DEVICE=cuda`` is a working deployment
+    today). There it takes CPU and logs ``diarization_device_unavailable``,
+    because refusing to start would break a deployment that changed nothing.
+    See ``diarization.resolve_device``.
+    """
+
     diarization_num_speakers: int | None = Field(default=None, ge=1)
     """Exactly how many people spoke, when the room knows. On a muffled
     microphone pyannote split one voice into four clusters (#325); with this
@@ -141,6 +191,72 @@ class AudioSettings(BaseSettings):
     diarization_max_speakers: int | None = Field(default=None, ge=1)
     """Upper bound on speakers when the exact count is unknown. Ignored when
     ``diarization_num_speakers`` is set."""
+
+    identification_threshold: float = 0.70
+    """Cosine similarity at or above which a voice profile is offered as the
+    candidate for a speaker label. Higher than the live tracker's
+    ``live_speaker_threshold``: that one asks "is this the same voice as a
+    moment ago", this one asks "is this a particular person", and the cost of
+    being wrong is a commitment filed under somebody who never made it.
+    Provisional until the evaluation in
+    ``docs/modules/audio-speaker-identification.md`` has run."""
+
+    voice_profiles_enabled: bool = False
+    """Whether this deployment keeps voice data at all: the per-meeting
+    observation vectors the worker takes, and the profile a confirmation
+    writes (a vector kept on the person, across meetings, until they delete it
+    or leave).
+
+    Off by default because ADR 0007's legal review is still open: #92's Q4
+    asks whether a voice embedding is biometric information (sensitive
+    information) under PIPA Article 23, and whether
+    collecting it needs its own separate, refusable consent, and identification
+    shipped before that question was answered. If the answer turns out to be
+    "yes, separate consent is required," the cost of having shipped with this
+    off is flipping the setting once authentication exists to collect and
+    record that consent (#268 -- ``User`` has no consent field and there is no
+    sign-up flow today); the cost of having shipped it on would have been
+    deleting biometric data already collected and rebuilding the confirmation
+    flow around a consent step that does not exist yet.
+
+    **It gated only the profile INSERT until review caught that.** The worker
+    stored an observation vector per speaker whenever a meeting had an
+    attestation, flag or no flag, so "merging this collects no biometric data"
+    was not true of the code that said it (@PARKJAEKYUNG0525, @lsh2217 on
+    #370). Those vectors are the same biometric data Q4 asks about, they
+    become attributable to a person the moment a speaker is confirmed, and the
+    consent behind them is one checkbox that says "녹음과 분석" and does not
+    mention voice characteristics. Worse, they survived the flag: turning it on
+    later and confirming a speaker copied a vector recorded before anyone could
+    have consented to enrolment into that person's profile.
+
+    So it gates collection as well. With it off, ``_speaker_vectors`` does not
+    run and ``_store_speaker_embeddings`` writes nothing -- and a meeting
+    reprocessed after it goes off gives its existing vectors back, because the
+    DELETE runs whether or not anything replaces them.
+
+    ``Participant.user_id`` is still written; that is attendance, not
+    biometric data. Deleting a profile or a departing user's data is never
+    gated by this -- a flag that limits collection must never also block its
+    own undo.
+
+    **Retention is the flag, not a sweep.** An earlier version of this
+    docstring said observation vectors were "bounded by the meeting's own
+    retention window". Nothing in the repository deletes a meeting whose
+    ``expires_at`` has passed, so that bound did not exist (@PARKJAEKYUNG0525
+    on #370). What bounds them today is this setting being off by default and
+    ``forget_user_voice``; the retention sweep is still owed.
+    """
+
+    speaker_embedding_max_s: float = 10.0
+    """How many seconds of one speaker go into their observation vector. More
+    is not better: the embedder pools over the window, and ten seconds of a
+    person is already more than a speaker-verification model needs."""
+
+    speaker_embedding_min_s: float = 3.0
+    """A speaker with less than this much speech in a meeting gets no vector.
+    Someone who said "네" twice cannot be recognised from it, and a noisy row
+    would be offered as a candidate."""
 
     live_hello_timeout_s: float = 5.0
     """How long a live connection may sit without sending ``hello``."""
@@ -212,10 +328,22 @@ class AudioSettings(BaseSettings):
 
     @model_validator(mode="after")
     def _warn_on_cuda_without_token(self) -> AudioSettings:
-        """A GPU with no token is a configuration someone meant to finish."""
-        if self.device == "cuda" and not self.hf_token:
+        """A GPU with no token is a configuration someone meant to finish.
+
+        Read from the device diarization will actually use, not from ``device``
+        alone: ``AUTUNE_AUDIO_DIARIZATION_DEVICE=cuda`` with an empty token used
+        to load cleanly and fail at the pipeline (@PARKJAEKYUNG0525 on #394,
+        item 4). The index is dropped so ``cuda:1`` is caught with ``cuda``.
+        """
+        chosen = self.diarization_device.strip() or self.device
+        setting = (
+            "AUTUNE_AUDIO_DIARIZATION_DEVICE"
+            if self.diarization_device.strip()
+            else "AUTUNE_AUDIO_DEVICE"
+        )
+        if chosen.split(":", 1)[0].lower() == "cuda" and not self.hf_token:
             raise ValueError(
-                "AUTUNE_AUDIO_DEVICE=cuda but AUTUNE_AUDIO_HF_TOKEN is empty; "
+                f"{setting}={chosen} but AUTUNE_AUDIO_HF_TOKEN is empty; "
                 "diarization would fail after the recording was already uploaded"
             )
         return self

@@ -12,7 +12,7 @@ Slack message.
 | --- | --- | --- | --- |
 | 1.7 HuggingFace access, GPU instance | 김민경 | A's diarization (W2) | Model gates are usually instant to a few hours; GPU quota can take a day |
 | 1.8 Slack app, Notion integration | 강민구 | Slack surfaces in A/B/E (W3), Notion sync (W4) | Self-serve, same day |
-| 1.9 AI Hub data terms | 김민경 | B's classifier training (W2) | Data is already downloaded; the terms question is the open part |
+| 1.9 AI Hub data terms | 김민경 | B's classifier training (W2) | Answered 09-28. Overseas deployment is out, a trained model is in. What is left is the 솔트룩스 conversation (item 1) and whether an id-plus-label file may be shared (item 2) |
 
 ---
 
@@ -283,12 +283,17 @@ a source of Korean meeting utterances, and every label on the evaluation set is
 hand-made. That is a scope fact, not a licensing one, and it is already the
 reason the evaluation-set estimate in the WBS is low.
 
-The licence questions now have answers. They come from AI Hub's 이용정책 page,
-read 2026-09-09. The dataset's own page (`dataSetSn=464`) carries no separate
-licence text, so the general 개방 데이터 policy is what applies. 수행기관(주관) is
-㈜솔트룩스, with ㈜소리자바, ㈜디그랩, ㈜비투엔 and 경북대학교산학협력단 participating —
-that matters, because two of the four answers below name 수행기관 as the party we
-have to talk to.
+The licence questions have answers from two places. The 이용정책 page, read
+2026-09-09, and **an official answer from AI Hub to a written enquiry, received
+2026-09-28** (@PARKJAEKYUNG0525 asked and holds the mail; ask for the original
+before relying on any wording here). Where the two differ the answer wins, and
+it differs in three places — two of them tighter than this document used to
+say, one of them looser. Each is marked *(answer, 09-28)* below.
+
+The dataset's own page (`dataSetSn=464`) carries no separate licence text, so
+the general 개방 데이터 policy is what applies. 수행기관(주관) is ㈜솔트룩스, with
+㈜소리자바, ㈜디그랩, ㈜비투엔 and 경북대학교산학협력단 participating — that matters,
+because 수행기관 is the party item 1 says we have to talk to.
 
 **1. Commercial use — permitted for development, but selling needs an agreement.**
 Open AI Hub data may be used for *"영리적・비영리적 연구・개발 목적"*, so building
@@ -307,12 +312,25 @@ people miss is that **the hand-labelled evaluation set is the same data**: 300
 utterances lifted out of the corpus are still the corpus. So the evaluation set
 cannot be committed, and it cannot be shared as a file.
 
+*(answer, 09-28)* **It is wider than the original file, and it reaches inside
+the team.** Not only the corpus as delivered: 편집·추출·분할·형식 변환, or any
+further processing of it, may not be published, shared or redistributed either.
+And a person who downloaded it may not put it in a shared store or hand it to
+another participant — **each person applies, is approved and downloads for
+themselves**. "The team has a copy" is not a state this licence has.
+
 What works instead: each person downloads the corpus themselves under their own
 AI Hub account, and what we share is **labels without text** — the utterance id
 from the source JSON plus our class label, and nothing else. That is our own
 annotation, keyed to data the recipient already holds legitimately. It also means
 the label file needs the source file name and utterance id to be stable, which is
 a requirement on B's preprocessing, not an afterthought.
+
+**That workaround is now assumed, not confirmed.** The 09-28 answer does not
+mention it. An id-plus-label file is our own annotation, but it is also close to
+"추가 가공한 형태", which the answer names. Ask AI Hub before the evaluation set
+is shared that way; until then it is one person's file on one person's machine.
+The question is narrow enough to be worth asking in the same thread as item 1.
 
 **3. Attribution — required, and it extends to the model.**
 *"반드시 한국지능정보사회진흥원의 사업결과임을 밝혀야 하며, 본 AI데이터 등을 이용한
@@ -322,18 +340,51 @@ the pitch deck, the landing page, and this repository. Draft line —
 「학습 데이터: 한국지능정보사회진흥원 AI 허브 「주요 영역별 회의 음성인식 데이터」
 (수행기관 ㈜솔트룩스)」.
 
-**4. Cross-border transfer — needs a separate agreement.**
-*"본 AI데이터 등의 국외 반출을 위해서는 수행기관 등 및 한국지능정보사회진흥원과
-별도로 합의가 필요합니다."* Uploading the corpus to a GPU instance in a non-Korean
-region is plausibly 국외 반출. **This constrains 1.7:** pick a Korean region for
-any instance that touches training data, or keep training on a local machine. It
-is also a reason not to hand corpus text to a hosted LLM for label generation
-without checking where that endpoint runs — and B's plan does exactly that for
-the *training* labels.
+**4. Cross-border transfer — there is no agreement to reach.**
+The policy says *"본 AI데이터 등의 국외 반출을 위해서는 수행기관 등 및
+한국지능정보사회진흥원과 별도로 합의가 필요합니다."* This document used to read
+that as a door: get the agreement, then deploy anywhere.
 
-One thing the policy does not settle: it has no explicit clause on ownership of a
-model trained on the data. Treat that as unresolved rather than permissive, and
-fold it into the 수행기관 conversation in item 1.
+*(answer, 09-28)* **There is no such door.** AI Hub does not operate a procedure
+for judging a particular cloud or environment, and does not grant separate
+agreements or exceptions for it. A requirement with no way to satisfy it is a
+prohibition, and this document should have said so.
+
+**A Korean region is not by itself enough.** The answer is explicit that neither
+a region's name nor a datacentre's location decides it: the instance must both
+store and process domestically **and** carry a public IP that KISA records as
+Korean. AWS addresses are allocated to Amazon, so an AWS Seoul instance has to
+be checked in KISA WHOIS per instance; an address that resolves as foreign can
+have the download refused.
+
+**This constrains 1.7:** a local machine is the only option that needs no
+checking. An instance in a Korean region is an option whose IP has to be
+verified and re-verified when it changes. It is also the reason not to hand
+corpus text to a hosted LLM for label generation. Module B's first-pass
+*training* labels on AI Hub rows are made by a local model on the approved
+person's own machine for exactly this reason, and must stay that way. B's
+hosted classifier option (`classifier_impl=llm`, #392) is a different path: it
+reads meeting utterances, never the AI Hub corpus.
+
+**5. A trained model — usable, including commercially.** *(answer, 09-28)*
+This document previously said ownership of a model trained on the data was
+unsettled and should be treated as unresolved. The answer settles it: a model
+trained on AI Hub data, and its outputs, are 2차적 저작물, and may be used for
+영리 or 비영리 purposes — including in a commercial service.
+
+The condition is the one item 2 and item 4 already describe: the original data,
+or a simple re-processing of it, must not leave in the course of storing or
+running that service. A model's weights are not the corpus; a cache of the
+utterances it was trained on would be.
+
+Attribution (item 3) is unchanged and still applies to the 2차적 저작물.
+
+**What this leaves open for item 1.** The answer says a trained model may be
+used in a commercial service; the policy says 판매 needs 수행기관 협의. Those are
+not obviously the same question — selling the data is not selling a model
+trained on it — and this document should not decide which reading holds. The
+conversation with 솔트룩스 in item 1 is still owed, and this is now one of the
+things to ask in it rather than an assumption to carry.
 
 For comparison, the other corpus is settled: AMI manual annotations v1.6.2 is
 **CC BY 4.0**, which permits commercial use and requires attribution wherever

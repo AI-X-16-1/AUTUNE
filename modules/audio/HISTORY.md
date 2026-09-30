@@ -40,14 +40,17 @@ halves are separated deliberately — see section 3.
 | Raw-audio deletion | `storage.py` | merged (#117) |
 | Diarize | `diarization.py` | merged (#136) |
 | Assign speakers to words | `speakers.py` | merged (#136) |
+| Speaker identification | `identification.py`, `tasks.py`, `service.py`, `router.py` | open, branch `audio/speaker-identification` (#6) |
 | PII masking — patterns | `masking.py` + `autune_integrations.privacy` | merged (#138) |
 | PII masking — spoken numbers | `recognition.py` | open, PR #158 |
 | Persist + publish | `persistence.py`, `tasks.py` | merged (#184) |
 | Event publishing | `autune_core.events` | merged (#145) |
 
-Speaker **identification** (matching a voice to a person, #6) is not built. Every
-`participants.user_id` is `NULL` today, and several downstream bugs are waiting
-on that changing — see section 6.
+Speaker **identification** (matching a voice to a person, #6) is built —
+`docs/modules/audio-speaker-identification.md`. A confirmed speaker fills
+`participants.user_id`; an unconfirmed one still keeps `NULL`. The downstream
+bugs section 6 describes as waiting on that column are live from here, not
+latent — see that section.
 
 ---
 
@@ -359,6 +362,218 @@ conclusion does not move — beam 1 costs 6.6 accuracy points and 151 deletions
 against 27, and nothing needs that speed — but the number was comparing
 configurations rather than beams (@lsh2217 on #389).
 
+#### Diarization was 171 s because nobody moved it off the CPU
+
+Measured 2026-09-28 on the same six-person 5m27s recording (327.4 s),
+`num_speakers=6`, one process, one waveform, so this is **one recording** and
+not a benchmark:
+
+| Device | Time | ×audio |
+| --- | --- | --- |
+| `cpu` | 163.4 s | 0.50× |
+| `mps` | **11.5 s** | **0.035×** |
+
+163.4 s here against the 169–176 s in the runs above is the same stage's
+run-to-run spread on the same machine; the row to read is the other one.
+
+`PyannoteDiarizer._load` called `Pipeline.from_pretrained` and never `.to()`.
+pyannote builds its pipeline on CPU and stays there, so the 171 s in the table
+above is a CPU number on a machine with a GPU — and on a CUDA box the same bug
+sent Whisper to the GPU through `AUTUNE_AUDIO_DEVICE` and left diarization
+beside it on the processor. One line, 14.3×.
+
+**The 0 ms boundary agreement is what makes it safe to take.** 77 turns and 6
+speakers both times, the same label on all 77, maximum drift 0 ms on start
+boundaries and 0 ms on end boundaries, total speech 297.4 s against 297.4 s.
+Equal counts would not have been enough: `speakers` assigns each word to the
+turn containing it, so a device that moved a boundary by 40 ms would move words
+between speakers downstream. Nothing moved.
+
+The device is its own setting, `AUTUNE_AUDIO_DIARIZATION_DEVICE`, and not a
+third value for `AUTUNE_AUDIO_DEVICE` — that one is handed to faster-whisper,
+whose CTranslate2 backend has no Metal support, so `mps` there would break
+transcription. Empty follows `AUTUNE_AUDIO_DEVICE`, so a CUDA deployment gets
+both stages on the GPU from the variable it already sets.
+
+An unavailable device raises `ConfigurationError` instead of falling back to
+CPU with a warning. CPU works, which is exactly the problem: a fallback turns
+14.3× into a log line, and section 4 below is a list of failures that looked
+like successes until somebody measured.
+
+**That rule cost a working deployment, and review caught it before it shipped.**
+Four reviewers converged on the same hole (#394). `uv sync` installs a CPU torch
+wheel on Windows while faster-whisper reaches the GPU through CTranslate2's own
+CUDA, so `AUTUNE_AUDIO_DEVICE=cuda` is a configuration that works today with
+`torch.cuda.is_available()` False — measured by @kjfcvx12 on an RTX 3060. An
+empty `DIARIZATION_DEVICE` inherits that `cuda`, so the rule as written would
+have failed every meeting on a box that changed no setting of its own, and the
+troubleshooting table in `environments.md` recommends exactly that setting.
+
+The distinction the rule was missing is between a device you asked for and one
+you inherited. An explicit `DIARIZATION_DEVICE` is a promise and still raises.
+An empty one takes CPU and logs `diarization_device_unavailable` naming the
+variable — which regresses nothing, because diarization has run on CPU since it
+shipped. What it removes is the silence, not the speed.
+
+**And it raised after thirteen minutes of Whisper.** `resolve_device` was
+reached only from `_load`, the last step inside the `adopt` block, so the error
+arrived after transcription — a mistake knowable before the file was opened,
+charged the whole recording. `process` resolves it as the **first line inside**
+`adopt` now, before `decode`.
+
+Inside, not in front of it, and that distinction took a second round of review.
+The first fix put the call ahead of `adopt`, which left the upload on disk when
+it failed; the reasoning was "the sweep will collect it". It would not have:
+`sweep_orphans` is for a task that was *lost*, and this one failed. A `failed`
+job is never re-run, recovery is a re-upload with a new job and a new file, so
+the one left behind had no reader and no owner — the durable copy invariant 11
+exists to prevent (@PARKJAEKYUNG0525). Inside the block both things hold: the
+failure costs milliseconds, and `adopt`'s `finally` still deletes. Two integration tests hold the
+order: one asserts `resolve_device → decode → transcribe`, the other that an
+unusable device decodes nothing and leaves the file.
+
+**CUDA is still unmeasured.** The 0 ms agreement is CPU against MPS. Whether a
+CUDA box produces the same turns, and how pyannote shares VRAM with Whisper
+`large-v3` in fp16, are open; `=cpu` is the way out.
+
+**This is what brings the module inside its processing-time target**, which was
+not obvious when it was written: at the time the baseline was thought to be 3.0×
+and this looked like an improvement from 3.0× to 2.5×. The baseline was wrong —
+it divided by a run that had been asleep — and with it corrected the shipped
+configuration was about 1.78×, so moving diarization to the GPU is the
+difference between over and under. The whole meeting is **434 s for 327 s of
+audio, 1.32×**, and transcription is now 95% of it. Nothing was traded for it:
+the transcript is identical to the millisecond.
+
+**What it does not settle.** `mps` has only been measured in-process. Module E's
+SetFit aborts on Metal under prefork and threaded Celery workers, which is why
+the demo runs `--pool=solo` (#329), and pyannote on Metal inherits that risk
+untested — which is why the setting is empty by default and only the demo opts
+in.
+
+#### Measured again on the shipped configuration, and the first meeting costs more
+
+The 434 s above was measured on #394's own branch, before #370 put speaker
+identification in the same task. Re-run 2026-09-29 on `main` (`438c498`) with
+`AUTUNE_AUDIO_DIARIZATION_DEVICE=mps`, a `--pool=solo` worker started fresh,
+and the same 327.4 s recording — twice in a row, in one worker:
+
+| | Total | ×audio | Whisper | pyannote load | Diarization |
+| --- | --- | --- | --- | --- | --- |
+| First meeting after the worker starts | 482.6 s | **1.47×** | 413 s | 50 s | 11 s |
+| Every meeting after that | 442.9 s | **1.35×** | 431 s | — | 11 s |
+
+Both are inside the 1.5× the module signed up for, and the 11 s diarization is
+the 11.5 s #394 measured, so nothing regressed when identification landed on
+top. Transcripts matched the CPU runs from the same day: 45 utterances, 6
+speakers, no tracebacks.
+
+**The CPU figure is now measured rather than reconstructed.** Three runs on the
+same `main` and the same recording with the setting left empty took 630.9 s,
+637.9 s and 654 s — **1.93×**, not the 1.78× this file arrived at by adding a
+separately-timed diarization stage to a separately-timed Whisper. Reconstruction
+under-counted by about 0.15×, which is the sort of error that only shows up when
+somebody runs the whole thing.
+
+**The first meeting is the one to quote.** 434 s was a warm process; loading
+pyannote onto Metal takes about 50 s and happens once per worker, so a demo
+that starts a worker and uploads one meeting is at 1.47×, not 1.32×. That is
+inside the target with about 20 s to spare, which is less margin than a single
+number suggests. Uploading anything before the demo pays that cost early and
+the meeting that matters runs at 1.35×.
+
+Whisper moved 413 s → 431 s between the two runs on the same machine and the
+same file. That spread is larger than the whole diarization stage now, which is
+the other thing the single number hides: **transcription is 93–97% of the run,
+and everything else is noise around it.** The next real saving is a different
+transcription engine or a smaller model, not another stage.
+
+### Speaker identification (`docs/modules/audio-speaker-identification.md`)
+
+`speaker_id` was null on every utterance the module had ever produced: voices
+were separated and never named. This adds the missing half — a confirmed
+speaker becomes a voice profile, and the next meeting offers that person as a
+candidate for the same voice.
+
+The threshold is **0.70, provisional** — higher than the live tracker's 0.55
+because that one asks whether a voice is the same as a moment ago and this one
+asks whether it is a particular person. The evaluation that settles it needs
+several meetings with the same people, which the in-house recording does not
+have; it is the next thing this feature owes.
+
+**First measurement, 2026-09-26 — the threshold has a floor now, and still no
+ceiling.** A six-person 5m27s recording (`오튠회의샘플_6인.m4a`, local only:
+`*.m4a` is git-ignored, and invariant 11 keeps a recording out of durable
+storage) diarized into 6 speakers over 77 turns and produced a vector for all
+six — nobody fell under the 3-second floor. Comparing the six against each
+other gives 15 pairs of **different people recorded in the same room, on the
+same microphone**:
+
+| | Cosine similarity |
+| --- | --- |
+| Closest pair (화자 2 / 화자 6) | **0.382** |
+| Mean of 15 pairs | 0.207 |
+| Furthest pair | 0.100 |
+
+So 0.70 sits **0.32 above the closest false match** on this recording. Same
+mic, same room, same session is the hardest case for telling people apart —
+channel and noise are identical, so only the voices differ — which makes 0.382
+a meaningful upper bound on the false-match region rather than a lucky number.
+
+A second, weaker check the same day: a profile confirmed from an unrelated
+60-second two-person clip was offered to **none** of the six. Correct, and
+what the threshold is for.
+
+**What is still unmeasured is the half that matters more.** These numbers bound
+the threshold from *below* — they say 0.70 will not confuse two people. They say
+nothing about whether it is too *high*, which is the question of how low the
+**same** person scores across two different recordings, and that still needs two
+meetings with the same people. A threshold that never confuses anyone and also
+never recognises anyone is the failure these numbers cannot see.
+
+The vector itself is taken from **3 to 10 seconds** of a speaker's own turns
+(`speaker_embedding_min_s` / `speaker_embedding_max_s`) — long enough to embed,
+short enough that one straggler turn cannot pull the average toward noise.
+Embedding model: `pyannote/wespeaker-voxceleb-resnet34-LM`, 256 dimensions —
+the same model `audio-live-speakers.md` already uses for the live path, so a
+live vector and a stored vector are comparable without a second download.
+
+**`voice_profiles_enabled` is `False` by default** — the one setting here that
+is not a tuning knob but a legal gate. ADR 0007's Q4 (#92) asks whether a
+voice embedding is biometric information (sensitive information) under PIPA
+Article 23 and whether collecting it needs
+its own separate consent, and that question was still open when this feature
+shipped.
+
+**It gated only the profile write, and that was the wrong line.** Four
+reviewers read the flag as "no biometric data is collected" because the PR said
+so; the code stored an observation vector per speaker on every consented
+meeting regardless of it (@PARKJAEKYUNG0525, @lsh2217 on #370). Those vectors
+are the same data Q4 asks about. They become attributable to a person the
+moment a speaker is confirmed. The consent behind them is one checkbox reading
+"녹음과 분석", which does not mention voice characteristics. And they outlived
+the flag: turning it on later and confirming a speaker copied a vector recorded
+before anyone could have consented to enrolment straight into that person's
+profile.
+
+So the gate moved to collection. With the flag off the embedder is never
+loaded, no vector is taken, and a meeting reprocessed after it goes off gives
+back the vectors it had — the DELETE now runs whether or not anything replaces
+it, which also fixes a re-run leaving a first pass's vectors under labels a
+second diarization had reassigned. `Participant.user_id` is still written (that
+is attendance), and deleting a profile is never gated — a flag that limits
+collection must not block its own undo.
+
+The lesson is narrower than the fix: **a privacy claim in a PR description is
+not a test.** "Merging this collects no biometric data" was written in good
+faith about a gate that existed, one layer away from the collection it was
+describing. What settles it now is `test_the_flag_being_off_collects_no_vectors_even_with_consent`,
+which asserts the embedder was never even loaded.
+
+Turning it on is expected to wait for authentication to exist and carry a
+separate, refusable biometric consent (#268); until then the cost of having
+shipped identification ahead of the legal answer is a flag flip, not a rebuild.
+
 ---
 
 ## 3. Decisions, and the ones that reversed
@@ -605,6 +820,10 @@ times in one day I wrote the rule down and broke it in the same file.
   (#138).
 - A docstring said the scale-word rule was tested; the test could not have
   failed (#158).
+- `live/session.py` said `# The same recogniser the stored path uses, chosen by
+  the same setting.` — the stored path passed none, so a number read out as
+  words was masked live and written in the clear by the batch path (found in
+  review of #484, where those rows go to an external verifier).
 
 **And the version that costs the most: a test that checks less than it claims.**
 
@@ -659,11 +878,19 @@ removed — so the check and the doing are separate, and the check uses the same
 patterns that did the masking so the two cannot disagree (#126, from the other
 side).
 
+That last clause is the one that broke. Both sides used `find_pii` and neither
+passed `get_recogniser()`, so both agreed — and both were half the masker. The
+live path had passed a recogniser since it was written, so `010` said aloud was
+masked in the live channel and stored in the clear by the batch path. The fix is
+one argument at each of the two call sites, and the reason it is two and not one
+is the same as the row above: the guard checks what the masker promises, so it
+has to see everything the masker sees.
+
 ---
 
 ## 6. What is open, and why it matters
 
-### Blocked on speaker identification (#6)
+### Speaker identification shipped (#6) — the two bugs it wakes up are live now
 
 `participants` holds **one row per diarization label**, and splitting one voice
 into two clusters is diarization's characteristic failure. Once `user_id` is
@@ -677,11 +904,12 @@ broken two other modules and each fixed it locally:
   been silent on it; a participation gap raised on that silence is a false
   statement about somebody who spoke.
 
-Both are latent today because `user_id` is always `NULL`. **They go live the day
-#6 ships.** #167 writes the rule down once, in
-`docs/architecture/data-model.md` under "A participant row is a voice, not a
-person" — **open, not merged**, so until it lands the rule is still two local
-fixes and no statement.
+Both were latent while `user_id` was always `NULL`. **They are live now**, on
+`audio/speaker-identification`: the day a real meeting gets a confirmed
+speaker, both bugs are reachable, not hypothetical. #167 wrote the rule down
+once, in `docs/architecture/data-model.md` under "A participant row is a
+voice, not a person" — **merged** (2026-09-15), so the rule was already a
+statement, not just two local fixes, before this feature shipped.
 
 `TranscriptMetadata.participants` still has no description in the contract, and
 the same trap reaches B and C through the payload rather than the table. **#184
@@ -707,7 +935,7 @@ exists, not fixed one at a time.**
 
 | | |
 | --- | --- |
-| #92 | Legal review of ADR 0007 — Q4 gates whether embedding collection needs separate consent, which gates #6 |
+| #92 | Legal review of ADR 0007 — Q4 gates whether embedding collection needs separate consent. #6 shipped without waiting for the answer, gated instead on the meeting's existing consent attestation; whether that is enough is still #92's open question |
 | #155 | S13's spec asks for live classification counts; the architecture deliberately has no path to fill them |
 | #106 | No frontend test infrastructure — the S13 components have no component tests |
 
@@ -741,8 +969,10 @@ Ordered by what the measurements say, not by what is pleasant.
    mode. Four open detector issues cannot be resolved without one, and the
    `#61` target argument is about what a number means under which conditions.
 
-4. **Speaker identification (#6)**, once #92 answers. It closes two latent bugs in
-   other modules as a side effect.
+4. ~~**Speaker identification (#6)**, once #92 answers.~~ Shipped on
+   `audio/speaker-identification` without waiting for #92 — see the table
+   above and section 6. The threshold evaluation section 2 describes is what
+   this feature still owes, not the identification itself.
 
 5. **Overlapping speech.** DER is measured on one-speaker-at-a-time audio. The
    next recording needs per-speaker tracks — that is the case the two pyannote

@@ -43,16 +43,41 @@ class IntelligenceSettings(BaseSettings):
     nothing here is fine-tuned and redistributed; the head is refit from
     ``pipeline.classifier._SEED_EXAMPLES`` every process start."""
 
+    misalignment_predictor_impl: str = "heuristic"
+    """Which misalignment predictor to run: ``heuristic`` or ``local``.
+
+    ``local`` fits XGBoost on the trailing window of labeled meetings
+    (``history.TRAINING_WINDOW``) and falls back to the heuristic until that
+    window holds enough labeled history — so it is safe to turn on before
+    there is data. The default stays ``heuristic`` until the eval
+    (``python -m autune_intelligence.eval``) shows the fitted model beating it
+    on calibration. No external option: features never leave the process."""
+
+    misalignment_refit_hours: int = 24
+    """How long a fitted model (or a fallback decision) is kept before the next
+    aggregation refits from history. Labels mature one day at a time, so
+    refitting more often buys nothing."""
+
     warm_models_on_worker_init: bool = False
-    """Set only on workers that actually consume gap-classification tasks.
+    """Set only on workers that actually aggregate meetings.
 
     Without this, the first ``aggregate_meeting`` call in a new worker process
     pays SetFit's fit-the-head cost (seconds, plus a backbone download) inside
     the transaction that holds the ``intel_completion`` row lock, delaying a
     concurrent late-source ``reopen`` on the same meeting. Mirrors module D's
     ``AUTUNE_CONTEXT_WARM_MODELS_ON_WORKER_INIT`` — same reasoning, see
-    ``pipeline.__init__``. Only affects ``gap_classifier_impl=local``;
-    ``fake`` has nothing to warm."""
+    ``pipeline.__init__``. It warms two models: the gap classifier, which only
+    has work to do under ``gap_classifier_impl=local`` (``fake`` no-ops), and
+    the misalignment predictor, which under ``misalignment_predictor_impl=local``
+    reads labeled history and fits XGBoost. Under both defaults there is nothing
+    to warm and the hook costs one settings read."""
+
+    web_base_url: str | None = None
+    """Where the web app is served, e.g. ``https://autune.example.com``.
+
+    The meeting report's "상세보기" button links to ``{web_base_url}/meetings/{id}``.
+    Unset, the report is posted without the button rather than with a link that
+    points nowhere."""
 
 
 @lru_cache

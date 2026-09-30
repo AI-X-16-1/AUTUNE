@@ -9,6 +9,8 @@ Never imports another module.
 from __future__ import annotations
 
 from collections import defaultdict
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from sqlalchemy import delete, func, nulls_last, select
@@ -29,7 +31,7 @@ from autune_core import (
 )
 from autune_core.errors import NotFoundError
 from autune_core.events import publish
-from autune_gap import detect, graph, template
+from autune_gap import detect, graph, semantic, template, verification
 from autune_gap.config import GapSettings, get_settings
 from autune_gap.models import (
     GapGap,
@@ -40,8 +42,14 @@ from autune_gap.models import (
     GapTopicEdge,
     GapTopicUtterance,
 )
-from autune_gap.pipeline import get_entity_extractor, get_relation_extractor
+from autune_gap.pipeline import (
+    get_entity_extractor,
+    get_relation_extractor,
+    get_sentence_embedder,
+    get_template_verifier,
+)
 from autune_gap.schemas import (
+    GapDismissal,
     TemplateComparison,
     TemplateItemRead,
     TemplateRead,
@@ -223,8 +231,13 @@ def build_topic_graph(transcript: TranscriptReady) -> int:
                 relation=edge.relation,
                 weight=edge.weight,
                 # NULL for co-occurrence: nothing asserted it, the two topics
-                # merely shared an utterance. See the model docstring.
-                extractor_version=None if edge.relation == graph.CO_OCCURS else relation_version,
+                # merely shared an utterance. See the model docstring. An edge
+                # the assisted extractor's model added names the model.
+                extractor_version=(
+                    None
+                    if edge.relation == graph.CO_OCCURS
+                    else edge.asserted_by or relation_version
+                ),
             )
             for edge in edges
         )
@@ -271,10 +284,22 @@ def detect_gaps(meeting_id: str) -> int:
     sit in the table waiting to be counted. Only template rows are touched;
     a gap found from the graph alone carries no template key and is left alone.
 
+    **The one exception is a dismissed row of another template.** Switching the
+    meeting to a different checklist drops the old one's gaps, but not the ones
+    somebody dismissed: that judgement is tuning's input, and switching back
+    finds it where it was left. See ``_store_gaps``.
+
     Call it after ``build_topic_graph``, which deletes and rebuilds the topics —
     the cascade takes ``gap_related_topics`` with them, and this puts them back.
     Between the two a report read shows its gaps with no related topics, which
     is why the pipeline runs them back to back and the publish comes after.
+
+    **Reading and writing are two transactions, and the models run between
+    them.** The embedder is seconds of CPU on a long meeting and the verifier is
+    a network round trip; neither should hold a database connection open
+    (raised in review of #454). One task runs the graph build and this back to
+    back, and a graph rebuilt in between would fail the write on its foreign
+    keys rather than store gaps against topics that no longer exist.
     """
     settings = get_settings()
 
@@ -285,7 +310,13 @@ def detect_gaps(meeting_id: str) -> int:
         chosen = template.get_template(selected_template_key(session, meeting_id))
         topics = _topic_views(session, meeting_id)
         speech = _speech(session, meeting_id)
-        findings = detect.compare(chosen, topics, speech, _thresholds(settings))
+
+    # An empty graph raises nothing whatever was said (`detect.compare`), so the
+    # speech is not embedded, or sent anywhere, for a meeting that cannot use it.
+    hearing = _hear(chosen, speech, settings) if topics else Hearing()
+    findings = detect.compare(chosen, topics, speech, _thresholds(settings), hearing.heard)
+
+    with session_scope() as session:
         _store_gaps(session, meeting_id, chosen, findings)
 
     # Counts and keys only. A gap title is composed from a template file and a
@@ -298,8 +329,161 @@ def detect_gaps(meeting_id: str) -> int:
         topics=len(topics),
         gaps=len(findings),
         high=sum(1 for finding in findings if finding.severity == "high"),
+        embedder=settings.embedder_impl,
+        verifier=settings.verifier_impl,
+        heard=len(hearing.heard),
+        confident=hearing.confident,
+        ambiguous=hearing.ambiguous,
+        asked=hearing.asked,
+        unanswered=hearing.unanswered,
     )
     return len(findings)
+
+
+def set_dismissed(session: Session, gap_id: str, reader: User, *, dismissed: bool) -> GapDismissal:
+    """Mark one gap a false positive, or take the mark back.
+
+    ``dismissed_at`` is the whole write. The row stays either way: a dismissed
+    gap leaves the report (``build_report``) but not the table, because
+    threshold tuning reads what was dismissed (ADR 0006). Nobody's id is stored
+    or logged with it — which teammate pressed "해당 없음" is a per-person
+    record of conduct ADR 0003 refuses.
+
+    Dismissing twice keeps the first timestamp, so a double click does not move
+    the moment tuning reads. Taking a mark back that is not there is a no-op.
+
+    **An unknown gap and a gap on somebody else's meeting are the same 404**,
+    for the reason ``require_readable_meeting`` gives about meeting ids. That
+    function is not called here because its 404 names the *meeting*, which
+    would tell a caller that the gap id they guessed is real.
+
+    It does not publish. The route commits the mark and then queues
+    ``autune.gap.publish_report``, so E stops quoting a gap the team has called
+    wrong (#471) — see ``republish_report``.
+    """
+    row = session.get(GapGap, gap_id)
+    meeting = session.get(Meeting, row.meeting_id) if row is not None else None
+    if (
+        row is None
+        or meeting is None
+        or not _is_team_member(session, user_id=reader.id, team_id=meeting.team_id)
+    ):
+        log.info("gap_dismissal_refused", gap_id=gap_id)
+        raise NotFoundError("gap", gap_id)
+
+    if dismissed and row.dismissed_at is None:
+        row.dismissed_at = datetime.now(tz=UTC)
+    elif not dismissed:
+        row.dismissed_at = None
+    session.flush()
+
+    log.info("gap_dismissal_set", gap_id=gap_id, meeting_id=row.meeting_id, dismissed=dismissed)
+    return GapDismissal(gap_id=gap_id, meeting_id=row.meeting_id, dismissed=dismissed)
+
+
+@dataclass(frozen=True)
+class Hearing:
+    """Which template items the speech said by meaning, and how that was decided.
+
+    Counts only, beside the keys: they are logged, and a count of utterances is
+    not meeting content."""
+
+    heard: frozenset[str] = frozenset()
+    confident: int = 0
+    """Utterances triage decided on the embedding alone (verifier on)."""
+    ambiguous: int = 0
+    """Utterances triage could not decide on the embedding."""
+    asked: int = 0
+    """Of those, how many were sent to the verifier."""
+    unanswered: int = 0
+    """Asked and not answered: the provider failed, or the utterance was too long
+    to send. These keep the embedding's own answer. An outbound privacy refusal
+    is not counted here; it fails the task."""
+
+
+def _hear(chosen: template.Template, speech: list[str], settings: GapSettings) -> Hearing:
+    """Template items the speech said by meaning. See ``semantic`` and
+    ``verification``.
+
+    - Embedder off: nothing is heard; comparison reads keywords only.
+    - Embedder on, verifier off: every utterance is decided by the embedding
+      (``semantic.nearest_item`` with ``semantic_floor`` and ``semantic_margin``),
+      exactly as before the verifier existed.
+    - Both on: triage takes the clear utterances on the embedding and asks the
+      verifier about the ambiguous ones. An ambiguous utterance that was not
+      asked (past ``verify_max_utterances``) or not answered keeps the
+      embedding's own answer: the verifier is a check on the embedding, and its
+      absence leaves the embedding standing.
+
+    What the verifier confirms only fills ``heard``. Coverage and risk are
+    ``detect``'s, and a heard item is partial at most there.
+
+    Utterances are embedded in this process. With ``gemini`` the ambiguous ones,
+    and only they, leave it; see ``pipeline.verifier``. Nothing here is stored.
+    """
+    embedder = get_sentence_embedder()
+    if embedder is None or not speech:
+        return Hearing()
+
+    examples = semantic.examples_for(chosen)
+    if not any(label != semantic.BACKGROUND_KEY for label in examples.labels):
+        return Hearing()
+
+    rankings = semantic.rank(
+        embedder.embed(speech), embedder.embed(list(examples.texts)), examples.labels
+    )
+    on_embedding = [
+        semantic.nearest_item(
+            ranking, floor=settings.semantic_floor, margin=settings.semantic_margin
+        )
+        for ranking in rankings
+    ]
+
+    verifier = get_template_verifier()
+    if verifier is None:
+        return Hearing(heard=frozenset(key for key in on_embedding if key is not None))
+
+    decisions = verification.triage(
+        rankings,
+        verification.TriageThresholds(
+            confident_score=settings.verify_confident_score,
+            confident_lead=settings.verify_confident_lead,
+            candidate_score=settings.verify_candidate_score,
+            candidates=settings.verify_candidates,
+        ),
+    )
+    asked = verification.questions(
+        decisions,
+        speech,
+        chosen,
+        examples_per_candidate=settings.verify_examples,
+        limit=settings.verify_max_utterances,
+    )
+    answers = verifier.verify([question for _, question in asked]) if asked else []
+
+    answered = [
+        (pair, answer) for pair, answer in zip(asked, answers, strict=True) if answer is not None
+    ]
+    heard = set(
+        verification.resolve(
+            decisions, [pair for pair, _ in answered], [answer for _, answer in answered]
+        )
+    )
+
+    settled = {index for (index, _), _ in answered}
+    for decision in decisions:
+        if decision.triage is verification.Triage.AMBIGUOUS and decision.index not in settled:
+            fallback = on_embedding[decision.index]
+            if fallback is not None:
+                heard.add(fallback)
+
+    return Hearing(
+        heard=frozenset(heard),
+        confident=sum(1 for d in decisions if d.triage is verification.Triage.CONFIDENT),
+        ambiguous=sum(1 for d in decisions if d.triage is verification.Triage.AMBIGUOUS),
+        asked=len(asked),
+        unanswered=len(asked) - len(answered),
+    )
 
 
 def selected_template_key(session: Session, meeting_id: str) -> str:
@@ -329,17 +513,15 @@ def selected_template_key(session: Session, meeting_id: str) -> str:
 
 
 def set_template(session: Session, meeting_id: str, template_key: str) -> str:
-    """Point this meeting at a template and re-compare against it.
+    """Point this meeting at a template.
 
     ``get_template`` rejects a key no file defines, so the row that lands is
-    always resolvable. Detection runs again immediately — the alternative is a
-    screen where choosing a template appears to do nothing until the meeting is
-    reprocessed.
-
-    It does **not** republish ``autune.gap.completed``. E scores the meeting the
-    pipeline produced, and a template somebody is trying out on S20 should not
-    silently rewrite that; the endpoint returns the key and the report endpoint
-    shows the new gaps.
+    always resolvable. The route re-runs detection as soon as this commits —
+    the alternative is a screen where choosing a template appears to do nothing
+    until the meeting is reprocessed — and then queues
+    ``autune.gap.publish_report``, so E scores the meeting against the template
+    in force rather than the one it was first compared to (#316). Publishing
+    happens on the worker, not in the request: see ``republish_report``.
     """
     chosen = template.get_template(template_key)
 
@@ -385,12 +567,7 @@ def template_comparison(session: Session, meeting_id: str) -> TemplateComparison
     """
     chosen = template.get_template(selected_template_key(session, meeting_id))
 
-    analysed = (
-        session.scalar(
-            select(func.count()).select_from(GapTopic).where(GapTopic.meeting_id == meeting_id)
-        )
-        or 0
-    ) > 0
+    analysed = _analysed(session, meeting_id)
 
     raised = {
         row.template_item_key: row
@@ -422,6 +599,19 @@ def template_comparison(session: Session, meeting_id: str) -> TemplateComparison
     )
 
 
+def _analysed(session: Session, meeting_id: str) -> bool:
+    """Whether the pipeline has stored a topic graph for this meeting.
+
+    A run that extracted nothing stores no topics either, and reads the same
+    as no run at all. Nothing is lost by that: an empty graph raises no gaps
+    (``detect.compare``), so there is nothing on it to show or to republish.
+    """
+    count = session.scalar(
+        select(func.count()).select_from(GapTopic).where(GapTopic.meeting_id == meeting_id)
+    )
+    return (count or 0) > 0
+
+
 def _thresholds(settings: GapSettings) -> detect.Thresholds:
     """``config`` values as the shape ``detect`` takes.
 
@@ -448,9 +638,14 @@ def _topic_views(session: Session, meeting_id: str) -> list[detect.TopicView]:
     docs/architecture/privacy.md section 3 turns on. A topic nobody was
     considered for carries ``None``, which ``detect.score`` drops rather than
     reading as "everybody spoke".
+
+    Each view also carries the step-2 relations its topic takes part in, which
+    is how an item like dependency matches a meeting that stated one without
+    naming it (``TemplateItem.relations``).
     """
     topics = _topics_in_reading_order(session, meeting_id)
     said = _spoke_by_person(session, meeting_id, [topic.id for topic in topics])
+    related = _relations_by_topic(session, meeting_id)
 
     views = []
     for topic in topics:
@@ -462,10 +657,34 @@ def _topic_views(session: Session, meeting_id: str) -> list[detect.TopicView]:
         )
         views.append(
             detect.TopicView(
-                id=topic.id, label=topic.label, centrality=topic.centrality, silent_share=silent
+                id=topic.id,
+                label=topic.label,
+                centrality=topic.centrality,
+                silent_share=silent,
+                relations=frozenset(related.get(topic.id, ())),
             )
         )
     return views
+
+
+def _relations_by_topic(session: Session, meeting_id: str) -> dict[str, set[str]]:
+    """Topic id -> the step-2 relations it is either end of.
+
+    Both ends, because an item that asks about a dependency is raised by the
+    thing that waits as much as by the thing waited on. ``co_occurs`` is left
+    out in the query rather than after it: it is most of a meeting's edges and
+    none of them is evidence here.
+    """
+    related: dict[str, set[str]] = {}
+    rows = session.execute(
+        select(
+            GapTopicEdge.source_topic_id, GapTopicEdge.target_topic_id, GapTopicEdge.relation
+        ).where(GapTopicEdge.meeting_id == meeting_id, GapTopicEdge.relation != graph.CO_OCCURS)
+    )
+    for source, target, relation in rows:
+        related.setdefault(source, set()).add(relation)
+        related.setdefault(target, set()).add(relation)
+    return related
 
 
 def _speech(session: Session, meeting_id: str) -> list[str]:
@@ -548,8 +767,17 @@ def _store_gaps(
         )
 
     for stale, gap in stored.items():
-        if stale not in produced:
-            session.delete(gap)
+        if stale in produced:
+            continue
+        # A dismissal made under another template outlives the switch away from
+        # it: it is threshold tuning's input (ADR 0006), and S20's picker makes
+        # trying a template one click. Kept, it is also still there when the
+        # meeting is switched back. It never reaches a reader in the meantime —
+        # the report leaves dismissed rows out and the rail reads only the
+        # template in force.
+        if gap.dismissed_at is not None and stale[0] != chosen.key:
+            continue
+        session.delete(gap)
 
 
 def publish_report(meeting_id: str) -> GapReport:
@@ -576,6 +804,36 @@ def publish_report(meeting_id: str) -> GapReport:
         gaps=len(report.gaps),
     )
     return report
+
+
+def republish_report(meeting_id: str) -> GapReport | None:
+    """Publish the meeting's ``GapReport`` again after S20 changed what it holds,
+    and return it — or ``None`` for a meeting the pipeline has not analysed.
+
+    A template switch or a dismissal rewrites ``gap_gaps`` after E has stored
+    the pipeline's report, and E scores the meeting and quotes gap titles from
+    what it stored (#316, #471). This sends the rows as they are now, and E
+    takes the latest payload for a meeting and re-aggregates it without
+    re-sending the personal DM.
+
+    **It never performs a first publish.** Choosing a template on a meeting
+    still in the pipeline, or one whose transcript never arrived, would
+    otherwise hand E an empty report and start E's timeout countdown for a
+    meeting B and D have not reached. The pipeline's own ``publish_report`` is
+    the first one.
+
+    Built from committed rows when it runs, not when it was queued, so two
+    changes in a row end with a publish of the second. Two workers taking the
+    pair out of order could still leave E with the older one: ``GapReport``
+    carries nothing E could order two payloads by, and adding that is a
+    contract change. ``autune.context.republish`` has the same exposure.
+    """
+    with session_scope() as session:
+        if not _analysed(session, meeting_id):
+            log.info("gap_report_republish_skipped", meeting_id=meeting_id)
+            return None
+
+    return publish_report(meeting_id)
 
 
 def build_report(session: Session, meeting_id: str) -> GapReport:

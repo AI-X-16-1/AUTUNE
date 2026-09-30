@@ -15,15 +15,19 @@ from autune_gap.pipeline import (
     RELATION_LABELS,
     Entity,
     EntityExtractor,
+    FakeEmbedder,
     FakeNer,
     RelationExtractor,
     RuleRelations,
+    SentenceEmbedder,
 )
 from autune_gap.pipeline.ner import _IGNORED_LABELS, _SPACY_LABELS, _claim_spans
 from autune_gap.pipeline.registry import (
+    _EMBEDDERS,
     _EXTRACTORS,
     _RELATION_EXTRACTORS,
     get_relation_extractor,
+    get_sentence_embedder,
     reset_cache,
 )
 
@@ -82,14 +86,15 @@ def test_there_is_no_external_extractor() -> None:
     assert set(_EXTRACTORS) == {"spacy", "fake"}
 
 
-def test_the_relation_step_has_one_implementation_and_a_seam() -> None:
+def test_the_relation_step_names_its_one_external_entry() -> None:
     """Step 2 is the step promised LLM assistance for its hard cases (#32), and
     unlike entity extraction it may have it — a relation needs the clause, not
-    the transcript. The seam is here so the second entry has somewhere to go;
-    the assertion is whole so adding one is a decision somebody made, not a
+    the transcript. ``gemini`` is that entry, and it sends utterances to Google.
+    The assertion is whole so another one is a decision somebody made, not a
     dictionary key that appeared.
     """
-    assert set(_RELATION_EXTRACTORS) == {"rule"}
+    assert set(_RELATION_EXTRACTORS) == {"rule", "gemini"}
+    assert "EXTERNAL" in _RELATION_EXTRACTORS["gemini"]
 
 
 def test_the_rule_extractor_satisfies_the_protocol() -> None:
@@ -229,3 +234,45 @@ def test_spans_come_back_in_the_order_they_were_said() -> None:
 
 def test_a_meeting_that_mentions_nothing_yields_nothing() -> None:
     assert _claim_spans("네 알겠습니다") == []
+
+
+# --- the sentence embedder ----------------------------------------------------
+
+
+def test_there_is_no_external_embedder() -> None:
+    """The embedder reads every consenting utterance of a meeting — the whole
+    transcript — so an external option is privacy.md section 6's design
+    conversation, not a dictionary key. Asserted whole for the reason
+    ``test_there_is_no_external_extractor`` gives."""
+    assert set(_EMBEDDERS) == {"off", "local", "fake"}
+
+
+def test_the_embedder_is_off_by_default() -> None:
+    """Off until real meetings say otherwise: the eval set is four authored
+    meetings and the floor was chosen by looking at them."""
+    reset_cache()
+    settings = get_settings()
+    original = settings.embedder_impl
+    settings.embedder_impl = "off"
+    try:
+        assert get_sentence_embedder() is None
+    finally:
+        settings.embedder_impl = original
+        reset_cache()
+
+
+def test_the_fake_embedder_satisfies_the_protocol() -> None:
+    assert isinstance(FakeEmbedder(), SentenceEmbedder)
+
+
+def test_an_unknown_embedder_is_named_in_the_error() -> None:
+    reset_cache()
+    settings = get_settings()
+    original = settings.embedder_impl
+    settings.embedder_impl = "openai"
+    try:
+        with pytest.raises(ValueError, match="AUTUNE_GAP_EMBEDDER_IMPL"):
+            get_sentence_embedder()
+    finally:
+        settings.embedder_impl = original
+        reset_cache()

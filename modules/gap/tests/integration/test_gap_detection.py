@@ -19,10 +19,18 @@ from datetime import UTC, datetime
 import pytest
 from sqlalchemy import delete, select
 
-from autune_core import Meeting, Participant, Team, session_scope
+from autune_core import Meeting, Participant, Team, Utterance, session_scope
 from autune_gap import service
 from autune_gap.config import get_settings
-from autune_gap.models import GapGap, GapMeetingTemplate, GapParticipation, GapTopic
+from autune_gap.models import (
+    GapGap,
+    GapMeetingTemplate,
+    GapParticipation,
+    GapTopic,
+    GapTopicEdge,
+)
+from autune_gap.pipeline import reset_cache
+from autune_gap.template import get_template
 
 
 @pytest.fixture
@@ -37,13 +45,21 @@ def team_id(db_engine: object) -> Iterator[str]:  # db_engine ensures migrations
         s.execute(delete(Team).where(Team.id == tid))
 
 
-def seed(team_id: str, topics: dict[str, float], *, people: int = 2) -> str:
+def seed(
+    team_id: str,
+    topics: dict[str, float],
+    *,
+    people: int = 2,
+    edges: tuple[tuple[str, str, str], ...] = (),
+) -> str:
     """A meeting whose topic graph is already built. Returns the meeting id.
 
     ``topics`` is label -> centrality. Everybody is recorded as having spoken on
     the first topic and silent on the rest, which is a participation matrix with
     both values in it — a matrix that was all one value would let a scoring bug
     that ignores it pass.
+
+    ``edges`` is ``(source label, relation, target label)``, stored one way.
     """
     with session_scope() as s:
         meeting = Meeting(team_id=team_id, title="회의", status="analyzing")
@@ -59,6 +75,7 @@ def seed(team_id: str, topics: dict[str, float], *, people: int = 2) -> str:
             s.flush()
             participants.append(person.id)
 
+        ids: dict[str, str] = {}
         for position, (label, centrality) in enumerate(topics.items()):
             topic = GapTopic(
                 meeting_id=meeting.id,
@@ -75,6 +92,18 @@ def seed(team_id: str, topics: dict[str, float], *, people: int = 2) -> str:
                         topic_id=topic.id, participant_id=participant_id, spoke=position == 0
                     )
                 )
+            ids[label] = topic.id
+
+        for source, relation, target in edges:
+            s.add(
+                GapTopicEdge(
+                    meeting_id=meeting.id,
+                    source_topic_id=ids[source],
+                    target_topic_id=ids[target],
+                    relation=relation,
+                    weight=1.0,
+                )
+            )
 
         return meeting.id
 
@@ -104,6 +133,37 @@ def test_the_items_a_meeting_missed_become_gaps(team_id: str) -> None:
     assert set(stored(meeting_id)) == {"risk", "dependency", "next_step"}
 
 
+def test_a_dependency_the_meeting_stated_covers_the_item_without_its_words(
+    team_id: str,
+) -> None:
+    """Neither label says 의존 or 선행, and the edge between them is the meeting
+    having said one waits on the other. The edge is read back out of
+    ``gap_topic_edges``, which is where step 2 left it."""
+    meeting_id = seed(
+        team_id,
+        {**COVERS_TWO, "정렬 로직": 0.9, "인덱스 재색인": 0.8},
+        edges=(("정렬 로직", "depends_on", "인덱스 재색인"),),
+    )
+
+    service.detect_gaps(meeting_id)
+
+    assert set(stored(meeting_id)) == {"risk", "next_step"}
+
+
+def test_two_topics_merely_said_together_do_not_cover_a_dependency(team_id: str) -> None:
+    """``co_occurs`` is most of a meeting's edges, and says nothing about how
+    the two relate."""
+    meeting_id = seed(
+        team_id,
+        {**COVERS_TWO, "정렬 로직": 0.9, "인덱스 재색인": 0.8},
+        edges=(("정렬 로직", "co_occurs", "인덱스 재색인"),),
+    )
+
+    service.detect_gaps(meeting_id)
+
+    assert "dependency" in stored(meeting_id)
+
+
 def test_a_gap_carries_the_template_that_raised_it(team_id: str) -> None:
     """Precision is measured across template edits, and a row that cannot say
     which checklist raised it averages two of them together."""
@@ -113,7 +173,7 @@ def test_a_gap_carries_the_template_that_raised_it(team_id: str) -> None:
     gap = stored(meeting_id)["risk"]
 
     assert gap.template_key == "general"
-    assert gap.template_version == "general.2"
+    assert gap.template_version == "general.4"
     assert gap.template_item == "리스크·예외 처리"
     assert gap.suggested_question
 
@@ -289,6 +349,36 @@ def test_switching_templates_drops_the_rows_the_old_one_raised(team_id: str) -> 
     assert {gap.template_key for gap in stored(meeting_id).values()} == {"general"}
 
 
+def test_switching_templates_keeps_what_was_dismissed_under_the_old_one(team_id: str) -> None:
+    """A dismissal is threshold tuning's input (ADR 0006), and S20's picker makes
+    trying another template one click. Switching away must not throw the
+    judgement out, and switching back must find it where it was left."""
+    meeting_id = seed(team_id, COVERS_TWO)
+    service.detect_gaps(meeting_id)
+    dismissed_id = stored(meeting_id)["risk"].id
+    with session_scope() as s:
+        s.get(GapGap, dismissed_id).dismissed_at = datetime.now(UTC)
+
+    with session_scope() as s:
+        service.set_template(s, meeting_id, "feature_planning")
+    service.detect_gaps(meeting_id)
+
+    with session_scope() as s:
+        kept = s.get(GapGap, dismissed_id)
+        assert kept is not None and kept.template_key == "general"
+        assert kept.dismissed_at is not None
+        report = service.build_report(s, meeting_id)
+    assert dismissed_id not in {gap.id for gap in report.gaps}
+
+    with session_scope() as s:
+        service.set_template(s, meeting_id, "general")
+    service.detect_gaps(meeting_id)
+
+    back = stored(meeting_id)["risk"]
+    assert back.id == dismissed_id
+    assert back.dismissed_at is not None
+
+
 def test_an_override_naming_a_template_that_no_longer_exists_falls_back(team_id: str) -> None:
     """A deleted template file is the deployment's problem, and refusing to
     analyse the meeting does not make it less so."""
@@ -312,3 +402,138 @@ def test_the_override_goes_when_the_meeting_does(team_id: str) -> None:
 
     with session_scope() as s:
         assert s.get(GapMeetingTemplate, meeting_id) is None
+
+
+# --- speech read by meaning ---------------------------------------------------
+
+
+@pytest.fixture
+def fake_embedder() -> Iterator[None]:
+    """``AUTUNE_GAP_EMBEDDER_IMPL=fake`` for one test. The fake is lexical, so
+    an utterance written as one of an item's example sentences is nearest to
+    that item — which is what these tests need, and says nothing about KURE-v1."""
+    settings = get_settings()
+    original = settings.embedder_impl
+    settings.embedder_impl = "fake"
+    reset_cache()
+    try:
+        yield
+    finally:
+        settings.embedder_impl = original
+        reset_cache()
+
+
+def say(meeting_id: str, *lines: str, consented: bool = True) -> None:
+    with session_scope() as s:
+        person = Participant(meeting_id=meeting_id, speaker_label="발화자", consented=consented)
+        s.add(person)
+        s.flush()
+        for index, text in enumerate(lines):
+            s.add(
+                Utterance(
+                    id=f"utt_{person.id}_{index}",
+                    meeting_id=meeting_id,
+                    participant_id=person.id,
+                    speaker_label="발화자",
+                    start_sec=float(index),
+                    end_sec=float(index) + 1,
+                    text=text,
+                )
+            )
+
+
+def dependency_example() -> str:
+    general = get_template("general")
+    return next(item for item in general.items if item.key == "dependency").examples[0]
+
+
+def test_an_item_the_embedder_heard_is_stored_partial(team_id: str, fake_embedder: None) -> None:
+    """The ``no-noun`` fix end to end: no keyword of ``dependency`` was said and
+    no topic names it, and the item is raised as partial rather than missing."""
+    meeting_id = seed(team_id, COVERS_TWO)
+    say(meeting_id, dependency_example())
+
+    service.detect_gaps(meeting_id)
+
+    assert stored(meeting_id)["dependency"].coverage == "partial"
+    assert stored(meeting_id)["risk"].coverage == "missing"
+
+
+def test_with_the_embedder_off_the_same_meeting_is_missing(team_id: str) -> None:
+    """The baseline, kept: nothing heard by meaning, keywords only."""
+    meeting_id = seed(team_id, COVERS_TWO)
+    say(meeting_id, dependency_example())
+
+    service.detect_gaps(meeting_id)
+
+    assert stored(meeting_id)["dependency"].coverage == "missing"
+
+
+def test_the_embedder_reads_only_consenting_speech(team_id: str, fake_embedder: None) -> None:
+    """privacy.md section 5: a participant who declined is not analysed, by the
+    keyword reading or by this one."""
+    meeting_id = seed(team_id, COVERS_TWO)
+    say(meeting_id, dependency_example(), consented=False)
+
+    service.detect_gaps(meeting_id)
+
+    assert stored(meeting_id)["dependency"].coverage == "missing"
+
+
+# --- sending E the report again after S20 changed it (#316, #471) -----------
+
+
+@pytest.fixture
+def sent(monkeypatch: pytest.MonkeyPatch) -> list[dict]:
+    """What ``republish_report`` hands to ``publish``. E's task is not
+    registered here (invariant 2), so the send itself is replaced."""
+    captured: list[dict] = []
+
+    def capture(event: str, payload: dict) -> list[str]:
+        captured.append(payload)
+        return ["autune.intelligence.on_gap_completed"]
+
+    monkeypatch.setattr(service, "publish", capture)
+    return captured
+
+
+def test_a_dismissed_gap_leaves_the_report_e_is_sent_again(team_id: str, sent: list[dict]) -> None:
+    meeting_id = seed(team_id, COVERS_TWO)
+    service.detect_gaps(meeting_id)
+    dismissed = stored(meeting_id)["risk"].id
+    with session_scope() as s:
+        gap = s.get(GapGap, dismissed)
+        assert gap is not None
+        gap.dismissed_at = datetime.now(UTC)
+
+    report = service.republish_report(meeting_id)
+
+    assert report is not None
+    assert len(sent) == 1
+    assert dismissed not in {gap["id"] for gap in sent[0]["gaps"]}
+    assert len(sent[0]["gaps"]) == 2
+
+
+def test_a_template_switch_reaches_e_as_the_new_checklist(team_id: str, sent: list[dict]) -> None:
+    meeting_id = seed(team_id, COVERS_TWO)
+    service.detect_gaps(meeting_id)
+    with session_scope() as s:
+        service.set_template(s, meeting_id, "feature_planning")
+    service.detect_gaps(meeting_id)
+
+    service.republish_report(meeting_id)
+
+    items = {item.item for item in get_template("feature_planning").items}
+    assert sent[0]["gaps"]
+    assert {gap["template_item"] for gap in sent[0]["gaps"]} <= items
+
+
+def test_a_meeting_the_pipeline_has_not_analysed_is_not_published(
+    team_id: str, sent: list[dict]
+) -> None:
+    """A first publish would start E's countdown for a meeting B and D have
+    not reached."""
+    meeting_id = seed(team_id, {})
+
+    assert service.republish_report(meeting_id) is None
+    assert sent == []

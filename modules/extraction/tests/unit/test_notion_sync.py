@@ -21,7 +21,15 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
-from autune_core import AutuneError, Base, Meeting, PrivacyViolationError, Utterance, get_session
+from autune_core import (
+    AutuneError,
+    Base,
+    Meeting,
+    PrivacyViolationError,
+    TeamMember,
+    Utterance,
+    get_session,
+)
 from autune_core.integrations_config import IntegrationConfig
 from autune_extraction import service, tasks
 from autune_extraction.config import ExtractionSettings
@@ -35,12 +43,15 @@ from autune_extraction.router import router
 from autune_integrations import PermanentIntegrationError
 from autune_integrations.fakes import FakeNotion
 
+from .conftest import sign_in
+
 MEETING = "mtg_1"
 DATABASE = "db_actions"
 PREFIX = "/api/extraction"
 
 TABLES = [
     Meeting.__table__,
+    TeamMember.__table__,
     Utterance.__table__,
     ExtActionItem.__table__,
     ExtActionItemSource.__table__,
@@ -472,6 +483,7 @@ def client(session: Session, monkeypatch: pytest.MonkeyPatch) -> Iterator[TestCl
 
     app.include_router(router, prefix=PREFIX)
     app.dependency_overrides[get_session] = lambda: session
+    sign_in(app, session)
     yield TestClient(app)
 
 

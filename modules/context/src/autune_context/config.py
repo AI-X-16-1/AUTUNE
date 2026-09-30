@@ -24,7 +24,8 @@ class ContextSettings(BaseSettings):
     embedder_impl: str = "kure_v1_http"
     reranker_impl: str = "bge_reranker_v2_m3_ko_http"
     nli_impl: str = "klue_kornli_http"
-    # LLM (agenda / briefs) is Phase 2 and has no impl yet — see base.LlmClient.
+    # LLM (agenda generation) has no impl yet — see base.LlmClient. The
+    # pre-meeting brief is a template over D's own rows and uses none.
 
     # --- embedding (KURE-v1) ---
     embedding_dim: int = 1024
@@ -107,6 +108,13 @@ class ContextSettings(BaseSettings):
     """Individual topic-link Slack messages posted per meeting before the rest
     collapse into one rollup notice. A meeting with many linked topics would
     otherwise post one message per topic and flood the channel."""
+
+    # --- pre-meeting brief ---
+    brief_lead_minutes: int = 10
+    """How long before a scheduled meeting's ``started_at`` its brief goes to
+    the team channel. ``autune.context.periodic.send_due_briefs`` runs every
+    minute, so a brief lands within a minute of this mark -- or right away for
+    a meeting scheduled closer to its start than this."""
 
     # --- worker bootstrap ---
     warm_models_on_worker_init: bool = False

@@ -147,6 +147,14 @@ def test_a_failed_load_is_remembered_and_not_retried(monkeypatch: pytest.MonkeyP
     assert "offline" not in str(caught.value)
 
 
+def test_the_checkpoint_is_exposed() -> None:
+    """Two vectors are only comparable when they came from the same
+    checkpoint, so the worker's write path (``tasks._speaker_vectors``)
+    records it with every observation."""
+    assert Embedder().checkpoint == CHECKPOINT
+    assert Embedder(checkpoint="a-different-checkpoint").checkpoint == "a-different-checkpoint"
+
+
 def test_torch_is_not_imported_at_module_scope() -> None:
     assert "torch" not in vars(embedder_module)
     assert "pyannote" not in vars(embedder_module)

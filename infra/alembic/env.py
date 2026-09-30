@@ -29,6 +29,9 @@ import autune_core.entities  # noqa: F401,E402
 for _name in MODULES:
     import_module(f"autune_{_name}.models")
 
+# The agent layer is not a module but owns agent_* tables (ADR 0010).
+import autune_agent.models  # noqa: E402,F401
+
 target_metadata = Base.metadata
 
 config.set_main_option("sqlalchemy.url", get_settings().database_url)

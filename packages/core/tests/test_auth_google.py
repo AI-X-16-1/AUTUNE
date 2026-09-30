@@ -16,6 +16,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
+from structlog.testing import capture_logs
 
 from autune_core import SESSION_COOKIE, issue_token
 from autune_core import auth_router as auth_router_module
@@ -32,6 +33,7 @@ from autune_core.oauth.state import (
     RedisStateStore,
     get_state_store,
 )
+from autune_core.settings import get_settings
 
 # --------------------------------------------------------------------------- #
 # State store
@@ -195,6 +197,43 @@ def test_exchange_code_maps_a_google_rejection_to_permission_denied(
         _client(rsa_key, http=http).exchange_code("auth-code")
 
 
+@pytest.mark.parametrize(
+    ("body", "logged"),
+    [
+        pytest.param(
+            {
+                "error": "invalid_client",
+                "error_description": "The provided client secret is invalid.",
+            },
+            "invalid_client",
+            id="wrong-secret",
+        ),
+        pytest.param({"error": "invalid_grant"}, "invalid_grant", id="spent-code"),
+        pytest.param({"error": "code=4/abc secret"}, "unrecognised", id="not-an-error-code"),
+        pytest.param(None, "unparseable", id="not-json"),
+    ],
+)
+def test_a_google_rejection_logs_only_its_error_code(
+    rsa_key: rsa.RSAPrivateKey, body: dict[str, str] | None, logged: str
+) -> None:
+    """A wrong client secret and a spent code both read as the same 403; the
+    log says which, and nothing from the request or Google's description."""
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        if body is None:
+            return httpx.Response(401, text="<html>nope</html>")
+        return httpx.Response(401, json=body)
+
+    http = httpx.Client(transport=httpx.MockTransport(handler))
+    with capture_logs() as logs, pytest.raises(PermissionDeniedError):
+        _client(rsa_key, http=http).exchange_code("auth-code")
+
+    (entry,) = [e for e in logs if e["event"] == "auth_google_token_rejected"]
+    assert entry["error"] == logged
+    assert entry["status"] == 401
+    assert "auth-code" not in repr(entry) and "secret is invalid" not in repr(entry)
+
+
 # --------------------------------------------------------------------------- #
 # upsert_user_from_google
 # --------------------------------------------------------------------------- #
@@ -238,6 +277,24 @@ def test_upsert_is_idempotent_on_google_sub(db: Session) -> None:
     second = upsert_user_from_google(db, _identity(name="New"))
     assert first.id == second.id
     assert second.display_name == "New"
+
+
+def test_upsert_follows_a_changed_google_email(db: Session) -> None:
+    upsert_user_from_google(db, _identity())
+    user = upsert_user_from_google(db, _identity(email="new@example.com"))
+    assert user.email == "new@example.com"
+
+
+def test_upsert_keeps_the_old_email_when_another_user_holds_the_new_one(db: Session) -> None:
+    first = upsert_user_from_google(db, _identity())
+    db.add(User(id="user_other", email="taken@example.com", display_name="Other"))
+    db.flush()
+
+    user = upsert_user_from_google(db, _identity(email="taken@example.com"))
+
+    assert user.id == first.id
+    assert user.email == "a@example.com"
+    assert user.last_login_at is not None
 
 
 def test_upsert_links_an_existing_magic_link_user_by_email(db: Session) -> None:
@@ -546,6 +603,20 @@ def test_me_accepts_the_session_cookie(
     assert client.get("/api/auth/me").status_code == 200
 
 
+def test_providers_reports_whether_google_is_configured(
+    api: tuple[TestClient, dict[str, object]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client, _ = api
+    settings = get_settings()
+    monkeypatch.setattr(settings, "google_client_id", "")
+    assert client.get("/api/auth/providers").json() == {"google": False}
+
+    monkeypatch.setattr(settings, "google_client_id", "id")
+    monkeypatch.setattr(settings, "google_client_secret", "secret")
+    monkeypatch.setattr(settings, "google_redirect_uri", "http://localhost:3000/cb")
+    assert client.get("/api/auth/providers").json() == {"google": True}
+
+
 def test_logout_clears_the_cookie(api: tuple[TestClient, dict[str, object]]) -> None:
     client, _ = api
     response = client.post("/api/auth/logout")
@@ -553,3 +624,17 @@ def test_logout_clears_the_cookie(api: tuple[TestClient, dict[str, object]]) -> 
     assert 'autune_session=""' in response.headers.get("set-cookie", "") or (
         "autune_session=;" in response.headers.get("set-cookie", "")
     )
+
+
+def test_verify_request_holds_for_a_token_without_an_email(rsa_key: rsa.RSAPrivateKey) -> None:
+    """The calendar consent has no ``email`` scope (#452 review)."""
+    token = _id_token(rsa_key, email=None, email_verified=None)
+    claims = _client(rsa_key).verify_request(token, nonce="the-nonce")
+    assert claims["sub"] == "google-sub-1"
+    with pytest.raises(PermissionDeniedError, match="no email"):
+        _client(rsa_key).verify(token, nonce="the-nonce")
+
+
+def test_verify_request_still_checks_the_nonce(rsa_key: rsa.RSAPrivateKey) -> None:
+    with pytest.raises(PermissionDeniedError, match="nonce"):
+        _client(rsa_key).verify_request(_id_token(rsa_key, email=None), nonce="different")

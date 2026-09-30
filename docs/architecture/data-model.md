@@ -28,6 +28,7 @@ absence of a prefix is what marks a table as shared.
 | `teams` | An organization or squad |
 | `team_members` | User ↔ team membership and role |
 | `team_integrations` | One team's connection to Notion, Slack or Calendar |
+| `user_integrations` | One person's own connection to their Google Calendar |
 | `meetings` | One analysis unit |
 | `participants` | One voice at a meeting, identified or not — usually one person, not always; see below |
 | `utterances` | One continuous stretch of speech, PII-masked |
@@ -55,6 +56,13 @@ if config is None:
     return  # this team has not connected Notion; skip the feature
 client = NotionClient(config.require_secret())
 ```
+
+`user_integrations` is the per-person counterpart (#59, #435): a person's own
+calendar, which only they can grant and which is deleted with their
+account (`ON DELETE CASCADE`). The same rule applies — written by `packages/core`,
+read by modules through `load_user_integration`, and only ever read by code
+acting for that person. A module's own sync state for it goes in its own
+prefixed table.
 
 The one exception, until S28 ships, is a route for connecting an integration
 by hand (#401). It is mounted only under `AUTUNE_ENV=local` **and** an explicit
@@ -144,6 +152,21 @@ Every table a module owns is named `<prefix>_<name>`.
 | C. gap | `gap_` | `gap_topics`, `gap_gaps`, `gap_participation` |
 | D. context | `ctx_` | `ctx_materials`, `ctx_topic_links`, `ctx_decisions`, `ctx_decision_versions` |
 | E. intelligence | `intel_` | `intel_scores`, `intel_predictions`, `intel_reports` |
+| agent layer (#260) | `agent_` | `agent_work_items`, `agent_runs`, `agent_approvers` |
+
+`agent_` (#260) is the one prefix that does not belong to a module. A prefix
+marks an owner, and an owner is a module *or* the agent layer (ADR 0010). Everything else about the rule is the same — the
+tables are owned by one party, nobody else writes them, and they need a
+deletion path by `meeting_id` or `user_id` like any other derived table.
+
+`agent_approvers` records who approves a subagent's proposals for a team; it
+holds no meeting content and is deleted by `user_id`. The other two
+tables are meeting content and need the meeting path, and **`agent_runs` needs
+it as much as `agent_work_items` does**: its `steps`, `decisions` and suspended `messages`
+hold copies of what the modules' tools returned, so it carries `meeting_id`,
+cascades from `meetings`, and is swept at retention expiry. A copy that outlives
+what it copied is how a value one module blanked comes back alive somewhere
+else. Raised on #261 by the owners of B and D.
 
 A table without a prefix is a shared entity. If you are creating one, you are
 either mistaken or you need team approval.

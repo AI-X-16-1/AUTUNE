@@ -7,13 +7,15 @@
  * Three provider paths (Google / Slack / magic link) and three states for the
  * email path: idle, sent (resend after 60s), error (red input + message below).
  * Google is fully wired; Slack and magic link surface a "곧 제공" message until
- * their backends land in W2.
+ * their backends land in W2. On a server without Google credentials the Google
+ * button is disabled up front rather than answering the click with a 500.
  */
 import { useEffect, useState } from "react";
 
 import { Button } from "@/shared/ui/Button";
 import {
   ApiError,
+  getProviders,
   googleStartUrl,
   PENDING_PROVIDERS,
   requestMagicLink,
@@ -29,6 +31,17 @@ export function SignInCard({ redirectTo = "/" }: { redirectTo?: string }) {
   const [phase, setPhase] = useState<Phase>("idle");
   const [error, setError] = useState<string | null>(null);
   const [secondsLeft, setSecondsLeft] = useState(0);
+  const [googleAvailable, setGoogleAvailable] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    void getProviders().then((providers) => {
+      if (!cancelled && providers) setGoogleAvailable(providers.google);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (secondsLeft <= 0) return;
@@ -91,6 +104,8 @@ export function SignInCard({ redirectTo = "/" }: { redirectTo?: string }) {
           tone="primary"
           className="w-full gap-2"
           onClick={() => startProvider("google")}
+          disabled={!googleAvailable}
+          aria-describedby={googleAvailable ? undefined : "signin-google-unavailable"}
         >
           <GoogleMark />
           Google로 계속
@@ -104,6 +119,15 @@ export function SignInCard({ redirectTo = "/" }: { redirectTo?: string }) {
           <SlackMark />
           Slack으로 계속
         </Button>
+        {!googleAvailable && (
+          <p
+            id="signin-google-unavailable"
+            className="text-ink-muted"
+            style={{ fontSize: "var(--text-metaSmall)" }}
+          >
+            이 서버에는 Google 로그인이 아직 설정되지 않았습니다. 관리자에게 문의해 주세요.
+          </p>
+        )}
       </div>
 
       <div

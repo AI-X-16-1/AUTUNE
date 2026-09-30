@@ -81,3 +81,51 @@ export interface DecisionSummaryRead {
   confidence: number;
   updated_at: string;
 }
+
+/** One decision in a brief's recap — `BriefDecisionRead`. */
+export interface BriefDecisionRead {
+  statement: string;
+  change_type: ChangeType;
+}
+
+/**
+ * The past meeting a brief recaps — `BriefRecapRead`. Rendered from that
+ * meeting's rows on every read, never stored with the brief.
+ */
+export interface BriefRecapRead {
+  meeting_id: string;
+  title: string;
+  day: string | null;
+  topics: string[];
+  decisions: BriefDecisionRead[];
+}
+
+/** One issue the meeting is expected to take up (Jira, through module B — #436). */
+export interface AgendaItemRead {
+  title: string;
+  key: string | null;
+  status: string | null;
+  url: string | null;
+}
+
+/** How the recapped meeting was chosen — see `autune_context.briefs`. */
+export type BriefMatchReason = "series" | "topic" | "latest";
+
+/**
+ * A scheduled meeting's pre-meeting brief (`GET /briefs/{meeting_id}`) —
+ * `BriefRead`. Not a contract: D's own read API, like the types above.
+ *
+ * `recap` is `null` both when there was no past meeting and when the chosen one
+ * has since been deleted or expired; `recap_gone` tells the two apart.
+ * `sent_at` is `null` for a team with no Slack channel.
+ */
+export interface BriefRead {
+  meeting_id: string;
+  title: string;
+  starts_at: string | null;
+  recap: BriefRecapRead | null;
+  recap_gone: boolean;
+  match_reason: BriefMatchReason | null;
+  agenda: AgendaItemRead[];
+  sent_at: string | null;
+}

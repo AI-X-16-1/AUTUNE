@@ -23,6 +23,7 @@ from .entities import (
     TeamIntegration,
     TeamMember,
     User,
+    UserIntegration,
     Utterance,
 )
 from .errors import (
@@ -44,9 +45,18 @@ from .integrations_config import (
     require_integration,
     save_integration,
 )
+from .jira_connection import JiraAccess, jira_access
 from .logging import configure_logging, get_logger
 from .periodic import beat_schedule, is_periodic_task_name, periodic
 from .settings import Settings, get_settings
+from .user_integrations import (
+    USER_SERVICES,
+    UserIntegrationConfig,
+    disconnect_user_integration,
+    load_user_integration,
+    save_user_integration,
+    users_with_integration,
+)
 
 __all__ = [
     "Settings",
@@ -64,6 +74,15 @@ __all__ = [
     "Participant",
     "Team",
     "TeamIntegration",
+    "JiraAccess",
+    "jira_access",
+    "UserIntegration",
+    "USER_SERVICES",
+    "UserIntegrationConfig",
+    "load_user_integration",
+    "save_user_integration",
+    "disconnect_user_integration",
+    "users_with_integration",
     "TeamMember",
     "User",
     "Utterance",
