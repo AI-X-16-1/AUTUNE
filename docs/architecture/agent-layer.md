@@ -870,6 +870,8 @@ Unchanged, and stated here so the six read together.
 
 ### Plan mode — a plan is submitted before anything at L2 happens
 
+**As built (`agent/docs/specs/2026-09-30-plan-mode-design.md`): an approval queue.** Every subagent plans inside its own graph and returns `ProposedAction`s, so there is no model loop to add; an L2 proposal waits in `agent_pending_actions` until an approver with its scope approves it on the approvals page, and then runs under its run's scope. The loop below stays as the direction if a subagent ever needs the model to plan; it would need an answer for keeping `messages`, which #509 does not store. Approval is at-most-once: the claim is committed before the action runs, so an approval interrupted mid-run reads approved with no result and is never re-run — other modules' writes commit in their own sessions, and running one twice would move a person twice. Only a current member of the team who holds an approver row for the proposal's scope, or `any`, may decide.
+
 Borrowed whole from coding agents. It is not a second model or a planning
 algorithm; it is the same loop with three differences:
 
@@ -932,6 +934,8 @@ resumes in `execute` mode**. The context the plan was made in is the messages;
 the messages are rows; nothing is lost by the task ending. Enqueuing that
 resuming task from the API process works today (#258, closed by #300); waking
 one on a timeout instead of on a person's click is #207's beat schedule.
+
+**An L2 proposal's arguments are ids and short scalars only** — every key is a short lowercase name (`[a-z_]{1,32}`), and every value an id, an ASCII ISO date, a boolean, or a lowercase enum up to 32 characters. Text a proposal needs is stored by its owner first and pointed at by id (E's report draft, Research's document). Anything else is refused and not queued.
 
 ### When it asks, and when it does not
 
@@ -1223,6 +1227,8 @@ wrong row sends a workload proposal to the wrong person. Setting a row is
 therefore itself a permission question, the same one as 13.4, and should be
 answered with it. Until then the first member of a team sets it and every
 change is written to `agent_runs`.
+
+For the demo: `INSERT INTO agent_approvers (team_id, user_id, scope) VALUES ('<team>', '<user>', 'any');`
 
 ### 13.6 Gmail is a new integration, and Jira waits on #82
 
