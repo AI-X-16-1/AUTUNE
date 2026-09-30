@@ -17,7 +17,11 @@ class AgentSettings(BaseSettings):
 
     llm_api_key: str = ""
     """Empty means the chat endpoint refuses with a configuration error naming
-    this variable, rather than guessing."""
+    this variable, rather than guessing.
+
+    Same condition as module B's ``classifier_impl=llm``: until #392 is decided
+    and this is a paid key, use it on demo meetings only. Unlike B's, this layer
+    is on by default, so setting the key is what switches it on."""
     llm_model: str = "gemini-3.5-flash-lite"
     """Routing and composing are short calls. Flash-Lite keeps 3.8 Flash's small
     free-tier quota for module B, which hit it (#419)."""

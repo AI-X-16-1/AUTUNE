@@ -25,7 +25,7 @@ from sqlalchemy.orm import Session
 from autune_agent.models import AgentRun
 
 from .graph import MainState, run
-from .registry import BudgetExceededError, CallBudget, Tool
+from .registry import BudgetExceededError, CallBudget, RunScope, Tool
 from .router import Router
 from .subagents import Subagent
 
@@ -59,6 +59,7 @@ def run_and_record(
             request,
             session=session,
             router=router,
+            scope=RunScope(team_id=team_id, meeting_id=meeting_id),
             subagents=subagents,
             tools=tools,
             budget=budget,

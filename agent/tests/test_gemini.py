@@ -66,3 +66,14 @@ def test_compose_sends_the_summary_and_titles_and_falls_back_to_the_summary() ->
     text = sent[0]["body"]["contents"][0]["parts"][0]["text"]
     assert "마감 1건." in text
     assert "API 문서" in text
+
+
+def test_compose_keeps_a_title_that_ends_in_a_colon() -> None:
+    sent: list[dict[str, Any]] = []
+    result = ToolResult(
+        ok=True, summary="한 건.", items=[{"title": "다음 안건:"}], evidence=[], confidence=1.0
+    )
+
+    _router("답변", sent).compose("질문", SubagentResult(result=result))
+
+    assert "- 다음 안건:" in json.dumps(sent[0]["body"], ensure_ascii=False)

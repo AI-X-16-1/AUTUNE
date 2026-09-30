@@ -115,7 +115,12 @@ class GeminiRouter:
     def compose(self, request: str, outcome: SubagentResult) -> str:
         result = outcome.result
         findings = [f"요약: {result.summary}"]
-        findings += [f"- {item.title}: {item.body}".rstrip(": ") for item in result.items]
+        # Not ``.rstrip(": ")``: that strips a character set, and a title that
+        # ends in a colon would lose it (review on #449).
+        findings += [
+            f"- {item.title}: {item.body}" if item.body else f"- {item.title}"
+            for item in result.items
+        ]
         if result.truncated:
             findings.append("(더 있음 — 상위 다섯 건만 표시)")
         answer = self._generate(
