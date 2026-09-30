@@ -55,7 +55,9 @@ team's most recent meeting whose analysis finished (`audio.recent_meetings`).
 | 4 | `write` | LLM: questions + matches → Markdown in three parts: 제기된 질문 / 과거 회의에서 나온 것 / 아직 모르는 것. | 1 LLM |
 | 5 | `save` | `agent.save_research_document(body, utterance_ids)`, then propose L2 `agent.share_research_document(document_id)`. | 1 tool |
 
-At most 8 tool calls against the run's 15. Every node that fails ends the run
+At most 8 tool calls against the run's 15 on the trigger path; a chat run spends
+two more finding its meeting (a refused `meeting_overview`, then
+`recent_meetings`), so at most 10. Every node that fails ends the run
 with `ok=False` and no proposal; a search that finds nothing is not a failure,
 and the document says so under 아직 모르는 것.
 
@@ -174,7 +176,7 @@ All after #509 merges, except ①.
 | ① | `audio.search_team_meetings` | 1 (module A) |
 | ② | own tools/actions collection, two tables and trigger, save tool, share action, `GET /research` | 1 (`agent/` only) |
 | ③ | Research subgraph and `SUBAGENT`, this spec | 1 |
-| ④ | research card | 1 |
+| ④ | research card, plus an `agent` entry in the shared API client | 5 (`apps/web/src/shared`) |
 | ⑤ | `agent-layer.md`: Research wakes on `intelligence.completed`; reads what we hold | 5 (`docs/`) |
 
 Schedule: ①② 10/1–10/2 · ③ 10/3–10/4 · ④⑤ 10/5 · end to end 10/6–10/8.
