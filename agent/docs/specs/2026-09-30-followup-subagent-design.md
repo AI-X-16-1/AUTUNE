@@ -96,9 +96,9 @@ from the agent layer (agent/CLAUDE.md rule 2).
   suggested question and the related topic labels. Evidence is the gap ids.
 - `gap.recurring_open_gaps(session, meeting_id)`: the template item keys open
   in M and in the team's previous analysed meeting. The previous meeting is the
-  team's latest earlier meeting that C has scored, meaning it has a
-  `gap_scorings` row (#506). Each key comes with both meetings' gap ids as
-  evidence.
+  team's latest earlier meeting that C has analysed, meaning it has a topic
+  graph (the same test C's report and rescore use). Each key comes with both
+  meetings' gap ids as evidence. Built in #546.
 - `RUN_SCOPE = ("team_id",)`, as in B and E. A meeting from another team reads
   as missing.
 - `PERSONAL_ONLY_TOOLS = []`. C has no per-person figure to offer.
@@ -169,7 +169,7 @@ text, as settled on #509.
   analysed meeting.
 - **C's tools** (PostgreSQL): another team's meeting reads as missing;
   dismissed gaps are left out; `recurring_open_gaps` finds the previous
-  scored meeting and skips one C never scored; no participation field in
+  analysed meeting and skips one C never analysed; no participation field in
   either result.
 - **End to end** (10/6–10/8): two real recordings for one team, the second
   leaving a template item open again. The proposal appears in
