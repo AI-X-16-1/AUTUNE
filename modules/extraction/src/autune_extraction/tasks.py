@@ -27,6 +27,7 @@ from autune_core import (
     AutuneError,
     Meeting,
     PrivacyViolationError,
+    Utterance,
     get_logger,
     jira_access,
     load_integration,
@@ -43,8 +44,10 @@ from autune_integrations import (
     JiraClient,
     NotionClient,
     PermanentIntegrationError,
+    SlackClient,
     refresh_access_token,
 )
+from autune_integrations.errors import SlackRecipientNotLinkedError
 
 from . import calendar_sync, jira_sync, notion_setup, service
 from .models import ExtActionItem, ExtCalendarPoll, ExtDecision, ExtExternalRef
@@ -155,15 +158,94 @@ def on_transcript_ready(payload: dict) -> None:
         resolver_model_version=resolver.model_version,
         resolved_commitments=len(resolved_descriptions),
     )
-    # TODO(강민구): step 6, the DM: for each of ``service.unasked_confirmations``,
-    # resolve the speaker's Slack account and call
-    # ``service.ask_for_confirmation`` -- blocked on an account mapping (#70)
-    # and a team Slack client (#30). Step 7, Notion (#30) -- Jira was
-    # dropped (#82): both its auth paths tie a workspace to whoever set it up.
+    # Step 6, the DM, is ``ask_confirmations``, not this run: a speaker who is
+    # identified or links Slack a little later is still asked. Step 7 waits for
+    # a person to confirm (#246).
 
     # Step 8, after the writes have committed. The payload is never logged:
     # decision statements and item descriptions are meeting content.
     publish(EXTRACTION_COMPLETED, result.model_dump(mode="json"))
+
+
+@shared_task(name="autune.extraction.periodic.ask_confirmations")
+@periodic(timedelta(minutes=5))
+def ask_confirmations() -> list[str]:
+    """Step 6: DM each speaker the ambiguous agreement they made -- "was that a
+    commitment?" -- and start its clock (#70, WBS 8.3). Returns the utterance
+    ids asked about.
+
+    What is asked is ``service.confirmations_to_ask``: not yet asked, recorded
+    inside ``CONFIRMATION_TIMEOUT``, by an identified, consenting speaker. The
+    DM goes to that speaker only, through the team's Slack bot, to the Slack
+    account they linked (#255, #478); ``send_confirmation_dm`` refuses any
+    other recipient. The answer comes back through ``slack.handle_block_action``.
+
+    Each question is claimed and sent in its own transaction
+    (``ask_for_confirmation``): a failed send takes the claim back and the next
+    run asks again, and a claim another run holds sends nothing. A team with no
+    Slack connection, and a speaker who has not linked a Slack account, are
+    skipped and looked at again next time, until the window closes. Any other
+    integration failure is logged by class and retried the same way. **A
+    privacy violation is never swallowed**: the others are still asked, then it
+    is raised with the utterance ids, as the extraction's sweeps do.
+
+    Every five minutes: a question should reach the speaker while the meeting
+    is still on their mind, and a run with nothing to ask is one query.
+    """
+    with session_scope() as session:
+        pending = service.confirmations_to_ask(session)
+        secrets: dict[str, str | None] = {}
+        for team_id in sorted({q.team_id for q in pending}):
+            config = load_integration(session, team_id, "slack")
+            secrets[team_id] = config.require_secret() if config is not None else None
+
+    asked: list[str] = []
+    violations: list[str] = []
+    for question in pending:
+        secret = secrets[question.team_id]
+        if secret is None:
+            continue
+        try:
+            with session_scope() as session:
+                said = session.get(Utterance, question.utterance_id)
+                if said is None:
+                    continue
+                row = service.ask_for_confirmation(
+                    session,
+                    SlackClient(secret),
+                    meeting_id=question.meeting_id,
+                    speaker_id=question.speaker_id,
+                    recipient_id=question.speaker_id,
+                    utterance_id=question.utterance_id,
+                    quoted_text=said.text,
+                )
+        except PrivacyViolationError:
+            violations.append(question.utterance_id)
+            continue
+        except SlackRecipientNotLinkedError:
+            log.info("extraction_confirmation_not_linked", utterance_id=question.utterance_id)
+            continue
+        except IntegrationError as exc:
+            log.warning(
+                "extraction_confirmation_send_failed",
+                utterance_id=question.utterance_id,
+                reason=type(exc).__name__,
+            )
+            continue
+        if row is not None:
+            asked.append(question.utterance_id)
+
+    log.info(
+        "extraction_confirmations_asked",
+        pending=len(pending),
+        asked=len(asked),
+        violations=len(violations),
+    )
+    if violations:
+        raise PrivacyViolationError(
+            f"unmasked value in {len(violations)} confirmation DM(s): {', '.join(violations)}"
+        )
+    return asked
 
 
 @shared_task(name="autune.extraction.sync_action_item", acks_late=True)

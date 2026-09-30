@@ -65,8 +65,12 @@ agreement, and sync the result to Notion.
    enough. See `../architecture/contracts.md`, "The B → D boundary".
 6. **Confirm** — every ambiguous agreement is recorded in `ext_confirmations`
    first, then the speaker gets a Slack DM. Until the DM goes out the row is
-   *not asked* and `AmbiguousAgreement.confirmation_sent` is false; sending
-   needs the speaker's Slack account (#70) and a team Slack client (#30).
+   *not asked* and `AmbiguousAgreement.confirmation_sent` is false. Every five
+   minutes `ask_confirmations` asks each one recorded within the 24-hour window
+   whose speaker is identified and consented, through the team's Slack bot to
+   the account that person linked (#255, #478), and to nobody else. A team
+   without Slack, or a speaker who has not linked, is looked at again on the
+   next run until the window closes.
 7. **Sync** — when a person confirms an action item (moves it out of
    `needs_confirmation`), create one page for it in the team's Notion database
    and store the URL in `ext_external_refs` (#30). One page per item: a later
