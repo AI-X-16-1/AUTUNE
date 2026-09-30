@@ -900,6 +900,19 @@ again and its `GapReport` republished. Gap ids and dismissals survive, as on any
 re-run. A consent withdrawal moves the grouping too and is picked up the same
 way.
 
+**A change of consent also rebuilds the graph** (#515). The topics, their
+evidence and the participation matrix were read from whoever consented when
+the transcript arrived, so rescoring alone left a label taken from a withdrawn
+line on S20 and a newly allowed line out of it. When the consenting
+participants differ from those in `gap_participation` — which holds every
+consenting participant on every topic, so its participant set is who consented
+at build time — `service.rebuild_topic_graph` reads the meeting's stored
+utterances (masked by module A, the same text the pipeline held) through the
+same consent filter before detection runs. A confirmed speaker changes who is
+one person, not whose speech may be read, and does not rebuild. A meeting with
+no stored utterances is left as it is: there is nothing to rebuild from. Module
+D does the same for its links with `autune.context.rederive_topics` (#472).
+
 - **A digest, not the grouping.** A comparison needs nothing more, and a digest
   cannot be read back into who was merged with whom.
 - **Only a meeting with a topic graph gets a row**, so the rescore never sends E

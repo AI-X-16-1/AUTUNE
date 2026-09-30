@@ -159,7 +159,75 @@ def build_topic_graph(transcript: TranscriptReady) -> int:
     slow step, and a connection held open across it is a connection nobody
     else can use.
     """
-    meeting_id = transcript.meeting_id
+    return _build_graph(transcript.meeting_id, [(u.id, u.text) for u in transcript.utterances])
+
+
+def rebuild_topic_graph(meeting_id: str) -> int | None:
+    """Build the meeting's topic graph again from its stored utterances.
+
+    For a meeting whose consent changed after it was analysed (#515). The graph
+    ``build_topic_graph`` stored was read from whoever consented then: a label
+    taken from a line somebody has since withdrawn stays on S20, and a line
+    somebody has since allowed is missing from it. The same consent filter runs
+    here over ``utterances`` as module A stored them, which is text already
+    masked (privacy.md section 2), so nothing is read that the pipeline did not
+    already hold. Module D answers the same question for its links with
+    ``autune.context.rederive_topics`` (#472).
+
+    New topic ids, as any rebuild makes. ``detect_gaps`` has to run after it:
+    the rebuild takes ``gap_related_topics`` with the old topics, and gap ids
+    and dismissals survive because gaps are recognised by their template item.
+
+    **A meeting with no stored utterances is left as it is**, and ``None`` is
+    returned. There is nothing to read the graph from, and building one from
+    nothing would not be a rebuild but a guess that the meeting said nothing.
+    """
+    with session_scope() as session:
+        utterances = [
+            (utterance_id, text)
+            for utterance_id, text in session.execute(
+                select(Utterance.id, Utterance.text)
+                .where(Utterance.meeting_id == meeting_id)
+                .order_by(Utterance.start_sec, Utterance.id)
+            ).all()
+        ]
+    if not utterances:
+        log.info("gap_topic_graph_rebuild_skipped", meeting_id=meeting_id)
+        return None
+    return _build_graph(meeting_id, utterances)
+
+
+def _consent_moved(meeting_id: str) -> bool:
+    """Whether the consenting participants differ from those the stored graph
+    was built from.
+
+    The participation matrix holds a row for every consenting participant on
+    every topic, silent or not (``graph.participation``), so the set of
+    participants in it is the set that consented when the graph was built. A
+    confirmed speaker changes who is one person and leaves this alone; a
+    withdrawal or a late consent does not.
+    """
+    with session_scope() as session:
+        now = set(
+            session.scalars(
+                select(Participant.id).where(
+                    Participant.meeting_id == meeting_id, Participant.consented.is_(True)
+                )
+            )
+        )
+        built = set(
+            session.scalars(
+                select(GapParticipation.participant_id)
+                .join(GapTopic, GapTopic.id == GapParticipation.topic_id)
+                .where(GapTopic.meeting_id == meeting_id)
+                .distinct()
+            )
+        )
+    return now != built
+
+
+def _build_graph(meeting_id: str, utterances: list[tuple[str, str]]) -> int:
+    """``build_topic_graph`` over ``(utterance id, masked text)`` in meeting order."""
 
     with session_scope() as session:
         if session.get(Meeting, meeting_id) is None:
@@ -184,7 +252,7 @@ def build_topic_graph(transcript: TranscriptReady) -> int:
             if participant_id is not None
         }
 
-    analysed = [(u.id, u.text) for u in transcript.utterances if u.id in speaker_of]
+    analysed = [(u_id, text) for u_id, text in utterances if u_id in speaker_of]
     extractor = get_entity_extractor()
     entities = extractor.extract(analysed)
     extractor_version = extractor.model_version
@@ -196,7 +264,7 @@ def build_topic_graph(transcript: TranscriptReady) -> int:
     topics = graph.build_topics(entities, [utterance_id for utterance_id, _ in analysed])
     edges = graph.build_edges(topics, relations)
     scores = graph.centrality(topics, edges)
-    position = {u.id: index for index, u in enumerate(transcript.utterances)}
+    position = {u_id: index for index, (u_id, _) in enumerate(utterances)}
 
     with session_scope() as session:
         session.execute(delete(GapTopic).where(GapTopic.meeting_id == meeting_id))
@@ -255,7 +323,7 @@ def build_topic_graph(transcript: TranscriptReady) -> int:
         "gap_topic_graph_built",
         meeting_id=meeting_id,
         utterances=len(analysed),
-        excluded=len(transcript.utterances) - len(analysed),
+        excluded=len(utterances) - len(analysed),
         topics=len(topics),
         edges=len(edges),
         # How many edges the meeting's own words explain, against how many
@@ -363,7 +431,9 @@ def rescore_where_people_changed() -> list[str]:
     stored at detection and read the old one. There is no event for a
     confirmation (#360), so this compares ``gap_scorings`` against the
     participants as they are now. A consent withdrawal moves the grouping too,
-    and is picked up the same way.
+    and is picked up the same way — and because the graph itself was read from
+    whoever consented then, a meeting whose consenting participants changed has
+    its graph rebuilt from the stored utterances first (#515).
 
     ``detect_gaps`` keeps each gap's id and dismissal, and records the new
     grouping, so a meeting rescored once is not rescored again until the
@@ -426,6 +496,8 @@ def rescore_where_people_changed() -> list[str]:
         if meeting_id in held:
             continue
         try:
+            if _consent_moved(meeting_id):
+                rebuild_topic_graph(meeting_id)
             detect_gaps(meeting_id)
             republish_report(meeting_id)
         except PrivacyViolationError:
