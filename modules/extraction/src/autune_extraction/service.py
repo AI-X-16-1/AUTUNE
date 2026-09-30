@@ -1127,6 +1127,20 @@ def consented_utterance_ids(session: Session, meeting_id: str) -> set[str]:
     )
 
 
+def team_roster(session: Session, meeting_id: str) -> list[str]:
+    """Display names of the members of the team that held this meeting -- what
+    an outbound classifier replaces before sending (#411). Read only."""
+    return list(
+        session.scalars(
+            select(User.display_name)
+            .join(TeamMember, TeamMember.user_id == User.id)
+            .join(Meeting, Meeting.team_id == TeamMember.team_id)
+            .where(Meeting.id == meeting_id)
+            .order_by(User.id)
+        )
+    )
+
+
 def classify_utterances(
     classifier: Classifier,
     utterances: Sequence[TranscriptUtterance],

@@ -24,11 +24,18 @@ masked text only, and only what the feature needs):
   ``check_outbound`` scans every string in the body and refuses an unmasked
   phone number, e-mail or account number, and an oversized body.
 
-Names are not masked by module A (there is no pattern for them), so a name said
-aloud can be in the text. That is the same exposure the resolver (#366) and the
-Notion sync already have, and it is why this is opt-in (``llm`` is never the
-default) and why enabling it outside a demo is a team decision -- see the issue
-this module's PR opened.
+Names are not masked by module A (there is no pattern for them), so **names
+from the meeting team's roster are replaced before any request** (#411): each
+member's full name, and the given name of a three-syllable Korean name, becomes
+``[사람N]`` -- numbered by first appearance within one ``classify`` call, the
+same person the same number, never stored and never mapped back (the answer
+is a label per line and carries no text). Only the request changes; the
+database, the resolver and every other output keep the text as it was. What
+still leaves: names not on the roster -- people outside the team, nicknames,
+English or misheard names. And a roster name that is also a word ("하늘") is
+replaced where it is only a word, which costs accuracy, not data. The resolver
+(#366) and the Notion sync still carry names; enabling ``llm`` outside a demo
+remains a team decision (#392).
 
 The LLM gives a label, not a probability. ``confidence`` is therefore a fixed
 ``LLM_CONFIDENCE``: the threshold ADR 0006 compares against is unset by default
@@ -41,6 +48,7 @@ from __future__ import annotations
 import json
 import re
 import time
+from collections.abc import Sequence
 from typing import Any
 
 from autune_contracts.enums import UtteranceKind
@@ -69,7 +77,7 @@ INSTRUCTIONS = (
     "concern: 앞 말에 대한 반대·문제 제기. "
     "ambiguous: '검토해 볼게요'처럼 구체적 약속 없는 약한 동의, 다른 팀이 할 일 전달. "
     "그 외(설명·잡담·맞장구·투표·예상 수치)는 적지 마세요.\n"
-    "[문맥] 줄은 판단하지 말고 참고만 하세요. "
+    "[문맥] 줄은 판단하지 말고 참고만 하세요. [사람N]은 가린 사람 이름입니다. "
     'JSON 한 줄로만 답하세요: {"labels": {"줄번호": "종류", ...}}. 해당 없으면 {"labels": {}}.'
     "\n예시(다른 회의):\n"
     "1 [문맥] 이 설문 결과는 누가 정리해 주실래요?\n"
@@ -159,6 +167,51 @@ def _llm_client(base_url: str, api_key: str, timeout_sec: float) -> Any:
     return client
 
 
+PLACEHOLDER = "[사람{n}]"
+"""What a roster name becomes in a request (#411)."""
+
+_HANGUL_FULL_NAME = re.compile(r"[가-힣]{3}")
+
+
+def _variants(name: str) -> list[str]:
+    """The forms a person is called by: the whole name, and for a three-syllable
+    Korean name also the given name ("김민경" -> "민경"). Nothing shorter than two
+    characters -- a one-letter "name" would replace letters everywhere."""
+    forms = [name]
+    if _HANGUL_FULL_NAME.fullmatch(name):
+        forms.append(name[1:])
+    return [form for form in forms if len(form) >= 2]
+
+
+def substitute_names(texts: list[str], roster: Sequence[str]) -> list[str]:
+    """``texts`` with every roster name replaced by ``[사람N]`` (#411).
+
+    Longest form first, so "김민경" never leaves "김[사람1]". Whatever follows a
+    name -- 님, 씨, a particle -- stays. The same person is the same number
+    throughout, numbered by first appearance so the numbers say nothing about
+    the roster's order or size. A given name two members share is its own
+    person here: it cannot be told which of them was meant, and either answer
+    would still be a name. No roster, no change.
+    """
+    owners: dict[str, set[str]] = {}
+    for name in {n.strip() for n in roster if n and n.strip()}:
+        for form in _variants(name):
+            owners.setdefault(form, set()).add(name)
+    if not owners:
+        return list(texts)
+    person = {
+        form: next(iter(p)) if len(p) == 1 else f"shared:{form}" for form, p in owners.items()
+    }
+    pattern = re.compile("|".join(re.escape(f) for f in sorted(owners, key=len, reverse=True)))
+    numbers: dict[str, int] = {}
+
+    def placeholder(match: re.Match[str]) -> str:
+        who = person[match.group(0)]
+        return PLACEHOLDER.format(n=numbers.setdefault(who, len(numbers) + 1))
+
+    return [pattern.sub(placeholder, text) for text in texts]
+
+
 def windows(texts: list[str], budget: int) -> list[tuple[int, int]]:
     """``[start, end)`` ranges of ``texts`` whose own text plus up to
     ``CONTEXT_LINES`` of context fits ``budget`` characters.
@@ -243,6 +296,12 @@ class LlmClassifier:
         self._client = _llm_client(base_url, api_key, timeout_sec)
         self._model = model
         self._fallback = fallback_model
+        self._roster: tuple[str, ...] = ()
+
+    def use_roster(self, names: Sequence[str]) -> None:
+        """The meeting team's display names, replaced in every request (#411).
+        Set per meeting by the task (``base.give_roster``); empty means none."""
+        self._roster = tuple(names)
 
     @property
     def model_version(self) -> str:
@@ -290,6 +349,8 @@ class LlmClassifier:
     def classify(self, texts: list[str]) -> list[Prediction]:
         if not texts:
             return []
+        # Before windowing: the budget is counted on what is actually sent.
+        texts = substitute_names(texts, self._roster)
         kinds: list[UtteranceKind | None] = [None] * len(texts)
         for index, (start, end) in enumerate(windows(texts, MAX_OUTBOUND_CHARS - _BODY_OVERHEAD)):
             text, targets = render(texts, start, end)

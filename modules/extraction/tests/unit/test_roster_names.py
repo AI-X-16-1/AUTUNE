@@ -1,0 +1,178 @@
+"""Roster names never reach the LLM provider (#411).
+
+Module A masks numbers, not names, so a name said aloud is in the text. Before
+``LlmClassifier`` sends a window it replaces the meeting team's names with
+``[사람N]``; nothing else changes. No network: the fake provider records bodies.
+"""
+
+from __future__ import annotations
+
+import json
+from collections.abc import Iterator
+
+import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session
+
+from autune_core import Base, Meeting, TeamMember, User
+from autune_extraction import service
+from autune_extraction.pipeline import llm as llm_module
+from autune_extraction.pipeline.base import Prediction, give_roster
+from autune_extraction.pipeline.checked import CheckedClassifier
+from autune_extraction.pipeline.llm import LlmClassifier, substitute_names
+
+from .test_llm_classifier import Provider, classifier
+
+ROSTER = ["김민경", "박재경", "이승환"]
+
+
+def test_the_full_name_and_the_given_name_become_one_person() -> None:
+    assert substitute_names(["김민경 님이 하시고", "민경 님 확인 부탁해요"], ROSTER) == [
+        "[사람1] 님이 하시고",
+        "[사람1] 님 확인 부탁해요",
+    ]
+
+
+def test_particles_and_honorifics_stay() -> None:
+    assert substitute_names(["재경이가 맡고 재경씨는 검토", "재경님, 재경 님"], ROSTER) == [
+        "[사람1]이가 맡고 [사람1]씨는 검토",
+        "[사람1]님, [사람1] 님",
+    ]
+
+
+def test_the_longest_form_goes_first() -> None:
+    """Otherwise "김민경" would leave "김[사람1]"."""
+    assert substitute_names(["김민경"], ["김민경"]) == ["[사람1]"]
+
+
+def test_two_people_in_one_window_are_numbered_by_first_appearance() -> None:
+    """Numbers follow the text, not the roster, so they say nothing of its order."""
+    assert substitute_names(["승환 님이 재경 님께 넘기고 승환 님은 빠져요"], ROSTER) == [
+        "[사람1] 님이 [사람2] 님께 넘기고 [사람1] 님은 빠져요"
+    ]
+
+
+def test_a_given_name_two_members_share_is_its_own_person() -> None:
+    texts = ["김민경, 이민경, 그리고 민경 님"]
+
+    (out,) = substitute_names(texts, ["김민경", "이민경"])
+
+    assert "민경" not in out
+    assert out == "[사람1], [사람2], 그리고 [사람3] 님"
+
+
+def test_no_roster_changes_nothing() -> None:
+    texts = ["김민경 님이 하시고"]
+    assert substitute_names(texts, []) == texts
+    assert substitute_names(texts, ["", "  "]) == texts
+
+
+def test_a_one_letter_name_is_not_replaced() -> None:
+    assert substitute_names(["A안과 B안"], ["A"]) == ["A안과 B안"]
+
+
+def test_an_english_name_is_replaced_whole() -> None:
+    assert substitute_names(["Alex will send it"], ["Alex"]) == ["[사람1] will send it"]
+
+
+# --- what leaves ------------------------------------------------------------------
+
+
+@pytest.fixture
+def slept(monkeypatch: pytest.MonkeyPatch) -> list[float]:
+    waits: list[float] = []
+    monkeypatch.setattr(llm_module.time, "sleep", waits.append)
+    return waits
+
+
+def test_no_roster_name_appears_in_any_request(slept) -> None:
+    """Across every window of a long meeting, not only the first."""
+    provider = Provider()
+    llm = classifier(provider)
+    llm.use_roster(ROSTER)
+    texts = [f"{i}번째로 김민경 님과 재경 님이 이승환 님 대신 정리할게요" for i in range(200)]
+
+    predictions = llm.classify(texts)
+
+    assert len(provider.bodies) > 1, "the meeting went out in several requests"
+    sent = json.dumps(provider.bodies, ensure_ascii=False)
+    for name in ["김민경", "민경", "박재경", "재경", "이승환", "승환"]:
+        assert name not in sent
+    assert "[사람1]" in sent
+    assert len(predictions) == len(texts)
+
+
+def test_the_prompt_says_what_a_placeholder_is() -> None:
+    assert "[사람N]" in llm_module.INSTRUCTIONS
+
+
+def test_the_labels_still_map_back_to_the_original_utterances(slept) -> None:
+    provider = Provider()
+    llm = classifier(provider)
+    llm.use_roster(ROSTER)
+
+    predictions = llm.classify(["김민경 님 이건 제가 할게요", "재경 님 생각은요?"])
+
+    assert predictions[0].kind is not None
+    assert predictions[1].kind is None
+
+
+# --- the handoff --------------------------------------------------------------------
+
+
+class _Local:
+    model_version = "local"
+
+    def classify(self, texts: list[str]) -> list[Prediction]:
+        self.seen = texts
+        return [llm_module._prediction(None) for _ in texts]
+
+
+def test_a_classifier_that_runs_here_is_left_alone() -> None:
+    local = _Local()
+    give_roster(local, ROSTER)  # no use_roster: nothing to do, nothing raised
+    assert not hasattr(local, "_roster")
+
+
+def test_the_checked_classifier_hands_the_roster_to_its_proposer(slept) -> None:
+    provider = Provider()
+    checker = _Local()
+    checked = CheckedClassifier(proposer=classifier(provider), checker=checker)
+
+    give_roster(checked, ROSTER)
+    checked.classify(["김민경 님이 할게요"])
+
+    assert "김민경" not in json.dumps(provider.bodies, ensure_ascii=False)
+    assert checker.seen == ["김민경 님이 할게요"], "the local checker reads the text as it is"
+
+
+# --- the roster -------------------------------------------------------------------
+
+
+@pytest.fixture
+def session() -> Iterator[Session]:
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(
+        engine, tables=[Meeting.__table__, User.__table__, TeamMember.__table__]
+    )
+    with Session(engine) as s:
+        s.add(Meeting(id="mtg_1", team_id="team_1", title="주간 회의"))
+        for uid, name, team in (
+            ("user_a", "김민경", "team_1"),
+            ("user_b", "박재경", "team_1"),
+            ("user_x", "다른팀", "team_2"),
+        ):
+            s.add(User(id=uid, email=f"{uid}@example.com", display_name=name))
+            s.add(TeamMember(team_id=team, user_id=uid))
+        s.flush()
+        yield s
+
+
+def test_the_roster_is_the_meeting_teams_members(session: Session) -> None:
+    assert service.team_roster(session, "mtg_1") == ["김민경", "박재경"]
+    assert service.team_roster(session, "mtg_missing") == []
+
+
+def test_llm_classifier_starts_with_no_roster() -> None:
+    llm = LlmClassifier(api_key="k", model="m", base_url="http://llm.invalid")
+    assert llm._roster == ()

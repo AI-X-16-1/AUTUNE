@@ -270,10 +270,22 @@ the conversation is #392. Until #392 is settled:
 
 What it sends is utterance text as module A masked it and a fixed instruction —
 no speaker, no id, no meeting title — in windows under the 4,000-character
-outbound cap, through `autune_integrations.HttpClient` like `hosted`. **A name
-said aloud is not masked:** module A masks resident registration, card, phone
-and account numbers and email addresses, and has no pattern or model for names. So every name spoken in the meeting goes
-with it — the exposure #392 and #92 ask about.
+outbound cap, through `autune_integrations.HttpClient` like `hosted`. Module A
+masks resident registration, card, phone and account numbers and email
+addresses, and has no pattern or model for names, **so `llm` replaces the
+meeting team's names itself before sending (#411):** each member's display
+name, and the given name of a three-syllable Korean name ("김민경" and "민경"),
+becomes `[사람N]` — the same person the same number within one meeting's
+requests, never stored and never mapped back. Only the request changes; the
+database, the reference resolver and Notion keep the text as it was.
+
+What still goes out, and is the exposure #392 and #92 ask about:
+
+- names not on the team's roster — people outside the team, nicknames, English
+  names and names the speech recogniser misheard;
+- a roster name that is also an ordinary word ("하늘", "보람") is replaced where
+  it is only a word — the cost is classification accuracy, not data;
+- the reference resolver's own LLM calls (#366), which this does not cover.
 
 `hosted` points at an inference server we run. It still goes through
 `autune_integrations.HttpClient` so the outbound guard reads the request body:

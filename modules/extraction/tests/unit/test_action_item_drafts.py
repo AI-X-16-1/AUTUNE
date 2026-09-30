@@ -22,7 +22,7 @@ from autune_contracts.transcript import (
     TranscriptSource,
     Utterance,
 )
-from autune_core import Base, Meeting, Participant, User
+from autune_core import Base, Meeting, Participant, TeamMember, User
 from autune_core import Utterance as StoredUtterance
 from autune_core.errors import NotFoundError, ValidationError
 from autune_extraction import service, tasks
@@ -45,6 +45,8 @@ STARTED = datetime(2026, 9, 9, 1, 0, tzinfo=UTC)
 
 TABLES = [
     User.__table__,
+    # The task reads the team's roster for an outbound classifier (#411).
+    TeamMember.__table__,
     Meeting.__table__,
     Participant.__table__,
     StoredUtterance.__table__,

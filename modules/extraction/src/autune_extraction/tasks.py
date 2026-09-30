@@ -37,6 +37,7 @@ from autune_integrations import (
 
 from . import calendar_sync, service
 from .models import ExtActionItem, ExtCalendarPoll, ExtDecision
+from .pipeline.base import give_roster
 from .pipeline.registry import get_classifier, get_nli, get_resolver
 
 log = get_logger(__name__)
@@ -96,8 +97,11 @@ def on_transcript_ready(payload: dict) -> None:
 
     with session_scope() as session:
         consented = service.consented_utterance_ids(session, transcript.meeting_id)
+        roster = service.team_roster(session, transcript.meeting_id)
 
     classifier = get_classifier()
+    # A classifier that sends text out replaces these names first (#411).
+    give_roster(classifier, roster)
     classified = service.classify_utterances(classifier, transcript.utterances, consented=consented)
     classified = service.verify_utterances(get_nli(), classified)
 
