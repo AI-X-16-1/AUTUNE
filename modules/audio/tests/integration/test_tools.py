@@ -16,7 +16,7 @@ import pytest
 from sqlalchemy.orm import Session
 
 from autune_audio import tools
-from autune_core import Meeting, Participant, User, Utterance
+from autune_core import Meeting, Participant, Team, User, Utterance
 
 RESULT_KEYS = {"ok", "reason", "summary", "items", "evidence", "confidence", "truncated"}
 
@@ -84,12 +84,13 @@ def spoken(db_session: Session, meeting: str) -> dict[str, Any]:
     return ids
 
 
-def test_the_tool_list_is_exactly_the_four_reads() -> None:
+def test_the_tool_list_is_exactly_the_five_reads() -> None:
     assert [fn.__name__ for fn in tools.TOOLS] == [
         "meeting_overview",
         "recent_meetings",
         "find_utterances",
         "quote_utterances",
+        "search_team_meetings",
     ]
     assert tools.PERSONAL_ONLY_TOOLS == []
     for fn in tools.TOOLS:
@@ -257,3 +258,82 @@ def test_recent_meetings_of_a_team_with_none_is_an_answer(db_session: Session) -
     _assert_shape(result)
     assert result["ok"] is True
     assert result["items"] == []
+
+
+def _past_meeting(db_session: Session, team: str, title: str, days_ago: int) -> str:
+    row = Meeting(
+        team_id=team,
+        title=title,
+        started_at=datetime.now(UTC) - timedelta(days=days_ago),
+        status="complete",
+    )
+    db_session.add(row)
+    db_session.flush()
+    return row.id
+
+
+def test_team_search_reads_every_meeting_of_the_team_newest_first(
+    db_session: Session, team: str, meeting: str
+) -> None:
+    older = _past_meeting(db_session, team, "지난달 회의", 20)
+    newer = _past_meeting(db_session, team, "지난주 회의", 7)
+    for mid in (older, newer):
+        who = _participant(db_session, mid, "SPEAKER_00", consented=True)
+        _say(db_session, mid, who, 3.0, "배포 일정은 금요일로 하죠")
+
+    result = tools.search_team_meetings(db_session, team, "배포", exclude_meeting_id=meeting)
+
+    _assert_shape(result)
+    assert [i["meeting_id"] for i in result["items"]] == [newer, older]
+    assert result["items"][0]["title"].endswith("지난주 회의 · 00:03 SPEAKER_00")
+
+
+def test_team_search_never_reaches_another_team(db_session: Session, team: str) -> None:
+    other = Team(name="다른 팀")
+    db_session.add(other)
+    db_session.flush()
+    theirs = _past_meeting(db_session, other.id, "남의 회의", 3)
+    who = _participant(db_session, theirs, "SPEAKER_00", consented=True)
+    _say(db_session, theirs, who, 1.0, "배포 이야기")
+
+    assert tools.search_team_meetings(db_session, team, "배포")["items"] == []
+
+
+def test_team_search_skips_non_consented_speakers_and_the_excluded_meeting(
+    db_session: Session, team: str, meeting: str, spoken: dict[str, str]
+) -> None:
+    past = _past_meeting(db_session, team, "지난주", 7)
+    refused = _participant(db_session, past, "SPEAKER_00", consented=False)
+    _say(db_session, past, refused, 1.0, "배포는 제가 합니다")
+
+    result = tools.search_team_meetings(db_session, team, "배포", exclude_meeting_id=meeting)
+
+    assert result["items"] == []
+
+
+def test_team_search_ignores_meetings_older_than_the_window(db_session: Session, team: str) -> None:
+    old = _past_meeting(db_session, team, "석 달 전", 120)
+    who = _participant(db_session, old, "SPEAKER_00", consented=True)
+    _say(db_session, old, who, 1.0, "배포")
+
+    assert tools.search_team_meetings(db_session, team, "배포")["items"] == []
+
+
+def test_team_search_caps_at_five_and_says_so(db_session: Session, team: str) -> None:
+    past = _past_meeting(db_session, team, "긴 회의", 2)
+    who = _participant(db_session, past, "SPEAKER_00", consented=True)
+    for n in range(7):
+        _say(db_session, past, who, float(n), f"배포 {n}")
+
+    result = tools.search_team_meetings(db_session, team, "배포")
+
+    assert len(result["items"]) == 5
+    assert result["truncated"] is True
+
+
+def test_recent_meetings_items_carry_their_status(db_session: Session, team: str) -> None:
+    _past_meeting(db_session, team, "끝난 회의", 1)
+
+    item = tools.recent_meetings(db_session, team)["items"][0]
+
+    assert item["status"] == "complete"

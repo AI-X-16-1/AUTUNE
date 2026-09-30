@@ -68,6 +68,7 @@ def test_module_a_tools_are_collected() -> None:
         "audio.meeting_overview",
         "audio.quote_utterances",
         "audio.recent_meetings",
+        "audio.search_team_meetings",
     ]
 
 
