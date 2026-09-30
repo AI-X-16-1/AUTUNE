@@ -71,9 +71,9 @@ def test_a_delegation_spends_the_same_budget() -> None:
     assert budget.used == 1
 
 
-def test_no_subagent_is_built_yet_so_none_is_collected() -> None:
+def test_only_built_subagents_are_collected() -> None:
     # Each owner's package exists and exports nothing until they build it.
-    assert collect_subagents() == {}
+    assert set(collect_subagents()) <= set(SUBAGENT_NAMES)
     assert SUBAGENT_NAMES == ("research", "briefing", "followup", "workload", "report")
 
 
