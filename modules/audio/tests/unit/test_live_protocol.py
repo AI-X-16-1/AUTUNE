@@ -12,6 +12,14 @@ def test_hello_carries_the_token() -> None:
     assert message.token == "abc"
 
 
+def test_a_hello_without_a_token_parses() -> None:
+    """A cookie-signed-in browser has no token to send; the route reads the
+    handshake's session cookie instead (test_live_routes)."""
+    message = protocol.parse_client('{"type": "hello"}')
+    assert isinstance(message, protocol.Hello)
+    assert message.token is None
+
+
 @pytest.mark.parametrize("kind", ["pause", "resume", "stop"])
 def test_control_messages_parse(kind: str) -> None:
     message = protocol.parse_client(f'{{"type": "{kind}"}}')
@@ -21,7 +29,7 @@ def test_control_messages_parse(kind: str) -> None:
 
 @pytest.mark.parametrize(
     "text",
-    ['{"type": "dance"}', "not json", '{"token": "abc"}', '{"type": "hello"}'],
+    ['{"type": "dance"}', "not json", '{"token": "abc"}'],
 )
 def test_anything_else_is_a_protocol_error(text: str) -> None:
     with pytest.raises(protocol.ProtocolError) as caught:

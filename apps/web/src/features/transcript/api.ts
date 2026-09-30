@@ -4,7 +4,7 @@
  * reads the agent layer's documents for this meeting (Research subagent spec,
  * section 4 ④).
  */
-import { api, ApiError, authHeaders } from "@/shared/api/client";
+import { api, API_BASE as SAME_ORIGIN_BASE, ApiError, authHeaders } from "@/shared/api/client";
 
 export { api };
 
@@ -174,8 +174,12 @@ export const attestConsent = (meetingId: string) =>
 export async function uploadRecording(meetingId: string, file: File) {
   const form = new FormData();
   form.append("file", file, file.name);
+  // Same origin as every other call (`""` in the browser, through the /api
+  // proxy), so the session cookie rides along. This went straight to
+  // localhost:8000, a cross-origin request that carries no cookie: fine on a
+  // dev token, a 403 for anyone signed in with Google.
   const response = await fetch(
-    `${API_BASE}/api/audio/meetings/${meetingId}/recording`,
+    `${SAME_ORIGIN_BASE}/api/audio/meetings/${meetingId}/recording`,
     {
       method: "POST",
       headers: authHeaders(),
@@ -195,7 +199,12 @@ export async function uploadRecording(meetingId: string, file: File) {
   return (await response.json()) as { meeting_id: string; status: string };
 }
 
-/** Mirrors `BASE` in `@/shared/api/client`, which is not exported. See `uploadRecording`. */
+/**
+ * The API's own origin, for the live socket only. A WebSocket does not go
+ * through the Next rewrite, so it cannot use the same-origin base the HTTP
+ * calls do. The browser still sends the `localhost` session cookie on the
+ * handshake: cookies are scoped by host, not port.
+ */
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 /**

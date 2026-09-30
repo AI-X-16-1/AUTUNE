@@ -28,7 +28,7 @@ from autune_audio.router import router
 from autune_audio.schemas import SAMPLE_RATE, Transcription, Waveform, Word
 from autune_audio.schemas import Segment as WhisperSegment
 from autune_core import Meeting, TeamMember, User
-from autune_core.auth import issue_token
+from autune_core.auth import SESSION_COOKIE, issue_token
 from autune_core.errors import ConfigurationError
 
 FRAME = SAMPLE_RATE // 5
@@ -150,6 +150,33 @@ def close_code(ws) -> int:
 def test_no_token_is_4401(client: TestClient, meeting: str) -> None:
     with connect(client, meeting) as ws:
         ws.send_text(json.dumps({"type": "hello", "token": "nope"}))
+        assert close_code(ws) == 4401
+
+
+def test_a_session_cookie_stands_in_for_a_missing_hello_token(
+    client: TestClient, meeting: str, member: User
+) -> None:
+    """A person signed in with Google holds an HttpOnly session cookie and no
+    token JavaScript can read, so their hello carries none. The handshake's
+    cookie is the same signed token and is enough."""
+    client.cookies.set(SESSION_COOKIE, issue_token(member.id))
+    with connect(client, meeting) as ws:
+        ws.send_text(json.dumps({"type": "hello"}))
+        assert ws.receive_json() == {"type": "ready"}
+
+
+def test_a_hello_token_wins_over_the_cookie(
+    client: TestClient, meeting: str, member: User, outsider: User
+) -> None:
+    client.cookies.set(SESSION_COOKIE, issue_token(member.id))
+    with connect(client, meeting) as ws:
+        hello(ws, issue_token(outsider.id))
+        assert close_code(ws) == 4403
+
+
+def test_no_token_and_no_cookie_is_4401(client: TestClient, meeting: str) -> None:
+    with connect(client, meeting) as ws:
+        ws.send_text(json.dumps({"type": "hello"}))
         assert close_code(ws) == 4401
 
 
