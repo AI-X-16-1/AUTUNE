@@ -1,4 +1,4 @@
-"""Write the transcript down. Module A is the only module that may.
+r"""Write the transcript down. Module A is the only module that may.
 
 `meetings`, `participants` and `utterances` live in ``packages/core`` and four
 other modules read them. A writes them and nobody else does — invariant 4 — so
@@ -44,6 +44,7 @@ from autune_core.errors import NotFoundError, PrivacyViolationError
 
 from .masking import mask
 from .models import AudConsentAttestation
+from .recognition import get_recogniser
 from .speakers import Utterance as SpokenUtterance
 
 log = get_logger(__name__)
@@ -116,10 +117,14 @@ def persist_transcript(
     if meeting is None:
         raise NotFoundError("meeting", meeting_id)
 
+    # The same recogniser the masker used, or this guard checks half of what
+    # the masker promises: a spoken-out number matches no digit pattern.
+    recogniser = get_recogniser()
     for utterance in utterances:
         # Anything the masker still finds is something the masker did not run
-        # over: a masked value contains "*" and matches no pattern.
-        found = mask(utterance.text)
+        # over: a masked value contains "*" and matches no pattern, and its
+        # syllables are gone, so the recogniser has nothing to read either.
+        found = mask(utterance.text, recogniser=recogniser)
         if found.spans:
             categories = sorted(found.counts)
             # Never the text. This message reaches error tracking, which is a

@@ -30,6 +30,7 @@ from autune_audio.models import AudConsentAttestation, AudSpeakerEmbedding
 from autune_audio.persistence import persist_transcript, transcript_payload
 from autune_audio.pipeline import transcribe
 from autune_audio.quality import detect_repetition
+from autune_audio.recognition import get_recogniser
 from autune_audio.schemas import Turn, Waveform
 from autune_audio.speaker_audio import representative_waveform
 from autune_audio.speakers import Utterance, assign_speakers, rename_speakers
@@ -196,7 +197,14 @@ def process_recording(job_id: str) -> None:
         detect_repetition(transcription).raise_if_collapsed()
 
         spoken = assign_speakers(transcription, named)
-        masked = tuple(replace(utterance, text=mask(utterance.text).text) for utterance in spoken)
+        # The recogniser as well as the patterns: a number read out as words
+        # ("공일공 일이삼사...") matches no digit pattern, so without it the
+        # batch path stored in the clear what the live path masks (#484 review).
+        recogniser = get_recogniser()
+        masked = tuple(
+            replace(utterance, text=mask(utterance.text, recogniser=recogniser).text)
+            for utterance in spoken
+        )
         _log_masking(meeting_id, spoken, masked)
 
         with session_scope() as session:

@@ -820,6 +820,10 @@ times in one day I wrote the rule down and broke it in the same file.
   (#138).
 - A docstring said the scale-word rule was tested; the test could not have
   failed (#158).
+- `live/session.py` said `# The same recogniser the stored path uses, chosen by
+  the same setting.` — the stored path passed none, so a number read out as
+  words was masked live and written in the clear by the batch path (found in
+  review of #484, where those rows go to an external verifier).
 
 **And the version that costs the most: a test that checks less than it claims.**
 
@@ -873,6 +877,14 @@ masker fails closed on every real meeting, which is how a privacy check gets
 removed — so the check and the doing are separate, and the check uses the same
 patterns that did the masking so the two cannot disagree (#126, from the other
 side).
+
+That last clause is the one that broke. Both sides used `find_pii` and neither
+passed `get_recogniser()`, so both agreed — and both were half the masker. The
+live path had passed a recogniser since it was written, so `010` said aloud was
+masked in the live channel and stored in the clear by the batch path. The fix is
+one argument at each of the two call sites, and the reason it is two and not one
+is the same as the row above: the guard checks what the masker promises, so it
+has to see everything the masker sees.
 
 ---
 
