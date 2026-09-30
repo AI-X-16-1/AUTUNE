@@ -5,6 +5,7 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Button, MaskedText, Quote, StatusDot, type StatusVariant } from "@/shared/ui";
 
 import { ConfirmDelete } from "./ConfirmDelete";
+import { ContextLines } from "./ContextLines";
 import { useDecisionReview } from "../hooks/useDecisionReview";
 import { useDecisionSources } from "../hooks/useDecisionSources";
 import type { DecisionStatus, ReviewAmbiguous, ReviewDecision } from "../types";
@@ -160,6 +161,7 @@ function DecisionRow({
           ) : null}
           {quotation.sources && quotation.sources.length > 0 ? (
             <div className="mt-2 grid gap-1" role="group" aria-label="원본 발화">
+              <ContextLines lines={quotation.context} />
               <p className="text-[var(--color-ink-muted)]" style={{ fontSize: "var(--text-metaSmall)" }}>
                 원본 발화
               </p>

@@ -67,7 +67,11 @@ agreement, and sync the result to Notion.
    the person confirming reads one against the other. Only the tidied line, as
    the person confirmed or reworded it, leaves Autune: an item goes out only
    after it leaves *needs confirmation*, a decision only once confirmed, and
-   never the original utterance. The due date is still read from the original
+   never the original utterance. A sentence that names nothing ("다음 주
+   화요일까지 볼 예정") is read with up to three lines said just before it, shown
+   apart from the sources as "앞선 발화 (맥락)"; nothing fills the missing object
+   into the line itself unless the reference resolver is switched on
+   (`resolver_impl`, off by default). The due date is still read from the original
    words, which carry the verb ending it depends on.
 4. **NLI verification** — check whether an apparent agreement entails an actual
    commitment. Weak assent ("한번 볼게요") is labeled `ambiguous`.
@@ -231,14 +235,14 @@ other module's tables.
 | --- | --- | --- |
 | GET | `/results/{meeting_id}` | The meeting's `ExtractionResult`, built from what is stored |
 | GET | `/action-items` | Filter by `meeting_id`, `assignee_id`, `status`, `due_before` (strict). Source utterance ids, never their text |
-| GET | `/action-items/{id}` | One item and the text of its source utterances, in spoken order |
+| GET | `/action-items/{id}` | One item, the text of its source utterances in spoken order, and up to three lines said just before them as `context` (consenting speakers only) |
 | PATCH | `/action-items/{id}` | Edit or close an item |
 | POST | `/action-items` | Add an item the model missed |
 | DELETE | `/action-items/{id}` | Delete an item the model got wrong |
 | POST | `/results/{meeting_id}/sync` | Re-sync to Notion — not built; confirming an item syncs it |
 | GET | `/reviews/{meeting_id}` | What needs a person before anything is sent: decisions with their verdict, weak assents with their DM state, items still `needs_confirmation` or below the candidate line (S15, #246) |
 | POST | `/decisions` | Add a decision the model missed. Confirmed, and kept through reruns |
-| GET | `/decisions/{id}` | One decision and the text of the utterances it was settled in, in spoken order (S15 shows them beneath the statement) |
+| GET | `/decisions/{id}` | One decision and the text of the utterances it was settled in, in spoken order (S15 shows them beneath the statement), plus the same `context` |
 | PATCH | `/decisions/{id}` | Confirm, reject, reword, or put back to pending |
 | DELETE | `/decisions/{id}` | Delete a decision a person added; reject one the model proposed, which a rerun would otherwise bring back |
 | GET | `/reviews/{meeting_id}/outbound` | Exactly what may leave for Notion or Slack: confirmed decisions and accepted items, each screened for personal data (a hit is held back in `blocked`, by id and category). The sync reads this and nothing else |

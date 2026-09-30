@@ -15,7 +15,7 @@ from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from typing import Any, Literal, Protocol
 
-from sqlalchemy import delete, func, or_, select, update
+from sqlalchemy import and_, delete, func, or_, select, update
 from sqlalchemy.dialects import postgresql, sqlite
 from sqlalchemy.orm import Session, selectinload
 
@@ -732,6 +732,51 @@ def list_action_items(
     ]
 
 
+SHOWN_CONTEXT = 3
+"""How many lines before a source a drawer shows. Fewer than the resolver reads
+(``MAX_CONTEXT_UTTERANCES``): that one needs a window a model can resolve
+against, this one a person's glance at what the sentence was about."""
+
+
+def context_before(session: Session, source_ids: Sequence[str]) -> list[SourceUtterance]:
+    """The lines said just before the first of these utterances, in spoken order.
+
+    Only consenting speakers' and only non-blank ones: an excluded speaker's turn
+    is not stored as text (privacy.md section 5), and one row of it reaching a
+    screen would be the leak ``resolve_commitment_references`` was fixed for
+    (#366). Reads ``utterances``, which module A owns. Empty when there are no
+    sources -- a hand-added item has nothing to be "before".
+    """
+    if not source_ids:
+        return []
+    first = session.execute(
+        select(Utterance.meeting_id, Utterance.start_sec, Utterance.id)
+        .where(Utterance.id.in_(source_ids))
+        .order_by(Utterance.start_sec, Utterance.id)
+        .limit(1)
+    ).first()
+    if first is None:
+        return []
+    meeting_id, start, first_id = first
+    rows = session.execute(
+        select(Utterance.id, Utterance.text)
+        .join(Participant, Participant.id == Utterance.participant_id)
+        .where(
+            Utterance.meeting_id == meeting_id,
+            Participant.consented.is_(True),
+            Utterance.id.not_in(source_ids),
+            func.length(func.trim(Utterance.text)) > 0,
+            or_(
+                Utterance.start_sec < start,
+                and_(Utterance.start_sec == start, Utterance.id < first_id),
+            ),
+        )
+        .order_by(Utterance.start_sec.desc(), Utterance.id.desc())
+        .limit(SHOWN_CONTEXT)
+    ).all()
+    return [SourceUtterance(id=uid, text=text) for uid, text in reversed(rows)]
+
+
 def read_detail(session: Session, item: ExtActionItem) -> ActionItemDetail:
     """One item with the text of the utterances it was drawn from.
 
@@ -751,6 +796,7 @@ def read_detail(session: Session, item: ExtActionItem) -> ActionItemDetail:
             item, assignee_name=name, summary=summary, sync_refs=refs, assignee_departed=departed
         ).model_dump(),
         sources=source_utterances(session, item.id),
+        context=context_before(session, [s.utterance_id for s in item.sources if s.utterance_id]),
         history=edit_history(session, item.id),
     )
 
@@ -2058,6 +2104,7 @@ def read_decision_detail(session: Session, decision: ExtDecision) -> DecisionDet
     return DecisionDetail(
         **row.model_dump(),
         sources=[SourceUtterance(id=uid, text=text) for uid, text in quoted],
+        context=context_before(session, [uid for uid, _ in quoted]),
     )
 
 
