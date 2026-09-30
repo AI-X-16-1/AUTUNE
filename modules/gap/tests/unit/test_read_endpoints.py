@@ -34,6 +34,7 @@ from autune_core import (
     get_session,
     issue_token,
 )
+from autune_gap import router as routes
 from autune_gap import service, template
 from autune_gap.models import (
     GapGap,
@@ -99,6 +100,18 @@ def session() -> Iterator[Session]:
         session.add(Meeting(id=FOREIGN_MEETING, team_id=OTHER_TEAM, title="남의 회의"))
         session.flush()
         yield session
+
+
+@pytest.fixture(autouse=True)
+def queued(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """The meetings a write queued a republish for (#316, #471).
+
+    Recorded rather than sent: there is no broker here, and what a route owes
+    E is that it asks for the republish once its change has committed.
+    """
+    called: list[str] = []
+    monkeypatch.setattr(routes, "enqueue_publish_report", called.append)
+    return called
 
 
 @pytest.fixture
@@ -675,6 +688,16 @@ def test_choosing_a_template_stores_it_and_re_compares(
     assert detection == [MEETING]
 
 
+def test_choosing_a_template_sends_e_the_report_again(
+    client: TestClient, detection: list[str], queued: list[str]
+) -> None:
+    """E scores the meeting against the template in force, not the one it was
+    first compared to (#316)."""
+    client.put(f"{PREFIX}/templates/{MEETING}", json={"template_key": "feature_planning"})
+
+    assert queued == [MEETING]
+
+
 def test_choosing_again_replaces_the_choice(
     client: TestClient, session: Session, detection: list[str]
 ) -> None:
@@ -686,7 +709,7 @@ def test_choosing_again_replaces_the_choice(
 
 
 def test_a_template_no_file_defines_is_a_422(
-    client: TestClient, session: Session, detection: list[str]
+    client: TestClient, session: Session, detection: list[str], queued: list[str]
 ) -> None:
     """What is wrong is the value, not the address. Nothing is stored and
     nothing is re-compared."""
@@ -695,6 +718,7 @@ def test_a_template_no_file_defines_is_a_422(
     assert response.status_code == 422
     assert session.get(GapMeetingTemplate, MEETING) is None
     assert detection == []
+    assert queued == []
 
 
 # --- who may read a meeting at all (#276) -----------------------------------
@@ -820,6 +844,18 @@ def test_a_dismissed_gap_leaves_the_report_and_stays_in_the_table(
     assert session.get(GapGap, "gap_1").dismissed_at is not None
 
 
+@pytest.mark.parametrize("method", ["post", "delete"])
+def test_a_dismissal_and_its_undo_send_e_the_report_again(
+    client: TestClient, session: Session, queued: list[str], method: str
+) -> None:
+    """Otherwise E keeps quoting a gap the team called wrong (#471)."""
+    gap(session, "gap_1", dismissed=method == "delete")
+
+    getattr(client, method)(_dismiss_path("gap_1"))
+
+    assert queued == [MEETING]
+
+
 def test_dismissing_twice_keeps_the_first_moment(client: TestClient, session: Session) -> None:
     """A double click must not move the timestamp tuning reads."""
     gap(session, "gap_1")
@@ -858,7 +894,7 @@ def test_the_rail_marks_the_item_once_its_gap_is_dismissed(
 
 @pytest.mark.parametrize("method", ["post", "delete"])
 def test_an_unknown_gap_and_another_teams_gap_are_the_same_404(
-    client: TestClient, session: Session, method: str
+    client: TestClient, session: Session, queued: list[str], method: str
 ) -> None:
     """The meeting's own 404 would name the meeting, and so confirm that the
     gap id somebody guessed is real."""
@@ -872,6 +908,7 @@ def test_an_unknown_gap_and_another_teams_gap_are_the_same_404(
     assert foreign.json()["error"].get("details") == unknown.json()["error"].get("details")
     assert "meeting" not in foreign.text
     assert session.get(GapGap, "gap_foreign").dismissed_at is None
+    assert queued == []
 
 
 @pytest.mark.parametrize("method", ["post", "delete"])

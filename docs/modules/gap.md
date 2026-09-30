@@ -909,9 +909,9 @@ reads.
 `PUT /templates/{meeting_id}` stores the choice **and re-runs detection**, so the
 gaps on `/reports/{meeting_id}` reflect the new template as soon as it returns —
 the alternative is a control that appears to do nothing until the meeting is
-reprocessed. It does not republish `autune.gap.completed`: E scores the meeting
-the pipeline produced, and a template somebody is trying out on S20 should not
-silently rewrite that. A key no template file defines is a 422, not a 404 — what
+reprocessed. It then queues `autune.gap.publish_report`, so E scores the
+meeting against the template in force rather than the one the pipeline first
+compared it to (#316). A key no template file defines is a 422, not a 404 — what
 is wrong is the value, not the address.
 
 `POST /gaps/{id}/dismiss` sets `dismissed_at` and nothing else; `DELETE` on the
@@ -920,8 +920,29 @@ the screen or the mistake sits in the data tuning reads. Both return the state
 the server settled on (`schemas.GapDismissal`). Dismissing twice keeps the first
 timestamp. The routes are named by the gap, so the membership check is the
 service's own: an unknown gap and a gap on another team's meeting are the same
-404, and neither names the meeting. Neither republishes `autune.gap.completed`,
-for the reason `PUT /templates` does not.
+404, and neither names the meeting. Both commit the mark and queue
+`autune.gap.publish_report`, so E stops quoting and scoring a gap the team
+called wrong (#471).
+
+### Sending E the report again
+
+`autune.gap.publish_report` re-sends `GapReport` built from the rows as they are
+when it runs. E takes the latest payload for a meeting, reopens it and
+re-aggregates without re-sending the personal DM, so a second
+`autune.gap.completed` needs no change on E's side and no contract change.
+
+- **Queued, never published in the request.** The API process is a Celery
+  client, not a worker (#258), and the route returns without waiting on the
+  broker round trip to E.
+- **It never performs a first publish.** A meeting with no topic graph is
+  skipped: a template chosen while the pipeline is still running, or for a
+  meeting whose transcript never arrived, would otherwise hand E an empty
+  report and start its timeout countdown before B and D have reported.
+- **Two changes in a row end with the second, on one worker.** Each run reads
+  committed rows, so the later run sends the later state. Two workers taking
+  the pair out of order could leave E with the older one; `GapReport` carries
+  nothing E could order payloads by, and adding that is a contract change.
+  `autune.context.republish` has the same exposure.
 
 A dismissal made under one template survives a switch to another. Switching
 drops the old checklist's gaps, but a dismissed one stays — marked, out of the
@@ -938,6 +959,7 @@ polls them every five seconds while the rail says `analysed: false`.
 | Task | Trigger | Queue |
 | --- | --- | --- |
 | `autune.gap.on_transcript_ready` | `autune.transcript.ready` | `cpu_heavy` |
+| `autune.gap.publish_report` | `PUT /templates/{meeting_id}`, `POST`/`DELETE /gaps/{id}/dismiss` | `cpu_heavy` |
 
 ## Slack surface
 
