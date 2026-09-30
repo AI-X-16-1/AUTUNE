@@ -674,3 +674,31 @@ class ExtNotionTarget(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+
+
+class ExtExtractionRun(Base):
+    """Which speech the last extraction of a meeting was allowed to read (#518).
+
+    ``consent_key`` is a digest of the ids of the utterances whose speaker had
+    consented when the meeting was last extracted. Consent can change after
+    that -- today only by A's ``attest_consent`` (False to True, #190) -- and
+    nothing announces it (#360), so ``tasks.reextract_consent_changes``
+    compares this key with the consent as it is now and extracts again where
+    they differ. A digest because a comparison is all it is for: it cannot be
+    read back into which utterances, or whose, were in.
+
+    One row per meeting, written in the same transaction as the extraction's
+    rows, deleted with the meeting. A meeting with no row has not been
+    extracted yet, or was extracted before this table existed; the sweep leaves
+    it alone.
+    """
+
+    __tablename__ = "ext_extraction_runs"
+
+    meeting_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("meetings.id", ondelete="CASCADE"), primary_key=True
+    )
+    consent_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    extracted_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
+    )

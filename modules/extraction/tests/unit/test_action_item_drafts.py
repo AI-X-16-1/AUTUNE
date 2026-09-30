@@ -35,6 +35,7 @@ from autune_extraction.models import (
     ExtDecisionReview,
     ExtDecisionSource,
     ExtEditEvent,
+    ExtExtractionRun,
 )
 from autune_extraction.pipeline import FakeClassifier, FakeNli, FakeResolver, ResolutionRequest
 from autune_extraction.schemas import ActionItemCreate, ActionItemUpdate
@@ -58,6 +59,8 @@ TABLES = [
     ExtActionItemSource.__table__,
     ExtEditEvent.__table__,
     ExtConfirmation.__table__,
+    # The task records which speech it read (#518).
+    ExtExtractionRun.__table__,
 ]
 
 LINES = [
