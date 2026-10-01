@@ -186,9 +186,9 @@ class ScoreBreakdownRead(BaseModel):
     """How a gap's risk score was reached (``detect.score_breakdown``).
 
     ``score`` is the stored ``risk_score``. A breakdown recomputed today that
-    no longer reaches it -- a weight or a template moved since the meeting was
-    scored -- is not sent at all rather than sent beside a number it does not
-    add up to.
+    no longer reaches it -- a weight, the template or the topic's
+    participation moved since the meeting was scored -- is not sent at all
+    rather than sent beside a number it does not add up to.
     """
 
     parts: list[ScorePartRead] = Field(default_factory=list)

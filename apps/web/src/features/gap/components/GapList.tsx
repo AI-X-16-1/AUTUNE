@@ -440,8 +440,8 @@ function ScoreExplain({
       >
         {breakdown ? <Arithmetic breakdown={breakdown} coverage={coverage} /> : (
           <Muted>
-            점수를 매긴 뒤 설정이나 템플릿이 바뀌어 지금의 계산식으로는 같은 점수가 나오지 않습니다.
-            회의를 다시 분석하면 근거가 다시 표시됩니다.
+            점수를 매긴 뒤 점수에 쓰인 값(가중치 설정, 템플릿, 토픽 참여 정보)이 바뀌어 지금
+            계산하면 저장된 점수가 나오지 않습니다. 회의가 다시 채점되면 근거가 다시 표시됩니다.
           </Muted>
         )}
         {explanations ? (

@@ -160,3 +160,11 @@ def test_a_missing_items_question_names_the_meetings_subject(team_id: str) -> No
     question = rows(ids["meeting"])["next_step"].suggested_question
     assert question is not None
     assert "핵심 지표" in question
+
+
+def test_a_refresh_after_detection_changes_no_question(team_id: str) -> None:
+    """All three bases at once -- a thin topic, a keyword said, nothing -- so the
+    backfill's inputs are the ones detection used in every case."""
+    ids = seed(team_id)
+
+    assert service.refresh_questions(ids["meeting"]) == 0

@@ -425,6 +425,93 @@ def detect_gaps(meeting_id: str) -> int:
     return len(findings)
 
 
+def refresh_questions(meeting_id: str, *, apply: bool = True) -> int:
+    """Recompute the stored ``suggested_question`` of the meeting's gaps with
+    ``detect.question_for``, and return how many differ from what is stored.
+
+    The backfill for gaps raised before a missing item's question named the
+    meeting's subject: their question is the template's generic one until
+    detection runs again, and the report, E's stored copy and the agent's
+    ``gap.open_gaps`` all read the column. Recomputing it in each reader instead
+    would let them disagree; this writes it once, in the column they share.
+
+    **Only the question moves.** Coverage, score and severity are not read
+    back through ``detect.compare``: they are the pipeline's verdict, a re-run
+    of comparison could reach another (a model or a threshold may have moved
+    since), and changing a verdict is not what a backfill of wording is for.
+    The inputs are the ones ``compare`` gave ``question_for``: the gap's matched
+    topics -- its related topics, most central first, as ``detect.match`` orders
+    them -- and the meeting's subject, chosen as ``detect_gaps`` chooses it.
+    So a meeting detected after this change refreshes to exactly what it holds.
+
+    Every template row is refreshed, a dismissed one included, so taking a
+    dismissal back shows the same question as everything else. A row whose
+    template or item no longer exists keeps its question. ``apply=False``
+    counts without writing.
+    """
+    with session_scope() as session:
+        gaps = list(
+            session.scalars(
+                select(GapGap).where(
+                    GapGap.meeting_id == meeting_id, GapGap.template_key.is_not(None)
+                )
+            )
+        )
+        if not gaps:
+            return 0
+
+        views = _topic_views(session, meeting_id)
+        by_id = {view.id: view for view in views}
+        subject = detect.subject_of(views, _names(session, meeting_id))
+        related: dict[str, list[str]] = defaultdict(list)
+        for gap_id, topic_id in session.execute(
+            select(GapRelatedTopic.gap_id, GapRelatedTopic.topic_id).where(
+                GapRelatedTopic.gap_id.in_([gap.id for gap in gaps])
+            )
+        ).all():
+            related[gap_id].append(topic_id)
+
+        templates = template.load_templates()
+        changed = 0
+        for gap in gaps:
+            chosen = templates.get(gap.template_key or "")
+            item = (
+                next((i for i in chosen.items if i.key == gap.template_item_key), None)
+                if chosen
+                else None
+            )
+            if item is None:
+                continue
+            matched = sorted(
+                (by_id[t] for t in related[gap.id] if t in by_id),
+                key=lambda topic: (-topic.centrality, topic.id),
+            )
+            question = detect.question_for(item, matched, subject)
+            if gap.suggested_question != question:
+                changed += 1
+                if apply:
+                    gap.suggested_question = question
+    # A count and an id. A question is composed from a topic label, which is
+    # transcript text, so it never goes in a log line.
+    log.info("gap_questions_refreshed", meeting_id=meeting_id, changed=changed, applied=apply)
+    return changed
+
+
+def refreshable_meeting_ids(session: Session, *, team_id: str | None = None) -> list[str]:
+    """Meetings holding a template gap, oldest first -- what
+    ``refresh_questions`` has to visit. ``team_id`` narrows it to one team."""
+    query = (
+        select(Meeting.id)
+        .join(GapGap, GapGap.meeting_id == Meeting.id)
+        .where(GapGap.template_key.is_not(None))
+        .group_by(Meeting.id, Meeting.created_at)
+        .order_by(Meeting.created_at, Meeting.id)
+    )
+    if team_id is not None:
+        query = query.where(Meeting.team_id == team_id)
+    return list(session.scalars(query))
+
+
 def rescore_where_people_changed() -> list[str]:
     """Re-run detection and republish for every meeting whose grouping of
     participants into people has moved since its gaps were scored. Returns
@@ -822,8 +909,9 @@ def explain(session: Session, meeting_id: str) -> GapExplanations:
 
     The score breakdown is ``detect.score_breakdown`` over the same inputs the
     pipeline gave ``detect.score``. If it no longer reaches the stored score --
-    a weight or the template changed since -- it is left out rather than shown
-    beside a number it does not add up to.
+    a weight, the template or the topic's participation changed since it was
+    scored -- it is left out rather than shown beside a number it does not
+    add up to.
     """
     meeting = session.get(Meeting, meeting_id)
     if meeting is None:

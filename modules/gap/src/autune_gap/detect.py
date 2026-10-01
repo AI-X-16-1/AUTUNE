@@ -118,8 +118,9 @@ class ScoreBreakdown:
 
     Only the parts that were measured are here -- a missing item has no topic,
     so its one part is the template weight -- and ``damping`` is set only on a
-    partial finding. ``score`` is the stored ``risk_score``: the screen never
-    recomputes it, so the explanation and the number cannot disagree.
+    partial finding. ``score`` is what ``score`` returns, which the pipeline
+    stores as ``risk_score``. S20 shows a breakdown only while it still
+    reaches the stored value (``service.explain``).
     """
 
     parts: tuple[ScorePart, ...]

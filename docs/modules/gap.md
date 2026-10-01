@@ -1008,6 +1008,14 @@ breakdown is `detect.score_breakdown` over the same inputs and is sent only
 while it adds up to the stored `risk_score`. Module C's own response, not a
 contract, mirrored by hand in `features/gap/types.ts`.
 
+A missing item's question names the meeting's subject (`detect.subject_of`).
+Gaps stored before that read the template's generic question until detection
+runs again, so `python -m autune_gap.refresh_questions [--team ID] [--dry-run]`
+recomputes the stored `suggested_question` with `detect.question_for` and
+queues `autune.gap.publish_report` for each meeting it changed, so the report,
+E's stored copy and the agent's `gap.open_gaps` keep reading one question.
+Coverage, score and severity are not touched; a second run changes nothing.
+
 Everything above is built.
 `/reports/{meeting_id}` and `/topics/{meeting_id}` read the stored rows; nothing
 was added to `apps/` to mount them.
