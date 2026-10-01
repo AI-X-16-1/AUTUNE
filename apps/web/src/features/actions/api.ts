@@ -1,4 +1,5 @@
 /** Calls to /api/extraction. This feature calls no other module's endpoints. */
+import { scopeQuery, type IntegrationScope } from "@/shared/api/auth";
 import { api } from "@/shared/api/client";
 
 import type {
@@ -171,9 +172,9 @@ export const syncResults = (meetingId: string) =>
  * after a project is chosen, so a project replacing a deleted one holds
  * everything (#458).
  */
-export const backfillJira = (meetingId: string) =>
+export const backfillJira = (scope: IntegrationScope) =>
   api.extraction<{ synced: number; failed: number }>(
-    `/jira/backfill?meeting_id=${encodeURIComponent(meetingId)}`,
+    `/jira/backfill?${scopeQuery(scope)}`,
     { method: "POST" },
   );
 
@@ -200,13 +201,13 @@ export interface NotionSetupResult {
 }
 
 /** The pages the team shared with Autune, and where its databases are (#428). */
-export const getNotionSetup = (meetingId: string) =>
-  api.extraction<NotionSetupState>(`/notion/setup?meeting_id=${encodeURIComponent(meetingId)}`);
+export const getNotionSetup = (scope: IntegrationScope) =>
+  api.extraction<NotionSetupState>(`/notion/setup?${scopeQuery(scope)}`);
 
 /** Make the databases under `pageId` and queue filling them with everything confirmed. */
-export const setUpNotion = (meetingId: string, pageId: string) =>
+export const setUpNotion = (scope: IntegrationScope, pageId: string) =>
   api.extraction<NotionSetupResult>(
-    `/notion/setup?meeting_id=${encodeURIComponent(meetingId)}&page_id=${encodeURIComponent(pageId)}`,
+    `/notion/setup?${scopeQuery(scope)}&page_id=${encodeURIComponent(pageId)}`,
     { method: "POST" },
   );
 

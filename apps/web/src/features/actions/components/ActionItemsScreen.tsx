@@ -1,5 +1,7 @@
 "use client";
 
+import type { Route } from "next";
+import Link from "next/link";
 import { useState } from "react";
 
 import { ActionBoard } from "./ActionBoard";
@@ -77,6 +79,14 @@ export function ActionItemsScreen({ meetingId }: { meetingId: string }) {
         </p>
 
         <div className="mt-3 flex flex-col gap-2">
+          {/* Every connection, with no meeting needed, lives on S28 (#496). */}
+          <Link
+            href={"/settings/integrations" as Route}
+            className="text-[var(--color-accent-default)]"
+            style={{ fontSize: "var(--text-metaSmall)" }}
+          >
+            연동 설정
+          </Link>
           <CalendarConnect />
           <SlackMeConnect />
           <JiraConnect meetingId={meetingId} />

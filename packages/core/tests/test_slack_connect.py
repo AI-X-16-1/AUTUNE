@@ -317,6 +317,28 @@ def test_status_and_disconnect_revoke_the_token(world: dict[str, Any]) -> None:
     assert world["saved"] == {}
 
 
+def test_settings_names_the_team_instead_of_a_meeting(world: dict[str, Any]) -> None:
+    """S28 (#496): the same routes, the team named directly, the same member check."""
+    client = signed_in(world)
+    client.get(f"/api/auth/slack/callback?state={start(client)}&code=c")
+
+    assert client.get(f"/api/auth/slack?team_id={TEAM}").json()["connected"] is True
+    response = client.get(
+        f"/api/auth/slack/start?team_id={TEAM}&redirect_to=/settings/integrations"
+    )
+    assert response.status_code == 307
+
+
+def test_a_team_the_person_is_not_on_is_refused(world: dict[str, Any]) -> None:
+    response = signed_in(world, OUTSIDER).get(f"/api/auth/slack?team_id={TEAM}")
+
+    assert response.status_code == 403
+
+
+def test_a_scope_is_required(world: dict[str, Any]) -> None:
+    assert signed_in(world).get("/api/auth/slack").status_code == 422
+
+
 # --- the client at its own door --------------------------------------------------------
 
 
