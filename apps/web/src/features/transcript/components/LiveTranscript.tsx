@@ -89,10 +89,7 @@ export function LiveTranscript({
           )}
         </main>
 
-        <div
-          className="border-l border-[var(--color-hairline)] bg-[var(--color-surface-paper)]"
-          style={{ padding: "22px 20px" }}
-        >
+        <div className="border-l border-[var(--color-hairline)] bg-[var(--color-surface-paper)]">
           <LiveRail
             state={state}
             elapsedSeconds={elapsedSeconds}
