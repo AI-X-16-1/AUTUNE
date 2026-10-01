@@ -17,6 +17,21 @@ export interface SessionUser {
   id: string;
   email: string;
   display_name: string;
+  /** The teams this person belongs to: what S28 settings (#496) picks from. */
+  teams: { id: string; name: string }[];
+}
+
+/**
+ * Which team a team-integration call is about: a meeting the screen shows (the
+ * 액션 tab) or the team itself (S28 settings, #496). The server checks the
+ * person belongs to that team either way.
+ */
+export type IntegrationScope = { meetingId: string } | { teamId: string };
+
+export function scopeQuery(scope: IntegrationScope): string {
+  return "meetingId" in scope
+    ? `meeting_id=${encodeURIComponent(scope.meetingId)}`
+    : `team_id=${encodeURIComponent(scope.teamId)}`;
 }
 
 function authUrl(path: string): string {
@@ -155,18 +170,18 @@ export interface JiraConnection {
  * consent screen, then back to `redirectTo` with `?jira=connected|failed`. The
  * team is the meeting's, checked against the person's membership.
  */
-export function jiraConnectUrl(meetingId: string, redirectTo = "/"): string {
+export function jiraConnectUrl(scope: IntegrationScope, redirectTo = "/"): string {
   return authUrl(
-    `/jira/start?meeting_id=${encodeURIComponent(meetingId)}&redirect_to=${encodeURIComponent(redirectTo)}`,
+    `/jira/start?${scopeQuery(scope)}&redirect_to=${encodeURIComponent(redirectTo)}`,
   );
 }
 
 export async function getJiraConnection(
-  meetingId: string,
+  scope: IntegrationScope,
 ): Promise<JiraConnection | null> {
   try {
     const response = await fetch(
-      authUrl(`/jira?meeting_id=${encodeURIComponent(meetingId)}`),
+      authUrl(`/jira?${scopeQuery(scope)}`),
       {
         credentials: "include",
       },
@@ -179,10 +194,10 @@ export async function getJiraConnection(
 }
 
 export async function chooseJiraProject(
-  meetingId: string,
+  scope: IntegrationScope,
   projectKey: string,
 ): Promise<void> {
-  const query = `meeting_id=${encodeURIComponent(meetingId)}&project_key=${encodeURIComponent(projectKey)}`;
+  const query = `${scopeQuery(scope)}&project_key=${encodeURIComponent(projectKey)}`;
   const response = await fetch(authUrl(`/jira/project?${query}`), {
     method: "POST",
     credentials: "include",
@@ -196,9 +211,9 @@ export async function chooseJiraProject(
   }
 }
 
-export async function disconnectJira(meetingId: string): Promise<void> {
+export async function disconnectJira(scope: IntegrationScope): Promise<void> {
   const response = await fetch(
-    authUrl(`/jira/disconnect?meeting_id=${encodeURIComponent(meetingId)}`),
+    authUrl(`/jira/disconnect?${scopeQuery(scope)}`),
     { method: "POST", credentials: "include" },
   );
   if (!response.ok) {
@@ -221,18 +236,18 @@ export interface NotionConnection {
  * consent screen (where the person also picks the pages Autune may see), then
  * back to `redirectTo` with `?notion=connected|failed`.
  */
-export function notionConnectUrl(meetingId: string, redirectTo = "/"): string {
+export function notionConnectUrl(scope: IntegrationScope, redirectTo = "/"): string {
   return authUrl(
-    `/notion/start?meeting_id=${encodeURIComponent(meetingId)}&redirect_to=${encodeURIComponent(redirectTo)}`,
+    `/notion/start?${scopeQuery(scope)}&redirect_to=${encodeURIComponent(redirectTo)}`,
   );
 }
 
 export async function getNotionConnection(
-  meetingId: string,
+  scope: IntegrationScope,
 ): Promise<NotionConnection | null> {
   try {
     const response = await fetch(
-      authUrl(`/notion?meeting_id=${encodeURIComponent(meetingId)}`),
+      authUrl(`/notion?${scopeQuery(scope)}`),
       {
         credentials: "include",
       },
@@ -244,9 +259,9 @@ export async function getNotionConnection(
   }
 }
 
-export async function disconnectNotion(meetingId: string): Promise<void> {
+export async function disconnectNotion(scope: IntegrationScope): Promise<void> {
   const response = await fetch(
-    authUrl(`/notion/disconnect?meeting_id=${encodeURIComponent(meetingId)}`),
+    authUrl(`/notion/disconnect?${scopeQuery(scope)}`),
     { method: "POST", credentials: "include" },
   );
   if (!response.ok) {
@@ -270,18 +285,18 @@ export interface SlackConnection {
  * Slack's install screen, then back to `redirectTo` with `?slack=connected|failed`.
  * The install makes `#autune` (or joins it) for the team's alerts.
  */
-export function slackConnectUrl(meetingId: string, redirectTo = "/"): string {
+export function slackConnectUrl(scope: IntegrationScope, redirectTo = "/"): string {
   return authUrl(
-    `/slack/start?meeting_id=${encodeURIComponent(meetingId)}&redirect_to=${encodeURIComponent(redirectTo)}`,
+    `/slack/start?${scopeQuery(scope)}&redirect_to=${encodeURIComponent(redirectTo)}`,
   );
 }
 
 export async function getSlackConnection(
-  meetingId: string,
+  scope: IntegrationScope,
 ): Promise<SlackConnection | null> {
   try {
     const response = await fetch(
-      authUrl(`/slack?meeting_id=${encodeURIComponent(meetingId)}`),
+      authUrl(`/slack?${scopeQuery(scope)}`),
       {
         credentials: "include",
       },
@@ -294,10 +309,10 @@ export async function getSlackConnection(
 }
 
 export async function disconnectSlack(
-  meetingId: string,
+  scope: IntegrationScope,
 ): Promise<{ revoked: boolean; shared?: boolean }> {
   const response = await fetch(
-    authUrl(`/slack/disconnect?meeting_id=${encodeURIComponent(meetingId)}`),
+    authUrl(`/slack/disconnect?${scopeQuery(scope)}`),
     { method: "POST", credentials: "include" },
   );
   if (!response.ok) {

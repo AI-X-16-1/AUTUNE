@@ -970,6 +970,12 @@ def assignee_names(session: Session, items: Sequence[ExtActionItem]) -> dict[str
 # --- who may read what (#189) ---------------------------------------------------
 
 
+def is_team_member(session: Session, team_id: str, user_id: str) -> bool:
+    """Whether ``user_id`` is on ``team_id`` -- for a route that names the team
+    itself (S28 settings, #496) rather than one of its meetings."""
+    return _is_team_member(session, user_id=user_id, team_id=team_id)
+
+
 def _is_team_member(session: Session, *, user_id: str, team_id: str) -> bool:
     return (
         session.scalar(

@@ -49,8 +49,8 @@ from .auth import (
 )
 from .auth_service import upsert_user_from_google
 from .db import get_session
-from .entities import Meeting, TeamMember
-from .errors import AutuneError, NotFoundError, PermissionDeniedError
+from .entities import Meeting, Team, TeamMember
+from .errors import AutuneError, NotFoundError, PermissionDeniedError, ValidationError
 from .integrations_config import (
     IntegrationConfig,
     disconnect_integration,
@@ -245,8 +245,21 @@ def logout() -> Response:
 
 
 @router.get("/me")
-def me(user: CurrentUser) -> dict[str, str]:
-    return {"id": user.id, "email": user.email, "display_name": user.display_name}
+def me(user: CurrentUser, session: Annotated[Session, Depends(get_session)]) -> dict[str, object]:
+    """Who is signed in, and the teams they belong to -- what S28 settings
+    (#496) chooses a team's integrations from, with no meeting to name it."""
+    teams = session.execute(
+        select(Team.id, Team.name)
+        .join(TeamMember, TeamMember.team_id == Team.id)
+        .where(TeamMember.user_id == user.id)
+        .order_by(Team.name, Team.id)
+    ).all()
+    return {
+        "id": user.id,
+        "email": user.email,
+        "display_name": user.display_name,
+        "teams": [{"id": team_id, "name": name} for team_id, name in teams],
+    }
 
 
 # --------------------------------------------------------------------------- #
@@ -413,6 +426,27 @@ def google_calendar_disconnect(
 # --------------------------------------------------------------------------- #
 
 
+def _team_for(
+    session: Session, user_id: str, *, meeting_id: str | None, team_id: str | None
+) -> str:
+    """The team a team-integration request is about, after checking the person
+    belongs to it: named by a meeting the screen shows (the 액션 tab) or by the
+    team itself (S28 settings, #496). Any member may connect -- ``team_members``
+    has no admin role yet (#592)."""
+    if meeting_id:
+        return _team_of(session, user_id, meeting_id)
+    if not team_id:
+        raise ValidationError("meeting_id or team_id is required", field="team_id")
+    member = session.scalar(
+        select(TeamMember.user_id).where(
+            TeamMember.team_id == team_id, TeamMember.user_id == user_id
+        )
+    )
+    if member is None:
+        raise PermissionDeniedError("not a member of this team")
+    return team_id
+
+
 def _team_of(session: Session, user_id: str, meeting_id: str) -> str:
     """The team of a meeting the person belongs to. The web app knows which
     meeting a screen is about, not which team; membership is checked here so
@@ -441,7 +475,8 @@ def jira_start(
     session: Annotated[Session, Depends(get_session)],
     store: Annotated[StateStore, Depends(get_state_store)],
     atlassian: Annotated[AtlassianOAuthClient, Depends(get_atlassian_client)],
-    meeting_id: Annotated[str, Query()],
+    meeting_id: Annotated[str | None, Query()] = None,
+    team_id: Annotated[str | None, Query()] = None,
     redirect_to: Annotated[str, Query()] = "/",
 ) -> RedirectResponse:
     """Send a team member to Atlassian to connect the team's Jira.
@@ -449,7 +484,7 @@ def jira_start(
     The grant is theirs (#82): it lasts while their Atlassian account does, and
     the connection says who made it (``connected_by``). Same browser-bound
     ``state`` as Google sign-in, cookie scoped to the Jira callback."""
-    team_id = _team_of(session, user.id, meeting_id)
+    team_id = _team_for(session, user.id, meeting_id=meeting_id, team_id=team_id)
     state = secrets.token_urlsafe(32)
     store.put(
         state,
@@ -560,12 +595,13 @@ def _finish_jira_connect(
 def jira_status(
     user: CurrentUser,
     session: Annotated[Session, Depends(get_session)],
-    meeting_id: Annotated[str, Query()],
+    meeting_id: Annotated[str | None, Query()] = None,
+    team_id: Annotated[str | None, Query()] = None,
 ) -> dict[str, object]:
     """The team's Jira connection as a member sees it: which site, which project,
     and whether it needs someone to reconnect. With no project chosen yet, the
     projects to choose from."""
-    team_id = _team_of(session, user.id, meeting_id)
+    team_id = _team_for(session, user.id, meeting_id=meeting_id, team_id=team_id)
     config = load_integration(session, team_id, JIRA)
     if config is None or not config.secret:
         return {"connected": False}
@@ -593,12 +629,13 @@ def _projects_for(team_id: str) -> list:
 def jira_choose_project(
     user: CurrentUser,
     session: Annotated[Session, Depends(get_session)],
-    meeting_id: Annotated[str, Query()],
     project_key: Annotated[str, Query()],
+    meeting_id: Annotated[str | None, Query()] = None,
+    team_id: Annotated[str | None, Query()] = None,
 ) -> dict[str, object]:
     """Which project confirmed items become issues in. Only a project the grant
     can actually see is accepted."""
-    team_id = _team_of(session, user.id, meeting_id)
+    team_id = _team_for(session, user.id, meeting_id=meeting_id, team_id=team_id)
     config = load_integration(session, team_id, JIRA)
     if config is None:
         raise NotFoundError("integration", f"jira for team {team_id}")
@@ -617,12 +654,13 @@ def jira_choose_project(
 def jira_disconnect(
     user: CurrentUser,
     session: Annotated[Session, Depends(get_session)],
-    meeting_id: Annotated[str, Query()],
+    meeting_id: Annotated[str | None, Query()] = None,
+    team_id: Annotated[str | None, Query()] = None,
 ) -> dict[str, bool]:
     """Forget the team's Jira connection. Atlassian offers no API to revoke a
     3LO grant; the person who connected removes Autune from their Atlassian
     account's connected apps -- the answer says so (``revoked: false``)."""
-    team_id = _team_of(session, user.id, meeting_id)
+    team_id = _team_for(session, user.id, meeting_id=meeting_id, team_id=team_id)
     disconnect_integration(session, team_id, JIRA)
     log.info("auth_jira_disconnected", team_id=team_id, user_id=user.id)
     return {"connected": False, "revoked": False}
@@ -646,13 +684,14 @@ def notion_start(
     session: Annotated[Session, Depends(get_session)],
     store: Annotated[StateStore, Depends(get_state_store)],
     notion: Annotated[NotionOAuthClient, Depends(get_notion_oauth_client)],
-    meeting_id: Annotated[str, Query()],
+    meeting_id: Annotated[str | None, Query()] = None,
+    team_id: Annotated[str | None, Query()] = None,
     redirect_to: Annotated[str, Query()] = "/",
 ) -> RedirectResponse:
     """Send a team member to Notion to connect the team's workspace. On Notion's
     screen they also pick the pages Autune may see -- one of those becomes the
     parent of Autune's databases (module B)."""
-    team_id = _team_of(session, user.id, meeting_id)
+    team_id = _team_for(session, user.id, meeting_id=meeting_id, team_id=team_id)
     state = secrets.token_urlsafe(32)
     store.put(
         state,
@@ -756,11 +795,12 @@ def _finish_notion_connect(
 def notion_status(
     user: CurrentUser,
     session: Annotated[Session, Depends(get_session)],
-    meeting_id: Annotated[str, Query()],
+    meeting_id: Annotated[str | None, Query()] = None,
+    team_id: Annotated[str | None, Query()] = None,
 ) -> dict[str, object]:
     """The team's Notion connection as a member sees it. Which page and which
     databases are module B's to answer (``/api/extraction/notion/setup``)."""
-    team_id = _team_of(session, user.id, meeting_id)
+    team_id = _team_for(session, user.id, meeting_id=meeting_id, team_id=team_id)
     config = load_integration(session, team_id, NOTION)
     if config is None or not config.secret:
         return {"connected": False}
@@ -771,12 +811,13 @@ def notion_status(
 def notion_disconnect(
     user: CurrentUser,
     session: Annotated[Session, Depends(get_session)],
-    meeting_id: Annotated[str, Query()],
+    meeting_id: Annotated[str | None, Query()] = None,
+    team_id: Annotated[str | None, Query()] = None,
 ) -> dict[str, bool]:
     """Forget the team's Notion token. The pages and databases stay in Notion --
     they are the team's -- and the person removes Autune under Notion's
     Settings > Connections to end the grant there (``revoked: false``)."""
-    team_id = _team_of(session, user.id, meeting_id)
+    team_id = _team_for(session, user.id, meeting_id=meeting_id, team_id=team_id)
     disconnect_integration(session, team_id, NOTION)
     log.info("auth_notion_disconnected", team_id=team_id, user_id=user.id)
     return {"connected": False, "revoked": False}
@@ -800,12 +841,13 @@ def slack_start(
     session: Annotated[Session, Depends(get_session)],
     store: Annotated[StateStore, Depends(get_state_store)],
     slack: Annotated[SlackOAuthClient, Depends(get_slack_oauth_client)],
-    meeting_id: Annotated[str, Query()],
+    meeting_id: Annotated[str | None, Query()] = None,
+    team_id: Annotated[str | None, Query()] = None,
     redirect_to: Annotated[str, Query()] = "/",
 ) -> RedirectResponse:
     """Send a team member to Slack to install Autune's bot in the team's
     workspace. Same browser-bound ``state`` as the other connects."""
-    team_id = _team_of(session, user.id, meeting_id)
+    team_id = _team_for(session, user.id, meeting_id=meeting_id, team_id=team_id)
     state = secrets.token_urlsafe(32)
     store.put(
         state,
@@ -977,9 +1019,10 @@ def _workspace_used_elsewhere(session: Session, workspace_id: str, team_id: str)
 def slack_status(
     user: CurrentUser,
     session: Annotated[Session, Depends(get_session)],
-    meeting_id: Annotated[str, Query()],
+    meeting_id: Annotated[str | None, Query()] = None,
+    team_id: Annotated[str | None, Query()] = None,
 ) -> dict[str, object]:
-    team_id = _team_of(session, user.id, meeting_id)
+    team_id = _team_for(session, user.id, meeting_id=meeting_id, team_id=team_id)
     config = load_integration(session, team_id, SLACK)
     if config is None or not config.secret:
         return {"connected": False}
@@ -995,13 +1038,14 @@ def slack_disconnect(
     user: CurrentUser,
     session: Annotated[Session, Depends(get_session)],
     slack: Annotated[SlackOAuthClient, Depends(get_slack_oauth_client)],
-    meeting_id: Annotated[str, Query()],
+    meeting_id: Annotated[str | None, Query()] = None,
+    team_id: Annotated[str | None, Query()] = None,
 ) -> dict[str, bool]:
     """Revoke the bot token at Slack (``auth.revoke``), then forget it. Our copy
     goes even when Slack does not answer; ``revoked`` says which. When another
     team on the same workspace still uses the bot, the token is left alive for
     it and ``shared`` says so."""
-    team_id = _team_of(session, user.id, meeting_id)
+    team_id = _team_for(session, user.id, meeting_id=meeting_id, team_id=team_id)
     config = load_integration(session, team_id, SLACK)
     shared = config is not None and _workspace_used_elsewhere(
         session, str(config.config.get("workspace_id") or ""), team_id
