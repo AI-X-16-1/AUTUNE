@@ -117,9 +117,10 @@ agreement, and sync the result to Notion.
    DM quotes their line and links to the meeting's 액션 tab, which lists the
    reader's own open questions (`GET /confirmations?meeting_id=`) with the
    three answers (`POST /confirmations/{utterance_id}`: commitment, decision,
-   not a commitment). The DM carries no buttons: a deployed stack has no
-   receiver for a Slack click yet, and #585 brings one; the answer then takes
-   the same path either way. A speaker who never linked Slack can still answer
+   not a commitment). With `AUTUNE_SLACK_BUTTONS` on — a deployment Slack can
+   reach at `/api/slack/events` (#585) — the DM also carries the three answers
+   as buttons; without it, only the link, since a button nothing receives does
+   nothing. Either way the answer takes the same path. A speaker who never linked Slack can still answer
    there — answering puts the question, so its clock starts then. Nobody but
    the speaker sees or answers it.
    **What the answer does.** *Commitment* makes one draft item for that

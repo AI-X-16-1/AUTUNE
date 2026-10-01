@@ -133,7 +133,9 @@ Where that token comes from, and the two ways to give it to the browser:
 
 | Variable | Used by |
 | --- | --- |
-| `AUTUNE_SLACK_BOT_TOKEN`, `AUTUNE_SLACK_SIGNING_SECRET` | `apps/bot` (the `/autune` command and interactivity). A team that connected with "Add to Slack" posts with the bot token stored for it in `team_integrations`, not this one |
+| `AUTUNE_SLACK_SIGNING_SECRET` | `apps/bot`, and `apps/api` when set: it mounts `POST /api/slack/events`, Slack's **Request URL** for Interactivity (#585) — set it in the Slack app to `https://<web origin>/api/slack/events`. Bolt refuses a request whose signature does not match. Each request is answered with the bot token its workspace's team stored (`team_integrations`), so a deployment needs no global token |
+| `AUTUNE_SLACK_BOT_TOKEN` | `apps/bot` socket mode only (one workspace, local development). Leave empty in a deployment: a team that connected with "Add to Slack" is answered with its own stored token |
+| `AUTUNE_SLACK_BUTTONS` | B's confirmation DM carries the three answers as buttons (default `false`). Turn on only where Slack can reach `/api/slack/events` (public HTTPS) or a socket-mode bot runs; otherwise a button does nothing, and the DM's link to Autune is always there (#585) |
 | `AUTUNE_SLACK_APP_TOKEN` | `apps/bot` socket mode, local development only |
 | `AUTUNE_SLACK_CLIENT_ID`, `AUTUNE_SLACK_CLIENT_SECRET` | core, the one-click "Add to Slack" install (#428) |
 | `AUTUNE_SLACK_REDIRECT_URI` | core. The web origin's `/api/auth/slack/callback`; Slack accepts **HTTPS only**, so a local test serves `apps/web` with `next dev --experimental-https` |

@@ -217,3 +217,17 @@ def test_every_answer_has_a_handler_registered() -> None:
     slack.register(RecordingApp())
 
     assert set(registered) == set(confirmations.ACTION_IDS)
+
+
+def test_where_slack_can_reach_us_the_dm_also_carries_the_answers() -> None:
+    """#585: with ``slack_buttons`` the three answers are in Slack, primary
+    first, each carrying the utterance; the link to Autune stays."""
+    _, blocks = build_confirmation_dm(
+        utterance_id=UTTERANCE, quoted_text=QUOTED, answer_url=URL, buttons=True
+    )
+    buttons = [b for block in blocks if block["type"] == "actions" for b in block["elements"]]
+
+    assert [b["action_id"] for b in buttons] == [CONFIRM_COMMITMENT, CONFIRM_DECISION, DENY]
+    assert buttons[0].get("style") == "primary"
+    assert {b["value"] for b in buttons} == {UTTERANCE}
+    assert f"<{URL}|" in str(blocks)

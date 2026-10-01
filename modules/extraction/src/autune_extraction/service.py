@@ -39,10 +39,12 @@ from autune_core import (
     User,
     Utterance,
     get_logger,
+    load_integration,
     session_scope,
 )
 from autune_core.errors import NotFoundError, ValidationError
 from autune_core.settings import get_settings as get_core_settings
+from autune_core.user_integrations import users_linked_to_slack_member
 from autune_integrations import PermanentIntegrationError, SlackApi, assert_personal_delivery
 from autune_integrations.privacy import find_unmasked
 
@@ -144,7 +146,10 @@ def send_confirmation_dm(
     assert_personal_delivery(subject_id=speaker_id, recipient_id=recipient_id, is_direct=True)
 
     text, blocks = build_confirmation_dm(
-        utterance_id=utterance_id, quoted_text=quoted_text, answer_url=answer_url
+        utterance_id=utterance_id,
+        quoted_text=quoted_text,
+        answer_url=answer_url,
+        buttons=get_core_settings().slack_buttons,
     )
     timestamp = slack.send_dm(recipient_id, text, blocks)
 
@@ -348,6 +353,47 @@ def apply_confirmation_response(response: ConfirmationResponse) -> None:
         from . import tasks
 
         tasks.summarise_confirmed_draft.delay(response.utterance_id)
+
+
+def answer_from_slack(response: ConfirmationResponse) -> None:
+    """A click on the DM's buttons (``slack.py``), recorded only when the
+    speaker made it.
+
+    Slack signs the request, not the person. The click counts when the Slack
+    account that made it is the one the speaker linked (#255) and it came from
+    the workspace the meeting's team installed Autune into -- the same "only
+    the speaker" the web path checks in ``answer_confirmation`` (#610 review).
+    Anything else is logged by id and dropped, like an orphaned click.
+    """
+    with session_scope() as session:
+        allowed = _clicked_by_the_speaker(session, response)
+    if not allowed:
+        log.info("extraction_confirmation_not_the_speaker", utterance_id=response.utterance_id)
+        return
+    apply_confirmation_response(response)
+
+
+def _clicked_by_the_speaker(session: Session, response: ConfirmationResponse) -> bool:
+    row = session.get(ExtConfirmation, response.utterance_id)
+    if row is None:
+        # ``resolve_confirmation`` logs and ignores an orphaned click.
+        return True
+    speaker = session.scalar(
+        select(Participant.user_id)
+        .join(Utterance, Utterance.participant_id == Participant.id)
+        .where(Utterance.id == response.utterance_id)
+    )
+    if speaker is None or speaker not in users_linked_to_slack_member(
+        session, response.responder_id
+    ):
+        return False
+    team_id = session.scalar(select(Meeting.team_id).where(Meeting.id == row.meeting_id))
+    slack = load_integration(session, team_id, "slack") if team_id else None
+    return (
+        slack is not None
+        and bool(response.workspace_id)
+        and slack.config.get("workspace_id") == response.workspace_id
+    )
 
 
 def resolve_confirmation(
