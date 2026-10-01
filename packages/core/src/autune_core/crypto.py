@@ -36,6 +36,13 @@ def _fernet() -> Fernet:
         ) from exc
 
 
+def ensure_configured() -> None:
+    """Raise ``ConfigurationError`` now if secrets cannot be encrypted -- for a
+    flow that has to fail before it changes anything outside Autune, such as a
+    Slack install that would otherwise make a channel first (#593)."""
+    _fernet()
+
+
 def encrypt(value: str) -> str:
     """Encrypt a secret for storage. The result is safe to put in a text column."""
     return _fernet().encrypt(value.encode()).decode()

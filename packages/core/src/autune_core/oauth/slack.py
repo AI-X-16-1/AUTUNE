@@ -275,14 +275,17 @@ class SlackOAuthClient:
                 allow={"already_in_channel"},
             )
         except AutuneError:
-            self._discard(token, channel)
+            self.discard_channel(token, channel)
             raise
 
-    def _discard(self, token: str, channel: str) -> None:
-        """Put away a private channel nobody could be invited to. An archived
-        channel keeps its name, so it is renamed first: otherwise every failed
-        install would use up ``#autune``, then ``#autune-2``, and the tenth
-        would blame the workspace for names Autune itself is holding."""
+    def discard_channel(self, token: str, channel: str) -> None:
+        """Put away a private channel an install made and then could not use --
+        nobody could be invited to it, or the install failed after it was made
+        (#593). An archived channel keeps its name, so it is renamed first:
+        otherwise every failed install would use up ``#autune``, then
+        ``#autune-2``, and the tenth would blame the workspace for names Autune
+        itself is holding. Best effort: a refusal is swallowed, and must be
+        called before the token is revoked."""
         with contextlib.suppress(AutuneError):
             self._call(
                 "conversations.rename",
