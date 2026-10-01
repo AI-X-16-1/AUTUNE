@@ -47,7 +47,7 @@ from autune_integrations import (
     refresh_access_token,
 )
 
-from . import calendar_sync, jira_sync, notion_setup, service
+from . import calendar_sync, jira_sync, notion_backfill, notion_setup, service
 from .models import ExtActionItem, ExtCalendarPoll, ExtDecision, ExtExternalRef
 from .pipeline.base import give_roster
 from .pipeline.registry import get_classifier, get_nli, get_resolver
@@ -611,6 +611,32 @@ def backfill_jira(team_id: str) -> dict[str, int]:
         client.close()
     log.info("extraction_jira_backfilled", team_id=team_id, **counts)
     return counts
+
+
+@shared_task(name="autune.extraction.backfill_notion", acks_late=True)
+def backfill_notion(team_id: str) -> None:
+    """After a one-click Notion setup (``notion_connect.set_up``): every confirmed
+    action item and decision of the team into the databases just recorded.
+
+    Out of the setup request because Notion takes about three requests a
+    second, and a team with hundreds of confirmed rows would outlast it (#481).
+    Safe to run again -- a redelivery after a lost worker included: each row
+    goes through the same claim-then-call sync a live confirmation uses, and
+    one row's failure, a privacy block among them, costs only that row
+    (``notion_backfill``). Logs counts only."""
+    items = notion_backfill.Stats()
+    notion_backfill.backfill_action_items(notion_backfill._confirmed_action_items(team_id), items)
+    decisions = notion_backfill.Stats()
+    notion_backfill.backfill_decisions(notion_backfill._confirmed_decisions(team_id), decisions)
+    log.info(
+        "extraction_notion_backfilled",
+        team_id=team_id,
+        items_sent=items.sent,
+        items_replaced=items.replaced,
+        items_failed=items.failed,
+        decisions_sent=decisions.sent,
+        decisions_failed=decisions.failed,
+    )
 
 
 def trash_notion_page(action_item_id: str) -> None:

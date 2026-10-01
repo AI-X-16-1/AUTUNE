@@ -178,15 +178,15 @@ export interface NotionSetupResult {
   action_db_url: string;
   decision_db_url: string;
   minutes_db_url: string;
-  action_items: { sent: number; replaced: number; failed: number };
-  decisions: { sent: number; replaced: number; failed: number };
+  /** Confirmed items and decisions go in from the worker, not this request (#481). */
+  backfill: "queued";
 }
 
 /** The pages the team shared with Autune, and where its databases are (#428). */
 export const getNotionSetup = (meetingId: string) =>
   api.extraction<NotionSetupState>(`/notion/setup?meeting_id=${encodeURIComponent(meetingId)}`);
 
-/** Make the databases under `pageId` and fill them with everything confirmed. */
+/** Make the databases under `pageId` and queue filling them with everything confirmed. */
 export const setUpNotion = (meetingId: string, pageId: string) =>
   api.extraction<NotionSetupResult>(
     `/notion/setup?meeting_id=${encodeURIComponent(meetingId)}&page_id=${encodeURIComponent(pageId)}`,

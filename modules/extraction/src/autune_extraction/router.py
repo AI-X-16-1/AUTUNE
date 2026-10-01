@@ -300,9 +300,9 @@ def notion_setup_state(meeting_id: str, session: SessionDep, reader: CurrentUser
 def notion_set_up(
     meeting_id: str, page_id: str, session: SessionDep, reader: CurrentUser
 ) -> dict[str, Any]:
-    """Make Autune's databases under ``page_id`` and fill them with every
-    confirmed action item and decision of the team (#428). Notion's own message
-    comes back when it refuses the page."""
+    """Make Autune's databases under ``page_id`` and queue filling them with
+    every confirmed action item and decision of the team (#428, #481). Notion's
+    own message comes back when it refuses the page."""
     team_id = _member_team(session, reader, meeting_id)
     try:
         return notion_connect.set_up(team_id, page_id)
