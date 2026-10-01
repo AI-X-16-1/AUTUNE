@@ -551,7 +551,11 @@ def apply_confirmed_summary(session: Session, utterance_id: str, resolution: Res
     for draft in drafts:
         draft.description = tidy(resolution.text)
         draft.description_resolved = said is not None and resolution.text != said.text
-        draft.related = _cited(session, draft.meeting_id, utterance_id, resolution)
+        # Keep the row of a line the draft already cites: a new equal row is
+        # inserted before the old one is deleted, and breaks the unique key.
+        kept = {r.utterance_id: r for r in draft.related}
+        cited = _cited(session, draft.meeting_id, utterance_id, resolution)
+        draft.related = [kept.get(r.utterance_id, r) for r in cited]
     session.flush()
     return True
 
