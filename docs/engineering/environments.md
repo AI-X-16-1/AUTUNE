@@ -609,13 +609,22 @@ recording travel over whatever carries that port.
 
 - **On the LAN**, `http://<DEV_PUBLIC_HOST>` is plain HTTP. Acceptable on a
   private network only.
-- **Through the domain**, `https://autune.shelldocs.cloud` is served by
-  Cloudflare. The browser-to-Cloudflare leg is TLS (checked 2026-10-01: `http://`
-  answers 301 to `https://`). The Cloudflare-to-host leg must be encrypted too:
-  a Cloudflare Tunnel (`cloudflared` on the host, no port forwarded) qualifies;
-  a proxied DNS record reaching a forwarded port 80 does not, because that leg
-  then crosses the internet in plain HTTP. **Which one this host uses is not
-  yet confirmed.** Until it is, put only dummy data on the server.
+- **Through the domain**, `https://autune.shelldocs.cloud` is TLS on both
+  internet legs (checked 2026-10-01):
+  - Browser to Cloudflare: Cloudflare's edge certificate; `http://` answers 301
+    to `https://`.
+  - Cloudflare to host: the DNS record is proxied to the router's public
+    address, where a front nginx on the host (not this repository's) terminates
+    TLS on 443 with a Cloudflare Origin Certificate (`*.shelldocs.cloud`) and
+    answers port 80 only with a 301 to `https://`. Cloudflare's SSL mode is
+    therefore Full or Full (strict): under Flexible, Cloudflare would fetch over
+    HTTP, get the redirect back, and loop.
+  - Front nginx to this stack's nginx: plain HTTP to `DEV_PUBLIC_HOST:80`,
+    inside the host's network.
+
+  If the front nginx or its port 80 redirect is ever removed, this no longer
+  holds; check again before relying on it. The stack still runs
+  `AUTUNE_ENV=local`, so put only dummy data on the server.
 
 Before the first deploy:
 
