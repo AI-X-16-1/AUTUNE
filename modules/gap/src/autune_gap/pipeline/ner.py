@@ -26,6 +26,7 @@ from .spoken import (
     masked_spans,
     noun_terms,
     person_name,
+    quantity_text,
 )
 
 log = get_logger(__name__)
@@ -191,6 +192,8 @@ class SpacyNer:
                 )
                 if label == "person":
                     text = person_name(text)
+                elif label in ("date", "metric"):
+                    text = quantity_text(text)
                 if is_plausible(label, text):
                     spans.append((span.start_char, text, label))
 
