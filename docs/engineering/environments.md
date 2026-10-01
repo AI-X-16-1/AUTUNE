@@ -603,18 +603,26 @@ without `--real-models` (#517), so it holds **dummy meetings only**. Every
 `/dev` router is mounted, and `/api/audio/dev/token` issues a token for any
 email. nginx therefore puts `/api/*/dev/` behind a password (user `autune`).
 
-**The dev server is reachable from the team's network only.** nginx serves
-plain HTTP on port 80, so the password, every bearer token and every uploaded
-recording cross the wire unencrypted. That is acceptable on a private network
-and on nothing wider. Before the first deploy, and for as long as there is no
-TLS in front of nginx:
+**Two ways in, and only one is encrypted end to end.** nginx itself serves
+plain HTTP on port 80. The dev password, every bearer token and every uploaded
+recording travel over whatever carries that port.
+
+- **On the LAN**, `http://<DEV_PUBLIC_HOST>` is plain HTTP. Acceptable on a
+  private network only.
+- **Through the domain**, `https://autune.shelldocs.cloud` is served by
+  Cloudflare. The browser-to-Cloudflare leg is TLS (checked 2026-10-01: `http://`
+  answers 301 to `https://`). The Cloudflare-to-host leg must be encrypted too:
+  a Cloudflare Tunnel (`cloudflared` on the host, no port forwarded) qualifies;
+  a proxied DNS record reaching a forwarded port 80 does not, because that leg
+  then crosses the internet in plain HTTP. **Which one this host uses is not
+  yet confirmed.** Until it is, put only dummy data on the server.
+
+Before the first deploy:
 
 - `DEV_PUBLIC_HOST` is a private IP address (LAN or VPN), never a public one
   and never a hostname: compose binds port 80 to it.
-- No domain points at this host, and no router forwards 80 or 8000. Only
-  nginx (80) and the api (8000) publish a port.
-- Exposing it beyond the LAN means terminating TLS on 443 first, with 80
-  redirecting to it.
+- No router forwards 8000. Only nginx (80) and the api (8000) publish a port;
+  the api's 8000 bypasses nginx and its password, so it stays LAN-only.
 
 Configuration lives in the repository, not on the host:
 
