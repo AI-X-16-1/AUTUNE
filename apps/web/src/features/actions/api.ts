@@ -9,6 +9,7 @@ import type {
   DecisionStatus,
   ExtractionResult,
   MeetingReview,
+  MeetingSummary,
   ReviewDecision,
 } from "./types";
 
@@ -111,6 +112,17 @@ async function withoutBody(path: string): Promise<void> {
     throw cause;
   }
 }
+
+/** S15's 요약 tab (#421): the meeting's decisions, items, counts and memo. */
+export const getSummary = (meetingId: string) =>
+  api.extraction<MeetingSummary>(`/summary/${encodeURIComponent(meetingId)}`);
+
+/** Replace the team's memo; a blank one removes it. Answers with the summary. */
+export const putSummaryNote = (meetingId: string, body: string) =>
+  api.extraction<MeetingSummary>(`/summary/${encodeURIComponent(meetingId)}/note`, {
+    method: "PUT",
+    body: JSON.stringify({ body }),
+  });
 
 /** Everything in one meeting that needs a person before it goes anywhere (#246). */
 export const getReview = (meetingId: string) =>

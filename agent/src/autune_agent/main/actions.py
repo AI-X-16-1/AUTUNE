@@ -2,17 +2,19 @@
 
 A subagent never writes. It returns ``ProposedAction``s, and this is where the
 ones at L1 -- reversible writes, "automatic, notify after" -- are carried out
-at the end of the run. L2 is not run here or anywhere yet: it waits for plan
-mode and the approval screen, and until then it stays in ``agent_runs.proposed``
-as a proposal.
+at the end of the run. L2 is not run here: plan mode queues it
+(``main/pending.py``) and it runs only when an approver approves it, through
+``run_action`` below. A proposal marked L1 whose action the module declared L2
+is recorded here as kept for approval and queued there with the same mapping.
 
 **The module decides the level, not the subagent.** A module lists its writes
 in ``ACTIONS`` and the reversible ones among them in ``L1_ACTIONS``; everything
 else in ``ACTIONS`` is L2. A proposal marked L1 whose action the module did not
 declare L1 is refused, never run -- a subagent cannot demote a write that moves
 a person (section 8 rule 2: the module that owns the content owns what happens
-to it). The reverse is harmless: a subagent may ask for approval of an L1
-action, and it simply waits with the L2s.
+to it). One the module declared L2 is queued for approval instead; one it did
+not declare at all goes nowhere. The reverse is harmless: a subagent may ask
+for approval of an L1 action, and it simply waits with the L2s.
 
 **Scope is bound the way a tool call's is** (``registry.bind_scope``):
 ``team_id`` and ``meeting_id`` come from the run, a different one from the
@@ -59,9 +61,18 @@ log = logging.getLogger(__name__)
 NOT_DECLARED = "not a declared action"
 KEPT_FOR_APPROVAL = "its module declares it L2; it waits for approval"
 FAILED = "the action failed"
+ARGUMENT_REFUSED = "arguments hold more than ids and short values"
 OUT_OF_SCOPE = ("team_id is outside this run's team", "meeting not found")
 OWN_REASONS = frozenset(
-    {NOT_DECLARED, KEPT_FOR_APPROVAL, FAILED, NO_MEETING, UNEXPECTED_ARGUMENT, *OUT_OF_SCOPE}
+    {
+        NOT_DECLARED,
+        KEPT_FOR_APPROVAL,
+        FAILED,
+        ARGUMENT_REFUSED,
+        NO_MEETING,
+        UNEXPECTED_ARGUMENT,
+        *OUT_OF_SCOPE,
+    }
 )
 """Reasons this layer wrote, and so knows hold no meeting or model text. A
 ``MISSING_ARGUMENT`` reason is also ours: it names parameters from the code."""
@@ -188,12 +199,18 @@ def execute_l1(
     return done
 
 
-def _run(
-    action: Action, proposal: ProposedAction, *, session: Session, scope: RunScope
+def own_reason(reason: str | None) -> str | None:
+    """``reason`` when it is one of this layer's own, else ``None``."""
+    return reason if _own(reason) else None
+
+
+def run_action(
+    action: Action, arguments: Mapping[str, Any], *, session: Session, scope: RunScope
 ) -> ToolResult:
+    """Run one declared action under ``scope`` -- the L1 path and plan mode's approval."""
     bound = bind_scope(
         action.parameters,
-        proposal.arguments,
+        arguments,
         scope,
         session,
         required=action.required,
@@ -209,3 +226,9 @@ def _run(
     except Exception as exc:  # noqa: BLE001 - one broken write must not lose the rest
         log.error("agent_action_failed action=%s error=%s", action.name, type(exc).__name__)
         return ToolResult.failure(FAILED)
+
+
+def _run(
+    action: Action, proposal: ProposedAction, *, session: Session, scope: RunScope
+) -> ToolResult:
+    return run_action(action, proposal.arguments, session=session, scope=scope)

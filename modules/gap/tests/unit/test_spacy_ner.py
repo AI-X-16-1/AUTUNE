@@ -129,6 +129,24 @@ def test_a_deadline_is_a_topic_and_today_is_not(ner: SpacyNer) -> None:
     assert "다음 주 화요일까지" in found
 
 
+def test_a_colleague_is_one_topic_however_they_were_addressed(ner: SpacyNer) -> None:
+    """``ko_core_news_lg`` reads 이건우님이 as one ``npp+jcs`` token and one
+    ``PS`` span. Before ``spoken.person_name`` the label kept 님이, and the
+    same person spaced as 이건우 님이 was a second topic."""
+    joined = [
+        entity.text
+        for entity in ner.extract([("utt_1", "정렬 로직은 이건우님이 맡고 초안을 봅니다")])
+        if entity.label == "person"
+    ]
+    spaced = [
+        entity.text
+        for entity in ner.extract([("utt_2", "정렬 로직은 이건우 님이 맡습니다")])
+        if entity.label == "person"
+    ]
+
+    assert joined == spaced == ["이건우"]
+
+
 def test_a_short_meeting_has_topics_at_all(ner: SpacyNer) -> None:
     """This fixture's only entity was ``네,``. Every noun in it — the feature
     being built and the metric nobody set — was invisible to the NER."""

@@ -16,6 +16,7 @@ from sqlalchemy.pool import StaticPool
 
 from autune_agent.models import (
     AgentApprover,
+    AgentPendingAction,
     AgentResearchDocument,
     AgentResearchSource,
     AgentRun,
@@ -34,6 +35,7 @@ TABLES = [
     Utterance.__table__,
     AgentResearchDocument.__table__,
     AgentResearchSource.__table__,
+    AgentPendingAction.__table__,
 ]
 
 
