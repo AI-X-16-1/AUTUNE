@@ -1,13 +1,15 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { Button } from "@/shared/ui/Button";
 
 import { attestConsent } from "../api";
 import { useLiveSession, type LivePhase } from "../hooks/useLiveSession";
-import { useMicrophone } from "../hooks/useMicrophone";
+import { useMeetingTitle } from "../hooks/useMeetingTitle";
+import { useMicrophone, type Microphone } from "../hooks/useMicrophone";
 import type { RecordingState } from "../types";
 import { LiveTopBar } from "./LiveTopBar";
 import { LiveTranscript } from "./LiveTranscript";
@@ -36,6 +38,14 @@ const LEAVING_LOSES_AUDIO = new Set<LivePhase>([
  * only while a consent request is in flight, so a tick is not lost to a
  * start that races it.
  *
+ * The gate is also S10's microphone check. The input opens for the level
+ * meter as soon as the gate shows (`useMicrophone().preview`), so the person
+ * sees their voice move the bars and can switch device before anything
+ * records; "녹음 시작" hands that same stream to the session. A refused
+ * permission is drawn as its own state with a "권한 허용" retry, and
+ * "파일 업로드로 대신" sends the meeting to the upload form (`?meeting=`,
+ * which the backend accepts for a `scheduled` meeting).
+ *
  * Speaker identification does not reach this screen. `LiveTranscript` has no
  * prompt during a recording — see its own docstring for why (no `Participant`
  * row exists until the meeting is processed) — so this screen does not need
@@ -44,6 +54,7 @@ const LEAVING_LOSES_AUDIO = new Set<LivePhase>([
 export function LiveMeetingScreen({ meetingId }: { meetingId: string }) {
   const router = useRouter();
   const microphone = useMicrophone();
+  const title = useMeetingTitle(meetingId);
   const live = useLiveSession(meetingId, microphone.stream);
   const [consented, setConsented] = useState(false);
   const [consentPending, setConsentPending] = useState(false);
@@ -61,12 +72,27 @@ export function LiveMeetingScreen({ meetingId }: { meetingId: string }) {
     if (microphone.stream && livePhase === "idle") void liveStart();
   }, [microphone.stream, livePhase, liveStart]);
 
+  // S10's level meter: open the input as soon as the gate is up, once. A
+  // grant arriving later (from the site settings, after a refusal) reopens it
+  // inside the hook.
+  const microphonePreview = microphone.preview;
+  const previewAsked = useRef(false);
+  useEffect(() => {
+    if (livePhase !== "idle" || previewAsked.current) return;
+    previewAsked.current = true;
+    void microphonePreview();
+  }, [livePhase, microphonePreview]);
+
   // A refusal (no live view is ever coming, per useLiveSession) means the
   // recording was already abandoned; the microphone is the one thing left
-  // for the screen itself to release, since `onStop` is not coming.
+  // for the screen itself to release, since `onStop` is not coming. The gate
+  // is back up afterwards, so its meter reopens rather than reading
+  // "마이크를 여는 중…" over a closed input.
   useEffect(() => {
-    if (livePhase === "error") microphoneStop();
-  }, [livePhase, microphoneStop]);
+    if (livePhase !== "error") return;
+    microphoneStop();
+    void microphonePreview();
+  }, [livePhase, microphoneStop, microphonePreview]);
 
   // A dropped tab loses whatever the recorder has not uploaded yet -- while
   // it is connecting, recording, paused, or the upload is still in flight or
@@ -134,16 +160,29 @@ export function LiveMeetingScreen({ meetingId }: { meetingId: string }) {
   if (live.phase === "idle" || live.phase === "error") {
     return frame(
       <main className="max-w-[776px] px-[var(--space-page)] py-[var(--space-24)]">
-        <h1
-          className="text-ink-strong"
-          style={{
-            fontSize: "var(--text-title)",
-            fontWeight: "var(--text-title-weight)",
-            letterSpacing: "var(--text-title-tracking)",
-          }}
-        >
-          녹음 시작
-        </h1>
+        <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+          <h1
+            className="text-ink-strong"
+            style={{
+              fontSize: "var(--text-title)",
+              fontWeight: "var(--text-title-weight)",
+              letterSpacing: "var(--text-title-tracking)",
+            }}
+          >
+            녹음 시작
+          </h1>
+          {title && (
+            <span className="text-ink-muted" style={{ fontSize: "var(--text-meta)" }}>
+              {title}
+            </span>
+          )}
+        </div>
+
+        <section className="mt-6" aria-label="입력 장치">
+          <SectionLabel>입력 장치</SectionLabel>
+          <InputDevice microphone={microphone} />
+        </section>
+
         <label className="mt-6 flex items-start gap-3" style={{ fontSize: "var(--text-body)" }}>
           <input
             type="checkbox"
@@ -162,14 +201,42 @@ export function LiveMeetingScreen({ meetingId }: { meetingId: string }) {
             {consentError}
           </p>
         )}
-        {(microphone.error ?? live.error) && (
+        {live.error && (
           <p role="alert" style={{ fontSize: "var(--text-meta)", color: "var(--color-signal-attention)" }}>
-            {microphone.error ?? live.error}
+            {live.error}
           </p>
         )}
-        <div className="mt-6">
+        <p className="mt-6 text-ink-muted" style={{ fontSize: "var(--text-meta)" }}>
+          원본 음성은 전사 후 바로 삭제되고, 전사 텍스트의 개인정보는 저장 전에 자동 마스킹됩니다.
+        </p>
+        <div className="mt-4 flex items-center justify-end gap-1">
+          <Link
+            href={`/meetings/new?meeting=${meetingId}`}
+            className="inline-flex items-center rounded-[var(--radius)] text-ink-muted focus-visible:outline-none focus-visible:ring-[1.5px] focus-visible:ring-[var(--color-accent-default)]"
+            style={{
+              height: "var(--control-h-default)",
+              paddingInline: "var(--control-px-text)",
+              fontSize: "var(--control-text-default)",
+              fontWeight: "var(--control-weight)",
+            }}
+          >
+            파일 업로드로 대신
+          </Link>
           <Button tone="primary" disabled={consentPending} onClick={() => void onStart()}>
-            녹음 시작
+            <span className="inline-flex items-center gap-2">
+              <span
+                aria-hidden
+                className="rounded-full"
+                style={{
+                  width: "var(--space-8)",
+                  height: "var(--space-8)",
+                  // The label's own colour: white on the accent fill, and the
+                  // muted disabled ink while a consent request is in flight.
+                  background: "currentColor",
+                }}
+              />
+              녹음 시작
+            </span>
           </Button>
         </div>
       </main>,
@@ -222,4 +289,129 @@ export function LiveMeetingScreen({ meetingId }: { meetingId: string }) {
       />
     </>,
   );
+}
+
+function SectionLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <div
+      className="text-ink-muted"
+      style={{
+        fontSize: "var(--text-label)",
+        fontWeight: "var(--text-label-weight)",
+        marginBottom: "var(--space-8)",
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
+/** How many bars the pre-start meter draws. S10 shows a short meter, not the rail's waveform. */
+const METER_BARS = 8;
+/** Below this, the last second or so is treated as silence. */
+const SILENT = 0.04;
+
+/**
+ * S10's input-device row: a level meter, the device picker, and one line of
+ * status.
+ *
+ * The status says only what the meter can tell — whether sound is arriving —
+ * and makes no claim about noise suppression or quality. A refused permission
+ * replaces the line with red guidance and a "권한 허용" retry: a browser that
+ * has blocked the site will not prompt again, so the guidance names where to
+ * change it, and the retry is what picks the change up.
+ */
+function InputDevice({ microphone }: { microphone: Microphone }) {
+  const { levels, devices, deviceId, permission, previewing, error } = microphone;
+  const recent = levels.slice(-METER_BARS);
+  const denied = permission === "denied";
+  const hearing = recent.some((level) => level > SILENT);
+
+  let status: React.ReactNode;
+  if (denied) {
+    status = (
+      <span style={{ color: "var(--color-signal-critical)" }}>
+        마이크 권한이 거부되어 있습니다. 주소창의 사이트 설정에서 마이크를 허용한 뒤
+        &quot;권한 허용&quot;을 눌러 주세요.
+      </span>
+    );
+  } else if (error) {
+    status = <span style={{ color: "var(--color-signal-attention)" }}>{error}</span>;
+  } else if (!previewing && permission === "prompt") {
+    status = "브라우저 주소창 아래에 뜬 창에서 마이크를 허용해 주세요";
+  } else if (!previewing) {
+    status = "마이크를 여는 중…";
+  } else {
+    status = hearing ? "입력이 들어오고 있습니다" : "입력이 없습니다. 마이크에 말해 보세요";
+  }
+
+  const selectable = devices.length > 0 && permission === "granted";
+
+  return (
+    <div
+      className="flex items-center gap-4 rounded-[var(--radius)]"
+      style={{
+        background: "var(--color-surface-sunken)",
+        padding: "var(--space-12) var(--space-16)",
+      }}
+    >
+      <div
+        role="img"
+        aria-label={previewing ? "입력 레벨" : "입력 없음"}
+        className="flex flex-none items-end"
+        style={{ height: "var(--space-24)", gap: "var(--bar-thickness)" }}
+      >
+        {recent.map((level, index) => (
+          <span
+            key={index}
+            style={{
+              width: "var(--space-4)",
+              height: `${Math.max(12, Math.round(level * 100))}%`,
+              background: previewing ? meterStep(level) : "var(--color-waveform-q1)",
+            }}
+          />
+        ))}
+      </div>
+      <div className="min-w-0 flex-1">
+        {selectable ? (
+          <select
+            aria-label="입력 장치"
+            value={deviceId}
+            onChange={(event) => microphone.selectDevice(event.target.value)}
+            className="w-full max-w-full truncate bg-transparent text-ink-strong focus-visible:outline-none focus-visible:ring-[1.5px] focus-visible:ring-[var(--color-accent-default)]"
+            style={{ fontSize: "var(--text-rowTitle)", fontWeight: "var(--text-rowTitle-weight)" }}
+          >
+            {devices.map((device) => (
+              <option key={device.deviceId} value={device.deviceId}>
+                {device.label}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <div
+            className="text-ink-strong"
+            style={{ fontSize: "var(--text-rowTitle)", fontWeight: "var(--text-rowTitle-weight)" }}
+          >
+            기본 마이크
+          </div>
+        )}
+        <div className="text-ink-muted" style={{ fontSize: "var(--text-meta)" }} aria-live="polite">
+          {status}
+        </div>
+      </div>
+      {(denied || (error && !previewing)) && (
+        <Button tone="text" size="compact" onClick={() => void microphone.preview()}>
+          {denied ? "권한 허용" : "다시 시도"}
+        </Button>
+      )}
+    </div>
+  );
+}
+
+/** The rail's four achromatic steps: loud is not a warning. */
+function meterStep(level: number): string {
+  if (level > 0.75) return "var(--color-waveform-q4)";
+  if (level > 0.5) return "var(--color-waveform-q3)";
+  if (level > 0.25) return "var(--color-waveform-q2)";
+  return "var(--color-waveform-q1)";
 }

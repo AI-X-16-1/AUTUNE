@@ -161,7 +161,12 @@ function DecisionRow({
           ) : null}
           {quotation.sources && quotation.sources.length > 0 ? (
             <div className="mt-2 grid gap-1" role="group" aria-label="원본 발화">
-              <ContextLines lines={quotation.context} />
+              <ContextLines lines={quotation.related} label="요약에 쓴 발화" />
+              <ContextLines
+                lines={quotation.context.filter(
+                  (line) => !quotation.related.some((cited) => cited.id === line.id),
+                )}
+              />
               <p className="text-[var(--color-ink-muted)]" style={{ fontSize: "var(--text-metaSmall)" }}>
                 원본 발화
               </p>

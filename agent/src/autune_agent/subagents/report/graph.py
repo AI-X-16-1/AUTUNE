@@ -29,6 +29,7 @@ from autune_agent.main import BudgetExceededError, SubagentState, Toolbox
 from autune_agent.main.subagents import CompiledSubagent
 from autune_agent.results import ProposedAction, SubagentResult, ToolResult
 from autune_contracts import INTELLIGENCE_COMPLETED
+from autune_core import new_id
 
 from .render import has_pending, render
 
@@ -36,9 +37,9 @@ log = logging.getLogger(__name__)
 
 ACTIONS_TOOL = "extraction.meeting_action_items"
 REVIEW_TOOL = "extraction.review_state"
-GAPS_TOOL = "gap.meeting_gaps"
-"""Placeholder until C's tools.py ships; match it to C's real name then. A tool
-that is not registered is skipped, so the gap section is just absent."""
+GAPS_TOOL = "gap.open_gaps"
+"""C's read since #546. A tool that is not registered is skipped, so a wrong name
+here loses the gap section silently -- a test pins it to C's registry."""
 LINKS_TOOL = "context.links_for_meeting"
 TOOLS = (ACTIONS_TOOL, REVIEW_TOOL, GAPS_TOOL, LINKS_TOOL)
 OPTIONAL = (GAPS_TOOL, LINKS_TOOL)
@@ -48,6 +49,11 @@ DRAFT_ACTION = "intelligence.draft_meeting_report"
 """E stores the report. L1: E lists it in ``L1_ACTIONS``."""
 PUBLISH_ACTION = "intelligence.publish_meeting_report"
 """E posts the stored report to the team channel. L2: a channel post moves people."""
+
+DRAFT_ID_PREFIX = "rdr"
+"""Both proposals carry one id per run. E stores it with the draft and posts only
+the draft the approved proposal names: a later run's draft replaces this one,
+and approving this run's post then posts nothing (review of #508)."""
 
 TRIGGER = INTELLIGENCE_COMPLETED
 """B, C and D have all reported (or timed out) only by this event."""
@@ -93,6 +99,7 @@ def build(toolbox: Toolbox) -> CompiledSubagent:
             return _failed("nothing to report for this meeting")
 
         # No team_id anywhere: the run's scope fills it (E's RUN_SCOPE).
+        draft_id = new_id(DRAFT_ID_PREFIX)
         draft = ProposedAction(
             kind="meeting_report_draft",
             title="회의 리포트 초안 저장",
@@ -101,6 +108,7 @@ def build(toolbox: Toolbox) -> CompiledSubagent:
                 **meeting,
                 "body_markdown": body,
                 "pending_review": has_pending(results[REVIEW_TOOL]),
+                "draft_id": draft_id,
             },
             level="L1",
             rationale="The meeting's analysis finished; store its structured minutes.",
@@ -109,7 +117,7 @@ def build(toolbox: Toolbox) -> CompiledSubagent:
             kind="meeting_report_post",
             title="회의 리포트 게시",
             tool=PUBLISH_ACTION,
-            arguments=dict(meeting),
+            arguments={**meeting, "draft_id": draft_id},
             level="L2",
             rationale="Post the stored minutes to the team channel once a person approves.",
         )

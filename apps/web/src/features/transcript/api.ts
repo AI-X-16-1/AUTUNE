@@ -9,11 +9,18 @@ import { api, API_BASE as SAME_ORIGIN_BASE, ApiError, authHeaders } from "@/shar
 export { api };
 
 import type {
+  AccountDeleted,
   MeetingDetail,
   MeetingSummary,
+  MyData,
+  PiiCategory,
+  PiiReported,
   ResearchDocument,
+  RetentionDays,
   SpeakerEntry,
+  SpeechDeleted,
   TeamMember,
+  TeamPrivacy,
   TeamSummary,
   Utterance,
 } from "./types";
@@ -204,6 +211,8 @@ export async function uploadRecording(meetingId: string, file: File) {
 
 /**
  * The bearer token this browser holds, or null — for the live socket only.
+ * Null in a signed-in tab: the socket's handshake then carries the session
+ * cookie, which the live route reads when `hello` has no token (#541).
  *
  * A `WebSocket` cannot carry request headers, so the live channel sends the
  * token in its `hello` frame instead (`useLiveSession`). That needs the raw
@@ -213,7 +222,6 @@ export async function uploadRecording(meetingId: string, file: File) {
  * shared client is the one place that decides where a token comes from, and
  * #286 moved it there precisely so a second copy could not drift from it. A
  * second reader of `localStorage["autune.token"]` here would be that copy.
- * When #189 replaces the dev token, this follows it with no change.
  */
 export function getToken(): string | null {
   const header = (authHeaders() as Record<string, string>).authorization;
@@ -239,3 +247,68 @@ export const getResearch = (teamId: string, meetingId: string) =>
   api.agent<ResearchDocument[]>(
     `/research?team_id=${encodeURIComponent(teamId)}&meeting_id=${encodeURIComponent(meetingId)}`,
   );
+
+/** S29 "내 데이터": counts of what Autune holds about the caller. Only theirs. */
+export const getMyData = () => api.audio<MyData>("/me/data");
+
+/**
+ * S29 "내 데이터 내려받기 (JSON)". The route answers JSON with an attachment
+ * header; `request()` reads it as JSON, so the file is made here from what it
+ * returned rather than by navigating to the URL — a navigation would not carry
+ * the developer token a session-less local run authenticates with.
+ */
+export async function downloadMyData(): Promise<void> {
+  const body = await api.audio<unknown>("/me/export");
+  const url = URL.createObjectURL(
+    new Blob([JSON.stringify(body, null, 2)], { type: "application/json" }),
+  );
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = "autune-my-data.json";
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+/** S29 "음성 임베딩 삭제". 204 — see `assignSpeaker` for why this goes to `fetch`. */
+export async function deleteVoiceProfile(): Promise<void> {
+  const response = await fetch(`${SAME_ORIGIN_BASE}/api/audio/me/voice-profile`, {
+    method: "DELETE",
+    headers: authHeaders(),
+  });
+  if (!response.ok) {
+    throw new ApiError(response.status, "unknown", response.statusText, {});
+  }
+}
+
+/** S29 "내 발화 데이터 모두 삭제": my utterances and voice. The account stays. */
+export const deleteMySpeech = () =>
+  api.audio<SpeechDeleted>("/me/speech", { method: "DELETE" });
+
+/** Account deletion (#358). The server clears the session cookie in the same response. */
+export const deleteAccount = () => api.audio<AccountDeleted>("/me", { method: "DELETE" });
+
+/** S29's retention row, for one team. */
+export const getTeamPrivacy = (teamId: string) =>
+  api.audio<TeamPrivacy>(`/teams/${teamId}/privacy`);
+
+export const setTeamRetention = (teamId: string, retentionDays: RetentionDays) =>
+  api.audio<TeamPrivacy>(`/teams/${teamId}/privacy`, {
+    method: "PATCH",
+    body: JSON.stringify({ retention_days: retentionDays }),
+  });
+
+/**
+ * S30: mask a span the masker missed. **Offsets, never the text** — the server
+ * reads the span from the stored row, so the unmasked string is not in the
+ * request, the proxy's log or the API's.
+ */
+export const reportPiiMiss = (
+  meetingId: string,
+  utteranceId: string,
+  body: { start: number; end: number; category: PiiCategory; include_similar: boolean },
+) =>
+  api.audio<PiiReported>(`/meetings/${meetingId}/utterances/${utteranceId}/pii-report`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+

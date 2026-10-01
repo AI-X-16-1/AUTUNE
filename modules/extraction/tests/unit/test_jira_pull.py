@@ -8,22 +8,24 @@ unconfirmed item is left alone.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
 
 import pytest
-from sqlalchemy import create_engine, event, select
+from sqlalchemy import create_engine, event, select, update
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.orm import ORMExecuteState, Session
 from sqlalchemy.pool import StaticPool
+from structlog.testing import capture_logs
 
 import autune_extraction.models  # noqa: F401  (ext_ tables)
-from autune_core import Base, Meeting, TeamMember, User, Utterance
+from autune_core import Base, JiraAccess, Meeting, TeamMember, User, Utterance
 from autune_extraction import jira_sync, service, tasks
 from autune_extraction.config import ExtractionSettings
 from autune_extraction.models import ExtActionItem, ExtEditEvent, ExtExternalRef
-from autune_integrations import PermanentIntegrationError
+from autune_integrations import PermanentIntegrationError, TransientIntegrationError
 from autune_integrations.fakes import FakeJira
 
 TEAM, SITE = "team_1", "cloud-1"
@@ -34,10 +36,16 @@ class ReadableJira(FakeJira):
     """``FakeJira`` with ``status_category``, read from what the test set."""
 
     gone: frozenset[str] = frozenset()
+    refused: dict[str, int] = field(default_factory=dict)
+    on_read: Callable[[str], None] | None = None
 
     def status_category(self, issue_key: str) -> str | None:
         if issue_key in self.gone:
             raise PermanentIntegrationError("gone", upstream_status=404)
+        if issue_key in self.refused:
+            raise PermanentIntegrationError("refused", upstream_status=self.refused[issue_key])
+        if self.on_read is not None:
+            self.on_read(issue_key)
         return self.categories.get(issue_key)
 
 
@@ -103,8 +111,13 @@ def status_of(session: Session, item_id: str) -> str:
     return session.scalar(select(ExtActionItem.status).where(ExtActionItem.id == item_id)) or ""
 
 
-def pull(session: Session, jira: ReadableJira) -> list[str]:
-    return jira_sync.pull_status_changes(session, jira, team_id=TEAM, site=SITE)
+def pull(session: Session, jira: ReadableJira, *, limit: int = jira_sync.PULL_LIMIT) -> list[str]:
+    """One run, every issue in the test's one session."""
+    return [
+        item_id
+        for item_id, key in jira_sync.pull_candidates(session, team_id=TEAM, site=SITE, limit=limit)
+        if jira_sync.read_back(session, jira, item_id=item_id, key=key, site=SITE)
+    ]
 
 
 def test_an_issue_moved_to_done_in_jira_makes_the_item_done(session: Session) -> None:
@@ -147,6 +160,78 @@ def test_when_both_moved_the_board_wins(session: Session) -> None:
 
     assert pull(session, jira) == []
     assert status_of(session, "act_1") == "in_progress"
+    assert jira.moves == [], "nothing is sent from the read-back"
+
+
+def test_a_move_both_sides_made_is_logged_once_not_every_run(session: Session) -> None:
+    """mkkim68's #548 review: with no baseline moved, the same "both moved"
+    came back every ten minutes. Jira's category is the new baseline."""
+    issued(session, "act_1", status="in_progress", synced="new")
+    jira = ReadableJira(categories={"KAN-act_1": "done"})
+
+    with capture_logs() as first:
+        pull(session, jira)
+    with capture_logs() as second:
+        pull(session, jira)
+
+    events = [e["event"] for e in first]
+    assert "extraction_jira_both_moved" in events
+    assert [e["event"] for e in second if e["event"].startswith("extraction_jira")] == []
+    ref = session.get(ExtExternalRef, ("act_1", jira_sync.JIRA))
+    assert ref is not None and ref.synced_category == "done"
+    assert status_of(session, "act_1") == "in_progress"
+
+
+def test_an_issue_jira_refuses_to_show_is_skipped_and_the_rest_read(session: Session) -> None:
+    """mkkim68's #548 review: a 403 raised, and stopped the team's read-back at
+    the same issue every run."""
+    issued(session, "act_hidden")
+    issued(session, "act_1")
+    jira = ReadableJira(categories={"KAN-act_1": "done"}, refused={"KAN-act_hidden": 403})
+
+    assert pull(session, jira) == ["act_1"]
+    assert status_of(session, "act_hidden") == "todo"
+
+
+def test_a_refused_grant_stops_the_run(session: Session) -> None:
+    issued(session, "act_1")
+    jira = ReadableJira(categories={"KAN-act_1": "done"}, refused={"KAN-act_1": 401})
+
+    with pytest.raises(PermanentIntegrationError):
+        pull(session, jira)
+
+
+def test_issues_past_the_limit_are_read_on_later_runs(session: Session) -> None:
+    """Least recently read first: two issues, one per run, both read."""
+    issued(session, "act_old")
+    issued(session, "act_new")
+    jira = ReadableJira(categories={"KAN-act_old": "done", "KAN-act_new": "done"})
+
+    first = pull(session, jira, limit=1)
+    second = pull(session, jira, limit=1)
+
+    assert sorted(first + second) == ["act_new", "act_old"]
+
+
+def test_a_read_overtaken_by_the_outgoing_sync_is_dropped(session: Session) -> None:
+    """Jira is read with no row locked. If the outgoing sync moves the issue
+    meanwhile, what was read predates it -- here "new", while the board's edit
+    to in progress has just reached Jira -- and must not undo that edit."""
+    issued(session, "act_1", status="in_progress", synced="new")
+
+    def outgoing_lands(_key: str) -> None:
+        session.execute(
+            update(ExtExternalRef)
+            .where(ExtExternalRef.action_item_id == "act_1")
+            .values(synced_category="indeterminate")
+        )
+
+    jira = ReadableJira(categories={"KAN-act_1": "new"}, on_read=outgoing_lands)
+
+    assert pull(session, jira) == []
+    assert status_of(session, "act_1") == "in_progress"
+    ref = session.get(ExtExternalRef, ("act_1", jira_sync.JIRA))
+    assert ref is not None and ref.synced_category == "indeterminate"
 
 
 def test_a_ref_with_no_baseline_records_jiras_and_leaves_the_board(session: Session) -> None:
@@ -277,3 +362,47 @@ def test_the_outgoing_sync_records_the_category_it_left_the_issue_in(session: Se
     ref = session.get(ExtExternalRef, ("act_1", jira_sync.JIRA))
     assert ref is not None and ref.synced_category == "indeterminate"
     assert pull(session, jira) == [], "Jira now shows what the board shows"
+
+
+def test_a_failure_part_way_keeps_what_was_read_before_it(
+    session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """One transaction per issue: a 429 on the second issue neither rolls the
+    first back nor keeps it from Notion."""
+    issued(session, "act_first")
+    issued(session, "act_second")
+    session.execute(
+        update(ExtExternalRef)
+        .where(ExtExternalRef.action_item_id == "act_second")
+        .values(pulled_at=datetime(2026, 9, 30, tzinfo=UTC))
+    )
+    session.commit()
+
+    @dataclass
+    class ThrottledJira(ReadableJira):
+        def status_category(self, issue_key: str) -> str | None:
+            if issue_key == "KAN-act_second":
+                raise TransientIntegrationError("slow down", upstream_status=429)
+            return super().status_category(issue_key)
+
+        def close(self) -> None:
+            pass
+
+    jira = ThrottledJira(categories={"KAN-act_first": "done"})
+
+    @contextmanager
+    def scope() -> Iterator[Session]:
+        yield session
+        session.commit()
+
+    notion: list[str] = []
+    monkeypatch.setattr(tasks, "session_scope", scope)
+    monkeypatch.setattr(tasks, "_jira_teams", lambda _s: [TEAM])
+    monkeypatch.setattr(tasks, "jira_access", lambda _t: JiraAccess("token", SITE, "KAN"))
+    monkeypatch.setattr(tasks.JiraClient, "for_cloud", lambda *_a: jira)
+    monkeypatch.setattr(tasks, "sync_action_item", notion.append)
+
+    tasks.pull_jira_changes()
+
+    assert notion == ["act_first"]
+    assert status_of(session, "act_first") == "done"

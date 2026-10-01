@@ -119,15 +119,15 @@ The web app proxies `/api/*` to the API (`next.config.ts`) so the browser sees
 one origin and the `autune_session` cookie stays first-party. `NEXT_PUBLIC_API_URL`
 overrides the client base only if you deliberately want cross-origin calls.
 
-**Signing in, until there is a sign-in.** Routes that take `CurrentUser` refuse
-a request without a bearer token, and S01 is not built. Until it is,
-`@/shared/api/client` attaches one to every call it makes, preferring
-`localStorage["autune.token"]` over `NEXT_PUBLIC_AUTUNE_DEV_TOKEN`. With no
-token the header is omitted and an authorised route answers 403 — which is what
-a screen shows today if you have not set one.
+**Signing in.** Routes that take `CurrentUser` refuse a request with neither a
+session cookie nor a bearer token. Google sign-in (S01) sets the cookie. A tab
+without a session falls back to a developer token: `@/shared/api/client`
+attaches one to every call it makes, preferring `localStorage["autune.token"]`
+over `NEXT_PUBLIC_AUTUNE_DEV_TOKEN`. With neither, the app sends you to
+`/login`.
 
 Where that token comes from, and the two ways to give it to the browser:
-"A token for the browser, until there is a sign-in" below.
+"A developer token for the browser" below.
 
 ### Integrations
 
@@ -164,7 +164,7 @@ Where that token comes from, and the two ways to give it to the browser:
 | `AUTUNE_AUDIO_HF_TOKEN` | A | Hugging Face token for the gated pyannote models |
 | `AUTUNE_AUDIO_DIARIZATION_NUM_SPEAKERS` | A | Exactly how many people spoke, when the room knows (#325). Unset by default: pyannote clusters freely, and a wrong number is worse than none. Deployment-wide for now; the per-meeting field comes with S10. Must be ≥ 1; the settings refuse to load otherwise |
 | `AUTUNE_AUDIO_DIARIZATION_MIN_SPEAKERS` / `…_MAX_SPEAKERS` | A | Bounds instead of an exact count. Ignored when `…_NUM_SPEAKERS` is set. Each must be ≥ 1; the settings refuse to load otherwise |
-| `NEXT_PUBLIC_AUTUNE_DEV_TOKEN` | A (web) | A bearer token for the browser, local only — see "A token for the browser" below |
+| `NEXT_PUBLIC_AUTUNE_DEV_TOKEN` | A (web) | A bearer token for the browser, local only — see "A developer token for the browser" below |
 | `AUTUNE_AUDIO_DIARIZATION_MODEL` | A | Default `pyannote/speaker-diarization-3.1` |
 | `AUTUNE_AUDIO_DIARIZATION_DEVICE` | A | Where pyannote runs: empty (default) follows `AUTUNE_AUDIO_DEVICE`, or `cpu` · `mps` · `cuda`. Separate from `AUTUNE_AUDIO_DEVICE` because that one reaches faster-whisper, which has no Metal support. `mps` is 14.3× faster than CPU on the measured recording for a millisecond-identical result (`modules/audio/HISTORY.md` §2), but is untested under a prefork or threaded Celery worker — module E's SetFit aborts on Metal there (#329). **CUDA is unmeasured**: the millisecond agreement is CPU against MPS, and pyannote sharing VRAM with Whisper `large-v3` has not been tried; `=cpu` is the way out. **Setting it is a promise, leaving it empty is not** — an explicit device torch cannot reach refuses the task rather than running 14× slower in silence, while an empty one that cannot be used takes CPU and logs `diarization_device_unavailable`, because `AUTUNE_AUDIO_DEVICE=cuda` with a CPU torch wheel is a deployment that works today |
 | `AUTUNE_AUDIO_IDENTIFICATION_THRESHOLD` | A | Cosine similarity at or above which a voice profile is offered as a speaker's candidate (0.70, provisional). Never assigns; a person confirms |
@@ -185,9 +185,11 @@ Where that token comes from, and the two ways to give it to the browser:
 | `AUTUNE_EXTRACTION_NLI_ENDPOINT` | B | Our own inference server. Required when `NLI_IMPL=hosted` |
 | `AUTUNE_EXTRACTION_NLI_DEVICE` | B | `cpu` · `cuda`. Default `cpu`. Mirrors `AUTUNE_EXTRACTION_CLASSIFIER_DEVICE` |
 | `AUTUNE_EXTRACTION_CANDIDATE_CONFIDENCE` | B | Below this, an item is a candidate rather than asserted. **Blank by default** — the number comes from the evaluation set (#10), and blank means nothing is a candidate |
-| `AUTUNE_EXTRACTION_RESOLVER_IMPL` | B | `local` · `hosted` · `fake` (#175). **Default `fake`** — unlike the classifier, since the model candidate is not yet confirmed. **No `external`**, same reason as the classifier |
+| `AUTUNE_EXTRACTION_RESOLVER_IMPL` | B | `local` · `hosted` · `llm` · `fake` (#175). **Default `fake`** — unlike the classifier, since the model candidate is not yet confirmed. `llm` is the Gemini API through the same `AUTUNE_EXTRACTION_LLM_*` settings as `CLASSIFIER_IMPL=llm`: opt-in, needs `LLM_API_KEY` and no checkpoint, sends the commitment and the lines around it with the team's names replaced, and a free-tier key is for dummy meetings only. **No `external`**, same reason as the classifier |
 | `AUTUNE_EXTRACTION_RESOLVER_CHECKPOINT` | B | Local model path/hub id, or the hosted model's recorded version. Required for `local`/`hosted` |
 | `AUTUNE_EXTRACTION_RESOLVER_ENDPOINT` | B | Our own inference server. Required when `RESOLVER_IMPL=hosted` |
+| `AUTUNE_EXTRACTION_RESOLVER_MODEL` | B | The model `RESOLVER_IMPL=llm` asks first. Default `gemini-3.5-flash-lite`. Its own setting, apart from `LLM_MODEL` (the classifier's) |
+| `AUTUNE_EXTRACTION_RESOLVER_SECOND_MODEL` | B | Asked once when the first model's answer fails a check (a bracketed clause of its own, the deadline dropped, a runaway length), and instead of it when it stays unavailable. Default `gemini-3.8-flash`; blank turns both off. On a free-tier key it allows 5 requests a minute and 20 a day, so one meeting asks it at most 5 times (`MAX_ESCALATIONS`). Every request is cut to fit the outbound limit before it is sent -- least alike candidates first, then the farthest context -- and a line too long on its own is not sent |
 | `AUTUNE_EXTRACTION_RESOLVER_DEVICE` | B | `cpu` · `cuda`. Default `cpu`. Mirrors `AUTUNE_EXTRACTION_CLASSIFIER_DEVICE` |
 | `AUTUNE_EXTRACTION_EMBEDDER_IMPL` | B | `local` · `fake` (#175, #366). **No `hosted` yet.** Default `fake`, same reason as `RESOLVER_IMPL` |
 | `AUTUNE_EXTRACTION_EMBEDDER_CHECKPOINT` | B | Default `nlpai-lab/KURE-v1` — module D's already-shipped choice, not a candidate awaiting evaluation |
@@ -285,8 +287,12 @@ often spaced ("박 재경", "재경 박"), so a Hangul name of two words is also
 joined and swapped ("박재경", "재경박") and by its given name ("재경") — the word
 of two syllables or more beside a one-syllable surname; with two longer words
 only the joined forms. Whichever form matched, the same person gets the same number
-within one meeting's requests, never stored and never mapped back. Only the request changes; the
-database, the reference resolver and Notion keep the text as it was.
+within one meeting's requests. The classifier's placeholders are never stored and
+never mapped back: it answers with labels only, and the database and Notion keep
+the text as it was. The `llm` reference resolver is the one that maps back -- its
+answer is a sentence stored as a description, so each `[사람N]` is restored to the
+name it stood for, and an answer holding a placeholder that was never sent is
+dropped for the raw quote.
 
 What still goes out, and is the exposure #392 and #92 ask about:
 
@@ -294,7 +300,7 @@ What still goes out, and is the exposure #392 and #92 ask about:
   names and names the speech recogniser misheard;
 - a roster name that is also an ordinary word ("하늘", "보람") is replaced where
   it is only a word — the cost is classification accuracy, not data;
-- the reference resolver's own LLM calls (#366), which this does not cover.
+- the reference resolver's lines when `RESOLVER_IMPL=llm`, which goes through the same name replacement and the same outbound guard but is an additional request per commitment — a name not on the roster leaves in them too; the `local` and `hosted` resolvers send nothing to a provider. **It sends more than the smallest window**: the four lines before a commitment (or before a decision's first turn) and two after, *and* up to eight lines from anywhere else in the meeting that share its words, so that the summary can draw on what was said far from it. Only consenting speakers' lines, masked, without speaker or id; the ids stay on our side and come back as line numbers. A team that wants only the smallest window keeps `RESOLVER_IMPL=fake`.
 
 `hosted` points at an inference server we run. It still goes through
 `autune_integrations.HttpClient` so the outbound guard reads the request body:
@@ -512,10 +518,12 @@ with `Library not loaded: @rpath/libavutil.*`. Passing a waveform already in
 memory works without FFmpeg, but uploads arrive as mp3, wav and m4a, so decoding
 them needs it either way.
 
-## A token for the browser, until there is a sign-in
+## A developer token for the browser
 
-Every route that matters takes `CurrentUser`, and screen S01 does not exist yet
-(#156, #189). On a developer's machine, module A's dev router issues a token:
+Every route that matters takes `CurrentUser`. Signing in with Google (S01) sets
+a session cookie and needs nothing below. Without Google credentials configured,
+or to act as several users without several Google accounts, module A's dev
+router issues a token:
 
 ```bash
 curl -s -X POST localhost:8000/api/audio/dev/token \
@@ -539,6 +547,13 @@ Give the token to the browser one of two ways:
 
 Tokens last seven days (`autune_core.auth.DEFAULT_TTL`). The `team_id` in the
 response is what `POST /api/audio/meetings` needs.
+
+**A session wins over the dev token (#440).** Once the app finds a session
+cookie (`/api/auth/me`), it stops attaching the dev token, so every call runs as
+the signed-in person. To act as the dev-token user, use a tab with no session:
+a private window, or delete the `autune_session` cookie. Calls made
+outside the app (curl, Swagger) still send whatever `Authorization` header they
+are given, and the API reads that before the cookie.
 
 ## Local privacy hygiene
 

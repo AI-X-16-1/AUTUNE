@@ -185,6 +185,19 @@ class ExtractionSettings(BaseSettings):
     resolver_endpoint: str = ""
     """Our own inference server, required when ``resolver_impl=hosted``."""
 
+    resolver_model: str = "gemini-3.5-flash-lite"
+    """The model ``resolver_impl=llm`` asks first. Its own setting, not
+    ``llm_model``: the classifier wants the model that finds every commitment,
+    and this wants the cheap one -- a rewrite of one sentence -- with a second
+    model behind it."""
+
+    resolver_second_model: str = "gemini-3.8-flash"
+    """Asked once for a request when ``resolver_model``'s answer fails a check
+    (a clause of its own, the deadline dropped, a runaway length), and instead of
+    it when it stays unavailable. Blank turns both off: a failed answer is then
+    the raw quote. On a free-tier key this model allows 5 requests a minute and
+    20 a day, so it is meant for the few answers that need it."""
+
     resolver_device: str = "cpu"
     """``cpu`` or ``cuda``, for ``resolver_impl=local``. Mirrors
     ``classifier_device``."""

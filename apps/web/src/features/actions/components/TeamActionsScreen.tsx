@@ -6,6 +6,7 @@ import { Tabs } from "@/shared/ui";
 
 import { ActionBoard } from "./ActionBoard";
 import { ActionDetailDrawer } from "./ActionDetailDrawer";
+import { isOverdue, localToday } from "../dates";
 import { useActionItems } from "../hooks/useActionItems";
 import type { ActionItemRead } from "../types";
 
@@ -35,12 +36,10 @@ export function TeamActionsScreen({ me }: { me: string | null }) {
   const [tab, setTab] = useState<Tab>("all");
   const [selectedId, setSelectedId] = useState<string | undefined>(undefined);
 
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localToday();
   const lists = useMemo(() => {
     const mine = me === null ? [] : items.filter((item) => item.assignee_id === me);
-    const overdue = items.filter(
-      (item) => item.status !== "done" && item.due_date != null && item.due_date < today,
-    );
+    const overdue = items.filter((item) => isOverdue(item, today));
     return { all: items, mine, overdue } satisfies Record<Tab, ActionItemRead[]>;
   }, [items, me, today]);
 

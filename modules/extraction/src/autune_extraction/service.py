@@ -52,15 +52,23 @@ from .confirmations import (
     ConfirmationResponse,
     build_confirmation_dm,
 )
-from .decisions import DEFAULT_MAX_GAP, ClassifiedUtterance, decision_id, group_decisions
+from .decisions import (
+    DEFAULT_MAX_GAP,
+    ClassifiedUtterance,
+    decision_id,
+    group_decisions,
+    needs_write_up,
+)
 from .edit_cost import EditCost
 from .models import (
     ExtActionItem,
+    ExtActionItemRelated,
     ExtActionItemSource,
     ExtClassification,
     ExtConfirmation,
     ExtDecision,
     ExtDecisionRef,
+    ExtDecisionRelated,
     ExtDecisionReview,
     ExtDecisionSource,
     ExtEditEvent,
@@ -69,13 +77,22 @@ from .models import (
     ExtMeetingNote,
 )
 from .noun_form import tidy
-from .pipeline.base import Classifier, NliModel, ReferenceResolver, ResolutionRequest
+from .pipeline.base import (
+    Classifier,
+    NliModel,
+    ReferenceResolver,
+    Resolution,
+    ResolutionRequest,
+)
+from .pipeline.related import related_ids
 from .pipeline.resolver import MAX_CONTEXT_AFTER, MAX_CONTEXT_UTTERANCES
 from .schemas import (
     ActionItemCreate,
     ActionItemDetail,
     ActionItemRead,
     ActionItemUpdate,
+    CarriedOver,
+    CarriedOverItem,
     DecisionCreate,
     DecisionDetail,
     DecisionReviewUpdate,
@@ -91,7 +108,7 @@ from .schemas import (
     SourceUtterance,
     SummaryDecision,
 )
-from .slots import assignee_of, meeting_day, parse_due
+from .slots import Assignee, assignee_of, meeting_day, parse_due
 
 log = get_logger(__name__)
 
@@ -235,7 +252,14 @@ def apply_confirmation_response(response: ConfirmationResponse) -> None:
     outside any request or task that owns one.
     """
     with session_scope() as session:
-        resolve_confirmation(session, response)
+        answered = resolve_confirmation(session, response)
+    if answered is not None and response.is_commitment:
+        # After the commit, so the job finds the draft. Imported here: tasks
+        # imports this module. The summary is written only now, for an answer
+        # of "약속입니다" -- never for the DM (decided with the user, 2026-10-01).
+        from . import tasks
+
+        tasks.summarise_confirmed_draft.delay(response.utterance_id)
 
 
 def resolve_confirmation(
@@ -295,7 +319,7 @@ def resolve_confirmation(
 
 
 def draft_confirmed_commitment(
-    session: Session, confirmation: ExtConfirmation
+    session: Session, confirmation: ExtConfirmation, resolution: Resolution | None = None
 ) -> ExtActionItem | None:
     """The draft item for an agreement its speaker confirmed was a commitment.
 
@@ -315,6 +339,10 @@ def draft_confirmed_commitment(
     Returns ``None`` -- and writes nothing -- when the utterance is gone, blank,
     or its speaker did not consent to analysis (privacy.md section 5: excluded
     speech is not stored, so there is nothing to quote and no one to assign).
+
+    ``resolution`` is a summary already written for it -- a rerun has one
+    (``confirmed_summaries``). Without one the description is the line, tidied,
+    and ``summarise_confirmed_draft`` replaces it a moment later.
     """
     existing = session.scalar(
         select(ExtActionItem)
@@ -341,11 +369,11 @@ def draft_confirmed_commitment(
     known = {user_id} if user_id is not None and session.get(User, user_id) is not None else set()
     assignee = assignee_of(user_id, utterance.speaker_label, known=known)
     due = parse_due(utterance.text, day)
-    description = tidy(utterance.text)
+    written = resolution.text if resolution is not None else utterance.text
     item = ExtActionItem(
         meeting_id=confirmation.meeting_id,
-        description=description,
-        description_resolved=False,
+        description=tidy(written),
+        description_resolved=written != utterance.text,
         assignee_id=assignee.user_id,
         assignee_label=assignee.label,
         due_date=due.date if due is not None else None,
@@ -354,6 +382,7 @@ def draft_confirmed_commitment(
         confidence=1.0,
         origin="model",
         sources=[ExtActionItemSource(utterance_id=confirmation.utterance_id)],
+        related=_cited(session, confirmation.meeting_id, confirmation.utterance_id, resolution),
     )
     session.add(item)
     session.flush()
@@ -363,6 +392,112 @@ def draft_confirmed_commitment(
         utterance_id=confirmation.utterance_id,
     )
     return item
+
+
+def _untouched_drafts(session: Session, utterance_id: str) -> list[ExtActionItem]:
+    """The draft a speaker's answer made for this utterance, while nobody has
+    touched it: still in *needs confirmation*, no edit recorded against it."""
+    return list(
+        session.scalars(
+            select(ExtActionItem)
+            .join(ExtActionItemSource, ExtActionItemSource.action_item_id == ExtActionItem.id)
+            .where(
+                ExtActionItemSource.utterance_id == utterance_id,
+                ExtActionItem.status == ActionStatus.NEEDS_CONFIRMATION.value,
+                ExtActionItem.origin == "model",
+                ~select(ExtEditEvent.id)
+                .where(ExtEditEvent.action_item_id == ExtActionItem.id)
+                .exists(),
+            )
+        ).all()
+    )
+
+
+def _cited(
+    session: Session, meeting_id: str, utterance_id: str, resolution: Resolution | None
+) -> list[ExtActionItemRelated]:
+    """The lines a summary says it used, as rows for the drawer -- only this
+    meeting's consenting ones, never the utterance itself."""
+    if resolution is None or not resolution.used:
+        return []
+    citable = consented_utterance_ids(session, meeting_id)
+    return [
+        ExtActionItemRelated(utterance_id=u)
+        for u in dict.fromkeys(resolution.used)
+        if u in citable and u != utterance_id
+    ]
+
+
+def confirmed_draft_window(session: Session, utterance_id: str) -> list[ClassifiedUtterance] | None:
+    """What ``summarise_confirmed_draft`` writes a summary from: the meeting,
+    with this utterance as the one commitment (``chat_draft_window``). ``None``
+    when there is nothing to summarise -- the answer is no longer "commitment",
+    or the draft is gone or a person has touched it.
+    """
+    row = session.get(ExtConfirmation, utterance_id)
+    if row is None or row.resolved_kind != UtteranceKind.COMMITMENT.value:
+        return None
+    if not _untouched_drafts(session, utterance_id):
+        return None
+    return chat_draft_window(session, row.meeting_id, utterance_id)
+
+
+def apply_confirmed_summary(session: Session, utterance_id: str, resolution: Resolution) -> bool:
+    """Put the summary on the draft a speaker's "약속입니다" made, if that is
+    still the answer and the draft is still untouched.
+
+    Decided with the user (2026-10-01): the DM shows the speaker's own line, and
+    the summary appears only once they confirm -- on the board, as the draft's
+    description, the line beneath it. The confirmation row is locked first, the
+    order ``resolve_confirmation`` and ``build_action_items`` take, so a changed
+    answer or a rerun in between is seen. Writes no edit event: a person did not
+    correct anything. Returns whether it was applied.
+    """
+    row = session.get(ExtConfirmation, utterance_id, with_for_update=True)
+    if row is None or row.resolved_kind != UtteranceKind.COMMITMENT.value:
+        return False
+    drafts = _untouched_drafts(session, utterance_id)
+    if not drafts:
+        return False
+    said = session.get(Utterance, utterance_id)
+    for draft in drafts:
+        draft.description = tidy(resolution.text)
+        draft.description_resolved = said is not None and resolution.text != said.text
+        draft.related = _cited(session, draft.meeting_id, utterance_id, resolution)
+    session.flush()
+    return True
+
+
+def confirmed_commitment_ids(session: Session, meeting_id: str) -> set[str]:
+    """The meeting's ambiguous agreements whose speakers answered "commitment"."""
+    return set(
+        session.scalars(
+            select(ExtConfirmation.utterance_id).where(
+                ExtConfirmation.meeting_id == meeting_id,
+                ExtConfirmation.resolved_kind == UtteranceKind.COMMITMENT.value,
+            )
+        )
+    )
+
+
+def confirmed_summaries(
+    resolver: ReferenceResolver,
+    classified: Sequence[ClassifiedUtterance],
+    confirmed: Collection[str],
+) -> dict[str, Resolution]:
+    """Summaries for the agreements a meeting's speakers confirmed as
+    commitments (``confirmed_commitment_ids``), for a rerun: it rebuilds their
+    drafts (``draft_confirmed_commitment``), and each keeps a summary rather
+    than falling back to the line. Only the confirmed ones are summarised --
+    most agreements never are. Model inference: call it outside a session.
+    """
+    if not confirmed:
+        return {}
+    marked = [
+        replace(u, kind=UtteranceKind.AMBIGUOUS if u.id in confirmed and u.text else None)
+        for u in classified
+    ]
+    return resolve_commitment_summaries(resolver, marked, kind=UtteranceKind.AMBIGUOUS)
 
 
 def withdraw_confirmed_draft(session: Session, confirmation: ExtConfirmation) -> int:
@@ -377,18 +512,7 @@ def withdraw_confirmed_draft(session: Session, confirmation: ExtConfirmation) ->
     Writes no ``ext_edit_events`` row: that table counts a *person's* corrections
     (ADR 0006), and this is neither. Returns how many items were removed.
     """
-    drafts = session.scalars(
-        select(ExtActionItem)
-        .join(ExtActionItemSource, ExtActionItemSource.action_item_id == ExtActionItem.id)
-        .where(
-            ExtActionItemSource.utterance_id == confirmation.utterance_id,
-            ExtActionItem.status == ActionStatus.NEEDS_CONFIRMATION.value,
-            ExtActionItem.origin == "model",
-            ~select(ExtEditEvent.id)
-            .where(ExtEditEvent.action_item_id == ExtActionItem.id)
-            .exists(),
-        )
-    ).all()
+    drafts = _untouched_drafts(session, confirmation.utterance_id)
     for draft in drafts:
         session.delete(draft)
     if drafts:
@@ -424,7 +548,13 @@ def ambiguous_agreements_for_meeting(
     ]
 
 
-def create_action_item(session: Session, payload: ActionItemCreate) -> ExtActionItem:
+AGENT_ORIGINS = ("chat", "followup")
+"""``ExtActionItem.origin`` values for items the agent layer adds (#561)."""
+
+
+def create_action_item(
+    session: Session, payload: ActionItemCreate, *, origin: str = "user"
+) -> ExtActionItem:
     """Add an item the model missed.
 
     ``confidence`` is 1.0 and ``origin`` is ``user``: a person typing an item is
@@ -433,6 +563,11 @@ def create_action_item(session: Session, payload: ActionItemCreate) -> ExtAction
     Counted as an edit. An item the model missed costs the user more than one it
     got wrong -- they have to notice the absence, which is the failure recall
     makes likely and the one editing cannot fix by itself.
+
+    ``origin`` is one of ``AGENT_ORIGINS`` when the agent layer adds the item
+    after a person approved it (``tools``). That is not a person finding what
+    the model missed, so it records no ``created`` event; a later edit or
+    deletion is counted like any other.
 
     **Every foreign key on this row is checked before anything is written.** An
     unknown meeting is a 404 and a source that is not one of *this* meeting's
@@ -449,6 +584,8 @@ def create_action_item(session: Session, payload: ActionItemCreate) -> ExtAction
     otherwise reach ``session.flush()`` as a 500 rather than a 422 naming the
     field.
     """
+    if origin != "user" and origin not in AGENT_ORIGINS:
+        raise ValueError(f"not an origin create_action_item makes: {origin!r}")
     if session.get(Meeting, payload.meeting_id) is None:
         raise NotFoundError("meeting", payload.meeting_id)
     if payload.assignee_id is not None and session.get(User, payload.assignee_id) is None:
@@ -475,7 +612,7 @@ def create_action_item(session: Session, payload: ActionItemCreate) -> ExtAction
         due_date=payload.due_date,
         status=ActionStatus.NEEDS_CONFIRMATION.value,
         confidence=1.0,
-        origin="user",
+        origin=origin,
     )
     item.sources = [
         ExtActionItemSource(utterance_id=utterance_id)
@@ -484,8 +621,123 @@ def create_action_item(session: Session, payload: ActionItemCreate) -> ExtAction
     session.add(item)
     session.flush()
 
-    _record_edit(session, meeting_id=item.meeting_id, action_item_id=item.id, kind="created")
+    if origin == "user":
+        _record_edit(session, meeting_id=item.meeting_id, action_item_id=item.id, kind="created")
     return item
+
+
+def chat_draft_window(
+    session: Session, meeting_id: str, utterance_id: str
+) -> list[ClassifiedUtterance] | None:
+    """The meeting as ``resolve_commitment_summaries`` reads it, with
+    ``utterance_id`` as the one commitment -- for an item the chat drafts from
+    that utterance (``tools.add_action_item``).
+
+    ``None`` when the utterance is not this meeting's, or its speaker did not
+    consent: an item cannot be drafted from speech that is not analysed at all
+    (privacy.md section 5). Every other non-consenting line is blanked, exactly
+    as ``classify_utterances`` blanks it, so the summary's window and its
+    candidates skip it the same way the pipeline's do.
+    """
+    consented = consented_utterance_ids(session, meeting_id)
+    if utterance_id not in consented:
+        return None
+    transcript = stored_transcript(session, meeting_id)
+    if not any(u.id == utterance_id for u in transcript):
+        return None
+    return [
+        ClassifiedUtterance(
+            id=u.id,
+            kind=UtteranceKind.COMMITMENT if u.id == utterance_id else None,
+            confidence=1.0,
+            text=u.text if u.id in consented else "",
+            speaker=u.speaker,
+        )
+        for u in transcript
+    ]
+
+
+def create_chat_item(
+    session: Session,
+    *,
+    meeting_id: str,
+    utterance_id: str,
+    resolution: Resolution,
+    assignee_id: str | None = None,
+    due_date: date | None = None,
+) -> ExtActionItem:
+    """An item the chat drafted from one utterance, after its summary was
+    written (``chat_draft_window``, ``resolve_commitment_summaries``).
+
+    Built the way ``build_action_items`` builds a model item -- the summary
+    tidied into the description, the utterance as the source, the lines the
+    summary cited kept beside it, the speaker and the first date phrase unless
+    the chat named an assignee or a date -- but ``origin`` is ``chat``: a rerun
+    leaves it alone, and edit cost does not count it as one the model missed (no
+    ``created`` event). It waits for confirmation; until then a person sees the
+    original utterances under the summary (``originals_hidden``).
+    """
+    said = session.get(Utterance, utterance_id)
+    if said is None or said.meeting_id != meeting_id:
+        raise ValidationError(
+            "utterance_id must be an utterance of this meeting", field="utterance_id"
+        )
+    if assignee_id is not None and session.get(User, assignee_id) is None:
+        raise ValidationError("assignee_id does not name an existing user", field="assignee_id")
+    meeting = session.get(Meeting, meeting_id)
+    if assignee_id is None:
+        speaker_id = (
+            session.scalar(select(Participant.user_id).where(Participant.id == said.participant_id))
+            if said.participant_id
+            else None
+        )
+        known = {speaker_id} if speaker_id and session.get(User, speaker_id) else set()
+        assignee = assignee_of(speaker_id, said.speaker_label, known=known)
+    else:
+        assignee = Assignee(user_id=assignee_id, label=None)
+    due = (
+        None
+        if due_date is not None
+        else parse_due(said.text, meeting_day(meeting.started_at if meeting else None))
+    )
+    # Only lines the model could have been shown: this meeting's, from a
+    # consenting speaker. A model that names any other id is not believed.
+    citable = consented_utterance_ids(session, meeting_id) if resolution.used else set()
+    item = ExtActionItem(
+        meeting_id=meeting_id,
+        description=tidy(resolution.text),
+        description_resolved=resolution.text != said.text,
+        assignee_id=assignee.user_id,
+        assignee_label=assignee.label,
+        due_date=due_date if due_date is not None else (due.date if due else None),
+        due_text=None if due_date is not None else (due.text if due else None),
+        status=ActionStatus.NEEDS_CONFIRMATION.value,
+        confidence=1.0,
+        origin="chat",
+        sources=[ExtActionItemSource(utterance_id=utterance_id)],
+        related=[
+            ExtActionItemRelated(utterance_id=u)
+            for u in dict.fromkeys(resolution.used)
+            if u in citable and u != utterance_id
+        ],
+    )
+    session.add(item)
+    session.flush()
+    return item
+
+
+def originals_hidden(item: ExtActionItem) -> bool:
+    """Whether the screens and the agent's tools leave out the utterances an
+    item came from.
+
+    A chat-drafted item shows them only while it waits for confirmation --
+    decided with the user, 2026-10-01: a person checks the summary against them,
+    and once it is confirmed the summary alone stands. Hidden, not deleted: the
+    rows stay, so D and E still count the item's source and the meeting's
+    deletion still takes them with it. What leaves for Notion, Jira or a
+    calendar was only ever the summary.
+    """
+    return item.origin == "chat" and item.status != ActionStatus.NEEDS_CONFIRMATION.value
 
 
 def read_model(
@@ -536,7 +788,8 @@ def read_model(
         and item.confidence < threshold
         and item.status == ActionStatus.NEEDS_CONFIRMATION.value
     )
-    source_ids = live_source_ids(item)
+    hidden = originals_hidden(item)
+    source_ids = [] if hidden else live_source_ids(item)
     return ActionItemRead(
         id=item.id,
         meeting_id=item.meeting_id,
@@ -551,7 +804,7 @@ def read_model(
         confidence=item.confidence,
         origin=item.origin,
         source_utterance_ids=source_ids,
-        deleted_source_count=len(item.sources) - len(source_ids),
+        deleted_source_count=0 if hidden else len(item.sources) - len(source_ids),
         needs_reassignment=assignee_departed and item.status in _OPEN_STATUSES,
         is_candidate=is_candidate,
         summary=summary,
@@ -750,6 +1003,80 @@ def list_action_items(
     ]
 
 
+CARRIED_OVER_SHOWN = 10
+"""How many carried-over items the popup lists. It counts all of them; past
+ten, a list stops being read and the board is the place to work through it."""
+
+
+def carried_over(session: Session, meeting_id: str, *, today: date | None = None) -> CarriedOver:
+    """The open items earlier meetings of this meeting's team left (WBS 4.8).
+
+    Open is *to do* or *in progress*: confirmed work nobody has finished. An
+    item still in *needs confirmation* is a draft of its own meeting's review,
+    and a finished one is not carried anywhere. "Earlier" is by when the
+    meeting was held, or uploaded when nobody recorded a start -- so reviewing
+    an old meeting today does not show it the work of the weeks after it.
+
+    Reads only what the board already shows the same team: descriptions,
+    assignees and dates, never an utterance.
+    """
+    meeting = session.get(Meeting, meeting_id)
+    if meeting is None:
+        raise NotFoundError("meeting", meeting_id)
+    held = func.coalesce(Meeting.started_at, Meeting.created_at)
+    this_held = meeting.started_at or meeting.created_at
+    earlier = {
+        row.id: row
+        for row in session.scalars(
+            select(Meeting).where(
+                Meeting.team_id == meeting.team_id, Meeting.id != meeting_id, held < this_held
+            )
+        )
+    }
+    if not earlier:
+        return CarriedOver(open=0, overdue=0, items=[])
+
+    day = today or date.today()
+    rows = list(
+        session.scalars(
+            select(ExtActionItem)
+            .options(selectinload(ExtActionItem.sources))
+            .where(
+                ExtActionItem.meeting_id.in_(earlier),
+                ExtActionItem.status.in_([ActionStatus.TODO.value, ActionStatus.IN_PROGRESS.value]),
+            )
+        )
+    )
+
+    def late(item: ExtActionItem) -> bool:
+        return item.due_date is not None and item.due_date < day
+
+    rows.sort(key=lambda i: (not late(i), i.due_date or date.max, i.created_at, i.id))
+    shown = rows[:CARRIED_OVER_SHOWN]
+    names = assignee_names(session, shown)
+    departed = departed_assignees(session, shown)
+    summaries = action_item_summaries(session, shown)
+    refs = action_item_external_refs(session, [item.id for item in shown])
+    return CarriedOver(
+        open=len(rows),
+        overdue=sum(1 for item in rows if late(item)),
+        items=[
+            CarriedOverItem(
+                **read_model(
+                    item,
+                    assignee_name=names.get(item.assignee_id) if item.assignee_id else None,
+                    summary=summaries.get(item.id),
+                    sync_refs=refs.get(item.id, []),
+                    assignee_departed=item.id in departed,
+                ).model_dump(),
+                meeting_title=earlier[item.meeting_id].title,
+                meeting_started_at=earlier[item.meeting_id].started_at,
+            )
+            for item in shown
+        ],
+    )
+
+
 SHOWN_CONTEXT = 3
 """How many lines before a source a drawer shows. Fewer than the resolver reads
 (``MAX_CONTEXT_UTTERANCES``): that one needs a window a model can resolve
@@ -795,6 +1122,27 @@ def context_before(session: Session, source_ids: Sequence[str]) -> list[SourceUt
     return [SourceUtterance(id=uid, text=text) for uid, text in reversed(rows)]
 
 
+def related_utterances(session: Session, item_id: str) -> list[SourceUtterance]:
+    """The lines an item's summary says it was written from, in spoken order.
+
+    Only consenting speakers' and non-blank lines, the filter every read of the
+    transcript draws: consent can be withdrawn after the summary was written, and
+    the line must disappear from the screen when it does.
+    """
+    rows = session.execute(
+        select(Utterance.id, Utterance.text)
+        .join(ExtActionItemRelated, ExtActionItemRelated.utterance_id == Utterance.id)
+        .join(Participant, Participant.id == Utterance.participant_id)
+        .where(
+            ExtActionItemRelated.action_item_id == item_id,
+            Participant.consented.is_(True),
+            func.length(func.trim(Utterance.text)) > 0,
+        )
+        .order_by(Utterance.start_sec, Utterance.id)
+    ).all()
+    return [SourceUtterance(id=uid, text=text) for uid, text in rows]
+
+
 def read_detail(session: Session, item: ExtActionItem) -> ActionItemDetail:
     """One item with the text of the utterances it was drawn from.
 
@@ -809,12 +1157,16 @@ def read_detail(session: Session, item: ExtActionItem) -> ActionItemDetail:
     summary = action_item_summaries(session, [item]).get(item.id)
     refs = action_item_external_refs(session, [item.id]).get(item.id, [])
     departed = item.id in departed_assignees(session, [item])
+    hidden = originals_hidden(item)
     return ActionItemDetail(
         **read_model(
             item, assignee_name=name, summary=summary, sync_refs=refs, assignee_departed=departed
         ).model_dump(),
-        sources=source_utterances(session, item.id),
-        context=context_before(session, [s.utterance_id for s in item.sources if s.utterance_id]),
+        sources=[] if hidden else source_utterances(session, item.id),
+        context=[]
+        if hidden
+        else context_before(session, [s.utterance_id for s in item.sources if s.utterance_id]),
+        related=[] if hidden else related_utterances(session, item.id),
         history=edit_history(session, item.id),
     )
 
@@ -1070,8 +1422,16 @@ def build_decisions(
     meeting_id: str,
     utterances: Sequence[ClassifiedUtterance],
     max_gap: int = DEFAULT_MAX_GAP,
+    summaries: Mapping[str, Resolution] | None = None,
 ) -> list[ExtDecision]:
     """Rebuild this meeting's decisions from its classified utterances.
+
+    ``summaries`` maps a ``dec_`` id to a model's summary of it
+    (``resolve_decision_summaries``, run before any session): its text, tidied and
+    followed by the owner and deadline, replaces the line a person sees and that
+    leaves, and the lines it says it used are stored in ``ext_decision_related``.
+    **``original_statement`` is always the assembled sentence, never the summary**
+    -- it is what module D is sent.
 
     ``utterances`` is every utterance of the meeting in ``start_sec`` order; see
     ``group_decisions`` for why the non-decision ones have to be there.
@@ -1130,6 +1490,20 @@ def build_decisions(
         decision_id(meeting_id, group.source_utterance_ids): group
         for group in group_decisions(utterances, max_gap=max_gap, day=day)
     }
+    summaries = summaries or {}
+    heard = {u.id for u in utterances}
+    shown: dict[str, str] = {}
+    cited: dict[str, list[str]] = {}
+    for id_, group in fresh.items():
+        summary = summaries.get(id_)
+        line = group.statement
+        if summary is not None and summary.text.strip() and summary.text != group.core_text:
+            head = tidy(summary.text.strip())
+            line = f"{head} ({group.suffix})" if group.suffix else head
+            cited[id_] = [
+                u for u in summary.used if u in heard and u not in group.source_utterance_ids
+            ]
+        shown[id_] = line
 
     # Only the model's decisions are rebuilt. One a person added is not derived
     # from labels, so no rerun can recompute it (#246).
@@ -1141,6 +1515,7 @@ def build_decisions(
         session.execute(delete(ExtDecisionReview).where(ExtDecisionReview.decision_id.in_(gone)))
         session.execute(delete(ExtDecisionRef).where(ExtDecisionRef.decision_id.in_(gone)))
         session.execute(delete(ExtDecisionSource).where(ExtDecisionSource.decision_id.in_(gone)))
+        session.execute(delete(ExtDecisionRelated).where(ExtDecisionRelated.decision_id.in_(gone)))
         session.execute(delete(ExtDecision).where(ExtDecision.id.in_(gone)))
 
     if fresh:
@@ -1149,7 +1524,8 @@ def build_decisions(
                 {
                     "id": id_,
                     "meeting_id": meeting_id,
-                    "statement": group.statement,
+                    "statement": shown[id_],
+                    "original_statement": group.original_statement or group.statement,
                     "confidence": group.confidence,
                     "origin": "model",
                 }
@@ -1161,6 +1537,7 @@ def build_decisions(
                 index_elements=["id"],
                 set_={
                     "statement": upsert.excluded.statement,
+                    "original_statement": upsert.excluded.original_statement,
                     "confidence": upsert.excluded.confidence,
                 },
             )
@@ -1183,6 +1560,21 @@ def build_decisions(
                         for position, utterance_id in enumerate(fresh[id_].source_utterance_ids)
                     ]
                 )
+                .on_conflict_do_nothing(index_elements=["decision_id", "utterance_id"])
+            )
+
+        # The lines a summary used can differ between two runs over the same
+        # sources, so they are replaced, not kept: the summary they belong to was.
+        session.execute(delete(ExtDecisionRelated).where(ExtDecisionRelated.decision_id.in_(fresh)))
+        related_rows = [
+            {"decision_id": id_, "utterance_id": utterance_id}
+            for id_, lines in cited.items()
+            for utterance_id in lines
+        ]
+        if related_rows:
+            session.execute(
+                _insert_if_absent_into(session, ExtDecisionRelated)
+                .values(related_rows)
                 .on_conflict_do_nothing(index_elements=["decision_id", "utterance_id"])
             )
 
@@ -1247,7 +1639,7 @@ def decisions_for_meeting(session: Session, meeting_id: str) -> list[Decision]:
     return [
         Decision(
             id=row.id,
-            statement=_confirmed_statement(row, reviews.get(row.id)),
+            statement=_lineage_statement(row, reviews.get(row.id)),
             source_utterance_ids=[
                 source.utterance_id for source in sorted(row.sources, key=lambda s: s.position)
             ],
@@ -1256,6 +1648,22 @@ def decisions_for_meeting(session: Session, meeting_id: str) -> list[Decision]:
         for row in rows
         if (review := reviews.get(row.id)) is None or review.status != "rejected"
     ]
+
+
+def _lineage_statement(decision: ExtDecision, review: ExtDecisionReview | None) -> str:
+    """What module D is sent: the person's wording if they reworded it, otherwise
+    the sentence *as assembled from what was said* -- not the tidied or summarised
+    line the screen shows.
+
+    D embeds this and compares it with earlier statements against a threshold
+    tuned on that shape (``context.config``); a rewrite made to read well on a
+    screen would move every score. A person's own wording is deliberate and is
+    sent as they wrote it. A decision they typed has no original and falls back to
+    its statement.
+    """
+    if review is not None and review.statement:
+        return review.statement
+    return decision.original_statement or decision.statement
 
 
 def _confirmed_statement(decision: ExtDecision, review: ExtDecisionReview | None) -> str:
@@ -1823,24 +2231,140 @@ def resolve_commitment_references(
     quote rather than failing the meeting) is what makes a generated sentence an
     acceptable draft here rather than a silent record.
     """
-    commitments = [u for u in classified if u.kind is UtteranceKind.COMMITMENT]
+    return {
+        utterance_id: resolution.text
+        for utterance_id, resolution in resolve_commitment_summaries(resolver, classified).items()
+    }
+
+
+def resolve_commitment_summaries(
+    resolver: ReferenceResolver,
+    classified: Sequence[ClassifiedUtterance],
+    *,
+    kind: UtteranceKind = UtteranceKind.COMMITMENT,
+) -> dict[str, Resolution]:
+    """``resolve_commitment_references`` with the lines each sentence was written from.
+
+    The same window as before -- ``MAX_CONTEXT_UTTERANCES`` lines before a
+    commitment and ``MAX_CONTEXT_AFTER`` after, blank turns dropped -- and, for a
+    resolver that can say which lines it used (``resolve_with_evidence``), up to
+    ``related.MAX_RELATED`` more from the rest of the meeting that are about the
+    same thing. Those are candidates the model may cite, never lines anyone is
+    shown until it does. A resolver that cannot cite is not handed them: the
+    retrieval is skipped, not run for nothing.
+
+    Read from ``classified`` for the reason ``resolve_commitment_references``
+    gives: it is already ordered, and an excluded speaker's turn is already
+    blank. Both the window and the candidates come out of the same filtered
+    sequence, so a line from a speaker who did not consent is in neither.
+
+    ``kind`` names which utterances are summarised; ``confirmed_summaries`` marks
+    the agreements their speakers confirmed and passes that mark.
+    """
+    commitments = [u for u in classified if u.kind is kind]
     if not commitments:
         return {}
 
+    cites = callable(getattr(resolver, "resolve_with_evidence", None))
+    lines = [(u.id, u.text) for u in classified if u.text]
+    said = dict(lines)
     position = {utterance.id: index for index, utterance in enumerate(classified)}
     requests = []
     for utterance in commitments:
         index = position[utterance.id]
         start = max(0, index - MAX_CONTEXT_UTTERANCES)
-        context = tuple(u.text for u in classified[start:index] if u.text)
+        before = [u for u in classified[start:index] if u.text]
         after_end = index + 1 + MAX_CONTEXT_AFTER
-        context_after = tuple(u.text for u in classified[index + 1 : after_end] if u.text)
+        after = [u for u in classified[index + 1 : after_end] if u.text]
+        offered = (
+            related_ids(utterance.id, lines, exclude={u.id for u in (*before, *after)})
+            if cites
+            else []
+        )
         requests.append(
-            ResolutionRequest(target=utterance.text, context=context, context_after=context_after)
+            ResolutionRequest(
+                target=utterance.text,
+                context=tuple(u.text for u in before),
+                context_after=tuple(u.text for u in after),
+                target_id=utterance.id,
+                context_ids=tuple(u.id for u in before),
+                context_after_ids=tuple(u.id for u in after),
+                related=tuple((line_id, said[line_id]) for line_id in offered),
+            )
         )
 
-    resolved = resolver.resolve(requests)
+    if cites:
+        resolved = resolver.resolve_with_evidence(requests)  # type: ignore[attr-defined]
+    else:
+        resolved = [Resolution(text) for text in resolver.resolve(requests)]
     return dict(zip((u.id for u in commitments), resolved, strict=True))
+
+
+def decision_day(session: Session, meeting_id: str) -> date | None:
+    """The meeting's date in Korea, for a run that has to read it before any
+    decision is built (``resolve_decision_summaries`` runs outside a session)."""
+    meeting = session.get(Meeting, meeting_id)
+    return meeting_day(meeting.started_at if meeting is not None else None)
+
+
+def resolve_decision_summaries(
+    resolver: ReferenceResolver,
+    classified: Sequence[ClassifiedUtterance],
+    *,
+    meeting_id: str,
+    day: date | None = None,
+    max_gap: int = DEFAULT_MAX_GAP,
+) -> dict[str, Resolution]:
+    """A model's write-up of each decision, keyed by its ``dec_`` id.
+
+    Only a resolver that can cite (``resolve_with_evidence``) writes one, and only
+    for a decision whose settling turn does not say what was decided
+    (``decisions.needs_write_up``); for any other this is empty and the decision
+    keeps the assembled, tidied line. Like
+    ``resolve_commitment_summaries`` it runs before any session -- it is model
+    inference -- and reads only ``classified``: ordered, and with a non-consenting
+    speaker's turn already blank.
+
+    What the model is given for a decision: the turn that carries its substance
+    (``DecisionGroup.core_text``) as the target; the lines around the whole run of
+    decision turns, from ``MAX_CONTEXT_UTTERANCES`` before its first to
+    ``MAX_CONTEXT_AFTER`` after its last, the other decision turns included; and up
+    to ``related.MAX_RELATED`` more from elsewhere in the meeting. It writes what
+    was decided and says which numbered lines it used.
+    """
+    if not callable(getattr(resolver, "resolve_with_evidence", None)):
+        return {}
+    groups = [g for g in group_decisions(classified, max_gap=max_gap, day=day) if needs_write_up(g)]
+    if not groups:
+        return {}
+
+    lines = [(u.id, u.text) for u in classified if u.text]
+    said = dict(lines)
+    position = {u.id: index for index, u in enumerate(classified)}
+    requests = []
+    keys = []
+    for group in groups:
+        here = position[group.substance_id]
+        first = min(group.first_position, here)
+        last = max(group.last_position, here)
+        before = [u for u in classified[max(0, first - MAX_CONTEXT_UTTERANCES) : here] if u.text]
+        after = [u for u in classified[here + 1 : last + 1 + MAX_CONTEXT_AFTER] if u.text]
+        offered = related_ids(group.substance_id, lines, exclude={u.id for u in (*before, *after)})
+        requests.append(
+            ResolutionRequest(
+                target=group.core_text,
+                context=tuple(u.text for u in before),
+                context_after=tuple(u.text for u in after),
+                target_id=group.substance_id,
+                context_ids=tuple(u.id for u in before),
+                context_after_ids=tuple(u.id for u in after),
+                purpose="decision",
+                related=tuple((line_id, said[line_id]) for line_id in offered),
+            )
+        )
+        keys.append(decision_id(meeting_id, group.source_utterance_ids))
+    resolved = resolver.resolve_with_evidence(requests)  # type: ignore[attr-defined]
+    return dict(zip(keys, resolved, strict=True))
 
 
 def build_action_items(
@@ -1850,6 +2374,8 @@ def build_action_items(
     utterances: Sequence[TranscriptUtterance],
     classified: Sequence[ClassifiedUtterance],
     resolved: Mapping[str, str] | None = None,
+    related: Mapping[str, Sequence[str]] | None = None,
+    confirmed: Mapping[str, Resolution] | None = None,
 ) -> list[ExtActionItem] | None:
     """One draft item per commitment, replacing the model's previous draft.
 
@@ -1875,8 +2401,15 @@ def build_action_items(
     resolved one.** ``parse_due`` depends on the exact verb ending the speaker
     used, and a resolver rewriting the sentence for a human reader is not
     obliged to preserve it.
+
+    ``related`` maps a commitment's utterance id to the other lines its summary
+    was written from (``resolve_commitment_summaries``); they are kept in
+    ``ext_action_item_related`` for the drawer. Only ids of this meeting's
+    utterances are kept, and an id that is the commitment itself is not a
+    "related" line.
     """
     resolved = resolved or {}
+    related = related or {}
     edited = session.scalar(
         select(func.count()).select_from(ExtEditEvent).where(ExtEditEvent.meeting_id == meeting_id)
     )
@@ -1933,6 +2466,7 @@ def build_action_items(
         # is a fixed rule, not a model's paraphrase, and the original is beside it.
         rewritten = resolved.get(utterance.id, said.text)
         description = tidy(rewritten)
+        cited = [u for u in related.get(utterance.id, ()) if u in spoken and u != utterance.id]
         items.append(
             ExtActionItem(
                 meeting_id=meeting_id,
@@ -1946,6 +2480,7 @@ def build_action_items(
                 confidence=utterance.confidence,
                 origin="model",
                 sources=[ExtActionItemSource(utterance_id=utterance.id)],
+                related=[ExtActionItemRelated(utterance_id=u) for u in cited],
             )
         )
     session.add_all(items)
@@ -1960,7 +2495,9 @@ def build_action_items(
             ExtConfirmation.resolved_kind == UtteranceKind.COMMITMENT.value,
         )
     ):
-        drafted = draft_confirmed_commitment(session, confirmation)
+        drafted = draft_confirmed_commitment(
+            session, confirmation, (confirmed or {}).get(confirmation.utterance_id)
+        )
         if drafted is not None and drafted not in items:
             items.append(drafted)
     return items
@@ -2173,6 +2710,23 @@ def _read_decision(
     return _review_decision_row(decision, review, refs, summary)
 
 
+def decision_related_utterances(session: Session, decision_id_: str) -> list[SourceUtterance]:
+    """The lines a decision's write-up says it used, in spoken order, consenting
+    speakers' and non-blank only (see ``related_utterances``)."""
+    rows = session.execute(
+        select(Utterance.id, Utterance.text)
+        .join(ExtDecisionRelated, ExtDecisionRelated.utterance_id == Utterance.id)
+        .join(Participant, Participant.id == Utterance.participant_id)
+        .where(
+            ExtDecisionRelated.decision_id == decision_id_,
+            Participant.consented.is_(True),
+            func.length(func.trim(Utterance.text)) > 0,
+        )
+        .order_by(Utterance.start_sec, Utterance.id)
+    ).all()
+    return [SourceUtterance(id=uid, text=text) for uid, text in rows]
+
+
 def read_decision_detail(session: Session, decision: ExtDecision) -> DecisionDetail:
     """One decision with the utterances it was settled in, in spoken order.
 
@@ -2191,6 +2745,7 @@ def read_decision_detail(session: Session, decision: ExtDecision) -> DecisionDet
         **row.model_dump(),
         sources=[SourceUtterance(id=uid, text=text) for uid, text in quoted],
         context=context_before(session, [uid for uid, _ in quoted]),
+        related=decision_related_utterances(session, decision.id),
     )
 
 

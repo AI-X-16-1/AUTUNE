@@ -481,3 +481,18 @@ def test_nothing_personal_survives_the_corpus() -> None:
     """
     for raw, _ in CORPUS:
         assert find_unmasked(mask(raw).text) == [], "masked text still trips the outbound guard"
+
+
+def test_a_reported_span_keeps_nothing_but_its_separators() -> None:
+    """A report means the detector missed it; no first character survives."""
+    from autune_audio.masking import hide_reported
+
+    assert hide_reported("A-20391") == "*-*****"
+    assert hide_reported("박OO 과장") == "*** **"
+
+
+def test_a_one_character_report_is_still_drawn_as_a_redaction() -> None:
+    """``MaskedText`` needs two mask characters in a run to draw a token."""
+    from autune_audio.masking import hide_reported
+
+    assert hide_reported("박") == "**"

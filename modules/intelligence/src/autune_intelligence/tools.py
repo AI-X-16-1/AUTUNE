@@ -266,7 +266,11 @@ def _not_found() -> dict[str, Any]:
 
 
 def draft_meeting_report(
-    team_id: str, meeting_id: str, body_markdown: str, pending_review: bool = False
+    team_id: str,
+    meeting_id: str,
+    body_markdown: str,
+    pending_review: bool = False,
+    draft_id: str | None = None,
 ) -> dict[str, Any]:
     """Store a meeting's finished report as a draft -- what the Report subagent
     proposes after a meeting's analysis finishes. Nothing is posted.
@@ -275,9 +279,11 @@ def draft_meeting_report(
     ``publish_meeting_report``. Never call it with text another meeting said.
     Adds the header (title, date) and the "자동 생성" footer; the title is left out
     when it holds personal data. ``pending_review`` adds a button to B's review
-    board when the report is posted. Replaces an unposted draft. Refused for
-    another team's meeting, a report already posted, one over the length cap,
-    or a body that still holds personal data (by category, never the text).
+    board when the report is posted. ``draft_id`` names this draft, so a post
+    approved for it is not made with a later one. Replaces an unposted draft.
+    Refused for another team's meeting, a report already posted, one over the
+    length cap, or a body that still holds personal data (by category, never
+    the text).
     """
     with session_scope() as session:
         meeting = session.get(Meeting, meeting_id)
@@ -286,7 +292,7 @@ def draft_meeting_report(
         document = service.meeting_report_document(meeting, body_markdown)
         try:
             service.save_meeting_report(
-                session, meeting_id, document, pending_review=pending_review
+                session, meeting_id, document, pending_review=pending_review, draft_id=draft_id
             )
         except ConflictError:
             return _refused("already posted", "이미 게시된 리포트입니다.")
@@ -304,14 +310,20 @@ def draft_meeting_report(
     return _acted("리포트 초안을 저장했습니다.", meeting_id)
 
 
-def publish_meeting_report(team_id: str, meeting_id: str) -> dict[str, Any]:
+def publish_meeting_report(
+    team_id: str, meeting_id: str, draft_id: str | None = None
+) -> dict[str, Any]:
     """Post a meeting's stored report draft to the team channel.
 
     L2 -- runs only after a person approves (a channel post moves people;
     agent-layer.md section 8). Posts what ``draft_meeting_report`` stored, once:
     delivery claims the report before it posts, so a second approval or a retry
-    sends nothing. Refused for another team's meeting, a meeting with no draft,
-    or a report already posted.
+    sends nothing. With ``draft_id`` it posts that draft only. When the stored
+    draft is another one, the approval posts nothing: a later run replaced it,
+    or this run's draft was never stored (refused for personal data or length)
+    and an earlier one is still there. Refused for another team's meeting, a
+    meeting with no draft, a draft that is not the approved one, or a report
+    already posted.
     """
     with session_scope() as session:
         meeting = session.get(Meeting, meeting_id)
@@ -322,9 +334,18 @@ def publish_meeting_report(team_id: str, meeting_id: str) -> dict[str, Any]:
             return _refused("no draft", "게시할 리포트 초안이 없습니다.")
         if row.sent_at is not None:
             return _refused("already posted", "이미 게시된 리포트입니다.")
+        if draft_id is not None and row.draft_id != draft_id:
+            # Either a later run replaced it or this run's draft was never
+            # stored; the stored row cannot tell which, so the words say both.
+            return _refused(
+                "draft not current",
+                "승인한 초안이 지금 저장된 초안이 아닙니다. "
+                "새 초안으로 바뀌었거나 저장되지 않았습니다.",
+            )
     # The transaction has committed: a worker that picks this up finds the row.
     try:
-        tasks.deliver_meeting_report.apply_async((meeting_id,))
+        # The draft can still be replaced before the task claims it; the claim checks again.
+        tasks.deliver_meeting_report.apply_async((meeting_id, draft_id))
     except Exception as exc:  # the draft is stored; the caller must not see a failure
         # Stored and unclaimed: approving the post again enqueues it.
         log.warning(

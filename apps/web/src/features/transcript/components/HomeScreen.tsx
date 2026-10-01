@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect } from "react";
 
+import { Button } from "@/shared/ui/Button";
 import { Row } from "@/shared/ui/Row";
 import { StatusDot } from "@/shared/ui/StatusDot";
 
@@ -22,7 +23,7 @@ import type { MeetingSummary } from "../types";
  * the URL bar; this is that way.
  *
  * **Four states, and the empty one is the one that matters.** A new install has
- * no meetings, so "아직 회의가 없습니다" with a way to make the first one is the
+ * no meetings, so S03's first-meeting screen (`FirstMeeting`) is the
  * difference between a working product and a broken-looking one — and it is the
  * state a reviewer sees first. `useMeetings` returns an empty list as `ready`
  * rather than as an error precisely so this screen can say it.
@@ -44,6 +45,12 @@ import type { MeetingSummary } from "../types";
 export function HomeScreen() {
   const state = useMeetings();
   useSendTeamlessToWorkspace();
+
+  // S03 replaces the whole screen, not just the list: with no meetings there
+  // is no "최근 회의" to title, and the first upload is the screen's subject.
+  if (state.status === "ready" && state.meetings.length === 0) {
+    return <FirstMeeting />;
+  }
 
   return (
     // S05's content column: the page gutter from the panel's left edge, not
@@ -107,39 +114,6 @@ function body(state: MeetingsState) {
     );
   }
 
-  if (state.meetings.length === 0) {
-    return (
-      <div
-        className="rounded-[var(--radius)] border border-dashed border-[var(--color-hairline)] px-4 py-8 text-center"
-        style={{ background: "var(--color-surface-sunken)" }}
-      >
-        <p
-          className="text-[var(--color-ink-strong)]"
-          style={{
-            fontSize: "var(--text-rowTitle)",
-            fontWeight: "var(--text-rowTitle-weight)",
-          }}
-        >
-          아직 회의가 없습니다
-        </p>
-        <p
-          className="mt-1 text-[var(--color-ink-muted)]"
-          style={{ fontSize: "var(--text-metaSmall)" }}
-        >
-          녹음 파일을 올리면 전사 · 화자 분리 · 개인정보 마스킹까지 이어서
-          처리됩니다.
-        </p>
-        <Link
-          href="/meetings/new"
-          className="mt-3 inline-block text-[var(--color-accent-default)]"
-          style={{ fontSize: "var(--text-meta)" }}
-        >
-          첫 회의 만들기
-        </Link>
-      </div>
-    );
-  }
-
   return (
     <div className="border-t border-[var(--color-hairline)]">
       {state.meetings.map((meeting) => (
@@ -177,10 +151,33 @@ function MeetingRow({ meeting }: { meeting: MeetingSummary }) {
         meta={
           <>
             <span>{STATUS_LABEL[meeting.status]}</span>
-            <span aria-hidden="true"> · </span>
-            {/* A meeting uploaded after the fact has no start time to show. */}
-            <span>{date ?? "시작 시각 미기록"}</span>
+            {/* A meeting uploaded after the fact has no start time to show,
+                and says so here rather than leaving the date column blank. */}
+            {date === null && (
+              <>
+                <span aria-hidden="true"> · </span>
+                <span>시작 시각 미기록</span>
+              </>
+            )}
           </>
+        }
+        // S05 puts the date at the row's right edge, short and in mono, so a
+        // column of meetings reads down by day. The full time is the title.
+        actions={
+          date !== null && meeting.started_at ? (
+            <time
+              dateTime={meeting.started_at}
+              title={date}
+              className="tabular-nums text-[var(--color-ink-muted)]"
+              style={{
+                fontFamily: "var(--font-mono)",
+                fontSize: "var(--text-label)",
+                fontWeight: "var(--text-data-weight)",
+              }}
+            >
+              {shortDate(meeting.started_at)}
+            </time>
+          ) : undefined
         }
       />
     </Link>
@@ -205,4 +202,140 @@ function useSendTeamlessToWorkspace() {
       current = false;
     };
   }, [router]);
+}
+
+/**
+ * `09/04`: month and day of a meeting's start, in the reader's timezone, the
+ * way S05 writes the date column. A meeting from another year carries it in
+ * front (`2025/09/04`), because a bare `09/04` from last year reads as this
+ * year's. Built by hand for the same reason `meetingDate` is: a
+ * locale-shaped string can differ between the server's first render and the
+ * browser's.
+ */
+function shortDate(iso: string): string {
+  const at = new Date(iso);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const day = `${pad(at.getMonth() + 1)}/${pad(at.getDate())}`;
+  return at.getFullYear() === new Date().getFullYear()
+    ? day
+    : `${at.getFullYear()}/${day}`;
+}
+
+/** The formats `NewMeetingScreen` accepts, and the size `MAX_UPLOAD_BYTES`
+ * (`modules/audio/src/autune_audio/config.py`) enforces. */
+const UPLOAD_LIMITS = "mp3 · wav · m4a · 최대 500MB";
+
+/**
+ * S03, the home screen of somebody with no meetings yet.
+ *
+ * What S03 draws and this does not, and why:
+ *
+ * - **No name in the heading.** S03 greets "<이름>님". The signed-in user's
+ *   name is `/api/auth/me`, and this feature calls only `/api/audio`
+ *   (`CLAUDE.md`), which has no "who am I". A heading with somebody else's
+ *   placeholder name would be worse than none.
+ * - **No checklist.** Slack, voice enrolment and Notion · Jira each have a
+ *   done/pending state that lives in another feature or has no endpoint
+ *   module A can read. A row that always says "pending" is a row that lies
+ *   the day somebody finishes it. The left column instead names the two ways
+ *   a meeting gets in, both of which work today.
+ * - **No "최대 3h".** Nothing enforces a duration: the server checks the
+ *   size while it writes the bytes, and ffmpeg decides what they are. The
+ *   dropzone states the limits that are real.
+ * - **No drag and drop.** Uploading needs a team, a title and the consent
+ *   attestation (S10), which live on `/meetings/new`; a file dropped here
+ *   could not be carried there, so "파일 선택" goes to that form instead of
+ *   accepting a file it would then lose. The zone is titled for what it does.
+ * - **No sample meeting.** There is no sample to open.
+ */
+function FirstMeeting() {
+  const router = useRouter();
+
+  return (
+    <main style={{ padding: "var(--space-24) var(--space-page)" }}>
+      <h1
+        className="text-[var(--color-ink-strong)]"
+        style={{
+          fontSize: "var(--text-title)",
+          fontWeight: "var(--text-title-weight)",
+          lineHeight: "var(--text-title-leading)",
+          letterSpacing: "var(--text-title-tracking)",
+        }}
+      >
+        첫 회의를 분석해 볼까요?
+      </h1>
+      <p
+        className="text-[var(--color-ink-muted)]"
+        style={{
+          marginTop: "var(--space-4)",
+          fontSize: "var(--text-rowBody)",
+          lineHeight: "var(--text-rowBody-leading)",
+        }}
+      >
+        녹음 파일 하나면 시작할 수 있습니다. 전사 · 화자 분리 · 개인정보 마스킹까지
+        이어서 처리됩니다.
+      </p>
+
+      <div
+        className="grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_var(--layout-miniWindow)]"
+        style={{ gap: "var(--space-32)", marginTop: "var(--space-32)" }}
+      >
+        <section
+          aria-label="녹음 파일 올리기"
+          className="flex flex-col items-center justify-center text-center md:order-2"
+          style={{
+            gap: "var(--space-8)",
+            padding: "var(--space-48) var(--space-page)",
+            borderRadius: "var(--radius)",
+            border: "1.5px dashed var(--color-hairline)",
+            background:
+              "repeating-linear-gradient(135deg, var(--color-surface-paper) 0 var(--space-8), var(--color-surface-panel) var(--space-8) var(--space-16))",
+          }}
+        >
+          <h2
+            className="text-[var(--color-ink-strong)]"
+            style={{
+              fontSize: "var(--text-heading)",
+              fontWeight: "var(--text-heading-weight)",
+            }}
+          >
+            녹음 파일 올리기
+          </h2>
+          <p
+            className="text-[var(--color-ink-muted)]"
+            style={{ fontFamily: "var(--font-mono)", fontSize: "var(--text-label)" }}
+          >
+            {UPLOAD_LIMITS}
+          </p>
+          {/* A wrapper for the spacing: `Button` sets its own `style`. */}
+          <div style={{ marginTop: "var(--space-8)" }}>
+            <Button onClick={() => router.push("/meetings/new")}>파일 선택</Button>
+          </div>
+          <p
+            className="text-[var(--color-ink-muted)]"
+            style={{
+              marginTop: "var(--space-8)",
+              fontSize: "var(--text-metaSmall)",
+              lineHeight: "var(--text-metaSmall-leading)",
+            }}
+          >
+            음성 인식 → 화자 분리 → 개인정보 마스킹 순서로 처리되고
+            <br />
+            원본 음성은 화자 분리가 끝나는 즉시 삭제됩니다
+          </p>
+        </section>
+
+        <div className="border-t border-[var(--color-hairline)] md:order-1">
+          <Row
+            title="끝난 회의라면 — 녹음 파일 올리기"
+            meta="mp3 · wav · m4a 파일을 올리면 전사부터 분석까지 이어서 처리됩니다."
+          />
+          <Row
+            title="지금 시작하는 회의라면 — 실시간 전사"
+            meta="사이드바의 회의 시작에서 마이크로 바로 전사합니다."
+          />
+        </div>
+      </div>
+    </main>
+  );
 }

@@ -19,6 +19,7 @@ from autune_core import Utterance as StoredUtterance
 from autune_extraction import service
 from autune_extraction.models import (
     ExtActionItem,
+    ExtActionItemRelated,
     ExtActionItemSource,
     ExtClassification,
     ExtConfirmation,
@@ -43,6 +44,7 @@ TABLES = [
     ExtDecisionReview.__table__,
     ExtDecisionRef.__table__,
     ExtActionItem.__table__,
+    ExtActionItemRelated.__table__,
     ExtActionItemSource.__table__,
     ExtEditEvent.__table__,
     ExtConfirmation.__table__,

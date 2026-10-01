@@ -283,7 +283,14 @@ def test_a_group_is_comparable_by_value() -> None:
     groups = group_decisions([utterance("utt_1", UtteranceKind.DECISION, text="가자")])
 
     assert groups == [
-        DecisionGroup(statement="가자", source_utterance_ids=("utt_1",), confidence=0.9)
+        DecisionGroup(
+            statement="가자",
+            source_utterance_ids=("utt_1",),
+            confidence=0.9,
+            original_statement="가자",
+            core_text="가자",
+            substance_id="utt_1",
+        )
     ]
 
 
@@ -361,6 +368,7 @@ def test_a_decision_belongs_to_the_meeting_and_carries_no_owner() -> None:
         "id",
         "meeting_id",
         "statement",
+        "original_statement",
         "confidence",
         "origin",
         "created_at",

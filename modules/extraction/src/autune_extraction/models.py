@@ -87,7 +87,9 @@ class ExtActionItem(Base, TimestampMixin):
             "status IN ('needs_confirmation','todo','in_progress','done')",
             name="ck_ext_action_items_status",
         ),
-        CheckConstraint("origin IN ('model','user')", name="ck_ext_action_items_origin"),
+        CheckConstraint(
+            "origin IN ('model','user','chat','followup')", name="ck_ext_action_items_origin"
+        ),
         CheckConstraint(
             "confidence >= 0 AND confidence <= 1", name="ck_ext_action_items_confidence"
         ),
@@ -131,6 +133,11 @@ class ExtActionItem(Base, TimestampMixin):
     """A hand-added item is 1.0: a person typing it is the certainty."""
 
     origin: Mapped[str] = mapped_column(String(16), nullable=False, default="model")
+    """Who made the item: ``model`` (the pipeline's draft), ``user`` (a person
+    typed it -- edit cost counts it as one the model missed), or one of the
+    agent layer's: ``followup`` (the Follow-up subagent's "후속 회의 잡기",
+    #561) and ``chat`` (drafted from an utterance in the chat). A rerun replaces
+    only ``model`` rows."""
 
     description_resolved: Mapped[bool] = mapped_column(nullable=False, default=False)
     """True when ``description`` is ``ReferenceResolver``'s rewrite rather than
@@ -145,6 +152,15 @@ class ExtActionItem(Base, TimestampMixin):
     paraphrase of them, worth a closer look given #366's own review found the
     paraphrase wrong often enough to matter.
     """
+
+    related: Mapped[list[ExtActionItemRelated]] = relationship(
+        back_populates="action_item",
+        cascade="all, delete-orphan",
+        # The database deletes them with the item (ondelete=CASCADE); the ORM need
+        # not load them first just to delete them.
+        passive_deletes=True,
+        order_by="ExtActionItemRelated.id",
+    )
 
     sources: Mapped[list[ExtActionItemSource]] = relationship(
         back_populates="action_item",
@@ -197,6 +213,48 @@ class ExtActionItemSource(Base):
     action_item: Mapped[ExtActionItem] = relationship(back_populates="sources")
 
 
+class ExtActionItemRelated(Base):
+    """The other lines of the meeting an item's summary was written from.
+
+    ``ext_action_item_sources`` is the utterance a commitment was said in; this is
+    what the model said it drew on besides -- a turn earlier that names the thing,
+    a line elsewhere about the same subject (``LlmResolver``, ``Resolution.used``).
+    The drawer shows them beneath the summary so a person can check the sentence
+    against what it was made from and correct it.
+
+    **A table of its own, not more rows in ``ext_action_item_sources``.** Sources
+    are what an item *is* -- ``ActionItem.source_utterance_ids`` reaches D and E,
+    and a count of them means something there. These are what a summary
+    *consulted*, decided by a model, and mixing the two would change what D and E
+    read without anyone deciding it.
+
+    Deleting an utterance deletes its row here: unlike a source, a consulted line
+    that is gone leaves nothing worth keeping. Only consenting speakers' lines are
+    ever written, and the reader filters on consent again.
+    """
+
+    __tablename__ = "ext_action_item_related"
+    __table_args__ = (
+        UniqueConstraint("action_item_id", "utterance_id", name="uq_ext_action_item_related"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    action_item_id: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("ext_action_items.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    utterance_id: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("utterances.id", ondelete="CASCADE", name="fk_ext_action_item_related_utt"),
+        nullable=False,
+        index=True,
+    )
+
+    action_item: Mapped[ExtActionItem] = relationship(back_populates="related")
+
+
 class ExtExternalRef(Base):
     """The page an action item became in an outside tool, once.
 
@@ -237,9 +295,13 @@ class ExtExternalRef(Base):
     """For Jira, the status category (``new``, ``indeterminate``, ``done``) the
     issue was last left in by Autune or last read back from. It is how the
     read-back tells a person's move in Jira from a board edit that has not
-    reached Jira yet (``jira_sync.pull_status_changes``). ``None`` until there
+    reached Jira yet (``jira_sync.read_back``). ``None`` until there
     is a baseline: a ref written before the read-back existed, or one whose
     issue never took the board's status; the next read-back records Jira's."""
+    pulled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    """For Jira, when the read-back last read the issue. The read-back reads the
+    least recently read first, so a team with more issues than one run reads is
+    read over several runs. ``None`` for an issue never read."""
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -307,8 +369,18 @@ class ExtDecision(Base, TimestampMixin):
         String(64), ForeignKey("meetings.id", ondelete="CASCADE"), nullable=False, index=True
     )
     statement: Mapped[str] = mapped_column(Text, nullable=False)
-    """The decision as settled, in one sentence. PII-masked like every utterance
-    it is drawn from — there is no unmasked text to reach this column."""
+    """The decision as settled, in one sentence, as a person sees it and as it
+    leaves: the noun-ended line, or a model's summary of it (``original_statement``
+    is what this was made from). PII-masked like every utterance it is drawn from
+    — there is no unmasked text to reach this column."""
+
+    original_statement: Mapped[str | None] = mapped_column(Text)
+    """The same sentence before it was tidied or summarised -- the substance turn
+    as said, with the owner and deadline. This is what module D is sent, because D
+    embeds and compares statements against a threshold tuned on this shape and a
+    rewrite made for the screen must not move it. ``NULL`` for a decision a person
+    typed and for rows from before this column: read it as
+    ``original_statement or statement``."""
 
     confidence: Mapped[float] = mapped_column(Float, nullable=False)
 
@@ -323,6 +395,44 @@ class ExtDecision(Base, TimestampMixin):
     sources: Mapped[list[ExtDecisionSource]] = relationship(
         back_populates="decision", cascade="all, delete-orphan"
     )
+    related: Mapped[list[ExtDecisionRelated]] = relationship(
+        back_populates="decision",
+        cascade="all, delete-orphan",
+        # Deleted with the decision by the database (ondelete=CASCADE); the ORM
+        # need not load them first, and the unit suite that lists its tables by
+        # hand need not know this one exists.
+        passive_deletes=True,
+        order_by="ExtDecisionRelated.id",
+    )
+
+
+class ExtDecisionRelated(Base):
+    """The other lines of the meeting a decision's summary says it was written from.
+
+    What ``ext_action_item_related`` is for an item: the lines the model said it
+    drew on, shown beneath the summary so a person can check the sentence and
+    correct it. Not more rows in ``ext_decision_sources`` -- those are the
+    utterances the decision was settled in, D keys its ``dec_`` id on them, and a
+    consulted line must never change that id.
+    """
+
+    __tablename__ = "ext_decision_related"
+    __table_args__ = (
+        UniqueConstraint("decision_id", "utterance_id", name="uq_ext_decision_related"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    decision_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("ext_decisions.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    utterance_id: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("utterances.id", ondelete="CASCADE", name="fk_ext_decision_related_utt"),
+        nullable=False,
+        index=True,
+    )
+
+    decision: Mapped[ExtDecision] = relationship(back_populates="related")
 
 
 class ExtDecisionSource(Base):
