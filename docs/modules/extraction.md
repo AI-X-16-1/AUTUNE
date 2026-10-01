@@ -129,6 +129,18 @@ the overlap the question turns on.
 | `ext_decision_sources` | Which utterances a decision was settled in, in order |
 | `ext_decision_reviews` | A person's verdict on each proposed decision (pending, confirmed, rejected) and an optional rewording, keyed by `dec_` id so a rerun over the same sources keeps it (#246). No reviewer column |
 | `ext_extraction_runs` | One row per extracted meeting: a digest of the consenting utterances the last run read, and when (#518) |
+| `ext_meeting_notes` | The team's memo on a meeting's summary tab (S15 요약, #421). Free text a member typed; no author column; a blank memo is no row |
+
+**The summary tab (S15 요약, #421, WBS 4.9).** B owns it. v1 is structured and
+uses no model: `GET /summary/{meeting_id}` gives the meeting's decisions
+(confirmed first, then pending; rejected left out), every action item, how many
+open questions were asked and how many ambiguous agreements still wait for
+their speaker, and the team's memo (`PUT /summary/{meeting_id}/note`, whole
+memo, blank removes it). The tab reads it in three levels -- counts, then the
+decisions and items, then their source lines on the 액션 tab. Nothing leaves,
+so it serves real meetings whatever #392 decides. A prose summary by an LLM
+over the whole meeting -- chunk summaries under the outbound limit, then a
+summary of those -- is v2 and waits on #392.
 
 A meeting that is processed again replaces its model-made rows —
 classifications, decisions, and draft items — rather than adding a second set,

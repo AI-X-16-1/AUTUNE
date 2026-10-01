@@ -61,6 +61,7 @@ from .models import (
     ExtEditEvent,
     ExtExternalRef,
     ExtExtractionRun,
+    ExtMeetingNote,
 )
 from .pipeline.base import Classifier, NliModel, ReferenceResolver, ResolutionRequest
 from .pipeline.resolver import MAX_CONTEXT_AFTER, MAX_CONTEXT_UTTERANCES
@@ -74,12 +75,14 @@ from .schemas import (
     EditHistoryEntry,
     ExternalRefRead,
     MeetingReview,
+    MeetingSummary,
     Outbound,
     OutboundBlocked,
     OutboundDecision,
     ReviewAmbiguous,
     ReviewDecision,
     SourceUtterance,
+    SummaryDecision,
 )
 from .slots import assignee_of, meeting_day, parse_due
 
@@ -1915,6 +1918,68 @@ def _read_decision(
         )
     summary = decision_summaries(session, [decision]).get(decision.id)
     return _review_decision_row(decision, review, refs, summary)
+
+
+def meeting_summary(
+    session: Session, meeting_id: str, *, now: datetime | None = None
+) -> MeetingSummary:
+    """S15's 요약 tab, v1 (#421): what the meeting settled and left, from B's rows.
+
+    Decisions as the review reads them (a person's wording when there is one),
+    confirmed first and without the rejected; every action item; how many
+    questions were asked and how many ambiguous agreements still wait for
+    their speaker; and the team's memo. No model and nothing leaves, so it
+    serves a real meeting whatever #392 decides.
+    """
+    review = review_for_meeting(session, meeting_id, now=now)
+    kept = [d for d in review.decisions if d.status in ("confirmed", "pending")]
+    kept.sort(key=lambda d: d.status != "confirmed")  # stable: settled order within
+    open_questions = session.scalar(
+        select(func.count())
+        .select_from(ExtClassification)
+        .where(
+            ExtClassification.meeting_id == meeting_id,
+            ExtClassification.kind == UtteranceKind.OPEN_QUESTION.value,
+        )
+    )
+    note = session.get(ExtMeetingNote, meeting_id)
+    return MeetingSummary(
+        meeting_id=meeting_id,
+        decisions=[
+            SummaryDecision(id=d.id, statement=d.statement, status=d.status)  # type: ignore[arg-type]
+            for d in kept
+        ],
+        action_items=list_action_items(session, meeting_id=meeting_id),
+        open_questions=open_questions or 0,
+        ambiguous_waiting=sum(
+            1 for a in review.ambiguous_agreements if a.outcome in ("not_asked", "pending")
+        ),
+        note=note.body if note is not None else None,
+        note_updated_at=note.updated_at if note is not None else None,
+    )
+
+
+def set_meeting_note(session: Session, meeting_id: str, body: str) -> ExtMeetingNote | None:
+    """Replace the team's memo on the summary tab; a blank one removes it.
+
+    Whole-memo writes, last one wins -- a memo is a few lines two people are
+    unlikely to type at once, and a merge of two free texts has no right answer.
+    """
+    text = body.strip()
+    note = session.get(ExtMeetingNote, meeting_id)
+    if not text:
+        if note is not None:
+            session.delete(note)
+            session.flush()
+        return None
+    if note is None:
+        note = ExtMeetingNote(meeting_id=meeting_id, body=text)
+        session.add(note)
+    else:
+        note.body = text
+        note.updated_at = datetime.now(UTC)
+    session.flush()
+    return note
 
 
 def review_for_meeting(

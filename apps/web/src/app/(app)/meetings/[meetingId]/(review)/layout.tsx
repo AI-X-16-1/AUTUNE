@@ -11,9 +11,8 @@ import { TabLinks } from "@/shared/ui";
  * side. A tab is a route rather than client state so that the back button, a
  * reload and a pasted link all land on the tab they name.
  *
- * **요약 is not here.** The spec's summary tab is an editable summary that
- * nobody has built; a fifth tab leading to an empty panel would say the feature
- * exists. It goes in when it does (#421).
+ * **요약** is module B's (#421, WBS 4.9): the meeting's decisions, items and
+ * counts from B's rows, and a memo the team writes.
  *
  * `live/` is deliberately outside this group. A meeting being recorded has no
  * actions, no gaps and no context yet, and S13 draws its own frame.
@@ -32,7 +31,7 @@ export default async function MeetingReviewLayout({
 
   // `typedRoutes` checks route shapes, not the ids filled into them, so a path
   // built from a meeting id has to be asserted. Once, here, rather than at each
-  // of the four tabs.
+  // of the tabs.
   const tab = (suffix: string) => `/meetings/${meetingId}${suffix}` as Route;
 
   return (
@@ -49,6 +48,7 @@ export default async function MeetingReviewLayout({
         <TabLinks
           label="회의 보기"
           tabs={[
+            { href: tab("/summary"), label: "요약" },
             { href: tab(""), label: "전사" },
             { href: tab("/actions"), label: "액션" },
             { href: tab("/gap"), label: "갭" },
