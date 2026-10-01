@@ -3,8 +3,10 @@ import { api } from "@/shared/api/client";
 
 import type {
   ActionItemDetail,
+  DecisionDetail,
   ActionItemRead,
   ActionStatus,
+  CarriedOver,
   DecisionStatus,
   ExtractionResult,
   MeetingReview,
@@ -45,6 +47,14 @@ export const listActionItems = (filter: ActionItemFilter = {}) => {
  */
 export const getActionItem = (id: string) =>
   api.extraction<ActionItemDetail>(`/action-items/${encodeURIComponent(id)}`);
+
+/**
+ * One decision with the words of the utterances it was settled in. As with
+ * `getActionItem`, the list never carries them — ask for a row's when it is on
+ * screen.
+ */
+export const getDecision = (id: string) =>
+  api.extraction<DecisionDetail>(`/decisions/${encodeURIComponent(id)}`);
 
 export interface ActionItemDraft {
   meeting_id: string;
@@ -103,6 +113,13 @@ async function withoutBody(path: string): Promise<void> {
     throw cause;
   }
 }
+
+/**
+ * What the team's earlier meetings left open, for the popup a review opens with
+ * (WBS 4.8). Counts cover everything; `items` is the most urgent ten.
+ */
+export const getCarriedOver = (meetingId: string) =>
+  api.extraction<CarriedOver>(`/carried-over/${encodeURIComponent(meetingId)}`);
 
 /** S15's 요약 tab (#421): the meeting's decisions, items, counts and memo. */
 export const getSummary = (meetingId: string) =>
@@ -178,15 +195,15 @@ export interface NotionSetupResult {
   action_db_url: string;
   decision_db_url: string;
   minutes_db_url: string;
-  action_items: { sent: number; replaced: number; failed: number };
-  decisions: { sent: number; replaced: number; failed: number };
+  /** Confirmed items and decisions go in from the worker, not this request (#481). */
+  backfill: "queued";
 }
 
 /** The pages the team shared with Autune, and where its databases are (#428). */
 export const getNotionSetup = (meetingId: string) =>
   api.extraction<NotionSetupState>(`/notion/setup?meeting_id=${encodeURIComponent(meetingId)}`);
 
-/** Make the databases under `pageId` and fill them with everything confirmed. */
+/** Make the databases under `pageId` and queue filling them with everything confirmed. */
 export const setUpNotion = (meetingId: string, pageId: string) =>
   api.extraction<NotionSetupResult>(
     `/notion/setup?meeting_id=${encodeURIComponent(meetingId)}&page_id=${encodeURIComponent(pageId)}`,

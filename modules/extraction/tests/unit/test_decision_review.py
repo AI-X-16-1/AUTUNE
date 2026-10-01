@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
 from autune_contracts.enums import UtteranceKind
-from autune_core import AutuneError, Base, Meeting, TeamMember, Utterance, get_session
+from autune_core import AutuneError, Base, Meeting, Participant, TeamMember, Utterance, get_session
 from autune_extraction import service, tasks
 from autune_extraction.config import ExtractionSettings
 from autune_extraction.confirmations import WEAK_ASSENT
@@ -31,6 +31,7 @@ from autune_extraction.models import (
     ExtConfirmation,
     ExtDecision,
     ExtDecisionRef,
+    ExtDecisionRelated,
     ExtDecisionReview,
     ExtDecisionSource,
     ExtEditEvent,
@@ -50,11 +51,13 @@ K = UtteranceKind
 TABLES = [
     Meeting.__table__,
     TeamMember.__table__,
+    Participant.__table__,
     Utterance.__table__,
     ExtActionItem.__table__,
     ExtActionItemSource.__table__,
     ExtClassification.__table__,
     ExtDecision.__table__,
+    ExtDecisionRelated.__table__,
     ExtDecisionRef.__table__,
     ExtDecisionSource.__table__,
     ExtDecisionReview.__table__,
@@ -228,6 +231,48 @@ def test_a_decisions_summary_is_its_longest_source_utterance(
 
     (decision,) = body["decisions"]
     assert decision["summary"] == "일정이 밀리면 다음 주 화요일로 옮기는 게 낫겠어요"
+
+
+def test_a_decisions_detail_quotes_its_sources_in_spoken_order(
+    client: TestClient, session: Session
+) -> None:
+    """The list carries ids and one preview line; the whole quotation comes from
+    the row's own endpoint, oldest utterance first, so the person confirming the
+    noun-ended line reads what was said beneath it."""
+    for uid, text in [("utt_2", "A안으로 진행합시다"), ("utt_3", "네 그렇게 하죠")]:
+        session.execute(Utterance.__table__.update().where(Utterance.id == uid).values(text=text))
+    session.commit()
+    service.build_decisions(
+        session,
+        meeting_id=MEETING,
+        utterances=[
+            ClassifiedUtterance(
+                id="utt_2", kind=K.DECISION, confidence=0.9, text="A안으로 진행합시다"
+            ),
+            ClassifiedUtterance(id="utt_3", kind=K.DECISION, confidence=0.9, text="네 그렇게 하죠"),
+            *(
+                ClassifiedUtterance(id=f"utt_{i}", kind=None, confidence=0.0, text="")
+                for i in (1, 4, 5, 6, 7, 8)
+            ),
+        ],
+    )
+    (listed,) = client.get(f"{PREFIX}/reviews/{MEETING}").json()["decisions"]
+
+    detail = client.get(f"{PREFIX}/decisions/{listed['id']}").json()
+
+    assert "sources" not in listed
+    assert [s["text"] for s in detail["sources"]] == ["A안으로 진행합시다", "네 그렇게 하죠"]
+    assert detail["statement"] == listed["statement"] == "A안으로 진행함"
+
+
+def test_a_decision_a_person_added_has_no_sources(client: TestClient, session: Session) -> None:
+    created = client.post(
+        f"{PREFIX}/decisions", json={"meeting_id": MEETING, "statement": "예산 동결"}
+    ).json()
+
+    detail = client.get(f"{PREFIX}/decisions/{created['id']}").json()
+
+    assert detail["sources"] == []
 
 
 def test_nothing_is_pre_checked_while_there_is_no_measured_line(

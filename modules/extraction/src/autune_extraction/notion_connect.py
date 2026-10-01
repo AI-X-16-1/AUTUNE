@@ -9,20 +9,25 @@ moving to another page (or another workspace) runs:
 1. ``notion_setup.provision_databases`` makes "액션 아이템", "결정" and "회의록"
    under the page -- or keeps the ones already made under that same page.
 2. The ids go in B's own ``ext_notion_targets``.
-3. Every confirmed action item and decision of the team is sent through the
-   ordinary sync (``notion_backfill``): a page that still exists is updated, one
-   Notion no longer finds -- another workspace, a deleted page -- is made again
-   in the new database (#403), and one never sent is created.
+3. ``tasks.backfill_notion`` is queued: every confirmed action item and decision
+   of the team goes through the ordinary sync (``notion_backfill``) -- a page
+   that still exists is updated, one Notion no longer finds (another workspace,
+   a deleted page) is made again in the new database (#403), and one never
+   sent is created. It runs in the worker, not in this request: Notion takes
+   about three requests a second, and a team with hundreds of confirmed rows
+   would outlast the request (#481).
+
+Steps 1 and 2 run under the team's setup lock (``notion_setup.lock_setup``), so
+two people finishing the first setup at once make one set of databases.
 """
 
 from __future__ import annotations
 
-from dataclasses import asdict
 from typing import Any
 
 from autune_core import get_logger, load_integration, session_scope
 
-from . import notion_backfill, notion_setup
+from . import notion_setup, tasks
 from .service import notion_url
 
 log = get_logger(__name__)
@@ -73,10 +78,11 @@ def pages_for(team_id: str) -> dict[str, Any]:
 
 
 def set_up(team_id: str, page_id: str) -> dict[str, Any]:
-    """Databases under ``page_id``, recorded, and filled. Raises
+    """Databases under ``page_id``, recorded, and the fill queued. Raises
     ``notion_setup.NotionSetupError`` with Notion's own message when Notion
     refuses the page."""
     with session_scope() as session:
+        notion_setup.lock_setup(session, team_id)
         config = load_integration(session, team_id, NOTION)
         if config is None or not config.secret:
             raise notion_setup.NotionSetupError(409, "Notion is not connected for this team")
@@ -90,21 +96,11 @@ def set_up(team_id: str, page_id: str) -> dict[str, Any]:
             session, team_id, target, workspace_id=notion_setup.workspace_of(config)
         )
 
-    items = notion_backfill.Stats()
-    notion_backfill.backfill_action_items(notion_backfill._confirmed_action_items(team_id), items)
-    decisions = notion_backfill.Stats()
-    notion_backfill.backfill_decisions(notion_backfill._confirmed_decisions(team_id), decisions)
-    log.info(
-        "extraction_notion_set_up",
-        team_id=team_id,
-        created=len(created),
-        items_sent=items.sent,
-        items_replaced=items.replaced,
-        decisions_sent=decisions.sent,
-    )
+    # After the commit, so the worker reads the databases just recorded.
+    tasks.backfill_notion.delay(team_id)
+    log.info("extraction_notion_set_up", team_id=team_id, created=len(created))
     return {
         "databases": "reused" if not created else "created" if len(created) == 3 else "added",
         **_urls(target),
-        "action_items": asdict(items),
-        "decisions": asdict(decisions),
+        "backfill": "queued",
     }

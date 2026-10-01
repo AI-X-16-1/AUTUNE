@@ -1,5 +1,6 @@
 import { StatusDot } from "@/shared/ui";
 
+import { isOverdue } from "../dates";
 import { isCandidate } from "../types";
 import type { ActionItemRead } from "../types";
 
@@ -23,7 +24,7 @@ export function ActionCard({
   selected?: boolean;
   onSelect?: (id: string) => void;
 }) {
-  const overdue = isOverdue(item.due_date);
+  const overdue = isOverdue(item);
 
   return (
     <button
@@ -131,6 +132,10 @@ export function ActionCard({
  */
 function reasonFor(item: ActionItemRead): string {
   if (item.origin === "user") return "직접 추가";
+  if (item.origin === "followup") return "후속 회의 제안";
+  // Confirmed, a chat draft keeps only its summary: the server stops listing
+  // its sources, so "근거 발화 0건" would misstate why.
+  if (item.origin === "chat" && item.status !== "needs_confirmation") return "채팅으로 추가";
   const sources = item.source_utterance_ids?.length ?? 0;
   const deleted = item.deleted_source_count ?? 0;
   // ADR 0007: a model item whose evidence was deleted says so, rather than
@@ -140,10 +145,4 @@ function reasonFor(item: ActionItemRead): string {
       ? "근거 발화 삭제됨"
       : (item.summary ?? `근거 발화 ${sources}건`) + (deleted > 0 ? ` · ${deleted}건 삭제됨` : "");
   return isCandidate(item) ? `후보 · ${base}` : base;
-}
-
-export function isOverdue(dueDate: string | null | undefined): boolean {
-  if (!dueDate) return false;
-  const today = new Date().toISOString().slice(0, 10);
-  return dueDate < today;
 }

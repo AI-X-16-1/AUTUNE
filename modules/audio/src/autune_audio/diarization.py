@@ -144,8 +144,13 @@ class Diarizer(Protocol):
         """
         ...
 
-    def diarize(self, waveform: Waveform) -> tuple[Turn, ...]:
+    def diarize(
+        self, waveform: Waveform, *, on_progress: Callable[[float], None] | None = None
+    ) -> tuple[Turn, ...]:
         """Turns in time order. May leave gaps; **may not overlap**.
+
+        ``on_progress`` is told how far through the pass it is, 0..1, when the
+        implementation can tell (``progress.ProgressReporter``).
 
         Not a formality. The join reads the first turn containing a word, so
         overlapping turns silently hand an interruption to whoever started
@@ -216,7 +221,9 @@ class PyannoteDiarizer:
         log.info("diarizer_loaded", checkpoint=self._checkpoint, device=str(device))
         return self._pipeline
 
-    def diarize(self, waveform: Waveform) -> tuple[Turn, ...]:
+    def diarize(
+        self, waveform: Waveform, *, on_progress: Callable[[float], None] | None = None
+    ) -> tuple[Turn, ...]:
         import torch  # noqa: PLC0415
 
         pipeline = self._load()
@@ -231,7 +238,8 @@ class PyannoteDiarizer:
         # (#325): the clustering step cannot invent a fourth speaker for a
         # room of one. Unset, it clusters freely, as the evaluation measured.
         bounds = get_settings().speaker_bounds()
-        output = pipeline(audio, **bounds)  # type: ignore[operator]
+        hook = {"hook": _progress_hook(on_progress)} if on_progress is not None else {}
+        output = pipeline(audio, **bounds, **hook)  # type: ignore[operator]
         # `exclusive_speaker_diarization`, not `speaker_diarization`. pyannote
         # keeps both: the first is what it calls "adapted to downstream
         # transcription" and holds no overlapping turns, the second holds them.
@@ -252,6 +260,32 @@ class PyannoteDiarizer:
         return turns
 
 
+_STEP_SPAN = {"segmentation": (0.0, 0.3), "embeddings": (0.3, 1.0)}
+"""Where each of pyannote's two inference steps sits in the whole pass. The
+embedding step runs a model per speech region and is most of the time; the
+clustering in between reports no counts and is quick."""
+
+
+def _progress_hook(on_progress: Callable[[float], None]) -> Callable[..., None]:
+    """pyannote 4's ``hook``: called with a step name, and during inference
+    with ``completed``/``total``. Folded into one rising fraction."""
+
+    def hook(
+        step_name: str,
+        step_artifact: object = None,
+        file: object = None,
+        total: int | None = None,
+        completed: int | None = None,
+    ) -> None:
+        span = _STEP_SPAN.get(step_name)
+        if span is None or not total or completed is None:
+            return
+        start, end = span
+        on_progress(start + (end - start) * min(1.0, completed / total))
+
+    return hook
+
+
 class FakeDiarizer:
     """Fixed turns, no model. What the tests run.
 
@@ -265,7 +299,11 @@ class FakeDiarizer:
     def __init__(self, turns: tuple[Turn, ...] = ()) -> None:
         self._turns = turns
 
-    def diarize(self, waveform: Waveform) -> tuple[Turn, ...]:
+    def diarize(
+        self, waveform: Waveform, *, on_progress: Callable[[float], None] | None = None
+    ) -> tuple[Turn, ...]:
+        if on_progress is not None:
+            on_progress(1.0)
         return self._turns
 
 

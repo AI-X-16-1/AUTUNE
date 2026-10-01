@@ -28,6 +28,7 @@ from autune_core import (
     AutuneError,
     Meeting,
     PrivacyViolationError,
+    TeamIntegration,
     Utterance,
     get_logger,
     jira_access,
@@ -50,7 +51,7 @@ from autune_integrations import (
 )
 from autune_integrations.errors import SlackRecipientNotLinkedError
 
-from . import calendar_sync, jira_sync, notion_setup, service
+from . import calendar_sync, jira_sync, notion_backfill, notion_setup, service
 from .models import ExtActionItem, ExtCalendarPoll, ExtDecision, ExtExternalRef
 from .pipeline.base import give_roster
 from .pipeline.registry import get_classifier, get_nli, get_resolver
@@ -118,6 +119,7 @@ def _extract(meeting_id: str, utterances: Sequence[TranscriptUtterance]) -> None
     with session_scope() as session:
         consented = service.consented_utterance_ids(session, meeting_id)
         roster = service.team_roster(session, meeting_id)
+        day = service.decision_day(session, meeting_id)
 
     classifier = get_classifier()
     # A classifier that sends text out replaces these names first (#411).
@@ -126,7 +128,14 @@ def _extract(meeting_id: str, utterances: Sequence[TranscriptUtterance]) -> None
     classified = service.verify_utterances(get_nli(), classified)
 
     resolver = get_resolver()
-    resolved_descriptions = service.resolve_commitment_references(resolver, classified)
+    # The resolver sends text out too, when it is the ``llm`` one (#411).
+    give_roster(resolver, roster)
+    summaries = service.resolve_commitment_summaries(resolver, classified)
+    resolved_descriptions = {uid: resolution.text for uid, resolution in summaries.items()}
+    related_lines = {uid: resolution.used for uid, resolution in summaries.items()}
+    decision_summaries = service.resolve_decision_summaries(
+        resolver, classified, meeting_id=meeting_id, day=day
+    )
 
     with session_scope() as session:
         stored = service.store_classifications(
@@ -135,13 +144,19 @@ def _extract(meeting_id: str, utterances: Sequence[TranscriptUtterance]) -> None
             utterances=classified,
             model_version=classifier.model_version,
         )
-        decisions = service.build_decisions(session, meeting_id=meeting_id, utterances=classified)
+        decisions = service.build_decisions(
+            session,
+            meeting_id=meeting_id,
+            utterances=classified,
+            summaries=decision_summaries,
+        )
         items = service.build_action_items(
             session,
             meeting_id=meeting_id,
             utterances=utterances,
             classified=classified,
             resolved=resolved_descriptions,
+            related=related_lines,
         )
         ambiguous = service.record_ambiguous_agreements(
             session, meeting_id=meeting_id, classified=classified
@@ -641,6 +656,68 @@ def _pull_one(user_id: str) -> list[str]:
         return moved
 
 
+@shared_task(name="autune.extraction.periodic.pull_jira_changes")
+@periodic(timedelta(minutes=10))
+def pull_jira_changes() -> None:
+    """Every ten minutes, read back the status people moved their issues to in
+    Jira (``jira_sync.pull_status_changes``): an issue dragged to Done is a done
+    item on the board. One team at a time, each with its own access token and
+    its own transaction, so one team's lapsed connection stops nobody else's.
+
+    Skipped for a team whose connection needs a person to reconnect
+    (``jira_access`` answers ``None``). Anything one team's read raises is
+    logged by the error's type and the team id, never its message -- the
+    calendar read-back's rule. After the commit, Notion follows the new status
+    the way it follows a board edit.
+    """
+    with session_scope() as session:
+        team_ids = _jira_teams(session)
+    for team_id in team_ids:
+        try:
+            moved = _pull_jira_team(team_id)
+        except Exception as exc:  # noqa: BLE001 -- one team's failure is theirs alone
+            log.warning("extraction_jira_pull_failed", team_id=team_id, error=type(exc).__name__)
+            continue
+        for action_item_id in moved:
+            try:
+                sync_action_item(action_item_id)
+            except IntegrationError:
+                log.warning("extraction_notion_sync_failed", action_item_id=action_item_id)
+            except PrivacyViolationError:
+                # Blocked, not failed: the outbound check refused the send and
+                # nothing left. Its own event, as ``sync_after_confirmation``
+                # logs it, so a privacy block never reads as a flaky Notion.
+                log.warning(
+                    "extraction_notion_sync_blocked_by_privacy_guard",
+                    action_item_id=action_item_id,
+                )
+
+
+def _jira_teams(session: Session) -> list[str]:
+    """Teams with a Jira connection stored. A read of core's table, never a write."""
+    return list(
+        session.scalars(
+            select(TeamIntegration.team_id)
+            .where(TeamIntegration.service == jira_sync.JIRA, TeamIntegration.secret.is_not(None))
+            .order_by(TeamIntegration.team_id)
+        )
+    )
+
+
+def _pull_jira_team(team_id: str) -> list[str]:
+    access = jira_access(team_id)
+    if access is None:
+        return []
+    client = JiraClient.for_cloud(access.access_token, access.cloud_id)
+    try:
+        with session_scope() as session:
+            return jira_sync.pull_status_changes(
+                session, client, team_id=team_id, site=access.cloud_id
+            )
+    finally:
+        client.close()
+
+
 def backfill_jira(team_id: str) -> dict[str, int]:
     """Every confirmed item of the team into its Jira project -- after a project
     is chosen, including a new one chosen because the old was deleted (#458).
@@ -693,6 +770,32 @@ def backfill_jira(team_id: str) -> dict[str, int]:
         client.close()
     log.info("extraction_jira_backfilled", team_id=team_id, **counts)
     return counts
+
+
+@shared_task(name="autune.extraction.backfill_notion", acks_late=True)
+def backfill_notion(team_id: str) -> None:
+    """After a one-click Notion setup (``notion_connect.set_up``): every confirmed
+    action item and decision of the team into the databases just recorded.
+
+    Out of the setup request because Notion takes about three requests a
+    second, and a team with hundreds of confirmed rows would outlast it (#481).
+    Safe to run again -- a redelivery after a lost worker included: each row
+    goes through the same claim-then-call sync a live confirmation uses, and
+    one row's failure, a privacy block among them, costs only that row
+    (``notion_backfill``). Logs counts only."""
+    items = notion_backfill.Stats()
+    notion_backfill.backfill_action_items(notion_backfill._confirmed_action_items(team_id), items)
+    decisions = notion_backfill.Stats()
+    notion_backfill.backfill_decisions(notion_backfill._confirmed_decisions(team_id), decisions)
+    log.info(
+        "extraction_notion_backfilled",
+        team_id=team_id,
+        items_sent=items.sent,
+        items_replaced=items.replaced,
+        items_failed=items.failed,
+        decisions_sent=decisions.sent,
+        decisions_failed=decisions.failed,
+    )
 
 
 def trash_notion_page(action_item_id: str) -> None:

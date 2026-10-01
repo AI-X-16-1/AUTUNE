@@ -5,6 +5,7 @@ import { useState } from "react";
 import { Button, MaskedText, Quote, StatusDot } from "@/shared/ui";
 
 import { ConfirmDelete } from "./ConfirmDelete";
+import { ContextLines } from "./ContextLines";
 import { useSourceUtterances } from "../hooks/useSourceUtterances";
 import { COLUMNS, COLUMN_LABELS, isCandidate } from "../types";
 import type { ActionItemRead, ActionStatus, EditHistoryEntry } from "../types";
@@ -185,6 +186,12 @@ export function ActionDetailDrawer({
           <SectionTitle>근거 발화</SectionTitle>
           {quotation.sources && quotation.sources.length > 0 ? (
             <div className="mt-2 grid gap-2">
+              <ContextLines lines={quotation.related} label="요약에 쓴 발화" />
+              <ContextLines
+                lines={quotation.context.filter(
+                  (line) => !quotation.related.some((cited) => cited.id === line.id),
+                )}
+              />
               {quotation.sources.map((source) => (
                 <Quote key={source.id}>
                   <MaskedText>{source.text}</MaskedText>
@@ -348,6 +355,12 @@ function quotationNote(
 ): string {
   if (item.origin === "user") {
     return "회의에서 뽑은 항목이 아니라 직접 추가한 항목입니다.";
+  }
+  if (item.origin === "followup") {
+    return "회의 뒤 후속 회의 에이전트가 제안한 항목이라 근거 발화가 없습니다.";
+  }
+  if (item.origin === "chat" && item.status !== "needs_confirmation") {
+    return "채팅으로 만든 항목은 확정한 뒤에는 원본 발화를 보여주지 않습니다.";
   }
   // The server lists only utterances that still exist (ADR 0007), so an item
   // whose every source was deleted arrives with an empty list, not a list of

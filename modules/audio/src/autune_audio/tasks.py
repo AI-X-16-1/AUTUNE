@@ -29,6 +29,7 @@ from autune_audio.masking import mask
 from autune_audio.models import AudConsentAttestation, AudSpeakerEmbedding
 from autune_audio.persistence import persist_transcript, transcript_payload
 from autune_audio.pipeline import transcribe
+from autune_audio.progress import ProgressReporter
 from autune_audio.quality import detect_repetition
 from autune_audio.recognition import get_recogniser
 from autune_audio.schemas import Turn, Waveform
@@ -157,6 +158,9 @@ def process_recording(job_id: str) -> None:
         return
 
     log.info("audio_process_started", meeting_id=meeting_id, job_id=job_id)
+    # What S12 reads to draw a percentage. Its writes are throttled and can
+    # never fail this task (`progress.ProgressReporter`).
+    report = ProgressReporter(job_id)
 
     try:
         with adopt(upload_path(job_id, settings)) as recording:
@@ -177,9 +181,12 @@ def process_recording(job_id: str) -> None:
             # (@PARKJAEKYUNG0525). In here, `adopt`'s `finally` deletes it.
             resolve_device()
 
+            report.stage("decoding")
             waveform = decode(recording.path)
-            transcription = transcribe(waveform, glossary=build_prompt())
-            named = rename_speakers(get_diarizer().diarize(waveform))
+            report.stage("transcribing")
+            transcription = transcribe(waveform, glossary=build_prompt(), on_progress=report.update)
+            report.stage("diarizing")
+            named = rename_speakers(get_diarizer().diarize(waveform, on_progress=report.update))
             # Two conditions, not one. Consent is the meeting's; the flag is
             # the deployment's, and while it is off there is nothing an
             # observation vector could be used for -- `assign_speaker` will
@@ -196,6 +203,8 @@ def process_recording(job_id: str) -> None:
         # re-run.
         detect_repetition(transcription).raise_if_collapsed()
 
+        # After `adopt` has closed: the recording is already deleted here.
+        report.stage("masking")
         spoken = assign_speakers(transcription, named)
         # The recogniser as well as the patterns: a number read out as words
         # ("공일공 일이삼사...") matches no digit pattern, so without it the
@@ -207,6 +216,7 @@ def process_recording(job_id: str) -> None:
         )
         _log_masking(meeting_id, spoken, masked)
 
+        report.stage("saving")
         with session_scope() as session:
             persist_transcript(
                 session,

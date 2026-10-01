@@ -94,6 +94,23 @@ def test_an_item_status_and_origin_are_closed_sets(
     refused(db_session, ITEM, {"m": ids["meeting"], "status": status, "origin": origin}, constraint)
 
 
+@pytest.mark.parametrize("origin", ["chat", "followup"])
+def test_the_agent_layers_origins_are_in_the_set(
+    db_session: Session, ids: dict[str, str], origin: str
+) -> None:
+    """#561: an item the agent layer adds is recorded as its own, not a person's."""
+    with db_session.begin_nested():
+        db_session.execute(
+            sa.text(ITEM), {"m": ids["meeting"], "status": "needs_confirmation", "origin": origin}
+        )
+    refused(
+        db_session,
+        ITEM.replace("'act_x'", "'act_y'"),
+        {"m": ids["meeting"], "status": "todo", "origin": "agent"},
+        "ck_ext_action_items_origin",
+    )
+
+
 def test_an_answer_is_a_kind_and_a_time_together(db_session: Session, ids: dict[str, str]) -> None:
     """Half an answer cannot be dated or has nothing to date."""
     refused(

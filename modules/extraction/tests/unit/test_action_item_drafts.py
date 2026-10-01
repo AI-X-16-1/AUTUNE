@@ -131,7 +131,9 @@ def test_an_identified_speakers_commitment_is_filled_in(session: Session) -> Non
     draft(session)
     item = next(i for i in model_items(session) if i.assignee_id == "user_001")
 
-    assert item.description == "제가 다음 주 화요일까지 정리하겠습니다"
+    # Noun-ended for the record; the original stays in ``stored`` utterances, which
+    # the drawer quotes beneath it.
+    assert item.description == "다음 주 화요일까지 정리 예정"
     assert item.assignee_label is None
     assert item.due_date == date(2026, 9, 15)
     assert item.due_text == "다음 주 화요일"
@@ -315,7 +317,8 @@ def test_a_resolved_description_replaces_the_raw_quote(session: Session) -> None
 
     assert items is not None
     item = next(i for i in items if i.assignee_id == "user_001")
-    assert item.description == "화요일까지 회의실 예약 제가 정리하겠습니다"
+    # Resolved by the model, then tidied into the noun form by rule.
+    assert item.description == "화요일까지 회의실 예약 정리 예정"
     assert item.description_resolved is True
 
 
@@ -326,8 +329,8 @@ def test_a_commitment_missing_from_resolved_keeps_its_own_text(session: Session)
 
     assert items is not None
     assert {i.description for i in items} == {
-        "제가 다음 주 화요일까지 정리하겠습니다",
-        "그건 제가 확인하겠습니다",
+        "다음 주 화요일까지 정리 예정",
+        "그건 확인 예정",
     }
     assert all(i.description_resolved is False for i in items)
 

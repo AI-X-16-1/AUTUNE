@@ -17,6 +17,7 @@ from .base import (
     NliScores,
     Prediction,
     ReferenceResolver,
+    Resolution,
     ResolutionRequest,
 )
 from .classifier import FakeClassifier, HostedDeberta, LocalDeberta
@@ -43,6 +44,7 @@ __all__ = [
     "NliScores",
     "Prediction",
     "ReferenceResolver",
+    "Resolution",
     "ResolutionRequest",
     "get_classifier",
     "get_embedder",

@@ -65,8 +65,12 @@ export interface ExternalRefRead {
  */
 export interface ActionItemRead extends ActionItem {
   meeting_id: string;
-  /** `model` for what the pipeline drafted, `user` for what a person typed. */
-  origin: "model" | "user";
+  /**
+   * `model` for what the pipeline drafted, `user` for what a person typed,
+   * `followup` for the Follow-up agent's "후속 회의 잡기" (#561), `chat` for an
+   * item drafted from an utterance in the chat.
+   */
+  origin: "model" | "user" | "followup" | "chat";
   /**
    * Whether the item belongs in the candidate band. Decided by the server,
    * which holds the threshold the classifier's confidences are measured
@@ -154,8 +158,36 @@ export interface EditHistoryEntry {
 export interface ActionItemDetail extends ActionItemRead {
   /** In the order they were spoken. */
   sources: SourceUtterance[];
+  /**
+   * What was said just before the first source, in spoken order — so a sentence
+   * with nothing to point at ("다음 주까지 볼게요") reads with what it is about.
+   * Not what the item was drawn from.
+   */
+  context?: SourceUtterance[];
+  /**
+   * The lines the summary says it was written from, beyond the commitment itself
+   * (`ext_action_item_related`), in spoken order — shown beneath the summary so a
+   * person can check the sentence against them and correct it.
+   */
+  related?: SourceUtterance[];
   /** Oldest first. Empty for an item the model extracted and nobody touched. */
   history?: EditHistoryEntry[];
+}
+
+/** `CarriedOverItem`: an open item from an earlier meeting of the same team. */
+export interface CarriedOverItem extends ActionItemRead {
+  meeting_title: string;
+  meeting_started_at: string | null;
+}
+
+/**
+ * `CarriedOver` (`GET /carried-over/{meeting_id}`, WBS 4.8). `open` and
+ * `overdue` count everything; `items` is the most urgent part, overdue first.
+ */
+export interface CarriedOver {
+  open: number;
+  overdue: number;
+  items: CarriedOverItem[];
 }
 
 /**
@@ -257,6 +289,20 @@ export interface ReviewAmbiguous {
   utterance_id: string;
   outcome: "not_asked" | "pending" | "undecided" | "resolved";
   resolved_kind: string | null;
+}
+
+/**
+ * One decision and the words it was settled in — `DecisionDetail`, from
+ * `GET /decisions/{id}`. The list carries ids and one preview line; the
+ * verbatim quotations come one row at a time.
+ */
+export interface DecisionDetail extends ReviewDecision {
+  /** In the order they were spoken: the proposal first, the settling turn last. */
+  sources: SourceUtterance[];
+  /** The lines just before the first source, in spoken order. */
+  context?: SourceUtterance[];
+  /** The lines the write-up says it used, beyond the turns it was settled in. */
+  related?: SourceUtterance[];
 }
 
 /** `GET /reviews/{meeting_id}` — everything that needs a person first. */

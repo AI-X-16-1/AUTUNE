@@ -23,6 +23,7 @@ from datetime import date
 from autune_contracts.enums import UtteranceKind
 from autune_core.ids import DECISION
 
+from .noun_form import tidy
 from .slots import parse_due
 
 DEFAULT_MAX_GAP = 2
@@ -77,8 +78,31 @@ class DecisionGroup:
     """One decision, before it is given an id or written down."""
 
     statement: str
+    """What a person sees and what leaves: the noun-ended line (``noun_form.tidy``),
+    or a model's summary of it when the resolver writes one."""
+
     source_utterance_ids: tuple[str, ...]
     confidence: float
+
+    original_statement: str = ""
+    """The same sentence *before* ``noun_form.tidy`` -- the substance turn as said,
+    with the owner and deadline -- which is what module D has always been sent. D
+    embeds and compares statements against a similarity threshold tuned on this
+    shape (``context.config``), so a rewrite for the screen must not reach it.
+    Empty only for a group built by a caller that does not know it; read it as
+    ``original_statement or statement``."""
+
+    core_text: str = ""
+    """The substance turn's own text, which a summary is written from."""
+
+    suffix: str = ""
+    """``담당 박지영, 기한 2026-10-02``, or empty: what is added after the line."""
+
+    substance_id: str = ""
+    first_position: int = 0
+    last_position: int = 0
+    """Where the decision's first and last utterance sit in the meeting's sequence,
+    so a summary can be given the lines around it."""
 
 
 def decision_id(meeting_id: str, source_utterance_ids: Sequence[str]) -> str:
@@ -146,7 +170,7 @@ def group_decisions(
     def close() -> None:
         members = [utterances[i] for i in current]
         region = utterances[current[0] : current[-1] + 1]
-        groups.append(_build(members, region, day=day))
+        groups.append(_build(members, region, day=day, span=(current[0], current[-1])))
 
     for position, utterance in enumerate(utterances):
         if utterance.kind is UtteranceKind.DECISION:
@@ -184,6 +208,26 @@ _ASKS = re.compile(r"([가-힣]{2,4})\s?(?:씨|님)(?:가|께서|이)?\s.*(?:주
 Both halves are required. The name is at least two syllables, so "날씨가" and
 "손님이" are not people; and the sentence has to ask for something, so "고객님이
 원하시니" names nobody as the owner."""
+
+
+SELF_CONTAINED = 20
+"""A substance turn this long that points at nothing ("그거", "그 방향") already says
+what was decided; writing it up again would only change its ending. See
+``needs_write_up``."""
+
+
+def needs_write_up(group: DecisionGroup) -> bool:
+    """Whether a model is worth asking about this decision.
+
+    Measured on the dummy meetings (2026-09-30): asked about every decision, the
+    model rewrote all of them and cited a line for about a quarter -- the rest it
+    only put into "~하기로 했습니다", which ``noun_form.tidy`` does without a model,
+    a request or a chance of drifting from what was said. It earns its call when
+    the turn that settles the decision does not say what was decided: it is short,
+    or it points at something said before.
+    """
+    core = group.core_text.strip()
+    return len(core) < SELF_CONTAINED or bool(_POINTS_AT.search(core))
 
 
 def _substance(members: Sequence[ClassifiedUtterance]) -> ClassifiedUtterance:
@@ -226,6 +270,7 @@ def _build(
     region: Sequence[ClassifiedUtterance] = (),
     *,
     day: date | None = None,
+    span: tuple[int, int] = (0, 0),
 ) -> DecisionGroup:
     """Turn one run of decision utterances into a decision.
 
@@ -237,9 +282,14 @@ def _build(
     three turns away and the deadline is relative to another date, so neither is
     in the quoted row.
 
-    It is still assembled from what was said, never written anew. A generated
-    sentence would be wrong in a way the reader could not see; this is wrong in a
-    way they can, and ``source_utterance_ids`` is what they check it against.
+    It is still assembled from what was said, never written by a model. A
+    generated sentence would be wrong in a way the reader could not see; this is
+    wrong in a way they can, and ``source_utterance_ids`` is what they check it
+    against. The one rewrite is ``noun_form.tidy``, which puts the sentence's
+    ending in the noun form a record uses -- a fixed list of endings, and a
+    sentence none of them fits is left as it was said. The original utterances
+    are shown beside it on S15, and a person confirms or rewords the line before
+    anything leaves.
 
     ``region`` is every utterance from the first member to the last, the
     non-decision ones included — that is where the commitment naming the owner
@@ -253,20 +303,31 @@ def _build(
     """
     scope = list(region) or list(members)
     substance = _substance(members)
-    parts = [substance.text.strip()]
+    core = substance.text.strip()
+    extras = []
 
     owner = _owner(scope, substance)
     if owner:
-        parts.append(f"담당 {owner}")
+        extras.append(f"담당 {owner}")
 
     for utterance in scope:
         if (due := parse_due(utterance.text, day)) is not None:
-            parts.append(f"기한 {due.date.isoformat()}" if due.date else f"기한 {due.text}")
+            extras.append(f"기한 {due.date.isoformat()}" if due.date else f"기한 {due.text}")
             break
 
-    statement = parts[0] if len(parts) == 1 else f"{parts[0]} ({', '.join(parts[1:])})"
+    suffix = ", ".join(extras)
+
+    def line(head: str) -> str:
+        return f"{head} ({suffix})" if suffix else head
+
     return DecisionGroup(
-        statement=statement,
+        statement=line(tidy(core)),
         source_utterance_ids=tuple(member.id for member in members),
         confidence=max(member.confidence for member in members),
+        original_statement=line(core),
+        core_text=core,
+        suffix=suffix,
+        substance_id=substance.id,
+        first_position=span[0],
+        last_position=span[1],
     )

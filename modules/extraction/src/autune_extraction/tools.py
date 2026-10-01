@@ -1,6 +1,6 @@
 """Module B as tools an agent can call (#260/#261, docs/architecture/agent-layer.md section 4).
 
-Eight read tools (``TOOLS``) over B's existing reads, and six writes
+Nine read tools (``TOOLS``) over B's existing reads, and seven writes
 (``ACTIONS``) over B's existing service calls, so that everything a person does
 with B on the board -- read items and decisions, confirm, reassign, re-date,
 close, add, review a decision -- can also be asked for in words. No new tables,
@@ -24,7 +24,8 @@ Rules from section 4 that are enforced here rather than trusted to the caller:
   exception.
 - Synchronous, safe to call twice: every tool only reads. The writes are
   ``ACTIONS``, never in ``TOOLS``: level L2, run by the main agent only after a
-  person approves (section 8), each through the same service call and checks
+  person approves (section 8) -- except ``L1_ACTIONS``, a draft that waits on
+  the board instead, each through the same service call and checks
   the board uses. ``RUN_SCOPE`` names the arguments the run fills, not the model.
 
 **Rule 3 of #261 -- B content that leaves goes through B's outbound read.** An
@@ -50,6 +51,8 @@ from autune_core import Meeting, TeamMember, User, Utterance, session_scope
 
 from . import service, tasks
 from .models import ExtActionItem, ExtDecision
+from .pipeline.base import give_roster
+from .pipeline.registry import get_resolver
 from .schemas import ActionItemCreate, ActionItemRead, ActionItemUpdate, DecisionReviewUpdate
 
 MAX_ITEMS = 5
@@ -507,6 +510,46 @@ def action_item_status(session: Session, team_id: str, action_item_id: str) -> d
     return _result(summary="액션아이템 1건.", items=[finding], evidence=read.source_utterance_ids)
 
 
+FOLLOWUP_DESCRIPTION = "후속 회의 잡기"
+"""What ``add_followup_item`` writes. Fixed, so a Follow-up proposal carries ids
+only and plan mode can queue it (#556, #561); a person may reword it later, which
+is why the open-item read keys on ``origin``, never on this text."""
+
+_STILL_OPEN = (ActionStatus.NEEDS_CONFIRMATION.value, *(s.value for s in _OPEN))
+
+
+def _open_followup(session: Session, team_id: str) -> ExtActionItem | None:
+    return session.scalars(
+        select(ExtActionItem)
+        .join(Meeting, Meeting.id == ExtActionItem.meeting_id)
+        .where(
+            Meeting.team_id == team_id,
+            ExtActionItem.origin == "followup",
+            ExtActionItem.status.in_(_STILL_OPEN),
+        )
+        .order_by(ExtActionItem.id)
+        .limit(1)
+    ).first()
+
+
+def open_followup_item(session: Session, team_id: str) -> dict[str, Any]:
+    """Use this before proposing a follow-up meeting: whether the team still has
+    a Follow-up item open -- waiting for confirmation, to do or in progress.
+    Propose nothing while one is open (#561).
+
+    One answer per team, not per meeting or topic. Reports the item by id and
+    status only, never its text (#261 rule 3; the id is all a caller needs).
+    """
+    row = _open_followup(session, team_id)
+    if row is None:
+        return _result(summary="열린 후속 회의 항목이 없습니다.", items=[], evidence=[])
+    return _result(
+        summary="열린 후속 회의 항목이 있습니다.",
+        items=[{"title": "후속 회의 항목", "body": row.status, "score": 1.0, "id": row.id}],
+        evidence=[],
+    )
+
+
 def _team_of(session: Session, meeting_id: str) -> str | None:
     return session.scalar(select(Meeting.team_id).where(Meeting.id == meeting_id))
 
@@ -533,6 +576,7 @@ TOOLS = [
     meeting_decisions,
     person_action_items,
     action_item_status,
+    open_followup_item,
 ]
 """Collected by the agent layer by iterating modules (invariant 6), never registered by hand."""
 
@@ -550,11 +594,12 @@ the rest to it (review of #449)."""
 #
 # agent-layer.md section 8, rule 2: the agent never edits an item itself; it asks
 # the module that owns it, and B's own service applies the change with the same
-# checks and the same after-commit sync the board uses. Every action here is L2:
-# the main agent proposes it in plan mode (or behind LangChain's
-# HumanInTheLoopMiddleware, ``interrupt_on``), and runs it only when a person
-# approves. None is in ``TOOLS``, so a model never calls one directly, and none
-# deletes anything (L3 is forbidden). Each owns its transaction, like a board
+# checks and the same after-commit sync the board uses. Every action here but
+# ``add_action_item`` is L2: the main agent proposes it in plan mode (or behind
+# LangChain's HumanInTheLoopMiddleware, ``interrupt_on``), and runs it only when
+# a person approves. ``add_action_item`` is L1 (``L1_ACTIONS``): it only drafts.
+# None is in ``TOOLS``, so a model never calls one directly, and none deletes
+# anything (L3 is forbidden). Each owns its transaction, like a board
 # request: it commits, then syncs, and a sync failure never undoes the change.
 
 
@@ -670,27 +715,27 @@ def set_action_item_status(team_id: str, action_item_id: str, status: str) -> di
 def add_action_item(
     team_id: str,
     meeting_id: str,
-    description: str,
+    utterance_id: str,
     assignee_id: str | None = None,
     due_date: date | str | None = None,
 ) -> dict[str, Any]:
-    """Add an item a meeting missed, as a person would on the board. It starts
-    waiting for confirmation, so it reaches nobody until someone confirms it.
+    """Draft an item from one thing said in a meeting -- "make that line an
+    action item". The summary is written from the lines around it the way the
+    pipeline writes one, and the item waits for confirmation with the original
+    utterances under it; once confirmed, only the summary is shown and only the
+    summary ever leaves (``service.originals_hidden``).
 
-    L2 -- runs only after a person approves. ``description`` is stored as given;
-    write it from masked text only.
+    L1 -- runs without waiting for approval: it makes a draft that reaches
+    nobody until a person confirms it on the board (or approves
+    ``confirm_action_item``), and deleting a draft undoes it. Ids only: nothing
+    a model writes becomes the item's text. Assignee defaults to the speaker,
+    ``due_date`` (``YYYY-MM-DD``) to the first date phrase in the line. Refused
+    for an utterance whose speaker did not consent to analysis.
     """
     try:
-        payload = ActionItemCreate(
-            meeting_id=meeting_id,
-            description=description,
-            assignee_id=assignee_id,
-            due_date=_as_date(due_date),
-        )
-    except ValueError as exc:
-        return _refused(
-            f"invalid item: {type(exc).__name__}", "액션아이템 내용이 올바르지 않습니다."
-        )
+        due = _as_date(due_date)
+    except ValueError:
+        return _refused(f"not a date: {due_date!r}", "날짜 형식이 아닙니다 (YYYY-MM-DD).")
     with session_scope() as session:
         if _team_of(session, meeting_id) != team_id:
             return _not_found("meeting", meeting_id)
@@ -698,10 +743,54 @@ def add_action_item(
             return _refused(
                 f"{assignee_id} is not on team {team_id}", "그 사람은 이 팀의 팀원이 아닙니다."
             )
-        row = service.create_action_item(session, payload)
-        session.flush()
+        window = service.chat_draft_window(session, meeting_id, utterance_id)
+        roster = service.team_roster(session, meeting_id)
+    if window is None:
+        return _not_found("consenting utterance", utterance_id)
+    # Model inference outside any session, as ``tasks._extract`` runs it; the
+    # resolver replaces the team's names before anything leaves (#411).
+    resolver = get_resolver()
+    give_roster(resolver, roster)
+    resolution = service.resolve_commitment_summaries(resolver, window)[utterance_id]
+    with session_scope() as session:
+        row = service.create_chat_item(
+            session,
+            meeting_id=meeting_id,
+            utterance_id=utterance_id,
+            resolution=resolution,
+            assignee_id=assignee_id,
+            due_date=due,
+        )
         new_id = row.id
-    return _acted("액션아이템을 추가했습니다 (확인 대기).", new_id)
+    return _acted("액션아이템 초안을 만들었습니다 (확인 대기).", new_id)
+
+
+def add_followup_item(team_id: str, meeting_id: str) -> dict[str, Any]:
+    """Add "후속 회의 잡기" to a meeting -- what the Follow-up subagent proposes
+    after a meeting that left topics open (#561). It starts waiting for
+    confirmation, so it reaches nobody until someone confirms it.
+
+    L2 -- runs only after a person (the team lead, for Follow-up) approves. B
+    writes the text, so the proposal carries ids only. Recorded as Follow-up's
+    (``origin`` ``followup``), not a person's, so edit cost does not count it as
+    an item the model missed. Refused while the team already has one open
+    (``open_followup_item``), so a second approved proposal makes no second item.
+    """
+    with session_scope() as session:
+        if _team_of(session, meeting_id) != team_id:
+            return _not_found("meeting", meeting_id)
+        if _open_followup(session, team_id) is not None:
+            return _refused(
+                f"team {team_id} already has an open follow-up item",
+                "이미 열린 후속 회의 항목이 있습니다.",
+            )
+        row = service.create_action_item(
+            session,
+            ActionItemCreate(meeting_id=meeting_id, description=FOLLOWUP_DESCRIPTION),
+            origin="followup",
+        )
+        new_id = row.id
+    return _acted("후속 회의 항목을 추가했습니다 (확인 대기).", new_id)
 
 
 def review_decision(team_id: str, decision_id: str, verdict: str) -> dict[str, Any]:
@@ -731,7 +820,15 @@ ACTIONS = [
     set_action_item_due_date,
     set_action_item_status,
     add_action_item,
+    add_followup_item,
     review_decision,
 ]
-"""B's writes, all L2 (see above). Kept out of ``TOOLS`` on purpose: the registry
-offers ``TOOLS`` to models, and the approval executor alone runs these."""
+"""B's writes, L2 but for ``L1_ACTIONS`` (see above). Kept out of ``TOOLS`` on
+purpose: the registry offers ``TOOLS`` to models, and the action executor alone
+runs these."""
+
+L1_ACTIONS = [add_action_item]
+"""The one write that runs without approval: a draft nobody sees outside the
+board until a person confirms it (agent-layer.md section 8, L1 "reversible
+write"). The agent layer runs an ``ACTIONS`` entry listed here at once and
+queues every other one for a person (``collect_actions``)."""
