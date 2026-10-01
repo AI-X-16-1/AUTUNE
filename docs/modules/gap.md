@@ -990,6 +990,7 @@ here, so the no-deletion-hook sentence above still holds.
 | --- | --- | --- |
 | GET | `/reports/{meeting_id}` | Full gap report |
 | GET | `/topics/{meeting_id}` | Topic graph for visualization |
+| GET | `/explanations/{meeting_id}` | Why each gap was raised: its basis, the utterances it rests on, its score breakdown |
 | POST | `/gaps/{id}/dismiss` | Mark a gap as a false positive (feeds threshold tuning) |
 | DELETE | `/gaps/{id}/dismiss` | Take a dismissal back |
 | GET | `/templates` | Available domain templates |
@@ -997,6 +998,15 @@ here, so the no-deletion-hook sentence above still holds.
 | PUT | `/templates/{meeting_id}` | Point this meeting at a template and re-compare |
 
 ### The read API as built
+
+`/explanations/{meeting_id}` is what S20 shows beside a verdict. It reads the
+stored coverage and score and never re-classifies: a gap rests on a thin topic
+(its first utterances are quoted), on a keyword said without becoming a topic
+(the consenting utterances that say it), on meaning (nothing to quote), or, when
+missing, on nothing (the item's keywords are what was searched for). The score
+breakdown is `detect.score_breakdown` over the same inputs and is sent only
+while it adds up to the stored `risk_score`. Module C's own response, not a
+contract, mirrored by hand in `features/gap/types.ts`.
 
 Everything above is built.
 `/reports/{meeting_id}` and `/topics/{meeting_id}` read the stored rows; nothing
