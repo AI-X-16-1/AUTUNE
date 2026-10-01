@@ -100,6 +100,11 @@ Plus the shared entities in `packages/core`, which A writes.
 | GET | `/meetings/{meeting_id}/speakers` | Each speaker label in the meeting, and the nearest candidate profile above `AUTUNE_AUDIO_IDENTIFICATION_THRESHOLD`, if any |
 | POST | `/meetings/{meeting_id}/speakers/{speaker_label}` | A team member confirms who a speaker is; fills `Participant.user_id` and copies the vector into that person's profile |
 | DELETE | `/me/voice-profile` | Deletes every profile row for the caller |
+| GET | `/me/data` | S29 "내 데이터": counts of the caller's own speech, voice profile and consent attestations (`account.my_data`) |
+| GET | `/me/export` | S29 download: the caller's own utterances (masked, as stored), voice-profile metadata (never the vector), consents and teams, as a JSON attachment |
+| DELETE | `/me/speech` | S29 "내 발화 데이터 모두 삭제": every utterance attributed to the caller and every vector of their voice. The account and the participant rows stay |
+| DELETE | `/me` | Account deletion (#358): reads the caller's participant rows, runs every module's `on_user_deleted` hook (a raising hook stops it), deletes their utterances, then the `users` row. Answers `{utterances}`, not 204 (#359) |
+| GET / PATCH | `/teams/{team_id}/privacy` | S29 retention window, 30/90/180/365 days. Any member may change it (no admin role exists); applies to meetings held afterwards |
 | GET | `/teams/{team_id}/members` | Id and display name of each team member, for the confirmation picker |
 
 ### Live transcription runs in the API process
@@ -243,6 +248,7 @@ shorter interval scans the whole directory to delete nothing.
 | --- | --- | --- |
 | `autune.audio.process_recording` | Upload | `gpu` |
 | `autune.audio.periodic.sweep_orphans` | Beat, hourly | `gpu` |
+| `autune.audio.periodic.expire_meetings` | Beat, hourly — deletes meetings past `expires_at` and idle voice profiles (`retention.py`, #206 #363) | `gpu` |
 | `autune.audio.generate_interim_summary` | Interval during processing | `cpu_heavy` |
 
 ## Slack surface

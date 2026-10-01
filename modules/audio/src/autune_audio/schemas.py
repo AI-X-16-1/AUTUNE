@@ -272,3 +272,49 @@ class ConsentAttestation(BaseModel):
 class ConsentState(BaseModel):
     meeting_id: str
     attested: bool
+
+
+class TeamPrivacy(BaseModel):
+    """S29's workspace half: what the team has chosen, for one team."""
+
+    team_id: str
+    retention_days: int
+
+
+class TeamPrivacyUpdate(BaseModel):
+    """The windows S29 offers. ``teams.retention_days`` takes any integer; the
+    route takes only these, so the screen and the column cannot disagree."""
+
+    retention_days: Literal[30, 90, 180, 365]
+
+
+class MyData(BaseModel):
+    """S29's "내 데이터": what Autune holds about the caller, as counts.
+
+    Only ever about the caller -- every number is computed with
+    ``user_id == caller`` -- so nothing here is one person's data shown to
+    another, and it carries no speaking ratio (privacy.md section 3: that goes
+    to the speaker by DM and is not stored, so there is nothing to count).
+    """
+
+    meetings_with_my_speech: int
+    voice_profile_rows: int
+    voice_profile_since: datetime | None
+    consents_attested: int
+
+
+class SpeechDeleted(BaseModel):
+    """What "내 발화 데이터 모두 삭제" removed."""
+
+    utterances: int
+    voice_rows: int
+
+
+class AccountDeleted(BaseModel):
+    """What account deletion removed of the caller's speech.
+
+    A body rather than 204: the shared web client parses every success as
+    JSON (#359), and a count is something the screen can say.
+    """
+
+    utterances: int
