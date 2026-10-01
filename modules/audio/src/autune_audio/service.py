@@ -122,6 +122,25 @@ def meeting_for(session: Session, *, meeting_id: str, reader: User) -> Meeting:
     return meeting
 
 
+def running_stage(session: Session, *, meeting_id: str) -> tuple[str | None, float | None]:
+    """Where the meeting's running transcription is: ``(stage, fraction)``.
+
+    Only a ``running`` job counts. A superseded attempt may have got further
+    before a re-upload replaced it, and S12 must show the attempt that will
+    actually produce the transcript. ``(None, None)`` when nothing is running.
+    """
+    row = session.execute(
+        sa.select(TranscriptionJob.stage, TranscriptionJob.stage_progress)
+        .where(
+            TranscriptionJob.meeting_id == meeting_id,
+            TranscriptionJob.status == "running",
+        )
+        .order_by(TranscriptionJob.created_at.desc())
+        .limit(1)
+    ).first()
+    return (row.stage, row.stage_progress) if row else (None, None)
+
+
 def meetings_for(session: Session, *, member: User) -> list[Meeting]:
     """Every meeting ``member`` may see, newest first. The home screen's list (S05).
 

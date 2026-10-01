@@ -159,6 +159,11 @@ class MeetingDetail(MeetingState):
     original_audio_deleted: bool
     pii_masked: bool
     team_id: str
+    stage: str | None = None
+    """The running attempt's step (``progress.STAGES``), while ``analyzing``.
+    Null otherwise, and before the worker has picked the job up."""
+    stage_progress: float | None = None
+    """How far through ``stage``, 0..1."""
 
 
 class MeetingSummary(BaseModel):
