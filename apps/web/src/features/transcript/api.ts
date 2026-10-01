@@ -59,6 +59,10 @@ export const listMeetings = () => api.audio<MeetingSummary[]>("/meetings");
 /** The teams this person may open a meeting for. Feeds `createMeeting`. */
 export const listTeams = () => api.audio<TeamSummary[]>("/teams");
 
+/** S02: make a workspace with this person on it, and nobody else. */
+export const createTeam = (body: { name: string; role?: string }) =>
+  api.audio<TeamSummary>("/teams", { method: "POST", body: JSON.stringify(body) });
+
 /**
  * Open a meeting before there is any audio for it (S06, the file-upload path).
  *

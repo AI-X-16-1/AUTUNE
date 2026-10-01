@@ -22,7 +22,7 @@ from autune_agent.main import (
     execute_l1,
 )
 from autune_agent.main.store import run_and_record
-from autune_agent.models import AgentRun
+from autune_agent.models import AgentPendingAction, AgentRun
 from autune_agent.results import ProposedAction, SubagentResult, ToolResult
 from autune_agent.testing import FakeRouter
 from autune_core import Meeting, Team
@@ -175,7 +175,7 @@ def test_a_run_records_what_ran_and_leaves_l2_proposed(
     }
     proposals = [
         _proposal("fake.draft_note", body="초안"),
-        _proposal("fake.post", "L2", body="게시"),
+        _proposal("fake.post", "L2", post_id="note_1"),
     ]
 
     row, state = run_and_record(
@@ -194,6 +194,7 @@ def test_a_run_records_what_ran_and_leaves_l2_proposed(
     assert [a["tool"] for a in row.actions] == ["fake.draft_note"]
     assert [p["tool"] for p in row.proposed] == ["fake.draft_note", "fake.post"]
     assert "초안" not in str(row.actions)
+    assert [p.tool for p in session.scalars(select(AgentPendingAction))] == ["fake.post"]
 
 
 def test_a_meeting_of_another_team_is_not_reached_by_an_action(

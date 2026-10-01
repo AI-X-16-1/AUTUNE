@@ -38,7 +38,9 @@ from .schemas import (
     ActionItemUpdate,
     DecisionCreate,
     DecisionReviewUpdate,
+    MeetingNoteUpdate,
     MeetingReview,
+    MeetingSummary,
     Outbound,
     ReviewDecision,
 )
@@ -213,6 +215,26 @@ def review_decision(
     # claim already exists.
     if response.status == "confirmed":
         background.add_task(tasks.sync_decision_after_confirmation, decision_id)
+    return response
+
+
+@router.get("/summary/{meeting_id}", response_model=MeetingSummary)
+def get_summary(meeting_id: str, session: SessionDep, reader: CurrentUser) -> MeetingSummary:
+    """S15's 요약 tab (#421): B's rows in three levels, and the team's memo."""
+    service.require_readable_meeting(session, meeting_id, reader)
+    return service.meeting_summary(session, meeting_id)
+
+
+@router.put("/summary/{meeting_id}/note", response_model=MeetingSummary)
+def put_summary_note(
+    meeting_id: str, payload: MeetingNoteUpdate, session: SessionDep, reader: CurrentUser
+) -> MeetingSummary:
+    """Replace the team's memo; blank removes it. Any member, like every other
+    correction on the review screen."""
+    service.require_readable_meeting(session, meeting_id, reader)
+    service.set_meeting_note(session, meeting_id, payload.body)
+    response = service.meeting_summary(session, meeting_id)
+    session.commit()
     return response
 
 

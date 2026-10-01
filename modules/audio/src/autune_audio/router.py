@@ -32,6 +32,7 @@ from .schemas import (
     MeetingSummary,
     SpeakerAssignment,
     SpeakerEntry,
+    TeamCreate,
     TeamMemberSummary,
     TeamSummary,
 )
@@ -103,6 +104,18 @@ def list_teams(user: CurrentUser, session: SessionDep) -> list[TeamSummary]:
         TeamSummary(team_id=team.id, name=team.name)
         for team in service.teams_for(session, member=user)
     ]
+
+
+@router.post("/teams", response_model=TeamSummary, status_code=status.HTTP_201_CREATED)
+def create_team(body: TeamCreate, user: CurrentUser, session: SessionDep) -> TeamSummary:
+    """S02: a new workspace with the caller on it. See ``service.create_team``."""
+    team = service.create_team(
+        session,
+        owner=user,
+        name=body.name,
+        role=body.role,
+    )
+    return TeamSummary(team_id=team.id, name=team.name)
 
 
 @router.get("/meetings", response_model=list[MeetingSummary])

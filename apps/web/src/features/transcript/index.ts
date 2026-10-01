@@ -10,3 +10,5 @@ export { HomeScreen } from "./components/HomeScreen";
 export { LiveMeetingScreen } from "./components/LiveMeetingScreen";
 export { StoredMeetingScreen } from "./components/StoredMeetingScreen";
 export { NewMeetingScreen } from "./components/NewMeetingScreen";
+export { TeamScope } from "./components/TeamScope";
+export { WorkspaceScreen } from "./components/WorkspaceScreen";

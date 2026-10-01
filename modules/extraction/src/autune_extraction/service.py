@@ -11,11 +11,11 @@ from __future__ import annotations
 import hashlib
 import re
 from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
-from dataclasses import replace
-from datetime import UTC, date, datetime
+from dataclasses import dataclass, replace
+from datetime import UTC, date, datetime, timedelta
 from typing import Any, Literal, Protocol
 
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.dialects import postgresql, sqlite
 from sqlalchemy.orm import Session, selectinload
 
@@ -46,7 +46,12 @@ from autune_integrations import PermanentIntegrationError, SlackApi, assert_pers
 from autune_integrations.privacy import find_unmasked
 
 from .config import get_settings
-from .confirmations import WEAK_ASSENT, ConfirmationResponse, build_confirmation_dm
+from .confirmations import (
+    CONFIRMATION_TIMEOUT,
+    WEAK_ASSENT,
+    ConfirmationResponse,
+    build_confirmation_dm,
+)
 from .decisions import DEFAULT_MAX_GAP, ClassifiedUtterance, decision_id, group_decisions
 from .edit_cost import EditCost
 from .models import (
@@ -61,6 +66,7 @@ from .models import (
     ExtEditEvent,
     ExtExternalRef,
     ExtExtractionRun,
+    ExtMeetingNote,
 )
 from .pipeline.base import Classifier, NliModel, ReferenceResolver, ResolutionRequest
 from .pipeline.resolver import MAX_CONTEXT_AFTER, MAX_CONTEXT_UTTERANCES
@@ -74,12 +80,14 @@ from .schemas import (
     EditHistoryEntry,
     ExternalRefRead,
     MeetingReview,
+    MeetingSummary,
     Outbound,
     OutboundBlocked,
     OutboundDecision,
     ReviewAmbiguous,
     ReviewDecision,
     SourceUtterance,
+    SummaryDecision,
 )
 from .slots import assignee_of, meeting_day, parse_due
 
@@ -1280,6 +1288,109 @@ def stored_transcript(session: Session, meeting_id: str) -> list[TranscriptUtter
     ]
 
 
+# --- a speaker identified after extraction (#360) ------------------------------
+
+
+FILL_WINDOW = timedelta(days=30)
+"""How far back ``fill_identified_assignees`` looks. A speaker is identified in
+the days after a meeting; a label still unresolved after a month is one nobody
+is going to resolve, and rescanning it every ten minutes forever buys nothing."""
+
+FILL_CAP = 200
+"""Items filled per run at most, newest first. The first run after a deploy may
+find a backlog; the rest waits ten minutes rather than one run holding locks on
+all of it."""
+
+
+def fill_identified_assignees(
+    session: Session, *, now: datetime | None = None
+) -> list[ExtActionItem]:
+    """Give an item its speaker's account once A has identified the speaker.
+
+    A commitment by an unidentified speaker is drafted with only the label
+    ("Speaker 2", ``slots.assignee_of``). When somebody later confirms who that
+    was, A fills ``participants.user_id``, and nothing announces it -- #360
+    settled on consumers reading it back rather than on a new event. This
+    finds the model's items still holding only the label their source was
+    spoken under, from the last ``FILL_WINDOW``, whose source utterances all
+    belong to one identified, consenting participant, and sets that account as
+    the assignee, clearing the label, as a fresh extraction would.
+
+    **A person's choice is never overwritten.** An item is left alone when:
+
+    - a person's edit of it names an assignee field, or names no fields at all
+      -- rows written before ``ext_edit_events.fields`` existed are NULL, and
+      may have been exactly that edit (lsh2217's review of #536);
+    - its label is no longer the speaker label it was drafted with -- a person
+      typed a name there;
+    - its assignee or its label changed between the read and the write: the
+      update carries both as they were read.
+
+    **Write-once.** A filled item holds an account, as a person-assigned one
+    does, and nothing here follows a later re-identification of the speaker
+    (A can move a label from X to Y): the item then shows X, and a person
+    reassigns it on the board. Following it would need a record of which
+    assignees this wrote, and would move work a person may already have
+    accepted as X's.
+
+    No ``ext_edit_events`` row: that table counts a person's corrections
+    (ADR 0006), and this is neither. Returns the items it changed.
+    """
+    moment = now or datetime.now(UTC)
+    maybe_edited = (
+        select(ExtEditEvent.id)
+        .where(
+            ExtEditEvent.action_item_id == ExtActionItem.id,
+            ExtEditEvent.kind == "edited",
+            or_(ExtEditEvent.fields.is_(None), ExtEditEvent.fields.like("%assignee%")),
+        )
+        .exists()
+    )
+    rows = session.execute(
+        select(ExtActionItem.id, ExtActionItem.assignee_label, Participant.user_id)
+        .join(ExtActionItemSource, ExtActionItemSource.action_item_id == ExtActionItem.id)
+        .join(Utterance, Utterance.id == ExtActionItemSource.utterance_id)
+        .join(Participant, Participant.id == Utterance.participant_id)
+        .join(User, User.id == Participant.user_id)
+        .where(
+            ExtActionItem.assignee_id.is_(None),
+            ExtActionItem.assignee_label == Utterance.speaker_label,
+            ExtActionItem.origin == "model",
+            ExtActionItem.created_at >= moment - FILL_WINDOW,
+            Participant.consented.is_(True),
+            ~maybe_edited,
+        )
+        .order_by(ExtActionItem.created_at.desc(), ExtActionItem.id)
+    ).all()
+    speakers: dict[str, tuple[str, set[str]]] = {}
+    for item_id, label, user_id in rows:
+        speakers.setdefault(item_id, (label, set()))[1].add(user_id)
+
+    filled: list[ExtActionItem] = []
+    for item_id, (label, users) in list(speakers.items())[:FILL_CAP]:
+        if len(users) != 1:
+            # Model items have one source today; one with sources by two
+            # people was never the speaker's alone, and a person decides.
+            continue
+        (user_id,) = users
+        changed = session.scalar(
+            update(ExtActionItem)
+            .where(
+                ExtActionItem.id == item_id,
+                ExtActionItem.assignee_id.is_(None),
+                ExtActionItem.assignee_label == label,
+            )
+            .values(assignee_id=user_id, assignee_label=None)
+            .returning(ExtActionItem.id)
+        )
+        if changed is None:
+            continue
+        item = session.get(ExtActionItem, item_id, populate_existing=True)
+        if item is not None:
+            filled.append(item)
+    return filled
+
+
 def classify_utterances(
     classifier: Classifier,
     utterances: Sequence[TranscriptUtterance],
@@ -1746,6 +1857,55 @@ def unasked_confirmations(session: Session, meeting_id: str) -> list[ExtConfirma
     )
 
 
+@dataclass(frozen=True)
+class PendingQuestion:
+    """One ambiguous agreement ready to be asked about: ids only. The quoted
+    utterance is read again inside the transaction that sends it."""
+
+    utterance_id: str
+    meeting_id: str
+    team_id: str
+    speaker_id: str
+
+
+def confirmations_to_ask(session: Session, *, now: datetime | None = None) -> list[PendingQuestion]:
+    """Every ambiguous agreement across meetings that a DM can go out for now.
+
+    Not yet asked; recorded within ``CONFIRMATION_TIMEOUT`` -- a question put
+    days after the meeting reads as noise, and one found before the sender
+    existed is past its window by the same rule; and spoken by an identified
+    speaker who consented. The DM quotes the speaker's own words to the
+    speaker and nobody else (``send_confirmation_dm``), so a line with no
+    account behind it has nobody to go to: it waits, and is asked if the
+    speaker is identified inside the window (#360).
+    """
+    moment = now or datetime.now(UTC)
+    rows = session.execute(
+        select(
+            ExtConfirmation.utterance_id,
+            ExtConfirmation.meeting_id,
+            Meeting.team_id,
+            Participant.user_id,
+        )
+        .join(Meeting, Meeting.id == ExtConfirmation.meeting_id)
+        .join(Utterance, Utterance.id == ExtConfirmation.utterance_id)
+        .join(Participant, Participant.id == Utterance.participant_id)
+        .join(User, User.id == Participant.user_id)
+        .where(
+            ExtConfirmation.sent_at.is_(None),
+            ExtConfirmation.created_at >= moment - CONFIRMATION_TIMEOUT,
+            Participant.consented.is_(True),
+        )
+        .order_by(ExtConfirmation.meeting_id, ExtConfirmation.utterance_id)
+    )
+    return [
+        PendingQuestion(
+            utterance_id=utterance_id, meeting_id=meeting_id, team_id=team_id, speaker_id=user_id
+        )
+        for utterance_id, meeting_id, team_id, user_id in rows
+    ]
+
+
 # --- review before anything leaves (#246) ------------------------------------
 
 
@@ -1812,6 +1972,68 @@ def _read_decision(
         )
     summary = decision_summaries(session, [decision]).get(decision.id)
     return _review_decision_row(decision, review, refs, summary)
+
+
+def meeting_summary(
+    session: Session, meeting_id: str, *, now: datetime | None = None
+) -> MeetingSummary:
+    """S15's 요약 tab, v1 (#421): what the meeting settled and left, from B's rows.
+
+    Decisions as the review reads them (a person's wording when there is one),
+    confirmed first and without the rejected; every action item; how many
+    questions were asked and how many ambiguous agreements still wait for
+    their speaker; and the team's memo. No model and nothing leaves, so it
+    serves a real meeting whatever #392 decides.
+    """
+    review = review_for_meeting(session, meeting_id, now=now)
+    kept = [d for d in review.decisions if d.status in ("confirmed", "pending")]
+    kept.sort(key=lambda d: d.status != "confirmed")  # stable: settled order within
+    open_questions = session.scalar(
+        select(func.count())
+        .select_from(ExtClassification)
+        .where(
+            ExtClassification.meeting_id == meeting_id,
+            ExtClassification.kind == UtteranceKind.OPEN_QUESTION.value,
+        )
+    )
+    note = session.get(ExtMeetingNote, meeting_id)
+    return MeetingSummary(
+        meeting_id=meeting_id,
+        decisions=[
+            SummaryDecision(id=d.id, statement=d.statement, status=d.status)  # type: ignore[arg-type]
+            for d in kept
+        ],
+        action_items=list_action_items(session, meeting_id=meeting_id),
+        open_questions=open_questions or 0,
+        ambiguous_waiting=sum(
+            1 for a in review.ambiguous_agreements if a.outcome in ("not_asked", "pending")
+        ),
+        note=note.body if note is not None else None,
+        note_updated_at=note.updated_at if note is not None else None,
+    )
+
+
+def set_meeting_note(session: Session, meeting_id: str, body: str) -> ExtMeetingNote | None:
+    """Replace the team's memo on the summary tab; a blank one removes it.
+
+    Whole-memo writes, last one wins -- a memo is a few lines two people are
+    unlikely to type at once, and a merge of two free texts has no right answer.
+    """
+    text = body.strip()
+    note = session.get(ExtMeetingNote, meeting_id)
+    if not text:
+        if note is not None:
+            session.delete(note)
+            session.flush()
+        return None
+    if note is None:
+        note = ExtMeetingNote(meeting_id=meeting_id, body=text)
+        session.add(note)
+    else:
+        note.body = text
+        note.updated_at = datetime.now(UTC)
+    session.flush()
+    return note
 
 
 def review_for_meeting(

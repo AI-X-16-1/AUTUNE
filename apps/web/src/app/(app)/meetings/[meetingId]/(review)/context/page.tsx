@@ -1,5 +1,8 @@
 import { ContextTab } from "@/features/context";
 
+/** The gutter the design files put under the tab row; see ../layout.tsx. */
+const TAB_BODY = { padding: "20px var(--space-page) var(--space-page)" } as const;
+
 /**
  * S15, context tab — what this meeting decided, against what the ones before it
  * decided.
@@ -21,5 +24,9 @@ export default async function MeetingContextPage({
 }) {
   const { meetingId } = await params;
 
-  return <ContextTab meetingId={meetingId} />;
+  return (
+    <div style={TAB_BODY}>
+      <ContextTab meetingId={meetingId} />
+    </div>
+  );
 }
