@@ -643,6 +643,7 @@ Configuration lives in the repository, not on the host:
 | `DEV_BASIC_AUTH_PASSWORD` | secret | yes; the password for `/api/*/dev/` |
 | `AUTUNE_AUDIO_HF_TOKEN` | secret | yes; pyannote is gated, so every upload fails after transcription without it ("Pyannote and its three gated repositories" above) |
 | `AUTUNE_AGENT_LLM_API_KEY` | secret | no; without it the agent chat refuses |
+| `AUTUNE_GOOGLE_CLIENT_ID`, `AUTUNE_GOOGLE_CLIENT_SECRET` | secret | no; without them Google sign-in answers "not configured" and the dev token still works. The OAuth client must list `https://autune.shelldocs.cloud/api/auth/google/callback` as an authorised redirect URI. Sign-in creates a user for any verified Google account, so nginx asks for the dev password before `/api/auth/google/start`, and the OAuth consent screen should stay in Testing with only the team as test users |
 
 To sign in, get a token with the password, then set it in the browser console
 on the site (`localStorage.setItem("autune.token", "<token>")`):

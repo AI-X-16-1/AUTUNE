@@ -27,7 +27,13 @@ x-python: &python
     # A password holding URL-reserved characters (@ : / ?) would break this URL.
     AUTUNE_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-autune}:${POSTGRES_PASSWORD:-autune}@postgres:5432/${POSTGRES_DB:-autune}
     AUTUNE_REDIS_URL: redis://redis:6379/0
-    AUTUNE_WEB_BASE_URL: http://${DEV_PUBLIC_HOST:-localhost}
+    # Where the api sends the browser after sign-in, and where E's report
+    # links point. Must be the origin the session cookie is set on.
+    AUTUNE_WEB_BASE_URL: ${DEV_SITE_URL:-http://${DEV_PUBLIC_HOST:-localhost}}
+    AUTUNE_GOOGLE_CLIENT_ID: ${AUTUNE_GOOGLE_CLIENT_ID:-}
+    AUTUNE_GOOGLE_CLIENT_SECRET: ${AUTUNE_GOOGLE_CLIENT_SECRET:-}
+    # Registered in the Google OAuth client as an authorised redirect URI.
+    AUTUNE_GOOGLE_REDIRECT_URI: ${DEV_SITE_URL:-http://localhost}/api/auth/google/callback
     AUTUNE_AUDIO_HF_TOKEN: ${AUTUNE_AUDIO_HF_TOKEN:-}
     AUTUNE_AGENT_LLM_API_KEY: ${AUTUNE_AGENT_LLM_API_KEY:-}
     # The implementations scripts/up.sh runs without --real-models, for the
