@@ -38,11 +38,33 @@ interface ErrorBody {
 const TOKEN_KEY = "autune.token";
 
 /**
- * The bearer token for this browser, until there is a sign-in.
+ * Whether this tab has a signed-in session (#440).
  *
- * A route taking `CurrentUser` refuses a request without one, and screen S01
- * does not exist, so until it does every call carries whatever token the
- * developer has. Two sources, in order:
+ * The session is an HttpOnly cookie, so this code cannot see it; `SessionGate`
+ * asks `/api/auth/me` before any screen draws and reports what it found here.
+ * The flag lives in memory only, so a reload asks again.
+ */
+let signedIn = false;
+
+/**
+ * Tell the client whether a session cookie was found. Called by `SessionGate`
+ * once its `/api/auth/me` check returns, before any screen calls `api.*`.
+ */
+export function setSignedIn(value: boolean): void {
+  signedIn = value;
+}
+
+/**
+ * The developer bearer token for this browser, when it is not signed in.
+ *
+ * **A session wins.** The backend reads `Authorization` before the session
+ * cookie (`autune_core.auth._session_token`), so a tab that signed in with
+ * Google and still sent a dev token ran every module call as the dev-token
+ * user while `/api/auth/me` named the Google one (#440). Once `SessionGate`
+ * has found a session this returns nothing, and the cookie decides.
+ *
+ * Without a session, every call carries whatever token the developer has.
+ * Two sources, in order:
  *
  * 1. `localStorage["autune.token"]` — pasted in by hand, so a person can switch
  *    users without a rebuild.
@@ -59,9 +81,6 @@ const TOKEN_KEY = "autune.token";
  * routes are about to take `CurrentUser` (#276), and the gap report screen
  * calls them through this client, so the second copy was the next commit.
  *
- * Nothing here is the sign-in design. When #189 lands, this function is where
- * a real token goes, and the 401 handling it needs goes beside it.
- *
  * **Exported for the one call that cannot go through `request`.**
  * `transcript.uploadRecording` sends a multipart body, and `request` sets
  * `content-type: application/json` on everything, so that call reaches `fetch`
@@ -70,6 +89,7 @@ const TOKEN_KEY = "autune.token";
  * imports it: a call going through `api.*` already has the header.
  */
 export function authHeaders(): HeadersInit {
+  if (signedIn) return {};
   let token: string | null = null;
   try {
     if (typeof window !== "undefined") token = window.localStorage.getItem(TOKEN_KEY);

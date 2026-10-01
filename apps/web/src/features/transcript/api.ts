@@ -204,6 +204,8 @@ export async function uploadRecording(meetingId: string, file: File) {
 
 /**
  * The bearer token this browser holds, or null — for the live socket only.
+ * Null in a signed-in tab: the socket's handshake then carries the session
+ * cookie, which the live route reads when `hello` has no token (#541).
  *
  * A `WebSocket` cannot carry request headers, so the live channel sends the
  * token in its `hello` frame instead (`useLiveSession`). That needs the raw
@@ -213,7 +215,6 @@ export async function uploadRecording(meetingId: string, file: File) {
  * shared client is the one place that decides where a token comes from, and
  * #286 moved it there precisely so a second copy could not drift from it. A
  * second reader of `localStorage["autune.token"]` here would be that copy.
- * When #189 replaces the dev token, this follows it with no change.
  */
 export function getToken(): string | null {
   const header = (authHeaders() as Record<string, string>).authorization;
