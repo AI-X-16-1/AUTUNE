@@ -24,7 +24,7 @@ from autune_audio.config import get_settings
 from autune_audio.decoding import decode
 from autune_audio.diarization import get_diarizer, resolve_device
 from autune_audio.glossary import build_prompt
-from autune_audio.live.embedder import Embedder
+from autune_audio.live.embedder import Embedder, EmbedderDimensionMismatch
 from autune_audio.masking import mask
 from autune_audio.models import AudConsentAttestation, AudSpeakerEmbedding
 from autune_audio.persistence import persist_transcript, transcript_payload
@@ -293,6 +293,11 @@ def _speaker_vectors(
     embedder = Embedder(token=settings.hf_token)
     try:
         embedder.warm_up()
+    except EmbedderDimensionMismatch as exc:
+        # A configuration error, not a bad day: every meeting will skip its
+        # vectors until the checkpoint or EMBEDDING_DIM changes (#363).
+        log.error("speaker_embedding_dimension_mismatch", width=exc.width)
+        return []
     except Exception as exc:
         log.warning("speaker_embedding_unavailable", error=type(exc).__name__)
         return []
