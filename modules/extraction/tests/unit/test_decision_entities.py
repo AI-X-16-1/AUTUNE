@@ -179,6 +179,24 @@ def test_the_statement_carries_the_owner_who_took_it_on() -> None:
     assert groups[0].statement == "검색 정렬은 인기순으로 바꾸시죠 (담당 박지영)"
 
 
+def test_the_statement_ends_in_the_noun_form_and_keeps_its_owner_and_deadline() -> None:
+    """The tidied line is what a person confirms; the owner and deadline are added
+    after it, so they are never rewritten."""
+    groups = group_decisions(
+        [
+            utterance(
+                "utt_1",
+                UtteranceKind.DECISION,
+                text="그럼 검색 정렬은 인기순으로 진행합시다",
+            ),
+            utterance("utt_2", UtteranceKind.COMMITMENT, text="제가 볼게요", speaker="박지영"),
+            utterance("utt_3", UtteranceKind.DECISION, text="네 그렇게 하죠"),
+        ]
+    )
+
+    assert groups[0].statement == "검색 정렬은 인기순으로 진행함 (담당 박지영)"
+
+
 def test_somebody_handed_the_work_by_name_is_the_owner() -> None:
     """Nobody said "I will"; the decision itself names who does it."""
     groups = group_decisions(

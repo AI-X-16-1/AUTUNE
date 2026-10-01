@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, type FormEvent } from "react";
 
@@ -14,6 +15,8 @@ import {
 import type { TeamSummary } from "../types";
 
 const ACCEPTED = [".mp3", ".wav", ".m4a"];
+
+type Source = "live" | "file";
 /** Matches `MAX_UPLOAD_BYTES` in `modules/audio/src/autune_audio/config.py` and S03's dropzone. */
 const MAX_BYTES = 500 * 1024 * 1024;
 
@@ -71,6 +74,15 @@ function asInstant(value: string): string | undefined {
  * only difference is whether there is a file yet. Consent is not asked on this
  * path — there is no recording to attest to, and the upload asks for it.
  *
+ * **Two sources, chosen first.** "실시간 전사" opens the meeting and goes
+ * straight to S13 (`/meetings/<id>/live`), which asks for consent and starts
+ * the microphone; "녹음 파일 올리기" is the upload form below. S06 draws the
+ * same choice as its audio-source radio. Before it, the only way to record
+ * live was to schedule a meeting, open it, and press record from there. Live
+ * is the default: "회의 시작" in the sidebar means a meeting starting now.
+ * The start time and "예정으로 만들기" belong to the file source — a live
+ * meeting starts when it is opened.
+ *
  * `?meeting=` re-uploads to an existing meeting — the retry S12 offers when a
  * run failed. The backend accepts a recording for a `failed` meeting and
  * refuses one for a meeting that is `analyzing` or `complete`, and its 409 is
@@ -94,11 +106,15 @@ export function NewMeetingScreen({
   // editable because a recording carried over from yesterday is the case that
   // makes the default wrong (#340).
   const [startedAt, setStartedAt] = useState(localNow);
+  // A re-upload is always a file; a new meeting defaults to recording live.
+  const [source, setSource] = useState<Source>(
+    existingMeetingId ? "file" : "live",
+  );
   const [file, setFile] = useState<File | null>(null);
   const [consented, setConsented] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [step, setStep] = useState<
-    "idle" | "creating" | "consenting" | "uploading" | "scheduling"
+    "idle" | "creating" | "consenting" | "uploading" | "scheduling" | "opening"
   >("idle");
 
   useEffect(() => {
@@ -139,8 +155,36 @@ export function NewMeetingScreen({
     asInstant(startedAt) !== undefined &&
     step === "idle";
 
+  const canGoLive =
+    existingMeetingId === undefined &&
+    title.trim().length > 0 &&
+    teamId !== "" &&
+    step === "idle";
+
+  /** Open the meeting now and hand over to S13, which asks for consent. */
+  async function goLive() {
+    if (!canGoLive) return;
+    setError(null);
+    try {
+      setStep("opening");
+      const { meeting_id } = await createMeeting({
+        title: title.trim(),
+        team_id: teamId,
+        started_at: new Date().toISOString(),
+      });
+      router.push(`/meetings/${meeting_id}/live`);
+    } catch (e: unknown) {
+      setStep("idle");
+      setError(e instanceof Error ? e.message : "회의를 만들지 못했습니다");
+    }
+  }
+
   async function submit(event: FormEvent) {
     event.preventDefault();
+    if (source === "live") {
+      await goLive();
+      return;
+    }
     if (!ready || !file) return;
     setError(null);
     try {
@@ -202,11 +246,16 @@ export function NewMeetingScreen({
         >
           {existingMeetingId
             ? existingMeetingId
-            : "녹음 파일을 올리면 STT → 화자 분리 → 개인정보 마스킹 순으로 처리되고, 원본은 처리 후 삭제됩니다."}
+            : source === "live"
+              ? "마이크로 녹음하면서 바로 전사합니다. 녹음을 끝내면 전체 녹음이 올라가 분석되고, 원본은 처리 후 삭제됩니다."
+              : "녹음 파일을 올리면 STT → 화자 분리 → 개인정보 마스킹 순으로 처리되고, 원본은 처리 후 삭제됩니다."}
         </p>
       </header>
 
       <form onSubmit={submit} className="mt-6 flex flex-col gap-5">
+        {existingMeetingId ? null : (
+          <SourceChoice value={source} onChange={setSource} />
+        )}
         {existingMeetingId ? null : (
           <>
             <Field label="제목">
@@ -219,24 +268,26 @@ export function NewMeetingScreen({
                 style={INPUT_STYLE}
               />
             </Field>
-            <Field label="회의 시작">
-              <input
-                type="datetime-local"
-                value={startedAt}
-                onChange={(e) => setStartedAt(e.target.value)}
-                className={INPUT}
-                style={INPUT_STYLE}
-              />
-              <p
-                className="mt-1 text-[var(--color-ink-muted)]"
-                style={{ fontSize: "var(--text-metaSmall)" }}
-              >
-                &quot;이번 주 금요일까지&quot; 같은 표현을 언제 기준으로 읽을지
-                정합니다. 지난 회의 녹음이면 그때로 고쳐 주세요. 앞으로 열
-                회의는 그 시각으로 &quot;예정으로 만들기&quot;를 누르면 시작
-                10분 전에 브리프가 옵니다.
-              </p>
-            </Field>
+            {source === "file" && (
+              <Field label="회의 시작">
+                <input
+                  type="datetime-local"
+                  value={startedAt}
+                  onChange={(e) => setStartedAt(e.target.value)}
+                  className={INPUT}
+                  style={INPUT_STYLE}
+                />
+                <p
+                  className="mt-1 text-[var(--color-ink-muted)]"
+                  style={{ fontSize: "var(--text-metaSmall)" }}
+                >
+                  &quot;이번 주 금요일까지&quot; 같은 표현을 언제 기준으로
+                  읽을지 정합니다. 지난 회의 녹음이면 그때로 고쳐 주세요. 앞으로
+                  열 회의는 그 시각으로 &quot;예정으로 만들기&quot;를 누르면
+                  시작 10분 전에 브리프가 옵니다.
+                </p>
+              </Field>
+            )}
             <Field label="팀">
               {teams === null ? (
                 <span
@@ -252,7 +303,10 @@ export function NewMeetingScreen({
                     color: "var(--color-signal-attention)",
                   }}
                 >
-                  속한 팀이 없습니다. 토큰을 확인해 주세요.
+                  속한 팀이 없습니다.{" "}
+                  <Link href="/workspace/new" className="text-[var(--color-accent-default)]">
+                    워크스페이스 만들기
+                  </Link>
                 </span>
               ) : (
                 <select
@@ -272,70 +326,75 @@ export function NewMeetingScreen({
           </>
         )}
 
-        <Field label="녹음 파일">
-          <label
-            className="flex cursor-pointer flex-col items-center justify-center gap-1 rounded-[var(--radius)] border border-dashed border-[var(--color-hairline)] px-4 py-8 text-center"
-            style={{ background: "var(--color-surface-sunken)" }}
-          >
-            <input
-              type="file"
-              accept={ACCEPTED.join(",")}
-              className="sr-only"
-              onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-            />
-            <span
-              className="text-[var(--color-ink-strong)]"
-              style={{
-                fontSize: "var(--text-rowTitle)",
-                fontWeight: "var(--text-rowTitle-weight)",
-              }}
-            >
-              {file ? file.name : "녹음 파일 선택"}
-            </span>
-            <span
-              className="text-[var(--color-ink-muted)]"
-              style={{ fontSize: "var(--text-metaSmall)" }}
-            >
-              {file
-                ? formatBytes(file.size)
-                : "mp3 · wav · m4a · 최대 3h · 500MB"}
-            </span>
-          </label>
-          {fileProblem ? (
-            <p
-              role="alert"
-              className="mt-2"
-              style={{
-                fontSize: "var(--text-metaSmall)",
-                color: "var(--color-signal-critical)",
-              }}
-            >
-              {fileProblem}
-            </p>
-          ) : null}
-        </Field>
+        {source === "file" && (
+          <>
+            <Field label="녹음 파일">
+              <label
+                className="flex cursor-pointer flex-col items-center justify-center gap-1 rounded-[var(--radius)] border border-dashed border-[var(--color-hairline)] px-4 py-8 text-center"
+                style={{ background: "var(--color-surface-sunken)" }}
+              >
+                <input
+                  type="file"
+                  accept={ACCEPTED.join(",")}
+                  className="sr-only"
+                  onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+                />
+                <span
+                  className="text-[var(--color-ink-strong)]"
+                  style={{
+                    fontSize: "var(--text-rowTitle)",
+                    fontWeight: "var(--text-rowTitle-weight)",
+                  }}
+                >
+                  {file ? file.name : "녹음 파일 선택"}
+                </span>
+                <span
+                  className="text-[var(--color-ink-muted)]"
+                  style={{ fontSize: "var(--text-metaSmall)" }}
+                >
+                  {file
+                    ? formatBytes(file.size)
+                    : "mp3 · wav · m4a · 최대 3h · 500MB"}
+                </span>
+              </label>
+              {fileProblem ? (
+                <p
+                  role="alert"
+                  className="mt-2"
+                  style={{
+                    fontSize: "var(--text-metaSmall)",
+                    color: "var(--color-signal-critical)",
+                  }}
+                >
+                  {fileProblem}
+                </p>
+              ) : null}
+            </Field>
 
-        <label
-          className="flex items-start gap-3"
-          style={{ fontSize: "var(--text-meta)" }}
-        >
-          <input
-            type="checkbox"
-            checked={consented}
-            onChange={(e) => setConsented(e.target.checked)}
-            className="mt-[3px]"
-          />
-          <span className="text-[var(--color-ink-strong)]">
-            이 녹음에 포함된 모든 참석자가 녹음과 분석에 동의했음을 확인합니다.
-            <span
-              className="block text-[var(--color-ink-muted)]"
-              style={{ fontSize: "var(--text-metaSmall)" }}
+            <label
+              className="flex items-start gap-3"
+              style={{ fontSize: "var(--text-meta)" }}
             >
-              동의가 기록되지 않은 회의는 전사만 저장되고 액션 · 갭 분석에서
-              제외됩니다.
-            </span>
-          </span>
-        </label>
+              <input
+                type="checkbox"
+                checked={consented}
+                onChange={(e) => setConsented(e.target.checked)}
+                className="mt-[3px]"
+              />
+              <span className="text-[var(--color-ink-strong)]">
+                이 녹음에 포함된 모든 참석자가 녹음과 분석에 동의했음을
+                확인합니다.
+                <span
+                  className="block text-[var(--color-ink-muted)]"
+                  style={{ fontSize: "var(--text-metaSmall)" }}
+                >
+                  동의가 기록되지 않은 회의는 전사만 저장되고 액션 · 갭 분석에서
+                  제외됩니다.
+                </span>
+              </span>
+            </label>
+          </>
+        )}
 
         {error ? (
           <p
@@ -349,35 +408,129 @@ export function NewMeetingScreen({
           </p>
         ) : null}
 
-        <div className="flex items-center gap-3">
-          <Button
-            tone="primary"
-            type="submit"
-            disabled={!ready || step === "scheduling"}
-            loading={step !== "idle" && step !== "scheduling"}
-          >
-            {STEP_LABEL[step === "scheduling" ? "idle" : step]}
-          </Button>
-          {existingMeetingId ? null : (
+        {source === "live" ? (
+          <div className="flex items-center gap-3">
             <Button
-              tone="secondary"
-              type="button"
-              onClick={schedule}
-              disabled={!canSchedule}
-              loading={step === "scheduling"}
+              tone="primary"
+              type="submit"
+              disabled={!canGoLive}
+              loading={step === "opening"}
             >
-              {step === "scheduling" ? "만드는 중…" : "예정으로 만들기"}
+              {step === "opening" ? "회의 만드는 중…" : "실시간 전사 시작"}
             </Button>
-          )}
-          <span
-            className="text-[var(--color-ink-muted)]"
-            style={{ fontSize: "var(--text-metaSmall)" }}
-          >
-            업로드 즉시 처리가 시작되고, 원본은 처리 후 삭제됩니다.
-          </span>
-        </div>
+            <span
+              className="text-[var(--color-ink-muted)]"
+              style={{ fontSize: "var(--text-metaSmall)" }}
+            >
+              다음 화면에서 참석자 동의를 확인하고 마이크를 켭니다.
+            </span>
+          </div>
+        ) : (
+          <div className="flex items-center gap-3">
+            <Button
+              tone="primary"
+              type="submit"
+              disabled={!ready || step === "scheduling"}
+              loading={step !== "idle" && step !== "scheduling"}
+            >
+              {STEP_LABEL[step === "scheduling" ? "idle" : step]}
+            </Button>
+            {existingMeetingId ? null : (
+              <Button
+                tone="secondary"
+                type="button"
+                onClick={schedule}
+                disabled={!canSchedule}
+                loading={step === "scheduling"}
+              >
+                {step === "scheduling" ? "만드는 중…" : "예정으로 만들기"}
+              </Button>
+            )}
+            <span
+              className="text-[var(--color-ink-muted)]"
+              style={{ fontSize: "var(--text-metaSmall)" }}
+            >
+              업로드 즉시 처리가 시작되고, 원본은 처리 후 삭제됩니다.
+            </span>
+          </div>
+        )}
       </form>
     </main>
+  );
+}
+
+/**
+ * S06's audio-source choice, as two large options rather than a radio row:
+ * this is the first decision on the screen and it changes the rest of the
+ * form. Selected uses the accent selection fill, like every chosen chip.
+ */
+function SourceChoice({
+  value,
+  onChange,
+}: {
+  value: Source;
+  onChange: (source: Source) => void;
+}) {
+  const options: { id: Source; title: string; detail: string }[] = [
+    {
+      id: "live",
+      title: "실시간 전사",
+      detail: "지금 마이크로 녹음하면서 전사를 봅니다",
+    },
+    {
+      id: "file",
+      title: "녹음 파일 올리기",
+      detail: "mp3 · wav · m4a, 지난 회의나 예정 회의",
+    },
+  ];
+  return (
+    <div
+      role="radiogroup"
+      aria-label="녹음 방식"
+      className="grid grid-cols-2 gap-2"
+    >
+      {options.map((option) => {
+        const selected = option.id === value;
+        return (
+          <button
+            key={option.id}
+            type="button"
+            role="radio"
+            aria-checked={selected}
+            onClick={() => onChange(option.id)}
+            className="rounded-[var(--radius)] text-left focus-visible:outline-none focus-visible:ring-[1.5px] focus-visible:ring-[var(--color-accent-default)]"
+            style={{
+              padding: "var(--space-16)",
+              background: selected
+                ? "var(--color-accent-selection)"
+                : "var(--color-surface-panel)",
+              border: selected
+                ? "var(--border-focus)"
+                : "1px solid var(--color-hairline)",
+            }}
+          >
+            <span
+              className="block"
+              style={{
+                fontSize: "var(--text-rowTitle)",
+                fontWeight: "var(--text-rowTitle-weight)",
+                color: selected
+                  ? "var(--color-accent-hover)"
+                  : "var(--color-ink-strong)",
+              }}
+            >
+              {option.title}
+            </span>
+            <span
+              className="mt-1 block text-[var(--color-ink-muted)]"
+              style={{ fontSize: "var(--text-metaSmall)" }}
+            >
+              {option.detail}
+            </span>
+          </button>
+        );
+      })}
+    </div>
   );
 }
 
@@ -386,6 +539,7 @@ const STEP_LABEL = {
   creating: "회의 만드는 중…",
   consenting: "동의 기록 중…",
   uploading: "업로드 중…",
+  opening: "회의 만드는 중…",
 } as const;
 
 const INPUT =

@@ -659,3 +659,112 @@ def test_nothing_is_published_for_a_meeting_that_could_not_be_built(
         tasks.on_transcript_ready(transcript("mtg_missing", MEETING).model_dump(mode="json"))
 
     assert sent == []
+
+
+# --- consent that changes after the graph was built (#515) -----------------
+
+WITH_PAYMENTS = [*MEETING, Line("박도윤", "결제 화면도 바꿔야 합니다")]
+""""결제" is only ever said by 박도윤, so a 결제 topic can only have come from
+their speech."""
+
+
+def set_consent(meeting_id: str, speaker: str, *, consented: bool) -> None:
+    with session_scope() as s:
+        participant = s.scalar(
+            select(Participant).where(
+                Participant.meeting_id == meeting_id, Participant.speaker_label == speaker
+            )
+        )
+        assert participant is not None
+        participant.consented = consented
+
+
+def analysed(team_id: str, lines: list[Line], **seed_options: frozenset[str]) -> str:
+    """Built and scored, as the pipeline leaves a meeting: the rescore only
+    looks at meetings with a ``gap_scorings`` row."""
+    meeting_id = build(team_id, lines, **seed_options)
+    service.detect_gaps(meeting_id)
+    return meeting_id
+
+
+def test_a_withdrawal_after_analysis_takes_its_speech_out_of_the_graph(
+    team_id: str, sent: list[tuple[str, dict]]
+) -> None:
+    meeting_id = analysed(team_id, WITH_PAYMENTS)
+    assert any("결제" in label for label in labels(meeting_id))
+
+    set_consent(meeting_id, "박도윤", consented=False)
+    rescored = service.rescore_where_people_changed()
+
+    assert meeting_id in rescored
+    assert not any("결제" in label for label in labels(meeting_id))
+    report = GapReport.model_validate(sent[-1][1])
+    assert not any("결제" in topic.label for topic in report.topics)
+
+
+def test_a_late_consent_brings_its_speech_into_the_graph(
+    team_id: str, sent: list[tuple[str, dict]]
+) -> None:
+    meeting_id = analysed(team_id, WITH_PAYMENTS, declined=frozenset({"박도윤"}))
+    assert not any("결제" in label for label in labels(meeting_id))
+
+    set_consent(meeting_id, "박도윤", consented=True)
+    service.rescore_where_people_changed()
+
+    assert any("결제" in label for label in labels(meeting_id))
+
+
+def test_a_confirmed_speaker_is_not_a_change_of_consent(team_id: str) -> None:
+    """Who is one person moves the rescore; it does not change whose speech
+    the graph may read, so the graph is not rebuilt for it."""
+    meeting_id = analysed(team_id, MEETING)
+    with session_scope() as s:
+        user = User(email="gap-515@example.com", display_name="515")
+        s.add(user)
+        s.flush()
+        for participant in s.scalars(
+            select(Participant).where(Participant.meeting_id == meeting_id)
+        ):
+            participant.user_id = user.id
+        user_id = user.id
+
+    try:
+        assert not service._consent_moved(meeting_id)
+    finally:
+        with session_scope() as s:
+            for participant in s.scalars(
+                select(Participant).where(Participant.meeting_id == meeting_id)
+            ):
+                participant.user_id = None
+            s.execute(delete(User).where(User.id == user_id))
+
+
+def test_rebuilding_from_the_stored_utterances_gives_the_same_graph(team_id: str) -> None:
+    meeting_id = build(team_id, MEETING)
+    before = (labels(meeting_id), counts(meeting_id))
+
+    service.rebuild_topic_graph(meeting_id)
+
+    assert (labels(meeting_id), counts(meeting_id)) == before
+
+
+def test_a_rebuild_keeps_a_gaps_identity_and_its_dismissal(
+    team_id: str, sent: list[tuple[str, dict]]
+) -> None:
+    meeting_id = analysed(team_id, WITH_PAYMENTS)
+    with session_scope() as s:
+        gap = s.scalars(select(GapGap).where(GapGap.meeting_id == meeting_id)).first()
+        assert gap is not None
+        gap.dismissed_at = datetime.now(UTC)
+        gap_id, item = gap.id, gap.template_item_key
+
+    set_consent(meeting_id, "박도윤", consented=False)
+    service.rescore_where_people_changed()
+
+    with session_scope() as s:
+        again = s.scalar(
+            select(GapGap).where(GapGap.meeting_id == meeting_id, GapGap.template_item_key == item)
+        )
+        assert again is not None
+        assert again.id == gap_id
+        assert again.dismissed_at is not None

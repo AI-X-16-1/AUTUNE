@@ -37,6 +37,11 @@ stays. A status move that fails does not lose the issue: its key is kept.
 
 The summary is one line of at most 255 characters, Jira's limit; a longer
 description goes whole into the issue's description when it is made.
+
+**The status comes back too** (``pull_status_changes``, every ten minutes): an
+issue a person moved in Jira moves its item on the board, unless the board
+moved since Autune last touched the issue -- then the board's edit goes out
+and wins. Only the status; summary, due date and assignee stay Autune's.
 """
 
 from __future__ import annotations
@@ -51,7 +56,9 @@ from autune_contracts.enums import ActionStatus
 from autune_core import Meeting, TeamMember, User, get_logger
 from autune_integrations import IntegrationError, PermanentIntegrationError
 
+from . import service
 from .models import ExtActionItem, ExtExternalRef
+from .schemas import ActionItemUpdate
 from .service import _insert_if_absent_into
 
 log = get_logger(__name__)
@@ -95,6 +102,8 @@ class JiraIssues(Protocol):
     def move_to_category(self, issue_key: str, category: str) -> bool: ...
 
     def add_comment(self, issue_key: str, text: str) -> None: ...
+
+    def status_category(self, issue_key: str) -> str | None: ...
 
 
 def _assignee_account(session: Session, jira: JiraIssues, item: ExtActionItem) -> str | None:
@@ -194,7 +203,11 @@ def sync_action_item_to_jira(
     category = CATEGORY.get(item.status)
     if category is not None:
         try:
-            if not jira.move_to_category(str(ref.external_id), category):
+            if jira.move_to_category(str(ref.external_id), category):
+                # What the read-back compares against: Jira now shows what the
+                # board shows (``pull_status_changes``).
+                ref.synced_category = category
+            else:
                 log.info("extraction_jira_no_transition", action_item_id=item.id, category=category)
         except IntegrationError as exc:
             # The issue exists; losing its key here would make a second one on
@@ -206,6 +219,104 @@ def sync_action_item_to_jira(
                 error=type(exc).__name__,
             )
     return ref
+
+
+STATUS_OF = {category: status for status, category in CATEGORY.items()}
+"""A Jira status category as the board's status -- ``CATEGORY`` read backwards."""
+
+PULL_LIMIT = 100
+"""Issues read back per team per run at most: the most recently made, the same
+ones every run. A read is one request per issue. A team with more issues than
+this -- done ones count too, since a done issue can be reopened in Jira -- has
+its older issues' moves not read back; there is no cursor yet."""
+
+
+def pull_status_changes(
+    session: Session, jira: JiraIssues, *, team_id: str, site: str, limit: int = PULL_LIMIT
+) -> list[str]:
+    """Read back the status people moved issues to in Jira (the mentoring of
+    2026-09-28: follow each assignee's issues, not only create them). Returns
+    the ids of items whose status changed, for the caller to sync onward.
+
+    For each of the team's confirmed items with an issue on this site, the
+    issue's status category is compared with ``synced_category``, what Autune
+    last left it in or last read:
+
+    - **Jira unchanged** -- nothing to read. A board edit that has not reached
+      Jira yet is the outgoing sync's to send, and must not be undone here.
+    - **Jira changed, the board did not** -- the item takes the matching status
+      through the board's edit path (``service.update_action_item``), as a date
+      moved on a person's calendar does (#435).
+    - **Both changed** -- the board wins and its edit goes out; logged.
+
+    A ref with no ``synced_category`` has no baseline to compare with: it was
+    written before the read-back existed, or its issue never took the board's
+    status (no transition in the workflow, or the move failed). Its issue's
+    category is recorded as the baseline and the board is left alone -- the
+    board may hold an edit Jira never got, and only a move made after the
+    baseline is a person's. (#548 review.)
+
+    Both rows are locked, the item first: deleting an item locks it and then
+    its ref (``ON DELETE CASCADE``), so taking them in that order never
+    deadlocks with a deletion, and a board edit cannot land between this read
+    and the write below. The outgoing sync locks only the ref, so waiting on it
+    here reads the ``synced_category`` it left. An issue deleted in Jira (404)
+    is left alone and logged: the next board edit makes it again, as it always
+    has. Any other failure raises for the caller.
+    """
+    rows = session.execute(
+        select(ExtExternalRef.action_item_id)
+        .join(ExtActionItem, ExtActionItem.id == ExtExternalRef.action_item_id)
+        .join(Meeting, Meeting.id == ExtActionItem.meeting_id)
+        .where(
+            ExtExternalRef.system == JIRA,
+            ExtExternalRef.site == site,
+            ExtExternalRef.external_id.is_not(None),
+            Meeting.team_id == team_id,
+            ExtActionItem.status.in_(list(CATEGORY)),
+        )
+        .order_by(ExtExternalRef.created_at.desc())
+        .limit(limit)
+    ).all()
+
+    moved: list[str] = []
+    for (item_id,) in rows:
+        item = session.get(ExtActionItem, item_id, with_for_update=True, populate_existing=True)
+        ref = session.get(
+            ExtExternalRef, (item_id, JIRA), with_for_update=True, populate_existing=True
+        )
+        if ref is None or item is None or not ref.external_id:
+            continue
+        board = CATEGORY.get(item.status)
+        if board is None:
+            continue
+        try:
+            in_jira = jira.status_category(str(ref.external_id))
+        except PermanentIntegrationError as exc:
+            if exc.details.get("upstream_status") != 404:
+                raise
+            log.info("extraction_jira_issue_gone", action_item_id=item_id)
+            continue
+        if in_jira is None or in_jira not in STATUS_OF:
+            continue
+        synced = ref.synced_category
+        if synced is None:
+            ref.synced_category = in_jira
+            log.info("extraction_jira_baseline_recorded", action_item_id=item_id, category=in_jira)
+            continue
+        if in_jira == synced:
+            continue
+        if board != synced:
+            log.info("extraction_jira_both_moved", action_item_id=item_id)
+            continue
+        service.update_action_item(
+            session, item, ActionItemUpdate(status=ActionStatus(STATUS_OF[in_jira]))
+        )
+        ref.synced_category = in_jira
+        moved.append(item_id)
+        log.info("extraction_jira_status_read_back", action_item_id=item_id, category=in_jira)
+    session.flush()
+    return moved
 
 
 DELETED_NOTE = "Autune에서 삭제된 액션 아이템입니다. 이슈 기록은 남기고 닫았습니다."

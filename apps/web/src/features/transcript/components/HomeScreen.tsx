@@ -1,10 +1,13 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { useEffect } from "react";
 
 import { Row } from "@/shared/ui/Row";
 import { StatusDot } from "@/shared/ui/StatusDot";
 
+import { listTeams } from "../api";
 import { meetingDate } from "../format";
 import { useMeetings, type MeetingsState } from "../hooks/useMeetings";
 import { STATUS_DOT, STATUS_LABEL, isBeingRecorded } from "../status";
@@ -40,6 +43,7 @@ import type { MeetingSummary } from "../types";
  */
 export function HomeScreen() {
   const state = useMeetings();
+  useSendTeamlessToWorkspace();
 
   return (
     // S05's content column: the page gutter from the panel's left edge, not
@@ -181,4 +185,24 @@ function MeetingRow({ meeting }: { meeting: MeetingSummary }) {
       />
     </Link>
   );
+}
+
+/**
+ * Somebody on no team has nothing to see here and cannot open a meeting, so
+ * they go to S02 first. Checked on the home screen because that is where sign-in
+ * lands; a failed check leaves them here rather than guessing.
+ */
+function useSendTeamlessToWorkspace() {
+  const router = useRouter();
+  useEffect(() => {
+    let current = true;
+    listTeams()
+      .then((teams) => {
+        if (current && teams.length === 0) router.replace("/workspace/new");
+      })
+      .catch(() => undefined);
+    return () => {
+      current = false;
+    };
+  }, [router]);
 }

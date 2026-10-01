@@ -119,14 +119,16 @@ def test_a_deadline_is_a_topic_and_today_is_not(ner: SpacyNer) -> None:
     Both paths now cut the particle with ``spoken.noun_stem`` and ask the same
     stoplist, so 오늘은 is 오늘 and is refused. 다음 주 화요일까지 is the
     deadline the meeting set and survives: the stoplist compares the whole span,
-    not the 다음 at its front. It keeps its 까지 because the model tags that
-    화요일까지 ``ncn+ncpa+ncn`` in this sentence — no particle to cut.
+    not the 다음 at its front. The model tags that 화요일까지 ``ncn+ncpa+ncn``
+    in this sentence — no particle for ``noun_stem`` to cut — so the 까지 goes
+    through ``spoken.quantity_text``, which reads a date by its ending (#315).
     """
     found = topics_of(ner, "transcript_ready.typical")
 
     assert "오늘은" not in found
     assert "오늘" not in found
-    assert "다음 주 화요일까지" in found
+    assert "다음 주 화요일" in found
+    assert "다음 주 화요일까지" not in found
 
 
 def test_a_colleague_is_one_topic_however_they_were_addressed(ner: SpacyNer) -> None:

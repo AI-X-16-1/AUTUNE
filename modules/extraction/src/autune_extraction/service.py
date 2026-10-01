@@ -15,7 +15,7 @@ from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, timedelta
 from typing import Any, Literal, Protocol
 
-from sqlalchemy import delete, func, or_, select, update
+from sqlalchemy import and_, delete, func, or_, select, update
 from sqlalchemy.dialects import postgresql, sqlite
 from sqlalchemy.orm import Session, selectinload
 
@@ -68,6 +68,7 @@ from .models import (
     ExtExtractionRun,
     ExtMeetingNote,
 )
+from .noun_form import tidy
 from .pipeline.base import Classifier, NliModel, ReferenceResolver, ResolutionRequest
 from .pipeline.resolver import MAX_CONTEXT_AFTER, MAX_CONTEXT_UTTERANCES
 from .schemas import (
@@ -78,6 +79,7 @@ from .schemas import (
     CarriedOver,
     CarriedOverItem,
     DecisionCreate,
+    DecisionDetail,
     DecisionReviewUpdate,
     EditHistoryEntry,
     ExternalRefRead,
@@ -253,8 +255,18 @@ def resolve_confirmation(
     DM went out, so no row means the meeting was deleted underneath it. Creating
     one here would write meeting-scoped data back after the cascade that was
     meant to remove it.
+
+    **The row is locked for the rest of the transaction.** The draft below is
+    looked up before it is inserted, and nothing unique stops a second insert
+    for the same utterance. A click landing while a rerun rebuilds the
+    meeting's items could not see the rerun's uncommitted item and would make
+    its own, and E would count the promise twice (#529 review);
+    ``build_action_items`` takes the same locks, so one waits for the other. A
+    Slack retry already waited behind the first answer's update of this row,
+    but only because autoflush sends that update before the lookup -- the lock
+    says it outright.
     """
-    row = session.get(ExtConfirmation, response.utterance_id)
+    row = session.get(ExtConfirmation, response.utterance_id, with_for_update=True)
     if row is None:
         log.info("extraction_confirmation_orphaned", utterance_id=response.utterance_id)
         return None
@@ -273,11 +285,117 @@ def resolve_confirmation(
         utterance_id=response.utterance_id,
         resolved_kind=response.resolved_kind.value,
     )
-    # TODO(강민구): #10 — reclassify the utterance in ext_classifications, which
-    # does not exist until the classifier lands. #11 — build an action item from
-    # a confirmed commitment; the description and due date come from slot
-    # filling, and inventing them here would put a guess where a parse belongs.
+    # The later answer wins here too: a commitment makes a draft, any other answer
+    # takes an untouched one back. ``ext_classifications`` is not rewritten -- it
+    # records what the model said, ``resolved_kind`` records what the speaker
+    # said, and the two stay comparable (#10's evaluation reads both).
+    if response.is_commitment:
+        draft_confirmed_commitment(session, row)
+    else:
+        withdraw_confirmed_draft(session, row)
     return row
+
+
+def draft_confirmed_commitment(
+    session: Session, confirmation: ExtConfirmation
+) -> ExtActionItem | None:
+    """The draft item for an agreement its speaker confirmed was a commitment.
+
+    Slot-filled from the stored utterance exactly like a model-classified
+    commitment -- the speaker is the assignee, the first date phrase the due
+    date, the utterance's own text the description -- and it starts in *needs
+    confirmation* like every model item: the speaker said the words were a
+    promise, and a team still accepts the item before it leaves for Notion or a
+    calendar (ADR 0006).
+
+    ``confidence`` is 1.0, the same rule as a hand-added item: the speaker's
+    answer is the certainty, and a model score would put an item its own author
+    confirmed under S15's "below the candidate line".
+
+    **Returns the existing item when there is one** for this utterance, so a
+    Slack retry, a changed-then-restored answer and a rerun all land on one item.
+    Returns ``None`` -- and writes nothing -- when the utterance is gone, blank,
+    or its speaker did not consent to analysis (privacy.md section 5: excluded
+    speech is not stored, so there is nothing to quote and no one to assign).
+    """
+    existing = session.scalar(
+        select(ExtActionItem)
+        .join(ExtActionItemSource, ExtActionItemSource.action_item_id == ExtActionItem.id)
+        .where(ExtActionItemSource.utterance_id == confirmation.utterance_id)
+    )
+    if existing is not None:
+        return existing
+
+    utterance = session.get(Utterance, confirmation.utterance_id)
+    if utterance is None or not utterance.text.strip():
+        return None
+    participant = (
+        session.get(Participant, utterance.participant_id)
+        if utterance.participant_id is not None
+        else None
+    )
+    if participant is None or not participant.consented:
+        return None
+
+    meeting = session.get(Meeting, confirmation.meeting_id)
+    day = meeting_day(meeting.started_at if meeting is not None else None)
+    user_id = participant.user_id
+    known = {user_id} if user_id is not None and session.get(User, user_id) is not None else set()
+    assignee = assignee_of(user_id, utterance.speaker_label, known=known)
+    due = parse_due(utterance.text, day)
+    description = tidy(utterance.text)
+    item = ExtActionItem(
+        meeting_id=confirmation.meeting_id,
+        description=description,
+        description_resolved=False,
+        assignee_id=assignee.user_id,
+        assignee_label=assignee.label,
+        due_date=due.date if due is not None else None,
+        due_text=due.text if due is not None else None,
+        status=ActionStatus.NEEDS_CONFIRMATION.value,
+        confidence=1.0,
+        origin="model",
+        sources=[ExtActionItemSource(utterance_id=confirmation.utterance_id)],
+    )
+    session.add(item)
+    session.flush()
+    log.info(
+        "extraction_confirmed_commitment_drafted",
+        action_item_id=item.id,
+        utterance_id=confirmation.utterance_id,
+    )
+    return item
+
+
+def withdraw_confirmed_draft(session: Session, confirmation: ExtConfirmation) -> int:
+    """Take back the draft this utterance made, if nobody has touched it since.
+
+    A speaker who answered *commitment* and then *not a commitment* has changed
+    their mind, and the item they made should go with the first answer. Only an
+    untouched draft goes: one still in *needs confirmation*, with no edit
+    recorded against it. Once a person has moved or corrected it, it is theirs,
+    and a later click on a DM does not get to delete their work.
+
+    Writes no ``ext_edit_events`` row: that table counts a *person's* corrections
+    (ADR 0006), and this is neither. Returns how many items were removed.
+    """
+    drafts = session.scalars(
+        select(ExtActionItem)
+        .join(ExtActionItemSource, ExtActionItemSource.action_item_id == ExtActionItem.id)
+        .where(
+            ExtActionItemSource.utterance_id == confirmation.utterance_id,
+            ExtActionItem.status == ActionStatus.NEEDS_CONFIRMATION.value,
+            ExtActionItem.origin == "model",
+            ~select(ExtEditEvent.id)
+            .where(ExtEditEvent.action_item_id == ExtActionItem.id)
+            .exists(),
+        )
+    ).all()
+    for draft in drafts:
+        session.delete(draft)
+    if drafts:
+        session.flush()
+    return len(drafts)
 
 
 def ambiguous_agreements_for_meeting(
@@ -708,6 +826,51 @@ def carried_over(session: Session, meeting_id: str, *, today: date | None = None
     )
 
 
+SHOWN_CONTEXT = 3
+"""How many lines before a source a drawer shows. Fewer than the resolver reads
+(``MAX_CONTEXT_UTTERANCES``): that one needs a window a model can resolve
+against, this one a person's glance at what the sentence was about."""
+
+
+def context_before(session: Session, source_ids: Sequence[str]) -> list[SourceUtterance]:
+    """The lines said just before the first of these utterances, in spoken order.
+
+    Only consenting speakers' and only non-blank ones: an excluded speaker's turn
+    is not stored as text (privacy.md section 5), and one row of it reaching a
+    screen would be the leak ``resolve_commitment_references`` was fixed for
+    (#366). Reads ``utterances``, which module A owns. Empty when there are no
+    sources -- a hand-added item has nothing to be "before".
+    """
+    if not source_ids:
+        return []
+    first = session.execute(
+        select(Utterance.meeting_id, Utterance.start_sec, Utterance.id)
+        .where(Utterance.id.in_(source_ids))
+        .order_by(Utterance.start_sec, Utterance.id)
+        .limit(1)
+    ).first()
+    if first is None:
+        return []
+    meeting_id, start, first_id = first
+    rows = session.execute(
+        select(Utterance.id, Utterance.text)
+        .join(Participant, Participant.id == Utterance.participant_id)
+        .where(
+            Utterance.meeting_id == meeting_id,
+            Participant.consented.is_(True),
+            Utterance.id.not_in(source_ids),
+            func.length(func.trim(Utterance.text)) > 0,
+            or_(
+                Utterance.start_sec < start,
+                and_(Utterance.start_sec == start, Utterance.id < first_id),
+            ),
+        )
+        .order_by(Utterance.start_sec.desc(), Utterance.id.desc())
+        .limit(SHOWN_CONTEXT)
+    ).all()
+    return [SourceUtterance(id=uid, text=text) for uid, text in reversed(rows)]
+
+
 def read_detail(session: Session, item: ExtActionItem) -> ActionItemDetail:
     """One item with the text of the utterances it was drawn from.
 
@@ -727,6 +890,7 @@ def read_detail(session: Session, item: ExtActionItem) -> ActionItemDetail:
             item, assignee_name=name, summary=summary, sync_refs=refs, assignee_departed=departed
         ).model_dump(),
         sources=source_utterances(session, item.id),
+        context=context_before(session, [s.utterance_id for s in item.sources if s.utterance_id]),
         history=edit_history(session, item.id),
     )
 
@@ -1808,6 +1972,19 @@ def build_action_items(
         else set()
     )
 
+    # Locked before anything is deleted, in one order, so a speaker's click on
+    # this meeting's DM waits for the rebuild or the rebuild for the click --
+    # never both writing a draft (``resolve_confirmation``).
+    answers = {
+        row.utterance_id: row.resolved_kind
+        for row in session.scalars(
+            select(ExtConfirmation)
+            .where(ExtConfirmation.meeting_id == meeting_id)
+            .order_by(ExtConfirmation.utterance_id)
+            .with_for_update()
+        )
+    }
+
     for stale in session.scalars(
         select(ExtActionItem).where(
             ExtActionItem.meeting_id == meeting_id, ExtActionItem.origin == "model"
@@ -1819,15 +1996,24 @@ def build_action_items(
     for utterance in classified:
         if utterance.kind is not UtteranceKind.COMMITMENT:
             continue
+        answer = answers.get(utterance.id)
+        if answer is not None and answer != UtteranceKind.COMMITMENT.value:
+            # Its speaker said it was not a promise. ``withdraw_confirmed_draft``
+            # took the item back; a rerun that still reads a commitment must not
+            # bring it back (#529 review).
+            continue
         said = spoken[utterance.id]
         assignee = assignee_of(said.speaker_id, said.speaker, known=known)
         due = parse_due(said.text, day)
-        description = resolved.get(utterance.id, said.text)
+        # ``description_resolved`` is about the resolver's rewrite alone; tidying
+        # is a fixed rule, not a model's paraphrase, and the original is beside it.
+        rewritten = resolved.get(utterance.id, said.text)
+        description = tidy(rewritten)
         items.append(
             ExtActionItem(
                 meeting_id=meeting_id,
                 description=description,
-                description_resolved=description != said.text,
+                description_resolved=rewritten != said.text,
                 assignee_id=assignee.user_id,
                 assignee_label=assignee.label,
                 due_date=due.date if due is not None else None,
@@ -1840,6 +2026,19 @@ def build_action_items(
         )
     session.add_all(items)
     session.flush()
+    # A draft a speaker's own answer made was one of the rows deleted above.
+    # ``ext_confirmations`` is what outlives a rerun, so the draft is derived
+    # from it again -- and an utterance the classifier now calls a commitment
+    # already has its item, which ``draft_confirmed_commitment`` returns as is.
+    for confirmation in session.scalars(
+        select(ExtConfirmation).where(
+            ExtConfirmation.meeting_id == meeting_id,
+            ExtConfirmation.resolved_kind == UtteranceKind.COMMITMENT.value,
+        )
+    ):
+        drafted = draft_confirmed_commitment(session, confirmation)
+        if drafted is not None and drafted not in items:
+            items.append(drafted)
     return items
 
 
@@ -2048,6 +2247,27 @@ def _read_decision(
         )
     summary = decision_summaries(session, [decision]).get(decision.id)
     return _review_decision_row(decision, review, refs, summary)
+
+
+def read_decision_detail(session: Session, decision: ExtDecision) -> DecisionDetail:
+    """One decision with the utterances it was settled in, in spoken order.
+
+    Reads ``utterances``, which module A owns and this module may only read. An
+    utterance that has been deleted takes its link row with it, so a missing
+    quotation means the speech is gone.
+    """
+    row = _read_decision(session, decision)
+    quoted = session.execute(
+        select(Utterance.id, Utterance.text)
+        .join(ExtDecisionSource, ExtDecisionSource.utterance_id == Utterance.id)
+        .where(ExtDecisionSource.decision_id == decision.id)
+        .order_by(ExtDecisionSource.position)
+    ).all()
+    return DecisionDetail(
+        **row.model_dump(),
+        sources=[SourceUtterance(id=uid, text=text) for uid, text in quoted],
+        context=context_before(session, [uid for uid, _ in quoted]),
+    )
 
 
 def meeting_summary(

@@ -154,6 +154,12 @@ export interface EditHistoryEntry {
 export interface ActionItemDetail extends ActionItemRead {
   /** In the order they were spoken. */
   sources: SourceUtterance[];
+  /**
+   * What was said just before the first source, in spoken order — so a sentence
+   * with nothing to point at ("다음 주까지 볼게요") reads with what it is about.
+   * Not what the item was drawn from.
+   */
+  context?: SourceUtterance[];
   /** Oldest first. Empty for an item the model extracted and nobody touched. */
   history?: EditHistoryEntry[];
 }
@@ -273,6 +279,18 @@ export interface ReviewAmbiguous {
   utterance_id: string;
   outcome: "not_asked" | "pending" | "undecided" | "resolved";
   resolved_kind: string | null;
+}
+
+/**
+ * One decision and the words it was settled in — `DecisionDetail`, from
+ * `GET /decisions/{id}`. The list carries ids and one preview line; the
+ * verbatim quotations come one row at a time.
+ */
+export interface DecisionDetail extends ReviewDecision {
+  /** In the order they were spoken: the proposal first, the settling turn last. */
+  sources: SourceUtterance[];
+  /** The lines just before the first source, in spoken order. */
+  context?: SourceUtterance[];
 }
 
 /** `GET /reviews/{meeting_id}` — everything that needs a person first. */

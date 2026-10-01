@@ -130,7 +130,7 @@ noun plus this is still a bare noun; anything else after a ``+`` — a particle
 grammar, and joining it into a label would put "개인화로" in a report where
 "개인화" belongs."""
 
-RULES_VERSION = "spoken-4"
+RULES_VERSION = "spoken-5"
 """The version of the judgements in this file, appended to the extractor's.
 
 ``ko_core_news_lg-3.8.0`` names the weights, and the weights are half of what
@@ -495,6 +495,12 @@ STOP_TERMS: frozenset[str] = frozenset(
         "저희",
         "한번",
         "문제",
+        # Measured on the authored eval set for #315: 의미 was the most central
+        # node of ``deploy-retro`` ("의미 있는 회고였습니다"). 진행 and 공유 are
+        # as contentless and are left out on purpose: 진행 is a ``next_step``
+        # keyword, and 공유 is the only topic of a status meeting, whose graph
+        # would otherwise be empty and raise nothing.
+        "의미",
         # Contrast markers. ``ko_core_news_lg`` tags 대신 and 말고 as ordinary
         # common nouns, so a run swallows them: "인기순 정렬 대신 실시간
         # 개인화로" came back as one topic called 인기순 정렬 대신 실시간 —
@@ -756,6 +762,63 @@ HONORIFICS: tuple[str, ...] = ("님", "씨")
 """What a meeting puts after a colleague's name. Neither is part of the name."""
 
 
+_COPULA_ENDINGS: tuple[str, ...] = tuple(
+    sorted(
+        {
+            "입니다",
+            "이고",
+            "이며",
+            "이다",
+            "이에요",
+            "예요",
+            "이었고",
+            "였고",
+            "이었습니다",
+            "였습니다",
+        },
+        key=len,
+        reverse=True,
+    )
+)
+"""The copula and its endings, as they close a quantity: 0건입니다, 90일이고."""
+
+_BARE_QUANTITY = re.compile(
+    r"\d[\d.,]*\s*(?:%|퍼센트|건|초|분|시간|일|주|개월|달|년|개|명|배|ms|밀리초|원|번|회)?"
+)
+"""A number and at most one unit, nothing else: 15%, 30초, 0건, 90일."""
+
+
+_QUANTITY_TAILS = frozenset("%건초분일주달년개명배원번회월")
+"""Last characters a date or quantity ends on once its particle is gone: a
+unit or a day (요일 ends in 일). Checked before a particle is cut, so 기간까지
+is not a date reduced to 기간 and a stem that is not a quantity is left whole."""
+
+
+def quantity_text(text: str) -> str:
+    """A ``date`` or ``metric`` span without the copula or particle on its end.
+
+    ``noun_stem`` will not read through the copula (``jp``), where the model is
+    least reliable about what is a noun, so an entity span ending in one kept
+    it: 0건입니다 and 90일이고 were topics (#315). A date or a quantity always
+    ends in a number, a unit or a day, so what follows it here is never part
+    of it. The particle is cut too: 다음 주 금요일까지 is tagged with 까지 on a
+    bound noun in some sentences and not in others, and the deadline is the
+    day either way.
+    """
+    stripped = text.strip()
+    for ending in _COPULA_ENDINGS:
+        if stripped.endswith(ending) and len(stripped) > len(ending):
+            stripped = stripped[: -len(ending)]
+            break
+    for particle in sorted(PARTICLES, key=len, reverse=True):
+        if stripped.endswith(particle) and len(stripped) > len(particle):
+            candidate = stripped[: -len(particle)].rstrip()
+            if candidate and (candidate[-1].isdigit() or candidate[-1] in _QUANTITY_TAILS):
+                stripped = candidate
+            break
+    return stripped
+
+
 def person_name(text: str) -> str:
     """A ``person`` span without the honorific after the name, or the particle
     after that.
@@ -798,8 +861,13 @@ def is_plausible(label: str, text: str) -> bool:
       one-letter names in it, and two of them became the most connected nodes
       of the ``typical`` fixture's graph.
     - **A metric without a number is not a metric.** ``QT`` is the quantity
-      label, and on spoken Korean it fires on ``한번``, ``네,``, ``좀``. What
-      makes a quantity worth graphing is the quantity: "응답 3초", "95%".
+      label, and on spoken Korean it fires on ``한번``, ``네,``, ``좀``.
+    - **A bare quantity is not a topic either** (#315). "15%", "30초" and
+      "0건" alone name no thing; the meeting was about 응답 시간 or 검색
+      이탈률, and that noun is its own topic. "응답 3초" keeps its noun and
+      stays. A ``date`` made of a number and one unit is the same: "90일" is a
+      retention period and "30초" a timeout, not a day anything is due. A day
+      the meeting named — 다음 주 금요일, 10월 1일 — has more than that.
 
     Neither rule looks at the *content* of a span beyond its shape, and no
     caller logs the text it rejects — the span is the meeting's, not the
@@ -810,6 +878,8 @@ def is_plausible(label: str, text: str) -> bool:
         return False
     if label == "person":
         return len(stripped) > 1
+    if label in ("metric", "date") and _BARE_QUANTITY.fullmatch(stripped):
+        return False
     if label == "metric":
         return any(character.isdigit() for character in stripped)
     return bool(stripped)

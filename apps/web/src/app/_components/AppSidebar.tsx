@@ -37,11 +37,13 @@ const NAV: NavItem[] = [
   // The meeting list is the home screen for now, so both entries lead there;
   // this one is current anywhere inside a meeting.
   { label: "회의", href: "/", isCurrent: (p) => p.startsWith("/meetings") },
-  { label: "액션아이템" },
+  { label: "액션아이템", href: "/actions", isCurrent: (p) => p === "/actions" },
   { label: "갭 리포트" },
   { label: "결정 계보", href: "/decisions", isCurrent: (p) => p.startsWith("/decisions") },
   { label: "자료", phase2: true },
-  { label: "대시보드" },
+  { label: "대시보드", href: "/dashboard", isCurrent: (p) => p.startsWith("/dashboard") },
+  // The agent layer's approval queue: L2 proposals wait here for a person.
+  { label: "승인 대기", href: "/approvals", isCurrent: (p) => p.startsWith("/approvals") },
 ];
 
 const itemText = {

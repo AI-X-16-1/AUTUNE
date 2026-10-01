@@ -28,6 +28,7 @@ from autune_core import (
     AutuneError,
     Meeting,
     PrivacyViolationError,
+    TeamIntegration,
     Utterance,
     get_logger,
     jira_access,
@@ -639,6 +640,68 @@ def _pull_one(user_id: str) -> list[str]:
             .on_conflict_do_update(index_elements=["user_id"], set_={"polled_at": started})
         )
         return moved
+
+
+@shared_task(name="autune.extraction.periodic.pull_jira_changes")
+@periodic(timedelta(minutes=10))
+def pull_jira_changes() -> None:
+    """Every ten minutes, read back the status people moved their issues to in
+    Jira (``jira_sync.pull_status_changes``): an issue dragged to Done is a done
+    item on the board. One team at a time, each with its own access token and
+    its own transaction, so one team's lapsed connection stops nobody else's.
+
+    Skipped for a team whose connection needs a person to reconnect
+    (``jira_access`` answers ``None``). Anything one team's read raises is
+    logged by the error's type and the team id, never its message -- the
+    calendar read-back's rule. After the commit, Notion follows the new status
+    the way it follows a board edit.
+    """
+    with session_scope() as session:
+        team_ids = _jira_teams(session)
+    for team_id in team_ids:
+        try:
+            moved = _pull_jira_team(team_id)
+        except Exception as exc:  # noqa: BLE001 -- one team's failure is theirs alone
+            log.warning("extraction_jira_pull_failed", team_id=team_id, error=type(exc).__name__)
+            continue
+        for action_item_id in moved:
+            try:
+                sync_action_item(action_item_id)
+            except IntegrationError:
+                log.warning("extraction_notion_sync_failed", action_item_id=action_item_id)
+            except PrivacyViolationError:
+                # Blocked, not failed: the outbound check refused the send and
+                # nothing left. Its own event, as ``sync_after_confirmation``
+                # logs it, so a privacy block never reads as a flaky Notion.
+                log.warning(
+                    "extraction_notion_sync_blocked_by_privacy_guard",
+                    action_item_id=action_item_id,
+                )
+
+
+def _jira_teams(session: Session) -> list[str]:
+    """Teams with a Jira connection stored. A read of core's table, never a write."""
+    return list(
+        session.scalars(
+            select(TeamIntegration.team_id)
+            .where(TeamIntegration.service == jira_sync.JIRA, TeamIntegration.secret.is_not(None))
+            .order_by(TeamIntegration.team_id)
+        )
+    )
+
+
+def _pull_jira_team(team_id: str) -> list[str]:
+    access = jira_access(team_id)
+    if access is None:
+        return []
+    client = JiraClient.for_cloud(access.access_token, access.cloud_id)
+    try:
+        with session_scope() as session:
+            return jira_sync.pull_status_changes(
+                session, client, team_id=team_id, site=access.cloud_id
+            )
+    finally:
+        client.close()
 
 
 def backfill_jira(team_id: str) -> dict[str, int]:

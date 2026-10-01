@@ -12,7 +12,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Integer, String, func
+from sqlalchemy import CheckConstraint, DateTime, Float, ForeignKey, Integer, String, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from autune_core import Base, Meeting
@@ -69,6 +69,14 @@ class TranscriptionJob(Base):
             "status IN ('queued','running','done','failed','superseded')",
             name="ck_aud_jobs_status",
         ),
+        CheckConstraint(
+            "stage IS NULL OR stage IN ('decoding','transcribing','diarizing','masking','saving')",
+            name="ck_aud_jobs_stage",
+        ),
+        CheckConstraint(
+            "stage_progress IS NULL OR (stage_progress >= 0 AND stage_progress <= 1)",
+            name="ck_aud_jobs_stage_progress",
+        ),
     )
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True, default=lambda: new_id(JOB))
@@ -80,6 +88,11 @@ class TranscriptionJob(Base):
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    stage: Mapped[str | None] = mapped_column(String(16))
+    """Which step of ``process_recording`` a ``running`` job is on -- see
+    ``progress.STAGES``. Null before the worker starts it."""
+    stage_progress: Mapped[float | None] = mapped_column(Float)
+    """How far through ``stage``, 0..1. Null when the step cannot tell."""
 
     meeting: Mapped[Meeting] = relationship()
 
