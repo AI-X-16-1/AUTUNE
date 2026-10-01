@@ -8,6 +8,7 @@ import { CalendarConnect } from "./CalendarConnect";
 import { CarriedOverActions } from "./CarriedOverActions";
 import { SlackMeConnect } from "./SlackMeConnect";
 import { JiraConnect } from "./JiraConnect";
+import { MyConfirmations } from "./MyConfirmations";
 import { SlackConnect } from "./SlackConnect";
 import { NotionConnect } from "./NotionConnect";
 import { DecisionReview } from "./DecisionReview";
@@ -42,7 +43,7 @@ import { useActionItems } from "../hooks/useActionItems";
  * whole width and the board renders at zero. Raised in review of #292.
  */
 export function ActionItemsScreen({ meetingId }: { meetingId: string }) {
-  const { items, settled, error, add, edit, remove } = useActionItems({
+  const { items, settled, error, add, edit, remove, reload } = useActionItems({
     meeting_id: meetingId,
   });
   const [selectedId, setSelectedId] = useState<string | undefined>(undefined);
@@ -82,6 +83,10 @@ export function ActionItemsScreen({ meetingId }: { meetingId: string }) {
           <JiraConnect meetingId={meetingId} />
           <SlackConnect meetingId={meetingId} />
           <NotionConnect meetingId={meetingId} />
+        </div>
+
+        <div className="mt-6">
+          <MyConfirmations meetingId={meetingId} onAnswered={() => void reload()} />
         </div>
 
         <div className="mt-6">
