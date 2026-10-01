@@ -695,6 +695,42 @@ after head selection, for the same reason. `GET /links/{meeting_id}` and
 `POST /links/{link_id}/confirm` apply the same expiry filter to the queried
 meeting itself that the two decision routes already applied.
 
+### Agent tools — `autune_context.tools`
+
+Three reads the agent layer collects the way `apps/api` collects routers
+(`agent-layer.md` section 4; `tools.py` is this module's file, ADR 0010):
+
+| Tool | Answers | Built on |
+| --- | --- | --- |
+| `links_for_meeting(team_id, meeting_id)` | which earlier meetings discussed what this one did | `service.get_topic_links` |
+| `decision_thread(team_id, thread_id)` | how one decision moved across meetings: its five most recent versions, oldest first | `service.get_decision_lineage` |
+| `list_decisions(team_id, topic?, change_type?)` | the team's decisions by current head, most recently touched first | `service.list_decisions` |
+
+Plain functions returning the `ToolResult` dict, with no `autune_agent` import;
+`team_id` is filled from the run's scope and never by a model, and a meeting or
+thread of another team reads as missing. They add no route, table or contract,
+and are reads only: confirming a link stays a person's act on S15.
+
+They go through the same `service` reads as the routes, so visibility cannot
+drift between the two: a meeting past its retention window is gone from a tool
+result the moment it expires. What the routes do in `router.py` is repeated here
+for the one place a tool cannot call the router, and one case is stricter:
+
+- **`key_stakeholders_absent` is never returned**, for the reason it is kept out
+  of the read API (see "Privacy notes", #188). No tool reads the column.
+- **`previous_statement` is returned only while its predecessor meeting is
+  visible.** The router blanks it when that meeting expired; a tool also
+  withholds it when `previous_meeting_id` is empty, since nothing then says the
+  quoted meeting is still readable.
+- **A `pending` link is counted, not listed.** `links_for_meeting` lists
+  `asserted` and `confirmed` links and says how many wait for a person, so an
+  agent does not state a guess as a fact.
+- `evidence` is a meeting id or a thread id, never text: a link's own id is an
+  integer and is not a valid evidence value.
+
+The brief the Briefing subagent composes is still sent by D's own surface
+(`briefs.py`), so one brief goes out.
+
 ## Celery tasks
 
 | Task | Trigger | Queue |

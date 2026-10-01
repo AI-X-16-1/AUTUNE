@@ -19,6 +19,14 @@ changed across meetings. Shortly before a scheduled meeting, post a brief
 recapping the meeting it follows (`briefs.py`). Material analysis and agenda
 generation are Phase 2.
 
+## Agent tools
+
+`tools.py` exposes three reads to the agent layer (`links_for_meeting`,
+`decision_thread`, `list_decisions`). They never return
+`key_stakeholders_absent`, and a quoted `previous_statement` only while its
+predecessor meeting is visible; `tests/integration/test_tools.py` pins both.
+A new tool must go through a `service` read, never a query of its own.
+
 ## Consumes
 
 Two inputs, and they arrive at different times:
