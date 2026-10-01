@@ -383,6 +383,7 @@ def draft_confirmed_commitment(
         origin="model",
         sources=[ExtActionItemSource(utterance_id=confirmation.utterance_id)],
         related=_cited(session, confirmation.meeting_id, confirmation.utterance_id, resolution),
+        source_digest=stored_digest(session, [confirmation.utterance_id]),
     )
     session.add(item)
     session.flush()
@@ -618,6 +619,7 @@ def create_action_item(
         ExtActionItemSource(utterance_id=utterance_id)
         for utterance_id in dict.fromkeys(payload.source_utterance_ids)
     ]
+    item.source_digest = stored_digest(session, list(dict.fromkeys(payload.source_utterance_ids)))
     session.add(item)
     session.flush()
 
@@ -715,6 +717,7 @@ def create_chat_item(
         confidence=1.0,
         origin="chat",
         sources=[ExtActionItemSource(utterance_id=utterance_id)],
+        source_digest=source_digest([said.text]),
         related=[
             ExtActionItemRelated(utterance_id=u)
             for u in dict.fromkeys(resolution.used)
@@ -806,6 +809,7 @@ def read_model(
         source_utterance_ids=source_ids,
         deleted_source_count=0 if hidden else len(item.sources) - len(source_ids),
         needs_reassignment=assignee_departed and item.status in _OPEN_STATUSES,
+        needs_recheck=bool(item.needs_recheck),
         is_candidate=is_candidate,
         summary=summary,
         sync_refs=sync_refs or [],
@@ -1307,6 +1311,9 @@ def update_action_item(
 
     for field, value in changes.items():
         setattr(item, field, value.value if isinstance(value, ActionStatus) else value)
+    # A person has looked at it and changed it: whatever a corrected source asked
+    # them to check, they have now had in front of them (#586).
+    item.needs_recheck = False
     if "due_date" in changes:
         # The phrase explained the date the model read. A date a person set is
         # not explained by it, and keeping it would hold on to what they
@@ -2367,6 +2374,143 @@ def resolve_decision_summaries(
     return dict(zip(keys, resolved, strict=True))
 
 
+def source_digest(texts: Sequence[str]) -> str:
+    """sha256 of the masked texts an item or decision was drawn from, in source
+    order -- not reversible, the #518 consent-key pattern. What a later run
+    compares to notice that a line was corrected (#586)."""
+    return hashlib.sha256("\x1f".join(texts).encode("utf-8")).hexdigest()
+
+
+def stored_digest(session: Session, utterance_ids: Sequence[str]) -> str | None:
+    """``source_digest`` over the stored text of ``utterance_ids``; ``None`` when
+    there are none or one is gone."""
+    if not utterance_ids:
+        return None
+    texts = dict(
+        session.execute(select(Utterance.id, Utterance.text).where(Utterance.id.in_(utterance_ids)))
+        .tuples()
+        .all()
+    )
+    if len(texts) != len(set(utterance_ids)):
+        return None
+    return source_digest([texts[u] for u in utterance_ids])
+
+
+@dataclass(frozen=True)
+class SourceCorrections:
+    """What ``apply_source_corrections`` changed, by id -- the confirmed ones,
+    whose copies in Notion, Jira and calendars must follow."""
+
+    changed_items: tuple[str, ...] = ()
+    changed_decisions: tuple[str, ...] = ()
+    flagged: int = 0
+
+
+def _edited_description(session: Session, action_item_id: str) -> bool:
+    for fields in session.scalars(
+        select(ExtEditEvent.fields).where(
+            ExtEditEvent.action_item_id == action_item_id, ExtEditEvent.kind == "edited"
+        )
+    ):
+        if fields is None or "description" in fields.split(","):
+            return True
+    return False
+
+
+def apply_source_corrections(
+    session: Session, *, meeting_id: str, spoken: Mapping[str, str]
+) -> SourceCorrections:
+    """Fix or flag what was drawn from a line that has since been corrected (#586).
+
+    A PII report masks stored lines again and republishes ``TranscriptReady``
+    without naming them. ``spoken`` is that payload's text by utterance id. Every
+    item and decision of the meeting whose sources now hash differently from
+    ``source_digest`` is handled -- **even in a meeting a person has edited**,
+    which ``build_action_items`` otherwise leaves alone (ADR 0006):
+
+    - an item whose description is the line itself reads the corrected line,
+      tidied; a model's summary is replaced the same way and flagged
+      ``needs_recheck`` (a summary is not rewritten here: no model call on a
+      correction); a person's own text is only flagged -- B cannot tell which
+      words of theirs were the private ones;
+    - ``due_text``, a fragment of the line, is read again from the new text;
+    - a model decision was rebuilt from the new text in this same run; one a
+      person typed, or reworded, is flagged.
+
+    A row with no digest yet records one and changes nothing. Runs after this
+    run's rebuild, so what it rebuilt already matches. No edit events: no person
+    corrected anything. Returns the confirmed rows whose outside copies must
+    follow.
+    """
+    meeting = session.get(Meeting, meeting_id)
+    day = meeting_day(meeting.started_at if meeting is not None else None)
+    changed: list[str] = []
+    flagged = 0
+    for item in session.scalars(
+        select(ExtActionItem)
+        .where(ExtActionItem.meeting_id == meeting_id)
+        .options(selectinload(ExtActionItem.sources))
+    ):
+        ids = live_source_ids(item)
+        texts = [spoken.get(u) for u in ids]
+        if not ids or any(t is None for t in texts):
+            continue
+        digest = source_digest([t for t in texts if t is not None])
+        if item.source_digest == digest:
+            continue
+        first = item.source_digest is None
+        item.source_digest = digest
+        if first:
+            continue
+        line = texts[0] or ""
+        if item.origin == "user" or _edited_description(session, item.id):
+            item.needs_recheck = True
+        elif item.description_resolved:
+            item.description = tidy(line)
+            item.description_resolved = False
+            item.needs_recheck = True
+        elif item.origin in ("model", "chat"):
+            item.description = tidy(line)
+        if item.due_text is not None:
+            due = parse_due(line, day)
+            item.due_text = due.text if due is not None else None
+        flagged += int(item.needs_recheck)
+        if item.status != ActionStatus.NEEDS_CONFIRMATION.value:
+            changed.append(item.id)
+
+    reviews = {
+        review.decision_id: review
+        for review in session.scalars(
+            select(ExtDecisionReview).where(ExtDecisionReview.meeting_id == meeting_id)
+        )
+    }
+    changed_decisions: list[str] = []
+    for decision in session.scalars(
+        select(ExtDecision)
+        .where(ExtDecision.meeting_id == meeting_id)
+        .options(selectinload(ExtDecision.sources))
+    ):
+        ids = [s.utterance_id for s in sorted(decision.sources, key=lambda s: s.position)]
+        texts = [spoken.get(u) for u in ids]
+        if not ids or any(t is None for t in texts):
+            continue
+        digest = source_digest([t for t in texts if t is not None])
+        if decision.source_digest == digest:
+            continue
+        first = decision.source_digest is None
+        decision.source_digest = digest
+        if first:
+            continue
+        review = reviews.get(decision.id)
+        if decision.origin == "user" or (review is not None and review.statement):
+            decision.needs_recheck = True
+            flagged += 1
+        if review is not None and review.status == "confirmed":
+            changed_decisions.append(decision.id)
+    session.flush()
+    return SourceCorrections(tuple(changed), tuple(changed_decisions), flagged)
+
+
 def build_action_items(
     session: Session,
     *,
@@ -2668,6 +2812,7 @@ def _review_decision_row(
         model_statement=decision.statement,
         confidence=decision.confidence,
         origin=decision.origin,  # type: ignore[arg-type]
+        needs_recheck=bool(decision.needs_recheck),
         status=review.status if review else "pending",  # type: ignore[arg-type]
         suggested=_suggested(decision.confidence),
         source_utterance_ids=[
@@ -2912,6 +3057,9 @@ def review_decision(
             # decision when the rejection is undone -- wording nobody typed this
             # time, sent to D, E and outbound as if confirmed.
             review.statement = None
+        # A person has reviewed it again: a corrected source has been in front
+        # of them (#586).
+        decision.needs_recheck = False
         session.flush()
 
     return _read_decision(session, decision)
@@ -3004,6 +3152,7 @@ def create_decision(session: Session, payload: DecisionCreate) -> ReviewDecision
             ExtDecisionSource(utterance_id=utterance_id, position=position)
             for position, utterance_id in enumerate(source_ids)
         ],
+        source_digest=stored_digest(session, source_ids),
     )
     session.add(decision)
     session.flush()

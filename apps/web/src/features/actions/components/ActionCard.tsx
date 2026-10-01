@@ -131,6 +131,9 @@ export function ActionCard({
  * either way, so this is never more than the one line was.
  */
 function reasonFor(item: ActionItemRead): string {
+  // Ahead of everything else: the text above may still carry what a PII
+  // report corrected (#586), and only a person can say.
+  if (item.needs_recheck) return "출처 발화가 정정됨 · 확인 필요";
   if (item.origin === "user") return "직접 추가";
   if (item.origin === "followup") return "후속 회의 제안";
   // Confirmed, a chat draft keeps only its summary: the server stops listing

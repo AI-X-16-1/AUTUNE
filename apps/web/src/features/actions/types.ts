@@ -72,6 +72,11 @@ export interface ActionItemRead extends ActionItem {
    */
   origin: "model" | "user" | "followup" | "chat";
   /**
+   * A line it was drawn from was corrected after it was made (#586) and the
+   * text may still need a person's eye. Cleared by their next edit.
+   */
+  needs_recheck: boolean;
+  /**
    * Whether the item belongs in the candidate band. Decided by the server,
    * which holds the threshold the classifier's confidences are measured
    * against; false for everything while that threshold is unset (#122).
@@ -264,6 +269,8 @@ export interface ReviewDecision {
   model_statement: string;
   confidence: number;
   origin: "model" | "user";
+  /** A source line was corrected since a person typed or reworded it (#586). */
+  needs_recheck: boolean;
   status: DecisionStatus;
   /** Pre-check it? `null` while the candidate line is unset. */
   suggested: boolean | null;

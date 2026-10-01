@@ -21,6 +21,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    false,
     func,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -138,6 +139,18 @@ class ExtActionItem(Base, TimestampMixin):
     agent layer's: ``followup`` (the Follow-up subagent's "후속 회의 잡기",
     #561) and ``chat`` (drafted from an utterance in the chat). A rerun replaces
     only ``model`` rows."""
+
+    source_digest: Mapped[str | None] = mapped_column(String(64))
+    """sha256 of the masked text of the utterances this was drawn from, in source
+    order (``service.source_digest``) -- how a corrected transcript is noticed
+    (#586). ``NULL`` until a run records it."""
+
+    needs_recheck: Mapped[bool] = mapped_column(
+        nullable=False, default=False, server_default=false()
+    )
+    """A line this came from was corrected after it was made, and what a person
+    sees may still carry what was corrected: a summary rewritten from the new
+    line, or their own wording (#586). Cleared when a person edits or reviews."""
 
     description_resolved: Mapped[bool] = mapped_column(nullable=False, default=False)
     """True when ``description`` is ``ReferenceResolver``'s rewrite rather than
@@ -381,6 +394,18 @@ class ExtDecision(Base, TimestampMixin):
     rewrite made for the screen must not move it. ``NULL`` for a decision a person
     typed and for rows from before this column: read it as
     ``original_statement or statement``."""
+
+    source_digest: Mapped[str | None] = mapped_column(String(64))
+    """sha256 of the masked text of the utterances this was drawn from, in source
+    order (``service.source_digest``) -- how a corrected transcript is noticed
+    (#586). ``NULL`` until a run records it."""
+
+    needs_recheck: Mapped[bool] = mapped_column(
+        nullable=False, default=False, server_default=false()
+    )
+    """A line this came from was corrected after it was made, and what a person
+    sees may still carry what was corrected: a summary rewritten from the new
+    line, or their own wording (#586). Cleared when a person edits or reviews."""
 
     confidence: Mapped[float] = mapped_column(Float, nullable=False)
 

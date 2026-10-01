@@ -113,6 +113,28 @@ def on_transcript_ready(payload: dict) -> None:
     _extract(transcript.meeting_id, transcript.utterances)
 
 
+def _follow_corrections(corrections: service.SourceCorrections) -> None:
+    """Queue the outside copies of corrected confirmed rows (#586) -- Notion,
+    Jira and the calendar for an item, Notion for a decision. A failure to queue
+    is logged: the rows are already right, and the next edit sends them."""
+    try:
+        for action_item_id in corrections.changed_items:
+            sync_action_item.delay(action_item_id)
+            sync_action_item_jira.delay(action_item_id)
+            sync_action_item_calendar.delay(action_item_id)
+        for decision_id in corrections.changed_decisions:
+            sync_decision.delay(decision_id)
+    except Exception as exc:  # noqa: BLE001 -- the correction itself is committed
+        log.warning("extraction_corrections_not_queued", error=type(exc).__name__)
+    if corrections.changed_items or corrections.changed_decisions or corrections.flagged:
+        log.info(
+            "extraction_sources_corrected",
+            items=len(corrections.changed_items),
+            decisions=len(corrections.changed_decisions),
+            flagged=corrections.flagged,
+        )
+
+
 def _extract(meeting_id: str, utterances: Sequence[TranscriptUtterance]) -> None:
     """Everything ``on_transcript_ready`` does after the payload is checked;
     ``reextract_consent_changes`` runs it too, on the stored transcript."""
@@ -165,10 +187,17 @@ def _extract(meeting_id: str, utterances: Sequence[TranscriptUtterance]) -> None
         ambiguous = service.record_ambiguous_agreements(
             session, meeting_id=meeting_id, classified=classified
         )
+        # After the rebuild, so what it rebuilt already matches: what was drawn
+        # from a line corrected since -- kept because a person edited the
+        # meeting, or written by a person -- is fixed or flagged (#586).
+        corrections = service.apply_source_corrections(
+            session, meeting_id=meeting_id, spoken={u.id: u.text for u in utterances}
+        )
         # With the rows it describes: a rollback takes both (#518).
         service.record_extraction(session, meeting_id=meeting_id, consented=consented)
         result = service.result_for_meeting(session, meeting_id)
 
+    _follow_corrections(corrections)
     # Counts and ids only. The utterances are meeting content.
     log.info(
         "extraction_classified",

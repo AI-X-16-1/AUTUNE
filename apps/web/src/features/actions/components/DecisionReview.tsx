@@ -182,6 +182,7 @@ function DecisionRow({
             </p>
           ) : null}
           <p className="mt-1 text-[var(--color-ink-muted)]" style={{ fontSize: "var(--text-metaSmall)" }}>
+            {decision.needs_recheck ? "출처 발화가 정정됨 · 확인 필요 · " : null}
             {status.label} ·{" "}
             {decision.origin === "user"
               ? "직접 추가"
