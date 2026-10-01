@@ -267,6 +267,14 @@ export function LiveMeetingScreen({ meetingId }: { meetingId: string }) {
   // reached ready yet, or it is live.
   const state: RecordingState = live.phase === "paused" ? "paused" : "recording";
 
+  // Read on every render, and the level meter re-renders every 100ms, so a
+  // track that ends (a headset unplugged) shows up within a tick.
+  const track = microphone.stream?.getAudioTracks()[0];
+  const microphoneStatus = {
+    live: track?.readyState === "live",
+    noiseSuppression: track?.getSettings().noiseSuppression === true,
+  };
+
   return frame(
     <>
       {live.liveLost && (
@@ -283,6 +291,7 @@ export function LiveMeetingScreen({ meetingId }: { meetingId: string }) {
         rows={live.rows}
         elapsedSeconds={live.elapsedSeconds}
         levels={microphone.levels}
+        microphone={microphoneStatus}
         onPause={live.pause}
         onResume={live.resume}
         onStop={() => void onStop()}
