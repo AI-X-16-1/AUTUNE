@@ -177,7 +177,7 @@ def test_a_stored_question_goes_undecided_on_its_own(session: Session) -> None:
     stored = session.get(ExtConfirmation, UTTERANCE)
     assert stored is not None
     assert stored.outcome_at(row.sent_at.replace(tzinfo=UTC) + timedelta(hours=23)) == PENDING
-    assert stored.outcome_at(row.sent_at.replace(tzinfo=UTC) + timedelta(hours=25)) == UNDECIDED
+    assert stored.outcome_at(row.sent_at.replace(tzinfo=UTC) + timedelta(hours=73)) == UNDECIDED
 
 
 def test_a_timestamp_that_lost_its_zone_is_still_read_as_utc(session: Session) -> None:

@@ -1,9 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 
-import { Button } from "@/shared/ui/Button";
 import { Row } from "@/shared/ui/Row";
 import { StatusDot } from "@/shared/ui/StatusDot";
 
@@ -41,52 +39,42 @@ import type { MeetingSummary } from "../types";
  * features. What is here is the list, which is what makes the rest reachable.
  */
 export function HomeScreen() {
-  const router = useRouter();
   const state = useMeetings();
 
   return (
-    // Two widths on purpose. The outer one is the shell's: 1200 with the page
-    // gutter, the same box the top bar's wordmark sits in, so this screen's
-    // first column starts where the wordmark does. The inner one is the
-    // reading width — a list of meeting titles stretched to 1200 is a line
-    // your eye has to travel back across.
-    <main className="mx-auto max-w-[1200px] p-[var(--space-page)]">
-      <div className="max-w-[720px]">
-        <header className="flex items-start justify-between gap-4">
-          <div className="min-w-0">
-            <h1
-              className="text-ink-strong"
-              style={{
-                fontSize: "var(--text-title)",
-                fontWeight: "var(--text-title-weight)",
-                letterSpacing: "var(--text-title-tracking)",
-              }}
+    // S05's content column: the page gutter from the panel's left edge, not
+    // centred. The shell's top bar already says "홈" and the sidebar holds the
+    // one primary action ("회의 시작"), so the screen opens straight on its
+    // first section, as S05 does. 720 is the reading width — a list of meeting
+    // titles stretched across the panel is a line your eye has to travel back
+    // across.
+    <main style={{ padding: "var(--space-24) var(--space-page)" }}>
+      <section className="max-w-[720px]" aria-labelledby="home-meetings">
+        <header className="flex items-baseline gap-2.5" style={{ marginBottom: "var(--space-4)" }}>
+          <h1
+            id="home-meetings"
+            className="text-ink-strong"
+            style={{
+              fontSize: "var(--text-heading)",
+              fontWeight: "var(--text-heading-weight)",
+            }}
+          >
+            최근 회의
+          </h1>
+          {state.status === "ready" && state.meetings.length > 0 && (
+            <span
+              className="text-[var(--color-ink-muted)]"
+              style={{ fontFamily: "var(--font-mono)", fontSize: "var(--text-label)", fontWeight: 500 }}
             >
-              회의
-            </h1>
-            <p
-              className="mt-2 text-[var(--color-ink-muted)]"
-              style={{ fontSize: "var(--text-meta)" }}
-            >
-              {subtitle(state)}
-            </p>
-          </div>
-          <Button tone="primary" onClick={() => router.push("/meetings/new")}>
-            회의 만들기
-          </Button>
+              {state.meetings.length}
+            </span>
+          )}
         </header>
 
-        <div className="mt-6">{body(state)}</div>
-      </div>
+        {body(state)}
+      </section>
     </main>
   );
-}
-
-/** The count once it is known, and a description of the place until then. */
-function subtitle(state: MeetingsState): string {
-  if (state.status === "ready" && state.meetings.length > 0)
-    return `내가 볼 수 있는 회의 ${state.meetings.length}건 · 최근 순`;
-  return "녹음 하나로 전사 · 액션아이템 · 갭까지.";
 }
 
 function body(state: MeetingsState) {

@@ -137,6 +137,11 @@ a 500MB pipeline is a judgement nobody tests.
   no digit in it is not a metric: `QT` on spoken Korean fires on 한번, 네, 좀.
   And a stopword is not a topic on either path. Precision is C's metric and a
   false topic is what a false gap is raised on.
+- **A person is named without the honorific.** The model reads 이건우님이
+  as one `npp+jcs` token and one `PS` span, and 이 is an ending `noun_stem`
+  will not cut on a noun (차이, 아이). After 님 it cannot be anything else, so
+  `spoken.person_name` cuts 님/씨 and the particle after it. Before this one
+  colleague was 이건우님이, 이건우님 and 이건우 — three topics.
 - **Both paths cut the particle and ask the same stoplist.** 오늘은 used to be
   a `DT` node, particle and all, while 오늘 was refused as a term — one word,
   two answers (#230). An entity span now loses the particle on its last word
@@ -1123,7 +1128,7 @@ extractor has no external option".
 
 Every row a topic produces records `extractor_version` — the pipeline name, its
 version and the version of `pipeline.spoken`'s rules,
-`ko_core_news_lg-3.8.0+spoken-3`. The rules are half the extractor: the same
+`ko_core_news_lg-3.8.0+spoken-4`. The rules are half the extractor: the same
 parse gives a different graph once a rule there changes, so `spoken.RULES_VERSION`
 is bumped with any change to what it keeps. The name alone is not a version: the
 pipeline ships a new release with every spaCy minor, so a graph built with 3.7

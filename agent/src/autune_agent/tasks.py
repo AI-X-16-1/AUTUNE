@@ -35,17 +35,17 @@ def _meeting_id(payload: dict[str, Any]) -> str:
     return envelope.meeting_id
 
 
-def _wake(event: str, payload: dict[str, Any]) -> None:
+def _wake(event: str, payload: dict[str, Any], *, task_id: str | None = None) -> None:
     meeting_id = _meeting_id(payload)
     with session_scope() as session:
-        on_event(event, meeting_id, session=session)
+        on_event(event, meeting_id, session=session, task_id=task_id)
 
 
-@shared_task(name="autune.agent.on_transcript_ready", acks_late=True)
-def on_transcript_ready(payload: dict[str, Any]) -> None:
-    _wake(TRANSCRIPT_READY, payload)
+@shared_task(name="autune.agent.on_transcript_ready", acks_late=True, bind=True)
+def on_transcript_ready(self: Any, payload: dict[str, Any]) -> None:
+    _wake(TRANSCRIPT_READY, payload, task_id=self.request.id)
 
 
-@shared_task(name="autune.agent.on_intelligence_completed", acks_late=True)
-def on_intelligence_completed(payload: dict[str, Any]) -> None:
-    _wake(INTELLIGENCE_COMPLETED, payload)
+@shared_task(name="autune.agent.on_intelligence_completed", acks_late=True, bind=True)
+def on_intelligence_completed(self: Any, payload: dict[str, Any]) -> None:
+    _wake(INTELLIGENCE_COMPLETED, payload, task_id=self.request.id)

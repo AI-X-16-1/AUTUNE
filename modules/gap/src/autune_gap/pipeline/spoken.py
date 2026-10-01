@@ -130,7 +130,7 @@ noun plus this is still a bare noun; anything else after a ``+`` — a particle
 grammar, and joining it into a label would put "개인화로" in a report where
 "개인화" belongs."""
 
-RULES_VERSION = "spoken-3"
+RULES_VERSION = "spoken-4"
 """The version of the judgements in this file, appended to the extractor's.
 
 ``ko_core_news_lg-3.8.0`` names the weights, and the weights are half of what
@@ -750,6 +750,36 @@ def entity_text(text: str, last: Token) -> str:
     if stem is None or stem == last.text or not text.endswith(last.text):
         return text
     return text[: len(text) - len(last.text) + len(stem)]
+
+
+HONORIFICS: tuple[str, ...] = ("님", "씨")
+"""What a meeting puts after a colleague's name. Neither is part of the name."""
+
+
+def person_name(text: str) -> str:
+    """A ``person`` span without the honorific after the name, or the particle
+    after that.
+
+    ``ko_core_news_lg`` reads 이건우님이 as one token (``npp+jcs``) and one
+    ``PS`` span, and ``entity_text`` leaves it whole: 이 is an ending
+    ``noun_stem`` refuses to cut, because on a noun it may be the last syllable
+    (차이, 아이). After 님 it cannot be. Left in, one colleague became as many
+    topics as the ways the meeting addressed them — 이건우, 이건우님이,
+    이건우님 — and the one with the particle on it is what S20 showed.
+
+    Cut only when what follows the honorific is nothing or a particle, so a
+    span that merely contains 님 or 씨 somewhere else is left alone. What is
+    left is judged by ``is_plausible`` like any other span: 김씨 leaves 김, a
+    one-character person, and is refused.
+    """
+    for honorific in HONORIFICS:
+        at = text.rfind(honorific)
+        if at <= 0:
+            continue
+        rest = text[at + len(honorific) :].strip()
+        if not rest or rest in PARTICLES:
+            return text[:at].rstrip()
+    return text
 
 
 def is_plausible(label: str, text: str) -> bool:
