@@ -308,3 +308,13 @@ class SpeechDeleted(BaseModel):
 
     utterances: int
     voice_rows: int
+
+
+class AccountDeleted(BaseModel):
+    """What account deletion removed of the caller's speech.
+
+    A body rather than 204: the shared web client parses every success as
+    JSON (#359), and a count is something the screen can say.
+    """
+
+    utterances: int

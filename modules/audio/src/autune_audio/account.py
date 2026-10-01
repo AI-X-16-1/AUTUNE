@@ -37,7 +37,7 @@ from autune_core.deletion import run_user_hooks
 from autune_core.errors import NotFoundError
 
 from .models import AudConsentAttestation, AudSpeakerEmbedding
-from .schemas import MyData, SpeechDeleted, TeamPrivacy
+from .schemas import AccountDeleted, MyData, SpeechDeleted, TeamPrivacy
 from .service import delete_voice_profile, require_team_member
 
 log = get_logger(__name__)
@@ -193,7 +193,7 @@ def delete_my_speech(session: Session, *, user: User) -> SpeechDeleted:
     return SpeechDeleted(utterances=utterances, voice_rows=voice_rows)
 
 
-def delete_account(session: Session, *, user: User) -> None:
+def delete_account(session: Session, *, user: User) -> AccountDeleted:
     """Delete ``user`` and everything that is theirs (#358).
 
     **The hooks run first, and a hook that raises stops the deletion.** A
@@ -232,6 +232,7 @@ def delete_account(session: Session, *, user: User) -> None:
     session.execute(sa.delete(User).where(User.id == user_id))
     session.flush()
     log.info("audio_account_deleted", user_id=user_id, utterances=utterances)
+    return AccountDeleted(utterances=utterances)
 
 
 def team_privacy(session: Session, *, team_id: str, reader: User) -> TeamPrivacy:

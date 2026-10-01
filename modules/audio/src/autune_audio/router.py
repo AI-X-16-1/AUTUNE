@@ -25,6 +25,7 @@ from .config import get_settings as get_audio_settings
 from .enqueue import enqueue_process_recording
 from .live.routes import router as live_router
 from .schemas import (
+    AccountDeleted,
     ConsentAttestation,
     ConsentState,
     MeetingCreate,
@@ -346,15 +347,16 @@ def delete_my_speech(user: CurrentUser, session: SessionDep) -> SpeechDeleted:
     return account.delete_my_speech(session, user=user)
 
 
-@router.delete("/me", status_code=status.HTTP_204_NO_CONTENT)
-def delete_account(user: CurrentUser, response: Response, session: SessionDep) -> None:
+@router.delete("/me", response_model=AccountDeleted)
+def delete_account(user: CurrentUser, response: Response, session: SessionDep) -> AccountDeleted:
     """Delete the caller's account and everything that is theirs (#358).
 
     The session cookie is cleared in the same response: the token it carries
     names a user who no longer exists, and would answer 401 on every request.
     """
-    account.delete_account(session, user=user)
+    deleted = account.delete_account(session, user=user)
     clear_session_cookie(response)
+    return deleted
 
 
 @router.get("/teams/{team_id}/privacy", response_model=TeamPrivacy)

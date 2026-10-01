@@ -167,7 +167,7 @@ def test_deleting_my_account_takes_me_and_my_speech(
 
     response = client_for(me).delete("/api/audio/me")
 
-    assert response.status_code == 204
+    assert response.json() == {"utterances": 1}
     assert "autune_session" in response.headers.get("set-cookie", "")
     assert no_hooks == [my_id]
     db_session.expire_all()
