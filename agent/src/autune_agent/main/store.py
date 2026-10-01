@@ -36,6 +36,7 @@ from autune_agent.models import AgentRun
 from .actions import Action, ActionPrivacyViolationError, collect_actions, execute_l1
 from .graph import MainState, run
 from .own_tools import collect_own_actions
+from .pending import queue_l2
 from .registry import BudgetExceededError, CallBudget, RunScope, Tool
 from .router import Router
 from .subagents import Subagent
@@ -68,6 +69,9 @@ def run_and_record(
     scope = RunScope(team_id=team_id, meeting_id=meeting_id)
     started = time.monotonic()
     state: MainState = {"request": request}
+    # One mapping for both halves: execute_l1 keeps an L2-declared action for
+    # approval, and queue_l2 must see the same levels to queue it.
+    declared: Mapping[str, Action] = {} if actions is None else actions
     row = AgentRun(
         team_id=team_id,
         meeting_id=meeting_id,
@@ -88,12 +92,12 @@ def run_and_record(
         row.outcome = "answered" if state.get("route") else "unrouted"
         outcome = state.get("outcome")
         if outcome is not None and outcome.proposed:
+            if actions is None:
+                declared = {**collect_actions(), **collect_own_actions()}
             try:
                 row.actions = execute_l1(
                     outcome.proposed,
-                    actions={**collect_actions(), **collect_own_actions()}
-                    if actions is None
-                    else actions,
+                    actions=declared,
                     session=session,
                     scope=scope,
                 )
@@ -116,6 +120,14 @@ def run_and_record(
         raise
     _finish(row, state, budget, started, meeting_id)
     session.add(row)
+    if row.outcome == "answered":
+        session.flush()  # row.id for the queue
+        outcome = state.get("outcome")
+        if outcome is not None and outcome.proposed:
+            row.actions = [
+                *row.actions,
+                *queue_l2(session, run=row, proposed=outcome.proposed, actions=declared),
+            ]
     session.commit()
     return row, state
 
