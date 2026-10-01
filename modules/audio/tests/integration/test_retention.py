@@ -229,3 +229,15 @@ def test_the_backfill_counts_from_when_the_meeting_was_held(db_session: Session,
     row = db_session.get(Meeting, legacy)
     db_session.refresh(row)
     assert row is not None and row.expires_at == held + timedelta(days=90)
+
+
+def test_an_old_recording_is_not_born_expired(db_session: Session, team: str, member: User) -> None:
+    """Review of #581: a meeting opened today for a recording made long ago
+    must survive until its upload arrives."""
+    now = datetime.now(tz=UTC)
+    old = service.create_meeting(
+        db_session, owner=member, team_id=team, title="t", started_at=now - timedelta(days=200)
+    )
+
+    assert retention.sweep(db_session, now=now + timedelta(hours=1)).meetings == ()
+    assert db_session.get(Meeting, old.id) is not None

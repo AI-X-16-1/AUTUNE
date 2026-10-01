@@ -301,15 +301,17 @@ def create_meeting(
     if team is None:  # membership just passed, so the team exists; this is a torn read
         raise NotFoundError("team", team_id)
 
+    now = datetime.now(tz=UTC)
     meeting = Meeting(
         team_id=team_id,
         title=title,
         started_at=started_at,
         status="scheduled",
         # Provisional for a meeting booked ahead: ``open_retention_window``
-        # restarts it when the meeting is held. Same anchor as
-        # ``retention.backfill_expiry``.
-        expires_at=(started_at or datetime.now(tz=UTC)) + timedelta(days=team.retention_days),
+        # restarts it when the meeting is held. Never earlier than now: a
+        # recording from long ago, uploaded today, would otherwise be born
+        # expired and could be swept before its upload arrives (#581 review).
+        expires_at=max(started_at or now, now) + timedelta(days=team.retention_days),
     )
     session.add(meeting)
     session.flush()
