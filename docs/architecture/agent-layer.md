@@ -445,7 +445,7 @@ CREATE TABLE agent_runs (
 CREATE TABLE agent_approvers (
   team_id     TEXT,    -- team_…
   user_id     TEXT,    -- user_…, ON DELETE CASCADE
-  scope       TEXT,    -- research | followup | workload | any
+  scope       TEXT,    -- research | followup | workload | report | any
   created_at  TIMESTAMPTZ,
   PRIMARY KEY (team_id, user_id, scope)
 );
@@ -587,6 +587,11 @@ triggers it wants (section 3.2) and the main agent's scheduler registers them,
 so a subagent owner never writes a `@periodic` task or an event subscription of
 their own, and every run — whoever it was for — is one `agent_runs` row with
 the same shape.
+
+**Safe to deliver twice.** The trigger's redelivery guard keys on the Celery
+task id, so a redelivery of the same task is skipped, while E's re-publish of
+`autune.intelligence.completed` is a new task that runs again and supersedes
+the older pending proposal of the same subagent for the same meeting.
 
 A periodic task is a `@periodic` declaration beside the task itself
 (`async-pipeline.md`, #374); nothing edits `apps/worker`. The agent layer's
@@ -870,6 +875,8 @@ Unchanged, and stated here so the six read together.
 
 ### Plan mode — a plan is submitted before anything at L2 happens
 
+**As built (`agent/docs/specs/2026-09-30-plan-mode-design.md`): an approval queue.** Every subagent plans inside its own graph and returns `ProposedAction`s, so there is no model loop to add; an L2 proposal waits in `agent_pending_actions` until an approver with its scope approves it on the approvals page, and then runs under its run's scope. The loop below stays as the direction if a subagent ever needs the model to plan; it would need an answer for keeping `messages`, which #509 does not store. Approval is at-most-once: the claim is committed before the action runs, so an approval interrupted mid-run reads approved with no result and is never re-run — other modules' writes commit in their own sessions, and running one twice would move a person twice. An approval interrupted mid-run is listed on the approvals page as needing a check, not hidden. Only a current member of the team who holds an approver row for the proposal's scope, or `any`, may decide.
+
 Borrowed whole from coding agents. It is not a second model or a planning
 algorithm; it is the same loop with three differences:
 
@@ -932,6 +939,8 @@ resumes in `execute` mode**. The context the plan was made in is the messages;
 the messages are rows; nothing is lost by the task ending. Enqueuing that
 resuming task from the API process works today (#258, closed by #300); waking
 one on a timeout instead of on a person's click is #207's beat schedule.
+
+**An L2 proposal's arguments are ids and short scalars only** — every key is a short lowercase name (`[a-z_]{1,32}`), and every value an id, an ASCII ISO date, a boolean, or a lowercase enum up to 32 characters. Text a proposal needs is stored by its owner first and pointed at by id (E's report draft, Research's document). Anything else is refused and not queued.
 
 ### When it asks, and when it does not
 
@@ -1221,8 +1230,10 @@ an L1 or an L2 action of the person making it. Not decided.
 `agent_approvers` (section 5) says who the lead and the manager are, and a
 wrong row sends a workload proposal to the wrong person. Setting a row is
 therefore itself a permission question, the same one as 13.4, and should be
-answered with it. Until then the first member of a team sets it and every
-change is written to `agent_runs`.
+answered with it. Not decided: until then nothing in the product sets a row —
+no endpoint, no screen — and the rows are seeded with SQL for the demo.
+
+For the demo: `INSERT INTO agent_approvers (team_id, user_id, scope) VALUES ('<team>', '<user>', 'any');`
 
 ### 13.6 Gmail is a new integration, and Jira waits on #82
 

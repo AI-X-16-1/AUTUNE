@@ -29,6 +29,7 @@ to its owner.
    runs L1 at the end of the run (`main/actions.py`) and puts L2 through plan
    mode. The level that counts is the one the owning module declared
    (`L1_ACTIONS` in its `tools.py`); a proposal cannot demote a write.
+   An L2 proposal's arguments are ids and short scalars under short lowercase keys; store text in your own table first and pass its id.
 5. **No personal-only tool anywhere in the layer.** A module declares a
    speaking-ratio read in `PERSONAL_ONLY_TOOLS` and the registry never loads
    it; `Subagent` also refuses the name (invariant 11).
