@@ -108,7 +108,7 @@ from .schemas import (
     SourceUtterance,
     SummaryDecision,
 )
-from .slots import assignee_of, meeting_day, parse_due
+from .slots import Assignee, assignee_of, meeting_day, parse_due
 
 log = get_logger(__name__)
 
@@ -519,6 +519,120 @@ def create_action_item(
     return item
 
 
+def chat_draft_window(
+    session: Session, meeting_id: str, utterance_id: str
+) -> list[ClassifiedUtterance] | None:
+    """The meeting as ``resolve_commitment_summaries`` reads it, with
+    ``utterance_id`` as the one commitment -- for an item the chat drafts from
+    that utterance (``tools.add_action_item``).
+
+    ``None`` when the utterance is not this meeting's, or its speaker did not
+    consent: an item cannot be drafted from speech that is not analysed at all
+    (privacy.md section 5). Every other non-consenting line is blanked, exactly
+    as ``classify_utterances`` blanks it, so the summary's window and its
+    candidates skip it the same way the pipeline's do.
+    """
+    consented = consented_utterance_ids(session, meeting_id)
+    if utterance_id not in consented:
+        return None
+    transcript = stored_transcript(session, meeting_id)
+    if not any(u.id == utterance_id for u in transcript):
+        return None
+    return [
+        ClassifiedUtterance(
+            id=u.id,
+            kind=UtteranceKind.COMMITMENT if u.id == utterance_id else None,
+            confidence=1.0,
+            text=u.text if u.id in consented else "",
+            speaker=u.speaker,
+        )
+        for u in transcript
+    ]
+
+
+def create_chat_item(
+    session: Session,
+    *,
+    meeting_id: str,
+    utterance_id: str,
+    resolution: Resolution,
+    assignee_id: str | None = None,
+    due_date: date | None = None,
+) -> ExtActionItem:
+    """An item the chat drafted from one utterance, after its summary was
+    written (``chat_draft_window``, ``resolve_commitment_summaries``).
+
+    Built the way ``build_action_items`` builds a model item -- the summary
+    tidied into the description, the utterance as the source, the lines the
+    summary cited kept beside it, the speaker and the first date phrase unless
+    the chat named an assignee or a date -- but ``origin`` is ``chat``: a rerun
+    leaves it alone, and edit cost does not count it as one the model missed (no
+    ``created`` event). It waits for confirmation; until then a person sees the
+    original utterances under the summary (``originals_hidden``).
+    """
+    said = session.get(Utterance, utterance_id)
+    if said is None or said.meeting_id != meeting_id:
+        raise ValidationError(
+            "utterance_id must be an utterance of this meeting", field="utterance_id"
+        )
+    if assignee_id is not None and session.get(User, assignee_id) is None:
+        raise ValidationError("assignee_id does not name an existing user", field="assignee_id")
+    meeting = session.get(Meeting, meeting_id)
+    if assignee_id is None:
+        speaker_id = (
+            session.scalar(select(Participant.user_id).where(Participant.id == said.participant_id))
+            if said.participant_id
+            else None
+        )
+        known = {speaker_id} if speaker_id and session.get(User, speaker_id) else set()
+        assignee = assignee_of(speaker_id, said.speaker_label, known=known)
+    else:
+        assignee = Assignee(user_id=assignee_id, label=None)
+    due = (
+        None
+        if due_date is not None
+        else parse_due(said.text, meeting_day(meeting.started_at if meeting else None))
+    )
+    # Only lines the model could have been shown: this meeting's, from a
+    # consenting speaker. A model that names any other id is not believed.
+    citable = consented_utterance_ids(session, meeting_id) if resolution.used else set()
+    item = ExtActionItem(
+        meeting_id=meeting_id,
+        description=tidy(resolution.text),
+        description_resolved=resolution.text != said.text,
+        assignee_id=assignee.user_id,
+        assignee_label=assignee.label,
+        due_date=due_date if due_date is not None else (due.date if due else None),
+        due_text=None if due_date is not None else (due.text if due else None),
+        status=ActionStatus.NEEDS_CONFIRMATION.value,
+        confidence=1.0,
+        origin="chat",
+        sources=[ExtActionItemSource(utterance_id=utterance_id)],
+        related=[
+            ExtActionItemRelated(utterance_id=u)
+            for u in dict.fromkeys(resolution.used)
+            if u in citable and u != utterance_id
+        ],
+    )
+    session.add(item)
+    session.flush()
+    return item
+
+
+def originals_hidden(item: ExtActionItem) -> bool:
+    """Whether the screens and the agent's tools leave out the utterances an
+    item came from.
+
+    A chat-drafted item shows them only while it waits for confirmation --
+    decided with the user, 2026-10-01: a person checks the summary against them,
+    and once it is confirmed the summary alone stands. Hidden, not deleted: the
+    rows stay, so D and E still count the item's source and the meeting's
+    deletion still takes them with it. What leaves for Notion, Jira or a
+    calendar was only ever the summary.
+    """
+    return item.origin == "chat" and item.status != ActionStatus.NEEDS_CONFIRMATION.value
+
+
 def read_model(
     item: ExtActionItem,
     *,
@@ -567,7 +681,8 @@ def read_model(
         and item.confidence < threshold
         and item.status == ActionStatus.NEEDS_CONFIRMATION.value
     )
-    source_ids = live_source_ids(item)
+    hidden = originals_hidden(item)
+    source_ids = [] if hidden else live_source_ids(item)
     return ActionItemRead(
         id=item.id,
         meeting_id=item.meeting_id,
@@ -582,7 +697,7 @@ def read_model(
         confidence=item.confidence,
         origin=item.origin,
         source_utterance_ids=source_ids,
-        deleted_source_count=len(item.sources) - len(source_ids),
+        deleted_source_count=0 if hidden else len(item.sources) - len(source_ids),
         needs_reassignment=assignee_departed and item.status in _OPEN_STATUSES,
         is_candidate=is_candidate,
         summary=summary,
@@ -935,13 +1050,16 @@ def read_detail(session: Session, item: ExtActionItem) -> ActionItemDetail:
     summary = action_item_summaries(session, [item]).get(item.id)
     refs = action_item_external_refs(session, [item.id]).get(item.id, [])
     departed = item.id in departed_assignees(session, [item])
+    hidden = originals_hidden(item)
     return ActionItemDetail(
         **read_model(
             item, assignee_name=name, summary=summary, sync_refs=refs, assignee_departed=departed
         ).model_dump(),
-        sources=source_utterances(session, item.id),
-        context=context_before(session, [s.utterance_id for s in item.sources if s.utterance_id]),
-        related=related_utterances(session, item.id),
+        sources=[] if hidden else source_utterances(session, item.id),
+        context=[]
+        if hidden
+        else context_before(session, [s.utterance_id for s in item.sources if s.utterance_id]),
+        related=[] if hidden else related_utterances(session, item.id),
         history=edit_history(session, item.id),
     )
 

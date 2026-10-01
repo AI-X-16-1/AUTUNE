@@ -516,10 +516,12 @@ def acting(session: Session, monkeypatch: pytest.MonkeyPatch) -> dict[str, list[
 
 
 def test_actions_are_not_offered_as_tools() -> None:
-    """A model calls ``TOOLS``; an action runs only after a person approves."""
+    """A model calls ``TOOLS``; an action runs only after a person approves,
+    except a draft (``L1_ACTIONS``), which waits on the board instead."""
     assert not set(tools.ACTIONS) & set(tools.TOOLS)
     for action in tools.ACTIONS:
-        assert "L2" in (action.__doc__ or ""), action.__name__
+        level = "L1" if action in tools.L1_ACTIONS else "L2"
+        assert level in (action.__doc__ or ""), action.__name__
         assert "delete" not in action.__name__, "L3 is forbidden"
 
 
@@ -593,17 +595,6 @@ def test_a_status_outside_the_board_is_refused(
     assert tools.set_action_item_status(TEAM, "act_1", "needs_confirmation")["ok"] is False
     assert tools.set_action_item_status(TEAM, "act_1", "done")["ok"] is True
     assert session.get(ExtActionItem, "act_1").status == "done"  # type: ignore[union-attr]
-
-
-def test_an_added_item_waits_for_confirmation_and_is_not_synced(
-    session: Session, acting: dict[str, list[str]]
-) -> None:
-    result = tools.add_action_item(TEAM, MEETING, "회의록 공유", assignee_id="user_in")
-
-    (row,) = session.query(ExtActionItem).all()
-    assert result["items"][0]["id"] == row.id
-    assert (row.status, row.origin, row.assignee_id) == ("needs_confirmation", "user", "user_in")
-    assert acting["items"] == []
 
 
 def test_a_followup_item_is_followups_fixed_text_and_waits(

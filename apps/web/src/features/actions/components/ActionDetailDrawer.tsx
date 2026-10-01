@@ -359,6 +359,9 @@ function quotationNote(
   if (item.origin === "followup") {
     return "회의 뒤 후속 회의 에이전트가 제안한 항목이라 근거 발화가 없습니다.";
   }
+  if (item.origin === "chat" && item.status !== "needs_confirmation") {
+    return "채팅으로 만든 항목은 확정한 뒤에는 원본 발화를 보여주지 않습니다.";
+  }
   // The server lists only utterances that still exist (ADR 0007), so an item
   // whose every source was deleted arrives with an empty list, not a list of
   // ids that fail to load.
