@@ -67,7 +67,32 @@ agreement, and sync the result to Notion.
    the person confirming reads one against the other. Only the tidied line, as
    the person confirmed or reworded it, leaves Autune: an item goes out only
    after it leaves *needs confirmation*, a decision only once confirmed, and
-   never the original utterance. A sentence that names nothing ("다음 주
+   never the original utterance. With `resolver_impl=llm` the description is also
+   a **summary**: the model reads the commitment, the lines around it and up to
+   eight lines from elsewhere in the meeting that share its subject (found by
+   word overlap, `pipeline/related.py`), writes one sentence, and says which
+   lines it used. Those lines are stored (`ext_action_item_related`) and shown
+   beneath the summary as "요약에 쓴 발화", above the quotation, so a person can
+   check the sentence against what it was made from and correct it — the
+   description is editable like any other. The candidates are only offered: a
+   line nobody cites is neither stored nor shown, and a citation the model
+   invents (a number that is no line, the commitment itself) is dropped.
+   A decision is written up the same way (`ext_decision_related`, "요약에 쓴
+   발화" on S15) -- but only when its settling turn does not say what was decided:
+   short, or pointing at something said before ("그렇게 하죠"). Asked about every
+   decision, the model rewrote all of them and cited a line for about a quarter;
+   the rest it only put into "~하기로 했습니다", which `noun_form.tidy` does without
+   a model.
+
+   **What module D is sent is not what the screen shows.** `ext_decisions.statement`
+   is the line a person sees and that leaves for Notion -- noun-ended, or the
+   write-up. `original_statement` is the sentence as assembled from the utterances
+   (the turn that settles it, plus owner and deadline), and that is the
+   `Decision.statement` in the contract, unless a person reworded the decision, in
+   which case it is their wording. D embeds statements and compares them against a
+   similarity threshold tuned on that shape (`context.config`), so nothing made for
+   the screen may reach it; D reads the utterances themselves through
+   `source_utterance_ids` as before. The contract is unchanged. A sentence that names nothing ("다음 주
    화요일까지 볼 예정") is read with up to three lines said just before it, shown
    apart from the sources as "앞선 발화 (맥락)"; nothing fills the missing object
    into the line itself unless the reference resolver is switched on
@@ -91,7 +116,8 @@ agreement, and sync the result to Notion.
    **What the answer does.** *Commitment* makes one draft item for that
    utterance, slot-filled like any commitment (the speaker is the assignee, the
    first date phrase the due date, the utterance's own text — tidied into the
-   noun form, as in step 3 — the description),
+   noun form, as in step 3 — the description, until the summary below replaces
+   it),
    in *needs confirmation* with confidence 1.0 — the speaker's answer is the
    certainty, and the team still accepts the item before it leaves for Notion
    or a calendar. Any other answer makes no item; a later answer replaces an
@@ -101,6 +127,15 @@ agreement, and sync the result to Notion.
    makes a second one. `ext_classifications` is not rewritten: it records what
    the model said and `resolved_kind` what the speaker said, and the two stay
    comparable.
+   **The summary comes after the answer** (decided with the user, 2026-10-01).
+   The DM quotes only the speaker's line. A *commitment* answer sends
+   `summarise_confirmed_draft`, which writes a summary from the lines around the
+   agreement the way a commitment's is written (step 3) and puts it on the
+   draft as its description, the lines it cited beside it — shown on the board,
+   the speaker's line beneath it, never in Slack. Only a confirmed agreement is
+   summarised, so an unanswered one costs no model call. A draft a person has
+   touched, or an answer changed in the meantime, is left as it is. A rerun
+   summarises the confirmed ones again so their drafts keep a summary.
 7. **Sync** — when a person confirms an action item (moves it out of
    `needs_confirmation`), create one page for it in the team's Notion database
    and store the URL in `ext_external_refs` (#30). One page per item: a later
@@ -126,7 +161,10 @@ agreement, and sync the result to Notion.
    their issues to: an issue dragged to Done makes its item done, through the
    same edit path. `ext_external_refs.synced_category` records what Autune last
    left the issue in, so a board edit that has not reached Jira yet is never
-   undone; when both moved, the board wins. A ref with no baseline yet (made
+   undone; when both moved, the board keeps its status and Jira's is taken as
+   the new baseline (nothing is sent back from the read-back). Each issue is
+   read in its own transaction, least recently read first (`pulled_at`); an
+   issue Jira refuses to show is skipped. A ref with no baseline yet (made
    before the read-back, or its issue never took the board's status) gets
    Jira's category recorded as one, and the board is left alone.
 8. **Publish** — emit `ExtractionResult`.
@@ -160,6 +198,8 @@ the overlap the question turns on.
 | `ext_classifications` | Per-utterance kind, confidence, model version, NLI result. Kinds only — no row for `none` |
 | `ext_action_items` | Assignee, description, due date, status, origin |
 | `ext_action_item_sources` | Which utterances an item came from |
+| `ext_decision_related` | The other lines of the meeting a decision's summary was written from, as the model said it used them; shown beneath the summary, never read by D |
+| `ext_action_item_related` | The other lines of the meeting the item's summary was written from, as the model said it used them (`LlmResolver`); shown beneath the summary, never read by D or E |
 | `ext_edit_events` | One row per correction. Counts only — no person on it |
 | `ext_external_refs` | The Notion page an action item became, one per item and system |
 | `ext_decision_refs` | The Notion page a confirmed decision became, one per decision and system |
@@ -215,6 +255,14 @@ person's reassignment on the board. A confirmed item is synced to Notion,
 Jira and the calendar the way the router syncs a board edit; like a board
 edit, no `ExtractionResult` is published.
 
+**What earlier meetings left open (PRD 5.2, WBS 4.8).** `GET
+/carried-over/{meeting_id}` answers a member of the meeting's team with the
+open items -- *to do* or *in progress* -- of the team's meetings held before
+this one: counts of all of them and the ten most urgent, overdue first. The
+review screen opens with a popup listing them the first time a meeting is
+reviewed in a browser, and keeps a one-line reminder above the board after.
+Drafts still in *needs confirmation* and finished items are not carried.
+
 `ext_action_items.due_text` is the phrase a model item's due date was read from,
 for S18. It is cleared when a person sets the date themselves: the phrase no
 longer explains the value (#109).
@@ -259,7 +307,7 @@ other module's tables.
 | --- | --- | --- |
 | GET | `/results/{meeting_id}` | The meeting's `ExtractionResult`, built from what is stored |
 | GET | `/action-items` | Filter by `meeting_id`, `assignee_id`, `status`, `due_before` (strict). Source utterance ids, never their text |
-| GET | `/action-items/{id}` | One item, the text of its source utterances in spoken order, and up to three lines said just before them as `context` (consenting speakers only) |
+| GET | `/action-items/{id}` | One item, the text of its source utterances in spoken order, up to three lines said just before them as `context`, and the lines its summary says it used as `related` (consenting speakers only) |
 | PATCH | `/action-items/{id}` | Edit or close an item |
 | POST | `/action-items` | Add an item the model missed |
 | DELETE | `/action-items/{id}` | Delete an item the model got wrong |

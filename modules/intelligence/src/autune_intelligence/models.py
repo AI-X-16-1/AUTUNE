@@ -164,6 +164,9 @@ class IntelMeetingReport(Base, TimestampMixin):
     """B had items awaiting a person's review when the report was composed.
     The post then carries a second button to B's review board; the items
     themselves are never quoted (agent-layer.md section 8 rule 3)."""
+    draft_id: Mapped[str | None] = mapped_column(String(64))
+    """The Report run that wrote this draft. A post approved for one draft id
+    is refused once a later run has replaced the draft (review of #508)."""
 
 
 class IntelReport(Base, TimestampMixin):

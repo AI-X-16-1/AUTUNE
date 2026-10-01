@@ -231,7 +231,9 @@ because both must be deletable on request:
   record. Until that ADR is accepted or rejected, this bullet is what the code
   follows, and `privacy.md` section 4 says the same.
 - **Retention sweep** deletes analysis results past the retention window (90
-  days by default).
+  days by default). Module A runs it (`autune.audio.periodic.expire_meetings`)
+  by deleting the expired `meetings` rows, so a module table is covered by the
+  same `ON DELETE CASCADE` that covers meeting deletion.
 
 Everything a module owns is a PostgreSQL row, so meeting deletion cascades
 reach all of it. Register a hook in `autune_core`'s deletion registry only for

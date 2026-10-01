@@ -65,8 +65,12 @@ export interface ExternalRefRead {
  */
 export interface ActionItemRead extends ActionItem {
   meeting_id: string;
-  /** `model` for what the pipeline drafted, `user` for what a person typed. */
-  origin: "model" | "user";
+  /**
+   * `model` for what the pipeline drafted, `user` for what a person typed,
+   * `followup` for the Follow-up agent's "후속 회의 잡기" (#561), `chat` for an
+   * item drafted from an utterance in the chat.
+   */
+  origin: "model" | "user" | "followup" | "chat";
   /**
    * Whether the item belongs in the candidate band. Decided by the server,
    * which holds the threshold the classifier's confidences are measured
@@ -160,8 +164,30 @@ export interface ActionItemDetail extends ActionItemRead {
    * Not what the item was drawn from.
    */
   context?: SourceUtterance[];
+  /**
+   * The lines the summary says it was written from, beyond the commitment itself
+   * (`ext_action_item_related`), in spoken order — shown beneath the summary so a
+   * person can check the sentence against them and correct it.
+   */
+  related?: SourceUtterance[];
   /** Oldest first. Empty for an item the model extracted and nobody touched. */
   history?: EditHistoryEntry[];
+}
+
+/** `CarriedOverItem`: an open item from an earlier meeting of the same team. */
+export interface CarriedOverItem extends ActionItemRead {
+  meeting_title: string;
+  meeting_started_at: string | null;
+}
+
+/**
+ * `CarriedOver` (`GET /carried-over/{meeting_id}`, WBS 4.8). `open` and
+ * `overdue` count everything; `items` is the most urgent part, overdue first.
+ */
+export interface CarriedOver {
+  open: number;
+  overdue: number;
+  items: CarriedOverItem[];
 }
 
 /**
@@ -275,6 +301,8 @@ export interface DecisionDetail extends ReviewDecision {
   sources: SourceUtterance[];
   /** The lines just before the first source, in spoken order. */
   context?: SourceUtterance[];
+  /** The lines the write-up says it used, beyond the turns it was settled in. */
+  related?: SourceUtterance[];
 }
 
 /** `GET /reviews/{meeting_id}` — everything that needs a person first. */

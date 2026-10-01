@@ -26,6 +26,7 @@ from autune_contracts import (
     validate_major_version,
 )
 from autune_core import Meeting, get_logger, load_integration, publish, session_scope
+from autune_core.errors import ConflictError
 from autune_integrations import SlackClient
 
 from . import service
@@ -181,7 +182,7 @@ def generate_weekly_report(team_id: str, period_end: str | None = None) -> None:
 
 
 @shared_task(name="autune.intelligence.deliver_meeting_report", acks_late=True)
-def deliver_meeting_report(meeting_id: str) -> None:
+def deliver_meeting_report(meeting_id: str, draft_id: str | None = None) -> None:
     """Post a meeting's stored report to its team's Slack channel, at most once.
 
     Takes the meeting id only -- the body is read from ``intel_meeting_reports``,
@@ -189,7 +190,8 @@ def deliver_meeting_report(meeting_id: str) -> None:
     The claim commits before the post, so a retry or a worker lost after the
     post finds the report claimed and sends nothing. Without a connected Slack
     or a configured ``channel`` the report stays stored and unclaimed, the same
-    as the weekly report.
+    as the weekly report. With ``draft_id`` it posts only that draft: a later
+    one is left unclaimed for its own approval.
     """
     with session_scope() as session:
         report = session.get(IntelMeetingReport, meeting_id)
@@ -206,7 +208,11 @@ def deliver_meeting_report(meeting_id: str) -> None:
             )
             return
         secret = config.require_secret()
-        claimed = service.claim_meeting_report(session, meeting_id)
+        try:
+            claimed = service.claim_meeting_report(session, meeting_id, draft_id=draft_id)
+        except ConflictError:
+            log.info("intelligence_meeting_report_draft_replaced", meeting_id=meeting_id)
+            return
 
     if claimed is None:
         log.info("intelligence_meeting_report_already_claimed", meeting_id=meeting_id)

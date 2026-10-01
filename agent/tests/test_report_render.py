@@ -24,9 +24,13 @@ REVIEW = _r(
     [{"title": "결정 확인 대기", "score": 1.0}],
 )
 GAPS = _r(
-    "논의된 토픽: 결제 수단, 출시 일정, 환불 정책",
-    [{"title": "환불 정책", "body": "담당자·기한 없음"}],
+    "열린 갭 2건, 그중 높음 1건.",
+    [
+        {"title": "리스크: 환불 정책", "body": "환불 기준은 누가 정하나요?", "severity": "high"},
+        {"title": "일정: 출시 일정", "body": "", "severity": "medium"},
+    ],
 )
+"""C's ``gap.open_gaps`` as it returns (modules/gap/.../tools.py)."""
 LINKS = _r(
     "이어지는 회의 1건.",
     [{"title": "간편결제는 2차로 미룬다", "meeting_title": "간편결제 도입 검토", "date": "9/22"}],
@@ -40,8 +44,9 @@ def test_every_section_in_order() -> None:
         "• 결제 화면 시안 — 디자인 · 2026-10-04 · todo\n"
         "⏳ 결정 확인 대기 1건, 액션아이템 확인 대기 1건, 답 없는 약한 동의 0건.\n"
         "\n"
-        "💬 논의된 토픽: 결제 수단, 출시 일정, 환불 정책\n"
-        "⚠️ 놓친 논의: 환불 정책 — 담당자·기한 없음\n"
+        "⚠️ 열린 갭 2건, 그중 높음 1건.\n"
+        "• 리스크: 환불 정책 — 환불 기준은 누가 정하나요?\n"
+        "• 일정: 출시 일정\n"
         "\n"
         "🔗 이어지는 회의: 간편결제 도입 검토 (9/22)"
     )
@@ -63,7 +68,27 @@ def test_missing_tools_drop_their_sections_instead_of_saying_none() -> None:
 
 
 def test_a_failed_tool_is_treated_as_missing() -> None:
-    assert "💬" not in render(ACTIONS, REVIEW, ToolResult.failure("down"), LINKS)
+    assert "⚠️" not in render(ACTIONS, REVIEW, ToolResult.failure("down"), LINKS)
+
+
+def test_a_meeting_with_no_open_gap_says_so() -> None:
+    """C answered and found nothing: that is a fact about the meeting, unlike a missing tool."""
+    gaps = _r("이 회의에 열린 갭이 없습니다.", [])
+    # Good news, so not under the warning sign (review of #568).
+    assert render(ACTIONS, None, gaps, None).endswith("\n\n✅ 이 회의에 열린 갭이 없습니다.")
+
+
+def test_a_low_gap_is_left_out_as_c_s_own_screen_hides_it() -> None:
+    """S20 keeps LOW behind a toggle; a team-channel post should not lead with it."""
+    gaps = _r(
+        "열린 갭 2건, 그중 높음 0건.",
+        [
+            {"title": "일정: 출시 일정", "body": "", "severity": "medium"},
+            {"title": "기타: 회식 장소", "body": "", "severity": "low"},
+        ],
+    )
+    body = render(ACTIONS, None, gaps, None)
+    assert "출시 일정" in body and "회식 장소" not in body
 
 
 def test_zero_confirmed_items_is_one_line() -> None:

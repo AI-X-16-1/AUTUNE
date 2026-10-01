@@ -1,8 +1,12 @@
 "use client";
 
+import { useEffect, useState } from "react";
+
+import { timecode } from "../format";
 import { useSpeakers } from "../hooks/useSpeakers";
 import { useTranscript } from "../hooks/useTranscript";
-import type { SpeakerEntry, TeamMember, UtteranceKind } from "../types";
+import type { SpeakerEntry, TeamMember, Utterance, UtteranceKind } from "../types";
+import { PiiReportModal, readSelection, ReportButton, type Selected } from "./PiiReport";
 import { TranscriptRow } from "./TranscriptRow";
 import { UnidentifiedSpeaker } from "./UnidentifiedSpeaker";
 
@@ -41,6 +45,10 @@ import { UnidentifiedSpeaker } from "./UnidentifiedSpeaker";
  * error branch is different: it hides a speaker list that may have loaded
  * successfully, on account of the *transcript* fetch alone failing. That is
  * a real gap, not a deliberate one, and it is not fixed here.
+ *
+ * **Selecting text offers S30.** A selection inside one line shows a floating
+ * "개인정보 신고"; reporting masks the span on the server, and the transcript
+ * is read again so the line shows the redaction it now stores.
  */
 export function StoredTranscript({
   meetingId,
@@ -52,7 +60,21 @@ export function StoredTranscript({
   /** Classification per utterance id, if the page has already fetched them. */
   kinds?: Record<string, UtteranceKind>;
 }) {
-  const state = useTranscript(meetingId);
+  const [version, setVersion] = useState(0);
+  const state = useTranscript(meetingId, version);
+  const [selected, setSelected] = useState<Selected | null>(null);
+  const [reporting, setReporting] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+
+  // A selection that goes away takes the floating button with it, unless the
+  // modal is already open.
+  useEffect(() => {
+    const onChange = () => {
+      if (!reporting && window.getSelection()?.isCollapsed) setSelected(null);
+    };
+    document.addEventListener("selectionchange", onChange);
+    return () => document.removeEventListener("selectionchange", onChange);
+  }, [reporting]);
   const {
     speakers,
     speakersError,
@@ -90,7 +112,13 @@ export function StoredTranscript({
   }
 
   return (
-    <section aria-label="회의 전사">
+    <section aria-label="회의 전사" onMouseUp={() => setSelected(readSelection())}>
+      {notice && (
+        <p role="status" style={{ fontSize: "var(--text-meta)", color: "var(--color-ink-muted)" }}>
+          {notice}
+        </p>
+      )}
+
       {speakersError && (
         <p
           role="alert"
@@ -137,6 +165,28 @@ export function StoredTranscript({
           name={nameOf(utterance.speaker, utterance.speaker_id)}
         />
       ))}
+
+      {selected && !reporting && <ReportButton selected={selected} onOpen={() => setReporting(true)} />}
+
+      {selected && reporting && (
+        <ReportModal
+          meetingId={meetingId}
+          selected={selected}
+          utterances={state.utterances}
+          nameOf={nameOf}
+          onClose={() => {
+            setReporting(false);
+            setSelected(null);
+          }}
+          onReported={(message) => {
+            setReporting(false);
+            setSelected(null);
+            window.getSelection()?.removeAllRanges();
+            setNotice(message);
+            setVersion((value) => value + 1);
+          }}
+        />
+      )}
     </section>
   );
 }
@@ -166,4 +216,41 @@ function speakerNames(
     const id = idByLabel.has(label) ? idByLabel.get(label) : storedId;
     return id ? (nameById.get(id) ?? null) : null;
   };
+}
+
+function ReportModal({
+  meetingId,
+  selected,
+  utterances,
+  nameOf,
+  onClose,
+  onReported,
+}: {
+  meetingId: string;
+  selected: Selected;
+  utterances: Utterance[];
+  nameOf: (label: string, storedId: string | null | undefined) => string | null;
+  onClose: () => void;
+  onReported: (message: string) => void;
+}) {
+  const utterance = utterances.find((row) => row.id === selected.utteranceId);
+  if (!utterance) return null;
+  return (
+    <PiiReportModal
+      meetingId={meetingId}
+      selected={selected}
+      context={{
+        time: timecode(utterance.start),
+        speaker: nameOf(utterance.speaker, utterance.speaker_id) ?? utterance.speaker,
+        text: utterance.text,
+      }}
+      onClose={onClose}
+      onReported={(result) =>
+        onReported(
+          `${result.occurrences}곳을 마스킹했습니다.` +
+            (result.republished ? " 요약·액션·갭 분석에 다시 반영됩니다." : ""),
+        )
+      }
+    />
+  );
 }

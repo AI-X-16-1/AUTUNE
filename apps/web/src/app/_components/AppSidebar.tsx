@@ -90,9 +90,11 @@ export function AppSidebar() {
 
       <div className="flex-1" />
 
-      <span className="text-[var(--color-ink-muted)]" style={itemText} aria-disabled title="준비 중">
-        설정
-      </span>
+      {/* The only settings screen so far is S29; S28 (연동, #496) joins it under /settings. */}
+      <NavEntry
+        item={{ label: "설정", href: "/settings/privacy" }}
+        current={pathname.startsWith("/settings")}
+      />
 
       <div className="border-t border-[var(--color-hairline)]" style={{ paddingTop: 12, minHeight: 44 }}>
         {user && (

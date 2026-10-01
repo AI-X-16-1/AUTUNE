@@ -38,6 +38,7 @@ from autune_extraction.config import ExtractionSettings
 from autune_extraction.confirmations import WEAK_ASSENT
 from autune_extraction.models import (
     ExtActionItem,
+    ExtActionItemRelated,
     ExtActionItemSource,
     ExtClassification,
     ExtConfirmation,
@@ -65,6 +66,7 @@ TABLES = [
     Participant.__table__,
     Utterance.__table__,
     ExtActionItem.__table__,
+    ExtActionItemRelated.__table__,
     ExtActionItemSource.__table__,
     ExtClassification.__table__,
     ExtDecision.__table__,
@@ -469,7 +471,9 @@ def test_the_detail_carries_everything_the_list_does(client: TestClient, session
     (listed,) = client.get(f"{PREFIX}/action-items").json()
     detail = client.get(f"{PREFIX}/action-items/act_1").json()
 
-    assert {k: v for k, v in detail.items() if k not in ("sources", "context", "history")} == listed
+    assert {
+        k: v for k, v in detail.items() if k not in ("sources", "context", "related", "history")
+    } == listed
 
 
 def test_a_confirmed_items_notion_status_reaches_both_the_card_and_the_drawer(

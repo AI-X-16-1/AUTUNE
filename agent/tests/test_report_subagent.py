@@ -8,6 +8,8 @@ from typing import Any
 import pytest
 
 from autune_agent.main import BudgetExceededError, CallBudget, RunScope, Tool, Toolbox
+from autune_agent.main.pending import arguments_ok
+from autune_agent.main.registry import collect_tools
 from autune_agent.main.subagents import TRIGGER_EVENTS
 from autune_agent.results import SubagentResult
 from autune_agent.subagents.report import SUBAGENT
@@ -31,7 +33,7 @@ ACTIONS = {
     "items": [{"title": "API 스펙", "body": "백엔드 · 10/2"}],
 }
 REVIEW = {"ok": True, "summary": "결정 확인 대기 1건.", "items": [{"title": "결정 확인 대기"}]}
-GAPS = {"ok": True, "summary": "논의된 토픽: 결제 수단", "items": []}
+GAPS = {"ok": True, "summary": "이 회의에 열린 갭이 없습니다.", "items": []}
 LINKS = {
     "ok": True,
     "summary": "",
@@ -94,8 +96,8 @@ def test_a_finished_meeting_becomes_a_draft_at_l1_and_a_post_at_l2() -> None:
     assert (draft.tool, draft.level, draft.kind) == (DRAFT_ACTION, "L1", "meeting_report_draft")
     assert (post.tool, post.level, post.kind) == (PUBLISH_ACTION, "L2", "meeting_report_post")
     # The run's scope carries the meeting and the team (#449, #509); the model sets neither.
-    assert set(draft.arguments) == {"body_markdown", "pending_review"}
-    assert post.arguments == {}
+    assert set(draft.arguments) == {"body_markdown", "pending_review", "draft_id"}
+    assert post.arguments == {"draft_id": draft.arguments["draft_id"]}
     assert draft.arguments["pending_review"] is True
     assert draft.arguments["body_markdown"].startswith("✅ 확정된 액션 아이템")
 
@@ -108,7 +110,7 @@ def test_a_chat_request_names_the_meeting_and_the_proposals_carry_it() -> None:
 
     draft, post = outcome.proposed
     assert draft.arguments["meeting_id"] == MEETING
-    assert post.arguments == {"meeting_id": MEETING}
+    assert post.arguments == {"meeting_id": MEETING, "draft_id": draft.arguments["draft_id"]}
 
 
 def test_a_korean_particle_after_the_id_still_finds_the_meeting() -> None:
@@ -142,8 +144,20 @@ def test_asked_on_a_meetings_screen_it_reports_the_runs_meeting() -> None:
 
     assert seen == [MEETING]
     draft, post = outcome.proposed
-    assert set(draft.arguments) == {"body_markdown", "pending_review"}
-    assert post.arguments == {}
+    assert set(draft.arguments) == {"body_markdown", "pending_review", "draft_id"}
+    assert post.arguments == {"draft_id": draft.arguments["draft_id"]}
+
+
+def test_the_post_is_pinned_to_this_runs_draft() -> None:
+    """E posts only the draft the approved proposal names, so each run's id is its own."""
+    first = _run(EVENT, _all_tools(), scope_meeting=MEETING)
+    second = _run(EVENT, _all_tools(), scope_meeting=MEETING)
+
+    ids = [run.proposed[1].arguments["draft_id"] for run in (first, second)]
+    assert ids[0] != ids[1]
+    # Plan mode queues an L2 row only when its arguments are ids and short scalars.
+    assert all(arguments_ok(run.proposed[1].arguments) for run in (first, second))
+    assert all(i.startswith("rdr_") for i in ids)
 
 
 def test_a_chat_request_about_no_meeting_proposes_nothing() -> None:
@@ -183,7 +197,7 @@ def test_a_missing_tool_drops_its_section_and_the_report_still_goes() -> None:
 
     outcome = _run(EVENT, tools, scope_meeting=MEETING)
 
-    assert "💬" not in outcome.proposed[0].arguments["body_markdown"]
+    assert "열린 갭" not in outcome.proposed[0].arguments["body_markdown"]
 
 
 def test_an_optional_tool_that_raises_drops_only_its_section() -> None:
@@ -198,7 +212,7 @@ def test_an_optional_tool_that_raises_drops_only_its_section() -> None:
     outcome = _run(EVENT, tools, scope_meeting=MEETING)
 
     body = outcome.proposed[0].arguments["body_markdown"]
-    assert "💬" not in body and "✅ 확정된 액션 아이템" in body
+    assert "열린 갭" not in body and "✅ 확정된 액션 아이템" in body
 
 
 def test_an_unknown_meeting_is_a_failure_with_no_proposal() -> None:
@@ -223,6 +237,11 @@ def test_it_calls_only_registered_tools(registered: int) -> None:
     _run(EVENT, tools, scope_meeting=MEETING, budget=budget)
 
     assert budget.used == registered
+
+
+def test_the_gap_read_is_a_tool_c_actually_ships() -> None:
+    """An unregistered name is skipped silently, so a wrong one would just lose the section."""
+    assert GAPS_TOOL in collect_tools(["gap"])
 
 
 def test_the_allow_list_is_exactly_the_four_reads() -> None:

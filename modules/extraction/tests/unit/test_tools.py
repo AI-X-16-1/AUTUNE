@@ -31,6 +31,7 @@ from autune_extraction.models import (
     ExtExternalRef,
     ExtNotionTarget,
 )
+from autune_extraction.schemas import ActionItemCreate
 
 TEAM, OTHER_TEAM = "team_1", "team_2"
 MEETING, OTHER_MEETING = "mtg_1", "mtg_9"
@@ -143,6 +144,7 @@ ARGS = {
     tools.workload_by_owner: (TEAM,),
     tools.person_action_items: (TEAM, "user_in"),
     tools.action_item_status: (TEAM, "act_missing"),
+    tools.open_followup_item: (TEAM,),
 }
 
 
@@ -514,10 +516,12 @@ def acting(session: Session, monkeypatch: pytest.MonkeyPatch) -> dict[str, list[
 
 
 def test_actions_are_not_offered_as_tools() -> None:
-    """A model calls ``TOOLS``; an action runs only after a person approves."""
+    """A model calls ``TOOLS``; an action runs only after a person approves,
+    except a draft (``L1_ACTIONS``), which waits on the board instead."""
     assert not set(tools.ACTIONS) & set(tools.TOOLS)
     for action in tools.ACTIONS:
-        assert "L2" in (action.__doc__ or ""), action.__name__
+        level = "L1" if action in tools.L1_ACTIONS else "L2"
+        assert level in (action.__doc__ or ""), action.__name__
         assert "delete" not in action.__name__, "L3 is forbidden"
 
 
@@ -593,15 +597,82 @@ def test_a_status_outside_the_board_is_refused(
     assert session.get(ExtActionItem, "act_1").status == "done"  # type: ignore[union-attr]
 
 
-def test_an_added_item_waits_for_confirmation_and_is_not_synced(
+def test_a_followup_item_is_followups_fixed_text_and_waits(
     session: Session, acting: dict[str, list[str]]
 ) -> None:
-    result = tools.add_action_item(TEAM, MEETING, "회의록 공유", assignee_id="user_in")
+    result = tools.add_followup_item(TEAM, MEETING)
 
     (row,) = session.query(ExtActionItem).all()
-    assert result["items"][0]["id"] == row.id
-    assert (row.status, row.origin, row.assignee_id) == ("needs_confirmation", "user", "user_in")
-    assert acting["items"] == []
+    assert result["ok"] is True and result["items"][0]["id"] == row.id
+    assert (row.description, row.status, row.origin) == (
+        tools.FOLLOWUP_DESCRIPTION,
+        "needs_confirmation",
+        "followup",
+    )
+    assert acting["items"] == []  # unconfirmed: nothing leaves
+    # Not a person finding what the model missed: edit cost gets no "created".
+    assert session.query(ExtEditEvent).count() == 0
+
+
+def test_a_second_followup_item_is_refused_while_one_is_open(
+    session: Session, acting: dict[str, list[str]]
+) -> None:
+    tools.add_followup_item(TEAM, MEETING)
+    (row,) = session.query(ExtActionItem).all()
+    row.description = "다음 주 화요일 후속 회의"  # a person rewords it
+    row.status = "in_progress"
+    session.flush()
+
+    refused = tools.add_followup_item(TEAM, MEETING)
+
+    assert refused["ok"] is False and "already has an open follow-up item" in refused["reason"]
+    assert session.query(ExtActionItem).count() == 1
+
+    row.status = "done"
+    session.flush()
+    assert tools.add_followup_item(TEAM, MEETING)["ok"] is True  # a closed one does not block
+
+
+def test_a_followup_item_only_on_the_teams_own_meeting(
+    session: Session, acting: dict[str, list[str]]
+) -> None:
+    result = tools.add_followup_item(TEAM, OTHER_MEETING)
+
+    assert result["ok"] is False
+    assert session.query(ExtActionItem).count() == 0
+
+
+def test_the_open_followup_read_keys_on_origin_not_text(session: Session) -> None:
+    assert tools.open_followup_item(session, TEAM)["items"] == []
+    item(session, "act_lookalike", status="todo")  # a model item, whatever it says
+    session.get(ExtActionItem, "act_lookalike").description = tools.FOLLOWUP_DESCRIPTION
+    session.flush()
+    assert tools.open_followup_item(session, TEAM)["items"] == []
+
+    session.add(
+        ExtActionItem(
+            id="act_fu",
+            meeting_id=MEETING,
+            description="고쳐 쓴 문장",
+            status="needs_confirmation",
+            confidence=1.0,
+            origin="followup",
+        )
+    )
+    session.flush()
+
+    result = tools.open_followup_item(session, TEAM)
+    assert [(i["id"], i["body"]) for i in result["items"]] == [("act_fu", "needs_confirmation")]
+    assert "고쳐 쓴" not in str(result)  # id and status only
+    assert tools.open_followup_item(session, OTHER_TEAM)["items"] == []
+
+
+def test_an_unknown_origin_is_refused_before_anything_is_written(session: Session) -> None:
+    with pytest.raises(ValueError):
+        service.create_action_item(
+            session, ActionItemCreate(meeting_id=MEETING, description="x"), origin="agent"
+        )
+    assert session.query(ExtActionItem).count() == 0
 
 
 def test_reviewing_a_decision(session: Session, acting: dict[str, list[str]]) -> None:

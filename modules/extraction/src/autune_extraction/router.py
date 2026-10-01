@@ -36,6 +36,7 @@ from .schemas import (
     ActionItemDetail,
     ActionItemRead,
     ActionItemUpdate,
+    CarriedOver,
     DecisionCreate,
     DecisionDetail,
     DecisionReviewUpdate,
@@ -106,6 +107,14 @@ def list_action_items(
         due_before=due_before,
         visible_to=reader.id,
     )
+
+
+@router.get("/carried-over/{meeting_id}", response_model=CarriedOver)
+def get_carried_over(meeting_id: str, session: SessionDep, reader: CurrentUser) -> CarriedOver:
+    """What the team's earlier meetings left open, for the popup this
+    meeting's review opens with (WBS 4.8). Members of the meeting's team only."""
+    service.require_readable_meeting(session, meeting_id, reader)
+    return service.carried_over(session, meeting_id)
 
 
 @router.get("/action-items/{action_item_id}", response_model=ActionItemDetail)
@@ -308,9 +317,9 @@ def notion_setup_state(meeting_id: str, session: SessionDep, reader: CurrentUser
 def notion_set_up(
     meeting_id: str, page_id: str, session: SessionDep, reader: CurrentUser
 ) -> dict[str, Any]:
-    """Make Autune's databases under ``page_id`` and fill them with every
-    confirmed action item and decision of the team (#428). Notion's own message
-    comes back when it refuses the page."""
+    """Make Autune's databases under ``page_id`` and queue filling them with
+    every confirmed action item and decision of the team (#428, #481). Notion's
+    own message comes back when it refuses the page."""
     team_id = _member_team(session, reader, meeting_id)
     try:
         return notion_connect.set_up(team_id, page_id)
