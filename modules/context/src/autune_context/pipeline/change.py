@@ -22,9 +22,19 @@ set's change types wrong. What each step here corrects
   withdrawal or replacement is *said* with negation or a stop/cancel/replace
   word, and a moved parameter is not.
 
-The cue lists are general Korean negation, cancellation and restriction
-vocabulary, not words lifted from the evaluation set. One kind of negation is
-not a cue: "차질 없이", "문제없이", "예외 없이" say how a decision is carried
+- **A replacement carries none of those words.** "MySQL에서 PostgreSQL로 옮기기로
+  했다" withdraws the earlier choice as surely as "MySQL은 쓰지 않기로 했다" does,
+  but has no negation or cancellation to fire ``marks_reversal`` -- so a swap of one
+  thing for another read as a moved parameter. ``marks_replacement`` reads it
+  structurally instead: a swap verb (전환, 교체, 대체, 이전, 갈아타, 바꾸, 옮기, ...)
+  whose ``(으)로``/``에`` target is a *new* thing. It stays quiet when the target is a
+  number, a weekday or time of day, or a unit ("월 단위로"), because those are a
+  parameter moving; and when the decision is about an owner (담당, 책임, 주관, ...),
+  because a replaced owner is a moved parameter too (see below).
+
+The cue lists are general Korean negation, cancellation, restriction and
+replacement vocabulary, not words lifted from the evaluation set. One kind of
+negation is not a cue: "차질 없이", "문제없이", "예외 없이" say how a decision is carried
 out, not that it was withdrawn, so an absence whose head is a hitch-or-exception
 noun is skipped. Known limits of a lexical cue:
 
@@ -35,6 +45,15 @@ noun is skipped. Known limits of a lexical cue:
   person from a vendor or a technology by vocabulary alone is not reliable --
   kiwipiepy splits names unpredictably ("김민/NNP 경/NNG"), and company names
   are proper nouns too -- so this stays a limit rather than a rule.
+- The replacement cue cannot tell a *swap* from a *state change* said with the
+  same verb: "베타를 무료에서 유료로 전환한다" reads as a replacement, though it is
+  arguably a pricing parameter. It also misses a replacement said without a swap
+  verb ("사내 인력이 직접 운영한다" after "외주로 운영한다"), and an owner it
+  cannot recognise by role word ("A팀이 맡던 일을 B팀으로 넘긴다" has no 담당).
+  The target of "…하는 걸로 바꿔요" is read as a thing when kiwipiepy tags 걸 as a
+  noun, though it is the nominaliser 것 + 으로 -- a very common way to say a decision
+  aloud. And the cancellation noun in "예약 취소 기한을 5일 전으로 늘려요" still reads as
+  a cancellation, which is ``marks_reversal`` and older than this cue.
 """
 
 from __future__ import annotations
@@ -111,6 +130,30 @@ _BOUND_NOUNS = {"이상", "이하", "미만", "초과"}
 # Adverbs that say "no change from now" -- stripped before re-asking NLI.
 _KEEP_ADVERBS = {"계속", "계속해서", "그대로", "여전히", "변함없이"}
 
+# Verbs that swap one thing for another. ``바꾸``/``옮기``/``이전`` also move a
+# parameter ("목요일로 옮긴다"); what tells the two apart is the target, not the verb.
+_SWAP_VERBS = {"갈아타", "바꾸", "옮기", "맡기"}  # tag VV
+_SWAP_NOUNS = {"전환", "교체", "대체", "이관", "이전", "통일"}  # noun + 하다
+_TARGET_PARTICLES = {"로", "으로", "에"}
+# What a noun phrase may be made of and still be one target.
+_PHRASE_TAGS = {"NNG", "NNP", "NNB", "SL", "SN", "SH", "MM", "MAG", "XR"}
+# A target made of these is a value, not a thing: a parameter is moving.
+_QUANTITY_OR_TIME = {
+    "월요일", "화요일", "수요일", "목요일", "금요일", "토요일", "일요일",
+    "주말", "평일", "오전", "오후", "아침", "점심", "저녁", "새벽", "야간",
+    "분기", "상반기", "하반기", "연초", "연말", "월초", "월말", "내일", "모레",
+    "매일", "매주", "매월", "매달", "격주", "단위", "이상", "이하", "미만", "초과",
+    "이내", "정도", "월", "주", "일", "년", "분", "초", "시", "회", "건", "명", "개",
+    "원", "배", "기간", "주기", "횟수",
+}  # fmt: skip
+# Latin unit abbreviations: a number touching one of these is a quantity (10GB), not a
+# name (3PL). Lower-cased.
+_LATIN_UNITS = {"kb", "mb", "gb", "tb", "pb", "ms", "mbps", "gbps", "hz", "khz", "ghz",
+                "px", "dpi", "fps", "kg", "mg", "km", "cm", "mm", "k", "m", "s"}  # fmt: skip
+# A decision about an owner: replacing the owner is a moved parameter, not a swap.
+_OWNER_ROLES = {"담당", "책임", "주관", "리드", "오너", "맡", "담당자", "책임자", "주관자", "리더"}
+_OWNER_TAGS = {"NNG", "NNP", "VV"}
+
 
 def classify_change(
     forward: NliScores,
@@ -132,8 +175,12 @@ def classify_change(
         return ChangeType.UNCHANGED, kept_forward.entailment
     contradiction = max(forward.contradiction, backward.contradiction)
     if contradiction >= _CONTRADICTION_MIN:
-        kind = ChangeType.REVERSED if marks_reversal(current) else ChangeType.MODIFIED
-        return kind, contradiction
+        reversed_ = marks_reversal(current) or marks_replacement(current, previous)
+        return (ChangeType.REVERSED if reversed_ else ChangeType.MODIFIED), contradiction
+    # Neither entailed nor contradicted: NLI has no opinion, and a swap said without
+    # a negation is exactly what it scores neutral as often as contradictory.
+    if marks_replacement(current, previous):
+        return ChangeType.REVERSED, forward.neutral
     return ChangeType.MODIFIED, forward.neutral
 
 
@@ -155,6 +202,80 @@ def marks_reversal(statement: str) -> bool:
         elif tag != "JKS":  # 차질이 없도록: the particle keeps the head
             head = None
     return False
+
+
+def marks_replacement(current: str, previous: str) -> bool:
+    """Whether ``current`` swaps something in ``previous`` for a different thing.
+
+    A swap verb whose ``(으)로``/``에`` target is new -- not already in ``previous`` --
+    and is neither a quantity or time (a parameter moving) nor said of an owner (a
+    replaced owner is a moved parameter, ``dataset.py``). Structural, not a
+    vocabulary of what gets swapped: the verbs say *that* something is replaced and
+    the target says it is a thing rather than a value.
+    """
+    now = _morphemes(current)
+    before = _morphemes(previous)
+    if any(form in _OWNER_ROLES for form, tag in (*now, *before) if tag in _OWNER_TAGS):
+        return False
+    known = {form for form, tag in before if _is_content(tag)}
+    for index, (form, tag) in enumerate(now):
+        if not _is_swap_verb(now, index, form, tag):
+            continue
+        target = _swap_target(now, index)
+        if target is None:
+            continue
+        content = [f for f, t in target if _is_content(t)]
+        if content and not _is_value(target) and not all(f in known for f in content):
+            return True
+    return False
+
+
+def _is_value(phrase: list[tuple[str, str]]) -> bool:
+    """Whether a target phrase is a quantity or a time rather than a thing."""
+    for index, (form, tag) in enumerate(phrase):
+        if form in _QUANTITY_OR_TIME or (tag == "SN" and not _is_name_part(phrase, index)):
+            return True
+    return False
+
+
+def _is_name_part(phrase: list[tuple[str, str]], index: int) -> bool:
+    """A digit run that is part of a name: Latin letters before it (S3, B2B, K8s), or
+    after it unless they are a unit (3PL, 5G are names; 10GB, 200ms are quantities).
+    A unit follows its number, so a letter *before* one is never a unit."""
+    if index > 0 and phrase[index - 1][1] == "SL":
+        return True
+    after = phrase[index + 1] if index + 1 < len(phrase) else None
+    return after is not None and after[1] == "SL" and after[0].lower() not in _LATIN_UNITS
+
+
+def _is_swap_verb(morphemes: list[tuple[str, str]], index: int, form: str, tag: str) -> bool:
+    if tag == "VV":
+        return form in _SWAP_VERBS
+    # ``전환`` is a swap only as ``전환하다``: bare, ``이전 방식`` is "the former way".
+    return (
+        tag.startswith("NN")
+        and form in _SWAP_NOUNS
+        and index + 1 < len(morphemes)
+        and morphemes[index + 1][1].startswith("XSV")
+    )
+
+
+def _swap_target(morphemes: list[tuple[str, str]], verb: int) -> list[tuple[str, str]] | None:
+    """The noun phrase marked ``(으)로`` or ``에`` before the verb at ``verb``, or
+    ``None`` -- a verb with no such phrase, or another clause's particle in the way,
+    names nothing it is swapped *to*."""
+    for index in range(verb - 1, -1, -1):
+        form, tag = morphemes[index]
+        if tag == "JKB" and form in _TARGET_PARTICLES:
+            phrase: list[tuple[str, str]] = []
+            for earlier in range(index - 1, -1, -1):
+                if morphemes[earlier][1] not in _PHRASE_TAGS:
+                    break
+                phrase.append(morphemes[earlier])
+            return phrase[::-1] or None
+        if tag.startswith(("J", "V", "E", "S")) and tag != "SN":
+            return None
+    return None
 
 
 def adds_condition(current: str, previous: str) -> bool:
