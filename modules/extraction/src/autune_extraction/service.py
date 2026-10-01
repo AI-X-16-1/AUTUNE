@@ -15,7 +15,7 @@ from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, timedelta
 from typing import Any, Literal, Protocol
 
-from sqlalchemy import and_, delete, func, or_, select, update
+from sqlalchemy import Select, and_, delete, func, or_, select, update
 from sqlalchemy.dialects import postgresql, sqlite
 from sqlalchemy.orm import Session, selectinload
 
@@ -42,6 +42,7 @@ from autune_core import (
     session_scope,
 )
 from autune_core.errors import NotFoundError, ValidationError
+from autune_core.settings import get_settings as get_core_settings
 from autune_integrations import PermanentIntegrationError, SlackApi, assert_personal_delivery
 from autune_integrations.privacy import find_unmasked
 
@@ -100,6 +101,7 @@ from .schemas import (
     ExternalRefRead,
     MeetingReview,
     MeetingSummary,
+    MyConfirmation,
     Outbound,
     OutboundBlocked,
     OutboundDecision,
@@ -120,6 +122,7 @@ def send_confirmation_dm(
     recipient_id: str,
     utterance_id: str,
     quoted_text: str,
+    answer_url: str,
 ) -> str:
     """Ask one speaker whether their own weak assent was a commitment.
 
@@ -140,7 +143,9 @@ def send_confirmation_dm(
     """
     assert_personal_delivery(subject_id=speaker_id, recipient_id=recipient_id, is_direct=True)
 
-    text, blocks = build_confirmation_dm(utterance_id=utterance_id, quoted_text=quoted_text)
+    text, blocks = build_confirmation_dm(
+        utterance_id=utterance_id, quoted_text=quoted_text, answer_url=answer_url
+    )
     timestamp = slack.send_dm(recipient_id, text, blocks)
 
     # Ids only. The utterance is meeting content and a log line is a store.
@@ -157,6 +162,7 @@ def ask_for_confirmation(
     recipient_id: str,
     utterance_id: str,
     quoted_text: str,
+    answer_url: str,
     reason: str = WEAK_ASSENT,
 ) -> ExtConfirmation | None:
     """Open a confirmation and send its DM, in that order — or send nothing.
@@ -188,6 +194,7 @@ def ask_for_confirmation(
         recipient_id=recipient_id,
         utterance_id=utterance_id,
         quoted_text=quoted_text,
+        answer_url=answer_url,
     )
     return row
 
@@ -243,6 +250,87 @@ def open_confirmation(
         .returning(ExtConfirmation)
         .execution_options(synchronize_session="fetch")
     ).one_or_none()
+
+
+WEB_ANSWERS: dict[str, UtteranceKind] = {
+    "commitment": UtteranceKind.COMMITMENT,
+    "decision": UtteranceKind.DECISION,
+    "not_commitment": UtteranceKind.CONCERN,
+}
+"""The three answers the web offers, resolved as the DM's buttons resolve them
+(``confirmations.ACTION_IDS``)."""
+
+_ANSWER_OF = {kind.value: answer for answer, kind in WEB_ANSWERS.items()}
+
+
+def answer_url(meeting_id: str) -> str:
+    """Where a speaker answers their own open questions: the meeting's 액션 tab."""
+    return f"{get_core_settings().web_base_url.rstrip('/')}/meetings/{meeting_id}/actions"
+
+
+def _own_confirmations(session: Session, meeting_id: str, user_id: str) -> Select[Any]:
+    return (
+        select(ExtConfirmation, Utterance.text)
+        .join(Utterance, Utterance.id == ExtConfirmation.utterance_id)
+        .join(Participant, Participant.id == Utterance.participant_id)
+        .where(
+            ExtConfirmation.meeting_id == meeting_id,
+            Participant.user_id == user_id,
+            Participant.consented.is_(True),
+        )
+        .order_by(Utterance.start_sec, Utterance.id)
+    )
+
+
+def my_confirmations(session: Session, meeting_id: str, reader: User) -> list[MyConfirmation]:
+    """The meeting's ambiguous agreements the reader said -- theirs to answer and
+    nobody else's: the question is about a person's own words, and goes to that
+    person only, on the web as in the DM (privacy.md section 3). An unknown
+    meeting, or one the reader cannot read, is the 404 any other read gives.
+    """
+    require_readable_meeting(session, meeting_id, reader)
+    return [
+        MyConfirmation(
+            utterance_id=row.utterance_id,
+            text=text,
+            answer=_ANSWER_OF.get(row.resolved_kind or ""),  # type: ignore[arg-type]
+        )
+        for row, text in session.execute(_own_confirmations(session, meeting_id, reader.id))
+    ]
+
+
+def answer_confirmation(
+    session: Session, utterance_id: str, reader: User, answer: str
+) -> MyConfirmation:
+    """The reader's answer to one of their own questions, given on the web.
+
+    The same path a click on the DM takes (``resolve_confirmation``): a
+    commitment makes the draft at once, any other answer takes an untouched one
+    back, and the later answer wins. A question nobody had put yet -- the
+    speaker never linked Slack, or the DM had not gone out -- is put by opening
+    the page, so its clock starts here (``open_confirmation``). Anyone but the
+    speaker gets a 404, the same as a question that does not exist.
+    """
+    row = session.get(ExtConfirmation, utterance_id)
+    if row is None:
+        raise NotFoundError("confirmation", utterance_id)
+    require_readable_meeting(session, row.meeting_id, reader)
+    own = session.execute(
+        _own_confirmations(session, row.meeting_id, reader.id).where(
+            ExtConfirmation.utterance_id == utterance_id
+        )
+    ).first()
+    if own is None:
+        raise NotFoundError("confirmation", utterance_id)
+    if row.sent_at is None:
+        open_confirmation(session, meeting_id=row.meeting_id, utterance_id=utterance_id)
+    resolve_confirmation(
+        session,
+        ConfirmationResponse(
+            utterance_id=utterance_id, resolved_kind=WEB_ANSWERS[answer], responder_id=reader.id
+        ),
+    )
+    return MyConfirmation(utterance_id=utterance_id, text=own[1], answer=answer)  # type: ignore[arg-type]
 
 
 def apply_confirmation_response(response: ConfirmationResponse) -> None:

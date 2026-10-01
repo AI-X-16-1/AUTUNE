@@ -134,7 +134,9 @@ def draft(session: Session) -> ExtActionItem:
 
 
 def test_the_dm_still_quotes_only_the_line() -> None:
-    _, blocks = build_confirmation_dm(utterance_id="utt_3", quoted_text="그럼 제가 한번 볼게요")
+    _, blocks = build_confirmation_dm(
+        utterance_id="utt_3", quoted_text="그럼 제가 한번 볼게요", answer_url="https://a/x"
+    )
     assert "> 그럼 제가 한번 볼게요" in str(blocks)
 
 

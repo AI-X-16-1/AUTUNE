@@ -313,3 +313,17 @@ export interface MeetingReview {
   action_items: ActionItemRead[];
   pending_decisions: number;
 }
+
+/** What a speaker answers about one of their own ambiguous agreements. */
+export type ConfirmationAnswer = "commitment" | "decision" | "not_commitment";
+
+/**
+ * `MyConfirmation` (`GET /confirmations?meeting_id=`, #585): an ambiguous
+ * agreement the reader said, their own line as stored, and their answer if any.
+ * Nobody else's questions ever come back.
+ */
+export interface MyConfirmation {
+  utterance_id: string;
+  text: string;
+  answer: ConfirmationAnswer | null;
+}

@@ -248,6 +248,27 @@ class SummaryDecision(BaseModel):
 MAX_NOTE_CHARS = 2000
 
 
+ConfirmationAnswer = Literal["commitment", "decision", "not_commitment"]
+
+
+class MyConfirmation(BaseModel):
+    """One ambiguous agreement the reader said, as the web asks them about it.
+
+    ``text`` is their own line, masked as stored. ``answer`` is what they said,
+    or ``None`` while they have not; a later answer replaces an earlier one.
+    """
+
+    utterance_id: str
+    text: str
+    answer: ConfirmationAnswer | None = None
+
+
+class ConfirmationAnswerIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    answer: ConfirmationAnswer
+
+
 class MeetingNoteUpdate(BaseModel):
     """The memo, whole. Blank removes it."""
 

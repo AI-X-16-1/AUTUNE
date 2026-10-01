@@ -30,7 +30,7 @@ nothing to compare a voice against.
 | Where matching happens | **At read time, in the API** — not stored | A candidate written into a column is stale the moment somebody else confirms a profile. Recomputing from the stored vectors is one pgvector query and is always current. It also keeps the worker from needing a profile lookup |
 | Whose voices may be candidates | **Only members of the meeting's team** | A candidate from another team leaks that a person attended that team's meeting. Enforced in the query and pinned by a test |
 | One profile vector or many | **Many — one row per confirmation**, matched against their mean | A voice changes with the room, the microphone and the day. Replacing a single vector would let one bad day overwrite a good profile; the mean of several is what `live/speakers.py` already does within a session |
-| Lifetime | **An observation dies with its meeting; a confirmed profile lives on the person** | `privacy.md` section 4 allows a table reachable by `user_id`. Cascading profiles with meetings would reset identification every retention window |
+| Lifetime | **An observation dies with its meeting; a confirmed profile lives on the person** | `privacy.md` section 4 allows a table reachable by `user_id`. Cascading profiles with meetings would reset identification every retention window. The retention sweep still deletes a profile once no remaining meeting names its owner (#363) |
 | Storing an unconfirmed voice | **Only when the meeting has a consent attestation** | An embedding is biometric data. Without an attestation nothing is stored and the transcript is unaffected |
 
 ## 2. Data — one table, two kinds of row

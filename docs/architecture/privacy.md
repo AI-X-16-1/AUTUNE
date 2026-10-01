@@ -99,8 +99,21 @@ incident. Target recall is 0.95+ for the MVP and 0.99+ at three months.
   in error tracking, which is an external service.
 - Sending unmasked text to Slack, Notion, or any LLM API.
 
-**User-reported misses** delete the affected utterance immediately. There is no
-review queue: report, delete, then improve the detector.
+**User-reported misses** are masked immediately where they are stored (S30,
+#555). There is no review queue: report, mask, then improve the detector.
+- The browser sends character offsets, never the text; the span is read from
+  the row, so the unmasked string is never in a request.
+- Nothing of a reported span survives — not the first character a detector hit
+  keeps (`masking.hide_reported`). Exact repeats in the same meeting are masked
+  in the same request unless the reporter opts out.
+- Once the meeting has been announced, A publishes `TranscriptReady` again
+  after the correction commits, so B, C and D rebuild from masked text — the
+  reprocessing async-pipeline.md already requires consumers to handle.
+- The log line carries the category and counts only. A workspace-wide pattern
+  rule built from reports does not exist yet.
+This replaces the earlier rule that a report deletes the whole utterance:
+masking removes exactly what was reported and keeps the evidence an action
+item quotes readable around it.
 
 ## 3. Speaking ratio is private to the speaker
 
@@ -189,7 +202,27 @@ ratios for a meeting (`_MIN_SPEAKERS_FOR_RATIO`, #128). Decided on #168.
 ## 4. Retention and deletion
 
 - Analysis results are retained **90 days** by default, adjustable per team.
-- A scheduled sweep deletes expired results.
+- A scheduled sweep deletes expired results: `autune.audio.periodic.expire_meetings`,
+  hourly (#206). Module A deletes every meeting past `meetings.expires_at` and
+  everything cascades from it. The window starts when the meeting is held —
+  the first live hello or the upload sets `expires_at` to now plus the team's
+  `retention_days` (`service.open_retention_window`); the value
+  `create_meeting` writes for a meeting booked ahead is provisional. A
+  scheduled meeting that has not been held yet is never expired. A module's `on_meeting_deleted` hook runs before the row goes,
+  and a hook that raises keeps the meeting for the next run.
+- A voice profile is biometric data and lives on the person, not the meeting,
+  so identification survives one meeting's window. It does not survive all of
+  them: the same sweep deletes a profile once no remaining meeting names its
+  owner (#363). Someone who stops attending is forgotten one retention window
+  after their last meeting.
+- What "delete their own data" runs today (module A, `account.py`):
+  `DELETE /api/audio/me/speech` removes every utterance attributed to the
+  person and every vector of their voice, and keeps the account;
+  `DELETE /api/audio/me` does that, runs every module's `on_user_deleted`
+  hook, and deletes the `users` row. **A hook that raises stops the account
+  deletion** and leaves the account in place to retry (#358): a module's
+  per-person rows are found by `user_id`, and deleting the user first would
+  leave them unreachable. Every hook must therefore be safe to run twice.
 - A user can delete their own data at any time. **The scope of "their own data"
   is under review — see ADR 0007, decision 5**, which would keep action items,
   decisions and lineage derived from a person's speech after that person's

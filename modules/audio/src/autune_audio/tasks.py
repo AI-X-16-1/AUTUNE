@@ -11,7 +11,7 @@ mechanism; ``sweep_orphans`` below explains why A wants both triggers.
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 
 import numpy as np
 import sqlalchemy as sa
@@ -19,7 +19,7 @@ from celery import shared_task
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from autune_audio import service
+from autune_audio import retention, service
 from autune_audio.config import get_settings
 from autune_audio.decoding import decode
 from autune_audio.diarization import get_diarizer, resolve_device
@@ -459,3 +459,26 @@ def _log_masking(
         1 for before, after in zip(spoken, masked, strict=True) if before.text != after.text
     )
     log.info("transcript_masked", meeting_id=meeting_id, utterances=len(masked), changed=changed)
+
+
+@shared_task(name="autune.audio.periodic.expire_meetings")
+@periodic(timedelta(hours=1))
+def expire_meetings() -> None:
+    """Delete meetings past their retention window, and voice profiles with them.
+
+    ``retention.sweep`` explains what goes and in what order. Hourly because
+    the window is counted in days: an hour of latency on a 90-day promise is
+    nothing, and a run that finds nothing is one indexed query
+    (``ix_meetings_expires_at``). Safe to overlap, as ``autune_core.periodic``
+    requires: two runs that pick the same meeting both ``DELETE`` it, and the
+    second deletes nothing.
+    """
+    with session_scope() as session:
+        result = retention.sweep(session, now=datetime.now(tz=UTC))
+    log.info(
+        "audio_retention_sweep_finished",
+        backfilled=result.backfilled,
+        meetings=len(result.meetings),
+        hooks_failed=len(result.hooks_failed),
+        profiles=result.profiles,
+    )

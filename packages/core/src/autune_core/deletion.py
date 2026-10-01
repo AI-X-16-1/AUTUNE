@@ -11,6 +11,13 @@ database must have somewhere to say so.
 
 A table that cannot be cleaned up is a compliance defect, not a backlog item.
 See docs/architecture/privacy.md section 4.
+
+**Every hook must be safe to run twice.** The callers run a hook, then delete
+the row it was about, in a transaction the hook is not part of: if that delete
+or its commit fails, the hook runs again on the next attempt, and two
+overlapping retention sweeps can run it concurrently. A hook is a set of
+``DELETE``/``UPDATE ... WHERE <id> = ...`` statements, or anything else that
+finds nothing to do the second time.
 """
 
 from __future__ import annotations
