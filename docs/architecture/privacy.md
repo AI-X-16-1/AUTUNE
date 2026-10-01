@@ -99,8 +99,21 @@ incident. Target recall is 0.95+ for the MVP and 0.99+ at three months.
   in error tracking, which is an external service.
 - Sending unmasked text to Slack, Notion, or any LLM API.
 
-**User-reported misses** delete the affected utterance immediately. There is no
-review queue: report, delete, then improve the detector.
+**User-reported misses** are masked immediately where they are stored (S30,
+#555). There is no review queue: report, mask, then improve the detector.
+- The browser sends character offsets, never the text; the span is read from
+  the row, so the unmasked string is never in a request.
+- Nothing of a reported span survives — not the first character a detector hit
+  keeps (`masking.hide_reported`). Exact repeats in the same meeting are masked
+  in the same request unless the reporter opts out.
+- Once the meeting has been announced, A publishes `TranscriptReady` again
+  after the correction commits, so B, C and D rebuild from masked text — the
+  reprocessing async-pipeline.md already requires consumers to handle.
+- The log line carries the category and counts only. A workspace-wide pattern
+  rule built from reports does not exist yet.
+This replaces the earlier rule that a report deletes the whole utterance:
+masking removes exactly what was reported and keeps the evidence an action
+item quotes readable around it.
 
 ## 3. Speaking ratio is private to the speaker
 

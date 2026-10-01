@@ -318,3 +318,24 @@ class AccountDeleted(BaseModel):
     """
 
     utterances: int
+
+
+class PiiReport(BaseModel):
+    """S30: which characters of an utterance are personal data the masker missed.
+
+    Offsets, never the text: the span is read from the stored row, so the
+    unmasked string is not in the request (``pii_report``).
+    """
+
+    start: int = Field(ge=0)
+    end: int = Field(gt=0)
+    category: Literal["name", "internal_id", "contact", "other"]
+    include_similar: bool = True
+
+
+class PiiReported(BaseModel):
+    utterances: int
+    occurrences: int
+    republished: bool
+    """Whether B, C and D were sent the corrected transcript. False when the
+    meeting was never announced (still being transcribed), or the publish failed."""
