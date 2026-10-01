@@ -22,8 +22,8 @@ from typing import Any
 
 import numpy as np
 
+from autune_audio.embedding import EMBEDDING_DIM
 from autune_audio.live.speakers import unit
-from autune_audio.models import EMBEDDING_DIM
 from autune_audio.schemas import Waveform
 
 CHECKPOINT = "pyannote/wespeaker-voxceleb-resnet34-LM"

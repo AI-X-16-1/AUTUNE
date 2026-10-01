@@ -18,6 +18,8 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from autune_core import Base, Meeting
 from autune_core.ids import JOB, new_id
 
+from .embedding import EMBEDDING_DIM
+
 JOB_STATUSES = ("queued", "running", "done", "failed", "superseded")
 
 
@@ -144,12 +146,6 @@ class AudConsentAttestation(Base):
     attested_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
-
-
-EMBEDDING_DIM = 256
-"""Width of ``pyannote/wespeaker-voxceleb-resnet34-LM``'s output -- the model
-``live/embedder.py`` already runs, so a live vector and a stored one are
-comparable."""
 
 
 class AudSpeakerEmbedding(Base, TimestampMixin):
