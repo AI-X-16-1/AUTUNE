@@ -20,6 +20,10 @@ _ID = re.compile(r"[a-z]+_[A-Za-z0-9]+")
 """The shape ``autune_core.ids.new_id`` produces: a prefix, an underscore, a hex tail.
 Matched with ``fullmatch``: ``$`` under ``match`` would let a trailing newline through."""
 
+_KIND = re.compile(r"[a-z_]{1,64}")
+_TOOL = re.compile(r"[a-z_]+(\.[a-z_]+)+")
+_TOOL_MAX = 128
+
 _QUIET = ConfigDict(hide_input_in_errors=True)
 """A refused value is refused because it may be text -- so it stays out of the
 exception message, and out of every log line that prints one (invariant 11)."""
@@ -90,6 +94,29 @@ class ProposedAction(BaseModel):
     level: Literal["L1", "L2"]
     rationale: str
     evidence: list[str] = Field(default_factory=list)
+
+    @field_validator("kind")
+    @classmethod
+    def _kind_is_a_code_name(cls, value: str) -> str:
+        # Stored on every run and every pending row (rule 8), so a sentence
+        # here would outlive the meeting it came from. Never echo the value.
+        if not _KIND.fullmatch(value):
+            raise ValueError("kind must be a lowercase code name")
+        return value
+
+    @field_validator("tool")
+    @classmethod
+    def _tool_is_a_registry_name(cls, value: str) -> str:
+        if len(value) > _TOOL_MAX or not _TOOL.fullmatch(value):
+            raise ValueError("tool must be a registry name")
+        return value
+
+    @field_validator("evidence")
+    @classmethod
+    def _ids_only(cls, value: list[str]) -> list[str]:
+        # Stored on every run, meeting or not (#449 review), so held to the
+        # same rule as a tool result's evidence.
+        return ToolResult._ids_only(value)
 
 
 class SubagentResult(BaseModel):

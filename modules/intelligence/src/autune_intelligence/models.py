@@ -12,6 +12,7 @@ from __future__ import annotations
 from datetime import date, datetime
 
 from sqlalchemy import (
+    Boolean,
     CheckConstraint,
     Date,
     DateTime,
@@ -20,6 +21,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    false,
     func,
 )
 from sqlalchemy.dialects.postgresql import JSONB
@@ -158,6 +160,10 @@ class IntelMeetingReport(Base, TimestampMixin):
     sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     """Set when a task claims the report, before it posts: a set value means
     never post again, even if that post failed (at most once)."""
+    pending_review: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=false())
+    """B had items awaiting a person's review when the report was composed.
+    The post then carries a second button to B's review board; the items
+    themselves are never quoted (agent-layer.md section 8 rule 3)."""
 
 
 class IntelReport(Base, TimestampMixin):

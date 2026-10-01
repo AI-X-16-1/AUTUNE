@@ -11,6 +11,8 @@ import {
 } from "@/shared/api/auth";
 import { Button } from "@/shared/ui";
 
+import { backfillJira } from "../api";
+
 /**
  * One button to connect the team's Jira (#82, #428). Connected, a confirmed
  * action item becomes a Jira issue in the chosen project, and its assignee,
@@ -27,6 +29,7 @@ export function JiraConnect({ meetingId }: { meetingId: string }) {
   const [state, setState] = useState<JiraConnection | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [backfilled, setBackfilled] = useState<string | null>(null);
 
   const refresh = () => getJiraConnection(meetingId).then(setState);
 
@@ -99,6 +102,11 @@ export function JiraConnect({ meetingId }: { meetingId: string }) {
           {state.project_key ? ` · ${state.project_key}` : ""}
         </span>
       )}
+      {!state.needs_reconnect && state.project_missing ? (
+        <span className="text-[var(--color-signal-critical)]" style={meta}>
+          프로젝트 {state.project_missing}이(가) Jira에서 없어졌습니다. 새 프로젝트를 고르면 확정된 항목을 모두 다시 넣습니다.
+        </span>
+      ) : null}
       {!state.needs_reconnect && !state.project_key && state.projects ? (
         <label className="flex items-center gap-2 text-[var(--color-ink-muted)]" style={meta}>
           이슈를 만들 프로젝트
@@ -107,8 +115,16 @@ export function JiraConnect({ meetingId }: { meetingId: string }) {
             defaultValue=""
             onChange={(event) =>
               void run(
-                () => chooseJiraProject(meetingId, event.target.value),
-                "프로젝트를 정했습니다. 확정한 항목이 이 프로젝트의 이슈가 됩니다.",
+                async () => {
+                  await chooseJiraProject(meetingId, event.target.value);
+                  const { synced, failed } = await backfillJira(meetingId);
+                  setBackfilled(
+                    failed
+                      ? `확정된 항목 ${synced}건을 넣었고 ${failed}건은 실패했습니다.`
+                      : `확정된 항목 ${synced}건을 이 프로젝트에 넣었습니다.`,
+                  );
+                },
+                "프로젝트를 정했습니다.",
                 "프로젝트를 정하지 못했습니다.",
               )
             }
@@ -139,6 +155,7 @@ export function JiraConnect({ meetingId }: { meetingId: string }) {
         연결 해제
       </Button>
       {note ? <span role="status" className="text-[var(--color-ink-muted)]" style={meta}>{note}</span> : null}
+      {backfilled ? <span role="status" className="text-[var(--color-ink-muted)]" style={meta}>{backfilled}</span> : null}
     </div>
   );
 }

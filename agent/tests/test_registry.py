@@ -54,8 +54,22 @@ def test_collects_module_b_tools_by_iterating_the_module_list() -> None:
     assert tools["extraction.open_action_items"].description.startswith("Use this")
 
 
-def test_a_module_without_tools_py_contributes_nothing() -> None:
-    assert collect_tools(["audio"]) == {}
+def test_a_module_without_tools_py_contributes_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A package with no tools submodule. Not a real module: which of the five
+    # has shipped its tools.py changes as they land.
+    monkeypatch.setitem(sys.modules, "autune_fake", types.ModuleType("autune_fake"))
+
+    assert collect_tools(["fake"]) == {}
+
+
+def test_module_a_tools_are_collected() -> None:
+    assert sorted(collect_tools(["audio"])) == [
+        "audio.find_utterances",
+        "audio.meeting_overview",
+        "audio.quote_utterances",
+        "audio.recent_meetings",
+        "audio.search_team_meetings",
+    ]
 
 
 def test_more_than_five_items_is_cut_to_five_and_marked_truncated() -> None:
@@ -254,3 +268,47 @@ def test_a_run_about_a_meeting_fills_it_in(session: Session, team: dict[str, str
 def test_toolbox_has_no_unscoped_default() -> None:
     with pytest.raises(TypeError):
         Toolbox({}, SESSION, CallBudget(), allowed=[])  # type: ignore[call-arg]
+
+
+def _per_meeting(seen: list[str]) -> Tool:
+    """Shaped like B's ``meeting_action_items(session, meeting_id)``."""
+
+    def fn(session: Any, meeting_id: str) -> dict[str, Any]:
+        seen.append(meeting_id)
+        return _payload()
+
+    return Tool(name="extraction.per_meeting", description="Use this in tests.", fn=fn)
+
+
+def test_a_per_meeting_tool_in_a_run_about_no_meeting_is_a_route_not_a_crash() -> None:
+    seen: list[str] = []
+    tools = {"extraction.per_meeting": _per_meeting(seen)}
+    box = Toolbox(tools, SESSION, CallBudget(), allowed=tools, scope=SCOPE)
+
+    result = box.call("extraction.per_meeting")
+
+    assert result.ok is False
+    assert result.reason == "this run is about no meeting; pass meeting_id"
+    assert seen == []
+
+
+def test_an_argument_the_tool_does_not_take_is_refused_without_its_name() -> None:
+    seen: list[dict[str, Any]] = []
+    tools = {"extraction.x": _scoped_tool("extraction.x", seen)}
+    box = Toolbox(tools, SESSION, CallBudget(), allowed=tools, scope=SCOPE)
+
+    result = box.call("extraction.x", 김팀장_전화="010")
+
+    assert result.ok is False
+    assert result.reason == "unexpected argument"
+    assert seen == []
+
+
+def test_a_missing_argument_other_than_the_meeting_is_named_from_the_code() -> None:
+    def fn(session: Any, team_id: str, query: str) -> dict[str, Any]:
+        return _payload()
+
+    tools = {"extraction.search": Tool(name="extraction.search", description="Use this.", fn=fn)}
+    box = Toolbox(tools, SESSION, CallBudget(), allowed=tools, scope=SCOPE)
+
+    assert box.call("extraction.search").reason == "missing argument: query"

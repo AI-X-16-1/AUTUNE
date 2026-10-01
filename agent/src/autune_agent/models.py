@@ -37,7 +37,7 @@ Json = JSON().with_variant(JSONB(), "postgresql")
 
 WORK_ITEM_KINDS = ("action", "gap", "open_question", "decision", "risk")
 WORK_ITEM_STATUSES = ("open", "in_progress", "blocked", "resolved", "dropped")
-APPROVER_SCOPES = ("research", "followup", "workload", "any")
+APPROVER_SCOPES = ("research", "followup", "workload", "report", "any")
 
 
 def _in(column: str, values: tuple[str, ...]) -> str:
@@ -116,7 +116,7 @@ class AgentRun(Base):
     trigger: Mapped[dict[str, Any]] = mapped_column(Json, nullable=False)
     route: Mapped[str | None] = mapped_column(String(32))
     steps: Mapped[list[dict[str, Any]]] = mapped_column(Json, nullable=False, default=list)
-    """Tool calls in order: name, ok, reason, evidence ids. Never tool text."""
+    """Tool calls in order: name, ok, evidence ids, truncated. Never tool text."""
     proposed: Mapped[list[dict[str, Any]]] = mapped_column(Json, nullable=False, default=list)
     decisions: Mapped[list[dict[str, Any]]] = mapped_column(Json, nullable=False, default=list)
     actions: Mapped[list[dict[str, Any]]] = mapped_column(Json, nullable=False, default=list)
@@ -124,6 +124,7 @@ class AgentRun(Base):
     outcome: Mapped[str] = mapped_column(String(32), nullable=False)
     """``answered`` | ``unrouted`` | ``budget_exceeded`` | ``failed``."""
     answer: Mapped[str | None] = mapped_column(Text)
+    """Not written today (``main/store.py``): an answer may quote another meeting."""
     latency_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     token_cost: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[datetime] = mapped_column(
@@ -146,6 +147,115 @@ class AgentApprover(Base):
         String(64), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
     )
     scope: Mapped[str] = mapped_column(String(32), primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+RESEARCH_DOC = "rdoc"
+"""Id prefix for ``agent_research_documents``. Kept here rather than in
+``autune_core.ids`` so the layer adds no core change for its own table."""
+RESEARCH_STATUSES = ("proposed", "approved", "rejected")
+
+
+class AgentResearchDocument(Base):
+    """What Research wrote for one meeting (spec section 5). Masked text only."""
+
+    __tablename__ = "agent_research_documents"
+    __table_args__ = (
+        CheckConstraint(_in("status", RESEARCH_STATUSES), name="ck_agent_research_status"),
+    )
+
+    id: Mapped[str] = mapped_column(
+        String(64), primary_key=True, default=lambda: new_id(RESEARCH_DOC)
+    )
+    team_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("teams.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    meeting_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("meetings.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="proposed")
+    run_id: Mapped[str | None] = mapped_column(
+        String(64), ForeignKey("agent_runs.id", ondelete="SET NULL")
+    )
+    decided_by: Mapped[str | None] = mapped_column(
+        String(64), ForeignKey("users.id", ondelete="SET NULL")
+    )
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class AgentResearchSource(Base):
+    """Every meeting a document quotes. Deleting a row deletes the document (trigger)."""
+
+    __tablename__ = "agent_research_sources"
+
+    document_id: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("agent_research_documents.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    meeting_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("meetings.id", ondelete="CASCADE"), primary_key=True, index=True
+    )
+
+
+PENDING_ACTION = "pa"
+"""Id prefix for ``agent_pending_actions``, kept here like ``RESEARCH_DOC``."""
+PENDING_STATUSES = ("pending", "approved", "rejected", "superseded", "failed")
+REJECT_REASONS = ("wrong_evidence", "not_now", "handled_elsewhere", "other")
+"""A fixed choice, never free text: an approver's sentence could quote a
+meeting and would have no deletion path (plan-mode spec section 1)."""
+
+
+class AgentPendingAction(Base):
+    """An L2 proposal waiting for a person (plan-mode spec section 4).
+
+    Arguments are ids and short scalars only (``main/pending.py`` checks), so
+    the row holds nothing a meeting deletion could miss; what the approver reads
+    is built at read time (``main/preview.py``).
+    """
+
+    __tablename__ = "agent_pending_actions"
+    __table_args__ = (
+        CheckConstraint(_in("status", PENDING_STATUSES), name="ck_agent_pending_status"),
+        CheckConstraint(
+            f"reject_reason IS NULL OR {_in('reject_reason', REJECT_REASONS)}",
+            name="ck_agent_pending_reject_reason",
+        ),
+        Index("ix_agent_pending_team_status", "team_id", "status"),
+    )
+
+    id: Mapped[str] = mapped_column(
+        String(64), primary_key=True, default=lambda: new_id(PENDING_ACTION)
+    )
+    team_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("teams.id", ondelete="CASCADE"), nullable=False
+    )
+    meeting_id: Mapped[str | None] = mapped_column(
+        String(64), ForeignKey("meetings.id", ondelete="CASCADE"), index=True
+    )
+    run_id: Mapped[str | None] = mapped_column(
+        String(64), ForeignKey("agent_runs.id", ondelete="SET NULL")
+    )
+    subagent: Mapped[str] = mapped_column(String(32), nullable=False)
+    tool: Mapped[str] = mapped_column(String(128), nullable=False)
+    kind: Mapped[str] = mapped_column(String(64), nullable=False)
+    arguments: Mapped[dict[str, Any]] = mapped_column(Json, nullable=False, default=dict)
+    evidence: Mapped[list[str]] = mapped_column(Json, nullable=False, default=list)
+    scope: Mapped[str] = mapped_column(String(32), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
+    reject_reason: Mapped[str | None] = mapped_column(String(32))
+    result_ok: Mapped[bool | None] = mapped_column(Boolean)
+    result_reason: Mapped[str | None] = mapped_column(String(128))
+    decided_by: Mapped[str | None] = mapped_column(
+        String(64), ForeignKey("users.id", ondelete="SET NULL")
+    )
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

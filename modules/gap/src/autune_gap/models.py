@@ -347,3 +347,42 @@ class GapRelatedTopic(Base):
     topic_id: Mapped[str] = mapped_column(
         String(64), ForeignKey("gap_topics.id", ondelete="CASCADE"), nullable=False, index=True
     )
+
+
+class GapScoring(Base, TimestampMixin):
+    """Who counted as one person when this meeting's gaps were last scored.
+
+    A gap's risk reads how much of the room stayed silent on a topic, and who
+    is one person is decided by ``participants.user_id`` (``service._people``).
+    Module A fills ``user_id`` when somebody confirms a speaker, which can be
+    long after the gaps were scored, and nothing tells C (#360 settled on no
+    event). The report recomputes participation on every read; the stored
+    ``risk_score`` and ``severity`` do not. This row is what lets the periodic
+    rescore tell the two apart (#415).
+
+    ``people_key`` is a digest of the participant-id -> person grouping, not
+    the grouping. Participant ids are this meeting's own and carry no name, but
+    a digest is all a comparison needs, and it cannot be read back into who was
+    merged with whom.
+
+    Written only for a meeting that has a topic graph, so the rescore never
+    touches a meeting the pipeline has not published.
+    """
+
+    __tablename__ = "gap_scorings"
+
+    meeting_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("meetings.id", ondelete="CASCADE"), primary_key=True
+    )
+    people_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    failed_people_key: Mapped[str | None] = mapped_column(String(64))
+    """The grouping the rescore last failed against, or NULL. A failure count
+    belongs to one grouping: when the people move again the meeting is a new
+    question and is tried again (#516)."""
+    rescore_failures: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    """Failures in a row against ``failed_people_key``. At
+    ``AUTUNE_GAP_RESCORE_MAX_ATTEMPTS`` the sweep stops trying that grouping, so
+    one broken meeting cannot spend a hosted verifier's quota every ten minutes."""
+    last_failed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

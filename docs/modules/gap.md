@@ -137,6 +137,30 @@ a 500MB pipeline is a judgement nobody tests.
   no digit in it is not a metric: `QT` on spoken Korean fires on 한번, 네, 좀.
   And a stopword is not a topic on either path. Precision is C's metric and a
   false topic is what a false gap is raised on.
+- **A person is named without the honorific.** The model reads 이건우님이
+  as one `npp+jcs` token and one `PS` span, and 이 is an ending `noun_stem`
+  will not cut on a noun (차이, 아이). After 님 it cannot be anything else, so
+  `spoken.person_name` cuts 님/씨 and the particle after it. Before this one
+  colleague was 이건우님이, 이건우님 and 이건우 — three topics.
+- **A date or a quantity is read by its ending, and a bare one is refused**
+  (#315). An entity span ending in the copula kept it — 0건입니다, 90일이고 —
+  because `noun_stem` does not read through `jp`; and 다음 주 금요일까지 kept
+  its 까지 whenever the model tagged it as a noun. `spoken.quantity_text` cuts
+  the copula and a particle from a `date` or `metric` span when what is left
+  ends in a number, a unit or a day. What is left, if it is only a number and
+  one unit (15%, 30초, 0건, 90일), is not a topic: the noun beside it is. 응답
+  3초, 다음 주 금요일 and 10월 1일 stay. 의미 joined `STOP_TERMS`, the most
+  central node of `deploy-retro`; 진행 and 공유 did not, because 진행 is a
+  `next_step` keyword and 공유 is the only topic of a status meeting.
+
+  | Labels over the two shared fixtures and the four authored meetings | before | after |
+  | --- | --- | --- |
+  | topics | 57 | 52 |
+  | with a copula or particle on the end | 0건입니다 · 90일이고 · 다음 주 화요일까지 · 다음 주 금요일까지 | none |
+  | a bare quantity | 15% · 30초 | none |
+
+  Precision and recall on the authored set are unchanged in every
+  configuration, measured before and after on the same run.
 - **Both paths cut the particle and ask the same stoplist.** 오늘은 used to be
   a `DT` node, particle and all, while 오늘 was refused as a term — one word,
   two answers (#230). An entity span now loses the particle on its last word
@@ -420,6 +444,13 @@ letters, `gemini-3.5-flash` and `gemini-3.8-flash` both wrote the topic names
 instead, and a letters-only parser dropped every answer — indistinguishable
 from a model that found nothing. A name is accepted when it is one of that
 line's own mentions, so this widens nothing the letters did not offer.
+
+**Nor always with bare line numbers.** The template verifier's answers came
+back keyed `"발화 1"`, the label the request shows, and a digits-only key
+reader dropped every one. Both callers now read keys through
+`gemini.answers_by_line`, which takes a key for its number and refuses an
+answer that names no line asked, so the batch falls back rather than reading
+as "nothing stated".
 
 **Measured** on 2026-09-30, one request per model:
 
@@ -743,23 +774,33 @@ embedding got wrong or nearly wrong: "인덱스 재색인이 먼저 끝나야…
 "인기순 정렬 대신 실시간 개인화로…" (not cold start), an owner and a date with no
 noun, and "네 알겠습니다, 마치겠습니다" (nothing).
 
-Measured on 2026-09-29 with `gemini-3.5-flash` (fallback never used), spaCy,
-the four authored meetings, templates `general.4` / `feature_planning.2`:
+Measured on 2026-09-30 with `gemini-3.5-flash` (fallback never used), spaCy,
+the four authored meetings, templates `general.4` / `feature_planning.2`, after
+the key-reading fix below:
 
 | | off | local | local + gemini |
 | --- | --- | --- | --- |
-| precision (`high`) | 0.89 | 1.00 | 0.94 |
+| precision (`high`) | 0.89 | 1.00 | 1.00 |
 | recall (`high`) | 1.00 | 0.94 | 1.00 |
-| false positives (all `no-noun`) | 2 | 0 | 1 |
+| false positives (all `no-noun`) | 2 | 0 | 0 |
 | verifier requests / utterances sent | 0 / 0 | 0 / 0 | 4 / 10 |
 
-**The verifier trades precision for recall here, not both up.** It restored
-the cold-start gap the embedding lost ("인기순 정렬 대신 실시간 개인화로…" is
-not a cold-start plan) and so brought recall back to 1.00. It also reopened a
-false positive the embedding had closed: it did not confirm "개인정보 마스킹이
-먼저 끝나야 전송할 수 있습니다" as a dependency, which it is. On four meetings
-that is one utterance either way, and it says nothing about which way real
-meetings lean — the W5 set decides whether the verifier is worth its request.
+**On this set the verifier takes recall back without giving up precision.** The
+embedding alone closed both `no-noun` false positives and lost the cold-start
+gap ("인기순 정렬 대신 실시간 개인화로…" is not a cold-start plan); with the
+verifier checking the ambiguous lines, the gap is back and neither false
+positive returns. Four authored meetings and ten asked utterances say the
+mechanism does what it was built for, and nothing about real meetings: the W5
+set decides whether it is worth its request. `--relations gemini` changes
+nothing here, because no utterance in the set holds a pair the rules decline
+(see "Relation assistance").
+
+**The 2026-09-29 run read 0.94 / 1.00 and was a parse bug.** The model keyed its
+answers by the line label it was shown (`"발화 1"`), the parser accepted only a
+bare digit, and every line came back answered empty — "not this item" on every
+ambiguous utterance, overriding the embedding. That run concluded the verifier
+traded precision for recall; it was measuring the parse. Keys are now read by
+`gemini.answers_by_line`.
 
 Probes: 3/5 on the embedding alone, 5/5 with Gemini (2 requests). Requests ran
 765-1,543 characters; no body carried the key, a speaker, an id or a line that
@@ -842,6 +883,7 @@ gaps off a transcript nothing was read out of.
 | PostgreSQL `gap_gaps` | Detected gaps, category, coverage, severity, risk score, question |
 | PostgreSQL `gap_related_topics` | Which topics a gap was inferred from |
 | PostgreSQL `gap_meeting_template` | Which template one meeting is compared against, when somebody chose one |
+| PostgreSQL `gap_scorings` | A digest of who counted as one person when a meeting's gaps were last scored |
 | PostgreSQL `gap_templates` | Domain templates and their items — **not built, and not needed**, see below |
 
 Everything that exists cascades from `meetings.id`, so no deletion hook is
@@ -863,6 +905,63 @@ threshold tuning has to read what was dismissed, and soft deletes are forbidden
 (`../architecture/data-model.md`). No dismisser is recorded: which teammate
 pressed the button is not something tuning needs, and storing it would be a
 per-person record of conduct that ADR 0003 refuses.
+
+### A speaker confirmed after scoring — `gap_scorings`
+
+A gap's risk reads how much of the room was silent on a topic, and who is one
+person comes from `participants.user_id`: two diarization labels that share a
+user are one person, and having spoken as either counts as having spoken.
+Module A fills `user_id` when somebody confirms a speaker (#370), which can be
+long after the gaps were scored. `build_report` recomputes participation on
+every read, but the stored `risk_score` and `severity` do not, so the report
+could show a person who spoke next to a gap scored on their silence (#415).
+
+A confirmation publishes no event (#360 settled on consumers re-reading), so
+`detect_gaps` records a digest of the participant → person grouping it scored
+against, and `autune.gap.periodic.rescore_changed_people` compares it against
+the participants every ten minutes. A meeting whose grouping moved is detected
+again and its `GapReport` republished. Gap ids and dismissals survive, as on any
+re-run. A consent withdrawal moves the grouping too and is picked up the same
+way.
+
+**A change of consent also rebuilds the graph** (#515). The topics, their
+evidence and the participation matrix were read from whoever consented when
+the transcript arrived, so rescoring alone left a label taken from a withdrawn
+line on S20 and a newly allowed line out of it. When the consenting
+participants differ from those in `gap_participation` — which holds every
+consenting participant on every topic, so its participant set is who consented
+at build time — `service.rebuild_topic_graph` reads the meeting's stored
+utterances (masked by module A, the same text the pipeline held) through the
+same consent filter before detection runs. A confirmed speaker changes who is
+one person, not whose speech may be read, and does not rebuild. A meeting with
+no stored utterances is left as it is: there is nothing to rebuild from. Module
+D does the same for its links with `autune.context.rederive_topics` (#472).
+
+- **A digest, not the grouping.** A comparison needs nothing more, and a digest
+  cannot be read back into who was merged with whom.
+- **Only a meeting with a topic graph gets a row**, so the rescore never sends E
+  a first report for a meeting the pipeline has not published. A re-run that
+  leaves no graph deletes the row, so it is not rescored every ten minutes
+  against a grouping it can never record.
+- **A privacy violation fails the sweep.** A meeting that fails otherwise is
+  logged by id and retried on the next run. A `PrivacyViolationError` from the
+  verifier is a broken invariant (`pipeline/base.py`). The sweep finishes the
+  other meetings, then raises it with the meeting ids and never the value.
+- **Retries are capped per grouping (#516).** A failed rescore is counted on
+  the row (`rescore_failures`, `failed_people_key`, `last_failed_at`). After
+  `AUTUNE_GAP_RESCORE_MAX_ATTEMPTS` (5) failures in a row at the same grouping,
+  the sweep skips the meeting until its people move again. That is a new
+  question, so the count starts over. A successful detection clears all three.
+  Before the cap, a meeting that always failed was retried every ten minutes
+  for good, spending a hosted verifier's quota each time. A privacy violation is
+  not counted, because `check_outbound` refused it before anything was sent. The
+  sweep logs `held` for the meetings it skipped, and each failure logs its
+  attempt number and whether that was the last.
+- **No backfill.** A meeting scored before the table existed has no row and is
+  left alone until its detection runs again. Speaker confirmation landed days
+  earlier, so few meetings have a `user_id` to be stale about.
+- **Naming a speaker who merges with nobody does not rescore.** It changes no
+  silent share.
 
 ### Templates are files, so `gap_templates` never had to be built
 
@@ -1023,6 +1122,7 @@ polls them every five seconds while the rail says `analysed: false`.
 | --- | --- | --- |
 | `autune.gap.on_transcript_ready` | `autune.transcript.ready` | `cpu_heavy` |
 | `autune.gap.publish_report` | `PUT /templates/{meeting_id}`, `POST`/`DELETE /gaps/{id}/dismiss` | `cpu_heavy` |
+| `autune.gap.periodic.rescore_changed_people` | every 10 minutes | `cpu_heavy` |
 
 ## Slack surface
 
@@ -1060,7 +1160,7 @@ extractor has no external option".
 
 Every row a topic produces records `extractor_version` — the pipeline name, its
 version and the version of `pipeline.spoken`'s rules,
-`ko_core_news_lg-3.8.0+spoken-3`. The rules are half the extractor: the same
+`ko_core_news_lg-3.8.0+spoken-4`. The rules are half the extractor: the same
 parse gives a different graph once a rule there changes, so `spoken.RULES_VERSION`
 is bumped with any change to what it keeps. The name alone is not a version: the
 pipeline ships a new release with every spaCy minor, so a graph built with 3.7

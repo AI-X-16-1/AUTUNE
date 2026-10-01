@@ -7,6 +7,7 @@ dependencies = [
     "autune-core",
     "autune-audio", "autune-extraction", "autune-gap",
     "autune-context", "autune-intelligence",
+    "autune-agent",
     "celery[redis]>=5.4",
 ]
 

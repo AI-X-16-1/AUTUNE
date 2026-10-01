@@ -1,11 +1,17 @@
-/** Calls to /api/audio. This feature calls no other module's endpoints. */
-import { api, ApiError, authHeaders } from "@/shared/api/client";
+/**
+ * Calls to /api/audio. This feature calls no other module's endpoints, with one
+ * exception: /api/agent/research, where the research card on the meeting screen
+ * reads the agent layer's documents for this meeting (Research subagent spec,
+ * section 4 ④).
+ */
+import { api, API_BASE as SAME_ORIGIN_BASE, ApiError, authHeaders } from "@/shared/api/client";
 
 export { api };
 
 import type {
   MeetingDetail,
   MeetingSummary,
+  ResearchDocument,
   SpeakerEntry,
   TeamMember,
   TeamSummary,
@@ -52,6 +58,10 @@ export const listMeetings = () => api.audio<MeetingSummary[]>("/meetings");
 
 /** The teams this person may open a meeting for. Feeds `createMeeting`. */
 export const listTeams = () => api.audio<TeamSummary[]>("/teams");
+
+/** S02: make a workspace with this person on it, and nobody else. */
+export const createTeam = (body: { name: string; role?: string }) =>
+  api.audio<TeamSummary>("/teams", { method: "POST", body: JSON.stringify(body) });
 
 /**
  * Open a meeting before there is any audio for it (S06, the file-upload path).
@@ -106,8 +116,11 @@ export async function assignSpeaker(
   speakerLabel: string,
   userId: string,
 ): Promise<void> {
+  // Same origin, like the upload below: a direct call to the API's own port is
+  // cross-origin, so the browser sent a CORS preflight the API answers 405 and
+  // the assignment never left the page.
   const response = await fetch(
-    `${API_BASE}/api/audio/meetings/${meetingId}/speakers/${encodeURIComponent(speakerLabel)}`,
+    `${SAME_ORIGIN_BASE}/api/audio/meetings/${meetingId}/speakers/${encodeURIComponent(speakerLabel)}`,
     {
       method: "POST",
       headers: { "content-type": "application/json", ...authHeaders() },
@@ -164,8 +177,12 @@ export const attestConsent = (meetingId: string) =>
 export async function uploadRecording(meetingId: string, file: File) {
   const form = new FormData();
   form.append("file", file, file.name);
+  // Same origin as every other call (`""` in the browser, through the /api
+  // proxy), so the session cookie rides along. This went straight to
+  // localhost:8000, a cross-origin request that carries no cookie: fine on a
+  // dev token, a 403 for anyone signed in with Google.
   const response = await fetch(
-    `${API_BASE}/api/audio/meetings/${meetingId}/recording`,
+    `${SAME_ORIGIN_BASE}/api/audio/meetings/${meetingId}/recording`,
     {
       method: "POST",
       headers: authHeaders(),
@@ -185,9 +202,6 @@ export async function uploadRecording(meetingId: string, file: File) {
   return (await response.json()) as { meeting_id: string; status: string };
 }
 
-/** Mirrors `BASE` in `@/shared/api/client`, which is not exported. See `uploadRecording`. */
-const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
-
 /**
  * The bearer token this browser holds, or null — for the live socket only.
  *
@@ -206,12 +220,22 @@ export function getToken(): string | null {
   return header?.startsWith("Bearer ") ? header.slice("Bearer ".length) : null;
 }
 
-/** The API's origin, for the one URL that cannot go through `request()`: the live socket. */
-export function apiBase(): string {
-  return API_BASE;
+/**
+ * `ws://` or `wss://` for the live channel, on the page's own origin.
+ *
+ * Through the same `/api` rewrite as every HTTP call: Next proxies the
+ * WebSocket upgrade too (probed against `next dev` — the API logged the
+ * handshake as accepted). Same origin keeps the session cookie first-party on
+ * the handshake, which is how a Google-signed-in browser authenticates the
+ * socket, and leaves no second API address to configure per environment.
+ */
+export function liveSocketUrl(meetingId: string): string {
+  const { protocol, host } = window.location;
+  return `${protocol === "https:" ? "wss" : "ws"}://${host}/api/audio/live/${meetingId}`;
 }
 
-/** `ws://` or `wss://` for the live channel, from the same origin as the API. */
-export function liveSocketUrl(meetingId: string): string {
-  return `${apiBase().replace(/^http/, "ws")}/api/audio/live/${meetingId}`;
-}
+/** The meeting's research documents the reader may see: approved ones for any member. */
+export const getResearch = (teamId: string, meetingId: string) =>
+  api.agent<ResearchDocument[]>(
+    `/research?team_id=${encodeURIComponent(teamId)}&meeting_id=${encodeURIComponent(meetingId)}`,
+  );

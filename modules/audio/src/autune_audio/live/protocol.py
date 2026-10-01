@@ -33,7 +33,10 @@ class ProtocolError(ValueError):
 
 class Hello(BaseModel):
     type: Literal["hello"]
-    token: str
+    token: str | None = None
+    """Absent for a browser signed in with the session cookie, which is HttpOnly
+    and not readable by the page; the route falls back to the handshake's
+    cookie."""
 
 
 class Control(BaseModel):

@@ -72,7 +72,14 @@ export type MeetingDetail = {
   pii_masked: boolean;
   /** The meeting's own team. Feeds `listTeamMembers` for the speaker picker. */
   team_id: string;
+  /** The running transcription's step while `analyzing`; null otherwise. */
+  stage: ProcessingStage | null;
+  /** How far through `stage`, 0..1. */
+  stage_progress: number | null;
 };
+
+/** `autune_audio.progress.STAGES`, in the order the worker runs them. */
+export type ProcessingStage = "decoding" | "transcribing" | "diarizing" | "masking" | "saving";
 
 /** One row of the home screen's list. `GET /api/audio/meetings`. */
 export type MeetingSummary = {
@@ -113,3 +120,13 @@ export type SpeakerEntry = {
 };
 
 export type TeamMember = { user_id: string; name: string };
+
+/** One research document (`GET /api/agent/research`). `body` is masked text. */
+export type ResearchDocument = {
+  id: string;
+  meeting_id: string;
+  status: "proposed" | "approved" | "rejected";
+  body: string;
+  created_at: string;
+  decided_at: string | null;
+};

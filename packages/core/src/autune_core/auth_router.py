@@ -25,31 +25,61 @@ Flow:
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import secrets
+from datetime import UTC, datetime, timedelta
 from typing import Annotated
 from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Cookie, Depends, Query, Request
-from fastapi.responses import JSONResponse, RedirectResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from .auth import CurrentUser, clear_session_cookie, issue_token, set_session_cookie
+from .auth import (
+    SESSION_COOKIE,
+    CurrentUser,
+    _session_token,
+    clear_session_cookie,
+    current_user,
+    issue_token,
+    set_session_cookie,
+)
 from .auth_service import upsert_user_from_google
 from .db import get_session
 from .entities import Meeting, TeamMember
 from .errors import AutuneError, NotFoundError, PermissionDeniedError
-from .integrations_config import disconnect_integration, load_integration, save_integration
+from .integrations_config import (
+    IntegrationConfig,
+    disconnect_integration,
+    load_integration,
+    save_integration,
+    teams_with,
+)
 from .jira_connection import JIRA, jira_access
 from .logging import get_logger
 from .oauth.atlassian import AtlassianOAuthClient, get_atlassian_client
 from .oauth.google import CALENDAR_SCOPE, GoogleOAuthClient, get_google_client
+from .oauth.notion import NotionOAuthClient, get_notion_oauth_client
+from .oauth.slack import (
+    SlackAccountTakenError,
+    SlackChannel,
+    SlackInstall,
+    SlackLinkNotConfirmedError,
+    SlackOAuthClient,
+    SlackTeamNotConnectedError,
+    SlackWrongWorkspaceError,
+    get_slack_oauth_client,
+)
 from .oauth.state import STATE_TTL_SECONDS, OAuthTransaction, StateStore, get_state_store
 from .settings import get_settings
 from .user_integrations import (
     disconnect_user_integration,
     load_user_integration,
     save_user_integration,
+    users_linked_to_slack_member,
 )
 
 log = get_logger(__name__)
@@ -596,3 +626,660 @@ def jira_disconnect(
     disconnect_integration(session, team_id, JIRA)
     log.info("auth_jira_disconnected", team_id=team_id, user_id=user.id)
     return {"connected": False, "revoked": False}
+
+
+# --------------------------------------------------------------------------- #
+# A team's Notion workspace (#428): one click, Notion's public-integration OAuth
+# --------------------------------------------------------------------------- #
+
+NOTION = "notion"
+
+
+def _notion_callback_path(request: Request) -> str:
+    return request.url_for("notion_callback").path
+
+
+@router.get("/notion/start")
+def notion_start(
+    request: Request,
+    user: CurrentUser,
+    session: Annotated[Session, Depends(get_session)],
+    store: Annotated[StateStore, Depends(get_state_store)],
+    notion: Annotated[NotionOAuthClient, Depends(get_notion_oauth_client)],
+    meeting_id: Annotated[str, Query()],
+    redirect_to: Annotated[str, Query()] = "/",
+) -> RedirectResponse:
+    """Send a team member to Notion to connect the team's workspace. On Notion's
+    screen they also pick the pages Autune may see -- one of those becomes the
+    parent of Autune's databases (module B)."""
+    team_id = _team_of(session, user.id, meeting_id)
+    state = secrets.token_urlsafe(32)
+    store.put(
+        state,
+        OAuthTransaction(
+            nonce="",
+            redirect_to=_safe_redirect_target(redirect_to),
+            purpose="notion",
+            user_id=user.id,
+            team_id=team_id,
+        ),
+    )
+    response = RedirectResponse(notion.authorization_url(state=state), status_code=307)
+    response.set_cookie(
+        STATE_COOKIE,
+        state,
+        max_age=STATE_TTL_SECONDS,
+        httponly=True,
+        secure=get_settings().session_cookie_secure,
+        samesite="lax",
+        path=_notion_callback_path(request),
+    )
+    return response
+
+
+@router.get("/notion/callback")
+def notion_callback(
+    request: Request,
+    state: Annotated[str, Query()],
+    store: Annotated[StateStore, Depends(get_state_store)],
+    notion: Annotated[NotionOAuthClient, Depends(get_notion_oauth_client)],
+    session: Annotated[Session, Depends(get_session)],
+    code: Annotated[str | None, Query()] = None,
+    error: Annotated[str | None, Query()] = None,
+    autune_oauth_state: Annotated[str | None, Cookie()] = None,
+) -> Response:
+    response: Response
+    if autune_oauth_state is None or not secrets.compare_digest(
+        autune_oauth_state.encode(), state.encode()
+    ):
+        response = JSONResponse(
+            status_code=403,
+            content=PermissionDeniedError(
+                "Notion connect was not started in this browser"
+            ).to_dict(),
+        )
+    else:
+        transaction = store.pop(state)
+        if transaction is None or transaction.purpose != "notion" or not transaction.team_id:
+            response = JSONResponse(
+                status_code=403,
+                content=PermissionDeniedError(
+                    "Notion connect state is unknown or expired"
+                ).to_dict(),
+            )
+        else:
+            response = _finish_notion_connect(transaction, notion, session, code=code, error=error)
+    response.delete_cookie(STATE_COOKIE, path=_notion_callback_path(request))
+    return response
+
+
+def _finish_notion_connect(
+    transaction: OAuthTransaction,
+    notion: NotionOAuthClient,
+    session: Session,
+    *,
+    code: str | None,
+    error: str | None,
+) -> RedirectResponse:
+    """Store the workspace's bot token, then back to the screen with
+    ``?notion=connected`` (the screen asks module B to set up the databases) or
+    ``?notion=failed``. A new connection replaces the old config whole: ids from
+    another workspace would point at nothing."""
+    assert transaction.team_id is not None
+    try:
+        if error or not code:
+            raise PermissionDeniedError("Notion access was not granted")
+        grant = notion.exchange_code(code)
+        save_integration(
+            session,
+            transaction.team_id,
+            NOTION,
+            secret=grant.access_token,
+            config={
+                "workspace_id": grant.workspace_id,
+                "workspace_name": grant.workspace_name,
+                "bot_id": grant.bot_id,
+            },
+            connected_by=transaction.user_id,
+        )
+        log.info("auth_notion_connected", team_id=transaction.team_id)
+        outcome = "connected"
+    except AutuneError as exc:
+        log.info("auth_notion_connect_failed", team_id=transaction.team_id, reason=exc.code)
+        outcome = "failed"
+    return RedirectResponse(
+        _web_url(_with_query(transaction.redirect_to, f"notion={outcome}")), status_code=303
+    )
+
+
+@router.get("/notion")
+def notion_status(
+    user: CurrentUser,
+    session: Annotated[Session, Depends(get_session)],
+    meeting_id: Annotated[str, Query()],
+) -> dict[str, object]:
+    """The team's Notion connection as a member sees it. Which page and which
+    databases are module B's to answer (``/api/extraction/notion/setup``)."""
+    team_id = _team_of(session, user.id, meeting_id)
+    config = load_integration(session, team_id, NOTION)
+    if config is None or not config.secret:
+        return {"connected": False}
+    return {"connected": True, "workspace_name": config.config.get("workspace_name")}
+
+
+@router.post("/notion/disconnect")
+def notion_disconnect(
+    user: CurrentUser,
+    session: Annotated[Session, Depends(get_session)],
+    meeting_id: Annotated[str, Query()],
+) -> dict[str, bool]:
+    """Forget the team's Notion token. The pages and databases stay in Notion --
+    they are the team's -- and the person removes Autune under Notion's
+    Settings > Connections to end the grant there (``revoked: false``)."""
+    team_id = _team_of(session, user.id, meeting_id)
+    disconnect_integration(session, team_id, NOTION)
+    log.info("auth_notion_disconnected", team_id=team_id, user_id=user.id)
+    return {"connected": False, "revoked": False}
+
+
+# --------------------------------------------------------------------------- #
+# A team's Slack workspace (#428): one click, "Add to Slack" (OAuth v2)
+# --------------------------------------------------------------------------- #
+
+SLACK = "slack"
+
+
+def _slack_callback_path(request: Request) -> str:
+    return request.url_for("slack_callback").path
+
+
+@router.get("/slack/start")
+def slack_start(
+    request: Request,
+    user: CurrentUser,
+    session: Annotated[Session, Depends(get_session)],
+    store: Annotated[StateStore, Depends(get_state_store)],
+    slack: Annotated[SlackOAuthClient, Depends(get_slack_oauth_client)],
+    meeting_id: Annotated[str, Query()],
+    redirect_to: Annotated[str, Query()] = "/",
+) -> RedirectResponse:
+    """Send a team member to Slack to install Autune's bot in the team's
+    workspace. Same browser-bound ``state`` as the other connects."""
+    team_id = _team_of(session, user.id, meeting_id)
+    state = secrets.token_urlsafe(32)
+    store.put(
+        state,
+        OAuthTransaction(
+            nonce="",
+            redirect_to=_safe_redirect_target(redirect_to),
+            purpose="slack",
+            user_id=user.id,
+            team_id=team_id,
+        ),
+    )
+    response = RedirectResponse(slack.authorization_url(state=state), status_code=307)
+    response.set_cookie(
+        STATE_COOKIE,
+        state,
+        max_age=STATE_TTL_SECONDS,
+        httponly=True,
+        secure=get_settings().session_cookie_secure,
+        samesite="lax",
+        path=_slack_callback_path(request),
+    )
+    return response
+
+
+@router.get("/slack/callback")
+def slack_callback(
+    request: Request,
+    state: Annotated[str, Query()],
+    store: Annotated[StateStore, Depends(get_state_store)],
+    slack: Annotated[SlackOAuthClient, Depends(get_slack_oauth_client)],
+    session: Annotated[Session, Depends(get_session)],
+    code: Annotated[str | None, Query()] = None,
+    error: Annotated[str | None, Query()] = None,
+    autune_oauth_state: Annotated[str | None, Cookie()] = None,
+) -> Response:
+    response: Response
+    if autune_oauth_state is None or not secrets.compare_digest(
+        autune_oauth_state.encode(), state.encode()
+    ):
+        response = JSONResponse(
+            status_code=403,
+            content=PermissionDeniedError(
+                "Slack connect was not started in this browser"
+            ).to_dict(),
+        )
+    else:
+        transaction = store.pop(state)
+        if transaction is not None and transaction.purpose == "slack_identity":
+            response = _finish_slack_identity(
+                request, transaction, slack, session, code=code, error=error
+            )
+        elif transaction is None or transaction.purpose != "slack" or not transaction.team_id:
+            response = JSONResponse(
+                status_code=403,
+                content=PermissionDeniedError(
+                    "Slack connect state is unknown or expired"
+                ).to_dict(),
+            )
+        else:
+            response = _finish_slack_connect(transaction, slack, session, code=code, error=error)
+    response.delete_cookie(STATE_COOKIE, path=_slack_callback_path(request))
+    return response
+
+
+def _finish_slack_connect(
+    transaction: OAuthTransaction,
+    slack: SlackOAuthClient,
+    session: Session,
+    *,
+    code: str | None,
+    error: str | None,
+) -> RedirectResponse:
+    """Store the workspace bot's token and the private alert channel the install
+    made -- the ``channel`` key D and E already read -- then back to the screen
+    with ``?slack=connected|failed``.
+
+    Tokens are never left alive and unknown to us: one issued by an install that
+    then fails is revoked, and so is the one a re-install to another workspace
+    replaces -- otherwise that bot stays in the old workspace and not even
+    ``/slack/disconnect`` could end it.
+
+    Two things stop a revoke. A token equal to the stored one: re-installing
+    into the same workspace can hand the same token back. And **another team on
+    the same workspace**: Slack issues one bot token per app and workspace, so
+    every Autune team installed there holds that token, and revoking it for one
+    would silence the others (review of #468)."""
+    assert transaction.team_id is not None
+    team_id = transaction.team_id
+    install: SlackInstall | None = None
+    previous: IntegrationConfig | None = None
+    shared = False
+    try:
+        if error or not code:
+            raise PermissionDeniedError("Slack install was not approved")
+        install = slack.exchange_code(code)
+        previous = load_integration(session, team_id, SLACK)
+        # Decided before anything else can fail, so a failure path never has
+        # to ask a session that may be broken.
+        shared = _workspace_used_elsewhere(session, install.workspace_id, team_id)
+        channel = _alert_channel(slack, install, previous)
+        save_integration(
+            session,
+            transaction.team_id,
+            SLACK,
+            secret=install.access_token,
+            config={
+                "channel": channel.id,
+                "channel_name": channel.name,
+                "workspace_id": install.workspace_id,
+                "workspace_name": install.workspace_name,
+                "bot_user_id": install.bot_user_id,
+            },
+            connected_by=transaction.user_id,
+        )
+        if (
+            previous is not None
+            and previous.secret
+            and previous.secret != install.access_token
+            and not _workspace_used_elsewhere(
+                session, str(previous.config.get("workspace_id") or ""), team_id
+            )
+        ):
+            slack.revoke(previous.secret)
+        log.info("auth_slack_connected", team_id=team_id)
+        outcome = "connected"
+    except Exception as exc:
+        if (
+            install is not None
+            and not shared
+            and install.access_token != (previous.secret if previous else None)
+        ):
+            slack.revoke(install.access_token)
+        if not isinstance(exc, AutuneError):
+            raise
+        log.info("auth_slack_connect_failed", team_id=team_id, reason=exc.code)
+        # Our own error code, never Slack's text: the screen explains the one
+        # case a person can fix (a private #autune) and is generic otherwise.
+        outcome = f"failed&reason={exc.code}"
+    return RedirectResponse(
+        _web_url(_with_query(transaction.redirect_to, f"slack={outcome}")), status_code=303
+    )
+
+
+def _alert_channel(
+    slack: SlackOAuthClient, install: SlackInstall, previous: IntegrationConfig | None
+) -> SlackChannel:
+    """The team's channel: kept on a re-install into the same workspace while it
+    can still take posts, made new (private, installer invited) otherwise."""
+    if previous is not None and previous.config.get("workspace_id") == install.workspace_id:
+        kept = previous.config.get("channel")
+        if kept and slack.channel_usable(install.access_token, str(kept)):
+            return SlackChannel(str(kept), str(previous.config.get("channel_name") or ""))
+    return slack.create_alert_channel(
+        install.access_token, get_settings().slack_channel_name, invite=install.installer_id
+    )
+
+
+def _workspace_used_elsewhere(session: Session, workspace_id: str, team_id: str) -> bool:
+    """Another Autune team is installed on this Slack workspace -- and so holds
+    the same bot token."""
+    if not workspace_id:
+        return False
+    return any(
+        other != team_id for other in teams_with(session, SLACK, "workspace_id", workspace_id)
+    )
+
+
+@router.get("/slack")
+def slack_status(
+    user: CurrentUser,
+    session: Annotated[Session, Depends(get_session)],
+    meeting_id: Annotated[str, Query()],
+) -> dict[str, object]:
+    team_id = _team_of(session, user.id, meeting_id)
+    config = load_integration(session, team_id, SLACK)
+    if config is None or not config.secret:
+        return {"connected": False}
+    return {
+        "connected": True,
+        "workspace_name": config.config.get("workspace_name"),
+        "channel_name": config.config.get("channel_name"),
+    }
+
+
+@router.post("/slack/disconnect")
+def slack_disconnect(
+    user: CurrentUser,
+    session: Annotated[Session, Depends(get_session)],
+    slack: Annotated[SlackOAuthClient, Depends(get_slack_oauth_client)],
+    meeting_id: Annotated[str, Query()],
+) -> dict[str, bool]:
+    """Revoke the bot token at Slack (``auth.revoke``), then forget it. Our copy
+    goes even when Slack does not answer; ``revoked`` says which. When another
+    team on the same workspace still uses the bot, the token is left alive for
+    it and ``shared`` says so."""
+    team_id = _team_of(session, user.id, meeting_id)
+    config = load_integration(session, team_id, SLACK)
+    shared = config is not None and _workspace_used_elsewhere(
+        session, str(config.config.get("workspace_id") or ""), team_id
+    )
+    revoked = bool(config and config.secret and not shared and slack.revoke(config.secret))
+    disconnect_integration(session, team_id, SLACK)
+    log.info(
+        "auth_slack_disconnected", team_id=team_id, user_id=user.id, revoked=revoked, shared=shared
+    )
+    return {"connected": False, "revoked": revoked, "shared": shared}
+
+
+# --------------------------------------------------------------------------- #
+# A person's own Slack account, for direct messages (#255, #280)
+# --------------------------------------------------------------------------- #
+
+
+@router.get("/slack/me/start")
+def slack_identity_start(
+    request: Request,
+    user: CurrentUser,
+    store: Annotated[StateStore, Depends(get_state_store)],
+    slack: Annotated[SlackOAuthClient, Depends(get_slack_oauth_client)],
+    redirect_to: Annotated[str, Query()] = "/",
+) -> RedirectResponse:
+    """ "Sign in with Slack" so direct messages can reach this person. Only their
+    own member id comes back -- no email, no directory (#70). The shared Slack
+    callback finishes it; the id is stored for the person of *this* session."""
+    state = secrets.token_urlsafe(32)
+    nonce = secrets.token_urlsafe(24)
+    store.put(
+        state,
+        OAuthTransaction(
+            nonce=nonce,
+            redirect_to=_safe_redirect_target(redirect_to),
+            purpose="slack_identity",
+            user_id=user.id,
+        ),
+    )
+    response = RedirectResponse(slack.identity_url(state=state, nonce=nonce), status_code=307)
+    response.set_cookie(
+        STATE_COOKIE,
+        state,
+        max_age=STATE_TTL_SECONDS,
+        httponly=True,
+        secure=get_settings().session_cookie_secure,
+        samesite="lax",
+        path=_slack_callback_path(request),
+    )
+    return response
+
+
+SLACK_CONFIRM_TTL = timedelta(minutes=30)
+"""How long the confirmation link a new Slack link waits on stays good."""
+
+_PENDING_KEYS = (
+    "pending_slack_user_id",
+    "pending_slack_team_id",
+    "confirm_digest",
+    "confirm_expires_at",
+    "confirm_redirect_to",
+)
+
+
+def _digest(token: str) -> str:
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
+def _finish_slack_identity(
+    request: Request,
+    transaction: OAuthTransaction,
+    slack: SlackOAuthClient,
+    session: Session,
+    *,
+    code: str | None,
+    error: str | None,
+) -> RedirectResponse:
+    """Hold the Slack account the browser signed in with as *pending*, and ask
+    that account to confirm (#478 review).
+
+    The browser may carry someone else's Slack session -- a shared computer,
+    before that person ever linked theirs -- and nothing in the sign-in says
+    whose it is. So the team's bot DMs a one-time link to the member id that
+    came back, and only opening it in *this* Autune session makes the link
+    real. The owner of a leftover session gets a link they cannot use; the
+    person who started never sees it. Until then ``slack_member_id`` answers
+    ``None`` and no DM, speaking ratio included, goes to that account. An
+    earlier confirmed link keeps working while a new one waits."""
+    try:
+        if error or not code or not transaction.user_id:
+            raise PermissionDeniedError("Slack sign-in was not approved")
+        identity = slack.identify(code, nonce=transaction.nonce)
+        workspaces = _slack_workspaces_of(session, transaction.user_id)
+        if not workspaces:
+            raise SlackTeamNotConnectedError("no team of this person has installed Autune in Slack")
+        if identity.team_id not in workspaces:
+            raise SlackWrongWorkspaceError("signed in to a workspace no team of theirs installed")
+        others = [
+            uid
+            for uid in users_linked_to_slack_member(session, identity.user_id)
+            if uid != transaction.user_id
+        ]
+        if others:
+            raise SlackAccountTakenError("that Slack account is linked to another person")
+        bot = _slack_bot_for_workspace(session, transaction.user_id, identity.team_id)
+        token = secrets.token_urlsafe(32)
+        # The web origin, like every other address this file hands a browser:
+        # the Host the API saw is the proxy's target, which a person's browser
+        # may not reach and where the session cookie is not sent (#478 review).
+        path = request.url_for("slack_identity_confirm").path
+        link = _web_url(f"{path}?token={token}")
+        slack.send_link_confirmation(
+            bot,
+            identity.user_id,
+            "Autune에서 이 Slack 계정으로 개인 알림을 받겠다는 연결 요청이 왔습니다. "
+            f"이 Slack 계정의 주인 본인이 요청한 경우에만 이 링크를 여세요: {link}\n"
+            "Autune에 로그인한 브라우저에서 열어야 합니다. Slack 앱에서 누르면 다른 "
+            "브라우저가 열릴 수 있으니, 그때는 링크를 복사해 그 브라우저에 붙여 넣으세요.\n"
+            "요청한 적이 없다면 열지 말고 무시하세요. 다른 사람이 이 브라우저에 남은 "
+            "Slack 로그인으로 연결을 시도한 것일 수 있습니다. 30분 뒤 만료됩니다.",
+        )
+        existing = load_user_integration(session, transaction.user_id, "slack")
+        kept = {
+            k: v
+            for k, v in (existing.config.items() if existing is not None else [])
+            if k in ("slack_user_id", "slack_team_id")
+        }
+        save_user_integration(
+            session,
+            transaction.user_id,
+            "slack",
+            config={
+                **kept,
+                "pending_slack_user_id": identity.user_id,
+                "pending_slack_team_id": identity.team_id,
+                "confirm_digest": _digest(token),
+                "confirm_expires_at": (datetime.now(UTC) + SLACK_CONFIRM_TTL).isoformat(),
+                "confirm_redirect_to": transaction.redirect_to,
+            },
+        )
+        log.info("auth_slack_identity_pending", user_id=transaction.user_id)
+        outcome = "pending"
+    except AutuneError as exc:
+        log.info("auth_slack_identity_failed", user_id=transaction.user_id, reason=exc.code)
+        outcome = f"failed&reason={exc.code}"
+    return RedirectResponse(
+        _web_url(_with_query(transaction.redirect_to, f"slack_me={outcome}")), status_code=303
+    )
+
+
+def _slack_bot_for_workspace(session: Session, user_id: str, workspace: str) -> str:
+    """The bot token of a team of this person installed in ``workspace`` --
+    the bot that will DM them, so the one to ask them to confirm."""
+    team_ids = session.scalars(select(TeamMember.team_id).where(TeamMember.user_id == user_id))
+    for team_id in team_ids:
+        installed = load_integration(session, team_id, SLACK)
+        if (
+            installed is not None
+            and installed.secret
+            and installed.config.get("workspace_id") == workspace
+        ):
+            return installed.secret
+    raise SlackWrongWorkspaceError("signed in to a workspace no team of theirs installed")
+
+
+SLACK_CONFIRM_NEEDS_SESSION = """<!doctype html>
+<html lang="ko"><head><meta charset="utf-8"><title>Autune</title>
+<meta name="viewport" content="width=device-width, initial-scale=1"></head>
+<body style="font-family: sans-serif; max-width: 32rem; margin: 3rem auto; padding: 0 1rem">
+<h1 style="font-size: 1.25rem">이 브라우저에서는 연결을 확정할 수 없습니다</h1>
+<p>이 링크는 Slack 연결을 시작한 브라우저에서, Autune에 로그인한 상태로 열어야 합니다.
+Slack 앱에서 링크를 누르면 다른 브라우저가 열릴 수 있습니다.</p>
+<p>Slack의 메시지에서 링크를 복사해, Autune이 열려 있는 브라우저의 주소창에 붙여 넣어 주세요.</p>
+</body></html>"""
+"""What a browser without an Autune session gets from the confirmation link.
+Slack's desktop app opens links in the default browser, which is often not the
+one signed in to Autune; a JSON 403 there told a person nothing (found clicking
+through with real Slack, #478)."""
+
+
+@router.get("/slack/me/confirm", name="slack_identity_confirm", response_model=None)
+def slack_identity_confirm(
+    request: Request,
+    token: Annotated[str, Query()],
+    session: Annotated[Session, Depends(get_session)],
+) -> RedirectResponse | HTMLResponse:
+    """The link the bot DMed. Confirms the pending Slack account only for the
+    Autune person whose connect is pending -- their session, their digest, in
+    time (#478 review). Anyone else, a second use, or a late one changes
+    nothing. A browser with no session gets a page saying where to open it."""
+    try:
+        user = current_user(
+            _session_token(
+                request.headers.get("authorization"), request.cookies.get(SESSION_COOKIE)
+            ),
+            session,
+        )
+    except AutuneError:
+        return HTMLResponse(SLACK_CONFIRM_NEEDS_SESSION, status_code=401)
+    linked = load_user_integration(session, user.id, "slack")
+    config = dict(linked.config) if linked is not None else {}
+    redirect_to = str(config.get("confirm_redirect_to") or "/")
+    try:
+        pending = config.get("pending_slack_user_id")
+        expires = config.get("confirm_expires_at")
+        digest = str(config.get("confirm_digest") or "")
+        if (
+            not pending
+            or not expires
+            or datetime.fromisoformat(str(expires)) <= datetime.now(UTC)
+            or not hmac.compare_digest(digest, _digest(token))
+        ):
+            raise SlackLinkNotConfirmedError("no pending Slack link matches this link")
+        others = [u for u in users_linked_to_slack_member(session, str(pending)) if u != user.id]
+        if others:
+            raise SlackAccountTakenError("that Slack account is linked to another person")
+        confirmed = {k: v for k, v in config.items() if k not in _PENDING_KEYS}
+        confirmed["slack_user_id"] = str(pending)
+        confirmed["slack_team_id"] = str(config.get("pending_slack_team_id") or "")
+        try:
+            save_user_integration(session, user.id, "slack", config=confirmed)
+            session.flush()
+        except IntegrityError:
+            # Two people confirming the same Slack account at once both pass
+            # the check above; the unique index lets only the first through.
+            session.rollback()
+            raise SlackAccountTakenError("that Slack account is linked to another person") from None
+        log.info("auth_slack_identity_linked", user_id=user.id)
+        outcome = "connected"
+    except AutuneError as exc:
+        log.info("auth_slack_identity_failed", user_id=user.id, reason=exc.code)
+        outcome = f"failed&reason={exc.code}"
+    return RedirectResponse(
+        _web_url(_with_query(redirect_to, f"slack_me={outcome}")), status_code=303
+    )
+
+
+def _slack_workspaces_of(session: Session, user_id: str) -> dict[str, str]:
+    """``{workspace id: name}`` for every Slack workspace a team of this
+    person installed Autune in -- the only places their DMs can come from."""
+    team_ids = session.scalars(select(TeamMember.team_id).where(TeamMember.user_id == user_id))
+    workspaces: dict[str, str] = {}
+    for team_id in team_ids:
+        installed = load_integration(session, team_id, SLACK)
+        workspace = str(installed.config.get("workspace_id") or "") if installed else ""
+        if installed is not None and installed.secret and workspace:
+            workspaces[workspace] = str(installed.config.get("workspace_name") or "")
+    return workspaces
+
+
+@router.get("/slack/me")
+def slack_identity_status(
+    user: CurrentUser, session: Annotated[Session, Depends(get_session)]
+) -> dict[str, object]:
+    """Whether the signed-in person linked their Slack account, and in which
+    workspace -- theirs only, so a person can see a link that is not theirs."""
+    linked = load_user_integration(session, user.id, "slack")
+    if linked is None or not linked.config.get("slack_user_id"):
+        # A link waiting for its confirmation DM is not a link yet -- and one
+        # past its 30 minutes is not waiting any more, so the screen offers to
+        # start again instead of "check your DM" (mkkim68, review of #478).
+        config = linked.config if linked is not None else {}
+        expires = config.get("confirm_expires_at")
+        waiting = bool(config.get("pending_slack_user_id")) and bool(
+            expires and datetime.fromisoformat(str(expires)) > datetime.now(UTC)
+        )
+        return {"linked": False, "pending": waiting}
+    workspace = str(linked.config.get("slack_team_id") or "")
+    return {
+        "linked": True,
+        "workspace_name": _slack_workspaces_of(session, user.id).get(workspace),
+    }
+
+
+@router.post("/slack/me/disconnect")
+def slack_identity_disconnect(
+    user: CurrentUser, session: Annotated[Session, Depends(get_session)]
+) -> dict[str, bool]:
+    """Forget the person's Slack id. No token was kept, so nothing to revoke."""
+    disconnect_user_integration(session, user.id, "slack")
+    return {"linked": False}

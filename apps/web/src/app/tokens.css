@@ -36,7 +36,7 @@
   --color-waveform-q3: #8F949C;
   --color-waveform-q4: #3A3F47;
 
-  --font-sans: Pretendard, system-ui, -apple-system, sans-serif;
+  --font-sans: 'Pretendard Variable', Pretendard, system-ui, -apple-system, sans-serif;
   --font-mono: ui-monospace, Menlo, monospace;
   --text-display: 32px;
   --text-display-weight: 700;

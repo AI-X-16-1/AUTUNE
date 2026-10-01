@@ -98,6 +98,8 @@ features:
       usage_hint: "[start|status|results]"
       should_escape: false
 oauth_config:
+  redirect_urls:
+    - https://localhost:3000/api/auth/slack/callback   # "Add to Slack" (#428); HTTPS only
   scopes:
     bot:
       - commands          # /autune
@@ -105,6 +107,9 @@ oauth_config:
       - im:write          # confirmation DMs, speaking-ratio DM
       - channels:read     # resolve the meeting channel
       - groups:read       # same, for private channels
+      - groups:write      # one-click install: make the private alert channel, invite the installer
+    user:
+      - openid            # "link my Slack account" for DMs (#255): member id only
 settings:
   interactivity:
     is_enabled: true      # buttons on the action-item card
@@ -141,6 +146,56 @@ linking ships, assignee mapping has no source.** `ui-spec.md` already expects
 that state — *"Creation is held back when the assignee is unmapped."* See #70.
 
 Do not widen this list without a reason written down.
+
+**Widened for the one-click install (#428):** `groups:write`. A team that
+installs Autune with "Add to Slack" gets an alert channel without anyone typing
+a channel id: the install creates a **private** `#autune` and invites the
+person who installed (their member id comes back with the install, so no
+directory read), and stores it as the channel D's briefings and E's reports
+post to. The installer adds the rest of the team.
+
+It never joins an existing channel. D posts decision statements and E posts
+meeting reports; joining a `#autune` that already exists would hand them to
+whoever is in it -- a second Autune team in the same workspace, or a company
+channel that happens to share the name (review of #468). A taken name becomes
+`#autune-2`, `#autune-3` and so on. An earlier draft asked for
+`channels:manage` and `channels:join` to create or join a *public* channel;
+both are gone.
+
+What `groups:write` allows is wider than what we use, and that is written here
+so whoever approves the scope knows: Slack grants with it `conversations.create`
+and `.invite` -- the two we call -- and also `.rename`, `.archive`, `.kick`,
+`.setTopic` and `.setPurpose` on private channels the bot is a member of. We
+call `.rename` and `.archive` only on the channel we just made when the
+installer could not be invited to it -- renamed first, because an archived
+channel keeps its name and would push the next install to `#autune-2`. Slack offers no narrower scope for creating a private
+channel.
+
+Still no user scope and no `users:read.email`. Slack accepts only an **HTTPS**
+redirect URL for this flow, so it cannot be finished on plain
+`http://localhost` -- a local test needs the web app served over HTTPS.
+
+**Direct messages: each person links their own Slack account (#255).** Every
+DM in the repo is addressed to an Autune user id, and Slack needs a member id.
+A person clicks "link my Slack account" and signs in with Slack (OpenID
+Connect); core stores only the member id and workspace id it returns, in
+`user_integrations`, and `SlackClient.send_dm` resolves `user_...` ids to it.
+This needs the user scope **`openid`** under *User Token Scopes* -- and only
+that one: not `email`, not `profile`, and still no `users:read` or
+`users:read.email`. We learn the identity of whoever linked and never read the
+directory (#70). The user token Slack issues for the sign-in is not kept.
+Someone who has not linked is refused by name
+(`SlackRecipientNotLinkedError`) rather than sent to `channel_not_found`.
+A link is refused when the browser signed in to a workspace none of the
+person's teams installed Autune in, or when that Slack account is already
+linked to another Autune person. **A new link is pending until the Slack
+account confirms it**: the team's bot DMs that member a one-time link, good
+for 30 minutes, that confirms only in the Autune session that started (#478
+review). A shared browser's leftover Slack session -- someone who never linked
+-- therefore gets a link it cannot use, and no DM, speaking ratio included,
+goes to it meanwhile. The bot needs `chat:write` for that DM, which it already
+has. The ID token's nonce is checked and the sign-in's user token is revoked
+right after `userInfo`.
 
 ### Notion
 
@@ -206,8 +261,13 @@ enforced, and it is the file to change if that ever needs to move — not the
 call site.
 
 Jira was evaluated and dropped from the product (#82, 2026-09-10) — see "Who
-owns a credential when its creator leaves" below for why. Nothing further to
-register for it.
+owns a credential when its creator leaves" below for why — and **brought back
+on 2026-09-29** (#457, #458): a team connects its Jira with one click over
+OAuth 3LO, and the person-bound failure below is handled rather than avoided.
+A dead grant marks the connection `needs_reconnect` and the screen asks the
+team to connect again; nothing fails silently. Register an OAuth 2.0 (3LO) app
+in the Atlassian developer console with `read:jira-work`, `write:jira-work`,
+`read:jira-user` and `offline_access`.
 
 ---
 
@@ -222,7 +282,7 @@ real problem.
 | --- | --- | --- |
 | Slack | Yes, for bot scopes | Bot users, slash commands and incoming webhooks *"will remain active"* when a member is deactivated. Only *"apps that require member-specific permissions"* deactivate, and *"API tokens are revoked"* refers to that member's own user tokens |
 | Notion | Yes, guaranteed in writing | An internal connection is *"its own bot user"* scoped to the workspace, and *"Access persists independently of users. If the user who shared a page leaves the workspace, the connection retains access to that page."* Every Workspace Owner sees every internal connection in the Developer portal, *"including connections created by others"* |
-| Jira | **No** — dropped (#82) | Both auth paths are personal. An API token pairs with `AUTUNE_JIRA_EMAIL` — that pairing *is* the personal identity. OAuth 2.0 (3LO) is no better: it accesses the API *"on a user's behalf"*, constrained by that user's permissions |
+| Jira | **No** — person-bound; reconnect on failure (#82, #458) | Both auth paths are personal. An API token pairs with `AUTUNE_JIRA_EMAIL` — that pairing *is* the personal identity. OAuth 2.0 (3LO) is no better: it accesses the API *"on a user's behalf"*, constrained by that user's permissions |
 
 So the practical rules for W1:
 
@@ -240,7 +300,8 @@ their account, and the surviving connection then has access to nothing. So creat
 the action-item database in a **teamspace**, not a private page. This is the actual
 failure mode, and it is not a credential problem at all.
 
-**Jira — this is why it was dropped, not deferred (#82).** The failure is not
+**Jira — this is why it was dropped in W2 (#82), and what bringing it back
+accepts (#458).** The failure is not
 hypothetical: Atlassian's own docs say a 3LO refresh token dies if *"The user's
 Atlassian account password has been changed"*, and the only remedies offered
 are *"Change the password back to the original password, or initiate the

@@ -55,6 +55,7 @@ from .user_integrations import (
     disconnect_user_integration,
     load_user_integration,
     save_user_integration,
+    slack_member_id,
     users_with_integration,
 )
 
@@ -83,6 +84,7 @@ __all__ = [
     "save_user_integration",
     "disconnect_user_integration",
     "users_with_integration",
+    "slack_member_id",
     "TeamMember",
     "User",
     "Utterance",

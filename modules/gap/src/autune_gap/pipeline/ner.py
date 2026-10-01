@@ -18,7 +18,16 @@ from typing import Any
 from autune_core import get_logger
 
 from .base import Entity
-from .spoken import RULES_VERSION, Token, entity_text, is_plausible, masked_spans, noun_terms
+from .spoken import (
+    RULES_VERSION,
+    Token,
+    entity_text,
+    is_plausible,
+    masked_spans,
+    noun_terms,
+    person_name,
+    quantity_text,
+)
 
 log = get_logger(__name__)
 
@@ -84,7 +93,7 @@ class SpacyNer:
 
     @property
     def model_version(self) -> str:
-        """``ko_core_news_lg-3.8.0+spoken-3`` — the name, the version, and the rules.
+        """``ko_core_news_lg-3.8.0+spoken-4`` — the name, the version, and the rules.
 
         The name alone is not a version. ``ko_core_news_lg`` is a pipeline that
         ships a new release with every spaCy minor, so a graph built with 3.7
@@ -98,7 +107,7 @@ class SpacyNer:
         registry loads once per process anyway, and there is no version to
         report for a model that will not load.
 
-        The ``+spoken-3`` is ``spoken.RULES_VERSION``. The weights are not the
+        The ``+spoken-4`` is ``spoken.RULES_VERSION``. The weights are not the
         whole extractor: what ``spoken`` keeps from the parse decides the graph
         as much as the parse does, and a rule change there has to be tellable
         on the row the same way a model upgrade is.
@@ -181,6 +190,10 @@ class SpacyNer:
                     span.text,
                     Token(text=last.text, tag=last.tag_, start=last.idx, end=last.idx + len(last)),
                 )
+                if label == "person":
+                    text = person_name(text)
+                elif label in ("date", "metric"):
+                    text = quantity_text(text)
                 if is_plausible(label, text):
                     spans.append((span.start_char, text, label))
 

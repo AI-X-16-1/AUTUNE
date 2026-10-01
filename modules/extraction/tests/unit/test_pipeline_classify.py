@@ -30,7 +30,7 @@ from autune_contracts.transcript import (
     TranscriptSource,
     Utterance,
 )
-from autune_core import Base, Meeting, Participant
+from autune_core import Base, Meeting, Participant, PrivacyViolationError, TeamMember, User
 from autune_core import Utterance as StoredUtterance
 from autune_extraction import service, tasks
 from autune_extraction.models import (
@@ -43,6 +43,7 @@ from autune_extraction.models import (
     ExtDecisionReview,
     ExtDecisionSource,
     ExtEditEvent,
+    ExtExtractionRun,
 )
 from autune_extraction.pipeline import FakeClassifier, FakeNli, Prediction
 
@@ -51,6 +52,9 @@ MEETING = "mtg_1"
 
 TABLES = [
     Meeting.__table__,
+    # The task reads the team's roster for an outbound classifier (#411).
+    User.__table__,
+    TeamMember.__table__,
     Participant.__table__,
     StoredUtterance.__table__,
     ExtClassification.__table__,
@@ -63,6 +67,8 @@ TABLES = [
     ExtActionItemSource.__table__,
     ExtEditEvent.__table__,
     ExtConfirmation.__table__,
+    # Which speech the run read, for the consent sweep (#518).
+    ExtExtractionRun.__table__,
 ]
 
 # Endings the fake reads: 겠습니다 commitment, 기로 했 decision, 나요 question,
@@ -393,6 +399,29 @@ def wired(session: Session, monkeypatch: pytest.MonkeyPatch) -> Session:
     return session
 
 
+def test_the_task_hands_the_teams_names_to_the_classifier(
+    wired: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#411: an outbound classifier gets the meeting team's roster before it
+    classifies, so it can replace those names in what it sends."""
+    stored(wired)
+    team_id = wired.get(Meeting, MEETING).team_id  # type: ignore[union-attr]
+    wired.add(User(id="user_1", email="u1@example.com", display_name="김민경"))
+    wired.add(TeamMember(team_id=team_id, user_id="user_1"))
+    wired.flush()
+    rosters: list[list[str]] = []
+
+    class Outbound(FakeClassifier):
+        def use_roster(self, names: list[str]) -> None:
+            rosters.append(list(names))
+
+    monkeypatch.setattr(tasks, "get_classifier", Outbound)
+
+    tasks.on_transcript_ready(transcript())
+
+    assert rosters == [["김민경"]]
+
+
 def test_the_task_classifies_and_groups_a_meeting(wired: Session) -> None:
     stored(wired)
 
@@ -563,3 +592,131 @@ def test_nothing_is_published_for_a_transcript_it_refuses(
         tasks.on_transcript_ready(transcript(masked=False))
 
     assert published == []
+
+
+# --- consent that changes after extraction (#518) --------------------------------
+
+
+def consent_later(session: Session) -> None:
+    """A's ``attest_consent`` after the analysis: the speaker who had not
+    consented now has."""
+    participant = session.get(Participant, "par_no")
+    assert participant is not None
+    participant.consented = True
+    session.flush()
+
+
+def test_the_task_records_which_speech_it_read(wired: Session) -> None:
+    stored(wired, speaker_of={"utt_1": "par_no"})
+
+    tasks.on_transcript_ready(transcript())
+
+    run = wired.get(ExtExtractionRun, MEETING)
+    assert run is not None
+    assert run.consent_key == service.consent_key({"utt_2", "utt_3", "utt_4", "utt_5"})
+
+
+def test_consent_recorded_after_the_analysis_fills_the_empty_result(
+    wired: Session, published: list[tuple[str, dict]]
+) -> None:
+    """The case #518 is about: nobody had consented when the recording was
+    analysed, so B read nothing; once they have, the sweep extracts again."""
+    stored(wired, speaker_of={uid: "par_no" for uid, _, _ in LINES})
+    tasks.on_transcript_ready(transcript())
+    assert kinds(wired) == {}
+
+    consent_later(wired)
+    swept = tasks.reextract_consent_changes()
+
+    assert swept == [MEETING]
+    assert len(kinds(wired)) == 4
+    assert wired.query(ExtDecision).count() == 1
+    assert wired.query(ExtActionItem).count() == 1
+    # D and E hear the new result, and the stored one matches it.
+    assert len(published) == 2
+    latest = ExtractionResult.model_validate(published[1][1])
+    assert latest == service.result_for_meeting(wired, MEETING)
+
+
+def test_a_meeting_is_extracted_again_only_once_per_change(wired: Session) -> None:
+    stored(wired, speaker_of={"utt_1": "par_no"})
+    tasks.on_transcript_ready(transcript())
+
+    assert tasks.reextract_consent_changes() == []
+    consent_later(wired)
+    assert tasks.reextract_consent_changes() == [MEETING]
+    assert tasks.reextract_consent_changes() == []
+
+
+def test_a_meeting_never_extracted_is_left_to_the_event(wired: Session) -> None:
+    """No row means ``TranscriptReady`` has not been handled yet -- or it was
+    handled before the table existed. Either way it is not the sweep's."""
+    stored(wired, speaker_of={"utt_1": "par_no"})
+    consent_later(wired)
+
+    assert service.meetings_with_changed_consent(wired) == []
+    assert tasks.reextract_consent_changes() == []
+    assert kinds(wired) == {}
+
+
+def test_a_person_edited_item_list_survives_the_sweep(wired: Session) -> None:
+    """The re-extraction is the event's own: an item list a person has started
+    to correct is kept, as on any rerun (``build_action_items``)."""
+    stored(wired, speaker_of={"utt_1": "par_no"})
+    tasks.on_transcript_ready(transcript())
+    (item,) = wired.query(ExtActionItem).all()
+    item.description = "사람이 고친 설명"
+    wired.add(
+        ExtEditEvent(
+            action_item_id=item.id, meeting_id=MEETING, kind="edited", fields="description"
+        )
+    )
+    wired.flush()
+
+    consent_later(wired)
+    assert tasks.reextract_consent_changes() == [MEETING]
+
+    assert [i.description for i in wired.query(ExtActionItem)] == ["사람이 고친 설명"]
+    assert kinds(wired)["utt_1"] == "decision", "the classifications are rebuilt"
+
+
+def test_one_meeting_failing_does_not_stop_the_rest_but_privacy_is_raised(
+    wired: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    for meeting_id in ("mtg_a", "mtg_b", "mtg_c"):
+        wired.add(ExtExtractionRun(meeting_id=meeting_id, consent_key="stale"))
+    wired.flush()
+    ran: list[str] = []
+
+    def extract(meeting_id: str, utterances: object) -> None:
+        ran.append(meeting_id)
+        if meeting_id == "mtg_a":
+            raise PrivacyViolationError("unmasked phone number in the text")
+        if meeting_id == "mtg_b":
+            raise RuntimeError("the classifier fell over")
+
+    monkeypatch.setattr(tasks, "_extract", extract)
+
+    with pytest.raises(PrivacyViolationError, match="1 meeting") as raised:
+        tasks.reextract_consent_changes()
+
+    assert ran == ["mtg_a", "mtg_b", "mtg_c"]
+    assert "phone" not in str(raised.value), "ids only, never the caught message"
+
+
+def test_the_stored_transcript_is_what_the_event_would_carry(session: Session) -> None:
+    session.add(User(id="user_1", email="u1@example.com", display_name="김민경"))
+    session.add(
+        Participant(
+            id="par_id", meeting_id=MEETING, speaker_label="A", consented=True, user_id="user_1"
+        )
+    )
+    stored(session, speaker_of={"utt_1": "par_id", "utt_5": None})
+
+    utterances = service.stored_transcript(session, MEETING)
+
+    assert [u.id for u in utterances] == [uid for uid, _, _ in LINES]
+    assert [u.text for u in utterances] == [text for _, _, text in LINES]
+    assert utterances[0].speaker_id == "user_1"
+    assert utterances[1].speaker_id is None, "a participant nobody has identified"
+    assert utterances[4].speaker_id is None, "speech with no participant behind it"

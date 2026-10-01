@@ -9,6 +9,9 @@ Screens: S13 live transcript, S12 processing pipeline, S15 transcript tab — se
   blocks cross-feature imports. If you need something another feature has, ask
   its owner to move it to `shared/` — that is a team decision.
 - **Call only `/api/audio`.** Use `api.audio()` from `@/shared/api/client`.
+  The one exception is `/api/agent/research` (`api.agent()`): the research
+  card on the meeting screen reads the agent layer's documents for this
+  meeting (Research subagent spec, section 4 ④).
 - **Types for API payloads come from `@autune/contracts`**, generated from the
   Pydantic models. Regenerate with `pnpm run gen:contracts`; never hand-write a
   mirror.

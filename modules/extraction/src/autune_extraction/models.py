@@ -229,6 +229,17 @@ class ExtExternalRef(Base):
     )
     external_id: Mapped[str | None] = mapped_column(String(64))
     url: Mapped[str | None] = mapped_column(Text)
+    site: Mapped[str | None] = mapped_column(String(64))
+    """For Jira, the cloud id of the site ``external_id`` lives on. An issue key
+    like ``KAN-1`` is unique only within a site; after a reconnect to another
+    site, a key without its site would name someone else's issue (#458)."""
+    synced_category: Mapped[str | None] = mapped_column(String(16))
+    """For Jira, the status category (``new``, ``indeterminate``, ``done``) the
+    issue was last left in by Autune or last read back from. It is how the
+    read-back tells a person's move in Jira from a board edit that has not
+    reached Jira yet (``jira_sync.pull_status_changes``). ``None`` until there
+    is a baseline: a ref written before the read-back existed, or one whose
+    issue never took the board's status; the next read-back records Jira's."""
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -481,7 +492,7 @@ class ExtConfirmation(Base, TimestampMixin):
     **No outcome is stored, only the two timestamps it is derived from.** A
     ``status`` column and a clock can disagree, and the one that would be wrong
     is the column — nothing runs at the deadline to update it. Deriving the
-    answer on read means the 24-hour rule holds whether or not a periodic job is
+    answer on read means the 72-hour rule holds whether or not a periodic job is
     alive.
 
     **There is no responder column.** The DM goes to one person and comes back
@@ -640,3 +651,82 @@ class ExtCalendarPoll(Base):
         String(64), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
     )
     polled_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class ExtNotionTarget(Base):
+    """Where a team's Notion sync writes: the page Autune's databases were made
+    under and the three database ids (#428).
+
+    B's own table rather than keys in ``team_integrations.config``, which is the
+    settings layer's and which modules never write (data-model.md). A one-click
+    connection stores the token there; B makes the databases and records them
+    here. A team connected through the local dev page still has the ids in its
+    config; ``notion_setup.database_id`` reads this table first and that second.
+
+    Keyed by team, deleted with it.
+    """
+
+    __tablename__ = "ext_notion_targets"
+
+    team_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("teams.id", ondelete="CASCADE"), primary_key=True
+    )
+    parent_page_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    action_db_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    decision_db_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    minutes_db_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    workspace_id: Mapped[str | None] = mapped_column(String(64))
+    """The Notion workspace these databases live in. A row naming another
+    workspace than the team's current connection is ignored (#467 review)."""
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class ExtMeetingNote(Base):
+    """The team's own memo on a meeting's summary tab (S15 요약, #421).
+
+    Free text a member types, not anything a model derived: the summary tab's
+    structure comes from B's rows, and this is the part a person writes. One
+    per meeting, deleted with it; a blank memo is no row. No author column,
+    the same rule as ``ext_edit_events`` -- the tab says what the team noted,
+    not who noted it.
+    """
+
+    __tablename__ = "ext_meeting_notes"
+
+    meeting_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("meetings.id", ondelete="CASCADE"), primary_key=True
+    )
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
+    )
+
+
+class ExtExtractionRun(Base):
+    """Which speech the last extraction of a meeting was allowed to read (#518).
+
+    ``consent_key`` is a digest of the ids of the utterances whose speaker had
+    consented when the meeting was last extracted. Consent can change after
+    that -- today only by A's ``attest_consent`` (False to True, #190) -- and
+    nothing announces it (#360), so ``tasks.reextract_consent_changes``
+    compares this key with the consent as it is now and extracts again where
+    they differ. A digest because a comparison is all it is for: it cannot be
+    read back into which utterances, or whose, were in.
+
+    One row per meeting, written in the same transaction as the extraction's
+    rows, deleted with the meeting. A meeting with no row has not been
+    extracted yet, or was extracted before this table existed; the sweep leaves
+    it alone.
+    """
+
+    __tablename__ = "ext_extraction_runs"
+
+    meeting_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("meetings.id", ondelete="CASCADE"), primary_key=True
+    )
+    consent_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    extracted_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
+    )

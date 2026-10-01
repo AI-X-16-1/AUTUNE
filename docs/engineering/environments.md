@@ -133,8 +133,11 @@ Where that token comes from, and the two ways to give it to the browser:
 
 | Variable | Used by |
 | --- | --- |
-| `AUTUNE_SLACK_BOT_TOKEN`, `AUTUNE_SLACK_SIGNING_SECRET` | `apps/bot`, all modules that notify |
+| `AUTUNE_SLACK_BOT_TOKEN`, `AUTUNE_SLACK_SIGNING_SECRET` | `apps/bot` (the `/autune` command and interactivity). A team that connected with "Add to Slack" posts with the bot token stored for it in `team_integrations`, not this one |
 | `AUTUNE_SLACK_APP_TOKEN` | `apps/bot` socket mode, local development only |
+| `AUTUNE_SLACK_CLIENT_ID`, `AUTUNE_SLACK_CLIENT_SECRET` | core, the one-click "Add to Slack" install (#428) |
+| `AUTUNE_SLACK_REDIRECT_URI` | core. The web origin's `/api/auth/slack/callback`; Slack accepts **HTTPS only**, so a local test serves `apps/web` with `next dev --experimental-https` |
+| `AUTUNE_SLACK_CHANNEL_NAME` | core. The private alert channel an install creates (default `autune`; `-2`, `-3`... when taken) |
 
 ### Module-specific
 
@@ -213,6 +216,7 @@ Where that token comes from, and the two ways to give it to the browser:
 | `AUTUNE_GAP_VERIFY_CONFIDENT_SCORE` · `_CONFIDENT_LEAD` | C | Defaults `0.6` · `0.05`. An item winning by both is taken without asking; a background win by the lead is dismissed without asking |
 | `AUTUNE_GAP_VERIFY_CANDIDATE_SCORE` · `_CANDIDATES` · `_EXAMPLES` | C | Defaults `0.45` · `3` · `2`. Which items one question offers, and how many example sentences each carries |
 | `AUTUNE_GAP_VERIFY_MAX_UTTERANCES` | C | Default `30`. At most this many utterances of one meeting are sent per run; the rest keep the embedding's answer |
+| `AUTUNE_GAP_RESCORE_MAX_ATTEMPTS` | C | Default `5`. Failed rescores in a row at one grouping of people before the ten-minute sweep leaves the meeting until the grouping moves (#516) |
 | `AUTUNE_CONTEXT_EMBEDDER_IMPL` | D | `kure_v1_http` (default), `kure_v1_local`, `fake` |
 | `AUTUNE_CONTEXT_RERANKER_IMPL` | D | `bge_reranker_v2_m3_ko_http` (default), `..._local`, `fake` |
 | `AUTUNE_CONTEXT_NLI_IMPL` | D | `klue_kornli_http` (default), `klue_kornli_local`, `fake` |
@@ -271,10 +275,26 @@ the conversation is #392. Until #392 is settled:
 
 What it sends is utterance text as module A masked it and a fixed instruction —
 no speaker, no id, no meeting title — in windows under the 4,000-character
-outbound cap, through `autune_integrations.HttpClient` like `hosted`. **A name
-said aloud is not masked:** module A masks resident registration, card, phone
-and account numbers and email addresses, and has no pattern or model for names. So every name spoken in the meeting goes
-with it — the exposure #392 and #92 ask about.
+outbound cap, through `autune_integrations.HttpClient` like `hosted`. Module A
+masks resident registration, card, phone and account numbers and email
+addresses, and has no pattern or model for names, **so `llm` replaces the
+meeting team's names itself before sending (#411):** each member's display
+name, and the given name of a three-syllable Korean name ("김민경" and "민경"),
+becomes `[사람N]`. A display name comes from the account's `name` claim and is
+often spaced ("박 재경", "재경 박"), so a Hangul name of two words is also matched
+joined and swapped ("박재경", "재경박") and by its given name ("재경") — the word
+of two syllables or more beside a one-syllable surname; with two longer words
+only the joined forms. Whichever form matched, the same person gets the same number
+within one meeting's requests, never stored and never mapped back. Only the request changes; the
+database, the reference resolver and Notion keep the text as it was.
+
+What still goes out, and is the exposure #392 and #92 ask about:
+
+- names not on the team's roster — people outside the team, nicknames, English
+  names and names the speech recogniser misheard;
+- a roster name that is also an ordinary word ("하늘", "보람") is replaced where
+  it is only a word — the cost is classification accuracy, not data;
+- the reference resolver's own LLM calls (#366), which this does not cover.
 
 `hosted` points at an inference server we run. It still goes through
 `autune_integrations.HttpClient` so the outbound guard reads the request body:
