@@ -77,6 +77,9 @@ export function useMicrophone(): Microphone {
   // A preview was asked for and has not been ended by start() or stop(): a
   // grant reported later should reopen it.
   const wantsPreview = useRef(false);
+  // False once the screen has unmounted: a getUserMedia answered after that
+  // must not leave the microphone on with nobody left to stop it.
+  const mounted = useRef(true);
 
   const refreshDevices = useCallback(async () => {
     if (!navigator.mediaDevices?.enumerateDevices) return;
@@ -106,12 +109,20 @@ export function useMicrophone(): Microphone {
 
   const open = useCallback(
     async (wanted: string): Promise<MediaStream | null> => {
+      // A preview queued behind the open that start() was waiting for would
+      // otherwise release the stream that is now recording, and the meter it
+      // opens would hide the silence.
+      if (recording.current) return media.current;
       release();
       try {
         const opened = await navigator.mediaDevices.getUserMedia({
           audio: wanted ? { deviceId: { exact: wanted } } : true,
           video: false,
         });
+        if (!mounted.current || recording.current) {
+          opened.getTracks().forEach((track) => track.stop());
+          return mounted.current ? media.current : null;
+        }
         const ctx = new AudioContext();
         const analyser = ctx.createAnalyser();
         analyser.fftSize = 1024;
@@ -241,7 +252,13 @@ export function useMicrophone(): Microphone {
 
   const stopRef = useRef(stop);
   stopRef.current = stop;
-  useEffect(() => () => stopRef.current(), []);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      stopRef.current();
+    };
+  }, []);
 
   return {
     stream,

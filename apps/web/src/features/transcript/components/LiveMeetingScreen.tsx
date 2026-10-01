@@ -85,10 +85,14 @@ export function LiveMeetingScreen({ meetingId }: { meetingId: string }) {
 
   // A refusal (no live view is ever coming, per useLiveSession) means the
   // recording was already abandoned; the microphone is the one thing left
-  // for the screen itself to release, since `onStop` is not coming.
+  // for the screen itself to release, since `onStop` is not coming. The gate
+  // is back up afterwards, so its meter reopens rather than reading
+  // "마이크를 여는 중…" over a closed input.
   useEffect(() => {
-    if (livePhase === "error") microphoneStop();
-  }, [livePhase, microphoneStop]);
+    if (livePhase !== "error") return;
+    microphoneStop();
+    void microphonePreview();
+  }, [livePhase, microphoneStop, microphonePreview]);
 
   // A dropped tab loses whatever the recorder has not uploaded yet -- while
   // it is connecting, recording, paused, or the upload is still in flight or
