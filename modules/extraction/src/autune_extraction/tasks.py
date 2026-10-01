@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 from celery import shared_task
 from sqlalchemy import select
@@ -1202,10 +1202,9 @@ def publish_action_progress() -> None:
     logged.
     """
     now = datetime.now(UTC)
-    today = date.today()
     with session_scope() as session:
         snapshots = [
-            service.team_action_progress(session, team_id, now=now, today=today)
+            service.team_action_progress(session, team_id, now=now)
             for team_id in service.teams_with_recent_meetings(session, now=now)
         ]
     for snapshot in snapshots:

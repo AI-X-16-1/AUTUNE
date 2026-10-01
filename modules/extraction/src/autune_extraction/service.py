@@ -115,7 +115,7 @@ from .schemas import (
     SourceUtterance,
     SummaryDecision,
 )
-from .slots import Assignee, assignee_of, meeting_day, parse_due
+from .slots import KST, Assignee, assignee_of, meeting_day, parse_due
 
 log = get_logger(__name__)
 
@@ -3792,18 +3792,21 @@ def teams_with_recent_meetings(session: Session, *, now: datetime) -> list[str]:
     )
 
 
-def team_action_progress(
-    session: Session, team_id: str, *, now: datetime, today: date
-) -> TeamActionProgress:
+def team_action_progress(session: Session, team_id: str, *, now: datetime) -> TeamActionProgress:
     """The team's action items as counts per meeting, as of ``now`` (#605).
 
     Per meeting made inside the window: items past ``needs_confirmation``,
-    those ``done``, and those confirmed, not done and due before ``today`` --
-    the board's overdue rule (``tools._overdue``). A meeting with nothing
+    those ``done``, and those confirmed, not done and due before the team's
+    today -- the board's overdue rule (``tools._overdue``). **Today is the
+    date of ``now`` in Korea** (``slots.KST``): there is no team time zone, and
+    a server's ``date.today()`` on UTC is a day behind from 00:00 to 09:00 KST,
+    when the board and E's dashboard would disagree on what is late (#619
+    review). A meeting with nothing
     confirmed is left out. Counts and meeting ids only: no assignee, title or
     item id leaves here, so no per-person completion record can be built from
     it (privacy.md section 3; the contract's own note).
     """
+    today = now.astimezone(KST).date()
     confirmed = ExtActionItem.status != ActionStatus.NEEDS_CONFIRMATION.value
     done = ExtActionItem.status == ActionStatus.DONE.value
     overdue = and_(

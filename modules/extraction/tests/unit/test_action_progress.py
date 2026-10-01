@@ -79,7 +79,7 @@ def test_each_meeting_counts_confirmed_done_and_overdue(session: Session) -> Non
     item(session, "a4", "mtg_1", "needs_confirmation", due=TODAY - timedelta(days=9))
     item(session, "b1", "mtg_2", "done")
 
-    progress = service.team_action_progress(session, "team_1", now=NOW, today=TODAY)
+    progress = service.team_action_progress(session, "team_1", now=NOW)
 
     assert progress.as_of == NOW
     assert [(m.meeting_id, m.confirmed, m.done, m.overdue) for m in progress.meetings] == [
@@ -94,7 +94,7 @@ def test_a_meeting_with_nothing_confirmed_or_outside_the_window_is_left_out(
     item(session, "a1", "mtg_1", "needs_confirmation")
     item(session, "o1", "mtg_old", "done")
 
-    progress = service.team_action_progress(session, "team_1", now=NOW, today=TODAY)
+    progress = service.team_action_progress(session, "team_1", now=NOW)
 
     assert progress.meetings == []
 
@@ -104,15 +104,24 @@ def test_counts_and_meeting_ids_only_leave(session: Session) -> None:
     built from it (privacy.md section 3)."""
     item(session, "a1", "mtg_1", "todo")
 
-    payload = service.team_action_progress(session, "team_1", now=NOW, today=TODAY).model_dump(
-        mode="json"
-    )
+    payload = service.team_action_progress(session, "team_1", now=NOW).model_dump(mode="json")
     sent = json.dumps(payload, ensure_ascii=False)
 
     assert "user_kim" not in sent
     assert "a1" not in sent
     assert "할 일" not in sent
     assert set(payload["meetings"][0]) == {"meeting_id", "confirmed", "done", "overdue"}
+
+
+def test_today_is_the_day_in_korea_not_the_servers(session: Session) -> None:
+    """#619 review: at 23:30 UTC it is already the next day in Seoul, so an
+    item due that UTC day is late on the board and must be here too."""
+    late_evening_utc = datetime(2026, 10, 2, 23, 30, tzinfo=UTC)  # 10-03 08:30 KST
+    item(session, "a1", "mtg_1", "todo", due=date(2026, 10, 2))
+
+    progress = service.team_action_progress(session, "team_1", now=late_evening_utc)
+
+    assert [(m.meeting_id, m.overdue) for m in progress.meetings] == [("mtg_1", 1)]
 
 
 def test_teams_with_a_meeting_in_the_window_are_published(session: Session) -> None:
