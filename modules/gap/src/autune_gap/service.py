@@ -984,7 +984,9 @@ def explain(session: Session, meeting_id: str) -> GapExplanations:
     return GapExplanations(
         meeting_id=meeting_id,
         meeting_title=meeting.title,
-        meeting_started_at=meeting.started_at,
+        # A meeting with no start time is dated by when its row was made, as
+        # `tools._previous_analysed` places it.
+        meeting_date=meeting.started_at or meeting.created_at,
         partial_centrality=thresholds.partial_centrality,
         high_threshold=thresholds.high,
         medium_threshold=thresholds.medium,

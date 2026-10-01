@@ -151,7 +151,23 @@ def test_the_meeting_is_named_for_the_breadcrumb(team_id: str) -> None:
     result = explained(ids["meeting"])["result"]
 
     assert result.meeting_title == "알림 발송 기획"  # type: ignore[attr-defined]
-    assert result.meeting_started_at == STARTED  # type: ignore[attr-defined]
+    assert result.meeting_date == STARTED  # type: ignore[attr-defined]
+
+
+def test_a_meeting_with_no_start_is_dated_by_when_it_was_registered(team_id: str) -> None:
+    """An uploaded recording has no start time. It is dated the way C orders
+    a team's meetings (`tools._previous_analysed`): by when its row was made."""
+    with session_scope() as s:
+        meeting = Meeting(team_id=team_id, title="업로드한 회의", status="analyzing")
+        s.add(meeting)
+        s.flush()
+        meeting_id, registered = meeting.id, meeting.created_at
+
+    with session_scope() as s:
+        result = service.explain(s, meeting_id)
+
+    assert result.meeting_date == registered
+    assert result.gaps == []
 
 
 def test_a_missing_items_question_names_the_meetings_subject(team_id: str) -> None:

@@ -244,7 +244,7 @@ export const DEMO_TEMPLATES: TemplateOption[] = [
 export const DEMO_EXPLANATIONS: GapExplanations = {
   meeting_id: DEMO_MEETING_ID,
   meeting_title: "검색 개인화 기획 회의",
-  meeting_started_at: "2026-09-21T01:00:00Z",
+  meeting_date: "2026-09-21T01:00:00Z",
   partial_centrality: 0.4,
   high_threshold: 0.7,
   medium_threshold: 0.5,

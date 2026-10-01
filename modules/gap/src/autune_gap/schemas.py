@@ -233,7 +233,11 @@ class GapExplanations(BaseModel):
 
     meeting_id: str
     meeting_title: str
-    meeting_started_at: datetime | None = None
+    meeting_date: datetime
+    """When the meeting was held: ``started_at``, or when its row was made if it
+    never got a start time -- the rule ``tools._previous_analysed`` orders a
+    team's meetings by. A recording uploaded after the fact has no start time,
+    and a breadcrumb with no date at all was most meetings on screen."""
     partial_centrality: float
     high_threshold: float
     medium_threshold: float

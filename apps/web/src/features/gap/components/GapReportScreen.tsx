@@ -103,7 +103,7 @@ export function GapReportScreen({ meetingId }: { meetingId: string }) {
     >
       <TopBar
         title={explanations?.meeting_title ?? null}
-        startedAt={explanations?.meeting_started_at ?? null}
+        date={explanations?.meeting_date ?? null}
       >
         {/* The one primary on the screen, and it is not wired: the Slack
             question card is a surface this module has not built (#36). A
@@ -235,14 +235,15 @@ export function GapReportScreen({ meetingId }: { meetingId: string }) {
  */
 function TopBar({
   title,
-  startedAt,
+  date: when,
   children,
 }: {
   title: string | null;
-  startedAt: string | null;
+  /** The meeting's start, or when it was registered if it has none. */
+  date: string | null;
   children: ReactNode;
 }) {
-  const date = startedAt ? DATE.format(new Date(startedAt)) : null;
+  const date = when ? DATE.format(new Date(when)) : null;
   return (
     <header
       className="flex items-center border-b border-[var(--color-hairline)]"

@@ -193,7 +193,8 @@ export interface GapExplanation {
 export interface GapExplanations {
   meeting_id: string;
   meeting_title: string;
-  meeting_started_at: string | null;
+  /** `started_at`, or when the meeting row was made if it has no start time. */
+  meeting_date: string;
   partial_centrality: number;
   high_threshold: number;
   medium_threshold: number;
