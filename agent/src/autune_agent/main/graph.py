@@ -4,12 +4,12 @@
 
 ``delegate`` invokes one subagent's compiled subgraph with the run's shared
 tool budget. Proposed actions come back in the outcome and are **not executed**
-here: plan mode and the approval screen are the next milestone, and until they
-exist nothing at L1 or L2 happens at all.
+here: ``store.run_and_record`` runs L1 at the end of the run and queues L2 for
+an approver (``pending.queue_l2``).
 
 Compiled without a checkpointer. Section 3.3: LangGraph's own tables would hold
 tool results with no deletion path by meeting, so run state goes to
-``agent_runs`` instead once that table exists.
+``agent_runs`` instead.
 """
 
 from __future__ import annotations

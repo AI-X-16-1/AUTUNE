@@ -229,8 +229,22 @@ subgraph the supervisor delegates to. An earlier draft said "no framework — a
 hand-written loop of about 200 lines", and with one orchestrator and one
 subagent that was right. With five subagents built by five people it is not:
 a shared graph shape is what lets each owner build a subagent without
-re-inventing routing, tool calling and interruption, and LangGraph's
-`interrupt` is plan mode's pause point (section 8).
+re-inventing routing and tool calling. An earlier draft also made LangGraph's
+`interrupt` plan mode's pause point; as built, plan mode is an approval queue
+outside the graph (section 8), so no graph waits for a person.
+
+**Why not LangChain's `create_agent`.** It was suggested as the way to build
+the agent, and the layer does not use it. `create_agent` is a loop in which the
+model picks and calls tools itself, and three rules of this layer sit badly
+with that: every model call must go through `check_outbound` and
+`assert_masked` (section 8 rule 1), which a LangChain chat model would bypass;
+a subagent never runs a write, it returns `ProposedAction`s (rule 4 in
+`agent/CLAUDE.md`); and tools come from the registry with an allow-list and a
+call budget per run (section 4). So each subagent is a fixed `StateGraph` and
+the model only routes and writes. None of the three is impossible to adapt —
+a guarded chat-model wrapper and a registry-to-tool adapter would do — so if
+the free-form chat path ever needs the model to choose tools, `create_agent` is
+the first thing to try there, with the event-driven subagents left as they are.
 
 Two uses of LangGraph are **not** allowed, because each would bypass a rule
 this repository already enforces:
@@ -465,7 +479,17 @@ nothing in the repository says who either is: `packages/core` has a job role
 `Team` or `User` would be a shared-entity change owned by module A (invariant
 4), for a fact only the agent layer reads. So the layer keeps its own row, set
 by the team in the web settings, and a proposal whose scope has no approver is
-not sent to anyone — it stays on the run timeline. The table holds a role
+not sent to anyone — it stays on the run timeline.
+
+**Who may set it, as built (#592).** 설정 › 승인자 (`/settings/approvers`)
+writes these rows through `GET`/`PUT /api/agent/approvers`, and the rule is in
+`main/approvers.py`. With no administrator in `packages/core`, the layer
+answers the question itself: while no current member holds an approver row,
+any member may name one, so a new team has a way in; after that only an
+approver with scope `any` may change the list; and the team never loses its
+last `any` approver, so the list can always be changed again — which makes the
+first assignment hold `any`. A former member's rows count for nothing, the same
+as in `approver_scopes`. The table holds a role
 assignment, not meeting content, so it is deleted with its user rather than with
 a meeting.
 
