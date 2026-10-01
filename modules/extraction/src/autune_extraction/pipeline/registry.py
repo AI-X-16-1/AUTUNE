@@ -15,7 +15,7 @@ from .base import Classifier, Embedder, NliModel, ReferenceResolver
 from .classifier import ENSEMBLE_SEPARATOR, FakeClassifier, HostedDeberta, LocalDeberta
 from .embedder import FakeEmbedder, LocalKureEmbedder
 from .nli import FakeNli, HostedNli, LocalNli
-from .resolver import FakeResolver, HostedResolver, LocalQwenResolver
+from .resolver import FakeResolver, HostedResolver, LlmResolver, LocalQwenResolver
 
 _CLASSIFIERS: dict[str, str] = {
     "local": "weights in this process",
@@ -174,6 +174,20 @@ def get_resolver() -> ReferenceResolver:
         return HostedResolver(
             settings.resolver_endpoint,
             settings.resolver_checkpoint,
+            embedder=embedder,
+            min_similarity=settings.resolver_min_similarity,
+        )
+    if impl == "llm":
+        if not settings.llm_api_key:
+            raise ValueError(
+                "AUTUNE_EXTRACTION_RESOLVER_IMPL=llm needs AUTUNE_EXTRACTION_LLM_API_KEY"
+            )
+        return LlmResolver(
+            api_key=settings.llm_api_key,
+            model=settings.resolver_model,
+            base_url=settings.llm_base_url,
+            timeout_sec=settings.llm_timeout_sec,
+            fallback_model=settings.resolver_second_model,
             embedder=embedder,
             min_similarity=settings.resolver_min_similarity,
         )

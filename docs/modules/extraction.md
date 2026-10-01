@@ -67,7 +67,32 @@ agreement, and sync the result to Notion.
    the person confirming reads one against the other. Only the tidied line, as
    the person confirmed or reworded it, leaves Autune: an item goes out only
    after it leaves *needs confirmation*, a decision only once confirmed, and
-   never the original utterance. A sentence that names nothing ("다음 주
+   never the original utterance. With `resolver_impl=llm` the description is also
+   a **summary**: the model reads the commitment, the lines around it and up to
+   eight lines from elsewhere in the meeting that share its subject (found by
+   word overlap, `pipeline/related.py`), writes one sentence, and says which
+   lines it used. Those lines are stored (`ext_action_item_related`) and shown
+   beneath the summary as "요약에 쓴 발화", above the quotation, so a person can
+   check the sentence against what it was made from and correct it — the
+   description is editable like any other. The candidates are only offered: a
+   line nobody cites is neither stored nor shown, and a citation the model
+   invents (a number that is no line, the commitment itself) is dropped.
+   A decision is written up the same way (`ext_decision_related`, "요약에 쓴
+   발화" on S15) -- but only when its settling turn does not say what was decided:
+   short, or pointing at something said before ("그렇게 하죠"). Asked about every
+   decision, the model rewrote all of them and cited a line for about a quarter;
+   the rest it only put into "~하기로 했습니다", which `noun_form.tidy` does without
+   a model.
+
+   **What module D is sent is not what the screen shows.** `ext_decisions.statement`
+   is the line a person sees and that leaves for Notion -- noun-ended, or the
+   write-up. `original_statement` is the sentence as assembled from the utterances
+   (the turn that settles it, plus owner and deadline), and that is the
+   `Decision.statement` in the contract, unless a person reworded the decision, in
+   which case it is their wording. D embeds statements and compares them against a
+   similarity threshold tuned on that shape (`context.config`), so nothing made for
+   the screen may reach it; D reads the utterances themselves through
+   `source_utterance_ids` as before. The contract is unchanged. A sentence that names nothing ("다음 주
    화요일까지 볼 예정") is read with up to three lines said just before it, shown
    apart from the sources as "앞선 발화 (맥락)"; nothing fills the missing object
    into the line itself unless the reference resolver is switched on
@@ -160,6 +185,8 @@ the overlap the question turns on.
 | `ext_classifications` | Per-utterance kind, confidence, model version, NLI result. Kinds only — no row for `none` |
 | `ext_action_items` | Assignee, description, due date, status, origin |
 | `ext_action_item_sources` | Which utterances an item came from |
+| `ext_decision_related` | The other lines of the meeting a decision's summary was written from, as the model said it used them; shown beneath the summary, never read by D |
+| `ext_action_item_related` | The other lines of the meeting the item's summary was written from, as the model said it used them (`LlmResolver`); shown beneath the summary, never read by D or E |
 | `ext_edit_events` | One row per correction. Counts only — no person on it |
 | `ext_external_refs` | The Notion page an action item became, one per item and system |
 | `ext_decision_refs` | The Notion page a confirmed decision became, one per decision and system |
@@ -259,7 +286,7 @@ other module's tables.
 | --- | --- | --- |
 | GET | `/results/{meeting_id}` | The meeting's `ExtractionResult`, built from what is stored |
 | GET | `/action-items` | Filter by `meeting_id`, `assignee_id`, `status`, `due_before` (strict). Source utterance ids, never their text |
-| GET | `/action-items/{id}` | One item, the text of its source utterances in spoken order, and up to three lines said just before them as `context` (consenting speakers only) |
+| GET | `/action-items/{id}` | One item, the text of its source utterances in spoken order, up to three lines said just before them as `context`, and the lines its summary says it used as `related` (consenting speakers only) |
 | PATCH | `/action-items/{id}` | Edit or close an item |
 | POST | `/action-items` | Add an item the model missed |
 | DELETE | `/action-items/{id}` | Delete an item the model got wrong |

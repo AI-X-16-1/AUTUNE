@@ -154,3 +154,18 @@ def test_a_negation_inside_a_clause_does_not_block_the_predicate(said: str, tidi
 )
 def test_a_negated_predicate_is_left_as_said(said: str) -> None:
     assert tidy(said) == said
+
+
+@pytest.mark.parametrize(
+    ("said", "tidied"),
+    [
+        ("롤백 기준은 구형으로 돌리는 걸로 정했습니다", "롤백 기준은 구형으로 돌리는 걸로 결정"),
+        ("가을 축제는 에이안으로 정했습니다", "가을 축제는 에이안으로 결정"),
+        (
+            "다음 달 파트 회의 때 다시 꺼내는 것으로 정했습니다",
+            "다음 달 파트 회의 때 다시 꺼내는 것으로 결정",
+        ),
+    ],
+)
+def test_a_decision_settled_on_something_ends_in_the_noun_form(said: str, tidied: str) -> None:
+    assert tidy(said) == tidied

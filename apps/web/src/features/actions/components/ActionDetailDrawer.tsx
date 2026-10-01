@@ -186,7 +186,12 @@ export function ActionDetailDrawer({
           <SectionTitle>근거 발화</SectionTitle>
           {quotation.sources && quotation.sources.length > 0 ? (
             <div className="mt-2 grid gap-2">
-              <ContextLines lines={quotation.context} />
+              <ContextLines lines={quotation.related} label="요약에 쓴 발화" />
+              <ContextLines
+                lines={quotation.context.filter(
+                  (line) => !quotation.related.some((cited) => cited.id === line.id),
+                )}
+              />
               {quotation.sources.map((source) => (
                 <Quote key={source.id}>
                   <MaskedText>{source.text}</MaskedText>

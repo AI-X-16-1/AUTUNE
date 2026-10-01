@@ -1,9 +1,12 @@
-"""The reference resolver: in-process weights, our own inference server, a fake.
+"""The reference resolver: in-process weights, our own inference server, a cloud
+LLM API, a fake.
 
-Same three implementations as ``pipeline.classifier``, same reason -- no
-external-API option, because handing a commitment's context to somebody else's
-model is a decision about where personal data goes (privacy.md section 6), not
-a value of ``AUTUNE_EXTRACTION_RESOLVER_IMPL``.
+The first, second and last mirror ``pipeline.classifier``. The cloud one
+(``LlmResolver``, ``resolver_impl=llm``) is the exception to that file's rule and
+is opt-in the way ``classifier_impl=llm`` is: handing a commitment's context to
+somebody else's model is a decision about where personal data goes (privacy.md
+section 6), so it is never the default, sends masked text with the team's names
+replaced, and belongs to dummy meetings until #392 is answered.
 
 ``torch`` and ``transformers`` are imported inside the class that needs them,
 same reason as ``LocalDeberta``: importing at module scope would make
@@ -12,16 +15,22 @@ same reason as ``LocalDeberta``: importing at module scope would make
 
 from __future__ import annotations
 
+import json
 import re
 import time
+from collections.abc import Sequence
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
 from autune_core import get_logger
 from autune_core.errors import PrivacyViolationError
+from autune_extraction.slots import parse_due
 from autune_integrations.errors import TransientIntegrationError
+from autune_integrations.privacy import MAX_OUTBOUND_CHARS
 
-from .base import Embedder, ResolutionRequest
+from .base import Embedder, Resolution, ResolutionRequest
 from .classifier import RETRY_BACKOFF_SEC
+from .llm import GeminiClient, _answer_text, substitute_names_mapped
 
 if TYPE_CHECKING:
     pass
@@ -155,7 +164,12 @@ def _retains_target_ending(resolved: str, target: str) -> bool:
 
 
 def _window_lines(request: ResolutionRequest) -> list[str]:
-    return [*request.context, request.target, *request.context_after]
+    return [
+        *request.context,
+        request.target,
+        *request.context_after,
+        *(text for _, text in request.related),
+    ]
 
 
 def _window_text(request: ResolutionRequest) -> str:
@@ -197,6 +211,8 @@ def _passes_grounding(
     request: ResolutionRequest,
     embedder: Embedder | None,
     min_similarity: float | None,
+    *,
+    keep_ending: bool = True,
 ) -> bool:
     """The digit, named-person and target-ending checks always apply; the
     embedding check only once both an embedder and a threshold are configured
@@ -204,7 +220,7 @@ def _passes_grounding(
     before this existed)."""
     if not _grounded(answer, _window_text(request)):
         return False
-    if not _retains_target_ending(answer, request.target):
+    if keep_ending and not _retains_target_ending(answer, request.target):
         return False
     if embedder is None or min_similarity is None:
         return True
@@ -483,3 +499,490 @@ class HostedResolver:
                 continue
             resolved.append(answer)
         return resolved
+
+
+_PLACEHOLDER = re.compile(r"\[사람\d+\]")
+
+
+def _scrubbed(
+    request: ResolutionRequest, roster: Sequence[str]
+) -> tuple[ResolutionRequest, dict[str, str]]:
+    """The request with the team's names replaced, and what each placeholder stood for.
+
+    The three parts go through one substitution, so a person is the same number in
+    the target and in the lines around it -- "[사람1]" in the context and in the
+    target is one person, which is what lets the model resolve "그분" to them.
+    """
+    texts = [
+        *request.context,
+        request.target,
+        *request.context_after,
+        *(text for _, text in request.related),
+    ]
+    replaced, surface = substitute_names_mapped(texts, roster)
+    before = len(request.context)
+    after = before + 1 + len(request.context_after)
+    return (
+        replace(
+            request,
+            target=replaced[before],
+            context=tuple(replaced[:before]),
+            context_after=tuple(replaced[before + 1 : after]),
+            related=tuple(
+                (line_id, text)
+                for (line_id, _), text in zip(request.related, replaced[after:], strict=True)
+            ),
+        ),
+        surface,
+    )
+
+
+def _restored(answer: str, surface: dict[str, str]) -> str | None:
+    """The answer with each placeholder put back as the name it stood for.
+
+    The sentence is stored as an item's description and read by the team, so a
+    "[사람1]" left in it would be nonsense -- and the reverse of the classifier,
+    whose labels carry no name to restore. ``None`` when the model wrote a
+    placeholder that was never sent: it invented a person.
+    """
+    for marked in _PLACEHOLDER.findall(answer):
+        if marked not in surface:
+            return None
+    return _PLACEHOLDER.sub(lambda m: surface[m.group(0)], answer)
+
+
+def _ends_the_same(answer: str, target: str) -> bool:
+    """The answer is the target with, at most, its closing punctuation changed."""
+    return answer.strip().rstrip(" .!?…") == target.strip().rstrip(" .!?…")
+
+
+_SENTENCE_BREAK = re.compile(r"(?:습니다|어요|아요|여요|이요|이에요|예요|죠|네요|군요)\s+\S")
+"""A finished sentence with more text after it. A rewrite that contains one the
+target does not is two sentences pasted into one -- "패키지 사고 우편함에 안 들어가는
+건이요 서버 쪽은 고쳤는데 ..." -- which is what a model does when it merges lines of
+two different subjects."""
+
+_BRACKETED = re.compile(r"\[[^\]]*\]|\([^)]*\)")
+MAX_GROWTH = 3
+"""A sentence more than this many times as long as the one it rewrites (or 80
+characters, whichever is more) is a paragraph, not a resolved reference."""
+
+
+def _sound(answer: str, request: ResolutionRequest) -> bool:
+    """What a resolved sentence must not do that the groundedness checks miss.
+
+    Measured on 24 dummy commitments (2026-09-30), the cheap model answered every
+    one and still: added a bracketed or parenthesised clause of its own, dropped
+    the words a deadline was read from ("매주 월요일에" became "주 단위로"), and now
+    and then ran on to three times the length. None of those is a number or a
+    name, so ``_grounded`` lets them through.
+
+    - No bracketed or parenthesised span that the target and its context do not
+      already contain (a masked token is one of those).
+    - The deadline phrase the target carries, if any, is still there.
+    - No longer than ``MAX_GROWTH`` times the target, with 80 characters as the
+      floor.
+    - No finished sentence followed by more text that the target does not already
+      have (``_SENTENCE_BREAK``): two lines merged into one is not a resolved
+      reference.
+    """
+    window = " ".join(_window_lines(request))
+    if any(span not in window for span in _BRACKETED.findall(answer)):
+        return False
+    due = parse_due(request.target, None)
+    if due is not None and due.text and due.text not in answer:
+        return False
+    if len(_SENTENCE_BREAK.findall(answer)) > len(_SENTENCE_BREAK.findall(request.target)):
+        return False
+    return len(answer) <= max(80, MAX_GROWTH * len(request.target))
+
+
+_SUMMARY_PROMPT = """\
+다음은 회의 발화 목록입니다. 앞의 번호는 이 목록 안에서만 쓰는 번호이고, [대상]이 정리할 \
+문장입니다. [앞]과 [뒤]는 대상 바로 앞뒤의 발화, [관련]은 회의의 다른 곳에서 비슷한 \
+말을 한 발화입니다 (관련 없는 것도 섞여 있을 수 있습니다).
+
+{lines}
+
+[대상] 문장에서 "그거", "그건", "이거", "저희 팀", "표", "이번 빌드" 같은 대명사나 빠져 있는 \
+대상을, 위 발화들([앞], [뒤], [관련] 모두)이 실제로 가리키는 것으로 채워 한 문장으로 다시 \
+쓰세요.
+
+규칙:
+- 위 발화에 없는 새로운 사실(날짜, 숫자, 이름 등)을 만들어내지 마세요.
+- 마스킹된 토큰(예: 대괄호로 묶인 표현)은 그대로 두세요.
+- [대상]의 화자 시점과 문장 끝 어미("~할게요", "~하겠습니다", "~보려고요")를 그대로 유지하세요. \
+"제가"/"저는"을 3인칭으로 바꾸지 마세요.
+- [대상]에 있는 날짜·기한·수량 표현은 그대로 두세요.
+- 지시어나 빠진 대상만 구체적인 말로 채우세요. 채우는 말은 짧은 명사구 하나로 하고, 다른 \
+발화의 문장을 통째로 옮겨 오지 마세요. 괄호나 대괄호는 새로 쓰지 마세요.
+- 서로 다른 주제의 발화를 섞지 마세요. 여러 주제가 보이면 [대상] 바로 앞 발화의 주제 하나만 \
+쓰고, 나머지는 무시하세요.
+- 이미 분명한 문장은 그대로 "summary"에 쓰세요.
+- 채우는 데 실제로 쓴 발화의 번호를 "used"에 적으세요. [대상] 자신의 번호는 적지 \
+마세요. 발화들로 풀리지 않으면 [대상] 문장을 그대로 "summary"에 쓰고 "used"는 빈 목록으로 \
+두세요.
+
+예시 1
+1 [앞] 지난주에 만든 온보딩 문서가 아직 초안 상태예요
+2 [대상] 그건 제가 금요일까지 마무리할게요
+{{"summary": "온보딩 문서는 제가 금요일까지 마무리할게요", "used": [1]}}
+
+예시 2 (이미 분명한 문장)
+1 [앞] 회의 끝나고 점심 먹으러 가요
+2 [대상] 제가 내일까지 견적서를 보낼게요
+{{"summary": "제가 내일까지 견적서를 보낼게요", "used": []}}
+
+예시 3 (주제가 섞여 있을 때는 바로 앞 주제 하나만)
+1 [관련] 주차 공간이 부족하다는 얘기가 있었어요
+2 [앞] 로그인 오류는 서버 쪽에서 고쳤어요
+3 [대상] 그건 제가 이번 배포에 넣을게요
+{{"summary": "로그인 오류 수정은 제가 이번 배포에 넣을게요", "used": [2]}}
+
+JSON 하나만 출력하세요: {{"summary": "다시 쓴 한 문장", "used": [번호, ...]}}
+"""
+_DECISION_PROMPT = """\
+다음은 회의 발화 목록입니다. 앞의 번호는 이 목록 안에서만 쓰는 번호이고, [대상]은 회의에서 \
+무언가를 하기로 정한 말입니다. [앞]과 [뒤]는 대상 바로 앞뒤의 발화, [관련]은 회의의 다른 \
+곳에서 비슷한 말을 한 발화입니다 (관련 없는 것도 섞여 있을 수 있습니다).
+
+{lines}
+
+이 회의에서 무엇이 결정되었는지를 한 문장으로 쓰세요. [대상]이 "그렇게 하죠", "그 방향으로 \
+가요"처럼 가리키기만 하면, 위 발화들에서 가리키는 것을 찾아 구체적으로 쓰세요.
+
+규칙:
+- 위 발화에 없는 새로운 사실(날짜, 숫자, 이름 등)을 만들어내지 마세요.
+- 마스킹된 토큰(예: 대괄호로 묶인 표현)은 그대로 두세요.
+- 결정된 내용만 쓰세요. 누가 말했는지, 누가 동의했는지는 쓰지 마세요. "~하기로 했습니다" \
+또는 "~로 정했습니다"로 끝내세요.
+- [대상]에 있는 날짜·기한·수량 표현은 그대로 두세요.
+- 괄호나 대괄호는 새로 쓰지 마세요. 결정은 하나만 쓰고, 서로 다른 주제의 발화를 한 문장에 \
+섞지 마세요.
+- 결정된 내용을 고른 발화의 번호를 "used"에 적으세요. [대상] 자신의 번호는 적지 마세요. \
+발화들로 더 구체적으로 쓸 수 없으면 [대상]의 뜻을 그대로 "~하기로 했습니다" 형태로 쓰고 \
+"used"는 빈 목록으로 두세요.
+
+예시 1
+1 [앞] 검색 결과를 인기순으로 할지 최신순으로 할지 고민이에요
+2 [앞] 인기순이 클릭률이 더 높아요
+3 [대상] 그럼 그렇게 하죠
+{{"summary": "검색 결과 정렬은 인기순으로 하기로 했습니다", "used": [1, 2]}}
+
+예시 2 (이미 구체적인 대상)
+1 [대상] 배포는 다음 주 화요일로 미루는 걸로 합시다
+{{"summary": "배포는 다음 주 화요일로 미루기로 했습니다", "used": []}}
+
+예시 3 (주제가 섞여 있을 때는 대상이 가리키는 하나만)
+1 [앞] 예산은 이번 분기 동결이에요
+2 [앞] 회의실은 다음 달부터 예약제로 해요
+3 [대상] 네 그걸로 가죠
+{{"summary": "회의실은 다음 달부터 예약제로 운영하기로 했습니다", "used": [2]}}
+
+JSON 하나만 출력하세요: {{"summary": "결정된 내용 한 문장", "used": [번호, ...]}}
+"""
+MAX_USED = 4
+_LABELS = ("앞", "대상", "뒤", "관련")
+
+
+def _numbered(request: ResolutionRequest) -> list[tuple[str, str, str]]:
+    """The window and the candidates as ``(utterance id, label, text)``, in the order
+    the prompt numbers them. An id is empty for a line the caller gave no id for --
+    such a line can be read but never cited."""
+
+    def ids(given: tuple[str, ...], n: int) -> list[str]:
+        return list(given) if len(given) == n else [""] * n
+
+    before = ids(request.context_ids, len(request.context))
+    after = ids(request.context_after_ids, len(request.context_after))
+    lines = [(i, _LABELS[0], t) for i, t in zip(before, request.context, strict=True)]
+    lines.append((request.target_id, _LABELS[1], request.target))
+    lines += [(i, _LABELS[2], t) for i, t in zip(after, request.context_after, strict=True)]
+    lines += [(i, _LABELS[3], t) for i, t in request.related]
+    return lines
+
+
+def _summary_prompt(numbered: list[tuple[str, str, str]], purpose: str = "commitment") -> str:
+    lines = "\n".join(f"{n} [{label}] {text}" for n, (_, label, text) in enumerate(numbered, 1))
+    template = _DECISION_PROMPT if purpose == "decision" else _SUMMARY_PROMPT
+    return template.format(lines=lines)
+
+
+_CITED_NUMBER = re.compile(r"\D*(\d+)\D*")
+"""A citation written as a string: "1", "발화 1", "1번"."""
+
+
+def _line_number(cited: Any) -> int | None:
+    """One entry of "used" as a line number, however the model wrote it.
+
+    An int, an integral float (``1.0``), or a string holding one number ("1",
+    "발화 1") -- the shapes C met from the same models (#503, #523). A bool, a
+    fraction, or a string with no number or two is not a citation.
+    """
+    if isinstance(cited, bool):
+        return None
+    if isinstance(cited, int):
+        return cited
+    if isinstance(cited, float):
+        return int(cited) if cited.is_integer() else None
+    if isinstance(cited, str):
+        match = _CITED_NUMBER.fullmatch(cited)
+        return int(match.group(1)) if match else None
+    return None
+
+
+def _read_summary(answer: str, numbered: list[tuple[str, str, str]]) -> tuple[str, tuple[str, ...]]:
+    """The model's summary and the ids of the lines it says it used.
+
+    Only numbers of lines that exist and carry an id count, never the target's
+    own. At most ``MAX_USED`` are kept, **the first the model listed** -- the
+    ones it leaned on, not the earliest said -- then put in spoken order for
+    the reader. Anything unreadable is an empty summary, which the caller
+    treats as no answer.
+
+    A summary that cites nothing is still accepted when it passes the checks:
+    what it added must already be in the window (``_passes_grounding``), and
+    the original sits beneath it on the screen.
+    """
+    match = re.search(r"\{.*\}", answer, re.S)
+    try:
+        data = json.loads(match.group(0)) if match else {}
+    except ValueError:
+        data = {}
+    if not isinstance(data, dict) or not isinstance(data.get("summary"), str):
+        return "", ()
+    cited = data.get("used")
+    used: list[str] = []
+    for entry in cited if isinstance(cited, list) else []:
+        number = _line_number(entry)
+        if number is None or not 1 <= number <= len(numbered):
+            continue
+        line_id, label, _ = numbered[number - 1]
+        if line_id and label != _LABELS[1] and line_id not in used:
+            used.append(line_id)
+    order = {line_id: n for n, (line_id, _, _) in enumerate(numbered)}
+    return data["summary"], tuple(sorted(used[:MAX_USED], key=lambda i: order[i]))
+
+
+_PROMPT_BUDGET = MAX_OUTBOUND_CHARS - 200
+"""What the prompt may take of the outbound limit. ``check_outbound`` counts
+every string in the body, and the rest ("user", the MIME type) is a few dozen
+characters; the margin covers them."""
+
+
+def _fitted(
+    request: ResolutionRequest, render: Any, budget: int = _PROMPT_BUDGET
+) -> ResolutionRequest | None:
+    """The request cut down until ``render(request)`` fits ``budget``, or
+    ``None`` when even the target alone does not (#530 review).
+
+    Over the limit, ``check_outbound`` raises ``PrivacyViolationError`` -- on
+    purpose, and never caught -- and the meeting's extraction fails. So the
+    request shrinks before it is sent: the least alike candidate first
+    (``related`` is best first), then the context line farthest from the
+    target, the one after it on a tie (what a pronoun points at was usually
+    said before). A target too long on its own is not sent: the item keeps
+    its raw quote. Nothing is truncated mid-line.
+    """
+    fitted = request
+    while len(render(fitted)) > budget:
+        if fitted.related:
+            fitted = replace(fitted, related=fitted.related[:-1])
+            continue
+        before, after = len(fitted.context), len(fitted.context_after)
+        if before == 0 and after == 0:
+            return None
+        if before > after:
+            ids = fitted.context_ids[1:] if len(fitted.context_ids) == before else ()
+            fitted = replace(fitted, context=fitted.context[1:], context_ids=ids)
+        else:
+            keep = after - 1
+            ids = fitted.context_after_ids[:keep] if len(fitted.context_after_ids) == after else ()
+            fitted = replace(
+                fitted, context_after=fitted.context_after[:keep], context_after_ids=ids
+            )
+    return fitted
+
+
+def _cut_like(request: ResolutionRequest, fitted: ResolutionRequest) -> ResolutionRequest:
+    """``request`` cut to the lines ``fitted`` kept -- the same cut on the text
+    before names were replaced, so the answer is checked against what was
+    sent and not against lines the model never saw."""
+    before, after = len(fitted.context), len(fitted.context_after)
+    return replace(
+        request,
+        context=request.context[len(request.context) - before :] if before else (),
+        context_ids=fitted.context_ids,
+        context_after=request.context_after[:after],
+        context_after_ids=fitted.context_after_ids,
+        related=request.related[: len(fitted.related)],
+    )
+
+
+MAX_ESCALATIONS = 5
+"""Second-model calls per meeting at most. The second model's free tier allows
+twenty a day (#530 review); one meeting of unsound first answers must not spend
+all of them. Past this, an unsound first answer is the raw quote."""
+
+
+class LlmResolver(GeminiClient):
+    """The same rewrite as ``LocalQwenResolver``, by a cloud LLM API (#175).
+
+    Exists because the local model needs a GPU and ``hosted`` needs a server of
+    ours, and the mentoring of 2026-09-23 says to use an LLM wherever a trained
+    model costs more than it earns. Opt-in and never the default
+    (``resolver_impl=llm``): it sends the commitment and up to four lines before
+    and two after it out of our infrastructure.
+
+    **What leaves, and what stops it** -- the same as ``LlmClassifier``: masked
+    utterance text only, no speaker, no id, no meeting; only consenting speakers'
+    lines (``resolve_commitment_references`` filters before this is called); the
+    team's names replaced by ``[사람N]`` and restored in the answer, so a name
+    never reaches the provider and never stays a placeholder in a description;
+    every request through ``HttpClient``, whose outbound check refuses an
+    unmasked number, address or account. A free-tier key may let the provider
+    keep what it is sent, so it is for dummy meetings only (#392).
+
+    **One bad answer degrades to the raw quote**, exactly as the other
+    resolvers: a failed call, a blank or multi-line answer, an invented
+    placeholder, or a sentence that fails the groundedness checks all return the
+    target unchanged. A privacy refusal is the exception -- it is raised, never
+    downgraded.
+    """
+
+    def __init__(
+        self,
+        *,
+        api_key: str,
+        model: str,
+        base_url: str = "https://generativelanguage.googleapis.com/v1beta",
+        timeout_sec: float = 60.0,
+        fallback_model: str = "",
+        embedder: Embedder | None = None,
+        min_similarity: float | None = None,
+    ) -> None:
+        super().__init__(
+            api_key=api_key,
+            model=model,
+            base_url=base_url,
+            timeout_sec=timeout_sec,
+            fallback_model=fallback_model,
+        )
+        self._embedder = embedder
+        self._min_similarity = min_similarity
+
+    def _accept(
+        self,
+        answer: str,
+        request: ResolutionRequest,
+        surface: dict[str, str],
+        numbered: list[tuple[str, str, str]] | None,
+    ) -> Resolution | None:
+        """The answer as the sentence to store and the lines it cites, or ``None``
+        when it should not be used.
+
+        Checks that need no model, cheapest first: one line, no placeholder the
+        model invented, then ``_sound`` (what the sentence adds and drops) and the
+        groundedness checks every resolver passes. A sentence that came back
+        unchanged cites nothing -- there is nothing it was written from.
+        """
+        used: tuple[str, ...] = ()
+        if numbered is None:
+            text = answer
+        else:
+            text, used = _read_summary(answer, numbered)
+        text = text.strip().strip("\"'“”‘’").strip()
+        if not text or "\n" in text:
+            return None
+        restored = _restored(text, surface)
+        if restored is None or not _sound(restored, request):
+            return None
+        decision = request.purpose == "decision"
+        if not _passes_grounding(
+            restored, request, self._embedder, self._min_similarity, keep_ending=not decision
+        ):
+            return None
+        if _ends_the_same(restored, request.target):
+            # Only the full stop differs: nothing was resolved, so nothing was used.
+            return Resolution(request.target)
+        return Resolution(restored, used)
+
+    def _ask(self, model: str | None, body: dict[str, Any], index: int) -> str | None:
+        """One model's answer text; ``None`` if the call failed. A privacy refusal is
+        raised, never downgraded (errors.py)."""
+        try:
+            if model is None:
+                return _answer_text(self._post(body, index=index))
+            return _answer_text(self._post_to(model, body, index=index))
+        except PrivacyViolationError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - #175: one bad call must not fail the meeting
+            # The class name only: a traceback can carry the request's text.
+            log.warning("extraction_resolver_call_failed", error=type(exc).__name__)
+            return None
+
+    def _resolve_one(
+        self, request: ResolutionRequest, index: int, escalations: list[int] | None = None
+    ) -> Resolution:
+        """The cheap model first; the second model once if its answer is not sound.
+
+        The first model (``model``) answers everything. When its answer fails a
+        check -- it added a bracketed clause, dropped the deadline, ran on -- the
+        second model gets the same request once, and when that fails too the raw
+        quote stands. A busy first model already falls through to the second
+        (``GeminiClient._post``), so a second model that has answered is not asked
+        again for the same request.
+
+        **Two modes.** A request that carries ids (``target_id``) is asked to
+        summarise from the numbered window and candidates and to say which lines
+        it used, and answers as JSON. One without is the plain rewrite it always
+        was.
+        """
+        scrubbed, surface = _scrubbed(request, self._roster)
+
+        def render(r: ResolutionRequest) -> str:
+            return _summary_prompt(_numbered(r), r.purpose) if r.target_id else _prompt(r)
+
+        sent = _fitted(scrubbed, render)
+        raw = Resolution(request.target)
+        if sent is None:
+            # Ids only: the line is meeting content.
+            log.info("extraction_resolver_target_too_long", target_id=request.target_id)
+            return raw
+        request = _cut_like(request, sent)
+        numbered = _numbered(sent) if request.target_id else None
+        prompt = render(sent)
+        generation: dict[str, Any] = {"temperature": 0}
+        if numbered is not None:
+            generation["responseMimeType"] = "application/json"
+        body = {
+            "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+            "generationConfig": generation,
+        }
+        first = self._ask(None, body, index)
+        if first is None:
+            return raw
+        accepted = self._accept(first, request, surface, numbered)
+        if accepted is not None:
+            return accepted
+        if not self._fallback or self.last_model == self._fallback:
+            return raw
+        if escalations is not None:
+            if escalations[0] >= MAX_ESCALATIONS:
+                return raw
+            escalations[0] += 1
+        log.info("extraction_resolver_escalated", model=self._model, second=self._fallback)
+        second = self._ask(self._fallback, body, index)
+        accepted = self._accept(second, request, surface, numbered) if second is not None else None
+        return accepted if accepted is not None else raw
+
+    def resolve_with_evidence(self, requests: list[ResolutionRequest]) -> list[Resolution]:
+        """One meeting's requests. The second model is asked at most
+        ``MAX_ESCALATIONS`` times across them."""
+        escalations = [0]
+        return [
+            self._resolve_one(request, index, escalations) for index, request in enumerate(requests)
+        ]
+
+    def resolve(self, requests: list[ResolutionRequest]) -> list[str]:
+        return [resolution.text for resolution in self.resolve_with_evidence(requests)]
