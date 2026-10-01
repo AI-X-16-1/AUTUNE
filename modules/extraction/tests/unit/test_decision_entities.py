@@ -179,6 +179,24 @@ def test_the_statement_carries_the_owner_who_took_it_on() -> None:
     assert groups[0].statement == "검색 정렬은 인기순으로 바꾸시죠 (담당 박지영)"
 
 
+def test_the_statement_ends_in_the_noun_form_and_keeps_its_owner_and_deadline() -> None:
+    """The tidied line is what a person confirms; the owner and deadline are added
+    after it, so they are never rewritten."""
+    groups = group_decisions(
+        [
+            utterance(
+                "utt_1",
+                UtteranceKind.DECISION,
+                text="그럼 검색 정렬은 인기순으로 진행합시다",
+            ),
+            utterance("utt_2", UtteranceKind.COMMITMENT, text="제가 볼게요", speaker="박지영"),
+            utterance("utt_3", UtteranceKind.DECISION, text="네 그렇게 하죠"),
+        ]
+    )
+
+    assert groups[0].statement == "검색 정렬은 인기순으로 진행함 (담당 박지영)"
+
+
 def test_somebody_handed_the_work_by_name_is_the_owner() -> None:
     """Nobody said "I will"; the decision itself names who does it."""
     groups = group_decisions(
@@ -265,7 +283,14 @@ def test_a_group_is_comparable_by_value() -> None:
     groups = group_decisions([utterance("utt_1", UtteranceKind.DECISION, text="가자")])
 
     assert groups == [
-        DecisionGroup(statement="가자", source_utterance_ids=("utt_1",), confidence=0.9)
+        DecisionGroup(
+            statement="가자",
+            source_utterance_ids=("utt_1",),
+            confidence=0.9,
+            original_statement="가자",
+            core_text="가자",
+            substance_id="utt_1",
+        )
     ]
 
 
@@ -343,6 +368,7 @@ def test_a_decision_belongs_to_the_meeting_and_carries_no_owner() -> None:
         "id",
         "meeting_id",
         "statement",
+        "original_statement",
         "confidence",
         "origin",
         "created_at",

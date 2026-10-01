@@ -105,6 +105,33 @@ class ResolutionRequest:
     target: str
     context: tuple[str, ...] = ()
     context_after: tuple[str, ...] = ()
+    target_id: str = ""
+    context_ids: tuple[str, ...] = ()
+    context_after_ids: tuple[str, ...] = ()
+    purpose: str = "commitment"
+    """``commitment`` for an action item's sentence, ``decision`` for the turn a
+    decision was settled in. Only a resolver that summarises reads it: a decision
+    is written up as what was decided, in the third person, not as the speaker's
+    promise, and need not keep the turn's verb ending."""
+    related: tuple[tuple[str, str], ...] = ()
+    """``(utterance id, text)`` of lines from elsewhere in the meeting that are about
+    the same thing, found by ``pipeline.related``. Only a resolver that can say
+    which lines it used reads them (``LlmResolver``); the ids beside ``context`` and
+    ``context_after`` are for the same reason. All default to empty, so a request
+    built without them is exactly what it was before."""
+
+
+@dataclass(frozen=True)
+class Resolution:
+    """A resolved sentence, and the utterances it was written from.
+
+    ``used`` is what the model said it drew on -- the lines the screen shows
+    beneath the sentence so a person can check it and correct it. Empty when the
+    sentence is the raw quote, or when the resolver does not cite.
+    """
+
+    text: str
+    used: tuple[str, ...] = ()
 
 
 @runtime_checkable

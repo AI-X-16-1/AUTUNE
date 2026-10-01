@@ -29,6 +29,7 @@ from autune_core import (
     Meeting,
     PrivacyViolationError,
     TeamIntegration,
+    Utterance,
     get_logger,
     jira_access,
     load_integration,
@@ -45,10 +46,12 @@ from autune_integrations import (
     JiraClient,
     NotionClient,
     PermanentIntegrationError,
+    SlackClient,
     refresh_access_token,
 )
+from autune_integrations.errors import SlackRecipientNotLinkedError
 
-from . import calendar_sync, jira_sync, notion_setup, service
+from . import calendar_sync, jira_sync, notion_backfill, notion_setup, service
 from .models import ExtActionItem, ExtCalendarPoll, ExtDecision, ExtExternalRef
 from .pipeline.base import give_roster
 from .pipeline.registry import get_classifier, get_nli, get_resolver
@@ -116,6 +119,7 @@ def _extract(meeting_id: str, utterances: Sequence[TranscriptUtterance]) -> None
     with session_scope() as session:
         consented = service.consented_utterance_ids(session, meeting_id)
         roster = service.team_roster(session, meeting_id)
+        day = service.decision_day(session, meeting_id)
 
     classifier = get_classifier()
     # A classifier that sends text out replaces these names first (#411).
@@ -124,7 +128,14 @@ def _extract(meeting_id: str, utterances: Sequence[TranscriptUtterance]) -> None
     classified = service.verify_utterances(get_nli(), classified)
 
     resolver = get_resolver()
-    resolved_descriptions = service.resolve_commitment_references(resolver, classified)
+    # The resolver sends text out too, when it is the ``llm`` one (#411).
+    give_roster(resolver, roster)
+    summaries = service.resolve_commitment_summaries(resolver, classified)
+    resolved_descriptions = {uid: resolution.text for uid, resolution in summaries.items()}
+    related_lines = {uid: resolution.used for uid, resolution in summaries.items()}
+    decision_summaries = service.resolve_decision_summaries(
+        resolver, classified, meeting_id=meeting_id, day=day
+    )
 
     with session_scope() as session:
         stored = service.store_classifications(
@@ -133,13 +144,19 @@ def _extract(meeting_id: str, utterances: Sequence[TranscriptUtterance]) -> None
             utterances=classified,
             model_version=classifier.model_version,
         )
-        decisions = service.build_decisions(session, meeting_id=meeting_id, utterances=classified)
+        decisions = service.build_decisions(
+            session,
+            meeting_id=meeting_id,
+            utterances=classified,
+            summaries=decision_summaries,
+        )
         items = service.build_action_items(
             session,
             meeting_id=meeting_id,
             utterances=utterances,
             classified=classified,
             resolved=resolved_descriptions,
+            related=related_lines,
         )
         ambiguous = service.record_ambiguous_agreements(
             session, meeting_id=meeting_id, classified=classified
@@ -162,11 +179,9 @@ def _extract(meeting_id: str, utterances: Sequence[TranscriptUtterance]) -> None
         resolver_model_version=resolver.model_version,
         resolved_commitments=len(resolved_descriptions),
     )
-    # TODO(강민구): step 6, the DM: for each of ``service.unasked_confirmations``,
-    # resolve the speaker's Slack account and call
-    # ``service.ask_for_confirmation`` -- blocked on an account mapping (#70)
-    # and a team Slack client (#30). Step 7, Notion (#30) -- Jira was
-    # dropped (#82): both its auth paths tie a workspace to whoever set it up.
+    # Step 6, the DM, is ``ask_confirmations``, not this run: a speaker who is
+    # identified or links Slack a little later is still asked. Step 7 waits for
+    # a person to confirm (#246).
 
     # Step 8, after the writes have committed. The payload is never logged:
     # decision statements and item descriptions are meeting content.
@@ -235,6 +250,123 @@ def reextract_consent_changes() -> list[str]:
             f"{', '.join(violations)}"
         )
     return done
+
+
+@shared_task(name="autune.extraction.periodic.fill_identified_assignees")
+@periodic(timedelta(minutes=10))
+def fill_identified_assignees() -> list[str]:
+    """Items whose speaker was identified after extraction get that person as
+    their assignee (#360; ``service.fill_identified_assignees``). Returns the
+    items' ids.
+
+    Then, after the commit, an item already confirmed goes through
+    ``sync_after_confirmation`` -- the same call the router makes after a board
+    edit -- so its Notion page and Jira issue name the person, and a due date
+    goes on their own calendar.
+
+    ``ExtractionResult`` is **not** published again, the way a board edit does
+    not publish it: D and E read the assignee on the meeting's next run. A
+    republish here would reopen E's aggregation for just these meetings, days
+    later, and for no other kind of correction (lsh2217's review of #536).
+
+    Every ten minutes because identifying a speaker is a person on a screen,
+    and a run that finds nothing is one query. Safe to overlap: the update is
+    conditional on the assignee and label as read, so a second run changes
+    nothing the first did.
+    """
+    with session_scope() as session:
+        filled = service.fill_identified_assignees(session)
+        confirmed = [
+            item.id for item in filled if item.status != ActionStatus.NEEDS_CONFIRMATION.value
+        ]
+        filled_ids = [item.id for item in filled]
+
+    for action_item_id in confirmed:
+        sync_after_confirmation(action_item_id)
+    # Ids and counts only: the assignee is a person.
+    log.info("extraction_assignees_filled", items=len(filled_ids), synced=len(confirmed))
+    return filled_ids
+
+
+@shared_task(name="autune.extraction.periodic.ask_confirmations")
+@periodic(timedelta(minutes=5))
+def ask_confirmations() -> list[str]:
+    """Step 6: DM each speaker the ambiguous agreement they made -- "was that a
+    commitment?" -- and start its clock (#70, WBS 8.3). Returns the utterance
+    ids asked about.
+
+    What is asked is ``service.confirmations_to_ask``: not yet asked, recorded
+    inside ``CONFIRMATION_TIMEOUT``, by an identified, consenting speaker. The
+    DM goes to that speaker only, through the team's Slack bot, to the Slack
+    account they linked (#255, #478); ``send_confirmation_dm`` refuses any
+    other recipient. The answer comes back through ``slack.handle_block_action``.
+
+    Each question is claimed and sent in its own transaction
+    (``ask_for_confirmation``): a failed send takes the claim back and the next
+    run asks again, and a claim another run holds sends nothing. A team with no
+    Slack connection, and a speaker who has not linked a Slack account, are
+    skipped and looked at again next time, until the window closes. Any other
+    integration failure is logged by class and retried the same way. **A
+    privacy violation is never swallowed**: the others are still asked, then it
+    is raised with the utterance ids, as the extraction's sweeps do.
+
+    Every five minutes: a question should reach the speaker while the meeting
+    is still on their mind, and a run with nothing to ask is one query.
+    """
+    with session_scope() as session:
+        pending = service.confirmations_to_ask(session)
+        secrets: dict[str, str | None] = {}
+        for team_id in sorted({q.team_id for q in pending}):
+            config = load_integration(session, team_id, "slack")
+            secrets[team_id] = config.require_secret() if config is not None else None
+
+    asked: list[str] = []
+    violations: list[str] = []
+    for question in pending:
+        secret = secrets[question.team_id]
+        if secret is None:
+            continue
+        try:
+            with session_scope() as session:
+                said = session.get(Utterance, question.utterance_id)
+                if said is None:
+                    continue
+                row = service.ask_for_confirmation(
+                    session,
+                    SlackClient(secret),
+                    meeting_id=question.meeting_id,
+                    speaker_id=question.speaker_id,
+                    recipient_id=question.speaker_id,
+                    utterance_id=question.utterance_id,
+                    quoted_text=said.text,
+                )
+        except PrivacyViolationError:
+            violations.append(question.utterance_id)
+            continue
+        except SlackRecipientNotLinkedError:
+            log.info("extraction_confirmation_not_linked", utterance_id=question.utterance_id)
+            continue
+        except IntegrationError as exc:
+            log.warning(
+                "extraction_confirmation_send_failed",
+                utterance_id=question.utterance_id,
+                reason=type(exc).__name__,
+            )
+            continue
+        if row is not None:
+            asked.append(question.utterance_id)
+
+    log.info(
+        "extraction_confirmations_asked",
+        pending=len(pending),
+        asked=len(asked),
+        violations=len(violations),
+    )
+    if violations:
+        raise PrivacyViolationError(
+            f"unmasked value in {len(violations)} confirmation DM(s): {', '.join(violations)}"
+        )
+    return asked
 
 
 @shared_task(name="autune.extraction.sync_action_item", acks_late=True)
@@ -470,8 +602,16 @@ def pull_calendar_changes() -> None:
         for action_item_id in moved:
             try:
                 sync_action_item(action_item_id)
-            except (IntegrationError, PrivacyViolationError):
+            except IntegrationError:
                 log.warning("extraction_notion_sync_failed", action_item_id=action_item_id)
+            except PrivacyViolationError:
+                # Blocked, not failed: the outbound check refused the send and
+                # nothing left. Its own event, as ``sync_after_confirmation``
+                # logs it, so a privacy block never reads as a flaky Notion.
+                log.warning(
+                    "extraction_notion_sync_blocked_by_privacy_guard",
+                    action_item_id=action_item_id,
+                )
 
 
 def _pull_one(user_id: str) -> list[str]:
@@ -642,6 +782,32 @@ def backfill_jira(team_id: str) -> dict[str, int]:
         client.close()
     log.info("extraction_jira_backfilled", team_id=team_id, **counts)
     return counts
+
+
+@shared_task(name="autune.extraction.backfill_notion", acks_late=True)
+def backfill_notion(team_id: str) -> None:
+    """After a one-click Notion setup (``notion_connect.set_up``): every confirmed
+    action item and decision of the team into the databases just recorded.
+
+    Out of the setup request because Notion takes about three requests a
+    second, and a team with hundreds of confirmed rows would outlast it (#481).
+    Safe to run again -- a redelivery after a lost worker included: each row
+    goes through the same claim-then-call sync a live confirmation uses, and
+    one row's failure, a privacy block among them, costs only that row
+    (``notion_backfill``). Logs counts only."""
+    items = notion_backfill.Stats()
+    notion_backfill.backfill_action_items(notion_backfill._confirmed_action_items(team_id), items)
+    decisions = notion_backfill.Stats()
+    notion_backfill.backfill_decisions(notion_backfill._confirmed_decisions(team_id), decisions)
+    log.info(
+        "extraction_notion_backfilled",
+        team_id=team_id,
+        items_sent=items.sent,
+        items_replaced=items.replaced,
+        items_failed=items.failed,
+        decisions_sent=decisions.sent,
+        decisions_failed=decisions.failed,
+    )
 
 
 def trash_notion_page(action_item_id: str) -> None:

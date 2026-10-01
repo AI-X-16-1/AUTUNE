@@ -236,6 +236,49 @@ class EditHistoryEntry(BaseModel):
     at: datetime
 
 
+class SummaryDecision(BaseModel):
+    """A decision as the summary tab lists it: the wording a person confirmed,
+    or the model's while it is still pending."""
+
+    id: str
+    statement: str
+    status: Literal["pending", "confirmed"]
+
+
+MAX_NOTE_CHARS = 2000
+
+
+class MeetingNoteUpdate(BaseModel):
+    """The memo, whole. Blank removes it."""
+
+    body: str = Field(max_length=MAX_NOTE_CHARS)
+
+
+class MeetingSummary(BaseModel):
+    """S15's 요약 tab, v1 (#421, WBS 4.9): B's own rows in three levels, no model.
+
+    The tab reads these top down -- counts, then the decisions and items
+    themselves, then (through the 액션 tab's drawer) the lines they came from.
+    Nothing here is a verbatim quotation: descriptions and statements are the
+    same fields the board already lists. A summary written by an LLM over the
+    whole meeting is v2, and waits on #392.
+    """
+
+    meeting_id: str
+    decisions: list[SummaryDecision]
+    """Confirmed first, then pending, each in the order they were settled.
+    A rejected one is not a decision of the meeting and is left out."""
+    action_items: list[ActionItemRead]
+    """Every item of the meeting, whatever its status."""
+    open_questions: int
+    """Utterances classified as open questions -- asked, not settled."""
+    ambiguous_waiting: int
+    """Ambiguous agreements not yet answered: never asked, or asked and within
+    the confirmation window."""
+    note: str | None = None
+    note_updated_at: datetime | None = None
+
+
 class ActionItemDetail(ActionItemRead):
     """One item and its evidence, for S18.
 
@@ -257,9 +300,47 @@ class ActionItemDetail(ActionItemRead):
     order comes with it at no extra cost.
     """
 
+    context: list[SourceUtterance] = Field(default_factory=list)
+    """What was said just before the first source, in spoken order, so a sentence
+    with nothing to point at ("다음 주까지 볼게요") can be read with the thing it
+    is about. Not what this was drawn from, only the lines around it, which is
+    why it is apart from ``sources``. A speaker who did not consent is never here
+    -- the line every read of the transcript draws (privacy.md section 5)."""
+
+    related: list[SourceUtterance] = Field(default_factory=list)
+    """The lines the summary says it was written from, beyond the commitment itself,
+    in spoken order -- a turn that names the thing, a line elsewhere about the
+    same subject (``ext_action_item_related``). Empty when the description is the
+    quote, a person's own words, or the resolver was not asked to cite. The
+    person checking the summary reads these beneath it and corrects the sentence
+    if it says more than they show. Same consent filter as ``context``."""
+
     history: list[EditHistoryEntry] = Field(default_factory=list)
     """What people did to the item, oldest first (S18, #109). Empty for an item
     the model extracted and nobody has touched since."""
+
+
+class CarriedOverItem(ActionItemRead):
+    """An open item from an earlier meeting of the same team, with the meeting
+    it was made in -- the popup says where each one came from."""
+
+    meeting_title: str
+    meeting_started_at: datetime | None
+
+
+class CarriedOver(BaseModel):
+    """What earlier meetings left open, for the popup a meeting's review opens
+    with (PRD 5.2, "incomplete items from previous meetings resurface in the
+    next one"; WBS 4.8).
+
+    ``open`` and ``overdue`` count everything; ``items`` is the most urgent
+    part of it -- overdue first, then the nearest due date, undated last -- so
+    a team with a long tail still sees what matters without a list to scroll.
+    """
+
+    open: int
+    overdue: int
+    items: list[CarriedOverItem]
 
 
 # --- review before anything leaves (#246) ------------------------------------
@@ -347,6 +428,33 @@ class ReviewAmbiguous(BaseModel):
     utterance_id: str
     outcome: Literal["not_asked", "pending", "undecided", "resolved"]
     resolved_kind: str | None
+
+
+class DecisionDetail(ReviewDecision):
+    """One decision and the words it was settled in, for the row S15 expands.
+
+    The list carries the source utterances' ids and one preview line, never the
+    whole set of quotations -- the same line ``ActionItemDetail`` draws, and for
+    the same reason: a verbatim quotation leaves the server only when one row's
+    is asked for.
+    """
+
+    sources: list[SourceUtterance]
+    """In the order they were spoken -- the proposal first, the sentence that
+    settled it last. Empty for a decision a person added, which has none."""
+
+    context: list[SourceUtterance] = Field(default_factory=list)
+    """What was said just before the first source, in spoken order, so a sentence
+    with nothing to point at ("다음 주까지 볼게요") can be read with the thing it
+    is about. Not what this was drawn from, only the lines around it, which is
+    why it is apart from ``sources``. A speaker who did not consent is never here
+    -- the line every read of the transcript draws (privacy.md section 5)."""
+
+    related: list[SourceUtterance] = Field(default_factory=list)
+    """The lines the model's write-up of this decision says it used, beyond the turns
+    it was settled in (``ext_decision_related``), in spoken order. Empty when the
+    statement is the assembled line or a person's own wording. Same consent filter
+    as ``context``."""
 
 
 class MeetingReview(BaseModel):

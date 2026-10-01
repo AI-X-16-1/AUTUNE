@@ -120,7 +120,7 @@ and keeps their module's `tools.py`.
 | **Briefing** | 문민재 | Ten minutes before a meeting, sends the previous meeting's summary and the issues this one should settle; links Jira issues **if #82 brings Jira back** | time, from Google Calendar (`list_events`) | D (links, decision threads), B (open items), C (undismissed gaps and their questions), Jira only after #82 | D's pre-meeting brief — D's own surface, rule 2 |
 | **Follow-up** | 박재경 | Watches progress and gaps nobody closed; when a follow-up meeting looks needed, proposes one — to the team lead only | state, `@periodic` | C's topic-level aggregates only (a topic's `silent_share`, undismissed gaps), B (open items), D (decision threads, topic links), Calendar (`free_busy`) | a proposal on the lead's approval screen; the calendar event only after approval — L2 |
 | **Workload** | 강민구 | Notices that one person is overloaded while another has finished, and proposes a redistribution — to the manager only; owns the Gmail, Google Calendar and Jira integrations | state, `@periodic` | B (items per owner and their state), Calendar (`free_busy`), Jira only after #82 | a proposal on the manager's approval screen; any reassignment only after approval — L2 |
-| **Report** | 이승환 | After a meeting, writes the summary minutes report and sends it | `autune.intelligence.completed` | E (scores, trend), B, C, D (their summaries) | E's report delivery — E's own surface, rule 2 |
+| **Report** | 이승환 | After a meeting, composes its structured minutes from a template (no LLM) and proposes that E store and post them | `autune.intelligence.completed`; a chat request | B (confirmed action items, review-state counts); C's open gaps (`gap.open_gaps`, HIGH and MEDIUM listed, as S20 shows them; LOW only in C's count); D (linked meetings, by title and date only) once its `tools.py` ships — until then that section is absent. Not E's scores: the report carries no quality grade | a draft stored by E at L1 (`draft_meeting_report`); the channel post through E's report delivery at L2 (`publish_meeting_report`) — E's own surface, rule 2 |
 
 Three things in that table are decisions, not descriptions:
 
@@ -359,7 +359,7 @@ says.
 | B | its action items; the stored classifications; an item's review state | B's read API, nothing new. `list_action_items` exists today |
 | C | a meeting's gaps with `risk_score` and `suggested_question`; the topic graph; a topic's `silent_share` | all four of C's steps produce values; what is left is measuring precision on real meetings (#22). Tools are C's owner's, in topic-level form |
 | D | this meeting's links; a decision thread; the team's decisions | `links_for_meeting`, `decision_thread`, `list_decisions` over #185's read routes, named by D's owner |
-| E | the quality score; the trend | E's aggregate reads |
+| E | a meeting's quality score; the team's trend; its recurring gap patterns; the misalignment risk (withheld before #27's history gate) | E's aggregate reads. No speaking-ratio tool (invariant 11). Two actions for the Report subagent: `draft_meeting_report` (L1) and `publish_meeting_report` (L2) |
 
 - **C — the charter reaching gap detection is a proposal, to be agreed with
   C.** An earlier draft said `detect_gaps` would take a `checklist: list[str]`
@@ -445,7 +445,7 @@ CREATE TABLE agent_runs (
 CREATE TABLE agent_approvers (
   team_id     TEXT,    -- team_…
   user_id     TEXT,    -- user_…, ON DELETE CASCADE
-  scope       TEXT,    -- research | followup | workload | any
+  scope       TEXT,    -- research | followup | workload | report | any
   created_at  TIMESTAMPTZ,
   PRIMARY KEY (team_id, user_id, scope)
 );
@@ -587,6 +587,11 @@ triggers it wants (section 3.2) and the main agent's scheduler registers them,
 so a subagent owner never writes a `@periodic` task or an event subscription of
 their own, and every run — whoever it was for — is one `agent_runs` row with
 the same shape.
+
+**Safe to deliver twice.** The trigger's redelivery guard keys on the Celery
+task id, so a redelivery of the same task is skipped, while E's re-publish of
+`autune.intelligence.completed` is a new task that runs again and supersedes
+the older pending proposal of the same subagent for the same meeting.
 
 A periodic task is a `@periodic` declaration beside the task itself
 (`async-pipeline.md`, #374); nothing edits `apps/worker`. The agent layer's
@@ -782,7 +787,7 @@ duplicate message and a bypassed check at the same time:
 | Gap report thread, generated question cards | C | `slack.py`; Briefing and Follow-up quote a gap or question into their own output, never post it separately |
 | Topic-link notice, decision-drift warning, pre-meeting brief | D | `notify.py`, capped and de-duplicated, implementation in #234 |
 | Speaking ratio | E | `feedback.build_speaking_ratio_dm`, DM to the subject only |
-| Meeting summary report | E | the Report subagent composes it; E's report delivery sends it |
+| Meeting summary report | E | the Report subagent composes it and proposes two of E's actions: `draft_meeting_report` stores it (L1, in E's `L1_ACTIONS`), and `publish_meeting_report` posts the stored draft once, after approval (L2) |
 
 So an L2 action is never "the agent sends X". It is "the agent asks the owning
 module to send X, and the module's own guard decides".
@@ -870,6 +875,8 @@ Unchanged, and stated here so the six read together.
 
 ### Plan mode — a plan is submitted before anything at L2 happens
 
+**As built (`agent/docs/specs/2026-09-30-plan-mode-design.md`): an approval queue.** Every subagent plans inside its own graph and returns `ProposedAction`s, so there is no model loop to add; an L2 proposal waits in `agent_pending_actions` until an approver with its scope approves it on the approvals page, and then runs under its run's scope. The loop below stays as the direction if a subagent ever needs the model to plan; it would need an answer for keeping `messages`, which #509 does not store. Approval is at-most-once: the claim is committed before the action runs, so an approval interrupted mid-run reads approved with no result and is never re-run — other modules' writes commit in their own sessions, and running one twice would move a person twice. An approval interrupted mid-run is listed on the approvals page as needing a check, not hidden. Only a current member of the team who holds an approver row for the proposal's scope, or `any`, may decide.
+
 Borrowed whole from coding agents. It is not a second model or a planning
 algorithm; it is the same loop with three differences:
 
@@ -932,6 +939,8 @@ resumes in `execute` mode**. The context the plan was made in is the messages;
 the messages are rows; nothing is lost by the task ending. Enqueuing that
 resuming task from the API process works today (#258, closed by #300); waking
 one on a timeout instead of on a person's click is #207's beat schedule.
+
+**An L2 proposal's arguments are ids and short scalars only** — every key is a short lowercase name (`[a-z_]{1,32}`), and every value an id, an ASCII ISO date, a boolean, or a lowercase enum up to 32 characters. Text a proposal needs is stored by its owner first and pointed at by id (E's report draft, Research's document). Anything else is refused and not queued.
 
 ### When it asks, and when it does not
 
@@ -1221,8 +1230,10 @@ an L1 or an L2 action of the person making it. Not decided.
 `agent_approvers` (section 5) says who the lead and the manager are, and a
 wrong row sends a workload proposal to the wrong person. Setting a row is
 therefore itself a permission question, the same one as 13.4, and should be
-answered with it. Until then the first member of a team sets it and every
-change is written to `agent_runs`.
+answered with it. Not decided: until then nothing in the product sets a row —
+no endpoint, no screen — and the rows are seeded with SQL for the demo.
+
+For the demo: `INSERT INTO agent_approvers (team_id, user_id, scope) VALUES ('<team>', '<user>', 'any');`
 
 ### 13.6 Gmail is a new integration, and Jira waits on #82
 
@@ -1237,6 +1248,31 @@ Jira is not a working client today: `integrations.md` records it as evaluated
 and dropped, and #82 is reopened with 강민구 owning it (3LO, B's sync, and
 Briefing's reads). Briefing's issue links and any Jira read by Workload wait on
 #82, and neither subagent depends on them.
+
+### 13.7 A republished event does not rerun a subagent
+
+`autune.intelligence.completed` is published more than once for a meeting: E
+re-aggregates when a late module reports, and again when C republishes its
+`GapReport` after a dismissal, a template switch (#498) or a rescoring (#506).
+The trigger skips a subagent that already has a finished run for that event and
+meeting (`_already_ran`, `main/triggers.py`), which is what makes a redelivered
+event safe — and also means the second, corrected result is never read.
+
+Two proposals can then go stale while they wait for approval: the Report's
+draft, written before a late B arrived or still quoting a gap the team has
+since dismissed, and Follow-up's proposal, holding the dismissed gap as its
+evidence (reviews of #509 and #531). The choice is between re-reading the
+evidence when a person approves and treating E's republish as a new run. It is
+to be settled with plan mode (section 8). Until then a draft is whatever the
+first run wrote.
+
+The Report's half of the precondition is in place: its post is pinned to its
+own run's draft (review of #508). Both proposals carry one `draft_id`, E
+stores it with the draft, and `publish_meeting_report` and the delivery task
+post only that draft -- approving a proposal whose draft a later run has
+replaced posts nothing (`draft not current`). A rerun therefore cannot change
+what an earlier approval posts. The approval card still does not show the
+draft's text.
 
 ## 14. Build plan — from 2026-09-29 to 2026-10-12
 

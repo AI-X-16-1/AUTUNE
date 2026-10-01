@@ -34,6 +34,7 @@ from collections.abc import Mapping
 from typing import Any
 
 import httpx
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from autune_core.integrations_config import IntegrationConfig
@@ -238,6 +239,26 @@ def stored_targets(
         "decision_db_id": target.decision_db_id,
         "minutes_db_id": target.minutes_db_id,
     }
+
+
+def lock_setup(session: Session, team_id: str) -> None:
+    """Hold the team's setup lock for the rest of ``session``'s transaction.
+
+    Two people finishing the first setup at once both find no
+    ``ext_notion_targets`` row, so a row lock has nothing to hold: both would
+    make databases, leaving three orphans in Notion and one request failing on
+    the primary key (#481). A transaction-scoped advisory lock keyed by team
+    makes the second wait, then read the first one's row and reuse its
+    databases. The key carries B's own namespace -- D keys its lineage lock on
+    the bare team id, and the two have no reason to wait on each other.
+    PostgreSQL only; SQLite (unit tests) has no such lock and runs one writer
+    anyway."""
+    if session.get_bind().dialect.name != "postgresql":
+        return
+    session.execute(
+        text("SELECT pg_advisory_xact_lock(hashtext(:key))"),
+        {"key": f"extraction.notion_setup:{team_id}"},
+    )
 
 
 def save_targets(

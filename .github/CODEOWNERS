@@ -33,6 +33,7 @@
 /apps/web/src/features/gap/         @PARKJAEKYUNG0525
 /apps/web/src/features/context/     @mminjae97
 /apps/web/src/features/dashboard/   @lsh2217
+/apps/web/src/features/agent/       @mkkim68
 
 # --- Shared: everyone approves ---
 # packages/contracts breaks four modules at once when it changes badly.

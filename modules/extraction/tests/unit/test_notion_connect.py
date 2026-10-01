@@ -153,15 +153,12 @@ def test_notion_being_down_is_still_an_error(
         _pages_for(session, monkeypatch, notion_setup.NotionSetupError(502, "bad gateway"))
 
 
-def test_setting_up_records_the_databases_then_fills_them(
-    session: Session, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def _set_up(session: Session, monkeypatch: pytest.MonkeyPatch, calls: list[str]) -> dict[str, Any]:
     @contextmanager
     def scope() -> Iterator[Session]:
         yield session
         session.commit()
-
-    calls: list[str] = []
+        calls.append("commit")
 
     class _Client:
         def __enter__(self) -> _Client:
@@ -178,15 +175,6 @@ def test_setting_up_records_the_databases_then_fills_them(
             "minutes_db_id",
         ]
 
-    def items(rows: list, stats: Any) -> None:
-        calls.append("items")
-        stats.sent += 2
-        stats.replaced += 1
-
-    def decisions(rows: list, stats: Any) -> None:
-        calls.append("decisions")
-        stats.sent += 1
-
     monkeypatch.setattr(notion_connect, "session_scope", scope)
     monkeypatch.setattr(
         notion_connect,
@@ -195,26 +183,57 @@ def test_setting_up_records_the_databases_then_fills_them(
             "notion", team, "ntn_token", {"workspace_id": "ws-1"}
         ),
     )
+    monkeypatch.setattr(notion_setup, "lock_setup", lambda _s, team: calls.append(f"lock:{team}"))
     monkeypatch.setattr(notion_setup, "notion_client", lambda token: _Client())
     monkeypatch.setattr(notion_setup, "provision_databases", provision)
     monkeypatch.setattr(
-        notion_connect.notion_backfill, "_confirmed_action_items", lambda t: [("a", "m")]
+        notion_connect.tasks.backfill_notion, "delay", lambda team: calls.append(f"queued:{team}")
     )
-    monkeypatch.setattr(
-        notion_connect.notion_backfill, "_confirmed_decisions", lambda t: [("d", "m")]
-    )
-    monkeypatch.setattr(notion_connect.notion_backfill, "backfill_action_items", items)
-    monkeypatch.setattr(notion_connect.notion_backfill, "backfill_decisions", decisions)
+    return notion_connect.set_up(TEAM, "page-2")
 
-    result = notion_connect.set_up(TEAM, "page-2")
 
-    assert calls == ["provision:page-2:False", "items", "decisions"]  # recorded before filling
+def test_setting_up_records_the_databases_then_queues_the_fill(
+    session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[str] = []
+
+    result = _set_up(session, monkeypatch, calls)
+
+    # Locked before anything is read; queued only once the row is committed,
+    # or the worker could look for databases not yet recorded.
+    assert calls == ["lock:team_1", "provision:page-2:False", "commit", "queued:team_1"]
     row = session.get(ExtNotionTarget, TEAM)
     assert row is not None and row.parent_page_id == "page-2"
     assert row.workspace_id == "ws-1"  # the workspace it was made in
     assert result["databases"] == "created"
-    assert (result["action_items"]["sent"], result["action_items"]["replaced"]) == (2, 1)
-    assert result["decisions"]["sent"] == 1
+    assert result["backfill"] == "queued"
+    assert "action_items" not in result  # nothing was sent inside the request (#481)
+
+
+def test_the_lock_is_a_no_op_on_sqlite(session: Session) -> None:
+    notion_setup.lock_setup(session, TEAM)  # SQLite has no advisory locks; must not raise
+
+
+def test_the_fill_sends_the_teams_confirmed_rows(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: dict[str, Any] = {}
+
+    def items(rows: list, stats: Any) -> None:
+        seen["items"] = rows
+        stats.sent += 2
+
+    def decisions(rows: list, stats: Any) -> None:
+        seen["decisions"] = rows
+        stats.sent += 1
+
+    backfill = notion_connect.tasks.notion_backfill
+    monkeypatch.setattr(backfill, "_confirmed_action_items", lambda t: [("a", f"m-{t}")])
+    monkeypatch.setattr(backfill, "_confirmed_decisions", lambda t: [("d", f"m-{t}")])
+    monkeypatch.setattr(backfill, "backfill_action_items", items)
+    monkeypatch.setattr(backfill, "backfill_decisions", decisions)
+
+    notion_connect.tasks.backfill_notion(TEAM)
+
+    assert seen == {"items": [("a", "m-team_1")], "decisions": [("d", "m-team_1")]}
 
 
 def test_setting_up_without_a_connection_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -223,6 +242,7 @@ def test_setting_up_without_a_connection_is_refused(monkeypatch: pytest.MonkeyPa
         yield None
 
     monkeypatch.setattr(notion_connect, "session_scope", scope)
+    monkeypatch.setattr(notion_setup, "lock_setup", lambda _s, team: None)
     monkeypatch.setattr(notion_connect, "load_integration", lambda _s, team, svc: None)
 
     with pytest.raises(notion_setup.NotionSetupError) as caught:

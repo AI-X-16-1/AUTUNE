@@ -15,8 +15,8 @@ import { getNotionSetup, setUpNotion, type NotionSetupState } from "../api";
 /**
  * One button to connect the team's Notion workspace (#428). On Notion's screen
  * the person picks the pages Autune may see; back here, if they picked exactly
- * one, the databases are made under it and filled with everything already
- * confirmed without another click. With several, they choose one.
+ * one, the databases are made under it without another click, and everything
+ * already confirmed goes in from the worker (#481). With several, they choose one.
  *
  * A teamspace page is the safe parent: a private page goes with its owner, and
  * the databases with it (external-approvals.md).
@@ -30,12 +30,10 @@ export function NotionConnect({ meetingId }: { meetingId: string }) {
   const setUp = useCallback(
     async (pageId: string) => {
       setBusy(true);
-      setNote("Notion에 DB를 만들고 확정된 내용을 넣는 중입니다…");
+      setNote("Notion에 DB를 만드는 중입니다…");
       try {
-        const result = await setUpNotion(meetingId, pageId);
-        const items = result.action_items.sent + result.action_items.replaced;
-        const decisions = result.decisions.sent + result.decisions.replaced;
-        setNote(`DB를 준비하고 액션 ${items}건, 결정 ${decisions}건을 넣었습니다.`);
+        await setUpNotion(meetingId, pageId);
+        setNote("DB를 준비했습니다. 확정된 액션과 결정을 Notion에 넣고 있습니다 — 많으면 몇 분 걸립니다.");
         setSetup(await getNotionSetup(meetingId));
       } catch {
         setNote("DB를 만들지 못했습니다. 페이지를 Autune에 공유했는지 확인해 주세요.");

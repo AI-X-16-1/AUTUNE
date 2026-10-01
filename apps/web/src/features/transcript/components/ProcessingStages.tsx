@@ -2,41 +2,47 @@ import Link from "next/link";
 
 import { StatusDot, type StatusVariant } from "@/shared/ui/StatusDot";
 
-import type { MeetingDetail } from "../types";
+import type { MeetingDetail, ProcessingStage } from "../types";
 
 type StageState = "done" | "running" | "queued" | "failed";
 
-type Stage = { label: string; detail: string; state: StageState };
+type Stage = { label: string; detail: string; state: StageState; progress?: number };
 
 /**
- * S12, drawn from what the backend actually knows.
+ * S12, drawn from where the worker says it is.
  *
- * The design shows six stages with per-stage timings and counts, fed by a
- * WebSocket. That feed does not exist: `process_recording` is one task, and
- * the only things it writes as it goes are the meeting's status and, at the
- * end, two flags. So this component derives each stage from those and says
- * nothing it cannot back:
+ * The worker records its current step and how far through it is on the job
+ * row (`autune_audio.progress`), and `GET /meetings/{id}` returns both, so this
+ * shows the step that is actually running, a percentage for it, and an
+ * overall percentage above the list. Before this, the task wrote only the
+ * meeting's status, and recognition, diarization and masking all read "진행"
+ * for the whole of a transcription that takes about as long as the meeting.
  *
- * - **upload** is done — the page exists because the upload returned 202.
- * - **STT / diarization** run while the meeting is `analyzing`; there is no
- *   way to tell which of the two is in progress, so both are "진행".
- * - **PII masking** and **deleting the original** are read from their flags,
- *   which `persist_transcript` sets in the same transaction as the
- *   utterances. Until then masking shows as running (it happens inside the
- *   task) and deletion as queued (it happens last).
+ * - **The rows are in the order the worker runs them.** The original is
+ *   deleted when diarization ends (`storage.adopt` closes there), before
+ *   masking — so deletion is listed above masking, not below as the design
+ *   file has it. The screen says what happened in the order it happened.
+ * - **The overall figure is weighted, not measured.** Recognition dominates
+ *   (Whisper at about real time on CPU), diarization is most of the rest, and
+ *   decoding, masking and saving are seconds. `WEIGHT` says so, and the label
+ *   says "약".
  * - **B · C · D** start when `TranscriptReady` goes out, which is after
  *   `complete`. Module A cannot see their progress and this feature may not
  *   ask them (`CLAUDE.md`), so it says "시작됨" and points at their tabs.
  *
- * `failed` turns the running stage red. The task does not report which step
- * raised, so the reason is generic and the retry is a new upload for the
- * same meeting — the pipeline accepts a recording for a `failed` meeting.
+ * `failed` turns the step that was running red. The retry is a new upload
+ * for the same meeting — the pipeline accepts a recording for a `failed`
+ * meeting.
  */
 export function ProcessingStages({ meeting }: { meeting: MeetingDetail }) {
   const stages = stagesFor(meeting);
+  const overall = overallProgress(meeting);
 
   return (
     <section aria-label="처리 단계">
+      {overall !== null && (
+        <Overall value={overall} waiting={meeting.stage === null} />
+      )}
       <ol className="border-t border-[var(--color-hairline)]">
         {stages.map((stage) => (
           <li
@@ -65,6 +71,9 @@ export function ProcessingStages({ meeting }: { meeting: MeetingDetail }) {
               >
                 {stage.detail}
               </div>
+              {stage.state === "running" && stage.progress !== undefined && (
+                <Bar value={stage.progress} label={`${stage.label} 진행률`} />
+              )}
             </div>
             <span
               className="shrink-0"
@@ -76,7 +85,16 @@ export function ProcessingStages({ meeting }: { meeting: MeetingDetail }) {
                     : "var(--color-ink-muted)",
               }}
             >
-              {STATE_LABEL[stage.state]}
+              {stage.state === "running" && stage.progress !== undefined ? (
+                <span
+                  className="tabular-nums text-[var(--color-accent-default)]"
+                  style={{ fontFamily: "var(--font-mono)", fontSize: "var(--text-data)", fontWeight: "var(--text-data-weight)" }}
+                >
+                  {percent(stage.progress)}
+                </span>
+              ) : (
+                STATE_LABEL[stage.state]
+              )}
             </span>
           </li>
         ))}
@@ -105,7 +123,7 @@ export function ProcessingStages({ meeting }: { meeting: MeetingDetail }) {
         >
           {meeting.status === "recording"
             ? "녹음 중인 브라우저가 올리면 처리가 시작됩니다."
-            : "이 페이지를 떠나도 처리는 계속됩니다. 단계별 진행률은 아직 제공되지 않아 회의 상태로 표시합니다."}
+            : "이 페이지를 떠나도 처리는 계속됩니다."}
         </p>
       )}
     </section>
@@ -126,35 +144,68 @@ const STATE_LABEL: Record<StageState, string> = {
   failed: "실패",
 };
 
+/** In the order `process_recording` runs them. */
+const ORDER: ProcessingStage[] = ["decoding", "transcribing", "diarizing", "masking", "saving"];
+
+/**
+ * Each step's share of the overall figure. Whisper at roughly real time
+ * dominates; pyannote's embedding pass is most of the rest; the other three
+ * take seconds. Estimates, which is why the overall label says "약".
+ */
+const WEIGHT: Record<ProcessingStage, number> = {
+  decoding: 0.03,
+  transcribing: 0.62,
+  diarizing: 0.3,
+  masking: 0.03,
+  saving: 0.02,
+};
+
+/** Where the running step sits in ORDER; -1 before the worker starts. */
+function position(meeting: MeetingDetail): number {
+  return meeting.stage === null ? -1 : ORDER.indexOf(meeting.stage);
+}
+
+/** 0..1 across the whole task, or null when there is nothing to measure. */
+function overallProgress(meeting: MeetingDetail): number | null {
+  if (meeting.status !== "analyzing") return null;
+  const at = position(meeting);
+  if (at < 0) return 0;
+  let total = 0;
+  for (const [index, stage] of ORDER.entries()) {
+    if (index < at) total += WEIGHT[stage];
+    else if (index === at) total += WEIGHT[stage] * (meeting.stage_progress ?? 0);
+  }
+  return Math.min(1, total);
+}
+
 function stagesFor(meeting: MeetingDetail): Stage[] {
   const recording = meeting.status === "recording";
   const analyzing = meeting.status === "analyzing";
   const failed = meeting.status === "failed";
   // `recording` is the live channel's status (#307): the browser still holds
   // the audio and nothing has run on the server yet.
-  const finished =
-    !recording && !analyzing && !failed && meeting.status !== "scheduled";
+  const finished = !recording && !analyzing && !failed && meeting.status !== "scheduled";
+  const at = position(meeting);
+  const fraction = meeting.stage_progress ?? 0;
 
-  // While analyzing the task is somewhere between decode and the final write;
-  // the first stage that is not yet backed by a flag is the one that shows red
-  // on failure. While recording, nothing has started.
-  const recognition: StageState = finished
-    ? "done"
-    : failed
-      ? "failed"
-      : recording
-        ? "queued"
-        : "running";
-  const masking: StageState = meeting.pii_masked
-    ? "done"
-    : failed || recording
-      ? "queued"
-      : "running";
-  const deletion: StageState = meeting.original_audio_deleted
-    ? "done"
-    : failed
-      ? "done" // adopt() deletes in a finally; a failed task has no recording left
-      : "queued";
+  /** One step's state from where the worker is. `upTo` is the last ORDER
+   * index the row covers, so masking and saving share a row. */
+  const state = (from: number, upTo: number = from): StageState => {
+    if (finished) return "done";
+    if (recording || meeting.status === "scheduled") return "queued";
+    if (at > upTo) return "done";
+    if (at >= from) return failed ? "failed" : "running";
+    return "queued";
+  };
+  const progress = (from: number, upTo: number = from): number | undefined => {
+    if (at < from || at > upTo || !analyzing) return undefined;
+    // A shared row counts its steps as one: masking is its first half.
+    const span = upTo - from + 1;
+    return (at - from + fraction) / span;
+  };
+
+  const deleted =
+    meeting.original_audio_deleted || finished || failed || at >= ORDER.indexOf("masking");
 
   return [
     {
@@ -162,27 +213,30 @@ function stagesFor(meeting: MeetingDetail): Stage[] {
       detail: recording
         ? "녹음이 끝나면 브라우저가 올립니다"
         : "서버가 받았고, ffmpeg 가 16kHz mono 로 변환합니다",
-      state: recording ? "queued" : "done",
+      state: recording ? "queued" : at === 0 && !failed ? "running" : at === 0 ? "failed" : "done",
     },
     {
       label: "음성 인식",
       detail: "Whisper large-v3 · 한국어 · 회의 용어집 적용",
-      state: recognition,
+      state: state(1),
+      progress: progress(1),
     },
     {
       label: "화자 분리",
       detail: "pyannote · 화자 식별은 아직 없어 화자 1, 2 … 로 표시됩니다",
-      state: recognition,
-    },
-    {
-      label: "개인정보 마스킹",
-      detail: "전화 · 이메일 · 주민번호 · 계좌 · 카드 — 저장 전에 마스킹",
-      state: masking,
+      state: state(2),
+      progress: progress(2),
     },
     {
       label: "원본 음성 삭제",
-      detail: "전사가 끝나면 즉시 삭제되고, 삭제 여부가 회의에 기록됩니다",
-      state: deletion,
+      detail: "화자 분리가 끝나면 바로 삭제되고, 삭제 여부가 회의에 기록됩니다",
+      state: deleted ? "done" : "queued",
+    },
+    {
+      label: "개인정보 마스킹 · 저장",
+      detail: "전화 · 이메일 · 주민번호 · 계좌 · 카드 — 저장 전에 마스킹",
+      state: meeting.pii_masked ? "done" : state(3, 4),
+      progress: progress(3, 4),
     },
     {
       label: "구조화 · 갭 · 맥락 분석",
@@ -192,4 +246,55 @@ function stagesFor(meeting: MeetingDetail): Stage[] {
       state: finished ? "done" : "queued",
     },
   ];
+}
+
+function percent(value: number): string {
+  return `${Math.floor(value * 100)}%`;
+}
+
+/** P3 in ui-spec: a 2px bar, accent while running. */
+function Bar({ value, label }: { value: number; label: string }) {
+  return (
+    <div
+      role="progressbar"
+      aria-label={label}
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={Math.floor(value * 100)}
+      className="mt-2"
+      style={{ height: "var(--bar-thickness)", background: "var(--color-surface-sunken)" }}
+    >
+      <div
+        style={{
+          width: `${Math.min(100, value * 100)}%`,
+          height: "100%",
+          background: "var(--color-accent-default)",
+          transition: "width 600ms ease-out",
+        }}
+      />
+    </div>
+  );
+}
+
+/** The whole task at a glance, above the steps. */
+function Overall({ value, waiting }: { value: number; waiting: boolean }) {
+  return (
+    <div style={{ marginBottom: "var(--space-16)" }}>
+      <div className="flex items-baseline justify-between">
+        <span
+          className="text-[var(--color-ink-strong)]"
+          style={{ fontSize: "var(--text-heading)", fontWeight: "var(--text-heading-weight)" }}
+        >
+          {waiting ? "처리를 시작하는 중입니다" : "전사하는 중입니다"}
+        </span>
+        <span
+          className="tabular-nums text-[var(--color-ink-strong)]"
+          style={{ fontFamily: "var(--font-mono)", fontSize: "var(--text-heading)", fontWeight: 600 }}
+        >
+          약 {percent(value)}
+        </span>
+      </div>
+      <Bar value={value} label="전체 진행률" />
+    </div>
+  );
 }

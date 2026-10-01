@@ -851,7 +851,12 @@ MEETING_REPORT_REVIEW_ACTION: Final = "intel_meeting_report_review"
 
 
 def save_meeting_report(
-    session: Session, meeting_id: str, body_markdown: str, *, pending_review: bool = False
+    session: Session,
+    meeting_id: str,
+    body_markdown: str,
+    *,
+    pending_review: bool = False,
+    draft_id: str | None = None,
 ) -> IntelMeetingReport:
     """Store the meeting's report body, replacing an unsent one.
 
@@ -859,6 +864,11 @@ def save_meeting_report(
     it is posted: privacy.md section 2 keeps unmasked text out of every store.
     A report already posted is not replaced -- people have read that version,
     and a silent edit would make the stored copy disagree with what they saw.
+
+    ``draft_id`` is stored as given, ``None`` included: a draft saved without
+    one also ends every pending approval of the draft it replaced, since that
+    approval names an id the row no longer holds. Intended -- the approver did
+    not see this text.
 
     **The body holds this meeting's content only.** The row is deleted with this
     meeting and nothing else, so a sentence quoted from another meeting -- a past
@@ -885,6 +895,7 @@ def save_meeting_report(
             team_id=meeting.team_id,
             body_markdown=body_markdown,
             pending_review=pending_review,
+            draft_id=draft_id,
         )
         session.add(row)
     elif row.sent_at is not None:
@@ -892,6 +903,7 @@ def save_meeting_report(
     else:
         row.body_markdown = body_markdown
         row.pending_review = pending_review
+        row.draft_id = draft_id
     session.flush()
     return row
 
@@ -953,7 +965,9 @@ class ClaimedReport:
     pending_review: bool
 
 
-def claim_meeting_report(session: Session, meeting_id: str) -> ClaimedReport | None:
+def claim_meeting_report(
+    session: Session, meeting_id: str, *, draft_id: str | None = None
+) -> ClaimedReport | None:
     """Mark the report sent and hand it out, or ``None`` if it was already claimed.
 
     The claim comes **before** the post and its transaction must commit before
@@ -971,6 +985,10 @@ def claim_meeting_report(session: Session, meeting_id: str) -> ClaimedReport | N
         raise NotFoundError("meeting report", meeting_id)
     if row.sent_at is not None:
         return None
+    if draft_id is not None and row.draft_id != draft_id:
+        # Approved for an earlier draft. The newer one stays unclaimed for its
+        # own approval rather than going out under this one.
+        raise ConflictError("meeting report draft was replaced", meeting_id=meeting_id)
     title = session.scalar(sa.select(Meeting.title).where(Meeting.id == meeting_id)) or ""
     claimed = ClaimedReport(
         meeting_id=meeting_id,

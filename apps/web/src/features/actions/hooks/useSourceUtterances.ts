@@ -30,9 +30,11 @@ export function useSourceUtterances(
   const [state, setState] = useState<{
     id: string;
     sources: SourceUtterance[] | null;
+    context: SourceUtterance[];
+    related: SourceUtterance[];
     history: EditHistoryEntry[] | null;
     error: Error | null;
-  }>({ id: item.id, sources: null, history: null, error: null });
+  }>({ id: item.id, sources: null, context: [], related: [], history: null, error: null });
 
   useEffect(() => {
     // A quick click from one card to the next must not paint the first card's
@@ -45,6 +47,8 @@ export function useSourceUtterances(
           setState({
             id: item.id,
             sources: detail.sources,
+            context: detail.context ?? [],
+            related: detail.related ?? [],
             history: detail.history ?? [],
             error: null,
           });
@@ -54,6 +58,8 @@ export function useSourceUtterances(
           setState({
             id: item.id,
             sources: null,
+            context: [],
+            related: [],
             history: null,
             error: cause instanceof Error ? cause : new Error(String(cause)),
           });
@@ -69,11 +75,13 @@ export function useSourceUtterances(
   const mine = state.id === item.id;
   const history = mine ? state.history : null;
   if (expected === 0)
-    return { sources: [], loading: false, error: null, history };
+    return { sources: [], context: [], related: [], loading: false, error: null, history };
   if (!mine)
-    return { sources: null, loading: true, error: null, history: null };
+    return { sources: null, context: [], related: [], loading: true, error: null, history: null };
   return {
     sources: state.sources,
+    context: state.context,
+    related: state.related,
     loading: state.sources === null && !state.error,
     error: state.error,
     history,

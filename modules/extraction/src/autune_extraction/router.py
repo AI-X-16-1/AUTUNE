@@ -36,9 +36,13 @@ from .schemas import (
     ActionItemDetail,
     ActionItemRead,
     ActionItemUpdate,
+    CarriedOver,
     DecisionCreate,
+    DecisionDetail,
     DecisionReviewUpdate,
+    MeetingNoteUpdate,
     MeetingReview,
+    MeetingSummary,
     Outbound,
     ReviewDecision,
 )
@@ -103,6 +107,14 @@ def list_action_items(
         due_before=due_before,
         visible_to=reader.id,
     )
+
+
+@router.get("/carried-over/{meeting_id}", response_model=CarriedOver)
+def get_carried_over(meeting_id: str, session: SessionDep, reader: CurrentUser) -> CarriedOver:
+    """What the team's earlier meetings left open, for the popup this
+    meeting's review opens with (WBS 4.8). Members of the meeting's team only."""
+    service.require_readable_meeting(session, meeting_id, reader)
+    return service.carried_over(session, meeting_id)
 
 
 @router.get("/action-items/{action_item_id}", response_model=ActionItemDetail)
@@ -192,6 +204,13 @@ def get_review(meeting_id: str, session: SessionDep, reader: CurrentUser) -> Mee
     return service.review_for_meeting(session, meeting_id)
 
 
+@router.get("/decisions/{decision_id}", response_model=DecisionDetail)
+def get_decision(decision_id: str, session: SessionDep, reader: CurrentUser) -> DecisionDetail:
+    """One decision and the text of the utterances it was settled in (S15)."""
+    decision = service.readable_decision(session, decision_id, reader)
+    return service.read_decision_detail(session, decision)
+
+
 @router.patch("/decisions/{decision_id}", response_model=ReviewDecision)
 def review_decision(
     decision_id: str,
@@ -213,6 +232,26 @@ def review_decision(
     # claim already exists.
     if response.status == "confirmed":
         background.add_task(tasks.sync_decision_after_confirmation, decision_id)
+    return response
+
+
+@router.get("/summary/{meeting_id}", response_model=MeetingSummary)
+def get_summary(meeting_id: str, session: SessionDep, reader: CurrentUser) -> MeetingSummary:
+    """S15's 요약 tab (#421): B's rows in three levels, and the team's memo."""
+    service.require_readable_meeting(session, meeting_id, reader)
+    return service.meeting_summary(session, meeting_id)
+
+
+@router.put("/summary/{meeting_id}/note", response_model=MeetingSummary)
+def put_summary_note(
+    meeting_id: str, payload: MeetingNoteUpdate, session: SessionDep, reader: CurrentUser
+) -> MeetingSummary:
+    """Replace the team's memo; blank removes it. Any member, like every other
+    correction on the review screen."""
+    service.require_readable_meeting(session, meeting_id, reader)
+    service.set_meeting_note(session, meeting_id, payload.body)
+    response = service.meeting_summary(session, meeting_id)
+    session.commit()
     return response
 
 
@@ -278,9 +317,9 @@ def notion_setup_state(meeting_id: str, session: SessionDep, reader: CurrentUser
 def notion_set_up(
     meeting_id: str, page_id: str, session: SessionDep, reader: CurrentUser
 ) -> dict[str, Any]:
-    """Make Autune's databases under ``page_id`` and fill them with every
-    confirmed action item and decision of the team (#428). Notion's own message
-    comes back when it refuses the page."""
+    """Make Autune's databases under ``page_id`` and queue filling them with
+    every confirmed action item and decision of the team (#428, #481). Notion's
+    own message comes back when it refuses the page."""
     team_id = _member_team(session, reader, meeting_id)
     try:
         return notion_connect.set_up(team_id, page_id)

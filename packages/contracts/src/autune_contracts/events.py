@@ -41,10 +41,13 @@ renaming one changes a task name in somebody else's module.
 """
 
 TERMINAL_EVENTS: Final = (INTELLIGENCE_COMPLETED,)
-"""Events nothing consumes, on purpose.
+"""Events that may reach no task, on purpose.
 
-The pipeline ends at E, so `autune.intelligence.completed` reaches no task and
-that is the design rather than a mistake. `publish` needs to know which is which:
+The module pipeline ends at E: no module consumes `autune.intelligence.completed`.
+The agent layer does when it is loaded (`autune.agent.on_intelligence_completed`,
+#509), so the event is no longer unconsumed everywhere -- but a process without
+the layer still publishes it to nobody, and that is the design rather than a
+mistake. `publish` needs to know which is which:
 without this list, "nobody is listening" is one message for a normal end of a
 meeting and for a consumer whose task name has a typo in it, and the first one
 happens on every meeting. A warning that fires on the normal path is a warning

@@ -4,10 +4,10 @@ import { CHART_STEPS } from "./chartScale";
 
 /**
  * A small panel shown on hover — a future-state mockup for S26 widgets with
- * no real data yet (heatmap pending #168, prediction/influence map pending
- * #26/#27), or supporting detail for a widget that does have data (gap
- * titles behind a pattern's count). Pure CSS hover — no state, no click
- * handling, dismisses when the pointer leaves.
+ * no real data yet (heatmap pending #168, prediction pending #26/#27), or
+ * supporting detail for a widget that does have data (gap titles behind a
+ * pattern's count). Pure CSS hover — no state, no click handling, dismisses
+ * when the pointer leaves.
  */
 export function HoverPreview({
   mockup,
@@ -114,54 +114,6 @@ export function PredictionMockup(): ReactNode {
       </text>
       <rect x={0} y={85} width={221} height={10} rx={5} fill="var(--color-surface-sunken)" />
       <rect x={0} y={85} width={136} height={10} rx={5} fill={CHART_STEPS[3]} />
-    </svg>
-  );
-}
-
-/** Illustrative node-link mockup — matches ui-spec's "influence map, role level only". */
-export function InfluenceMapMockup(): ReactNode {
-  const nodes: { label: string; x: number; y: number }[] = [
-    { label: "PM", x: 119, y: 24 },
-    { label: "Dev", x: 41, y: 102 },
-    { label: "Design", x: 197, y: 102 },
-  ];
-  const edges: [number, number][] = [
-    [0, 1],
-    [0, 2],
-    [1, 2],
-  ];
-  return (
-    <svg width={240} height={155} role="img" aria-label="영향력 맵 예상 모습">
-      {edges.map(([a, b]) => {
-        const from = nodes[a];
-        const to = nodes[b];
-        if (!from || !to) return null;
-        return (
-          <line
-            key={`${a}-${b}`}
-            x1={from.x}
-            y1={from.y}
-            x2={to.x}
-            y2={to.y}
-            stroke="var(--color-hairline)"
-            strokeWidth={2}
-          />
-        );
-      })}
-      {nodes.map((node) => (
-        <g key={node.label}>
-          <circle cx={node.x} cy={node.y} r={20} fill={CHART_STEPS[2]} />
-          <text
-            x={node.x}
-            y={node.y + 41}
-            fontSize={15}
-            textAnchor="middle"
-            fill="var(--color-ink-muted)"
-          >
-            {node.label}
-          </text>
-        </g>
-      ))}
     </svg>
   );
 }
