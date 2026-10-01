@@ -131,6 +131,30 @@ def test_over_budget_the_other_modules_go_before_the_confirmed_items() -> None:
     assert all(line.endswith("(9/22)") for line in body.splitlines() if line.startswith("🔗"))
 
 
+def test_over_budget_a_question_goes_before_its_own_title() -> None:
+    """Gap lines drop from the end, so a "↳" line never stays without its gap (#591 review)."""
+    long_gaps = _r(
+        "열린 갭 5건, 그중 높음 5건.",
+        [
+            {
+                "title": f"항목{n} — 충분히 다뤄지지 않았습니다",
+                "body": "질" * 500,
+                "severity": "high",
+            }
+            for n in range(5)
+        ],
+    )
+
+    body = render(ACTIONS, REVIEW, long_gaps, None)
+
+    assert len(body) <= BODY_MAX_CHARS
+    lines = body.splitlines()
+    assert sum(line.startswith("  ↳") for line in lines) < 5  # the budget did cut
+    for index, line in enumerate(lines):
+        if line.startswith("  ↳"):
+            assert lines[index - 1].startswith("• 항목")
+
+
 def test_the_body_stays_under_the_budget() -> None:
     long_items = [{"title": "가" * 600, "body": "나"} for _ in range(5)]
     body = render(_r("확정 5건.", long_items), REVIEW, GAPS, LINKS)
