@@ -197,7 +197,7 @@ def test_a_missing_tool_drops_its_section_and_the_report_still_goes() -> None:
 
     outcome = _run(EVENT, tools, scope_meeting=MEETING)
 
-    assert "⚠️" not in outcome.proposed[0].arguments["body_markdown"]
+    assert "열린 갭" not in outcome.proposed[0].arguments["body_markdown"]
 
 
 def test_an_optional_tool_that_raises_drops_only_its_section() -> None:
@@ -212,7 +212,7 @@ def test_an_optional_tool_that_raises_drops_only_its_section() -> None:
     outcome = _run(EVENT, tools, scope_meeting=MEETING)
 
     body = outcome.proposed[0].arguments["body_markdown"]
-    assert "⚠️" not in body and "✅ 확정된 액션 아이템" in body
+    assert "열린 갭" not in body and "✅ 확정된 액션 아이템" in body
 
 
 def test_an_unknown_meeting_is_a_failure_with_no_proposal() -> None:

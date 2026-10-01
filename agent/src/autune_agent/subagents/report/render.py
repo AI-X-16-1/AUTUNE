@@ -59,7 +59,9 @@ def _gaps(gaps: ToolResult | None) -> list[str]:
     usable = _usable(gaps)
     if usable is None:
         return []
-    lines = [f"⚠️ {usable.summary}"] if usable.summary else []
+    # No open gap is good news; C sends an empty list only then.
+    mark = "⚠️" if usable.items else "✅"
+    lines = [f"{mark} {usable.summary}"] if usable.summary else []
     for item in usable.items:
         if (item.model_extra or {}).get("severity") == "low":
             continue

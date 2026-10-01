@@ -74,7 +74,8 @@ def test_a_failed_tool_is_treated_as_missing() -> None:
 def test_a_meeting_with_no_open_gap_says_so() -> None:
     """C answered and found nothing: that is a fact about the meeting, unlike a missing tool."""
     gaps = _r("이 회의에 열린 갭이 없습니다.", [])
-    assert render(ACTIONS, None, gaps, None).endswith("\n\n⚠️ 이 회의에 열린 갭이 없습니다.")
+    # Good news, so not under the warning sign (review of #568).
+    assert render(ACTIONS, None, gaps, None).endswith("\n\n✅ 이 회의에 열린 갭이 없습니다.")
 
 
 def test_a_low_gap_is_left_out_as_c_s_own_screen_hides_it() -> None:
