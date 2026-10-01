@@ -26,11 +26,16 @@ REVIEW = _r(
 GAPS = _r(
     "열린 갭 2건, 그중 높음 1건.",
     [
-        {"title": "리스크: 환불 정책", "body": "환불 기준은 누가 정하나요?", "severity": "high"},
+        {
+            "title": "리스크·예외 처리 — 충분히 다뤄지지 않았습니다",
+            "body": "이 방향이 실패하면 무엇을 합니까?",
+            "severity": "high",
+        },
         {"title": "일정: 출시 일정", "body": "", "severity": "medium"},
     ],
 )
-"""C's ``gap.open_gaps`` as it returns (modules/gap/.../tools.py)."""
+"""C's ``gap.open_gaps`` as it returns (modules/gap/.../tools.py). The first
+title is a real one from the 10/1 run: C's titles carry their own dash."""
 LINKS = _r(
     "이어지는 회의 1건.",
     [{"title": "간편결제는 2차로 미룬다", "meeting_title": "간편결제 도입 검토", "date": "9/22"}],
@@ -45,7 +50,8 @@ def test_every_section_in_order() -> None:
         "⏳ 결정 확인 대기 1건, 액션아이템 확인 대기 1건, 답 없는 약한 동의 0건.\n"
         "\n"
         "⚠️ 열린 갭 2건, 그중 높음 1건.\n"
-        "• 리스크: 환불 정책 — 환불 기준은 누가 정하나요?\n"
+        "• 리스크·예외 처리 — 충분히 다뤄지지 않았습니다\n"
+        "  ↳ 이 방향이 실패하면 무엇을 합니까?\n"
         "• 일정: 출시 일정\n"
         "\n"
         "🔗 이어지는 회의: 간편결제 도입 검토 (9/22)"
