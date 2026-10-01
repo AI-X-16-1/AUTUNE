@@ -216,10 +216,15 @@ export interface NotionSetupResult {
 export const getNotionSetup = (meetingId: string) =>
   api.extraction<NotionSetupState>(`/notion/setup?meeting_id=${encodeURIComponent(meetingId)}`);
 
-/** Make the databases under `pageId` and queue filling them with everything confirmed. */
-export const setUpNotion = (meetingId: string, pageId: string) =>
+/**
+ * Make the databases under `pageId` -- or, without one, in an "Autune" page
+ * among the person's private Notion pages -- and queue filling them with
+ * everything confirmed.
+ */
+export const setUpNotion = (meetingId: string, pageId?: string) =>
   api.extraction<NotionSetupResult>(
-    `/notion/setup?meeting_id=${encodeURIComponent(meetingId)}&page_id=${encodeURIComponent(pageId)}`,
+    `/notion/setup?meeting_id=${encodeURIComponent(meetingId)}` +
+      (pageId ? `&page_id=${encodeURIComponent(pageId)}` : ""),
     { method: "POST" },
   );
 

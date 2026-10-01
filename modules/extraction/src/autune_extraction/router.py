@@ -159,7 +159,8 @@ def update_action_item(
     background: BackgroundTasks,
 ) -> ActionItemRead:
     """Edit or close an item. Confirming it queues its Notion page (#30); an
-    edit to an already-confirmed item queues an update to the same page."""
+    edit to an item that has a page queues an update to it -- moving it back to
+    확인 필요 included."""
     item = service.readable_action_item(session, action_item_id, reader)
     item = service.update_action_item(session, item, payload)
     # Before the commit, for the reason ``create_action_item`` gives: an edit
@@ -168,11 +169,14 @@ def update_action_item(
     response = service.read_one(session, item)
     session.commit()
     # After the response, so the sync reads the committed row and the board is
-    # not held on Notion. Confirming or any later edit both queue the same
-    # task -- ``sync_action_item_to_notion`` itself decides create vs. update
-    # from whether the claim already exists, so a still-``needs_confirmation``
-    # item is the only case this need not queue at all.
-    if item.status != ActionStatus.NEEDS_CONFIRMATION.value:
+    # not held on Notion. Confirming or any later edit queues the same task --
+    # ``sync_action_item_to_notion`` decides create vs. update from whether the
+    # claim already exists. An unconfirmed item queues it only when it has a
+    # page: one moved back to 확인 필요 updates that page's status (decided
+    # with the user, 2026-10-01); one never confirmed has nothing to send.
+    if item.status != ActionStatus.NEEDS_CONFIRMATION.value or service.has_notion_page(
+        session, item.id
+    ):
         background.add_task(tasks.sync_after_confirmation, item.id)
     return response
 
@@ -344,11 +348,12 @@ def notion_setup_state(meeting_id: str, session: SessionDep, reader: CurrentUser
 
 @router.post("/notion/setup")
 def notion_set_up(
-    meeting_id: str, page_id: str, session: SessionDep, reader: CurrentUser
+    meeting_id: str, session: SessionDep, reader: CurrentUser, page_id: str | None = None
 ) -> dict[str, Any]:
-    """Make Autune's databases under ``page_id`` and queue filling them with
-    every confirmed action item and decision of the team (#428, #481). Notion's
-    own message comes back when it refuses the page."""
+    """Make Autune's databases under ``page_id`` -- or, with none, in an
+    "Autune" page among the connecting person's private pages -- and queue
+    filling them with every confirmed action item and decision of the team
+    (#428, #481). Notion's own message comes back when it refuses the page."""
     team_id = _member_team(session, reader, meeting_id)
     try:
         return notion_connect.set_up(team_id, page_id)

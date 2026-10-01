@@ -3154,6 +3154,19 @@ none. Raised in review of #294.
 """
 
 
+NOTION_STATUS_LABELS: Mapping[str, str] = {
+    ActionStatus.NEEDS_CONFIRMATION.value: "확인 필요",
+    ActionStatus.TODO.value: "진행 전",
+    ActionStatus.IN_PROGRESS.value: "진행 중",
+    ActionStatus.DONE.value: "완료",
+}
+"""The 상태 option a page gets for each status: the board's column names
+(``features/actions/types.ts``), so Notion and the board read the same. The
+codes went out as they were until 2026-10-01 and were hard to tell apart in
+Notion; a database made before then gains these options on first use, since
+Notion adds a select option it has not seen."""
+
+
 class NotionPages(Protocol):
     """The calls the sync makes. ``NotionClient`` and ``fakes.FakeNotion``
     both fit."""
@@ -3215,6 +3228,12 @@ def _update_or_replace_page(
     return "updated"
 
 
+def has_notion_page(session: Session, action_item_id: str) -> bool:
+    """Whether the item was ever sent to Notion -- confirmed once, whatever it
+    is now."""
+    return session.get(ExtExternalRef, (action_item_id, NOTION)) is not None
+
+
 def notion_url(page_id: str) -> str:
     """The page's address. Notion accepts the id without its dashes."""
     return f"https://www.notion.so/{page_id.replace('-', '')}"
@@ -3250,7 +3269,7 @@ def notion_properties(
 
     fields: dict[str, Any] = {
         "title": {"title": [{"type": "text", "text": {"content": item.description[:2000]}}]},
-        "status": {"select": {"name": item.status}},
+        "status": {"select": {"name": NOTION_STATUS_LABELS.get(item.status, item.status)}},
         "confidence": {"number": round(item.confidence, 3)},
     }
     assignee = item.assignee_label
@@ -3279,8 +3298,11 @@ def sync_action_item_to_notion(
     """Create the item's Notion page the first time; update the same page every
     time after. ``None`` when there is nothing to send.
 
-    Nothing is sent for an item that is gone or one still waiting for
-    confirmation. The first send is decided by the database: the claim is an
+    Nothing is sent for an item that is gone, and no page is made for one
+    still waiting for confirmation. An item moved back to 확인 필요 after its
+    page was made updates that page, so Notion shows the status the board does
+    -- the page stays, only its status changes (decided with the user,
+    2026-10-01). The first send is decided by the database: the claim is an
     insert that skips an existing row, so a confirmation delivered twice, or
     two workers holding it at once, create one page -- the second blocks on
     the first's row and then finds it. Claim and create share the caller's
@@ -3320,7 +3342,7 @@ def sync_action_item_to_notion(
         # it to the database has its page id -- there is no committed row
         # from a claim whose create never ran.
         item = session.get(ExtActionItem, action_item_id, populate_existing=True)
-        if item is None or item.status == ActionStatus.NEEDS_CONFIRMATION.value:
+        if item is None:
             return existing
         meeting = session.get(Meeting, item.meeting_id)
         title = meeting.title if meeting else None
@@ -3361,7 +3383,7 @@ def sync_action_item_to_notion(
         existing = session.get(ExtExternalRef, (item.id, NOTION), with_for_update=True)
         assert existing is not None
         item = session.get(ExtActionItem, action_item_id, populate_existing=True)
-        if item is None or item.status == ActionStatus.NEEDS_CONFIRMATION.value:
+        if item is None:
             return existing
         meeting = session.get(Meeting, item.meeting_id)
         title = meeting.title if meeting else None
