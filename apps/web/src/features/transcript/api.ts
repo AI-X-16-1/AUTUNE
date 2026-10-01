@@ -13,6 +13,8 @@ import type {
   MeetingDetail,
   MeetingSummary,
   MyData,
+  PiiCategory,
+  PiiReported,
   ResearchDocument,
   RetentionDays,
   SpeakerEntry,
@@ -293,5 +295,20 @@ export const setTeamRetention = (teamId: string, retentionDays: RetentionDays) =
   api.audio<TeamPrivacy>(`/teams/${teamId}/privacy`, {
     method: "PATCH",
     body: JSON.stringify({ retention_days: retentionDays }),
+  });
+
+/**
+ * S30: mask a span the masker missed. **Offsets, never the text** — the server
+ * reads the span from the stored row, so the unmasked string is not in the
+ * request, the proxy's log or the API's.
+ */
+export const reportPiiMiss = (
+  meetingId: string,
+  utteranceId: string,
+  body: { start: number; end: number; category: PiiCategory; include_similar: boolean },
+) =>
+  api.audio<PiiReported>(`/meetings/${meetingId}/utterances/${utteranceId}/pii-report`, {
+    method: "POST",
+    body: JSON.stringify(body),
   });
 
