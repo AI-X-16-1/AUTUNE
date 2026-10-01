@@ -5,6 +5,7 @@ import { useState } from "react";
 import { Button, MaskedText, Quote, StatusDot } from "@/shared/ui";
 
 import { ConfirmDelete } from "./ConfirmDelete";
+import { ContextLines } from "./ContextLines";
 import { useSourceUtterances } from "../hooks/useSourceUtterances";
 import { COLUMNS, COLUMN_LABELS, isCandidate } from "../types";
 import type { ActionItemRead, ActionStatus, EditHistoryEntry } from "../types";
@@ -185,6 +186,7 @@ export function ActionDetailDrawer({
           <SectionTitle>근거 발화</SectionTitle>
           {quotation.sources && quotation.sources.length > 0 ? (
             <div className="mt-2 grid gap-2">
+              <ContextLines lines={quotation.context} />
               {quotation.sources.map((source) => (
                 <Quote key={source.id}>
                   <MaskedText>{source.text}</MaskedText>

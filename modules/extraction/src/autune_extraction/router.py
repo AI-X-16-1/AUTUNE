@@ -37,6 +37,7 @@ from .schemas import (
     ActionItemRead,
     ActionItemUpdate,
     DecisionCreate,
+    DecisionDetail,
     DecisionReviewUpdate,
     MeetingNoteUpdate,
     MeetingReview,
@@ -192,6 +193,13 @@ def get_review(meeting_id: str, session: SessionDep, reader: CurrentUser) -> Mee
     """What needs a person in this meeting before anything is sent (S15, #246)."""
     service.require_readable_meeting(session, meeting_id, reader)
     return service.review_for_meeting(session, meeting_id)
+
+
+@router.get("/decisions/{decision_id}", response_model=DecisionDetail)
+def get_decision(decision_id: str, session: SessionDep, reader: CurrentUser) -> DecisionDetail:
+    """One decision and the text of the utterances it was settled in (S15)."""
+    decision = service.readable_decision(session, decision_id, reader)
+    return service.read_decision_detail(session, decision)
 
 
 @router.patch("/decisions/{decision_id}", response_model=ReviewDecision)

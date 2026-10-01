@@ -300,6 +300,13 @@ class ActionItemDetail(ActionItemRead):
     order comes with it at no extra cost.
     """
 
+    context: list[SourceUtterance] = Field(default_factory=list)
+    """What was said just before the first source, in spoken order, so a sentence
+    with nothing to point at ("다음 주까지 볼게요") can be read with the thing it
+    is about. Not what this was drawn from, only the lines around it, which is
+    why it is apart from ``sources``. A speaker who did not consent is never here
+    -- the line every read of the transcript draws (privacy.md section 5)."""
+
     history: list[EditHistoryEntry] = Field(default_factory=list)
     """What people did to the item, oldest first (S18, #109). Empty for an item
     the model extracted and nobody has touched since."""
@@ -390,6 +397,27 @@ class ReviewAmbiguous(BaseModel):
     utterance_id: str
     outcome: Literal["not_asked", "pending", "undecided", "resolved"]
     resolved_kind: str | None
+
+
+class DecisionDetail(ReviewDecision):
+    """One decision and the words it was settled in, for the row S15 expands.
+
+    The list carries the source utterances' ids and one preview line, never the
+    whole set of quotations -- the same line ``ActionItemDetail`` draws, and for
+    the same reason: a verbatim quotation leaves the server only when one row's
+    is asked for.
+    """
+
+    sources: list[SourceUtterance]
+    """In the order they were spoken -- the proposal first, the sentence that
+    settled it last. Empty for a decision a person added, which has none."""
+
+    context: list[SourceUtterance] = Field(default_factory=list)
+    """What was said just before the first source, in spoken order, so a sentence
+    with nothing to point at ("다음 주까지 볼게요") can be read with the thing it
+    is about. Not what this was drawn from, only the lines around it, which is
+    why it is apart from ``sources``. A speaker who did not consent is never here
+    -- the line every read of the transcript draws (privacy.md section 5)."""
 
 
 class MeetingReview(BaseModel):
