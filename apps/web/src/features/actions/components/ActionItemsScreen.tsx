@@ -5,6 +5,7 @@ import { useState } from "react";
 import { ActionBoard } from "./ActionBoard";
 import { ActionDetailDrawer } from "./ActionDetailDrawer";
 import { CalendarConnect } from "./CalendarConnect";
+import { CarriedOverActions } from "./CarriedOverActions";
 import { SlackMeConnect } from "./SlackMeConnect";
 import { JiraConnect } from "./JiraConnect";
 import { SlackConnect } from "./SlackConnect";
@@ -79,6 +80,10 @@ export function ActionItemsScreen({ meetingId }: { meetingId: string }) {
           <JiraConnect meetingId={meetingId} />
           <SlackConnect meetingId={meetingId} />
           <NotionConnect meetingId={meetingId} />
+        </div>
+
+        <div className="mt-6">
+          <CarriedOverActions meetingId={meetingId} />
         </div>
 
         <div className="mt-6">

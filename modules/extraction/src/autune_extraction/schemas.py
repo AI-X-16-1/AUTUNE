@@ -320,6 +320,29 @@ class ActionItemDetail(ActionItemRead):
     the model extracted and nobody has touched since."""
 
 
+class CarriedOverItem(ActionItemRead):
+    """An open item from an earlier meeting of the same team, with the meeting
+    it was made in -- the popup says where each one came from."""
+
+    meeting_title: str
+    meeting_started_at: datetime | None
+
+
+class CarriedOver(BaseModel):
+    """What earlier meetings left open, for the popup a meeting's review opens
+    with (PRD 5.2, "incomplete items from previous meetings resurface in the
+    next one"; WBS 4.8).
+
+    ``open`` and ``overdue`` count everything; ``items`` is the most urgent
+    part of it -- overdue first, then the nearest due date, undated last -- so
+    a team with a long tail still sees what matters without a list to scroll.
+    """
+
+    open: int
+    overdue: int
+    items: list[CarriedOverItem]
+
+
 # --- review before anything leaves (#246) ------------------------------------
 
 
