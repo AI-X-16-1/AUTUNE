@@ -12,7 +12,7 @@ import pytest
 import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
-from autune_audio import retention
+from autune_audio import retention, service
 from autune_audio.models import EMBEDDING_DIM, AudSpeakerEmbedding
 from autune_core import Meeting, Participant, Team, TeamMember, User, Utterance, deletion
 
@@ -177,3 +177,55 @@ def test_a_run_is_bounded(db_session: Session, team: str) -> None:
 
     assert len(retention.sweep(db_session, now=NOW, batch=2).meetings) == 2
     assert len(retention.sweep(db_session, now=NOW, batch=2).meetings) == 1
+
+
+@pytest.mark.parametrize("held_by", ["live", "upload"])
+def test_a_meeting_booked_further_ahead_than_the_window_survives_being_held(
+    db_session: Session, team: str, member: User, held_by: str
+) -> None:
+    """Review of #581: a 30-day team books a meeting five weeks out. Its
+    provisional ``expires_at`` has passed by the time it starts, and the sweep
+    must not take it mid-recording."""
+    db_session.get(Team, team).retention_days = 30  # type: ignore[union-attr]
+    now = datetime.now(tz=UTC)
+    booked = service.create_meeting(
+        db_session, owner=member, team_id=team, title="t", started_at=now + timedelta(days=35)
+    )
+    # Five weeks later: the provisional window (created + 30d) closed days ago.
+    meeting = db_session.get(Meeting, booked.id)
+    assert meeting is not None
+    meeting.started_at = now - timedelta(minutes=1)
+    meeting.expires_at = now - timedelta(days=5)
+    db_session.flush()
+
+    if held_by == "live":
+        service.begin_live(db_session, meeting_id=booked.id)
+    else:
+        service.start_transcription(db_session, meeting_id=booked.id, uploader=member)
+
+    assert retention.sweep(db_session, now=now + timedelta(hours=1)).meetings == ()
+    assert meeting.expires_at is not None
+    assert meeting.expires_at >= now + timedelta(days=30) - timedelta(minutes=1)
+
+
+def test_a_reconnect_does_not_restart_the_window(
+    db_session: Session, team: str, member: User
+) -> None:
+    meeting_id = make_meeting(
+        db_session, team, expires_at=NOW + timedelta(days=3), status="recording"
+    )
+
+    service.begin_live(db_session, meeting_id=meeting_id)
+
+    assert db_session.get(Meeting, meeting_id).expires_at == NOW + timedelta(days=3)  # type: ignore[union-attr]
+
+
+def test_the_backfill_counts_from_when_the_meeting_was_held(db_session: Session, team: str) -> None:
+    held = datetime(2026, 9, 1, tzinfo=UTC)
+    legacy = make_meeting(db_session, team, expires_at=None, started_at=held)
+
+    retention.sweep(db_session, now=NOW)
+
+    row = db_session.get(Meeting, legacy)
+    db_session.refresh(row)
+    assert row is not None and row.expires_at == held + timedelta(days=90)

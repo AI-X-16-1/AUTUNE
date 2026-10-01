@@ -56,28 +56,32 @@ def backfill_expiry(session: Session) -> int:
     ``create_meeting`` has set ``expires_at`` since the upload endpoint
     landed, but rows written before that -- and by tests and seed scripts that
     build a ``Meeting`` directly -- carry ``NULL``, which module D and this
-    sweep both read as "never expires". Filled from the meeting's own
-    ``created_at`` and its team's ``retention_days``, the same two inputs
-    ``create_meeting`` uses, so a backfilled row ends up where it would have
-    been had it been created today's way.
+    sweep both read as "never expires". Filled from when the meeting was held
+    (``started_at``, else ``created_at``) and its team's ``retention_days`` --
+    the anchor ``create_meeting`` uses -- so a backfilled row ends up where it
+    would have been had it been created today's way.
     """
+    anchor = sa.func.coalesce(Meeting.started_at, Meeting.created_at)
     result = session.execute(
         sa.update(Meeting)
         .where(Meeting.expires_at.is_(None), Meeting.team_id == Team.id)
-        .values(expires_at=Meeting.created_at + sa.func.make_interval(0, 0, 0, Team.retention_days))
+        .values(expires_at=anchor + sa.func.make_interval(0, 0, 0, Team.retention_days))
         .execution_options(synchronize_session=False)
     )
     return int(getattr(result, "rowcount", 0))
 
 
-def expired_meeting_ids(session: Session, *, now: datetime) -> list[str]:
-    """Meetings whose window has closed, oldest first.
+def expired_meeting_ids(session: Session, *, now: datetime, limit: int) -> list[str]:
+    """Up to ``limit`` meetings whose window has closed, oldest first.
 
     **A scheduled meeting that has not happened yet is never expired.** Its
-    window is counted from when it was created, and a meeting booked far
-    enough ahead would otherwise be deleted before anyone held it. It has no
-    transcript and nothing derived from it, so sparing it keeps nothing the
-    window is meant to bound.
+    ``expires_at`` is provisional until it is held -- ``service.open_retention_window``
+    restarts the window when the first live hello or the upload arrives -- and
+    until then it has no transcript and nothing derived from it, so sparing it
+    keeps nothing the window is meant to bound.
+
+    ``LIMIT`` in SQL, not a slice of every expired id: the first run on a
+    database that never swept reads the whole backlog otherwise (review of #581).
     """
     not_yet_held = sa.and_(Meeting.status == "scheduled", Meeting.started_at > now)
     return list(
@@ -85,6 +89,7 @@ def expired_meeting_ids(session: Session, *, now: datetime) -> list[str]:
             sa.select(Meeting.id)
             .where(Meeting.expires_at <= now, sa.not_(not_yet_held))
             .order_by(Meeting.expires_at)
+            .limit(limit)
         )
     )
 
@@ -120,6 +125,11 @@ def sweep(session: Session, *, now: datetime, batch: int = 200) -> SweepResult:
     tries again. Hooks take only an id and own their sessions, so they cannot
     join this transaction -- which is why the order is hook, then ``DELETE``.
 
+    **So a hook can run twice for one meeting**: when its ``DELETE`` or this
+    transaction's commit fails after it succeeded, and when two runs overlap.
+    Every ``on_meeting_deleted`` hook must be safe to repeat
+    (``autune_core.deletion`` says the same).
+
     ``batch`` bounds one run, so a backlog (the first run after #206, on a
     database that never swept) is worked through over several runs rather
     than in one transaction holding a lock on every expired meeting.
@@ -128,7 +138,7 @@ def sweep(session: Session, *, now: datetime, batch: int = 200) -> SweepResult:
 
     deleted: list[str] = []
     failed: list[str] = []
-    for meeting_id in expired_meeting_ids(session, now=now)[:batch]:
+    for meeting_id in expired_meeting_ids(session, now=now, limit=batch):
         try:
             run_meeting_hooks(meeting_id)
         except Exception as exc:  # noqa: BLE001 -- any hook failure keeps the row
