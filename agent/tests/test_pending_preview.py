@@ -6,7 +6,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from autune_agent.main.preview import GONE, preview
+from autune_agent.main.preview import FOLLOWUP_GAPS_CLOSED, GONE, preview
 from autune_agent.main.registry import Tool
 from autune_agent.models import AgentPendingAction, AgentResearchDocument
 from autune_core import Meeting, User
@@ -125,3 +125,56 @@ def test_an_assignee_outside_the_team_is_not_named(session: Session, team: dict[
 
     assert shown["title"] == "액션아이템 재배정"
     assert "알 수 없는 사람" in shown["body"]
+
+
+def _open_gaps(*gaps: tuple[str, str], ok: bool = True) -> Tool:
+    """C's ``open_gaps``, most risky first, as the registry would wrap it."""
+    return Tool(
+        name="gap.open_gaps",
+        description="Use this.",
+        fn=lambda _s, team_id, meeting_id: {
+            "ok": ok,
+            "summary": "열린 갭",
+            "items": [{"id": i, "title": t, "body": "질문?"} for i, t in gaps],
+        },
+    )
+
+
+def _followup(team: dict[str, str], evidence: list[str]) -> AgentPendingAction:
+    row = _row(team, "extraction.add_followup_item", {"meeting_id": team["meeting"]})
+    row.evidence = evidence
+    return row
+
+
+def test_a_followup_shows_the_gaps_behind_it_most_risky_first(
+    session: Session, team: dict[str, str]
+) -> None:
+    gaps = _open_gaps(("gap_a", "일정 · 출시일"), ("gap_b", "담당자 · 결제"), ("gap_c", "예산"))
+
+    # Evidence lists carried-over gaps first; the preview orders them by risk.
+    shown = preview(session, _followup(team, ["gap_c", "gap_a"]), tools={"gap.open_gaps": gaps})
+
+    assert shown["title"] == "후속 회의 잡기"
+    assert shown["body"] == "· 일정 · 출시일\n· 예산"
+
+
+def test_a_followup_whose_gaps_were_all_dismissed_says_so(
+    session: Session, team: dict[str, str]
+) -> None:
+    gaps = _open_gaps(("gap_b", "담당자 · 결제"))
+
+    shown = preview(session, _followup(team, ["gap_a"]), tools={"gap.open_gaps": gaps})
+
+    assert shown["body"] == FOLLOWUP_GAPS_CLOSED
+
+
+def test_a_followup_without_c_falls_back_to_gone(session: Session, team: dict[str, str]) -> None:
+    unread = preview(
+        session,
+        _followup(team, ["gap_a"]),
+        tools={"gap.open_gaps": _open_gaps(("gap_a", "일정"), ok=False)},
+    )
+    absent = preview(session, _followup(team, ["gap_a"]), tools={})
+
+    assert unread["body"] == GONE
+    assert absent["body"] == GONE
