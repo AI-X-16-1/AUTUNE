@@ -99,3 +99,12 @@ def test_the_sweep_logs_a_count_and_no_filenames(monkeypatch: pytest.MonkeyPatch
         ("audio_orphan_sweep_finished", 3)
     ]
     assert all("job-1" not in str(entry) for entry in logs)
+
+
+def test_the_retention_sweep_is_named_so_the_schedule_can_find_it() -> None:
+    """The second periodic task. Same rule, same queue: it deletes ``meetings``
+    rows, which only A writes."""
+    name = "autune.audio.periodic.expire_meetings"
+    assert tasks.expire_meetings.name == name
+    assert is_periodic_task_name(name)
+    assert schedule_of(tasks.expire_meetings) == timedelta(hours=1)

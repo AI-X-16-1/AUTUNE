@@ -289,3 +289,26 @@ def _hide(value: str, category: str, *, merged: bool = False) -> str:
         out.append(char if index in keep else MASK_CHAR)
         index += 1
     return "".join(out)
+
+
+def hide_reported(span: str) -> str:
+    """Mask a span a person reported as a miss (S30, #555). Nothing of it stays.
+
+    ``_hide`` keeps a first character or the last digits because a detector's
+    hit is usually right about *what kind* of thing it found and the shape helps
+    a reader. A report is the opposite case: the detector missed it, and the
+    person who saw it decided it should not be readable -- so every character
+    goes except separators, which keep the line reading as having said
+    something there.
+
+    Each whitespace-separated run ends with at least two mask characters, so
+    ``MaskedText`` on the web (``\\S*\\*{2,}\\S*``) recognises it as a redaction
+    rather than a stray asterisk.
+    """
+    runs = []
+    for run in span.split(" "):
+        hidden = "".join(char if char in _SHAPE_CHARS else MASK_CHAR for char in run)
+        if MASK_CHAR in hidden and MASK_CHAR * 2 not in hidden:
+            hidden += MASK_CHAR
+        runs.append(hidden)
+    return " ".join(runs)
