@@ -1,5 +1,4 @@
 import type { Route } from "next";
-import Link from "next/link";
 
 import { TabLinks } from "@/shared/ui";
 
@@ -35,16 +34,11 @@ export default async function MeetingReviewLayout({
   const tab = (suffix: string) => `/meetings/${meetingId}${suffix}` as Route;
 
   return (
-    <div className="mx-auto max-w-[1200px] px-[var(--space-page)] pt-[var(--space-page)]">
-      <Link
-        href="/"
-        className="text-[var(--color-ink-muted)]"
-        style={{ fontSize: "var(--text-meta)" }}
-      >
-        ← 회의 목록
-      </Link>
-
-      <div className="mt-[var(--space-16)]">
+    <>
+      {/* The tab row sits directly under the shell's top bar at the page
+          gutter, as S15 and S17 draw it. The way back to the meeting list is
+          the sidebar now, so the "← 회의 목록" link that stood here is gone. */}
+      <div style={{ padding: "var(--space-16) var(--space-page) 0" }}>
         <TabLinks
           label="회의 보기"
           tabs={[
@@ -57,12 +51,11 @@ export default async function MeetingReviewLayout({
         />
       </div>
 
-      {/* Space under the bar, because a tab body cannot be relied on to bring
-          its own: the context tab was written to sit inside a section that
-          already had margin, and without this its first line touches the
-          underline. Screens that do carry page padding sit a little lower,
-          which is the harmless direction to be wrong in. */}
-      <div className="pt-[var(--space-24)]">{children}</div>
-    </div>
+      {/* No padding here. The action board and the gap report bring their
+          own page gutter; wrapping them in a second one is what pushed each
+          tab's first line to a different place. The two tabs that bring none
+          get theirs from their route file. */}
+      {children}
+    </>
   );
 }

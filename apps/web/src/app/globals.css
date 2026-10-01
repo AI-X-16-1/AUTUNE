@@ -38,6 +38,11 @@
   color-scheme: light dark;
 }
 
+/* Native controls and scrollbars follow the pinned theme, not the OS. */
+:root[data-theme="light"] {
+  color-scheme: light;
+}
+
 body {
   margin: 0;
   background: var(--color-surface-paper);

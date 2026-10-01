@@ -184,7 +184,7 @@ export function NewMeetingScreen({
   }
 
   return (
-    <main className="mx-auto max-w-[720px] p-[var(--space-page)]">
+    <main className="max-w-[776px] px-[var(--space-page)] py-[var(--space-24)]">
       <header>
         <h1
           className="text-ink-strong"
