@@ -5,8 +5,8 @@ import { useEffect, useState } from "react";
 import { Button, StatusDot } from "@/shared/ui";
 
 import { getCarriedOver } from "../api";
+import { isOverdue } from "../dates";
 import type { CarriedOver, CarriedOverItem } from "../types";
-import { isOverdue } from "./ActionCard";
 
 /**
  * What the team's earlier meetings left open (PRD 5.2, WBS 4.8): a popup the
@@ -145,7 +145,7 @@ function Popup({
 }
 
 function CarriedRow({ item }: { item: CarriedOverItem }) {
-  const overdue = isOverdue(item.due_date);
+  const overdue = isOverdue(item);
   return (
     <li className="flex gap-2 border-b border-[var(--color-hairline)] py-2 last:border-b-0">
       <StatusDot variant="attention" className="mt-1.5" />

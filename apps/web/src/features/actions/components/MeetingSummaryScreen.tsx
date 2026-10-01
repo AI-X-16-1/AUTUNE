@@ -7,9 +7,16 @@ import { useEffect, useState } from "react";
 import { Button, StatusDot } from "@/shared/ui";
 
 import { getSummary, putSummaryNote } from "../api";
+import { isOverdue } from "../dates";
 import { COLUMNS, COLUMN_LABELS, MAX_NOTE_CHARS } from "../types";
 import type { ActionItemRead, MeetingSummary } from "../types";
-import { isOverdue } from "./ActionCard";
+
+/**
+ * The gutter under S15's tab row. The review layout gives none (#534): each tab
+ * brings its own, and the route files that wrap the transcript and context tabs
+ * use this same value, so the first line of every tab sits in one place.
+ */
+const TAB_BODY = { padding: "20px var(--space-page) var(--space-page)" } as const;
 
 /**
  * S15's 요약 tab, v1 (#421, WBS 4.9): what the meeting settled and left, read
@@ -57,11 +64,11 @@ export function MeetingSummaryScreen({ meetingId }: { meetingId: string }) {
       ] as const,
   );
   const overdue = summary.action_items.filter(
-    (i) => i.status !== "done" && isOverdue(i.due_date),
+    (i) => isOverdue(i),
   ).length;
 
   return (
-    <main className="flex max-w-[860px] flex-col gap-8">
+    <main className="flex max-w-[860px] flex-col gap-8" style={TAB_BODY}>
       <section aria-label="개요">
         <Heading>개요</Heading>
         <dl
@@ -218,7 +225,7 @@ function localTime(iso: string): string {
 }
 
 function ItemLine({ item }: { item: ActionItemRead }) {
-  const late = item.status !== "done" && isOverdue(item.due_date);
+  const late = isOverdue(item);
   return (
     <Line dot={item.status === "done" ? "idle" : "progress"}>
       <span className="text-[var(--color-ink-strong)]">{item.description}</span>
