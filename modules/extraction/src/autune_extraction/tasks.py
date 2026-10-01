@@ -120,6 +120,7 @@ def _extract(meeting_id: str, utterances: Sequence[TranscriptUtterance]) -> None
         consented = service.consented_utterance_ids(session, meeting_id)
         roster = service.team_roster(session, meeting_id)
         day = service.decision_day(session, meeting_id)
+        confirmed = service.confirmed_commitment_ids(session, meeting_id)
 
     classifier = get_classifier()
     # A classifier that sends text out replaces these names first (#411).
@@ -133,6 +134,8 @@ def _extract(meeting_id: str, utterances: Sequence[TranscriptUtterance]) -> None
     summaries = service.resolve_commitment_summaries(resolver, classified)
     resolved_descriptions = {uid: resolution.text for uid, resolution in summaries.items()}
     related_lines = {uid: resolution.used for uid, resolution in summaries.items()}
+    # Agreements their speakers confirmed keep a summary through the rebuild.
+    confirmed_summaries = service.confirmed_summaries(resolver, classified, confirmed)
     decision_summaries = service.resolve_decision_summaries(
         resolver, classified, meeting_id=meeting_id, day=day
     )
@@ -157,6 +160,7 @@ def _extract(meeting_id: str, utterances: Sequence[TranscriptUtterance]) -> None
             classified=classified,
             resolved=resolved_descriptions,
             related=related_lines,
+            confirmed=confirmed_summaries,
         )
         ambiguous = service.record_ambiguous_agreements(
             session, meeting_id=meeting_id, classified=classified
@@ -367,6 +371,35 @@ def ask_confirmations() -> list[str]:
             f"unmasked value in {len(violations)} confirmation DM(s): {', '.join(violations)}"
         )
     return asked
+
+
+@shared_task(name="autune.extraction.summarise_confirmed_draft", acks_late=True)
+def summarise_confirmed_draft(utterance_id: str) -> None:
+    """After a speaker answers "약속입니다": write the summary of what they
+    agreed to onto the draft their answer made (decided with the user,
+    2026-10-01 -- the DM shows only their line; the summary appears on the
+    board once they confirm).
+
+    Only now, and only for this one: most ambiguous agreements are never
+    confirmed, so none of them costs a model call before an answer. The window
+    and the rules are a commitment's (``resolve_commitment_summaries``); the
+    model runs outside any session. Nothing happens if the answer changed or a
+    person touched the draft in the meantime (``apply_confirmed_summary``), so
+    a redelivery is harmless. A privacy refusal from the resolver is raised.
+    """
+    with session_scope() as session:
+        window = service.confirmed_draft_window(session, utterance_id)
+        said = session.get(Utterance, utterance_id)
+        roster = service.team_roster(session, said.meeting_id) if said is not None else []
+    if window is None:
+        return
+    resolver = get_resolver()
+    give_roster(resolver, roster)
+    resolution = service.resolve_commitment_summaries(resolver, window)[utterance_id]
+    with session_scope() as session:
+        applied = service.apply_confirmed_summary(session, utterance_id, resolution)
+    # Ids only. The summary is meeting content.
+    log.info("extraction_confirmed_draft_summarised", utterance_id=utterance_id, applied=applied)
 
 
 @shared_task(name="autune.extraction.sync_action_item", acks_late=True)

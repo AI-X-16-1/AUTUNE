@@ -252,7 +252,14 @@ def apply_confirmation_response(response: ConfirmationResponse) -> None:
     outside any request or task that owns one.
     """
     with session_scope() as session:
-        resolve_confirmation(session, response)
+        answered = resolve_confirmation(session, response)
+    if answered is not None and response.is_commitment:
+        # After the commit, so the job finds the draft. Imported here: tasks
+        # imports this module. The summary is written only now, for an answer
+        # of "약속입니다" -- never for the DM (decided with the user, 2026-10-01).
+        from . import tasks
+
+        tasks.summarise_confirmed_draft.delay(response.utterance_id)
 
 
 def resolve_confirmation(
@@ -312,7 +319,7 @@ def resolve_confirmation(
 
 
 def draft_confirmed_commitment(
-    session: Session, confirmation: ExtConfirmation
+    session: Session, confirmation: ExtConfirmation, resolution: Resolution | None = None
 ) -> ExtActionItem | None:
     """The draft item for an agreement its speaker confirmed was a commitment.
 
@@ -332,6 +339,10 @@ def draft_confirmed_commitment(
     Returns ``None`` -- and writes nothing -- when the utterance is gone, blank,
     or its speaker did not consent to analysis (privacy.md section 5: excluded
     speech is not stored, so there is nothing to quote and no one to assign).
+
+    ``resolution`` is a summary already written for it -- a rerun has one
+    (``confirmed_summaries``). Without one the description is the line, tidied,
+    and ``summarise_confirmed_draft`` replaces it a moment later.
     """
     existing = session.scalar(
         select(ExtActionItem)
@@ -358,11 +369,11 @@ def draft_confirmed_commitment(
     known = {user_id} if user_id is not None and session.get(User, user_id) is not None else set()
     assignee = assignee_of(user_id, utterance.speaker_label, known=known)
     due = parse_due(utterance.text, day)
-    description = tidy(utterance.text)
+    written = resolution.text if resolution is not None else utterance.text
     item = ExtActionItem(
         meeting_id=confirmation.meeting_id,
-        description=description,
-        description_resolved=False,
+        description=tidy(written),
+        description_resolved=written != utterance.text,
         assignee_id=assignee.user_id,
         assignee_label=assignee.label,
         due_date=due.date if due is not None else None,
@@ -371,6 +382,7 @@ def draft_confirmed_commitment(
         confidence=1.0,
         origin="model",
         sources=[ExtActionItemSource(utterance_id=confirmation.utterance_id)],
+        related=_cited(session, confirmation.meeting_id, confirmation.utterance_id, resolution),
     )
     session.add(item)
     session.flush()
@@ -380,6 +392,112 @@ def draft_confirmed_commitment(
         utterance_id=confirmation.utterance_id,
     )
     return item
+
+
+def _untouched_drafts(session: Session, utterance_id: str) -> list[ExtActionItem]:
+    """The draft a speaker's answer made for this utterance, while nobody has
+    touched it: still in *needs confirmation*, no edit recorded against it."""
+    return list(
+        session.scalars(
+            select(ExtActionItem)
+            .join(ExtActionItemSource, ExtActionItemSource.action_item_id == ExtActionItem.id)
+            .where(
+                ExtActionItemSource.utterance_id == utterance_id,
+                ExtActionItem.status == ActionStatus.NEEDS_CONFIRMATION.value,
+                ExtActionItem.origin == "model",
+                ~select(ExtEditEvent.id)
+                .where(ExtEditEvent.action_item_id == ExtActionItem.id)
+                .exists(),
+            )
+        ).all()
+    )
+
+
+def _cited(
+    session: Session, meeting_id: str, utterance_id: str, resolution: Resolution | None
+) -> list[ExtActionItemRelated]:
+    """The lines a summary says it used, as rows for the drawer -- only this
+    meeting's consenting ones, never the utterance itself."""
+    if resolution is None or not resolution.used:
+        return []
+    citable = consented_utterance_ids(session, meeting_id)
+    return [
+        ExtActionItemRelated(utterance_id=u)
+        for u in dict.fromkeys(resolution.used)
+        if u in citable and u != utterance_id
+    ]
+
+
+def confirmed_draft_window(session: Session, utterance_id: str) -> list[ClassifiedUtterance] | None:
+    """What ``summarise_confirmed_draft`` writes a summary from: the meeting,
+    with this utterance as the one commitment (``chat_draft_window``). ``None``
+    when there is nothing to summarise -- the answer is no longer "commitment",
+    or the draft is gone or a person has touched it.
+    """
+    row = session.get(ExtConfirmation, utterance_id)
+    if row is None or row.resolved_kind != UtteranceKind.COMMITMENT.value:
+        return None
+    if not _untouched_drafts(session, utterance_id):
+        return None
+    return chat_draft_window(session, row.meeting_id, utterance_id)
+
+
+def apply_confirmed_summary(session: Session, utterance_id: str, resolution: Resolution) -> bool:
+    """Put the summary on the draft a speaker's "약속입니다" made, if that is
+    still the answer and the draft is still untouched.
+
+    Decided with the user (2026-10-01): the DM shows the speaker's own line, and
+    the summary appears only once they confirm -- on the board, as the draft's
+    description, the line beneath it. The confirmation row is locked first, the
+    order ``resolve_confirmation`` and ``build_action_items`` take, so a changed
+    answer or a rerun in between is seen. Writes no edit event: a person did not
+    correct anything. Returns whether it was applied.
+    """
+    row = session.get(ExtConfirmation, utterance_id, with_for_update=True)
+    if row is None or row.resolved_kind != UtteranceKind.COMMITMENT.value:
+        return False
+    drafts = _untouched_drafts(session, utterance_id)
+    if not drafts:
+        return False
+    said = session.get(Utterance, utterance_id)
+    for draft in drafts:
+        draft.description = tidy(resolution.text)
+        draft.description_resolved = said is not None and resolution.text != said.text
+        draft.related = _cited(session, draft.meeting_id, utterance_id, resolution)
+    session.flush()
+    return True
+
+
+def confirmed_commitment_ids(session: Session, meeting_id: str) -> set[str]:
+    """The meeting's ambiguous agreements whose speakers answered "commitment"."""
+    return set(
+        session.scalars(
+            select(ExtConfirmation.utterance_id).where(
+                ExtConfirmation.meeting_id == meeting_id,
+                ExtConfirmation.resolved_kind == UtteranceKind.COMMITMENT.value,
+            )
+        )
+    )
+
+
+def confirmed_summaries(
+    resolver: ReferenceResolver,
+    classified: Sequence[ClassifiedUtterance],
+    confirmed: Collection[str],
+) -> dict[str, Resolution]:
+    """Summaries for the agreements a meeting's speakers confirmed as
+    commitments (``confirmed_commitment_ids``), for a rerun: it rebuilds their
+    drafts (``draft_confirmed_commitment``), and each keeps a summary rather
+    than falling back to the line. Only the confirmed ones are summarised --
+    most agreements never are. Model inference: call it outside a session.
+    """
+    if not confirmed:
+        return {}
+    marked = [
+        replace(u, kind=UtteranceKind.AMBIGUOUS if u.id in confirmed and u.text else None)
+        for u in classified
+    ]
+    return resolve_commitment_summaries(resolver, marked, kind=UtteranceKind.AMBIGUOUS)
 
 
 def withdraw_confirmed_draft(session: Session, confirmation: ExtConfirmation) -> int:
@@ -394,18 +512,7 @@ def withdraw_confirmed_draft(session: Session, confirmation: ExtConfirmation) ->
     Writes no ``ext_edit_events`` row: that table counts a *person's* corrections
     (ADR 0006), and this is neither. Returns how many items were removed.
     """
-    drafts = session.scalars(
-        select(ExtActionItem)
-        .join(ExtActionItemSource, ExtActionItemSource.action_item_id == ExtActionItem.id)
-        .where(
-            ExtActionItemSource.utterance_id == confirmation.utterance_id,
-            ExtActionItem.status == ActionStatus.NEEDS_CONFIRMATION.value,
-            ExtActionItem.origin == "model",
-            ~select(ExtEditEvent.id)
-            .where(ExtEditEvent.action_item_id == ExtActionItem.id)
-            .exists(),
-        )
-    ).all()
+    drafts = _untouched_drafts(session, confirmation.utterance_id)
     for draft in drafts:
         session.delete(draft)
     if drafts:
@@ -2133,6 +2240,8 @@ def resolve_commitment_references(
 def resolve_commitment_summaries(
     resolver: ReferenceResolver,
     classified: Sequence[ClassifiedUtterance],
+    *,
+    kind: UtteranceKind = UtteranceKind.COMMITMENT,
 ) -> dict[str, Resolution]:
     """``resolve_commitment_references`` with the lines each sentence was written from.
 
@@ -2148,8 +2257,11 @@ def resolve_commitment_summaries(
     gives: it is already ordered, and an excluded speaker's turn is already
     blank. Both the window and the candidates come out of the same filtered
     sequence, so a line from a speaker who did not consent is in neither.
+
+    ``kind`` names which utterances are summarised; ``confirmed_summaries`` marks
+    the agreements their speakers confirmed and passes that mark.
     """
-    commitments = [u for u in classified if u.kind is UtteranceKind.COMMITMENT]
+    commitments = [u for u in classified if u.kind is kind]
     if not commitments:
         return {}
 
@@ -2263,6 +2375,7 @@ def build_action_items(
     classified: Sequence[ClassifiedUtterance],
     resolved: Mapping[str, str] | None = None,
     related: Mapping[str, Sequence[str]] | None = None,
+    confirmed: Mapping[str, Resolution] | None = None,
 ) -> list[ExtActionItem] | None:
     """One draft item per commitment, replacing the model's previous draft.
 
@@ -2382,7 +2495,9 @@ def build_action_items(
             ExtConfirmation.resolved_kind == UtteranceKind.COMMITMENT.value,
         )
     ):
-        drafted = draft_confirmed_commitment(session, confirmation)
+        drafted = draft_confirmed_commitment(
+            session, confirmation, (confirmed or {}).get(confirmation.utterance_id)
+        )
         if drafted is not None and drafted not in items:
             items.append(drafted)
     return items

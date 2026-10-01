@@ -116,7 +116,8 @@ agreement, and sync the result to Notion.
    **What the answer does.** *Commitment* makes one draft item for that
    utterance, slot-filled like any commitment (the speaker is the assignee, the
    first date phrase the due date, the utterance's own text — tidied into the
-   noun form, as in step 3 — the description),
+   noun form, as in step 3 — the description, until the summary below replaces
+   it),
    in *needs confirmation* with confidence 1.0 — the speaker's answer is the
    certainty, and the team still accepts the item before it leaves for Notion
    or a calendar. Any other answer makes no item; a later answer replaces an
@@ -126,6 +127,15 @@ agreement, and sync the result to Notion.
    makes a second one. `ext_classifications` is not rewritten: it records what
    the model said and `resolved_kind` what the speaker said, and the two stay
    comparable.
+   **The summary comes after the answer** (decided with the user, 2026-10-01).
+   The DM quotes only the speaker's line. A *commitment* answer sends
+   `summarise_confirmed_draft`, which writes a summary from the lines around the
+   agreement the way a commitment's is written (step 3) and puts it on the
+   draft as its description, the lines it cited beside it — shown on the board,
+   the speaker's line beneath it, never in Slack. Only a confirmed agreement is
+   summarised, so an unanswered one costs no model call. A draft a person has
+   touched, or an answer changed in the meantime, is left as it is. A rerun
+   summarises the confirmed ones again so their drafts keep a summary.
 7. **Sync** — when a person confirms an action item (moves it out of
    `needs_confirmation`), create one page for it in the team's Notion database
    and store the URL in `ext_external_refs` (#30). One page per item: a later
