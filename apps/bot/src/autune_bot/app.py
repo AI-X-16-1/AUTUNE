@@ -13,6 +13,7 @@ See docs/architecture/monorepo.md.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from importlib import import_module
 from typing import TYPE_CHECKING, Any, cast
@@ -74,6 +75,22 @@ def authorize_team(
     return None
 
 
+def bolt_logger() -> logging.Logger:
+    """Bolt's logger, at WARNING.
+
+    Bolt gives each of its loggers the root's level unless the app is handed
+    one, and at INFO it logs a request that failed the signature check with its
+    raw body (``RequestVerification._debug_log_error``). A forged copy of a
+    real click carries the DM's blocks, which quote a person's line (privacy
+    rule 11, #610 review). Setting the level on ``slack_bolt`` alone is not
+    enough: each Bolt logger copies its level once, from the logger it is
+    given, so the app must be given this one.
+    """
+    logger = logging.getLogger("slack_bolt")
+    logger.setLevel(logging.WARNING)
+    return logger
+
+
 def build_app() -> App:
     """Construct the Bolt app from configured credentials.
 
@@ -92,7 +109,15 @@ def build_app() -> App:
 
     if settings.slack_bot_token:
         # One workspace, one token: local development in socket mode.
-        app = App(token=settings.slack_bot_token, signing_secret=settings.slack_signing_secret)
+        if settings.env != "local":
+            # Every workspace would be answered with this one token, and a
+            # team's own installation would be ignored (#610 review).
+            log.warning("slack_global_bot_token_outside_local", env=settings.env)
+        app = App(
+            token=settings.slack_bot_token,
+            signing_secret=settings.slack_signing_secret,
+            logger=bolt_logger(),
+        )
     else:
         # Every team installs Autune into its own workspace (#428) and stores
         # its own bot token; a request is answered with the token of the
@@ -103,6 +128,7 @@ def build_app() -> App:
         app = App(
             signing_secret=settings.slack_signing_secret,
             authorize=cast("Callable[..., AuthorizeResult]", authorize_team),
+            logger=bolt_logger(),
         )
 
     @app.event("app_mention")

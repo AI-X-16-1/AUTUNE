@@ -82,6 +82,9 @@ class ConfirmationResponse:
     utterance_id: str
     resolved_kind: UtteranceKind
     responder_id: str
+    # The Slack workspace a click came from, as Slack signed it; empty on the
+    # web, where the responder is a signed-in Autune user.
+    workspace_id: str = ""
 
     @property
     def is_commitment(self) -> bool:
@@ -188,8 +191,10 @@ def parse_confirmation_action(payload: dict) -> ConfirmationResponse:
     if not responder_id:
         raise ConfirmationError("payload carries no responding user")
 
+    team = payload.get("team") or {}
     return ConfirmationResponse(
         utterance_id=utterance_id,
         resolved_kind=ACTION_IDS[action_id],
         responder_id=responder_id,
+        workspace_id=str(team.get("id") or ""),
     )

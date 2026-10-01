@@ -20,7 +20,7 @@ from .confirmations import (
     ConfirmationError,
     parse_confirmation_action,
 )
-from .service import apply_confirmation_response
+from .service import answer_from_slack
 
 if TYPE_CHECKING:
     from slack_bolt import App
@@ -56,4 +56,4 @@ def _on_confirmation(ack: Any, body: dict) -> None:
         log.warning("extraction_confirmation_unparsed", reason=str(exc))
         return
 
-    apply_confirmation_response(response)
+    answer_from_slack(response)
