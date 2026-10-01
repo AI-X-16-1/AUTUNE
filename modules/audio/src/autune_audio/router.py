@@ -13,17 +13,20 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Response, UploadFile, status
 from sqlalchemy.orm import Session
 
+from autune_contracts.events import TRANSCRIPT_READY
 from autune_contracts.transcript import Utterance
 from autune_core import CurrentUser, get_logger, get_session
 from autune_core.auth import clear_session_cookie
 from autune_core.errors import AutuneError
+from autune_core.events import publish
 from autune_core.settings import get_settings as get_core_settings
 
-from . import account, service
+from . import account, pii_report, service
 from .config import MAX_UPLOAD_BYTES
 from .config import get_settings as get_audio_settings
 from .enqueue import enqueue_process_recording
 from .live.routes import router as live_router
+from .persistence import transcript_payload
 from .schemas import (
     AccountDeleted,
     ConsentAttestation,
@@ -33,6 +36,8 @@ from .schemas import (
     MeetingState,
     MeetingSummary,
     MyData,
+    PiiReport,
+    PiiReported,
     SpeakerAssignment,
     SpeakerEntry,
     SpeechDeleted,
@@ -370,3 +375,56 @@ def set_team_privacy(
 ) -> TeamPrivacy:
     """S29's retention row. Applies to meetings held from now on."""
     return account.set_retention(session, team_id=team_id, days=body.retention_days, by=user)
+
+
+# Statuses at which TranscriptReady has gone out. Before them nobody downstream
+# holds the text, and the pipeline's own publish will carry the correction.
+_ANNOUNCED = frozenset({"complete", "awaiting_confirmation", "delivered"})
+
+
+@router.post(
+    "/meetings/{meeting_id}/utterances/{utterance_id}/pii-report", response_model=PiiReported
+)
+def report_pii_miss(
+    meeting_id: str,
+    utterance_id: str,
+    body: PiiReport,
+    user: CurrentUser,
+    session: SessionDep,
+) -> PiiReported:
+    """S30: mask a span the masker missed, then tell B, C and D (#555).
+
+    **Committed before the publish**, as ``process_recording`` does: the event
+    is a statement about what is stored, and a consumer that reads the rows
+    after it must find the masked text. A failed publish does not undo the
+    masking -- the stored text is corrected either way -- and is reported as
+    ``republished: false`` rather than as an error the person would retry.
+    """
+    reported = pii_report.report_miss(
+        session,
+        meeting_id=meeting_id,
+        utterance_id=utterance_id,
+        start=body.start,
+        end=body.end,
+        category=body.category,
+        include_similar=body.include_similar,
+        reporter=user,
+    )
+    session.commit()
+
+    republished = False
+    meeting = service.meeting_for(session, meeting_id=meeting_id, reader=user)
+    if meeting.status in _ANNOUNCED:
+        try:
+            payload = transcript_payload(session, meeting_id=meeting_id)
+            publish(TRANSCRIPT_READY, payload.model_dump(mode="json"))
+            republished = True
+        except Exception as error:  # noqa: BLE001 -- the masking already landed
+            log.warning(
+                "audio_pii_republish_failed", meeting_id=meeting_id, error=type(error).__name__
+            )
+    return PiiReported(
+        utterances=reported.utterances,
+        occurrences=reported.occurrences,
+        republished=republished,
+    )

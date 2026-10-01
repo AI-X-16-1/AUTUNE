@@ -24,11 +24,15 @@ export type TranscriptState =
  * channel that does not exist yet (see `api.getTranscript`). A polling loop here
  * would be a live view that is wrong about how live it is.
  *
+ * `version` is the one exception to "fetched once": a caller that has just
+ * changed the stored text — an S30 report masking a span — bumps it to read
+ * the transcript again.
+ *
  * The request is abandoned if the id changes before it lands, so a fast
  * navigation cannot leave the previous meeting's transcript on screen under the
  * new meeting's heading.
  */
-export function useTranscript(meetingId: string): TranscriptState {
+export function useTranscript(meetingId: string, version = 0): TranscriptState {
   const [state, setState] = useState<TranscriptState>({ status: "loading" });
 
   useEffect(() => {
@@ -48,7 +52,7 @@ export function useTranscript(meetingId: string): TranscriptState {
     return () => {
       current = false;
     };
-  }, [meetingId]);
+  }, [meetingId, version]);
 
   return state;
 }

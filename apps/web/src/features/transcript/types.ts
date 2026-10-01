@@ -147,3 +147,7 @@ export type MyData = {
 };
 export type SpeechDeleted = { utterances: number; voice_rows: number };
 export type AccountDeleted = { utterances: number };
+
+/** S30's body and answer — `schemas.PiiReport` / `PiiReported`. */
+export type PiiCategory = "name" | "internal_id" | "contact" | "other";
+export type PiiReported = { utterances: number; occurrences: number; republished: boolean };
