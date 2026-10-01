@@ -8,6 +8,7 @@ from typing import Any
 import pytest
 
 from autune_agent.main import BudgetExceededError, CallBudget, RunScope, Tool, Toolbox
+from autune_agent.main.pending import arguments_ok
 from autune_agent.main.subagents import TRIGGER_EVENTS
 from autune_agent.results import SubagentResult
 from autune_agent.subagents.report import SUBAGENT
@@ -94,8 +95,8 @@ def test_a_finished_meeting_becomes_a_draft_at_l1_and_a_post_at_l2() -> None:
     assert (draft.tool, draft.level, draft.kind) == (DRAFT_ACTION, "L1", "meeting_report_draft")
     assert (post.tool, post.level, post.kind) == (PUBLISH_ACTION, "L2", "meeting_report_post")
     # The run's scope carries the meeting and the team (#449, #509); the model sets neither.
-    assert set(draft.arguments) == {"body_markdown", "pending_review"}
-    assert post.arguments == {}
+    assert set(draft.arguments) == {"body_markdown", "pending_review", "draft_id"}
+    assert post.arguments == {"draft_id": draft.arguments["draft_id"]}
     assert draft.arguments["pending_review"] is True
     assert draft.arguments["body_markdown"].startswith("✅ 확정된 액션 아이템")
 
@@ -108,7 +109,7 @@ def test_a_chat_request_names_the_meeting_and_the_proposals_carry_it() -> None:
 
     draft, post = outcome.proposed
     assert draft.arguments["meeting_id"] == MEETING
-    assert post.arguments == {"meeting_id": MEETING}
+    assert post.arguments == {"meeting_id": MEETING, "draft_id": draft.arguments["draft_id"]}
 
 
 def test_a_korean_particle_after_the_id_still_finds_the_meeting() -> None:
@@ -142,8 +143,20 @@ def test_asked_on_a_meetings_screen_it_reports_the_runs_meeting() -> None:
 
     assert seen == [MEETING]
     draft, post = outcome.proposed
-    assert set(draft.arguments) == {"body_markdown", "pending_review"}
-    assert post.arguments == {}
+    assert set(draft.arguments) == {"body_markdown", "pending_review", "draft_id"}
+    assert post.arguments == {"draft_id": draft.arguments["draft_id"]}
+
+
+def test_the_post_is_pinned_to_this_runs_draft() -> None:
+    """E posts only the draft the approved proposal names, so each run's id is its own."""
+    first = _run(EVENT, _all_tools(), scope_meeting=MEETING)
+    second = _run(EVENT, _all_tools(), scope_meeting=MEETING)
+
+    ids = [run.proposed[1].arguments["draft_id"] for run in (first, second)]
+    assert ids[0] != ids[1]
+    # Plan mode queues an L2 row only when its arguments are ids and short scalars.
+    assert all(arguments_ok(run.proposed[1].arguments) for run in (first, second))
+    assert all(i.startswith("rdr_") for i in ids)
 
 
 def test_a_chat_request_about_no_meeting_proposes_nothing() -> None:

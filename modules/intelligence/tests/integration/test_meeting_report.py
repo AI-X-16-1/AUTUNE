@@ -113,6 +113,28 @@ def test_claim_hands_out_the_report_once(db_session: Session, meeting: str) -> N
     assert row is not None and row.sent_at is not None
 
 
+def test_claim_refuses_a_draft_replaced_since_the_post_was_approved(
+    db_session: Session, meeting: str
+) -> None:
+    """The approver approved the draft named by its id; a newer draft is not that one."""
+    service.save_meeting_report(db_session, meeting, BODY, draft_id="rdr_seen")
+    service.save_meeting_report(db_session, meeting, BODY + "\n추가", draft_id="rdr_newer")
+
+    with pytest.raises(ConflictError):
+        service.claim_meeting_report(db_session, meeting, draft_id="rdr_seen")
+
+    row = db_session.get(IntelMeetingReport, meeting)
+    assert row is not None and row.sent_at is None  # unclaimed: the newer draft can still go
+
+
+def test_claim_hands_out_the_draft_it_was_pinned_to(db_session: Session, meeting: str) -> None:
+    service.save_meeting_report(db_session, meeting, BODY, draft_id="rdr_seen")
+
+    claimed = service.claim_meeting_report(db_session, meeting, draft_id="rdr_seen")
+
+    assert claimed is not None and claimed.body_markdown == BODY
+
+
 def test_claim_is_not_found_before_a_report_was_saved(db_session: Session, meeting: str) -> None:
     with pytest.raises(NotFoundError):
         service.claim_meeting_report(db_session, meeting)
@@ -289,6 +311,22 @@ def test_task_posts_to_the_teams_configured_channel(
     row = db_session.get(IntelMeetingReport, meeting)
     assert row is not None
     assert (row.slack_channel, row.slack_ts) == ("C123", "1.000000")
+
+
+@pytest.mark.usefixtures("use_test_session", "fake_encryption_key")
+def test_task_posts_nothing_when_the_draft_was_replaced_after_approval(
+    db_session: Session, team: str, meeting: str
+) -> None:
+    service.save_meeting_report(db_session, meeting, BODY, draft_id="rdr_newer")
+    _connect_slack(db_session, team, config={"channel": "C123"})
+    slack = FakeSlack()
+
+    with patch.object(tasks, "SlackClient", return_value=slack):
+        tasks.deliver_meeting_report(meeting, "rdr_seen")
+
+    assert slack.sent == []
+    row = db_session.get(IntelMeetingReport, meeting)
+    assert row is not None and row.sent_at is None
 
 
 @pytest.mark.usefixtures("use_test_session", "fake_encryption_key")
