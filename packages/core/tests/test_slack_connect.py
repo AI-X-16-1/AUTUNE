@@ -40,12 +40,16 @@ class FakeSlack:
         self.channel: SlackChannel | Exception = SlackChannel("C1", "autune")
         self.made: list[tuple[str, str]] = []
         self.revoked: list[str] = []
+        self.calls: list[str] = []
+        self.discarded: list[tuple[str, str]] = []
+        self.exchanged = 0
         self.usable = True
 
     def authorization_url(self, *, state: str) -> str:
         return f"https://slack.com/oauth/v2/authorize?state={state}"
 
     def exchange_code(self, code: str) -> SlackInstall:
+        self.exchanged += 1
         if isinstance(self.install, Exception):
             raise self.install
         return self.install
@@ -57,8 +61,13 @@ class FakeSlack:
         return self.channel
 
     def revoke(self, token: str) -> bool:
+        self.calls.append("revoke")
         self.revoked.append(token)
         return True
+
+    def discard_channel(self, token: str, channel: str) -> None:
+        self.calls.append("discard")
+        self.discarded.append((token, channel))
 
     def channel_usable(self, token: str, channel: str) -> bool:
         return self.usable
@@ -97,6 +106,8 @@ def world(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
 
     monkeypatch.setattr(auth_router_module, "save_integration", save)
     monkeypatch.setattr(auth_router_module, "load_integration", load)
+    # This test database stores no encrypted secret; the check is its own test.
+    monkeypatch.setattr(auth_router_module, "ensure_configured", lambda: None)
     monkeypatch.setattr(
         auth_router_module, "disconnect_integration", lambda _s, t, _svc: saved.pop(t)
     )
@@ -182,6 +193,61 @@ def test_a_token_from_an_install_that_then_fails_is_revoked(world: dict[str, Any
     assert response.headers["location"].endswith("?slack=failed&reason=slack_channel_unavailable")
     assert world["saved"] == {}
     assert world["slack"].revoked == ["xoxb-1"]
+
+
+def test_a_deploy_that_cannot_store_the_token_fails_before_slack_is_touched(
+    world: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#593: an empty AUTUNE_ENCRYPTION_KEY used to fail in save_integration,
+    after the channel was made -- and each retry made the next #autune-N."""
+    from autune_core.errors import ConfigurationError
+
+    def unset() -> None:
+        raise ConfigurationError("AUTUNE_ENCRYPTION_KEY is not set")
+
+    monkeypatch.setattr(auth_router_module, "ensure_configured", unset)
+    client = signed_in(world)
+    response = client.get(f"/api/auth/slack/callback?state={start(client)}&code=c")
+
+    assert response.headers["location"].endswith("?slack=failed&reason=configuration_error")
+    assert world["slack"].exchanged == 0, "no token was issued"
+    assert (world["slack"].made, world["slack"].revoked) == ([], [])
+
+
+def test_a_channel_made_by_an_install_that_then_fails_is_put_away_first(
+    world: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#593: archived with the new token, before that token is revoked."""
+    from autune_core.errors import ConfigurationError
+
+    def refused(*_: Any, **__: Any) -> None:
+        raise ConfigurationError("the row could not be written")
+
+    monkeypatch.setattr(auth_router_module, "save_integration", refused)
+    client = signed_in(world)
+    response = client.get(f"/api/auth/slack/callback?state={start(client)}&code=c")
+
+    assert "slack=failed" in response.headers["location"]
+    assert world["slack"].discarded == [("xoxb-1", "C1")]
+    assert world["slack"].calls == ["discard", "revoke"]
+
+
+def test_a_kept_channel_is_not_put_away_when_a_reinstall_fails(
+    world: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from autune_core.errors import ConfigurationError
+
+    client = signed_in(world)
+    client.get(f"/api/auth/slack/callback?state={start(client)}&code=c")  # installed, C1
+    world["slack"].install = SlackInstall("xoxb-2", "U_BOT", "T1", "Acme", "U_ME")
+
+    def refused(*_: Any, **__: Any) -> None:
+        raise ConfigurationError("the row could not be written")
+
+    monkeypatch.setattr(auth_router_module, "save_integration", refused)
+    client.get(f"/api/auth/slack/callback?state={start(client)}&code=c")
+
+    assert world["slack"].discarded == [], "C1 is the team's channel, kept on a re-install"
 
 
 def test_reinstalling_elsewhere_revokes_the_old_workspaces_token(world: dict[str, Any]) -> None:
@@ -315,6 +381,28 @@ def test_status_and_disconnect_revoke_the_token(world: dict[str, Any]) -> None:
     assert body == {"connected": False, "revoked": True, "shared": False}
     assert world["slack"].revoked == ["xoxb-1"]
     assert world["saved"] == {}
+
+
+def test_settings_names_the_team_instead_of_a_meeting(world: dict[str, Any]) -> None:
+    """S28 (#496): the same routes, the team named directly, the same member check."""
+    client = signed_in(world)
+    client.get(f"/api/auth/slack/callback?state={start(client)}&code=c")
+
+    assert client.get(f"/api/auth/slack?team_id={TEAM}").json()["connected"] is True
+    response = client.get(
+        f"/api/auth/slack/start?team_id={TEAM}&redirect_to=/settings/integrations"
+    )
+    assert response.status_code == 307
+
+
+def test_a_team_the_person_is_not_on_is_refused(world: dict[str, Any]) -> None:
+    response = signed_in(world, OUTSIDER).get(f"/api/auth/slack?team_id={TEAM}")
+
+    assert response.status_code == 403
+
+
+def test_a_scope_is_required(world: dict[str, Any]) -> None:
+    assert signed_in(world).get("/api/auth/slack").status_code == 422
 
 
 # --- the client at its own door --------------------------------------------------------

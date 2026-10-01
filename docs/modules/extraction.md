@@ -225,6 +225,7 @@ signal. Ids and counts only in the log.
 | `ext_decision_refs` | The Notion page a confirmed decision became, one per decision and system |
 | `ext_calendar_events` | The event an item's due date became on its assignee's own calendar, and the date last synced |
 | `ext_calendar_polls` | When each person's calendar was last read back |
+| `ext_calendar_cleanup` | Due-date events still to take off a person's calendar after their meeting expired; queued by the meeting hook, removed by `drain_calendar_cleanup` with the owner's grant (#588). No meeting key; `user_id` cascades |
 | `ext_notion_targets` | The page and three databases a team's Notion sync writes to, one row per team (#428) |
 | `ext_confirmations` | Every ambiguous agreement, the DM once sent, and the response |
 | `ext_decisions` | Decision entities, their statements and source utterances. `origin` is `model` or `user`; a rerun rebuilds only the model's |

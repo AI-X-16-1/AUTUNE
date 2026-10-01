@@ -65,7 +65,11 @@ def _gaps(gaps: ToolResult | None) -> list[str]:
     for item in usable.items:
         if (item.model_extra or {}).get("severity") == "low":
             continue
-        lines.append(f"• {item.title} — {item.body}" if item.body else f"• {item.title}")
+        # The question goes on its own line: C's titles already carry a dash
+        # ("담당자와 기한 — 충분히 다뤄지지 않았습니다"), so a second one ran together.
+        lines.append(f"• {item.title}")
+        if item.body:
+            lines.append(f"  ↳ {item.body}")
     return lines
 
 

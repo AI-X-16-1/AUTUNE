@@ -39,7 +39,7 @@ from autune_core import (
     session_scope,
     users_with_integration,
 )
-from autune_core.deletion import on_speech_deleted
+from autune_core.deletion import on_meeting_deleted, on_speech_deleted, on_user_deleted
 from autune_core.settings import get_settings as get_core_settings
 from autune_integrations import (
     CalendarClient,
@@ -48,12 +48,20 @@ from autune_integrations import (
     NotionClient,
     PermanentIntegrationError,
     SlackClient,
+    TransientIntegrationError,
     refresh_access_token,
 )
 from autune_integrations.errors import SlackRecipientNotLinkedError
 
 from . import calendar_sync, jira_sync, notion_backfill, notion_setup, service
-from .models import ExtActionItem, ExtCalendarPoll, ExtDecision, ExtExternalRef
+from .models import (
+    ExtActionItem,
+    ExtCalendarCleanup,
+    ExtCalendarEvent,
+    ExtCalendarPoll,
+    ExtDecision,
+    ExtExternalRef,
+)
 from .pipeline.base import give_roster
 from .pipeline.registry import get_classifier, get_nli, get_resolver
 
@@ -913,6 +921,183 @@ def remove_calendar_event(action_item_id: str) -> None:
             action_item_id=action_item_id,
             error=type(exc).__name__,
         )
+
+
+CLEANUP_BATCH = 100
+"""How many queued calendar events one ``drain_calendar_cleanup`` run takes."""
+
+CLEANUP_MAX_ATTEMPTS = 5
+"""Transient failures before a queued event is given up on and logged."""
+
+
+@on_user_deleted("extraction")
+def forget_user_calendar_events(user_id: str) -> None:
+    """Before an account goes (#582, #588): every due-date event B put on that
+    person's own calendar, removed now.
+
+    Now, not queued: the events can only be removed with the person's own
+    Google grant (``user_integrations``), and that row goes with ``users``
+    right after this hook. Events already queued for them by a meeting's
+    expiry are removed here too, for the same reason. Never raises -- an
+    expired token or an unreachable Google is logged and the deletion goes on,
+    as #582 requires; the ``users`` cascade then takes B's rows either way.
+    Safe to run twice. Logs ids and counts only.
+    """
+    try:
+        with session_scope() as session, _calendars(session) as calendar_for:
+            events = list(
+                session.scalars(select(ExtCalendarEvent).where(ExtCalendarEvent.user_id == user_id))
+            )
+            queued = list(
+                session.scalars(
+                    select(ExtCalendarCleanup).where(ExtCalendarCleanup.user_id == user_id)
+                )
+            )
+            ids = [e.event_id for e in events if e.event_id] + [q.event_id for q in queued]
+            removed, failed = _remove_events(calendar_for, user_id, ids)
+            for row in [*events, *queued]:
+                session.delete(row)
+        if failed:
+            # Best effort (privacy.md section 4): the account goes on, and these
+            # events stay on that calendar. Loud, because nothing can retry.
+            log.warning(
+                "extraction_user_calendar_events_left",
+                user_id=user_id,
+                failed=failed,
+                client_configured=_google_client_configured(),
+            )
+        log.info(
+            "extraction_user_calendar_events_removed",
+            user_id=user_id,
+            removed=removed,
+            failed=failed,
+        )
+    except PrivacyViolationError:
+        raise  # nothing here sends content, so this would be a real defect
+    except Exception as exc:  # noqa: BLE001 -- an account deletion must not stop on this
+        log.warning(
+            "extraction_user_calendar_events_failed", user_id=user_id, error=type(exc).__name__
+        )
+
+
+def _google_client_configured() -> bool:
+    """Whether this deployment can refresh anyone's Google grant at all."""
+    core = get_core_settings()
+    return bool(core.google_client_id and core.google_client_secret)
+
+
+def _remove_events(
+    calendar_for: calendar_sync.CalendarFor, user_id: str, event_ids: Sequence[str]
+) -> tuple[int, int]:
+    """Remove ``event_ids`` from ``user_id``'s calendar; (removed, failed).
+    An event already gone counts as removed (``CalendarClient.delete_event``)."""
+    if not event_ids:
+        return 0, 0
+    try:
+        connection = calendar_for(user_id)
+    except IntegrationError:
+        return 0, len(event_ids)
+    if connection is None:
+        return 0, len(event_ids)
+    client, calendar_id = connection
+    removed = failed = 0
+    for event_id in event_ids:
+        try:
+            client.delete_event(calendar_id, event_id)
+            removed += 1
+        except IntegrationError:
+            failed += 1
+    return removed, failed
+
+
+@on_meeting_deleted("extraction")
+def queue_meeting_calendar_events(meeting_id: str) -> None:
+    """Before an expired meeting goes (#581, #588): its items' due-date events,
+    copied into ``ext_calendar_cleanup`` for ``drain_calendar_cleanup``.
+
+    Only a copy -- no call to Google here. The hook runs once per meeting
+    inside the retention sweep, and a slow or failing calendar must not hold
+    the sweep up. A database error is raised on purpose: the sweep then keeps
+    the meeting and tries again, rather than deleting it with its events
+    unrecorded. Safe to run twice (the queue is unique per user and event).
+    """
+    with session_scope() as session:
+        rows = session.execute(
+            select(ExtCalendarEvent.user_id, ExtCalendarEvent.event_id).where(
+                ExtCalendarEvent.meeting_id == meeting_id,
+                ExtCalendarEvent.event_id.is_not(None),
+            )
+        ).all()
+        if rows:
+            session.execute(
+                service._insert_if_absent_into(session, ExtCalendarCleanup)
+                .values([{"user_id": user, "event_id": event} for user, event in rows])
+                .on_conflict_do_nothing(index_elements=["user_id", "event_id"])
+            )
+    log.info("extraction_meeting_calendar_events_queued", meeting_id=meeting_id, events=len(rows))
+
+
+@shared_task(name="autune.extraction.periodic.drain_calendar_cleanup")
+@periodic(timedelta(minutes=10))
+def drain_calendar_cleanup() -> int:
+    """Take queued due-date events off their owners' calendars (#588).
+
+    Each goes with its owner's own grant. Removed, or already gone: the row
+    goes. A transient failure keeps it for the next run, up to
+    ``CLEANUP_MAX_ATTEMPTS``. Nothing can remove it -- the owner disconnected
+    their calendar, or the grant is refused -- and the row goes too, logged:
+    keeping it would retry forever. Returns how many were removed.
+    """
+    if not _google_client_configured():
+        # Without the deployment's Google client no grant can be refreshed, and
+        # every row would read as "no grant" and be dropped. Keep them for when
+        # it is configured, and say so loudly (lsh2217, review of #595).
+        log.warning("extraction_calendar_cleanup_no_client")
+        return 0
+    removed = 0
+    with session_scope() as session, _calendars(session) as calendar_for:
+        rows = list(
+            session.scalars(
+                select(ExtCalendarCleanup).order_by(ExtCalendarCleanup.id).limit(CLEANUP_BATCH)
+            )
+        )
+        for row in rows:
+            try:
+                connection = calendar_for(row.user_id)
+                if connection is None:
+                    log.info("extraction_calendar_cleanup_no_grant", user_id=row.user_id)
+                    session.delete(row)
+                    continue
+                client, calendar_id = connection
+                client.delete_event(calendar_id, row.event_id)
+                session.delete(row)
+                removed += 1
+            except TransientIntegrationError:
+                row.attempts += 1
+                if row.attempts >= CLEANUP_MAX_ATTEMPTS:
+                    log.warning("extraction_calendar_cleanup_gave_up", user_id=row.user_id)
+                    session.delete(row)
+            except IntegrationError as exc:
+                log.warning(
+                    "extraction_calendar_cleanup_refused",
+                    user_id=row.user_id,
+                    error=type(exc).__name__,
+                )
+                session.delete(row)
+            except Exception as exc:  # noqa: BLE001 -- one row must not block the queue
+                # Counted like a transient failure: left uncaught it would roll
+                # back the batch, and the row, first by id, would block every
+                # run after it (mminjae97, review of #595).
+                row.attempts += 1
+                log.warning(
+                    "extraction_calendar_cleanup_failed",
+                    user_id=row.user_id,
+                    error=type(exc).__name__,
+                )
+                if row.attempts >= CLEANUP_MAX_ATTEMPTS:
+                    session.delete(row)
+    log.info("extraction_calendar_cleanup_drained", taken=len(rows), removed=removed)
+    return removed
 
 
 @shared_task(name="autune.extraction.sync_decision", acks_late=True)
