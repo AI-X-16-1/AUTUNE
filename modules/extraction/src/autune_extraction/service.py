@@ -540,9 +540,13 @@ def forget_speech(session: Session, utterance_ids: Collection[str]) -> SpeechFor
       summary, not a person's writing) reads ``SPEECH_DELETED_TEXT``, and its
       ``due_text`` -- a fragment of the line -- is cleared; a summary or a
       person's text is the team's record and stays;
-    - a decision loses ``original_statement`` (D then reads ``statement``),
-      and a model statement that is the line tidied (no cited lines, so not a
-      write-up) reads ``SPEECH_DELETED_TEXT`` too.
+    - a decision loses ``original_statement`` (what B would send D next is
+      then ``statement``), and a model statement that is the line tidied (no
+      cited lines, so not a write-up) reads ``SPEECH_DELETED_TEXT`` too.
+
+    Nothing is republished here: copies C, D and E already received through
+    ``ExtractionResult`` are theirs, and stay until they act on the same signal
+    (#601 review).
 
     Runs before the utterances are deleted, while the sources still name them.
     Safe to repeat. Writes no edit event: no person corrected anything.

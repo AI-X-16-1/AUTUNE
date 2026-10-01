@@ -200,8 +200,11 @@ ratios for a meeting (`_MIN_SPEAKERS_FOR_RATIO`, #128). Decided on #168.
   their words go too while the team's work stays — an unconfirmed draft drawn
   from the speech is deleted; a confirmed item or decision whose text is the
   line itself reads "삭제된 발화에서 만든 항목" and loses its date phrase and
-  original sentence; a model's summary or a person's own writing stays; copies
-  in Notion, Jira and calendars follow. Modules receive this through
+  original sentence; a model's summary or a person's own writing stays; B's
+  copies in Notion, Jira and calendars follow. Every module that keeps what it
+  derived from speech — D's statements, E's report text — clears its own copy
+  on the same signal; a module that does not yet is a gap to close. Modules
+  receive this through
   `autune_core.deletion.on_speech_deleted`, before the utterances are deleted
   (ADR 0007 decision 5, #92).
 - When a user leaves a team, their utterances and everything derived from them

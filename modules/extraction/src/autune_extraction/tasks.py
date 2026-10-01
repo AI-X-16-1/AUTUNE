@@ -972,6 +972,10 @@ def forget_deleted_speech(user_id: str, utterance_ids: Sequence[str]) -> None:
     leaving the words behind in B. The copies outside are queued after the
     commit and a failure to queue is only logged: the person's speech must not
     stay because a broker was down. Safe to repeat. Ids and counts only.
+
+    B commits before A deletes the utterances, in its own transaction: if A's
+    deletion then fails, B has already dropped the words. That errs toward
+    deleting more, which is the side to err on (mkkim68, review of #601).
     """
     with session_scope() as session:
         done = service.forget_speech(session, utterance_ids)

@@ -197,8 +197,10 @@ drafts the model or the chat made from them are deleted; a confirmed item whose
 description is the line itself reads "삭제된 발화에서 만든 항목" and its
 `due_text` is cleared; a decision loses `original_statement`, and a model
 statement with no cited lines reads the same placeholder; a model summary or a
-person's text stays. Confirmed changes are queued to Notion, Jira and the
-calendar. Ids and counts only in the log.
+person's text stays. Confirmed changes are queued to Notion, Jira (summary and
+description) and the calendar. Nothing is republished: what C, D and E already
+received in `ExtractionResult` stays with them until they act on the same
+signal. Ids and counts only in the log.
 
 ## Tables
 
