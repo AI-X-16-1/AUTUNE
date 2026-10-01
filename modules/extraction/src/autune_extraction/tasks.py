@@ -956,6 +956,15 @@ def forget_user_calendar_events(user_id: str) -> None:
             removed, failed = _remove_events(calendar_for, user_id, ids)
             for row in [*events, *queued]:
                 session.delete(row)
+        if failed:
+            # Best effort (privacy.md section 4): the account goes on, and these
+            # events stay on that calendar. Loud, because nothing can retry.
+            log.warning(
+                "extraction_user_calendar_events_left",
+                user_id=user_id,
+                failed=failed,
+                client_configured=_google_client_configured(),
+            )
         log.info(
             "extraction_user_calendar_events_removed",
             user_id=user_id,
@@ -968,6 +977,12 @@ def forget_user_calendar_events(user_id: str) -> None:
         log.warning(
             "extraction_user_calendar_events_failed", user_id=user_id, error=type(exc).__name__
         )
+
+
+def _google_client_configured() -> bool:
+    """Whether this deployment can refresh anyone's Google grant at all."""
+    core = get_core_settings()
+    return bool(core.google_client_id and core.google_client_secret)
 
 
 def _remove_events(
@@ -1032,6 +1047,12 @@ def drain_calendar_cleanup() -> int:
     their calendar, or the grant is refused -- and the row goes too, logged:
     keeping it would retry forever. Returns how many were removed.
     """
+    if not _google_client_configured():
+        # Without the deployment's Google client no grant can be refreshed, and
+        # every row would read as "no grant" and be dropped. Keep them for when
+        # it is configured, and say so loudly (lsh2217, review of #595).
+        log.warning("extraction_calendar_cleanup_no_client")
+        return 0
     removed = 0
     with session_scope() as session, _calendars(session) as calendar_for:
         rows = list(
@@ -1062,6 +1083,18 @@ def drain_calendar_cleanup() -> int:
                     error=type(exc).__name__,
                 )
                 session.delete(row)
+            except Exception as exc:  # noqa: BLE001 -- one row must not block the queue
+                # Counted like a transient failure: left uncaught it would roll
+                # back the batch, and the row, first by id, would block every
+                # run after it (mminjae97, review of #595).
+                row.attempts += 1
+                log.warning(
+                    "extraction_calendar_cleanup_failed",
+                    user_id=row.user_id,
+                    error=type(exc).__name__,
+                )
+                if row.attempts >= CLEANUP_MAX_ATTEMPTS:
+                    session.delete(row)
     log.info("extraction_calendar_cleanup_drained", taken=len(rows), removed=removed)
     return removed
 

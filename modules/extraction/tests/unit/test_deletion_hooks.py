@@ -105,6 +105,7 @@ def calendars(session: Session, monkeypatch: pytest.MonkeyPatch) -> dict[str, An
 
     monkeypatch.setattr(tasks, "session_scope", scope)
     monkeypatch.setattr(tasks, "_calendars", lookup)
+    monkeypatch.setattr(tasks, "_google_client_configured", lambda: True)
     return state
 
 
@@ -217,3 +218,28 @@ def test_an_event_nothing_can_remove_is_dropped(
     tasks.drain_calendar_cleanup()
 
     assert queued(session) == [], "retrying forever would help nobody"
+
+
+def test_an_unexpected_error_on_one_row_does_not_block_the_queue(
+    session: Session, calendars: dict[str, Any]
+) -> None:
+    calendars["by_user"]["user_kim"] = _Calendar({"ev_1": ValueError("not an IntegrationError")})
+    tasks.queue_meeting_calendar_events("mtg_1")
+
+    assert tasks.drain_calendar_cleanup() == 1  # user_lee's still goes
+
+    assert queued(session) == [("user_kim", "ev_1")], "kept and counted, not the batch lost"
+    for _ in range(tasks.CLEANUP_MAX_ATTEMPTS - 1):
+        tasks.drain_calendar_cleanup()
+    assert queued(session) == []
+
+
+def test_without_a_google_client_the_queue_is_kept_not_dropped(
+    session: Session, calendars: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(tasks, "_google_client_configured", lambda: False)
+    tasks.queue_meeting_calendar_events("mtg_1")
+
+    assert tasks.drain_calendar_cleanup() == 0
+
+    assert queued(session) == [("user_kim", "ev_1"), ("user_lee", "ev_2")]

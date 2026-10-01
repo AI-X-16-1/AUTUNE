@@ -219,7 +219,10 @@ own Notion or Jira, through an integration the team connected, is the team's
 record there and is not deleted with the meeting or the person. What Autune put
 on a person's own calendar is removed: on account deletion at once, with that
 person's own grant (it goes with the account), and on a meeting's expiry by a
-queued job, so a slow calendar never holds up the sweep.
+queued job, so a slow calendar never holds up the sweep. Both are best effort:
+an account deletion does not wait on Google, so if Google does not answer an
+event can remain on that calendar, and Autune's record of it goes with the
+account anyway.
 
 ## 5. Consent
 
