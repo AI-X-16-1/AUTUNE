@@ -48,6 +48,7 @@ from .auth import (
     set_session_cookie,
 )
 from .auth_service import upsert_user_from_google
+from .crypto import ensure_configured
 from .db import get_session
 from .entities import Meeting, TeamMember
 from .errors import AutuneError, NotFoundError, PermissionDeniedError
@@ -896,16 +897,22 @@ def _finish_slack_connect(
     team_id = transaction.team_id
     install: SlackInstall | None = None
     previous: IntegrationConfig | None = None
+    made: SlackChannel | None = None
     shared = False
     try:
         if error or not code:
             raise PermissionDeniedError("Slack install was not approved")
+        # Before Slack is touched: a deploy that cannot store the token fails
+        # here, not after a channel it would leave behind (#593).
+        ensure_configured()
         install = slack.exchange_code(code)
         previous = load_integration(session, team_id, SLACK)
         # Decided before anything else can fail, so a failure path never has
         # to ask a session that may be broken.
         shared = _workspace_used_elsewhere(session, install.workspace_id, team_id)
         channel = _alert_channel(slack, install, previous)
+        if previous is None or channel.id != previous.config.get("channel"):
+            made = channel
         save_integration(
             session,
             transaction.team_id,
@@ -932,6 +939,12 @@ def _finish_slack_connect(
         log.info("auth_slack_connected", team_id=team_id)
         outcome = "connected"
     except Exception as exc:
+        if install is not None and made is not None:
+            # With the new token, before it is revoked: after, nothing could
+            # archive the channel this attempt made (#593). Best effort; the
+            # original failure is what the person is told.
+            slack.discard_channel(install.access_token, made.id)
+            log.info("auth_slack_channel_discarded", team_id=team_id, channel=made.id)
         if (
             install is not None
             and not shared
