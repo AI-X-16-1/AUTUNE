@@ -280,7 +280,7 @@ export function PiiReportModal({
                 checked={addRule}
                 onChange={(event) => setAddRule(event.target.checked)}
               />
-              같은 형태를 워크스페이스 마스킹 규칙에 추가 · 영문과 숫자가 섞인 사번·ID 형태만
+              같은 형태를 워크스페이스 마스킹 규칙에 추가 · 이후 회의부터 · 영문과 숫자가 섞인 사번·ID 형태만
             </label>
           </li>
         </ul>

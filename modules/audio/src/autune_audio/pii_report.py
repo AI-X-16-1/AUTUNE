@@ -27,7 +27,8 @@ event can never describe text the database does not hold.
 **"This meeting's similar spans" are exact repeats.** The same string elsewhere
 in the meeting is masked in the same request when asked: a phone number said
 twice is the case that matters, and an exact match is the one way to find more
-of it without guessing. A workspace-wide pattern rule is not built yet.
+of it without guessing. The same *shape* in later meetings is a team rule, made
+here when the reporter asks for one (``masking_rules``).
 """
 
 from __future__ import annotations
