@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, type FormEvent } from "react";
 
@@ -252,7 +253,10 @@ export function NewMeetingScreen({
                     color: "var(--color-signal-attention)",
                   }}
                 >
-                  속한 팀이 없습니다. 토큰을 확인해 주세요.
+                  속한 팀이 없습니다.{" "}
+                  <Link href="/workspace/new" className="text-[var(--color-accent-default)]">
+                    워크스페이스 만들기
+                  </Link>
                 </span>
               ) : (
                 <select

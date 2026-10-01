@@ -12,7 +12,7 @@ from datetime import datetime
 from typing import Literal
 
 import numpy as np
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 SAMPLE_RATE = 16_000
 """What both Whisper and pyannote want. Decoding to it once means neither
@@ -188,6 +188,26 @@ class MeetingSummary(BaseModel):
     title: str
     status: str
     started_at: datetime | None
+
+
+class TeamCreate(BaseModel):
+    """S02: a workspace and the creator's job role. Nobody else is added.
+
+    Invitations are not part of this: see ``service.create_team``. A body that
+    still carries ``invite_emails`` is accepted and the field ignored, as
+    Pydantic does with any unknown key.
+    """
+
+    name: str = Field(min_length=2, max_length=40)
+    """2-40 characters after trimming, the limit S02 states."""
+    role: str | None = Field(default=None, min_length=1, max_length=50)
+    """The creator's job role — PM, Backend, Design... Stored on their
+    membership and used for role-level analytics only."""
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def _trim_name(cls, value: object) -> object:
+        return value.strip() if isinstance(value, str) else value
 
 
 class TeamSummary(BaseModel):
