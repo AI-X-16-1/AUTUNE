@@ -42,7 +42,7 @@ export function LiveRail({
    * recording stops, and there is no incremental path into B on purpose
    * (`audio.md`). So every kind is unknown for the whole recording, and
    * rendering `counts[kind] ?? 0` turned "we have not looked" into "we looked
-   * and found none" — `확인 필요 0` reads as a claim that nothing ambiguous was
+   * and found none" — `모호 0` reads as a claim that nothing ambiguous was
    * said. This screen says what it knows and nothing else. */
   onPause?: () => void;
   onResume?: () => void;
@@ -131,7 +131,7 @@ export function LiveRail({
                   color: "var(--color-ink-muted)",
                 }}
               >
-                {KIND_LABELS[kind]}
+                {KIND_LABELS[kind].tally}
               </dt>
               <dd
                 className="tabular-nums"
