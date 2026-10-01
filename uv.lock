@@ -297,6 +297,7 @@ source = { editable = "apps/api" }
 dependencies = [
     { name = "autune-agent" },
     { name = "autune-audio" },
+    { name = "autune-bot" },
     { name = "autune-context" },
     { name = "autune-core" },
     { name = "autune-extraction" },
@@ -310,6 +311,7 @@ dependencies = [
 requires-dist = [
     { name = "autune-agent", editable = "agent" },
     { name = "autune-audio", editable = "modules/audio" },
+    { name = "autune-bot", editable = "apps/bot" },
     { name = "autune-context", editable = "modules/context" },
     { name = "autune-core", editable = "packages/core" },
     { name = "autune-extraction", editable = "modules/extraction" },

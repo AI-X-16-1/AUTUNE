@@ -48,6 +48,11 @@ class Settings(BaseSettings):
     slack_bot_token: str = ""
     slack_signing_secret: str = ""
     slack_app_token: str = ""
+    slack_buttons: bool = False
+    """Whether a DM may carry buttons a person answers in Slack (#585). On only
+    where Slack can reach ``/api/slack/events`` (the app's Request URL, public
+    HTTPS) or a socket-mode bot runs; a button nothing receives does nothing, so
+    off by default and every DM links to Autune either way."""
     """Socket-mode token, local development only."""
 
     web_base_url: str = "http://localhost:3000"

@@ -89,15 +89,16 @@ class ConfirmationResponse:
 
 
 def build_confirmation_dm(
-    *, utterance_id: str, quoted_text: str, answer_url: str
+    *, utterance_id: str, quoted_text: str, answer_url: str, buttons: bool = False
 ) -> tuple[str, list[dict]]:
     """The DM asking one speaker to resolve one ambiguous agreement.
 
     The speaker answers on Autune, at ``answer_url`` -- the meeting's 액션 tab,
     where their own open questions are listed (decided with the user,
-    2026-10-01). The DM carries no buttons: a deployed stack has no receiver
-    for a Slack click yet (#585), and a button that does nothing when pressed is
-    worse than a link. The handlers in ``slack.py`` stay for when it does.
+    2026-10-01). With ``buttons`` -- a deployment Slack can reach
+    (``slack_buttons``, #585) -- the DM also carries the three answers, handled
+    in ``slack.py`` by the same path; without, no button, because a button
+    nothing receives does nothing when pressed.
 
     ``quoted_text`` is the utterance as stored, which is already PII-masked —
     transcript text is masked before it is written (invariant 11), so what comes
@@ -128,11 +129,26 @@ def build_confirmation_dm(
                 }
             ],
         },
+    ]
+    if buttons:
+        # Where a click reaches us (``slack_buttons``, #585): answered in Slack,
+        # the same path as the web; the link stays for anyone who prefers it.
+        blocks.append(
+            {
+                "type": "actions",
+                "elements": [
+                    _button("약속입니다", CONFIRM_COMMITMENT, utterance_id, primary=True),
+                    _button("결정입니다", CONFIRM_DECISION, utterance_id),
+                    _button("아닙니다", DENY, utterance_id),
+                ],
+            }
+        )
+    blocks.append(
         {
             "type": "section",
             "text": {"type": "mrkdwn", "text": f"<{answer_url}|Autune에서 답하기>"},
-        },
-    ]
+        }
+    )
     return fallback, blocks
 
 

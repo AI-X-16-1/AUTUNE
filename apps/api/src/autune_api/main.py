@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from importlib import import_module
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
@@ -91,6 +91,23 @@ def create_app(*, origins: list[str] | None = None) -> FastAPI:
         import_module("autune_agent.router").router, prefix="/api/agent", tags=["agent"]
     )
     log.info("router_registered", module="agent", prefix="/api/agent")
+
+    # Slack's Request URL, for a click on a button in Slack (#585): the Bolt app
+    # and every module's handlers are apps/bot's; this only mounts it, and only
+    # where a signing secret is configured -- Bolt refuses any request whose
+    # signature does not match.
+    if get_settings().slack_signing_secret:
+        from slack_bolt.adapter.fastapi import SlackRequestHandler
+
+        from autune_bot import build_app as build_slack_app
+
+        slack = SlackRequestHandler(build_slack_app())
+
+        @app.post("/api/slack/events", include_in_schema=False)
+        async def slack_events(request: Request) -> Response:
+            return await slack.handle(request)
+
+        log.info("router_registered", module="slack", prefix="/api/slack/events")
 
     return app
 

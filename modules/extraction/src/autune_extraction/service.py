@@ -144,7 +144,10 @@ def send_confirmation_dm(
     assert_personal_delivery(subject_id=speaker_id, recipient_id=recipient_id, is_direct=True)
 
     text, blocks = build_confirmation_dm(
-        utterance_id=utterance_id, quoted_text=quoted_text, answer_url=answer_url
+        utterance_id=utterance_id,
+        quoted_text=quoted_text,
+        answer_url=answer_url,
+        buttons=get_core_settings().slack_buttons,
     )
     timestamp = slack.send_dm(recipient_id, text, blocks)
 
