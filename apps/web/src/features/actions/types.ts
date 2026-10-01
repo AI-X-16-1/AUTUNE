@@ -65,6 +65,8 @@ export interface ExternalRefRead {
  */
 export interface ActionItemRead extends ActionItem {
   meeting_id: string;
+  /** The meeting the item came from; the board across meetings shows it. */
+  meeting_title?: string | null;
   /**
    * `model` for what the pipeline drafted, `user` for what a person typed,
    * `followup` for the Follow-up agent's "후속 회의 잡기" (#561), `chat` for an
