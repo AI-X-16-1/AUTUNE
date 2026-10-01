@@ -693,9 +693,9 @@ def _pull_one(user_id: str) -> list[str]:
 @periodic(timedelta(minutes=10))
 def pull_jira_changes() -> None:
     """Every ten minutes, read back the status people moved their issues to in
-    Jira (``jira_sync.pull_status_changes``): an issue dragged to Done is a done
-    item on the board. One team at a time, each with its own access token and
-    its own transaction, so one team's lapsed connection stops nobody else's.
+    Jira (``jira_sync.read_back``): an issue dragged to Done is a done item on
+    the board. One team at a time, each with its own access token, and one
+    transaction per issue, so one team's lapsed connection stops nobody else's.
 
     Skipped for a team whose connection needs a person to reconnect
     (``jira_access`` answers ``None``). Anything one team's read raises is
@@ -738,17 +738,29 @@ def _jira_teams(session: Session) -> list[str]:
 
 
 def _pull_jira_team(team_id: str) -> list[str]:
+    """One team's read-back, each issue in its own transaction: no row stays
+    locked across another issue's request, and a failure part-way keeps what
+    was read before it. The items moved so far are returned even then, for
+    Notion to follow; the failure is logged here, by type."""
     access = jira_access(team_id)
     if access is None:
         return []
+    moved: list[str] = []
     client = JiraClient.for_cloud(access.access_token, access.cloud_id)
     try:
         with session_scope() as session:
-            return jira_sync.pull_status_changes(
-                session, client, team_id=team_id, site=access.cloud_id
-            )
+            targets = jira_sync.pull_candidates(session, team_id=team_id, site=access.cloud_id)
+        for item_id, key in targets:
+            with session_scope() as session:
+                if jira_sync.read_back(
+                    session, client, item_id=item_id, key=key, site=access.cloud_id
+                ):
+                    moved.append(item_id)
+    except Exception as exc:  # noqa: BLE001 -- one team's failure is theirs alone
+        log.warning("extraction_jira_pull_failed", team_id=team_id, error=type(exc).__name__)
     finally:
         client.close()
+    return moved
 
 
 def backfill_jira(team_id: str) -> dict[str, int]:
