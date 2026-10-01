@@ -26,7 +26,12 @@ from autune_core.auth_service import upsert_user_from_google
 from autune_core.db import Base, get_session
 from autune_core.entities import Team, TeamMember, User
 from autune_core.errors import AutuneError, PermissionDeniedError
-from autune_core.oauth.google import GoogleIdentity, GoogleOAuthClient, get_google_client
+from autune_core.oauth.google import (
+    CLOCK_SKEW_SECONDS,
+    GoogleIdentity,
+    GoogleOAuthClient,
+    get_google_client,
+)
 from autune_core.oauth.state import (
     InMemoryStateStore,
     OAuthTransaction,
@@ -175,9 +180,33 @@ def test_verify_rejects_a_foreign_issuer(rsa_key: rsa.RSAPrivateKey) -> None:
 
 
 def test_verify_rejects_an_expired_token(rsa_key: rsa.RSAPrivateKey) -> None:
-    stale = _id_token(rsa_key, exp=int(time.time()) - 10)
+    stale = _id_token(rsa_key, exp=int(time.time()) - CLOCK_SKEW_SECONDS - 60)
     with pytest.raises(PermissionDeniedError):
         _client(rsa_key).verify(stale, nonce="the-nonce")
+
+
+def test_verify_accepts_a_token_issued_just_ahead_of_this_clock(
+    rsa_key: rsa.RSAPrivateKey,
+) -> None:
+    """#618: a PC 0.9 s behind Google read a fresh token's ``iat`` as in the
+    future and refused every sign-in."""
+    fresh = _id_token(rsa_key, iat=int(time.time()) + 5)
+
+    identity = _client(rsa_key).verify(fresh, nonce="the-nonce")
+
+    assert identity.sub == "google-sub-1"
+
+
+def test_verify_rejects_a_token_issued_beyond_the_skew(rsa_key: rsa.RSAPrivateKey) -> None:
+    ahead = _id_token(rsa_key, iat=int(time.time()) + CLOCK_SKEW_SECONDS + 60)
+
+    with capture_logs() as logs, pytest.raises(PermissionDeniedError):
+        _client(rsa_key).verify(ahead, nonce="the-nonce")
+
+    (entry,) = [e for e in logs if e["event"] == "auth_google_id_token_rejected"]
+    assert entry["reason"] == "ImmatureSignatureError", "the log names which check refused it"
+    assert "dev@example.com" not in repr(logs)
+    assert ahead not in repr(logs)
 
 
 def test_exchange_code_returns_the_id_token(rsa_key: rsa.RSAPrivateKey) -> None:
