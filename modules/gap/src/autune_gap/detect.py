@@ -184,6 +184,7 @@ def compare(
         return []
 
     spoken = [line.casefold() for line in speech]
+    checklist = checklist_words(template)
     scored: list[tuple[int, Finding]] = []
 
     for position, item in enumerate(template.items):
@@ -203,7 +204,7 @@ def compare(
                     category=item.category,
                     template_item=item.item,
                     title=template_for.format(item=item.item),
-                    question=question_for(item, matched, subject),
+                    question=question_for(item, matched, subject, checklist),
                     coverage=coverage,
                     risk_score=risk,
                     severity=severity_of(risk, thresholds),
@@ -217,7 +218,10 @@ def compare(
 
 
 def question_for(
-    item: TemplateItem, matched: list[TopicView], subject: TopicView | None = None
+    item: TemplateItem,
+    matched: list[TopicView],
+    subject: TopicView | None = None,
+    checklist: frozenset[str] = frozenset(),
 ) -> str:
     """The question that would close this gap, naming a topic when there is one.
 
@@ -238,16 +242,85 @@ def question_for(
     subject; it claims nothing about coverage, which stays the classification's.
     Without a subject the template's own question stands.
 
+    **Two things keep a topic out of a question** (both judged on real
+    meetings, #598's follow-up):
+
+    - A label that is only the checklist's own words -- "성공", "필요",
+      "다음 주" -- names nothing (``nameable``). A matched topic like that gets
+      the template's question rather than "필요에 앞서 …"; it is not swapped
+      for another topic, because the question has to point at the topic the
+      score was read from. ``subject_of`` passes over such labels too.
+    - The subject is named only where the item asks for it
+      (``TemplateItem.ask_about_subject``). Who owns the work and what happens
+      next are questions about the meeting, not about its main topic.
+
+    ``checklist`` is the template's keywords (``checklist_words``); empty, no
+    label is judged and a matched topic is always named.
+
     The label is transcript text and safe to put in a question for the reason it
     is safe as a node: ``graph.build_topics`` drops any entity carrying the mask
     character, so no topic label has ever contained a masked span (#250 confirms
     the guarantee holds through both extraction paths).
     """
     if matched:
-        return item.question_about.format(topic=matched[0].label)
-    if subject is not None:
+        if nameable(matched[0].label, checklist):
+            return item.question_about.format(topic=matched[0].label)
+        return item.question
+    if subject is not None and item.ask_about_subject:
         return item.question_about.format(topic=subject.label)
     return item.question
+
+
+NAMEABLE_MIN_LETTERS = 2
+"""Letters a label must keep, once the checklist's words and a trailing
+particle are taken out, to name something. "주" in "다음 주" does not."""
+
+TRAILING_PARTICLES = (
+    "에서",
+    "으로",
+    "에게",
+    "에",
+    "로",
+    "의",
+    "은",
+    "는",
+    "이",
+    "가",
+    "을",
+    "를",
+    "과",
+    "와",
+    "도",
+)
+"""Stripped from the end of what is left, once: NER keeps a particle on a
+span now and then ("3단계로", "다음 주에"), and it is not a name."""
+
+
+def checklist_words(template: Template) -> frozenset[str]:
+    """Every keyword of every item: the words a checklist is made of."""
+    return frozenset(word for item in template.items for word in item.keywords)
+
+
+def nameable(label: str, checklist: frozenset[str]) -> bool:
+    """Whether a topic label still names something once the checklist's own
+    words are taken out of it.
+
+    "응답 시간 목표" keeps "응답 시간" and names a thing; "성공", "필요", "다음
+    주에" and "3단계로" keep a particle or a digit at most, and a question
+    built on them -- "성공의 담당자와 기한은?" -- says nothing. Only the question
+    reads this; whether the topic matched the item, and how the gap scored,
+    are ``match`` and ``score``'s and do not move."""
+    rest = topic_key(label)
+    for word in sorted(checklist, key=len, reverse=True):
+        rest = rest.replace(word, " ")
+    letters = 0
+    for word in rest.split():
+        for particle in TRAILING_PARTICLES:
+            if word.endswith(particle):
+                word = word[: -len(particle)]
+                break
+        letters += sum(1 for char in word if char.isalpha())
+    return letters >= NAMEABLE_MIN_LETTERS
 
 
 SUBJECT_MIN_KEY = 2
@@ -255,7 +328,11 @@ SUBJECT_MIN_KEY = 2
 label says nothing about whether the label is a person."""
 
 
-def subject_of(topics: Sequence[TopicView], names: Sequence[str]) -> TopicView | None:
+def subject_of(
+    topics: Sequence[TopicView],
+    names: Sequence[str],
+    checklist: frozenset[str] = frozenset(),
+) -> TopicView | None:
     """The topic the meeting was about: the most central one that is not a
     person's name.
 
@@ -264,6 +341,9 @@ def subject_of(topics: Sequence[TopicView], names: Sequence[str]) -> TopicView |
     passed over -- a colleague mentioned often is central and is not what a
     question about performance should be about (#521 names a colleague without
     the honorific, which is why containment and not equality).
+
+    A label made of the checklist's own words is passed over as well -- "성공"
+    carrying a meeting is not what it was about (``nameable``).
     """
     keys = [key for key in (topic_key(name) for name in names) if len(key) >= SUBJECT_MIN_KEY]
     for topic in sorted(topics, key=lambda t: (-t.centrality, t.id)):
@@ -271,6 +351,8 @@ def subject_of(topics: Sequence[TopicView], names: Sequence[str]) -> TopicView |
         if not label:
             continue
         if any(key in label or label in key for key in keys):
+            continue
+        if not nameable(topic.label, checklist):
             continue
         return topic
     return None

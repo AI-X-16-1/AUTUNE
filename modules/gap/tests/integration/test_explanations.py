@@ -173,7 +173,8 @@ def test_a_meeting_with_no_start_is_dated_by_when_it_was_registered(team_id: str
 def test_a_missing_items_question_names_the_meetings_subject(team_id: str) -> None:
     ids = seed(team_id)
 
-    question = rows(ids["meeting"])["next_step"].suggested_question
+    # dependency asks about the subject; next_step is about the meeting itself.
+    question = rows(ids["meeting"])["dependency"].suggested_question
     assert question is not None
     assert "핵심 지표" in question
 

@@ -387,7 +387,9 @@ def detect_gaps(meeting_id: str) -> int:
         topics = _topic_views(session, meeting_id)
         speech = _speech(session, meeting_id)
         people_key = _people_key(_people(session, meeting_id))
-        subject = detect.subject_of(topics, _names(session, meeting_id))
+        subject = detect.subject_of(
+            topics, _names(session, meeting_id), detect.checklist_words(chosen)
+        )
 
     # An empty graph raises nothing whatever was said (`detect.compare`), so the
     # speech is not embedded, or sent anywhere, for a meeting that cannot use it.
@@ -462,7 +464,7 @@ def refresh_questions(meeting_id: str, *, apply: bool = True) -> int:
 
         views = _topic_views(session, meeting_id)
         by_id = {view.id: view for view in views}
-        subject = detect.subject_of(views, _names(session, meeting_id))
+        names = _names(session, meeting_id)
         related: dict[str, list[str]] = defaultdict(list)
         for gap_id, topic_id in session.execute(
             select(GapRelatedTopic.gap_id, GapRelatedTopic.topic_id).where(
@@ -475,18 +477,20 @@ def refresh_questions(meeting_id: str, *, apply: bool = True) -> int:
         changed = 0
         for gap in gaps:
             chosen = templates.get(gap.template_key or "")
-            item = (
-                next((i for i in chosen.items if i.key == gap.template_item_key), None)
-                if chosen
-                else None
-            )
+            if chosen is None:
+                continue
+            item = next((i for i in chosen.items if i.key == gap.template_item_key), None)
             if item is None:
                 continue
             matched = sorted(
                 (by_id[t] for t in related[gap.id] if t in by_id),
                 key=lambda topic: (-topic.centrality, topic.id),
             )
-            question = detect.question_for(item, matched, subject)
+            # The subject depends on the template: its words are what a label
+            # must not be made of. Same call as `detect_gaps` makes.
+            checklist = detect.checklist_words(chosen)
+            subject = detect.subject_of(views, names, checklist)
+            question = detect.question_for(item, matched, subject, checklist)
             if gap.suggested_question != question:
                 changed += 1
                 if apply:
