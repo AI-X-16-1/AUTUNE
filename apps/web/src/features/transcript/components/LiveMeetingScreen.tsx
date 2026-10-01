@@ -207,7 +207,7 @@ export function LiveMeetingScreen({ meetingId }: { meetingId: string }) {
           </p>
         )}
         <p className="mt-6 text-ink-muted" style={{ fontSize: "var(--text-meta)" }}>
-          원본 음성은 전사 후 바로 삭제되고, 전사 텍스트의 개인정보는 저장 전에 자동 마스킹됩니다.
+          원본 음성은 처리 후 삭제되고, 전사 텍스트의 개인정보는 저장 전에 자동 마스킹됩니다.
         </p>
         <div className="mt-4 flex items-center justify-end gap-1">
           <Link

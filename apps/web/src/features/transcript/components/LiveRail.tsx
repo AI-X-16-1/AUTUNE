@@ -16,10 +16,12 @@ import { KindMark } from "./KindTag";
  * bar -- and a red timer would make every glance read as an alarm. It is also
  * why the stop button is not red: red is the state, not the action.
  *
- * "원본 즉시 삭제" in the header is a fact of this path, not a promise: live
- * audio is held as frames in memory and dropped as each segment is
- * transcribed (`autune_audio.live`), and the uploaded recording is deleted
- * when its transcription completes (`privacy.md`).
+ * "원본 처리 후 삭제" in the header, not "즉시": the live channel keeps no audio
+ * (frames are dropped as each segment is transcribed, `autune_audio.live`),
+ * but the whole recording is held by this tab's `MediaRecorder` until the
+ * meeting ends, uploaded, and deleted once its transcription is done
+ * (`privacy.md` section 1, #275). Copy about privacy may not promise more than
+ * the code does (review of #564). Every screen says it the same way.
  *
  * Counts are per kind and per meeting. **There is no per-person count, here or
  * anywhere**, and adding one would turn the rail into a scoreboard of who
@@ -102,7 +104,7 @@ export function LiveRail({
               color: "var(--color-ink-muted)",
             }}
           >
-            원본 즉시 삭제
+            원본 처리 후 삭제
           </span>
         </div>
 
