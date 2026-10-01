@@ -333,6 +333,8 @@ function InputDevice({ microphone }: { microphone: Microphone }) {
     );
   } else if (error) {
     status = <span style={{ color: "var(--color-signal-attention)" }}>{error}</span>;
+  } else if (!previewing && permission === "prompt") {
+    status = "브라우저 주소창 아래에 뜬 창에서 마이크를 허용해 주세요";
   } else if (!previewing) {
     status = "마이크를 여는 중…";
   } else {

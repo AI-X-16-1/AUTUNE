@@ -10,8 +10,10 @@ const LEVEL_WINDOW = 48;
  *
  * `denied` is its own state rather than an error string because S10 draws it
  * differently: a "권한 허용" action and guidance, not a generic failure.
+ * `prompt` means the browser has not been answered yet, so its own permission
+ * bubble is probably open and the gate should point at it.
  */
-export type MicrophonePermission = "unknown" | "granted" | "denied";
+export type MicrophonePermission = "unknown" | "prompt" | "granted" | "denied";
 
 export type AudioInput = { deviceId: string; label: string };
 
@@ -215,7 +217,8 @@ export function useMicrophone(): Microphone {
         if (wantsPreview.current && !media.current && !recording.current) {
           void previewRef.current();
         }
-      } else setPermission("unknown");
+      } else if (status.state === "prompt") setPermission("prompt");
+      else setPermission("unknown");
     };
     navigator.permissions
       ?.query({ name: "microphone" as PermissionName })
