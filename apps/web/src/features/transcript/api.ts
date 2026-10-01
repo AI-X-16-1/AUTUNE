@@ -10,6 +10,7 @@ export { api };
 
 import type {
   AccountDeleted,
+  MaskingRule,
   MeetingDetail,
   MeetingSummary,
   MyData,
@@ -305,10 +306,24 @@ export const setTeamRetention = (teamId: string, retentionDays: RetentionDays) =
 export const reportPiiMiss = (
   meetingId: string,
   utteranceId: string,
-  body: { start: number; end: number; category: PiiCategory; include_similar: boolean },
+  body: {
+    start: number;
+    end: number;
+    category: PiiCategory;
+    include_similar: boolean;
+    add_rule: boolean;
+  },
 ) =>
   api.audio<PiiReported>(`/meetings/${meetingId}/utterances/${utteranceId}/pii-report`, {
     method: "POST",
     body: JSON.stringify(body),
   });
+
+/** S29's "추가 마스킹 항목": the shapes this team learned from S30 reports. */
+export const listMaskingRules = (teamId: string) =>
+  api.audio<MaskingRule[]>(`/teams/${teamId}/masking-rules`);
+
+/** Stop masking one shape in later transcripts. Answers the rules that remain. */
+export const deleteMaskingRule = (teamId: string, ruleId: number) =>
+  api.audio<MaskingRule[]>(`/teams/${teamId}/masking-rules/${ruleId}`, { method: "DELETE" });
 

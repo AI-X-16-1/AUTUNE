@@ -18,9 +18,10 @@ import type { PiiCategory, PiiReported } from "../types";
  * shows the selection — the reader already has it on screen — but the request
  * carries only where it starts and ends in the utterance (`reportPiiMiss`).
  *
- * The design's "워크스페이스 마스킹 규칙에 추가" and the DM to the reporter are
- * left out: neither exists on the server, and a checkbox that is stored nowhere
- * is a promise the product does not keep.
+ * "같은 형태를 워크스페이스 마스킹 규칙에 추가" stores the span's *shape*
+ * (`A-#####`), not the span, and only when it carries a digit — a rule built
+ * from a name would mask every word of that length (`masking_rules.py`). The
+ * DM to the reporter is left out: the result is shown on this screen.
  */
 
 export type Selected = {
@@ -130,6 +131,7 @@ export function PiiReportModal({
 }) {
   const [category, setCategory] = useState<PiiCategory | null>(null);
   const [similar, setSimilar] = useState(true);
+  const [addRule, setAddRule] = useState(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -152,6 +154,7 @@ export function PiiReportModal({
           end: selected.end,
           category,
           include_similar: similar,
+          add_rule: addRule,
         }),
       );
     } catch (caught) {
@@ -267,6 +270,16 @@ export function PiiReportModal({
                 onChange={(event) => setSimilar(event.target.checked)}
               />
               이 회의의 같은 구간도 모두 마스킹
+            </label>
+          </li>
+          <li>
+            <label className="flex items-center gap-2 text-[var(--color-ink-body)]">
+              <input
+                type="checkbox"
+                checked={addRule}
+                onChange={(event) => setAddRule(event.target.checked)}
+              />
+              같은 형태를 워크스페이스 마스킹 규칙에 추가 · 숫자가 든 사번·ID 형태만
             </label>
           </li>
         </ul>

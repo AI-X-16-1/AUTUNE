@@ -109,8 +109,15 @@ incident. Target recall is 0.95+ for the MVP and 0.99+ at three months.
 - Once the meeting has been announced, A publishes `TranscriptReady` again
   after the correction commits, so B, C and D rebuild from masked text — the
   reprocessing async-pipeline.md already requires consumers to handle.
-- The log line carries the category and counts only. A workspace-wide pattern
-  rule built from reports does not exist yet.
+- The log line carries the category and counts only.
+- A reporter can also add the span's **shape** to the team's masking rules
+  (`masking_rules.py`, table `aud_masking_rules`): character classes and
+  separators only — `A-20391` is stored as `A-#####` — so the table holds
+  nothing a value can be recovered from. Only shapes with a digit and at least
+  four classed characters become rules; a name's shape would mask every word
+  of that length. Both the stored and the live path apply the team's shapes
+  after the built-in masker. Removing a rule stops masking it in later
+  transcripts; what it already masked stays masked.
 This replaces the earlier rule that a report deletes the whole utterance:
 masking removes exactly what was reported and keeps the evidence an action
 item quotes readable around it.

@@ -104,7 +104,8 @@ Plus the shared entities in `packages/core`, which A writes.
 | GET | `/me/export` | S29 download: the caller's own utterances (masked, as stored), voice-profile metadata (never the vector), consents and teams, as a JSON attachment |
 | DELETE | `/me/speech` | S29 "내 발화 데이터 모두 삭제": every utterance attributed to the caller and every vector of their voice. The account and the participant rows stay |
 | DELETE | `/me` | Account deletion (#358): reads the caller's participant rows, runs every module's `on_user_deleted` hook (a raising hook stops it), deletes their utterances, then the `users` row. Answers `{utterances}`, not 204 (#359) |
-| POST | `/meetings/{meeting_id}/utterances/{utterance_id}/pii-report` | S30: mask a span the masker missed, by offsets; exact repeats too unless `include_similar` is false; republishes `TranscriptReady` if the meeting was announced (`pii_report.py`, #555) |
+| POST | `/meetings/{meeting_id}/utterances/{utterance_id}/pii-report` | S30: mask a span the masker missed, by offsets; exact repeats too unless `include_similar` is false; republishes `TranscriptReady` if the meeting was announced; `add_rule` stores the span's shape as a team rule (`pii_report.py`, #555) |
+| GET / DELETE | `/teams/{team_id}/masking-rules[/{rule_id}]` | The team's own masking shapes learned from S30 reports (`A-#####`, never the text); S29 lists and removes them |
 | GET / PATCH | `/teams/{team_id}/privacy` | S29 retention window, 30/90/180/365 days. Any member may change it (no admin role exists); applies to meetings held afterwards |
 | GET | `/teams/{team_id}/members` | Id and display name of each team member, for the confirmation picker |
 

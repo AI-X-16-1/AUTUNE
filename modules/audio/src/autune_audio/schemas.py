@@ -331,11 +331,26 @@ class PiiReport(BaseModel):
     end: int = Field(gt=0)
     category: Literal["name", "internal_id", "contact", "other"]
     include_similar: bool = True
+    add_rule: bool = False
+    """Also mask this span's *shape* in every later transcript of the team
+    (``masking_rules``). Ignored when the span has no shape worth a rule."""
 
 
 class PiiReported(BaseModel):
     utterances: int
     occurrences: int
     republished: bool
+    rule: str | None = None
+    """The shape added to the team's rules (``A-#####``), when one was asked
+    for and the span had one. Never the reported text."""
     """Whether B, C and D were sent the corrected transcript. False when the
     meeting was never announced (still being transcribed), or the publish failed."""
+
+
+class MaskingRule(BaseModel):
+    """One of a team's own masking shapes (S29's "추가 마스킹 항목")."""
+
+    id: int
+    shape: str
+    category: str
+    created_at: datetime

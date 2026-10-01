@@ -35,12 +35,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import sqlalchemy as sa
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from autune_core import Meeting, User, Utterance, get_logger
 from autune_core.errors import NotFoundError, ValidationError
 
+from . import masking_rules
 from .masking import hide_reported
+from .models import AudMaskingRule
 from .service import require_team_member
 
 log = get_logger(__name__)
@@ -52,6 +55,8 @@ class Reported:
     """How many utterances changed, the reported one included."""
     occurrences: int
     """How many places the span was masked."""
+    rule: str | None = None
+    """The shape added to the team's rules, if one was."""
 
 
 def report_miss(
@@ -64,6 +69,7 @@ def report_miss(
     category: str,
     include_similar: bool,
     reporter: User,
+    add_rule: bool = False,
 ) -> Reported:
     """Mask ``text[start:end]`` of one utterance, and its exact repeats if asked.
 
@@ -107,6 +113,8 @@ def report_miss(
                 occurrences += found
                 changed += 1
 
+    rule = _add_rule(session, meeting.team_id, span, category, reporter) if add_rule else None
+
     session.flush()
     log.info(
         "audio_pii_miss_reported",
@@ -115,8 +123,22 @@ def report_miss(
         category=category,
         utterances=changed,
         occurrences=occurrences,
+        rule_added=rule is not None,
     )
-    return Reported(utterances=changed, occurrences=occurrences)
+    return Reported(utterances=changed, occurrences=occurrences, rule=rule)
+
+
+def _add_rule(session: Session, team_id: str, span: str, category: str, by: User) -> str | None:
+    """Store the span's shape for the team, if it has one. Idempotent per shape."""
+    shape = masking_rules.shape_of(span)
+    if shape is None:
+        return None
+    session.execute(
+        pg_insert(AudMaskingRule)
+        .values(team_id=team_id, shape=shape, category=category, created_by=by.id)
+        .on_conflict_do_nothing(constraint="uq_aud_masking_rules_team_shape")
+    )
+    return shape
 
 
 def _replace_all(utterance: Utterance, span: str, hidden: str) -> int:

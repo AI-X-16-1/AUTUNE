@@ -21,7 +21,7 @@ from autune_core.errors import AutuneError
 from autune_core.events import publish
 from autune_core.settings import get_settings as get_core_settings
 
-from . import account, pii_report, service
+from . import account, masking_rules, pii_report, service
 from .config import MAX_UPLOAD_BYTES
 from .config import get_settings as get_audio_settings
 from .enqueue import enqueue_process_recording
@@ -31,6 +31,7 @@ from .schemas import (
     AccountDeleted,
     ConsentAttestation,
     ConsentState,
+    MaskingRule,
     MeetingCreate,
     MeetingDetail,
     MeetingState,
@@ -409,6 +410,7 @@ def report_pii_miss(
         category=body.category,
         include_similar=body.include_similar,
         reporter=user,
+        add_rule=body.add_rule,
     )
     session.commit()
 
@@ -427,4 +429,20 @@ def report_pii_miss(
         utterances=reported.utterances,
         occurrences=reported.occurrences,
         republished=republished,
+        rule=reported.rule,
     )
+
+
+@router.get("/teams/{team_id}/masking-rules", response_model=list[MaskingRule])
+def list_masking_rules(team_id: str, user: CurrentUser, session: SessionDep) -> list[MaskingRule]:
+    """S29's "추가 마스킹 항목": the shapes this team masks, learned from S30 reports."""
+    return masking_rules.list_rules(session, team_id=team_id, reader=user)
+
+
+@router.delete("/teams/{team_id}/masking-rules/{rule_id}", response_model=list[MaskingRule])
+def delete_masking_rule(
+    team_id: str, rule_id: int, user: CurrentUser, session: SessionDep
+) -> list[MaskingRule]:
+    """Stop masking one shape in later transcripts. Answers what remains."""
+    masking_rules.delete_rule(session, team_id=team_id, rule_id=rule_id, by=user)
+    return masking_rules.list_rules(session, team_id=team_id, reader=user)
