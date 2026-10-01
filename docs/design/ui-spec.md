@@ -49,7 +49,7 @@ Modules: A Audio · B Extraction · C Gap · D Context · E Intelligence.
 |---|---|---|---|
 | S01 | Landing · sign-in | MVP | Headline "회의는 끝났는데 실행은 시작되지 않았다면" · Google / Slack / magic link · email-sent state (resend after 60s) · error state · no team branding |
 | S02 | Create workspace | MVP | Name (2–40) · role chips (= the `utterances.role` enum) · invite-email chips · import Slack members · 4-step progress |
-| S03 | Onboarding empty home | MVP | 2-item checklist (connect Slack · enrol voice); done = ink dot, pending = hollow ring · dropzone (mp3/wav/m4a, 3h, 500MB) · sample meeting |
+| S03 | Onboarding empty home | MVP | 2-item checklist (connect Slack · enrol voice); done = ink dot, pending = hollow ring · dropzone (mp3/wav/m4a, 500MB; no duration limit, since nothing enforces one) · sample meeting |
 | S04 | Voice enrolment modal | MVP | Two sentences · waveform · circular accent button · timer (red dot) · quality verdict · disabled under 8 seconds · only the embedding vector is stored |
 | S05 | Home | MVP | Next meeting (single paper block) · "Things for me" (overdue → needs confirmation → due soon → in progress) · unresolved gaps · recent meetings (retention expiry D-n) |
 | S06 | Create meeting modal | MVP | Title · date · start · end (optional) · attendee chips (warn when a voice is not enrolled) · audio-source radio (web mic / file) · Notion DB checkbox (per-meeting override) · P2 items shown disabled |
@@ -62,7 +62,7 @@ Modules: A Audio · B Extraction · C Gap · D Context · E Intelligence.
 | S09 | Pre-meeting brief | P2 | Slack, 30 minutes before · overdue actions · 2 undecided items · previous-decision summary · pattern warning · 3 buttons |
 | S10 | Start recording modal | MVP | Input device and level · scheduled-end chip (P2) · attendee consent table (ink / ochre) · exclude non-consenting checkbox · start disabled at zero consent · "Upload a file instead" |
 | S11 | Attendee consent DM | MVP | 4 explanatory rows · "동의합니다" (accent) / "이번 회의는 제외" (sunken) · no response = logged only, excluded from analysis · follow-up message when no voice is enrolled |
-| S12 | File processing pipeline | MVP | 6 stages (upload → STT → diarization → PII masking → delete original → B/C/D) · done = ink + elapsed · running = accent · queued = hollow ring · failed = red + reason · detection counts on the right |
+| S12 | File processing pipeline | MVP | 6 stages in the order the task runs them (upload → STT → diarization → delete original → PII masking · save → B/C/D); the original is deleted when diarization ends, before masking · done = ink + elapsed · running = accent · queued = hollow ring · failed = red + reason · detection counts on the right |
 | S13 | Live transcript | MVP | **Light theme + recording frame glow.** REC timer in top bar · P1 undecided band (P2) · transcript rows (time code · speaker · body · 5-kind tag) · unidentified-speaker row in ochre (assign / enter manually / send confirmation DM) · related-material card (quotation + open material / cite in minutes / not related) · PII tokens · right rail: 56px timer · elapsed bar · waveform · pause/stop · "Decided so far" (10 min) · "Needs confirmation" · 5-kind detection counts |
 | S14 | Undecided alert | P2 | Inverted ink band "종료 5분 전 · 결정되지 않은 사항 n건" · "질문으로 띄우기" inserts a suggested-question row into the transcript |
 
