@@ -1,225 +1,314 @@
-"""The Follow-up subagent against mock tools
-(agent/docs/specs/2026-09-30-followup-subagent-design.md section 8).
+"""Follow-up: read, decide and propose (spec sections 3, 4 and 8).
 
-The mocks return what C's ``open_gaps`` and ``recurring_open_gaps`` (#546),
-B's ``unresolved_questions`` and A's ``recent_meetings`` return, extra fields
-included, so a change to those shapes shows up here.
+The mocks return what C's ``open_gaps`` and ``recurring_open_gaps`` (#546) and
+B's ``unresolved_questions`` return. B's open-item read is #561's and not built
+yet; its mock answers with the items it finds.
 """
 
 from __future__ import annotations
 
-from types import SimpleNamespace
 from typing import Any
 
-from autune_agent.main import CallBudget, RunScope, collect_subagents
-from autune_agent.main.registry import Tool, Toolbox
+from sqlalchemy.orm import Session
+
+from autune_agent.main import CallBudget, RunScope, Toolbox, collect_subagents
+from autune_agent.main.pending import arguments_ok
+from autune_agent.main.registry import Tool
 from autune_agent.subagents.followup import SUBAGENT, rules
-from autune_agent.subagents.followup.graph import ADD_ITEM, OPEN, QUESTIONS, RECENT, RECURRING
+from autune_agent.subagents.followup.graph import (
+    OPEN_GAPS,
+    OPEN_ITEM,
+    QUESTIONS,
+    RECENT,
+    RECURRING,
+    WRITE,
+)
 from autune_contracts import INTELLIGENCE_COMPLETED
 
-TEAM = "team_a"
-MEETING = "mtg_now"
+QUESTION_TEXT = "결제 실패하면 누가 책임지죠?"
 
 
-class FakeSession:
-    """Answers the toolbox's one question: which team a meeting belongs to."""
-
-    def get(self, _entity: Any, ident: str) -> Any:
-        return SimpleNamespace(team_id=TEAM) if ident.startswith("mtg_") else None
-
-
-def gap(gid: str, title: str, score: float, severity: str = "medium") -> dict[str, Any]:
+def gap(gid: str, severity: str = "high", key: str = "risk") -> dict[str, Any]:
     return {
         "id": gid,
-        "title": title,
-        "body": "질문?",
-        "score": score,
+        "title": f"{key} — 결제",
+        "body": "누가 확인하나요?",
+        "score": 0.9 if severity == "high" else 0.4,
         "severity": severity,
-        "template_item_key": title,
-        "topics": ["배포"],
+        "template_item_key": key,
+        "topics": ["결제"],
     }
 
 
-def result(*items: dict[str, Any], evidence: list[str] | None = None) -> dict[str, Any]:
+def carried(gid: str, key: str = "risk") -> dict[str, Any]:
     return {
-        "ok": True,
-        "summary": "결과",
-        "items": list(items),
-        "evidence": evidence if evidence is not None else [i["id"] for i in items],
+        "id": gid,
+        "title": f"{key} — 결제",
+        "score": 0.9,
+        "severity": "high",
+        "template_item_key": key,
+        "previous_meeting_id": "mtg_before",
+        "previous_gap_id": "gap_before",
     }
 
 
-def questions(n: int) -> dict[str, Any]:
-    return result(
-        *[{"id": f"utt_{i}", "title": "질문", "body": "누가?", "score": 0.5} for i in range(n)]
-    )
+def _result(items: list[dict[str, Any]], ok: bool = True) -> dict[str, Any]:
+    return {
+        "ok": ok,
+        "reason": None if ok else "unreadable",
+        "summary": "결과",
+        "items": items,
+        "evidence": [i["id"] for i in items if "id" in i],
+    }
 
 
 def tools_for(
-    open_: dict[str, Any],
-    recurring: dict[str, Any],
-    asked: dict[str, Any],
-    recent: dict[str, Any] | None = None,
-) -> tuple[dict[str, Tool], list[tuple[str, dict[str, Any]]]]:
-    calls: list[tuple[str, dict[str, Any]]] = []
+    *,
+    gaps: list[dict[str, Any]] | None = None,
+    recurring: list[dict[str, Any]] | None = None,
+    questions: int = 1,
+    open_items: list[dict[str, Any]] | None = None,
+    recent: list[dict[str, Any]] | None = None,
+    gaps_ok: bool = True,
+    with_open_item: bool = True,
+    calls: list[tuple[str, dict[str, Any]]] | None = None,
+) -> dict[str, Tool]:
+    log = [] if calls is None else calls
 
-    def recorder(name: str, payload: dict[str, Any]) -> Tool:
-        def fn(_session: Any, team_id: str, meeting_id: str) -> dict[str, Any]:
-            calls.append((name, {"team_id": team_id, "meeting_id": meeting_id}))
-            return payload
+    def open_gaps(session: Any, team_id: str, meeting_id: str) -> dict[str, Any]:
+        log.append((OPEN_GAPS, {"meeting_id": meeting_id}))
+        return _result(gaps or [], ok=gaps_ok)
 
-        return Tool(name=name, description="Use this in tests.", fn=fn)
+    def recurring_open_gaps(session: Any, team_id: str, meeting_id: str) -> dict[str, Any]:
+        log.append((RECURRING, {"meeting_id": meeting_id}))
+        return _result(recurring or [])
 
-    def recent_fn(_session: Any, team_id: str, days: int = 30) -> dict[str, Any]:
-        calls.append((RECENT, {"team_id": team_id}))
-        return recent or result()
+    def unresolved(session: Any, meeting_id: str) -> dict[str, Any]:
+        log.append((QUESTIONS, {"meeting_id": meeting_id}))
+        items = [
+            {"title": "질문", "body": QUESTION_TEXT, "id": f"utt_q{n}"} for n in range(questions)
+        ]
+        return _result(items)
+
+    def recent_meetings(session: Any, team_id: str) -> dict[str, Any]:
+        log.append((RECENT, {}))
+        return {"ok": True, "summary": "회의", "items": recent or [], "evidence": []}
+
+    def open_followup_item(session: Any, team_id: str) -> dict[str, Any]:
+        log.append((OPEN_ITEM, {}))
+        return _result(open_items or [])
 
     tools = {
-        OPEN: recorder(OPEN, open_),
-        RECURRING: recorder(RECURRING, recurring),
-        QUESTIONS: recorder(QUESTIONS, asked),
-        RECENT: Tool(name=RECENT, description="Use this in tests.", fn=recent_fn),
+        OPEN_GAPS: Tool(name=OPEN_GAPS, description="Use this in tests.", fn=open_gaps),
+        RECURRING: Tool(name=RECURRING, description="Use this in tests.", fn=recurring_open_gaps),
+        QUESTIONS: Tool(name=QUESTIONS, description="Use this in tests.", fn=unresolved),
+        RECENT: Tool(name=RECENT, description="Use this in tests.", fn=recent_meetings),
     }
-    return tools, calls
+    if with_open_item:
+        tools[OPEN_ITEM] = Tool(
+            name=OPEN_ITEM, description="Use this in tests.", fn=open_followup_item
+        )
+    return tools
 
 
 def invoke(
-    tools: dict[str, Tool], *, meeting: str | None = MEETING, budget: CallBudget | None = None
+    tools: dict[str, Tool],
+    *,
+    session: Session,
+    team_id: str,
+    meeting: str | None,
+    request: str = INTELLIGENCE_COMPLETED,
 ) -> Any:
     box = Toolbox(
         tools,
-        FakeSession(),  # type: ignore[arg-type]
-        budget or CallBudget(),
+        session,
+        CallBudget(),
         allowed=SUBAGENT.tools,
-        scope=RunScope(team_id=TEAM, meeting_id=meeting),
+        scope=RunScope(team_id=team_id, meeting_id=meeting),
     )
-    return SUBAGENT.build(box).invoke({"request": INTELLIGENCE_COMPLETED})["outcome"]
+    return SUBAGENT.build(box).invoke({"request": request})["outcome"]
 
 
-RISK = gap("gap_r2", "리스크 미논의", 0.9, "high")
-NEXT = gap("gap_n2", "다음 단계 미정", 0.7, "high")
-DEP = gap("gap_d2", "의존성 미확인", 0.4)
+def names(calls: list[tuple[str, dict[str, Any]]]) -> list[str]:
+    return [name for name, _ in calls]
 
 
-def test_an_item_left_open_twice_is_proposed_as_a_follow_up() -> None:
-    carried = result(RISK, DEP, evidence=["gap_r2", "gap_r1", "gap_d2", "gap_d1"])
-    tools, _ = tools_for(result(RISK, NEXT, DEP), carried, questions(0))
-
-    outcome = invoke(tools)
-
-    (proposal,) = outcome.proposed
-    assert (proposal.level, proposal.tool) == ("L2", ADD_ITEM)
-    assert proposal.arguments == {"description": "후속 회의: 리스크 미논의, 의존성 미확인"}
-    assert proposal.evidence == ["gap_r2", "gap_r1", "gap_d2", "gap_d1"]
-    assert "직전 회의에 이어" in proposal.rationale
-    assert outcome.result.ok
-
-
-def test_a_heavy_meeting_with_a_question_is_proposed() -> None:
-    tools, _ = tools_for(result(RISK, NEXT, DEP), result(), questions(1))
-
-    (proposal,) = invoke(tools).proposed
-
-    assert proposal.arguments["description"] == "후속 회의: 리스크 미논의, 다음 단계 미정"
-    assert proposal.evidence == ["gap_r2", "gap_n2"]
-
-
-def test_heavy_without_a_question_is_not_enough() -> None:
-    tools, _ = tools_for(result(RISK, NEXT), result(), questions(0))
-
-    outcome = invoke(tools)
-
-    assert outcome.proposed == []
-    assert outcome.result.ok
-    assert "필요해 보이지 않습니다" in outcome.result.summary
-
-
-def test_one_high_gap_is_not_heavy() -> None:
-    tools, _ = tools_for(result(RISK, DEP), result(), questions(3))
-
-    assert invoke(tools).proposed == []
-
-
-def test_a_meeting_with_nothing_open_proposes_nothing() -> None:
-    tools, _ = tools_for(result(), result(), questions(2))
-
-    assert invoke(tools).proposed == []
-
-
-def test_the_description_names_three_titles_at_most() -> None:
-    many = [gap(f"gap_{i}", f"항목{i}", 1.0 - i / 10, "high") for i in range(5)]
-    tools, _ = tools_for(result(*many), result(*many), questions(0))
-
-    (proposal,) = invoke(tools).proposed
-
-    assert proposal.arguments["description"] == "후속 회의: 항목0, 항목1, 항목2"
-
-
-def test_a_trigger_run_reads_three_tools_scoped_to_its_meeting() -> None:
-    tools, calls = tools_for(result(RISK), result(RISK), questions(0))
-
-    invoke(tools)
-
-    assert [name for name, _ in calls] == [OPEN, RECURRING, QUESTIONS]
-    assert all(args == {"team_id": TEAM, "meeting_id": MEETING} for _, args in calls)
-
-
-def test_a_trigger_proposal_leaves_team_and_meeting_to_the_run() -> None:
-    tools, _ = tools_for(result(RISK), result(RISK), questions(0))
-
-    (proposal,) = invoke(tools).proposed
-
-    assert set(proposal.arguments) == {"description"}, "team_id and meeting_id are the run's"
-
-
-def test_a_chat_run_picks_the_most_recent_analysed_meeting() -> None:
-    recent = result(
-        {"id": "x", "title": "예정", "score": 0, "meeting_id": "mtg_next", "status": "scheduled"},
-        {"id": "y", "title": "지난", "score": 0, "meeting_id": "mtg_last", "status": "complete"},
-        evidence=["mtg_next", "mtg_last"],
-    )
-    tools, calls = tools_for(result(RISK), result(RISK), questions(0), recent)
-
-    outcome = invoke(tools, meeting=None)
-
-    assert [name for name, _ in calls] == [RECENT, OPEN, RECURRING, QUESTIONS]
-    assert {args["meeting_id"] for name, args in calls if name != RECENT} == {"mtg_last"}
-    (proposal,) = outcome.proposed
-    assert proposal.arguments["meeting_id"] == "mtg_last"
-
-
-def test_a_chat_run_with_no_analysed_meeting_stops() -> None:
-    tools, _ = tools_for(result(), result(), questions(0), result())
-
-    outcome = invoke(tools, meeting=None)
-
-    assert not outcome.result.ok
-    assert outcome.proposed == []
-
-
-def test_a_failed_read_ends_without_a_proposal() -> None:
-    broken = {"ok": False, "reason": "no gap analysis yet", "summary": "아직", "items": []}
-    for tools, _ in (
-        tools_for(broken, result(RISK), questions(0)),
-        tools_for(result(RISK), broken, questions(0)),
-        tools_for(result(RISK), result(RISK), broken),
-    ):
-        outcome = invoke(tools)
-        assert not outcome.result.ok
-        assert outcome.proposed == []
-
-
-def test_it_asks_for_nothing_personal_and_wakes_on_intelligence_completed() -> None:
+def test_it_is_collected_woken_by_intelligence_completed_and_reads_only_its_list() -> None:
+    assert collect_subagents()["followup"] is SUBAGENT
     assert SUBAGENT.triggers == (INTELLIGENCE_COMPLETED,)
-    assert SUBAGENT.tools == (OPEN, RECURRING, QUESTIONS, RECENT)
-    assert "followup" in collect_subagents()
+    assert set(SUBAGENT.tools) == {OPEN_GAPS, RECURRING, QUESTIONS, RECENT, OPEN_ITEM}
 
 
-def test_the_rule_prefers_carried_over() -> None:
-    high = [rules.Gap("gap_a", "a", 0.9, "high"), rules.Gap("gap_b", "b", 0.8, "high")]
-    carried = [rules.Gap("gap_c", "c", 0.3, "low")]
+def test_it_reads_nothing_about_a_person() -> None:
+    for tool in SUBAGENT.tools:
+        assert not any(word in tool for word in ("speaking", "participation", "silent", "person"))
 
-    decision = rules.decide(high, carried, [], questions_raised=1)
 
-    assert decision is not None and decision.reason == "carried_over"
-    assert decision.evidence == ("gap_c",)
+def test_a_carried_over_item_is_one_l2_proposal_on_the_trigger_meeting(session, team) -> None:
+    calls: list[tuple[str, dict[str, Any]]] = []
+    tools = tools_for(
+        gaps=[gap("gap_now", "medium")], recurring=[carried("gap_now")], questions=0, calls=calls
+    )
+
+    outcome = invoke(tools, session=session, team_id=team["team"], meeting=team["meeting"])
+
+    (proposal,) = outcome.proposed
+    assert (proposal.level, proposal.tool, proposal.kind) == ("L2", WRITE, "followup_meeting")
+    # The trigger's meeting is the run's: the action is bound to it when it runs.
+    assert proposal.arguments == {"source": "followup"}
+    assert proposal.evidence == ["gap_now"]
+    assert "다시 열린 항목 1개" in outcome.result.summary
+    assert names(calls) == [OPEN_GAPS, RECURRING, QUESTIONS, OPEN_ITEM]
+    assert {args["meeting_id"] for _, args in calls if args} == {team["meeting"]}
+
+
+def test_every_proposal_passes_plan_modes_argument_rule(session, team) -> None:
+    tools = tools_for(gaps=[gap("gap_1"), gap("gap_2")], recurring=[carried("gap_1")])
+
+    (proposal,) = invoke(
+        tools, session=session, team_id=team["team"], meeting=team["meeting"]
+    ).proposed
+
+    assert arguments_ok(proposal.arguments)
+
+
+def test_two_high_gaps_and_a_question_leave_a_meeting_heavy(session, team) -> None:
+    tools = tools_for(gaps=[gap("gap_1"), gap("gap_2", key="dependency")], questions=1)
+
+    outcome = invoke(tools, session=session, team_id=team["team"], meeting=team["meeting"])
+
+    (proposal,) = outcome.proposed
+    assert proposal.evidence == ["gap_1", "gap_2"]
+    assert "높음 갭 2건과 미해결 질문" in proposal.rationale
+
+
+def test_high_gaps_without_a_question_are_not_heavy(session, team) -> None:
+    tools = tools_for(gaps=[gap("gap_1"), gap("gap_2", key="dependency")], questions=0)
+
+    outcome = invoke(tools, session=session, team_id=team["team"], meeting=team["meeting"])
+
+    assert outcome.result.ok is True
+    assert outcome.proposed == []
+
+
+def test_one_high_gap_and_a_question_are_not_heavy(session, team) -> None:
+    tools = tools_for(gaps=[gap("gap_1"), gap("gap_2", "medium")], questions=2)
+
+    assert (
+        invoke(tools, session=session, team_id=team["team"], meeting=team["meeting"]).proposed == []
+    )
+
+
+def test_both_rules_cite_each_gap_once_carried_first(session, team) -> None:
+    tools = tools_for(
+        gaps=[gap("gap_1"), gap("gap_2", key="dependency")],
+        recurring=[carried("gap_2", "dependency")],
+    )
+
+    (proposal,) = invoke(
+        tools, session=session, team_id=team["team"], meeting=team["meeting"]
+    ).proposed
+
+    assert proposal.evidence == ["gap_2", "gap_1"]
+
+
+def test_nothing_fires_and_the_open_item_read_is_not_spent(session, team) -> None:
+    calls: list[tuple[str, dict[str, Any]]] = []
+    tools = tools_for(gaps=[gap("gap_1", "medium")], calls=calls)
+
+    outcome = invoke(tools, session=session, team_id=team["team"], meeting=team["meeting"])
+
+    assert outcome.result.ok is True
+    assert outcome.proposed == []
+    assert "필요해 보이지 않습니다" in outcome.result.summary
+    assert OPEN_ITEM not in names(calls)
+
+
+def test_an_open_follow_up_item_stops_another_proposal(session, team) -> None:
+    tools = tools_for(
+        recurring=[carried("gap_1")],
+        open_items=[{"id": "act_followup", "title": "후속 회의 잡기"}],
+    )
+
+    outcome = invoke(tools, session=session, team_id=team["team"], meeting=team["meeting"])
+
+    assert outcome.result.ok is True
+    assert outcome.proposed == []
+    assert "이미 열린" in outcome.result.summary
+
+
+def test_an_unknown_open_item_proposes_nothing(session, team) -> None:
+    # Until B ships the read (#561) the call fails; not knowing is not "none open".
+    tools = tools_for(recurring=[carried("gap_1")], with_open_item=False)
+
+    outcome = invoke(tools, session=session, team_id=team["team"], meeting=team["meeting"])
+
+    assert outcome.result.ok is False
+    assert outcome.proposed == []
+
+
+def test_an_unreadable_meeting_fails_without_a_proposal(session, team) -> None:
+    tools = tools_for(recurring=[carried("gap_1")], gaps_ok=False)
+
+    outcome = invoke(tools, session=session, team_id=team["team"], meeting=team["meeting"])
+
+    assert outcome.result.ok is False
+    assert outcome.proposed == []
+
+
+def test_a_chat_run_takes_the_latest_analysed_meeting(session, team) -> None:
+    calls: list[tuple[str, dict[str, Any]]] = []
+    tools = tools_for(
+        recurring=[carried("gap_1")],
+        recent=[
+            {"title": "진행 중", "meeting_id": "mtg_live", "status": "analyzing"},
+            {"title": "주간 회의", "meeting_id": team["meeting"], "status": "complete"},
+        ],
+        calls=calls,
+    )
+
+    outcome = invoke(
+        tools, session=session, team_id=team["team"], meeting=None, request="후속 회의 필요해?"
+    )
+
+    (proposal,) = outcome.proposed
+    # A chat run's scope has no meeting, so the proposal names the one it read.
+    assert proposal.arguments == {"meeting_id": team["meeting"], "source": "followup"}
+    assert arguments_ok(proposal.arguments)
+    # The first open_gaps is refused by the scope (no meeting) before it reaches C.
+    assert names(calls) == [RECENT, OPEN_GAPS, RECURRING, QUESTIONS, OPEN_ITEM]
+    assert {args["meeting_id"] for _, args in calls if args} == {team["meeting"]}
+
+
+def test_a_chat_run_with_no_analysed_meeting_says_so(session, team) -> None:
+    tools = tools_for(
+        recent=[{"title": "진행 중", "meeting_id": "mtg_live", "status": "analyzing"}]
+    )
+
+    outcome = invoke(tools, session=session, team_id=team["team"], meeting=None, request="후속?")
+
+    assert outcome.result.ok is False
+    assert "분석된 회의가 없습니다" in outcome.result.summary
+
+
+def test_no_question_text_reaches_the_proposal_or_the_answer(session, team) -> None:
+    tools = tools_for(gaps=[gap("gap_1"), gap("gap_2", key="dependency")], questions=2)
+
+    outcome = invoke(tools, session=session, team_id=team["team"], meeting=team["meeting"])
+
+    assert outcome.proposed
+    assert QUESTION_TEXT not in repr(outcome)
+    assert not any(e.startswith("utt_") for e in outcome.proposed[0].evidence)
+
+
+def test_evidence_stops_at_five() -> None:
+    from autune_agent.results import ToolResult
+
+    many = ToolResult.model_validate(_result([carried(f"gap_{n}") for n in range(5)]))
+    high = ToolResult.model_validate(_result([gap(f"gap_h{n}") for n in range(5)]))
+    asked = ToolResult.model_validate(_result([{"title": "질문", "id": "utt_q"}]))
+
+    verdict = rules.decide(high, many, asked)
+
+    assert len(verdict.evidence) == rules.MAX_EVIDENCE
+    assert verdict.evidence == [f"gap_{n}" for n in range(5)]

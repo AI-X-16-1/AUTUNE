@@ -1,15 +1,17 @@
-"""The Follow-up subgraph: read what the meeting left open, decide, propose.
+"""The Follow-up subgraph (spec section 3): read, decide, propose.
 
-``agent/docs/specs/2026-09-30-followup-subagent-design.md`` section 3. Three
-nodes, no model call, no checkpointer (agent/CLAUDE.md rule 6). It reads
-through its ``Toolbox`` only and calls no write. A follow-up leaves as one L2
-``ProposedAction`` for the main agent to put through plan mode, where an
-approver with scope ``followup`` -- the team lead -- accepts or refuses it.
+Three nodes, no model call, no checkpointer (agent/CLAUDE.md rule 6). It reads
+through its ``Toolbox`` only and calls no write: the follow-up meeting leaves as
+one L2 ``ProposedAction`` for plan mode, where an approver with scope
+``followup`` -- the team lead -- accepts or refuses it.
 
-``team_id`` is never passed here: the run's scope fills it (C's and B's
-``RUN_SCOPE``). ``meeting_id`` is the scope's too on a trigger. On a chat run
-the scope has none, and the subgraph picks the team's most recent analysed
-meeting, as Research does.
+**Ids only in the proposal.** Plan mode queues an L2 proposal only when its
+arguments are ids, dates, booleans and short enums (#556), so the item's
+wording is B's to write and the lead sees the gap titles through the
+approvals-page preview (#562), never through the arguments.
+
+M is the run's meeting when its scope has one -- the trigger's, or the screen a
+chat was asked from -- and otherwise the team's latest analysed meeting.
 """
 
 from __future__ import annotations
@@ -20,30 +22,34 @@ from langgraph.graph import END, START, StateGraph
 
 from autune_agent.main.registry import NO_MEETING, Toolbox
 from autune_agent.main.subagents import CompiledSubagent, SubagentState
-from autune_agent.results import Finding, ProposedAction, SubagentResult, ToolResult
+from autune_agent.results import ProposedAction, SubagentResult, ToolResult
 
 from . import rules
 
-OPEN = "gap.open_gaps"
+OPEN_GAPS = "gap.open_gaps"
 RECURRING = "gap.recurring_open_gaps"
 QUESTIONS = "extraction.unresolved_questions"
 RECENT = "audio.recent_meetings"
-ADD_ITEM = "extraction.add_action_item"
-"""The write the proposal names. B's ``ACTIONS``, L2; the main agent runs it
-only after the lead approves."""
+OPEN_ITEM = "extraction.open_followup_item"
+"""Whether the team has a Follow-up item still open (#561). Until B ships it,
+the call fails and Follow-up proposes nothing -- an unknown is not "none open"."""
+WRITE = "extraction.add_action_item"
+"""B's write for the item, with ``source="followup"`` (#561). The main agent runs
+it only after approval; B's owner may still rename it there."""
+SOURCE = "followup"
 
-TOOLS = (OPEN, RECURRING, QUESTIONS, RECENT)
-
+TOOLS = (OPEN_GAPS, RECURRING, QUESTIONS, RECENT, OPEN_ITEM)
 ANALYSED = ("awaiting_confirmation", "complete", "delivered")
-"""A's meeting statuses after the pipeline has run."""
+"""Meeting statuses after the pipeline's analysis, as Research reads them."""
 
 
 class FollowupState(SubagentState, total=False):
-    meeting_id: str
-    open_gaps: list[rules.Gap]
-    carried: list[rules.Gap]
-    carried_evidence: list[str]
-    questions: int
+    at: dict[str, str]
+    """``{"meeting_id": M}`` when M was picked here; empty when the scope holds it."""
+    open_gaps: ToolResult
+    recurring: ToolResult
+    questions: ToolResult
+    verdict: rules.Verdict
 
 
 def _stop(reason: str, summary: str) -> dict[str, Any]:
@@ -56,78 +62,73 @@ def _done(summary: str) -> dict[str, Any]:
 
 def build(toolbox: Toolbox) -> CompiledSubagent:
     def read(state: FollowupState) -> dict[str, Any]:
-        opened = toolbox.call(OPEN)
-        meeting_id: str | None = None
-        if not opened.ok and opened.reason == NO_MEETING:
+        at: dict[str, str] = {}
+        gaps = toolbox.call(OPEN_GAPS)
+        if not gaps.ok and gaps.reason == NO_MEETING:
             recent = toolbox.call(RECENT)
             picked = next((i for i in recent.items if getattr(i, "status", None) in ANALYSED), None)
-            if picked is None:
-                return _stop("no analysed meeting", "살펴볼 회의가 없습니다.")
-            meeting_id = (picked.model_extra or {}).get("meeting_id")
-            opened = toolbox.call(OPEN, meeting_id=meeting_id)
-        if not opened.ok:
-            return _stop(opened.reason or "gaps unreadable", "회의의 갭을 읽지 못했습니다.")
-
-        scoped = {"meeting_id": meeting_id} if meeting_id else {}
-        recurring = toolbox.call(RECURRING, **scoped)
+            meeting_id = (picked.model_extra or {}).get("meeting_id") if picked else None
+            if not isinstance(meeting_id, str):
+                return _stop("no analysed meeting", "후속 회의를 판단할 분석된 회의가 없습니다.")
+            at = {"meeting_id": meeting_id}
+            gaps = toolbox.call(OPEN_GAPS, **at)
+        if not gaps.ok:
+            return _stop(gaps.reason or "gaps unreadable", "회의의 갭을 읽지 못했습니다.")
+        recurring = toolbox.call(RECURRING, **at)
         if not recurring.ok:
             return _stop(
-                recurring.reason or "recurrence unreadable", "직전 회의와 비교하지 못했습니다."
+                recurring.reason or "recurring gaps unreadable",
+                "이어서 열린 항목을 읽지 못했습니다.",
             )
-        asked = toolbox.call(QUESTIONS, **scoped)
-        if not asked.ok:
-            return _stop(asked.reason or "questions unreadable", "회의의 질문을 읽지 못했습니다.")
-        return {
-            "open_gaps": rules.gaps_from(opened.items),
-            "carried": rules.gaps_from(recurring.items),
-            "carried_evidence": list(recurring.evidence),
-            "questions": len(asked.items),
-            **scoped,
-        }
+        questions = toolbox.call(QUESTIONS, **at)
+        if not questions.ok:
+            return _stop(questions.reason or "questions unreadable", "질문을 읽지 못했습니다.")
+        return {"at": at, "open_gaps": gaps, "recurring": recurring, "questions": questions}
+
+    def decide(state: FollowupState) -> dict[str, Any]:
+        verdict = rules.decide(state["open_gaps"], state["recurring"], state["questions"])
+        if not verdict.fires:
+            return _done("후속 회의가 필요해 보이지 않습니다.")
+        # Read only when the rule fires: otherwise the call buys nothing.
+        open_item = toolbox.call(OPEN_ITEM)
+        if not open_item.ok:
+            return _stop(
+                open_item.reason or "follow-up items unreadable",
+                "열린 후속 회의 항목을 확인하지 못해 제안하지 않았습니다.",
+            )
+        if open_item.items:
+            return _done("이미 열린 후속 회의 항목이 있어 새로 제안하지 않았습니다.")
+        return {"verdict": verdict}
 
     def propose(state: FollowupState) -> dict[str, Any]:
-        decision = rules.decide(
-            state["open_gaps"], state["carried"], state["carried_evidence"], state["questions"]
-        )
-        if decision is None:
-            return _done("후속 회의가 필요해 보이지 않습니다.")
-        description = rules.item_description(decision)
-        why = rules.rationale(decision)
-        arguments: dict[str, Any] = {"description": description}
-        if "meeting_id" in state:
-            # A chat run's meeting; on a trigger the scope fills it in.
-            arguments["meeting_id"] = state["meeting_id"]
+        verdict = state["verdict"]
+        reason = verdict.reason()
         result = ToolResult(
             ok=True,
-            summary=f"{why} 팀장이 승인하면 보드에 후속 회의 항목이 생깁니다.",
-            items=[
-                Finding.model_validate(
-                    {"title": g.title, "score": g.score, "id": g.id, "severity": g.severity}
-                )
-                for g in decision.gaps
-            ],
-            evidence=list(decision.evidence),
+            summary=f"후속 회의를 제안했습니다 ({reason}). 팀장이 승인하면 보드에 항목이 생깁니다.",
+            items=rules.cited(state["open_gaps"], verdict),
+            evidence=verdict.evidence,
         )
-        proposed = [
-            ProposedAction(
-                kind="propose_followup_meeting",
-                title=description,
-                tool=ADD_ITEM,
-                arguments=arguments,
-                level="L2",
-                rationale=why,
-                evidence=list(decision.evidence),
-            )
-        ]
-        return {"outcome": SubagentResult(result=result, proposed=proposed)}
+        proposal = ProposedAction(
+            kind="followup_meeting",
+            title="후속 회의 제안",
+            tool=WRITE,
+            arguments={**state["at"], "source": SOURCE},
+            level="L2",
+            rationale=f"{reason}.",
+            evidence=verdict.evidence,
+        )
+        return {"outcome": SubagentResult(result=result, proposed=[proposal])}
 
-    def after_read(state: FollowupState) -> str:
-        return END if "outcome" in state else "propose"
+    def next_after(node: str) -> Any:
+        return lambda s: END if "outcome" in s else node
 
     graph = StateGraph(FollowupState)
     graph.add_node("read", read)
+    graph.add_node("decide", decide)
     graph.add_node("propose", propose)
     graph.add_edge(START, "read")
-    graph.add_conditional_edges("read", after_read, ["propose", END])
+    graph.add_conditional_edges("read", next_after("decide"), ["decide", END])
+    graph.add_conditional_edges("decide", next_after("propose"), ["propose", END])
     graph.add_edge("propose", END)
     return cast(CompiledSubagent, graph.compile())

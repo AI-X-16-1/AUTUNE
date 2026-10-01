@@ -23,8 +23,8 @@ lead. Once approved, it becomes an action item on the board.
 | --- | --- |
 | When it runs | On `autune.intelligence.completed`, and on a chat request. No periodic run yet (section 2). |
 | What "a follow-up looks needed" means | Rules, no model call (section 4). A template item left open in this meeting **and** in the team's previous analysed meeting, or two or more high-severity open gaps in this meeting together with an unresolved question. |
-| What the lead approves | One L2 action per run: B's `extraction.add_action_item`, a "follow-up meeting" item on this meeting (section 5). |
-| How the calendar event happens | Not by Follow-up. The approved item gets a due date and an assignee on the board, and B's sync (#441) puts it on that person's own calendar. |
+| What the lead approves | One L2 action per run: B adds a "follow-up meeting" item to this meeting, marked as Follow-up's (section 5). Its arguments are ids and an enum only, as plan mode requires (#556). |
+| How the calendar event happens | Not by Follow-up. Four steps: the lead approves; someone gives the item an assignee and a due date on the board; someone confirms it; B's sync (#441, `sync_after_confirmation`) puts it on the assignee's own calendar. Nothing reaches a calendar before the item is confirmed. |
 | What it reads about people | Nothing. Open gaps and their topic labels, open questions, and open items. It does not read `silent_share` in this version (section 6). |
 
 ### Out of scope
@@ -41,7 +41,7 @@ up on them, #435), a model-written proposal, and the approval screen itself
 | Wakes on state, `@periodic` | Wakes on `autune.intelligence.completed` and chat | `Subagent.triggers` accepts only `TRIGGER_EVENTS` (`main/subagents.py`); there is no periodic trigger yet. A meeting finishing is also the moment the state changes. |
 | Reads D's decision threads and topic links | Recurrence comes from C alone | A topic belongs to one meeting, but a template item key (`risk`, `ownership`, …) is the same across meetings. "Open in two meetings running" needs no cross-meeting topic link. D's links can refine it once D ships `tools.py`. |
 | Reads Calendar `free_busy` | No calendar read | A team account sees one Workspace only, and a person's own grant serves only their own work (#435, as recorded in Workload's `__init__.py`). |
-| Proposes a calendar event | Proposes a board item | The only write Follow-up may name is a module's declared action. `add_action_item` exists, is L2, and reaches a calendar through #441 once it has a due date and an assignee. |
+| Proposes a calendar event | Proposes a board item | The only write Follow-up may name is a module's declared action. B's item reaches a calendar through #441 once it is confirmed with an assignee and a due date. |
 | Reads a topic's `silent_share` | Does not | The rule does not need it, and it is the one participation figure in the inputs (section 6). |
 
 The doc change to `agent-layer.md` is PR ③ (section 9).
@@ -54,16 +54,18 @@ second event (#509). Section 7 covers a gap dismissed in between.
 ## 3. Flow
 
 Scope: the run's `team_id`, and meeting M. On the trigger, M is the event's
-meeting. On a chat request the scope has no meeting, and Follow-up takes the
-team's most recent analysed meeting (`audio.recent_meetings`).
+meeting. On a chat request asked from a meeting's screen, M is the scope's
+meeting. Only when the scope has no meeting does Follow-up take the team's most
+recent analysed meeting (`audio.recent_meetings`).
 
 | # | Node | Does | Calls |
 | --- | --- | --- | --- |
-| 1 | `read` | `gap.open_gaps(M)`, `gap.recurring_open_gaps(M)`, `extraction.unresolved_questions(M)` | 3 tools |
-| 2 | `decide` | Applies the rule in section 4. No trigger → finish, `ok=True`, no proposal. | — |
-| 3 | `propose` | Composes the item text from gap titles (section 5), then proposes one L2 `extraction.add_action_item`. | — |
+| 1 | `read` | `gap.open_gaps(M)`, `gap.recurring_open_gaps(M)`, `extraction.unresolved_questions(M)`, and B's read of an open Follow-up item (section 7) | 4 tools |
+| 2 | `decide` | Applies the rule in section 4. No trigger, or a Follow-up item still open → finish, `ok=True`, no proposal. | — |
+| 3 | `propose` | Proposes one L2 action: B's Follow-up item on M, with the gap ids as evidence (section 5). | — |
 
-At most 3 tool calls on the trigger path and 5 on a chat run. A failed read
+At most 4 tool calls on the trigger path and 5 on a chat run with no meeting in
+its scope. A failed read
 ends the run with `ok=False` and no proposal. A meeting with no open gaps is not
 a failure.
 
@@ -115,14 +117,31 @@ Neither tool returns participation, per person or per role.
 
 ### The proposal
 
-One `ProposedAction` naming `extraction.add_action_item`, with these arguments:
+**No text in the arguments.** Plan mode (#556) queues an L2 proposal only when
+its arguments are ids, ISO dates, booleans and short lowercase enums
+(`main/pending.py`, `arguments_ok`); text a proposal needs lives in the owning
+store and is pointed at by id. An earlier draft of this section passed
+`description="후속 회의: <gap titles>"` to `extraction.add_action_item`, which
+the queue refuses (`ARGUMENT_REFUSED`), so the lead would never have seen it.
 
-- `meeting_id`: M.
-- `description`: `후속 회의: <item title>, <item title> …`. At most three
-  titles, highest risk first. The titles come from C's gap titles, which are a
-  template's item name plus a masked topic label. No utterance text is used.
-- `assignee_id`, `due_date`: left empty. The lead fills them on the board after
-  approving. The due date is what puts the meeting on a calendar (#441).
+One `ProposedAction`, with:
+
+- `tool`: B's Follow-up write. B's owner chooses its shape (#561); what
+  this design needs from it is a declared L2 action taking `meeting_id` and a
+  source enum `followup`, for which B writes a fixed description itself
+  ("후속 회의 잡기"), records the item as Follow-up's rather than a person's,
+  and starts it unconfirmed like `add_action_item`.
+- `arguments`: `{"meeting_id": M, "source": "followup"}`. No assignee, no due
+  date: the lead fills them on the board after approving, and the due date is
+  what puts the meeting on a calendar (#441).
+- `evidence`: the gap ids the rule fired on, highest risk first.
+
+**What the lead sees.** Plan mode renders a preview from read tools when the
+list is read and stores nothing for display (its spec, section 6). This needs a
+preview row for B's Follow-up write that shows the evidence's gap titles through
+`gap.open_gaps(M)` (#562); without it the lead sees only the kind and the
+ids. A title is a template's item name plus a masked topic label, so no
+utterance text is shown.
 
 `agent_runs` keeps the proposal's arguments and the gap ids, and no other
 text, as settled on #509.
@@ -137,7 +156,8 @@ text, as settled on #509.
   share of one-half says a lot about one person, and the rule does not need it.
   If a later rule wants it, that is a decision recorded here first.
 - **Nothing leaves Autune.** There is no model call and no outbound request. The
-  only write is B's, and it runs after the lead approves.
+  only write is B's, and it runs after the lead approves. The item it stores
+  holds B's fixed wording, not gap titles, so no topic label is copied into B.
 - **The lead is the only reader of the proposal**: approvers with scope
   `followup` in `agent_approvers`. The item it creates starts unconfirmed on the
   board (`add_action_item`), so it reaches nobody else until someone confirms
@@ -150,10 +170,22 @@ text, as settled on #509.
   Re-reading the evidence at approval time is plan mode's question (10/7). Until
   then, the lead sees the gap ids and can reject the proposal.
 - **Repeated proposals.** A key that stays open meeting after meeting would
-  produce a proposal each time. Proposed: do not propose again while an earlier
-  Follow-up item for the same keys is still open on the board. That needs a
-  read B does not have yet (items by description prefix, or a source marker),
-  so it waits on B.
+  produce a proposal each time. Decided: Follow-up does not propose while a
+  Follow-up item of the team's is still open on the board (unconfirmed, to do or
+  in progress). Per team rather than per key, because a key list is not an
+  argument plan mode accepts, and one open follow-up meeting is enough to carry
+  them. The read is B's and keys on B's source marker, not on the description,
+  which a person may reword (#561). A pending proposal for the same meeting
+  is already superseded by plan mode (#556).
+- **B's edit-cost figure.** `add_action_item` records an item as a person's
+  (`origin="user"`), so E's edit-cost figure would count Follow-up's items as
+  human additions. B's source marker separates them (#561).
+- **What "carried over" cannot see.** An item is the same item only under the
+  same template (#546): a template switch between two meetings carries nothing
+  over. And the previous meeting is the latest one C analysed even when it
+  raised no gap, so a meeting in between that settled everything breaks the run.
+  Both are intended. D's topic links could bridge a template switch once D ships
+  `tools.py`.
 - **Periodic runs.** "Deadline passed, nothing moved" is a state that no event
   signals. It comes with the main agent's scheduler.
 
@@ -162,19 +194,20 @@ text, as settled on #509.
 - **Rules** (unit): carried-over only; heavy only; both; neither. A dismissed
   gap does not count as open. The previous meeting is the team's, never another
   team's.
-- **Subgraph** (unit, `mock_tool`): no trigger means no proposal. At most 3
-  tool calls on the trigger path. Exactly one L2 proposal, naming
-  `extraction.add_action_item`, whose `description` holds only gap titles. A
-  failed read ends `ok=False` with no proposal. A chat run picks the most recent
-  analysed meeting.
+- **Subgraph** (unit, `mock_tool`): no trigger means no proposal; an open
+  Follow-up item means no proposal. At most 4 tool calls on the trigger path.
+  Exactly one L2 proposal naming B's Follow-up write, whose arguments pass
+  `arguments_ok` and whose evidence is gap ids. A failed read ends `ok=False`
+  with no proposal. A chat run uses the scope's meeting when it has one, and
+  the most recent analysed meeting otherwise.
 - **C's tools** (PostgreSQL): another team's meeting reads as missing;
   dismissed gaps are left out; `recurring_open_gaps` finds the previous
   analysed meeting and skips one C never analysed; no participation field in
   either result.
 - **End to end** (10/6–10/8): two real recordings for one team, the second
-  leaving a template item open again. The proposal appears in
-  `agent_runs.proposed`. Until plan mode lands there is no approval endpoint, so
-  approval is a direct `add_action_item` call, as Research does it.
+  leaving a template item open again. The proposal is queued with scope
+  `followup`, shows the gap titles on the approvals page, and once approved the
+  item appears unconfirmed on the board.
 
 ## 9. Delivery
 
@@ -183,6 +216,10 @@ text, as settled on #509.
 | ⓪ | This spec, on its own, so the proposals in section 1 can be settled first | 김민경 (`agent/docs/`) |
 | ① | C's `tools.py`: `open_gaps`, `recurring_open_gaps` | 1 (module C) |
 | ② | Follow-up subgraph and `SUBAGENT` | 1 (`subagents/followup/`) |
+| — | B's Follow-up write and its open-item read (#561) | B's owner |
+| — | The approvals-page preview for that write (#562) | 김민경 |
 | ③ | `agent-layer.md` section 3.1 row and section 6: the deviations in section 2 | 5 (`docs/`) |
 
-Schedule: ① 10/1 · ② 10/2–10/3 · ③ 10/5 · end to end 10/6–10/8.
+Schedule: ① 10/1 · ② 10/2–10/3 · ③ 10/5 · end to end 10/6–10/8. ② builds
+against mock tools for B's two pieces, so it does not wait on #561; end to
+end does.
