@@ -601,13 +601,20 @@ back after a reboot, provided Docker Desktop itself starts at sign-in.
 It runs with `AUTUNE_ENV=local` and the implementations `scripts/up.sh` picks
 without `--real-models` (#517), so it holds **dummy meetings only**. Every
 `/dev` router is mounted, and `/api/audio/dev/token` issues a token for any
-email. nginx therefore puts `/api/*/dev/` behind a password (user `autune`):
-port 80 may be reachable from beyond the team network, through the domain in
-front of this host. Before the first deploy:
+email. nginx therefore puts `/api/*/dev/` behind a password (user `autune`).
+
+**The dev server is reachable from the team's network only.** nginx serves
+plain HTTP on port 80, so the password, every bearer token and every uploaded
+recording cross the wire unencrypted. That is acceptable on a private network
+and on nothing wider. Before the first deploy, and for as long as there is no
+TLS in front of nginx:
 
 - `DEV_PUBLIC_HOST` is a private IP address (LAN or VPN), never a public one
   and never a hostname: compose binds port 80 to it.
-- No router forwards 8000. Only nginx (80) and the api (8000) publish a port.
+- No domain points at this host, and no router forwards 80 or 8000. Only
+  nginx (80) and the api (8000) publish a port.
+- Exposing it beyond the LAN means terminating TLS on 443 first, with 80
+  redirecting to it.
 
 Configuration lives in the repository, not on the host:
 
