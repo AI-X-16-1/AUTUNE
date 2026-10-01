@@ -12,6 +12,8 @@ import type {
   MeetingReview,
   MeetingSummary,
   ReviewDecision,
+  ConfirmationAnswer,
+  MyConfirmation,
 } from "./types";
 
 export { api };
@@ -120,6 +122,17 @@ async function withoutBody(path: string): Promise<void> {
  */
 export const getCarriedOver = (meetingId: string) =>
   api.extraction<CarriedOver>(`/carried-over/${encodeURIComponent(meetingId)}`);
+
+/** The reader's own ambiguous agreements in this meeting, to answer here (#585). */
+export const getMyConfirmations = (meetingId: string) =>
+  api.extraction<MyConfirmation[]>(`/confirmations?meeting_id=${encodeURIComponent(meetingId)}`);
+
+/** Answer one of them -- the DM button's path; a commitment makes a draft. */
+export const answerConfirmation = (utteranceId: string, answer: ConfirmationAnswer) =>
+  api.extraction<MyConfirmation>(`/confirmations/${encodeURIComponent(utteranceId)}`, {
+    method: "POST",
+    body: JSON.stringify({ answer }),
+  });
 
 /** S15's 요약 tab (#421): the meeting's decisions, items, counts and memo. */
 export const getSummary = (meetingId: string) =>

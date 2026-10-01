@@ -68,6 +68,7 @@ def asking(meeting_id: str, utterance_id: str) -> dict[str, str]:
         "recipient_id": "U_SPEAKER",
         "utterance_id": utterance_id,
         "quoted_text": "...",
+        "answer_url": f"https://autune.example/meetings/{meeting_id}/actions",
     }
 
 

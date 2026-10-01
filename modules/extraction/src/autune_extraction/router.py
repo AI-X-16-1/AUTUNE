@@ -37,12 +37,14 @@ from .schemas import (
     ActionItemRead,
     ActionItemUpdate,
     CarriedOver,
+    ConfirmationAnswerIn,
     DecisionCreate,
     DecisionDetail,
     DecisionReviewUpdate,
     MeetingNoteUpdate,
     MeetingReview,
     MeetingSummary,
+    MyConfirmation,
     Outbound,
     ReviewDecision,
 )
@@ -295,6 +297,33 @@ def _member_team(session: Session, reader: User, meeting_id: str) -> str:
     team_id = session.scalar(select(Meeting.team_id).where(Meeting.id == meeting_id))
     assert team_id is not None  # the check above found it
     return team_id
+
+
+@router.get("/confirmations", response_model=list[MyConfirmation])
+def my_confirmations(
+    meeting_id: str, session: SessionDep, reader: CurrentUser
+) -> list[MyConfirmation]:
+    """The meeting's ambiguous agreements the caller said, to answer on the web
+    (#585: a Slack click has no receiver yet). Nobody else's."""
+    return service.my_confirmations(session, meeting_id, reader)
+
+
+@router.post("/confirmations/{utterance_id}", response_model=MyConfirmation)
+def answer_confirmation(
+    utterance_id: str,
+    payload: ConfirmationAnswerIn,
+    session: SessionDep,
+    reader: CurrentUser,
+    background: BackgroundTasks,
+) -> MyConfirmation:
+    """The caller's answer to one of their own questions -- the DM button's
+    path. A commitment makes the draft now and its summary after the commit
+    (``tasks.summarise_confirmed_draft``, #577)."""
+    response = service.answer_confirmation(session, utterance_id, reader, payload.answer)
+    session.commit()
+    if payload.answer == "commitment":
+        background.add_task(tasks.summarise_confirmed_draft.delay, utterance_id)
+    return response
 
 
 @router.post("/jira/backfill")

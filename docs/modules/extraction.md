@@ -113,6 +113,15 @@ agreement, and sync the result to Notion.
    the account that person linked (#255, #478), and to nobody else. A team
    without Slack, or a speaker who has not linked, is looked at again on the
    next run until the window closes.
+   **Where the speaker answers** (decided with the user, 2026-10-01; #585). The
+   DM quotes their line and links to the meeting's 액션 tab, which lists the
+   reader's own open questions (`GET /confirmations?meeting_id=`) with the
+   three answers (`POST /confirmations/{utterance_id}`: commitment, decision,
+   not a commitment). The DM carries no buttons: a deployed stack has no
+   receiver for a Slack click yet, and #585 brings one; the answer then takes
+   the same path either way. A speaker who never linked Slack can still answer
+   there — answering puts the question, so its clock starts then. Nobody but
+   the speaker sees or answers it.
    **What the answer does.** *Commitment* makes one draft item for that
    utterance, slot-filled like any commitment (the speaker is the assignee, the
    first date phrase the due date, the utterance's own text — tidied into the

@@ -88,8 +88,16 @@ class ConfirmationResponse:
         return self.resolved_kind is UtteranceKind.COMMITMENT
 
 
-def build_confirmation_dm(*, utterance_id: str, quoted_text: str) -> tuple[str, list[dict]]:
+def build_confirmation_dm(
+    *, utterance_id: str, quoted_text: str, answer_url: str
+) -> tuple[str, list[dict]]:
     """The DM asking one speaker to resolve one ambiguous agreement.
+
+    The speaker answers on Autune, at ``answer_url`` -- the meeting's 액션 tab,
+    where their own open questions are listed (decided with the user,
+    2026-10-01). The DM carries no buttons: a deployed stack has no receiver
+    for a Slack click yet (#585), and a button that does nothing when pressed is
+    worse than a link. The handlers in ``slack.py`` stay for when it does.
 
     ``quoted_text`` is the utterance as stored, which is already PII-masked —
     transcript text is masked before it is written (invariant 11), so what comes
@@ -121,12 +129,8 @@ def build_confirmation_dm(*, utterance_id: str, quoted_text: str) -> tuple[str, 
             ],
         },
         {
-            "type": "actions",
-            "elements": [
-                _button("약속입니다", CONFIRM_COMMITMENT, utterance_id, primary=True),
-                _button("결정입니다", CONFIRM_DECISION, utterance_id),
-                _button("아닙니다", DENY, utterance_id),
-            ],
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": f"<{answer_url}|Autune에서 답하기>"},
         },
     ]
     return fallback, blocks

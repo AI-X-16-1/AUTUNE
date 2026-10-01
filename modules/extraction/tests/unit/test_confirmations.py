@@ -25,6 +25,7 @@ from autune_integrations.fakes import FakeSlack
 
 UTTERANCE = "utt_9f2"
 QUOTED = "한번 볼게요"
+URL = "https://autune.example/meetings/mtg_1/actions"
 
 
 def _payload(action_id: str, *, value: str = UTTERANCE, user: str = "U_SPEAKER") -> dict:
@@ -35,27 +36,25 @@ def _payload(action_id: str, *, value: str = UTTERANCE, user: str = "U_SPEAKER")
 
 
 def test_the_message_follows_the_slackblocks_rules() -> None:
-    """ui-spec section 2: "●" not an emoji, at most 3 buttons, only the first primary."""
-    _, blocks = build_confirmation_dm(utterance_id=UTTERANCE, quoted_text=QUOTED)
-    buttons = [b for block in blocks if block["type"] == "actions" for b in block["elements"]]
+    """ui-spec section 2: "●" not an emoji."""
+    _, blocks = build_confirmation_dm(utterance_id=UTTERANCE, quoted_text=QUOTED, answer_url=URL)
 
-    assert len(buttons) <= 3
-    assert buttons[0].get("style") == "primary"
-    assert all("style" not in b for b in buttons[1:])
     assert any("●" in str(block) for block in blocks)
 
 
-def test_every_button_carries_the_utterance_it_answers() -> None:
-    """Without it the response has nothing to resolve."""
-    _, blocks = build_confirmation_dm(utterance_id=UTTERANCE, quoted_text=QUOTED)
-    buttons = [b for block in blocks if block["type"] == "actions" for b in block["elements"]]
+def test_the_answer_is_a_link_to_autune_not_a_button() -> None:
+    """A deployed stack has no receiver for a Slack click yet (#585): a button
+    there would do nothing when pressed. The speaker answers on the meeting's
+    액션 tab instead."""
+    _, blocks = build_confirmation_dm(utterance_id=UTTERANCE, quoted_text=QUOTED, answer_url=URL)
 
-    assert {b["value"] for b in buttons} == {UTTERANCE}
+    assert not [block for block in blocks if block["type"] == "actions"]
+    assert f"<{URL}|" in str(blocks)
 
 
 def test_the_notification_fallback_does_not_quote_the_meeting() -> None:
     """The fallback is what a phone shows on a lock screen, to whoever holds it."""
-    text, blocks = build_confirmation_dm(utterance_id=UTTERANCE, quoted_text=QUOTED)
+    text, blocks = build_confirmation_dm(utterance_id=UTTERANCE, quoted_text=QUOTED, answer_url=URL)
 
     assert QUOTED not in text
     assert any(QUOTED in str(block) for block in blocks)
@@ -135,6 +134,7 @@ def test_the_question_goes_to_the_speaker_by_direct_message() -> None:
         recipient_id="U_SPEAKER",
         utterance_id=UTTERANCE,
         quoted_text=QUOTED,
+        answer_url=URL,
     )
 
     assert len(fake.sent) == 1
@@ -154,6 +154,7 @@ def test_sending_one_speakers_utterance_to_anyone_else_is_refused() -> None:
             recipient_id="U_MANAGER",
             utterance_id=UTTERANCE,
             quoted_text=QUOTED,
+            answer_url=URL,
         )
 
     assert fake.sent == []
@@ -178,6 +179,7 @@ def test_unmasked_text_is_refused_before_it_reaches_slack() -> None:
             recipient_id="U_SPEAKER",
             utterance_id=UTTERANCE,
             quoted_text="제 번호는 010-1234-5678 입니다",
+            answer_url=URL,
         )
 
     assert fake.sent == []
@@ -193,7 +195,7 @@ def test_the_clients_own_guard_now_sees_blocks() -> None:
     """
     fake = FakeSlack()
     _, blocks = build_confirmation_dm(
-        utterance_id=UTTERANCE, quoted_text="제 번호는 010-1234-5678 입니다"
+        utterance_id=UTTERANCE, quoted_text="제 번호는 010-1234-5678 입니다", answer_url=URL
     )
 
     with pytest.raises(PrivacyViolationError):
@@ -202,8 +204,9 @@ def test_the_clients_own_guard_now_sees_blocks() -> None:
     assert fake.sent == []
 
 
-def test_every_button_has_a_handler_registered() -> None:
-    """A button with no handler leaves the speaker's click doing nothing, silently."""
+def test_every_answer_has_a_handler_registered() -> None:
+    """Kept for the Slack buttons #585 brings back: an answer with no handler
+    leaves the speaker's click doing nothing, silently."""
     registered: list[str] = []
 
     class RecordingApp:
@@ -213,8 +216,4 @@ def test_every_button_has_a_handler_registered() -> None:
 
     slack.register(RecordingApp())
 
-    _, blocks = build_confirmation_dm(utterance_id=UTTERANCE, quoted_text=QUOTED)
-    buttons = [b for block in blocks if block["type"] == "actions" for b in block["elements"]]
-
-    assert set(registered) == {b["action_id"] for b in buttons}
     assert set(registered) == set(confirmations.ACTION_IDS)

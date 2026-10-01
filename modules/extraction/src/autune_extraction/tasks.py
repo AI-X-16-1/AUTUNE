@@ -343,6 +343,7 @@ def ask_confirmations() -> list[str]:
                     recipient_id=question.speaker_id,
                     utterance_id=question.utterance_id,
                     quoted_text=said.text,
+                    answer_url=service.answer_url(question.meeting_id),
                 )
         except PrivacyViolationError:
             violations.append(question.utterance_id)
