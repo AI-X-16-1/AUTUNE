@@ -32,6 +32,14 @@ jobs:
       DEV_BASIC_AUTH_PASSWORD: ${{ secrets.DEV_BASIC_AUTH_PASSWORD }}
       # Optional: without it /api/agent/chat refuses and the rest works.
       AUTUNE_AGENT_LLM_API_KEY: ${{ secrets.AUTUNE_AGENT_LLM_API_KEY }}
+      # The address the domain serves. Google sends sign-in back here, and
+      # the api sends the browser here afterwards, so it must be the origin
+      # the session cookie belongs to.
+      DEV_SITE_URL: https://autune.shelldocs.cloud
+      # Optional: without them /api/auth/google/start answers "not
+      # configured" and the dev token still works.
+      AUTUNE_GOOGLE_CLIENT_ID: ${{ secrets.AUTUNE_GOOGLE_CLIENT_ID }}
+      AUTUNE_GOOGLE_CLIENT_SECRET: ${{ secrets.AUTUNE_GOOGLE_CLIENT_SECRET }}
     steps:
 
       - name: Checkout repository
