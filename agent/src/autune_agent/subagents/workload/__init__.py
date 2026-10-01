@@ -12,11 +12,19 @@ Workspace, a calendar Autune creates holds only what Autune wrote, and a
 person's own grant serves only their own work. Busy hours from a person's own
 calendar, with their consent, are a later decision there. Jira reads wait on
 #82.
+
+It also wakes after each meeting is processed (``INTELLIGENCE_COMPLETED``):
+that is when new items land on people, so it is when a load changes -- the
+"state" trigger of section 3.1, until the main agent has a periodic one
+(mentoring, 2026-10-01). The run is the meeting's team's; its proposals wait
+for the manager like a chat run's, and a later run's replace the earlier ones
+still waiting (the main agent's team-wide supersede for Workload).
 """
 
 from __future__ import annotations
 
 from autune_agent.main.subagents import Subagent
+from autune_contracts import INTELLIGENCE_COMPLETED
 
 from .graph import TOOLS, build
 
@@ -32,4 +40,5 @@ SUBAGENT = Subagent(
     ),
     tools=TOOLS,
     build=build,
+    triggers=(INTELLIGENCE_COMPLETED,),
 )
