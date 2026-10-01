@@ -179,12 +179,10 @@ export function useLiveSession(meetingId: string, stream: MediaStream | null): L
     // continuation open the audio graph and flip the phase back to recording.
     const stale = () => generation.current !== mine || stopping.current;
     if (!stream) return;
+    // Null for a browser signed in with Google: its session is an HttpOnly
+    // cookie the page cannot read, and the socket's handshake carries it
+    // instead. The server takes a hello token first and the cookie otherwise.
     const token = getToken();
-    if (!token) {
-      setError("로그인 토큰이 없습니다. environments.md의 dev token 절을 보세요.");
-      setPhase("error");
-      return;
-    }
     // Before the socket opens: a browser that cannot record webm/opus must
     // not claim the meeting on the server and then throw on the recorder,
     // which left the claim held and the next start() blocked. Chrome,
@@ -208,7 +206,7 @@ export function useLiveSession(meetingId: string, stream: MediaStream | null): L
 
     let readyResolved = false;
     const ready = new Promise<void>((resolve, reject) => {
-      ws.onopen = () => ws.send(JSON.stringify({ type: "hello", token }));
+      ws.onopen = () => ws.send(JSON.stringify(token ? { type: "hello", token } : { type: "hello" }));
       ws.onmessage = (event: MessageEvent<string>) => {
         if (generation.current !== mine) return;
         const message = JSON.parse(event.data) as ServerMessage;
