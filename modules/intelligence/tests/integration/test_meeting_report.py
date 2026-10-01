@@ -7,6 +7,7 @@ E's half only.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from unittest.mock import patch
 
@@ -32,6 +33,15 @@ class BlockRecordingSlack(FakeSlack):
     def post_message(self, channel: str, text: str, blocks: list[dict] | None = None) -> str:
         self.blocks.append(blocks)
         return super().post_message(channel, text, blocks)
+
+
+@pytest.fixture
+def no_web_base_url(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Unset even when a developer's .env sets it for a local sign-in."""
+    monkeypatch.setenv("AUTUNE_INTELLIGENCE_WEB_BASE_URL", "")
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
 
 
 @pytest.fixture
@@ -113,6 +123,28 @@ def test_claim_hands_out_the_report_once(db_session: Session, meeting: str) -> N
     assert row is not None and row.sent_at is not None
 
 
+def test_claim_refuses_a_draft_replaced_since_the_post_was_approved(
+    db_session: Session, meeting: str
+) -> None:
+    """The approver approved the draft named by its id; a newer draft is not that one."""
+    service.save_meeting_report(db_session, meeting, BODY, draft_id="rdr_seen")
+    service.save_meeting_report(db_session, meeting, BODY + "\n추가", draft_id="rdr_newer")
+
+    with pytest.raises(ConflictError):
+        service.claim_meeting_report(db_session, meeting, draft_id="rdr_seen")
+
+    row = db_session.get(IntelMeetingReport, meeting)
+    assert row is not None and row.sent_at is None  # unclaimed: the newer draft can still go
+
+
+def test_claim_hands_out_the_draft_it_was_pinned_to(db_session: Session, meeting: str) -> None:
+    service.save_meeting_report(db_session, meeting, BODY, draft_id="rdr_seen")
+
+    claimed = service.claim_meeting_report(db_session, meeting, draft_id="rdr_seen")
+
+    assert claimed is not None and claimed.body_markdown == BODY
+
+
 def test_claim_is_not_found_before_a_report_was_saved(db_session: Session, meeting: str) -> None:
     with pytest.raises(NotFoundError):
         service.claim_meeting_report(db_session, meeting)
@@ -178,6 +210,7 @@ def test_a_report_at_the_length_cap_passes_the_outbound_size_check(
     assert len(slack.sent) == 1
 
 
+@pytest.mark.usefixtures("no_web_base_url")
 def test_post_without_a_web_url_has_no_button(db_session: Session, meeting: str) -> None:
     slack = BlockRecordingSlack()
 
@@ -244,7 +277,6 @@ def test_the_report_goes_when_its_meeting_is_deleted(db_session: Session, meetin
 @pytest.fixture
 def use_test_session(db_session: Session, monkeypatch: pytest.MonkeyPatch) -> None:
     import contextlib
-    from collections.abc import Iterator
 
     @contextlib.contextmanager
     def _scope() -> Iterator[Session]:
@@ -289,6 +321,22 @@ def test_task_posts_to_the_teams_configured_channel(
     row = db_session.get(IntelMeetingReport, meeting)
     assert row is not None
     assert (row.slack_channel, row.slack_ts) == ("C123", "1.000000")
+
+
+@pytest.mark.usefixtures("use_test_session", "fake_encryption_key")
+def test_task_posts_nothing_when_the_draft_was_replaced_after_approval(
+    db_session: Session, team: str, meeting: str
+) -> None:
+    service.save_meeting_report(db_session, meeting, BODY, draft_id="rdr_newer")
+    _connect_slack(db_session, team, config={"channel": "C123"})
+    slack = FakeSlack()
+
+    with patch.object(tasks, "SlackClient", return_value=slack):
+        tasks.deliver_meeting_report(meeting, "rdr_seen")
+
+    assert slack.sent == []
+    row = db_session.get(IntelMeetingReport, meeting)
+    assert row is not None and row.sent_at is None
 
 
 @pytest.mark.usefixtures("use_test_session", "fake_encryption_key")
