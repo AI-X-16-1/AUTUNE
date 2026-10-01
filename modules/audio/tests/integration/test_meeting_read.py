@@ -87,6 +87,8 @@ def test_a_member_reads_the_meetings_status_and_flags(
         "original_audio_deleted": True,
         "pii_masked": True,
         "team_id": team,
+        "stage": None,
+        "stage_progress": None,
     }
 
 
@@ -147,3 +149,53 @@ def test_the_upload_flow_reads_back_as_analyzing(
     assert body["status"] == "analyzing"
     assert body["title"] == "데모 회의"
     assert body["original_audio_deleted"] is False
+
+
+def test_an_analyzing_meeting_carries_its_running_jobs_stage_and_progress(
+    client: TestClient, db_session: Session, meeting: str
+) -> None:
+    """S12 draws a percentage from these. Only the running attempt counts: a
+    superseded one that got further must not show through."""
+    from autune_audio.models import TranscriptionJob
+
+    db_session.get(Meeting, meeting).status = "analyzing"
+    db_session.add(
+        TranscriptionJob(
+            meeting_id=meeting, status="superseded", stage="saving", stage_progress=1.0
+        )
+    )
+    db_session.add(
+        TranscriptionJob(
+            meeting_id=meeting, status="running", stage="transcribing", stage_progress=0.42
+        )
+    )
+    db_session.flush()
+
+    body = client.get(f"/api/audio/meetings/{meeting}").json()
+
+    assert body["stage"] == "transcribing"
+    assert body["stage_progress"] == 0.42
+
+
+def test_the_reporter_writes_the_job_row(db_session: Session, meeting: str, monkeypatch) -> None:
+    """The real write, through its own session: the worker's progress must be
+    committed while the task is still running, or S12 never sees it."""
+    from contextlib import contextmanager
+
+    from autune_audio import progress
+    from autune_audio.models import TranscriptionJob
+
+    job = TranscriptionJob(meeting_id=meeting, status="running")
+    db_session.add(job)
+    db_session.flush()
+
+    @contextmanager
+    def same_session():
+        yield db_session
+
+    monkeypatch.setattr(progress, "session_scope", same_session)
+    progress.ProgressReporter(job.id).stage("diarizing")
+    db_session.expire_all()
+
+    row = db_session.get(TranscriptionJob, job.id)
+    assert (row.stage, row.stage_progress) == ("diarizing", 0.0)

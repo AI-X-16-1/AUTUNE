@@ -122,6 +122,25 @@ def meeting_for(session: Session, *, meeting_id: str, reader: User) -> Meeting:
     return meeting
 
 
+def running_stage(session: Session, *, meeting_id: str) -> tuple[str | None, float | None]:
+    """Where the meeting's running transcription is: ``(stage, fraction)``.
+
+    Only a ``running`` job counts. A superseded attempt may have got further
+    before a re-upload replaced it, and S12 must show the attempt that will
+    actually produce the transcript. ``(None, None)`` when nothing is running.
+    """
+    row = session.execute(
+        sa.select(TranscriptionJob.stage, TranscriptionJob.stage_progress)
+        .where(
+            TranscriptionJob.meeting_id == meeting_id,
+            TranscriptionJob.status == "running",
+        )
+        .order_by(TranscriptionJob.created_at.desc())
+        .limit(1)
+    ).first()
+    return (row.stage, row.stage_progress) if row else (None, None)
+
+
 def meetings_for(session: Session, *, member: User) -> list[Meeting]:
     """Every meeting ``member`` may see, newest first. The home screen's list (S05).
 
@@ -180,6 +199,38 @@ def teams_for(session: Session, *, member: User) -> list[Team]:
             .order_by(Team.name)
         )
     )
+
+
+def create_team(
+    session: Session,
+    *,
+    owner: User,
+    name: str,
+    role: str | None = None,
+) -> Team:
+    """S02: make a team with its creator on it, and nobody else.
+
+    **Why A.** ``teams`` and ``team_members`` are shared entities and invariant
+    4 gives module A the write. Until this, a person who signed in with Google
+    and belonged to no team could not open a meeting — ``POST /meetings`` takes
+    a ``team_id`` — and the only thing that made teams was the dev-token route.
+
+    **No invitations.** The first version of this took invited addresses and
+    made them members on the spot. Review of #539 showed why that cannot stand:
+    team membership is the read boundary for every module's team-level data,
+    so a membership nobody accepted let anyone be put on any team — learning
+    from the member list whether an address had an account and its real name,
+    and making the inviter's team the invitee's default for new meetings, with
+    no way to leave. An invitation has to be one the invitee accepts, and that
+    is its own change.
+    """
+    team = Team(name=name)
+    session.add(team)
+    session.flush()
+    session.add(TeamMember(team_id=team.id, user_id=owner.id, role=role))
+    session.flush()
+    log.info("team_created", team_id=team.id)
+    return team
 
 
 _ACCEPTS_A_RECORDING = frozenset({"scheduled", "failed", "recording"})

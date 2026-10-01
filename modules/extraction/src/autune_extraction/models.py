@@ -284,6 +284,13 @@ class ExtExternalRef(Base):
     """For Jira, the cloud id of the site ``external_id`` lives on. An issue key
     like ``KAN-1`` is unique only within a site; after a reconnect to another
     site, a key without its site would name someone else's issue (#458)."""
+    synced_category: Mapped[str | None] = mapped_column(String(16))
+    """For Jira, the status category (``new``, ``indeterminate``, ``done``) the
+    issue was last left in by Autune or last read back from. It is how the
+    read-back tells a person's move in Jira from a board edit that has not
+    reached Jira yet (``jira_sync.pull_status_changes``). ``None`` until there
+    is a baseline: a ref written before the read-back existed, or one whose
+    issue never took the board's status; the next read-back records Jira's."""
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -584,7 +591,7 @@ class ExtConfirmation(Base, TimestampMixin):
     **No outcome is stored, only the two timestamps it is derived from.** A
     ``status`` column and a clock can disagree, and the one that would be wrong
     is the column — nothing runs at the deadline to update it. Deriving the
-    answer on read means the 24-hour rule holds whether or not a periodic job is
+    answer on read means the 72-hour rule holds whether or not a periodic job is
     alive.
 
     **There is no responder column.** The DM goes to one person and comes back
@@ -772,6 +779,27 @@ class ExtNotionTarget(Base):
     workspace than the team's current connection is ignored (#467 review)."""
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class ExtMeetingNote(Base):
+    """The team's own memo on a meeting's summary tab (S15 요약, #421).
+
+    Free text a member types, not anything a model derived: the summary tab's
+    structure comes from B's rows, and this is the part a person writes. One
+    per meeting, deleted with it; a blank memo is no row. No author column,
+    the same rule as ``ext_edit_events`` -- the tab says what the team noted,
+    not who noted it.
+    """
+
+    __tablename__ = "ext_meeting_notes"
+
+    meeting_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("meetings.id", ondelete="CASCADE"), primary_key=True
+    )
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
     )
 
 

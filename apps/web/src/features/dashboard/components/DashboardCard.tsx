@@ -28,34 +28,3 @@ export function DashboardCard({ title, children }: { title: string; children: Re
     </div>
   );
 }
-
-/** The Phase 2 placeholder — dashed border, no data, per #28/#27 (not decided yet). */
-export function PlaceholderCard({ label }: { label: string }) {
-  return (
-    <div
-      className="flex flex-col items-center justify-center gap-2"
-      style={{
-        background: "var(--color-surface-panel)",
-        border: "1px dashed var(--color-surface-sunken)",
-        borderRadius: "var(--radius)",
-        padding: "var(--space-card)",
-        minHeight: 96,
-      }}
-    >
-      <span
-        style={{
-          fontSize: "var(--text-metaSmall)",
-          color: "var(--color-ink-muted)",
-          border: "1px solid var(--color-surface-sunken)",
-          borderRadius: "var(--radius)",
-          padding: "1px 6px",
-        }}
-      >
-        PHASE 2
-      </span>
-      <p style={{ margin: 0, fontSize: "var(--text-meta)", color: "var(--color-ink-muted)" }}>
-        {label}
-      </p>
-    </div>
-  );
-}

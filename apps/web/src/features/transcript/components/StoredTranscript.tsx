@@ -2,7 +2,7 @@
 
 import { useSpeakers } from "../hooks/useSpeakers";
 import { useTranscript } from "../hooks/useTranscript";
-import type { UtteranceKind } from "../types";
+import type { SpeakerEntry, TeamMember, UtteranceKind } from "../types";
 import { TranscriptRow } from "./TranscriptRow";
 import { UnidentifiedSpeaker } from "./UnidentifiedSpeaker";
 
@@ -63,6 +63,7 @@ export function StoredTranscript({
     pending,
   } = useSpeakers(meetingId, teamId);
   const unidentified = speakers.filter((entry) => entry.user_id === null);
+  const nameOf = speakerNames(speakers, members);
 
   if (state.status === "loading") {
     return (
@@ -133,8 +134,36 @@ export function StoredTranscript({
         <TranscriptRow
           key={utterance.id}
           row={{ utterance, kind: kinds[utterance.id] }}
+          name={nameOf(utterance.speaker, utterance.speaker_id)}
         />
       ))}
     </section>
   );
+}
+
+/**
+ * Who each line was said by, by name, from the two lists this screen already
+ * holds.
+ *
+ * A row used to print its diarization label ("화자 1") whatever happened to
+ * it, and the transcript is read once, so an assignment made on this screen
+ * changed nothing below it: the request succeeded (204) and the line still
+ * said "화자 1". `useSpeakers` re-reads the label → person list after every
+ * assignment and already has the team's members, so the name comes from those
+ * and appears the moment the assignment lands, with no second transcript read.
+ *
+ * The label's current assignment wins over the row's stored `speaker_id`,
+ * which is only as fresh as the transcript read. A person no longer on the
+ * team has no name to show; the line keeps its label.
+ */
+function speakerNames(
+  speakers: SpeakerEntry[],
+  members: TeamMember[],
+): (label: string, storedId: string | null | undefined) => string | null {
+  const nameById = new Map(members.map((member) => [member.user_id, member.name]));
+  const idByLabel = new Map(speakers.map((entry) => [entry.speaker_label, entry.user_id]));
+  return (label, storedId) => {
+    const id = idByLabel.has(label) ? idByLabel.get(label) : storedId;
+    return id ? (nameById.get(id) ?? null) : null;
+  };
 }

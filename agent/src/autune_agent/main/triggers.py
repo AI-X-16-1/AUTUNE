@@ -22,10 +22,11 @@ layer, so their results do not exist yet; only ``intelligence.completed``
 arrives after all three have finished.
 
 **Safe to deliver twice.** Tasks are ``acks_late``, so a worker that dies
-mid-run gets the event again. A subagent that already has a finished run for
-this event and meeting is skipped, which is what keeps an L1 write from
-happening twice. A ``failed`` run does not count as finished, so a redelivery
-retries it.
+mid-run gets the event again. The redelivery guard keys on the Celery task id:
+a redelivered task carries the same id and is skipped; when E re-publishes the
+event (plan-mode spec §3), it is a new task with a new id and runs again. A
+subagent with a failed run for the same task id is retried. A ``failed`` run
+with a different task id does not block the same subagent in a fresh task.
 """
 
 from __future__ import annotations
@@ -69,6 +70,7 @@ def on_event(
     subagents: Mapping[str, Subagent] | None = None,
     tools: Mapping[str, Tool] | None = None,
     actions: Mapping[str, Action] | None = None,
+    task_id: str | None = None,
 ) -> list[AgentRun]:
     """Start a run for each subagent that asked for ``event``. Returns the new rows."""
     if event not in TRIGGER_EVENTS:
@@ -86,7 +88,9 @@ def on_event(
     rows: list[AgentRun] = []
     violations: list[str] = []
     for sub in woken:
-        if _already_ran(session, event=event, meeting_id=meeting_id, route=sub.name):
+        if _already_ran(
+            session, event=event, meeting_id=meeting_id, route=sub.name, task_id=task_id
+        ):
             log.info("agent_trigger_redelivered event=%s subagent=%s", event, sub.name)
             continue
         try:
@@ -96,7 +100,11 @@ def on_event(
                 router=SummaryRouter(),
                 team_id=meeting.team_id,
                 meeting_id=meeting_id,
-                trigger={"kind": "event", "event": event},
+                trigger={
+                    "kind": "event",
+                    "event": event,
+                    **({"task_id": task_id} if task_id else {}),
+                },
                 subagents=everyone,
                 tools=tools,
                 actions=actions,
@@ -121,7 +129,9 @@ def on_event(
     return rows
 
 
-def _already_ran(session: Session, *, event: str, meeting_id: str, route: str) -> bool:
+def _already_ran(
+    session: Session, *, event: str, meeting_id: str, route: str, task_id: str | None
+) -> bool:
     earlier = session.scalars(
         select(AgentRun.trigger).where(
             AgentRun.meeting_id == meeting_id,
@@ -129,4 +139,7 @@ def _already_ran(session: Session, *, event: str, meeting_id: str, route: str) -
             AgentRun.outcome != "failed",
         )
     )
+    if task_id is not None:
+        # A redelivery carries the same task id; E's re-publish is a new task (plan-mode spec §3).
+        return any(t.get("task_id") == task_id for t in earlier)
     return any(t.get("kind") == "event" and t.get("event") == event for t in earlier)

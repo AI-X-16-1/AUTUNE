@@ -45,7 +45,7 @@ See `/docs/architecture/contracts.md`, "The B → D boundary".
 `ext_edit_events`, `ext_decisions`, `ext_decision_sources`, `ext_external_refs`,
 `ext_confirmations`, `ext_decision_reviews`, `ext_decision_refs`,
 `ext_calendar_events`, `ext_calendar_polls`, `ext_notion_targets`,
-`ext_extraction_runs`.
+`ext_extraction_runs`, `ext_meeting_notes`.
 
 The list in `/docs/modules/extraction.md` is the same set; keep the two together.
 This one drifted once already — the B/D boundary commit updated "Publishes" here

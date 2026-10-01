@@ -29,11 +29,13 @@ from typing import Any
 
 from autune_contracts.enums import UtteranceKind
 
-CONFIRMATION_TIMEOUT = timedelta(hours=24)
+CONFIRMATION_TIMEOUT = timedelta(hours=72)
 """How long the speaker has before the question resolves itself as undecided.
 
 A product rule (#12, ui-spec S19), not an environment knob: shortening it in one
 deployment would change what "undecided" means in the numbers ADR 0006 reports.
+It was 24 hours until 2026-09-30, when the owner set it to the 72 hours WBS 8.3
+names: a speaker away for a day or a weekend still gets to answer.
 
 Nothing sweeps at the deadline. The outcome is derived from ``sent_at`` whenever
 it is read, so there is no stored flag that can disagree with the clock and no
@@ -63,7 +65,7 @@ ACTION_IDS: dict[str, UtteranceKind] = {
 `DENY` lands on ``concern`` rather than dropping the utterance: the speaker
 declining to commit is itself something the meeting said, and module C reads
 concerns. Silence is not in this table — a DM nobody answers has no button
-click, and the 24-hour timeout (#12) resolves it as undecided.
+click, and the 72-hour timeout (#12) resolves it as undecided.
 """
 
 

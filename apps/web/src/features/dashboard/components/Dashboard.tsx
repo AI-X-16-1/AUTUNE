@@ -2,9 +2,7 @@
 
 import { ActionCompletionRate } from "./ActionCompletionRate";
 import { AlignmentHeatmap } from "./AlignmentHeatmap";
-import { PlaceholderCard } from "./DashboardCard";
 import { GapDistributionBars } from "./GapDistributionBars";
-import { HoverPreview, InfluenceMapMockup } from "./HoverPreview";
 import { PredictionCard } from "./PredictionCard";
 import { QualityScoreCard } from "./QualityScoreCard";
 import { useDashboard } from "../hooks/useDashboard";
@@ -14,6 +12,11 @@ import { useDashboard } from "../hooks/useDashboard";
  * has no pages for any module, and `team_id` resolution needs the auth/team
  * context the whole app is still missing (#156, #189). A future page passes
  * `teamId` in once that lands.
+ *
+ * **No influence map here, not even as a placeholder.** The influence map goes
+ * to the person themselves and nobody else, the way the speaking-ratio DM does
+ * (#28, #304; ui-spec S26). A "Phase 2" card on a screen the whole team sees
+ * would announce the opposite.
  */
 export function Dashboard({ teamId }: { teamId: string }) {
   const { dashboard, heatmap, gapTitles, predictions, loading, error } = useDashboard(teamId);
@@ -48,9 +51,6 @@ export function Dashboard({ teamId }: { teamId: string }) {
       </div>
 
       <PredictionCard predictions={predictions} />
-      <HoverPreview mockup={<InfluenceMapMockup />}>
-        <PlaceholderCard label="영향력 맵" />
-      </HoverPreview>
     </div>
   );
 }

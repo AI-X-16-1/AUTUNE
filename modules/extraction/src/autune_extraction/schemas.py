@@ -236,6 +236,49 @@ class EditHistoryEntry(BaseModel):
     at: datetime
 
 
+class SummaryDecision(BaseModel):
+    """A decision as the summary tab lists it: the wording a person confirmed,
+    or the model's while it is still pending."""
+
+    id: str
+    statement: str
+    status: Literal["pending", "confirmed"]
+
+
+MAX_NOTE_CHARS = 2000
+
+
+class MeetingNoteUpdate(BaseModel):
+    """The memo, whole. Blank removes it."""
+
+    body: str = Field(max_length=MAX_NOTE_CHARS)
+
+
+class MeetingSummary(BaseModel):
+    """S15's 요약 tab, v1 (#421, WBS 4.9): B's own rows in three levels, no model.
+
+    The tab reads these top down -- counts, then the decisions and items
+    themselves, then (through the 액션 tab's drawer) the lines they came from.
+    Nothing here is a verbatim quotation: descriptions and statements are the
+    same fields the board already lists. A summary written by an LLM over the
+    whole meeting is v2, and waits on #392.
+    """
+
+    meeting_id: str
+    decisions: list[SummaryDecision]
+    """Confirmed first, then pending, each in the order they were settled.
+    A rejected one is not a decision of the meeting and is left out."""
+    action_items: list[ActionItemRead]
+    """Every item of the meeting, whatever its status."""
+    open_questions: int
+    """Utterances classified as open questions -- asked, not settled."""
+    ambiguous_waiting: int
+    """Ambiguous agreements not yet answered: never asked, or asked and within
+    the confirmation window."""
+    note: str | None = None
+    note_updated_at: datetime | None = None
+
+
 class ActionItemDetail(ActionItemRead):
     """One item and its evidence, for S18.
 
