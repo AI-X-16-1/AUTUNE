@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 from autune_agent import router as routes
 from autune_agent.models import AgentApprover, AgentPendingAction, AgentResearchDocument, AgentRun
 from autune_agent.testing import FakeRouter
-from autune_core import AutuneError, User, current_user, get_session
+from autune_core import AutuneError, Meeting, User, current_user, get_session
 
 
 def _client(session: Session, user_id: str, *, chat_router: object | None) -> TestClient:
@@ -136,13 +136,16 @@ def test_research_is_refused_to_a_non_member(session: Session, team: dict[str, s
     assert _research(outsider, team).status_code == 403
 
 
-def _queue(session: Session, team: dict[str, str], scope: str = "research") -> AgentPendingAction:
-    doc = AgentResearchDocument(team_id=team["team"], meeting_id=team["meeting"], body="본문")
+def _queue(
+    session: Session, team: dict[str, str], scope: str = "research", meeting_id: str | None = None
+) -> AgentPendingAction:
+    meeting_id = meeting_id or team["meeting"]
+    doc = AgentResearchDocument(team_id=team["team"], meeting_id=meeting_id, body="본문")
     session.add(doc)
     session.flush()
     row = AgentPendingAction(
         team_id=team["team"],
-        meeting_id=team["meeting"],
+        meeting_id=meeting_id,
         subagent="research",
         tool="agent.share_research_document",
         kind="research_share",
@@ -181,7 +184,11 @@ def test_an_interrupted_approval_lists_as_needing_a_check(
 ) -> None:
     session.add(AgentApprover(team_id=team["team"], user_id=team["member"], scope="research"))
     row = _interrupted(session, team)
-    finished = _queue(session, team)
+    # Another meeting: a meeting holds one proposed document at a time.
+    other = Meeting(team_id=team["team"], title="다른 회의")
+    session.add(other)
+    session.flush()
+    finished = _queue(session, team, meeting_id=other.id)
     finished.status, finished.result_ok = "approved", True
     session.commit()
 
