@@ -29,6 +29,7 @@ report, and deliver each participant their own speaking ratio.
 | B | `ExtractionResult` via `autune.extraction.completed` |
 | C | `GapReport` via `autune.gap.completed` |
 | D | `ContextLinks` via `autune.context.completed` |
+| B | `TeamActionProgress` via `autune.extraction.action_progress` -- a team's action-item counts per meeting, every ten minutes (#605) |
 | `packages/core` | `meetings`, `participants`, `utterances` (read-only) |
 
 ## Outputs
@@ -177,6 +178,8 @@ See `../architecture/async-pipeline.md`.
 | `intel_reports` | Generated weekly reports |
 | `intel_completion` | Which of B, C, D have reported per meeting |
 | `intel_meeting_reports` | One summary report per meeting, composed by the agent layer's Report subagent; posted once, deleted with its meeting |
+| `intel_action_progress` | The latest `TeamActionProgress` per team: its `as_of`, kept even when it listed no meeting so "none confirmed" stays apart from "unknown" |
+| `intel_action_progress_meetings` | That snapshot's counts per meeting (confirmed, done, overdue); deleted with its meeting; shown only as team totals |
 
 There is no speaking-ratio table, and there will not be one.
 
@@ -203,6 +206,7 @@ admin override and no team-level variant of this endpoint.
 | Task | Trigger | Queue |
 | --- | --- | --- |
 | `autune.intelligence.aggregate` | B, C, D completion or timeout | `cpu_heavy` |
+| `autune.intelligence.on_extraction_action_progress` | B's `TeamActionProgress`, every ten minutes | `default` |
 | `autune.intelligence.send_personal_feedback` | After aggregation | `default` |
 | `autune.intelligence.weekly_report` | Weekly schedule | `cpu_heavy` |
 

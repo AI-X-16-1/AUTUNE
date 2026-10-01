@@ -182,3 +182,49 @@ class IntelReport(Base, TimestampMixin):
     body_markdown: Mapped[str] = mapped_column(Text, nullable=False)
     metrics_json: Mapped[dict] = mapped_column(JSONB, nullable=False)
     source_meeting_ids: Mapped[list] = mapped_column(JSONB, nullable=False, server_default="[]")
+
+
+class IntelActionProgress(Base, TimestampMixin):
+    """The latest ``TeamActionProgress`` B sent for a team: when it was taken (#605).
+
+    The header exists even when the snapshot listed no meeting, so "fresh and
+    empty" (nothing confirmed in the window) stays apart from "never received" and
+    from "stale". Deleted with its team.
+    """
+
+    __tablename__ = "intel_action_progress"
+
+    team_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("teams.id", ondelete="CASCADE"), primary_key=True
+    )
+    as_of: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class IntelActionProgressMeeting(Base):
+    """One meeting's counts from that snapshot. Counts only -- no assignee, no title.
+
+    Cascaded from ``meetings``, so a deleted meeting's counts go with it rather
+    than waiting for the next snapshot (#86), and from ``teams`` like the header.
+    Foreign keys point at shared tables only, so the header is not referenced;
+    a kept snapshot replaces the team's rows itself. Shown only as team totals
+    (the contract's usage rule, #605 review).
+    """
+
+    __tablename__ = "intel_action_progress_meetings"
+    __table_args__ = (
+        CheckConstraint("confirmed >= 1", name="ck_intel_action_progress_confirmed"),
+        CheckConstraint("done >= 0 AND done <= confirmed", name="ck_intel_action_progress_done"),
+        CheckConstraint(
+            "overdue >= 0 AND overdue <= confirmed - done", name="ck_intel_action_progress_overdue"
+        ),
+    )
+
+    team_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("teams.id", ondelete="CASCADE"), primary_key=True
+    )
+    meeting_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("meetings.id", ondelete="CASCADE"), primary_key=True, index=True
+    )
+    confirmed: Mapped[int] = mapped_column(Integer, nullable=False)
+    done: Mapped[int] = mapped_column(Integer, nullable=False)
+    overdue: Mapped[int] = mapped_column(Integer, nullable=False)

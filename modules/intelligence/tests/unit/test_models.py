@@ -13,6 +13,8 @@ INTEL_TABLES = {
     "intel_predictions",
     "intel_reports",
     "intel_meeting_reports",
+    "intel_action_progress",
+    "intel_action_progress_meetings",
 }
 
 
@@ -20,7 +22,7 @@ def _table(name: str):
     return Base.metadata.tables[name]
 
 
-def test_module_owns_exactly_these_seven_tables() -> None:
+def test_module_owns_exactly_these_nine_tables() -> None:
     present = {n for n in Base.metadata.tables if n.startswith("intel_")}
     assert present == INTEL_TABLES
 
@@ -48,13 +50,16 @@ def test_primary_keys_are_the_spec_natural_keys() -> None:
         "intel_predictions": ["meeting_id", "kind", "horizon_days"],
         "intel_reports": ["team_id", "period_start"],
         "intel_meeting_reports": ["meeting_id"],
+        "intel_action_progress": ["team_id"],
+        "intel_action_progress_meetings": ["team_id", "meeting_id"],
     }
     for name, cols in expected.items():
         assert [c.name for c in _table(name).primary_key.columns] == cols
 
 
 def test_meeting_scoped_tables_cascade_on_meeting_delete() -> None:
-    for name in INTEL_TABLES - {"intel_reports"}:
+    # Team-scoped: a weekly report, and the header of B's latest counts snapshot.
+    for name in INTEL_TABLES - {"intel_reports", "intel_action_progress"}:
         fk = next(iter(_table(name).c.meeting_id.foreign_keys))
         assert fk.column.table.name == "meetings"
         assert fk.ondelete == "CASCADE"
