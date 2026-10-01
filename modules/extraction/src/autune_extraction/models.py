@@ -87,7 +87,9 @@ class ExtActionItem(Base, TimestampMixin):
             "status IN ('needs_confirmation','todo','in_progress','done')",
             name="ck_ext_action_items_status",
         ),
-        CheckConstraint("origin IN ('model','user')", name="ck_ext_action_items_origin"),
+        CheckConstraint(
+            "origin IN ('model','user','chat','followup')", name="ck_ext_action_items_origin"
+        ),
         CheckConstraint(
             "confidence >= 0 AND confidence <= 1", name="ck_ext_action_items_confidence"
         ),
@@ -131,6 +133,11 @@ class ExtActionItem(Base, TimestampMixin):
     """A hand-added item is 1.0: a person typing it is the certainty."""
 
     origin: Mapped[str] = mapped_column(String(16), nullable=False, default="model")
+    """Who made the item: ``model`` (the pipeline's draft), ``user`` (a person
+    typed it -- edit cost counts it as one the model missed), or one of the
+    agent layer's: ``followup`` (the Follow-up subagent's "후속 회의 잡기",
+    #561) and ``chat`` (drafted from an utterance in the chat). A rerun replaces
+    only ``model`` rows."""
 
     description_resolved: Mapped[bool] = mapped_column(nullable=False, default=False)
     """True when ``description`` is ``ReferenceResolver``'s rewrite rather than

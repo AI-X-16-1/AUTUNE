@@ -356,6 +356,9 @@ function quotationNote(
   if (item.origin === "user") {
     return "회의에서 뽑은 항목이 아니라 직접 추가한 항목입니다.";
   }
+  if (item.origin === "followup") {
+    return "회의 뒤 후속 회의 에이전트가 제안한 항목이라 근거 발화가 없습니다.";
+  }
   // The server lists only utterances that still exist (ADR 0007), so an item
   // whose every source was deleted arrives with an empty list, not a list of
   // ids that fail to load.

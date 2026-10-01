@@ -441,7 +441,13 @@ def ambiguous_agreements_for_meeting(
     ]
 
 
-def create_action_item(session: Session, payload: ActionItemCreate) -> ExtActionItem:
+AGENT_ORIGINS = ("chat", "followup")
+"""``ExtActionItem.origin`` values for items the agent layer adds (#561)."""
+
+
+def create_action_item(
+    session: Session, payload: ActionItemCreate, *, origin: str = "user"
+) -> ExtActionItem:
     """Add an item the model missed.
 
     ``confidence`` is 1.0 and ``origin`` is ``user``: a person typing an item is
@@ -450,6 +456,11 @@ def create_action_item(session: Session, payload: ActionItemCreate) -> ExtAction
     Counted as an edit. An item the model missed costs the user more than one it
     got wrong -- they have to notice the absence, which is the failure recall
     makes likely and the one editing cannot fix by itself.
+
+    ``origin`` is one of ``AGENT_ORIGINS`` when the agent layer adds the item
+    after a person approved it (``tools``). That is not a person finding what
+    the model missed, so it records no ``created`` event; a later edit or
+    deletion is counted like any other.
 
     **Every foreign key on this row is checked before anything is written.** An
     unknown meeting is a 404 and a source that is not one of *this* meeting's
@@ -466,6 +477,8 @@ def create_action_item(session: Session, payload: ActionItemCreate) -> ExtAction
     otherwise reach ``session.flush()`` as a 500 rather than a 422 naming the
     field.
     """
+    if origin != "user" and origin not in AGENT_ORIGINS:
+        raise ValueError(f"not an origin create_action_item makes: {origin!r}")
     if session.get(Meeting, payload.meeting_id) is None:
         raise NotFoundError("meeting", payload.meeting_id)
     if payload.assignee_id is not None and session.get(User, payload.assignee_id) is None:
@@ -492,7 +505,7 @@ def create_action_item(session: Session, payload: ActionItemCreate) -> ExtAction
         due_date=payload.due_date,
         status=ActionStatus.NEEDS_CONFIRMATION.value,
         confidence=1.0,
-        origin="user",
+        origin=origin,
     )
     item.sources = [
         ExtActionItemSource(utterance_id=utterance_id)
@@ -501,7 +514,8 @@ def create_action_item(session: Session, payload: ActionItemCreate) -> ExtAction
     session.add(item)
     session.flush()
 
-    _record_edit(session, meeting_id=item.meeting_id, action_item_id=item.id, kind="created")
+    if origin == "user":
+        _record_edit(session, meeting_id=item.meeting_id, action_item_id=item.id, kind="created")
     return item
 
 
