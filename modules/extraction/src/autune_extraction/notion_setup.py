@@ -40,6 +40,7 @@ import httpx
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from autune_core import get_logger
 from autune_core.integrations_config import IntegrationConfig
 from autune_extraction.models import ExtNotionTarget
 from autune_extraction.service import (
@@ -50,6 +51,8 @@ from autune_extraction.service import (
 
 NOTION_API = "https://api.notion.com/v1"
 NOTION_VERSION = "2022-06-28"
+
+log = get_logger(__name__)
 
 MINUTES_NOTION_PROPERTIES: Mapping[str, str] = {
     "title": "제목",
@@ -156,12 +159,50 @@ def create_home_page(client: httpx.Client, *, page_id: str | None) -> str:
 
 def home_of(client: httpx.Client, database_id: str) -> str | None:
     """The page a database Autune made sits in, so a missing one is added
-    beside it. ``None`` when Notion no longer has it under a page."""
+    beside it. ``None`` when Notion no longer has it under a page, or no
+    longer gives it to Autune at all -- deleted or unshared: the missing one
+    then goes in a new "Autune" page rather than the whole setup failing (#622
+    review)."""
     resp = client.get(f"/databases/{database_id}")
+    if 400 <= resp.status_code < 500:
+        log.info("extraction_notion_kept_database_unreachable", status=resp.status_code)
+        return None
     if resp.status_code >= 400:
         raise _refused(resp)
     parent = resp.json().get("parent") or {}
     return str(parent["page_id"]) if parent.get("type") == "page_id" else None
+
+
+def retire_status_codes(client: httpx.Client, database_id: str) -> None:
+    """Drop the status codes from a kept action database's 상태 options.
+
+    Pages went out with ``todo``/``done`` until #622, which writes the board's
+    labels instead; Notion adds a select option it has not seen, so a database
+    set up before then ended with eight options, four of them the codes (#622
+    review). The pages still on a code lose it here and get their label back
+    from the fill that every setup queues. Best effort: a database Notion will
+    not answer for, or a refused update, leaves the options as they are -- the
+    sync is unaffected either way.
+    """
+    name = NOTION_PROPERTIES["status"]
+    resp = client.get(f"/databases/{database_id}")
+    if resp.status_code >= 400:
+        return
+    status = (resp.json().get("properties") or {}).get(name) or {}
+    options = (status.get("select") or {}).get("options") or []
+    keep = [
+        {"id": option["id"], "name": option["name"]}
+        for option in options
+        if option.get("name") not in NOTION_STATUS_LABELS
+    ]
+    if len(keep) == len(options):
+        return
+    resp = client.patch(
+        f"/databases/{database_id}",
+        json={"properties": {name: {"select": {"options": keep}}}},
+    )
+    if resp.status_code >= 400:
+        log.info("extraction_notion_status_codes_kept", status=resp.status_code)
 
 
 def create_database(
@@ -214,6 +255,8 @@ def provision_databases(
         existing = stored.get(key) if reuse else None
         if isinstance(existing, str) and existing:
             config[key] = existing
+    if "action_db_id" in config:
+        retire_status_codes(client, config["action_db_id"])
     created: list[str] = []
     missing = [database for database in DATABASES if database[0] not in config]
     if missing:

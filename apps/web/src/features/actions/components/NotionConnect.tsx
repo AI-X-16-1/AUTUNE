@@ -79,7 +79,15 @@ export function NotionConnect({
       // another click. None makes the "Autune" page among the person's
       // private pages (decided with the user, 2026-10-01).
       const pages = state?.pages ?? [];
-      if (result === "connected" && state && !state.target && pages.length <= 1) {
+      // Not when Notion refused the token: the reconnect prompt is the answer,
+      // and a setup would only fail beside it (#622 review).
+      if (
+        result === "connected" &&
+        state &&
+        !state.target &&
+        !state.needs_reconnect &&
+        pages.length <= 1
+      ) {
         await setUp(pages[0]?.id);
       }
     })();

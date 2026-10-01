@@ -139,6 +139,90 @@ def test_a_home_page_given_holds_the_databases_itself() -> None:
     assert config["parent_page_id"] == "home-1"
 
 
+def _notion(
+    calls: list[tuple[str, str, dict[str, Any] | None]],
+    *,
+    database: httpx.Response,
+) -> httpx.Client:
+    """Answers ``GET /databases/<id>`` with ``database``; records every call."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path.removeprefix("/v1")
+        body = json.loads(request.content) if request.content else None
+        calls.append((request.method, path, body))
+        if request.method == "GET":
+            return database
+        if path == "/pages":
+            return httpx.Response(200, json={"id": "home"})
+        return httpx.Response(200, json={"id": "db_new"})
+
+    return httpx.Client(base_url=notion_setup.NOTION_API, transport=httpx.MockTransport(handler))
+
+
+def test_a_kept_database_loses_the_status_codes_it_gained_before_622() -> None:
+    """mkkim68, review of #622: a database set up before it had four codes and
+    four labels. The codes go; the fill every setup queues relabels the pages."""
+    options = [
+        {"id": "o1", "name": "todo"},
+        {"id": "o2", "name": "done"},
+        {"id": "o3", "name": "진행 전"},
+        {"id": "o4", "name": "완료"},
+    ]
+    database = httpx.Response(
+        200,
+        json={
+            "parent": {"type": "page_id", "page_id": "home_kept"},
+            "properties": {"상태": {"select": {"options": options}}},
+        },
+    )
+    stored = {
+        "action_db_id": "db_a",
+        "decision_db_id": "db_d",
+        "minutes_db_id": "db_m",
+        "parent_page_id": PAGE,
+    }
+    calls: list[tuple[str, str, dict[str, Any] | None]] = []
+    with _notion(calls, database=database) as client:
+        provision_databases(client, page_id=PAGE, stored=stored)
+
+    (patch,) = [c for c in calls if c[0] == "PATCH"]
+    assert patch[1] == "/databases/db_a"
+    assert patch[2] == {
+        "properties": {
+            "상태": {
+                "select": {
+                    "options": [{"id": "o3", "name": "진행 전"}, {"id": "o4", "name": "완료"}]
+                }
+            }
+        }
+    }
+
+
+def test_a_database_with_only_labels_is_not_touched() -> None:
+    database = httpx.Response(
+        200, json={"properties": {"상태": {"select": {"options": [{"id": "o", "name": "완료"}]}}}}
+    )
+    calls: list[tuple[str, str, dict[str, Any] | None]] = []
+    with _notion(calls, database=database) as client:
+        notion_setup.retire_status_codes(client, "db_a")
+
+    assert [c[0] for c in calls] == ["GET"]
+
+
+def test_a_kept_database_notion_no_longer_has_does_not_fail_the_setup() -> None:
+    """mkkim68, review of #622: a 404 there failed the whole setup. The missing
+    database goes in a new "Autune" page instead."""
+    stored = {"action_db_id": "db_a", "decision_db_id": "db_d", "parent_page_id": PAGE}
+    calls: list[tuple[str, str, dict[str, Any] | None]] = []
+    with _notion(calls, database=httpx.Response(404, json={"message": "gone"})) as client:
+        config, created = provision_databases(client, page_id=PAGE, stored=stored)
+
+    posts = [(path, body) for method, path, body in calls if method == "POST"]
+    assert [path for path, _ in posts] == ["/pages", "/databases"]
+    assert posts[1][1]["parent"] == {"page_id": "home"}
+    assert created == ["minutes_db_id"]
+
+
 def test_the_status_options_are_the_boards_column_names() -> None:
     """The codes went out as they were and were hard to tell apart in Notion."""
     properties = schema(NOTION_PROPERTIES, status_select=True)
