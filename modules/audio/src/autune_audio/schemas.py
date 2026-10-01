@@ -340,11 +340,11 @@ class PiiReported(BaseModel):
     utterances: int
     occurrences: int
     republished: bool
+    """Whether B, C and D were sent the corrected transcript. False when the
+    meeting was never announced (still being transcribed), or the publish failed."""
     rule: str | None = None
     """The shape added to the team's rules (``A-#####``), when one was asked
     for and the span had one. Never the reported text."""
-    """Whether B, C and D were sent the corrected transcript. False when the
-    meeting was never announced (still being transcribed), or the publish failed."""
 
 
 class MaskingRule(BaseModel):

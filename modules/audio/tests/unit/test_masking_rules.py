@@ -13,7 +13,8 @@ from autune_audio.masking_rules import apply, shape_of
         ("A-20391", "A-#####"),
         ("JIRA-1234", "AAAA-####"),
         ("ab12cd", "aa##aa"),
-        ("서울2024", "가가####"),
+        ("A-20391로", "A-#####"),  # the particle is not part of the value
+        ("TKT-1234번", "AAA-####"),
     ],
 )
 def test_a_span_becomes_its_shape_and_nothing_of_its_text(span: str, shape: str) -> None:
@@ -27,6 +28,13 @@ def test_a_span_becomes_its_shape_and_nothing_of_its_text(span: str, shape: str)
         "A-1",  # too short to be anything but a small number
         "A 20391",  # two tokens
         "a@b.c1234",  # a character that is neither classed nor a separator
+        "2026",  # every year, price and head count (review of #612)
+        "2026-10-15",  # every date; module B reads due dates from these
+        "10:30",  # every time
+        "1.2.3.4",
+        "2026년",  # a unit dropped leaves a number shape
+        "서울2024",  # no Latin letter
+        "20391",  # a purely numeric ID: the price of not masking every number
     ],
 )
 def test_spans_that_would_make_a_dangerous_rule_make_none(span: str) -> None:

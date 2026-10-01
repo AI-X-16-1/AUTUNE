@@ -113,11 +113,17 @@ incident. Target recall is 0.95+ for the MVP and 0.99+ at three months.
 - A reporter can also add the span's **shape** to the team's masking rules
   (`masking_rules.py`, table `aud_masking_rules`): character classes and
   separators only — `A-20391` is stored as `A-#####` — so the table holds
-  nothing a value can be recovered from. Only shapes with a digit and at least
-  four classed characters become rules; a name's shape would mask every word
-  of that length. Both the stored and the live path apply the team's shapes
-  after the built-in masker. Removing a rule stops masking it in later
-  transcripts; what it already masked stays masked.
+  nothing a value can be recovered from. Only shapes with both a digit and a
+  Latin letter, and at least four classed characters, become rules, after a
+  trailing Hangul particle or unit is dropped: a name's shape would mask every
+  word of that length, and a number's shape (`####`, `####-##-##`, `##:##`)
+  every year, price, date and time — which module B reads due dates from. A
+  purely numeric ID therefore cannot become a rule. Both the stored and the
+  live path apply the team's shapes after the built-in masker. Removing a rule
+  stops masking it in later transcripts; what it already masked stays masked.
+  **Any team member can remove a rule**, which weakens masking for the whole
+  team; there is no admin role yet (#592). The removal is logged with who did
+  it.
 This replaces the earlier rule that a report deletes the whole utterance:
 masking removes exactly what was reported and keeps the evidence an action
 item quotes readable around it.

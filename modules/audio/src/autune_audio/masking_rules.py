@@ -12,11 +12,20 @@ a Hangul syllable `가` -- with separators kept: `A-20391` becomes `A-#####`.
 That string is all that is stored, so a rule table holds nothing a reader
 could recover the reported value from (privacy.md section 2).
 
-**Only shapes that carry a digit, and at least four classed characters.**
-A shape of letters alone is a word shape: `가가가` is every three-syllable word
-in Korean, and a rule built from a reported name would mask whole transcripts.
-Names stay the recogniser's job. The floor of four keeps `#-#` from eating
-every small number in a meeting.
+**Only shapes that carry a digit and a Latin letter, and at least four
+classed characters.** A shape of letters alone is a word shape: `가가가` is
+every three-syllable word in Korean, and a rule built from a reported name
+would mask whole transcripts -- names stay the recogniser's job. A shape of
+digits and separators alone is a number shape: `####` is every year, price and
+head count, `####-##-##` every date and `##:##` every time, and module B reads
+due dates out of exactly that text (review of #612). An employee number or a
+ticket id carries a letter; a purely numeric one cannot become a rule, which
+is the price of not masking every number a team says. The floor of four keeps
+`A-#` from eating every short code.
+
+**A trailing Hangul run is dropped first.** A reporter selects `A-20391로` as
+often as `A-20391`; the particle (or a unit, `원`, `명`) is not part of the
+value, and a shape that kept it would only ever match with that particle.
 
 **A match must stand on its own.** It may not touch another letter or digit on
 either side, so `A-#####` does not mask the middle of `XA-203915`.
@@ -64,11 +73,15 @@ def shape_of(span: str) -> str | None:
     """The span as a shape, or ``None`` when it should not become a rule.
 
     ``None`` for: anything with a whitespace or a character that is neither a
-    classed one nor a separator (a rule is one token); no digit; fewer than
-    ``MIN_CLASSED`` classed characters; or longer than a column holds.
+    classed one nor a separator (a rule is one token); no digit; no Latin
+    letter; fewer than ``MIN_CLASSED`` classed characters; or longer than a
+    column holds. A trailing Hangul run is removed before any of that.
     """
+    value = span.strip()
+    while value and "가" <= value[-1] <= "힣":
+        value = value[:-1]
     out: list[str] = []
-    for char in span.strip():
+    for char in value:
         placeholder = _placeholder(char)
         if placeholder is not None:
             out.append(placeholder)
@@ -78,7 +91,8 @@ def shape_of(span: str) -> str | None:
             return None
     shape = "".join(out)
     classed = sum(1 for c in shape if c not in _SEPARATORS)
-    if "#" not in shape or classed < MIN_CLASSED or len(shape) > MAX_SHAPE:
+    has_letter = "A" in shape or "a" in shape
+    if "#" not in shape or not has_letter or classed < MIN_CLASSED or len(shape) > MAX_SHAPE:
         return None
     return shape
 

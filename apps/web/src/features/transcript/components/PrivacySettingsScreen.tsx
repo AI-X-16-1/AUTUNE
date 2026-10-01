@@ -177,7 +177,7 @@ function WorkspacePolicy({ teamId }: { teamId: string }) {
       />
       <PolicyRow
         title="추가 마스킹 항목"
-        description="개인정보 신고에서 추가한 사번·ID 형태 · 이후 회의에 자동 적용"
+        description="개인정보 신고에서 추가한 사번·ID 형태 · 이후 회의에 자동 적용 · 팀원 누구나 지울 수 있음"
         control={<TeamRules teamId={teamId} />}
       />
       <PolicyRow

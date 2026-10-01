@@ -19,8 +19,9 @@ import type { PiiCategory, PiiReported } from "../types";
  * carries only where it starts and ends in the utterance (`reportPiiMiss`).
  *
  * "같은 형태를 워크스페이스 마스킹 규칙에 추가" stores the span's *shape*
- * (`A-#####`), not the span, and only when it carries a digit — a rule built
- * from a name would mask every word of that length (`masking_rules.py`). The
+ * (`A-#####`), not the span, and only when it mixes a Latin letter and a
+ * digit — a name's shape would mask every word of that length, a number's
+ * every year, date and price (`masking_rules.py`). The
  * DM to the reporter is left out: the result is shown on this screen.
  */
 
@@ -279,7 +280,7 @@ export function PiiReportModal({
                 checked={addRule}
                 onChange={(event) => setAddRule(event.target.checked)}
               />
-              같은 형태를 워크스페이스 마스킹 규칙에 추가 · 숫자가 든 사번·ID 형태만
+              같은 형태를 워크스페이스 마스킹 규칙에 추가 · 영문과 숫자가 섞인 사번·ID 형태만
             </label>
           </li>
         </ul>
