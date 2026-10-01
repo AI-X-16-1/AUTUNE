@@ -191,6 +191,15 @@ building on an LLM call per utterance and cutting it back later is not. Keep the
 step positionable. `modules/extraction/scripts/ko_reference_overlap.py` measures
 the overlap the question turns on.
 
+**When a person deletes their own speech** (#587): `tasks.forget_deleted_speech`
+(`@on_speech_deleted("extraction")`) runs before the utterances go. Unconfirmed
+drafts the model or the chat made from them are deleted; a confirmed item whose
+description is the line itself reads "삭제된 발화에서 만든 항목" and its
+`due_text` is cleared; a decision loses `original_statement`, and a model
+statement with no cited lines reads the same placeholder; a model summary or a
+person's text stays. Confirmed changes are queued to Notion, Jira and the
+calendar. Ids and counts only in the log.
+
 ## Tables
 
 | Table | Purpose |

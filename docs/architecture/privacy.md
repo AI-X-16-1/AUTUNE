@@ -195,6 +195,15 @@ ratios for a meeting (`_MIN_SPEAKERS_FOR_RATIO`, #128). Decided on #168.
   decisions and lineage derived from a person's speech after that person's
   utterances are deleted. Until that ADR is accepted or rejected, "their own
   data" includes everything derived from their speech.
+  **For a person deleting their own speech, decided with the user
+  (2026-10-01, #587):** the utterances go, and in what was derived from them
+  their words go too while the team's work stays — an unconfirmed draft drawn
+  from the speech is deleted; a confirmed item or decision whose text is the
+  line itself reads "삭제된 발화에서 만든 항목" and loses its date phrase and
+  original sentence; a model's summary or a person's own writing stays; copies
+  in Notion, Jira and calendars follow. Modules receive this through
+  `autune_core.deletion.on_speech_deleted`, before the utterances are deleted
+  (ADR 0007 decision 5, #92).
 - When a user leaves a team, their utterances and everything derived from them
   are deleted. **This rule is under review — see ADR 0007**, which argues the
   record belongs to the meeting rather than to its participants, and that

@@ -500,6 +500,118 @@ def confirmed_summaries(
     return resolve_commitment_summaries(resolver, marked, kind=UtteranceKind.AMBIGUOUS)
 
 
+SPEECH_DELETED_TEXT = "삭제된 발화에서 만든 항목"
+"""What replaces a line that was the deleted speech itself (#587)."""
+
+
+@dataclass(frozen=True)
+class SpeechForgotten:
+    """What ``forget_speech`` did, by id: drafts deleted, and the confirmed items
+    and decisions whose text changed and whose copies outside must follow."""
+
+    deleted_items: tuple[str, ...] = ()
+    changed_items: tuple[str, ...] = ()
+    changed_decisions: tuple[str, ...] = ()
+
+
+def _person_wrote_description(session: Session, action_item_id: str) -> bool:
+    """Whether a person ever edited this item's description -- or edited it
+    before edits named their fields (#109), when it cannot be told: then the
+    text may be theirs, and it is kept."""
+    for fields in session.scalars(
+        select(ExtEditEvent.fields).where(
+            ExtEditEvent.action_item_id == action_item_id, ExtEditEvent.kind == "edited"
+        )
+    ):
+        if fields is None or "description" in fields.split(","):
+            return True
+    return False
+
+
+def forget_speech(session: Session, utterance_ids: Collection[str]) -> SpeechForgotten:
+    """A person deleted their own speech (#587): the work stays, their words go.
+
+    Decided with the user (2026-10-01). For every item and decision drawn from
+    ``utterance_ids``:
+
+    - an unconfirmed draft the model or the chat made is deleted -- nobody has
+      accepted it, and it is only the deleted words restated;
+    - a confirmed item whose description is the line itself (not a model's
+      summary, not a person's writing) reads ``SPEECH_DELETED_TEXT``, and its
+      ``due_text`` -- a fragment of the line -- is cleared; a summary or a
+      person's text is the team's record and stays;
+    - a decision loses ``original_statement`` (D then reads ``statement``),
+      and a model statement that is the line tidied (no cited lines, so not a
+      write-up) reads ``SPEECH_DELETED_TEXT`` too.
+
+    Runs before the utterances are deleted, while the sources still name them.
+    Safe to repeat. Writes no edit event: no person corrected anything.
+    """
+    ids = set(utterance_ids)
+    if not ids:
+        return SpeechForgotten()
+    items = session.scalars(
+        select(ExtActionItem)
+        .join(ExtActionItemSource, ExtActionItemSource.action_item_id == ExtActionItem.id)
+        .where(ExtActionItemSource.utterance_id.in_(ids))
+        .distinct()
+    ).all()
+    deleted: list[str] = []
+    changed: list[str] = []
+    for item in items:
+        drafted = item.origin in ("model", "chat")
+        if drafted and item.status == ActionStatus.NEEDS_CONFIRMATION.value:
+            deleted.append(item.id)
+            session.delete(item)
+            continue
+        touched = False
+        if (
+            drafted
+            and not item.description_resolved
+            and item.description != SPEECH_DELETED_TEXT
+            and not _person_wrote_description(session, item.id)
+        ):
+            item.description = SPEECH_DELETED_TEXT
+            touched = True
+        if item.due_text is not None:
+            item.due_text = None
+            touched = True
+        if touched and item.status != ActionStatus.NEEDS_CONFIRMATION.value:
+            changed.append(item.id)
+
+    decisions = session.scalars(
+        select(ExtDecision)
+        .join(ExtDecisionSource, ExtDecisionSource.decision_id == ExtDecision.id)
+        .where(ExtDecisionSource.utterance_id.in_(ids))
+        .distinct()
+    ).all()
+    confirmed = set(
+        session.scalars(
+            select(ExtDecisionReview.decision_id).where(
+                ExtDecisionReview.decision_id.in_([d.id for d in decisions]),
+                ExtDecisionReview.status == "confirmed",
+            )
+        )
+    )
+    changed_decisions: list[str] = []
+    for decision in decisions:
+        touched = False
+        if decision.original_statement is not None:
+            decision.original_statement = None
+            touched = True
+        if (
+            decision.origin == "model"
+            and not decision.related
+            and decision.statement != SPEECH_DELETED_TEXT
+        ):
+            decision.statement = SPEECH_DELETED_TEXT
+            touched = True
+        if touched and decision.id in confirmed:
+            changed_decisions.append(decision.id)
+    session.flush()
+    return SpeechForgotten(tuple(deleted), tuple(changed), tuple(changed_decisions))
+
+
 def withdraw_confirmed_draft(session: Session, confirmation: ExtConfirmation) -> int:
     """Take back the draft this utterance made, if nobody has touched it since.
 
