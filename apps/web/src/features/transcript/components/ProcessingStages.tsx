@@ -213,6 +213,9 @@ function stagesFor(meeting: MeetingDetail): Stage[] {
   };
   const progress = (from: number, upTo: number = from): number | undefined => {
     if (at < from || at > upTo || !analyzing) return undefined;
+    // A step that reports no fraction (and every job from before #545) would
+    // otherwise read "0%" for its whole run, which looks stuck.
+    if (meeting.stage_progress === null) return undefined;
     // A shared row counts its steps as one: masking is its first half.
     const span = upTo - from + 1;
     return (at - from + fraction) / span;
