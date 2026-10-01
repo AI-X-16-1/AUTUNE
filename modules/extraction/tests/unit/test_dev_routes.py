@@ -107,6 +107,7 @@ def _no_notion_pages(monkeypatch: pytest.MonkeyPatch) -> None:
     databases sit are stubbed (``test_notion_setup.py`` covers them)."""
     monkeypatch.setattr(notion_setup, "create_home_page", lambda client, *, page_id: "home_new")
     monkeypatch.setattr(notion_setup, "home_of", lambda client, database_id: "home_kept")
+    monkeypatch.setattr(notion_setup, "retire_status_codes", lambda client, database_id: None)
 
 
 class _Session:
