@@ -43,7 +43,7 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import or_, select
+from sqlalchemy import or_, select, text
 from sqlalchemy.orm import Session
 
 from autune_contracts.enums import ActionStatus, UtteranceKind
@@ -532,6 +532,23 @@ def _open_followup(session: Session, team_id: str) -> ExtActionItem | None:
     ).first()
 
 
+def _lock_followups(session: Session, team_id: str) -> None:
+    """Hold the team's Follow-up lock for the rest of the transaction.
+
+    Two approvals landing together would each find no open item -- neither sees
+    the other's uncommitted insert -- and each add one. A transaction-scoped
+    advisory lock keyed by team makes the second wait, then see the first's
+    item and refuse. Namespaced like ``notion_setup.lock_setup``; PostgreSQL
+    only, as SQLite (unit tests) has one writer anyway.
+    """
+    if session.get_bind().dialect.name != "postgresql":
+        return
+    session.execute(
+        text("SELECT pg_advisory_xact_lock(hashtext(:key))"),
+        {"key": f"extraction.followup:{team_id}"},
+    )
+
+
 def open_followup_item(session: Session, team_id: str) -> dict[str, Any]:
     """Use this before proposing a follow-up meeting: whether the team still has
     a Follow-up item open -- waiting for confirmation, to do or in progress.
@@ -774,11 +791,14 @@ def add_followup_item(team_id: str, meeting_id: str) -> dict[str, Any]:
     writes the text, so the proposal carries ids only. Recorded as Follow-up's
     (``origin`` ``followup``), not a person's, so edit cost does not count it as
     an item the model missed. Refused while the team already has one open
-    (``open_followup_item``), so a second approved proposal makes no second item.
+    (``open_followup_item``), so a second approved proposal makes no second item
+    -- even two approved at the same instant: the check and the insert run under
+    the team's lock (``_lock_followups``).
     """
     with session_scope() as session:
         if _team_of(session, meeting_id) != team_id:
             return _not_found("meeting", meeting_id)
+        _lock_followups(session, team_id)
         if _open_followup(session, team_id) is not None:
             return _refused(
                 f"team {team_id} already has an open follow-up item",
