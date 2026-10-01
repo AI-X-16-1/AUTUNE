@@ -189,7 +189,17 @@ ratios for a meeting (`_MIN_SPEAKERS_FOR_RATIO`, #128). Decided on #168.
 ## 4. Retention and deletion
 
 - Analysis results are retained **90 days** by default, adjustable per team.
-- A scheduled sweep deletes expired results.
+- A scheduled sweep deletes expired results: `autune.audio.periodic.expire_meetings`,
+  hourly (#206). Module A deletes every meeting past `meetings.expires_at` and
+  everything cascades from it; `create_meeting` sets that column from the
+  team's `retention_days`. A scheduled meeting that has not been held yet is
+  never expired. A module's `on_meeting_deleted` hook runs before the row goes,
+  and a hook that raises keeps the meeting for the next run.
+- A voice profile is biometric data and lives on the person, not the meeting,
+  so identification survives one meeting's window. It does not survive all of
+  them: the same sweep deletes a profile once no remaining meeting names its
+  owner (#363). Someone who stops attending is forgotten one retention window
+  after their last meeting.
 - A user can delete their own data at any time. **The scope of "their own data"
   is under review — see ADR 0007, decision 5**, which would keep action items,
   decisions and lineage derived from a person's speech after that person's
