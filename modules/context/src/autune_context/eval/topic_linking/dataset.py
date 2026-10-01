@@ -47,7 +47,9 @@ class EvalCase:
     ``multi_topic`` (a six-utterance meeting carrying two topics, so
     segmentation is in play), ``unrelated``, ``shared_keyword`` (a shared word
     with a different meaning) and ``same_domain`` (same area, different
-    subject) — the last three expect no link."""
+    subject) — the last three expect no link. long_meeting and
+    large_history (six to nine past meetings, so a shortlist of candidates is a
+    real restriction) were added by the v3 held-out set."""
 
 
 def load_cases(name: str = _DEFAULT_DATASET) -> list[EvalCase]:
