@@ -183,7 +183,7 @@ function WorkspacePolicy({ teamId }: { teamId: string }) {
       />
       <PolicyRow
         title="분석 결과 보관 기간"
-        description="요약 · 액션 · 갭 · 전사 텍스트. 만료 시 자동 삭제 · 새로 만드는 회의부터 적용"
+        description="요약 · 액션 · 갭 · 전사 텍스트. 만료 시 자동 삭제 · 이후 열리는 회의부터 적용"
         control={
           retention === null && !error ? (
             <span style={META}>불러오는 중…</span>
