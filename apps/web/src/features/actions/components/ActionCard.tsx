@@ -1,5 +1,6 @@
 import { StatusDot } from "@/shared/ui";
 
+import { isOverdue } from "../dates";
 import { isCandidate } from "../types";
 import type { ActionItemRead } from "../types";
 
@@ -23,7 +24,7 @@ export function ActionCard({
   selected?: boolean;
   onSelect?: (id: string) => void;
 }) {
-  const overdue = isOverdue(item.due_date);
+  const overdue = isOverdue(item);
 
   return (
     <button
@@ -144,10 +145,4 @@ function reasonFor(item: ActionItemRead): string {
       ? "근거 발화 삭제됨"
       : (item.summary ?? `근거 발화 ${sources}건`) + (deleted > 0 ? ` · ${deleted}건 삭제됨` : "");
   return isCandidate(item) ? `후보 · ${base}` : base;
-}
-
-export function isOverdue(dueDate: string | null | undefined): boolean {
-  if (!dueDate) return false;
-  const today = new Date().toISOString().slice(0, 10);
-  return dueDate < today;
 }

@@ -49,9 +49,11 @@ export function ActionItemsScreen({ meetingId }: { meetingId: string }) {
   const selected = items.find((item) => item.id === selectedId);
 
   return (
+    // The tab row's gutter (see the review layout, #534): starting at the same
+    // place as the row above it and the other tabs, not centred under it.
     <main
-      className="mx-auto flex max-w-[1200px] flex-col gap-6 md:flex-row"
-      style={{ padding: "var(--space-page)" }}
+      className="flex max-w-[1200px] flex-col gap-6 md:flex-row"
+      style={{ padding: "20px var(--space-page) var(--space-page)" }}
     >
       <div className="min-w-0 flex-1">
         <h1

@@ -1263,9 +1263,16 @@ draft, written before a late B arrived or still quoting a gap the team has
 since dismissed, and Follow-up's proposal, holding the dismissed gap as its
 evidence (reviews of #509 and #531). The choice is between re-reading the
 evidence when a person approves and treating E's republish as a new run. It is
-to be settled with plan mode (section 8), together with pinning an approved
-post to the draft the approver saw (review of #508). Until then a draft is
-whatever the first run wrote.
+to be settled with plan mode (section 8). Until then a draft is whatever the
+first run wrote.
+
+The Report's half of the precondition is in place: its post is pinned to its
+own run's draft (review of #508). Both proposals carry one `draft_id`, E
+stores it with the draft, and `publish_meeting_report` and the delivery task
+post only that draft -- approving a proposal whose draft a later run has
+replaced posts nothing (`draft not current`). A rerun therefore cannot change
+what an earlier approval posts. The approval card still does not show the
+draft's text.
 
 ## 14. Build plan — from 2026-09-29 to 2026-10-12
 

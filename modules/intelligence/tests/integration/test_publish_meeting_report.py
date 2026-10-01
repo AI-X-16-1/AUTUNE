@@ -169,6 +169,76 @@ def test_publish_enqueues_after_the_commit_with_the_id_only(
     assert events == [("commit", ""), ("enqueue", meeting)]
 
 
+def test_a_draft_keeps_the_id_the_subagent_gave_it(
+    db_session: Session, team: str, events: list[tuple[str, str]]
+) -> None:
+    meeting = _meeting(db_session, team, "결제 기능 기획")
+
+    tools.draft_meeting_report(team, meeting, BODY, draft_id="rdr_first")
+    tools.draft_meeting_report(team, meeting, BODY + "\n추가", draft_id="rdr_second")
+
+    row = db_session.get(IntelMeetingReport, meeting)
+    assert row is not None and row.draft_id == "rdr_second"
+
+
+def test_publish_of_a_replaced_draft_is_refused(
+    db_session: Session, team: str, events: list[tuple[str, str]]
+) -> None:
+    """Approving an older proposal must not post a draft written after it (review of #508)."""
+    meeting = _meeting(db_session, team, "결제 기능 기획")
+    tools.draft_meeting_report(team, meeting, BODY, draft_id="rdr_first")
+    tools.draft_meeting_report(team, meeting, BODY + "\n추가", draft_id="rdr_second")
+
+    result = tools.publish_meeting_report(team, meeting, draft_id="rdr_first")
+
+    assert result["ok"] is False and result["reason"] == "draft not current"
+    assert _enqueued(events) == []
+
+
+def test_publish_after_this_runs_draft_was_refused_posts_nothing(
+    db_session: Session, team: str, events: list[tuple[str, str]]
+) -> None:
+    """The run's L1 draft was refused, so an earlier run's draft is still stored.
+
+    The approval names this run's draft, which never existed; posting the
+    earlier one would put text under an approval it was not given for. The
+    words must not claim a newer draft exists (review of #570).
+    """
+    meeting = _meeting(db_session, team, "결제 기능 기획")
+    tools.draft_meeting_report(team, meeting, BODY, draft_id="rdr_first")
+    refused = tools.draft_meeting_report(
+        team, meeting, BODY + "\n연락처 010-1234-5678", draft_id="rdr_second"
+    )
+    assert refused["ok"] is False
+
+    result = tools.publish_meeting_report(team, meeting, draft_id="rdr_second")
+
+    assert result["ok"] is False and result["reason"] == "draft not current"
+    assert "저장되지 않았습니다" in result["summary"]
+    assert _enqueued(events) == []
+
+
+def test_publish_hands_the_task_the_draft_id_it_was_approved_for(
+    db_session: Session, team: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The draft can still change between this check and the task's claim; the claim checks too."""
+
+    @contextlib.contextmanager
+    def scope() -> Iterator[Session]:
+        yield db_session
+
+    sent: list[tuple[str, ...]] = []
+    monkeypatch.setattr(tools, "session_scope", scope)
+    monkeypatch.setattr(tools.tasks.deliver_meeting_report, "apply_async", sent.append)
+    meeting = _meeting(db_session, team, "결제 기능 기획")
+    tools.draft_meeting_report(team, meeting, BODY, draft_id="rdr_first")
+
+    result = tools.publish_meeting_report(team, meeting, draft_id="rdr_first")
+
+    assert result["ok"] is True
+    assert sent == [(meeting, "rdr_first")]
+
+
 def test_publish_without_a_draft_is_refused(
     db_session: Session, team: str, events: list[tuple[str, str]]
 ) -> None:
