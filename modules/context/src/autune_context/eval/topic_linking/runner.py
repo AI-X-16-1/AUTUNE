@@ -208,37 +208,90 @@ def run_all(cases: list[EvalCase] | None = None) -> list[CaseResult]:
     return [run_case(case) for case in (cases if cases is not None else load_cases())]
 
 
+def _pair_counts(results: list[CaseResult]) -> tuple[int, int, int]:
+    """(true positive, false positive, false negative) asserted links, counted
+    per (current meeting, past meeting) pair."""
+    return (
+        sum(len(r.asserted & r.expected) for r in results),
+        sum(len(r.asserted - r.expected) for r in results),
+        sum(len(r.expected - r.asserted) for r in results),
+    )
+
+
+def _f1(tp: int, fp: int, fn: int) -> tuple[float, float, float]:
+    precision = tp / (tp + fp) if tp + fp else 0.0
+    recall = tp / (tp + fn) if tp + fn else 0.0
+    f1 = 2 * precision * recall / (precision + recall) if precision + recall else 0.0
+    return precision, recall, f1
+
+
+def headline(results: list[CaseResult]) -> dict[str, float]:
+    """The numbers ``--mode both`` puts side by side."""
+    precision, recall, f1 = _f1(*_pair_counts(results))
+    negatives = [r for r in results if not r.expected]
+    return {
+        "accuracy": sum(r.correct for r in results) / len(results) if results else 0.0,
+        "precision": precision,
+        "recall": recall,
+        "f1": f1,
+        "no-link cases falsely linked": (
+            sum(bool(r.asserted) for r in negatives) / len(negatives) if negatives else 0.0
+        ),
+    }
+
+
+def case_outcomes(results: list[CaseResult]) -> dict[str, bool]:
+    return {f"{r.category}/{r.case_id}": r.correct for r in results}
+
+
 def report(results: list[CaseResult]) -> str:
     """Per-case lines, the KPI, then the numbers that explain it.
 
     Past meetings print as their index in the case (``#0``, ``#1``), with the
     best dense similarity (``s``) and rerank score (``r``) each got, so a FAIL
     line reads against the fixture directly instead of against throwaway
-    ``mtg_`` ids.
+    ``mtg_`` ids. Under ``engine_mode="llm"`` ``r`` is the LLM's probability that
+    it is the same topic, and the threshold sweep is left out: the dense
+    similarity no longer decides anything, so a sweep over it would read as a
+    tuning result that it is not.
     """
     settings = get_settings()
+    llm_mode = settings.engine_mode == "llm"
     lines = [_case_line(r) for r in results]
     correct = sum(r.correct for r in results)
     total = len(results)
     accuracy = correct / total if total else 0.0
     verdict = "PASS" if accuracy >= _TARGET_ACCURACY else "BELOW TARGET"
 
-    tp = sum(len(r.asserted & r.expected) for r in results)
-    fp = sum(len(r.asserted - r.expected) for r in results)
-    fn = sum(len(r.expected - r.asserted) for r in results)
+    tp, fp, fn = _pair_counts(results)
     surfaced = sum(len((r.asserted | r.pending) & r.expected) for r in results)
     negatives = [r for r in results if not r.expected]
     false_linked = sum(bool(r.asserted) for r in negatives)
-    precision = tp / (tp + fp) if tp + fp else 0.0
-    recall = tp / (tp + fn) if tp + fn else 0.0
-    f1 = 2 * precision * recall / (precision + recall) if precision + recall else 0.0
+    _precision, _recall, f1 = _f1(tp, fp, fn)
 
     lines += [
         "",
         accuracy_line("topic linking accuracy", correct, total)
         + f" (target {_TARGET_ACCURACY}) -- {verdict}",
-        f"link_similarity_threshold = {settings.link_similarity_threshold}, "
-        f"link_confidence_threshold (rerank) = {settings.link_confidence_threshold}",
+        (
+            f"engine_mode = llm ({settings.llm_impl}:{settings.llm_model_name}): "
+            f"llm_link_threshold = "
+            f"{settings.llm_link_threshold}, asked about the top "
+            f"{settings.llm_topic_candidates} candidates per topic"
+            if llm_mode
+            else f"link_similarity_threshold = {settings.link_similarity_threshold}, "
+            f"link_confidence_threshold (rerank) = {settings.link_confidence_threshold}"
+        ),
+        *(
+            [
+                f"engine_mode = hybrid: every link asserted above is one "
+                f"{settings.llm_impl}:{settings.llm_model_name} confirmed at "
+                f"llm_link_threshold = {settings.llm_link_threshold} (a link it was "
+                f"under {settings.llm_pending_floor} on was dropped)"
+            ]
+            if settings.engine_mode == "hybrid"
+            else []
+        ),
         "",
         "by category:",
         *by_category(results),
@@ -249,11 +302,18 @@ def report(results: list[CaseResult]) -> str:
         f"  f1        {f1:.2f}",
         f"  surfaced  {ratio(surfaced, tp + fn)}  (asserted or pending: reached the user)",
         f"  no-link cases with any asserted link: {ratio(false_linked, len(negatives))}",
-        "",
-        "threshold sweep (accuracy if link_similarity_threshold were t,",
-        " link_confidence_threshold held as configured):",
-        *_sweep(results, settings.link_similarity_threshold, settings.link_confidence_threshold),
     ]
+    if settings.engine_mode == "classic":
+        # Only classic: the sweep re-derives ``asserted`` from the stored dense and
+        # re-ranker scores, which in ``llm`` and ``hybrid`` no longer decide it.
+        lines += [
+            "",
+            "threshold sweep (accuracy if link_similarity_threshold were t,",
+            " link_confidence_threshold held as configured):",
+            *_sweep(
+                results, settings.link_similarity_threshold, settings.link_confidence_threshold
+            ),
+        ]
     return "\n".join(lines)
 
 

@@ -59,7 +59,9 @@ contract change is needed for the confirmation flow.
 ## AI stack
 
 The three trained models sit behind interfaces (see "Model abstraction layer")
-and are self-hosted. The LLM is Phase 2 and is declared as an interface only.
+and are self-hosted. An external LLM is an alternative `engine_mode` for the
+linking and lineage judgements, off by default (see "Engine mode"); agenda and
+brief generation are Phase 2.
 
 | Component | Model or algorithm | Hosting | Version pin |
 | --- | --- | --- | --- |
@@ -130,7 +132,7 @@ directly outside that package.
 
 ```
 autune_context/pipeline/
-├── __init__.py     # public surface: get_embedder / get_reranker / get_nli,
+├── __init__.py     # public surface: get_embedder / get_reranker / get_nli / get_llm_judge,
 │                   #   plus an opt-in worker_process_init hook that warms and logs each model
 ├── base.py         # Protocols: Embedder, Reranker, NliModel, LlmClient (+ result dataclasses)
 ├── registry.py     # config string → implementation, lru_cache, startup dimension guard
@@ -138,6 +140,8 @@ autune_context/pipeline/
 ├── embedding.py    # KureHttpEmbedder / KureLocalEmbedder / FakeEmbedder
 ├── reranking.py    # BgeRerankerKoHttp / ...Local / Fake
 ├── nli.py          # KlueKorNliHttp / ...Local / Fake
+├── llm.py          # OpenAiLlm / GeminiLlm / AnthropicLlm (on autune_integrations.HttpClient) / FakeLlm
+├── llm_judge.py    # engine_mode="llm": the three pairwise judgements, prompts, parsing
 ├── retrieval.py    # HybridRetriever: KURE dense + BM25, RRF fusion
 └── topics.py       # TextTiling segmentation + keyphrase labelling
 ```
@@ -145,7 +149,8 @@ autune_context/pipeline/
 Rules:
 
 - **Selection is config.** `AUTUNE_CONTEXT_EMBEDDER_IMPL`, `_RERANKER_IMPL`,
-  `_NLI_IMPL`. Swapping an implementation changes no code outside `pipeline/`.
+  `_NLI_IMPL`, `_LLM_IMPL`. Swapping an implementation changes no code outside
+  `pipeline/`.
 - **Load once at worker startup**, not per task — `registry.get_*()` is
   `lru_cache`d and warmed from `worker_process_init` when
   `AUTUNE_CONTEXT_WARM_MODELS_ON_WORKER_INIT=true`. Opt-in, not automatic:
@@ -176,17 +181,110 @@ Rules:
 - **`Fake*` implementations** back unit tests; integration and pipeline tests
   select them with `AUTUNE_CONTEXT_*_IMPL=fake`.
 
-### The LLM client is declared, not implemented (PR #90 review)
+### Engine mode: the trained stack or an external LLM
 
-`LlmClient` is a Protocol only. It has no Phase 1 implementation and no config
-knob. It is the one path that would leave our infrastructure, so it must be
-built on top of `autune_integrations` (or a shared LLM client added there) —
-`check_outbound` has to run on every call. That is invariant 11: a docstring
-saying "masked text only" is not the guard. A module-local `httpx` client
-(`ExternalLlm`, defaulting to OpenAI) was written for the scaffold and removed
-in review — an unused external client with a third-party default is the worst
-state. It comes back in Phase 2 with the agenda/brief work, done through the
-integration boundary.
+`AUTUNE_CONTEXT_ENGINE_MODE` is `classic` (default), `llm` or `hybrid`. It exists to answer
+one question with numbers — how does an LLM do the judgements this module makes,
+compared with the trained stack — and `classic` stays the default until the
+comparison says otherwise. Three judgements change hands; everything around them
+does not:
+
+| Judgement | `classic` | `llm` |
+| --- | --- | --- |
+| Is this past meeting the same topic? | Re-ranker score, plus dense similarity, each against a threshold | The LLM's probability (`llm_link_threshold`); a confident "different" writes no row (`llm_pending_floor`) |
+| Which thread does this decision join? | Embedding cosine ≥ `lineage_match_threshold` | The LLM, asked about the `llm_thread_candidates` closest threads (`llm_match_threshold`) |
+| How did it change? | NLI both ways plus the lexical cues in `pipeline/change.py` | The LLM's `unchanged` / `modified` / `reversed` |
+
+`hybrid` is `classic` with one addition: a topic link the thresholds are about to
+*assert* is first put to the LLM, which can veto it — drop it, or demote it to
+`pending` (`llm_pending_floor` decides which: under it the link is dropped; set it
+to `0` and a veto only ever demotes). The LLM is asked about nothing else, so it
+costs about half of `llm` mode's calls. A link the LLM's answer could not be read
+for keeps classic's verdict: an unreadable answer is not a veto. Decision lineage
+runs `classic` in this mode.
+
+Segmentation and candidate retrieval run on the embedder in every mode: a
+transcript is never sent out whole (`../architecture/privacy.md`, section 6), and
+`ctx_embeddings` is written either way. So `llm` mode needs the embedder, the
+database and an API key, and **not** the re-ranker or NLI endpoints. Nothing in
+`classic` mode constructs the LLM client, so it needs no key.
+
+In `llm` mode, `ctx_topic_links.rerank_score` and `reranker_version` hold the
+LLM's score and the judge's version, and `ctx_decision_versions.nli_version`
+holds the judge's version with `nli_label` left empty — the columns record what
+produced the value, and an LLM verdict is not an NLI label. The judge's version
+is `judge-v1+<client model_version>`: a reworded prompt is a different judge.
+
+The LLM path is where the privacy rules are code, not policy:
+
+- The clients (`pipeline/llm.py`: `OpenAiLlm`, `GeminiLlm`, `AnthropicLlm`) each
+  subclass `autune_integrations.HttpClient` and are just a request builder and a
+  response reader over it, so `check_outbound` runs over the whole request body —
+  the PR #90 rule for `LlmClient`. They deliberately do not use the providers'
+  SDKs, which would go around that guard, and adding a provider adds no way out.
+  `AUTUNE_CONTEXT_LLM_IMPL` has no default: the team has not chosen a provider,
+  and a silent default would send meeting excerpts to whichever it named.
+- `check_outbound` caps a request at 4000 characters, prompt included. Excerpts
+  are cut to `llm_snippet_chars` (1200) per side before sending; a unit test pins
+  that the largest request the defaults allow passes the guard.
+- A `PrivacyViolationError` is not caught: it means unmasked text got this far.
+  An answer that cannot be read (refusal, cut off, not JSON) is *unjudged* — it
+  asserts nothing, is counted in the usage line, and is never cached.
+- Excerpts are meeting speech and so untrusted prompt input: they are fenced in
+  tags and the reply is a fixed JSON shape, read strictly.
+- Nothing from a prompt or a reply goes into a log line or an exception message.
+  The API key is a `SecretStr`.
+
+Compare them on the evaluation set (`python -m autune_context.eval --mode all`,
+below). The run prints its own cost — calls, tokens, request time, unusable
+answers.
+
+**What the first comparison found** (dev set `*_v2`, 2026-09-30, one run each,
+`gemini-3.5-flash-lite`; the caveats below matter as much as the numbers):
+
+| Topic linking (49 cases) | `classic` | `llm` | `hybrid` | `hybrid`, floor `0` |
+| --- | --- | --- | --- | --- |
+| Accuracy | 0.92 | 0.94 | 0.94 | 0.94 |
+| Precision of asserted links | 0.90 | 1.00 | 1.00 | 1.00 |
+| Recall of asserted links | 1.00 | 0.92 | 0.89 | 0.92 |
+| Reached the user (asserted or pending) | 1.00 | 0.92 | 0.89 | **1.00** |
+| No-link meetings given an asserted link | 4 of 19 | 0 | 0 | 0 |
+| No-link meetings shown a pending link | 15 of 19 | 0 | 15 | 19 |
+| LLM calls | 0 | 93 | 53 | 53 |
+
+Decision lineage: 49/50 for `classic` and for `llm`, threading 50/50 in both; the
+one miss differs. The set cannot tell them apart, and `classic` needs no API.
+
+- The LLM removes the four false links `classic` asserts (same-domain and
+  shared-keyword meetings) and misses three or four true ones. It is the more
+  precise judge and the less complete one; `hybrid` cannot repair a miss, because
+  the miss *is* the LLM calling a true link a different topic.
+- The accuracy gap (45 vs 46 of 49) is inside the noise: 4 cases went one way and
+  3 the other. The two `hybrid` runs differ in one link that the same LLM
+  confirmed in one run and vetoed in the other (no `temperature` to pin it).
+- `pending` is `classic`'s own noise, not something `hybrid` adds: it already
+  shows a pending link on 15 of 19 meetings that link to nothing.
+- `hybrid` with `AUTUNE_CONTEXT_LLM_PENDING_FLOOR=0` is the only variant that lost
+  no true link and asserted no wrong one, at the price of four more pending
+  questions on no-link meetings. It is the most promising, not a conclusion.
+- Caveats: the lightest model tier; one run each; a small synthetic set written
+  by one person, whose dev split is saturated for lineage; ~1.4 past meetings per
+  case, so the `llm_topic_candidates` shortlist never bit. A choice between the
+  modes needs a new held-out set — ideally masked real meetings.
+- **On the held-out set (`*_heldout_v3`, 100 cases per suite) the LLM leads on
+  both suites, the modes fail in opposite directions, and neither lead is
+  established.** Topic linking: `classic` 0.90, `hybrid` 0.93, `llm` 0.96
+  (p = 0.15 against `classic`). Decision lineage: `classic` 0.81, `llm` 0.90
+  (p = 0.12) — `classic` read every replacement phrased without a cue word
+  ("A사에서 B사로 바꾼다") as `modified`, 0 of 10, while the LLM got all ten and
+  in exchange called nine real modifications `reversed`. One run is missing
+  (`hybrid` with the floor at `0`). `classic` stays the default. Afterwards
+  `classic` gained a replacement cue (`pipeline/change.py`): 0.81 → 0.91 on v3, a
+  figure that does not count as held-out for it, and 0.72 → 0.76 on a clean
+  held-out set (`*_heldout_v4`, 120 cases), then 0.74 → 0.82 on a second one
+  (`*_heldout_v5`) after two guard gaps were fixed. Full
+  write-up, the numbers behind every claim above, and what is still unmeasured:
+  [`context-evaluations/01-engine-mode-comparison.md`](context-evaluations/01-engine-mode-comparison.md).
 
 ### Self-hosted serving contract
 
@@ -777,12 +875,32 @@ of real meetings.
 
 `*_heldout_v1.json` has since been used to choose rules (`pipeline/change.py`,
 `link_similarity_threshold`), so it is no longer held out. `*_heldout_v2.json`
-was written before those rules and run once after them; the next rule or
-threshold change needs a new held-out set — ideally masked real meetings.
+was written before those rules and run once after them. `*_heldout_v3.json`
+(100 cases per suite, 2026-09-30) was written before any model ran on it and is
+frozen: no rule, prompt or threshold may be chosen by looking at its failures,
+and it is a development set from the moment anyone does. The next rule or
+threshold change — including a fix for the replacement-phrasing gap it
+exposed — needs a new held-out set, ideally masked real meetings labelled by
+someone other than the author.
 
 To run it on a laptop without the team's inference endpoints, use the
 `*_local` implementations (the `local-models` extra) and point
 `AUTUNE_CONTEXT_NLI_LOCAL_MODEL` at the fine-tuned checkpoint.
+
+`--mode classic|llm|both` runs under that `engine_mode` instead of the
+environment's. `both` runs each suite twice — the trained stack, then the LLM —
+prints both reports, then a side-by-side of the headline numbers and the cases
+only one of them got right. An `llm` run needs `AUTUNE_CONTEXT_LLM_IMPL`, `_LLM_MODEL` and `_LLM_API_KEY`,
+spends real money (its calls and tokens are printed at the end), and leaves the
+threshold sweep out of the report: dense similarity decides nothing there, so a
+sweep over it would read as a tuning result that it is not.
+
+The comparison is not a like-for-like of *models*: `classic` re-ranks fifty
+candidates for free while `llm` is asked about `llm_topic_candidates` (5) of them,
+because one external call per candidate is the cost. A case `llm` misses because
+the right past meeting was ranked sixth by retrieval is a result about the
+shortlist, not about the LLM — raise `AUTUNE_CONTEXT_LLM_TOPIC_CANDIDATES` to
+separate the two.
 
 ## Privacy notes
 
@@ -797,10 +915,13 @@ To run it on a laptop without the team's inference endpoints, use the
 - Embeddings are derived from masked text and are rows that cascade from
   `meetings.id`; an embedding outliving its meeting is a retention violation.
 - The three self-hosted models receive masked transcript text within our
-  infrastructure. The Phase 2 LLM path goes through `autune_integrations` so
-  `check_outbound` runs; it receives only the snippet a feature needs — never a
-  full transcript — and nothing goes into an exception message or a log line.
-  See `../architecture/privacy.md` sections 2 and 6.
+  infrastructure. The LLM path (`engine_mode="llm"`, later agenda/briefs) goes
+  through `autune_integrations` so `check_outbound` runs; it receives only the
+  snippet a feature needs — never a full transcript — and nothing goes into an
+  exception message or a log line. See `../architecture/privacy.md` sections 2
+  and 6. `engine_mode="llm"` is a decision for the team to make before it is
+  turned on for real meetings: it sends masked topic excerpts and decision
+  statements to a third party, which `classic` never does.
 - No screen, endpoint, export, or Slack message in this module surfaces any
   per-person speaking ratio. This module does not compute one.
 - `ctx_decision_versions.key_stakeholders_absent` records who was *not* present
@@ -855,4 +976,10 @@ pre-meeting brief was added to the build on 2026-09-29.
 - Whether `autune_core.publish_event` lands before Phase 2, or D ships the
   interim `current_app.send_task` path.
 - Whether the LLM client moves to `packages/integrations` at the start of
-  Phase 2 (depends on B's and C's needs).
+  Phase 2 (depends on B's and C's needs). Until then the clients live here,
+  on top of `HttpClient`.
+- Whether `engine_mode="llm"` can ever be the default. It needs the comparison
+  above on a held-out set that has not been used to pick a rule, and a decision
+  on which provider — OpenAI or Gemini are the candidates — receives masked
+  meeting excerpts, including where its endpoint runs (see
+  `../engineering/external-approvals.md` on 국외 반출).
