@@ -52,7 +52,12 @@ from autune_gap.pipeline import (
     get_template_verifier,
 )
 from autune_gap.schemas import (
+    EvidenceRead,
     GapDismissal,
+    GapExplanationRead,
+    GapExplanations,
+    ScoreBreakdownRead,
+    ScorePartRead,
     TemplateComparison,
     TemplateItemRead,
     TemplateRead,
@@ -382,11 +387,12 @@ def detect_gaps(meeting_id: str) -> int:
         topics = _topic_views(session, meeting_id)
         speech = _speech(session, meeting_id)
         people_key = _people_key(_people(session, meeting_id))
+        subject = detect.subject_of(topics, _names(session, meeting_id))
 
     # An empty graph raises nothing whatever was said (`detect.compare`), so the
     # speech is not embedded, or sent anywhere, for a meeting that cannot use it.
     hearing = _hear(chosen, speech, settings) if topics else Hearing()
-    findings = detect.compare(chosen, topics, speech, _thresholds(settings), hearing.heard)
+    findings = detect.compare(chosen, topics, speech, _thresholds(settings), hearing.heard, subject)
 
     with session_scope() as session:
         _store_gaps(session, meeting_id, chosen, findings)
@@ -790,6 +796,157 @@ def template_comparison(session: Session, meeting_id: str) -> TemplateComparison
         analysed=analysed,
         items=items,
     )
+
+
+MAX_EVIDENCE = 3
+"""Utterances quoted under one gap. Enough to check a verdict against; the
+transcript tab holds the rest."""
+
+
+def explain(session: Session, meeting_id: str) -> GapExplanations:
+    """Why each of the meeting's gaps was raised, read from the stored rows.
+
+    **The verdict is the stored one.** ``coverage`` and ``risk_score`` are what
+    the pipeline wrote and what the list, the rail and E all read; this only
+    says what they rest on. Re-classifying here would let an explanation argue
+    with the verdict beside it.
+
+    - A gap with related topics rests on them (``basis="topic"``): the first
+      topic's utterances are quoted, in meeting order.
+    - A partial gap with none was said without becoming a topic. The consenting
+      speech is searched for the item's keywords, the same casefolded
+      containment ``detect.mentioned`` reads (``keyword``); if none is found it
+      was heard by meaning (``meaning``) and there is nothing to quote.
+    - A missing gap rests on nothing (``none``), and the keywords it was
+      searched for are the explanation.
+
+    The score breakdown is ``detect.score_breakdown`` over the same inputs the
+    pipeline gave ``detect.score``. If it no longer reaches the stored score --
+    a weight or the template changed since -- it is left out rather than shown
+    beside a number it does not add up to.
+    """
+    meeting = session.get(Meeting, meeting_id)
+    if meeting is None:
+        raise NotFoundError("meeting", meeting_id)
+
+    thresholds = _thresholds(get_settings())
+    chosen = template.get_template(selected_template_key(session, meeting_id))
+    items = {item.key: item for item in chosen.items}
+
+    gaps = list(
+        session.scalars(
+            select(GapGap)
+            .where(GapGap.meeting_id == meeting_id, GapGap.template_key == chosen.key)
+            .order_by(GapGap.risk_score.desc(), GapGap.id)
+        )
+    )
+    views = {view.id: view for view in _topic_views(session, meeting_id)}
+    related: dict[str, list[str]] = defaultdict(list)
+    for gap_id, topic_id in session.execute(
+        select(GapRelatedTopic.gap_id, GapRelatedTopic.topic_id)
+        .where(GapRelatedTopic.gap_id.in_([gap.id for gap in gaps]))
+        .order_by(GapRelatedTopic.id)
+    ).all():
+        related[gap_id].append(topic_id)
+
+    speech: list[tuple[str, float, str]] | None = None
+    explained = []
+    for gap in gaps:
+        item = items.get(gap.template_item_key or "")
+        keywords = list(item.keywords) if item else []
+        matched = [views[t] for t in related[gap.id] if t in views]
+        coverage = gap.coverage
+
+        explanation = GapExplanationRead(
+            gap_id=gap.id, coverage=coverage, basis="none", keywords=keywords
+        )
+        if matched:
+            explanation.basis = "topic"
+            explanation.topic_label = matched[0].label
+            explanation.topic_centrality = matched[0].centrality
+            explanation.evidence = _topic_evidence(session, matched[0].id)
+        elif coverage == detect.Coverage.PARTIAL.value:
+            if speech is None:
+                speech = _timed_speech(session, meeting_id)
+            heard = [k for k in keywords if any(k in text.casefold() for _, _, text in speech)]
+            if heard:
+                explanation.basis = "keyword"
+                explanation.matched_keywords = heard
+                explanation.evidence = [
+                    EvidenceRead(utterance_id=uid, start_sec=start, text=text)
+                    for uid, start, text in speech
+                    if any(k in text.casefold() for k in heard)
+                ][:MAX_EVIDENCE]
+            else:
+                explanation.basis = "meaning"
+
+        if item is not None and coverage is not None:
+            breakdown = detect.score_breakdown(item, matched, detect.Coverage(coverage), thresholds)
+            if abs(breakdown.score - gap.risk_score) < 1e-6:
+                explanation.breakdown = ScoreBreakdownRead(
+                    parts=[
+                        ScorePartRead(key=part.key, weight=part.weight, value=part.value)
+                        for part in breakdown.parts
+                    ],
+                    damping=breakdown.damping,
+                    score=gap.risk_score,
+                )
+        explained.append(explanation)
+
+    return GapExplanations(
+        meeting_id=meeting_id,
+        meeting_title=meeting.title,
+        meeting_started_at=meeting.started_at,
+        partial_centrality=thresholds.partial_centrality,
+        high_threshold=thresholds.high,
+        medium_threshold=thresholds.medium,
+        gaps=explained,
+    )
+
+
+def _topic_evidence(session: Session, topic_id: str) -> list[EvidenceRead]:
+    """A topic's first utterances, in meeting order. The topic was built from
+    consenting speech only (``graph.build_topics``), so these are too."""
+    rows = session.execute(
+        select(Utterance.id, Utterance.start_sec, Utterance.text)
+        .join(GapTopicUtterance, GapTopicUtterance.utterance_id == Utterance.id)
+        .where(GapTopicUtterance.topic_id == topic_id)
+        .order_by(Utterance.start_sec, Utterance.id)
+        .limit(MAX_EVIDENCE)
+    ).all()
+    return [EvidenceRead(utterance_id=uid, start_sec=start, text=text) for uid, start, text in rows]
+
+
+def _timed_speech(session: Session, meeting_id: str) -> list[tuple[str, float, str]]:
+    """``_speech`` with each utterance's id and start, for quoting it.
+
+    The same consent join: a gap explained by speech a person declined to have
+    analysed would put it back on the screen (privacy.md section 5)."""
+    return [
+        (uid, start, text)
+        for uid, start, text in session.execute(
+            select(Utterance.id, Utterance.start_sec, Utterance.text)
+            .join(Participant, Participant.id == Utterance.participant_id)
+            .where(Utterance.meeting_id == meeting_id, Participant.consented.is_(True))
+            .order_by(Utterance.start_sec, Utterance.id)
+        ).all()
+    ]
+
+
+def _names(session: Session, meeting_id: str) -> list[str]:
+    """Every name a topic label could be a person by: the meeting's speaker
+    labels and its team members' display names. Read to keep a person out of
+    a question's subject (``detect.subject_of``); nothing is stored."""
+    labels = session.scalars(
+        select(Participant.speaker_label).where(Participant.meeting_id == meeting_id)
+    )
+    members = session.scalars(
+        select(User.display_name)
+        .join(TeamMember, TeamMember.user_id == User.id)
+        .join(Meeting, Meeting.team_id == TeamMember.team_id)
+        .where(Meeting.id == meeting_id)
+    )
+    return [*labels, *members]
 
 
 def _analysed(session: Session, meeting_id: str) -> bool:

@@ -6,12 +6,13 @@ import type { ReactNode } from "react";
 import { Button, Tabs } from "@/shared/ui";
 
 import { useGapActions } from "../hooks/useGapActions";
+import { useGapExplanations } from "../hooks/useGapExplanations";
 import { useGapReport } from "../hooks/useGapReport";
 import { usePollUntilAnalysed } from "../hooks/usePollUntilAnalysed";
 import { useTemplateComparison } from "../hooks/useTemplateComparison";
 import { useTemplates } from "../hooks/useTemplates";
 import { useTopicGraph } from "../hooks/useTopicGraph";
-import { GapList, lowCount } from "./GapList";
+import { GapList } from "./GapList";
 import { TemplateRail } from "./TemplateRail";
 import { TopicRanking } from "./TopicRanking";
 import { TopicRelations } from "./TopicRelations";
@@ -77,13 +78,15 @@ export function GapReportScreen({ meetingId }: { meetingId: string }) {
     error: railError,
     reload: reloadRail,
   } = useTemplateComparison(meetingId);
+  const { explanations, reload: reloadExplanations } = useGapExplanations(meetingId);
   const templates = useTemplates();
 
   const reloadAll = useCallback(() => {
     void reloadReport();
     void reloadGraph();
     void reloadRail();
-  }, [reloadReport, reloadGraph, reloadRail]);
+    void reloadExplanations();
+  }, [reloadReport, reloadGraph, reloadRail, reloadExplanations]);
 
   usePollUntilAnalysed(comparison ? comparison.analysed : null, reloadAll);
   const { pending, failure, dismiss, undoDismiss, choose } = useGapActions(reloadAll);
@@ -92,22 +95,33 @@ export function GapReportScreen({ meetingId }: { meetingId: string }) {
   const [showLow, setShowLow] = useState(false);
 
   const gaps = report?.gaps ?? [];
-  const low = lowCount(gaps);
 
   return (
     <main
       className="mx-auto flex min-h-screen flex-col"
       style={{ maxWidth: "var(--layout-canvas)" }}
     >
-      <TopBar meetingId={meetingId}>
-        {low > 0 ? (
-          <Button tone="text" size="default" onClick={() => setShowLow((shown) => !shown)}>
-            {showLow ? "LOW 숨기기" : `LOW ${low}건 보기`}
-          </Button>
-        ) : null}
+      <TopBar
+        title={explanations?.meeting_title ?? null}
+        startedAt={explanations?.meeting_started_at ?? null}
+      >
         {/* The one primary on the screen, and it is not wired: the Slack
-            question card is a surface this module has not built (#36). */}
-        <Button tone="primary" disabled title="아직 연결되지 않은 동작입니다">
+            question card is a surface this module has not built (#36). A
+            disabled button alone does not say why, so the reason is written
+            beside it rather than left to a tooltip nobody hovers. */}
+        <span
+          id="slack-send-status"
+          className="hidden text-[var(--color-ink-muted)] md:inline"
+          style={{ fontSize: "var(--text-metaSmall)" }}
+        >
+          Slack 전송은 준비 중입니다
+        </span>
+        <Button
+          tone="primary"
+          disabled
+          aria-describedby="slack-send-status"
+          title="질문 카드를 Slack으로 보내는 기능은 아직 준비 중입니다"
+        >
           질문 카드 Slack 전송
         </Button>
       </TopBar>
@@ -160,7 +174,10 @@ export function GapReportScreen({ meetingId }: { meetingId: string }) {
               {(loaded) => (
                 <GapList
                   gaps={loaded.gaps ?? []}
+                  explanations={explanations}
+                  meetingId={meetingId}
                   showLow={showLow}
+                  onToggleLow={() => setShowLow((shown) => !shown)}
                   onDismiss={(gapId) => void dismiss(gapId)}
                   pendingGapId={pending}
                 />
@@ -211,12 +228,21 @@ export function GapReportScreen({ meetingId }: { meetingId: string }) {
  * The 56px bar the design puts above every content panel: where you are on the
  * left, what you can do on the right, and a hairline under it.
  *
- * The meeting's title is not here, and the id is. `/api/gap` answers about one
- * meeting's gaps; the title lives on the shared `meetings` row and reaching for
- * it from this feature would be this screen deciding how a meeting is named
- * across the product. S15 owns the breadcrumb when it exists.
+ * Where you are is the meeting's title and date, from module C's own read
+ * (`/explanations`), which reads the shared `meetings` row and writes nothing
+ * to it. The id it used to show is an identifier, not a place; until the title
+ * arrives the bar says "회의" and nothing else.
  */
-function TopBar({ meetingId, children }: { meetingId: string; children: ReactNode }) {
+function TopBar({
+  title,
+  startedAt,
+  children,
+}: {
+  title: string | null;
+  startedAt: string | null;
+  children: ReactNode;
+}) {
+  const date = startedAt ? DATE.format(new Date(startedAt)) : null;
   return (
     <header
       className="flex items-center border-b border-[var(--color-hairline)]"
@@ -226,27 +252,34 @@ function TopBar({ meetingId, children }: { meetingId: string; children: ReactNod
         paddingInline: "var(--space-page)",
       }}
     >
-      {/* Below `sm` the actions need the whole bar, and a flex row with nothing
-          allowed to shrink just clips every label to a few pixels. What the
-          breadcrumb says is recoverable — the words around the id are constant
-          on this screen — so they are dropped and the id, which is not, keeps
-          the room and truncates. */}
+      {/* Below `sm` the actions need the whole bar, so the constant words are
+          dropped and the title, which is not constant, keeps the room and
+          truncates. */}
       <span
         className="hidden shrink-0 whitespace-nowrap text-[var(--color-ink-muted)] sm:inline"
         style={{ fontSize: "var(--text-meta)" }}
       >
         회의
       </span>
-      <span className="hidden shrink-0 text-[var(--color-signal-idle)] sm:inline">/</span>
-      <span
-        className="min-w-0 truncate text-[var(--color-ink-strong)]"
-        style={{
-          fontFamily: "var(--font-mono)",
-          fontSize: "var(--text-dataSmall)",
-        }}
-      >
-        {meetingId}
-      </span>
+      {title ? (
+        <>
+          <span className="hidden shrink-0 text-[var(--color-signal-idle)] sm:inline">/</span>
+          <span
+            className="min-w-0 truncate text-[var(--color-ink-strong)]"
+            style={{ fontSize: "var(--text-meta)", fontWeight: 500 }}
+          >
+            {title}
+          </span>
+          {date ? (
+            <span
+              className="hidden shrink-0 whitespace-nowrap text-[var(--color-ink-muted)] sm:inline"
+              style={{ fontSize: "var(--text-metaSmall)" }}
+            >
+              {date}
+            </span>
+          ) : null}
+        </>
+      ) : null}
       <span
         className="hidden shrink-0 whitespace-nowrap text-[var(--color-ink-muted)] sm:inline"
         style={{ fontSize: "var(--text-metaSmall)" }}
@@ -260,6 +293,8 @@ function TopBar({ meetingId, children }: { meetingId: string; children: ReactNod
     </header>
   );
 }
+
+const DATE = new Intl.DateTimeFormat("ko-KR", { year: "numeric", month: "long", day: "numeric" });
 
 /**
  * One section of the screen, and the state of the read behind it.

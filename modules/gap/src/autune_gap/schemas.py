@@ -11,6 +11,8 @@ for a payload that crosses a boundary and not for one that does not.
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from pydantic import BaseModel, Field
 
 
@@ -157,3 +159,82 @@ class TopicGraphRead(BaseModel):
     meeting_id: str
     nodes: list[TopicNodeRead] = Field(default_factory=list)
     edges: list[TopicEdgeRead] = Field(default_factory=list)
+
+
+class EvidenceRead(BaseModel):
+    """One utterance a verdict rests on, as S20 quotes it.
+
+    Masked text -- module A masks before it writes, and there is no other form
+    to read. No speaker: the quote says what was said and when, which is what a
+    reader checks a verdict against; who said it is the transcript's to show.
+    """
+
+    utterance_id: str
+    start_sec: float
+    text: str
+
+
+class ScorePartRead(BaseModel):
+    """One term of the risk score's weighted mean (``detect.ScorePart``)."""
+
+    key: str
+    weight: float
+    value: float
+
+
+class ScoreBreakdownRead(BaseModel):
+    """How a gap's risk score was reached (``detect.score_breakdown``).
+
+    ``score`` is the stored ``risk_score``. A breakdown recomputed today that
+    no longer reaches it -- a weight or a template moved since the meeting was
+    scored -- is not sent at all rather than sent beside a number it does not
+    add up to.
+    """
+
+    parts: list[ScorePartRead] = Field(default_factory=list)
+    damping: float | None = None
+    score: float
+
+
+class GapExplanationRead(BaseModel):
+    """Why one gap was raised: its verdict, what it rests on, how it scored.
+
+    ``basis`` is the evidence the classification read (``detect.classify``):
+
+    - ``topic`` -- a topic matched and sat below ``partial_centrality``;
+      ``topic_label`` and ``topic_centrality`` say which and how central.
+    - ``keyword`` -- no topic, but an item keyword was said; ``matched_keywords``
+      are the ones heard.
+    - ``meaning`` -- no topic and no keyword; the speech was read by meaning
+      (``semantic.heard``). Nothing to quote: the embedding is not kept.
+    - ``none`` -- missing. Nothing matched, so ``evidence`` is empty and
+      ``keywords`` is what the meeting was searched for.
+    """
+
+    gap_id: str
+    coverage: str | None = None
+    basis: str
+    topic_label: str | None = None
+    topic_centrality: float | None = None
+    keywords: list[str] = Field(default_factory=list)
+    matched_keywords: list[str] = Field(default_factory=list)
+    evidence: list[EvidenceRead] = Field(default_factory=list)
+    breakdown: ScoreBreakdownRead | None = None
+
+
+class GapExplanations(BaseModel):
+    """Everything S20 shows beside a gap that ``GapReport`` does not carry.
+
+    Module C's own read, not a contract: E scores a meeting on ``GapReport`` and
+    never explains a verdict to anyone. The meeting's title and date are here
+    so the screen's breadcrumb names the meeting rather than its id; module C
+    reads ``meetings`` and writes nothing to it (invariant 4).
+    """
+
+    meeting_id: str
+    meeting_title: str
+    meeting_started_at: datetime | None = None
+    partial_centrality: float
+    high_threshold: float
+    medium_threshold: float
+    gaps: list[GapExplanationRead] = Field(default_factory=list)

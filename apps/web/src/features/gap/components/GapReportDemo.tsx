@@ -4,6 +4,7 @@ import { useState } from "react";
 
 import {
   DEMO_COMPARISON,
+  DEMO_EXPLANATIONS,
   DEMO_GRAPH,
   DEMO_MEETING_ID,
   DEMO_REPORT,
@@ -69,6 +70,7 @@ function demoBody(url: string, method: string): unknown {
   }
   if (url.endsWith("/api/gap/templates")) return DEMO_TEMPLATES;
   if (url.includes(`/api/gap/reports/${DEMO_MEETING_ID}`)) return DEMO_REPORT;
+  if (url.includes(`/api/gap/explanations/${DEMO_MEETING_ID}`)) return DEMO_EXPLANATIONS;
   if (url.includes(`/api/gap/topics/${DEMO_MEETING_ID}`)) return DEMO_GRAPH;
   if (url.includes(`/api/gap/templates/${DEMO_MEETING_ID}`)) return DEMO_COMPARISON;
   return undefined;

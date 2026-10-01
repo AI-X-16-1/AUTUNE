@@ -348,17 +348,105 @@ def test_a_partial_gap_names_the_topic_it_was_inferred_from(
     assert findings[0].question.startswith("성공 기준의")
 
 
-def test_a_missing_gap_keeps_the_generic_question(thresholds: detect.Thresholds) -> None:
-    """There is no topic to name, and naming the meeting's most central one
-    instead would be a guess — with extraction where it is, as likely to be
-    "다음 주" as the thing the meeting was about. Same rule as `score`: what was
-    not measured is not substituted for."""
+def test_a_missing_gap_with_no_subject_keeps_the_generic_question(
+    thresholds: detect.Thresholds,
+) -> None:
+    """No matched topic and no subject: the template's own question stands."""
     findings = detect.compare(
         one_item_template(item()), [topic(label="콜드스타트")], SILENT, thresholds
     )
 
     assert findings[0].coverage is detect.Coverage.MISSING
     assert findings[0].question == "무엇으로 측정합니까?"
+
+
+def test_a_missing_gap_names_the_meetings_subject(thresholds: detect.Thresholds) -> None:
+    """ "이 기능이 …은?" reads "알림 발송의 …은?": the question is about what the
+    meeting was about. The coverage is untouched -- still missing."""
+    subject = topic(label="알림 발송")
+
+    findings = detect.compare(
+        one_item_template(item()), [subject], SILENT, thresholds, subject=subject
+    )
+
+    assert findings[0].coverage is detect.Coverage.MISSING
+    assert findings[0].question == "알림 발송의 성공 기준은 무엇으로 측정합니까?"
+    assert findings[0].topic_ids == ()
+
+
+def test_a_matched_topic_wins_over_the_subject(thresholds: detect.Thresholds) -> None:
+    findings = detect.compare(
+        one_item_template(item()),
+        [topic(label="성공 기준", centrality=0.1)],
+        SILENT,
+        thresholds,
+        subject=topic("topic_s", "알림 발송"),
+    )
+
+    assert findings[0].question.startswith("성공 기준의")
+
+
+def test_the_subject_is_the_most_central_topic_that_is_not_a_person() -> None:
+    """A colleague named often is central, and a question about performance is
+    not about them. #521 names a colleague without the honorific, so "민수"
+    against "김민수" is passed over too."""
+    topics = [
+        topic("topic_a", "민수", centrality=1.0),
+        topic("topic_b", "알림 발송", centrality=0.8),
+        topic("topic_c", "배포", centrality=0.5),
+    ]
+
+    assert detect.subject_of(topics, ["김민수", "화자0"]).id == "topic_b"
+    assert detect.subject_of(topics, []).id == "topic_a"
+    assert detect.subject_of([topics[0]], ["김민수"]) is None
+    assert detect.subject_of([], ["김민수"]) is None
+
+
+def test_a_one_syllable_name_passes_nothing_over() -> None:
+    """One syllable inside a label says nothing about whether it is a person."""
+    assert detect.subject_of([topic(label="수요 예측")], ["수"]).label == "수요 예측"
+
+
+# --- the score, explained -------------------------------------------------
+
+
+def test_the_breakdown_is_the_score(thresholds: detect.Thresholds) -> None:
+    """S20 shows the breakdown beside the stored score, so it must be the same
+    arithmetic, part by part."""
+    thin = [topic(label="성공 기준", centrality=0.2, silent_share=0.5)]
+    for matched, coverage in (
+        (thin, detect.Coverage.PARTIAL),
+        ([], detect.Coverage.MISSING),
+        ([], detect.Coverage.PARTIAL),
+    ):
+        breakdown = detect.score_breakdown(item(), matched, coverage, thresholds)
+        assert breakdown.score == detect.score(item(), matched, coverage, thresholds)
+
+
+def test_a_missing_item_scores_its_template_weight_alone(thresholds: detect.Thresholds) -> None:
+    breakdown = detect.score_breakdown(item(weight=0.9), [], detect.Coverage.MISSING, thresholds)
+
+    assert [part.key for part in breakdown.parts] == ["template"]
+    assert breakdown.damping is None
+    assert breakdown.score == 0.9
+
+
+def test_a_partial_topic_shows_every_part_and_the_damping(thresholds: detect.Thresholds) -> None:
+    matched = [topic(label="성공 기준", centrality=0.2, silent_share=0.5)]
+
+    breakdown = detect.score_breakdown(
+        item(weight=0.9), matched, detect.Coverage.PARTIAL, thresholds
+    )
+
+    assert [(p.key, p.value) for p in breakdown.parts] == [
+        ("template", 0.9),
+        ("coverage", pytest.approx(0.8)),
+        ("participation", 0.5),
+    ]
+    assert breakdown.damping == thresholds.partial_damping
+    total = sum(p.weight for p in breakdown.parts)
+    raw = sum(p.weight * p.value for p in breakdown.parts) / total
+    assert breakdown.score == pytest.approx(raw * thresholds.partial_damping)
 
 
 def test_the_topic_named_is_the_one_the_score_was_based_on(

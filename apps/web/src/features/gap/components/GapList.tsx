@@ -1,30 +1,53 @@
-import { Button, MaskedText, Row, ScoreLabel, StatusDot } from "@/shared/ui";
+"use client";
 
-import { SEVERITY_LABELS, bySeverity } from "../types";
-import type { Gap } from "../types";
+import Link from "next/link";
+import type { Route } from "next";
+import { useState } from "react";
+import type { ReactNode } from "react";
+
+import { Button, MaskedText, Quote, ScoreLabel, StatusDot } from "@/shared/ui";
+
+import { COVERAGE_LABELS, SEVERITY_LABELS, bySeverity } from "../types";
+import type { Gap, GapEvidence, GapExplanation, GapExplanations, ScoreBreakdown } from "../types";
 
 /**
- * The gap list on S20: HIGH expanded, MEDIUM collapsed, LOW behind a toggle.
+ * The gap list on S20: HIGH opened, MEDIUM and LOW closed, LOW behind a toggle.
  *
  * The hierarchy is C's metric made visible. Precision, not recall — a false gap
  * costs user trust and a missed one costs nothing the team did not already
- * have — so only HIGH is opened by default and LOW is not on the screen at all
- * until somebody goes looking for it.
+ * have — so only HIGH is opened by default and LOW is not on the screen until
+ * somebody asks for it.
  *
- * Every gap arrives with the question that would close it, and that block is
- * the point of the screen: "성능 요구사항 미정" tells a team it has a problem,
- * "목표 응답 시간을 정하셨나요?" is the thing they can act on in the meeting
- * thread.
+ * **Every card is the same card.** What differs by severity is whether it
+ * starts open, never what it holds: the verdict, why it was reached, the
+ * question that would close it, how the score was reached, and the same three
+ * actions. A MEDIUM gap with no question and no "해당 없음" read as a lesser
+ * kind of finding rather than as a less certain one.
+ *
+ * **The counts add up on screen.** The tab counts every gap in the report; the
+ * list says how many it shows and how many LOW it is hiding, so the two never
+ * disagree silently.
+ *
+ * The explanation is a second read (`/explanations`) and optional: without it
+ * a card still shows its title, score and question, and says it could not load
+ * why.
  */
 export function GapList({
   gaps,
+  explanations = null,
+  meetingId,
   showLow = false,
+  onToggleLow,
   onDismiss,
   pendingGapId = null,
 }: {
   gaps: readonly Gap[];
+  explanations?: GapExplanations | null;
+  /** Links each quote to its place in the transcript tab. */
+  meetingId?: string;
   showLow?: boolean;
-  /** "해당 없음" on a HIGH gap. Without it the button is drawn disabled. */
+  onToggleLow?: () => void;
+  /** "해당 없음". Without it the button is drawn disabled. */
   onDismiss?: (gapId: string) => void;
   /** The gap whose write is in flight, so only its button shows it. */
   pendingGapId?: string | null;
@@ -36,183 +59,499 @@ export function GapList({
   const high = bySeverity(gaps, "high");
   const medium = bySeverity(gaps, "medium");
   const low = bySeverity(gaps, "low");
+  const explained = new Map(explanations?.gaps.map((e) => [e.gap_id, e]) ?? []);
+  const shown = [...high, ...medium, ...(showLow ? low : [])];
 
   // Every gap is LOW and LOW is hidden: without this the list drew nothing at
   // all, which reads as a broken screen rather than as "nothing above the
   // threshold". Seen on a real recording whose five gaps were all LOW.
-  if (high.length === 0 && medium.length === 0 && !showLow) {
-    return <OnlyLowGaps count={low.length} />;
+  if (shown.length === 0) {
+    return <OnlyLowGaps count={low.length} onToggleLow={onToggleLow} />;
   }
 
+  const card = (gap: Gap, open: boolean) => (
+    <GapCard
+      key={gap.id}
+      gap={gap}
+      explanation={explained.get(gap.id) ?? null}
+      explanations={explanations}
+      meetingId={meetingId}
+      defaultOpen={open}
+      onDismiss={onDismiss}
+      pending={pendingGapId === gap.id}
+    />
+  );
+
   return (
-    <div className="flex flex-col" style={{ gap: "var(--space-24)" }}>
+    <div className="flex flex-col" style={{ gap: "var(--space-16)" }}>
+      <ListSummary
+        shown={shown}
+        explained={explained}
+        hiddenLow={showLow ? 0 : low.length}
+        lowCount={low.length}
+        showLow={showLow}
+        onToggleLow={onToggleLow}
+      />
+
       {high.length > 0 ? (
         <section className="border-t border-[var(--color-hairline)]">
-          {high.map((gap) => (
-            <ExpandedGap
-              key={gap.id}
-              gap={gap}
-              onDismiss={onDismiss}
-              pending={pendingGapId === gap.id}
-            />
-          ))}
+          {high.map((gap) => card(gap, true))}
         </section>
       ) : null}
 
       {medium.length > 0 ? (
         <section>
           <SectionTitle>{SEVERITY_LABELS.medium}</SectionTitle>
-          {medium.map((gap) => (
-            <CollapsedGap key={gap.id} gap={gap} />
-          ))}
+          <div className="border-t border-[var(--color-hairline)]">
+            {medium.map((gap) => card(gap, false))}
+          </div>
         </section>
       ) : null}
 
       {showLow && low.length > 0 ? (
         <section>
           <SectionTitle>{SEVERITY_LABELS.low}</SectionTitle>
-          {low.map((gap) => (
-            <CollapsedGap key={gap.id} gap={gap} />
-          ))}
+          <div className="border-t border-[var(--color-hairline)]">
+            {low.map((gap) => card(gap, false))}
+          </div>
         </section>
       ) : null}
+
+      <p className="text-[var(--color-ink-muted)]" style={{ fontSize: "var(--text-metaSmall)" }}>
+        &quot;다음 회의 어젠다로&quot;와 &quot;담당자 지정해 질문&quot;은 아직 준비 중이라 누를 수
+        없습니다. 지금 할 수 있는 동작은 &quot;해당 없음&quot;(오탐 표시)입니다.
+      </p>
     </div>
   );
 }
 
-/** How many gaps sit below the default threshold, for the toggle in the top bar. */
+/** How many gaps sit below the default threshold. */
 export function lowCount(gaps: readonly Gap[]): number {
   return bySeverity(gaps, "low").length;
 }
 
 /**
- * One HIGH gap, opened: what is missing, how sure we are, and the question
- * that would settle it.
+ * What the list shows, in numbers that add up to the tab's: how many cards,
+ * how many of them are 누락 and 미흡, and how many LOW are hidden.
+ */
+function ListSummary({
+  shown,
+  explained,
+  hiddenLow,
+  lowCount: lows,
+  showLow,
+  onToggleLow,
+}: {
+  shown: readonly Gap[];
+  explained: ReadonlyMap<string, GapExplanation>;
+  hiddenLow: number;
+  lowCount: number;
+  showLow: boolean;
+  onToggleLow?: () => void;
+}) {
+  const coverages = shown.map((gap) => explained.get(gap.id)?.coverage ?? null);
+  const missing = coverages.filter((c) => c === "missing").length;
+  const partial = coverages.filter((c) => c === "partial").length;
+  const known = missing + partial === shown.length;
+
+  return (
+    <div
+      className="flex flex-wrap items-center text-[var(--color-ink-muted)]"
+      style={{ fontSize: "var(--text-metaSmall)", gap: "var(--space-8)" }}
+    >
+      <span>
+        표시 {shown.length}건
+        {known ? ` · ${COVERAGE_LABELS.missing} ${missing} · ${COVERAGE_LABELS.partial} ${partial}` : ""}
+        {hiddenLow > 0 ? ` · ${SEVERITY_LABELS.low} ${hiddenLow}건 숨김` : ""}
+      </span>
+      {lows > 0 && onToggleLow ? (
+        <Button tone="text" size="compact" onClick={onToggleLow}>
+          {showLow ? `${SEVERITY_LABELS.low} 숨기기` : `${SEVERITY_LABELS.low} ${lows}건 보기`}
+        </Button>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * One gap. The header toggles it; HIGH starts open.
  *
  * "해당 없음" is a real write: `POST /gaps/{id}/dismiss` marks the gap a false
  * positive, it leaves the report, and the rail keeps the item marked — which is
- * where it can be taken back. The dismissal is the input ADR 0006's threshold
- * tuning reads.
- *
- * The other two stay drawn and disabled. Carrying a question to the next
- * meeting's agenda or to one person needs surfaces this module has not built
- * (#36), and a button that looked live and did nothing would teach a reader to
- * distrust the rest of the screen.
+ * where it can be taken back. The other two stay drawn and disabled: carrying a
+ * question to the next agenda or to one person needs surfaces this module has
+ * not built (#36), and the list says so once under the cards.
  */
-function ExpandedGap({
+function GapCard({
   gap,
+  explanation,
+  explanations,
+  meetingId,
+  defaultOpen,
   onDismiss,
   pending,
 }: {
   gap: Gap;
+  explanation: GapExplanation | null;
+  explanations: GapExplanations | null;
+  meetingId?: string;
+  defaultOpen: boolean;
   onDismiss?: (gapId: string) => void;
   pending: boolean;
 }) {
+  const [open, setOpen] = useState(defaultOpen);
+  const coverage = explanation?.coverage ?? null;
+
   return (
-    <article
-      className="grid border-b border-[var(--color-hairline)]"
-      style={{
-        gridTemplateColumns: "auto 1fr",
-        gap: "var(--space-12)",
-        padding: "18px 0",
-      }}
-    >
-      <StatusDot variant="critical" className="mt-2" />
-
-      <div className="min-w-0">
-        <div className="flex flex-wrap items-baseline" style={{ gap: "var(--space-12)" }}>
-          <h3
-            className="min-w-0 text-[var(--color-ink-strong)]"
-            style={{
-              fontSize: "var(--text-rowTitle)",
-              fontWeight: "var(--text-rowTitle-weight)",
-            }}
-          >
-            <MaskedText>{gap.title}</MaskedText>
-          </h3>
+    <article className="border-b border-[var(--color-hairline)]" style={{ padding: "14px 0" }}>
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen((value) => !value)}
+        className="grid w-full text-left"
+        style={{ gridTemplateColumns: "auto 1fr", gap: "var(--space-12)" }}
+      >
+        <StatusDot variant={DOT[gap.severity]} className="mt-2" />
+        {/* The score wraps under the title when the row is narrow, rather than
+            squeezing the title to a character per line. */}
+        <span
+          className="flex min-w-0 flex-wrap items-start justify-between"
+          style={{ columnGap: "var(--space-12)", rowGap: "var(--space-4)" }}
+        >
+          <span className="min-w-0 flex-1" style={{ flexBasis: "12rem" }}>
+            <span
+              className="block text-[var(--color-ink-strong)]"
+              style={{
+                fontSize: "var(--text-rowTitle)",
+                fontWeight: "var(--text-rowTitle-weight)",
+              }}
+            >
+              <MaskedText>{gap.title}</MaskedText>
+            </span>
+            {gap.template_item ? (
+              <span
+                className="block text-[var(--color-ink-muted)]"
+                style={{ fontSize: "var(--text-metaSmall)" }}
+              >
+                템플릿 항목 &quot;{gap.template_item}&quot;
+                {coverage ? (
+                  <>
+                    {" · "}
+                    <span style={{ color: COVERAGE_COLOR[coverage] }}>
+                      {COVERAGE_LABELS[coverage]}
+                    </span>
+                  </>
+                ) : null}
+              </span>
+            ) : null}
+          </span>
           <ScoreLabel level={gap.severity} score={gap.risk_score} />
-        </div>
+        </span>
+      </button>
 
-        {gap.template_item ? (
-          <p
-            className="mt-2 text-[var(--color-ink-body)]"
-            style={{
-              fontSize: "var(--text-body)",
-              lineHeight: "var(--text-body-leading)",
-            }}
-          >
-            템플릿 필수 항목 &quot;{gap.template_item}&quot;.
-          </p>
-        ) : null}
+      {open ? (
+        <div className="flex flex-col" style={{ gap: "var(--space-12)", padding: "12px 0 0 20px" }}>
+          <Block label="판정 근거">
+            {explanation ? (
+              <Reason explanation={explanation} explanations={explanations} meetingId={meetingId} />
+            ) : (
+              <Muted>판정 근거를 불러오지 못했습니다.</Muted>
+            )}
+          </Block>
 
-        {gap.suggested_question ? (
-          <div
-            className="mt-3"
-            style={{
-              background: "var(--color-surface-sunken)",
-              borderRadius: "var(--radius)",
-              padding: "12px 14px",
-            }}
-          >
-            <div
-              className="text-[var(--color-ink-muted)]"
-              style={{
-                fontSize: "var(--text-label)",
-                fontWeight: "var(--text-label-weight)",
-              }}
+          {gap.suggested_question ? (
+            <Block label="해소용 질문" sunken>
+              <p
+                className="text-[var(--color-ink-strong)]"
+                style={{
+                  fontSize: "var(--text-rowBody)",
+                  lineHeight: "var(--text-rowBody-leading)",
+                }}
+              >
+                <MaskedText>{gap.suggested_question}</MaskedText>
+              </p>
+            </Block>
+          ) : null}
+
+          <ScoreExplain
+            breakdown={explanation?.breakdown ?? null}
+            coverage={coverage}
+            explanations={explanations}
+          />
+
+          <div className="-ml-2 flex flex-wrap" style={{ gap: "var(--space-4)" }}>
+            <Button tone="text" size="compact" disabled title={PENDING}>
+              다음 회의 어젠다로
+            </Button>
+            <Button tone="text" size="compact" disabled title={PENDING}>
+              담당자 지정해 질문
+            </Button>
+            <Button
+              tone="text"
+              size="compact"
+              disabled={!onDismiss || pending}
+              aria-busy={pending || undefined}
+              title={onDismiss ? UNDO_HINT : PENDING}
+              onClick={() => onDismiss?.(gap.id)}
             >
-              해소용 질문
-            </div>
-            <p
-              className="mt-1 text-[var(--color-ink-strong)]"
-              style={{
-                fontSize: "var(--text-rowBody)",
-                lineHeight: "var(--text-rowBody-leading)",
-              }}
-            >
-              <MaskedText>{gap.suggested_question}</MaskedText>
-            </p>
+              {pending ? "처리 중" : "해당 없음"}
+            </Button>
           </div>
-        ) : null}
-
-        <div className="mt-2 -ml-2 flex flex-wrap" style={{ gap: "var(--space-4)" }}>
-          {/* Text tones rather than the mockup's accent fill: the screen's one
-              primary is the Slack send in the top bar, and the ui-spec allows
-              at most one per screen. */}
-          <Button tone="text" size="compact" disabled title={PENDING}>
-            다음 회의 어젠다로
-          </Button>
-          <Button tone="text" size="compact" disabled title={PENDING}>
-            담당자 지정해 질문
-          </Button>
-          <Button
-            tone="quiet"
-            size="compact"
-            disabled={!onDismiss || pending}
-            aria-busy={pending || undefined}
-            title={onDismiss ? UNDO_HINT : PENDING}
-            onClick={() => onDismiss?.(gap.id)}
-          >
-            {pending ? "처리 중" : "해당 없음"}
-          </Button>
         </div>
-      </div>
+      ) : null}
     </article>
   );
 }
 
-const PENDING = "아직 연결되지 않은 동작입니다";
+const PENDING = "아직 준비 중인 동작입니다";
 
 const UNDO_HINT = "오탐으로 표시합니다. 오른쪽 템플릿 대조에서 되돌릴 수 있습니다.";
 
-function CollapsedGap({ gap }: { gap: Gap }) {
+const DOT = { high: "critical", medium: "attention", low: "idle" } as const;
+
+const COVERAGE_COLOR = {
+  covered: "var(--color-ink-muted)",
+  partial: "var(--color-signal-attention)",
+  missing: "var(--color-signal-critical)",
+} as const;
+
+/**
+ * Why the verdict was reached, in the terms `detect.classify` used, and the
+ * utterances it rests on. A missing item has nothing to quote by definition —
+ * nothing matched — so it says what the meeting was searched for instead.
+ */
+function Reason({
+  explanation,
+  explanations,
+  meetingId,
+}: {
+  explanation: GapExplanation;
+  explanations: GapExplanations | null;
+  meetingId?: string;
+}) {
+  const threshold = explanations?.partial_centrality;
+  const sentence = (() => {
+    switch (explanation.basis) {
+      case "topic":
+        return (
+          `"${explanation.topic_label ?? ""}" 토픽으로 다뤄졌지만 회의에서의 비중(중심도 ` +
+          `${fixed(explanation.topic_centrality)})이 기준 ${fixed(threshold)}보다 낮아 ` +
+          `미흡으로 판정했습니다.`
+        );
+      case "keyword":
+        return (
+          `${quoted(explanation.matched_keywords)}라는 말은 나왔지만 하나의 토픽으로 ` +
+          `논의되지는 않아 미흡으로 판정했습니다.`
+        );
+      case "meaning":
+        return (
+          "의미가 가까운 발화는 있었지만 토픽으로 논의되지는 않아 미흡으로 판정했습니다. " +
+          "의미 비교는 발화를 저장하지 않아 인용할 수 없습니다."
+        );
+      default:
+        return (
+          `이 항목을 가리키는 표현(${quoted(explanation.keywords.slice(0, 5))} 등)이 회의에서 ` +
+          `한 번도 나오지 않아 누락으로 판정했습니다.`
+        );
+    }
+  })();
+
   return (
-    <Row
-      dot={<StatusDot variant={gap.severity === "medium" ? "attention" : "idle"} />}
-      title={<MaskedText>{gap.title}</MaskedText>}
-      meta={gap.template_item ?? undefined}
-      actions={<ScoreLabel level={gap.severity} score={gap.risk_score} />}
-    />
+    <div className="flex flex-col" style={{ gap: "var(--space-8)" }}>
+      <p
+        className="text-[var(--color-ink-body)]"
+        style={{ fontSize: "var(--text-body)", lineHeight: "var(--text-body-leading)" }}
+      >
+        {sentence}
+      </p>
+      {explanation.evidence.length > 0 ? (
+        <ul className="flex flex-col" style={{ gap: "var(--space-4)" }}>
+          {explanation.evidence.map((quote) => (
+            <li key={quote.utterance_id}>
+              <EvidenceQuote quote={quote} meetingId={meetingId} />
+            </li>
+          ))}
+        </ul>
+      ) : explanation.basis === "none" ? (
+        <Muted>관련 발화가 없습니다.</Muted>
+      ) : null}
+    </div>
+  );
+}
+
+/** One quote, its time first. The time links to the transcript tab. */
+function EvidenceQuote({ quote, meetingId }: { quote: GapEvidence; meetingId?: string }) {
+  const time = clock(quote.start_sec);
+  return (
+    <Quote>
+      {meetingId ? (
+        <Link
+          href={`/meetings/${meetingId}#${quote.utterance_id}` as Route}
+          className="mr-2 text-[var(--color-accent-default)] hover:underline"
+          style={{ fontFamily: "var(--font-mono)", fontSize: "var(--text-dataSmall)" }}
+          title="전사에서 이 발화 보기"
+        >
+          {time}
+        </Link>
+      ) : (
+        <span
+          className="mr-2 text-[var(--color-ink-muted)]"
+          style={{ fontFamily: "var(--font-mono)", fontSize: "var(--text-dataSmall)" }}
+        >
+          {time}
+        </span>
+      )}
+      <MaskedText>{quote.text}</MaskedText>
+    </Quote>
+  );
+}
+
+const PART_LABELS: Record<string, string> = {
+  template: "항목 중요도",
+  coverage: "다룬 정도 부족 (1 − 토픽 중심도)",
+  participation: "토픽에서 말하지 않은 사람 비율",
+};
+
+/**
+ * The score's arithmetic, exactly as `detect.score_breakdown` did it: a
+ * weighted mean of what was measured, damped when partial. The server sends it
+ * only when it still adds up to the stored score.
+ */
+function ScoreExplain({
+  breakdown,
+  coverage,
+  explanations,
+}: {
+  breakdown: ScoreBreakdown | null;
+  coverage: string | null;
+  explanations: GapExplanations | null;
+}) {
+  return (
+    <details>
+      <summary
+        className="cursor-pointer text-[var(--color-accent-default)]"
+        style={{ fontSize: "var(--text-metaSmall)" }}
+      >
+        점수 근거
+      </summary>
+      <div
+        className="mt-2 text-[var(--color-ink-body)]"
+        style={{ fontSize: "var(--text-metaSmall)", lineHeight: "var(--text-metaSmall-leading)" }}
+      >
+        {breakdown ? <Arithmetic breakdown={breakdown} coverage={coverage} /> : (
+          <Muted>
+            점수를 매긴 뒤 설정이나 템플릿이 바뀌어 지금의 계산식으로는 같은 점수가 나오지 않습니다.
+            회의를 다시 분석하면 근거가 다시 표시됩니다.
+          </Muted>
+        )}
+        {explanations ? (
+          <p className="mt-1 text-[var(--color-ink-muted)]">
+            {fixed(explanations.high_threshold)} 이상 높음 · {fixed(explanations.medium_threshold)}{" "}
+            이상 중간 · 그 아래 낮음
+          </p>
+        ) : null}
+      </div>
+    </details>
+  );
+}
+
+function Arithmetic({ breakdown, coverage }: { breakdown: ScoreBreakdown; coverage: string | null }) {
+  const total = breakdown.parts.reduce((sum, part) => sum + part.weight, 0);
+  const mean = breakdown.parts.reduce((sum, part) => sum + part.weight * part.value, 0) / total;
+  // One part is its own mean: a weight beside it reads as a multiplication
+  // that the score then does not show.
+  const weighted = breakdown.parts.length > 1;
+  return (
+    <>
+      {coverage === "missing" ? (
+        <p>
+          누락 항목은 회의에 대응하는 토픽이 없어 잴 신호가 없습니다. 그래서 템플릿이 정한 항목
+          중요도가 그대로 점수가 됩니다.
+        </p>
+      ) : (
+        <p>측정된 값의 가중 평균{breakdown.damping !== null ? "에 미흡 감쇠를 곱한 값" : ""}입니다.</p>
+      )}
+      <table className="mt-1" style={{ fontFamily: "var(--font-mono)" }}>
+        <tbody>
+          {breakdown.parts.map((part) => (
+            <tr key={part.key}>
+              <td className="pr-3" style={{ fontFamily: "var(--font-sans)" }}>
+                {PART_LABELS[part.key] ?? part.key}
+              </td>
+              <td className="pr-3 text-right">{fixed(part.value)}</td>
+              <td className="text-[var(--color-ink-muted)]">
+                {weighted ? `× 가중치 ${fixed(part.weight)}` : null}
+              </td>
+            </tr>
+          ))}
+          {weighted ? (
+            <tr>
+              <td className="pr-3" style={{ fontFamily: "var(--font-sans)" }}>
+                가중 평균
+              </td>
+              <td className="pr-3 text-right">{fixed(mean)}</td>
+              <td />
+            </tr>
+          ) : null}
+          {breakdown.damping !== null ? (
+            <tr>
+              <td className="pr-3" style={{ fontFamily: "var(--font-sans)" }}>
+                미흡 감쇠
+              </td>
+              <td className="pr-3 text-right">× {fixed(breakdown.damping)}</td>
+              <td />
+            </tr>
+          ) : null}
+          <tr className="text-[var(--color-ink-strong)]">
+            <td className="pr-3" style={{ fontFamily: "var(--font-sans)" }}>
+              점수
+            </td>
+            <td className="pr-3 text-right">{fixed(breakdown.score)}</td>
+            <td />
+          </tr>
+        </tbody>
+      </table>
+    </>
+  );
+}
+
+function Block({
+  label,
+  sunken = false,
+  children,
+}: {
+  label: string;
+  sunken?: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <div
+      style={
+        sunken
+          ? {
+              background: "var(--color-surface-sunken)",
+              borderRadius: "var(--radius)",
+              padding: "12px 14px",
+            }
+          : undefined
+      }
+    >
+      <div
+        className="mb-1 text-[var(--color-ink-muted)]"
+        style={{ fontSize: "var(--text-label)", fontWeight: "var(--text-label-weight)" }}
+      >
+        {label}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function Muted({ children }: { children: ReactNode }) {
+  return (
+    <p className="text-[var(--color-ink-muted)]" style={{ fontSize: "var(--text-metaSmall)" }}>
+      {children}
+    </p>
   );
 }
 
@@ -227,13 +566,35 @@ function SectionTitle({ children }: { children: string }) {
   );
 }
 
+/** Two places, as the score is shown everywhere else. */
+function fixed(value: number | null | undefined): string {
+  return value === null || value === undefined ? "–" : value.toFixed(2);
+}
+
+function quoted(words: readonly string[]): string {
+  return words.map((word) => `"${word}"`).join(", ");
+}
+
+/** `m:ss`, or `h:mm:ss` past an hour. */
+export function clock(seconds: number): string {
+  const total = Math.max(0, Math.floor(seconds));
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = String(total % 60).padStart(2, "0");
+  return h > 0 ? `${h}:${String(m).padStart(2, "0")}:${s}` : `${m}:${s}`;
+}
+
 /** Nothing above the threshold, and the LOW ones hidden: say where they are. */
-function OnlyLowGaps({ count }: { count: number }) {
+function OnlyLowGaps({ count, onToggleLow }: { count: number; onToggleLow?: () => void }) {
   return (
-    <p className="text-[var(--color-ink-muted)]" style={{ fontSize: "var(--text-metaSmall)" }}>
-      기본 기준 이상인 갭은 없습니다. 낮음으로 분류된 갭 {count}건은 위의 &quot;LOW {count}건
-      보기&quot;에서 볼 수 있습니다.
-    </p>
+    <div className="flex flex-wrap items-center" style={{ gap: "var(--space-8)" }}>
+      <Muted>기본 기준 이상인 갭은 없습니다. 낮음으로 분류된 갭이 {count}건 있습니다.</Muted>
+      {onToggleLow ? (
+        <Button tone="text" size="compact" onClick={onToggleLow}>
+          낮음 {count}건 보기
+        </Button>
+      ) : null}
+    </div>
   );
 }
 
@@ -243,14 +604,13 @@ function OnlyLowGaps({ count }: { count: number }) {
  * A report can be empty because the meeting covered its checklist, because the
  * pipeline has not run, or because the topic graph came out empty — which says
  * extraction found nothing, not that the meeting discussed nothing, and raises
- * no gaps by design. "감지된 갭이 없습니다" reads as the first of those, and a
- * team that trusts it once will not read the next report. The rail beside this
- * is what distinguishes them: it says whether anything was compared at all.
+ * no gaps by design. The rail beside this says whether anything was compared.
  */
 function EmptyGaps() {
   return (
-    <p className="text-[var(--color-ink-muted)]" style={{ fontSize: "var(--text-metaSmall)" }}>
+    <Muted>
       이 회의에서 확인된 갭이 없습니다. 오른쪽 템플릿 대조가 실제로 무엇이 확인되었는지 보여줍니다.
-    </p>
+    </Muted>
   );
 }
+

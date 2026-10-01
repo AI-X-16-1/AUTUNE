@@ -101,6 +101,32 @@ class Finding:
     topic_ids: tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class ScorePart:
+    """One term of ``score``'s weighted mean: which signal, its weight, its value."""
+
+    key: str
+    """``template`` (the item's own weight), ``coverage`` (1 - the matched
+    topic's centrality) or ``participation`` (the topic's silent share)."""
+    weight: float
+    value: float
+
+
+@dataclass(frozen=True)
+class ScoreBreakdown:
+    """How ``score`` reached its number, so S20 can show the same arithmetic.
+
+    Only the parts that were measured are here -- a missing item has no topic,
+    so its one part is the template weight -- and ``damping`` is set only on a
+    partial finding. ``score`` is the stored ``risk_score``: the screen never
+    recomputes it, so the explanation and the number cannot disagree.
+    """
+
+    parts: tuple[ScorePart, ...]
+    damping: float | None
+    score: float
+
+
 MISSING_TITLE = "{item} — 논의되지 않았습니다"
 PARTIAL_TITLE = "{item} — 충분히 다뤄지지 않았습니다"
 """Gap titles are product copy a reader sees on S20, so they are Korean
@@ -116,6 +142,7 @@ def compare(
     speech: Sequence[str],
     thresholds: Thresholds,
     heard: frozenset[str] = frozenset(),
+    subject: TopicView | None = None,
 ) -> list[Finding]:
     """Findings for one meeting, riskiest first.
 
@@ -138,6 +165,9 @@ def compare(
     noun — and it is exactly as strong as a spoken keyword, no stronger: partial
     at most. Empty when ``AUTUNE_GAP_EMBEDDER_IMPL=off``, which leaves the
     rule-based comparison unchanged.
+
+    ``subject`` is what the meeting was about -- ``subject_of`` picks it -- and
+    names the question of an item no topic matched. See ``question_for``.
 
     **A meeting with no topics raises no gaps at all**, and that survives the
     change. Every item would be missing, and the template would produce its
@@ -172,7 +202,7 @@ def compare(
                     category=item.category,
                     template_item=item.item,
                     title=template_for.format(item=item.item),
-                    question=question_for(item, matched),
+                    question=question_for(item, matched, subject),
                     coverage=coverage,
                     risk_score=risk,
                     severity=severity_of(risk, thresholds),
@@ -185,7 +215,9 @@ def compare(
     return [finding for _, finding in scored]
 
 
-def question_for(item: TemplateItem, matched: list[TopicView]) -> str:
+def question_for(
+    item: TemplateItem, matched: list[TopicView], subject: TopicView | None = None
+) -> str:
     """The question that would close this gap, naming a topic when there is one.
 
     A gap raised on a topic the meeting named and a gap raised on nothing are
@@ -194,21 +226,53 @@ def question_for(item: TemplateItem, matched: list[TopicView]) -> str:
     decoded first, and a reader who opens a report a week later no longer knows
     which "일" it meant.
 
-    **Only a matched topic is named**, and the one the finding was scored
-    against. A missing item has no topic, and naming the meeting's most central
-    one instead would be a guess — with extraction where it is, that guess is as
-    likely to be "다음 주" as the thing the meeting was about, and a question
-    about the wrong subject is worse than a general one. Same rule as
-    ``score``: what was not measured is not substituted for.
+    **A matched topic is named first**, the one the finding was scored against.
+    An item no topic matched names the meeting's ``subject`` instead -- the
+    thing the meeting was about, so "이 기능이 만족해야 하는 응답 시간과
+    처리량은?" reads "알림 발송의 응답 시간과 처리량 목표는?". This used to be
+    refused as a guess that was as likely to be "다음 주" as the meeting's
+    subject. Two things changed: a bare date or quantity is no longer a topic
+    (#528), and ``subject_of`` passes over a person's name, which is the other
+    label that could carry a meeting's centrality. The question names the
+    subject; it claims nothing about coverage, which stays the classification's.
+    Without a subject the template's own question stands.
 
     The label is transcript text and safe to put in a question for the reason it
     is safe as a node: ``graph.build_topics`` drops any entity carrying the mask
     character, so no topic label has ever contained a masked span (#250 confirms
     the guarantee holds through both extraction paths).
     """
-    if not matched:
-        return item.question
-    return item.question_about.format(topic=matched[0].label)
+    if matched:
+        return item.question_about.format(topic=matched[0].label)
+    if subject is not None:
+        return item.question_about.format(topic=subject.label)
+    return item.question
+
+
+SUBJECT_MIN_KEY = 2
+"""A name shorter than this, normalised, is not compared: one syllable inside a
+label says nothing about whether the label is a person."""
+
+
+def subject_of(topics: Sequence[TopicView], names: Sequence[str]) -> TopicView | None:
+    """The topic the meeting was about: the most central one that is not a
+    person's name.
+
+    ``names`` are the meeting's speaker labels and its team's display names. A
+    label that contains a name, or is contained in one ("민수" in "김민수"), is
+    passed over -- a colleague mentioned often is central and is not what a
+    question about performance should be about (#521 names a colleague without
+    the honorific, which is why containment and not equality).
+    """
+    keys = [key for key in (topic_key(name) for name in names) if len(key) >= SUBJECT_MIN_KEY]
+    for topic in sorted(topics, key=lambda t: (-t.centrality, t.id)):
+        label = topic_key(topic.label)
+        if not label:
+            continue
+        if any(key in label or label in key for key in keys):
+            continue
+        return topic
+    return None
 
 
 def match(item: TemplateItem, topics: list[TopicView]) -> list[TopicView]:
@@ -315,6 +379,16 @@ def score(
     coverage: Coverage,
     thresholds: Thresholds,
 ) -> float:
+    """Risk in 0..1. See ``score_breakdown``, which this is the number of."""
+    return score_breakdown(item, matched, coverage, thresholds).score
+
+
+def score_breakdown(
+    item: TemplateItem,
+    matched: list[TopicView],
+    coverage: Coverage,
+    thresholds: Thresholds,
+) -> ScoreBreakdown:
     """Risk in 0..1: template weight, how thinly the meeting covered it, and how
     much of the room was silent on it.
 
@@ -336,21 +410,24 @@ def score(
     A partial finding is damped on the way out. "Named but thin" is a weaker
     claim than "never came up", and the metric is precision.
     """
-    parts: list[tuple[float, float]] = [(thresholds.weight_template, item.weight)]
+    parts = [ScorePart("template", thresholds.weight_template, item.weight)]
 
     best = matched[0] if matched else None
     if best is not None:
-        parts.append((thresholds.weight_coverage, 1.0 - best.centrality))
+        parts.append(ScorePart("coverage", thresholds.weight_coverage, 1.0 - best.centrality))
         if best.silent_share is not None:
-            parts.append((thresholds.weight_participation, best.silent_share))
+            parts.append(
+                ScorePart("participation", thresholds.weight_participation, best.silent_share)
+            )
 
-    total = sum(weight for weight, _ in parts)
+    total = sum(part.weight for part in parts)
     if total <= 0:
         raise ValueError("risk weights sum to zero; check the AUTUNE_GAP_WEIGHT_ settings")
 
-    raw = sum(weight * value for weight, value in parts) / total
-    if coverage is Coverage.PARTIAL:
-        raw *= thresholds.partial_damping
+    raw = sum(part.weight * part.value for part in parts) / total
+    damping = thresholds.partial_damping if coverage is Coverage.PARTIAL else None
+    if damping is not None:
+        raw *= damping
 
     # Rounded before it is compared against a threshold. A missing item of
     # weight 0.7 comes out of the weighted mean as 0.6999999999999998, and
@@ -358,7 +435,9 @@ def score(
     # weighted exactly at the threshold, demoted by float residue at the
     # sixteenth decimal place. The score is a heuristic a screen shows to two
     # places; six is past anything it means and short of where the residue is.
-    return min(1.0, max(0.0, round(raw, 6)))
+    return ScoreBreakdown(
+        parts=tuple(parts), damping=damping, score=min(1.0, max(0.0, round(raw, 6)))
+    )
 
 
 def severity_of(risk: float, thresholds: Thresholds) -> str:

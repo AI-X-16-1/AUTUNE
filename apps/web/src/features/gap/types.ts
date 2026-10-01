@@ -140,6 +140,66 @@ export interface GapDismissal {
   dismissed: boolean;
 }
 
+/**
+ * One utterance a verdict rests on — `EvidenceRead` in
+ * `modules/gap/src/autune_gap/schemas.py`. Masked text, no speaker.
+ */
+export interface GapEvidence {
+  utterance_id: string;
+  start_sec: number;
+  text: string;
+}
+
+/** One term of the risk score's weighted mean — `ScorePartRead`. */
+export interface ScorePart {
+  /** `template` (the item's weight), `coverage` (1 − centrality) or `participation`. */
+  key: string;
+  weight: number;
+  value: number;
+}
+
+/**
+ * How a gap's score was reached — `ScoreBreakdownRead`. `score` is the stored
+ * `risk_score`; a breakdown that no longer adds up to it is not sent at all.
+ */
+export interface ScoreBreakdown {
+  parts: ScorePart[];
+  /** `partial_damping`, on a partial finding only. */
+  damping: number | null;
+  score: number;
+}
+
+/** What a verdict rests on: a thin topic, a keyword said, meaning, or nothing. */
+export type GapBasis = "topic" | "keyword" | "meaning" | "none";
+
+/**
+ * Why one gap was raised — `GapExplanationRead`. Not a contract: E scores a
+ * meeting on `GapReport` and never explains a verdict.
+ */
+export interface GapExplanation {
+  gap_id: string;
+  coverage: Coverage | null;
+  basis: GapBasis;
+  topic_label: string | null;
+  topic_centrality: number | null;
+  /** The template item's keywords: what the meeting was searched for. */
+  keywords: string[];
+  matched_keywords: string[];
+  evidence: GapEvidence[];
+  breakdown: ScoreBreakdown | null;
+}
+
+/** `GET /api/gap/explanations/{meeting_id}` — `GapExplanations`. */
+export interface GapExplanations {
+  meeting_id: string;
+  meeting_title: string;
+  meeting_started_at: string | null;
+  partial_centrality: number;
+  high_threshold: number;
+  medium_threshold: number;
+  gaps: GapExplanation[];
+}
+
 /** How far the meeting got with one checklist item. */
 export type Coverage = "covered" | "partial" | "missing";
 
