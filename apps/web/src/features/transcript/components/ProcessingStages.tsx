@@ -30,6 +30,12 @@ type Stage = { label: string; detail: string; state: StageState; progress?: numb
  *   `complete`. Module A cannot see their progress and this feature may not
  *   ask them (`CLAUDE.md`), so it says "시작됨" and points at their tabs.
  *
+ * - **A running step says "진행" in accent, with its own percentage.** S12
+ *   draws only "진행"; the number stays because it is the one thing that
+ *   moves during a recognition pass that takes about as long as the meeting.
+ *   The per-step bar is gone — the overall bar above is the one line S12
+ *   draws, and a second bar under the step said what its number says.
+ *
  * `failed` turns the step that was running red. The retry is a new upload
  * for the same meeting — the pipeline accepts a recording for a `failed`
  * meeting.
@@ -56,11 +62,17 @@ export function ProcessingStages({ meeting }: { meeting: MeetingDetail }) {
               className="mt-[7px]"
             />
             <div className="min-w-0 flex-1">
+              {/* A step that has not started reads muted, as S12 draws it: the
+                  hollow dot says "queued" and the title stops competing with
+                  the steps that have happened. */}
               <div
-                className="text-[var(--color-ink-strong)]"
                 style={{
                   fontSize: "var(--text-rowTitle)",
                   fontWeight: "var(--text-rowTitle-weight)",
+                  color:
+                    stage.state === "queued"
+                      ? "var(--color-ink-muted)"
+                      : "var(--color-ink-strong)",
                 }}
               >
                 {stage.label}
@@ -71,9 +83,6 @@ export function ProcessingStages({ meeting }: { meeting: MeetingDetail }) {
               >
                 {stage.detail}
               </div>
-              {stage.state === "running" && stage.progress !== undefined && (
-                <Bar value={stage.progress} label={`${stage.label} 진행률`} />
-              )}
             </div>
             <span
               className="shrink-0"
@@ -85,12 +94,17 @@ export function ProcessingStages({ meeting }: { meeting: MeetingDetail }) {
                     : "var(--color-ink-muted)",
               }}
             >
-              {stage.state === "running" && stage.progress !== undefined ? (
+              {stage.state === "running" ? (
+                // S12's running state is an accent "진행". The step's own
+                // percentage stays beside it: it is the only sign a
+                // forty-minute recognition pass is moving, and the overall
+                // bar above already carries the line S12 draws.
                 <span
                   className="tabular-nums text-[var(--color-accent-default)]"
                   style={{ fontFamily: "var(--font-mono)", fontSize: "var(--text-data)", fontWeight: "var(--text-data-weight)" }}
                 >
-                  {percent(stage.progress)}
+                  {STATE_LABEL.running}
+                  {stage.progress !== undefined && ` ${percent(stage.progress)}`}
                 </span>
               ) : (
                 STATE_LABEL[stage.state]
@@ -199,6 +213,9 @@ function stagesFor(meeting: MeetingDetail): Stage[] {
   };
   const progress = (from: number, upTo: number = from): number | undefined => {
     if (at < from || at > upTo || !analyzing) return undefined;
+    // A step that reports no fraction (and every job from before #545) would
+    // otherwise read "0%" for its whole run, which looks stuck.
+    if (meeting.stage_progress === null) return undefined;
     // A shared row counts its steps as one: masking is its first half.
     const span = upTo - from + 1;
     return (at - from + fraction) / span;
@@ -223,7 +240,13 @@ function stagesFor(meeting: MeetingDetail): Stage[] {
     },
     {
       label: "화자 분리",
-      detail: "pyannote · 화자 식별은 아직 없어 화자 1, 2 … 로 표시됩니다",
+      // Identification is not a step of this task. The task only separates
+      // voices (and, for a consented meeting on a deployment with voice
+      // profiles on, keeps one vector per speaker); a name is suggested from
+      // registered voices on the transcript afterwards and written only when
+      // somebody confirms it (`UnidentifiedSpeaker`). So the row keeps
+      // S12's "화자 분리" without "· 식별", and says where naming happens.
+      detail: "pyannote · 화자 1, 2 … 로 나누고, 이름은 처리 후 전사 화면에서 확인을 받아 붙입니다",
       state: state(2),
       progress: progress(2),
     },
@@ -252,7 +275,7 @@ function percent(value: number): string {
   return `${Math.floor(value * 100)}%`;
 }
 
-/** P3 in ui-spec: a 2px bar, accent while running. */
+/** P3 in ui-spec: a 2px bar, accent while running. Overall progress only. */
 function Bar({ value, label }: { value: number; label: string }) {
   return (
     <div

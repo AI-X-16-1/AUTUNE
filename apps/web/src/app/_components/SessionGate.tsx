@@ -4,7 +4,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { createContext, useContext, useEffect, useState } from "react";
 
 import { getSession, type SessionUser } from "@/shared/api/auth";
-import { authHeaders } from "@/shared/api/client";
+import { authHeaders, setSignedIn } from "@/shared/api/client";
 
 /**
  * Sends somebody with no session to `/login` before any screen draws.
@@ -20,6 +20,11 @@ import { authHeaders } from "@/shared/api/client";
  * or a pasted `localStorage` token has no session there and every API call
  * still succeeds. Redirecting it would lock out the dev setup
  * environments.md describes; the token is checked first.
+ *
+ * **A session found here switches the dev token off** (`setSignedIn`, #440).
+ * Without that, a signed-in tab would still send the developer token on every
+ * module call and run as two people at once. Nothing draws until the check
+ * returns, so no screen's first call goes out before the switch.
  *
  * **The `/dev-*` preview routes are let through unchecked.** `/dev-gap`,
  * `/dev-context` and `/dev-dashboard` exist to show a layout with no backend,
@@ -53,6 +58,7 @@ export function SessionGate({ children }: { children: React.ReactNode }) {
     const hasDevToken = "authorization" in authHeaders();
     void getSession().then((user) => {
       if (!current) return;
+      setSignedIn(user !== null);
       if (user || hasDevToken) {
         setState({ status: "in", user });
       } else {

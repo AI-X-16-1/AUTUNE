@@ -244,6 +244,23 @@ have a transcript four modules have already been told about.
 """
 
 
+def open_retention_window(session: Session, meeting: Meeting, *, now: datetime) -> None:
+    """Start the meeting's retention window now, because it is being held now.
+
+    The window is counted from when there is a record to keep, not from when
+    somebody booked the meeting. ``create_meeting`` gives a meeting booked ahead
+    a provisional ``expires_at``, and a team on a 30-day window that books a
+    meeting five weeks out would otherwise see it swept within the hour of it
+    starting -- mid-recording (review of #581). So the two transitions that
+    make a record -- a live session's first hello and an upload -- set it
+    again, from the team's window at that moment.
+    """
+    team = session.get(Team, meeting.team_id)
+    if team is None:  # the meeting row holds a CASCADE FK to it; a torn read
+        raise NotFoundError("team", meeting.team_id)
+    meeting.expires_at = now + timedelta(days=team.retention_days)
+
+
 def create_meeting(
     session: Session,
     *,
@@ -274,20 +291,27 @@ def create_meeting(
     else in the repository writes it (#206), and module D reads
     ``expires_at IS NULL`` as "never expires" — so a meeting created without it
     is one the retention sweep and every retention-aware read ignore for good.
-    Resolved now rather than at read time: a team that later shortens its
-    retention does not retroactively un-record what was agreed.
+    Resolved when written rather than at read time: a team that later shortens
+    its retention does not retroactively un-record what was agreed. For a
+    meeting booked ahead the value is provisional; ``open_retention_window``
+    sets it again when the meeting is held.
     """
     require_team_member(session, user_id=owner.id, team_id=team_id)
     team = session.get(Team, team_id)
     if team is None:  # membership just passed, so the team exists; this is a torn read
         raise NotFoundError("team", team_id)
 
+    now = datetime.now(tz=UTC)
     meeting = Meeting(
         team_id=team_id,
         title=title,
         started_at=started_at,
         status="scheduled",
-        expires_at=datetime.now(tz=UTC) + timedelta(days=team.retention_days),
+        # Provisional for a meeting booked ahead: ``open_retention_window``
+        # restarts it when the meeting is held. Never earlier than now: a
+        # recording from long ago, uploaded today, would otherwise be born
+        # expired and could be swept before its upload arrives (#581 review).
+        expires_at=max(started_at or now, now) + timedelta(days=team.retention_days),
     )
     session.add(meeting)
     session.flush()
@@ -365,6 +389,7 @@ def start_transcription(session: Session, *, meeting_id: str, uploader: User) ->
     job = TranscriptionJob(meeting_id=meeting_id, status="queued")
     session.add(job)
     meeting.status = "analyzing"
+    open_retention_window(session, meeting, now=now)
     session.flush()
     log.info(
         "audio_transcription_started",
@@ -742,6 +767,9 @@ def begin_live(session: Session, *, meeting_id: str) -> None:
             f"meeting {meeting_id} is {meeting.status}; a live session needs a meeting "
             f"that is {' or '.join(sorted(_ACCEPTS_A_LIVE_SESSION))}"
         )
+    if meeting.status == "scheduled":
+        # The first hello, not a reconnect: that is when the meeting is held.
+        open_retention_window(session, meeting, now=datetime.now(tz=UTC))
     meeting.status = "recording"
     session.flush()
     log.info("live_meeting_recording", meeting_id=meeting_id)

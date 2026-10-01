@@ -130,3 +130,24 @@ export type ResearchDocument = {
   created_at: string;
   decided_at: string | null;
 };
+
+/**
+ * S29's bodies — `/api/audio/me/*` and `/api/audio/teams/{id}/privacy`.
+ * Hand-written for the same reason as `MeetingDetail`: these mirror
+ * `schemas.py` (`MyData`, `SpeechDeleted`, `AccountDeleted`, `TeamPrivacy`)
+ * and no other module reads them.
+ */
+export type RetentionDays = 30 | 90 | 180 | 365;
+export type TeamPrivacy = { team_id: string; retention_days: number };
+export type MyData = {
+  meetings_with_my_speech: number;
+  voice_profile_rows: number;
+  voice_profile_since: string | null;
+  consents_attested: number;
+};
+export type SpeechDeleted = { utterances: number; voice_rows: number };
+export type AccountDeleted = { utterances: number };
+
+/** S30's body and answer — `schemas.PiiReport` / `PiiReported`. */
+export type PiiCategory = "name" | "internal_id" | "contact" | "other";
+export type PiiReported = { utterances: number; occurrences: number; republished: boolean };

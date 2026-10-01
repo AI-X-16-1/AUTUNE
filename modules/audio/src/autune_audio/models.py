@@ -165,7 +165,9 @@ class AudSpeakerEmbedding(Base, TimestampMixin):
     - a **profile** (``user_id``, no meeting): a voice somebody confirmed is
       theirs. Lives on the person, because cascading it with the meeting would
       reset identification every retention window. ``privacy.md`` section 4
-      allows a table reachable by ``user_id``.
+      allows a table reachable by ``user_id``. Bounded all the same: the
+      retention sweep deletes it once no meeting still names its owner
+      (``retention.forget_idle_profiles``, #363).
 
     ``source_meeting_id``/``source_speaker_label`` are provenance, not a link:
     ``SET NULL`` so the profile outlives the meeting it came from, and there so
