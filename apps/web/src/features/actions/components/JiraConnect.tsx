@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import {
   chooseJiraProject,
@@ -8,6 +8,7 @@ import {
   getJiraConnection,
   jiraConnectUrl,
   type JiraConnection,
+  type IntegrationScope,
 } from "@/shared/api/auth";
 import { Button } from "@/shared/ui";
 
@@ -24,18 +25,31 @@ import { backfillJira } from "../api";
  *
  * Nothing renders until the status is known, or for someone who is not on the
  * meeting's team.
+ *
+ * Takes the meeting the 액션 tab shows, or the team itself on S28 settings
+ * (#496); the server checks membership either way.
  */
-export function JiraConnect({ meetingId }: { meetingId: string }) {
+export function JiraConnect({
+  meetingId,
+  teamId,
+}: {
+  meetingId?: string;
+  teamId?: string;
+}) {
+  const scope = useMemo<IntegrationScope>(
+    () => (meetingId !== undefined ? { meetingId } : { teamId: teamId ?? "" }),
+    [meetingId, teamId],
+  );
   const [state, setState] = useState<JiraConnection | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [backfilled, setBackfilled] = useState<string | null>(null);
 
-  const refresh = () => getJiraConnection(meetingId).then(setState);
+  const refresh = () => getJiraConnection(scope).then(setState);
 
   useEffect(() => {
     let alive = true;
-    void getJiraConnection(meetingId).then((status) => {
+    void getJiraConnection(scope).then((status) => {
       if (!alive) return;
       setState(status);
       const url = new URL(window.location.href);
@@ -50,13 +64,13 @@ export function JiraConnect({ meetingId }: { meetingId: string }) {
     return () => {
       alive = false;
     };
-  }, [meetingId]);
+  }, [scope]);
 
   if (state === null) return null;
 
   const connect = () => {
     const here = window.location.pathname + window.location.search;
-    window.location.assign(jiraConnectUrl(meetingId, here));
+    window.location.assign(jiraConnectUrl(scope, here));
   };
 
   const run = async (work: () => Promise<void>, done: string, failed: string) => {
@@ -116,8 +130,8 @@ export function JiraConnect({ meetingId }: { meetingId: string }) {
             onChange={(event) =>
               void run(
                 async () => {
-                  await chooseJiraProject(meetingId, event.target.value);
-                  const { synced, failed } = await backfillJira(meetingId);
+                  await chooseJiraProject(scope, event.target.value);
+                  const { synced, failed } = await backfillJira(scope);
                   setBackfilled(
                     failed
                       ? `확정된 항목 ${synced}건을 넣었고 ${failed}건은 실패했습니다.`
@@ -146,7 +160,7 @@ export function JiraConnect({ meetingId }: { meetingId: string }) {
         loading={busy}
         onClick={() =>
           void run(
-            () => disconnectJira(meetingId),
+            () => disconnectJira(scope),
             "Jira 연결을 해제했습니다. Atlassian 계정의 연결된 앱에서 Autune도 제거해 주세요.",
             "연결을 해제하지 못했습니다.",
           )

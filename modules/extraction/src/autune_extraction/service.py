@@ -551,7 +551,11 @@ def apply_confirmed_summary(session: Session, utterance_id: str, resolution: Res
     for draft in drafts:
         draft.description = tidy(resolution.text)
         draft.description_resolved = said is not None and resolution.text != said.text
-        draft.related = _cited(session, draft.meeting_id, utterance_id, resolution)
+        # Keep the row of a line the draft already cites: a new equal row is
+        # inserted before the old one is deleted, and breaks the unique key.
+        kept = {r.utterance_id: r for r in draft.related}
+        cited = _cited(session, draft.meeting_id, utterance_id, resolution)
+        draft.related = [kept.get(r.utterance_id, r) for r in cited]
     session.flush()
     return True
 
@@ -968,6 +972,12 @@ def assignee_names(session: Session, items: Sequence[ExtActionItem]) -> dict[str
 
 
 # --- who may read what (#189) ---------------------------------------------------
+
+
+def is_team_member(session: Session, team_id: str, user_id: str) -> bool:
+    """Whether ``user_id`` is on ``team_id`` -- for a route that names the team
+    itself (S28 settings, #496) rather than one of its meetings."""
+    return _is_team_member(session, user_id=user_id, team_id=team_id)
 
 
 def _is_team_member(session: Session, *, user_id: str, team_id: str) -> bool:

@@ -246,6 +246,17 @@ ratios for a meeting (`_MIN_SPEAKERS_FOR_RATIO`, #128). Decided on #168.
 A test proving that your module's data is fully removed when a meeting is
 deleted is part of shipping a table, not an extra.
 
+**Copies outside Autune** (decided with the user, 2026-10-01; #588). Retention
+and deletion apply to what Autune holds. An item or decision a team sent to its
+own Notion or Jira, through an integration the team connected, is the team's
+record there and is not deleted with the meeting or the person. What Autune put
+on a person's own calendar is removed: on account deletion at once, with that
+person's own grant (it goes with the account), and on a meeting's expiry by a
+queued job, so a slow calendar never holds up the sweep. Both are best effort:
+an account deletion does not wait on Google, so if Google does not answer an
+event can remain on that calendar, and Autune's record of it goes with the
+account anyway.
+
 ## 5. Consent
 
 - Participants are notified when recording starts.
