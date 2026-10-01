@@ -233,6 +233,13 @@ class ExtExternalRef(Base):
     """For Jira, the cloud id of the site ``external_id`` lives on. An issue key
     like ``KAN-1`` is unique only within a site; after a reconnect to another
     site, a key without its site would name someone else's issue (#458)."""
+    synced_category: Mapped[str | None] = mapped_column(String(16))
+    """For Jira, the status category (``new``, ``indeterminate``, ``done``) the
+    issue was last left in by Autune or last read back from. It is how the
+    read-back tells a person's move in Jira from a board edit that has not
+    reached Jira yet (``jira_sync.pull_status_changes``). ``None`` until there
+    is a baseline: a ref written before the read-back existed, or one whose
+    issue never took the board's status; the next read-back records Jira's."""
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
