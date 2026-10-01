@@ -372,7 +372,7 @@ export function NewMeetingScreen({
                 >
                   {file
                     ? formatBytes(file.size)
-                    : "mp3 · wav · m4a · 최대 3h · 500MB"}
+                    : "mp3 · wav · m4a · 최대 500MB"}
                 </span>
               </label>
               {fileProblem ? (
