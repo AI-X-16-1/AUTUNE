@@ -40,6 +40,7 @@ def test_the_web_read_model_mirror_is_current() -> None:
 
     assert added == {
         "meeting_id",
+        "meeting_title",
         "origin",
         "is_candidate",
         "sync_refs",

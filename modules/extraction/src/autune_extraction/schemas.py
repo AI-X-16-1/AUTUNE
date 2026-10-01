@@ -97,6 +97,11 @@ class ActionItemRead(BaseModel):
 
     id: str
     meeting_id: str
+    meeting_title: str | None = None
+    """The title of the meeting the item came from. The board across every
+    meeting shows it on each card, so a person can tell which meeting an item
+    belongs to without opening it (mentoring, 2026-10-01). Read with the item,
+    never stored on it."""
     description: str
     description_resolved: bool = False
     """Whether ``description`` is ``ReferenceResolver``'s rewrite rather than

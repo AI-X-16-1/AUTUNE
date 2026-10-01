@@ -885,6 +885,7 @@ def read_model(
     summary: str | None = None,
     sync_refs: list[ExternalRefRead] | None = None,
     assignee_departed: bool = False,
+    meeting_title: str | None = None,
 ) -> ActionItemRead:
     """One item as this module's own screens read it.
 
@@ -931,6 +932,7 @@ def read_model(
     return ActionItemRead(
         id=item.id,
         meeting_id=item.meeting_id,
+        meeting_title=meeting_title,
         description=item.description,
         description_resolved=item.description_resolved,
         assignee_id=None if assignee_departed else item.assignee_id,
@@ -998,7 +1000,18 @@ def read_one(session: Session, item: ExtActionItem) -> ActionItemRead:
         item,
         assignee_name=name,
         assignee_departed=item.id in departed_assignees(session, [item]),
+        meeting_title=meeting_titles(session, [item]).get(item.meeting_id),
     )
+
+
+def meeting_titles(session: Session, items: Sequence[ExtActionItem]) -> dict[str, str]:
+    """The title of each meeting ``items`` came from, in one query. Reads the
+    shared ``meetings`` table and never writes it (invariant 4)."""
+    ids = {item.meeting_id for item in items}
+    if not ids:
+        return {}
+    rows = session.execute(select(Meeting.id, Meeting.title).where(Meeting.id.in_(ids)))
+    return dict(rows.tuples().all())
 
 
 def assignee_names(session: Session, items: Sequence[ExtActionItem]) -> dict[str, str]:
@@ -1135,6 +1148,7 @@ def list_action_items(
     departed = departed_assignees(session, items)
     summaries = action_item_summaries(session, items)
     refs = action_item_external_refs(session, [item.id for item in items])
+    titles = meeting_titles(session, items)
     return [
         read_model(
             item,
@@ -1142,6 +1156,7 @@ def list_action_items(
             summary=summaries.get(item.id),
             sync_refs=refs.get(item.id, []),
             assignee_departed=item.id in departed,
+            meeting_title=titles.get(item.meeting_id),
         )
         for item in items
     ]
@@ -1212,8 +1227,8 @@ def carried_over(session: Session, meeting_id: str, *, today: date | None = None
                     summary=summaries.get(item.id),
                     sync_refs=refs.get(item.id, []),
                     assignee_departed=item.id in departed,
+                    meeting_title=earlier[item.meeting_id].title,
                 ).model_dump(),
-                meeting_title=earlier[item.meeting_id].title,
                 meeting_started_at=earlier[item.meeting_id].started_at,
             )
             for item in shown
@@ -1304,7 +1319,12 @@ def read_detail(session: Session, item: ExtActionItem) -> ActionItemDetail:
     hidden = originals_hidden(item)
     return ActionItemDetail(
         **read_model(
-            item, assignee_name=name, summary=summary, sync_refs=refs, assignee_departed=departed
+            item,
+            assignee_name=name,
+            summary=summary,
+            sync_refs=refs,
+            assignee_departed=departed,
+            meeting_title=meeting_titles(session, [item]).get(item.meeting_id),
         ).model_dump(),
         sources=[] if hidden else source_utterances(session, item.id),
         context=[]

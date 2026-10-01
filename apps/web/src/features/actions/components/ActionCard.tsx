@@ -14,15 +14,22 @@ import type { ActionItemRead } from "../types";
  *
  * A broken integration link is red text, never a red fill — red belongs to
  * elapsing time and failure (ui-spec section 0).
+ *
+ * `showMeeting` puts the meeting's title above the title, for the board across
+ * every meeting, where a card alone did not say which meeting it came from
+ * (mentoring, 2026-10-01). One meeting's board leaves it off: every card there
+ * would repeat the same title.
  */
 export function ActionCard({
   item,
   selected = false,
   onSelect,
+  showMeeting = false,
 }: {
   item: ActionItemRead;
   selected?: boolean;
   onSelect?: (id: string) => void;
+  showMeeting?: boolean;
 }) {
   const overdue = isOverdue(item);
 
@@ -40,6 +47,14 @@ export function ActionCard({
         borderColor: selected ? "var(--color-accent-default)" : "var(--color-hairline)",
       }}
     >
+      {showMeeting && item.meeting_title ? (
+        <div
+          className="mb-1 truncate text-[var(--color-ink-muted)]"
+          style={{ fontSize: "var(--text-metaSmall)" }}
+        >
+          {item.meeting_title}
+        </div>
+      ) : null}
       <div
         className="text-[var(--color-ink-strong)]"
         style={{ fontSize: "var(--text-rowTitle)", fontWeight: "var(--text-rowTitle-weight)" }}
