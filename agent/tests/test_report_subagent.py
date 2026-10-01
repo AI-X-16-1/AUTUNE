@@ -9,6 +9,7 @@ import pytest
 
 from autune_agent.main import BudgetExceededError, CallBudget, RunScope, Tool, Toolbox
 from autune_agent.main.pending import arguments_ok
+from autune_agent.main.registry import collect_tools
 from autune_agent.main.subagents import TRIGGER_EVENTS
 from autune_agent.results import SubagentResult
 from autune_agent.subagents.report import SUBAGENT
@@ -32,7 +33,7 @@ ACTIONS = {
     "items": [{"title": "API 스펙", "body": "백엔드 · 10/2"}],
 }
 REVIEW = {"ok": True, "summary": "결정 확인 대기 1건.", "items": [{"title": "결정 확인 대기"}]}
-GAPS = {"ok": True, "summary": "논의된 토픽: 결제 수단", "items": []}
+GAPS = {"ok": True, "summary": "이 회의에 열린 갭이 없습니다.", "items": []}
 LINKS = {
     "ok": True,
     "summary": "",
@@ -196,7 +197,7 @@ def test_a_missing_tool_drops_its_section_and_the_report_still_goes() -> None:
 
     outcome = _run(EVENT, tools, scope_meeting=MEETING)
 
-    assert "💬" not in outcome.proposed[0].arguments["body_markdown"]
+    assert "⚠️" not in outcome.proposed[0].arguments["body_markdown"]
 
 
 def test_an_optional_tool_that_raises_drops_only_its_section() -> None:
@@ -211,7 +212,7 @@ def test_an_optional_tool_that_raises_drops_only_its_section() -> None:
     outcome = _run(EVENT, tools, scope_meeting=MEETING)
 
     body = outcome.proposed[0].arguments["body_markdown"]
-    assert "💬" not in body and "✅ 확정된 액션 아이템" in body
+    assert "⚠️" not in body and "✅ 확정된 액션 아이템" in body
 
 
 def test_an_unknown_meeting_is_a_failure_with_no_proposal() -> None:
@@ -236,6 +237,11 @@ def test_it_calls_only_registered_tools(registered: int) -> None:
     _run(EVENT, tools, scope_meeting=MEETING, budget=budget)
 
     assert budget.used == registered
+
+
+def test_the_gap_read_is_a_tool_c_actually_ships() -> None:
+    """An unregistered name is skipped silently, so a wrong one would just lose the section."""
+    assert GAPS_TOOL in collect_tools(["gap"])
 
 
 def test_the_allow_list_is_exactly_the_four_reads() -> None:

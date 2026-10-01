@@ -50,11 +50,20 @@ def _pending(review: ToolResult | None) -> list[str]:
 
 
 def _gaps(gaps: ToolResult | None) -> list[str]:
+    """C's open gaps: its count sentence, then each gap and its suggested question.
+
+    A LOW gap is left out: C's own screen (S20) keeps LOW behind a toggle, and a
+    team-channel post should not lead with what C ranks least. C's summary still
+    counts it, and the detail button reaches it.
+    """
     usable = _usable(gaps)
     if usable is None:
         return []
-    lines = [f"💬 {usable.summary}"] if usable.summary else []
-    lines += [f"⚠️ 놓친 논의: {item.title} — {item.body}" for item in usable.items]
+    lines = [f"⚠️ {usable.summary}"] if usable.summary else []
+    for item in usable.items:
+        if (item.model_extra or {}).get("severity") == "low":
+            continue
+        lines.append(f"• {item.title} — {item.body}" if item.body else f"• {item.title}")
     return lines
 
 

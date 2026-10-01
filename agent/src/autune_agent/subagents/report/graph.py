@@ -37,9 +37,9 @@ log = logging.getLogger(__name__)
 
 ACTIONS_TOOL = "extraction.meeting_action_items"
 REVIEW_TOOL = "extraction.review_state"
-GAPS_TOOL = "gap.meeting_gaps"
-"""Placeholder until C's tools.py ships; match it to C's real name then. A tool
-that is not registered is skipped, so the gap section is just absent."""
+GAPS_TOOL = "gap.open_gaps"
+"""C's read since #546. A tool that is not registered is skipped, so a wrong name
+here loses the gap section silently -- a test pins it to C's registry."""
 LINKS_TOOL = "context.links_for_meeting"
 TOOLS = (ACTIONS_TOOL, REVIEW_TOOL, GAPS_TOOL, LINKS_TOOL)
 OPTIONAL = (GAPS_TOOL, LINKS_TOOL)
