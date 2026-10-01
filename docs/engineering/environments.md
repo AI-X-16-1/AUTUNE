@@ -615,6 +615,7 @@ Configuration lives in the repository, not on the host:
 | --- | --- | --- |
 | `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` | secret | yes; the deploy stops without them |
 | `DEV_PUBLIC_HOST` | variable | yes; the IP port 80 is bound to |
+| `AUTUNE_SECRET_KEY` | secret | yes; signs every session. `AUTUNE_ENV=local` turns off the check that refuses `.env.example`'s public key, so without this anyone could forge a token. Generate: `python -c "import secrets; print(secrets.token_urlsafe(32))"` |
 | `DEV_BASIC_AUTH_PASSWORD` | secret | yes; the password for `/api/*/dev/` |
 | `AUTUNE_AUDIO_HF_TOKEN` | secret | yes; pyannote is gated, so every upload fails after transcription without it ("Pyannote and its three gated repositories" above) |
 | `AUTUNE_AGENT_LLM_API_KEY` | secret | no; without it the agent chat refuses |

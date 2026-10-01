@@ -20,6 +20,10 @@ x-python: &python
     # Dummy meetings only (#517). This mounts /api/audio/dev/token, which
     # issues a token for any email; nginx puts it behind a password.
     AUTUNE_ENV: local
+    # Settings refuses the shipped default key only outside env=local, so on
+    # this host nothing else stops .env.example's public key from signing
+    # every session. Required: compose stops before starting anything.
+    AUTUNE_SECRET_KEY: ${AUTUNE_SECRET_KEY:?set the AUTUNE_SECRET_KEY secret}
     # A password holding URL-reserved characters (@ : / ?) would break this URL.
     AUTUNE_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-autune}:${POSTGRES_PASSWORD:-autune}@postgres:5432/${POSTGRES_DB:-autune}
     AUTUNE_REDIS_URL: redis://redis:6379/0

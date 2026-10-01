@@ -25,6 +25,9 @@ jobs:
       DEV_PUBLIC_HOST: ${{ vars.DEV_PUBLIC_HOST }}
       # Pyannote is gated: without this every upload fails after Whisper.
       AUTUNE_AUDIO_HF_TOKEN: ${{ secrets.AUTUNE_AUDIO_HF_TOKEN }}
+      # Signs every session. .env.example's key is public, and env=local
+      # turns off the check that refuses it, so the deploy refuses instead.
+      AUTUNE_SECRET_KEY: ${{ secrets.AUTUNE_SECRET_KEY }}
       # The team's password for /api/*/dev/ behind nginx (user `autune`).
       DEV_BASIC_AUTH_PASSWORD: ${{ secrets.DEV_BASIC_AUTH_PASSWORD }}
       # Optional: without it /api/agent/chat refuses and the rest works.
@@ -45,6 +48,7 @@ jobs:
           if not defined POSTGRES_PASSWORD (echo POSTGRES_PASSWORD secret is not set & exit /b 1)
           if not defined POSTGRES_DB (echo POSTGRES_DB secret is not set & exit /b 1)
           if not defined AUTUNE_AUDIO_HF_TOKEN (echo AUTUNE_AUDIO_HF_TOKEN secret is not set & exit /b 1)
+          if not defined AUTUNE_SECRET_KEY (echo AUTUNE_SECRET_KEY secret is not set & exit /b 1)
           if not defined DEV_BASIC_AUTH_PASSWORD (echo DEV_BASIC_AUTH_PASSWORD secret is not set & exit /b 1)
           if not defined DEV_PUBLIC_HOST (echo DEV_PUBLIC_HOST repository variable is not set & exit /b 1)
           docker version || exit /b 1
