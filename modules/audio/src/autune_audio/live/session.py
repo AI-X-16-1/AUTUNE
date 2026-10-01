@@ -18,6 +18,7 @@ from typing import Literal
 
 import numpy as np
 
+from autune_audio import masking_rules
 from autune_audio.config import get_settings
 from autune_audio.live.embedder import Embedder, EmbedderUnavailable
 from autune_audio.live.segmenter import Segment, Segmenter
@@ -73,6 +74,10 @@ class LiveSession:
         # the process-wide embedder; a session whose embedder fails sets this
         # back to None and goes on without labels.
         self._embedder = embedder
+        # The team's own masking shapes (S30); the route sets them once the
+        # meeting is known. Empty until then, which masks what the built-in
+        # masker masks and nothing less.
+        self._shapes: tuple[str, ...] = ()
         self._tracker = (
             tracker
             if tracker is not None
@@ -122,6 +127,10 @@ class LiveSession:
         row = await self._row(last)
         return [row] if row is not None else []
 
+    def use_masking_rules(self, shapes: tuple[str, ...]) -> None:
+        """The meeting's team's masking shapes, applied after the built-in masker."""
+        self._shapes = shapes
+
     async def warm_up(self) -> None:
         """Load the models before the browser is told the channel is ready.
 
@@ -153,7 +162,7 @@ class LiveSession:
         spoken = " ".join(s.text.strip() for s in transcription.segments).strip()
         words = transcription.words
         confidence = float(np.mean([w.probability for w in words])) if words else 0.0
-        masked = mask(spoken, recogniser=self._recogniser).text
+        masked = masking_rules.apply(mask(spoken, recogniser=self._recogniser).text, self._shapes)
         del spoken  # the unmasked string ends here; everything below sees the masked one
         if not masked.strip():
             # Nothing heard, or nothing left once masked: not a row, and not

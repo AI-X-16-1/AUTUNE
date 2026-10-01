@@ -1280,3 +1280,28 @@ def test_the_steps_are_reported_in_the_order_they_run(
         ("masking", False),
         ("saving", False),
     ]
+
+
+def test_a_teams_own_masking_shape_is_masked_before_the_write(
+    pipeline: dict,
+    db_session: Session,
+    job: str,
+    meeting: str,
+    team: str,
+    published: list[tuple[str, dict]],
+) -> None:
+    """S30: a shape somebody reported once is masked in the next meeting --
+    stored and published -- with a different value in it."""
+    from autune_audio.models import AudMaskingRule
+
+    db_session.add(AudMaskingRule(team_id=team, shape="A-#####", category="internal_id"))
+    db_session.flush()
+    pipeline["transcription"] = _transcription_of("제 사번은 B-77812입니다")
+
+    tasks.process_recording(job)
+
+    stored = db_session.scalars(
+        sa.select(Utterance.text).where(Utterance.meeting_id == meeting)
+    ).all()
+    assert not any("77812" in text for text in stored)
+    assert "77812" not in str(published)

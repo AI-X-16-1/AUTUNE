@@ -150,4 +150,12 @@ export type AccountDeleted = { utterances: number };
 
 /** S30's body and answer — `schemas.PiiReport` / `PiiReported`. */
 export type PiiCategory = "name" | "internal_id" | "contact" | "other";
-export type PiiReported = { utterances: number; occurrences: number; republished: boolean };
+export type PiiReported = {
+  utterances: number;
+  occurrences: number;
+  republished: boolean;
+  /** The shape added to the team's rules (`A-#####`), never the reported text. */
+  rule: string | null;
+};
+/** One of a team's own masking shapes — `schemas.MaskingRule`. */
+export type MaskingRule = { id: number; shape: string; category: string; created_at: string };

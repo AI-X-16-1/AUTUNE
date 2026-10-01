@@ -248,7 +248,8 @@ function ReportModal({
       onReported={(result) =>
         onReported(
           `${result.occurrences}곳을 마스킹했습니다.` +
-            (result.republished ? " 요약·액션·갭 분석에 다시 반영됩니다." : ""),
+            (result.republished ? " 요약·액션·갭 분석에 다시 반영됩니다." : "") +
+            (result.rule ? ` 앞으로 ${result.rule} 형태는 자동으로 가립니다.` : ""),
         )
       }
     />
