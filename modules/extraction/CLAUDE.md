@@ -38,6 +38,15 @@ key a lineage on without the entity. Changing or dropping that field breaks D.
 
 See `/docs/architecture/contracts.md`, "The B → D boundary".
 
+`TeamActionProgress` on `autune.extraction.action_progress`, every ten
+minutes for each team with a meeting in the last 91 days, consumed by **E**
+for its real completion rate (#605). Counts per meeting and meeting ids only —
+no assignee, title or item id, so no per-person completion record can be
+built from it.
+
+`TeamAgenda` on `autune.extraction.agenda_changed`, every five minutes, for
+**D**'s pre-meeting brief (#436).
+
 ## Owns
 
 `ext_classifications`, `ext_action_items`, `ext_action_item_sources`,

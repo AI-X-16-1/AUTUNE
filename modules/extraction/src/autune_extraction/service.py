@@ -21,6 +21,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from autune_contracts.enums import ActionStatus, UtteranceKind
 from autune_contracts.extraction import (
+    ACTION_PROGRESS_WINDOW,
     AGENDA_TITLE_MAX,
     JIRA_ISSUE_URL,
     ActionItem,
@@ -29,6 +30,8 @@ from autune_contracts.extraction import (
     Classification,
     Decision,
     ExtractionResult,
+    MeetingActionProgress,
+    TeamActionProgress,
     TeamAgenda,
 )
 from autune_contracts.transcript import Utterance as TranscriptUtterance
@@ -3774,6 +3777,64 @@ def _one_line(text: str, limit: int) -> str:
     """Whitespace collapsed, and cut to ``limit`` characters with an ellipsis."""
     line = " ".join(text.split())
     return line if len(line) <= limit else line[: limit - 1].rstrip() + "…"
+
+
+def teams_with_recent_meetings(session: Session, *, now: datetime) -> list[str]:
+    """Teams with a meeting made inside ``ACTION_PROGRESS_WINDOW`` of ``now`` --
+    the teams whose action progress is published (#605), even when nothing in
+    the window is confirmed: a fresh empty snapshot says so."""
+    return sorted(
+        session.scalars(
+            select(Meeting.team_id)
+            .where(Meeting.created_at >= now - ACTION_PROGRESS_WINDOW)
+            .distinct()
+        )
+    )
+
+
+def team_action_progress(
+    session: Session, team_id: str, *, now: datetime, today: date
+) -> TeamActionProgress:
+    """The team's action items as counts per meeting, as of ``now`` (#605).
+
+    Per meeting made inside the window: items past ``needs_confirmation``,
+    those ``done``, and those confirmed, not done and due before ``today`` --
+    the board's overdue rule (``tools._overdue``). A meeting with nothing
+    confirmed is left out. Counts and meeting ids only: no assignee, title or
+    item id leaves here, so no per-person completion record can be built from
+    it (privacy.md section 3; the contract's own note).
+    """
+    confirmed = ExtActionItem.status != ActionStatus.NEEDS_CONFIRMATION.value
+    done = ExtActionItem.status == ActionStatus.DONE.value
+    overdue = and_(
+        confirmed,
+        ~done,
+        ExtActionItem.due_date.is_not(None),
+        ExtActionItem.due_date < today,
+    )
+    rows = session.execute(
+        select(
+            ExtActionItem.meeting_id,
+            func.count().filter(confirmed),
+            func.count().filter(done),
+            func.count().filter(overdue),
+        )
+        .join(Meeting, Meeting.id == ExtActionItem.meeting_id)
+        .where(Meeting.team_id == team_id, Meeting.created_at >= now - ACTION_PROGRESS_WINDOW)
+        .group_by(ExtActionItem.meeting_id)
+        .order_by(ExtActionItem.meeting_id)
+    ).all()
+    return TeamActionProgress(
+        team_id=team_id,
+        as_of=now,
+        meetings=[
+            MeetingActionProgress(
+                meeting_id=meeting_id, confirmed=n_confirmed, done=n_done, overdue=n_overdue
+            )
+            for meeting_id, n_confirmed, n_done, n_overdue in rows
+            if n_confirmed > 0
+        ],
+    )
 
 
 def teams_with_jira_issues(session: Session) -> list[str]:
