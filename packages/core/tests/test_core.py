@@ -104,7 +104,11 @@ def test_errors_render_a_consistent_body() -> None:
         assert set(body) == {"code", "message", "details"}
 
 
-def test_deletion_hooks_run_for_registered_modules() -> None:
+def test_deletion_hooks_run_for_registered_modules(monkeypatch: pytest.MonkeyPatch) -> None:
+    # An empty registry: in the full suite the modules' own hooks are already
+    # registered (extraction's since #588), and they need tables this test
+    # does not create. The same isolation as #581's test_retention.py.
+    monkeypatch.setattr(deletion, "_meeting_hooks", {})
     seen: list[str] = []
 
     @deletion.on_meeting_deleted("test_module")
