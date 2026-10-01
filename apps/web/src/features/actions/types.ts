@@ -170,6 +170,32 @@ export function isCandidate(item: ActionItemRead): boolean {
   return item.is_candidate;
 }
 
+/** `SummaryDecision`: a decision as the summary tab lists it. */
+export interface SummaryDecision {
+  id: string;
+  statement: string;
+  status: "pending" | "confirmed";
+}
+
+/**
+ * `MeetingSummary` (`GET /summary/{meeting_id}`, #421): S15's 요약 tab, v1 —
+ * B's rows in three levels and the team's memo. No model wrote any of it.
+ */
+export interface MeetingSummary {
+  meeting_id: string;
+  /** Confirmed first, then pending; a rejected decision is not listed. */
+  decisions: SummaryDecision[];
+  /** Every item of the meeting, whatever its status. */
+  action_items: ActionItemRead[];
+  open_questions: number;
+  ambiguous_waiting: number;
+  note: string | null;
+  note_updated_at: string | null;
+}
+
+/** The memo's limit, the server's `MAX_NOTE_CHARS`. */
+export const MAX_NOTE_CHARS = 2000;
+
 /** Where a proposed decision stands with the people reviewing it (#246). */
 export type DecisionStatus = "pending" | "confirmed" | "rejected";
 

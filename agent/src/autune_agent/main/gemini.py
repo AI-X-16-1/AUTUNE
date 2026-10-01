@@ -70,7 +70,10 @@ def _answer_text(body: Any) -> str:
         return ""
 
 
-class GeminiRouter:
+class GeminiText:
+    """One generateContent call through ``check_outbound``. The router and any
+    subagent that writes text use this, so there is one outbound path to audit."""
+
     def __init__(
         self,
         *,
@@ -83,7 +86,7 @@ class GeminiRouter:
         self._client = _GeminiClient(base_url, headers={"x-goog-api-key": api_key})
         self._client._client.timeout = timeout_sec  # noqa: SLF001 - httpx's own setter
 
-    def _generate(self, instructions: str, text: str, *, json_answer: bool) -> str:
+    def generate(self, instructions: str, text: str, *, json_answer: bool) -> str:
         config: dict[str, Any] = {"temperature": 0}
         if json_answer:
             config["responseMimeType"] = "application/json"
@@ -96,11 +99,44 @@ class GeminiRouter:
             self._client.request("POST", f"/models/{self._model}:generateContent", json=body)
         )
 
+
+def gemini_text_from_settings() -> GeminiText:
+    from autune_agent.config import get_agent_settings
+    from autune_core.errors import ConfigurationError
+
+    settings = get_agent_settings()
+    if settings.router_impl == "off" or not settings.llm_api_key:
+        raise ConfigurationError("the agent layer is off or AUTUNE_AGENT_LLM_API_KEY is unset")
+    return GeminiText(
+        api_key=settings.llm_api_key,
+        model=settings.llm_model,
+        base_url=settings.llm_base_url,
+        timeout_sec=settings.llm_timeout_sec,
+    )
+
+
+class GeminiRouter:
+    def __init__(
+        self,
+        *,
+        api_key: str,
+        model: str,
+        base_url: str = "https://generativelanguage.googleapis.com/v1beta",
+        timeout_sec: float = 30.0,
+    ) -> None:
+        self._text = GeminiText(
+            api_key=api_key, model=model, base_url=base_url, timeout_sec=timeout_sec
+        )
+
+    @property
+    def _client(self) -> _GeminiClient:
+        return self._text._client  # noqa: SLF001
+
     def route(self, request: str, subagents: Mapping[str, str]) -> str | None:
         if not subagents:
             return None
         listing = "\n".join(f"- {name}: {description}" for name, description in subagents.items())
-        answer = self._generate(
+        answer = self._text.generate(
             ROUTE_INSTRUCTIONS,
             f"Assistants:\n{listing}\n\nRequest:\n{request}",
             json_answer=True,
@@ -123,7 +159,7 @@ class GeminiRouter:
         ]
         if result.truncated:
             findings.append("(더 있음 — 상위 다섯 건만 표시)")
-        answer = self._generate(
+        answer = self._text.generate(
             COMPOSE_INSTRUCTIONS,
             f"Request:\n{request}\n\nFindings:\n" + "\n".join(findings),
             json_answer=False,

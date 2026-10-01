@@ -65,8 +65,12 @@ agreement, and sync the result to Notion.
    enough. See `../architecture/contracts.md`, "The B → D boundary".
 6. **Confirm** — every ambiguous agreement is recorded in `ext_confirmations`
    first, then the speaker gets a Slack DM. Until the DM goes out the row is
-   *not asked* and `AmbiguousAgreement.confirmation_sent` is false; sending
-   needs the speaker's Slack account (#70) and a team Slack client (#30).
+   *not asked* and `AmbiguousAgreement.confirmation_sent` is false. Every five
+   minutes `ask_confirmations` asks each one recorded within the 72-hour window
+   whose speaker is identified and consented, through the team's Slack bot to
+   the account that person linked (#255, #478), and to nobody else. A team
+   without Slack, or a speaker who has not linked, is looked at again on the
+   next run until the window closes.
 7. **Sync** — when a person confirms an action item (moves it out of
    `needs_confirmation`), create one page for it in the team's Notion database
    and store the URL in `ext_external_refs` (#30). One page per item: a later
@@ -123,16 +127,55 @@ the overlap the question turns on.
 | `ext_decision_refs` | The Notion page a confirmed decision became, one per decision and system |
 | `ext_calendar_events` | The event an item's due date became on its assignee's own calendar, and the date last synced |
 | `ext_calendar_polls` | When each person's calendar was last read back |
+| `ext_notion_targets` | The page and three databases a team's Notion sync writes to, one row per team (#428) |
 | `ext_confirmations` | Every ambiguous agreement, the DM once sent, and the response |
 | `ext_decisions` | Decision entities, their statements and source utterances. `origin` is `model` or `user`; a rerun rebuilds only the model's |
 | `ext_decision_sources` | Which utterances a decision was settled in, in order |
 | `ext_decision_reviews` | A person's verdict on each proposed decision (pending, confirmed, rejected) and an optional rewording, keyed by `dec_` id so a rerun over the same sources keeps it (#246). No reviewer column |
+| `ext_extraction_runs` | One row per extracted meeting: a digest of the consenting utterances the last run read, and when (#518) |
+| `ext_meeting_notes` | The team's memo on a meeting's summary tab (S15 요약, #421). Free text a member typed; no author column; a blank memo is no row |
+
+**The summary tab (S15 요약, #421, WBS 4.9).** B owns it. v1 is structured and
+uses no model: `GET /summary/{meeting_id}` gives the meeting's decisions
+(confirmed first, then pending; rejected left out), every action item, how many
+open questions were asked and how many ambiguous agreements still wait for
+their speaker, and the team's memo (`PUT /summary/{meeting_id}/note`, whole
+memo, blank removes it). The tab reads it in three levels -- counts, then the
+decisions and items, then their source lines on the 액션 tab. Nothing leaves,
+so it serves real meetings whatever #392 decides. A prose summary by an LLM
+over the whole meeting -- chunk summaries under the outbound limit, then a
+summary of those -- is v2 and waits on #392.
 
 A meeting that is processed again replaces its model-made rows —
 classifications, decisions, and draft items — rather than adding a second set,
 which is what makes a redelivered task safe. The one exception is the draft:
 once a person has edited anything in the meeting, a rerun leaves its items
 alone, because ADR 0006 makes the list theirs to finish.
+
+**Consent that changes after the run (#518).** The consent filter reads
+`participants.consented` when the run starts, and consent can be recorded
+later (A's `attest_consent`). Nothing announces that (#360), so every ten
+minutes `reextract_consent_changes` compares each meeting's
+`ext_extraction_runs` digest with the consenting utterances now, and extracts
+the meetings that differ again from the stored transcript — the same run as
+the event's, so it follows the rules above and publishes `ExtractionResult`
+again. A meeting extracted before the table existed has no row and is left
+alone. Speech that loses consent drops out of the model's rows the same way;
+what a person already edited or sent out from it waits on per-person
+withdrawal (S10/S11), the second half of #518.
+
+**A speaker identified after the run (#360).** A commitment by an unidentified
+speaker keeps only the label ("Speaker 2"). When A later fills
+`participants.user_id`, nothing announces it, so every ten minutes
+`fill_identified_assignees` gives each model item from the last 30 days still
+holding only the label it was drafted with the account of the one identified,
+consenting speaker behind its sources, and clears the label. An item whose
+assignee a person may have edited -- an edit naming an assignee field, or an
+older edit row naming no fields -- or whose label a person renamed is left
+alone. The fill is write-once: a later re-identification of the speaker is a
+person's reassignment on the board. A confirmed item is synced to Notion,
+Jira and the calendar the way the router syncs a board edit; like a board
+edit, no `ExtractionResult` is published.
 
 `ext_action_items.due_text` is the phrase a model item's due date was read from,
 for S18. It is cleared when a person sets the date themselves: the phrase no

@@ -114,8 +114,14 @@ Two routers are mounted by name next to the loop, and only two:
   not in `MODULES` (ADR 0010). Its subagents are collected inside the layer, so
   adding one never touches `main.py`.
 
-Both are fixed exceptions, not a precedent — a *module* feature still goes in
-that module's `router.py`, and a subagent in `agent/`.
+The worker has the same one exception: `apps/worker` passes
+`autune_agent.tasks` to `make_celery_app(extra_include=...)` beside the module
+loop, for the layer's two event subscriptions (agent-layer.md section 6). A
+subagent declares the events it wants in `Subagent.triggers` and never adds a
+task module of its own.
+
+All three are fixed exceptions, not a precedent — a *module* feature still goes in
+that module's `router.py` or `tasks.py`, and a subagent in `agent/`.
 
 `apps/web` is the only JavaScript app; `apps/bot` is Python, because Slack
 integration uses Bolt for Python.

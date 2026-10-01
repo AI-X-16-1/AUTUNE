@@ -63,14 +63,14 @@ export function LiveTranscript({
   return (
     <>
       <RecordingFrame state={state} />
+      {/* S13's body: the transcript across the panel, and a 372px paper rail
+          beside it behind a hairline. Full width — the screen has no sidebar,
+          and a meeting in progress is the only thing on it. */}
       <div
-        className="mx-auto flex gap-8"
-        style={{
-          maxWidth: "var(--layout-canvasWide)",
-          padding: "var(--space-page)",
-        }}
+        className="grid min-h-0 flex-1"
+        style={{ gridTemplateColumns: "minmax(0, 1fr) 372px" }}
       >
-        <main className="min-w-0 flex-1">
+        <main className="min-w-0" style={{ padding: "var(--space-12) var(--space-24)" }}>
           {rows.length === 0 ? (
             <p
               style={{
@@ -89,16 +89,21 @@ export function LiveTranscript({
           )}
         </main>
 
-        <LiveRail
-          state={state}
-          elapsedSeconds={elapsedSeconds}
-          plannedSeconds={plannedSeconds}
-          levels={levels}
-          counts={counts}
-          onPause={onPause}
-          onResume={onResume}
-          onStop={onStop}
-        />
+        <div
+          className="border-l border-[var(--color-hairline)] bg-[var(--color-surface-paper)]"
+          style={{ padding: "22px 20px" }}
+        >
+          <LiveRail
+            state={state}
+            elapsedSeconds={elapsedSeconds}
+            plannedSeconds={plannedSeconds}
+            levels={levels}
+            counts={counts}
+            onPause={onPause}
+            onResume={onResume}
+            onStop={onStop}
+          />
+        </div>
       </div>
     </>
   );

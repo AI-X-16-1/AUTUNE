@@ -445,6 +445,13 @@ instead, and a letters-only parser dropped every answer — indistinguishable
 from a model that found nothing. A name is accepted when it is one of that
 line's own mentions, so this widens nothing the letters did not offer.
 
+**Nor always with bare line numbers.** The template verifier's answers came
+back keyed `"발화 1"`, the label the request shows, and a digits-only key
+reader dropped every one. Both callers now read keys through
+`gemini.answers_by_line`, which takes a key for its number and refuses an
+answer that names no line asked, so the batch falls back rather than reading
+as "nothing stated".
+
 **Measured** on 2026-09-30, one request per model:
 
 - **The authored eval set sends nothing.** Over `gap_detection_v1` with spaCy,
@@ -767,23 +774,33 @@ embedding got wrong or nearly wrong: "인덱스 재색인이 먼저 끝나야…
 "인기순 정렬 대신 실시간 개인화로…" (not cold start), an owner and a date with no
 noun, and "네 알겠습니다, 마치겠습니다" (nothing).
 
-Measured on 2026-09-29 with `gemini-3.5-flash` (fallback never used), spaCy,
-the four authored meetings, templates `general.4` / `feature_planning.2`:
+Measured on 2026-09-30 with `gemini-3.5-flash` (fallback never used), spaCy,
+the four authored meetings, templates `general.4` / `feature_planning.2`, after
+the key-reading fix below:
 
 | | off | local | local + gemini |
 | --- | --- | --- | --- |
-| precision (`high`) | 0.89 | 1.00 | 0.94 |
+| precision (`high`) | 0.89 | 1.00 | 1.00 |
 | recall (`high`) | 1.00 | 0.94 | 1.00 |
-| false positives (all `no-noun`) | 2 | 0 | 1 |
+| false positives (all `no-noun`) | 2 | 0 | 0 |
 | verifier requests / utterances sent | 0 / 0 | 0 / 0 | 4 / 10 |
 
-**The verifier trades precision for recall here, not both up.** It restored
-the cold-start gap the embedding lost ("인기순 정렬 대신 실시간 개인화로…" is
-not a cold-start plan) and so brought recall back to 1.00. It also reopened a
-false positive the embedding had closed: it did not confirm "개인정보 마스킹이
-먼저 끝나야 전송할 수 있습니다" as a dependency, which it is. On four meetings
-that is one utterance either way, and it says nothing about which way real
-meetings lean — the W5 set decides whether the verifier is worth its request.
+**On this set the verifier takes recall back without giving up precision.** The
+embedding alone closed both `no-noun` false positives and lost the cold-start
+gap ("인기순 정렬 대신 실시간 개인화로…" is not a cold-start plan); with the
+verifier checking the ambiguous lines, the gap is back and neither false
+positive returns. Four authored meetings and ten asked utterances say the
+mechanism does what it was built for, and nothing about real meetings: the W5
+set decides whether it is worth its request. `--relations gemini` changes
+nothing here, because no utterance in the set holds a pair the rules decline
+(see "Relation assistance").
+
+**The 2026-09-29 run read 0.94 / 1.00 and was a parse bug.** The model keyed its
+answers by the line label it was shown (`"발화 1"`), the parser accepted only a
+bare digit, and every line came back answered empty — "not this item" on every
+ambiguous utterance, overriding the embedding. That run concluded the verifier
+traded precision for recall; it was measuring the parse. Keys are now read by
+`gemini.answers_by_line`.
 
 Probes: 3/5 on the embedding alone, 5/5 with Gemini (2 requests). Requests ran
 765-1,543 characters; no body carried the key, a speaker, an id or a line that
@@ -917,8 +934,16 @@ way.
   logged by id and retried on the next run. A `PrivacyViolationError` from the
   verifier is a broken invariant (`pipeline/base.py`). The sweep finishes the
   other meetings, then raises it with the meeting ids and never the value.
-- **No retry cap yet.** A meeting that keeps failing is retried every ten
-  minutes. With a hosted verifier, that spends its quota each time.
+- **Retries are capped per grouping (#516).** A failed rescore is counted on
+  the row (`rescore_failures`, `failed_people_key`, `last_failed_at`). After
+  `AUTUNE_GAP_RESCORE_MAX_ATTEMPTS` (5) failures in a row at the same grouping,
+  the sweep skips the meeting until its people move again. That is a new
+  question, so the count starts over. A successful detection clears all three.
+  Before the cap, a meeting that always failed was retried every ten minutes
+  for good, spending a hosted verifier's quota each time. A privacy violation is
+  not counted, because `check_outbound` refused it before anything was sent. The
+  sweep logs `held` for the meetings it skipped, and each failure logs its
+  attempt number and whether that was the last.
 - **No backfill.** A meeting scored before the table existed has no row and is
   left alone until its detection runs again. Speaker confirmation landed days
   earlier, so few meetings have a `user_id` to be stale about.

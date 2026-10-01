@@ -22,6 +22,7 @@ from sqlalchemy.orm import Session
 
 from autune_agent.results import SubagentResult, ToolResult
 
+from .own_tools import collect_own_tools
 from .registry import CallBudget, RunScope, Tool, Toolbox, collect_tools, refuse_tracing
 from .router import Router
 from .subagents import CompiledSubagent, Subagent, collect_subagents
@@ -42,6 +43,7 @@ def build_main_graph(
     tools: Mapping[str, Tool],
     budget: CallBudget,
     scope: RunScope,
+    route_to: str | None = None,
 ) -> Any:
     refuse_tracing()
     compiled: dict[str, CompiledSubagent] = {
@@ -51,7 +53,8 @@ def build_main_graph(
     options = {name: sub.description for name, sub in subagents.items()}
 
     def route(state: MainState) -> MainState:
-        name = router.route(state["request"], options)
+        # A trigger names its subagent; only a chat message is routed by a model.
+        name = route_to if route_to is not None else router.route(state["request"], options)
         return {"route": name if name in compiled else None}
 
     def delegate(state: MainState) -> MainState:
@@ -91,6 +94,7 @@ def run(
     subagents: Mapping[str, Subagent] | None = None,
     tools: Mapping[str, Tool] | None = None,
     budget: CallBudget | None = None,
+    route_to: str | None = None,
 ) -> MainState:
     """One chat turn or one trigger, start to finish.
 
@@ -101,9 +105,10 @@ def run(
         session=session,
         router=router,
         subagents=collect_subagents() if subagents is None else subagents,
-        tools=collect_tools() if tools is None else tools,
+        tools={**collect_tools(), **collect_own_tools()} if tools is None else tools,
         budget=budget or CallBudget(),
         scope=scope,
+        route_to=route_to,
     )
     state: MainState = graph.invoke({"request": request})
     return state

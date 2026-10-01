@@ -26,6 +26,8 @@ from autune_extraction.models import (
     ExtDecisionReview,
     ExtDecisionSource,
     ExtEditEvent,
+    ExtExtractionRun,
+    ExtMeetingNote,
 )
 
 B_TABLES = (
@@ -37,6 +39,8 @@ B_TABLES = (
     "ext_decision_reviews",
     "ext_confirmations",
     "ext_classifications",
+    "ext_extraction_runs",
+    "ext_meeting_notes",
 )
 
 
@@ -96,6 +100,8 @@ def meeting(db_session: Session) -> dict[str, str]:
     )
     db_session.flush()
     db_session.add(ExtEditEvent(meeting_id=meeting.id, action_item_id=item.id, kind="edited"))
+    db_session.add(ExtExtractionRun(meeting_id=meeting.id, consent_key="0" * 64))
+    db_session.add(ExtMeetingNote(meeting_id=meeting.id, body="팀 메모"))
     db_session.add(
         ExtDecisionReview(
             decision_id=decision.id, meeting_id=meeting.id, status="confirmed", statement="확정"
