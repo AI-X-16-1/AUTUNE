@@ -24,6 +24,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -123,8 +124,18 @@ class UserIntegration(Base, TimestampMixin):
     __table_args__ = (
         UniqueConstraint("user_id", "service", name="uq_user_integrations_user_service"),
         CheckConstraint(
-            "service IN ('calendar')",
+            "service IN ('calendar','slack')",
             name="ck_user_integrations_service",
+        ),
+        # One Slack member is one Autune person: a second confirmed link to the
+        # same member is a borrowed Slack session, and it would send one
+        # person's speaking ratio to another. The route checks first; this is
+        # what holds when two confirmations race (#478 review).
+        Index(
+            "uq_user_integrations_slack_member",
+            text("(config->>'slack_user_id')"),
+            unique=True,
+            postgresql_where=text("service = 'slack' AND (config->>'slack_user_id') IS NOT NULL"),
         ),
     )
 

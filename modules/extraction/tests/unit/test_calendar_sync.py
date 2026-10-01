@@ -19,7 +19,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
-from autune_core import Base, Meeting, TeamMember, User, Utterance
+from autune_core import Base, Meeting, PrivacyViolationError, TeamMember, User, Utterance
 from autune_core.user_integrations import UserIntegrationConfig
 from autune_extraction import calendar_sync, tasks
 from autune_extraction.calendar_sync import (
@@ -607,6 +607,29 @@ def test_one_persons_unexpected_failure_does_not_stop_the_others(
     tasks.pull_calendar_changes()
 
     assert seen == ["user_a", "user_b"]
+
+
+def test_a_privacy_block_on_the_notion_step_is_logged_as_a_block(
+    wired: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Blocked, not failed: its own event, and the next item still syncs."""
+    events: list[str] = []
+    synced: list[str] = []
+
+    def notion(action_item_id: str) -> None:
+        if action_item_id == "act_blocked":
+            raise PrivacyViolationError("unmasked phone number")
+        synced.append(action_item_id)
+
+    monkeypatch.setattr(tasks, "users_with_integration", lambda _s, _svc: ["user_a"])
+    monkeypatch.setattr(tasks, "_pull_one", lambda _u: ["act_blocked", "act_ok"])
+    monkeypatch.setattr(tasks, "sync_action_item", notion)
+    monkeypatch.setattr(tasks.log, "warning", lambda event, **_: events.append(event))
+
+    tasks.pull_calendar_changes()
+
+    assert events == ["extraction_notion_sync_blocked_by_privacy_guard"]
+    assert synced == ["act_ok"]
 
 
 def _connected_me(monkeypatch: pytest.MonkeyPatch, calendar: FakeCalendar) -> None:

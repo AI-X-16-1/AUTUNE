@@ -33,3 +33,15 @@ def test_the_report_details_button_is_acknowledged() -> None:
     app.actions[MEETING_REPORT_OPEN_ACTION](ack=ack)
 
     ack.assert_called_once_with()
+
+
+def test_the_review_button_is_acknowledged() -> None:
+    from autune_intelligence.service import MEETING_REPORT_REVIEW_ACTION
+
+    app = _App()
+    slack.register(app)  # type: ignore[arg-type]
+    ack = MagicMock()
+
+    app.actions[MEETING_REPORT_REVIEW_ACTION](ack=ack)
+
+    ack.assert_called_once_with()

@@ -106,7 +106,7 @@
   },
   "typography": {
     "fontFamily": {
-      "sans": { "$value": "Pretendard, system-ui, -apple-system, sans-serif", "$type": "fontFamily" },
+      "sans": { "$value": "'Pretendard Variable', Pretendard, system-ui, -apple-system, sans-serif", "$type": "fontFamily" },
       "mono": { "$value": "ui-monospace, Menlo, monospace", "$type": "fontFamily", "$description": "Time codes, scores, IDs, dates and percentages only" }
     },
     "scale": {

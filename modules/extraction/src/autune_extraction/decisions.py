@@ -23,6 +23,7 @@ from datetime import date
 from autune_contracts.enums import UtteranceKind
 from autune_core.ids import DECISION
 
+from .noun_form import tidy
 from .slots import parse_due
 
 DEFAULT_MAX_GAP = 2
@@ -237,9 +238,14 @@ def _build(
     three turns away and the deadline is relative to another date, so neither is
     in the quoted row.
 
-    It is still assembled from what was said, never written anew. A generated
-    sentence would be wrong in a way the reader could not see; this is wrong in a
-    way they can, and ``source_utterance_ids`` is what they check it against.
+    It is still assembled from what was said, never written by a model. A
+    generated sentence would be wrong in a way the reader could not see; this is
+    wrong in a way they can, and ``source_utterance_ids`` is what they check it
+    against. The one rewrite is ``noun_form.tidy``, which puts the sentence's
+    ending in the noun form a record uses -- a fixed list of endings, and a
+    sentence none of them fits is left as it was said. The original utterances
+    are shown beside it on S15, and a person confirms or rewords the line before
+    anything leaves.
 
     ``region`` is every utterance from the first member to the last, the
     non-decision ones included — that is where the commitment naming the owner
@@ -253,7 +259,7 @@ def _build(
     """
     scope = list(region) or list(members)
     substance = _substance(members)
-    parts = [substance.text.strip()]
+    parts = [tidy(substance.text.strip())]
 
     owner = _owner(scope, substance)
     if owner:

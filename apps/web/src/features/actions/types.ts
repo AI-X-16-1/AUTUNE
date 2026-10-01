@@ -154,6 +154,12 @@ export interface EditHistoryEntry {
 export interface ActionItemDetail extends ActionItemRead {
   /** In the order they were spoken. */
   sources: SourceUtterance[];
+  /**
+   * What was said just before the first source, in spoken order — so a sentence
+   * with nothing to point at ("다음 주까지 볼게요") reads with what it is about.
+   * Not what the item was drawn from.
+   */
+  context?: SourceUtterance[];
   /** Oldest first. Empty for an item the model extracted and nobody touched. */
   history?: EditHistoryEntry[];
 }
@@ -169,6 +175,32 @@ export interface ActionItemDetail extends ActionItemRead {
 export function isCandidate(item: ActionItemRead): boolean {
   return item.is_candidate;
 }
+
+/** `SummaryDecision`: a decision as the summary tab lists it. */
+export interface SummaryDecision {
+  id: string;
+  statement: string;
+  status: "pending" | "confirmed";
+}
+
+/**
+ * `MeetingSummary` (`GET /summary/{meeting_id}`, #421): S15's 요약 tab, v1 —
+ * B's rows in three levels and the team's memo. No model wrote any of it.
+ */
+export interface MeetingSummary {
+  meeting_id: string;
+  /** Confirmed first, then pending; a rejected decision is not listed. */
+  decisions: SummaryDecision[];
+  /** Every item of the meeting, whatever its status. */
+  action_items: ActionItemRead[];
+  open_questions: number;
+  ambiguous_waiting: number;
+  note: string | null;
+  note_updated_at: string | null;
+}
+
+/** The memo's limit, the server's `MAX_NOTE_CHARS`. */
+export const MAX_NOTE_CHARS = 2000;
 
 /** Where a proposed decision stands with the people reviewing it (#246). */
 export type DecisionStatus = "pending" | "confirmed" | "rejected";
@@ -231,6 +263,18 @@ export interface ReviewAmbiguous {
   utterance_id: string;
   outcome: "not_asked" | "pending" | "undecided" | "resolved";
   resolved_kind: string | null;
+}
+
+/**
+ * One decision and the words it was settled in — `DecisionDetail`, from
+ * `GET /decisions/{id}`. The list carries ids and one preview line; the
+ * verbatim quotations come one row at a time.
+ */
+export interface DecisionDetail extends ReviewDecision {
+  /** In the order they were spoken: the proposal first, the settling turn last. */
+  sources: SourceUtterance[];
+  /** The lines just before the first source, in spoken order. */
+  context?: SourceUtterance[];
 }
 
 /** `GET /reviews/{meeting_id}` — everything that needs a person first. */

@@ -84,6 +84,11 @@ class Tool:
         """Named parameters after the session, for filling scope arguments in."""
         return frozenset(inspect.signature(self.fn).parameters)
 
+    @property
+    def required(self) -> frozenset[str]:
+        """Parameters the call must supply. The first is the session, always passed."""
+        return required_parameters(self.fn, skip_first=True)
+
     def __call__(self, session: Session, **arguments: Any) -> ToolResult:
         raw = self.fn(session, **arguments)
         try:
@@ -198,7 +203,14 @@ class Toolbox:
             # A route to correct, not a crash.
             result = ToolResult.failure(f"{name} is not available here")
         else:
-            scoped = self._in_scope(tool, arguments)
+            scoped = bind_scope(
+                tool.parameters,
+                arguments,
+                self._scope,
+                self._session,
+                required=tool.required,
+                open_ended=takes_any_keyword(tool.fn),
+            )
             result = scoped if isinstance(scoped, ToolResult) else tool(self._session, **scoped)
         self._budget.steps.append(
             {
@@ -210,21 +222,70 @@ class Toolbox:
         )
         return result
 
-    def _in_scope(self, tool: Tool, arguments: dict[str, Any]) -> dict[str, Any] | ToolResult:
-        """The arguments with the run's scope written in, or the refusal."""
-        scope = self._scope
-        arguments = dict(arguments)
-        team_id = arguments.get("team_id")
-        if team_id is not None and team_id != scope.team_id:
-            # Not echoed back: the id is whatever the model wrote.
-            return ToolResult.failure("team_id is outside this run's team")
-        if "team_id" in tool.parameters:
-            arguments["team_id"] = scope.team_id
-        meeting_id = arguments.get("meeting_id")
-        if meeting_id is None and scope.meeting_id and "meeting_id" in tool.parameters:
-            arguments["meeting_id"] = meeting_id = scope.meeting_id
-        if meeting_id is not None:
-            meeting = self._session.get(Meeting, meeting_id)
-            if meeting is None or meeting.team_id != scope.team_id:
-                return ToolResult.failure("meeting not found")
-        return arguments
+
+NO_MEETING = "this run is about no meeting; pass meeting_id"
+UNEXPECTED_ARGUMENT = "unexpected argument"
+"""Without the name: it is whatever the model wrote."""
+MISSING_ARGUMENT = "missing argument: "
+"""Followed by parameter names, which come from the code, never from the model."""
+
+
+def takes_any_keyword(fn: Callable[..., Any]) -> bool:
+    return any(
+        p.kind is inspect.Parameter.VAR_KEYWORD for p in inspect.signature(fn).parameters.values()
+    )
+
+
+def required_parameters(fn: Callable[..., Any], *, skip_first: bool) -> frozenset[str]:
+    params = list(inspect.signature(fn).parameters.values())
+    if skip_first:
+        params = params[1:]
+    return frozenset(
+        p.name
+        for p in params
+        if p.default is inspect.Parameter.empty
+        and p.kind not in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)
+    )
+
+
+def bind_scope(
+    parameters: frozenset[str],
+    arguments: Mapping[str, Any],
+    scope: RunScope,
+    session: Session,
+    *,
+    required: frozenset[str] = frozenset(),
+    open_ended: bool = True,
+) -> dict[str, Any] | ToolResult:
+    """``arguments`` with the run's scope written in, or the refusal.
+
+    One function for a tool call and for an action's execution
+    (``main/actions.py``), so the rule cannot drift between reading and
+    writing: a model that could not read another team's work cannot change it
+    either (#449, answered on its review).
+    """
+    bound = dict(arguments)
+    team_id = bound.get("team_id")
+    if team_id is not None and team_id != scope.team_id:
+        # Not echoed back: the id is whatever the model wrote.
+        return ToolResult.failure("team_id is outside this run's team")
+    if "team_id" in parameters:
+        bound["team_id"] = scope.team_id
+    meeting_id = bound.get("meeting_id")
+    if meeting_id is None and scope.meeting_id and "meeting_id" in parameters:
+        bound["meeting_id"] = meeting_id = scope.meeting_id
+    if meeting_id is not None:
+        meeting = session.get(Meeting, meeting_id)
+        if meeting is None or meeting.team_id != scope.team_id:
+            return ToolResult.failure("meeting not found")
+    # A route to correct, not a TypeError that fails the whole run: a chat run
+    # has no meeting in its scope, so a per-meeting tool called without one
+    # would otherwise crash (#509 review).
+    if not open_ended and set(bound) - parameters:
+        return ToolResult.failure(UNEXPECTED_ARGUMENT)
+    missing = required - set(bound)
+    if "meeting_id" in missing:
+        return ToolResult.failure(NO_MEETING)
+    if missing:
+        return ToolResult.failure(MISSING_ARGUMENT + ", ".join(sorted(missing)))
+    return bound

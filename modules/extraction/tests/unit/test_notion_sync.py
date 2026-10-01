@@ -38,6 +38,7 @@ from autune_extraction.models import (
     ExtActionItemSource,
     ExtEditEvent,
     ExtExternalRef,
+    ExtNotionTarget,
 )
 from autune_extraction.router import router
 from autune_integrations import PermanentIntegrationError
@@ -57,6 +58,7 @@ TABLES = [
     ExtActionItemSource.__table__,
     ExtEditEvent.__table__,
     ExtExternalRef.__table__,
+    ExtNotionTarget.__table__,
 ]
 
 
@@ -624,3 +626,51 @@ def test_the_task_uses_the_teams_token_and_database(
 
     assert tokens == ["secret-token", "secret-token"]
     assert [database for database, _ in notion.pages] == ["db_team_1"]
+
+
+# --- deleting an item trashes its page (#467, option B) -------------------------------
+
+
+def test_deleting_an_item_moves_its_page_to_notions_trash(
+    wired: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from .conftest import TRASH_NOTION_PAGE
+
+    class Closable(FakeNotion):
+        def close(self) -> None:
+            pass
+
+    notion = Closable()
+    config = IntegrationConfig(
+        service="notion", team_id="team_1", secret="t", config={"action_db_id": DATABASE}
+    )
+    monkeypatch.setattr(tasks, "load_integration", lambda _s, _t, _n: config)
+    monkeypatch.setattr(tasks, "NotionClient", lambda token: notion)
+    monkeypatch.setattr(tasks, "trash_notion_page", TRASH_NOTION_PAGE)
+    row = item(wired)
+    tasks.sync_action_item(row.id)
+    ref = wired.get(ExtExternalRef, (row.id, "notion"))
+    assert ref is not None
+
+    tasks.trash_notion_page(row.id)
+
+    assert notion.page_state(str(ref.external_id)) == "archived"  # in the trash, restorable
+
+
+def test_an_unreachable_notion_never_blocks_a_deletion(
+    wired: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from .conftest import TRASH_NOTION_PAGE
+
+    def down(_s: object, _t: str, _n: str) -> None:
+        raise PermanentIntegrationError("notion is down")
+
+    row = item(wired)
+    wired.add(
+        ExtExternalRef(action_item_id=row.id, system="notion", meeting_id=MEETING, external_id="p1")
+    )
+    wired.flush()
+    monkeypatch.setattr(tasks, "load_integration", down)
+    monkeypatch.setattr(tasks, "trash_notion_page", TRASH_NOTION_PAGE)
+
+    tasks.trash_notion_page(row.id)  # must not raise

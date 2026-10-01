@@ -32,6 +32,7 @@ from .schemas import (
     MeetingSummary,
     SpeakerAssignment,
     SpeakerEntry,
+    TeamCreate,
     TeamMemberSummary,
     TeamSummary,
 )
@@ -105,6 +106,18 @@ def list_teams(user: CurrentUser, session: SessionDep) -> list[TeamSummary]:
     ]
 
 
+@router.post("/teams", response_model=TeamSummary, status_code=status.HTTP_201_CREATED)
+def create_team(body: TeamCreate, user: CurrentUser, session: SessionDep) -> TeamSummary:
+    """S02: a new workspace with the caller on it. See ``service.create_team``."""
+    team = service.create_team(
+        session,
+        owner=user,
+        name=body.name,
+        role=body.role,
+    )
+    return TeamSummary(team_id=team.id, name=team.name)
+
+
 @router.get("/meetings", response_model=list[MeetingSummary])
 def list_meetings(user: CurrentUser, session: SessionDep) -> list[MeetingSummary]:
     """The meetings of the teams this person belongs to, newest first. S05's list.
@@ -137,8 +150,11 @@ def list_meetings(user: CurrentUser, session: SessionDep) -> list[MeetingSummary
 @router.get("/meetings/{meeting_id}", response_model=MeetingDetail)
 def get_meeting(meeting_id: str, user: CurrentUser, session: SessionDep) -> MeetingDetail:
     """Where the meeting is in its life. Screen S12 polls this until it is
-    ``complete`` or ``failed``, then reads the transcript."""
+    ``complete`` or ``failed``, then reads the transcript. While a
+    transcription runs, ``stage`` and ``stage_progress`` say how far it got
+    (``progress.ProgressReporter``)."""
     meeting = service.meeting_for(session, meeting_id=meeting_id, reader=user)
+    stage, stage_progress = service.running_stage(session, meeting_id=meeting.id)
     return MeetingDetail(
         meeting_id=meeting.id,
         title=meeting.title,
@@ -146,6 +162,8 @@ def get_meeting(meeting_id: str, user: CurrentUser, session: SessionDep) -> Meet
         original_audio_deleted=meeting.original_audio_deleted,
         pii_masked=meeting.pii_masked,
         team_id=meeting.team_id,
+        stage=stage,
+        stage_progress=stage_progress,
     )
 
 

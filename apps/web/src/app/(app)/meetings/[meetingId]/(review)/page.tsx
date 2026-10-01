@@ -1,5 +1,8 @@
 import { StoredMeetingScreen } from "@/features/transcript";
 
+/** The gutter the design files put under the tab row; see ./layout.tsx. */
+const TAB_BODY = { padding: "20px var(--space-page) var(--space-page)" } as const;
+
 /**
  * S15, transcript tab — a finished meeting, read back from what was stored.
  *
@@ -13,5 +16,9 @@ export default async function StoredMeetingPage({
   params: Promise<{ meetingId: string }>;
 }) {
   const { meetingId } = await params;
-  return <StoredMeetingScreen meetingId={meetingId} />;
+  return (
+    <div style={TAB_BODY}>
+      <StoredMeetingScreen meetingId={meetingId} />
+    </div>
+  );
 }

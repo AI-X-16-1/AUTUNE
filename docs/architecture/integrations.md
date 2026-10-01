@@ -1,8 +1,10 @@
 # Integrations
 
 `packages/integrations` wraps every service Autune talks to: Slack, Notion,
-Google Calendar. Modules call these clients rather than an API directly. Jira
-was evaluated and dropped from the product — see `external-approvals.md`.
+Google Calendar, Jira. Modules call these clients rather than an API directly.
+Jira was dropped once (#82) and brought back over one-click OAuth 3LO with a
+reconnect path for its person-bound grant (#457, #458) — see
+`external-approvals.md`.
 
 ## Why a shared wrapper
 

@@ -25,8 +25,11 @@ to its owner.
    plain dicts; the registry validates them into `ToolResult`.
 3. **Read through the `Toolbox` only.** It holds your allow-list and the run's
    budget. import-linter refuses a subagent importing a module.
-4. **Never call a write yourself.** Return `ProposedAction`s; the main agent
-   puts L2 through plan mode.
+4. **Never call a write yourself.** Return `ProposedAction`s. The main agent
+   runs L1 at the end of the run (`main/actions.py`) and puts L2 through plan
+   mode. The level that counts is the one the owning module declared
+   (`L1_ACTIONS` in its `tools.py`); a proposal cannot demote a write.
+   An L2 proposal's arguments are ids and short scalars under short lowercase keys; store text in your own table first and pass its id.
 5. **No personal-only tool anywhere in the layer.** A module declares a
    speaking-ratio read in `PERSONAL_ONLY_TOOLS` and the registry never loads
    it; `Subagent` also refuses the name (invariant 11).
@@ -36,12 +39,19 @@ to its owner.
    `LANGSMITH_TRACING` or `LANGCHAIN_TRACING_V2` on.
 7. **Return at most five items, evidence as ids.** `ToolResult` cuts and
    refuses the rest.
-8. **A stored row keeps no text a meeting deletion would miss.** `agent_runs`
-   stores tool names and evidence ids; the answer and a proposal's title and
-   body only when the run has a `meeting_id` to cascade from.
+8. **A stored row keeps no meeting text at all.** `agent_runs` stores tool
+   names, evidence ids, and what ran -- never the answer, a proposal's title,
+   body or arguments, even for a run about a meeting, because that answer may
+   quote another meeting the cascade would miss (`main/store.py`).
 
 ## Starting a subagent
 
 Copy the shape of `autune_agent.testing.example_subagent`, export it as
 `SUBAGENT` from your package, and test it with `mock_tool` and `FakeRouter` —
 see `tests/test_main_graph.py`. You do not need anyone's module to be ready.
+
+To be woken by the pipeline rather than a chat message, list the events in
+`Subagent.triggers` (`TRIGGER_EVENTS`: `autune.transcript.ready`,
+`autune.intelligence.completed`). Your run then gets the event name as its
+`request` and the meeting in its scope, so every tool and action you name is
+already bound to that meeting. Do not write a Celery task.

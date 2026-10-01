@@ -19,6 +19,12 @@ SYNC_ACTION_ITEM_CALENDAR = tasks.sync_action_item_calendar
 
 REMOVE_CALENDAR_EVENT = tasks.remove_calendar_event
 
+SYNC_ACTION_ITEM_JIRA = tasks.sync_action_item_jira
+
+CLOSE_JIRA_ISSUE = tasks.close_jira_issue
+
+TRASH_NOTION_PAGE = tasks.trash_notion_page
+
 
 @pytest.fixture(autouse=True)
 def _no_calendar_sync(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -28,6 +34,9 @@ def _no_calendar_sync(monkeypatch: pytest.MonkeyPatch) -> None:
     that exercise them put the real ones back themselves."""
     monkeypatch.setattr(tasks, "sync_action_item_calendar", lambda _action_item_id: None)
     monkeypatch.setattr(tasks, "remove_calendar_event", lambda _action_item_id: None)
+    monkeypatch.setattr(tasks, "sync_action_item_jira", lambda _action_item_id: None)
+    monkeypatch.setattr(tasks, "close_jira_issue", lambda _action_item_id: None)
+    monkeypatch.setattr(tasks, "trash_notion_page", lambda _action_item_id: None)
 
 
 def sign_in(app: FastAPI, session: Session, *, team_id: str = "team_1") -> None:

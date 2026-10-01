@@ -8,7 +8,9 @@ Never imports another module.
 
 from __future__ import annotations
 
+import hashlib
 from collections import defaultdict
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
@@ -29,7 +31,7 @@ from autune_core import (
     new_id,
     session_scope,
 )
-from autune_core.errors import NotFoundError
+from autune_core.errors import NotFoundError, PrivacyViolationError
 from autune_core.events import publish
 from autune_gap import detect, graph, semantic, template, verification
 from autune_gap.config import GapSettings, get_settings
@@ -38,6 +40,7 @@ from autune_gap.models import (
     GapMeetingTemplate,
     GapParticipation,
     GapRelatedTopic,
+    GapScoring,
     GapTopic,
     GapTopicEdge,
     GapTopicUtterance,
@@ -156,7 +159,75 @@ def build_topic_graph(transcript: TranscriptReady) -> int:
     slow step, and a connection held open across it is a connection nobody
     else can use.
     """
-    meeting_id = transcript.meeting_id
+    return _build_graph(transcript.meeting_id, [(u.id, u.text) for u in transcript.utterances])
+
+
+def rebuild_topic_graph(meeting_id: str) -> int | None:
+    """Build the meeting's topic graph again from its stored utterances.
+
+    For a meeting whose consent changed after it was analysed (#515). The graph
+    ``build_topic_graph`` stored was read from whoever consented then: a label
+    taken from a line somebody has since withdrawn stays on S20, and a line
+    somebody has since allowed is missing from it. The same consent filter runs
+    here over ``utterances`` as module A stored them, which is text already
+    masked (privacy.md section 2), so nothing is read that the pipeline did not
+    already hold. Module D answers the same question for its links with
+    ``autune.context.rederive_topics`` (#472).
+
+    New topic ids, as any rebuild makes. ``detect_gaps`` has to run after it:
+    the rebuild takes ``gap_related_topics`` with the old topics, and gap ids
+    and dismissals survive because gaps are recognised by their template item.
+
+    **A meeting with no stored utterances is left as it is**, and ``None`` is
+    returned. There is nothing to read the graph from, and building one from
+    nothing would not be a rebuild but a guess that the meeting said nothing.
+    """
+    with session_scope() as session:
+        utterances = [
+            (utterance_id, text)
+            for utterance_id, text in session.execute(
+                select(Utterance.id, Utterance.text)
+                .where(Utterance.meeting_id == meeting_id)
+                .order_by(Utterance.start_sec, Utterance.id)
+            ).all()
+        ]
+    if not utterances:
+        log.info("gap_topic_graph_rebuild_skipped", meeting_id=meeting_id)
+        return None
+    return _build_graph(meeting_id, utterances)
+
+
+def _consent_moved(meeting_id: str) -> bool:
+    """Whether the consenting participants differ from those the stored graph
+    was built from.
+
+    The participation matrix holds a row for every consenting participant on
+    every topic, silent or not (``graph.participation``), so the set of
+    participants in it is the set that consented when the graph was built. A
+    confirmed speaker changes who is one person and leaves this alone; a
+    withdrawal or a late consent does not.
+    """
+    with session_scope() as session:
+        now = set(
+            session.scalars(
+                select(Participant.id).where(
+                    Participant.meeting_id == meeting_id, Participant.consented.is_(True)
+                )
+            )
+        )
+        built = set(
+            session.scalars(
+                select(GapParticipation.participant_id)
+                .join(GapTopic, GapTopic.id == GapParticipation.topic_id)
+                .where(GapTopic.meeting_id == meeting_id)
+                .distinct()
+            )
+        )
+    return now != built
+
+
+def _build_graph(meeting_id: str, utterances: list[tuple[str, str]]) -> int:
+    """``build_topic_graph`` over ``(utterance id, masked text)`` in meeting order."""
 
     with session_scope() as session:
         if session.get(Meeting, meeting_id) is None:
@@ -181,7 +252,7 @@ def build_topic_graph(transcript: TranscriptReady) -> int:
             if participant_id is not None
         }
 
-    analysed = [(u.id, u.text) for u in transcript.utterances if u.id in speaker_of]
+    analysed = [(u_id, text) for u_id, text in utterances if u_id in speaker_of]
     extractor = get_entity_extractor()
     entities = extractor.extract(analysed)
     extractor_version = extractor.model_version
@@ -193,7 +264,7 @@ def build_topic_graph(transcript: TranscriptReady) -> int:
     topics = graph.build_topics(entities, [utterance_id for utterance_id, _ in analysed])
     edges = graph.build_edges(topics, relations)
     scores = graph.centrality(topics, edges)
-    position = {u.id: index for index, u in enumerate(transcript.utterances)}
+    position = {u_id: index for index, (u_id, _) in enumerate(utterances)}
 
     with session_scope() as session:
         session.execute(delete(GapTopic).where(GapTopic.meeting_id == meeting_id))
@@ -252,7 +323,7 @@ def build_topic_graph(transcript: TranscriptReady) -> int:
         "gap_topic_graph_built",
         meeting_id=meeting_id,
         utterances=len(analysed),
-        excluded=len(transcript.utterances) - len(analysed),
+        excluded=len(utterances) - len(analysed),
         topics=len(topics),
         edges=len(edges),
         # How many edges the meeting's own words explain, against how many
@@ -310,6 +381,7 @@ def detect_gaps(meeting_id: str) -> int:
         chosen = template.get_template(selected_template_key(session, meeting_id))
         topics = _topic_views(session, meeting_id)
         speech = _speech(session, meeting_id)
+        people_key = _people_key(_people(session, meeting_id))
 
     # An empty graph raises nothing whatever was said (`detect.compare`), so the
     # speech is not embedded, or sent anywhere, for a meeting that cannot use it.
@@ -318,6 +390,13 @@ def detect_gaps(meeting_id: str) -> int:
 
     with session_scope() as session:
         _store_gaps(session, meeting_id, chosen, findings)
+        if topics:
+            _record_scoring(session, meeting_id, people_key)
+        else:
+            # A rerun that left no graph has nothing to rescore. A row left at
+            # the old grouping would disagree forever and rerun this, and
+            # republish, every ten minutes (#506 review).
+            session.execute(delete(GapScoring).where(GapScoring.meeting_id == meeting_id))
 
     # Counts and keys only. A gap title is composed from a template file and a
     # topic label is transcript text; neither goes in a log line.
@@ -338,6 +417,120 @@ def detect_gaps(meeting_id: str) -> int:
         unanswered=hearing.unanswered,
     )
     return len(findings)
+
+
+def rescore_where_people_changed() -> list[str]:
+    """Re-run detection and republish for every meeting whose grouping of
+    participants into people has moved since its gaps were scored. Returns
+    those meetings' ids.
+
+    Module A fills ``participants.user_id`` when somebody confirms a speaker,
+    and that merges two diarization labels into one person, or splits a
+    mistaken merge back apart (#415). ``build_report`` shows the new
+    participation on its next read, but ``risk_score`` and ``severity`` were
+    stored at detection and read the old one. There is no event for a
+    confirmation (#360), so this compares ``gap_scorings`` against the
+    participants as they are now. A consent withdrawal moves the grouping too,
+    and is picked up the same way — and because the graph itself was read from
+    whoever consented then, a meeting whose consenting participants changed has
+    its graph rebuilt from the stored utterances first (#515).
+
+    ``detect_gaps`` keeps each gap's id and dismissal, and records the new
+    grouping, so a meeting rescored once is not rescored again until the
+    grouping moves again. Safe to overlap: two runs that both see the change
+    both rescore, and the second writes what the first did.
+
+    One meeting failing does not stop the rest; it is logged by id and tried on
+    the next run, because its row still disagrees. **Only so many times**: after
+    ``rescore_max_attempts`` failures in a row at the same grouping, the meeting
+    is skipped until its people move again, which is a new question worth one
+    more try. Without the cap a meeting that always fails was retried every ten
+    minutes for good, spending a hosted verifier's quota each time (#516).
+    **Except a privacy
+    violation**: the verifier raises ``PrivacyViolationError`` on purpose when a
+    stored row would leave unmasked (``pipeline/base.py``), and that is a broken
+    invariant, not a hiccup. The other meetings are still rescored, then it is
+    raised so the task fails the way ``on_transcript_ready`` does, instead of
+    ending in a warning every ten minutes (#506 review). It does not count
+    towards the cap: ``check_outbound`` refused the request before it left, so
+    no quota was spent, and a broken invariant should keep failing loudly.
+    """
+    max_attempts = get_settings().rescore_max_attempts
+    with session_scope() as session:
+        rows_scored = session.execute(
+            select(
+                GapScoring.meeting_id,
+                GapScoring.people_key,
+                GapScoring.failed_people_key,
+                GapScoring.rescore_failures,
+            )
+        ).all()
+        scored: dict[str, str] = {meeting_id: key for meeting_id, key, _, _ in rows_scored}
+        failed: dict[str, tuple[str | None, int]] = {
+            meeting_id: (failed_key, failures)
+            for meeting_id, _, failed_key, failures in rows_scored
+        }
+        rows = session.execute(
+            select(Participant.meeting_id, Participant.id, Participant.user_id).where(
+                Participant.meeting_id.in_(scored), Participant.consented.is_(True)
+            )
+        ).all()
+
+    by_meeting: dict[str, list[tuple[str, str | None]]] = defaultdict(list)
+    for meeting_id, participant_id, user_id in rows:
+        by_meeting[meeting_id].append((participant_id, user_id))
+    current = {
+        meeting_id: _people_key(_group_people(by_meeting[meeting_id])) for meeting_id in scored
+    }
+    changed = sorted(meeting_id for meeting_id, key in scored.items() if current[meeting_id] != key)
+    # Given up on: the same grouping failed ``max_attempts`` times already.
+    held = {
+        meeting_id
+        for meeting_id in changed
+        if failed[meeting_id][0] == current[meeting_id] and failed[meeting_id][1] >= max_attempts
+    }
+
+    rescored = []
+    violations: list[str] = []
+    for meeting_id in changed:
+        if meeting_id in held:
+            continue
+        try:
+            if _consent_moved(meeting_id):
+                rebuild_topic_graph(meeting_id)
+            detect_gaps(meeting_id)
+            republish_report(meeting_id)
+        except PrivacyViolationError:
+            violations.append(meeting_id)
+            continue
+        except Exception as exc:
+            attempts = _record_rescore_failure(meeting_id, current[meeting_id])
+            # The class name only, as the verifier logs it: an exception raised
+            # over stored rows can carry transcript text in its message.
+            log.warning(
+                "gap_rescore_failed",
+                meeting_id=meeting_id,
+                reason=type(exc).__name__,
+                attempts=attempts,
+                gave_up=attempts >= max_attempts,
+            )
+            continue
+        rescored.append(meeting_id)
+
+    log.info(
+        "gap_rescore_swept",
+        scored=len(scored),
+        changed=len(changed),
+        rescored=len(rescored),
+        held=len(held),
+        violations=len(violations),
+    )
+    if violations:
+        # Ids only: the message of the one caught can quote the value.
+        raise PrivacyViolationError(
+            f"unmasked value on rescore in {len(violations)} meeting(s): {', '.join(violations)}"
+        )
+    return rescored
 
 
 def set_dismissed(session: Session, gap_id: str, reader: User, *, dismissed: bool) -> GapDismissal:
@@ -780,6 +973,36 @@ def _store_gaps(
         session.delete(gap)
 
 
+def _record_scoring(session: Session, meeting_id: str, people_key: str) -> None:
+    """Remember the grouping a meeting's gaps were just scored against, and
+    forget any failed rescore: this detection is the one that succeeded."""
+    row = session.get(GapScoring, meeting_id)
+    if row is None:
+        session.add(GapScoring(meeting_id=meeting_id, people_key=people_key))
+    else:
+        row.people_key = people_key
+        row.failed_people_key = None
+        row.rescore_failures = 0
+        row.last_failed_at = None
+
+
+def _record_rescore_failure(meeting_id: str, people_key: str) -> int:
+    """Count one failed rescore of ``meeting_id`` at the grouping ``people_key``,
+    and return the count. A different grouping from the last failure starts the
+    count again. Its own transaction: the one the failure happened in is gone."""
+    with session_scope() as session:
+        row = session.get(GapScoring, meeting_id)
+        if row is None:
+            # The meeting went while it was being rescored; nothing to count.
+            return 0
+        if row.failed_people_key != people_key:
+            row.failed_people_key = people_key
+            row.rescore_failures = 0
+        row.rescore_failures += 1
+        row.last_failed_at = datetime.now(UTC)
+        return row.rescore_failures
+
+
 def publish_report(meeting_id: str) -> GapReport:
     """Publish what is stored for the meeting as ``GapReport`` on
     ``autune.gap.completed``, and return it.
@@ -1097,6 +1320,13 @@ def _people(session: Session, meeting_id: str) -> dict[str, str]:
             Participant.meeting_id == meeting_id, Participant.consented.is_(True)
         )
     ).all()
+    return _group_people([(participant_id, user_id) for participant_id, user_id in rows])
+
+
+def _group_people(rows: Sequence[tuple[str, str | None]]) -> dict[str, str]:
+    """``_people`` over rows already read: ``(participant id, user id)`` for
+    each consenting participant. Separate so the rescore can group every
+    scored meeting from one query."""
     first: dict[str, str] = {}
     for participant_id, user_id in rows:
         if user_id is not None:
@@ -1105,3 +1335,10 @@ def _people(session: Session, meeting_id: str) -> dict[str, str]:
         participant_id: participant_id if user_id is None else first[user_id]
         for participant_id, user_id in rows
     }
+
+
+def _people_key(people: dict[str, str]) -> str:
+    """A digest of a meeting's participant -> person grouping, in a fixed
+    order, for ``gap_scorings``. See ``GapScoring`` for why not the grouping."""
+    joined = "\n".join(f"{participant}={person}" for participant, person in sorted(people.items()))
+    return hashlib.sha256(joined.encode()).hexdigest()

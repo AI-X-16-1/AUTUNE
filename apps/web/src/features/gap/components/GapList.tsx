@@ -37,6 +37,13 @@ export function GapList({
   const medium = bySeverity(gaps, "medium");
   const low = bySeverity(gaps, "low");
 
+  // Every gap is LOW and LOW is hidden: without this the list drew nothing at
+  // all, which reads as a broken screen rather than as "nothing above the
+  // threshold". Seen on a real recording whose five gaps were all LOW.
+  if (high.length === 0 && medium.length === 0 && !showLow) {
+    return <OnlyLowGaps count={low.length} />;
+  }
+
   return (
     <div className="flex flex-col" style={{ gap: "var(--space-24)" }}>
       {high.length > 0 ? (
@@ -217,6 +224,16 @@ function SectionTitle({ children }: { children: string }) {
     >
       {children}
     </h2>
+  );
+}
+
+/** Nothing above the threshold, and the LOW ones hidden: say where they are. */
+function OnlyLowGaps({ count }: { count: number }) {
+  return (
+    <p className="text-[var(--color-ink-muted)]" style={{ fontSize: "var(--text-metaSmall)" }}>
+      기본 기준 이상인 갭은 없습니다. 낮음으로 분류된 갭 {count}건은 위의 &quot;LOW {count}건
+      보기&quot;에서 볼 수 있습니다.
+    </p>
   );
 }
 

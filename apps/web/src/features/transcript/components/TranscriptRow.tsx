@@ -16,9 +16,11 @@ import { KindTag } from "./KindTag";
  * no way to tell it happened.
  */
 
-export function TranscriptRow({ row }: { row: LiveRow }) {
+export function TranscriptRow({ row, name }: { row: LiveRow; name?: string | null }) {
   const { utterance, kind } = row;
-  const unidentified = utterance.speaker_id == null;
+  // `name` is who the label was confirmed as, when the caller knows. The live
+  // screen never does -- no one is named during a recording -- and passes none.
+  const unidentified = name == null && utterance.speaker_id == null;
 
   return (
     <article
@@ -49,7 +51,7 @@ export function TranscriptRow({ row }: { row: LiveRow }) {
             : "var(--color-ink-strong)",
         }}
       >
-        {utterance.speaker}
+        {name ?? utterance.speaker}
       </span>
 
       <p style={{ color: "var(--color-ink-body)" }}>

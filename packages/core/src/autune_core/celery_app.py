@@ -22,6 +22,8 @@ worker knows and the client does not.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 from celery import Celery
 
 from autune_contracts import MODULES
@@ -44,19 +46,25 @@ TASK_ROUTES: dict[str, dict[str, str]] = {
     "autune.context.notify_late_drift": {"queue": "default"},
     "autune.intelligence.aggregate": {"queue": "cpu_heavy"},
     "autune.intelligence.*": {"queue": "default"},
+    # The agent layer (ADR 0010): a woken run reads through tools and calls no
+    # model of ours, so it is database-bound, not compute-bound.
+    "autune.agent.*": {"queue": "default"},
 }
 
 
-def make_celery_app(*, include_tasks: bool) -> Celery:
+def make_celery_app(*, include_tasks: bool, extra_include: Sequence[str] = ()) -> Celery:
     """Build the app and make it the one ``current_app`` returns -- everywhere.
 
     ``include_tasks=True`` is the worker: it imports ``autune_<module>.tasks``
     for every module in ``MODULES`` so the registry is full and ``subscribers``
     can derive consumers from event names. ``include_tasks=False`` is a client
     such as ``apps/api``: it sends by task name, ``TASK_ROUTES`` still applies,
-    and nothing heavy is imported. A client's registry is empty, so ``publish``
-    from a client finds no subscribers; that is a known limit, not a bug in the
-    caller, and the demo path does not need it.
+    and nothing heavy is imported. ``extra_include`` is for the one task module
+    that is not a module's: ``apps/worker`` names ``autune_agent.tasks`` there
+    (ADR 0010), and nothing here knows the agent layer exists. A client's
+    registry is empty, so ``publish`` from a client finds no subscribers; that
+    is a known limit, not a bug in the caller, and the demo path does not need
+    it.
 
     ``set_default`` matters as much as ``set_as_current``. ``current_app`` is
     thread-local, and a thread that never set one -- every FastAPI threadpool
@@ -74,7 +82,9 @@ def make_celery_app(*, include_tasks: bool) -> Celery:
         "autune",
         broker=settings.redis_url,
         backend=settings.redis_url,
-        include=[f"autune_{name}.tasks" for name in MODULES] if include_tasks else [],
+        include=[*(f"autune_{name}.tasks" for name in MODULES), *extra_include]
+        if include_tasks
+        else [],
     )
     app.conf.update(
         task_acks_late=True,

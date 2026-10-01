@@ -22,7 +22,16 @@ from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
 from autune_contracts.extraction import ExtractionResult
-from autune_core import AutuneError, Base, Meeting, TeamMember, User, Utterance, get_session
+from autune_core import (
+    AutuneError,
+    Base,
+    Meeting,
+    Participant,
+    TeamMember,
+    User,
+    Utterance,
+    get_session,
+)
 from autune_core.auth import current_user
 from autune_extraction import service, tasks
 from autune_extraction.config import ExtractionSettings
@@ -38,6 +47,7 @@ from autune_extraction.models import (
     ExtDecisionSource,
     ExtEditEvent,
     ExtExternalRef,
+    ExtNotionTarget,
 )
 from autune_extraction.router import router
 
@@ -52,6 +62,7 @@ TABLES = [
     User.__table__,
     # Read on every list: an assignee who is not a member needs reassigning.
     TeamMember.__table__,
+    Participant.__table__,
     Utterance.__table__,
     ExtActionItem.__table__,
     ExtActionItemSource.__table__,
@@ -64,6 +75,7 @@ TABLES = [
     ExtConfirmation.__table__,
     ExtEditEvent.__table__,
     ExtExternalRef.__table__,
+    ExtNotionTarget.__table__,
 ]
 
 
@@ -457,7 +469,7 @@ def test_the_detail_carries_everything_the_list_does(client: TestClient, session
     (listed,) = client.get(f"{PREFIX}/action-items").json()
     detail = client.get(f"{PREFIX}/action-items/act_1").json()
 
-    assert {k: v for k, v in detail.items() if k not in ("sources", "history")} == listed
+    assert {k: v for k, v in detail.items() if k not in ("sources", "context", "history")} == listed
 
 
 def test_a_confirmed_items_notion_status_reaches_both_the_card_and_the_drawer(

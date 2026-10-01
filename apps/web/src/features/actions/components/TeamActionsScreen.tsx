@@ -1,0 +1,111 @@
+"use client";
+
+import { useMemo, useState } from "react";
+
+import { Tabs } from "@/shared/ui";
+
+import { ActionBoard } from "./ActionBoard";
+import { ActionDetailDrawer } from "./ActionDetailDrawer";
+import { useActionItems } from "../hooks/useActionItems";
+import type { ActionItemRead } from "../types";
+
+/**
+ * S17 across every meeting — the sidebar's "액션아이템".
+ *
+ * `ActionItemsScreen` is one meeting's review: its decisions, its connections
+ * and its board. This is the board alone, over every item the caller can see.
+ * `GET /action-items` with no `meeting_id` already answers that, scoped to the
+ * caller's teams by the server (`visible_to`), so nothing new is needed below
+ * the screen.
+ *
+ * The tabs are S17's first three: 전체, 내 담당, 기한 초과. They filter one
+ * fetch rather than making three, so their counts are always of the same list.
+ * "내 담당" needs the signed-in person's id, which the route passes in — this
+ * feature does not read the session. Overdue is a due date before today on an
+ * item that is not done; the server's `due_before` would include finished ones.
+ *
+ * No add form: an item is added to a meeting, and this screen has none. That
+ * stays on the meeting's own actions tab.
+ */
+
+type Tab = "all" | "mine" | "overdue";
+
+export function TeamActionsScreen({ me }: { me: string | null }) {
+  const { items, settled, error, edit, remove } = useActionItems({});
+  const [tab, setTab] = useState<Tab>("all");
+  const [selectedId, setSelectedId] = useState<string | undefined>(undefined);
+
+  const today = new Date().toISOString().slice(0, 10);
+  const lists = useMemo(() => {
+    const mine = me === null ? [] : items.filter((item) => item.assignee_id === me);
+    const overdue = items.filter(
+      (item) => item.status !== "done" && item.due_date != null && item.due_date < today,
+    );
+    return { all: items, mine, overdue } satisfies Record<Tab, ActionItemRead[]>;
+  }, [items, me, today]);
+
+  const shown = lists[tab];
+  const selected = items.find((item) => item.id === selectedId);
+
+  return (
+    <main
+      className="flex flex-col gap-6 md:flex-row"
+      style={{ padding: "var(--space-16) var(--space-page) var(--space-page)" }}
+    >
+      <div className="min-w-0 flex-1">
+        <Tabs
+          tabs={[
+            { id: "all", label: "전체", count: lists.all.length },
+            ...(me === null ? [] : [{ id: "mine" as const, label: "내 담당", count: lists.mine.length }]),
+            { id: "overdue", label: "기한 초과", count: lists.overdue.length },
+          ]}
+          active={tab}
+          onChange={setTab}
+        />
+
+        <div style={{ marginTop: "var(--space-24)" }}>
+          {!settled ? (
+            <Note>액션 아이템을 불러오는 중입니다.</Note>
+          ) : error !== null && items.length === 0 ? (
+            <Note>액션 아이템을 불러오지 못했습니다.</Note>
+          ) : (
+            <>
+              {error !== null ? <Note>최신 목록을 불러오지 못해 이전 목록을 보여주고 있습니다.</Note> : null}
+              {shown.length === 0 ? <Note>{EMPTY[tab]}</Note> : null}
+              <ActionBoard items={shown} selectedId={selectedId} onSelect={setSelectedId} />
+            </>
+          )}
+        </div>
+      </div>
+
+      {selected !== undefined ? (
+        <ActionDetailDrawer
+          key={selected.id}
+          item={selected}
+          onClose={() => setSelectedId(undefined)}
+          onStatusChange={async (status) => {
+            await edit(selected.id, { status });
+          }}
+          onDelete={async () => {
+            await remove(selected.id);
+            setSelectedId(undefined);
+          }}
+        />
+      ) : null}
+    </main>
+  );
+}
+
+const EMPTY: Record<Tab, string> = {
+  all: "아직 액션 아이템이 없습니다. 회의가 분석되면 이곳에 모입니다.",
+  mine: "나에게 배정된 액션 아이템이 없습니다.",
+  overdue: "기한이 지난 액션 아이템이 없습니다.",
+};
+
+function Note({ children }: { children: string }) {
+  return (
+    <p className="mb-4 text-[var(--color-ink-muted)]" style={{ fontSize: "var(--text-metaSmall)" }}>
+      {children}
+    </p>
+  );
+}
