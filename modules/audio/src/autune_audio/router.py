@@ -10,15 +10,16 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, UploadFile, status
+from fastapi import APIRouter, Depends, Response, UploadFile, status
 from sqlalchemy.orm import Session
 
 from autune_contracts.transcript import Utterance
 from autune_core import CurrentUser, get_logger, get_session
+from autune_core.auth import clear_session_cookie
 from autune_core.errors import AutuneError
 from autune_core.settings import get_settings as get_core_settings
 
-from . import service
+from . import account, service
 from .config import MAX_UPLOAD_BYTES
 from .config import get_settings as get_audio_settings
 from .enqueue import enqueue_process_recording
@@ -30,10 +31,14 @@ from .schemas import (
     MeetingDetail,
     MeetingState,
     MeetingSummary,
+    MyData,
     SpeakerAssignment,
     SpeakerEntry,
+    SpeechDeleted,
     TeamCreate,
     TeamMemberSummary,
+    TeamPrivacy,
+    TeamPrivacyUpdate,
     TeamSummary,
 )
 from .storage import assign, handover
@@ -320,3 +325,46 @@ def assign_speaker(
 def delete_voice_profile(user: CurrentUser, session: SessionDep) -> None:
     """Delete every voice vector this account has confirmed."""
     service.delete_voice_profile(session, user=user)
+
+
+@router.get("/me/data", response_model=MyData)
+def my_data(user: CurrentUser, session: SessionDep) -> MyData:
+    """S29 "내 데이터": counts of what Autune holds about the caller."""
+    return account.my_data(session, user=user)
+
+
+@router.get("/me/export")
+def export_my_data(user: CurrentUser, response: Response, session: SessionDep) -> dict[str, object]:
+    """S29 "내 데이터 내려받기 (JSON)". An attachment, so a browser saves it."""
+    response.headers["Content-Disposition"] = 'attachment; filename="autune-my-data.json"'
+    return account.export_my_data(session, user=user)
+
+
+@router.delete("/me/speech", response_model=SpeechDeleted)
+def delete_my_speech(user: CurrentUser, session: SessionDep) -> SpeechDeleted:
+    """S29 "내 발화 데이터 모두 삭제": the caller's utterances and voice. The account stays."""
+    return account.delete_my_speech(session, user=user)
+
+
+@router.delete("/me", status_code=status.HTTP_204_NO_CONTENT)
+def delete_account(user: CurrentUser, response: Response, session: SessionDep) -> None:
+    """Delete the caller's account and everything that is theirs (#358).
+
+    The session cookie is cleared in the same response: the token it carries
+    names a user who no longer exists, and would answer 401 on every request.
+    """
+    account.delete_account(session, user=user)
+    clear_session_cookie(response)
+
+
+@router.get("/teams/{team_id}/privacy", response_model=TeamPrivacy)
+def team_privacy(team_id: str, user: CurrentUser, session: SessionDep) -> TeamPrivacy:
+    return account.team_privacy(session, team_id=team_id, reader=user)
+
+
+@router.patch("/teams/{team_id}/privacy", response_model=TeamPrivacy)
+def set_team_privacy(
+    team_id: str, body: TeamPrivacyUpdate, user: CurrentUser, session: SessionDep
+) -> TeamPrivacy:
+    """S29's retention row. Applies to meetings created from now on."""
+    return account.set_retention(session, team_id=team_id, days=body.retention_days, by=user)
