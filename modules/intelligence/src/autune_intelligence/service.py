@@ -865,6 +865,11 @@ def save_meeting_report(
     A report already posted is not replaced -- people have read that version,
     and a silent edit would make the stored copy disagree with what they saw.
 
+    ``draft_id`` is stored as given, ``None`` included: a draft saved without
+    one also ends every pending approval of the draft it replaced, since that
+    approval names an id the row no longer holds. Intended -- the approver did
+    not see this text.
+
     **The body holds this meeting's content only.** The row is deleted with this
     meeting and nothing else, so a sentence quoted from another meeting -- a past
     decision from D's lineage, a team-wide action item from B -- would outlive

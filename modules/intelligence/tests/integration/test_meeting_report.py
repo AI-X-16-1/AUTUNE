@@ -7,6 +7,7 @@ E's half only.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from unittest.mock import patch
 
@@ -32,6 +33,15 @@ class BlockRecordingSlack(FakeSlack):
     def post_message(self, channel: str, text: str, blocks: list[dict] | None = None) -> str:
         self.blocks.append(blocks)
         return super().post_message(channel, text, blocks)
+
+
+@pytest.fixture
+def no_web_base_url(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Unset even when a developer's .env sets it for a local sign-in."""
+    monkeypatch.setenv("AUTUNE_INTELLIGENCE_WEB_BASE_URL", "")
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
 
 
 @pytest.fixture
@@ -200,6 +210,7 @@ def test_a_report_at_the_length_cap_passes_the_outbound_size_check(
     assert len(slack.sent) == 1
 
 
+@pytest.mark.usefixtures("no_web_base_url")
 def test_post_without_a_web_url_has_no_button(db_session: Session, meeting: str) -> None:
     slack = BlockRecordingSlack()
 
@@ -266,7 +277,6 @@ def test_the_report_goes_when_its_meeting_is_deleted(db_session: Session, meetin
 @pytest.fixture
 def use_test_session(db_session: Session, monkeypatch: pytest.MonkeyPatch) -> None:
     import contextlib
-    from collections.abc import Iterator
 
     @contextlib.contextmanager
     def _scope() -> Iterator[Session]:

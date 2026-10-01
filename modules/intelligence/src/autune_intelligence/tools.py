@@ -281,9 +281,9 @@ def draft_meeting_report(
     when it holds personal data. ``pending_review`` adds a button to B's review
     board when the report is posted. ``draft_id`` names this draft, so a post
     approved for it is not made with a later one. Replaces an unposted draft.
-    Refused for
-    another team's meeting, a report already posted, one over the length cap,
-    or a body that still holds personal data (by category, never the text).
+    Refused for another team's meeting, a report already posted, one over the
+    length cap, or a body that still holds personal data (by category, never
+    the text).
     """
     with session_scope() as session:
         meeting = session.get(Meeting, meeting_id)
@@ -318,10 +318,12 @@ def publish_meeting_report(
     L2 -- runs only after a person approves (a channel post moves people;
     agent-layer.md section 8). Posts what ``draft_meeting_report`` stored, once:
     delivery claims the report before it posts, so a second approval or a retry
-    sends nothing. With ``draft_id`` it posts that draft only: once a later run
-    has replaced it, the approval posts nothing and the newer draft waits for
-    its own. Refused for another team's meeting, a meeting with no draft, a
-    replaced draft, or a report already posted.
+    sends nothing. With ``draft_id`` it posts that draft only. When the stored
+    draft is another one, the approval posts nothing: a later run replaced it,
+    or this run's draft was never stored (refused for personal data or length)
+    and an earlier one is still there. Refused for another team's meeting, a
+    meeting with no draft, a draft that is not the approved one, or a report
+    already posted.
     """
     with session_scope() as session:
         meeting = session.get(Meeting, meeting_id)
@@ -333,7 +335,13 @@ def publish_meeting_report(
         if row.sent_at is not None:
             return _refused("already posted", "이미 게시된 리포트입니다.")
         if draft_id is not None and row.draft_id != draft_id:
-            return _refused("draft replaced", "승인한 뒤 리포트 초안이 새로 바뀌었습니다.")
+            # Either a later run replaced it or this run's draft was never
+            # stored; the stored row cannot tell which, so the words say both.
+            return _refused(
+                "draft not current",
+                "승인한 초안이 지금 저장된 초안이 아닙니다. "
+                "새 초안으로 바뀌었거나 저장되지 않았습니다.",
+            )
     # The transaction has committed: a worker that picks this up finds the row.
     try:
         # The draft can still be replaced before the task claims it; the claim checks again.

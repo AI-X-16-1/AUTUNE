@@ -1270,7 +1270,7 @@ The Report's half of the precondition is in place: its post is pinned to its
 own run's draft (review of #508). Both proposals carry one `draft_id`, E
 stores it with the draft, and `publish_meeting_report` and the delivery task
 post only that draft -- approving a proposal whose draft a later run has
-replaced posts nothing (`draft replaced`). A rerun therefore cannot change
+replaced posts nothing (`draft not current`). A rerun therefore cannot change
 what an earlier approval posts. The approval card still does not show the
 draft's text.
 

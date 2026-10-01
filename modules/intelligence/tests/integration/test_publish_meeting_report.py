@@ -191,7 +191,30 @@ def test_publish_of_a_replaced_draft_is_refused(
 
     result = tools.publish_meeting_report(team, meeting, draft_id="rdr_first")
 
-    assert result["ok"] is False and result["reason"] == "draft replaced"
+    assert result["ok"] is False and result["reason"] == "draft not current"
+    assert _enqueued(events) == []
+
+
+def test_publish_after_this_runs_draft_was_refused_posts_nothing(
+    db_session: Session, team: str, events: list[tuple[str, str]]
+) -> None:
+    """The run's L1 draft was refused, so an earlier run's draft is still stored.
+
+    The approval names this run's draft, which never existed; posting the
+    earlier one would put text under an approval it was not given for. The
+    words must not claim a newer draft exists (review of #570).
+    """
+    meeting = _meeting(db_session, team, "결제 기능 기획")
+    tools.draft_meeting_report(team, meeting, BODY, draft_id="rdr_first")
+    refused = tools.draft_meeting_report(
+        team, meeting, BODY + "\n연락처 010-1234-5678", draft_id="rdr_second"
+    )
+    assert refused["ok"] is False
+
+    result = tools.publish_meeting_report(team, meeting, draft_id="rdr_second")
+
+    assert result["ok"] is False and result["reason"] == "draft not current"
+    assert "저장되지 않았습니다" in result["summary"]
     assert _enqueued(events) == []
 
 
