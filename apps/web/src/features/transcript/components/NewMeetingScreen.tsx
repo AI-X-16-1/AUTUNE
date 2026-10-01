@@ -21,10 +21,10 @@ type Source = "live" | "file";
 const MAX_BYTES = 500 * 1024 * 1024;
 
 /**
- * `now`, in the shape `<input type="datetime-local">` wants: local wall time,
- * no zone, minutes precision.
+ * `now` as local wall time, `YYYY-MM-DDTHH:MM` — split at the `T` into what
+ * `<input type="date">` and `<input type="time">` want.
  *
- * `toISOString()` would be UTC, which the input renders as a time the person
+ * `toISOString()` would be UTC, which the inputs render as a time the person
  * did not mean. Subtracting the offset first makes the slice come out as what
  * their own clock reads.
  */
@@ -38,12 +38,14 @@ function localNow(): string {
 /**
  * What the browser typed, as an instant the API can store.
  *
- * `datetime-local` has no zone, so `new Date(value)` reads it in the browser's
- * own — which is the intent: somebody typing "14:00" means two in the
- * afternoon where they are.
+ * The date and time inputs have no zone, so `new Date("<date>T<time>")` reads
+ * them in the browser's own — which is the intent: somebody typing "14:00"
+ * means two in the afternoon where they are. Same payload as the single
+ * `datetime-local` input this replaced.
  */
-function asInstant(value: string): string | undefined {
-  const parsed = new Date(value);
+function asInstant(date: string, time: string): string | undefined {
+  if (!date || !time) return undefined;
+  const parsed = new Date(`${date}T${time}`);
   return Number.isNaN(parsed.getTime()) ? undefined : parsed.toISOString();
 }
 
@@ -57,14 +59,14 @@ function asInstant(value: string): string | undefined {
  * attestation: unchecked, the button stays disabled, and there is no way to
  * upload without making the statement.
  *
- * Not the whole of S06. Attendee chips, the web-microphone source, Notion and
- * Jira overrides are drawn in the spec and depend on things that do not exist
- * yet (identification #6, integrations per meeting). What is here is what
+ * Not the whole of S06. Attendee chips and Notion and Jira overrides are
+ * drawn in the spec and depend on things that do not exist yet
+ * (identification #6, integrations per meeting). What is here is what
  * makes a recording reach the pipeline from a browser instead of from `curl`.
  *
- * A meeting can also be opened with no recording at all — "예정으로 만들기",
- * beside the upload button. It stops after the first call and leaves the
- * meeting `scheduled`, which is what D's pre-meeting brief waits on: a
+ * A meeting can also be opened with no recording at all — "저장만", beside
+ * the primary button, under either source. It stops after the first call and
+ * leaves the meeting `scheduled`, which is what D's pre-meeting brief waits on: a
  * `scheduled` meeting whose `started_at` is ahead gets a brief ten minutes
  * before it (#437, #469). The upload path cannot produce one, because it moves
  * the meeting to `analyzing` in the same submit. The recording arrives later
@@ -74,19 +76,24 @@ function asInstant(value: string): string | undefined {
  * only difference is whether there is a file yet. Consent is not asked on this
  * path — there is no recording to attest to, and the upload asks for it.
  *
- * **Two sources, chosen first.** "실시간 전사" opens the meeting and goes
- * straight to S13 (`/meetings/<id>/live`), which asks for consent and starts
- * the microphone; "녹음 파일 올리기" is the upload form below. S06 draws the
+ * **Two sources.** "웹 마이크 실시간" opens the meeting and goes straight to
+ * S13 (`/meetings/<id>/live`), which checks the microphone, asks for consent
+ * and records; "녹음 파일 업로드" is the upload form below. S06 draws the
  * same choice as its audio-source radio. Before it, the only way to record
  * live was to schedule a meeting, open it, and press record from there. Live
  * is the default: "회의 시작" in the sidebar means a meeting starting now.
- * The start time and "예정으로 만들기" belong to the file source — a live
- * meeting starts when it is opened.
+ * The date and start fields are read by the upload and by "저장만"; "지금
+ * 녹음 시작" ignores them — a live meeting starts when it is opened.
  *
- * `?meeting=` re-uploads to an existing meeting — the retry S12 offers when a
- * run failed. The backend accepts a recording for a `failed` meeting and
- * refuses one for a meeting that is `analyzing` or `complete`, and its 409 is
- * shown as-is.
+ * Field order follows S06: title, date and start, team, audio source, then
+ * the Phase 2 rows drawn disabled. S06's attendee chips and its optional end
+ * time are omitted: neither has a field in the create payload.
+ *
+ * `?meeting=` uploads to an existing meeting — the retry S12 offers when a
+ * run failed, and S10's "파일 업로드로 대신" for a meeting opened to record
+ * live. The backend accepts a recording for a `scheduled`, `recording` or
+ * `failed` meeting and refuses one for a meeting that is `analyzing` or
+ * `complete`, and its 409 is shown as-is.
  *
  * Validation before the request: extension and size, because a 500MB body
  * that the server then refuses is 500MB of somebody's time. The server checks
@@ -105,7 +112,8 @@ export function NewMeetingScreen({
   // defaults to now because most uploads follow the meeting closely, and it is
   // editable because a recording carried over from yesterday is the case that
   // makes the default wrong (#340).
-  const [startedAt, setStartedAt] = useState(localNow);
+  const [date, setDate] = useState(() => localNow().slice(0, 10));
+  const [time, setTime] = useState(() => localNow().slice(11, 16));
   // A re-upload is always a file; a new meeting defaults to recording live.
   const [source, setSource] = useState<Source>(
     existingMeetingId ? "file" : "live",
@@ -152,7 +160,7 @@ export function NewMeetingScreen({
     existingMeetingId === undefined &&
     title.trim().length > 0 &&
     teamId !== "" &&
-    asInstant(startedAt) !== undefined &&
+    asInstant(date, time) !== undefined &&
     step === "idle";
 
   const canGoLive =
@@ -195,7 +203,7 @@ export function NewMeetingScreen({
           await createMeeting({
             title: title.trim(),
             team_id: teamId,
-            started_at: asInstant(startedAt),
+            started_at: asInstant(date, time),
           })
         ).meeting_id;
       }
@@ -218,7 +226,7 @@ export function NewMeetingScreen({
       const { meeting_id } = await createMeeting({
         title: title.trim(),
         team_id: teamId,
-        started_at: asInstant(startedAt),
+        started_at: asInstant(date, time),
       });
       router.push(`/meetings/${meeting_id}`);
     } catch (e: unknown) {
@@ -254,9 +262,6 @@ export function NewMeetingScreen({
 
       <form onSubmit={submit} className="mt-6 flex flex-col gap-5">
         {existingMeetingId ? null : (
-          <SourceChoice value={source} onChange={setSource} />
-        )}
-        {existingMeetingId ? null : (
           <>
             <Field label="제목">
               <input
@@ -268,26 +273,36 @@ export function NewMeetingScreen({
                 style={INPUT_STYLE}
               />
             </Field>
-            {source === "file" && (
-              <Field label="회의 시작">
-                <input
-                  type="datetime-local"
-                  value={startedAt}
-                  onChange={(e) => setStartedAt(e.target.value)}
-                  className={INPUT}
-                  style={INPUT_STYLE}
-                />
-                <p
-                  className="mt-1 text-[var(--color-ink-muted)]"
-                  style={{ fontSize: "var(--text-metaSmall)" }}
-                >
-                  &quot;이번 주 금요일까지&quot; 같은 표현을 언제 기준으로
-                  읽을지 정합니다. 지난 회의 녹음이면 그때로 고쳐 주세요. 앞으로
-                  열 회의는 그 시각으로 &quot;예정으로 만들기&quot;를 누르면
-                  시작 10분 전에 브리프가 옵니다.
-                </p>
-              </Field>
-            )}
+            <div>
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="날짜">
+                  <input
+                    type="date"
+                    value={date}
+                    onChange={(e) => setDate(e.target.value)}
+                    className={INPUT}
+                    style={{ ...INPUT_STYLE, fontFamily: "var(--font-mono)" }}
+                  />
+                </Field>
+                <Field label="시작">
+                  <input
+                    type="time"
+                    value={time}
+                    onChange={(e) => setTime(e.target.value)}
+                    className={INPUT}
+                    style={{ ...INPUT_STYLE, fontFamily: "var(--font-mono)" }}
+                  />
+                </Field>
+              </div>
+              <p
+                className="mt-1 text-[var(--color-ink-muted)]"
+                style={{ fontSize: "var(--text-metaSmall)" }}
+              >
+                {source === "live"
+                  ? "“지금 녹음 시작”은 지금 시각으로 열립니다. 앞으로 열 회의는 그 시각으로 “저장만”을 누르면 시작 10분 전에 브리프가 옵니다."
+                  : "“이번 주 금요일까지” 같은 표현을 언제 기준으로 읽을지 정합니다. 지난 회의 녹음이면 그때로 고쳐 주세요."}
+              </p>
+            </div>
             <Field label="팀">
               {teams === null ? (
                 <span
@@ -322,6 +337,9 @@ export function NewMeetingScreen({
                   ))}
                 </select>
               )}
+            </Field>
+            <Field label="오디오 소스">
+              <SourceChoice value={source} onChange={setSource} />
             </Field>
           </>
         )}
@@ -396,6 +414,8 @@ export function NewMeetingScreen({
           </>
         )}
 
+        {existingMeetingId ? null : <LaterOptions />}
+
         {error ? (
           <p
             role="alert"
@@ -408,25 +428,43 @@ export function NewMeetingScreen({
           </p>
         ) : null}
 
-        {source === "live" ? (
-          <div className="flex items-center gap-3">
+        <div className="flex items-center gap-1">
+          <span
+            className="flex-1 text-[var(--color-ink-muted)]"
+            style={{ fontSize: "var(--text-metaSmall)" }}
+          >
+            {source === "live"
+              ? "다음 화면에서 마이크와 참석자 동의를 확인한 뒤 녹음을 시작합니다."
+              : "업로드 즉시 처리가 시작되고, 원본은 처리 후 삭제됩니다."}
+          </span>
+          {existingMeetingId ? null : (
+            <Button
+              tone="quiet"
+              type="button"
+              onClick={schedule}
+              disabled={!canSchedule}
+              loading={step === "scheduling"}
+            >
+              {step === "scheduling" ? "저장 중…" : "저장만"}
+            </Button>
+          )}
+          {source === "live" ? (
             <Button
               tone="primary"
               type="submit"
               disabled={!canGoLive}
               loading={step === "opening"}
             >
-              {step === "opening" ? "회의 만드는 중…" : "실시간 전사 시작"}
+              {step === "opening" ? (
+                "회의 만드는 중…"
+              ) : (
+                <span className="inline-flex items-center gap-2">
+                  <LeadingDot />
+                  지금 녹음 시작
+                </span>
+              )}
             </Button>
-            <span
-              className="text-[var(--color-ink-muted)]"
-              style={{ fontSize: "var(--text-metaSmall)" }}
-            >
-              다음 화면에서 참석자 동의를 확인하고 마이크를 켭니다.
-            </span>
-          </div>
-        ) : (
-          <div className="flex items-center gap-3">
+          ) : (
             <Button
               tone="primary"
               type="submit"
@@ -435,34 +473,40 @@ export function NewMeetingScreen({
             >
               {STEP_LABEL[step === "scheduling" ? "idle" : step]}
             </Button>
-            {existingMeetingId ? null : (
-              <Button
-                tone="secondary"
-                type="button"
-                onClick={schedule}
-                disabled={!canSchedule}
-                loading={step === "scheduling"}
-              >
-                {step === "scheduling" ? "만드는 중…" : "예정으로 만들기"}
-              </Button>
-            )}
-            <span
-              className="text-[var(--color-ink-muted)]"
-              style={{ fontSize: "var(--text-metaSmall)" }}
-            >
-              업로드 즉시 처리가 시작되고, 원본은 처리 후 삭제됩니다.
-            </span>
-          </div>
-        )}
+          )}
+        </div>
       </form>
     </main>
   );
 }
 
 /**
- * S06's audio-source choice, as two large options rather than a radio row:
- * this is the first decision on the screen and it changes the rest of the
- * form. Selected uses the accent selection fill, like every chosen chip.
+ * The white dot S06 and S10 put before "녹음 시작". It takes the label's own
+ * colour, so a disabled button greys it with the text.
+ */
+function LeadingDot() {
+  return (
+    <span
+      aria-hidden
+      className="rounded-full"
+      style={{
+        width: "var(--space-8)",
+        height: "var(--space-8)",
+        background: "currentColor",
+      }}
+    />
+  );
+}
+
+/**
+ * S06's audio-source choice: two options with a radio circle, the first
+ * decision that changes the rest of the form. Selected is a 1.5px accent
+ * border and a filled circle, with no background fill, as S06 draws it.
+ *
+ * The live option's detail names only what the live path does today:
+ * transcription as it happens, and the same full analysis once the recording
+ * is uploaded at stop. S06's "중간 요약 · 자료 감지" are Phase 2 and not
+ * claimed here.
  */
 function SourceChoice({
   value,
@@ -474,20 +518,20 @@ function SourceChoice({
   const options: { id: Source; title: string; detail: string }[] = [
     {
       id: "live",
-      title: "실시간 전사",
-      detail: "지금 마이크로 녹음하면서 전사를 봅니다",
+      title: "웹 마이크 실시간",
+      detail: "실시간 전사 · 종료 후 전체 분석",
     },
     {
       id: "file",
-      title: "녹음 파일 올리기",
-      detail: "mp3 · wav · m4a, 지난 회의나 예정 회의",
+      title: "녹음 파일 업로드",
+      detail: "회의 후 업로드 · 동일 분석",
     },
   ];
   return (
     <div
       role="radiogroup"
-      aria-label="녹음 방식"
-      className="grid grid-cols-2 gap-2"
+      aria-label="오디오 소스"
+      className="grid grid-cols-2 gap-3"
     >
       {options.map((option) => {
         const selected = option.id === value;
@@ -498,38 +542,97 @@ function SourceChoice({
             role="radio"
             aria-checked={selected}
             onClick={() => onChange(option.id)}
-            className="rounded-[var(--radius)] text-left focus-visible:outline-none focus-visible:ring-[1.5px] focus-visible:ring-[var(--color-accent-default)]"
+            className="flex items-start gap-3 rounded-[var(--radius)] bg-[var(--color-surface-panel)] text-left focus-visible:outline-none focus-visible:ring-[1.5px] focus-visible:ring-[var(--color-accent-default)]"
             style={{
-              padding: "var(--space-16)",
-              background: selected
-                ? "var(--color-accent-selection)"
-                : "var(--color-surface-panel)",
-              border: selected
-                ? "var(--border-focus)"
-                : "1px solid var(--color-hairline)",
+              padding: "var(--space-12)",
+              border: selected ? "var(--border-focus)" : "var(--border-input)",
             }}
           >
             <span
-              className="block"
+              aria-hidden
+              className="mt-[1px] grid flex-none place-items-center rounded-full"
               style={{
-                fontSize: "var(--text-rowTitle)",
-                fontWeight: "var(--text-rowTitle-weight)",
-                color: selected
-                  ? "var(--color-accent-hover)"
-                  : "var(--color-ink-strong)",
+                width: "var(--space-16)",
+                height: "var(--space-16)",
+                border: selected ? "var(--border-focus)" : "var(--border-input)",
               }}
             >
-              {option.title}
+              {selected ? (
+                <span
+                  className="rounded-full"
+                  style={{
+                    width: "var(--dot-size)",
+                    height: "var(--dot-size)",
+                    background: "var(--color-accent-default)",
+                  }}
+                />
+              ) : null}
             </span>
-            <span
-              className="mt-1 block text-[var(--color-ink-muted)]"
-              style={{ fontSize: "var(--text-metaSmall)" }}
-            >
-              {option.detail}
+            <span>
+              <span
+                className="block text-[var(--color-ink-strong)]"
+                style={{
+                  fontSize: "var(--text-rowTitle)",
+                  fontWeight: "var(--text-rowTitle-weight)",
+                }}
+              >
+                {option.title}
+              </span>
+              <span
+                className="mt-[2px] block text-[var(--color-ink-muted)]"
+                style={{ fontSize: "var(--text-meta)" }}
+              >
+                {option.detail}
+              </span>
             </span>
           </button>
         );
       })}
+    </div>
+  );
+}
+
+/**
+ * S06's Phase 2 rows, drawn disabled rather than hidden so the roadmap shows.
+ *
+ * S06 also draws Notion and Jira rows here as per-meeting overrides. Those
+ * are left out, not drawn disabled: the integrations exist at team level, and
+ * a per-meeting override row would read as a setting this form saves when it
+ * does not.
+ */
+function LaterOptions() {
+  const rows = [
+    { title: "종료 5분 전 미결정 사항 알림", detail: "종료 시간 기준 · Phase 2" },
+    { title: "자료 연결 후 어젠다 자동 생성", detail: "PRD · 이전 회의록 · Phase 2" },
+  ];
+  return (
+    <div className="flex flex-col border-t border-[var(--color-hairline)]">
+      {rows.map((row) => (
+        <label
+          key={row.title}
+          className="flex cursor-not-allowed items-center gap-3 border-b border-[var(--color-hairline)]"
+          style={{ paddingBlock: "var(--space-12)" }}
+        >
+          <input type="checkbox" disabled checked={false} readOnly />
+          <span>
+            <span
+              className="block text-[var(--color-ink-muted)]"
+              style={{
+                fontSize: "var(--text-rowLabel)",
+                fontWeight: "var(--text-rowLabel-weight)",
+              }}
+            >
+              {row.title}
+            </span>
+            <span
+              className="block text-[var(--color-ink-muted)]"
+              style={{ fontSize: "var(--text-meta)" }}
+            >
+              {row.detail}
+            </span>
+          </span>
+        </label>
+      ))}
     </div>
   );
 }
@@ -559,8 +662,12 @@ function Field({
   return (
     <div>
       <div
-        className="mb-1 text-[var(--color-ink-muted)]"
-        style={{ fontSize: "var(--text-metaSmall)" }}
+        className="text-[var(--color-ink-body)]"
+        style={{
+          fontSize: "var(--text-label)",
+          fontWeight: "var(--text-label-weight)",
+          marginBottom: "var(--space-8)",
+        }}
       >
         {label}
       </div>
