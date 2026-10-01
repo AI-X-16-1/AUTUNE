@@ -14,6 +14,24 @@ jobs:
     defaults:
       run:
         shell: cmd
+    # Every step talks to the same compose project, and each of them
+    # interpolates the database URL, so all of them need these.
+    env:
+      POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
+      POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+      POSTGRES_DB: ${{ secrets.POSTGRES_DB }}
+      # The address teammates type into a browser. Next inlines it into the
+      # web build (#517), so it is a variable, not a secret.
+      DEV_PUBLIC_HOST: ${{ vars.DEV_PUBLIC_HOST }}
+      # Pyannote is gated: without this every upload fails after Whisper.
+      AUTUNE_AUDIO_HF_TOKEN: ${{ secrets.AUTUNE_AUDIO_HF_TOKEN }}
+      # Signs every session. .env.example's key is public, and env=local
+      # turns off the check that refuses it, so the deploy refuses instead.
+      AUTUNE_SECRET_KEY: ${{ secrets.AUTUNE_SECRET_KEY }}
+      # The team's password for /api/*/dev/ behind nginx (user `autune`).
+      DEV_BASIC_AUTH_PASSWORD: ${{ secrets.DEV_BASIC_AUTH_PASSWORD }}
+      # Optional: without it /api/agent/chat refuses and the rest works.
+      AUTUNE_AGENT_LLM_API_KEY: ${{ secrets.AUTUNE_AGENT_LLM_API_KEY }}
     steps:
 
       - name: Checkout repository
@@ -21,24 +39,45 @@ jobs:
         with:
           path: .
 
-      # Checkout alone starts nothing: the services only run once compose
-      # brings them up on the runner. --wait fails the job when a container
-      # does not reach healthy, so a green run means the services are up.
-      - name: Start services
-        env:
-          POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
-          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
-          POSTGRES_DB: ${{ secrets.POSTGRES_DB }}
-        # An unset secret reaches compose as an empty string, which the
-        # compose defaults would turn into autune/autune. Refuse instead.
-        # "not defined" also avoids quoting a password that holds " or &.
+      # An unset secret reaches compose as an empty string, which the
+      # compose defaults would turn into autune/autune. Refuse instead.
+      # "not defined" also avoids quoting a password that holds " or &.
+      - name: Check configuration
         run: |
           if not defined POSTGRES_USER (echo POSTGRES_USER secret is not set & exit /b 1)
           if not defined POSTGRES_PASSWORD (echo POSTGRES_PASSWORD secret is not set & exit /b 1)
           if not defined POSTGRES_DB (echo POSTGRES_DB secret is not set & exit /b 1)
+          if not defined AUTUNE_AUDIO_HF_TOKEN (echo AUTUNE_AUDIO_HF_TOKEN secret is not set & exit /b 1)
+          if not defined AUTUNE_SECRET_KEY (echo AUTUNE_SECRET_KEY secret is not set & exit /b 1)
+          if not defined DEV_BASIC_AUTH_PASSWORD (echo DEV_BASIC_AUTH_PASSWORD secret is not set & exit /b 1)
+          if not defined DEV_PUBLIC_HOST (echo DEV_PUBLIC_HOST repository variable is not set & exit /b 1)
           docker version || exit /b 1
-          docker compose -f infra/docker-compose.yml up -d --wait
+
+      # The database is its own compose project, so the steps below never
+      # restart it. --remove-orphans clears containers of this project that
+      # the file no longer defines: the application ran here before it moved
+      # to infra/docker-compose.app.yml.
+      - name: Start database and broker
+        run: docker compose -f infra/docker-compose.yml up -d --wait --remove-orphans
+
+      - name: Migrate
+        run: docker compose -f infra/docker-compose.app.yml run --rm --build migrate
+
+      - name: Start application
+        run: docker compose -f infra/docker-compose.app.yml up -d --build --wait --wait-timeout 600
+
+      # Every deploy rebuilds the images, and the python one is over 10 GB;
+      # the one it replaced is left untagged. Only untagged images go: the
+      # build cache (uv and pnpm downloads) stays, so the next build is fast.
+      - name: Remove replaced images
+        run: docker image prune -f
 
       - name: Show services
         if: always()
-        run: docker compose -f infra/docker-compose.yml ps -a
+        run: |
+          docker compose -f infra/docker-compose.yml ps -a
+          docker compose -f infra/docker-compose.app.yml ps -a
+
+      - name: Show application logs on failure
+        if: failure()
+        run: docker compose -f infra/docker-compose.app.yml logs --tail 100 api worker web nginx

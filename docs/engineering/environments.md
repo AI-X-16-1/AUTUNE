@@ -554,8 +554,10 @@ the worker finds nothing, and the file the endpoint wrote is left with nobody
 to delete it. Locally both run on the host from the same checkout (the two
 commands at the top of this file), so they share `AUTUNE_AUDIO_TEMP_DIR` by
 construction: `AudioSettings` reads `.env` relative to the working directory,
-and both are started from the repository root. `infra/docker-compose.yml` runs
-only PostgreSQL and Redis, and no volume is involved.
+and both are started from the repository root. On a laptop
+`infra/docker-compose.yml` runs only PostgreSQL and Redis, and no volume is
+involved. On the dev server `infra/docker-compose.app.yml` runs both processes in
+containers, sharing the tmpfs volume `audio-tmp` (see "The dev server" below).
 
 Containerising either process means both must see one **local** directory at
 that path: a bind mount of the host directory (the only option when one of the
@@ -572,6 +574,86 @@ Starlette's multipart parser before module A's code runs. It is deleted when
 the request closes. `AUTUNE_AUDIO_TEMP_DIR` is the copy this module owns and
 checks; the other one is the web framework's, and the same "not a synced
 folder" rule applies to `TMPDIR` on a developer machine.
+
+## The dev server
+
+A push to `dev` runs `.github/workflows/dev.yml` on the self-hosted Windows
+runner DEV-SERVER1. It runs two compose projects:
+
+- `autune`, from `infra/docker-compose.yml`: PostgreSQL and Redis, the same
+  file a laptop uses. The deploy only starts it if it is not running; nothing
+  in the application's deploy restarts it.
+- `autune-app`, from `infra/docker-compose.app.yml`: `alembic upgrade heads`
+  as a one-off, then the containers below, on the `autune` project's network.
+
+Every long-running container has `restart: unless-stopped`, so all of them come
+back after a reboot, provided Docker Desktop itself starts at sign-in.
+
+| Container | Published port | What it runs |
+| --- | --- | --- |
+| `autune-app-nginx` | 80, on `DEV_PUBLIC_HOST` only | one origin: `/api/` (and the live WebSocket) to `api`, everything else to `web` |
+| `autune-app-api` | 8000, on `DEV_PUBLIC_HOST` only | `uvicorn autune_api.main:app`, also reached directly for `/docs` and curl; no password on `/dev` routes here, LAN only |
+| `autune-app-worker` | none | Celery, queues `default,cpu_heavy,gpu`, `--pool=solo` |
+| `autune-app-beat` | none | Celery beat: sends the `autune.<module>.periodic.*` tasks on their schedules |
+| `autune-app-web` | none | `next start`, built with an empty `NEXT_PUBLIC_API_URL`, so the browser calls its own origin |
+| `autune-postgres`, `autune-redis` | 5432, 6379, loopback only | as locally |
+
+It runs with `AUTUNE_ENV=local` and the implementations `scripts/up.sh` picks
+without `--real-models` (#517), so it holds **dummy meetings only**. Every
+`/dev` router is mounted, and `/api/audio/dev/token` issues a token for any
+email. nginx therefore puts `/api/*/dev/` behind a password (user `autune`).
+
+**Two ways in, and only one is encrypted end to end.** nginx itself serves
+plain HTTP on port 80. The dev password, every bearer token and every uploaded
+recording travel over whatever carries that port.
+
+- **On the LAN**, `http://<DEV_PUBLIC_HOST>` is plain HTTP. Acceptable on a
+  private network only.
+- **Through the domain**, `https://autune.shelldocs.cloud` is TLS on both
+  internet legs (checked 2026-10-01):
+  - Browser to Cloudflare: Cloudflare's edge certificate; `http://` answers 301
+    to `https://`.
+  - Cloudflare to host: the DNS record is proxied to the router's public
+    address, where a front nginx on the host (not this repository's) terminates
+    TLS on 443 with a Cloudflare Origin Certificate (`*.shelldocs.cloud`) and
+    answers port 80 only with a 301 to `https://`. Cloudflare's SSL mode is
+    therefore Full or Full (strict): under Flexible, Cloudflare would fetch over
+    HTTP, get the redirect back, and loop.
+  - Front nginx to this stack's nginx: plain HTTP to `DEV_PUBLIC_HOST:80`,
+    inside the host's network.
+
+  If the front nginx or its port 80 redirect is ever removed, this no longer
+  holds; check again before relying on it. The stack still runs
+  `AUTUNE_ENV=local`, so put only dummy data on the server.
+
+Before the first deploy:
+
+- `DEV_PUBLIC_HOST` is a private IP address (LAN or VPN), never a public one
+  and never a hostname: compose binds port 80 to it.
+- No router forwards 8000. Only nginx (80) and the api (8000) publish a port;
+  the api's 8000 bypasses nginx and its password, so it stays LAN-only.
+
+Configuration lives in the repository, not on the host:
+
+| Name | Kind | Required |
+| --- | --- | --- |
+| `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` | secret | yes; the deploy stops without them |
+| `DEV_PUBLIC_HOST` | variable | yes; the IP port 80 is bound to |
+| `AUTUNE_SECRET_KEY` | secret | yes; signs every session. `AUTUNE_ENV=local` turns off the check that refuses `.env.example`'s public key, so without this anyone could forge a token. Generate: `python -c "import secrets; print(secrets.token_urlsafe(32))"` |
+| `DEV_BASIC_AUTH_PASSWORD` | secret | yes; the password for `/api/*/dev/` |
+| `AUTUNE_AUDIO_HF_TOKEN` | secret | yes; pyannote is gated, so every upload fails after transcription without it ("Pyannote and its three gated repositories" above) |
+| `AUTUNE_AGENT_LLM_API_KEY` | secret | no; without it the agent chat refuses |
+
+To sign in, get a token with the password, then set it in the browser console
+on the site (`localStorage.setItem("autune.token", "<token>")`):
+
+```bash
+curl -s -u autune:<password> -X POST http://<DEV_PUBLIC_HOST>/api/audio/dev/token \
+  -H 'content-type: application/json' -d '{"email": "you@example.com"}'
+```
+
+The first upload downloads Whisper and the first context task KURE-v1 and its
+re-ranker (several GB) into the `models` volume, which survives redeploys.
 
 ## Environments
 
