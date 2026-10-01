@@ -62,3 +62,30 @@ def test_deleting_a_team_takes_its_memberships(db: Session, member: tuple[User, 
 
     assert db.scalars(sa.select(TeamMember)).all() == []
     assert db.get(User, user.id) is not None
+
+
+def test_a_user_whose_memberships_were_read_can_still_be_deleted(
+    db: Session, member: tuple[User, Team]
+) -> None:
+    """``passive_deletes=True`` only stands aside for a collection that was never
+    loaded; once ``user.memberships`` has been read, the ORM nulls the column
+    again and the NOT NULL refuses (review of #613). ``"all"`` never touches it."""
+    user, _ = member
+    assert len(user.memberships) == 1
+
+    db.delete(user)
+    db.flush()
+
+    assert db.scalars(sa.select(TeamMember)).all() == []
+
+
+def test_a_team_whose_members_were_read_can_still_be_deleted(
+    db: Session, member: tuple[User, Team]
+) -> None:
+    _, team = member
+    assert len(team.members) == 1
+
+    db.delete(team)
+    db.flush()
+
+    assert db.scalars(sa.select(TeamMember)).all() == []

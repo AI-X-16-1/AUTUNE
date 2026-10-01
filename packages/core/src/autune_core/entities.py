@@ -50,10 +50,11 @@ class Team(Base, TimestampMixin):
     retention_days: Mapped[int] = mapped_column(Integer, nullable=False, default=90)
     """Per-team override of the retention window. See docs/architecture/privacy.md."""
 
-    # `passive_deletes`: `team_members.team_id` is NOT NULL with ON DELETE
-    # CASCADE, and without it the ORM nulls the column before the DELETE and
-    # fails (#355). The database already does the right thing.
-    members: Mapped[list[TeamMember]] = relationship(back_populates="team", passive_deletes=True)
+    # `passive_deletes="all"`: `team_members.team_id` is NOT NULL with ON DELETE
+    # CASCADE, and otherwise the ORM nulls the column before the DELETE and
+    # fails (#355). `True` is not enough: it still nulls a collection that was
+    # already loaded. The database does the right thing on its own.
+    members: Mapped[list[TeamMember]] = relationship(back_populates="team", passive_deletes="all")
 
 
 class TeamIntegration(Base, TimestampMixin):
@@ -174,9 +175,10 @@ class User(Base, TimestampMixin):
 
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
-    # Same as `Team.members` (#355): leave the memberships to ON DELETE CASCADE.
+    # Same as `Team.members` (#355): leave the memberships to ON DELETE CASCADE,
+    # loaded or not.
     memberships: Mapped[list[TeamMember]] = relationship(
-        back_populates="user", passive_deletes=True
+        back_populates="user", passive_deletes="all"
     )
 
 
