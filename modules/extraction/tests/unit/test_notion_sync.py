@@ -134,7 +134,7 @@ def test_a_confirmed_item_becomes_one_page_with_the_item_and_no_transcript(
         "작업": {"title": [{"type": "text", "text": {"content": "릴리스 노트 정리"}}]},
         "담당자": {"rich_text": [{"type": "text", "text": {"content": "김개발"}}]},
         "마감일": {"date": {"start": "2026-09-25"}},
-        "상태": {"select": {"name": "todo"}},
+        "상태": {"select": {"name": "진행 전"}},
         "신뢰도": {"number": 0.91},
         "회의": {"rich_text": [{"type": "text", "text": {"content": "스프린트 회의"}}]},
     }
@@ -177,6 +177,24 @@ def test_an_item_still_waiting_for_confirmation_sends_nothing(session: Session) 
     assert sync(session, notion, row.id) is None
     assert notion.pages == []
     assert session.scalars(select(ExtExternalRef)).all() == []
+
+
+def test_moving_an_item_back_to_confirmation_updates_its_pages_status(session: Session) -> None:
+    """Decided with the user (2026-10-01): the page stays and its 상태 reads
+    확인 필요, as the board does. Before, the sync skipped the item and Notion
+    kept "진행 전"."""
+    notion = FakeNotion()
+    row = item(session)
+    ref = sync(session, notion, row.id)
+    assert ref is not None
+    row.status = "needs_confirmation"
+
+    sync(session, notion, row.id)
+
+    assert len(notion.pages) == 1, "no second page"
+    (page_id, properties), *_ = notion.updates
+    assert page_id == ref.external_id
+    assert properties["상태"] == {"select": {"name": "확인 필요"}}
 
 
 def test_the_second_sync_of_an_item_updates_its_page_not_a_new_one(session: Session) -> None:
@@ -518,6 +536,23 @@ def test_an_edit_that_keeps_the_item_unconfirmed_queues_nothing(
     client.patch(f"{PREFIX}/action-items/{row.id}", json={"assignee_label": "박디자인"})
 
     assert queued == []
+
+
+def test_moving_a_sent_item_back_to_confirmation_queues_its_update(
+    client: TestClient, session: Session, queued: list[str]
+) -> None:
+    """Its page shows 확인 필요 (decided with the user, 2026-10-01)."""
+    row = item(session)
+    session.add(
+        ExtExternalRef(
+            action_item_id=row.id, system="notion", meeting_id=row.meeting_id, external_id="p1"
+        )
+    )
+    session.commit()
+
+    client.patch(f"{PREFIX}/action-items/{row.id}", json={"status": "needs_confirmation"})
+
+    assert queued == [row.id]
 
 
 def test_a_notion_failure_does_not_fail_the_confirmation(

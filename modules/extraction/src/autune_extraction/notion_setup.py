@@ -1,8 +1,11 @@
 """Creating the Notion databases a team's sync writes to, under one page.
 
-A team connects Notion by sharing one page with the integration; everything
-Autune writes lives in databases this module creates under that page. Three of
-them: "액션 아이템", "결정" and "회의록", each with exactly the property names
+A team connects Notion by sharing one page with the integration. Under it this
+module makes a page of Autune's own, titled "Autune", and everything Autune
+writes lives in databases inside that page -- so the team finds it all in one
+place and the page they shared keeps only that one child (decided with the
+user, 2026-10-01). Three databases: "액션 아이템", "결정" and "회의록", each
+with exactly the property names
 the sync uses -- ``service.NOTION_PROPERTIES``,
 ``service.DECISION_NOTION_PROPERTIES`` and ``MINUTES_NOTION_PROPERTIES`` below
 -- so the schema created here and the pages written later cannot drift apart.
@@ -39,7 +42,11 @@ from sqlalchemy.orm import Session
 
 from autune_core.integrations_config import IntegrationConfig
 from autune_extraction.models import ExtNotionTarget
-from autune_extraction.service import DECISION_NOTION_PROPERTIES, NOTION_PROPERTIES
+from autune_extraction.service import (
+    DECISION_NOTION_PROPERTIES,
+    NOTION_PROPERTIES,
+    NOTION_STATUS_LABELS,
+)
 
 NOTION_API = "https://api.notion.com/v1"
 NOTION_VERSION = "2022-06-28"
@@ -54,7 +61,15 @@ two. ``meeting`` holds the meeting id, as it does in the action and decision
 databases. The writer (#428 item 7) must import this map rather than spell the
 names again."""
 
-_ACTION_STATUS_OPTIONS = ["needs_confirmation", "todo", "in_progress", "done"]
+_ACTION_STATUS_OPTIONS = list(NOTION_STATUS_LABELS.values())
+
+HOME_TITLE = "Autune"
+HOME_INTRO = (
+    "Autune이 회의에서 확정한 액션 아이템과 결정을 이 페이지 아래 데이터베이스에 "
+    "정리합니다. 데이터베이스와 속성 이름을 바꾸면 동기화가 멈추니 그대로 두세요."
+)
+"""The page every database goes in, and the one line on it. Fixed text: no
+meeting content leaves here."""
 
 DATABASES: tuple[tuple[str, str, Mapping[str, str], bool], ...] = (
     ("action_db_id", "액션 아이템", NOTION_PROPERTIES, True),
@@ -107,6 +122,48 @@ def schema(names: Mapping[str, str], *, status_select: bool) -> dict[str, Any]:
     return properties
 
 
+def _refused(resp: httpx.Response) -> NotionSetupError:
+    # A proxy's HTML page instead of Notion's JSON must not turn into a 500
+    # (lsh2217, review of #402).
+    try:
+        message = resp.json().get("message")
+    except ValueError:
+        message = None
+    return NotionSetupError(resp.status_code, message or f"Notion answered {resp.status_code}")
+
+
+def create_home_page(client: httpx.Client, *, page_id: str | None) -> str:
+    """The "Autune" page holding the databases: under the page the team shared,
+    or -- ``page_id`` ``None``, nothing shared -- at the top of the workspace,
+    which Notion makes one of the connecting person's private pages. Only a
+    public (OAuth) integration may do that, which the one-click connect is."""
+    body = {
+        "parent": {"page_id": page_id} if page_id else {"workspace": True},
+        "properties": {"title": {"title": [{"type": "text", "text": {"content": HOME_TITLE}}]}},
+        "children": [
+            {
+                "object": "block",
+                "type": "paragraph",
+                "paragraph": {"rich_text": [{"type": "text", "text": {"content": HOME_INTRO}}]},
+            }
+        ],
+    }
+    resp = client.post("/pages", json=body)
+    if resp.status_code >= 400:
+        raise _refused(resp)
+    return str(resp.json()["id"])
+
+
+def home_of(client: httpx.Client, database_id: str) -> str | None:
+    """The page a database Autune made sits in, so a missing one is added
+    beside it. ``None`` when Notion no longer has it under a page."""
+    resp = client.get(f"/databases/{database_id}")
+    if resp.status_code >= 400:
+        raise _refused(resp)
+    parent = resp.json().get("parent") or {}
+    return str(parent["page_id"]) if parent.get("type") == "page_id" else None
+
+
 def create_database(
     client: httpx.Client,
     *,
@@ -122,13 +179,7 @@ def create_database(
     }
     resp = client.post("/databases", json=body)
     if resp.status_code >= 400:
-        # A proxy's HTML page instead of Notion's JSON must not turn into a
-        # 500 (lsh2217, review of #402).
-        try:
-            message = resp.json().get("message")
-        except ValueError:
-            message = None
-        raise NotionSetupError(resp.status_code, message or f"Notion answered {resp.status_code}")
+        raise _refused(resp)
     return str(resp.json()["id"])
 
 
@@ -138,7 +189,7 @@ def same_page(stored: object, page_id: str) -> bool:
 
 
 def provision_databases(
-    client: httpx.Client, *, page_id: str, stored: Mapping[str, Any]
+    client: httpx.Client, *, page_id: str, stored: Mapping[str, Any], home: str | None = None
 ) -> tuple[dict[str, str], list[str]]:
     """The Notion config for a connection to ``page_id``, and the config keys of
     the databases this call had to create.
@@ -149,19 +200,34 @@ def provision_databases(
     or a stored config that never recorded its page, gets all new databases,
     because the old ones may not be shared with the new token (lsh2217, review
     of #402).
+
+    New databases go in a new "Autune" page under ``page_id``
+    (``create_home_page``); a missing one goes beside the ones kept, in
+    whatever page holds them -- a team set up before the "Autune" page existed
+    keeps its databases directly under the page it shared. ``home`` is an
+    "Autune" page already made, for ``page_id`` itself to hold them
+    (``notion_connect.set_up`` with nothing shared).
     """
     reuse = same_page(stored.get("parent_page_id"), page_id)
     config: dict[str, str] = {}
-    created: list[str] = []
-    for key, title, names, status_select in DATABASES:
+    for key, *_ in DATABASES:
         existing = stored.get(key) if reuse else None
         if isinstance(existing, str) and existing:
             config[key] = existing
-            continue
-        config[key] = create_database(
-            client, page_id=page_id, title=title, names=names, status_select=status_select
+    created: list[str] = []
+    missing = [database for database in DATABASES if database[0] not in config]
+    if missing:
+        kept = next(iter(config.values()), None)
+        home = (
+            home
+            or (home_of(client, kept) if kept else None)
+            or create_home_page(client, page_id=page_id)
         )
-        created.append(key)
+        for key, title, names, status_select in missing:
+            config[key] = create_database(
+                client, page_id=home, title=title, names=names, status_select=status_select
+            )
+            created.append(key)
     config["parent_page_id"] = page_id
     return config, created
 

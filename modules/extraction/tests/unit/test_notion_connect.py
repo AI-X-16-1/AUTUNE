@@ -153,7 +153,13 @@ def test_notion_being_down_is_still_an_error(
         _pages_for(session, monkeypatch, notion_setup.NotionSetupError(502, "bad gateway"))
 
 
-def _set_up(session: Session, monkeypatch: pytest.MonkeyPatch, calls: list[str]) -> dict[str, Any]:
+def _set_up(
+    session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+    calls: list[str],
+    page_id: str | None = "page-2",
+    shared: tuple[str, ...] = (),
+) -> dict[str, Any]:
     @contextmanager
     def scope() -> Iterator[Session]:
         yield session
@@ -167,8 +173,10 @@ def _set_up(session: Session, monkeypatch: pytest.MonkeyPatch, calls: list[str])
         def __exit__(self, *exc: Any) -> None:
             pass
 
-    def provision(client: Any, *, page_id: str, stored: dict) -> tuple[dict, list[str]]:
-        calls.append(f"provision:{page_id}:{bool(stored)}")
+    def provision(
+        client: Any, *, page_id: str, stored: dict, home: str | None = None
+    ) -> tuple[dict, list[str]]:
+        calls.append(f"provision:{page_id}:{bool(stored)}" + (f":home={home}" if home else ""))
         return {**TARGET, "parent_page_id": page_id}, [
             "action_db_id",
             "decision_db_id",
@@ -187,9 +195,18 @@ def _set_up(session: Session, monkeypatch: pytest.MonkeyPatch, calls: list[str])
     monkeypatch.setattr(notion_setup, "notion_client", lambda token: _Client())
     monkeypatch.setattr(notion_setup, "provision_databases", provision)
     monkeypatch.setattr(
+        notion_setup, "shared_pages", lambda client: [{"id": p, "title": p} for p in shared]
+    )
+
+    def home_page(client: Any, *, page_id: str | None) -> str:
+        calls.append(f"home:{page_id}")
+        return "home-1"
+
+    monkeypatch.setattr(notion_setup, "create_home_page", home_page)
+    monkeypatch.setattr(
         notion_connect.tasks.backfill_notion, "delay", lambda team: calls.append(f"queued:{team}")
     )
-    return notion_connect.set_up(TEAM, "page-2")
+    return notion_connect.set_up(TEAM, page_id)
 
 
 def test_setting_up_records_the_databases_then_queues_the_fill(
@@ -208,6 +225,34 @@ def test_setting_up_records_the_databases_then_queues_the_fill(
     assert result["databases"] == "created"
     assert result["backfill"] == "queued"
     assert "action_items" not in result  # nothing was sent inside the request (#481)
+
+
+def test_with_no_page_shared_an_autune_page_is_made_in_the_workspace(
+    session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Decided with the user (2026-10-01): allowing access without picking a
+    page still sets Autune up, among the person's private pages."""
+    calls: list[str] = []
+
+    _set_up(session, monkeypatch, calls, page_id=None)
+
+    assert calls[:3] == ["lock:team_1", "home:None", "provision:home-1:False:home=home-1"]
+    row = session.get(ExtNotionTarget, TEAM)
+    assert row is not None and row.parent_page_id == "home-1"
+
+
+def test_with_no_page_a_setup_still_shared_is_kept(
+    session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Opening the screen again must not make a second "Autune" page."""
+    session.add(ExtNotionTarget(team_id=TEAM, workspace_id="ws-1", **TARGET))
+    session.commit()
+    calls: list[str] = []
+
+    _set_up(session, monkeypatch, calls, page_id=None, shared=(TARGET["parent_page_id"],))
+
+    assert not any(c.startswith("home:") for c in calls)
+    assert f"provision:{TARGET['parent_page_id']}:True" in calls
 
 
 def test_the_lock_is_a_no_op_on_sqlite(session: Session) -> None:

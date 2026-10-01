@@ -77,20 +77,35 @@ def pages_for(team_id: str) -> dict[str, Any]:
     }
 
 
-def set_up(team_id: str, page_id: str) -> dict[str, Any]:
+def set_up(team_id: str, page_id: str | None = None) -> dict[str, Any]:
     """Databases under ``page_id``, recorded, and the fill queued. Raises
     ``notion_setup.NotionSetupError`` with Notion's own message when Notion
-    refuses the page."""
+    refuses the page.
+
+    **No ``page_id``: the person shared no page** on Notion's consent screen.
+    The databases are still made, in an "Autune" page at the top of the
+    workspace -- the connecting person's private pages, from where they can
+    move it into a teamspace (decided with the user, 2026-10-01). A setup that
+    already exists and is still shared is kept instead, so opening the screen
+    again does not make a second one."""
     with session_scope() as session:
         notion_setup.lock_setup(session, team_id)
         config = load_integration(session, team_id, NOTION)
         if config is None or not config.secret:
             raise notion_setup.NotionSetupError(409, "Notion is not connected for this team")
+        stored = notion_setup.stored_targets(session, team_id, config)
         with notion_setup.notion_client(config.secret) as client:
+            home = None
+            if page_id is None:
+                shared = {page["id"] for page in notion_setup.shared_pages(client)}
+                kept = stored.get("parent_page_id")
+                if kept in shared:
+                    page_id = kept
+                else:
+                    page_id = home = notion_setup.create_home_page(client, page_id=None)
+                    stored = {}
             target, created = notion_setup.provision_databases(
-                client,
-                page_id=page_id,
-                stored=notion_setup.stored_targets(session, team_id, config),
+                client, page_id=page_id, stored=stored, home=home
             )
         notion_setup.save_targets(
             session, team_id, target, workspace_id=notion_setup.workspace_of(config)

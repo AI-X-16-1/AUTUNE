@@ -217,10 +217,15 @@ export interface NotionSetupResult {
 export const getNotionSetup = (scope: IntegrationScope) =>
   api.extraction<NotionSetupState>(`/notion/setup?${scopeQuery(scope)}`);
 
-/** Make the databases under `pageId` and queue filling them with everything confirmed. */
-export const setUpNotion = (scope: IntegrationScope, pageId: string) =>
+/**
+ * Make the databases under `pageId` -- or, without one, in an "Autune" page
+ * among the person's private Notion pages -- and queue filling them with
+ * everything confirmed.
+ */
+export const setUpNotion = (scope: IntegrationScope, pageId?: string) =>
   api.extraction<NotionSetupResult>(
-    `/notion/setup?${scopeQuery(scope)}&page_id=${encodeURIComponent(pageId)}`,
+    `/notion/setup?${scopeQuery(scope)}` +
+      (pageId ? `&page_id=${encodeURIComponent(pageId)}` : ""),
     { method: "POST" },
   );
 
