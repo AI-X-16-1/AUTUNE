@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from unittest.mock import patch
 
 import pytest
@@ -54,6 +55,19 @@ def web_base_url(monkeypatch: pytest.MonkeyPatch) -> str:
 
 
 # --- save ---------------------------------------------------------------------
+
+
+def test_the_footer_says_when_the_draft_was_written(db_session: Session, meeting: str) -> None:
+    """A late approval posts the draft as it was; the time keeps it from reading as current."""
+    from autune_core import Meeting
+
+    row = db_session.get(Meeting, meeting)
+    assert row is not None
+    drafted = datetime(2026, 10, 1, 6, 2, tzinfo=UTC)  # 15:02 in Seoul
+
+    document = service.meeting_report_document(row, BODY, now=drafted)
+
+    assert document.endswith("\n\n자동 생성된 리포트입니다 · 10/1 15:02 기준.")
 
 
 def test_save_stores_the_body_under_the_meetings_team(
