@@ -122,6 +122,12 @@ agreement, and sync the result to Notion.
    the same path either way. A speaker who never linked Slack can still answer
    there — answering puts the question, so its clock starts then. Nobody but
    the speaker sees or answers it.
+   **A DM whose line is corrected afterwards** (#586). Each DM keeps where it
+   landed (`dm_channel`, `dm_ts`) and a digest of what it quoted; a run that
+   finds the line hashing differently queues `update_confirmation_dm`, which
+   rebuilds the DM from the stored line and replaces it in place
+   (`SlackClient.update_message`, `chat.update`) under the same outbound check
+   as a send. A DM sent before places were kept cannot be corrected.
    **What the answer does.** *Commitment* makes one draft item for that
    utterance, slot-filled like any commitment (the speaker is the assignee, the
    first date phrase the due date, the utterance's own text — tidied into the

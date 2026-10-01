@@ -15,7 +15,7 @@ from datetime import date, datetime
 from .calendar import CalendarClient, CalendarEvent
 from .errors import PermanentIntegrationError
 from .privacy import assert_personal_delivery, check_outbound
-from .slack import SlackClient, slack_body
+from .slack import PostedMessage, SlackClient, slack_body
 
 
 @dataclass
@@ -31,6 +31,8 @@ class FakeSlack:
     """Implements the SlackApi protocol. Records instead of sending."""
 
     sent: list[SentMessage] = field(default_factory=list)
+    updates: list[tuple[str, str, str, list[dict] | None]] = field(default_factory=list)
+    """``(channel, ts, text, blocks)`` per ``update_message`` call."""
     _ts: int = 0
 
     def _next_ts(self) -> str:
@@ -63,6 +65,20 @@ class FakeSlack:
         )
         self.sent.append(SentMessage(channel=user_id, text=text, is_dm=True))
         return self._next_ts()
+
+    def send_dm_message(
+        self, user_id: str, text: str, blocks: list[dict] | None = None
+    ) -> PostedMessage:
+        ts = self.send_dm(user_id, text, blocks)
+        return PostedMessage(channel=f"D-{user_id}", ts=ts)
+
+    def update_message(
+        self, channel: str, ts: str, text: str, blocks: list[dict] | None = None
+    ) -> None:
+        body = slack_body(channel, text, blocks)
+        body["ts"] = ts
+        check_outbound(body, destination="slack", addressing=SlackClient.addressing)
+        self.updates.append((channel, ts, text, blocks))
 
     def send_personal(self, *, subject_id: str, recipient_id: str, text: str) -> str:
         assert_personal_delivery(subject_id=subject_id, recipient_id=recipient_id, is_direct=True)

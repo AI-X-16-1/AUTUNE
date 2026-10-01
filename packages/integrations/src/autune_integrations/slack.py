@@ -10,6 +10,7 @@ and only the first is primary.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any, Protocol
 
 from .base import HttpClient
@@ -28,6 +29,22 @@ class SlackApi(Protocol):
     def post_message(self, channel: str, text: str, blocks: list[dict] | None = ...) -> str: ...
     def reply_in_thread(self, channel: str, thread_ts: str, text: str) -> str: ...
     def send_dm(self, user_id: str, text: str, blocks: list[dict] | None = ...) -> str: ...
+    def send_dm_message(
+        self, user_id: str, text: str, blocks: list[dict] | None = ...
+    ) -> PostedMessage: ...
+    def update_message(
+        self, channel: str, ts: str, text: str, blocks: list[dict] | None = ...
+    ) -> None: ...
+
+
+@dataclass(frozen=True)
+class PostedMessage:
+    """Where a sent message is: the conversation Slack put it in (for a DM, the
+    ``D...`` channel Slack opened) and its ``ts``. What ``update_message`` needs to
+    change it later (#586)."""
+
+    channel: str
+    ts: str
 
 
 def slack_body(
@@ -51,12 +68,13 @@ def slack_body(
 class SlackClient(HttpClient):
     service = "slack"
 
-    addressing = frozenset({"channel", "thread_ts"})
+    addressing = frozenset({"channel", "thread_ts", "ts"})
     """Where the message goes, not what it says.
 
     `channel` is a channel id, or a user id for a DM. `thread_ts` is Slack's own
     timestamp -- `1726012345.123456` -- which is three groups of digits and is
-    therefore a bank account to any pattern that reads it as content. Both are
+    therefore a bank account to any pattern that reads it as content; `ts` is the
+    same timestamp naming the message ``update_message`` changes. All are
     supplied by the feature and neither came out of a meeting, so checking them
     can only produce false refusals. `text` and `blocks` are still checked.
     """
@@ -81,16 +99,40 @@ class SlackClient(HttpClient):
         with "Sign in with Slack" is looked up here, once for every module
         (#255). Someone who has not linked is refused by name rather than sent
         to ``channel_not_found``; a Slack member id is passed through."""
-        return self._post(slack_body(_member_id(user_id), text, blocks))
+        return self.send_dm_message(user_id, text, blocks).ts
+
+    def send_dm_message(
+        self, user_id: str, text: str, blocks: list[dict] | None = None
+    ) -> PostedMessage:
+        """``send_dm``, saying where the message landed, for a caller that may
+        need to correct it later (``update_message``, #586)."""
+        answer = self._send(slack_body(_member_id(user_id), text, blocks))
+        return PostedMessage(channel=str(answer.get("channel", "")), ts=str(answer.get("ts", "")))
+
+    def update_message(
+        self, channel: str, ts: str, text: str, blocks: list[dict] | None = None
+    ) -> None:
+        """``chat.update``: replace a message this bot sent -- a quotation whose
+        line was masked again after a PII report (#586). The same outbound check
+        as a new message reads the new text and blocks; ``channel`` and ``ts``
+        are addressing. Slack's ``ok: false`` raises, as for a send."""
+        body = slack_body(channel, text, blocks)
+        body["ts"] = ts
+        answer = self.request("POST", "/chat.update", json=body)
+        if not answer.get("ok", True):
+            raise PermanentIntegrationError(f"slack refused the update: {answer.get('error')}")
 
     def _post(self, body: dict[str, Any]) -> str:
+        return str(self._send(body).get("ts", ""))
+
+    def _send(self, body: dict[str, Any]) -> dict[str, Any]:
         """``chat.postMessage``, whose failures arrive as HTTP 200 with
         ``ok: false``. Those were recorded as sent (#280); now they raise, with
         Slack's error code and no content."""
         answer = self.request("POST", "/chat.postMessage", json=body)
         if not answer.get("ok", True):
             raise PermanentIntegrationError(f"slack refused the message: {answer.get('error')}")
-        return str(answer.get("ts", ""))
+        return dict(answer)
 
     def send_personal(self, *, subject_id: str, recipient_id: str, text: str) -> str:
         """Deliver data that describes exactly one person.
