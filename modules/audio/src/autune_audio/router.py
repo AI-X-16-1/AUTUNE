@@ -368,5 +368,5 @@ def team_privacy(team_id: str, user: CurrentUser, session: SessionDep) -> TeamPr
 def set_team_privacy(
     team_id: str, body: TeamPrivacyUpdate, user: CurrentUser, session: SessionDep
 ) -> TeamPrivacy:
-    """S29's retention row. Applies to meetings created from now on."""
+    """S29's retention row. Applies to meetings held from now on."""
     return account.set_retention(session, team_id=team_id, days=body.retention_days, by=user)

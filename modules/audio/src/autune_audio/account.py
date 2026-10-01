@@ -244,10 +244,10 @@ def team_privacy(session: Session, *, team_id: str, reader: User) -> TeamPrivacy
 
 
 def set_retention(session: Session, *, team_id: str, days: int, by: User) -> TeamPrivacy:
-    """Change the window for meetings the team creates from now on.
+    """Change the window for meetings the team holds from now on.
 
-    **Not retroactive.** ``create_meeting`` fixes each meeting's
-    ``expires_at`` when it is created, and that is a promise made to the
+    **Not retroactive.** ``service.open_retention_window`` fixes each
+    meeting's ``expires_at`` when it is held, and that is a promise made to the
     people in that room: lengthening the window later must not keep what they
     were told would go, and shortening it must not delete what the team was
     still relying on without anyone deciding to.
