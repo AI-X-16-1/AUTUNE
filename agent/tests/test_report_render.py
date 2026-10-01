@@ -26,11 +26,16 @@ REVIEW = _r(
 GAPS = _r(
     "열린 갭 2건, 그중 높음 1건.",
     [
-        {"title": "리스크: 환불 정책", "body": "환불 기준은 누가 정하나요?", "severity": "high"},
+        {
+            "title": "리스크·예외 처리 — 충분히 다뤄지지 않았습니다",
+            "body": "이 방향이 실패하면 무엇을 합니까?",
+            "severity": "high",
+        },
         {"title": "일정: 출시 일정", "body": "", "severity": "medium"},
     ],
 )
-"""C's ``gap.open_gaps`` as it returns (modules/gap/.../tools.py)."""
+"""C's ``gap.open_gaps`` as it returns (modules/gap/.../tools.py). The first
+title is a real one from the 10/1 run: C's titles carry their own dash."""
 LINKS = _r(
     "이어지는 회의 1건.",
     [{"title": "간편결제는 2차로 미룬다", "meeting_title": "간편결제 도입 검토", "date": "9/22"}],
@@ -45,7 +50,8 @@ def test_every_section_in_order() -> None:
         "⏳ 결정 확인 대기 1건, 액션아이템 확인 대기 1건, 답 없는 약한 동의 0건.\n"
         "\n"
         "⚠️ 열린 갭 2건, 그중 높음 1건.\n"
-        "• 리스크: 환불 정책 — 환불 기준은 누가 정하나요?\n"
+        "• 리스크·예외 처리 — 충분히 다뤄지지 않았습니다\n"
+        "  ↳ 이 방향이 실패하면 무엇을 합니까?\n"
         "• 일정: 출시 일정\n"
         "\n"
         "🔗 이어지는 회의: 간편결제 도입 검토 (9/22)"
@@ -123,6 +129,30 @@ def test_over_budget_the_other_modules_go_before_the_confirmed_items() -> None:
     assert "• 결제 API 스펙 초안" in body and "• 결제 화면 시안" in body
     # Whole lines only: no line is cut in the middle.
     assert all(line.endswith("(9/22)") for line in body.splitlines() if line.startswith("🔗"))
+
+
+def test_over_budget_a_question_goes_before_its_own_title() -> None:
+    """Gap lines drop from the end, so a "↳" line never stays without its gap (#591 review)."""
+    long_gaps = _r(
+        "열린 갭 5건, 그중 높음 5건.",
+        [
+            {
+                "title": f"항목{n} — 충분히 다뤄지지 않았습니다",
+                "body": "질" * 500,
+                "severity": "high",
+            }
+            for n in range(5)
+        ],
+    )
+
+    body = render(ACTIONS, REVIEW, long_gaps, None)
+
+    assert len(body) <= BODY_MAX_CHARS
+    lines = body.splitlines()
+    assert sum(line.startswith("  ↳") for line in lines) < 5  # the budget did cut
+    for index, line in enumerate(lines):
+        if line.startswith("  ↳"):
+            assert lines[index - 1].startswith("• 항목")
 
 
 def test_the_body_stays_under_the_budget() -> None:
