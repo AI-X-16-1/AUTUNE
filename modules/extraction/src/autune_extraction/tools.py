@@ -1,6 +1,6 @@
 """Module B as tools an agent can call (#260/#261, docs/architecture/agent-layer.md section 4).
 
-Eight read tools (``TOOLS``) over B's existing reads, and six writes
+Nine read tools (``TOOLS``) over B's existing reads, and seven writes
 (``ACTIONS``) over B's existing service calls, so that everything a person does
 with B on the board -- read items and decisions, confirm, reassign, re-date,
 close, add, review a decision -- can also be asked for in words. No new tables,
@@ -507,6 +507,46 @@ def action_item_status(session: Session, team_id: str, action_item_id: str) -> d
     return _result(summary="액션아이템 1건.", items=[finding], evidence=read.source_utterance_ids)
 
 
+FOLLOWUP_DESCRIPTION = "후속 회의 잡기"
+"""What ``add_followup_item`` writes. Fixed, so a Follow-up proposal carries ids
+only and plan mode can queue it (#556, #561); a person may reword it later, which
+is why the open-item read keys on ``origin``, never on this text."""
+
+_STILL_OPEN = (ActionStatus.NEEDS_CONFIRMATION.value, *(s.value for s in _OPEN))
+
+
+def _open_followup(session: Session, team_id: str) -> ExtActionItem | None:
+    return session.scalars(
+        select(ExtActionItem)
+        .join(Meeting, Meeting.id == ExtActionItem.meeting_id)
+        .where(
+            Meeting.team_id == team_id,
+            ExtActionItem.origin == "followup",
+            ExtActionItem.status.in_(_STILL_OPEN),
+        )
+        .order_by(ExtActionItem.id)
+        .limit(1)
+    ).first()
+
+
+def open_followup_item(session: Session, team_id: str) -> dict[str, Any]:
+    """Use this before proposing a follow-up meeting: whether the team still has
+    a Follow-up item open -- waiting for confirmation, to do or in progress.
+    Propose nothing while one is open (#561).
+
+    One answer per team, not per meeting or topic. Reports the item by id and
+    status only, never its text (#261 rule 3; the id is all a caller needs).
+    """
+    row = _open_followup(session, team_id)
+    if row is None:
+        return _result(summary="열린 후속 회의 항목이 없습니다.", items=[], evidence=[])
+    return _result(
+        summary="열린 후속 회의 항목이 있습니다.",
+        items=[{"title": "후속 회의 항목", "body": row.status, "score": 1.0, "id": row.id}],
+        evidence=[],
+    )
+
+
 def _team_of(session: Session, meeting_id: str) -> str | None:
     return session.scalar(select(Meeting.team_id).where(Meeting.id == meeting_id))
 
@@ -533,6 +573,7 @@ TOOLS = [
     meeting_decisions,
     person_action_items,
     action_item_status,
+    open_followup_item,
 ]
 """Collected by the agent layer by iterating modules (invariant 6), never registered by hand."""
 
@@ -704,6 +745,34 @@ def add_action_item(
     return _acted("액션아이템을 추가했습니다 (확인 대기).", new_id)
 
 
+def add_followup_item(team_id: str, meeting_id: str) -> dict[str, Any]:
+    """Add "후속 회의 잡기" to a meeting -- what the Follow-up subagent proposes
+    after a meeting that left topics open (#561). It starts waiting for
+    confirmation, so it reaches nobody until someone confirms it.
+
+    L2 -- runs only after a person (the team lead, for Follow-up) approves. B
+    writes the text, so the proposal carries ids only. Recorded as Follow-up's
+    (``origin`` ``followup``), not a person's, so edit cost does not count it as
+    an item the model missed. Refused while the team already has one open
+    (``open_followup_item``), so a second approved proposal makes no second item.
+    """
+    with session_scope() as session:
+        if _team_of(session, meeting_id) != team_id:
+            return _not_found("meeting", meeting_id)
+        if _open_followup(session, team_id) is not None:
+            return _refused(
+                f"team {team_id} already has an open follow-up item",
+                "이미 열린 후속 회의 항목이 있습니다.",
+            )
+        row = service.create_action_item(
+            session,
+            ActionItemCreate(meeting_id=meeting_id, description=FOLLOWUP_DESCRIPTION),
+            origin="followup",
+        )
+        new_id = row.id
+    return _acted("후속 회의 항목을 추가했습니다 (확인 대기).", new_id)
+
+
 def review_decision(team_id: str, decision_id: str, verdict: str) -> dict[str, Any]:
     """Confirm or reject a decision the model proposed. A confirmed one goes to
     Notion, as when a person confirms it on the review screen.
@@ -731,6 +800,7 @@ ACTIONS = [
     set_action_item_due_date,
     set_action_item_status,
     add_action_item,
+    add_followup_item,
     review_decision,
 ]
 """B's writes, all L2 (see above). Kept out of ``TOOLS`` on purpose: the registry

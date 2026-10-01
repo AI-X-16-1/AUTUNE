@@ -65,8 +65,12 @@ export interface ExternalRefRead {
  */
 export interface ActionItemRead extends ActionItem {
   meeting_id: string;
-  /** `model` for what the pipeline drafted, `user` for what a person typed. */
-  origin: "model" | "user";
+  /**
+   * `model` for what the pipeline drafted, `user` for what a person typed,
+   * `followup` for the Follow-up agent's "후속 회의 잡기" (#561), `chat` for an
+   * item drafted from an utterance in the chat.
+   */
+  origin: "model" | "user" | "followup" | "chat";
   /**
    * Whether the item belongs in the candidate band. Decided by the server,
    * which holds the threshold the classifier's confidences are measured
