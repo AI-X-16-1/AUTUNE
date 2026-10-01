@@ -137,6 +137,19 @@ def test_recurring_finds_what_the_previous_meeting_also_left_open(team_id: str) 
     assert len(result["evidence"]) == 2 * len(result["items"])
 
 
+def test_the_same_key_under_another_template_is_not_recurring(team_id: str) -> None:
+    first = meeting(team_id, COVERS_TWO, started=T0)
+    with session_scope() as s:
+        for gap in s.scalars(select(GapGap).where(GapGap.meeting_id == first)):
+            gap.template_key = "feature_planning"
+    second = meeting(team_id, COVERS_TWO, started=T0 + timedelta(days=7))
+
+    result = call(tools.recurring_open_gaps, team_id, second)
+
+    assert result["ok"]
+    assert result["items"] == []
+
+
 def test_recurring_reads_the_latest_earlier_meeting_only(team_id: str) -> None:
     meeting(team_id, COVERS_TWO, started=T0)
     middle = meeting(team_id, COVERS_TWO, started=T0 + timedelta(days=7))

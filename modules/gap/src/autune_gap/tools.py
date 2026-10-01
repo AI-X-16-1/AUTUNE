@@ -171,6 +171,13 @@ def _previous_analysed(session: Session, meeting: Meeting) -> Meeting | None:
     return None
 
 
+def _item(gap: GapGap) -> tuple[str, str] | None:
+    """A template item as ``uq_gap_gaps_template_item`` keys it within a meeting."""
+    if gap.template_key is None or gap.template_item_key is None:
+        return None
+    return (gap.template_key, gap.template_item_key)
+
+
 def recurring_open_gaps(session: Session, team_id: str, meeting_id: str) -> dict[str, Any]:
     """Use this to see whether a meeting left open what the team's previous
     meeting also left open: the template items with an undismissed gap in both.
@@ -179,6 +186,13 @@ def recurring_open_gaps(session: Session, team_id: str, meeting_id: str) -> dict
 
     Returns at most five template items, most risky first. Each names the item
     and holds both meetings' gap ids. Nothing about who spoke.
+
+    An item is the same item only under the same template: ``risk`` in
+    ``general`` and ``risk`` in ``feature_planning`` are two checklists' items,
+    so a template switch between the meetings carries nothing over. The
+    previous meeting is the latest analysed one, even when it raised no gap at
+    all -- a meeting in between that settled everything breaks the run, which
+    is what it should do.
     """
     meeting = _meeting(session, team_id, meeting_id)
     if meeting is None:
@@ -200,15 +214,11 @@ def recurring_open_gaps(session: Session, team_id: str, meeting_id: str) -> dict
             evidence=[],
         )
 
-    before = {
-        gap.template_item_key: gap
-        for gap in _open_gaps(session, previous.id)
-        if gap.template_item_key is not None
-    }
+    before = {_item(gap): gap for gap in _open_gaps(session, previous.id) if _item(gap) is not None}
     carried = [
-        (gap, before[gap.template_item_key])
+        (gap, before[key])
         for gap in _open_gaps(session, meeting_id)
-        if gap.template_item_key is not None and gap.template_item_key in before
+        if (key := _item(gap)) is not None and key in before
     ]
     summary = (
         f"직전 회의에 이어 이번에도 열린 항목 {len(carried)}개."
