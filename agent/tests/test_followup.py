@@ -1,8 +1,7 @@
 """Follow-up: read, decide and propose (spec sections 3, 4 and 8).
 
 The mocks return what C's ``open_gaps`` and ``recurring_open_gaps`` (#546) and
-B's ``unresolved_questions`` return. B's open-item read is #561's and not built
-yet; its mock answers with the items it finds.
+B's ``unresolved_questions`` and ``open_followup_item`` (#561) return.
 """
 
 from __future__ import annotations
@@ -11,7 +10,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from autune_agent.main import CallBudget, RunScope, Toolbox, collect_subagents
+from autune_agent.main import CallBudget, RunScope, Toolbox, collect_actions, collect_subagents
 from autune_agent.main.pending import arguments_ok
 from autune_agent.main.registry import Tool
 from autune_agent.subagents.followup import SUBAGENT, rules
@@ -69,6 +68,7 @@ def tools_for(
     questions: int = 1,
     open_items: list[dict[str, Any]] | None = None,
     recent: list[dict[str, Any]] | None = None,
+    recent_ok: bool = True,
     gaps_ok: bool = True,
     with_open_item: bool = True,
     calls: list[tuple[str, dict[str, Any]]] | None = None,
@@ -92,7 +92,7 @@ def tools_for(
 
     def recent_meetings(session: Any, team_id: str) -> dict[str, Any]:
         log.append((RECENT, {}))
-        return {"ok": True, "summary": "회의", "items": recent or [], "evidence": []}
+        return {"ok": recent_ok, "summary": "회의", "items": recent or [], "evidence": []}
 
     def open_followup_item(session: Any, team_id: str) -> dict[str, Any]:
         log.append((OPEN_ITEM, {}))
@@ -155,11 +155,18 @@ def test_a_carried_over_item_is_one_l2_proposal_on_the_trigger_meeting(session, 
     (proposal,) = outcome.proposed
     assert (proposal.level, proposal.tool, proposal.kind) == ("L2", WRITE, "followup_meeting")
     # The trigger's meeting is the run's: the action is bound to it when it runs.
-    assert proposal.arguments == {"source": "followup"}
+    assert proposal.arguments == {}
     assert proposal.evidence == ["gap_now"]
     assert "다시 열린 항목 1개" in outcome.result.summary
     assert names(calls) == [OPEN_GAPS, RECURRING, QUESTIONS, OPEN_ITEM]
     assert {args["meeting_id"] for _, args in calls if args} == {team["meeting"]}
+
+
+def test_the_write_is_one_b_declares_l2_and_takes_only_the_meeting() -> None:
+    """A proposal cannot demote a write, but an L1 one would run with no lead at all."""
+    write = collect_actions(["extraction"])[WRITE]
+    assert write.level == "L2"
+    assert write.parameters == {"team_id", "meeting_id"}
 
 
 def test_every_proposal_passes_plan_modes_argument_rule(session, team) -> None:
@@ -273,7 +280,7 @@ def test_a_chat_run_takes_the_latest_analysed_meeting(session, team) -> None:
 
     (proposal,) = outcome.proposed
     # A chat run's scope has no meeting, so the proposal names the one it read.
-    assert proposal.arguments == {"meeting_id": team["meeting"], "source": "followup"}
+    assert proposal.arguments == {"meeting_id": team["meeting"]}
     assert arguments_ok(proposal.arguments)
     # The first open_gaps is refused by the scope (no meeting) before it reaches C.
     assert names(calls) == [RECENT, OPEN_GAPS, RECURRING, QUESTIONS, OPEN_ITEM]
@@ -289,6 +296,16 @@ def test_a_chat_run_with_no_analysed_meeting_says_so(session, team) -> None:
 
     assert outcome.result.ok is False
     assert "분석된 회의가 없습니다" in outcome.result.summary
+
+
+def test_an_unreadable_meeting_list_is_not_no_meeting(session, team) -> None:
+    tools = tools_for(recent=[], recent_ok=False)
+
+    outcome = invoke(tools, session=session, team_id=team["team"], meeting=None, request="후속?")
+
+    assert outcome.result.ok is False
+    assert outcome.proposed == []
+    assert "읽지 못했습니다" in outcome.result.summary
 
 
 def test_no_question_text_reaches_the_proposal_or_the_answer(session, team) -> None:

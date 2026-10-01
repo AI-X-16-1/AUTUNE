@@ -31,12 +31,12 @@ RECURRING = "gap.recurring_open_gaps"
 QUESTIONS = "extraction.unresolved_questions"
 RECENT = "audio.recent_meetings"
 OPEN_ITEM = "extraction.open_followup_item"
-"""Whether the team has a Follow-up item still open (#561). Until B ships it,
-the call fails and Follow-up proposes nothing -- an unknown is not "none open"."""
-WRITE = "extraction.add_action_item"
-"""B's write for the item, with ``source="followup"`` (#561). The main agent runs
-it only after approval; B's owner may still rename it there."""
-SOURCE = "followup"
+"""Whether the team has a Follow-up item still open (#561). A failed read
+proposes nothing -- an unknown is not "none open"."""
+WRITE = "extraction.add_followup_item"
+"""B's L2 write for the item (#561). It takes the meeting and writes the fixed
+wording itself, so the proposal carries ids only. Not ``add_action_item``: that
+is L1 since #576 and would run without the lead's approval."""
 
 TOOLS = (OPEN_GAPS, RECURRING, QUESTIONS, RECENT, OPEN_ITEM)
 ANALYSED = ("awaiting_confirmation", "complete", "delivered")
@@ -66,6 +66,11 @@ def build(toolbox: Toolbox) -> CompiledSubagent:
         gaps = toolbox.call(OPEN_GAPS)
         if not gaps.ok and gaps.reason == NO_MEETING:
             recent = toolbox.call(RECENT)
+            if not recent.ok:
+                return _stop(
+                    recent.reason or "recent meetings unreadable",
+                    "최근 회의 목록을 읽지 못했습니다.",
+                )
             picked = next((i for i in recent.items if getattr(i, "status", None) in ANALYSED), None)
             meeting_id = (picked.model_extra or {}).get("meeting_id") if picked else None
             if not isinstance(meeting_id, str):
@@ -113,7 +118,7 @@ def build(toolbox: Toolbox) -> CompiledSubagent:
             kind="followup_meeting",
             title="후속 회의 제안",
             tool=WRITE,
-            arguments={**state["at"], "source": SOURCE},
+            arguments=dict(state["at"]),
             level="L2",
             rationale=f"{reason}.",
             evidence=verdict.evidence,

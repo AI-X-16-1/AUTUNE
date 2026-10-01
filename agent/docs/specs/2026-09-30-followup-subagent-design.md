@@ -126,14 +126,15 @@ the queue refuses (`ARGUMENT_REFUSED`), so the lead would never have seen it.
 
 One `ProposedAction`, with:
 
-- `tool`: B's Follow-up write. B's owner chooses its shape (#561); what
-  this design needs from it is a declared L2 action taking `meeting_id` and a
-  source enum `followup`, for which B writes a fixed description itself
-  ("후속 회의 잡기"), records the item as Follow-up's rather than a person's,
-  and starts it unconfirmed like `add_action_item`.
-- `arguments`: `{"meeting_id": M, "source": "followup"}`. No assignee, no due
-  date: the lead fills them on the board after approving, and the due date is
-  what puts the meeting on a calendar (#441).
+- `tool`: `extraction.add_followup_item`, B's L2 action for this (#561). It
+  takes `team_id` and `meeting_id`, writes the fixed description "후속 회의
+  잡기" itself, records the item as Follow-up's (`origin="followup"`) rather
+  than a person's, and starts it unconfirmed. Not `add_action_item`: that is
+  B's chat-draft write and L1 since #576, so it would run without the lead.
+- `arguments`: `{}` on a triggered run, whose scope binds the meeting when the
+  action runs; `{"meeting_id": M}` on a chat run that picked M itself. No
+  assignee, no due date: the lead fills them on the board after approving, and
+  the due date is what puts the meeting on a calendar (#441).
 - `evidence`: the gap ids the rule fired on, highest risk first.
 
 **What the lead sees.** Plan mode renders a preview from read tools when the
@@ -160,7 +161,7 @@ text, as settled on #509.
   holds B's fixed wording, not gap titles, so no topic label is copied into B.
 - **The lead is the only reader of the proposal**: approvers with scope
   `followup` in `agent_approvers`. The item it creates starts unconfirmed on the
-  board (`add_action_item`), so it reaches nobody else until someone confirms
+  board (`add_followup_item`), so it reaches nobody else until someone confirms
   it.
 
 ## 7. Open questions
@@ -174,12 +175,14 @@ text, as settled on #509.
   Follow-up item of the team's is still open on the board (unconfirmed, to do or
   in progress). Per team rather than per key, because a key list is not an
   argument plan mode accepts, and one open follow-up meeting is enough to carry
-  them. The read is B's and keys on B's source marker, not on the description,
-  which a person may reword (#561). A pending proposal for the same meeting
+  them. The read is B's `open_followup_item(team_id)` and keys on
+  `origin="followup"`, not on the description, which a person may reword
+  (#561). `add_followup_item` also refuses while one is open, so a second
+  approved proposal makes no second item. A pending proposal for the same meeting
   is already superseded by plan mode (#556).
-- **B's edit-cost figure.** `add_action_item` records an item as a person's
-  (`origin="user"`), so E's edit-cost figure would count Follow-up's items as
-  human additions. B's source marker separates them (#561).
+- **B's edit-cost figure.** Settled by #561: the item is recorded with
+  `origin="followup"`, so E's edit-cost figure does not count it as an item a
+  person added.
 - **What "carried over" cannot see.** An item is the same item only under the
   same template (#546): a template switch between two meetings carries nothing
   over. And the previous meeting is the latest one C analysed even when it
