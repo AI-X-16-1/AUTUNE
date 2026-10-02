@@ -605,6 +605,78 @@ def mark_published(session: Session, *, job_id: str) -> None:
     session.flush()
 
 
+# --------------------------------------------------------------------------- #
+# Cancel and restart (spec 2026-10-02)
+# --------------------------------------------------------------------------- #
+
+
+class NothingToCancelError(ConflictError):
+    code = "nothing_to_cancel"
+
+
+def latest_job(session: Session, *, meeting_id: str, lock: bool = False) -> TranscriptionJob | None:
+    """The meeting's newest attempt -- the one a restart or a re-upload made
+    last, and so the one the screen and both routes are about."""
+    query = (
+        sa.select(TranscriptionJob)
+        .where(TranscriptionJob.meeting_id == meeting_id)
+        .order_by(TranscriptionJob.created_at.desc())
+        .limit(1)
+    )
+    if lock:
+        query = query.with_for_update()
+    return session.scalar(query)
+
+
+def is_stalled(job: TranscriptionJob, *, settings: AudioSettings, now: datetime) -> bool:
+    """A ``running`` job whose worker has stopped writing its heartbeat.
+
+    Not progress: diarization and a remote STT call can report none for
+    minutes on a healthy run. A job claimed before ``heartbeat_at`` existed
+    falls back to ``created_at``."""
+    if job.status != "running":
+        return False
+    last = job.heartbeat_at or job.created_at
+    return last < now - timedelta(seconds=settings.stall_after_s)
+
+
+def cancel_transcription(
+    session: Session, *, meeting_id: str, user: User, settings: AudioSettings
+) -> Meeting:
+    """Stop the meeting's transcription and leave it ``failed``, which accepts
+    a new upload.
+
+    **Locks the meeting, then the job** -- the order ``lock_running_job``
+    takes them in, so a cancel and the transcript write serialise instead of
+    deadlocking: if the write committed first the meeting is ``complete`` and
+    this refuses; if this commits first the worker's fence stops the write.
+
+    **Who deletes the upload.** A live worker does, through ``adopt``, once
+    its guard hears the status; a ``queued`` job's file goes when
+    ``claim_job`` declines it. A stalled job's owner is gone, so this takes
+    ownership and deletes it now (privacy.md section 1). The sweep is the
+    backstop for all three.
+    """
+    meeting = session.get(Meeting, meeting_id, with_for_update=True)
+    if meeting is None:
+        raise NotFoundError("meeting", meeting_id)
+    require_team_member(session, user_id=user.id, team_id=meeting.team_id)
+    job = latest_job(session, meeting_id=meeting_id, lock=True)
+    if meeting.status != "analyzing" or job is None or job.status not in ("queued", "running"):
+        raise NothingToCancelError(f"meeting {meeting_id} has no transcription in progress")
+
+    now = datetime.now(tz=UTC)
+    stalled = is_stalled(job, settings=settings, now=now)
+    job.status = "cancelled"
+    job.finished_at = now
+    meeting.status = "failed"
+    session.flush()
+    if stalled:
+        storage.delete_orphan(storage.upload_path(job.id, settings))
+    log.info("audio_transcription_cancelled", meeting_id=meeting_id, job_id=job.id, stalled=stalled)
+    return meeting
+
+
 def sweep_orphans(
     session: Session, *, settings: AudioSettings, keep: str | None = None
 ) -> list[str]:

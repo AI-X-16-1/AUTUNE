@@ -301,6 +301,18 @@ def upload_recording(
     return MeetingState(meeting_id=job.meeting_id, status=job.meeting.status)
 
 
+@router.post("/meetings/{meeting_id}/transcription/cancel", response_model=MeetingState)
+def cancel_transcription(meeting_id: str, user: CurrentUser, session: SessionDep) -> MeetingState:
+    """Stop the meeting's transcription (S12 "처리 취소"). The meeting is
+    ``failed`` on return and accepts a new upload; the worker stops within one
+    heartbeat. 409 ``nothing_to_cancel`` when nothing is running."""
+    meeting = service.cancel_transcription(
+        session, meeting_id=meeting_id, user=user, settings=get_audio_settings()
+    )
+    session.commit()
+    return MeetingState(meeting_id=meeting.id, status=meeting.status)
+
+
 @router.get("/meetings/{meeting_id}/speakers", response_model=list[SpeakerEntry])
 def list_speakers(meeting_id: str, user: CurrentUser, session: SessionDep) -> list[SpeakerEntry]:
     """The meeting's speakers, and who each one is or might be. What S13 and
