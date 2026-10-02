@@ -437,9 +437,11 @@ def test_a_figure_before_an_account_does_not_hide_it(line: str) -> None:
     The account shape matched `50 1002-123` first — nine digits, a figure,
     correctly rejected — and the scan then resumed past it, so the account that
     starts inside what was rejected was never looked at. It reached neither the
-    masker nor the guard.
+    masker nor the guard. Since #696 the grouped-digits rule, declared above
+    `account`, is the one that claims a hyphenated eleven-digit run, so either
+    name means the account was found.
     """
-    assert "account" in find_unmasked(line)
+    assert {"account", "digits"} & set(find_unmasked(line))
 
 
 def test_an_oversized_payload_is_refused_before_it_is_scanned() -> None:
@@ -562,7 +564,9 @@ KNOWN_OVER_MASKING = [
 
 @pytest.mark.parametrize(("category", "text"), KNOWN_OVER_MASKING)
 def test_a_four_group_list_is_over_masked_and_we_know_it(category: str, text: str) -> None:
-    assert {cat for _, _, cat in find_pii(text)} == {category}
+    # Since #696 a hyphenated list of sixteen digits is also a grouped run;
+    # the over-masking is the same, by one more name.
+    assert {cat for _, _, cat in find_pii(text)} - {"digits"} == {category}
 
 
 @pytest.mark.parametrize("head", ["010", "1234", "900101", "+82"])
@@ -601,3 +605,43 @@ def test_an_international_number_with_a_bracketed_area_code_is_a_known_miss() ->
     `(1) 2024-2025` has the same shape. Pinned so the miss is a decision,
     not a surprise."""
     assert find_pii("+82 (10) 1234-5678") == []
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "계좌는 450-80-930-9782에요",  # an account read 3-2-6, hyphenated 3-2-3-4
+        "주민번호는 971-227-837-6573입니다",  # 6-7 hyphenated 3-3-3-4
+        "주민번호는 700826-643-8793입니다",  # 6-7 hyphenated 6-3-4
+        "계좌는 628음 84음 919160이에요",  # a filler kept between the groups
+        "계좌는 450-80-9309782에요",  # a seven-digit last group `account` refuses
+        # Review of #702: split into short groups and starting with 19/20, these
+        # passed the first version's date exemption.
+        "계좌는 2012-34-567-8901이에요",
+        "계좌 2024-450-80-930-9782",
+        "주민번호는 2008-26-643-8793입니다",
+        "계좌는 1990-12-345-6789",
+        "계좌는 2013-45-6789-01이에요",
+        "주민번호는 2003-15-3123-456입니다",
+    ],
+)
+def test_a_number_whisper_grouped_its_own_way_is_found(text: str) -> None:
+    """#696: Whisper hyphenates by guess, and these were stored in the clear or
+    kept their front groups (evaluation 04)."""
+    assert "digits" in {cat for _, _, cat in find_pii(text)}
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "2026-10-02-2026-10-05 휴가",  # a date range: refused whole, not retried inside
+        "2026-09-18까지 배포",  # a date
+        "버전 1.2.3.4",  # dots are not a grouping separator
+        "010-1234",  # too short
+        "2024-2025-2026-2027 로드맵",  # a list of years
+        "2026-10-02T14:30:00+09:00",  # a timestamp
+        "2026-10-05-15-30에",  # a date and a time
+    ],
+)
+def test_dates_years_and_short_runs_are_not_grouped_digits(text: str) -> None:
+    assert "digits" not in {cat for _, _, cat in find_pii(text)}

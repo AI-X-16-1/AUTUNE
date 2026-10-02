@@ -29,6 +29,7 @@ from autune_core.oauth.google import (
     GoogleIdentity,
     GoogleOAuthClient,
     get_google_client,
+    get_google_integration_client,
 )
 from autune_core.oauth.state import InMemoryStateStore, OAuthTransaction, get_state_store
 from autune_core.settings import Settings
@@ -38,7 +39,8 @@ ME = "user_me"
 
 
 class FakeGoogle:
-    def __init__(self) -> None:
+    def __init__(self, client_id: str = "sign-in-client") -> None:
+        self.client_id = client_id
         self.grant = GoogleGrant(
             id_token="id-token",
             refresh_token="1//refresh",
@@ -116,19 +118,19 @@ def world(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     app.dependency_overrides[get_google_client] = lambda: google
     # No second client unless a test gives one -- and never the one a
     # developer's own ``.env`` would build, which would reach Google.
-    monkeypatch.setattr(auth_router_module, "get_google_integration_client", lambda: None)
+    app.dependency_overrides[get_google_integration_client] = lambda: None
     return {"app": app, "store": store, "google": google, "grants": grants, "configs": configs}
 
 
 def with_integration_client(world: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> FakeGoogle:
     """Give the deployment a second Google client, apart from the sign-in one."""
-    second = FakeGoogle()
+    second = FakeGoogle("integration-client")
     second.grant = GoogleGrant(
         id_token="id-token",
         refresh_token="1//from-the-integration-client",
         scopes=frozenset({"openid", CALENDAR_SCOPE}),
     )
-    monkeypatch.setattr(auth_router_module, "get_google_integration_client", lambda: second)
+    world["app"].dependency_overrides[get_google_integration_client] = lambda: second
     return second
 
 
@@ -237,9 +239,62 @@ def test_the_state_cookie_is_cleared_after_a_calendar_callback(world: dict[str, 
 def test_status_is_the_persons_own(world: dict[str, Any]) -> None:
     world["grants"][ME] = "1//refresh"
 
-    assert signed_in(world).get("/api/auth/google/calendar").json() == {"connected": True}
+    assert signed_in(world).get("/api/auth/google/calendar").json() == {
+        "connected": True,
+        "needs_reconnect": False,
+    }
     assert signed_in(world, "user_other").get("/api/auth/google/calendar").json() == {
-        "connected": False
+        "connected": False,
+        "needs_reconnect": False,
+    }
+
+
+def _status_with_current_client(
+    world: dict[str, Any], monkeypatch: pytest.MonkeyPatch, current: str
+) -> dict[str, bool]:
+    monkeypatch.setattr(
+        auth_router_module,
+        "get_settings",
+        lambda: Settings(
+            _env_file=None,
+            env="local",
+            google_client_id=current,
+            google_client_secret="s",
+            google_integration_client_id="",
+            google_integration_client_secret="",
+        ),
+    )
+    return signed_in(world).get("/api/auth/google/calendar").json()
+
+
+def test_a_grant_issued_to_another_client_says_it_needs_reconnecting(
+    world: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """mkkim68, review of #700: once the deployment refreshes with another
+    client, a stored refresh token cannot work. The record of who issued it
+    says so before any call to Google is refused."""
+    world["grants"][ME] = "1//refresh"
+    world["configs"][ME] = {"calendar_id": "primary", "client_id": "the-old-client"}
+
+    assert _status_with_current_client(world, monkeypatch, "the-new-client") == {
+        "connected": True,
+        "needs_reconnect": True,
+    }
+    assert _status_with_current_client(world, monkeypatch, "the-old-client") == {
+        "connected": True,
+        "needs_reconnect": False,
+    }
+
+
+def test_a_grant_from_before_the_client_was_recorded_is_not_called_broken(
+    world: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    world["grants"][ME] = "1//refresh"
+    world["configs"][ME] = {"calendar_id": "primary"}
+
+    assert _status_with_current_client(world, monkeypatch, "any-client") == {
+        "connected": True,
+        "needs_reconnect": False,
     }
 
 
@@ -263,6 +318,7 @@ def test_a_connect_records_which_google_account_it_is(world: dict[str, Any]) -> 
     assert world["configs"][ME] == {
         "calendar_id": "primary",
         "google_sub": "another-google-account",
+        "client_id": "sign-in-client",
     }
 
 

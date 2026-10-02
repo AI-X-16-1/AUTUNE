@@ -5,6 +5,10 @@ See docs/architecture/privacy.md.
 
 from __future__ import annotations
 
+import json
+import re
+from pathlib import Path
+
 import pytest
 
 from autune_contracts import (
@@ -47,6 +51,39 @@ def test_snapshot_carries_no_speaking_ratio() -> None:
     """
     banned = {"speaking_ratio", "speaking_ratios", "talk_time", "speech_volume", "speaker_share"}
     assert banned.isdisjoint(IntelligenceSnapshot.model_fields)
+
+
+_SPEECH_SHARE = re.compile(r"speaking_?ratio|talk_?time|speech_?volume|speaker_?share", re.I)
+_GENERATED = Path(__file__).resolve().parents[1] / "ts"
+
+
+def _properties(node: object) -> set[str]:
+    found: set[str] = set()
+    if isinstance(node, dict):
+        if isinstance(node.get("properties"), dict):
+            found |= set(node["properties"])
+        for value in node.values():
+            found |= _properties(value)
+    elif isinstance(node, list):
+        for value in node:
+            found |= _properties(value)
+    return found
+
+
+def test_no_generated_type_carries_a_speaking_ratio() -> None:
+    """The browser can only render what a payload carries (ADR 0009, decision 5).
+
+    ``test_snapshot_carries_no_speaking_ratio`` guards one model; this reads the
+    generated schema and TS types every screen is typed against, so a ratio
+    added to any contract fails here -- including for a screen nobody has
+    written yet. CI already fails when the generated files are stale.
+    """
+    schema = json.loads((_GENERATED / "schema.json").read_text(encoding="utf-8"))
+    properties = _properties(schema)
+    declared = re.findall(r"^\s+(\w+)\??:", (_GENERATED / "index.d.ts").read_text("utf-8"), re.M)
+
+    assert properties, "schema.json lists no properties; the walk is wrong"
+    assert not [name for name in properties | set(declared) if _SPEECH_SHARE.search(name)]
 
 
 def _stance(**overrides: object) -> dict:

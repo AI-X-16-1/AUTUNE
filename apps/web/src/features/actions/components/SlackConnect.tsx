@@ -96,6 +96,17 @@ export function SlackConnect({
         Slack 연결됨 · {state.workspace_name ?? "워크스페이스"}
         {state.channel_name ? ` · #${state.channel_name} (비공개)` : ""}
       </span>
+      {state.channel_url ? (
+        <a
+          className="text-[var(--color-accent-default)]"
+          style={meta}
+          href={state.channel_url}
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          Slack에서 열기
+        </a>
+      ) : null}
       <Button
         tone="quiet"
         size="compact"

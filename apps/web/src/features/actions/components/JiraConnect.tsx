@@ -29,6 +29,13 @@ import { backfillJira } from "../api";
  * Takes the meeting the 액션 tab shows, or the team itself on S28 settings
  * (#496); the server checks membership either way.
  */
+/** The chosen project in the team's Jira, or the site when none is chosen yet.
+ * `/browse/<key>` is the address Jira keeps for a project of any type. */
+function jiraLink(siteUrl: string, projectKey?: string | null): string {
+  const site = siteUrl.replace(/\/+$/, "");
+  return projectKey ? `${site}/browse/${encodeURIComponent(projectKey)}` : site;
+}
+
 export function JiraConnect({
   meetingId,
   teamId,
@@ -111,10 +118,23 @@ export function JiraConnect({
           </Button>
         </>
       ) : (
-        <span className="text-[var(--color-ink-muted)]" style={meta}>
-          Jira 연결됨 · {state.site_name ?? "사이트"}
-          {state.project_key ? ` · ${state.project_key}` : ""}
-        </span>
+        <>
+          <span className="text-[var(--color-ink-muted)]" style={meta}>
+            Jira 연결됨 · {state.site_name ?? "사이트"}
+            {state.project_key ? ` · ${state.project_key}` : ""}
+          </span>
+          {state.site_url ? (
+            <a
+              className="text-[var(--color-accent-default)]"
+              style={meta}
+              href={jiraLink(state.site_url, state.project_key)}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              Jira에서 열기
+            </a>
+          ) : null}
+        </>
       )}
       {!state.needs_reconnect && state.project_missing ? (
         <span className="text-[var(--color-signal-critical)]" style={meta}>

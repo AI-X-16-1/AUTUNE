@@ -76,6 +76,7 @@ export function TeamActionsScreen({ me }: { me: string | null }) {
                 selectedId={selectedId}
                 onSelect={setSelectedId}
                 showMeeting
+                onMove={(id, status) => edit(id, { status })}
               />
             </>
           )}

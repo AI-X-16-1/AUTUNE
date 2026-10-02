@@ -25,7 +25,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
-from autune_core import CurrentUser, get_session
+from autune_core import CurrentUser, get_logger, get_session
 from autune_core.errors import NotFoundError
 
 from . import enqueue, service
@@ -43,6 +43,7 @@ from .schemas import (
 )
 
 router = APIRouter()
+log = get_logger(__name__)
 
 SessionDep = Annotated[Session, Depends(get_session)]
 
@@ -115,7 +116,7 @@ def edit_meeting_report(
         session, meeting_id, edit.body, user_id=user.id, base_updated_at=edit.base_updated_at
     )
     session.commit()
-    enqueue.announce_meeting_report_changed(meeting_id)
+    _announce(meeting_id)
     return report
 
 
@@ -135,8 +136,22 @@ def correct_meeting_report(
     """
     report = service.correct_meeting_report(session, meeting_id, correction.body, user_id=user.id)
     session.commit()
-    enqueue.announce_meeting_report_changed(meeting_id)
+    _announce(meeting_id)
     return report
+
+
+def _announce(meeting_id: str) -> None:
+    """Queue the announcement of a committed change. A queue that refuses it does
+    not fail the request -- the change is saved, and the sweep announces it
+    within minutes (#698). Ids only in the log."""
+    try:
+        enqueue.announce_meeting_report_changed(meeting_id)
+    except Exception as exc:
+        log.warning(
+            "intelligence_meeting_report_announce_enqueue_failed",
+            meeting_id=meeting_id,
+            error=type(exc).__name__,
+        )
 
 
 @router.get("/me/speaking-ratio/{meeting_id}", response_model=SpeakingRatioRead)
