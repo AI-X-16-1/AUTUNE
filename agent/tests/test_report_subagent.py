@@ -180,6 +180,8 @@ def test_a_late_analysis_after_the_post_proposes_nothing(awaiting: dict[str, Any
 
     assert outcome.result.ok is True and outcome.proposed == []
     assert budget.used == 1  # E's read only; nothing is rendered
+    # Asked in chat, the answer says where a fix goes instead of a dead end.
+    assert "수정본" in outcome.result.summary
 
 
 def test_before_the_post_a_late_analysis_still_writes_the_draft() -> None:

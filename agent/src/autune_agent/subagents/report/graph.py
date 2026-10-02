@@ -139,6 +139,13 @@ def _repropose(toolbox: Toolbox) -> SubagentState:
     return {"outcome": SubagentResult(result=summary, proposed=[post])}
 
 
+POSTED = (
+    "이 회의의 리포트는 이미 게시됐습니다. 고칠 내용은 대시보드의 회의 리포트 카드에서 "
+    "수정본으로 올려 주세요. 승인되면 원래 게시물 아래에 올라갑니다."
+)
+"""What a run says once the report is out: never a second report, but the way to fix one."""
+
+
 def _already_posted(toolbox: Toolbox, meeting: dict[str, Any]) -> bool:
     """The report went out, so a run proposes nothing (#658 review).
 
@@ -165,8 +172,8 @@ def build(toolbox: Toolbox) -> CompiledSubagent:
         # None named: the run's scope carries the meeting (or the Toolbox refuses).
         meeting: dict[str, Any] = {"meeting_id": named.pop()} if named else {}
         if _already_posted(toolbox, meeting):
-            posted = ToolResult(ok=True, summary="이 회의의 리포트는 이미 게시됐습니다.", items=[])
-            return {"outcome": SubagentResult(result=posted)}
+            # Asked in chat too, so say where a fix goes (#658 review).
+            return {"outcome": SubagentResult(result=ToolResult(ok=True, summary=POSTED, items=[]))}
 
         results = {name: _read(toolbox, name, meeting) for name in READS}
         actions = results[ACTIONS_TOOL]
