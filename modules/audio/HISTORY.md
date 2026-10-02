@@ -804,9 +804,12 @@ after the last check still writes nothing and publishes nothing. Spec:
 
 **Settings, both provisional:** `heartbeat_interval_s = 30`, `stall_after_s =
 120`. Four missed heartbeats, because one missed beat is a slow database call or
-a GC pause and two is a busy host; four is two minutes of silence, which
-diarization of a long meeting never produces now that its hook reports progress.
-They are not tuned against a deploy window or a real stall rate.
+a GC pause and two is a busy host; four is two minutes of silence. The heartbeat is its own
+thread and does not depend on progress callbacks; the real risk to it is a stage
+that holds the GIL for minutes, which none measured so far does.
+They are not tuned against a deploy window or a real stall rate. A restart is
+not offered in the last 10 minutes of the upload's six hours, so the sweep cannot
+take the file from under the restarted job.
 
 **Measured on a real local stack** (own API port, own Redis db, throwaway
 database, fake B/C/D, Whisper `small` on CPU, one Mac, one solo-pool worker).
@@ -818,18 +821,18 @@ says nothing about real meetings; only the control flow does.
 | Kill and restart | 115.8 s | `kill -9` of the worker 7 s into recognition (progress 0.26). The job read `stalled: true, restartable: true` at 17:47:09, 120 s after the claim stamped the heartbeat. `POST .../restart` returned 202; the new job ran to `complete` in 24.5 s; the temp directory was empty; `autune.transcript.ready` went out once, for the restarted job. |
 | Cancel in recognition | 926.1 s | Cancel at 17:51:29.4, `audio_process_stopped` at 17:52:11.4: **42.0 s**. Recognition held no segment boundary for part of this: 28 s to the next heartbeat tick plus about 14 s to the next progress report. |
 | Cancel in diarization | 926.1 s | Cancel at 17:53:21.2, `audio_process_stopped` at 17:53:47.6: **26.5 s**, which is the wait for the next heartbeat tick. The pyannote hook saw the flag within about 0.1 s of it. |
-| Cancel in recognition, short audio | 250.5 s | Cancel at 17:49:53.4, stopped at 17:50:18.5: **25.0 s**. The whole task takes 27 s, shorter than the heartbeat interval, so the flag was never set; recognition and diarization ran to the end and the commit fence stopped it before anything was written. A 115.8 s file gave the same shape (17.4 s). |
+| Cancel in recognition, short audio | 250.5 s | Cancel at 17:49:53.4, stopped at 17:50:18.5: **25.0 s**. The whole task takes 27 s, shorter than the heartbeat interval, so the flag could not have been set (the task is shorter than the heartbeat interval; inferred, not observed); recognition and diarization ran to the end and the commit fence stopped it before anything was written. A 115.8 s file gave the same shape (17.4 s). |
 
 In every cancel run the temp directory was empty afterwards, the worker logged
 no `transcript_persisted`, and no `autune.transcript.ready` or consumer task
 followed for the cancelled meeting. The API answered 200 and the meeting read
-`failed, cancelled: true` 14 ms after the press, so the screen does not wait on
+`failed, cancelled: true` 14 to 20 ms after the press, so the screen does not wait on
 these numbers.
 
 **What the numbers say.** The cancel latency is bounded by the heartbeat
 interval plus the gap between progress reports in the stage, not by the stage.
-The two stages behave the same, because pyannote's hook fires often enough that
-diarization adds almost nothing beyond the heartbeat wait. A person waits up to
+Both stages were bounded by the heartbeat wait (one run each), and
+pyannote's hook fires often enough that diarization adds almost nothing beyond it. A person waits up to
 about 30 s for the worker to stop, and the meeting is `failed` from the first
 instant. If that wait ever matters, lower `heartbeat_interval_s`; the cost is one
 short UPDATE per interval.
