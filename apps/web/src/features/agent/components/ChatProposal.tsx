@@ -6,7 +6,7 @@ import { useState } from "react";
 import { ApiError } from "@/shared/api/client";
 import { Button, MaskedText, StatusDot } from "@/shared/ui";
 
-import { approvePending, rejectPending } from "../api";
+import { approvePending, listPending, rejectPending } from "../api";
 import { reportLink } from "../reportLink";
 import type { PendingAction, RejectReason } from "../types";
 
@@ -50,7 +50,7 @@ function outcomeUnknown(e: unknown, approving: boolean): boolean {
  * One L2 proposal on an S34 reply, for a person who may decide it
  * (agent/docs/specs/2026-10-02-assistant-questions-design.md section 6). The
  * same endpoints and wording as 승인 대기; a 409, or a lost response on 승인
- * (the claim commits before the action runs), is reported, never retried.
+ * (the claim commits before the action runs), re-reads the queue, never retries.
  */
 export function ChatProposal({ item }: { item: PendingAction }) {
   const [busy, setBusy] = useState(false);
@@ -61,6 +61,23 @@ export function ChatProposal({ item }: { item: PendingAction }) {
     null,
   );
 
+  /**
+   * After a 409 or a lost 승인, ask the queue what happened rather than guess:
+   * gone (someone settled it), needing a check, or still pending (buttons
+   * again). If even the queue cannot be read, ask for a check and offer
+   * nothing to press twice -- the same rule as 승인 대기.
+   */
+  const reread = async () => {
+    try {
+      const now = (await listPending()).find((p) => p.id === item.id);
+      if (!now) setResult({ text: GONE, ok: false });
+      else if (now.needs_check) setResult({ text: NEEDS_CHECK, ok: false });
+      else setResult(null);
+    } catch {
+      setResult({ text: NEEDS_CHECK, ok: false });
+    }
+  };
+
   const decide = async (
     run: () => Promise<PendingAction>,
     approving: boolean,
@@ -70,10 +87,13 @@ export function ChatProposal({ item }: { item: PendingAction }) {
     try {
       setResult(settled(await run()));
     } catch (e) {
-      if (e instanceof ApiError && (e.status === 409 || e.status === 404))
+      if (e instanceof ApiError && e.status === 404)
         setResult({ text: GONE, ok: false });
-      else if (outcomeUnknown(e, approving))
-        setResult({ text: NEEDS_CHECK, ok: false });
+      else if (
+        (e instanceof ApiError && e.status === 409) ||
+        outcomeUnknown(e, approving)
+      )
+        await reread();
       else setError(TRY_LATER);
     } finally {
       setBusy(false);
