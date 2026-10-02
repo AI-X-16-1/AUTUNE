@@ -152,7 +152,10 @@ function ListSummary({
   const coverages = shown.map((gap) => explained.get(gap.id)?.coverage ?? null);
   const missing = coverages.filter((c) => c === "missing").length;
   const partial = coverages.filter((c) => c === "partial").length;
-  const known = missing + partial === shown.length;
+  // Only a list that holds both says how it divides. Under the 누락 or 미흡
+  // tab every card is one verdict, and "미흡 0" beside the 누락 tab reads as
+  // a second, contradicting count.
+  const known = missing + partial === shown.length && missing > 0 && partial > 0;
 
   return (
     <div

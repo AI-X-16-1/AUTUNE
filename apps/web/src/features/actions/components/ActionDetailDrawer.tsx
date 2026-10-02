@@ -4,8 +4,10 @@ import { useEffect, useState } from "react";
 
 import { Button, MaskedText, Quote, StatusDot } from "@/shared/ui";
 
+import { AssigneeInput, assigneeFields, type AssigneeValue } from "./AssigneeInput";
 import { ConfirmDelete } from "./ConfirmDelete";
 import { ContextLines } from "./ContextLines";
+import { useAssignable } from "../hooks/useAssignable";
 import { useSourceUtterances } from "../hooks/useSourceUtterances";
 import { CONFIRMED_NOTICE, confirms } from "../board";
 import { COLUMNS, COLUMN_LABELS, isCandidate } from "../types";
@@ -35,11 +37,17 @@ export function ActionDetailDrawer({
   item,
   onClose,
   onStatusChange,
+  onAssigneeChange,
   onDelete,
 }: {
   item: ActionItemRead;
   onClose: () => void;
   onStatusChange?: (status: ActionStatus) => void | Promise<void>;
+  /** Set the assignee: a member's account or a typed name, never both. */
+  onAssigneeChange?: (change: {
+    assignee_id: string | null;
+    assignee_label: string | null;
+  }) => void | Promise<void>;
   onDelete?: () => void | Promise<void>;
 }) {
   const [confirming, setConfirming] = useState(false);
@@ -58,6 +66,31 @@ export function ActionDetailDrawer({
   // still shows the old value. Left enabled, a second pick sends a second PATCH
   // and the board ends on whichever response lands last. Raised in review of #292.
   const [changing, setChanging] = useState(false);
+  // The assignee as it stands on the item, and what the person is typing
+  // when they chose "직접 입력". A member or "미지정" is saved the moment it is
+  // picked, like the status; a typed name is saved with its own button, since
+  // saving on every keystroke would write half a name.
+  const members = useAssignable(item.meeting_id);
+  const stored: AssigneeValue = item.assignee_id
+    ? { kind: "member", userId: item.assignee_id }
+    : item.assignee_label
+      ? { kind: "typed", label: item.assignee_label }
+      : { kind: "none" };
+  const [typed, setTyped] = useState<string | null>(null);
+  const [assigning, setAssigning] = useState(false);
+
+  const saveAssignee = async (value: AssigneeValue) => {
+    setFailure(null);
+    setAssigning(true);
+    try {
+      await onAssigneeChange?.(assigneeFields(value));
+      setTyped(null);
+    } catch {
+      setFailure("담당자를 바꾸지 못했습니다. 잠시 후 다시 시도해 주세요.");
+    } finally {
+      setAssigning(false);
+    }
+  };
   // The quotation is fetched when the drawer opens (GET /action-items/{id});
   // the list the board holds carries utterance ids, never their words.
   // History follows an edit made here or on the board: the item's editable
@@ -176,9 +209,51 @@ export function ActionDetailDrawer({
           style={{ padding: "var(--space-card)" }}
         >
           <Field label="담당">
-            {item.needs_reassignment
-              ? "재배정 필요 · 담당자가 이 팀에 없습니다"
-              : (item.assignee_name ?? item.assignee_label ?? "미지정")}
+            {onAssigneeChange === undefined ? (
+              item.needs_reassignment ? (
+                "재배정 필요 · 담당자가 이 팀에 없습니다"
+              ) : (
+                (item.assignee_name ?? item.assignee_label ?? "미지정")
+              )
+            ) : (
+              <div className="grid gap-2">
+                {item.needs_reassignment ? (
+                  <span>재배정 필요 · 담당자가 이 팀에 없습니다</span>
+                ) : null}
+                <AssigneeInput
+                  id={`assignee-${item.id}`}
+                  label="담당"
+                  memberName={item.assignee_name}
+                  members={members}
+                  value={typed !== null ? { kind: "typed", label: typed } : stored}
+                  disabled={assigning}
+                  onChange={(value) => {
+                    if (value.kind === "typed") setTyped(value.label);
+                    else void saveAssignee(value);
+                  }}
+                  controlClassName="w-full border bg-transparent"
+                  controlStyle={{
+                    height: "var(--control-h-default)",
+                    paddingInline: "var(--control-px-text)",
+                    borderRadius: "var(--radius)",
+                    border: "1px solid var(--color-hairline)",
+                    fontSize: "var(--text-body)",
+                  }}
+                />
+                {typed !== null && typed.trim() !== (item.assignee_label ?? "") ? (
+                  <div>
+                    <Button
+                      tone="secondary"
+                      size="compact"
+                      loading={assigning}
+                      onClick={() => void saveAssignee({ kind: "typed", label: typed })}
+                    >
+                      이름 저장
+                    </Button>
+                  </div>
+                ) : null}
+              </div>
+            )}
           </Field>
           <Field label="기한" mono>
             {item.due_date ?? "없음"}

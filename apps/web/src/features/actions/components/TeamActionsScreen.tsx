@@ -97,6 +97,9 @@ export function TeamActionsScreen({ me }: { me: string | null }) {
           onStatusChange={async (status) => {
             await edit(selected.id, { status });
           }}
+          onAssigneeChange={async (change) => {
+            await edit(selected.id, change);
+          }}
           onDelete={async () => {
             await remove(selected.id);
             setSelectedId(undefined);
