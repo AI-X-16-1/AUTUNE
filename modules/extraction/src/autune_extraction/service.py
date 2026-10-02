@@ -3610,7 +3610,12 @@ class NotionPages(Protocol):
     def page_state(self, page_id: str) -> str: ...
 
 
-PageOutcome = Literal["updated", "replaced", "archived"]
+PageOutcome = Literal["updated", "replaced", "archived", "retired", "gone"]
+"""What became of a page a row already had. The first three are a sync of
+something still confirmed (``_update_or_replace_page``). The last two, and
+``"archived"`` again, are a retire (``_retire_decision_page``): taken out of
+Notion by Autune, found already in a person's archive, or found already
+deleted."""
 
 
 def _update_or_replace_page(
@@ -3997,7 +4002,7 @@ def decision_has_page(session: Session, decision_id: str) -> bool:
 
 def _retire_decision_page(
     notion: NotionPages, ref: ExtDecisionRef, names: Mapping[str, str]
-) -> None:
+) -> Literal["retired", "archived", "gone"] | None:
     """Take a decision's page out of the team's Notion: the decision is no
     longer confirmed, or is gone (#669, decided with the user 2026-10-02).
 
@@ -4009,24 +4014,25 @@ def _retire_decision_page(
     page: confirming again makes a new one.
 
     Both calls share the caller's transaction, so a failure of either leaves
-    the row pointing at the page and the next sync tries again. Retitling
+    the row pointing at the page and the next sync tries again -- the
+    decision's next change, or ``tasks.retire_decision_pages`` on its timer
+    (#683). Retitling
     does not reach Notion's own page history, which a paid workspace keeps:
     someone who restores the page from the trash can still read the earlier
     title there (``privacy.md`` section 6). A page a
     person already archived cannot be edited -- Notion refuses -- and is
-    left to them, as ``_update_or_replace_page`` leaves it; one already
-    deleted has nothing to retire.
+    left as they put it: it is in Notion's trash already, which is where a
+    retire ends, only with its statement still in the title. The row forgets
+    it, as it forgets a page already deleted (#683): kept, the id made every
+    sweep ask Notion about a page nothing more can be done to.
+
+    Returns what happened, so a caller that counts does not call a page it
+    only found archived or deleted "retired": ``None`` when the row had no
+    page to begin with.
     """
     page_id = ref.external_id
     if page_id is None:
-        return
-    if "title" not in names:
-        # A team's own property map with no title: nothing here knows which
-        # property holds the statement, so the page goes to the trash as it
-        # is. Better than leaving it live; said loudly (PARK, review of #679).
-        log.warning(
-            "extraction_notion_decision_trashed_without_retitle", decision_id=ref.decision_id
-        )
+        return None
     if "title" in names:
         retitled = {
             names["title"]: {
@@ -4039,20 +4045,27 @@ def _retire_decision_page(
             state = notion.page_state(page_id)
             if state == "live":
                 raise
-            if state == "archived":
-                log.info(
-                    "extraction_notion_decision_page_left_archived",
-                    decision_id=ref.decision_id,
-                )
-                return
             ref.external_id = None
             ref.url = None
-            log.info("extraction_notion_decision_page_gone", decision_id=ref.decision_id)
-            return
+            log.info(
+                "extraction_notion_decision_page_left_archived"
+                if state == "archived"
+                else "extraction_notion_decision_page_gone",
+                decision_id=ref.decision_id,
+            )
+            return "archived" if state == "archived" else "gone"
+    else:
+        # A team's own property map with no title: nothing here knows which
+        # property holds the statement, so the page goes to the trash as it
+        # is. Better than leaving it live; said loudly (PARK, review of #679).
+        log.warning(
+            "extraction_notion_decision_trashed_without_retitle", decision_id=ref.decision_id
+        )
     notion.trash_page(page_id)
     ref.external_id = None
     ref.url = None
     log.info("extraction_notion_decision_retired", decision_id=ref.decision_id)
+    return "retired"
 
 
 def _send_decision_page(
@@ -4130,7 +4143,9 @@ def sync_decision_to_notion(
         decision = session.get(ExtDecision, decision_id, populate_existing=True)
         review = session.get(ExtDecisionReview, decision_id, populate_existing=True)
         if decision is None or review is None or review.status != "confirmed":
-            _retire_decision_page(notion, existing, names)
+            retired = _retire_decision_page(notion, existing, names)
+            if retired is not None and on_page is not None:
+                on_page(retired)
             return existing
         meeting = session.get(Meeting, decision.meeting_id)
         statement = _confirmed_statement(decision, review)
@@ -4169,7 +4184,9 @@ def sync_decision_to_notion(
         decision = session.get(ExtDecision, decision_id, populate_existing=True)
         review = session.get(ExtDecisionReview, decision_id, populate_existing=True)
         if decision is None or review is None or review.status != "confirmed":
-            _retire_decision_page(notion, existing, names)
+            retired = _retire_decision_page(notion, existing, names)
+            if retired is not None and on_page is not None:
+                on_page(retired)
             return existing
         meeting = session.get(Meeting, decision.meeting_id)
         statement = _confirmed_statement(decision, review)

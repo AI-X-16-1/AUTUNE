@@ -37,6 +37,7 @@ report, and deliver each participant their own speaking ratio.
 | Destination | Contract | Event |
 | --- | --- | --- |
 | `apps/web`, `apps/bot` | `IntelligenceSnapshot` | `autune.intelligence.completed` |
+| agent layer (Report subagent) | `Payload` (the meeting id only) | `autune.intelligence.meeting_report_changed` -- a person edited a report's draft (#674) |
 | Slack DM | Personal speaking ratio, to that person only | — |
 | Slack channel | Weekly report, prediction warnings | — |
 
@@ -196,7 +197,70 @@ foreign keys to another module's tables.
 | GET | `/predictions/{team_id}` | Latest misalignment prediction, or `null` with a reason before #27's gate clears |
 | GET | `/gap-titles/{team_id}` | High-severity gap titles behind each pattern count |
 | GET | `/reports/{team_id}` | Weekly reports |
+| GET | `/meeting-reports/{team_id}` | The team's meeting reports for the dashboard card: header line, body, draft/posted, editor. **Team members only** |
+| PUT | `/meeting-reports/{meeting_id}` | A team member edits a draft's body before it is posted (send back `base_updated_at`; a newer save makes it 409). Editor and time recorded, E's footer says a person edited it (the name is added from `edited_by` when read or posted, never stored), and the draft takes a **new `draft_id`**, so the approval given for the model's text lapses. Committed, then announced on `autune.intelligence.meeting_report_changed`; the Report subagent proposes the edited draft's post for approval. Nothing is posted from the card. 409 once posted, 422 with categories for personal data or over 3,000 characters as Slack receives it, 404 for anyone outside the team |
+| POST | `/meeting-reports/{meeting_id}/corrections` | A member corrects a **posted** report whose post reached Slack (202). It waits for approval like an edit: committed, then announced, and the Report subagent proposes `publish_meeting_report_correction` with its `correction_id`; once approved it goes out as a reply under the post. A newer correction replaces one still waiting. 409 for a draft, for a report that never reached Slack, or while an approved correction is being posted (at most five minutes); 422 for an unchanged, empty, too long or personal-data correction |
 | GET | `/me/speaking-ratio/{meeting_id}` | **The requester's own ratio only** |
+
+**Meeting reports on the dashboard (#642, #674).** Every post goes through
+approval (L2), a person's edit included: a report goes out under the bot's name
+to the whole channel, and #592/#621's approvers decide that. An edit lapses the
+approval given for the model's text (new `draft_id`) and is announced from the
+worker (`announce_meeting_report_changed`; the API process cannot publish,
+#170). The Report subagent wakes on the event, reads the draft E holds now
+(`meeting_report_awaiting_approval`) and proposes its post without rendering
+anything; plan mode supersedes the earlier post proposal for the meeting, so
+the approver sees one card, for the text that is there. A rerun of the Report (a
+republished `intelligence.completed`, #556) overwrites an edited draft and
+clears its editor -- the corrected inputs win, and the card stops showing a
+name on text that person did not write. The "this meeting only" rule (#459)
+is an instruction to the subagent; a person's text is not checked against it.
+The editor's name is not stored with the text: the stored footer reads
+"팀원이 고쳤습니다", and the name is joined from `edited_by` when the card
+reads the report and when the worker claims it, so it goes with the account
+(invariant 11). A name that looks like personal data is left out rather than
+refusing the post. Report text is
+escaped for Slack (`&`, `<`, `>`), so a mention or a disguised link in it goes
+out as plain text, and the 3,000-character cap counts the escaped text. A
+posted copy in Slack is outside Autune: deleting an account or a meeting does
+not recall it.
+
+**A correction to a posted report (#658, #674).** A posted report is never
+changed in place. A member writes a correction on the card; it goes the same
+way as an edit -- announced, proposed by the Report subagent as
+`publish_meeting_report_correction` with its `correction_id`, and posted only
+after a `report` approver approves it -- as a reply under the original post,
+"✏️ 수정본 · <time> · <name>", or as a new message in the team's channel when
+that thread is out of reach (a reconnected workspace). Accepted only for a
+report whose post reached Slack. The approval pins the `correction_id`: a
+correction written after it replaces the waiting one, and that approval then
+posts nothing. Statuses: pending (waits for approval), sending (claimed, being
+posted), sent, failed (claimed but not posted within
+`CORRECTION_SEND_WINDOW`, five minutes from the claim -- a new one is then
+accepted). Each is checked and escaped like the report and posted at most once.
+Once the report is posted, a late `intelligence.completed` run of the Report
+subagent proposes nothing (E's read answers `already posted`), so it cannot
+supersede a correction waiting for approval.
+
+**No change is left without an approval request (#698).** The card's routes
+commit a change, then queue its announcement; a queue that refuses it does not
+fail the request. An announcement claims the change it covers (`announced_at`,
+under the row lock, before it publishes; a failed publish gives it back), so
+the route's task, the sweep and a redelivered task never announce one change
+twice -- each announcement notifies the approvers.
+`autune.intelligence.periodic.announce_report_changes` announces, every five
+minutes, any edit or waiting correction older than two minutes that no
+announcement covered; one meeting's failure does not stop the rest. A save that
+changes only trailing spaces or blank edges counts as unchanged. A correction is
+refused while the team has no Slack token or channel, and an approved one whose
+team lost Slack after the post reads as
+failed (`correction_failed_at`) rather than waiting forever; the next
+correction, after reconnecting, clears it.
+Only the text, its id and `corrected_by` are stored; the name is joined when it
+is read or sent, as for an edit. The approval card can read it through
+`meeting_report_correction(correction_id)`. Deleting a post from Slack is not
+built: it needs `chat.delete` in `packages/integrations` and a decision on who
+may do it.
 
 `/me/speaking-ratio` authorizes on `requester_id == subject_id`. There is no
 admin override and no team-level variant of this endpoint.
@@ -209,6 +273,10 @@ admin override and no team-level variant of this endpoint.
 | `autune.intelligence.on_extraction_action_progress` | B's `TeamActionProgress`, every ten minutes | `default` |
 | `autune.intelligence.send_personal_feedback` | After aggregation | `default` |
 | `autune.intelligence.weekly_report` | Weekly schedule | `cpu_heavy` |
+| `autune.intelligence.deliver_meeting_report` | An approved post (`publish_meeting_report`, L2) | `default` |
+| `autune.intelligence.announce_meeting_report_changed` | A person's edit or correction on the dashboard card, after it commits (#674) | `default` |
+| `autune.intelligence.periodic.announce_report_changes` | Every five minutes: changes no announcement covered (#698) | `default` |
+| `autune.intelligence.deliver_meeting_report_correction` | An approved correction (`publish_meeting_report_correction`, L2) | `default` |
 
 ## Slack surface
 

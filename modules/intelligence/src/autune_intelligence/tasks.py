@@ -13,25 +13,32 @@ reopens the meeting and re-enqueues ``aggregate``.
 
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 import sqlalchemy as sa
 from celery import shared_task
 
 from autune_contracts import (
     INTELLIGENCE_COMPLETED,
+    INTELLIGENCE_MEETING_REPORT_CHANGED,
     ContextLinks,
     ExtractionResult,
     GapReport,
+    Payload,
     TeamActionProgress,
     validate_major_version,
 )
-from autune_core import Meeting, get_logger, load_integration, publish, session_scope
+from autune_core import Meeting, get_logger, load_integration, periodic, publish, session_scope
 from autune_core.errors import ConflictError
 from autune_integrations import SlackClient
 
 from . import service
 from .config import get_settings
+from .enqueue import (
+    ANNOUNCE_MEETING_REPORT_CHANGED,
+    DELIVER_MEETING_REPORT,
+    DELIVER_MEETING_REPORT_CORRECTION,
+)
 from .models import IntelCompletion, IntelMeetingReport
 
 log = get_logger(__name__)
@@ -196,7 +203,95 @@ def generate_weekly_report(team_id: str, period_end: str | None = None) -> None:
     )
 
 
-@shared_task(name="autune.intelligence.deliver_meeting_report", acks_late=True)
+@shared_task(name=ANNOUNCE_MEETING_REPORT_CHANGED, acks_late=True)
+def announce_meeting_report_changed(meeting_id: str) -> None:
+    """Publish that a person changed the meeting's report, for the agent layer (#674).
+
+    From the worker, because the API process cannot publish (#170). The payload
+    is the meeting's id only; the Report subagent reads the stored draft through
+    E's tools and proposes its post for approval. Nothing is published when no
+    change of a person's waits any more (posted, or overwritten by a rerun).
+    Claims the change before publishing, so the route's task and the sweep
+    never both announce it; a failed publish gives it back (#698, #705 review).
+    """
+    with session_scope() as session:
+        claimed = service.claim_meeting_report_announcement(session, meeting_id)
+    if claimed is None:
+        log.info("intelligence_meeting_report_change_nothing_to_announce", meeting_id=meeting_id)
+        return
+    try:
+        publish(INTELLIGENCE_MEETING_REPORT_CHANGED, Payload(meeting_id=meeting_id).model_dump())
+    except Exception:
+        # Not announced after all: give the change back to the sweep.
+        with session_scope() as session:
+            service.release_meeting_report_announcement(session, meeting_id, claimed)
+        raise
+    log.info("intelligence_meeting_report_change_announced", meeting_id=meeting_id)
+
+
+@shared_task(name="autune.intelligence.periodic.announce_report_changes")
+@periodic(timedelta(minutes=5))
+def announce_report_changes() -> list[str]:
+    """Announce every person's change no announcement covered; return those meetings.
+
+    The card's route queues the announcement after its commit, and queueing can
+    fail there with the change already saved (#698). Ids only, as ever.
+    """
+    with session_scope() as session:
+        meetings = service.meeting_reports_unannounced(session, now=datetime.now(UTC))
+    for meeting_id in meetings:
+        try:
+            announce_meeting_report_changed(meeting_id)
+        except Exception as exc:  # one meeting must not hold back the rest of the run
+            log.warning(
+                "intelligence_meeting_report_sweep_announce_failed",
+                meeting_id=meeting_id,
+                error=type(exc).__name__,
+            )
+    return meetings
+
+
+@shared_task(name=DELIVER_MEETING_REPORT_CORRECTION, acks_late=True)
+def deliver_meeting_report_correction(meeting_id: str, correction_id: str) -> None:
+    """Post an approved correction under the meeting's posted report, at most once.
+
+    Ids only (#275). Posts only the correction ``correction_id`` names: one
+    written since the approval replaced it and waits for its own. Without a
+    connected Slack or a configured channel it stays unclaimed, as a report does.
+    """
+    with session_scope() as session:
+        report = session.get(IntelMeetingReport, meeting_id)
+        if report is None:
+            return
+        config = load_integration(session, report.team_id, "slack")
+        channel = config.config.get("channel") if config is not None else None
+        if config is None or channel is None or not config.secret:
+            # Approved, but the team's Slack went away after the post: it can
+            # never go out, so say so instead of "승인 대기" forever (#698).
+            service.fail_meeting_report_correction(session, meeting_id, correction_id=correction_id)
+            log.info("intelligence_meeting_report_correction_no_channel", meeting_id=meeting_id)
+            return
+        secret = config.require_secret()
+        try:
+            claimed = service.claim_meeting_report_correction(
+                session, meeting_id, correction_id=correction_id
+            )
+        except ConflictError:
+            log.info("intelligence_meeting_report_correction_replaced", meeting_id=meeting_id)
+            return
+
+    if claimed is None:
+        log.info("intelligence_meeting_report_correction_already_claimed", meeting_id=meeting_id)
+        return
+    slack_ts = service.post_meeting_report_correction(SlackClient(secret), channel, claimed)
+    with session_scope() as session:
+        service.record_meeting_report_correction(
+            session, meeting_id, slack_ts, correction_id=claimed.correction_id
+        )
+    log.info("intelligence_meeting_report_correction_posted", meeting_id=meeting_id)
+
+
+@shared_task(name=DELIVER_MEETING_REPORT, acks_late=True)
 def deliver_meeting_report(meeting_id: str, draft_id: str | None = None) -> None:
     """Post a meeting's stored report to its team's Slack channel, at most once.
 

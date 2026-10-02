@@ -36,6 +36,15 @@ CODEOWNERS requires approval from the whole team for changes to this package.
 | `ContextLinks` | D | E | `autune.context.completed` |
 | `IntelligenceSnapshot` | E | apps (dashboard, Slack) | `autune.intelligence.completed` |
 
+`autune.intelligence.meeting_report_changed` (#674, version 2.4) carries a
+plain `Payload` from E to the agent layer: a person saved an edited report
+draft, or a correction to a posted report, on the dashboard card. Nothing is
+posted until an approver accepts the L2 proposal the Report subagent queues in
+response. The event holds the meeting id only; what waits to be posted is read
+through E's tools when the event is handled. It is in `TERMINAL_EVENTS`, like
+`autune.intelligence.completed`, because a process without the agent layer
+publishes it to nobody.
+
 Outside the per-meeting pipeline, two payloads are about a team rather than a
 meeting, so they extend `TeamPayload` (`team_id`) instead of `Payload`
 (`meeting_id`):

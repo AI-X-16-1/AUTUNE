@@ -1,12 +1,14 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 
 import { ActionCard } from "./ActionCard";
 import { AddActionItem } from "./AddActionItem";
 import { CandidateBand } from "./CandidateBand";
-import { COLUMNS, COLUMN_LABELS, isCandidate } from "../types";
+import { canDrop, groupForBoard } from "../board";
+import { COLUMNS, COLUMN_LABELS } from "../types";
 import type { ActionItemDraft } from "../api";
+import type { Moves } from "../board";
 import type { ActionItemRead, ActionStatus } from "../types";
 
 /**
@@ -26,6 +28,17 @@ import type { ActionItemRead, ActionStatus } from "../types";
  * useful together and passing one without the other should not typecheck. The
  * board renders read-only when it is absent — S15 lists items across meetings
  * and has no single meeting to add to.
+ *
+ * **`onMove` makes a card draggable to another column.** A drop is the same
+ * change the detail window's status select makes, sent the same way, and so it
+ * carries the same weight: out of "확인 필요" is a confirmation, after which
+ * the item is copied to the tools the team connected (#246); back into it
+ * takes those copies' text with it (#622). Decided with the user, 2026-10-02:
+ * a drop applies at once, as the select does, and a candidate cannot be
+ * dragged.
+ *
+ * The select stays the way to do it without a pointer: the browser's own drag
+ * and drop has no keyboard path and does not fire on most touch screens.
  */
 export function ActionBoard({
   items,
@@ -33,6 +46,7 @@ export function ActionBoard({
   onSelect,
   add,
   showMeeting = false,
+  onMove,
 }: {
   items: ActionItemRead[];
   selectedId?: string;
@@ -40,42 +54,133 @@ export function ActionBoard({
   add?: { meetingId: string; onAdd: (draft: ActionItemDraft) => Promise<unknown> };
   /** Each card names its meeting -- the board across meetings. */
   showMeeting?: boolean;
+  /** Set an item's status. Rejects when the server refused, leaving it where it was. */
+  onMove?: (id: string, status: ActionStatus) => Promise<unknown>;
 }) {
-  const { candidates, byColumn } = useMemo(() => group(items), [items]);
+  // Drawn in the column it was dropped on while the request is in flight, so
+  // the card does not spring back and then jump; see `Moves`.
+  const [moves, setMoves] = useState<Moves>({});
+  const [draggedId, setDraggedId] = useState<string | null>(null);
+  const [over, setOver] = useState<ActionStatus | null>(null);
+  // The select in the detail window says why a change did not hold; a card
+  // that only slid back would say nothing (review of #292).
+  const [failure, setFailure] = useState<string | null>(null);
+
+  const { candidates, byColumn } = useMemo(() => groupForBoard(items, moves), [items, moves]);
+  const dragged = draggedId === null ? undefined : items.find((item) => item.id === draggedId);
+
+  const drop = async (target: ActionStatus) => {
+    setDraggedId(null);
+    setOver(null);
+    if (onMove === undefined || !canDrop(dragged, target, moves)) return;
+    const id = dragged.id;
+    setFailure(null);
+    setMoves((current) => ({ ...current, [id]: target }));
+    try {
+      await onMove(id, target);
+    } catch {
+      setFailure("상태를 바꾸지 못했습니다. 잠시 후 다시 시도해 주세요.");
+    } finally {
+      setMoves((current) =>
+        Object.fromEntries(Object.entries(current).filter(([moving]) => moving !== id)),
+      );
+    }
+  };
 
   return (
     <div style={{ display: "grid", gap: "var(--space-page)" }}>
       {add !== undefined && <AddActionItem meetingId={add.meetingId} onAdd={add.onAdd} />}
 
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
-        {COLUMNS.map((status) => (
-          <section key={status} aria-label={COLUMN_LABELS[status]}>
-            <header
-              className="flex items-baseline gap-2 border-b border-[var(--color-hairline)] pb-2"
-              style={{ fontSize: "var(--text-status)", fontWeight: "var(--text-status-weight)" }}
-            >
-              <span className="text-[var(--color-ink-strong)]">{COLUMN_LABELS[status]}</span>
-              <span
-                className="text-[var(--color-ink-muted)]"
-                style={{ fontFamily: "var(--font-mono)" }}
-              >
-                {byColumn[status].length}
-              </span>
-            </header>
+      {failure !== null ? (
+        <p
+          role="alert"
+          className="text-[var(--color-signal-critical)]"
+          style={{ fontSize: "var(--text-metaSmall)" }}
+        >
+          {failure}
+        </p>
+      ) : null}
 
-            <div className="mt-3 grid gap-2">
-              {byColumn[status].map((item) => (
-                <ActionCard
-                  key={item.id}
-                  item={item}
-                  selected={item.id === selectedId}
-                  onSelect={onSelect}
-                  showMeeting={showMeeting}
-                />
-              ))}
-            </div>
-          </section>
-        ))}
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
+        {COLUMNS.map((status) => {
+          // Only a column this card can go to takes the drop: its own column,
+          // and anything dragged in from outside the board, fall through to
+          // the browser's "not allowed".
+          const accepts = onMove !== undefined && canDrop(dragged, status, moves);
+          return (
+            <section
+              key={status}
+              aria-label={COLUMN_LABELS[status]}
+              onDragOver={
+                accepts
+                  ? (event) => {
+                      event.preventDefault();
+                      event.dataTransfer.dropEffect = "move";
+                    }
+                  : undefined
+              }
+              onDragEnter={accepts ? () => setOver(status) : undefined}
+              onDragLeave={(event) => {
+                // Entering a card inside the column fires a leave on the column.
+                if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
+                setOver((current) => (current === status ? null : current));
+              }}
+              onDrop={
+                accepts
+                  ? (event) => {
+                      event.preventDefault();
+                      void drop(status);
+                    }
+                  : undefined
+              }
+              style={{
+                borderRadius: "var(--radius)",
+                background: accepts && over === status ? "var(--color-surface-sunken)" : undefined,
+              }}
+            >
+              <header
+                className="flex items-baseline gap-2 border-b border-[var(--color-hairline)] pb-2"
+                style={{ fontSize: "var(--text-status)", fontWeight: "var(--text-status-weight)" }}
+              >
+                <span className="text-[var(--color-ink-strong)]">{COLUMN_LABELS[status]}</span>
+                <span
+                  className="text-[var(--color-ink-muted)]"
+                  style={{ fontFamily: "var(--font-mono)" }}
+                >
+                  {byColumn[status].length}
+                </span>
+              </header>
+
+              {/* A floor, so an empty column is still somewhere to drop. */}
+              <div className="mt-3 grid content-start gap-2" style={{ minHeight: "var(--space-48)" }}>
+                {byColumn[status].map((item) => (
+                  <ActionCard
+                    key={item.id}
+                    item={item}
+                    selected={item.id === selectedId}
+                    onSelect={onSelect}
+                    showMeeting={showMeeting}
+                    drag={
+                      onMove === undefined
+                        ? undefined
+                        : {
+                            moving: item.id in moves,
+                            onStart: () => {
+                              setFailure(null);
+                              setDraggedId(item.id);
+                            },
+                            onEnd: () => {
+                              setDraggedId(null);
+                              setOver(null);
+                            },
+                          }
+                    }
+                  />
+                ))}
+              </div>
+            </section>
+          );
+        })}
       </div>
 
       <CandidateBand
@@ -86,36 +191,4 @@ export function ActionBoard({
       />
     </div>
   );
-}
-
-function group(items: ActionItemRead[]): {
-  candidates: ActionItemRead[];
-  byColumn: Record<ActionStatus, ActionItemRead[]>;
-} {
-  const byColumn = Object.fromEntries(COLUMNS.map((status) => [status, [] as ActionItemRead[]])) as
-    Record<ActionStatus, ActionItemRead[]>;
-  const candidates: ActionItemRead[] = [];
-
-  for (const item of items) {
-    // A candidate leaves the columns entirely rather than sitting in
-    // "needs confirmation" alongside items the model is sure about. The column
-    // means "no external issue yet"; the band means "we are not sure this is an
-    // item", and merging the two loses the difference the user needs.
-    if (isCandidate(item)) {
-      candidates.push(item);
-      continue;
-    }
-    byColumn[item.status ?? "needs_confirmation"].push(item);
-  }
-
-  // ADR 0007: an item whose assignee left the team goes to the top of its
-  // column instead of sitting invisibly unowned. Stable sort, so the server's
-  // order holds within each group.
-  for (const status of COLUMNS) {
-    byColumn[status].sort(
-      (a, b) => Number(b.needs_reassignment ?? false) - Number(a.needs_reassignment ?? false),
-    );
-  }
-
-  return { candidates, byColumn };
 }

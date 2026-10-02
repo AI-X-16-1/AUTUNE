@@ -5,14 +5,17 @@ here — it cannot be reused by ``tasks.py`` if it lives in a route.
 
 The prefix ``/api/intelligence`` is applied by apps/api; declare paths relative to it.
 
-Every route here is read-only. Auth is not enforced yet — apps/api has no auth
-middleware wired (#156, #189). Most of these are team-level aggregates (quality,
-alignment, gap distribution) that carry no per-person data, so the gap is
-tolerable until then. ``/gap-titles`` is the exception: it returns gap *title
-text*, not a number, to anyone who knows a ``team_id`` — narrower than a
-transcript, but real content, not an aggregate. Tracked in #156/#189 rather
-than solved here. ``/me/speaking-ratio`` is the one route that must authorise
-on the subject regardless of when the rest gets auth, and it is not built here.
+Every route here is read-only but the edit of a meeting report, and the two
+``/meeting-reports`` routes authenticate and check team membership: a report is
+meeting text, and one of them changes it. Nothing here posts. Elsewhere auth is not
+enforced yet — apps/api has no auth middleware wired (#156, #189). Most of these
+are team-level aggregates (quality, alignment, gap distribution) that carry no
+per-person data, so the gap is tolerable until then. ``/gap-titles`` is the
+exception: it returns gap *title text*, not a number, to anyone who knows a
+``team_id`` — narrower than a transcript, but real content, not an aggregate.
+Tracked in #156/#189 rather than solved here. ``/me/speaking-ratio`` is the one
+route that must authorise on the subject regardless of when the rest gets auth,
+and it is not built here.
 """
 
 from __future__ import annotations
@@ -22,14 +25,17 @@ from typing import Annotated
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
-from autune_core import CurrentUser, get_session
+from autune_core import CurrentUser, get_logger, get_session
 from autune_core.errors import NotFoundError
 
-from . import service
+from . import enqueue, service
 from .models import IntelReport, IntelScore
 from .schemas import (
     DashboardRead,
     HeatmapCell,
+    MeetingReportCorrection,
+    MeetingReportEdit,
+    MeetingReportRead,
     PredictionsRead,
     ReportRead,
     ScoreRead,
@@ -37,6 +43,7 @@ from .schemas import (
 )
 
 router = APIRouter()
+log = get_logger(__name__)
 
 SessionDep = Annotated[Session, Depends(get_session)]
 
@@ -84,6 +91,67 @@ def get_predictions(team_id: str, session: SessionDep) -> PredictionsRead:
 def list_reports(team_id: str, session: SessionDep) -> list[IntelReport]:
     """The team's generated weekly reports, newest period first."""
     return service.list_reports(session, team_id)
+
+
+@router.get("/meeting-reports/{team_id}", response_model=list[MeetingReportRead])
+def list_meeting_reports(
+    team_id: str, user: CurrentUser, session: SessionDep
+) -> list[MeetingReportRead]:
+    """The team's meeting reports for the dashboard card. Members only: a report
+    is meeting text, not an aggregate."""
+    return service.list_meeting_reports(session, team_id, user_id=user.id)
+
+
+@router.put("/meeting-reports/{meeting_id}", response_model=MeetingReportRead)
+def edit_meeting_report(
+    meeting_id: str, edit: MeetingReportEdit, user: CurrentUser, session: SessionDep
+) -> MeetingReportRead:
+    """A team member edits a draft before it is posted; refused once posted.
+
+    Nothing is posted from here. The edit is committed first, so the Report
+    subagent woken by the announcement reads it, and then announced; its post
+    goes to the approval queue (#674). Ids only to the task (#275).
+    """
+    report = service.edit_meeting_report(
+        session, meeting_id, edit.body, user_id=user.id, base_updated_at=edit.base_updated_at
+    )
+    session.commit()
+    _announce(meeting_id)
+    return report
+
+
+@router.post(
+    "/meeting-reports/{meeting_id}/corrections",
+    response_model=MeetingReportRead,
+    status_code=202,
+)
+def correct_meeting_report(
+    meeting_id: str, correction: MeetingReportCorrection, user: CurrentUser, session: SessionDep
+) -> MeetingReportRead:
+    """A member corrects a posted report; it waits for approval (#674).
+
+    Nothing is posted from here. Committed, then announced, so the Report
+    subagent woken by it reads the correction and proposes its post; once
+    approved it goes out as a reply under the post. Ids only (#275).
+    """
+    report = service.correct_meeting_report(session, meeting_id, correction.body, user_id=user.id)
+    session.commit()
+    _announce(meeting_id)
+    return report
+
+
+def _announce(meeting_id: str) -> None:
+    """Queue the announcement of a committed change. A queue that refuses it does
+    not fail the request -- the change is saved, and the sweep announces it
+    within minutes (#698). Ids only in the log."""
+    try:
+        enqueue.announce_meeting_report_changed(meeting_id)
+    except Exception as exc:
+        log.warning(
+            "intelligence_meeting_report_announce_enqueue_failed",
+            meeting_id=meeting_id,
+            error=type(exc).__name__,
+        )
 
 
 @router.get("/me/speaking-ratio/{meeting_id}", response_model=SpeakingRatioRead)

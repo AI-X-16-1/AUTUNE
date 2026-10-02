@@ -15,6 +15,12 @@ Where the meeting comes from:
 - **The request names exactly one id:** it is passed on, and the scope still
   holds it to the run's team.
 - **Several different ids:** refused rather than guessed.
+
+**Woken by ``autune.intelligence.meeting_report_changed``** (#674): a person
+edited the draft on E's dashboard. Nothing is read from B, C or D and nothing
+is rendered; the run proposes the post of the draft E holds now (L2), with that
+draft's id. Plan mode supersedes the earlier post proposal for the meeting, so
+an approver sees one proposal, for the text that is there.
 """
 
 from __future__ import annotations
@@ -28,7 +34,7 @@ from langgraph.graph import END, START, StateGraph
 from autune_agent.main import BudgetExceededError, SubagentState, Toolbox
 from autune_agent.main.subagents import CompiledSubagent
 from autune_agent.results import ProposedAction, SubagentResult, ToolResult
-from autune_contracts import INTELLIGENCE_COMPLETED
+from autune_contracts import INTELLIGENCE_COMPLETED, INTELLIGENCE_MEETING_REPORT_CHANGED
 from autune_core import new_id
 
 from .render import has_pending, render
@@ -41,7 +47,11 @@ GAPS_TOOL = "gap.open_gaps"
 """C's read since #546. A tool that is not registered is skipped, so a wrong name
 here loses the gap section silently -- a test pins it to C's registry."""
 LINKS_TOOL = "context.links_for_meeting"
-TOOLS = (ACTIONS_TOOL, REVIEW_TOOL, GAPS_TOOL, LINKS_TOOL)
+READS = (ACTIONS_TOOL, REVIEW_TOOL, GAPS_TOOL, LINKS_TOOL)
+"""What a report is composed from, in order."""
+AWAITING_TOOL = "intelligence.meeting_report_awaiting_approval"
+"""E's read of the draft a person's edit left, for the post proposal (#674)."""
+TOOLS = (*READS, AWAITING_TOOL)
 OPTIONAL = (GAPS_TOOL, LINKS_TOOL)
 """Context around B's confirmed items. A failure here drops a section, never the report."""
 
@@ -49,6 +59,8 @@ DRAFT_ACTION = "intelligence.draft_meeting_report"
 """E stores the report. L1: E lists it in ``L1_ACTIONS``."""
 PUBLISH_ACTION = "intelligence.publish_meeting_report"
 """E posts the stored report to the team channel. L2: a channel post moves people."""
+CORRECTION_ACTION = "intelligence.publish_meeting_report_correction"
+"""E posts a member's correction under the posted report. L2, like the post (#674)."""
 
 DRAFT_ID_PREFIX = "rdr"
 """Both proposals carry one id per run. E stores it with the draft and posts only
@@ -57,6 +69,9 @@ and approving this run's post then posts nothing (review of #508)."""
 
 TRIGGER = INTELLIGENCE_COMPLETED
 """B, C and D have all reported (or timed out) only by this event."""
+CHANGED_TRIGGER = INTELLIGENCE_MEETING_REPORT_CHANGED
+"""A person edited the draft; propose its post again (#674)."""
+TRIGGERS = (TRIGGER, CHANGED_TRIGGER)
 
 # ASCII boundaries, not \b: in a str pattern \b is Unicode-aware, so a Korean
 # particle right after the id ("mtg_ab12cd의") would count as part of the word.
@@ -81,15 +96,86 @@ def _failed(reason: str) -> SubagentState:
     return {"outcome": SubagentResult(result=ToolResult.failure(reason))}
 
 
+def _repropose(toolbox: Toolbox) -> SubagentState:
+    """The post of what a person's change left, for approval -- no model, no render.
+
+    Before the report is posted that is an edited draft (``PUBLISH_ACTION`` with
+    its ``draft_id``); after, a correction (``CORRECTION_ACTION`` with its
+    ``correction_id``). Never both: E accepts a correction only once the report
+    is posted, so one proposal per run, superseding the last for the meeting.
+    """
+    awaiting = toolbox.call(AWAITING_TOOL)
+    if not awaiting.ok:
+        return {"outcome": SubagentResult(result=awaiting)}
+    if not awaiting.items:
+        return _failed("nothing awaits approval")
+    item = awaiting.items[0]
+    kind = getattr(item, "kind", None)
+    if kind == "draft" and isinstance(draft_id := getattr(item, "draft_id", None), str):
+        post = ProposedAction(
+            kind="meeting_report_post",
+            title="회의 리포트 게시 (팀원이 고친 초안)",
+            tool=PUBLISH_ACTION,
+            arguments={"draft_id": draft_id},
+            level="L2",
+            rationale="A team member edited the report; post the edit once a person approves.",
+        )
+        said = "고친 회의 리포트를 승인 대기로 올렸습니다."
+    elif kind == "correction" and isinstance(
+        correction_id := getattr(item, "correction_id", None), str
+    ):
+        post = ProposedAction(
+            kind="meeting_report_correction_post",
+            title="회의 리포트 수정본 게시",
+            tool=CORRECTION_ACTION,
+            arguments={"correction_id": correction_id},
+            level="L2",
+            rationale="A team member corrected the posted report; post it once approved.",
+        )
+        said = "회의 리포트 수정본을 승인 대기로 올렸습니다."
+    else:
+        return _failed("what awaits approval has no id")
+    summary = ToolResult(ok=True, summary=said, items=[])
+    return {"outcome": SubagentResult(result=summary, proposed=[post])}
+
+
+POSTED = (
+    "이 회의의 리포트는 이미 게시됐습니다. 고칠 내용은 대시보드의 회의 리포트 카드에서 "
+    "수정본으로 올려 주세요. 승인되면 원래 게시물 아래에 올라갑니다."
+)
+"""What a run says once the report is out: never a second report, but the way to fix one."""
+
+
+def _already_posted(toolbox: Toolbox, meeting: dict[str, Any]) -> bool:
+    """The report went out, so a run proposes nothing (#658 review).
+
+    A late ``intelligence.completed`` after the post would otherwise queue a
+    draft and its post: E refuses both, but plan mode would already have
+    superseded a correction waiting for approval with that dead post proposal.
+    A correction waiting means posted too. Skipped when E's read is not there.
+    """
+    if AWAITING_TOOL not in toolbox.describe():
+        return False
+    awaiting = toolbox.call(AWAITING_TOOL, **meeting)
+    if not awaiting.ok:
+        return awaiting.reason == "already posted"
+    return any(getattr(item, "kind", None) == "correction" for item in awaiting.items)
+
+
 def build(toolbox: Toolbox) -> CompiledSubagent:
     def report(state: SubagentState) -> SubagentState:
+        if state.get("request") == CHANGED_TRIGGER:
+            return _repropose(toolbox)
         named = set(_MEETING_ID.findall(state.get("request", "")))
         if len(named) > 1:
             return _failed("the request names several meetings")
         # None named: the run's scope carries the meeting (or the Toolbox refuses).
         meeting: dict[str, Any] = {"meeting_id": named.pop()} if named else {}
+        if _already_posted(toolbox, meeting):
+            # Asked in chat too, so say where a fix goes (#658 review).
+            return {"outcome": SubagentResult(result=ToolResult(ok=True, summary=POSTED, items=[]))}
 
-        results = {name: _read(toolbox, name, meeting) for name in TOOLS}
+        results = {name: _read(toolbox, name, meeting) for name in READS}
         actions = results[ACTIONS_TOOL]
         if actions is not None and not actions.ok:
             # B (or the scope check) cannot find the meeting: nothing to report.
