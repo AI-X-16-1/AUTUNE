@@ -145,7 +145,7 @@ def meeting_action_items(session: Session, meeting_id: str) -> dict[str, Any]:
     five), and in ``summary`` how many are still waiting for confirmation.
     Unconfirmed items are counted, never quoted.
     """
-    if session.get(Meeting, meeting_id) is None:
+    if service.live_meeting(session, meeting_id) is None:
         return _missing(meeting_id)
     today = date.today()
     confirmed = service.outbound_for_meeting(session, meeting_id).action_items
@@ -177,7 +177,11 @@ def open_action_items(session: Session, team_id: str, *, within_days: int = 7) -
     """
     today = date.today()
     horizon = today + timedelta(days=within_days)
-    meeting_ids = set(session.scalars(select(Meeting.id).where(Meeting.team_id == team_id)))
+    meeting_ids = set(
+        session.scalars(
+            select(Meeting.id).where(Meeting.team_id == team_id, service.within_retention())
+        )
+    )
     if not meeting_ids:
         return _result(summary="이 팀의 회의가 없습니다.", items=[], evidence=[])
     open_items = [
@@ -249,6 +253,7 @@ def workload_by_owner(session: Session, team_id: str, *, days: int = 30) -> dict
         session.scalars(
             select(Meeting.id).where(
                 Meeting.team_id == team_id,
+                service.within_retention(),
                 # An upload with no start time cannot be placed in the window;
                 # leaving it out would hide its items from everyone.
                 or_(Meeting.started_at.is_(None), Meeting.started_at >= cutoff),
@@ -343,7 +348,7 @@ def unresolved_questions(session: Session, meeting_id: str) -> dict[str, Any]:
     them to a channel or tracker on your own** (#261 rule 3). Whether a question
     was answered later in the meeting is not known; say "raised", not "open".
     """
-    if session.get(Meeting, meeting_id) is None:
+    if service.live_meeting(session, meeting_id) is None:
         return _missing(meeting_id)
     wanted = {UtteranceKind.OPEN_QUESTION, UtteranceKind.CONCERN}
     rows = [c for c in service.classifications_for_meeting(session, meeting_id) if c.kind in wanted]
@@ -381,7 +386,7 @@ def review_state(session: Session, meeting_id: str) -> dict[str, Any]:
     confirmation and weak agreements whose speaker has not answered, and up to
     five of them by id and kind -- never their text.
     """
-    if session.get(Meeting, meeting_id) is None:
+    if service.live_meeting(session, meeting_id) is None:
         return _missing(meeting_id)
     review = service.review_for_meeting(session, meeting_id)
     pending_decisions = [d for d in review.decisions if d.status == "pending"]
@@ -421,7 +426,7 @@ def meeting_decisions(session: Session, meeting_id: str) -> dict[str, Any]:
     confirmed, or one held back because its text carries personal data, is
     counted and never quoted (#261 rule 3).
     """
-    if session.get(Meeting, meeting_id) is None:
+    if service.live_meeting(session, meeting_id) is None:
         return _missing(meeting_id)
     review = service.review_for_meeting(session, meeting_id)
     outbound = service.outbound_for_meeting(session, meeting_id)
@@ -466,7 +471,11 @@ def person_action_items(session: Session, team_id: str, user_id: str) -> dict[st
             confidence=0.0,
         )
     today = date.today()
-    meeting_ids = set(session.scalars(select(Meeting.id).where(Meeting.team_id == team_id)))
+    meeting_ids = set(
+        session.scalars(
+            select(Meeting.id).where(Meeting.team_id == team_id, service.within_retention())
+        )
+    )
     mine = [
         i
         for status in _OPEN
@@ -524,6 +533,7 @@ def _open_followup(session: Session, team_id: str) -> ExtActionItem | None:
         .join(Meeting, Meeting.id == ExtActionItem.meeting_id)
         .where(
             Meeting.team_id == team_id,
+            service.within_retention(),
             ExtActionItem.origin == "followup",
             ExtActionItem.status.in_(_STILL_OPEN),
         )
@@ -568,7 +578,12 @@ def open_followup_item(session: Session, team_id: str) -> dict[str, Any]:
 
 
 def _team_of(session: Session, meeting_id: str) -> str | None:
-    return session.scalar(select(Meeting.team_id).where(Meeting.id == meeting_id))
+    """The meeting's team -- ``None`` for a meeting that is not there or is past
+    its retention window (``service.within_retention``, #656), so every tool
+    that asks treats the two alike."""
+    return session.scalar(
+        select(Meeting.team_id).where(Meeting.id == meeting_id, service.within_retention())
+    )
 
 
 def _not_found(kind: str, ident: str) -> dict[str, Any]:

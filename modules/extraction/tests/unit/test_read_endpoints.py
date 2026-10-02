@@ -11,7 +11,7 @@ This is not the integration suite: no Postgres, no migrations.
 from __future__ import annotations
 
 from collections.abc import Iterator
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import get_args
 
 import pytest
@@ -912,3 +912,100 @@ def test_history_carries_no_person(client: TestClient, session: Session) -> None
     (entry,) = client.get(f"{PREFIX}/action-items/act_1").json()["history"]
 
     assert set(entry) == {"kind", "fields", "at"}
+
+
+# --- a meeting past its retention window (#656) -----------------------------------
+
+EXPIRED = "mtg_expired"
+
+
+def expired_meeting(session: Session) -> None:
+    """A meeting of the reader's own team that is past ``expires_at`` and still
+    in the table -- A's sweep has not taken it yet, or one of its deletion hooks
+    failed. It holds a confirmed item and a decision."""
+    now = datetime.now(UTC)
+    session.add(
+        Meeting(
+            id=EXPIRED,
+            team_id="team_1",
+            title="지난 회의",
+            started_at=now - timedelta(days=120),
+            expires_at=now - timedelta(days=1),
+        )
+    )
+    session.flush()
+    action_item(session, "act_old", meeting_id=EXPIRED, status="todo")
+    session.add(
+        ExtDecision(
+            id="dec_old", meeting_id=EXPIRED, statement="지난 결정", confidence=0.9, origin="model"
+        )
+    )
+    session.flush()
+
+
+def test_the_board_lists_nothing_from_a_meeting_past_retention(
+    client: TestClient, session: Session
+) -> None:
+    expired_meeting(session)
+    action_item(session, "act_1", status="todo")
+
+    everything = client.get(f"{PREFIX}/action-items").json()
+    by_meeting = client.get(f"{PREFIX}/action-items", params={"meeting_id": EXPIRED}).json()
+
+    assert [i["id"] for i in everything] == ["act_1"]
+    assert by_meeting == []
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        f"/results/{EXPIRED}",
+        f"/reviews/{EXPIRED}",
+        f"/reviews/{EXPIRED}/outbound",
+        f"/summary/{EXPIRED}",
+        f"/carried-over/{EXPIRED}",
+        f"/confirmations?meeting_id={EXPIRED}",
+        "/action-items/act_old",
+        "/decisions/dec_old",
+    ],
+)
+def test_a_meeting_past_retention_reads_as_one_that_is_not_there(
+    client: TestClient, session: Session, path: str
+) -> None:
+    """The same 404 an unknown id gets, for the meeting and for what hangs off
+    it: until the sweep takes the rows, nothing of them may be shown."""
+    expired_meeting(session)
+
+    assert client.get(PREFIX + path).status_code == 404
+
+
+def test_nothing_of_a_meeting_past_retention_can_be_changed(
+    client: TestClient, session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # What an edit or a deletion would call outside, were it let through: no
+    # test may reach Notion, Jira or a calendar while proving it is not.
+    for name in (
+        "sync_after_confirmation",
+        "remove_calendar_event",
+        "close_jira_issue",
+        "trash_notion_page",
+    ):
+        monkeypatch.setattr(tasks, name, lambda _id: None)
+    expired_meeting(session)
+
+    patched = client.patch(f"{PREFIX}/action-items/act_old", json={"status": "done"})
+    deleted = client.delete(f"{PREFIX}/action-items/act_old")
+
+    assert (patched.status_code, deleted.status_code) == (404, 404)
+    row = session.get(ExtActionItem, "act_old")
+    assert row is not None and row.status == "todo"
+
+
+def test_an_earlier_meeting_past_retention_carries_nothing_over(
+    client: TestClient, session: Session
+) -> None:
+    expired_meeting(session)
+
+    carried = client.get(f"{PREFIX}/carried-over/{MEETING}").json()
+
+    assert (carried["open"], carried["items"]) == (0, [])
