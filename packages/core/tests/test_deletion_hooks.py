@@ -1,4 +1,10 @@
-"""The speech-deletion hook registry (#587): who is told, with what, and when it stops."""
+"""The speech-deletion hook runner beyond what test_core.py covers (#628).
+
+Registration and the basic call are pinned in `test_core.py`
+(`test_speech_hooks_get_the_person_and_the_utterances_before_they_go`); these
+are the three behaviours #628 added or relies on: no ids, a failure, and
+independent copies.
+"""
 
 from __future__ import annotations
 
@@ -10,19 +16,6 @@ from autune_core import deletion
 @pytest.fixture(autouse=True)
 def empty_registry(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(deletion, "_speech_hooks", {})
-
-
-def test_a_registered_module_gets_the_person_and_their_utterance_ids() -> None:
-    seen: list[tuple[str, list[str]]] = []
-
-    @deletion.on_speech_deleted("extraction")
-    def hook(user_id: str, utterance_ids: list[str]) -> None:
-        seen.append((user_id, utterance_ids))
-
-    deletion.run_speech_hooks("user_1", ["utt_1", "utt_2"])
-
-    assert seen == [("user_1", ["utt_1", "utt_2"])]
-    assert deletion.registered_speech_modules() == {"extraction"}
 
 
 def test_no_utterances_tells_nobody() -> None:
