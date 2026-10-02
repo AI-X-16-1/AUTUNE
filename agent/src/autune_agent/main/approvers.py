@@ -7,9 +7,11 @@
   new team would otherwise have no way in, and neither would a team whose
   ``any`` approver left while others kept narrower scopes.
 - After that, only an approver with scope ``any`` may change it.
-- As long as any approver row remains, one of them is ``any``, so the list
-  can always be changed again. That makes the first assignment hold ``any``
-  too. Clearing every row is allowed and returns the team to the start.
+- A change is saved only if, afterwards, no rows remain or one of them is
+  ``any``. So the first assignment holds ``any``, clearing every row returns
+  the team to the start, and narrower scopes with no ``any`` are never
+  written -- that state arises only when the ``any`` approver leaves, which
+  the first rule reopens.
 
 Rows of a former member count for nothing here, as in ``approver_scopes``: a
 team whose only ``any`` approver left is open to its members again.
