@@ -486,10 +486,17 @@ writes these rows through `GET`/`PUT /api/agent/approvers`, and the rule is in
 `main/approvers.py`. With no administrator in `packages/core`, the layer
 answers the question itself: while no current member holds an approver row,
 any member may name one, so a new team has a way in; after that only an
-approver with scope `any` may change the list; and the team never loses its
-last `any` approver, so the list can always be changed again — which makes the
-first assignment hold `any`. A former member's rows count for nothing, the same
-as in `approver_scopes`. The table holds a role
+approver with scope `any` may change the list; and as long as any approver row
+remains, one of them is `any`, so the list can always be changed again — which
+makes the first assignment hold `any`. Clearing every row is allowed and
+returns the team to its starting state. A former member's rows count for
+nothing, the same as in `approver_scopes`.
+
+Two limits follow from having no administrator. In a new team the first member
+to open the screen takes `any`; the team settles who it should be among
+themselves. And the check reads before it writes without a lock, so two `any`
+approvers removing each other's `any` at the same moment could both pass; a
+row lock in `set_scopes` closes that (follow-up to #621). The table holds a role
 assignment, not meeting content, so it is deleted with its user rather than with
 a meeting.
 
@@ -1256,15 +1263,14 @@ question: a team admin, any member, a reviewer? `agent_charters` needs an
 owner column and a version, and the answer decides whether a charter edit is
 an L1 or an L2 action of the person making it. Not decided.
 
-### 13.5 Who sets the approvers
+### 13.5 Who sets the approvers — answered: 설정 › 승인자 (#592)
 
 `agent_approvers` (section 5) says who the lead and the manager are, and a
-wrong row sends a workload proposal to the wrong person. Setting a row is
-therefore itself a permission question, the same one as 13.4, and should be
-answered with it. Not decided: until then nothing in the product sets a row —
-no endpoint, no screen — and the rows are seeded with SQL for the demo.
-
-For the demo: `INSERT INTO agent_approvers (team_id, user_id, scope) VALUES ('<team>', '<user>', 'any');`
+wrong row sends a workload proposal to the wrong person, so setting a row is
+itself a permission question. #592 answered it inside the layer, without the
+team administrator `packages/core` does not have: see "Who may set it, as
+built" in section 5. No SQL seed is needed; the first member to open
+설정 › 승인자 names the first `any` approver.
 
 ### 13.6 Gmail is a new integration, and Jira is back
 
