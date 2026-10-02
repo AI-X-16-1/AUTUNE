@@ -54,8 +54,12 @@ export function TemplateRail({
   return (
     <div className="flex flex-col" style={{ gap: "var(--space-24)" }}>
       <section>
+        {/* The version names every file that contributed, which is how two
+            meetings are known to be held to the same checklist. A reader has
+            no use for the identifier, so it is a tooltip rather than text. */}
         <h2
           className="text-[var(--color-ink-strong)]"
+          title={`템플릿 버전 ${comparison.version}`}
           style={{
             fontSize: "var(--text-heading)",
             fontWeight: "var(--text-heading-weight)",
@@ -93,11 +97,7 @@ export function TemplateRail({
           className="mt-1 text-[var(--color-ink-muted)]"
           style={{ fontSize: "var(--text-metaSmall)" }}
         >
-          {/* The version names every file that contributed, so two meetings
-              can be compared only when they were held to the same checklist.
-              Monospace because it is an identifier, not prose. */}
-          <span style={{ fontFamily: "var(--font-mono)" }}>{comparison.version}</span>
-          {comparison.analysed ? null : " · 아직 대조하지 않았습니다"}
+          {comparison.analysed ? tally(comparison.items) : "아직 대조하지 않았습니다"}
         </p>
 
         <div className="mt-3 border-t border-[var(--color-hairline)]">
@@ -182,6 +182,23 @@ function ChecklistRow({
       </span>
     </div>
   );
+}
+
+/**
+ * The rail's verdicts counted, so they can be read against the list. An item
+ * marked 해당 없음 is counted apart: the list no longer shows its gap.
+ */
+function tally(items: readonly TemplateChecklistItem[]): string {
+  const count = (coverage: Coverage) =>
+    items.filter((item) => item.coverage === coverage && !item.dismissed).length;
+  const dismissed = items.filter((item) => item.dismissed).length;
+  const parts = [
+    `${COVERAGE_LABELS.missing} ${count("missing")}`,
+    `${COVERAGE_LABELS.partial} ${count("partial")}`,
+    `${COVERAGE_LABELS.covered} ${count("covered")}`,
+  ];
+  if (dismissed > 0) parts.push(`해당 없음 ${dismissed}`);
+  return `${items.length}개 항목 · ${parts.join(" · ")}`;
 }
 
 /**

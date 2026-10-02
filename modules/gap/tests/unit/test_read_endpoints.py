@@ -728,6 +728,7 @@ ROUTES = [
     f"{PREFIX}/reports/{{meeting_id}}",
     f"{PREFIX}/topics/{{meeting_id}}",
     f"{PREFIX}/templates/{{meeting_id}}",
+    f"{PREFIX}/explanations/{{meeting_id}}",
 ]
 """Every GET that names a meeting. Parameterised rather than written out three
 times, so a route added later without the check fails here — the list is the

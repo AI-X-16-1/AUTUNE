@@ -175,7 +175,7 @@ def test_a_gap_carries_the_template_that_raised_it(team_id: str) -> None:
     gap = stored(meeting_id)["risk"]
 
     assert gap.template_key == "general"
-    assert gap.template_version == "general.4"
+    assert gap.template_version == "general.5"
     assert gap.template_item == "리스크·예외 처리"
     assert gap.suggested_question
 

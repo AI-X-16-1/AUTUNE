@@ -15,7 +15,7 @@
 
 key: feature_planning
 name: "기능 기획"
-version: 2
+version: 3
 extends: general
 
 items:
@@ -26,6 +26,7 @@ items:
     keywords: ["성능", "응답", "지연", "레이턴시", "처리량", "부하", "latency", "p95"]
     question: "이 기능이 만족해야 하는 응답 시간과 처리량은 얼마입니까?"
     question_about: "{topic}의 응답 시간과 처리량 목표는 얼마입니까?"
+    ask_about_subject: true
     examples:
       - "페이지는 1초 안에 떠야 합니다"
       - "동시 접속 천 명을 버텨야 합니다"
@@ -38,6 +39,7 @@ items:
     keywords: ["초기", "콜드", "신규", "데이터가 없", "처음", "빈 상태", "cold"]
     question: "데이터가 아직 없는 사용자에게 이 기능은 무엇을 보여줍니까?"
     question_about: "{topic}에서 데이터가 아직 없는 사용자에게는 무엇을 보여줍니까?"
+    ask_about_subject: true
     examples:
       - "가입 직후라 기록이 없는 사용자에게는 인기 항목을 보여줍니다"
       - "데이터가 쌓이기 전에는 기본값으로 갑니다"
@@ -50,6 +52,7 @@ items:
     keywords: ["롤아웃", "배포", "실험", "ab", "점진", "단계적", "플래그"]
     question: "이 기능을 누구에게 먼저 열고, 효과는 어떻게 확인합니까?"
     question_about: "{topic}의 롤아웃 대상과 효과 확인 방법은 무엇입니까?"
+    ask_about_subject: true
     examples:
       - "처음에는 사내 직원에게만 열어 봅니다"
       - "10% 사용자에게 먼저 배포해서 반응을 봅니다"
@@ -62,6 +65,7 @@ items:
     keywords: ["에러", "오류", "실패", "예외", "타임아웃", "재시도", "폴백"]
     question: "이 기능이 실패했을 때 사용자에게 무엇이 보입니까?"
     question_about: "{topic}에서 실패가 났을 때 사용자에게 무엇이 보입니까?"
+    ask_about_subject: true
     examples:
       - "요청이 실패하면 다시 시도하게 합니다"
       - "서버 오류가 나면 사용자에게 안내 메시지를 띄웁니다"
@@ -74,6 +78,7 @@ items:
     keywords: ["개인정보", "프라이버시", "동의", "보관", "삭제", "마스킹", "수집"]
     question: "이 기능은 어떤 데이터를 새로 쓰고, 그 근거와 보관 기간은 무엇입니까?"
     question_about: "{topic}에서 새로 쓰는 데이터와 그 보관 기간은 무엇입니까?"
+    ask_about_subject: true
     examples:
       - "이름과 연락처는 저장하지 않습니다"
       - "수집한 데이터는 30일 뒤 지웁니다"
