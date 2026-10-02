@@ -13,7 +13,7 @@
 
 Turn utterances into trackable structure: classify what kind of statement each
 utterance is, build action-item cards from commitments, verify ambiguous
-agreement, and sync the result to Notion.
+agreement, and sync the result to Notion and Jira.
 
 ## Non-goals
 
@@ -33,7 +33,7 @@ agreement, and sync the result to Notion.
 | Destination | Contract | Event |
 | --- | --- | --- |
 | D, E | `ExtractionResult` | `autune.extraction.completed` |
-| Notion | Issue creation via `packages/integrations` | — |
+| Notion, Jira | Issue creation via `packages/integrations` | — |
 | Slack | Action-item card thread, confirmation DMs | — |
 
 ## Pipeline
@@ -357,13 +357,13 @@ other module's tables.
 | PATCH | `/action-items/{id}` | Edit or close an item |
 | POST | `/action-items` | Add an item the model missed |
 | DELETE | `/action-items/{id}` | Delete an item the model got wrong |
-| POST | `/results/{meeting_id}/sync` | Re-sync to Notion — not built; confirming an item syncs it |
+| POST | `/results/{meeting_id}/sync` | Re-sync to Notion and Jira — not built; confirming an item syncs it |
 | GET | `/reviews/{meeting_id}` | What needs a person before anything is sent: decisions with their verdict, weak assents with their DM state, items still `needs_confirmation` or below the candidate line (S15, #246) |
 | POST | `/decisions` | Add a decision the model missed. Confirmed, and kept through reruns |
 | GET | `/decisions/{id}` | One decision and the text of the utterances it was settled in, in spoken order (S15 shows them beneath the statement), plus the same `context` |
 | PATCH | `/decisions/{id}` | Confirm, reject, reword, or put back to pending |
 | DELETE | `/decisions/{id}` | Delete a decision a person added; reject one the model proposed, which a rerun would otherwise bring back |
-| GET | `/reviews/{meeting_id}/outbound` | Exactly what may leave for Notion or Slack: confirmed decisions and accepted items, each screened for personal data (a hit is held back in `blocked`, by id and category). The sync reads this and nothing else |
+| GET | `/reviews/{meeting_id}/outbound` | Exactly what may leave for Notion, Slack or Jira: confirmed decisions and accepted items, each screened for personal data (a hit is held back in `blocked`, by id and category). The sync reads this and nothing else |
 
 ## Celery tasks
 
@@ -591,8 +591,8 @@ versions.
 
 ## Privacy notes
 
-- Only what an issue needs goes to Notion: the action description, assignee,
-  and due date. Never the full transcript.
+- Only what an issue needs goes to Notion or Jira: the action description,
+  assignee, and due date. Never the full transcript.
 - The LLM used for reference resolution receives masked text only, and the
   smallest window that resolves the reference.
 - Confirmation DMs go to the speaker, never to a channel.

@@ -66,7 +66,8 @@ variant and no administrator override.
 
 ## Testing without credentials
 
-`autune_integrations.fakes` provides `FakeSlack` and `FakeNotion`.
+`autune_integrations.fakes` provides `FakeSlack`, `FakeNotion`, `FakeJira` and
+`FakeCalendar`.
 They record instead of sending and **run the same privacy guards**, so a test
 that would have leaked fails in tests too. Mock external services here, never
 with network calls.
@@ -82,9 +83,10 @@ assert slack.channel_messages[0].channel == "#squad"
 ## Scope
 
 W1 defines the boundary, the error split and the guards. The full API surface is
-filled in during W3 by the owner who needs it — extraction for Notion; Calendar
-by the Workload subagent's owner (#260, #435). Writing the rest before the first
-real call would produce an abstraction that fits nothing.
+filled in during W3 by the owner who needs it — extraction for Notion, and for
+Jira when it came back (#458); Calendar by the Workload subagent's owner (#260,
+#435). Writing the rest before the first real call would produce an abstraction
+that fits nothing.
 
 **What Calendar reads, and what it never returns** (#435, #438). `list_events`
 returns a team calendar's events without attendees — other people's addresses,

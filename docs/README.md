@@ -42,7 +42,7 @@ documents cover how it is built.
 | `data-model.md` | Shared entities, per-module tables, prefix rules, datastore split |
 | `async-pipeline.md` | Celery event flow A → B/C/D → E, retries, idempotency |
 | `privacy.md` | Raw-audio deletion, PII masking, speaking-ratio confidentiality, retention |
-| `integrations.md` | Slack, Notion, Calendar wrappers and the outbound privacy boundary |
+| `integrations.md` | Slack, Notion, Jira, Calendar wrappers and the outbound privacy boundary |
 | `agent-layer.md` | Main agent and five subagents with their owners, modules as tools, work-item state, triggers, action permission levels, build plan to 10/12 |
 
 ### engineering/
@@ -55,7 +55,7 @@ documents cover how it is built.
 | `dependencies.md` | uv and pnpm workspaces, lockfile conflict policy |
 | `testing.md` | Test layers, fixtures, model-dependent tests, CI gates |
 | `environments.md` | Docker services, environment variables, local setup, secrets |
-| `external-approvals.md` | HuggingFace, Slack, Notion registrations and the AI Hub terms questions |
+| `external-approvals.md` | HuggingFace, Slack, Notion, Jira registrations and the AI Hub terms questions |
 
 ### design/
 | Document | Contents |

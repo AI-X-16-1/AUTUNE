@@ -84,7 +84,7 @@ permitted actions — and no new machine learning.
         ┌──────┬───────┬───────┼───────┬────────┐
         ▼      ▼       ▼       ▼       ▼        ▼
        [A]    [B]     [C]     [D]     [E]   integrations
-        modules, unchanged           (Slack, Notion, Calendar;
+        modules, unchanged           (Slack, Notion, Jira, Calendar;
                                       outbound boundary, section 8 rule 1)
                                │
                                ▼
@@ -117,7 +117,7 @@ and keeps their module's `tools.py`.
 | --- | --- | --- | --- | --- | --- |
 | **Main agent** | 김민경 | Chat entry point; routes a request or a trigger to one subagent, or answers from tools directly; combines the answer; owns the work-item store, the trigger scheduler, the approval gate and `agent_runs` | every trigger, every chat message | any | the chat answer; L2 plans to the approval screen |
 | **Research** | 김민경 | When a meeting raises an idea or argues over a fact nobody could confirm, gathers what is known into a short document and proposes sending it to the people involved | `autune.intelligence.completed`; a chat request | A (the team's meetings), B (open questions); D once it ships tools.py. Uploaded material has no store yet | a document shown to the team in the app after an approver with scope `research` approves it — L2; a Slack DM to participants follows #478 |
-| **Briefing** | 문민재 | Ten minutes before a meeting, sends the previous meeting's summary and the issues this one should settle; links Jira issues **if #82 brings Jira back** | time, from Google Calendar (`list_events`) | D (links, decision threads), B (open items), C (undismissed gaps and their questions), Jira only after #82 | D's pre-meeting brief — D's own surface, rule 2 |
+| **Briefing** | 문민재 | Ten minutes before a meeting, sends the previous meeting's summary and the issues this one should settle; lists the team's open Jira issues (B's `TeamAgenda`, #436) | time, from Google Calendar (`list_events`) | D (links, decision threads), B (open items), C (undismissed gaps and their questions), the team's open Jira issues as B reported them (`brief_agenda`) | D's pre-meeting brief — D's own surface, rule 2 |
 | **Follow-up** | 박재경 | Watches the gaps nobody closed; when a follow-up meeting looks needed, proposes one — to the team lead only | `autune.intelligence.completed`; a chat request | C (undismissed gaps; the template items left open in this meeting and the team's previous one), B (unresolved questions; whether a Follow-up item is still open), A (the team's latest meeting, on a chat run about none). No participation, no `silent_share`, no calendar | a proposal on the lead's approval screen; after approval, an unconfirmed "후속 회의 잡기" item on the board (B's `add_followup_item`) — L2. It reaches a calendar only through B's sync, once a person confirms it with an assignee and a due date (#441) |
 | **Workload** | 강민구 | Notices that one person is overloaded while another has finished, and proposes a redistribution — to the manager only; owns the Gmail, Google Calendar and Jira integrations | state, `@periodic` | B (items per owner and their state), Calendar (`free_busy`), Jira only after #82 | a proposal on the manager's approval screen; any reassignment only after approval — L2 |
 | **Report** | 이승환 | After a meeting, composes its structured minutes from a template (no LLM) and proposes that E store and post them | `autune.intelligence.completed`; a chat request | B (confirmed action items, review-state counts); C's open gaps (`gap.open_gaps`, HIGH and MEDIUM listed, as S20 shows them; LOW only in C's count); D (linked meetings, by title and date only) once its `tools.py` ships — until then that section is absent. Not E's scores: the report carries no quality grade | a draft stored by E at L1 (`draft_meeting_report`); the channel post through E's report delivery at L2 (`publish_meeting_report`) — E's own surface, rule 2 |
@@ -158,12 +158,12 @@ Three things in that table are decisions, not descriptions:
   windows only** — never titles, attendees or places of other people's events —
   and returns `None` for a calendar it could not read, which a subagent must
   not treat as free.
-- **Jira is not, yet.** `integrations.md` records it as evaluated and dropped,
-  and #82 — whose credentials it runs on — is reopened. 강민구 owns Jira (agreed
-  with 문민재 on #260): moving `JiraClient` to 3LO, B's action-to-issue sync,
-  and the reads Briefing asks for in its own issue, the way #435 did for
-  Calendar. Until #82 lands, Briefing's issue links and Workload's Jira reads
-  are **conditional**; both subagents are specified to work without them.
+- **Jira is back.** It was evaluated and dropped (#82) and brought back over
+  one-click OAuth 3LO (#457, #458; `integrations.md`). 강민구 owns Jira (agreed
+  with 문민재 on #260): `JiraClient` on 3LO and B's action-to-issue sync are in,
+  and Briefing reads the team's open issues as B reports them (`TeamAgenda`,
+  #436, through D's `brief_agenda`). Workload reads no Jira yet and is
+  specified to work without it.
 - **Gmail is new** (section 13.6).
 
 ### 3.2 Where the code goes
@@ -723,11 +723,11 @@ why `L0-ext` exists as its own row.
 
 **It is not blocked, and it is not new.** `privacy.md` section 6 already
 governs it and already permits it: *"Anything leaving our infrastructure — LLM
-APIs, Slack, Notion, Google Calendar, error tracking, analytics — carries
+APIs, Slack, Notion, Jira, Google Calendar, error tracking, analytics — carries
 masked text only, and only what the feature needs."* Two conditions, both
 already decided. `packages/integrations/src/autune_integrations/privacy.py` is
 the single enforcement point, and its own docstring names "any LLM API"
-alongside Slack, Notion and Calendar. So the orchestrator's prompt goes out
+alongside Slack, Notion, Jira and Calendar. So the orchestrator's prompt goes out
 through `check_outbound` / `assert_masked` exactly as B's Notion sync and D's
 Slack notices do. There is no new mechanism to build and no new decision to
 make.
@@ -1242,19 +1242,19 @@ no endpoint, no screen — and the rows are seeded with SQL for the demo.
 
 For the demo: `INSERT INTO agent_approvers (team_id, user_id, scope) VALUES ('<team>', '<user>', 'any');`
 
-### 13.6 Gmail is a new integration, and Jira waits on #82
+### 13.6 Gmail is a new integration, and Jira is back
 
 Workload's owner builds the mail side. `packages/integrations` has Slack,
-Notion and Calendar clients and no mail client; a new one is a
+Notion, Jira and Calendar clients and no mail client; a new one is a
 shared-package change (invariant 10) with the team's approval, and it goes
 through `privacy.py` like every other client. Mail is also the one surface
 that reaches people outside the team, which is L3 in section 8 today — so the
 first version reads mail and drafts replies, and sends nothing.
 
-Jira is not a working client today: `integrations.md` records it as evaluated
-and dropped, and #82 is reopened with 강민구 owning it (3LO, B's sync, and
-Briefing's reads). Briefing's issue links and any Jira read by Workload wait on
-#82, and neither subagent depends on them.
+Jira is a working client again: it was evaluated and dropped (#82) and brought
+back over OAuth 3LO (#457, #458), with 강민구 owning it. Briefing's issue list
+is in — B's `TeamAgenda` (#436), read through D's `brief_agenda`. A Jira read
+by Workload is not built, and Workload does not depend on one.
 
 ### 13.7 A republished event does not rerun a subagent
 
