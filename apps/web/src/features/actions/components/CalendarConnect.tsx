@@ -41,6 +41,10 @@ export function CalendarConnect() {
         setNote("캘린더를 연결했습니다. 내가 담당인 항목의 마감일이 내 캘린더에 들어갑니다.");
       } else if (result === "failed") {
         setNote("캘린더를 연결하지 못했습니다. Google 화면에서 캘린더 권한에 체크한 채로 다시 시도해 주세요.");
+      } else if (status.connected && status.needs_reconnect) {
+        // Connected with a Google client this server no longer uses: the stored
+        // grant cannot be refreshed, so no due date goes out until a new one.
+        setNote("캘린더 연결이 끊겼습니다. 연결을 해제한 뒤 다시 연결해 주세요.");
       }
       if (result !== null) {
         url.searchParams.delete("calendar");

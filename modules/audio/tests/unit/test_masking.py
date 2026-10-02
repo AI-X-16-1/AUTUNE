@@ -454,11 +454,12 @@ def test_an_account_said_without_separators_keeps_at_most_one_digit() -> None:
 
     Six-to-eight makes a twelve-digit run match `rrn` first, so an account
     number said without separators is masked to the national-ID layout and one
-    digit survives instead of four. Said *with* separators it is still an
-    `account` and still keeps its last four, which is the common case.
+    digit survives instead of four. Said *with* separators it now keeps none
+    (#696): a hyphenated run of eleven digits or more is taken whole, so that
+    a resident number Whisper hyphenated like an account cannot keep four.
     """
     assert mask("계좌 110123456789").text == "계좌 ******4*****"
-    assert mask("계좌 110-123-456789").text == "계좌 ***-***-**6789"
+    assert mask("계좌 110-123-456789").text == "계좌 ***-***-******"
 
 
 @pytest.mark.parametrize("line", NOT_PERSONAL)
@@ -496,3 +497,26 @@ def test_a_one_character_report_is_still_drawn_as_a_redaction() -> None:
     from autune_audio.masking import hide_reported
 
     assert hide_reported("박") == "**"
+
+
+def test_a_misgrouped_resident_number_keeps_nothing() -> None:
+    """#696: hyphenated 6-3-4 it is also an account shape, which keeps the last
+    four; the grouped rule is declared first so the span is hidden whole."""
+    assert mask("주민번호는 700826-643-8793입니다").text == "주민번호는 ******-***-****입니다"
+
+
+def test_a_phone_number_keeps_its_shape() -> None:
+    """Ten or eleven digits in the phone shape stay `phone`, prefix and last four."""
+    assert mask("제 번호는 010-1234-5678").text == "제 번호는 010-****-5678"
+
+
+def test_a_thin_space_between_groups_is_layout_not_content() -> None:
+    """#324 item 2: `find_pii` accepts any horizontal space as a separator; the
+    masker's copy of that list lacked U+2009, so the whole phone number went."""
+    assert mask("010 1234 5678").text == "010 **** 5678"
+
+
+def test_a_card_read_across_lines_keeps_its_last_four() -> None:
+    """#324 item 3: same digits, same shape, whether or not a line broke."""
+    assert mask("1234\n5678\n9012\n3456").text == "****\n****\n****\n3456"
+    assert mask("1234-5678-9012-3456").text == "****-****-****-3456"

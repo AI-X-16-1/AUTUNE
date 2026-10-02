@@ -192,6 +192,15 @@ class Settings(BaseSettings):
                 "AUTUNE_GOOGLE_INTEGRATION_CLIENT_SECRET are set together or not at "
                 "all; one of them is blank."
             )
+        # The second client has no redirect URI of its own (one callback finishes
+        # both flows). Without this the connect starts, and the client refuses
+        # to be built with a message about sign-in (PARK, review of #700).
+        if self.google_integration_client_id and not self.google_redirect_uri:
+            raise ValueError(
+                "AUTUNE_GOOGLE_INTEGRATION_CLIENT_ID is set and AUTUNE_GOOGLE_REDIRECT_URI "
+                "is not: the integration client uses that callback, and it has to be "
+                "registered on it."
+            )
         return self
 
     @property

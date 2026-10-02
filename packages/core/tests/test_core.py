@@ -75,6 +75,7 @@ def _google(**values: str) -> Settings:
         "google_client_secret": "",
         "google_integration_client_id": "",
         "google_integration_client_secret": "",
+        "google_redirect_uri": "http://localhost:3000/api/auth/google/callback",
     } | values
     return Settings(_env_file=None, env="local", **given)
 
@@ -88,6 +89,23 @@ def test_a_persons_google_grant_uses_the_integration_client_when_it_is_set() -> 
     )
     assert settings.google_integration_configured
     assert settings.google_integration_credentials == ("cal-id", "cal-secret")
+
+
+def test_an_integration_client_without_the_redirect_uri_is_refused() -> None:
+    """PARK, review of #700: the second client has no redirect URI of its own.
+    Left unset, the connect started and then failed with a message about
+    sign-in; now the server says which variable is missing, at start-up."""
+    with pytest.raises(ValueError, match="AUTUNE_GOOGLE_REDIRECT_URI"):
+        _google(
+            google_integration_client_id="cal-id",
+            google_integration_client_secret="cal-secret",
+            google_redirect_uri="",
+        )
+
+
+def test_without_an_integration_client_no_redirect_uri_is_still_just_sign_in_off() -> None:
+    settings = _google(google_client_id="login-id", google_redirect_uri="")
+    assert not settings.google_sign_in_configured
 
 
 def test_without_an_integration_client_the_sign_in_client_does_both() -> None:

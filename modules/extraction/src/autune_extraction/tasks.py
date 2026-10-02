@@ -49,6 +49,7 @@ from autune_integrations import (
     JiraClient,
     NotionClient,
     PermanentIntegrationError,
+    ReconnectRequiredError,
     SlackClient,
     TransientIntegrationError,
     refresh_access_token,
@@ -616,6 +617,12 @@ def _calendars(session: Session) -> Iterator[calendar_sync.CalendarFor]:
     otherwise (#425). A deployment with neither has nobody connected as far as
     this is concerned. A refused refresh token raises ``ReconnectRequiredError`` -- an
     ``IntegrationError`` -- for the caller to handle.
+
+    A grant recorded as issued to another client (core keeps ``client_id``
+    beside it since the review of #700) raises the same error **without**
+    asking Google: the answer is known, and a refresh with the wrong client
+    is one refused call per sync for as long as the person stays connected.
+    A grant from before the client was recorded is tried as it always was.
     """
     client_id, client_secret = get_core_settings().google_integration_credentials
     opened: dict[str, tuple[calendar_sync.CalendarEvents, str]] = {}
@@ -627,6 +634,11 @@ def _calendars(session: Session) -> Iterator[calendar_sync.CalendarFor]:
         config = load_user_integration(session, user_id, calendar_sync.CALENDAR)
         if config is None or not config.secret or not client_id or not client_secret:
             return None
+        issued_to = config.config.get("client_id")
+        if issued_to and issued_to != client_id:
+            raise ReconnectRequiredError(
+                "the calendar grant was issued to another Google client; connect again"
+            )
         token = refresh_access_token(
             client_id=client_id, client_secret=client_secret, refresh_token=config.secret
         )

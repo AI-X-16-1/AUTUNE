@@ -10,8 +10,9 @@ from sqlalchemy.orm import Session
 
 from autune_agent.main import CallBudget, Subagent, SubagentState, Toolbox
 from autune_agent.main.store import BUDGET_ANSWER, run_and_record
+from autune_agent.main.toolcall import FunctionCall
 from autune_agent.results import ProposedAction, SubagentResult, ToolResult
-from autune_agent.testing import FakeRouter, example_subagent, mock_tool
+from autune_agent.testing import FakeRouter, ScriptedToolModel, example_subagent, mock_tool
 
 OPEN_ITEMS = {
     "ok": True,
@@ -175,3 +176,33 @@ def test_a_bug_is_recorded_and_still_raised(session: Session, team: dict[str, st
     from autune_agent.models import AgentRun
 
     assert [r.outcome for r in session.query(AgentRun)] == ["failed"]
+
+
+def test_an_asked_turn_records_tools_and_no_text(session: Session, team: dict[str, str]) -> None:
+    tools = {
+        "extraction.open_action_items": mock_tool(
+            "extraction.open_action_items",
+            {"ok": True, "summary": "1건", "items": [{"title": "문서"}], "evidence": ["act_1"]},
+        )
+    }
+    row, _ = run_and_record(
+        "기한?",
+        session=session,
+        router=FakeRouter(),
+        team_id=team["team"],
+        trigger={"kind": "chat"},
+        subagents={},
+        tools=tools,
+        asker=ScriptedToolModel([[FunctionCall("extraction__open_action_items", {})], "DONE"]),
+    )
+
+    assert row.route == "ask" and row.outcome == "answered"
+    assert row.steps == [
+        {
+            "tool": "extraction.open_action_items",
+            "ok": True,
+            "evidence": ["act_1"],
+            "truncated": False,
+        }
+    ]
+    assert row.answer is None

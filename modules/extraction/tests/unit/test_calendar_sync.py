@@ -368,6 +368,8 @@ def core_settings(
         google_client_secret=sign_in[1],
         google_integration_client_id=integration[0],
         google_integration_client_secret=integration[1],
+        # An integration client is refused without it (core, review of #700).
+        google_redirect_uri="http://localhost:3000/api/auth/google/callback",
     )
 
 
@@ -472,6 +474,56 @@ def test_without_an_integration_client_the_sign_in_client_refreshes(
     only_sign_in = core_settings(sign_in=("login-id", "login-secret"))
 
     assert _refreshed_with(wired, monkeypatch, only_sign_in) == [("login-id", "login-secret")]
+
+
+def _grant_issued_to(monkeypatch: pytest.MonkeyPatch, issued_to: str | None) -> list[str]:
+    """One connected person whose grant records ``issued_to``; returns the
+    refresh calls made, so a test can say Google was or was not asked."""
+    asked: list[str] = []
+
+    def load(_s: Session, user_id: str, service: str) -> UserIntegrationConfig | None:
+        config = {"calendar_id": "primary"} | ({"client_id": issued_to} if issued_to else {})
+        return UserIntegrationConfig(service, user_id, "refresh-me", config)
+
+    def refresh(**kw: str) -> str:
+        asked.append(kw["client_id"])
+        return "access"
+
+    monkeypatch.setattr(tasks, "load_user_integration", load)
+    monkeypatch.setattr(tasks, "refresh_access_token", refresh)
+    monkeypatch.setattr(tasks, "CalendarClient", lambda token: ClosableCalendar())
+    monkeypatch.setattr(
+        tasks, "get_core_settings", lambda: core_settings(sign_in=("current-client", "s"))
+    )
+    return asked
+
+
+def test_a_grant_issued_to_another_client_is_not_sent_to_google(
+    session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """mkkim68, review of #700: the refresh would be refused -- a token works
+    only with the client that issued it -- so it is not made, and the caller
+    gets the error a refused refresh would have given."""
+    asked = _grant_issued_to(monkeypatch, "the-old-client")
+
+    with pytest.raises(ReconnectRequiredError), tasks._calendars(session) as calendar_for:
+        calendar_for(ME)
+
+    assert asked == []
+
+
+@pytest.mark.parametrize("issued_to", ["current-client", None])
+def test_a_grant_issued_to_this_client_or_to_nobody_on_record_is_refreshed(
+    session: Session, monkeypatch: pytest.MonkeyPatch, issued_to: str | None
+) -> None:
+    """``None``: connected before the client was recorded. Unknown is not
+    broken, so it is tried as it always was."""
+    asked = _grant_issued_to(monkeypatch, issued_to)
+
+    with tasks._calendars(session) as calendar_for:
+        assert calendar_for(ME) is not None
+
+    assert asked == ["current-client"]
 
 
 def test_an_integration_client_alone_is_enough_to_reach_calendars(
