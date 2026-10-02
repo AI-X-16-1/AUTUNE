@@ -224,6 +224,53 @@ def test_evidence_is_utterance_ids_only(session: Session) -> None:
 # --- open_action_items ---------------------------------------------------------------
 
 
+@pytest.mark.parametrize("count", [10**9, 10**30, 366, 1e300])
+def test_a_day_count_too_large_is_pulled_into_range(session: Session, count: Any) -> None:
+    """The ask loop lets a model write these arguments (#677). ``timedelta``
+    cannot hold a billion days, and that exception was the tool's answer."""
+    item(session, "act_far", due=TODAY + timedelta(days=300))
+
+    result = tools.open_action_items(session, TEAM, within_days=count)
+    load = tools.workload_by_owner(session, TEAM, days=count)
+
+    assert result["ok"] is True and [i["id"] for i in result["items"]] == ["act_far"]
+    assert "365일 안에 기한 1건" in result["summary"]
+    assert load["ok"] is True
+
+
+def test_a_day_count_too_small_is_pulled_into_range(session: Session) -> None:
+    item(session, "act_today", due=TODAY)
+    item(session, "act_tomorrow", due=TODAY + timedelta(days=1))
+
+    result = tools.open_action_items(session, TEAM, within_days=-5)
+
+    assert [i["id"] for i in result["items"]] == ["act_today"], "0 days: due today or earlier"
+    assert tools.workload_by_owner(session, TEAM, days=0)["ok"] is True
+
+
+def test_a_whole_number_written_as_a_float_is_that_number(session: Session) -> None:
+    item(session, "act_soon", due=TODAY + timedelta(days=3))
+
+    assert tools.open_action_items(session, TEAM, within_days=7.0) == tools.open_action_items(  # type: ignore[arg-type]
+        session, TEAM, within_days=7
+    )
+
+
+@pytest.mark.parametrize("count", ["7", 7.5, None, True, float("nan"), float("inf"), [7]])
+def test_a_value_that_is_not_a_whole_number_of_days_is_refused(
+    session: Session, count: Any
+) -> None:
+    item(session, "act_soon", due=TODAY + timedelta(days=3))
+
+    for result in (
+        tools.open_action_items(session, TEAM, within_days=count),
+        tools.workload_by_owner(session, TEAM, days=count),
+    ):
+        assert set(result) == KEYS
+        assert (result["ok"], result["items"]) == (False, [])
+        assert "whole number of days" in result["reason"]
+
+
 def test_open_items_stay_inside_the_team(session: Session) -> None:
     item(session, "act_mine", due=TODAY + timedelta(days=1))
     item(session, "act_theirs", due=TODAY + timedelta(days=1), meeting=OTHER_MEETING)
