@@ -886,8 +886,29 @@ gaps off a transcript nothing was read out of.
 | PostgreSQL `gap_scorings` | A digest of who counted as one person when a meeting's gaps were last scored |
 | PostgreSQL `gap_templates` | Domain templates and their items — **not built, and not needed**, see below |
 
-Everything that exists cascades from `meetings.id`, so no deletion hook is
-needed.
+Everything that exists cascades from `meetings.id`, so no meeting or user
+deletion hook is needed.
+
+**A person deleting their own speech is the exception (#587).** A topic's
+`label` is a span cut from an utterance and a gap's `suggested_question` names
+it; only `gap_topic_utterances` cascades from `utterances.id`. So
+`service.forget_deleted_speech` runs on `autune_core.deletion.on_speech_deleted`,
+before the utterances go:
+
+- A topic goes only when every utterance it was built from is being deleted. A
+  topic somebody else also named stays, label and all: it is still the
+  meeting's topic, in their words too.
+- A gap stays — it is the team's finding. If it was related to a topic that
+  goes and its question names that label, the question falls back to the
+  template item's general `question`, or to none if the template is no longer
+  shipped.
+- Each meeting that changed is queued for `autune.gap.publish_report`, so E
+  stops quoting the label. A meeting left with no topic at all is not
+  republished (`republish_report` skips an unanalysed meeting); E clears its
+  own copy on the same signal.
+
+The hook lives in `service.py` because the API process, where module A's
+deletion runs, imports `router` (and through it `service`) but never `tasks`.
 
 `gap_topic_utterances` and `gap_related_topics` are link tables rather than
 JSONB lists on their parents. The report joins both back — to `utterances` for

@@ -31,10 +31,12 @@ from autune_core import (
     new_id,
     session_scope,
 )
-from autune_core.errors import NotFoundError, PrivacyViolationError
+from autune_core.deletion import on_speech_deleted
+from autune_core.errors import NotFoundError, PrivacyViolationError, ValidationError
 from autune_core.events import publish
 from autune_gap import detect, graph, semantic, template, verification
 from autune_gap.config import GapSettings, get_settings
+from autune_gap.enqueue import enqueue_publish_report
 from autune_gap.models import (
     GapGap,
     GapMeetingTemplate,
@@ -572,6 +574,128 @@ def set_dismissed(session: Session, gap_id: str, reader: User, *, dismissed: boo
 
     log.info("gap_dismissal_set", gap_id=gap_id, meeting_id=row.meeting_id, dismissed=dismissed)
     return GapDismissal(gap_id=gap_id, meeting_id=row.meeting_id, dismissed=dismissed)
+
+
+@dataclass(frozen=True)
+class SpeechForgotten:
+    """What ``forget_speech`` changed: ids and counts, never a label."""
+
+    meetings: tuple[str, ...]
+    topics_deleted: int
+    questions_reset: int
+
+
+def forget_speech(session: Session, utterance_ids: Sequence[str]) -> SpeechForgotten:
+    """Drop the words C copied from utterances that are about to be deleted (#587).
+
+    A topic's ``label`` is a span cut from an utterance, and a gap's
+    ``suggested_question`` names that label. ``gap_topic_utterances`` goes with
+    the utterances by cascade; the label and the question would stay.
+
+    **A topic goes only when every utterance it was built from goes.** A topic
+    somebody else also named is still the meeting's topic, said in their words
+    too, so it stays with its label — even when the label was cut from the
+    deleted line, since the key it is grouped by is the same either way. A
+    topic that goes takes its edges, participation rows and related-topic links
+    with it by cascade.
+
+    A gap is the team's finding and stays. If it was related to a topic that
+    goes and its question names that topic's label, the question falls back to
+    the template item's general one — what ``detect.question_for`` asks when no
+    topic was matched. A template no longer shipped leaves no question rather
+    than a guess.
+
+    Safe to repeat: the second time there is no link left to find.
+    """
+    gone = set(utterance_ids)
+    if not gone:
+        return SpeechForgotten(meetings=(), topics_deleted=0, questions_reset=0)
+
+    touched = set(
+        session.scalars(
+            select(GapTopicUtterance.topic_id).where(GapTopicUtterance.utterance_id.in_(gone))
+        )
+    )
+    still_said = set(
+        session.scalars(
+            select(GapTopicUtterance.topic_id).where(
+                GapTopicUtterance.topic_id.in_(touched),
+                GapTopicUtterance.utterance_id.not_in(gone),
+            )
+        )
+    )
+    orphaned = touched - still_said
+    if not orphaned:
+        return SpeechForgotten(meetings=(), topics_deleted=0, questions_reset=0)
+
+    topics = {
+        topic.id: topic
+        for topic in session.scalars(select(GapTopic).where(GapTopic.id.in_(orphaned)))
+    }
+    reset: set[str] = set()
+    for gap, topic_id in session.execute(
+        select(GapGap, GapRelatedTopic.topic_id)
+        .join(GapRelatedTopic, GapRelatedTopic.gap_id == GapGap.id)
+        .where(GapRelatedTopic.topic_id.in_(orphaned))
+    ):
+        question = gap.suggested_question
+        if gap.id in reset or not question or topics[topic_id].label not in question:
+            continue
+        gap.suggested_question = _general_question(gap)
+        reset.add(gap.id)
+
+    meetings = tuple(sorted({topic.meeting_id for topic in topics.values()}))
+    session.execute(delete(GapTopic).where(GapTopic.id.in_(orphaned)))
+    session.flush()
+    return SpeechForgotten(
+        meetings=meetings, topics_deleted=len(topics), questions_reset=len(reset)
+    )
+
+
+def _general_question(gap: GapGap) -> str | None:
+    """The question the gap's template item asks without naming a topic."""
+    if gap.template_key is None or gap.template_item_key is None:
+        return None
+    try:
+        chosen = template.get_template(gap.template_key)
+    except ValidationError:
+        return None
+    return next((item.question for item in chosen.items if item.key == gap.template_item_key), None)
+
+
+@on_speech_deleted("gap")
+def forget_deleted_speech(user_id: str, utterance_ids: Sequence[str]) -> None:
+    """Before a person's own speech is deleted (#582, #587): ``forget_speech``,
+    then a republish of each meeting it changed, so E stops quoting a label
+    that is gone.
+
+    Registered from this file because ``router`` imports it: A's deletion runs
+    in the API process, which imports every router and no ``tasks`` module.
+
+    The database part raises on failure, so A's deletion stops rather than
+    leaving the words behind in C. It commits in its own transaction before A
+    deletes, as B's hook does; if A's deletion then fails, C has already let
+    go, which errs toward deleting more. A republish that cannot be queued is
+    only logged: the person's speech must not stay because a broker was down.
+    A meeting left with no topic at all is not republished
+    (``republish_report`` skips an unanalysed meeting); E's copy of that one is
+    E's to clear on the same signal. Ids and counts only.
+    """
+    with session_scope() as session:
+        done = forget_speech(session, utterance_ids)
+    try:
+        for meeting_id in done.meetings:
+            enqueue_publish_report(meeting_id)
+    except Exception as exc:  # noqa: BLE001 -- the deletion must go on; the rows changed
+        log.warning("gap_speech_republish_not_queued", user_id=user_id, error=type(exc).__name__)
+    log.info(
+        "gap_speech_forgotten",
+        user_id=user_id,
+        utterances=len(utterance_ids),
+        meetings=len(done.meetings),
+        topics_deleted=done.topics_deleted,
+        questions_reset=done.questions_reset,
+    )
 
 
 @dataclass(frozen=True)
