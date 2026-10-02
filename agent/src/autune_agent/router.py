@@ -199,6 +199,8 @@ class PendingRead(BaseModel):
     decided_at: datetime | None
     title: str
     body: str
+    href: str | None = None
+    """Where the source can be read in the app, when there is a page for it."""
     needs_check: bool
     """Approved, but the action's outcome was never recorded: something raised
     after the claim. It is never re-run; a person checks what happened."""

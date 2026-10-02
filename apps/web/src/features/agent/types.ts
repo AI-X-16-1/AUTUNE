@@ -13,6 +13,8 @@ export type PendingAction = {
   decided_at: string | null;
   title: string;
   body: string;
+  /** A page in the app where the source can be read in full, when there is one. */
+  href?: string | null;
   /** Approved, but the outcome was never recorded; a person must check it. */
   needs_check: boolean;
 };

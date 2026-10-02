@@ -141,7 +141,8 @@ scope:
 | --- | --- |
 | `agent.share_research_document` | the document's body from `agent_research_documents` |
 | `extraction.reassign_action_item` | `extraction.action_item_status` for the item (B hides an unconfirmed item's text), and the new assignee's display name |
-| `intelligence.publish_meeting_report` | "리포트 초안 — 회의 대시보드에서 보기" with the meeting link; E has no read tool for a draft yet, and an issue asks 이승환 for one |
+| `intelligence.publish_meeting_report` | The draft the approval would post, read by its `draft_id` through E's `intelligence.meeting_report_draft` (#639); "원본이 더 이상 없습니다" once a later run or an edit replaced it, since approving then posts nothing. Links to `/dashboard#report-<meeting_id>` (#642, #571) |
+| `extraction.add_followup_item` (Follow-up) | The titles and severity of the open gaps in the row's `evidence`, read through C's `gap.open_gaps`, riskiest first. A gap dismissed since drops out; if all have, the card says the proposal's reason is gone (#562) |
 | anything else | the kind, the subagent and the ids |
 
 If the source is gone the preview says "원본이 더 이상 없습니다" and the row can

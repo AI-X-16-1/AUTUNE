@@ -1,5 +1,6 @@
 "use client";
 
+import type { Route } from "next";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 
@@ -236,6 +237,15 @@ export function ApprovalsScreen() {
               >
                 {item.body}
               </pre>
+              {item.href ? (
+                <Link
+                  href={item.href as Route}
+                  className="mt-1 inline-block text-[var(--color-accent-default)]"
+                  style={{ fontSize: "var(--text-meta)" }}
+                >
+                  전체 보기
+                </Link>
+              ) : null}
               {done[item.id] || item.needs_check ? (
                 <p className="mt-3" style={{ fontSize: "var(--text-meta)" }}>
                   {done[item.id] ?? NEEDS_CHECK}
