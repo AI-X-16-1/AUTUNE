@@ -86,9 +86,15 @@ def run_user_hooks(user_id: str) -> None:
 
 def run_speech_hooks(user_id: str, utterance_ids: Sequence[str]) -> None:
     """Run every speech hook before the utterances are deleted. Called by module
-    A's speech and account deletion (#582, #587); a hook that raises stops it."""
+    A's speech and account deletion (#582, #587); a hook that raises stops it.
+
+    Nothing to tell when there are no utterances. Each hook gets its own copy
+    of the ids, so one module trimming the list cannot change what the next
+    one sees (#628)."""
+    if not utterance_ids:
+        return
     for module, hook in _speech_hooks.items():
-        hook(user_id, utterance_ids)
+        hook(user_id, list(utterance_ids))
         log.info(
             "deletion_hook_ran",
             scope="speech",

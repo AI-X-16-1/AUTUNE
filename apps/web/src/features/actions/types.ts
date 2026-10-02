@@ -46,7 +46,7 @@ export const COLUMN_LABELS: Record<ActionStatus, string> = {
  * (this system absent from the array) means nothing has tried yet.
  */
 export interface ExternalRefRead {
-  system: "notion"; // Jira dropped (#82)
+  system: "notion" | "jira"; // the systems ext_external_refs holds (#650)
   url: string | null;
   external_id: string | null;
 }
@@ -73,6 +73,11 @@ export interface ActionItemRead extends ActionItem {
    * item drafted from an utterance in the chat.
    */
   origin: "model" | "user" | "followup" | "chat";
+  /**
+   * A line it was drawn from was corrected after it was made (#586) and the
+   * text may still need a person's eye. Cleared by their next edit.
+   */
+  needs_recheck: boolean;
   /**
    * Whether the item belongs in the candidate band. Decided by the server,
    * which holds the threshold the classifier's confidences are measured
@@ -253,7 +258,7 @@ export type DecisionStatus = "pending" | "confirmed" | "rejected";
  * (this system absent from the array) means nothing has tried yet.
  */
 export interface ExternalRefRead {
-  system: "notion"; // Jira dropped (#82)
+  system: "notion" | "jira"; // the systems ext_external_refs holds (#650)
   url: string | null;
   external_id: string | null;
 }
@@ -266,6 +271,8 @@ export interface ReviewDecision {
   model_statement: string;
   confidence: number;
   origin: "model" | "user";
+  /** A source line was corrected since a person typed or reworded it (#586). */
+  needs_recheck: boolean;
   status: DecisionStatus;
   /** Pre-check it? `null` while the candidate line is unset. */
   suggested: boolean | null;

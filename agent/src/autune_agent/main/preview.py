@@ -16,6 +16,9 @@ from autune_core import TeamMember, User
 from .registry import Tool
 
 GONE = "원본이 더 이상 없습니다"
+FOLLOWUP_GAPS_CLOSED = "근거가 된 갭이 모두 닫혔습니다"
+REPORT_ON_DASHBOARD = "리포트 초안 — 회의 대시보드에서 보기"
+REPORT_ALREADY_POSTED = "이미 게시된 리포트입니다"
 
 
 def preview(
@@ -51,7 +54,60 @@ def preview(
             if is_member:
                 to = who.display_name
         return {"title": "액션아이템 재배정", "body": f"{item.title} · {item.body}\n→ {to}"}
+    if row.tool == "extraction.add_followup_item":
+        return {"title": "후속 회의 잡기", "body": _followup_gaps(session, row, tools)}
     if row.tool == "intelligence.publish_meeting_report":
-        return {"title": "리포트 게시", "body": "리포트 초안 — 회의 대시보드에서 보기"}
+        return {"title": "리포트 게시", "body": _report_draft(session, row, tools)}
     ids = ", ".join(f"{k}={v}" for k, v in args.items())
     return {"title": row.kind, "body": ids}
+
+
+def _followup_gaps(session: Session, row: AgentPendingAction, tools: Mapping[str, Tool]) -> str:
+    """The titles of the gaps a Follow-up proposal rests on, most risky first (#562).
+
+    Read now from C's ``gaps_by_id`` with the row's evidence, so a gap dismissed
+    since the proposal drops out, and a cited gap is found wherever it ranks
+    (``open_gaps`` stops at five; #644). A title is C's template item and a
+    fixed phrase ("{item} — 논의되지 않았습니다"); no topic label, no utterance.
+
+    The meeting is the row's when a pipeline event woke Follow-up, and the
+    proposal's ``meeting_id`` argument when it was asked in chat, where the run
+    is about no meeting (#626 review). C checks that meeting against the row's
+    team, as ``bind_scope`` does when the proposal is approved.
+    """
+    read = tools.get("gap.gaps_by_id")
+    meeting_id = row.meeting_id or row.arguments.get("meeting_id")
+    if read is None or not isinstance(meeting_id, str):
+        return GONE
+    result = read(session, team_id=row.team_id, meeting_id=meeting_id, gap_ids=list(row.evidence))
+    if not result.ok:
+        return GONE
+    titles = [item.title for item in result.items]
+    return "\n".join(f"· {t}" for t in titles) if titles else FOLLOWUP_GAPS_CLOSED
+
+
+def _report_draft(session: Session, row: AgentPendingAction, tools: Mapping[str, Tool]) -> str:
+    """The report text this approval would post (#571).
+
+    Read from E's ``meeting_report_draft`` with the proposal's ``draft_id``: the
+    publish posts only that draft, so the card shows exactly what goes out.
+    A later run that replaced the draft makes this approval post nothing
+    ("draft not current"), and the card says the original is gone rather than
+    showing text that will not be posted. The stored text was masked before E
+    saved it.
+
+    Before E exposes the read, the card points at the dashboard as it did.
+    """
+    read = tools.get("intelligence.meeting_report_draft")
+    if read is None:
+        return REPORT_ON_DASHBOARD
+    meeting_id = row.meeting_id or row.arguments.get("meeting_id")
+    draft_id = row.arguments.get("draft_id")
+    if not (isinstance(meeting_id, str) and isinstance(draft_id, str)):
+        return GONE
+    result = read(session, team_id=row.team_id, meeting_id=meeting_id, draft_id=draft_id)
+    if not result.ok or not result.items:
+        return GONE
+    draft = result.items[0]
+    text = f"{draft.title}\n\n{draft.body}"
+    return f"{REPORT_ALREADY_POSTED}\n\n{text}" if getattr(draft, "posted", False) else text

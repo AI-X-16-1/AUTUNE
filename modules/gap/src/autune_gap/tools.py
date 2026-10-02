@@ -1,7 +1,9 @@
 """Module C as tools an agent can call (agent-layer.md section 4).
 
 Two reads for the Follow-up subagent
-(``agent/docs/specs/2026-09-30-followup-subagent-design.md``). Each returns a
+(``agent/docs/specs/2026-09-30-followup-subagent-design.md``), and a third for
+the approvals card that shows what a Follow-up proposal cited (#644). Each
+returns a
 dict in the shape agent-layer.md calls ``ToolResult``::
 
     {"ok", "reason", "summary", "items", "evidence", "confidence", "truncated"}
@@ -10,14 +12,16 @@ dict in the shape agent-layer.md calls ``ToolResult``::
 E's ``tools.py``. ADR 0010 forbids a module importing the agent layer, so the
 registry validates these dicts when it collects them.
 
-What holds for both:
+What holds for all three:
 
 - **Topics, never people or roles.** Neither result carries participation, a
   participant id or a ``silent_share``. In a small team a role is a person, and
   whoever reads a Follow-up proposal is the team lead (agent-layer.md section
-  3.1, privacy.md section 3). A gap's title is a template's item name plus a
-  topic label, and a topic label is masked transcript text, so no raw
-  utterance leaves here.
+  3.1, privacy.md section 3). A gap's ``title`` is a template's item name
+  plus a coverage phrase (``detect.MISSING_TITLE``, ``PARTIAL_TITLE``) and
+  names no topic. Topic labels reach a caller only through ``body`` (the
+  suggested question) and ``topics``, and a topic label is masked transcript
+  text, so no raw utterance leaves here.
 - **Undismissed gaps only.** A dismissal is a person saying the gap is wrong,
   and C's own report leaves those out too (``service.build_report``).
 - ``evidence`` is gap ids. ``items`` holds at most five, most risky first, and
@@ -87,14 +91,11 @@ def _analysed(session: Session, meeting_id: str) -> bool:
     return (count or 0) > 0
 
 
-def _open_gaps(session: Session, meeting_id: str) -> list[GapGap]:
-    return list(
-        session.scalars(
-            select(GapGap)
-            .where(GapGap.meeting_id == meeting_id, GapGap.dismissed_at.is_(None))
-            .order_by(GapGap.risk_score.desc(), GapGap.id)
-        )
-    )
+def _open_gaps(session: Session, meeting_id: str, gap_ids: list[str] | None = None) -> list[GapGap]:
+    query = select(GapGap).where(GapGap.meeting_id == meeting_id, GapGap.dismissed_at.is_(None))
+    if gap_ids is not None:
+        query = query.where(GapGap.id.in_(gap_ids))
+    return list(session.scalars(query.order_by(GapGap.risk_score.desc(), GapGap.id)))
 
 
 def _topic_labels(session: Session, gap_ids: list[str]) -> dict[str, list[str]]:
@@ -111,6 +112,28 @@ def _topic_labels(session: Session, gap_ids: list[str]) -> dict[str, list[str]]:
     return labels
 
 
+def _gap_item(gap: GapGap, labels: dict[str, list[str]]) -> dict[str, Any]:
+    return {
+        "id": gap.id,
+        "title": gap.title,
+        "body": gap.suggested_question or "",
+        "score": gap.risk_score,
+        "severity": gap.severity,
+        "template_item_key": gap.template_item_key,
+        "topics": labels.get(gap.id, []),
+    }
+
+
+def _not_analysed(meeting_id: str) -> dict[str, Any]:
+    return _result(
+        ok=False,
+        reason=f"meeting {meeting_id} has no gap analysis yet",
+        summary="이 회의는 아직 갭 분석이 끝나지 않았습니다.",
+        items=[],
+        evidence=[],
+    )
+
+
 def open_gaps(session: Session, team_id: str, meeting_id: str) -> dict[str, Any]:
     """Use this to see what a meeting left open: the gaps C found that nobody
     dismissed, most risky first. Do not use it for whether the same thing was
@@ -123,13 +146,7 @@ def open_gaps(session: Session, team_id: str, meeting_id: str) -> dict[str, Any]
     if meeting is None:
         return _missing(meeting_id)
     if not _analysed(session, meeting_id):
-        return _result(
-            ok=False,
-            reason=f"meeting {meeting_id} has no gap analysis yet",
-            summary="이 회의는 아직 갭 분석이 끝나지 않았습니다.",
-            items=[],
-            evidence=[],
-        )
+        return _not_analysed(meeting_id)
 
     gaps = _open_gaps(session, meeting_id)
     labels = _topic_labels(session, [gap.id for gap in gaps[:MAX_ITEMS]])
@@ -139,18 +156,7 @@ def open_gaps(session: Session, team_id: str, meeting_id: str) -> dict[str, Any]
     )
     return _result(
         summary=summary,
-        items=[
-            {
-                "id": gap.id,
-                "title": gap.title,
-                "body": gap.suggested_question or "",
-                "score": gap.risk_score,
-                "severity": gap.severity,
-                "template_item_key": gap.template_item_key,
-                "topics": labels.get(gap.id, []),
-            }
-            for gap in gaps
-        ],
+        items=[_gap_item(gap, labels) for gap in gaps],
         evidence=[gap.id for gap in gaps[:MAX_ITEMS]],
     )
 
@@ -198,13 +204,7 @@ def recurring_open_gaps(session: Session, team_id: str, meeting_id: str) -> dict
     if meeting is None:
         return _missing(meeting_id)
     if not _analysed(session, meeting_id):
-        return _result(
-            ok=False,
-            reason=f"meeting {meeting_id} has no gap analysis yet",
-            summary="이 회의는 아직 갭 분석이 끝나지 않았습니다.",
-            items=[],
-            evidence=[],
-        )
+        return _not_analysed(meeting_id)
 
     previous = _previous_analysed(session, meeting)
     if previous is None:
@@ -243,7 +243,39 @@ def recurring_open_gaps(session: Session, team_id: str, meeting_id: str) -> dict
     )
 
 
-TOOLS = [open_gaps, recurring_open_gaps]
+def gaps_by_id(
+    session: Session, team_id: str, meeting_id: str, gap_ids: list[str]
+) -> dict[str, Any]:
+    """Use this to check whether the gaps something cited are still open: of
+    the given gap ids, the ones in this meeting that nobody has dismissed since,
+    most risky first. Do not use it to find what a meeting left open --
+    ``open_gaps`` answers that.
+
+    Returns at most five gaps, in the same shape as ``open_gaps``. An id that
+    is dismissed, unknown or from another meeting is left out, so a cited gap
+    missing from the result is closed. Nothing about who spoke.
+    """
+    meeting = _meeting(session, team_id, meeting_id)
+    if meeting is None:
+        return _missing(meeting_id)
+    if not _analysed(session, meeting_id):
+        return _not_analysed(meeting_id)
+
+    gaps = _open_gaps(session, meeting_id, gap_ids) if gap_ids else []
+    labels = _topic_labels(session, [gap.id for gap in gaps[:MAX_ITEMS]])
+    summary = (
+        f"근거 갭 {len(set(gap_ids))}건 중 {len(gaps)}건이 아직 열려 있습니다."
+        if gaps
+        else "근거 갭 중 열린 것이 없습니다."
+    )
+    return _result(
+        summary=summary,
+        items=[_gap_item(gap, labels) for gap in gaps],
+        evidence=[gap.id for gap in gaps[:MAX_ITEMS]],
+    )
+
+
+TOOLS = [open_gaps, recurring_open_gaps, gaps_by_id]
 
 RUN_SCOPE = ("team_id",)
 """Parameters the agent fills from the run's authenticated scope, never from a model."""

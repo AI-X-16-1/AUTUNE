@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from contextlib import contextmanager
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 import pytest
@@ -215,3 +215,23 @@ def test_a_team_whose_last_issue_was_deleted_drops_out_and_goes_stale(
 
     assert service.teams_with_jira_issues(session) == []
     assert AGENDA_STALE_AFTER >= 3 * AGENDA_PUBLISH_EVERY, "a few missed runs are not a gap"
+
+
+def test_an_issue_of_a_meeting_past_retention_is_not_on_the_agenda(session: Session) -> None:
+    """#656: until A's sweep takes it, a meeting past ``expires_at`` is still in
+    the table, and its open Jira issue would go to D's brief."""
+    session.add(
+        Meeting(
+            id="mtg_expired",
+            team_id="team_1",
+            title="지난 회의",
+            expires_at=NOW - timedelta(days=1),
+        )
+    )
+    session.flush()
+    item(session, "act_old", meeting_id="mtg_expired", key="AUT-9")
+    item(session, "act_live", key="AUT-1")
+
+    agenda = service.team_agenda(session, "team_1", now=NOW)
+
+    assert [i.key for i in agenda.issues] == ["AUT-1"]

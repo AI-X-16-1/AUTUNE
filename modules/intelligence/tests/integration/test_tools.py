@@ -49,13 +49,14 @@ def _score(db_session: Session, meeting_id: str, team: str, **kw: Any) -> None:
     db_session.flush()
 
 
-def test_the_tool_list_is_exactly_the_four_reads() -> None:
+def test_the_tool_list_is_exactly_the_five_reads() -> None:
     """No speaking-ratio read, ever: a report goes to many people (invariant 11)."""
     assert [fn.__name__ for fn in tools.TOOLS] == [
         "meeting_quality",
         "team_trend",
         "recurring_gaps",
         "misalignment_risk",
+        "meeting_report_draft",  # the approval card's preview (#571)
     ]
     for fn in tools.TOOLS:
         assert fn.__doc__ and fn.__doc__.strip().startswith("Use this")

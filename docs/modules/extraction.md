@@ -13,7 +13,7 @@
 
 Turn utterances into trackable structure: classify what kind of statement each
 utterance is, build action-item cards from commitments, verify ambiguous
-agreement, and sync the result to Notion.
+agreement, and sync the result to Notion and Jira.
 
 ## Non-goals
 
@@ -33,7 +33,7 @@ agreement, and sync the result to Notion.
 | Destination | Contract | Event |
 | --- | --- | --- |
 | D, E | `ExtractionResult` | `autune.extraction.completed` |
-| Notion | Issue creation via `packages/integrations` | — |
+| Notion, Jira | Issue creation via `packages/integrations` | — |
 | Slack | Action-item card thread, confirmation DMs | — |
 
 ## Pipeline
@@ -123,6 +123,12 @@ agreement, and sync the result to Notion.
    nothing. Either way the answer takes the same path. A speaker who never linked Slack can still answer
    there — answering puts the question, so its clock starts then. Nobody but
    the speaker sees or answers it.
+   **A DM whose line is corrected afterwards** (#586). Each DM keeps where it
+   landed (`dm_channel`, `dm_ts`) and a digest of what it quoted; a run that
+   finds the line hashing differently queues `update_confirmation_dm`, which
+   rebuilds the DM from the stored line and replaces it in place
+   (`SlackClient.update_message`, `chat.update`) under the same outbound check
+   as a send. A DM sent before places were kept cannot be corrected.
    **What the answer does.** *Commitment* makes one draft item for that
    utterance, slot-filled like any commitment (the speaker is the assignee, the
    first date phrase the due date, the utterance's own text — tidied into the
@@ -176,7 +182,9 @@ agreement, and sync the result to Notion.
    read in its own transaction, least recently read first (`pulled_at`); an
    issue Jira refuses to show is skipped. A ref with no baseline yet (made
    before the read-back, or its issue never took the board's status) gets
-   Jira's category recorded as one, and the board is left alone.
+   Jira's category recorded as one, and the board is left alone. An item
+   moved back to 확인 필요 keeps its issue: the issue follows the item's
+   text and stays in the status the team has it in (#657).
 8. **Publish** — emit `ExtractionResult`.
 
 Classification runs before reference resolution, which is worth stating because
@@ -203,14 +211,38 @@ the overlap the question turns on.
 
 **When a person deletes their own speech** (#587): `tasks.forget_deleted_speech`
 (`@on_speech_deleted("extraction")`) runs before the utterances go. Unconfirmed
-drafts the model or the chat made from them are deleted; a confirmed item whose
+drafts the model or the chat made from them are deleted — except one that was
+confirmed once and moved back, which still has a page or an issue outside and
+is treated as a confirmed item, so the words do not stay there with no row left
+to find them by (#657); a confirmed item whose
 description is the line itself reads "삭제된 발화에서 만든 항목" and its
 `due_text` is cleared; a decision loses `original_statement`, and a model
 statement with no cited lines reads the same placeholder; a model summary or a
-person's text stays. Confirmed changes are queued to Notion, Jira (summary and
-description) and the calendar. Nothing is republished: what C, D and E already
+person's text stays. Changes to a row that has copies outside — a confirmed one,
+or an item moved back to 확인 필요 that kept them (`service.copies_follow`) — are
+queued to Notion, Jira (summary and description) and the calendar. Nothing is
+republished: what C, D and E already
 received in `ExtractionResult` stays with them until they act on the same
 signal. Ids and counts only in the log.
+
+**When a line is corrected after the fact** (#586). A PII report (S30, #584)
+masks stored lines again and republishes `TranscriptReady` without naming them.
+Every item and decision keeps `source_digest`, a sha256 of the masked text it was
+drawn from (set when it is made, and recorded as a baseline by the first run that
+finds none). Each run compares it after its rebuild — also in a meeting a person
+has edited, where the rebuild keeps every item: a description that is the line
+itself reads the corrected line, tidied; a model summary is replaced the same way
+and flagged `needs_recheck`; a person's own text (a typed item, an edited
+description, a typed or reworded decision) is only flagged, because B cannot tell
+which of their words were the private ones; `due_text` is read again from the
+new line. Changes are queued to Notion, Jira and the calendar under the same
+rule as for a deleted speech (`service.copies_follow`). The flag
+shows on the card and on the decision ("출처 발화가 정정됨 · 확인 필요") and is
+cleared by the person's next edit or review. A line that was *deleted* is not a
+corrected one: `forget_speech` drops the digest of every row it leaves behind,
+because the lines that remain hash differently from a digest taken over all of
+them, and the next run records a baseline instead of rewriting or flagging. The
+confirmation DM's quotation is #586's second part.
 
 ## Tables
 
@@ -333,13 +365,13 @@ other module's tables.
 | PATCH | `/action-items/{id}` | Edit or close an item |
 | POST | `/action-items` | Add an item the model missed |
 | DELETE | `/action-items/{id}` | Delete an item the model got wrong |
-| POST | `/results/{meeting_id}/sync` | Re-sync to Notion — not built; confirming an item syncs it |
+| POST | `/results/{meeting_id}/sync` | Re-sync to Notion and Jira — not built; confirming an item syncs it |
 | GET | `/reviews/{meeting_id}` | What needs a person before anything is sent: decisions with their verdict, weak assents with their DM state, items still `needs_confirmation` or below the candidate line (S15, #246) |
 | POST | `/decisions` | Add a decision the model missed. Confirmed, and kept through reruns |
 | GET | `/decisions/{id}` | One decision and the text of the utterances it was settled in, in spoken order (S15 shows them beneath the statement), plus the same `context` |
 | PATCH | `/decisions/{id}` | Confirm, reject, reword, or put back to pending |
 | DELETE | `/decisions/{id}` | Delete a decision a person added; reject one the model proposed, which a rerun would otherwise bring back |
-| GET | `/reviews/{meeting_id}/outbound` | Exactly what may leave for Notion or Slack: confirmed decisions and accepted items, each screened for personal data (a hit is held back in `blocked`, by id and category). The sync reads this and nothing else |
+| GET | `/reviews/{meeting_id}/outbound` | Exactly what may leave for Notion, Slack or Jira: confirmed decisions and accepted items, each screened for personal data (a hit is held back in `blocked`, by id and category). The sync reads this and nothing else |
 
 ## Celery tasks
 
@@ -567,8 +599,8 @@ versions.
 
 ## Privacy notes
 
-- Only what an issue needs goes to Notion: the action description, assignee,
-  and due date. Never the full transcript.
+- Only what an issue needs goes to Notion or Jira: the action description,
+  assignee, and due date. Never the full transcript.
 - The LLM used for reference resolution receives masked text only, and the
   smallest window that resolves the reference.
 - Confirmation DMs go to the speaker, never to a channel.

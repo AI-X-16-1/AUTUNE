@@ -152,10 +152,23 @@ def sync_action_item_to_jira(
     The ref row is locked before the item is read (``populate_existing``), for
     the reason ``sync_action_item_to_notion`` gives: of two edits in flight, the
     one sending last must be the one that read last.
+
+    **An item moved back to 확인 필요 keeps its issue, and the issue keeps
+    following its text** (#657): summary, description, due date and assignee
+    are rewritten, the status is left where the team has it (Jira has no
+    category for a draft), and an issue deleted in Jira is not made again --
+    its ref row goes, so the item stops counting as one with a copy outside
+    (#672).
+    Without this a line deleted or corrected in Autune stayed in the issue of
+    an item that happened to be a draft again. An item never confirmed has no
+    issue and gets none.
     """
     ref = session.get(ExtExternalRef, (action_item_id, JIRA), with_for_update=True)
     item = session.get(ExtActionItem, action_item_id, populate_existing=True)
-    if item is None or item.status == ActionStatus.NEEDS_CONFIRMATION.value:
+    if item is None:
+        return ref
+    moved_back = item.status == ActionStatus.NEEDS_CONFIRMATION.value
+    if moved_back and not (ref is not None and ref.external_id and ref.site == site):
         return ref
 
     if ref is None:
@@ -192,6 +205,13 @@ def sync_action_item_to_jira(
         keep_assignee=account is None and item.assignee_id is not None,
         description=description,
     )
+    if moved_back:
+        log.info("extraction_jira_updated_moved_back", action_item_id=item.id, found=bool(updated))
+        if not updated:
+            session.delete(ref)
+            session.flush()
+            return None
+        return ref
     if not updated:
         # First send, an issue deleted in Jira since, or another site: make it.
         ref.external_id = jira.create_task(

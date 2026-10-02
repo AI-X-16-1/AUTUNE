@@ -15,12 +15,13 @@ from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, timedelta
 from typing import Any, Literal, Protocol
 
-from sqlalchemy import Select, and_, delete, func, or_, select, update
+from sqlalchemy import ColumnElement, Select, and_, delete, func, or_, select, update
 from sqlalchemy.dialects import postgresql, sqlite
 from sqlalchemy.orm import Session, selectinload
 
 from autune_contracts.enums import ActionStatus, UtteranceKind
 from autune_contracts.extraction import (
+    ACTION_PROGRESS_WINDOW,
     AGENDA_TITLE_MAX,
     JIRA_ISSUE_URL,
     ActionItem,
@@ -29,6 +30,8 @@ from autune_contracts.extraction import (
     Classification,
     Decision,
     ExtractionResult,
+    MeetingActionProgress,
+    TeamActionProgress,
     TeamAgenda,
 )
 from autune_contracts.transcript import Utterance as TranscriptUtterance
@@ -45,7 +48,12 @@ from autune_core import (
 from autune_core.errors import NotFoundError, ValidationError
 from autune_core.settings import get_settings as get_core_settings
 from autune_core.user_integrations import users_linked_to_slack_member
-from autune_integrations import PermanentIntegrationError, SlackApi, assert_personal_delivery
+from autune_integrations import (
+    PermanentIntegrationError,
+    PostedMessage,
+    SlackApi,
+    assert_personal_delivery,
+)
 from autune_integrations.privacy import find_unmasked
 
 from .config import get_settings
@@ -67,6 +75,7 @@ from .models import (
     ExtActionItem,
     ExtActionItemRelated,
     ExtActionItemSource,
+    ExtCalendarEvent,
     ExtClassification,
     ExtConfirmation,
     ExtDecision,
@@ -112,7 +121,7 @@ from .schemas import (
     SourceUtterance,
     SummaryDecision,
 )
-from .slots import Assignee, assignee_of, meeting_day, parse_due
+from .slots import KST, Assignee, assignee_of, meeting_day, parse_due
 
 log = get_logger(__name__)
 
@@ -125,7 +134,7 @@ def send_confirmation_dm(
     utterance_id: str,
     quoted_text: str,
     answer_url: str,
-) -> str:
+) -> PostedMessage:
     """Ask one speaker whether their own weak assent was a commitment.
 
     ``speaker_id`` and ``recipient_id`` are both taken rather than one, so the
@@ -151,11 +160,11 @@ def send_confirmation_dm(
         answer_url=answer_url,
         buttons=get_core_settings().slack_buttons,
     )
-    timestamp = slack.send_dm(recipient_id, text, blocks)
+    sent = slack.send_dm_message(recipient_id, text, blocks)
 
     # Ids only. The utterance is meeting content and a log line is a store.
     log.info("extraction_confirmation_sent", utterance_id=utterance_id)
-    return timestamp
+    return sent
 
 
 def ask_for_confirmation(
@@ -193,7 +202,7 @@ def ask_for_confirmation(
         # Ids only, and no send. Another run holds this question.
         log.info("extraction_confirmation_already_asked", utterance_id=utterance_id)
         return None
-    send_confirmation_dm(
+    sent = send_confirmation_dm(
         slack,
         speaker_id=speaker_id,
         recipient_id=recipient_id,
@@ -201,6 +210,10 @@ def ask_for_confirmation(
         quoted_text=quoted_text,
         answer_url=answer_url,
     )
+    # Where it landed and what it quoted, so a later correction of the line can
+    # be carried into the DM itself (#586).
+    row.dm_channel, row.dm_ts = sent.channel or None, sent.ts or None
+    row.dm_digest = source_digest([quoted_text])
     return row
 
 
@@ -336,6 +349,22 @@ def answer_confirmation(
         ),
     )
     return MyConfirmation(utterance_id=utterance_id, text=own[1], answer=answer)  # type: ignore[arg-type]
+
+
+def dms_to_correct(session: Session, *, meeting_id: str, spoken: Mapping[str, str]) -> list[str]:
+    """Utterance ids whose confirmation DM quotes a line that has since been
+    corrected (#586): sent with a place kept, and the line no longer hashing to
+    what the DM quoted."""
+    stale: list[str] = []
+    for row in session.scalars(
+        select(ExtConfirmation).where(
+            ExtConfirmation.meeting_id == meeting_id, ExtConfirmation.dm_ts.is_not(None)
+        )
+    ):
+        text = spoken.get(row.utterance_id)
+        if text is not None and row.dm_digest != source_digest([text]):
+            stale.append(row.utterance_id)
+    return stale
 
 
 def apply_confirmation_response(response: ConfirmationResponse) -> None:
@@ -517,6 +546,7 @@ def draft_confirmed_commitment(
         origin="model",
         sources=[ExtActionItemSource(utterance_id=confirmation.utterance_id)],
         related=_cited(session, confirmation.meeting_id, confirmation.utterance_id, resolution),
+        source_digest=stored_digest(session, [confirmation.utterance_id]),
     )
     session.add(item)
     session.flush()
@@ -644,8 +674,8 @@ SPEECH_DELETED_TEXT = "삭제된 발화에서 만든 항목"
 
 @dataclass(frozen=True)
 class SpeechForgotten:
-    """What ``forget_speech`` did, by id: drafts deleted, and the confirmed items
-    and decisions whose text changed and whose copies outside must follow."""
+    """What ``forget_speech`` did, by id: drafts deleted, and the items and
+    decisions whose text changed and whose copies outside must follow."""
 
     deleted_items: tuple[str, ...] = ()
     changed_items: tuple[str, ...] = ()
@@ -673,7 +703,10 @@ def forget_speech(session: Session, utterance_ids: Collection[str]) -> SpeechFor
     ``utterance_ids``:
 
     - an unconfirmed draft the model or the chat made is deleted -- nobody has
-      accepted it, and it is only the deleted words restated;
+      accepted it, and it is only the deleted words restated. A draft that was
+      confirmed once and moved back is not that: it has a copy outside, and
+      deleting its row would leave the words there with nothing left to find
+      them by. It is kept and treated as the next bullet says (#657);
     - a confirmed item whose description is the line itself (not a model's
       summary, not a person's writing) reads ``SPEECH_DELETED_TEXT``, and its
       ``due_text`` -- a fragment of the line -- is cleared; a summary or a
@@ -685,6 +718,13 @@ def forget_speech(session: Session, utterance_ids: Collection[str]) -> SpeechFor
     Nothing is republished here: copies C, D and E already received through
     ``ExtractionResult`` are theirs, and stay until they act on the same signal
     (#601 review).
+
+    Every row that stays forgets its ``source_digest``. The digest was taken
+    over all of its lines; once one is gone the lines that are left hash
+    differently, and ``apply_source_corrections`` would read that as a corrected
+    line -- rewriting the text from what is left, flagging a person's writing
+    and re-syncing the copies outside. With no digest the next run records a
+    baseline and changes nothing (#607 review).
 
     Runs before the utterances are deleted, while the sources still name them.
     Safe to repeat. Writes no edit event: no person corrected anything.
@@ -702,10 +742,12 @@ def forget_speech(session: Session, utterance_ids: Collection[str]) -> SpeechFor
     changed: list[str] = []
     for item in items:
         drafted = item.origin in ("model", "chat")
-        if drafted and item.status == ActionStatus.NEEDS_CONFIRMATION.value:
+        follows = copies_follow(session, item)
+        if drafted and not follows:
             deleted.append(item.id)
             session.delete(item)
             continue
+        item.source_digest = None
         touched = False
         if (
             drafted
@@ -718,7 +760,7 @@ def forget_speech(session: Session, utterance_ids: Collection[str]) -> SpeechFor
         if item.due_text is not None:
             item.due_text = None
             touched = True
-        if touched and item.status != ActionStatus.NEEDS_CONFIRMATION.value:
+        if touched and follows:
             changed.append(item.id)
 
     decisions = session.scalars(
@@ -737,6 +779,7 @@ def forget_speech(session: Session, utterance_ids: Collection[str]) -> SpeechFor
     )
     changed_decisions: list[str] = []
     for decision in decisions:
+        decision.source_digest = None
         touched = False
         if decision.original_statement is not None:
             decision.original_statement = None
@@ -872,6 +915,7 @@ def create_action_item(
         ExtActionItemSource(utterance_id=utterance_id)
         for utterance_id in dict.fromkeys(payload.source_utterance_ids)
     ]
+    item.source_digest = stored_digest(session, list(dict.fromkeys(payload.source_utterance_ids)))
     session.add(item)
     session.flush()
 
@@ -969,6 +1013,7 @@ def create_chat_item(
         confidence=1.0,
         origin="chat",
         sources=[ExtActionItemSource(utterance_id=utterance_id)],
+        source_digest=source_digest([said.text]),
         related=[
             ExtActionItemRelated(utterance_id=u)
             for u in dict.fromkeys(resolution.used)
@@ -1062,6 +1107,7 @@ def read_model(
         source_utterance_ids=source_ids,
         deleted_source_count=0 if hidden else len(item.sources) - len(source_ids),
         needs_reassignment=assignee_departed and item.status in _OPEN_STATUSES,
+        needs_recheck=bool(item.needs_recheck),
         is_candidate=is_candidate,
         summary=summary,
         sync_refs=sync_refs or [],
@@ -1149,6 +1195,27 @@ def assignee_names(session: Session, items: Sequence[ExtActionItem]) -> dict[str
 # --- who may read what (#189) ---------------------------------------------------
 
 
+def within_retention(now: datetime | None = None) -> ColumnElement[bool]:
+    """A meeting B may still read or write: not past ``expires_at``.
+
+    A meeting past its retention window stays in the table until A's sweep
+    takes it -- longer when one of its deletion hooks fails -- and until then
+    nothing of it may be shown (invariant 11; #656). D asks the same question
+    with ``visible_meeting_clauses``. Every read of B's that reaches a
+    meeting asks this one, so there is one place to get it wrong.
+    """
+    moment = now if now is not None else datetime.now(UTC)
+    return or_(Meeting.expires_at.is_(None), Meeting.expires_at > moment)
+
+
+def live_meeting(
+    session: Session, meeting_id: str, *, now: datetime | None = None
+) -> Meeting | None:
+    """The meeting, or ``None`` when there is none or it is past retention --
+    one answer for both, the way an unknown id and somebody else's get one."""
+    return session.scalar(select(Meeting).where(Meeting.id == meeting_id, within_retention(now)))
+
+
 def is_team_member(session: Session, team_id: str, user_id: str) -> bool:
     """Whether ``user_id`` is on ``team_id`` -- for a route that names the team
     itself (S28 settings, #496) rather than one of its meetings."""
@@ -1175,7 +1242,10 @@ def _refuse(kind: str, ident: str, reader: User, reason: str) -> NotFoundError:
 def _require_member_of_meeting(
     session: Session, meeting_id: str, reader: User, *, kind: str, ident: str
 ) -> None:
-    team_id = session.scalar(select(Meeting.team_id).where(Meeting.id == meeting_id))
+    # A meeting past retention is refused as one that is not there (#656).
+    team_id = session.scalar(
+        select(Meeting.team_id).where(Meeting.id == meeting_id, within_retention())
+    )
     if team_id is None:
         raise _refuse(kind, ident, reader, "no_such_meeting")
     if not _is_team_member(session, user_id=reader.id, team_id=team_id):
@@ -1233,6 +1303,9 @@ def list_action_items(
     hold a meeting or a team, do not. A meeting outside the caller's teams
     therefore lists nothing, the same answer as a meeting that does not exist.
 
+    A meeting past its retention window lists nothing either, for every
+    caller (``within_retention``, #656).
+
     ``due_before`` is strict: an item due on that day is not before it. That
     makes "overdue" one argument -- today's date -- instead of yesterday's, and
     an item with no due date is never before anything, so it drops out of any
@@ -1243,6 +1316,8 @@ def list_action_items(
     """
     query = (
         select(ExtActionItem)
+        .join(Meeting, Meeting.id == ExtActionItem.meeting_id)
+        .where(within_retention())
         .options(selectinload(ExtActionItem.sources))
         .order_by(ExtActionItem.created_at, ExtActionItem.id)
     )
@@ -1255,7 +1330,7 @@ def list_action_items(
     if due_before is not None:
         query = query.where(ExtActionItem.due_date < due_before)
     if visible_to is not None:
-        query = query.join(Meeting, Meeting.id == ExtActionItem.meeting_id).where(
+        query = query.where(
             Meeting.team_id.in_(select(TeamMember.team_id).where(TeamMember.user_id == visible_to))
         )
 
@@ -1293,9 +1368,10 @@ def carried_over(session: Session, meeting_id: str, *, today: date | None = None
     an old meeting today does not show it the work of the weeks after it.
 
     Reads only what the board already shows the same team: descriptions,
-    assignees and dates, never an utterance.
+    assignees and dates, never an utterance. An earlier meeting past its
+    retention window carries nothing over (``within_retention``, #656).
     """
-    meeting = session.get(Meeting, meeting_id)
+    meeting = live_meeting(session, meeting_id)
     if meeting is None:
         raise NotFoundError("meeting", meeting_id)
     held = func.coalesce(Meeting.started_at, Meeting.created_at)
@@ -1304,7 +1380,10 @@ def carried_over(session: Session, meeting_id: str, *, today: date | None = None
         row.id: row
         for row in session.scalars(
             select(Meeting).where(
-                Meeting.team_id == meeting.team_id, Meeting.id != meeting_id, held < this_held
+                Meeting.team_id == meeting.team_id,
+                Meeting.id != meeting_id,
+                held < this_held,
+                within_retention(),
             )
         )
     }
@@ -1587,6 +1666,9 @@ def update_action_item(
 
     for field, value in changes.items():
         setattr(item, field, value.value if isinstance(value, ActionStatus) else value)
+    # A person has looked at it and changed it: whatever a corrected source asked
+    # them to check, they have now had in front of them (#586).
+    item.needs_recheck = False
     if "due_date" in changes:
         # The phrase explained the date the model read. A date a person set is
         # not explained by it, and keeping it would hold on to what they
@@ -2647,6 +2729,145 @@ def resolve_decision_summaries(
     return dict(zip(keys, resolved, strict=True))
 
 
+def source_digest(texts: Sequence[str]) -> str:
+    """sha256 of the masked texts an item or decision was drawn from, or a
+    confirmation DM quotes, in source order -- not reversible, the #518
+    consent-key pattern. What a later run compares to notice that a line was
+    corrected (#586)."""
+    return hashlib.sha256("\x1f".join(texts).encode("utf-8")).hexdigest()
+
+
+def stored_digest(session: Session, utterance_ids: Sequence[str]) -> str | None:
+    """``source_digest`` over the stored text of ``utterance_ids``; ``None`` when
+    there are none or one is gone."""
+    if not utterance_ids:
+        return None
+    texts = dict(
+        session.execute(select(Utterance.id, Utterance.text).where(Utterance.id.in_(utterance_ids)))
+        .tuples()
+        .all()
+    )
+    if len(texts) != len(set(utterance_ids)):
+        return None
+    return source_digest([texts[u] for u in utterance_ids])
+
+
+@dataclass(frozen=True)
+class SourceCorrections:
+    """What ``apply_source_corrections`` changed, by id -- the ones whose copies
+    in Notion, Jira and calendars must follow (``copies_follow``)."""
+
+    changed_items: tuple[str, ...] = ()
+    changed_decisions: tuple[str, ...] = ()
+    flagged: int = 0
+
+
+def _edited_description(session: Session, action_item_id: str) -> bool:
+    for fields in session.scalars(
+        select(ExtEditEvent.fields).where(
+            ExtEditEvent.action_item_id == action_item_id, ExtEditEvent.kind == "edited"
+        )
+    ):
+        if fields is None or "description" in fields.split(","):
+            return True
+    return False
+
+
+def apply_source_corrections(
+    session: Session, *, meeting_id: str, spoken: Mapping[str, str]
+) -> SourceCorrections:
+    """Fix or flag what was drawn from a line that has since been corrected (#586).
+
+    A PII report masks stored lines again and republishes ``TranscriptReady``
+    without naming them. ``spoken`` is that payload's text by utterance id. Every
+    item and decision of the meeting whose sources now hash differently from
+    ``source_digest`` is handled -- **even in a meeting a person has edited**,
+    which ``build_action_items`` otherwise leaves alone (ADR 0006):
+
+    - an item whose description is the line itself reads the corrected line,
+      tidied; a model's summary is replaced the same way and flagged
+      ``needs_recheck`` (a summary is not rewritten here: no model call on a
+      correction); a person's own text is only flagged -- B cannot tell which
+      words of theirs were the private ones;
+    - ``due_text``, a fragment of the line, is read again from the new text;
+    - a model decision was rebuilt from the new text in this same run; one a
+      person typed, or reworded, is flagged.
+
+    A row with no digest yet records one and changes nothing. Runs after this
+    run's rebuild, so what it rebuilt already matches. No edit events: no person
+    corrected anything. Returns the rows whose outside copies must follow: the
+    confirmed ones, and an item moved back to 확인 필요 that still has a copy
+    outside (``copies_follow``).
+    """
+    meeting = session.get(Meeting, meeting_id)
+    day = meeting_day(meeting.started_at if meeting is not None else None)
+    changed: list[str] = []
+    flagged = 0
+    for item in session.scalars(
+        select(ExtActionItem)
+        .where(ExtActionItem.meeting_id == meeting_id)
+        .options(selectinload(ExtActionItem.sources))
+    ):
+        ids = live_source_ids(item)
+        texts = [spoken.get(u) for u in ids]
+        if not ids or any(t is None for t in texts):
+            continue
+        digest = source_digest([t for t in texts if t is not None])
+        if item.source_digest == digest:
+            continue
+        first = item.source_digest is None
+        item.source_digest = digest
+        if first:
+            continue
+        line = texts[0] or ""
+        if item.origin == "user" or _edited_description(session, item.id):
+            item.needs_recheck = True
+        elif item.description_resolved:
+            item.description = tidy(line)
+            item.description_resolved = False
+            item.needs_recheck = True
+        elif item.origin in ("model", "chat"):
+            item.description = tidy(line)
+        if item.due_text is not None:
+            due = parse_due(line, day)
+            item.due_text = due.text if due is not None else None
+        flagged += int(item.needs_recheck)
+        if copies_follow(session, item):
+            changed.append(item.id)
+
+    reviews = {
+        review.decision_id: review
+        for review in session.scalars(
+            select(ExtDecisionReview).where(ExtDecisionReview.meeting_id == meeting_id)
+        )
+    }
+    changed_decisions: list[str] = []
+    for decision in session.scalars(
+        select(ExtDecision)
+        .where(ExtDecision.meeting_id == meeting_id)
+        .options(selectinload(ExtDecision.sources))
+    ):
+        ids = [s.utterance_id for s in sorted(decision.sources, key=lambda s: s.position)]
+        texts = [spoken.get(u) for u in ids]
+        if not ids or any(t is None for t in texts):
+            continue
+        digest = source_digest([t for t in texts if t is not None])
+        if decision.source_digest == digest:
+            continue
+        first = decision.source_digest is None
+        decision.source_digest = digest
+        if first:
+            continue
+        review = reviews.get(decision.id)
+        if decision.origin == "user" or (review is not None and review.statement):
+            decision.needs_recheck = True
+            flagged += 1
+        if review is not None and review.status == "confirmed":
+            changed_decisions.append(decision.id)
+    session.flush()
+    return SourceCorrections(tuple(changed), tuple(changed_decisions), flagged)
+
+
 def build_action_items(
     session: Session,
     *,
@@ -2948,6 +3169,7 @@ def _review_decision_row(
         model_statement=decision.statement,
         confidence=decision.confidence,
         origin=decision.origin,  # type: ignore[arg-type]
+        needs_recheck=bool(decision.needs_recheck),
         status=review.status if review else "pending",  # type: ignore[arg-type]
         suggested=_suggested(decision.confidence),
         source_utterance_ids=[
@@ -3192,14 +3414,16 @@ def review_decision(
             # decision when the rejection is undone -- wording nobody typed this
             # time, sent to D, E and outbound as if confirmed.
             review.statement = None
+        # A person has reviewed it again: a corrected source has been in front
+        # of them (#586).
+        decision.needs_recheck = False
         session.flush()
 
     return _read_decision(session, decision)
 
 
 def outbound_for_meeting(session: Session, meeting_id: str) -> Outbound:
-    """Exactly what may leave for Notion or Slack: nothing unconfirmed (#246).
-    Jira was dropped from the product (#82).
+    """Exactly what may leave for Notion, Jira or Slack: nothing unconfirmed (#246).
 
     A decision goes only when a person confirmed it, in their wording if they gave
     one. An action item goes only once it is past ``needs_confirmation`` -- the
@@ -3284,6 +3508,7 @@ def create_decision(session: Session, payload: DecisionCreate) -> ReviewDecision
             ExtDecisionSource(utterance_id=utterance_id, position=position)
             for position, utterance_id in enumerate(source_ids)
         ],
+        source_digest=stored_digest(session, source_ids),
     )
     session.add(decision)
     session.flush()
@@ -3404,6 +3629,22 @@ def _update_or_replace_page(
     The caller holds the ref row's lock throughout, so a refused update costs
     up to three Notion calls under it (PATCH, GET, POST) instead of one.
     """
+    state = _update_page(notion, ref, update)
+    if state != "deleted":
+        return state
+    page_id = notion.create_page(database_id, create)
+    ref.external_id = page_id
+    ref.url = notion_url(page_id)
+    return "replaced"
+
+
+def _update_page(
+    notion: NotionPages, ref: ExtExternalRef | ExtDecisionRef, update: dict[str, Any]
+) -> Literal["updated", "archived", "deleted"]:
+    """Update the page ``ref`` points at, or say why Notion refused: the page
+    is ``"archived"`` or ``"deleted"``. A refusal for a page that is still live
+    is raised. The first half of ``_update_or_replace_page``, for a caller
+    that does not make a deleted page again."""
     assert ref.external_id is not None
     try:
         notion.update_page(ref.external_id, update)
@@ -3413,17 +3654,95 @@ def _update_or_replace_page(
             return "archived"
         if state != "deleted":
             raise
-        page_id = notion.create_page(database_id, create)
-        ref.external_id = page_id
-        ref.url = notion_url(page_id)
-        return "replaced"
+        return "deleted"
     return "updated"
 
 
-def has_notion_page(session: Session, action_item_id: str) -> bool:
-    """Whether the item was ever sent to Notion -- confirmed once, whatever it
-    is now."""
-    return session.get(ExtExternalRef, (action_item_id, NOTION)) is not None
+def _follow_item_page(
+    session: Session,
+    notion: NotionPages,
+    ref: ExtExternalRef,
+    item: ExtActionItem,
+    *,
+    database_id: str,
+    names: Mapping[str, str],
+) -> PageOutcome | None:
+    """Bring the page an item already has in step with the item, and say what
+    became of it.
+
+    A confirmed item whose page was deleted in Notion gets a new one (#403).
+    **An item moved back to 확인 필요 does not** (#672): no page is made for a
+    draft, and the team deleted that one. Its ref row goes instead, and
+    ``None`` is returned -- with nothing left outside, the item is a draft
+    like any other, and ``has_copy_outside`` stops counting it.
+    """
+    meeting = session.get(Meeting, item.meeting_id)
+    title = meeting.title if meeting else None
+    update = notion_properties(item, title, names, clear_missing=True)
+    if item.status != ActionStatus.NEEDS_CONFIRMATION.value:
+        return _update_or_replace_page(
+            notion,
+            ref,
+            database_id=database_id,
+            update=update,
+            create=notion_properties(item, title, names),
+        )
+    state = _update_page(notion, ref, update)
+    if state == "deleted":
+        session.delete(ref)
+        session.flush()
+        return None
+    return state
+
+
+def has_copy_outside(session: Session, action_item_id: str) -> bool:
+    """Whether the item has something outside that its confirmation made -- a
+    Notion page, a Jira issue, an event on its assignee's calendar -- whatever
+    its status is now.
+
+    It counts B's own rows, not what Notion, Jira or Google hold. That stands
+    for "was confirmed once" only because **a ref or an event row is never
+    made for an item that has not been confirmed**: every sync returns before
+    creating anything for a draft. A kind of ref made before confirmation
+    would change what this function, and ``copies_follow``, mean (#672).
+
+    A calendar event counts (#672): an item moved back to 확인 필요 with only
+    an event was not one whose copies follow, so the event stayed on the
+    calendar, and a deleted speech then took the draft and the event's row
+    with it while the event kept the line in its title."""
+    if (
+        session.scalar(
+            select(ExtExternalRef.action_item_id)
+            .where(ExtExternalRef.action_item_id == action_item_id)
+            .limit(1)
+        )
+        is not None
+    ):
+        return True
+    return (
+        session.scalar(
+            select(ExtCalendarEvent.action_item_id).where(
+                ExtCalendarEvent.action_item_id == action_item_id,
+                ExtCalendarEvent.event_id.is_not(None),
+            )
+        )
+        is not None
+    )
+
+
+def copies_follow(session: Session, item: ExtActionItem) -> bool:
+    """Whether what this item says outside has to follow what it says here.
+
+    A confirmed item, and one that was confirmed once: moved back to 확인 필요
+    it keeps its Notion page and its Jira issue (decided with the user,
+    2026-10-01), and its calendar event until the sync this queues takes it
+    off, so it is a draft on the board and a record outside. Asking
+    only for the status left such an item's page holding a line that had been
+    deleted or corrected here (#657). One rule for the board's edits, a
+    deleted speech and a corrected line."""
+    return item.status != ActionStatus.NEEDS_CONFIRMATION.value or has_copy_outside(
+        session, item.id
+    )
 
 
 def notion_url(page_id: str) -> str:
@@ -3524,7 +3843,9 @@ def sync_action_item_to_notion(
 
     **A page someone removed in Notion** (#403): deleted, it is made again;
     archived, it is left alone -- ``_update_or_replace_page``. ``on_page``
-    hears which, for a caller that counts (``notion_backfill``).
+    hears which, for a caller that counts (``notion_backfill``). For an item
+    moved back to 확인 필요 a deleted page is not made again: its ref row
+    goes and ``None`` is returned (``_follow_item_page``, #672).
     """
     names = property_names or NOTION_PROPERTIES
 
@@ -3536,21 +3857,17 @@ def sync_action_item_to_notion(
         item = session.get(ExtActionItem, action_item_id, populate_existing=True)
         if item is None:
             return existing
-        meeting = session.get(Meeting, item.meeting_id)
-        title = meeting.title if meeting else None
-        outcome = _update_or_replace_page(
-            notion,
-            existing,
-            database_id=database_id,
-            update=notion_properties(item, title, names, clear_missing=True),
-            create=notion_properties(item, title, names),
+        outcome = _follow_item_page(
+            session, notion, existing, item, database_id=database_id, names=names
         )
         log.info(
             "extraction_notion_updated",
             action_item_id=item.id,
             meeting_id=item.meeting_id,
-            page=outcome,
+            page=outcome or "gone",
         )
+        if outcome is None:
+            return None
         if on_page is not None:
             on_page(outcome)
         return existing
@@ -3577,20 +3894,16 @@ def sync_action_item_to_notion(
         item = session.get(ExtActionItem, action_item_id, populate_existing=True)
         if item is None:
             return existing
-        meeting = session.get(Meeting, item.meeting_id)
-        title = meeting.title if meeting else None
-        outcome = _update_or_replace_page(
-            notion,
-            existing,
-            database_id=database_id,
-            update=notion_properties(item, title, names, clear_missing=True),
-            create=notion_properties(item, title, names),
+        outcome = _follow_item_page(
+            session, notion, existing, item, database_id=database_id, names=names
         )
         log.info(
             "extraction_notion_updated_after_claim_race",
             action_item_id=item.id,
-            page=outcome,
+            page=outcome or "gone",
         )
+        if outcome is None:
+            return None
         if on_page is not None:
             on_page(outcome)
         return existing
@@ -3776,6 +4089,79 @@ def _one_line(text: str, limit: int) -> str:
     return line if len(line) <= limit else line[: limit - 1].rstrip() + "…"
 
 
+def _counted_for_progress(now: datetime) -> ColumnElement[bool]:
+    """A meeting ``TeamActionProgress`` may count: made inside
+    ``ACTION_PROGRESS_WINDOW`` of ``now`` and not past its retention window.
+
+    The window is 91 days and a team's retention can be shorter, and a meeting
+    past ``expires_at`` stays in the table until A's sweep takes it -- longer
+    when one of its deletion hooks fails. Counting it would send its id to E
+    and keep it in the team's completion rate after it should be gone
+    (invariant 11; #649 review). The retention half is ``within_retention``,
+    the one every read of B's asks.
+    """
+    return and_(Meeting.created_at >= now - ACTION_PROGRESS_WINDOW, within_retention(now))
+
+
+def teams_with_recent_meetings(session: Session, *, now: datetime) -> list[str]:
+    """Teams with a meeting ``_counted_for_progress`` -- the teams whose action
+    progress is published (#605), even when nothing in the window is confirmed:
+    a fresh empty snapshot says so. A team whose only meetings in the window
+    are past retention is not one of them."""
+    return sorted(
+        session.scalars(select(Meeting.team_id).where(_counted_for_progress(now)).distinct())
+    )
+
+
+def team_action_progress(session: Session, team_id: str, *, now: datetime) -> TeamActionProgress:
+    """The team's action items as counts per meeting, as of ``now`` (#605).
+
+    Per meeting made inside the window and still inside its retention
+    (``_counted_for_progress``): items past ``needs_confirmation``, those
+    ``done``, and those confirmed, not done and due before the team's today --
+    the board's overdue rule (``tools._overdue``). **Today is the date of
+    ``now`` in Korea** (``slots.KST``): there is no team time zone, and a
+    server's ``date.today()`` on UTC is a day behind from 00:00 to 09:00 KST,
+    when the board and E's dashboard would disagree on what is late (#619
+    review). A meeting with nothing confirmed is left out. Counts and meeting
+    ids only: no assignee, title or item id leaves here, so no per-person
+    completion record can be built from it (privacy.md section 3; the
+    contract's own note).
+    """
+    today = now.astimezone(KST).date()
+    confirmed = ExtActionItem.status != ActionStatus.NEEDS_CONFIRMATION.value
+    done = ExtActionItem.status == ActionStatus.DONE.value
+    overdue = and_(
+        confirmed,
+        ~done,
+        ExtActionItem.due_date.is_not(None),
+        ExtActionItem.due_date < today,
+    )
+    rows = session.execute(
+        select(
+            ExtActionItem.meeting_id,
+            func.count().filter(confirmed),
+            func.count().filter(done),
+            func.count().filter(overdue),
+        )
+        .join(Meeting, Meeting.id == ExtActionItem.meeting_id)
+        .where(Meeting.team_id == team_id, _counted_for_progress(now))
+        .group_by(ExtActionItem.meeting_id)
+        .order_by(ExtActionItem.meeting_id)
+    ).all()
+    return TeamActionProgress(
+        team_id=team_id,
+        as_of=now,
+        meetings=[
+            MeetingActionProgress(
+                meeting_id=meeting_id, confirmed=n_confirmed, done=n_done, overdue=n_overdue
+            )
+            for meeting_id, n_confirmed, n_done, n_overdue in rows
+            if n_confirmed > 0
+        ],
+    )
+
+
 def teams_with_jira_issues(session: Session) -> list[str]:
     """Teams with an item that became a Jira issue and still exists -- the teams
     whose agenda can be non-empty, or whose issues all closed and must now be
@@ -3816,6 +4202,7 @@ def team_agenda(session: Session, team_id: str, *, now: datetime) -> TeamAgenda:
         .join(Meeting, Meeting.id == ExtActionItem.meeting_id)
         .where(
             Meeting.team_id == team_id,
+            within_retention(now),
             ExtExternalRef.external_id.is_not(None),
             ExtActionItem.status.in_(_AGENDA_STATUSES),
         )

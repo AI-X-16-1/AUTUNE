@@ -97,7 +97,7 @@ incident. Target recall is 0.95+ for the MVP and 0.99+ at three months.
 - Logging transcript text at any level, including `DEBUG`. Log utterance IDs.
 - Including transcript text in exception messages — an exception string ends up
   in error tracking, which is an external service.
-- Sending unmasked text to Slack, Notion, or any LLM API.
+- Sending unmasked text to Slack, Notion, Jira, or any LLM API.
 
 **User-reported misses** are masked immediately where they are stored (S30,
 #555). There is no review queue: report, mask, then improve the detector.
@@ -264,9 +264,14 @@ person's, those counts are that person's completion record. So:
   copies in Notion, Jira and calendars follow. Every module that keeps what it
   derived from speech — D's statements, E's report text — clears its own copy
   on the same signal; a module that does not yet is a gap to close. Modules
-  receive this through
-  `autune_core.deletion.on_speech_deleted`, before the utterances are deleted
-  (ADR 0007 decision 5, #92).
+  receive this through `autune_core.deletion.on_speech_deleted`, before the
+  utterances are deleted (ADR 0007 decision 5, #92). Module A sends it on
+  **both** paths that delete a person's speech — `DELETE /api/audio/me/speech`
+  and account deletion, where it runs before the user hooks — with the ids
+  read before anything is locked, and again for any utterance that appeared
+  meanwhile, so every utterance deleted is one the modules were told about. A
+  hook that raises stops the deletion, and so do utterances that are still
+  appearing after three rounds (409, try again) (#628).
 - When a user leaves a team, their utterances and everything derived from them
   are deleted. **This rule is under review — see ADR 0007**, which argues the
   record belongs to the meeting rather than to its participants, and that
@@ -308,7 +313,7 @@ account anyway.
 
 ## 6. Third-party services
 
-Anything leaving our infrastructure — LLM APIs, Slack, Notion, Google
+Anything leaving our infrastructure — LLM APIs, Slack, Notion, Jira, Google
 Calendar, error tracking, analytics — carries masked text only, and only what
 the feature needs.
 

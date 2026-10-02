@@ -27,6 +27,9 @@ meeting is left open on ``risk``, ``dependency`` and ``next_step``."""
 COVERS_RISK_TOO = {**COVERS_TWO, "리스크": 0.8}
 """The same, with ``risk`` settled."""
 
+COVERS_NOTHING = {"점심 메뉴": 1.0}
+"""Matches no item of ``general``, so it leaves five gaps open."""
+
 T0 = datetime(2026, 9, 1, 10, tzinfo=UTC)
 
 KEYS = {"ok", "reason", "summary", "items", "evidence", "confidence", "truncated"}
@@ -92,13 +95,18 @@ def dismiss(meeting_id: str, key: str) -> None:
         gap.dismissed_at = datetime.now(UTC)
 
 
-def call(fn, team_id: str, meeting_id: str) -> dict:  # type: ignore[no-untyped-def]
+def call(fn, team_id: str, meeting_id: str, **arguments: object) -> dict:  # type: ignore[no-untyped-def]
     with session_scope() as s:
-        result = fn(s, team_id=team_id, meeting_id=meeting_id)
+        result = fn(s, team_id=team_id, meeting_id=meeting_id, **arguments)
     assert set(result) == KEYS
     assert all(ID.fullmatch(e) for e in result["evidence"])
     assert len(result["items"]) <= tools.MAX_ITEMS
     return result
+
+
+def gap_ids(meeting_id: str) -> list[str]:
+    with session_scope() as s:
+        return list(s.scalars(select(GapGap.id).where(GapGap.meeting_id == meeting_id)))
 
 
 def keys_of(result: dict) -> set[str]:
@@ -189,6 +197,10 @@ def test_another_teams_meeting_reads_as_missing(team_id: str, other_team: str) -
         assert not result["ok"]
         assert result["items"] == []
 
+    result = call(tools.gaps_by_id, team_id, theirs, gap_ids=gap_ids(theirs))
+    assert not result["ok"]
+    assert result["items"] == []
+
 
 def test_another_teams_meeting_is_never_the_previous_one(team_id: str, other_team: str) -> None:
     meeting(other_team, COVERS_TWO, started=T0)
@@ -206,12 +218,68 @@ def test_a_meeting_with_no_graph_is_not_analysed_yet(team_id: str) -> None:
 
     for fn in (tools.open_gaps, tools.recurring_open_gaps):
         assert not call(fn, team_id, pending)["ok"]
+    assert not call(tools.gaps_by_id, team_id, pending, gap_ids=[])["ok"]
 
 
 def test_no_result_says_anything_about_a_person(team_id: str) -> None:
     meeting(team_id, COVERS_TWO, started=T0)
     second = meeting(team_id, COVERS_TWO, started=T0 + timedelta(days=7))
 
-    for fn in (tools.open_gaps, tools.recurring_open_gaps):
-        for item in call(fn, team_id, second)["items"]:
+    results = [call(fn, team_id, second) for fn in (tools.open_gaps, tools.recurring_open_gaps)]
+    results.append(call(tools.gaps_by_id, team_id, second, gap_ids=gap_ids(second)))
+    for result in results:
+        for item in result["items"]:
             assert not [k for k in item if any(word in k for word in PERSONAL)]
+
+
+def test_gaps_by_id_finds_a_cited_gap_open_gaps_cuts(team_id: str) -> None:
+    m = meeting(team_id, COVERS_NOTHING, started=T0)
+    with session_scope() as s:
+        # Below every detected gap, the way a carried item can rank sixth.
+        row = GapGap(meeting_id=m, category="graph", title="여섯째", severity="low", risk_score=0.0)
+        s.add(row)
+        s.flush()
+        sixth = row.id
+    listed = call(tools.open_gaps, team_id, m)
+    assert listed["truncated"]
+    assert sixth not in listed["evidence"]
+
+    result = call(tools.gaps_by_id, team_id, m, gap_ids=[sixth])
+
+    # #644: the riskiest five do not decide whether a cited gap is still open.
+    assert result["ok"]
+    assert [item["id"] for item in result["items"]] == [sixth]
+    assert result["evidence"] == [sixth]
+    assert set(result["items"][0]) == set(listed["items"][0])
+
+
+def test_gaps_by_id_leaves_out_a_dismissed_gap(team_id: str) -> None:
+    m = meeting(team_id, COVERS_TWO, started=T0)
+    cited = gap_ids(m)
+    dismiss(m, "risk")
+
+    result = call(tools.gaps_by_id, team_id, m, gap_ids=cited)
+
+    assert result["ok"]
+    assert keys_of(result) == {"dependency", "next_step"}
+    scores = [item["score"] for item in result["items"]]
+    assert scores == sorted(scores, reverse=True)
+
+
+def test_gaps_by_id_reads_only_the_meeting_it_was_given(team_id: str) -> None:
+    first = meeting(team_id, COVERS_TWO, started=T0)
+    second = meeting(team_id, COVERS_TWO, started=T0 + timedelta(days=7))
+
+    # A carried proposal cites both meetings' gaps; only this meeting's count.
+    result = call(tools.gaps_by_id, team_id, second, gap_ids=gap_ids(first) + gap_ids(second))
+
+    assert set(result["evidence"]) == set(gap_ids(second))
+
+
+def test_gaps_by_id_with_nothing_still_open_is_not_a_failure(team_id: str) -> None:
+    m = meeting(team_id, COVERS_TWO, started=T0)
+
+    for cited in ([], ["gap_unknown"]):
+        result = call(tools.gaps_by_id, team_id, m, gap_ids=cited)
+        assert result["ok"]
+        assert result["items"] == []

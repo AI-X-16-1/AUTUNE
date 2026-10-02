@@ -29,6 +29,7 @@ from . import service
 from .enqueue import enqueue_publish_report
 from .schemas import (
     GapDismissal,
+    GapExplanations,
     TemplateComparison,
     TemplateRead,
     TemplateSelection,
@@ -73,6 +74,18 @@ def get_topic_graph(meeting_id: str, session: SessionDep, reader: CurrentUser) -
     """
     service.require_readable_meeting(session, meeting_id, reader)
     return service.topic_graph(session, meeting_id)
+
+
+@router.get("/explanations/{meeting_id}", response_model=GapExplanations)
+def get_explanations(meeting_id: str, session: SessionDep, reader: CurrentUser) -> GapExplanations:
+    """Why each gap was raised -- its evidence, and how its score was reached.
+
+    Quotes masked utterances, so it is meeting content and takes the same check
+    as the report. No speaker and no participation: the quote is what was said
+    and when.
+    """
+    service.require_readable_meeting(session, meeting_id, reader)
+    return service.explain(session, meeting_id)
 
 
 @router.post("/gaps/{gap_id}/dismiss", response_model=GapDismissal)

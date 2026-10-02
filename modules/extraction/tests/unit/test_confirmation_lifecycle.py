@@ -106,6 +106,12 @@ def test_a_confirmation_records_no_responder() -> None:
         "sent_at",
         "resolved_kind",
         "responded_at",
+        # Where the question was sent, to correct its quotation (#586) -- the
+        # speaker's own conversation, which the utterance already names; not
+        # who answered.
+        "dm_channel",
+        "dm_ts",
+        "dm_digest",
         "created_at",
         "updated_at",
     }

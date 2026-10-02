@@ -64,7 +64,12 @@ otherwise two different checklists averaged together.
 
 `gap_meeting_template` stores only the exception — one row for a meeting
 somebody pointed at a non-default template. Everything here still cascades from
-`meetings.id`, so no deletion hook is needed.
+`meetings.id`, so no meeting or user deletion hook is needed.
+
+One hook is: `service.forget_deleted_speech`, on `on_speech_deleted` (#587). A
+topic label is a span cut from an utterance and a gap question names it, and
+neither cascades from `utterances.id`. A topic every utterance of which is being
+deleted goes; a question naming it falls back to the item's general one.
 
 ## AI stack
 
@@ -108,7 +113,9 @@ per-person talk-time metric — see `/docs/architecture/privacy.md` section 3.
 - Extract action items (B) or link across meetings (D).
 - Persist a cross-meeting topic graph. Cross-meeting linking is D's job; C works
   within one meeting.
-- Surface `medium` or `low` severity gaps by default. Only `high` is shown.
+- Open `medium` or `low` severity gaps by default. Only `high` is expanded;
+  `medium` is a collapsed row and `low` stays behind a toggle (S20,
+  `GapList.tsx`). The agent's Report and Briefing leave `low` out the same way.
 
 ## Metric
 

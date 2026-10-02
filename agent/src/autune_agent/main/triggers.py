@@ -55,6 +55,7 @@ from autune_core import Meeting, TeamMember
 from autune_core.errors import PrivacyViolationError
 
 from .actions import Action
+from .notify import tell_approvers
 from .registry import Tool
 from .store import run_and_record
 from .subagents import (
@@ -124,6 +125,8 @@ def on_event(
         )
         if row is not None:
             rows.append(row)
+    # Once for the whole event, not per subagent (main/notify.py).
+    tell_approvers(session, team_id=meeting.team_id, run_ids=[r.id for r in rows])
     _raise_for(violations)
     return rows
 
@@ -169,6 +172,10 @@ def on_tick(
             )
             if row is not None:
                 rows.append(row)
+    for team_id in sorted({r.team_id for r in rows}):
+        tell_approvers(
+            session, team_id=team_id, run_ids=[r.id for r in rows if r.team_id == team_id]
+        )
     _raise_for(violations)
     return rows
 
@@ -199,6 +206,7 @@ def _run_woken(
             tools=tools,
             actions=actions,
             route_to=sub.name,
+            notify=False,
         )
     except PrivacyViolationError:
         log.error("agent_trigger_privacy_violation subagent=%s", sub.name)

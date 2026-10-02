@@ -6,7 +6,13 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from autune_agent.main.preview import GONE, preview
+from autune_agent.main.preview import (
+    FOLLOWUP_GAPS_CLOSED,
+    GONE,
+    REPORT_ALREADY_POSTED,
+    REPORT_ON_DASHBOARD,
+    preview,
+)
 from autune_agent.main.registry import Tool
 from autune_agent.models import AgentPendingAction, AgentResearchDocument
 from autune_core import Meeting, User
@@ -90,10 +96,75 @@ def test_a_reassignment_shows_the_item_and_the_new_assignee(
     assert "API 문서" in shown["body"] and new.display_name in shown["body"]
 
 
-def test_a_report_publish_points_at_the_dashboard(session: Session, team: dict[str, str]) -> None:
+def test_a_report_publish_points_at_the_dashboard_until_e_can_be_read(
+    session: Session, team: dict[str, str]
+) -> None:
     shown = preview(session, _row(team, "intelligence.publish_meeting_report", {}), tools={})
 
-    assert shown == {"title": "리포트 게시", "body": "리포트 초안 — 회의 대시보드에서 보기"}
+    assert shown == {"title": "리포트 게시", "body": REPORT_ON_DASHBOARD}
+
+
+def _report_draft(
+    *, current: str | None, posted: bool = False
+) -> tuple[Tool, list[dict[str, Any]]]:
+    """E's ``meeting_report_draft``: the stored draft when ``draft_id`` is ``current``."""
+    asked: list[dict[str, Any]] = []
+
+    def read(_s: Session, team_id: str, meeting_id: str, draft_id: str) -> dict[str, Any]:
+        asked.append({"team_id": team_id, "meeting_id": meeting_id, "draft_id": draft_id})
+        items = (
+            [{"title": "주간 회의 · 10/2", "body": "## 결정\n· 출시일 확정", "posted": posted}]
+            if draft_id == current
+            else []
+        )
+        return {"ok": True, "summary": "초안", "items": items}
+
+    return Tool(name="intelligence.meeting_report_draft", description="Use this.", fn=read), asked
+
+
+def _publish(team: dict[str, str], draft_id: str = "rdr_1") -> AgentPendingAction:
+    return _row(
+        team,
+        "intelligence.publish_meeting_report",
+        {"meeting_id": team["meeting"], "draft_id": draft_id},
+    )
+
+
+def test_a_report_publish_shows_the_draft_it_would_post(
+    session: Session, team: dict[str, str]
+) -> None:
+    tool, asked = _report_draft(current="rdr_1")
+
+    shown = preview(session, _publish(team), tools={"intelligence.meeting_report_draft": tool})
+
+    assert shown == {"title": "리포트 게시", "body": "주간 회의 · 10/2\n\n## 결정\n· 출시일 확정"}
+    assert asked == [{"team_id": team["team"], "meeting_id": team["meeting"], "draft_id": "rdr_1"}]
+
+
+def test_a_replaced_draft_reads_as_gone(session: Session, team: dict[str, str]) -> None:
+    """A later run replaced the draft; approving this one would post nothing."""
+    tool, _ = _report_draft(current="rdr_2")
+
+    shown = preview(session, _publish(team), tools={"intelligence.meeting_report_draft": tool})
+
+    assert shown["body"] == GONE
+
+
+def test_a_report_already_posted_says_so(session: Session, team: dict[str, str]) -> None:
+    tool, _ = _report_draft(current="rdr_1", posted=True)
+
+    shown = preview(session, _publish(team), tools={"intelligence.meeting_report_draft": tool})
+
+    assert shown["body"].startswith(REPORT_ALREADY_POSTED)
+
+
+def test_a_publish_without_a_draft_id_is_gone(session: Session, team: dict[str, str]) -> None:
+    tool, asked = _report_draft(current="rdr_1")
+    row = _row(team, "intelligence.publish_meeting_report", {"meeting_id": team["meeting"]})
+
+    shown = preview(session, row, tools={"intelligence.meeting_report_draft": tool})
+
+    assert (shown["body"], asked) == (GONE, [])
 
 
 def test_anything_else_shows_kind_and_ids(session: Session, team: dict[str, str]) -> None:
@@ -125,3 +196,104 @@ def test_an_assignee_outside_the_team_is_not_named(session: Session, team: dict[
 
     assert shown["title"] == "액션아이템 재배정"
     assert "알 수 없는 사람" in shown["body"]
+
+
+def _gaps_by_id(*gaps: tuple[str, str], ok: bool = True) -> tuple[Tool, list[dict[str, Any]]]:
+    """C's ``gaps_by_id``: of the cited ids, the open ones, most risky first.
+
+    ``gaps`` is every open gap of the meeting in risk order; the fake keeps the
+    cited ones, as C does, and records what it was asked.
+    """
+    asked: list[dict[str, Any]] = []
+
+    def read(_s: Session, team_id: str, meeting_id: str, gap_ids: list[str]) -> dict[str, Any]:
+        asked.append({"team_id": team_id, "meeting_id": meeting_id, "gap_ids": gap_ids})
+        return {
+            "ok": ok,
+            "summary": "근거 갭",
+            "items": [{"id": i, "title": t, "body": "질문?"} for i, t in gaps if i in set(gap_ids)],
+        }
+
+    return Tool(name="gap.gaps_by_id", description="Use this.", fn=read), asked
+
+
+def _followup(
+    team: dict[str, str],
+    evidence: list[str],
+    *,
+    chat: bool = False,
+) -> AgentPendingAction:
+    """The two shapes Follow-up leaves (subagents/followup/graph.py).
+
+    Woken by an event: the run's meeting is the row's, arguments are empty.
+    Asked in chat: the run has no meeting, the proposal names it.
+    """
+    row = _row(
+        team, "extraction.add_followup_item", {"meeting_id": team["meeting"]} if chat else {}
+    )
+    if chat:
+        row.meeting_id = None
+    row.evidence = evidence
+    return row
+
+
+def test_a_followup_shows_the_gaps_behind_it_most_risky_first(
+    session: Session, team: dict[str, str]
+) -> None:
+    gaps, asked = _gaps_by_id(
+        ("gap_a", "일정 · 출시일"), ("gap_b", "담당자 · 결제"), ("gap_c", "예산")
+    )
+
+    # Evidence lists carried-over gaps first; the preview orders them by risk.
+    shown = preview(session, _followup(team, ["gap_c", "gap_a"]), tools={"gap.gaps_by_id": gaps})
+
+    assert shown["title"] == "후속 회의 잡기"
+    assert shown["body"] == "· 일정 · 출시일\n· 예산"
+    assert asked == [
+        {"team_id": team["team"], "meeting_id": team["meeting"], "gap_ids": ["gap_c", "gap_a"]}
+    ]
+
+
+def test_a_followup_asked_in_chat_reads_the_meeting_it_names(
+    session: Session, team: dict[str, str]
+) -> None:
+    """#626 review: a chat run has no meeting, so the row's is NULL; the argument names it."""
+    gaps, asked = _gaps_by_id(("gap_a", "일정 · 출시일"))
+
+    shown = preview(session, _followup(team, ["gap_a"], chat=True), tools={"gap.gaps_by_id": gaps})
+
+    assert shown["body"] == "· 일정 · 출시일"
+    assert asked[0]["meeting_id"] == team["meeting"]
+
+
+def test_a_followup_naming_no_meeting_at_all_is_gone(
+    session: Session, team: dict[str, str]
+) -> None:
+    row = _followup(team, ["gap_a"])
+    row.meeting_id = None
+
+    shown = preview(session, row, tools={"gap.gaps_by_id": _gaps_by_id(("gap_a", "일정"))[0]})
+
+    assert shown["body"] == GONE
+
+
+def test_a_followup_whose_gaps_were_all_dismissed_says_so(
+    session: Session, team: dict[str, str]
+) -> None:
+    gaps, asked = _gaps_by_id(("gap_b", "담당자 · 결제"))
+
+    shown = preview(session, _followup(team, ["gap_a"]), tools={"gap.gaps_by_id": gaps})
+
+    assert shown["body"] == FOLLOWUP_GAPS_CLOSED
+
+
+def test_a_followup_without_c_falls_back_to_gone(session: Session, team: dict[str, str]) -> None:
+    unread = preview(
+        session,
+        _followup(team, ["gap_a"]),
+        tools={"gap.gaps_by_id": _gaps_by_id(("gap_a", "일정"), ok=False)[0]},
+    )
+    absent = preview(session, _followup(team, ["gap_a"]), tools={})
+
+    assert unread["body"] == GONE
+    assert absent["body"] == GONE

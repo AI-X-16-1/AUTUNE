@@ -17,7 +17,16 @@ import pytest
 from sqlalchemy.orm import Session
 
 from autune_context import tasks
-from autune_context.models import CtxDecision, CtxDecisionVersion, CtxMeetingStatus, CtxTopicLink
+from autune_context.constants import EMBEDDING_DIM
+from autune_context.models import (
+    CtxDecision,
+    CtxDecisionVersion,
+    CtxEmbedding,
+    CtxMeetingStatus,
+    CtxTopicLink,
+)
+from autune_core import Participant, Utterance
+from autune_core.ids import new_id
 
 
 @pytest.fixture
@@ -147,6 +156,34 @@ def test_sends_once_and_a_redelivered_execution_is_a_no_op(
     assert slack_client_cls.return_value.send_dm.call_count == 1  # one absent stakeholder
 
 
+def _spoken(s: Session, meeting_id: str, label: str, *, consented: bool = True) -> None:
+    """The segment ``label`` was cut from, stored as topic linking stores it, so a
+    link carrying that label reads as cut from a consenting speaker's speech."""
+    speaker = Participant(meeting_id=meeting_id, speaker_label=new_id("spk"), consented=consented)
+    s.add(speaker)
+    s.flush()
+    utterance = Utterance(
+        meeting_id=meeting_id,
+        participant_id=speaker.id,
+        speaker_label=speaker.speaker_label,
+        start_sec=0.0,
+        end_sec=1.0,
+        text=label,
+    )
+    s.add(utterance)
+    s.flush()
+    s.add(
+        CtxEmbedding(
+            meeting_id=meeting_id,
+            kind="topic",
+            ref_label=label,
+            utterance_ids=[utterance.id],
+            embedding=[1.0] + [0.0] * (EMBEDDING_DIM - 1),
+            model_version="test",
+        )
+    )
+
+
 @pytest.mark.usefixtures("use_test_session", "fake_encryption_key")
 def test_a_catch_up_owed_skips_drift_here_but_still_sends_topic_links(
     db_session: Session, meeting: str, team: str
@@ -162,6 +199,7 @@ def test_a_catch_up_owed_skips_drift_here_but_still_sends_topic_links(
     status = _status(db_session, meeting)
     status.late_drift_due_at = datetime.now(tz=UTC)
     _connect_slack(db_session, team, config={"channel": "C123"})
+    _spoken(db_session, meeting, "검색 정렬 기준")
     db_session.add(
         CtxTopicLink(
             meeting_id=meeting,

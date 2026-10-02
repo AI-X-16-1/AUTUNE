@@ -7,9 +7,10 @@ approver with scope ``workload`` -- the manager -- accepts or refuses each one.
 
 ``team_id`` is never passed here. It is the run's scope (B's ``RUN_SCOPE``), and
 the main agent binds it from the authenticated caller -- ``POST /api/agent/chat``
-after its membership check; a subagent that chose it could read another team's
-work (autune-fb's review of #449). It wakes on chat only, no pipeline event:
-``tests/test_workload_chat.py`` runs it on B's real tools from that route.
+after its membership check, or ``on_event`` from the processed meeting's team; a
+subagent that chose it could read another team's work (autune-fb's review of
+#449). ``tests/test_workload_chat.py`` runs it on B's real tools from the chat
+route, ``tests/test_workload_after_meeting.py`` from the event.
 """
 
 from __future__ import annotations

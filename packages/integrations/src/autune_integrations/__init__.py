@@ -29,9 +29,10 @@ from .privacy import (
     check_outbound,
     find_unmasked,
 )
-from .slack import SlackApi, SlackClient
+from .slack import PostedMessage, SlackApi, SlackClient
 
 __all__ = [
+    "PostedMessage",
     "SlackClient",
     "SlackApi",
     "NotionClient",

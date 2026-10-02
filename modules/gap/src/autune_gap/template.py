@@ -78,6 +78,13 @@ class TemplateItem:
     question: str
     question_about: str
     """The same question with ``{topic}`` in it, for a partial finding."""
+    ask_about_subject: bool = False
+    """Whether ``question_about`` may name the meeting's subject when no topic
+    matched the item (``detect.question_for``). An author's call per item:
+    "{topic}의 성능 목표는?" reads as one question about the feature the meeting
+    was about, while "{topic}에 대해 이 회의 다음에 일어나는 일은?" pins a
+    question about the whole meeting onto one of its topics. Off unless the
+    template says so."""
     relations: tuple[str, ...] = ()
     """Relations whose presence in the graph is the meeting having raised this
     item — ``depends_on`` for the dependency item.
@@ -251,9 +258,21 @@ def _item(entry: dict[str, Any], template_key: str) -> TemplateItem:
         keywords=keywords,
         question=str(entry["question"]),
         question_about=_question_about(entry, template_key),
+        ask_about_subject=_flag(entry, template_key, "ask_about_subject"),
         relations=_relations(entry, template_key),
         examples=_examples(entry, template_key),
     )
+
+
+def _flag(entry: dict[str, Any], template_key: str, name: str) -> bool:
+    value = entry.get(name, False)
+    if not isinstance(value, bool):
+        # "false" in quotes is a string, and a non-empty string is truthy.
+        raise ConfigurationError(
+            f"template {template_key!r} item {entry.get('key')!r} has {name} "
+            f"{value!r}, which is not true or false"
+        )
+    return value
 
 
 def _relations(entry: dict[str, Any], template_key: str) -> tuple[str, ...]:

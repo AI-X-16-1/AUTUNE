@@ -131,6 +131,48 @@ def test_nothing_is_sent_before_confirmation(session: Session) -> None:
     assert session.scalars(select(ExtExternalRef)).all() == []
 
 
+def test_an_item_moved_back_keeps_its_issue_and_the_issue_follows_its_text(
+    session: Session,
+) -> None:
+    """Confirmed once, then moved back to 확인 필요 (#657): the issue is the
+    team's by then, so it stays, in the status they have it in -- but a line
+    deleted or corrected in Autune must not stay behind in it."""
+    jira = FakeJira(accounts={"me@example.com": "acc-me"})
+    row = item(session)
+    sync(session, jira, row)
+
+    row.status = "needs_confirmation"
+    row.description = "삭제된 발화에서 만든 항목"
+    session.flush()
+    ref = sync(session, jira, row)
+
+    assert ref is not None and ref.external_id == "AUT-1"
+    assert list(jira.tasks) == ["AUT-1"], "no second issue for a draft"
+    assert jira.tasks["AUT-1"]["summary"] == "삭제된 발화에서 만든 항목"
+    assert "스펙 초안 공유" not in str(jira.tasks)
+    assert jira.categories["AUT-1"] == "new", "the status is left where the team has it"
+
+
+def test_a_moved_back_item_whose_issue_is_gone_gets_no_new_one(session: Session) -> None:
+    """A confirmed item whose issue was deleted in Jira is made again on the
+    next edit. A draft is not: no issue is created for an unconfirmed item,
+    whether it never had one or lost it."""
+    jira = FakeJira()
+    row = item(session)
+    sync(session, jira, row)
+    del jira.tasks["AUT-1"]
+
+    row.status = "needs_confirmation"
+    session.flush()
+
+    assert sync(session, jira, row) is None
+
+    assert jira.tasks == {}
+    # #672: with the issue gone the ref row goes too, so the item is a draft
+    # like any other and stops counting as one with a copy outside.
+    assert session.scalars(select(ExtExternalRef)).all() == []
+
+
 @pytest.mark.parametrize(
     "fields",
     [

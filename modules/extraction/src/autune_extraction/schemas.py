@@ -76,12 +76,13 @@ class ExternalRefRead(BaseModel):
     ``assignee_label``'s reasoning for being on the list already covers this.
     """
 
-    system: Literal["notion"]
-    """Jira was dropped from the product (#82): both its credential paths tie
-    a workspace to whoever set it up. The DB's own check constraint still
-    allows ``'jira'`` (unused, kept rather than a migration for a value that
-    only removes a possibility) -- this type is the narrower, honest answer
-    for what the API actually returns."""
+    system: Literal["notion", "jira"]
+    """The systems ``ext_external_refs`` holds a row for -- the table's own
+    check constraint. Jira was dropped once (#82) and this type narrowed to
+    ``"notion"`` with it; #458 brought Jira's sync back and wrote
+    ``system='jira'`` rows again while the type stayed narrow, so listing any
+    item with a Jira issue raised (#650). A system added to the constraint is
+    added here in the same change."""
     url: str | None
     external_id: str | None
 
@@ -160,6 +161,11 @@ class ActionItemRead(BaseModel):
     ``source_utterance_ids`` -- the same shape as a hand-added item -- and the
     drawer printed "직접 추가한 항목" over it. ``origin`` says who made the
     item; this says its evidence is gone, and the screen needs both."""
+
+    needs_recheck: bool = False
+    """A line this was drawn from was corrected after it was made (a PII report,
+    #586), and the text shown may still need a person's eye: a summary rewritten
+    from the corrected line, or their own wording. Cleared by their next edit."""
 
     needs_reassignment: bool = False
     """An open item (``todo`` or ``in_progress``) whose assignee is no longer a
@@ -413,6 +419,10 @@ class ReviewDecision(BaseModel):
 
     confidence: float
     origin: Literal["model", "user"]
+    needs_recheck: bool = False
+    """A source line was corrected since a person typed or reworded this (#586):
+    B cannot correct their wording, so it asks them to look. Cleared by their
+    next review."""
     status: Literal["pending", "confirmed", "rejected"]
     suggested: bool | None
     """Whether the screen should pre-check it: the confidence clears
@@ -515,7 +525,7 @@ class OutboundBlocked(BaseModel):
 class Outbound(BaseModel):
     """What confirm-and-send would send, and nothing else.
 
-    The Notion and Slack sync (#30; Jira dropped, #82) is to read this and only
+    The Notion, Jira and Slack sync (#30, #458) is to read this and only
     this. A decision nobody confirmed is not in it, and neither is an item
     still waiting for confirmation.
     """
