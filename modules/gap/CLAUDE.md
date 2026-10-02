@@ -108,7 +108,9 @@ per-person talk-time metric — see `/docs/architecture/privacy.md` section 3.
 - Extract action items (B) or link across meetings (D).
 - Persist a cross-meeting topic graph. Cross-meeting linking is D's job; C works
   within one meeting.
-- Surface `medium` or `low` severity gaps by default. Only `high` is shown.
+- Open `medium` or `low` severity gaps by default. Only `high` is expanded;
+  `medium` is a collapsed row and `low` stays behind a toggle (S20,
+  `GapList.tsx`). The agent's Report and Briefing leave `low` out the same way.
 
 ## Metric
 
