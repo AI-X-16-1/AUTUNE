@@ -215,10 +215,12 @@ PII_PATTERNS: Final[tuple[tuple[str, re.Pattern[str]], ...]] = (
     # run-together rule above it: on the same span the first declared wins, and
     # a resident number Whisper hyphenated 6-3-4 is also an account shape that
     # would keep its last four.
-    # Up to sixteen groups: six left a seventh group standing
+    # No cap on the number of groups. Six left a seventh standing
     # (`97-12-27-83-76-57-3`) and missed a number read one digit at a time
-    # entirely (#716). Sixteen covers a card read digit by digit.
-    ("digits", re.compile(rf"{_L}\d{{1,7}}(?:{_GROUP_SEP}\d{{1,7}}){{1,15}}{_R}")),
+    # (#716); sixteen moved the same leak to the seventeenth group, where `main`
+    # had masked everything six at a time (review of #734). A separator is
+    # required between groups, so an unbounded repeat does not backtrack.
+    ("digits", re.compile(rf"{_L}\d{{1,7}}(?:{_GROUP_SEP}\d{{1,7}})+{_R}")),
     # Bank layouts vary -- 3-2-6, 6-2-6, 3-3-6 -- and get said without
     # separators as often as with. See MIN_ACCOUNT_DIGITS for what keeps this
     # from matching every date in a transcript.

@@ -693,3 +693,21 @@ def test_the_shapes_716_found_are_grouped_digits(text: str) -> None:
 )
 def test_real_dates_and_short_lists_stay_out_of_grouped_digits(text: str) -> None:
     assert "digits" not in {cat for _, _, cat in find_pii(text)}
+
+
+def test_a_run_of_more_than_sixteen_groups_is_hidden_whole() -> None:
+    """Review of #734: a cap of sixteen left the seventeenth group and later
+    standing, where `main`, six at a time, had hidden everything."""
+    text = "12-34-56-78-90-12-34-56-78-90-12-34-56-78-90-12-345-6789"
+    assert [(s, e) for s, e, cat in find_pii(text) if cat == "digits"] == [(0, len(text))]
+    one_at_a_time = "-".join("123456789012345678")
+    assert [(s, e) for s, e, cat in find_pii(one_at_a_time) if cat == "digits"] == [
+        (0, len(one_at_a_time))
+    ]
+
+
+def test_an_unbounded_group_run_is_scanned_quickly() -> None:
+    started = time.monotonic()
+    find_pii("1-" * 2_000 + "x")
+    find_pii("1음 " * 1_300 + "x")
+    assert time.monotonic() - started < 2.0

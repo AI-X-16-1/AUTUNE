@@ -909,7 +909,9 @@ digits (`2001-01-31-23-45-6` passed as a date and time), and a number split
 into more than six groups (`97-12-27-83-76-57-3` kept its seventh; one digit
 at a time was missed whole). The date exemption now checks values -- month
 1-12, day 1-31, one hour and minute after a full date -- instead of widths,
-and the rule joins up to sixteen groups. Closed because it is cheap and only
+and the rule joins any number of groups. A cap of sixteen, the first version,
+moved the leak to the seventeenth group, where `main` had masked everything
+six at a time (review of #734). Closed because it is cheap and only
 masks more, not because it was measured. In the same note, from review of
 #723: the line-crossing phone pattern also crosses several blank lines
 (`02\n\n123\n\n4567`), which over-masks a paragraph break.
