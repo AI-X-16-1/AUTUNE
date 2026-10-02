@@ -51,3 +51,9 @@ export const sendChat = (
       message,
     }),
   });
+
+/** The title of a meeting the person may read, for S34's header. */
+export const getMeetingLabel = (meetingId: string) =>
+  api.agent<{ title: string }>(
+    `/meeting-label?meeting_id=${encodeURIComponent(meetingId)}`,
+  );
