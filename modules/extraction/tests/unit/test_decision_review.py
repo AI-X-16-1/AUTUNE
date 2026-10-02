@@ -9,6 +9,7 @@ carries exactly what was confirmed.
 from __future__ import annotations
 
 from collections.abc import Iterator
+from contextlib import contextmanager
 
 import pytest
 from fastapi import FastAPI, Request
@@ -20,6 +21,7 @@ from sqlalchemy.pool import StaticPool
 
 from autune_contracts.enums import UtteranceKind
 from autune_core import AutuneError, Base, Meeting, Participant, TeamMember, Utterance, get_session
+from autune_core.integrations_config import IntegrationConfig
 from autune_extraction import service, tasks
 from autune_extraction.config import ExtractionSettings
 from autune_extraction.confirmations import WEAK_ASSENT
@@ -40,6 +42,7 @@ from autune_extraction.models import (
 )
 from autune_extraction.router import router
 from autune_extraction.schemas import DecisionReviewUpdate
+from autune_integrations.errors import TransientIntegrationError
 from autune_integrations.fakes import FakeNotion
 
 from .conftest import sign_in
@@ -912,3 +915,255 @@ def test_a_decision_claim_that_lands_mid_flight_gets_an_update_not_a_dropped_edi
     assert notion.pages == [], "no second create -- the race's claim already made the page"
     assert len(notion.updates) == 1
     assert notion.updates[0][0] == "page_from_other_worker"
+
+
+# --- a decision that stops being confirmed does not keep its page (#669) --------------
+
+RETITLED = {
+    "결정": {"title": [{"type": "text", "text": {"content": service.DECISION_PUT_BACK_TEXT}}]}
+}
+
+
+def confirmed_with_a_page(session: Session, notion: FakeNotion) -> ExtDecision:
+    """The first decision, confirmed in a person's wording, with its page made."""
+    first, _second = two_decisions(session)
+    service.review_decision(
+        session, first, DecisionReviewUpdate(status="confirmed", statement="출시는 금요일로 확정")
+    )
+    service.sync_decision_to_notion(session, notion, decision_id=first.id, database_id="db")
+    return first
+
+
+def resync(session: Session, notion: FakeNotion, decision_id: str) -> ExtDecisionRef | None:
+    return service.sync_decision_to_notion(
+        session, notion, decision_id=decision_id, database_id="db"
+    )
+
+
+@pytest.mark.parametrize("verdict", ["pending", "rejected"])
+def test_a_decision_put_back_has_its_page_retitled_then_trashed(
+    session: Session, verdict: str
+) -> None:
+    """Decided with the user (2026-10-02): the decision database has no status
+    column, so a page left in place would go on reading as a confirmed
+    decision. The title goes first, so Notion's trash does not keep the
+    statement; the row stays, without a page."""
+    notion = FakeNotion()
+    first = confirmed_with_a_page(session, notion)
+    service.review_decision(session, first, DecisionReviewUpdate(status=verdict))  # type: ignore[arg-type]
+
+    ref = resync(session, notion, first.id)
+
+    assert notion.updates == [("page_1", RETITLED)]
+    assert notion.archived == {"page_1"}
+    assert ref is not None and (ref.external_id, ref.url) == (None, None)
+    assert len(notion.pages) == 1, "no page is made for a decision that is not confirmed"
+
+
+def test_a_retired_page_is_retired_once(session: Session) -> None:
+    notion = FakeNotion()
+    first = confirmed_with_a_page(session, notion)
+    service.review_decision(session, first, DecisionReviewUpdate(status="pending"))
+    resync(session, notion, first.id)
+
+    resync(session, notion, first.id)
+
+    assert len(notion.updates) == 1 and len(notion.pages) == 1
+
+
+def test_confirming_again_after_the_page_was_retired_makes_a_new_page(session: Session) -> None:
+    notion = FakeNotion()
+    first = confirmed_with_a_page(session, notion)
+    service.review_decision(session, first, DecisionReviewUpdate(status="pending"))
+    resync(session, notion, first.id)
+
+    service.review_decision(session, first, DecisionReviewUpdate(status="confirmed"))
+    ref = resync(session, notion, first.id)
+
+    assert ref is not None and ref.external_id == "page_2"
+    assert ref.url == service.notion_url("page_2")
+    assert notion.pages[1][1]["결정"] == {
+        "title": [{"type": "text", "text": {"content": "출시는 금요일로 확정"}}]
+    }
+
+
+def test_a_trash_that_fails_leaves_the_page_to_the_next_sync(session: Session) -> None:
+    """The row keeps its page until the page is in the trash, so the next sync
+    finds it and tries again."""
+
+    class TrashDown(FakeNotion):
+        down = True
+
+        def trash_page(self, page_id: str) -> bool:
+            if self.down:
+                raise TransientIntegrationError("notion timed out")
+            return super().trash_page(page_id)
+
+    notion = TrashDown()
+    first = confirmed_with_a_page(session, notion)
+    service.review_decision(session, first, DecisionReviewUpdate(status="rejected"))
+
+    with pytest.raises(TransientIntegrationError):
+        resync(session, notion, first.id)
+    kept = session.get(ExtDecisionRef, (first.id, "notion"))
+    assert kept is not None and kept.external_id == "page_1"
+
+    notion.down = False
+    ref = resync(session, notion, first.id)
+
+    assert notion.archived == {"page_1"}
+    assert ref is not None and ref.external_id is None
+
+
+def test_a_page_a_person_already_archived_is_left_to_them(session: Session) -> None:
+    """Notion refuses to edit an archived page, so its title cannot be
+    rewritten; it stays the person's, as it does for a confirmed decision."""
+    notion = FakeNotion()
+    first = confirmed_with_a_page(session, notion)
+    notion.archived.add("page_1")
+    service.review_decision(session, first, DecisionReviewUpdate(status="pending"))
+
+    ref = resync(session, notion, first.id)
+
+    assert notion.updates == []
+    assert ref is not None and ref.external_id == "page_1"
+
+
+def test_a_page_already_deleted_in_notion_has_nothing_to_retire(session: Session) -> None:
+    notion = FakeNotion()
+    first = confirmed_with_a_page(session, notion)
+    notion.deleted.add("page_1")
+    service.review_decision(session, first, DecisionReviewUpdate(status="pending"))
+
+    ref = resync(session, notion, first.id)
+
+    assert notion.updates == [] and notion.archived == set()
+    assert ref is not None and ref.external_id is None
+
+
+def test_a_deleted_decision_of_a_persons_takes_its_page_out_too(
+    client: TestClient, session: Session, notion_syncs: list[str]
+) -> None:
+    """A decision a person added is really deleted. Its ref row outlives it, and
+    is what the sync retires the page through."""
+    added = client.post(
+        f"{PREFIX}/decisions", json={"meeting_id": MEETING, "statement": "회고는 격주로"}
+    ).json()
+    notion = FakeNotion()
+    resync(session, notion, added["id"])
+
+    client.delete(f"{PREFIX}/decisions/{added['id']}")
+    ref = resync(session, notion, added["id"])
+
+    assert notion_syncs == [added["id"], added["id"]], "the deletion queued the sync"
+    assert session.get(ExtDecision, added["id"]) is None
+    assert notion.updates == [("page_1", RETITLED)] and notion.archived == {"page_1"}
+    assert ref is not None and ref.external_id is None
+
+
+def test_taking_a_confirmation_back_queues_the_sync_only_while_there_is_a_page(
+    client: TestClient, session: Session, notion_syncs: list[str]
+) -> None:
+    first, second = two_decisions(session)
+    client.patch(f"{PREFIX}/decisions/{first.id}", json={"status": "confirmed"})
+    client.patch(f"{PREFIX}/decisions/{second.id}", json={"status": "confirmed"})
+    session.add(
+        ExtDecisionRef(
+            decision_id=first.id, system="notion", meeting_id=MEETING, external_id="page_1"
+        )
+    )
+    session.flush()
+
+    client.patch(f"{PREFIX}/decisions/{first.id}", json={"status": "pending"})
+    client.patch(f"{PREFIX}/decisions/{second.id}", json={"status": "rejected"})
+
+    assert notion_syncs == [first.id, second.id, first.id], "the one with no page queues nothing"
+
+
+def test_a_retired_page_is_not_shown_as_a_sync_in_flight(
+    client: TestClient, session: Session
+) -> None:
+    """A ref with no page under a confirmed decision is a send in flight and is
+    shown. Under a decision put back it is a retired page: nothing to show."""
+    notion = FakeNotion()
+    first = confirmed_with_a_page(session, notion)
+    service.review_decision(session, first, DecisionReviewUpdate(status="pending"))
+    resync(session, notion, first.id)
+
+    listed = client.get(f"{PREFIX}/reviews/{MEETING}").json()["decisions"]
+
+    assert next(d for d in listed if d["id"] == first.id)["sync_refs"] == []
+
+
+def test_the_task_finds_a_deleted_decisions_page_through_its_ref(
+    session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``tasks.sync_decision`` takes the team's Notion from the decision's
+    meeting. With the decision gone, the ref row is what still names it."""
+
+    @contextmanager
+    def scope() -> Iterator[Session]:
+        yield session
+        session.commit()
+
+    notion = FakeNotion()
+    config = IntegrationConfig(
+        service="notion", team_id="team_1", secret="t", config={"decision_db_id": "db"}
+    )
+    monkeypatch.setattr(tasks, "session_scope", scope)
+    monkeypatch.setattr(tasks, "load_integration", lambda _s, _team, _name: config)
+    monkeypatch.setattr(tasks, "NotionClient", lambda _token: notion)
+    session.add(
+        ExtDecisionRef(
+            decision_id="dec_gone", system="notion", meeting_id=MEETING, external_id="page_7"
+        )
+    )
+    session.flush()
+
+    tasks.sync_decision("dec_gone")
+
+    assert notion.updates == [("page_7", RETITLED)] and notion.archived == {"page_7"}
+    ref = session.get(ExtDecisionRef, ("dec_gone", "notion"))
+    assert ref is not None and ref.external_id is None
+
+
+def test_a_rerun_that_drops_a_decision_keeps_the_ref_that_names_its_page(session: Session) -> None:
+    """mkkim68, review of #679: ``build_decisions`` deleted the refs of
+    decisions a rerun dropped, page or not. The page then stayed live in Notion
+    with nothing left to find it by. A claim with no page still goes."""
+    notion = FakeNotion()
+    first = confirmed_with_a_page(session, notion)
+    second = session.scalars(select(ExtDecision).where(ExtDecision.id != first.id)).one()
+    session.add(ExtDecisionRef(decision_id=second.id, system="notion", meeting_id=MEETING))
+    session.flush()
+
+    service.build_decisions(session, meeting_id=MEETING, utterances=labelled({}))
+
+    assert session.get(ExtDecision, first.id) is None, "the rerun dropped it"
+    assert session.get(ExtDecisionRef, (second.id, "notion")) is None
+    assert service.decision_pages_without_a_decision(session, MEETING) == [first.id]
+
+    resync(session, notion, first.id)
+
+    assert notion.updates == [("page_1", RETITLED)] and notion.archived == {"page_1"}
+    assert service.decision_pages_without_a_decision(session, MEETING) == []
+
+
+def test_a_property_map_with_no_title_trashes_the_page_as_it_is(session: Session) -> None:
+    """A team's own map replaces the default one. With no title in it nothing
+    says which property holds the statement, so the page is trashed without a
+    retitle -- better than leaving it live (PARK, review of #679)."""
+    notion = FakeNotion()
+    first = confirmed_with_a_page(session, notion)
+    service.review_decision(session, first, DecisionReviewUpdate(status="pending"))
+
+    ref = service.sync_decision_to_notion(
+        session,
+        notion,
+        decision_id=first.id,
+        database_id="db",
+        property_names={"confidence": "신뢰도"},
+    )
+
+    assert notion.updates == [] and notion.archived == {"page_1"}
+    assert ref is not None and ref.external_id is None

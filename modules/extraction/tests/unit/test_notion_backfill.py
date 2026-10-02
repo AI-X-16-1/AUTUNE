@@ -22,7 +22,7 @@ from sqlalchemy.pool import StaticPool
 
 from autune_core import Base, Meeting, PrivacyViolationError, Utterance
 from autune_core.integrations_config import IntegrationConfig
-from autune_extraction import notion_backfill
+from autune_extraction import notion_backfill, service
 from autune_extraction.models import (
     ExtActionItem,
     ExtActionItemSource,
@@ -33,7 +33,7 @@ from autune_extraction.models import (
     ExtExternalRef,
     ExtNotionTarget,
 )
-from autune_integrations import IntegrationError
+from autune_integrations import IntegrationError, TransientIntegrationError
 from autune_integrations.fakes import FakeNotion
 
 TABLES = [
@@ -395,3 +395,106 @@ def test_the_team_filter_only_touches_that_team(
 
     assert wired.get(ExtExternalRef, (mine.id, "notion")) is not None
     assert wired.get(ExtExternalRef, (theirs.id, "notion")) is None
+
+
+# --- pages of decisions no longer confirmed (#669) ------------------------------------
+
+RETITLED = {
+    "결정": {"title": [{"type": "text", "text": {"content": service.DECISION_PUT_BACK_TEXT}}]}
+}
+
+
+def stale_pages(session: Session) -> ExtDecision:
+    """A confirmed decision, a decision put back to pending whose page is still
+    recorded, and the page of a decision that was deleted. Returns the
+    confirmed one."""
+    confirmed = decision(session)
+    back = decision(session, status="pending")
+    for decision_id, page in ((back.id, "page_back"), ("dec_deleted", "page_of_deleted")):
+        session.add(
+            ExtDecisionRef(
+                decision_id=decision_id, system="notion", meeting_id="mtg_1", external_id=page
+            )
+        )
+    session.commit()
+    return confirmed
+
+
+def test_the_backfill_retires_pages_of_decisions_no_longer_confirmed(
+    wired: Session, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The live sync retires such a page once and only logs a failure, and a
+    deleted decision has no later event to try again on. The backfill is the
+    second try."""
+    confirmed = stale_pages(wired)
+    notion = FakeNotion()
+    wire_notion(monkeypatch, notion, {"team_1": config_for("team_1")})
+
+    notion_backfill.main([])
+
+    assert notion.archived == {"page_back", "page_of_deleted"}
+    assert sorted(notion.updates) == [("page_back", RETITLED), ("page_of_deleted", RETITLED)]
+    pages = {
+        ref.decision_id: ref.external_id
+        for ref in wired.scalars(select(ExtDecisionRef).order_by(ExtDecisionRef.decision_id))
+    }
+    assert pages.pop(confirmed.id) == "page_1", "the confirmed decision got its page"
+    assert set(pages.values()) == {None}, "the rows stay, without a page"
+    out = capsys.readouterr().out
+    assert "decision pages to retire:       2" in out
+    assert "decision pages retired: 2" in out
+
+
+def test_a_retire_that_failed_is_done_by_the_next_backfill(
+    wired: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class TrashDownOnce(FakeNotion):
+        failed_once = False
+
+        def trash_page(self, page_id: str) -> bool:
+            if not self.failed_once:
+                self.failed_once = True
+                raise TransientIntegrationError("notion timed out")
+            return super().trash_page(page_id)
+
+    wired.add(
+        ExtDecisionRef(
+            decision_id="dec_deleted", system="notion", meeting_id="mtg_1", external_id="page_7"
+        )
+    )
+    wired.commit()
+    notion = TrashDownOnce()
+    wire_notion(monkeypatch, notion, {"team_1": config_for("team_1")})
+
+    assert notion_backfill.main([]) == 1, "the failure is counted and reported"
+    ref = wired.get(ExtDecisionRef, ("dec_deleted", "notion"))
+    assert ref is not None and ref.external_id == "page_7", "still there to try again"
+
+    assert notion_backfill.main([]) == 0
+    wired.expire_all()
+    ref = wired.get(ExtDecisionRef, ("dec_deleted", "notion"))
+    assert notion.archived == {"page_7"}
+    assert ref is not None and ref.external_id is None
+
+
+def test_the_team_filter_retires_only_that_teams_pages(
+    wired: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    for decision_id, meeting, page in (
+        ("dec_a", "mtg_1", "page_a"),
+        ("dec_b", "mtg_2", "page_b"),
+    ):
+        wired.add(
+            ExtDecisionRef(
+                decision_id=decision_id, system="notion", meeting_id=meeting, external_id=page
+            )
+        )
+    wired.commit()
+    notion = FakeNotion()
+    wire_notion(
+        monkeypatch, notion, {"team_1": config_for("team_1"), "team_2": config_for("team_2")}
+    )
+
+    notion_backfill.main(["--team", "team_1"])
+
+    assert notion.archived == {"page_a"}

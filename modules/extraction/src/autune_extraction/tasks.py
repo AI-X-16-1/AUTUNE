@@ -64,6 +64,7 @@ from .models import (
     ExtCalendarPoll,
     ExtConfirmation,
     ExtDecision,
+    ExtDecisionRef,
     ExtExternalRef,
 )
 from .pipeline.base import give_roster
@@ -210,6 +211,9 @@ def _extract(meeting_id: str, utterances: Sequence[TranscriptUtterance]) -> None
         stale_dms = service.dms_to_correct(
             session, meeting_id=meeting_id, spoken={u.id: u.text for u in utterances}
         )
+        # Pages of decisions this run dropped: their refs are kept so the
+        # pages can be retired, not left live in Notion (#669).
+        orphaned_pages = service.decision_pages_without_a_decision(session, meeting_id)
         # With the rows it describes: a rollback takes both (#518).
         service.record_extraction(session, meeting_id=meeting_id, consented=consented)
         result = service.result_for_meeting(session, meeting_id)
@@ -220,6 +224,11 @@ def _extract(meeting_id: str, utterances: Sequence[TranscriptUtterance]) -> None
             update_confirmation_dm.delay(utterance_id)
         except Exception as exc:  # noqa: BLE001 -- queuing only; the next run finds it again
             log.warning("extraction_dm_correction_not_queued", error=type(exc).__name__)
+    for decision_id in orphaned_pages:
+        try:
+            sync_decision.delay(decision_id)
+        except Exception as exc:  # noqa: BLE001 -- queuing only; the Notion backfill sweeps it
+            log.warning("extraction_decision_page_retire_not_queued", error=type(exc).__name__)
     # Counts and ids only. The utterances are meeting content.
     log.info(
         "extraction_classified",
@@ -883,7 +892,14 @@ def backfill_notion(team_id: str) -> None:
     items = notion_backfill.Stats()
     notion_backfill.backfill_action_items(notion_backfill._confirmed_action_items(team_id), items)
     decisions = notion_backfill.Stats()
-    notion_backfill.backfill_decisions(notion_backfill._confirmed_decisions(team_id), decisions)
+    # The confirmed ones get their pages; then the other way round, pages of
+    # decisions no longer confirmed, or deleted, whose one retire after the
+    # change did not get through (#669).
+    notion_backfill.backfill_decisions(
+        notion_backfill._confirmed_decisions(team_id)
+        + notion_backfill._decision_pages_to_retire(team_id),
+        decisions,
+    )
     log.info(
         "extraction_notion_backfilled",
         team_id=team_id,
@@ -891,6 +907,7 @@ def backfill_notion(team_id: str) -> None:
         items_replaced=items.replaced,
         items_failed=items.failed,
         decisions_sent=decisions.sent,
+        decisions_retired=decisions.retired,
         decisions_failed=decisions.failed,
     )
 
@@ -1145,6 +1162,8 @@ def drain_calendar_cleanup() -> int:
 @shared_task(name="autune.extraction.sync_decision", acks_late=True)
 def sync_decision(decision_id: str) -> None:
     """Step 7 for one decision a person just confirmed: its Notion page, once.
+    And for one that stopped being confirmed, or was deleted, while it had a
+    page: that page is retired (``service.sync_decision_to_notion``, #669).
 
     ``sync_action_item``'s rules, for the team's decision database
     (``decision_db_id`` in its Notion config). A team that connected Notion for
@@ -1153,8 +1172,15 @@ def sync_decision(decision_id: str) -> None:
     """
     with session_scope() as session:
         decision = session.get(ExtDecision, decision_id)
-        meeting = session.get(Meeting, decision.meeting_id) if decision is not None else None
-        if decision is None or meeting is None:
+        # A deleted decision is found through its ref: the row outlives it, and
+        # names the meeting whose team's Notion holds the page to retire.
+        if decision is not None:
+            meeting_id: str | None = decision.meeting_id
+        else:
+            ref = session.get(ExtDecisionRef, (decision_id, "notion"))
+            meeting_id = ref.meeting_id if ref is not None else None
+        meeting = session.get(Meeting, meeting_id) if meeting_id else None
+        if meeting is None:
             log.info("extraction_notion_decision_gone", decision_id=decision_id)
             return
         config = load_integration(session, meeting.team_id, "notion")
