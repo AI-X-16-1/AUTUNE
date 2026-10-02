@@ -22,6 +22,7 @@ from celery import shared_task
 
 from autune_contracts import (
     INTELLIGENCE_COMPLETED,
+    INTELLIGENCE_MEETING_REPORT_CHANGED,
     TRANSCRIPT_READY,
     Payload,
     validate_major_version,
@@ -54,6 +55,11 @@ def on_transcript_ready(self: Any, payload: dict[str, Any]) -> None:
 @shared_task(name="autune.agent.on_intelligence_completed", acks_late=True, bind=True)
 def on_intelligence_completed(self: Any, payload: dict[str, Any]) -> None:
     _wake(INTELLIGENCE_COMPLETED, payload, task_id=self.request.id)
+
+
+@shared_task(name="autune.agent.on_intelligence_meeting_report_changed", acks_late=True, bind=True)
+def on_intelligence_meeting_report_changed(self: Any, payload: dict[str, Any]) -> None:
+    _wake(INTELLIGENCE_MEETING_REPORT_CHANGED, payload, task_id=self.request.id)
 
 
 @shared_task(name="autune.agent.periodic.wake_subagents", acks_late=True, bind=True)
