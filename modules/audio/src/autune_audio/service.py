@@ -450,6 +450,11 @@ def claim_job(session: Session, *, job_id: str) -> Claim:
         log.info("audio_job_declined", job_id=job_id, status=job.status)
         return Claim(job.meeting_id, run=False, owns_file=job.status != "running")
     job.status = "running"
+    # Claiming is itself proof of life. Without this a job that waited in the
+    # queue longer than ``stall_after_s`` would read as stalled until the guard
+    # writes its first heartbeat, and a cancel in that window would delete the
+    # upload under a live worker.
+    job.heartbeat_at = datetime.now(tz=UTC)
     session.flush()
     return Claim(job.meeting_id, run=True, owns_file=True)
 
@@ -633,7 +638,8 @@ def is_stalled(job: TranscriptionJob, *, settings: AudioSettings, now: datetime)
 
     Not progress: diarization and a remote STT call can report none for
     minutes on a healthy run. A job claimed before ``heartbeat_at`` existed
-    falls back to ``created_at``."""
+    falls back to ``created_at``, which is right: those workers were restarted by
+    the deploy that added the column."""
     if job.status != "running":
         return False
     last = job.heartbeat_at or job.created_at
