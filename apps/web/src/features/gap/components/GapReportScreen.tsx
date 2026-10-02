@@ -12,12 +12,48 @@ import { usePollUntilAnalysed } from "../hooks/usePollUntilAnalysed";
 import { useTemplateComparison } from "../hooks/useTemplateComparison";
 import { useTemplates } from "../hooks/useTemplates";
 import { useTopicGraph } from "../hooks/useTopicGraph";
+import { COVERAGE_LABELS } from "../types";
+import type { Coverage, Gap, GapExplanations, TemplateComparison } from "../types";
+import { CoveredList } from "./CoveredList";
 import { GapList } from "./GapList";
 import { TemplateRail } from "./TemplateRail";
 import { TopicRanking } from "./TopicRanking";
 import { TopicRelations } from "./TopicRelations";
 
 type Tab = "gaps" | "topics";
+
+/** The order the 갭 tab's own tabs read in: what is worst first. */
+const COVERAGES = ["missing", "partial", "covered"] as const satisfies readonly Coverage[];
+
+const COVERAGE_HEADINGS: Record<Coverage, string> = {
+  missing: "이 회의에서 빠진 논의",
+  partial: "충분히 다루지 못한 논의",
+  covered: "충분히 다룬 항목",
+};
+
+/**
+ * Each gap's verdict, or `null` while any gap's is unknown.
+ *
+ * The verdict is not on the contract's `Gap`; it comes from the rail
+ * (`items[].gap_id`) or from `/explanations`, whichever has arrived. Until
+ * every gap has one, the tab cannot sort them honestly — a gap filed under
+ * 누락 for want of a verdict is a claim the screen did not have — so the
+ * caller shows the one undivided list instead.
+ */
+function coverageByGap(
+  gaps: readonly Gap[],
+  comparison: TemplateComparison | null,
+  explanations: GapExplanations | null,
+): Map<string, Coverage> | null {
+  const known = new Map<string, Coverage>();
+  for (const e of explanations?.gaps ?? []) {
+    if (e.coverage) known.set(e.gap_id, e.coverage);
+  }
+  for (const item of comparison?.items ?? []) {
+    if (item.gap_id && item.coverage) known.set(item.gap_id, item.coverage);
+  }
+  return gaps.every((gap) => known.has(gap.id)) && comparison !== null ? known : null;
+}
 
 /**
  * S20, the gap report for one meeting, laid out as
@@ -51,6 +87,12 @@ type Tab = "gaps" | "topics";
  * them. What it does carry is the two views module C owns — the findings and
  * the graph behind them — so the tab band sits where the design puts it
  * without any tab on it being a control that cannot work.
+ *
+ * **The 갭 tab is split by verdict: 누락, 미흡, 충족.** 누락 and 미흡 are the
+ * report's gaps, sorted by the verdict the rail or `/explanations` carries;
+ * 충족 is the rail's covered items, which raise no gap and so have no card.
+ * While a verdict is still unknown the tab shows the one undivided list, as
+ * it did before the split.
  *
  * **A meeting still being analysed is read again until it is not.** The three
  * endpoints answer 200 with nothing for a meeting the pipeline has not reached,
@@ -92,9 +134,16 @@ export function GapReportScreen({ meetingId }: { meetingId: string }) {
   const { pending, failure, dismiss, undoDismiss, choose } = useGapActions(reloadAll);
 
   const [tab, setTab] = useState<Tab>("gaps");
+  const [coverageTab, setCoverageTab] = useState<Coverage>("missing");
   const [showLow, setShowLow] = useState(false);
 
   const gaps = report?.gaps ?? [];
+  const split = coverageByGap(gaps, comparison, explanations);
+  const covered =
+    comparison?.analysed === true
+      ? comparison.items.filter((item) => item.coverage === "covered")
+      : [];
+  const templateNote = comparison ? `도메인 템플릿 "${comparison.name}" 대조` : undefined;
 
   return (
     <main
@@ -162,27 +211,82 @@ export function GapReportScreen({ meetingId }: { meetingId: string }) {
           style={{ padding: "var(--space-24) var(--space-page)" }}
         >
           {tab === "gaps" ? (
-            <ReadSection
-              heading="이 회의에서 빠진 논의"
-              note={comparison ? `도메인 템플릿 "${comparison.name}" 대조 · 리스크 순` : undefined}
-              data={report}
-              loading={reportLoading}
-              error={reportError}
-            >
-              {/* `gaps` carries `default_factory=list`, so the contract marks it
-                  optional and a report can arrive without the key. */}
-              {(loaded) => (
-                <GapList
-                  gaps={loaded.gaps ?? []}
-                  explanations={explanations}
-                  meetingId={meetingId}
-                  showLow={showLow}
-                  onToggleLow={() => setShowLow((shown) => !shown)}
-                  onDismiss={(gapId) => void dismiss(gapId)}
-                  pendingGapId={pending}
+            split ? (
+              <div className="flex flex-col" style={{ gap: "var(--space-16)" }}>
+                <Tabs<Coverage>
+                  tabs={COVERAGES.map((coverage) => ({
+                    id: coverage,
+                    label: COVERAGE_LABELS[coverage],
+                    count:
+                      coverage === "covered"
+                        ? covered.length
+                        : gaps.filter((gap) => split.get(gap.id) === coverage).length,
+                  }))}
+                  active={coverageTab}
+                  onChange={setCoverageTab}
                 />
-              )}
-            </ReadSection>
+                {coverageTab === "covered" ? (
+                  <ReadSection
+                    heading={COVERAGE_HEADINGS.covered}
+                    note={templateNote}
+                    data={comparison}
+                    loading={railLoading}
+                    error={railError}
+                  >
+                    {() => <CoveredList items={covered} />}
+                  </ReadSection>
+                ) : (
+                  <ReadSection
+                    heading={COVERAGE_HEADINGS[coverageTab]}
+                    note={templateNote && `${templateNote} · 리스크 순`}
+                    data={report}
+                    loading={reportLoading}
+                    error={reportError}
+                  >
+                    {(loaded) => {
+                      const shown = (loaded.gaps ?? []).filter(
+                        (gap) => split.get(gap.id) === coverageTab,
+                      );
+                      return shown.length === 0 ? (
+                        <Note>{`${COVERAGE_LABELS[coverageTab]}으로 판정된 항목이 없습니다.`}</Note>
+                      ) : (
+                        <GapList
+                          gaps={shown}
+                          explanations={explanations}
+                          meetingId={meetingId}
+                          showLow={showLow}
+                          onToggleLow={() => setShowLow((on) => !on)}
+                          onDismiss={(gapId) => void dismiss(gapId)}
+                          pendingGapId={pending}
+                        />
+                      );
+                    }}
+                  </ReadSection>
+                )}
+              </div>
+            ) : (
+              <ReadSection
+                heading="이 회의에서 빠진 논의"
+                note={templateNote && `${templateNote} · 리스크 순`}
+                data={report}
+                loading={reportLoading}
+                error={reportError}
+              >
+                {/* `gaps` carries `default_factory=list`, so the contract marks it
+                    optional and a report can arrive without the key. */}
+                {(loaded) => (
+                  <GapList
+                    gaps={loaded.gaps ?? []}
+                    explanations={explanations}
+                    meetingId={meetingId}
+                    showLow={showLow}
+                    onToggleLow={() => setShowLow((on) => !on)}
+                    onDismiss={(gapId) => void dismiss(gapId)}
+                    pendingGapId={pending}
+                  />
+                )}
+              </ReadSection>
+            )
           ) : (
             <div className="flex flex-col" style={{ gap: "var(--space-32)" }}>
               <ReadSection heading="토픽" data={report} loading={reportLoading} error={reportError}>
