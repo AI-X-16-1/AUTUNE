@@ -6,3 +6,4 @@
  * internal so a route cannot compose a screen the feature did not design.
  */
 export { ApprovalsScreen } from "./components/ApprovalsScreen";
+export { ApproverSettingsScreen } from "./components/ApproverSettingsScreen";
