@@ -34,6 +34,32 @@ x-python: &python
     AUTUNE_GOOGLE_CLIENT_SECRET: ${AUTUNE_GOOGLE_CLIENT_SECRET:-}
     # Registered in the Google OAuth client as an authorised redirect URI.
     AUTUNE_GOOGLE_REDIRECT_URI: ${DEV_SITE_URL:-http://localhost}/api/auth/google/callback
+    # A second Google client, for what a person connects after signing in
+    # (their calendar). Blank, the sign-in client above does both. It has no
+    # redirect URI of its own: the callback above finishes both flows, so
+    # that address is registered on this client too.
+    AUTUNE_GOOGLE_INTEGRATION_CLIENT_ID: ${AUTUNE_GOOGLE_INTEGRATION_CLIENT_ID:-}
+    AUTUNE_GOOGLE_INTEGRATION_CLIENT_SECRET: ${AUTUNE_GOOGLE_INTEGRATION_CLIENT_SECRET:-}
+    # The OAuth apps behind "connect Slack / Notion / Jira". Blank, that
+    # connect answers "not configured" and the rest works. Each callback is
+    # built from the site's address like Google's, not read from a setting:
+    # the browser has to come back to the origin its state cookie is on, so
+    # on this host there is one right value. Register exactly these in the
+    # Slack, Notion and Atlassian consoles.
+    AUTUNE_SLACK_CLIENT_ID: ${AUTUNE_SLACK_CLIENT_ID:-}
+    AUTUNE_SLACK_CLIENT_SECRET: ${AUTUNE_SLACK_CLIENT_SECRET:-}
+    AUTUNE_SLACK_REDIRECT_URI: ${DEV_SITE_URL:-http://localhost}/api/auth/slack/callback
+    AUTUNE_NOTION_CLIENT_ID: ${AUTUNE_NOTION_CLIENT_ID:-}
+    AUTUNE_NOTION_CLIENT_SECRET: ${AUTUNE_NOTION_CLIENT_SECRET:-}
+    AUTUNE_NOTION_REDIRECT_URI: ${DEV_SITE_URL:-http://localhost}/api/auth/notion/callback
+    AUTUNE_JIRA_CLIENT_ID: ${AUTUNE_JIRA_CLIENT_ID:-}
+    AUTUNE_JIRA_CLIENT_SECRET: ${AUTUNE_JIRA_CLIENT_SECRET:-}
+    AUTUNE_JIRA_REDIRECT_URI: ${DEV_SITE_URL:-http://localhost}/api/auth/jira/callback
+    # Encrypts the token every connect above returns before it is stored.
+    # Settings requires it only outside env=local, so here nothing in the
+    # application stops a deploy that can connect and cannot store: dev.yml
+    # does, before anything starts.
+    AUTUNE_ENCRYPTION_KEY: ${AUTUNE_ENCRYPTION_KEY:-}
     AUTUNE_AUDIO_HF_TOKEN: ${AUTUNE_AUDIO_HF_TOKEN:-}
     AUTUNE_AGENT_LLM_API_KEY: ${AUTUNE_AGENT_LLM_API_KEY:-}
     # The implementations scripts/up.sh runs without --real-models, for the

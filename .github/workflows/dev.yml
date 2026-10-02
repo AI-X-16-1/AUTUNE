@@ -40,6 +40,25 @@ jobs:
       # configured" and the dev token still works.
       AUTUNE_GOOGLE_CLIENT_ID: ${{ secrets.AUTUNE_GOOGLE_CLIENT_ID }}
       AUTUNE_GOOGLE_CLIENT_SECRET: ${{ secrets.AUTUNE_GOOGLE_CLIENT_SECRET }}
+      # Optional: a second Google client for what a person connects (their
+      # calendar), apart from sign-in. Without it the client above does
+      # both. Both or neither.
+      AUTUNE_GOOGLE_INTEGRATION_CLIENT_ID: ${{ secrets.AUTUNE_GOOGLE_INTEGRATION_CLIENT_ID }}
+      AUTUNE_GOOGLE_INTEGRATION_CLIENT_SECRET: ${{ secrets.AUTUNE_GOOGLE_INTEGRATION_CLIENT_SECRET }}
+      # Optional: the OAuth apps behind "connect Slack / Notion / Jira".
+      # Without a pair, that connect answers "not configured". The redirect
+      # URIs are not read from secrets: compose builds them from
+      # DEV_SITE_URL, the one origin the callback can land on.
+      AUTUNE_SLACK_CLIENT_ID: ${{ secrets.AUTUNE_SLACK_CLIENT_ID }}
+      AUTUNE_SLACK_CLIENT_SECRET: ${{ secrets.AUTUNE_SLACK_CLIENT_SECRET }}
+      AUTUNE_NOTION_CLIENT_ID: ${{ secrets.AUTUNE_NOTION_CLIENT_ID }}
+      AUTUNE_NOTION_CLIENT_SECRET: ${{ secrets.AUTUNE_NOTION_CLIENT_SECRET }}
+      AUTUNE_JIRA_CLIENT_ID: ${{ secrets.AUTUNE_JIRA_CLIENT_ID }}
+      AUTUNE_JIRA_CLIENT_SECRET: ${{ secrets.AUTUNE_JIRA_CLIENT_SECRET }}
+      # Encrypts the token each of those connects returns. Required as soon
+      # as one of them is set: env=local turns off the application's own
+      # check, so "Check configuration" refuses instead.
+      AUTUNE_ENCRYPTION_KEY: ${{ secrets.AUTUNE_ENCRYPTION_KEY }}
     steps:
 
       - name: Checkout repository
@@ -50,6 +69,8 @@ jobs:
       # An unset secret reaches compose as an empty string, which the
       # compose defaults would turn into autune/autune. Refuse instead.
       # "not defined" also avoids quoting a password that holds " or &.
+      # The last lines print a secret's name, never its value: NEEDS_KEY
+      # holds the name of a connect client that is set.
       - name: Check configuration
         run: |
           if not defined POSTGRES_USER (echo POSTGRES_USER secret is not set & exit /b 1)
@@ -59,6 +80,17 @@ jobs:
           if not defined AUTUNE_SECRET_KEY (echo AUTUNE_SECRET_KEY secret is not set & exit /b 1)
           if not defined DEV_BASIC_AUTH_PASSWORD (echo DEV_BASIC_AUTH_PASSWORD secret is not set & exit /b 1)
           if not defined DEV_PUBLIC_HOST (echo DEV_PUBLIC_HOST repository variable is not set & exit /b 1)
+          if defined AUTUNE_GOOGLE_INTEGRATION_CLIENT_ID if not defined AUTUNE_GOOGLE_INTEGRATION_CLIENT_SECRET (echo AUTUNE_GOOGLE_INTEGRATION_CLIENT_SECRET secret is not set and its CLIENT_ID is & exit /b 1)
+          if defined AUTUNE_GOOGLE_INTEGRATION_CLIENT_SECRET if not defined AUTUNE_GOOGLE_INTEGRATION_CLIENT_ID (echo AUTUNE_GOOGLE_INTEGRATION_CLIENT_ID secret is not set and its CLIENT_SECRET is & exit /b 1)
+          set NEEDS_KEY=
+          if defined AUTUNE_SLACK_CLIENT_ID set NEEDS_KEY=AUTUNE_SLACK_CLIENT_ID
+          if defined AUTUNE_SLACK_CLIENT_SECRET set NEEDS_KEY=AUTUNE_SLACK_CLIENT_SECRET
+          if defined AUTUNE_NOTION_CLIENT_ID set NEEDS_KEY=AUTUNE_NOTION_CLIENT_ID
+          if defined AUTUNE_NOTION_CLIENT_SECRET set NEEDS_KEY=AUTUNE_NOTION_CLIENT_SECRET
+          if defined AUTUNE_JIRA_CLIENT_ID set NEEDS_KEY=AUTUNE_JIRA_CLIENT_ID
+          if defined AUTUNE_JIRA_CLIENT_SECRET set NEEDS_KEY=AUTUNE_JIRA_CLIENT_SECRET
+          if defined AUTUNE_GOOGLE_INTEGRATION_CLIENT_ID set NEEDS_KEY=AUTUNE_GOOGLE_INTEGRATION_CLIENT_ID
+          if defined NEEDS_KEY if not defined AUTUNE_ENCRYPTION_KEY (echo AUTUNE_ENCRYPTION_KEY secret is not set and %NEEDS_KEY% is, so a connection could not be stored & exit /b 1)
           docker version || exit /b 1
 
       # The database is its own compose project, so the steps below never
@@ -70,6 +102,13 @@ jobs:
 
       - name: Migrate
         run: docker compose -f infra/docker-compose.app.yml run --rm --build migrate
+
+      # A key that is set and is not a Fernet key would otherwise be found by
+      # the first person who connects something. The error names the
+      # variable and never prints it.
+      - name: Check the encryption key
+        run: |
+          if defined AUTUNE_ENCRYPTION_KEY docker compose -f infra/docker-compose.app.yml run --rm migrate python -c "from autune_core.crypto import ensure_configured; ensure_configured()"
 
       - name: Start application
         run: docker compose -f infra/docker-compose.app.yml up -d --build --wait --wait-timeout 600
