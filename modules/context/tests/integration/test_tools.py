@@ -19,14 +19,17 @@ from datetime import UTC, date, datetime, timedelta
 import pytest
 from sqlalchemy import delete
 
-from autune_context import tools
+from autune_context import briefs, tools
 from autune_context.models import (
+    CtxBrief,
     CtxDecision,
     CtxDecisionVersion,
+    CtxEmbedding,
     CtxMeetingStatus,
     CtxTopicLink,
 )
-from autune_core import Meeting, Team, session_scope
+from autune_contracts import AGENDA_STALE_AFTER, AgendaIssue, TeamAgenda
+from autune_core import Meeting, Participant, Team, Utterance, session_scope
 from autune_core.ids import new_id
 
 KEYS = {"ok", "reason", "summary", "items", "evidence", "confidence", "truncated"}
@@ -401,11 +404,256 @@ def test_no_result_carries_who_was_absent(team_id: str) -> None:
     assert "stakeholder" not in dumped.lower()
 
 
+# --------------------------------------------------------------------------- #
+# brief_recap and brief_agenda
+# --------------------------------------------------------------------------- #
+
+
+def _scheduled(team_id: str, *, expired: bool = False) -> str:
+    with session_scope() as s:
+        row = Meeting(
+            team_id=team_id,
+            title="주간 회의",
+            status="scheduled",
+            started_at=NOW + timedelta(minutes=10),
+            expires_at=NOW - timedelta(days=1) if expired else NOW + timedelta(days=90),
+        )
+        s.add(row)
+        s.flush()
+        return row.id
+
+
+def _past(team_id: str, *, topics: tuple[str, ...] = (), decisions: int = 0) -> str:
+    """An analysed earlier meeting, its topics cut from consenting speech."""
+    with session_scope() as s:
+        meeting = Meeting(
+            team_id=team_id,
+            title="지난 주간 회의",
+            status="complete",
+            started_at=NOW - timedelta(days=7),
+            expires_at=NOW + timedelta(days=90),
+        )
+        s.add(meeting)
+        s.flush()
+        s.add(CtxMeetingStatus(meeting_id=meeting.id, topic_linking_done=True))
+        speaker = Participant(meeting_id=meeting.id, speaker_label="화자", consented=True)
+        s.add(speaker)
+        s.flush()
+        for i, label in enumerate(topics):
+            utterance = Utterance(
+                meeting_id=meeting.id,
+                participant_id=speaker.id,
+                speaker_label="화자",
+                start_sec=float(i),
+                end_sec=float(i) + 1,
+                text=f"{label} 이야기",
+            )
+            s.add(utterance)
+            s.flush()
+            s.add(
+                CtxEmbedding(
+                    meeting_id=meeting.id,
+                    kind="topic",
+                    ref_label=label,
+                    embedding=[0.0] * 1024,
+                    model_version="test",
+                    utterance_ids=[utterance.id],
+                )
+            )
+        for n in range(decisions):
+            thread = CtxDecision(team_id=team_id, topic_label=f"결정 {n}")
+            s.add(thread)
+            s.flush()
+            s.add(
+                CtxDecisionVersion(
+                    thread_id=thread.id,
+                    source_decision_id=new_id("dec"),
+                    meeting_id=meeting.id,
+                    current_statement=f"결정 {n}",
+                    change_type="reversed" if n == 0 else "new",
+                    confidence=0.9,
+                    nli_version="test",
+                )
+            )
+        return meeting.id
+
+
+def _composed(meeting_id: str, previous: str | None, reason: str | None) -> None:
+    with session_scope() as s:
+        s.add(CtxBrief(meeting_id=meeting_id, previous_meeting_id=previous, match_reason=reason))
+
+
+def _agenda(team_id: str, *titles: str, age: timedelta = timedelta()) -> None:
+    agenda = TeamAgenda(
+        team_id=team_id,
+        as_of=datetime.now(tz=UTC) - age,
+        issues=[
+            AgendaIssue(
+                title=title,
+                key=f"AUT-{i}",
+                status="진행 중",
+                url=f"https://example.atlassian.net/browse/AUT-{i}",
+            )
+            for i, title in enumerate(titles, start=1)
+        ],
+    )
+    with session_scope() as s:
+        briefs.store_team_agenda(s, agenda)
+
+
+def test_the_recap_names_the_meeting_it_follows_then_its_decisions(team_id: str) -> None:
+    past = _past(team_id, topics=("검색 정렬", "배포 일정"), decisions=2)
+    upcoming = _scheduled(team_id)
+    _composed(upcoming, past, briefs.SERIES)
+
+    result = _call(tools.brief_recap, team_id, upcoming)
+
+    _holds_the_shape(result)
+    assert result["ok"] is True
+    first, *decisions = result["items"]
+    assert first["kind"] == "previous_meeting"
+    assert first["meeting_id"] == past
+    assert first["title"] == "지난 주간 회의"
+    assert "같은 제목의 지난 회의" in first["body"]
+    assert "주제: 검색 정렬, 배포 일정" in first["body"]
+    assert [d["kind"] for d in decisions] == ["decision", "decision"]
+    assert decisions[0]["title"].endswith("(번복)")
+    assert result["evidence"] == [past]
+    assert result["truncated"] is False
+
+
+def test_a_long_recap_keeps_the_meeting_and_four_decisions_and_says_it_was_cut(
+    team_id: str,
+) -> None:
+    past = _past(team_id, decisions=6)
+    upcoming = _scheduled(team_id)
+    _composed(upcoming, past, briefs.LATEST)
+
+    result = _call(tools.brief_recap, team_id, upcoming)
+
+    assert [i["kind"] for i in result["items"]] == ["previous_meeting"] + ["decision"] * 4
+    assert result["truncated"] is True
+    assert "6건" in result["summary"]
+
+
+def test_a_brief_not_composed_yet_is_a_failure_the_agent_can_route_around(team_id: str) -> None:
+    upcoming = _scheduled(team_id)
+
+    result = _call(tools.brief_recap, team_id, upcoming)
+
+    _holds_the_shape(result)
+    assert result["ok"] is False
+    assert result["reason"] == tools.BRIEF_NOT_COMPOSED
+
+
+def test_a_recap_whose_meeting_was_deleted_says_so(team_id: str) -> None:
+    upcoming = _scheduled(team_id)
+    _composed(upcoming, None, briefs.SERIES)  # SET NULL by the deletion, reason kept
+
+    result = _call(tools.brief_recap, team_id, upcoming)
+
+    assert result["ok"] is True
+    assert result["items"] == []
+    assert "삭제" in result["summary"]
+
+
+def test_a_team_with_no_earlier_analysed_meeting_gets_an_empty_recap(team_id: str) -> None:
+    upcoming = _scheduled(team_id)
+    _composed(upcoming, None, None)
+
+    result = _call(tools.brief_recap, team_id, upcoming)
+
+    assert result["ok"] is True
+    assert result["items"] == []
+    assert "이전에 분석된 회의가 없습니다" in result["summary"]
+
+
+def test_a_recap_goes_when_the_earlier_meeting_expires(team_id: str) -> None:
+    past = _past(team_id, decisions=1)
+    upcoming = _scheduled(team_id)
+    _composed(upcoming, past, briefs.SERIES)
+    with session_scope() as s:
+        meeting = s.get(Meeting, past)
+        assert meeting is not None
+        meeting.expires_at = NOW - timedelta(minutes=1)
+
+    result = _call(tools.brief_recap, team_id, upcoming)
+
+    assert result["items"] == []
+    assert "삭제" in result["summary"]
+    assert past not in json.dumps(result)
+
+
+def test_the_agenda_lists_the_issues_with_key_status_and_link(team_id: str) -> None:
+    _agenda(team_id, "결제 모듈 API 명세 정리", "온보딩 화면 시안 공유")
+    upcoming = _scheduled(team_id)
+
+    result = _call(tools.brief_agenda, team_id, upcoming)
+
+    _holds_the_shape(result)
+    assert [i["title"] for i in result["items"]] == [
+        "결제 모듈 API 명세 정리",
+        "온보딩 화면 시안 공유",
+    ]
+    assert result["items"][0]["body"] == "AUT-1 · 진행 중"
+    assert result["items"][0]["url"] == "https://example.atlassian.net/browse/AUT-1"
+    assert result["evidence"] == []
+
+
+def test_the_agenda_works_before_the_brief_is_composed(team_id: str) -> None:
+    """The issues come from B's snapshot, not from the choice D makes at T-10."""
+    _agenda(team_id, "미리 보는 이슈")
+
+    result = _call(tools.brief_agenda, team_id, _scheduled(team_id))
+
+    assert result["ok"] is True
+    assert len(result["items"]) == 1
+
+
+def test_no_issue_and_a_snapshot_b_stopped_refreshing_both_read_as_none(team_id: str) -> None:
+    upcoming = _scheduled(team_id)
+    none_at_all = _call(tools.brief_agenda, team_id, upcoming)
+    _agenda(team_id, "오래된 이슈", age=AGENDA_STALE_AFTER + timedelta(minutes=1))
+    stale = _call(tools.brief_agenda, team_id, upcoming)
+
+    for result in (none_at_all, stale):
+        assert result["ok"] is True
+        assert result["items"] == []
+        assert "없습니다" in result["summary"]
+
+
+def test_a_long_agenda_shows_five_and_says_it_was_cut(team_id: str) -> None:
+    _agenda(team_id, *(f"이슈 {n}" for n in range(8)))
+
+    result = _call(tools.brief_agenda, team_id, _scheduled(team_id))
+
+    assert len(result["items"]) == 5
+    assert result["truncated"] is True
+    assert "8건" in result["summary"]
+
+
+def test_another_teams_or_an_expired_meeting_reads_as_missing_for_both_brief_tools(
+    team_id: str, other_team: str
+) -> None:
+    theirs = _scheduled(other_team)
+    expired = _scheduled(team_id, expired=True)
+    _composed(theirs, None, None)
+    _composed(expired, None, None)
+
+    for meeting in (theirs, expired, "mtg_doesnotexist"):
+        for tool in (tools.brief_recap, tools.brief_agenda):
+            result = _call(tool, team_id, meeting)
+            assert result["ok"] is False, (tool.__name__, meeting)
+            assert result["items"] == []
+
+
 def test_every_tool_is_registered_with_a_docstring_to_route_on() -> None:
     assert [fn.__name__ for fn in tools.TOOLS] == [
         "links_for_meeting",
         "decision_thread",
         "list_decisions",
+        "brief_recap",
+        "brief_agenda",
     ]
     for fn in tools.TOOLS:
         assert inspect.getdoc(fn), fn.__name__

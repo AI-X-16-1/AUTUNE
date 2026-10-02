@@ -1,10 +1,11 @@
 """The Meeting Context Engine as tools an agent can call (agent-layer.md section 4).
 
-Three reads over what D's pipeline already computed -- this meeting's topic
-links, a decision thread's timeline, and the team's decisions by their current
-head -- for the Briefing subagent and anything else that asks "what did we say
-about this before". Each returns a dict in the shape agent-layer.md calls
-``ToolResult``::
+Five reads over what D's pipeline already computed -- this meeting's topic
+links, a decision thread's timeline, the team's decisions by their current
+head, and the two halves of a meeting's pre-meeting brief (the earlier meeting
+it follows, and the issues it is expected to take up) -- for the Briefing
+subagent and anything else that asks "what did we say about this before". Each
+returns a dict in the shape agent-layer.md calls ``ToolResult``::
 
     {"ok", "reason", "summary", "items", "evidence", "confidence", "truncated"}
 
@@ -45,15 +46,16 @@ What holds for all three, and is tested rather than trusted:
 from __future__ import annotations
 
 import re
-from datetime import date
+from datetime import UTC, date, datetime
 from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from autune_context import service
+from autune_context import briefs, service
 from autune_context.dates import meeting_day
 from autune_context.models import CtxDecision, CtxMeetingStatus, CtxTopicLink
+from autune_context.notify import _decision_line
 from autune_context.pipeline.retrieval import visible_meeting_clauses
 from autune_contracts import ChangeType
 from autune_core import Meeting
@@ -293,7 +295,134 @@ def list_decisions(
     )
 
 
-TOOLS = [links_for_meeting, decision_thread, list_decisions]
+BRIEF_NOT_COMPOSED = "brief not composed yet"
+"""Why ``brief_recap`` fails before D has chosen the earlier meeting. A fixed
+string the agent can route on, as ``links_for_meeting`` does for its own."""
+
+_MATCH_REASON = {
+    briefs.SERIES: "같은 제목의 지난 회의",
+    briefs.TOPIC: "주제가 이어지는 지난 회의",
+    briefs.LATEST: "가장 최근 분석된 회의",
+}
+
+
+def brief_recap(session: Session, team_id: str, meeting_id: str) -> dict[str, Any]:
+    """Use this to see what a meeting that is about to start follows: the
+    earlier meeting D chose for its pre-meeting brief, and the decisions that
+    meeting recorded. Do not use it for a meeting that has already been
+    analysed -- ``links_for_meeting`` answers that -- or for how one decision
+    changed -- ``decision_thread`` does.
+
+    Returns the earlier meeting first (its id, title, date, topics and why D
+    chose it), then at most four of its decisions, each with how it changed.
+    D chooses the earlier meeting ten minutes before the start; before then
+    this fails, and the agent should say the link is not known yet rather than
+    guess one.
+    """
+    meeting = _meeting(session, team_id, meeting_id)
+    if meeting is None:
+        return _missing("meeting", meeting_id)
+    brief = briefs.read_team_brief(session, team_id, meeting_id)
+    if brief is None:
+        return _result(
+            ok=False,
+            reason=BRIEF_NOT_COMPOSED,
+            summary="이 회의의 브리프는 아직 만들어지지 않았습니다.",
+            items=[],
+            evidence=[],
+        )
+    if brief.recap is None:
+        gone = brief.recap_gone
+        return _result(
+            summary=(
+                "이어받는 회의가 보존 기간이 지나 삭제되었습니다."
+                if gone
+                else "이 회의 이전에 분석된 회의가 없습니다."
+            ),
+            items=[],
+            evidence=[],
+        )
+
+    recap = brief.recap
+    why = _MATCH_REASON.get(brief.match_reason or "", "")
+    head = " · ".join(
+        part
+        for part in (
+            f"{recap.day:%Y-%m-%d}" if recap.day else "",
+            why,
+            f"주제: {', '.join(_clip(topic, 60) for topic in recap.topics[:MAX_ITEMS])}"
+            if recap.topics
+            else "",
+        )
+        if part
+    )
+    shown = recap.decisions[: MAX_ITEMS - 1]
+    items: list[dict[str, Any]] = [
+        {
+            "id": recap.meeting_id,
+            "title": _clip(recap.title),
+            "body": head,
+            "score": 1.0,
+            "kind": "previous_meeting",
+            "meeting_id": recap.meeting_id,
+            "match_reason": brief.match_reason,
+            "meeting_date": recap.day.isoformat() if recap.day else None,
+        },
+        *(
+            {
+                "title": _clip(_decision_line(decision)),
+                "body": "",
+                "score": 1.0,
+                "kind": "decision",
+                "change_type": decision.change_type.value,
+            }
+            for decision in shown
+        ),
+    ]
+    return _result(
+        summary=f"이 회의는 지난 회의의 결정 {len(recap.decisions)}건을 이어받습니다.",
+        items=items,
+        evidence=[recap.meeting_id],
+        total=1 + len(recap.decisions),
+    )
+
+
+def brief_agenda(session: Session, team_id: str, meeting_id: str) -> dict[str, Any]:
+    """Use this to see the issues a meeting is expected to take up: the team's
+    open Jira issues, as module B last reported them. Do not use it for
+    action items that came out of a meeting -- those are module B's -- or for
+    what an earlier meeting decided -- ``brief_recap``.
+
+    Returns at most five issues, in B's order (most pressing first), each with
+    its Jira key, status and link. A team that has not connected Jira, a team
+    with no open issue and a report B stopped refreshing all read as none.
+    """
+    meeting = _meeting(session, team_id, meeting_id)
+    if meeting is None:
+        return _missing("meeting", meeting_id)
+    agenda = briefs.agenda_for(session, meeting, now=datetime.now(tz=UTC))
+    if not agenda:
+        return _result(summary="이 회의에 연결된 Jira 이슈가 없습니다.", items=[], evidence=[])
+    items = [
+        {
+            "title": _clip(issue.title),
+            "body": " · ".join(part for part in (issue.key, issue.status) if part),
+            "score": 1.0,
+            "key": issue.key,
+            "status": issue.status,
+            "url": issue.url,
+        }
+        for issue in agenda
+    ]
+    return _result(
+        summary=f"이 회의가 다룰 열린 Jira 이슈 {len(agenda)}건.",
+        items=items,
+        evidence=[],
+        total=len(agenda),
+    )
+
+
+TOOLS = [links_for_meeting, decision_thread, list_decisions, brief_recap, brief_agenda]
 
 RUN_SCOPE = ("team_id",)
 """Parameters the agent fills from the run's authenticated scope, never from a model."""

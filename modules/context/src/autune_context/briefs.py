@@ -504,7 +504,32 @@ def get_brief(
             reason="no_such_meeting" if meeting is None else "not_a_member",
         )
         raise NotFoundError("brief", meeting_id)
-    row = session.get(CtxBrief, meeting_id)
-    if row is None or not _is_visible(meeting, now):
+    brief = _composed_brief(session, meeting, now)
+    if brief is None:
         raise NotFoundError("brief", meeting_id)
+    return brief
+
+
+def read_team_brief(
+    session: Session, team_id: str, meeting_id: str, *, now: datetime | None = None
+) -> Brief | None:
+    """A composed brief of one of ``team_id``'s meetings, for the agent's tools.
+
+    ``None`` for an unknown meeting, another team's, an expired one, and one
+    whose brief is not composed yet -- the caller cannot tell them apart, the
+    same answer ``get_brief`` gives a reader. The team comes from the run's
+    scope (``autune_context.tools``), not from a user, so there is no member
+    check here.
+    """
+    now = now or datetime.now(tz=UTC)
+    meeting = session.get(Meeting, meeting_id)
+    if meeting is None or meeting.team_id != team_id:
+        return None
+    return _composed_brief(session, meeting, now)
+
+
+def _composed_brief(session: Session, meeting: Meeting, now: datetime) -> Brief | None:
+    row = session.get(CtxBrief, meeting.id)
+    if row is None or not _is_visible(meeting, now):
+        return None
     return _render(session, meeting, row, agenda_for(session, meeting, now=now), now)
