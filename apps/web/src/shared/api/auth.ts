@@ -159,6 +159,8 @@ export interface JiraConnection {
   connected: boolean;
   needs_reconnect?: boolean;
   site_name?: string | null;
+  /** The team's Jira site, `https://` or absent. */
+  site_url?: string | null;
   project_key?: string | null;
   /** The key of a chosen project that has since been deleted in Jira. */
   project_missing?: string | null;
@@ -278,6 +280,8 @@ export interface SlackConnection {
   connected: boolean;
   workspace_name?: string | null;
   channel_name?: string | null;
+  /** The alert channel in the team's workspace; absent on an old install. */
+  channel_url?: string | null;
 }
 
 /**

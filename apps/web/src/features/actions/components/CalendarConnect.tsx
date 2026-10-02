@@ -21,6 +21,10 @@ import { Button } from "@/shared/ui";
  * Nothing shows until the status is known, and nothing shows for a visitor
  * without a session: a button that could only fail is worse than none.
  */
+/** The person's own calendar: Google shows whichever account the browser is
+ * signed in to, which is where a connected person's due dates were put. */
+const GOOGLE_CALENDAR = "https://calendar.google.com/calendar/";
+
 export function CalendarConnect() {
   const [connected, setConnected] = useState<boolean | null>(null);
   const [note, setNote] = useState<string | null>(null);
@@ -82,6 +86,15 @@ export function CalendarConnect() {
           >
             내 Google 캘린더 연결됨
           </span>
+          <a
+            className="text-[var(--color-accent-default)]"
+            style={{ fontSize: "var(--text-metaSmall)" }}
+            href={GOOGLE_CALENDAR}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            캘린더 열기
+          </a>
           <Button tone="quiet" size="compact" loading={busy} onClick={disconnect}>
             연결 해제
           </Button>

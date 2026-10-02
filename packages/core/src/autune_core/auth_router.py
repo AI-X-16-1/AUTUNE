@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import re
 import secrets
 from datetime import UTC, datetime, timedelta
 from typing import Annotated
@@ -372,6 +373,29 @@ def _with_query(path: str, pair: str) -> str:
     return path + ("&" if "?" in path else "?") + pair
 
 
+def _https_link(stored: object) -> str | None:
+    """A stored address as something a screen may put in an ``href``: only an
+    ``https://`` URL. What is stored came from the provider at connect time;
+    this keeps a row that holds anything else from becoming a link a person
+    clicks."""
+    return stored if isinstance(stored, str) and stored.startswith("https://") else None
+
+
+_SLACK_ID = re.compile(r"[A-Z0-9]{2,}")
+
+
+def _slack_channel_link(config: dict) -> str | None:
+    """Where the team's alert channel opens in Slack, built from the workspace
+    and channel ids the install stored. ``None`` when either is missing or is
+    not shaped like a Slack id -- an install from before the ids were kept, or
+    a row somebody edited."""
+    workspace = str(config.get("workspace_id") or "")
+    channel = str(config.get("channel") or "")
+    if not (_SLACK_ID.fullmatch(workspace) and _SLACK_ID.fullmatch(channel)):
+        return None
+    return f"https://app.slack.com/client/{workspace}/{channel}"
+
+
 def _complete_calendar_connect(
     transaction: OAuthTransaction,
     google: GoogleOAuthClient,
@@ -641,6 +665,8 @@ def jira_status(
         "connected": True,
         "needs_reconnect": bool(config.config.get("needs_reconnect")),
         "site_name": config.config.get("site_name"),
+        # The team's own Jira site, for a link beside the connection.
+        "site_url": _https_link(config.config.get("site_url")),
         "project_key": config.config.get("project_key"),
         # The key of a chosen project that has since been deleted in Jira.
         "project_missing": config.config.get("project_missing"),
@@ -1074,6 +1100,8 @@ def slack_status(
         "connected": True,
         "workspace_name": config.config.get("workspace_name"),
         "channel_name": config.config.get("channel_name"),
+        # The alert channel in the team's own workspace, for a link beside it.
+        "channel_url": _slack_channel_link(config.config),
     }
 
 
