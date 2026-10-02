@@ -56,6 +56,12 @@ x-python: &python
     AUTUNE_ENCRYPTION_KEY: ${AUTUNE_ENCRYPTION_KEY:-}
     AUTUNE_AUDIO_HF_TOKEN: ${AUTUNE_AUDIO_HF_TOKEN:-}
     AUTUNE_AGENT_LLM_API_KEY: ${AUTUNE_AGENT_LLM_API_KEY:-}
+    # The provider key under its shared name. Module B reads it when its own
+    # AUTUNE_EXTRACTION_LLM_API_KEY is blank (#701); no other module reads it.
+    # A key selects nothing: B's classifier is pinned to `fake` below and its
+    # resolver is not set to `llm`, so with this file as it is B calls no
+    # provider and nothing of a meeting leaves the server through it.
+    AUTUNE_LLM_API_KEY: ${AUTUNE_LLM_API_KEY:-}
     # The implementations scripts/up.sh runs without --real-models, for the
     # same reasons it gives: B's checkpoints are unpublished (#112) and both NLI
     # checkpoints are a private repo (#172).
