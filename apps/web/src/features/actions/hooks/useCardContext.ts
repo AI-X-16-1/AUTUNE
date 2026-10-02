@@ -21,12 +21,19 @@ import type { ActionItemRead, SourceUtterance } from "../types";
  * the detail window makes, sent for the few cards that need it, and never a
  * wider list response.
  *
- * At most `MAX_CARDS` at a time and two lines each: it is a hint beside a
- * card, not the transcript. A card whose request fails simply shows no hint.
+ * **The first `MAX_CARDS` such cards of the board, and no more.** Each request
+ * carries quoted lines, so the number a board fires by being opened is bounded
+ * here and does not grow with the meeting. A thirteenth card that points at
+ * nothing gets no hint -- not later either: the bound is on the board, not on
+ * requests in flight -- and its lines are where they always were, in the
+ * detail window.
+ *
+ * Two lines each, the nearest: it is a hint beside a card, not the transcript.
+ * A card whose request fails simply shows no hint.
  */
 
-const LINES = 2;
-const MAX_CARDS = 12;
+export const LINES = 2;
+export const MAX_CARDS = 12;
 
 export function useCardContext(items: ActionItemRead[]): Record<string, SourceUtterance[]> {
   const [known, setKnown] = useState<Record<string, SourceUtterance[]>>({});

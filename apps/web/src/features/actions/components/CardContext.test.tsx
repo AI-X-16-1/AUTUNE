@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ActionBoard } from "./ActionBoard";
 import { pointsAtNothing } from "../board";
+import { MAX_CARDS } from "../hooks/useCardContext";
 import type { ActionItemRead, SourceUtterance } from "../types";
 
 // A card whose sentence says nothing by itself -- "그럴게" -- shows the line
@@ -130,6 +131,42 @@ describe("a card on the board", () => {
     );
 
     await waitFor(() => expect(screen.queryByRole("group", { name: "앞선 발화" })).toBeNull());
+  });
+
+  it("asks about the first twelve such cards and never a thirteenth", async () => {
+    // Each request carries quoted lines, so what a board fires by being opened
+    // is bounded -- on the board, not on requests in flight.
+    detail.mockResolvedValue({ context: BEFORE });
+    const many = Array.from({ length: MAX_CARDS + 2 }, (_, n) => item(`short_${n}`, "그럴게"));
+
+    const { rerender } = render(<ActionBoard items={many} />);
+
+    await waitFor(() =>
+      expect(screen.getAllByRole("group", { name: "앞선 발화" })).toHaveLength(MAX_CARDS),
+    );
+    expect(MAX_CARDS).toBe(12);
+    expect(detail.mock.calls.map(([id]) => id)).toEqual(many.slice(0, MAX_CARDS).map((i) => i.id));
+
+    // The first twelve are known now. The rest are still not asked about.
+    rerender(<ActionBoard items={[...many]} />);
+    await waitFor(() =>
+      expect(screen.getAllByRole("group", { name: "앞선 발화" })).toHaveLength(MAX_CARDS),
+    );
+    expect(detail).toHaveBeenCalledTimes(MAX_CARDS);
+  });
+
+  it("shows the nearest two of however many lines came before", async () => {
+    detail.mockResolvedValue({
+      context: [1, 2, 3, 4, 5].map((n) => ({ id: `utt_${n}`, text: `${n}번째 줄` })),
+    });
+
+    render(<ActionBoard items={[item("short", "그럴게")]} />);
+
+    const hint = await screen.findByRole("group", { name: "앞선 발화" });
+    expect(within(hint).getAllByText(/번째 줄/).map((line) => line.textContent)).toEqual([
+      "4번째 줄",
+      "5번째 줄",
+    ]);
   });
 
   it("shows it for a candidate too", async () => {
