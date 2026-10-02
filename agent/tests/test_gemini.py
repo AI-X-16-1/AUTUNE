@@ -36,6 +36,16 @@ def test_route_returns_the_named_subagent() -> None:
     assert sent[0]["body"]["generationConfig"]["responseMimeType"] == "application/json"
 
 
+def test_the_route_instructions_send_a_plain_lookup_to_no_subagent() -> None:
+    sent: list[dict[str, Any]] = []
+
+    _router('{"subagent": null}', sent).route("이 회의에서 정한 거 뭐야?", SUBAGENTS)
+
+    instruction = sent[0]["body"]["systemInstruction"]["parts"][0]["text"]
+    assert "only asks to look something up" in instruction
+    assert '{"subagent": null}' in instruction
+
+
 @pytest.mark.parametrize("answer", ['{"subagent": "payroll"}', '{"subagent": null}', "음..."])
 def test_an_unknown_null_or_unparsed_answer_is_no_route(answer: str) -> None:
     assert _router(answer, []).route("점심 메뉴", SUBAGENTS) is None
