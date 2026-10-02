@@ -178,6 +178,14 @@ PII_PATTERNS: Final[tuple[tuple[str, re.Pattern[str]], ...]] = (
     # a regex goes stale: 070 is a common Korean VoIP range, 0505 is a safe
     # number and 080 is freephone, and none of them were in the old list.
     ("phone", re.compile(rf"{_L}0\d{{1,3}}{_SEP}\d{{3,4}}{_SEP}\d{{4}}{_R}")),
+    # The same number written across lines, on the card's narrow separator
+    # (#688). `account` catches a line-split number of ten digits or more, but a
+    # nine-digit Seoul number (`02` / `123` / `4567`) matched nothing and
+    # `check_outbound` passed it -- most likely in text a person typed with line
+    # breaks: an edited report, a correction, an action item. The leading zero
+    # and the 2-3 / 3-4 / 4 layout are what keep this from joining two figures
+    # on adjacent lines, the hazard `_HSPACE` exists for.
+    ("phone", re.compile(rf"{_L}0\d{{1,2}}{_SEP_CARD}\d{{3,4}}{_SEP_CARD}\d{{4}}{_R}")),
     # +82-10-1234-5678. Without this the account pattern takes the first two
     # groups and leaves the last eight digits standing.
     ("phone", re.compile(rf"{_L}\+?82{_SEP}\d{{1,3}}{_SEP}\d{{3,4}}{_SEP}\d{{4}}{_R}")),

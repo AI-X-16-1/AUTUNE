@@ -520,3 +520,8 @@ def test_a_card_read_across_lines_keeps_its_last_four() -> None:
     """#324 item 3: same digits, same shape, whether or not a line broke."""
     assert mask("1234\n5678\n9012\n3456").text == "****\n****\n****\n3456"
     assert mask("1234-5678-9012-3456").text == "****-****-****-3456"
+
+
+def test_a_phone_number_split_across_lines_keeps_its_last_four() -> None:
+    """#688: found across lines, laid out like the card -- the breaks stay."""
+    assert mask("02\n123\n4567").text == "**\n***\n4567"
