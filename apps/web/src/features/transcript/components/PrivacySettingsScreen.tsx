@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 
+import { ApiError } from "@/shared/api/client";
 import { Button, ChipToggle, StatusDot } from "@/shared/ui";
 
 import {
@@ -316,7 +317,7 @@ function MyDataSection() {
       setConfirming(null);
       load();
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "삭제하지 못했습니다.");
+      setError(deletionError(caught));
       setConfirming(null);
     } finally {
       setBusy(false);
@@ -380,6 +381,24 @@ function MyDataSection() {
       )}
     </div>
   );
+}
+
+/**
+ * What a failed deletion says, in Korean and in terms the person can act on.
+ *
+ * The server's messages are English and written for a developer. Two outcomes
+ * have a meaning worth saying plainly (#628): a 409 means one of the meetings
+ * is being transcribed again and new lines keep appearing, so the deletion
+ * stopped rather than take words no module heard of; a 5xx means a module
+ * could not clean up its copy, so the deletion stopped there too. In both the
+ * account and the words are still there, and trying again later is right.
+ */
+function deletionError(caught: unknown): string {
+  if (caught instanceof ApiError && caught.status === 409)
+    return "회의 하나가 다시 처리되는 중이라 지금은 지울 수 없습니다. 처리가 끝난 뒤 다시 시도해 주세요.";
+  if (caught instanceof ApiError && caught.status >= 500)
+    return "삭제를 끝내지 못했습니다. 잠시 후 다시 시도해 주세요.";
+  return caught instanceof Error ? caught.message : "삭제하지 못했습니다.";
 }
 
 const TITLES: Record<Pending, string> = {
