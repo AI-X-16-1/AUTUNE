@@ -61,11 +61,8 @@ class TeamIntegration(Base, TimestampMixin):
     """One team's connection to one outside service.
 
     Credentials belong to the customer team, not to the deployment. A row here is
-    what makes Notion, Slack and Calendar configurable per team on screen
-    S28, instead of one workspace for everybody. The check constraint below
-    still allows ``jira`` as a stored value -- Jira was dropped from the
-    product (#82), and narrowing the constraint is a migration, a separate
-    decision from this docstring.
+    what makes Notion, Jira, Slack and Calendar configurable per team on
+    screen S28, instead of one workspace for everybody.
 
     Written by ``autune_core``, the way ``users`` and ``teams`` are — no module
     writes it. Modules read it through ``load_integration``.

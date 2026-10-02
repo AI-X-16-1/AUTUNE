@@ -103,7 +103,21 @@ def no_hooks(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     """
     ran: list[str] = []
     monkeypatch.setattr(deletion, "_user_hooks", {"recorder": ran.append})
+    monkeypatch.setattr(deletion, "_speech_hooks", {})
     return ran
+
+
+@pytest.fixture
+def speech_hooks(db_session: Session, monkeypatch: pytest.MonkeyPatch) -> list[tuple]:
+    """Record each speech hook call, and whether its utterances still existed."""
+    calls: list[tuple] = []
+
+    def recorder(user_id: str, utterance_ids: list[str]) -> None:
+        still_there = all(db_session.get(Utterance, u) is not None for u in utterance_ids)
+        calls.append((user_id, sorted(utterance_ids), still_there))
+
+    monkeypatch.setattr(deletion, "_speech_hooks", {"recorder": recorder})
+    return calls
 
 
 def test_my_data_counts_only_mine(
@@ -266,3 +280,135 @@ def test_an_outsider_cannot_read_or_change_the_window(
         client.patch(f"/api/audio/teams/{team}/privacy", json={"retention_days": 30}).status_code
         == 403
     )
+
+
+def test_other_modules_hear_which_words_go_before_they_go(
+    db_session: Session, client_for, me: User, spoken: dict[str, str], speech_hooks: list
+) -> None:
+    """#587: B copied some of these words into its own rows; it gets the ids
+    while the utterances still exist, and only the caller's."""
+    client_for(me).delete("/api/audio/me/speech")
+
+    assert speech_hooks == [(me.id, [spoken["me@example.com:utterance"]], True)]
+
+
+def test_a_failing_speech_hook_keeps_my_words(
+    db_session: Session,
+    client_for,
+    me: User,
+    spoken: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def broken(user_id: str, utterance_ids: list[str]) -> None:
+        raise RuntimeError("a module could not clean up")
+
+    monkeypatch.setattr(deletion, "_speech_hooks", {"elsewhere": broken})
+
+    with pytest.raises(RuntimeError):
+        client_for(me).delete("/api/audio/me/speech")
+
+    assert db_session.get(Utterance, spoken["me@example.com:utterance"]) is not None
+
+
+def test_account_deletion_tells_speech_hooks_before_user_hooks(
+    db_session: Session,
+    client_for,
+    me: User,
+    spoken: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    order: list[str] = []
+    monkeypatch.setattr(
+        deletion, "_speech_hooks", {"r": lambda user_id, ids: order.append("speech")}
+    )
+    monkeypatch.setattr(deletion, "_user_hooks", {"r": lambda user_id: order.append("user")})
+
+    client_for(me).delete("/api/audio/me")
+
+    assert order == ["speech", "user"]
+
+
+def test_account_deletion_tells_modules_only_my_words_while_they_exist(
+    db_session: Session,
+    client_for,
+    me: User,
+    spoken: dict[str, str],
+    speech_hooks: list,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(deletion, "_user_hooks", {})
+
+    client_for(me).delete("/api/audio/me")
+
+    assert speech_hooks == [(me.id, [spoken["me@example.com:utterance"]], True)]
+
+
+def test_words_that_appear_while_modules_are_told_are_told_too(
+    db_session: Session,
+    client_for,
+    me: User,
+    spoken: dict[str, str],
+    meeting: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A reprocess between the hooks and the delete writes new utterances under
+    the same participant; the delete takes them, so modules must hear of them."""
+    told: list[list[str]] = []
+
+    def hook(user_id: str, utterance_ids: list[str]) -> None:
+        told.append(sorted(utterance_ids))
+        if len(told) == 1:
+            db_session.add(
+                Utterance(
+                    id="utt_reprocessed",
+                    meeting_id=meeting,
+                    participant_id=spoken["me@example.com:participant"],
+                    speaker_label="화자 1",
+                    start_sec=2,
+                    end_sec=3,
+                    text="다시 처리된 말",
+                )
+            )
+            db_session.flush()
+
+    monkeypatch.setattr(deletion, "_speech_hooks", {"b": hook})
+
+    client_for(me).delete("/api/audio/me/speech")
+
+    assert told == [[spoken["me@example.com:utterance"]], ["utt_reprocessed"]]
+    assert db_session.get(Utterance, "utt_reprocessed") is None
+
+
+def test_words_that_keep_appearing_stop_the_deletion(
+    db_session: Session,
+    client_for,
+    me: User,
+    spoken: dict[str, str],
+    meeting: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Review of #628: if every round finds new utterances, deleting anyway
+    would take some no module heard of. It stops with a 409 instead."""
+    rounds: list[int] = []
+
+    def hook(user_id: str, utterance_ids: list[str]) -> None:
+        rounds.append(len(rounds))
+        db_session.add(
+            Utterance(
+                meeting_id=meeting,
+                participant_id=spoken["me@example.com:participant"],
+                speaker_label="화자 1",
+                start_sec=10 + len(rounds),
+                end_sec=11 + len(rounds),
+                text="계속 생기는 말",
+            )
+        )
+        db_session.flush()
+
+    monkeypatch.setattr(deletion, "_speech_hooks", {"b": hook})
+
+    response = client_for(me).delete("/api/audio/me/speech")
+
+    assert response.status_code == 409
+    assert len(rounds) == 3
+    assert db_session.get(Utterance, spoken["me@example.com:utterance"]) is not None

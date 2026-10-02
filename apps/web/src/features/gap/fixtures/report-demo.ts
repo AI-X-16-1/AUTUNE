@@ -1,4 +1,10 @@
-import type { GapReport, TemplateComparison, TemplateOption, TopicGraph } from "../types";
+import type {
+  GapExplanations,
+  GapReport,
+  TemplateComparison,
+  TemplateOption,
+  TopicGraph,
+} from "../types";
 
 /**
  * One meeting's gap report, for looking at S20 without a database behind it.
@@ -76,7 +82,7 @@ export const DEMO_REPORT: GapReport = {
       category: "next_step",
       title: "다음 단계 — 충분히 다뤄지지 않았습니다",
       severity: "low",
-      risk_score: 0.38,
+      risk_score: 0.43,
       template_item: "다음 단계",
       related_topic_ids: ["topic_demo_followup"],
       suggested_question: "이 회의 다음에 실제로 일어나는 일은 무엇입니까?",
@@ -228,3 +234,95 @@ export const DEMO_TEMPLATES: TemplateOption[] = [
   { key: "feature_planning", name: "기능 기획", version: "general.4+feature_planning.2", items: 10 },
   { key: "general", name: "기본", version: "general.4", items: 5 },
 ];
+
+/**
+ * Why each demo gap was raised. Every breakdown is the arithmetic
+ * `detect.score_breakdown` does with the shipped weights (0.4 · 0.4 · 0.2,
+ * partial damping 0.7) and adds up to the gap's `risk_score` above, so the demo
+ * cannot show a score its own explanation contradicts.
+ */
+export const DEMO_EXPLANATIONS: GapExplanations = {
+  meeting_id: DEMO_MEETING_ID,
+  meeting_title: "검색 개인화 기획 회의",
+  meeting_date: "2026-09-21T01:00:00Z",
+  partial_centrality: 0.4,
+  high_threshold: 0.7,
+  medium_threshold: 0.5,
+  gaps: [
+    {
+      gap_id: "gap_demo_ownership",
+      coverage: "missing",
+      basis: "none",
+      topic_label: null,
+      topic_centrality: null,
+      keywords: ["담당", "책임", "기한", "마감", "일정", "언제까지", "데드라인"],
+      matched_keywords: [],
+      evidence: [],
+      breakdown: { parts: [{ key: "template", weight: 0.4, value: 0.9 }], damping: null, score: 0.9 },
+    },
+    {
+      gap_id: "gap_demo_risk",
+      coverage: "partial",
+      basis: "topic",
+      topic_label: "예외 처리",
+      topic_centrality: 0.22,
+      keywords: ["리스크", "위험", "예외", "실패", "장애", "롤백", "대비"],
+      matched_keywords: [],
+      evidence: [
+        { utterance_id: "utt_demo_1", start_sec: 754, text: "예외 처리는 일단 기존 방식대로 가죠." },
+        { utterance_id: "utt_demo_2", start_sec: 1210, text: "실패하면 그때 다시 보면 될 것 같아요." },
+      ],
+      breakdown: {
+        parts: [
+          { key: "template", weight: 0.4, value: 0.8 },
+          { key: "coverage", weight: 0.4, value: 0.78 },
+          { key: "participation", weight: 0.2, value: 0.7 },
+        ],
+        damping: 0.7,
+        score: 0.54,
+      },
+    },
+    {
+      gap_id: "gap_demo_dependency",
+      coverage: "partial",
+      basis: "topic",
+      topic_label: "연동 일정",
+      topic_centrality: 0.19,
+      keywords: ["의존", "선행", "전제", "필요", "블로커", "대기", "연동"],
+      matched_keywords: [],
+      evidence: [
+        { utterance_id: "utt_demo_3", start_sec: 1502, text: "연동 일정은 결제팀이랑 맞춰봐야 해요." },
+      ],
+      breakdown: {
+        parts: [
+          { key: "template", weight: 0.4, value: 0.7 },
+          { key: "coverage", weight: 0.4, value: 0.81 },
+          { key: "participation", weight: 0.2, value: 0.625 },
+        ],
+        damping: 0.7,
+        score: 0.51,
+      },
+    },
+    {
+      gap_id: "gap_demo_next_step",
+      coverage: "partial",
+      basis: "topic",
+      topic_label: "후속 작업",
+      topic_centrality: 0.15,
+      keywords: ["다음", "후속", "이후", "계획", "단계", "진행"],
+      matched_keywords: [],
+      evidence: [
+        { utterance_id: "utt_demo_4", start_sec: 2405, text: "후속 작업은 다음에 정리해서 공유할게요." },
+      ],
+      breakdown: {
+        parts: [
+          { key: "template", weight: 0.4, value: 0.7 },
+          { key: "coverage", weight: 0.4, value: 0.85 },
+          { key: "participation", weight: 0.2, value: 0 },
+        ],
+        damping: 0.7,
+        score: 0.43,
+      },
+    },
+  ],
+};

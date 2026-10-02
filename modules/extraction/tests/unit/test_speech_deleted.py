@@ -10,8 +10,11 @@ the hook is safe to repeat, never stops on the queue, and stops on the database.
 
 from __future__ import annotations
 
+import subprocess
+import sys
 from collections.abc import Iterator
 from contextlib import contextmanager
+from datetime import date
 from types import SimpleNamespace
 from typing import Any
 
@@ -28,11 +31,13 @@ from autune_extraction.models import (
     ExtActionItem,
     ExtActionItemRelated,
     ExtActionItemSource,
+    ExtCalendarEvent,
     ExtDecision,
     ExtDecisionRelated,
     ExtDecisionReview,
     ExtDecisionSource,
     ExtEditEvent,
+    ExtExternalRef,
 )
 
 GONE = ["utt_gone1", "utt_gone2"]
@@ -183,6 +188,102 @@ def test_unconfirmed_drafts_go_and_a_persons_draft_stays(
     assert item_state(session, "act_draft") is None
     assert item_state(session, "act_chatdraft") is None
     assert item_state(session, "act_userdraft") == ("act_userdraft 원문", None)
+
+
+@pytest.mark.parametrize("system", ["notion", "jira"])
+def test_a_draft_that_was_confirmed_once_is_kept_and_its_copy_follows(
+    session: Session, queued: list[tuple[str, str]], system: str
+) -> None:
+    """Moved back to 확인 필요 it still has its page or its issue (#657). Deleting
+    the row, as for a draft nobody accepted, would leave the deleted words
+    outside with nothing left to find them by; so it reads the placeholder and
+    its copies are queued, like a confirmed item."""
+    session.add(
+        ExtActionItem(
+            id="act_back",
+            meeting_id="mtg_1",
+            description="act_back 원문",
+            description_resolved=False,
+            due_text="금요일까지",
+            status="needs_confirmation",
+            confidence=0.9,
+            origin="model",
+            sources=[ExtActionItemSource(utterance_id="utt_gone1")],
+        )
+    )
+    session.flush()
+    session.add(
+        ExtExternalRef(
+            action_item_id="act_back", system=system, meeting_id="mtg_1", external_id="x"
+        )
+    )
+    session.commit()
+
+    tasks.forget_deleted_speech("user_1", GONE)
+
+    assert item_state(session, "act_back") == (PLACEHOLDER, None)
+    assert {task for task, ident in queued if ident == "act_back"} == {
+        "sync_action_item",
+        "sync_action_item_jira",
+        "sync_action_item_calendar",
+    }
+    assert item_state(session, "act_draft") is None, "a draft never confirmed still goes"
+
+
+def test_a_draft_whose_only_copy_is_a_calendar_event_is_kept_too(
+    session: Session, queued: list[tuple[str, str]]
+) -> None:
+    """#672: the event's title is the item's description. Deleting the draft
+    took the event's row with it and left the title on the calendar; kept, its
+    calendar sync is queued and takes the event off."""
+    session.add(
+        ExtActionItem(
+            id="act_event",
+            meeting_id="mtg_1",
+            description="act_event 원문",
+            description_resolved=False,
+            due_text="금요일까지",
+            status="needs_confirmation",
+            confidence=0.9,
+            origin="model",
+            sources=[ExtActionItemSource(utterance_id="utt_gone1")],
+        )
+    )
+    session.flush()
+    session.add(
+        ExtCalendarEvent(
+            action_item_id="act_event",
+            meeting_id="mtg_1",
+            user_id="user_1",
+            event_id="evt_1",
+            synced_due_date=date(2026, 10, 2),
+        )
+    )
+    session.commit()
+
+    tasks.forget_deleted_speech("user_1", GONE)
+
+    assert item_state(session, "act_event") == (PLACEHOLDER, None)
+    assert ("sync_action_item_calendar", "act_event") in queued
+
+
+def test_the_hook_is_registered_in_a_process_that_only_imported_the_router() -> None:
+    """A calls the speech hooks from the API process (#628), and B's hook lives
+    in ``tasks``, which that process has only because ``autune_extraction.router``
+    imports it. ``test_the_hook_is_registered`` runs where ``tasks`` is already
+    imported and would pass without that import -- and a speech deletion would
+    then never reach B. A fresh interpreter, as #671 does for C."""
+    probe = (
+        "import autune_extraction.router\n"
+        "from autune_core.deletion import registered_speech_modules\n"
+        "assert 'extraction' in registered_speech_modules()\n"
+    )
+
+    done = subprocess.run(
+        [sys.executable, "-c", probe], capture_output=True, text=True, check=False
+    )
+
+    assert done.returncode == 0, done.stderr[-500:]
 
 
 def test_a_confirmed_line_reads_the_placeholder_the_rest_stays(

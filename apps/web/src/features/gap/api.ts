@@ -3,6 +3,7 @@ import { api } from "@/shared/api/client";
 
 import type {
   GapDismissal,
+  GapExplanations,
   GapReport,
   TemplateComparison,
   TemplateOption,
@@ -51,6 +52,13 @@ export const getTopicGraph = (meetingId: string) =>
  */
 export const getTemplateComparison = (meetingId: string) =>
   api.gap<TemplateComparison>(`/templates/${meetingId}`);
+
+/**
+ * Why each gap was raised: the stored verdict, the utterances it rests on, and
+ * how its score was reached. Also names the meeting for the breadcrumb.
+ */
+export const getExplanations = (meetingId: string) =>
+  api.gap<GapExplanations>(`/explanations/${meetingId}`);
 
 /** Every template a meeting can be held to, for the rail's picker. */
 export const listTemplates = () => api.gap<TemplateOption[]>("/templates");

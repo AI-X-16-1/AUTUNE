@@ -38,6 +38,16 @@ key a lineage on without the entity. Changing or dropping that field breaks D.
 
 See `/docs/architecture/contracts.md`, "The B → D boundary".
 
+`TeamActionProgress` on `autune.extraction.action_progress`, every ten
+minutes for each team with a meeting in the last 91 days that is still inside
+its retention window, consumed by **E** for its real completion rate (#605). A
+meeting past `expires_at` is not counted. Counts per meeting and meeting ids only —
+no assignee, title or item id, so no per-person completion record can be
+built from it.
+
+`TeamAgenda` on `autune.extraction.agenda_changed`, every five minutes, for
+**D**'s pre-meeting brief (#436).
+
 ## Owns
 
 `ext_classifications`, `ext_action_items`, `ext_action_item_sources`,
@@ -66,9 +76,9 @@ the model calls none is simply not in `ExtractionResult.classifications`.
 
 ## Privacy
 
-- Send Notion only what an issue needs — description, assignee, due date.
-  Never a transcript. A person's own calendar gets less: the description as
-  the event title, the date, and no attendees (nobody is invited). The
+- Send Notion and Jira only what an issue needs — description, assignee, due
+  date. Never a transcript. A person's own calendar gets less: the description
+  as the event title, the date, and no attendees (nobody is invited). The
   read-back asks Google for Autune's tagged events only, never the rest of the
   calendar.
 - Send the LLM the smallest window that resolves a reference, and only masked

@@ -79,3 +79,43 @@ def test_an_enterprise_grid_member_id_is_passed_through() -> None:
     sent: list[dict[str, Any]] = []
     client({"ok": True, "ts": "1"}, sent).send_dm("W777", "x")
     assert sent[0]["channel"] == "W777"
+
+
+# --- where a DM landed, and correcting it in place (#586) -------------------------
+
+
+def test_a_dm_says_which_conversation_and_message_it_became() -> None:
+    sent: list[dict[str, Any]] = []
+
+    posted = client(
+        {"ok": True, "channel": "D42", "ts": "1726012345.123456"}, sent
+    ).send_dm_message("U123", "확인 부탁드립니다")
+
+    assert (posted.channel, posted.ts) == ("D42", "1726012345.123456")
+
+
+def test_an_update_replaces_the_message_by_its_place() -> None:
+    sent: list[dict[str, Any]] = []
+    blocks = [{"type": "section", "text": {"type": "mrkdwn", "text": "> [전화번호]로 연락"}}]
+
+    client({"ok": True}, sent).update_message("D42", "1726012345.123456", "확인", blocks)
+
+    assert sent[0]["channel"] == "D42"
+    assert sent[0]["ts"] == "1726012345.123456"  # addressing, not read as a bank account
+    assert sent[0]["blocks"] == blocks
+
+
+def test_an_update_is_checked_like_a_send() -> None:
+    from autune_core.errors import PrivacyViolationError
+
+    blocks = [{"type": "section", "text": {"type": "mrkdwn", "text": "> 010-1234-5678로 연락"}}]
+    sent: list[dict[str, Any]] = []
+
+    with pytest.raises(PrivacyViolationError):
+        client({"ok": True}, sent).update_message("D42", "1.2", "확인", blocks)
+    assert sent == []
+
+
+def test_slacks_refused_update_is_a_failure() -> None:
+    with pytest.raises(PermanentIntegrationError, match="message_not_found"):
+        client({"ok": False, "error": "message_not_found"}, []).update_message("D42", "1.2", "x")

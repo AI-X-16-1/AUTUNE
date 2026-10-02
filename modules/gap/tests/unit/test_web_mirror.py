@@ -17,7 +17,12 @@ import re
 from pathlib import Path
 
 from autune_gap.schemas import (
+    EvidenceRead,
     GapDismissal,
+    GapExplanationRead,
+    GapExplanations,
+    ScoreBreakdownRead,
+    ScorePartRead,
     TemplateComparison,
     TemplateItemRead,
     TemplateRead,
@@ -92,3 +97,16 @@ def test_the_web_template_selection_mirror_is_current() -> None:
 def test_the_web_dismissal_mirror_is_current() -> None:
     """What "해당 없음" and its undo return. No dismisser on either side."""
     assert ts_fields("GapDismissal") == set(GapDismissal.model_fields), f"update {TYPES_TS}"
+
+
+def test_the_web_explanation_mirrors_are_current() -> None:
+    """``/explanations`` -- why each gap was raised. Module C's own read, not a
+    contract, so it is mirrored by hand like the rail."""
+    for interface, model in (
+        ("GapExplanations", GapExplanations),
+        ("GapExplanation", GapExplanationRead),
+        ("GapEvidence", EvidenceRead),
+        ("ScoreBreakdown", ScoreBreakdownRead),
+        ("ScorePart", ScorePartRead),
+    ):
+        assert ts_fields(interface) == set(model.model_fields), f"{interface}: update {TYPES_TS}"

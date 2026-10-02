@@ -915,19 +915,29 @@ _KST: Final = timezone(timedelta(hours=9))
 """The report's date is the team's calendar date. A fixed offset until a team
 timezone setting exists (#227 is undecided)."""
 
-MEETING_REPORT_FOOTER: Final = "자동 생성된 리포트입니다."
+MEETING_REPORT_FOOTER: Final = "자동 생성된 리포트입니다"
 
 
-def meeting_report_document(meeting: Meeting, body_markdown: str) -> str:
+def meeting_report_document(
+    meeting: Meeting, body_markdown: str, *, now: datetime | None = None
+) -> str:
     """Header, the subagent's body, footer -- the text ``save_meeting_report`` stores.
 
     The header names the meeting unless its title holds personal data, the
     same test ``_report_preview`` makes; stored text is checked by
     ``assert_masked``, so such a title would refuse the whole report.
+
+    The footer says when the draft was written. The body is B's, C's and D's
+    state at that moment, and the post goes out only when a person approves
+    it, possibly days later: without the time, "확인 대기 9건" would read as
+    current after half of them were confirmed. Live numbers are on the
+    dashboard, which the post's button opens.
     """
     when = (meeting.started_at or meeting.created_at).astimezone(_KST)
+    drafted = (now or datetime.now(UTC)).astimezone(_KST)
     title = meeting.title if meeting.title and not find_unmasked(meeting.title) else "회의 리포트"
-    return f"📋 {title} · {when.month}/{when.day}\n\n{body_markdown}\n\n{MEETING_REPORT_FOOTER}"
+    footer = f"{MEETING_REPORT_FOOTER} · {drafted.month}/{drafted.day} {drafted:%H:%M} 기준."
+    return f"📋 {title} · {when.month}/{when.day}\n\n{body_markdown}\n\n{footer}"
 
 
 def _meeting_report_blocks(meeting_id: str, body_markdown: str, pending_review: bool) -> list[dict]:

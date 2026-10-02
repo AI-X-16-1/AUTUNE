@@ -369,6 +369,8 @@ def test_a_decision_belongs_to_the_meeting_and_carries_no_owner() -> None:
         "meeting_id",
         "statement",
         "original_statement",
+        "source_digest",
+        "needs_recheck",
         "confidence",
         "origin",
         "created_at",

@@ -173,11 +173,10 @@ def update_action_item(
     # not held on Notion. Confirming or any later edit queues the same task --
     # ``sync_action_item_to_notion`` decides create vs. update from whether the
     # claim already exists. An unconfirmed item queues it only when it has a
-    # page: one moved back to 확인 필요 updates that page's status (decided
-    # with the user, 2026-10-01); one never confirmed has nothing to send.
-    if item.status != ActionStatus.NEEDS_CONFIRMATION.value or service.has_notion_page(
-        session, item.id
-    ):
+    # copy outside: one moved back to 확인 필요 updates that page's status
+    # (decided with the user, 2026-10-01); one never confirmed has nothing to
+    # send. The same rule a deleted speech and a corrected line use (#657).
+    if service.copies_follow(session, item):
         background.add_task(tasks.sync_after_confirmation, item.id)
     return response
 

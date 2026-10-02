@@ -36,6 +36,7 @@ from autune_extraction.config import ExtractionSettings
 from autune_extraction.models import (
     ExtActionItem,
     ExtActionItemSource,
+    ExtCalendarEvent,
     ExtEditEvent,
     ExtExternalRef,
     ExtNotionTarget,
@@ -59,6 +60,8 @@ TABLES = [
     ExtEditEvent.__table__,
     ExtExternalRef.__table__,
     ExtNotionTarget.__table__,
+    # ``has_copy_outside`` counts a calendar event as a copy (#672).
+    ExtCalendarEvent.__table__,
 ]
 
 
@@ -195,6 +198,38 @@ def test_moving_an_item_back_to_confirmation_updates_its_pages_status(session: S
     (page_id, properties), *_ = notion.updates
     assert page_id == ref.external_id
     assert properties["상태"] == {"select": {"name": "확인 필요"}}
+
+
+def test_a_moved_back_item_whose_page_was_deleted_gets_no_new_page(session: Session) -> None:
+    """A confirmed item whose page was deleted in Notion gets a new one (#403).
+    A draft does not (#672): the team deleted that page, and no page is made
+    for an item that is not confirmed. The ref row goes, so the item stops
+    counting as one with a copy outside."""
+    notion = FakeNotion()
+    row = item(session)
+    ref = sync(session, notion, row.id)
+    assert ref is not None
+    notion.deleted.add(ref.external_id)
+    row.status = "needs_confirmation"
+
+    assert sync(session, notion, row.id) is None
+
+    assert len(notion.pages) == 1, "no second page"
+    assert session.scalars(select(ExtExternalRef)).all() == []
+    assert service.has_copy_outside(session, row.id) is False
+
+
+def test_a_moved_back_item_whose_page_was_archived_keeps_its_ref(session: Session) -> None:
+    """Archived is not gone: a person put it away and can take it back out."""
+    notion = FakeNotion()
+    row = item(session)
+    ref = sync(session, notion, row.id)
+    assert ref is not None
+    notion.archived.add(ref.external_id)
+    row.status = "needs_confirmation"
+
+    assert sync(session, notion, row.id) is not None
+    assert service.has_copy_outside(session, row.id) is True
 
 
 def test_the_second_sync_of_an_item_updates_its_page_not_a_new_one(session: Session) -> None:

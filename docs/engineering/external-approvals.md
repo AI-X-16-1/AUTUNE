@@ -11,7 +11,7 @@ Slack message.
 | Task | Owner | Blocks | Lead time |
 | --- | --- | --- | --- |
 | 1.7 HuggingFace access, GPU instance | 김민경 | A's diarization (W2) | Model gates are usually instant to a few hours; GPU quota can take a day |
-| 1.8 Slack app, Notion integration | 강민구 | Slack surfaces in A/B/E (W3), Notion sync (W4) | Self-serve, same day |
+| 1.8 Slack app, Notion integration | 강민구 | Slack surfaces in A/B/E (W3), Notion sync (W4), Jira sync (#458) | Self-serve, same day |
 | 1.9 AI Hub data terms | 김민경 | B's classifier training (W2) | Answered 09-28. Overseas deployment is out, a trained model is in. What is left is the 솔트룩스 conversation (item 1) and whether an id-plus-label file may be shared (item 2) |
 
 ---
@@ -207,8 +207,8 @@ capability to read.
 1. notion.so/my-integrations → New integration → internal.
 2. Capabilities: **Read content, Update content, Insert content**. No user
    information capability — B sends an assignee name, not a Notion identity.
-3. Keep the token. It does **not** go in `.env`: #57 moved Notion and Calendar
-   credentials into `team_integrations`, encrypted, one row per team,
+3. Keep the token. It does **not** go in `.env`: #57 moved Notion, Jira and
+   Calendar credentials into `team_integrations`, encrypted, one row per team,
    configured on screen S28. `.env` carries only the encryption key.
 4. Create the action-item database, then open it → **⋯ → Connections → Connect
    to → AUTUNE**. Skipping this makes every API call return "could not find
@@ -325,12 +325,14 @@ credential per team. E's `core/team-integrations` branch already implements
 exactly that (per-team credentials, encrypted, 624 lines) and is still unmerged.
 When it lands, the product path is: Slack app distribution and a Notion
 **public** integration (internal connections *cannot* span workspaces) — each
-writing into that per-team store rather than into `.env`.
+writing into that per-team store rather than into `.env`. Jira writes into the
+same store: a team connects it over OAuth 3LO (#458).
 
 Note what that does and does not solve. It removes *our* dependence on one
 person's account. It does not remove the customer's: a 3LO grant is still tied
 to whoever clicked Authorize at their company. Slack and Notion carry the grant
-at workspace level and are fine.
+at workspace level and are fine. Jira's stays that person's: when it lapses the
+connection is marked `needs_reconnect` and the team is asked to connect again.
 
 ## 1.9 AI Hub data terms
 
@@ -457,7 +459,7 @@ results are published. `docs/modules/extraction.md` already records that.
 
 - `.env` on each developer's machine has `AUTUNE_AUDIO_HF_TOKEN`,
   `AUTUNE_SLACK_BOT_TOKEN`, `AUTUNE_SLACK_SIGNING_SECRET` and
-  `AUTUNE_SLACK_APP_TOKEN` filled. Notion and Calendar are **not** in
+  `AUTUNE_SLACK_APP_TOKEN` filled. Notion, Jira and Calendar are **not** in
   `.env` — they are per-team rows in `team_integrations` (#57).
 - The pyannote gate check above prints `gate ok`.
 - The bot answers `/autune` in the demo channel.

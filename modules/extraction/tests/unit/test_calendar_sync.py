@@ -21,7 +21,7 @@ from sqlalchemy.pool import StaticPool
 
 from autune_core import Base, Meeting, PrivacyViolationError, TeamMember, User, Utterance
 from autune_core.user_integrations import UserIntegrationConfig
-from autune_extraction import calendar_sync, tasks
+from autune_extraction import calendar_sync, service, tasks
 from autune_extraction.calendar_sync import (
     ITEM_KEY,
     TAG,
@@ -33,14 +33,17 @@ from autune_extraction.dev.page import PAGE
 from autune_extraction.models import (
     ExtActionItem,
     ExtActionItemSource,
+    ExtCalendarCleanup,
     ExtCalendarEvent,
     ExtCalendarPoll,
     ExtEditEvent,
+    ExtExternalRef,
 )
 from autune_integrations import (
     CalendarEvent,
     PermanentIntegrationError,
     ReconnectRequiredError,
+    TransientIntegrationError,
 )
 from autune_integrations.fakes import FakeCalendar
 
@@ -60,6 +63,10 @@ TABLES = [
     ExtEditEvent.__table__,
     ExtCalendarEvent.__table__,
     ExtCalendarPoll.__table__,
+    # An event Google would not delete is queued here for another try (#672).
+    ExtCalendarCleanup.__table__,
+    # ``has_copy_outside`` reads the refs before the events.
+    ExtExternalRef.__table__,
 ]
 
 
@@ -571,6 +578,64 @@ def test_the_calendar_service_name_is_the_grants() -> None:
 # --- review of #441 ------------------------------------------------------------------
 
 
+class _DeleteDown(FakeCalendar):
+    """Google is reachable for everything but a delete."""
+
+    def delete_event(self, calendar_id: str, event_id: str) -> None:
+        raise TransientIntegrationError("google timed out")
+
+
+def test_an_event_google_would_not_delete_is_queued_for_another_try(session: Session) -> None:
+    """mkkim68, review of #670: the row went whether or not the delete got
+    through, and after that nothing knew the event's id -- its title, the
+    item's description, stayed on the old assignee's calendar for good (#672)."""
+    calendars = Calendars(ME, YOU)
+    row = item(session)
+    first = sync(session, calendars, row)
+    assert first is not None
+    event_id = first.event_id
+    calendars.by_user[ME] = _DeleteDown(events=dict(calendars.events(ME)))
+    row.assignee_id = YOU
+
+    moved = sync(session, calendars, row)
+
+    assert moved is not None and moved.user_id == YOU, "the item still moves on"
+    queued = session.scalars(select(ExtCalendarCleanup)).all()
+    assert [(q.user_id, q.event_id) for q in queued] == [(ME, event_id)]
+
+
+def test_a_deleted_event_queues_nothing(session: Session) -> None:
+    calendars = Calendars(ME, YOU)
+    row = item(session)
+    sync(session, calendars, row)
+    row.assignee_id = YOU
+
+    sync(session, calendars, row)
+
+    assert session.scalars(select(ExtCalendarCleanup)).all() == []
+
+
+def test_moving_an_item_back_takes_its_event_off_and_it_counted_as_a_copy_until_then(
+    session: Session,
+) -> None:
+    """#672: an event is a copy outside like a page or an issue. Counted, a move
+    back to 확인 필요 queues the sync that removes it; not counted, the event
+    stayed, and a deleted speech later took the draft and left the title."""
+    calendars = Calendars(ME)
+    row = item(session)
+    sync(session, calendars, row)
+    row.status = "needs_confirmation"
+    session.flush()
+
+    assert service.has_copy_outside(session, row.id) is True
+    assert service.copies_follow(session, row) is True
+
+    assert sync(session, calendars, row) is None
+
+    assert calendars.events(ME) == {}
+    assert service.has_copy_outside(session, row.id) is False
+
+
 def test_a_previous_assignees_lost_grant_does_not_block_the_new_one(session: Session) -> None:
     """The probe from review: the old grant is refused, the item moves anyway."""
     calendars = Calendars(ME, YOU)
@@ -693,6 +758,28 @@ def test_deleting_an_item_takes_its_event_off_the_calendar(
     tasks.remove_calendar_event(row.id)
 
     assert calendar.deleted == [event_id]
+
+
+def test_an_event_that_could_not_be_removed_with_its_item_is_queued(
+    wired: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The item's row cascades away with the item; the queue is what still
+    knows the event (#672)."""
+
+    class DeleteDown(ClosableCalendar):
+        def delete_event(self, calendar_id: str, event_id: str) -> None:
+            raise TransientIntegrationError("google timed out")
+
+    calendar = DeleteDown()
+    _connected_me(monkeypatch, calendar)
+    row = item(wired)
+    tasks.sync_action_item_calendar(row.id)
+    (event_id,) = list(calendar.events)
+
+    tasks.remove_calendar_event(row.id)  # must not raise
+
+    queued = wired.scalars(select(ExtCalendarCleanup)).all()
+    assert [(q.user_id, q.event_id) for q in queued] == [(ME, event_id)]
 
 
 def test_an_unreachable_calendar_never_blocks_a_deletion(
