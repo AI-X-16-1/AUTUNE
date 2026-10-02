@@ -13,6 +13,7 @@ checkpoint would not run in CI.
 
 from __future__ import annotations
 
+import os
 from collections.abc import Callable, Iterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -1259,6 +1260,42 @@ def test_the_periodic_sweep_collects_what_no_upload_would_have(
     tasks.sweep_orphans()
 
     assert not leftover.exists()
+
+
+def test_a_restarted_attempt_does_not_get_six_more_hours(
+    pipeline: dict,
+    db_session: Session,
+    job: str,
+    meeting: str,
+    recording: Path,
+    settings: AudioSettings,
+) -> None:
+    """A restart makes a new job for an old file. The clock is the file's."""
+    restarted = _job(db_session, meeting, "running")
+    old_file = _upload(settings, restarted)
+    hours_ago = datetime.now(tz=UTC) - timedelta(hours=settings.orphan_after_hours + 1)
+    os.utime(old_file, (hours_ago.timestamp(), hours_ago.timestamp()))
+
+    tasks.process_recording(job)
+
+    assert not old_file.exists()
+    assert db_session.get(TranscriptionJob, restarted).status == "failed"
+
+
+def test_the_sweep_collects_a_cancelled_attempts_file(
+    pipeline: dict,
+    db_session: Session,
+    job: str,
+    meeting: str,
+    recording: Path,
+    settings: AudioSettings,
+) -> None:
+    cancelled = _job(db_session, meeting, "cancelled")
+    left = _upload(settings, cancelled)
+
+    tasks.process_recording(job)
+
+    assert not left.exists()
 
 
 def test_the_steps_are_reported_in_the_order_they_run(
