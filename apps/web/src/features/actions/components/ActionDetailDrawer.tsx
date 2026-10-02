@@ -22,6 +22,13 @@ import type { ActionItemRead, ActionStatus, EditHistoryEntry } from "../types";
  * A small window over the board, not a column beside it (decided with the
  * user, 2026-10-01): opening it no longer reflows the board, and a click
  * outside it -- or Esc -- closes it and leaves the board exactly where it was.
+ *
+ * The two things a person does about the window itself sit together at the
+ * top right, 삭제 then 닫기 (the user, 2026-10-02): they were at opposite ends,
+ * the delete under everything a long item scrolls through. Side by side they
+ * are told apart by colour -- red text for the one that destroys, as
+ * everywhere -- and 삭제 still only opens the confirmation, so a slip costs a
+ * second click, not the item.
  */
 export function ActionDetailDrawer({
   item,
@@ -140,9 +147,20 @@ export function ActionDetailDrawer({
               ) : null}
             </div>
           </div>
-          <Button tone="quiet" size="compact" onClick={onClose} aria-label="닫기">
-            닫기
-          </Button>
+          <div className="flex shrink-0 items-center gap-3">
+            {/* Destructive actions are red text, then a modal. Red never fills
+                a button, and there is no undo afterwards — the row is gone. */}
+            <Button
+              tone="destructiveText"
+              size="compact"
+              onClick={() => setConfirming(true)}
+            >
+              삭제
+            </Button>
+            <Button tone="quiet" size="compact" onClick={onClose} aria-label="닫기">
+              닫기
+            </Button>
+          </div>
         </header>
 
         <div
@@ -314,7 +332,8 @@ export function ActionDetailDrawer({
             role="alert"
             className="text-[var(--color-signal-critical)]"
             style={{
-              paddingInline: "var(--space-card)",
+              // The window ends here now that the footer is gone.
+              padding: "0 var(--space-card) var(--space-card)",
               fontSize: "var(--text-rowBody)",
               lineHeight: "var(--text-rowBody-leading)",
             }}
@@ -322,17 +341,6 @@ export function ActionDetailDrawer({
             {failure}
           </p>
         )}
-
-        <footer
-          className="flex justify-end border-t border-[var(--color-hairline)]"
-          style={{ padding: "var(--space-card)" }}
-        >
-          {/* Destructive actions are red text, then a modal. Red never fills a
-              button, and there is no undo afterwards — the row is gone. */}
-          <Button tone="destructiveText" onClick={() => setConfirming(true)}>
-            삭제
-          </Button>
-        </footer>
 
         {confirming ? (
           <ConfirmDelete
