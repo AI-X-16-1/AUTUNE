@@ -589,14 +589,12 @@ def test_a_match_does_not_run_across_a_line_break() -> None:
     assert {cat for _, _, cat in find_pii("예산\n150000\n200000")} == {"account"}
 
 
-@pytest.mark.parametrize("brk", ["\v", "\f", "\x85", "\u2028", "\u2029"])
-def test_no_vertical_separator_joins_a_phone_number(brk: str) -> None:
-    """#324 item 1: `[^\\S\\r\\n]` still let `\\v`, `\\f`, NEL, U+2028 and
-    U+2029 through as horizontal space, so a phone match bridged two lines.
-    Only `account`, on its own narrow separator, may still span one (pinned
-    above)."""
-    text = f"010{brk}1234{brk}5678"
-    assert "phone" not in {cat for _, _, cat in find_pii(text)}
+@pytest.mark.parametrize("brk", ["\u2028", "\v"])
+def test_a_nine_digit_number_split_by_a_vertical_separator_is_still_found(brk: str) -> None:
+    """Review of #687: narrowing `_HSPACE` to exclude these left `02` + 123 +
+    4567 matched by nothing -- `account` needs ten digits -- and the outbound
+    guard let it through. Detection stays wide."""
+    assert "phone" in find_unmasked(f"02{brk}123{brk}4567")
 
 
 def test_a_card_number_split_across_lines_is_still_one_card() -> None:

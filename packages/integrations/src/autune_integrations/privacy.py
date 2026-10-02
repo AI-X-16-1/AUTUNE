@@ -86,10 +86,12 @@ _R: Final = rf"(?![{_EDGE}])"
 # miss rather than widened here, because `(` between groups is also what
 # `(1) 2024-2025` looks like.
 #
-# Horizontal means every vertical separator is out, not only `\r` and `\n`:
-# Python's `\s` also matches `\v`, `\f`, U+0085, U+2028 and U+2029, and any
-# one of them let a phone or RRN match bridge two lines (#324).
-_HSPACE: Final = r"[^\S\r\n\v\f\x85\u2028\u2029]"
+# `\v`, `\f`, U+0085, U+2028 and U+2029 still count as space here, though they
+# break a line: narrowing them out (#324, first version of #687) left a
+# nine-digit `02` number split by one of them matched by nothing, and this is
+# the detector `check_outbound` relies on. Detection stays wide; how the masker
+# lays out what it hides is ``masking._layout``'s business.
+_HSPACE: Final = r"[^\S\r\n]"
 SEPARATOR_PUNCTUATION: Final = "-.–—)"
 """The punctuation `_SEP` accepts between digit groups. Exported so module A's
 masker keeps exactly these as layout instead of a hand-made copy (#324)."""
