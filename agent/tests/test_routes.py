@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 from autune_agent import router as routes
 from autune_agent.models import AgentApprover, AgentPendingAction, AgentResearchDocument, AgentRun
 from autune_agent.testing import FakeRouter
-from autune_core import AutuneError, Meeting, User, current_user, get_session
+from autune_core import AutuneError, Meeting, Team, User, current_user, get_session
 
 
 def _client(session: Session, user_id: str, *, chat_router: object | None) -> TestClient:
@@ -52,6 +52,41 @@ def test_a_member_chats_and_the_turn_is_recorded(
     assert run is not None
     assert run.requested_by == team["member"]
     assert run.trigger == {"kind": "chat"}
+
+
+def test_a_chat_from_a_meeting_page_is_scoped_to_that_meeting(
+    member: TestClient, session: Session, team: dict[str, str]
+) -> None:
+    # S34 sends the meeting the person is looking at; the run is bound to it,
+    # the way a triggered run is bound to its event's meeting.
+    reply = member.post(
+        "/api/agent/chat",
+        json={"team_id": team["team"], "meeting_id": team["meeting"], "message": "이 회의"},
+    )
+
+    assert reply.status_code == 200
+    run = session.get(AgentRun, reply.json()["run_id"])
+    assert run is not None and run.meeting_id == team["meeting"]
+
+
+def test_a_meeting_of_another_team_is_refused_as_missing(
+    member: TestClient, session: Session, team: dict[str, str]
+) -> None:
+    other_team = Team(name="다른 팀")
+    session.add(other_team)
+    session.flush()
+    elsewhere = Meeting(team_id=other_team.id, title="남의 회의")
+    session.add(elsewhere)
+    session.commit()
+
+    reply = member.post(
+        "/api/agent/chat",
+        json={"team_id": team["team"], "meeting_id": elsewhere.id, "message": "이 회의"},
+    )
+
+    assert reply.status_code == 404
+    assert elsewhere.id not in reply.text
+    assert session.query(AgentRun).count() == 0
 
 
 def test_a_non_member_is_refused(session: Session, team: dict[str, str]) -> None:
@@ -305,3 +340,55 @@ def test_one_row_whose_preview_raises_still_lists_beside_a_good_row(
 
     assert {p["body"] for p in got} == {"본문", "미리보기를 만들지 못했습니다"}
     assert {p["title"] for p in got} == {"리서치 문서 공유", "reassign"}
+
+
+def test_a_meeting_alone_names_the_team(
+    member: TestClient, session: Session, team: dict[str, str]
+) -> None:
+    # #651 review: a person in two teams asks on the second team's meeting page;
+    # the shell cannot know which team that is, the meeting does.
+    reply = member.post(
+        "/api/agent/chat", json={"meeting_id": team["meeting"], "message": "이 회의"}
+    )
+
+    assert reply.status_code == 200
+    run = session.get(AgentRun, reply.json()["run_id"])
+    assert run is not None
+    assert (run.team_id, run.meeting_id) == (team["team"], team["meeting"])
+
+
+def test_a_meeting_of_a_team_the_caller_is_not_in_reads_as_missing(
+    session: Session, team: dict[str, str]
+) -> None:
+    outsider = _client(session, team["outsider"], chat_router=FakeRouter())
+
+    reply = outsider.post("/api/agent/chat", json={"meeting_id": team["meeting"], "message": "x"})
+
+    assert reply.status_code == 404
+    assert team["meeting"] not in reply.text
+    assert session.query(AgentRun).count() == 0
+
+
+def test_neither_a_team_nor_a_meeting_is_422(member: TestClient) -> None:
+    assert member.post("/api/agent/chat", json={"message": "x"}).status_code == 422
+
+
+def test_queued_counts_what_the_run_actually_left_waiting(
+    session: Session, team: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # #651 review: proposed - executed also counted failed L1 and refused L2.
+    real = routes.run_and_record
+
+    def queueing(*args: Any, **kwargs: Any) -> Any:
+        row, state = real(*args, **kwargs)
+        waiting = _queue(session, team)
+        waiting.run_id = row.id
+        session.commit()
+        return row, state
+
+    monkeypatch.setattr(routes, "run_and_record", queueing)
+    client = _client(session, team["member"], chat_router=FakeRouter())
+
+    body = client.post("/api/agent/chat", json={"team_id": team["team"], "message": "x"}).json()
+
+    assert body["queued"] == 1
