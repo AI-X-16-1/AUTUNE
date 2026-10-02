@@ -727,7 +727,7 @@ APIs, Slack, Notion, Jira, Google Calendar, error tracking, analytics — carrie
 masked text only, and only what the feature needs."* Two conditions, both
 already decided. `packages/integrations/src/autune_integrations/privacy.py` is
 the single enforcement point, and its own docstring names "any LLM API"
-alongside Slack, Notion and Calendar. So the orchestrator's prompt goes out
+alongside Slack, Notion, Jira and Calendar. So the orchestrator's prompt goes out
 through `check_outbound` / `assert_masked` exactly as B's Notion sync and D's
 Slack notices do. There is no new mechanism to build and no new decision to
 make.
