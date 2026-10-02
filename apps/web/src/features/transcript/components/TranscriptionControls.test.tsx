@@ -134,4 +134,19 @@ describe("TranscriptionControls", () => {
     const button = screen.getByRole("button", { name: "처리 중단" }) as HTMLButtonElement;
     expect(button.disabled).toBe(false);
   });
+
+  it("clears an earlier refusal when the server's view changes", async () => {
+    cancelTranscription.mockRejectedValue(new ApiError(409, "nothing_to_cancel", "x"));
+    const { rerender } = render(<TranscriptionControls meeting={meeting({ cancellable: true })} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "처리 중단" }));
+    fireEvent.click(screen.getByRole("button", { name: "중단하기" }));
+    await screen.findByRole("alert");
+
+    rerender(
+      <TranscriptionControls meeting={meeting({ stalled: true, cancellable: true })} />,
+    );
+
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
 });
