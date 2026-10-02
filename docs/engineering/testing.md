@@ -52,13 +52,18 @@ places:
   cannot honour. The owner of the component tests it. Transcript text goes
   through `MaskedText`, whose test (`shared/ui/MaskedText.test.tsx`) covers
   every screen that uses it.
-- **What no screen may show.** A person's speaking ratio is never on a screen.
-  A component test cannot state that about components not yet written, so it
-  is a lint rule over the whole app (`no-restricted-syntax` in
+- **What no screen may show.** No screen shows one person's speaking ratio to
+  anyone else (`../architecture/privacy.md` section 3). A component test cannot
+  state that about components not yet written, so it is a lint rule over the
+  whole app (`no-restricted-syntax` in
   `apps/web/eslint.config.mjs`) and a contract test that no generated type
   carries a ratio-shaped property
   (`packages/contracts/tests/test_privacy_contract.py`). Both live in shared
-  files, so removing either needs everyone's approval.
+  files, so removing either needs everyone's approval. The speaker may see
+  their own share (`GET /me/speaking-ratio/{meeting_id}`); a screen that shows
+  only that disables the lint rule on that line with the reason
+  (`// eslint-disable-next-line no-restricted-syntax -- own share only,
+  privacy.md section 3`), so the exception is visible in review.
 
 Until the six-week review, a frontend PR is not required to add component
 tests for screens that already exist. New shared components, and changes to
