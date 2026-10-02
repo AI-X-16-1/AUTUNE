@@ -26,8 +26,13 @@
  *   (privacy 제9조). Unconfirmed speech is stored and is not analysed.
  * - what goes to a language model is listed for EVERY caller on main -- B's
  *   classifier and resolver, C's verifier and relation assistant, D's judge,
- *   the agent's router and Research -- not for the one that sends least
- *   (privacy 제6조). A new caller means rereading that row.
+ *   the agent's router, Research and the ask loop (#677: per item it sends the
+ *   title and the start of the body, masked utterances among them) -- not for
+ *   the one that sends least (privacy 제6조). A new caller means rereading
+ *   that row.
+ * - the application stores no IP address. What a server's own access log
+ *   keeps is the hosting environment's, and nobody has checked its retention
+ *   (제2조 says exactly that much).
  * - deleting one's own speech does not yet reach the decision statements kept
  *   for meeting linking or the report text (privacy 제4조 ④).
  * - a per-participant spoke/did-not-speak value per topic IS stored and shown
@@ -180,7 +185,11 @@ const PRIVACY: LegalDocument = {
           ],
           [
             "자동 생성 정보",
-            "접속 일시, 접속 IP 주소, 쿠키(세션 식별자)",
+            [
+              "쿠키(세션 식별자). 접속 일시 및 접속 IP 주소는 서비스의 데이터베이스에 저장하지 않으나, 서버 운영 환경(",
+              HOSTING,
+              ")의 접속 기록에 남을 수 있습니다",
+            ],
             "서비스 이용 과정에서 자동 생성",
           ],
         ),
@@ -324,7 +333,7 @@ const PRIVACY: LegalDocument = {
           [
             "Google LLC (Gemini API)",
             "언어 모델을 이용한 AI 비서 응답 생성",
-            "이용자의 질문, 조회 결과의 요약 및 항목 제목(담당자 성명 및 기한이 포함될 수 있음), 인용한 회의의 제목 및 일시",
+            "이용자의 질문, 조회 결과의 요약, 조회된 항목의 제목과 본문의 앞부분(가림 처리된 발화 문장, 결정 사항 및 액션 아이템을 포함하며, 담당자 성명 및 기한이 포함될 수 있음), 인용한 회의의 제목 및 일시",
           ],
         ),
         p(
