@@ -133,8 +133,11 @@ MIN_ACCOUNT_DIGITS: Final = 10
 # shape this needs. The one hyphenated thing a meeting says that is this long
 # and not an identifier is a list of years or a date range (`2024-2025-2026`,
 # `2026-10-02-2026-10-05`, #125's false positive), which ``find_pii`` refuses:
-# every group at most four digits and the first a 19xx/20xx year. A real
-# account starting that way still has a group longer than four.
+# a 19xx/20xx year followed only by one- or two-digit groups (month, day,
+# hour) or by further years. Not "every group at most four digits" -- that
+# was the first version, and a number Whisper split into fours that happened
+# to start with 19 or 20 (`2008-26-643-8793`, `2012-34-567-8901`) passed as a
+# date (review of #702).
 #
 # Declared before `account`, so on the same span this wins and every digit
 # goes. That costs a correctly hyphenated account its last four (`1002-123-
@@ -143,7 +146,7 @@ MIN_ACCOUNT_DIGITS: Final = 10
 # four is the leak; an account losing four is the annoyance.
 MIN_GROUPED_DIGITS: Final = 11
 _GROUP_SEP: Final = rf"{_HSPACE}*(?:[-–—]|음|어){_HSPACE}*"
-_YEAR_LED: Final = re.compile(r"(?:19|20)\d\d(?:\D+\d{1,4})+")
+_YEAR_LED: Final = re.compile(r"(?:19|20)\d\d(?:\D+(?:\d{1,2}|(?:19|20)\d\d))+")
 
 PII_PATTERNS: Final[tuple[tuple[str, re.Pattern[str]], ...]] = (
     # Longest shapes first: an RRN also looks like two number groups, and a card
@@ -287,7 +290,8 @@ def _digit_count(value: str) -> int:
 
 def _is_short_or_dated(value: str) -> bool:
     """A grouped run too short to be an identifier, or a list of years or a date
-    range -- every group at most four digits and the first a 19xx/20xx year.
+    range -- a 19xx/20xx year followed only by one- or two-digit groups or more
+    years.
     The run-together ``digits`` rule (twelve and up, no separator) passes both."""
     if not any(not c.isdigit() for c in value):
         return False

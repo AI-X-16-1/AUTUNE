@@ -615,6 +615,14 @@ def test_an_international_number_with_a_bracketed_area_code_is_a_known_miss() ->
         "주민번호는 700826-643-8793입니다",  # 6-7 hyphenated 6-3-4
         "계좌는 628음 84음 919160이에요",  # a filler kept between the groups
         "계좌는 450-80-9309782에요",  # a seven-digit last group `account` refuses
+        # Review of #702: split into short groups and starting with 19/20, these
+        # passed the first version's date exemption.
+        "계좌는 2012-34-567-8901이에요",
+        "계좌 2024-450-80-930-9782",
+        "주민번호는 2008-26-643-8793입니다",
+        "계좌는 1990-12-345-6789",
+        "계좌는 2013-45-6789-01이에요",
+        "주민번호는 2003-15-3123-456입니다",
     ],
 )
 def test_a_number_whisper_grouped_its_own_way_is_found(text: str) -> None:
@@ -631,6 +639,8 @@ def test_a_number_whisper_grouped_its_own_way_is_found(text: str) -> None:
         "버전 1.2.3.4",  # dots are not a grouping separator
         "010-1234",  # too short
         "2024-2025-2026-2027 로드맵",  # a list of years
+        "2026-10-02T14:30:00+09:00",  # a timestamp
+        "2026-10-05-15-30에",  # a date and a time
     ],
 )
 def test_dates_years_and_short_runs_are_not_grouped_digits(text: str) -> None:

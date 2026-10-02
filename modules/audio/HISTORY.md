@@ -918,6 +918,15 @@ was four of its digits standing. Two corpus rows (3-3-6, 6-2-6 accounts) now
 differ in the safe direction and say so (`known_inexact`); recall and
 precision stay 1.000. TTS, one voice: not field rates.
 
+Review moved one line. The date exemption first refused any run whose groups
+were all four digits or fewer and started with 19xx/20xx -- which is exactly
+the shape of a number Whisper split into short groups, so `2008-26-643-8793`
+passed as a date. It now refuses only a year followed by one- or two-digit
+groups or more years. What the rule newly over-masks, accepted: hyphenated
+lists past eleven digits (`100-200-300-400-500명`, an ISBN). The filler `어`
+is a separator on the strength of `음` alone; the next corpus run should
+say whether any match is joined only by `어`.
+
 **Retention and deletion, 2026-10-01 (#581–#584, then #363).** Four rows that
 were document-only became code: an hourly sweep deletes meetings past
 `expires_at` (`retention.py`); a person can export, delete their speech, or
