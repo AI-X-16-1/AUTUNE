@@ -473,3 +473,29 @@ def test_pending_is_empty_for_a_member_who_cannot_decide(
     got = member.post("/api/agent/chat", json={"team_id": team["team"], "message": "x"}).json()
 
     assert got["pending"] == []
+
+
+def test_pending_uses_the_meetings_team_when_only_a_meeting_is_sent(
+    session: Session, team: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The approver check must use the team the meeting named, not the absent team_id.
+    session.add(AgentApprover(team_id=team["team"], user_id=team["member"], scope="research"))
+    session.commit()
+    real = routes.run_and_record
+
+    def queueing(*args: Any, **kwargs: Any) -> Any:
+        row, state = real(*args, **kwargs)
+        waiting = _queue(session, team)
+        waiting.run_id = row.id
+        session.commit()
+        return row, state
+
+    monkeypatch.setattr(routes, "run_and_record", queueing)
+    client = _client(session, team["member"], chat_router=FakeRouter())
+
+    body = client.post(
+        "/api/agent/chat", json={"meeting_id": team["meeting"], "message": "x"}
+    ).json()
+
+    assert [p["tool"] for p in body["pending"]] == ["agent.share_research_document"]
+    assert body["queued"] == 1
