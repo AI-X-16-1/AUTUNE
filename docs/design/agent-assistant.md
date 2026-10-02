@@ -187,13 +187,13 @@ today. None blocks drawing the screen; each blocks the behaviour named.
    deletion (#449 review). Keeping 30 days of conversation reopens that
    decision. Until it is reopened, the conversation lives in the browser tab
    only.
-2. **Free-form questions.** `/api/agent/chat` routes a question to one
+2. **Free-form questions** — proposed in #677. `/api/agent/chat` routes a question to one
    subagent and answers "no subagent fits this request" otherwise. Most
    suggested questions in section 4 ("기한 초과만 보여줘", "이 회의에서 미정으로
    남은 것") need an answer composed from read tools, not a subagent. This is
    where agent-layer.md section 3.3 names `create_agent` as the first thing to
    try.
-3. **Who confirms an action (5.2).** Plan mode sends an L2 proposal to an
+3. **Who confirms an action (5.2)** — proposed in #677. Plan mode sends an L2 proposal to an
    approver holding its scope (agent-layer.md section 8). A `생성` button
    pressed by whoever asked is a different rule: either a new level the asker
    may confirm for themselves, or the block queues the proposal for the
@@ -207,6 +207,15 @@ today. None blocks drawing the screen; each blocks the behaviour named.
 6. **History in S18 (5.2).** "비서를 통해 {user}가 실행" names who confirmed.
    Module B's item history records which fields changed and when, and on
    purpose never who (`EditHistoryEntry`, #109, ADR 0003). Showing the name
-   reopens that decision with B; "비서를 통해 실행" without a name does not.
+   reopens that decision with B; "비서를 통해 실행" without a name does not, but
+   B's history has no value for it yet (`kind` is `created` or `edited`), so it
+   needs a B change, filed as an issue when the screen is built.
 7. **The launcher alert.** "Something to say first" has no source yet. The
    approvals queue (`GET /api/agent/pending`) is the nearest existing signal.
+8. **The asker's own speaking figures (5.4).** Answering them would carry a
+   speaking ratio through an agent run and a model call. The layer keeps that
+   data out entirely (`PERSONAL_ONLY_TOOLS`, agent-layer.md section 4), and
+   invariant 11 and privacy.md section 3 deliver it only to its subject — by
+   E's `/me/speaking-ratio` and the subject's own DM. Until that is decided,
+   the assistant answers neither someone else's figures nor the asker's own,
+   and points the asker to their own card on the dashboard.
