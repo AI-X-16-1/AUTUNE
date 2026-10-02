@@ -88,7 +88,7 @@ export function ChatProposal({ item }: { item: PendingAction }) {
         className="text-[var(--color-ink-strong)]"
         style={{ fontSize: 12.5, fontWeight: 600 }}
       >
-        {item.title}
+        <MaskedText>{item.title}</MaskedText>
       </p>
       <p
         className="mt-1 whitespace-pre-wrap"

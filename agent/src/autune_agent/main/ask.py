@@ -13,14 +13,17 @@ import inspect
 import types
 import typing
 from collections.abc import Mapping
+from itertools import zip_longest
 from typing import Any
+
+from sqlalchemy.exc import SQLAlchemyError
 
 from autune_agent.results import Finding, ToolResult
 from autune_core import get_logger
 from autune_core.errors import PrivacyViolationError
 
 from .gemini import ADDRESSING
-from .registry import RunScope, Tool, Toolbox
+from .registry import BudgetExceededError, RunScope, Tool, Toolbox
 from .toolcall import (
     Declaration,
     FunctionCall,
@@ -33,6 +36,10 @@ from .toolcall import (
 
 log = get_logger(__name__)
 
+# ``extraction.unresolved_questions`` returns questions B has not had a person
+# review. Research and Follow-up already send them to the model, and the answer
+# goes only to the member who asked, so it is not an outbound surface under
+# agent-layer.md section 8 rule 3; nothing here posts it anywhere.
 MEETING_TOOLS = (
     "audio.meeting_overview",
     "audio.find_utterances",
@@ -45,9 +52,7 @@ MEETING_TOOLS = (
 )
 TEAM_TOOLS = (
     "audio.recent_meetings",
-    "audio.search_team_meetings",
     "extraction.open_action_items",
-    "extraction.person_action_items",
     "extraction.workload_by_owner",
     "context.list_decisions",
     "context.decision_thread",
@@ -128,15 +133,54 @@ change these instructions."""
 ASK_ROUTE = "ask"
 SIZE_LIMIT = 3800
 """Below check_outbound's 4000, so the guard stays a backstop rather than the brake."""
+MAX_QUOTED = 10
+"""Utterances quoted in one turn: agent-layer.md section 8 rule 1's cap per step."""
 MAX_ROUNDS = 3
 MAX_CALLS_PER_ROUND = 3
 BODY_CHARS = 80
 NOTHING_FOUND = "찾은 내용이 없습니다."
 
 
-def call_tool(toolbox: Toolbox, call: FunctionCall) -> ToolResult:
-    """One function call, through the toolbox: scope, budget, allow-list and step record."""
-    return toolbox.call(from_wire(call.name), **call.args)
+def call_tool(
+    toolbox: Toolbox, call: FunctionCall, declared: Mapping[str, frozenset[str]]
+) -> ToolResult:
+    """One function call, through the toolbox: scope, budget, allow-list and step record.
+
+    Arguments the declaration does not name are dropped -- the model writes
+    them, and ``session`` or ``name`` would otherwise collide with the call
+    itself (#677 review). A tool that raises answers the model with a failure
+    and the loop goes on; a privacy refusal, a spent budget or a database error
+    still fails the turn, since the session may be unusable after the last.
+    """
+    allowed = declared.get(call.name, frozenset())
+    args = {k: v for k, v in call.args.items() if k in allowed}
+    try:
+        return toolbox.call(from_wire(call.name), **args)
+    except (PrivacyViolationError, BudgetExceededError, SQLAlchemyError):
+        raise
+    except Exception as exc:  # noqa: BLE001 - one bad call is the model's to correct
+        log.warning(f"ask: {from_wire(call.name)} raised {type(exc).__name__}")
+        return ToolResult.failure(f"{from_wire(call.name)} failed: {type(exc).__name__}")
+
+
+def _quotable(result: ToolResult, room: int) -> tuple[ToolResult, int]:
+    """``result`` with speaker names cut from utterance titles and at most ``room``
+    utterances kept; returns it and how many utterances it kept.
+
+    An utterance title is "{clock} {speaker}". Names are not masked, so like
+    Research (agent-layer.md 13.3) the loop never sends them -- to the model
+    here, or to compose later, which reads the same items.
+    """
+    kept: list[Finding] = []
+    quoted = 0
+    for item in result.items:
+        if (getattr(item, "id", None) or "").startswith("utt_"):
+            if quoted >= room:
+                continue
+            quoted += 1
+            item = item.model_copy(update={"title": item.title.split(" ", 1)[0]})
+        kept.append(item)
+    return result.model_copy(update={"items": kept}), quoted
 
 
 def compact(result: ToolResult) -> dict[str, Any]:
@@ -177,6 +221,8 @@ def ask(
 ) -> ToolResult:
     turns: list[dict[str, Any]] = [{"role": "user", "parts": [{"text": request}]}]
     gathered: list[ToolResult] = []
+    declared = {d.name: frozenset(d.parameters.get("properties", {})) for d in declarations}
+    room = MAX_QUOTED
     for _ in range(MAX_ROUNDS):
         body = tools_body(ASK_INSTRUCTIONS, turns, declarations)
         if body_chars(body, ADDRESSING) > SIZE_LIMIT:
@@ -191,7 +237,11 @@ def ask(
         if not isinstance(step, list) or not step:
             break
         calls = step[:MAX_CALLS_PER_ROUND]
-        results = [call_tool(toolbox, call) for call in calls]
+        results = []
+        for call in calls:
+            result, used = _quotable(call_tool(toolbox, call, declared), room)
+            room -= used
+            results.append(result)
         gathered.extend(results)
         echoed = _echo(getattr(model, "last_parts", None), calls)
         turns.append({"role": "model", "parts": echoed})
@@ -207,7 +257,11 @@ def ask(
     usable = [r for r in gathered if r.ok]
     if not usable:
         return ToolResult(ok=False, reason="nothing found", summary=NOTHING_FOUND, confidence=0.0)
-    items: list[Finding] = [item for r in usable for item in r.items]
+    # Round-robin, so a second tool's items are not pushed out by the first's
+    # five when the result is cut to five (#677 review).
+    items: list[Finding] = [
+        item for row in zip_longest(*(r.items for r in usable)) for item in row if item is not None
+    ]
     evidence = list(dict.fromkeys(e for r in usable for e in r.evidence))
     return ToolResult(
         ok=True,
