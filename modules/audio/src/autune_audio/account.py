@@ -16,10 +16,10 @@ Two deletions, matching S29's two buttons:
 - **"내 발화 데이터 모두 삭제"** -- the person stays, their speech goes:
   every utterance attributed to them and every vector of their voice. The
   meeting keeps its other speakers, and the participant row stays as a
-  record of attendance with nothing said under it. What B, C and D derived
-  from those utterances follows their own foreign keys (``ON DELETE CASCADE``
-  or ``SET NULL`` on ``utterances.id``); ADR 0007 decision 5 is what decides
-  whether a decision outlives its source, and it is still Proposed (#92).
+  record of attendance with nothing said under it. Every module that copied
+  those words into its own rows is told first, through
+  ``autune_core.deletion.run_speech_hooks`` (#587); what it removes and what
+  it keeps as the team's record is its own rule (privacy.md section 4).
 - **Account deletion** -- all of the above, every module's user hook, then
   the ``users`` row, whose foreign keys take sessions, memberships and
   integrations with it and clear ``participants.user_id``.
@@ -33,7 +33,7 @@ import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
 from autune_core import Meeting, Participant, Team, TeamMember, User, Utterance, get_logger
-from autune_core.deletion import run_user_hooks
+from autune_core.deletion import run_speech_hooks, run_user_hooks
 from autune_core.errors import NotFoundError
 
 from .models import AudConsentAttestation, AudSpeakerEmbedding
@@ -161,6 +161,35 @@ def export_my_data(session: Session, *, user: User) -> dict[str, Any]:
     }
 
 
+def _utterance_ids(session: Session, participant_ids: list[str]) -> list[str]:
+    if not participant_ids:
+        return []
+    return list(
+        session.scalars(
+            sa.select(Utterance.id).where(Utterance.participant_id.in_(participant_ids))
+        )
+    )
+
+
+def _tell_modules(session: Session, user_id: str, participant_ids: list[str]) -> None:
+    """Run the speech hooks for every utterance the delete below will take.
+
+    The delete goes by participant, the hooks by utterance id, and a meeting
+    reprocessed in between writes new utterances under the same participant
+    rows -- which the delete would take without any module having heard of
+    them (review of #628). So the ids are read again after the hooks, and any
+    new ones are announced too, until nothing new appears.
+    """
+    told: set[str] = set()
+    for _ in range(3):
+        fresh = [u for u in _utterance_ids(session, participant_ids) if u not in told]
+        if not fresh:
+            return
+        run_speech_hooks(user_id, fresh)
+        told.update(fresh)
+    log.warning("audio_speech_ids_kept_changing", user_id=user_id)
+
+
 def _delete_utterances(session: Session, participant_ids: list[str]) -> int:
     if not participant_ids:
         return 0
@@ -183,11 +212,19 @@ def delete_my_speech(session: Session, *, user: User) -> SpeechDeleted:
     The voice goes through ``delete_voice_profile``, so profile rows and the
     meeting observations still attributable to them both go -- the same
     "deleted means the vector that matters most, too" that route already
-    promises. It runs first because it, too, finds observations through the
-    participant rows.
+    promises.
+
+    **Other modules hear about it first** (#587). B copied some of these words
+    into its own rows -- an item's description, a decision's original
+    statement -- and a foreign key on ``utterances.id`` only nulls the link to
+    them. ``run_speech_hooks`` gets the ids while the utterances still exist,
+    before anything here is locked or deleted, and a hook that raises stops
+    the deletion the way a user hook stops an account deletion.
     """
+    participant_ids = list(session.scalars(_my_participant_ids(user.id)))
+    _tell_modules(session, user.id, participant_ids)
     voice_rows = delete_voice_profile(session, user=user)
-    utterances = _delete_utterances(session, list(session.scalars(_my_participant_ids(user.id))))
+    utterances = _delete_utterances(session, participant_ids)
     session.flush()
     log.info("audio_my_speech_deleted", user_id=user.id, utterances=utterances)
     return SpeechDeleted(utterances=utterances, voice_rows=voice_rows)
@@ -227,6 +264,9 @@ def delete_account(session: Session, *, user: User) -> AccountDeleted:
     """
     user_id = user.id
     participant_ids = list(session.scalars(_my_participant_ids(user_id)))
+    # Their words first, while every module can still find them by utterance
+    # id (#587); then everything keyed on the person.
+    _tell_modules(session, user_id, participant_ids)
     run_user_hooks(user_id)
     utterances = _delete_utterances(session, participant_ids)
     session.execute(sa.delete(User).where(User.id == user_id))
