@@ -912,6 +912,50 @@ def backfill_notion(team_id: str) -> None:
     )
 
 
+@shared_task(name="autune.extraction.periodic.retire_decision_pages")
+@periodic(timedelta(minutes=10))
+def retire_decision_pages() -> int:
+    """Take out of Notion the decision pages that should no longer be there,
+    on a timer (#683). Returns how many were retired.
+
+    A decision's page is retired once, right after the decision stops being
+    confirmed, is deleted, or is dropped by a rerun (#669), and a failure of
+    that one call is only logged. A decision that still exists is tried
+    again at its next change; one that is gone has no next change, and its
+    page stayed live with the statement until somebody ran the Notion
+    backfill. This is that second try with nobody doing anything: the same
+    list (``notion_backfill._decision_pages_to_retire``, every team) through
+    the same sync, so a decision whose id came back unconfirmed is covered
+    too.
+
+    A tick with nothing to retire reads the database and calls Notion not
+    at all. A page whose team has no Notion connection cannot be reached and
+    is counted, not failed; it is listed again next time, which costs one
+    read. Every other periodic task of B's follows the same shape: one row's
+    failure costs that row. Ids and counts only in the log.
+
+    Not covered, because nothing records them: a *changed* page whose update
+    failed (retried at the row's next change or by the backfill), and the
+    page or issue of an action item a person deleted when
+    ``trash_notion_page`` / ``close_jira_issue`` could not get through --
+    the item's row is gone by then. Both need a record of what is owed,
+    which is a table, not this task.
+    """
+    rows = notion_backfill._decision_pages_to_retire(None)
+    if not rows:
+        return 0
+    stats = notion_backfill.Stats()
+    notion_backfill.backfill_decisions(rows, stats)
+    log.info(
+        "extraction_decision_pages_retired",
+        listed=len(rows),
+        retired=stats.retired,
+        failed=stats.failed,
+        not_connected=stats.not_connected,
+    )
+    return stats.retired
+
+
 def trash_notion_page(action_item_id: str) -> None:
     """Before the board deletes an item: its Notion page to the workspace's
     trash, restorable there for 30 days (decided with the user, #467). Runs in
