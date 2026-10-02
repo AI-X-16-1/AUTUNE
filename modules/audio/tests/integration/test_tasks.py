@@ -1298,6 +1298,40 @@ def test_the_sweep_collects_a_cancelled_attempts_file(
     assert not left.exists()
 
 
+def test_the_sweep_handles_a_vanished_job_file(
+    pipeline: dict,
+    db_session: Session,
+    job: str,
+    meeting: str,
+    recording: Path,
+    settings: AudioSettings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A file can vanish between listing and stat: a worker deletes it in
+    ``adopt``'s finally while the job row still reads ``running``. The sweep
+    must not abort when this race occurs; a file that disappeared is nothing
+    to do. Simulated by removing the file before stale() calls stat()."""
+    orphan = _job(db_session, meeting, "running")
+    orphan_file = _upload(settings, orphan)
+
+    # Monkeypatch Path.stat to simulate the file being deleted after listing
+    # but before this stat() call. Only patch the one we care about.
+    original_stat = Path.stat
+
+    def patched_stat(self: Path, **kwargs: object) -> object:
+        if self == orphan_file:
+            orphan_file.unlink(missing_ok=True)
+        return original_stat(self, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", patched_stat)
+
+    # The sweep must complete without raising FileNotFoundError, and the task
+    # must finish successfully -- the vanished file is not an orphan to clean up.
+    tasks.process_recording(job)
+
+    assert db_session.get(Meeting, meeting).status == "complete"
+
+
 def test_the_steps_are_reported_in_the_order_they_run(
     pipeline: dict,
     job: str,
