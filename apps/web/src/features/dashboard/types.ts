@@ -69,3 +69,34 @@ export interface PredictionsRead {
   prediction: PredictionRead | null;
   reason: "insufficient_history" | "no_prediction" | null;
 }
+
+/**
+ * One meeting's report as `/api/intelligence/meeting-reports/{team_id}` returns
+ * it — `MeetingReportRead` in the module's schemas.py. `title` is the stored
+ * header line, `body` the rest (the subagent's text and E's footer).
+ */
+export interface MeetingReport {
+  meeting_id: string;
+  title: string;
+  body: string;
+  /** E's last line: "자동 생성된 리포트입니다 · M/D HH:MM 기준." or, after an edit, who edited it. */
+  footer: string;
+  status: "draft" | "posted";
+  posted_at: string | null;
+  pending_review: boolean;
+  edited_by_name: string | null;
+  edited_at: string | null;
+  /** Sent back with an edit, so a save over a newer version is refused. */
+  updated_at: string;
+  /** The post reached Slack, so a correction can go under it. */
+  in_slack: boolean;
+  /** The latest correction to a posted report, posted under it once approved. */
+  correction_body: string | null;
+  corrected_by_name: string | null;
+  corrected_at: string | null;
+  /**
+   * "pending": waits for approval; "sending": approved and being posted;
+   * "failed": approved but not posted within a few minutes -- a new one is accepted.
+   */
+  correction_status: "pending" | "sending" | "sent" | "failed" | null;
+}

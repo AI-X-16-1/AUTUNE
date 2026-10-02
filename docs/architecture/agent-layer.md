@@ -585,6 +585,7 @@ shipping them.
 | State | `next_check_at` due; deadline tomorrow and no signal in three days | main agent | `@periodic`, every 5 minutes |
 | State | work piling up on one person | Workload | `@periodic`, a few times a day (`Periodic`, #637) |
 | Event | a meeting's analysis finished; for Follow-up, whether it left open what the previous meeting also did | Research, Report, Follow-up | `autune.intelligence.completed` |
+| Event | a person edited a report draft, or wrote a correction to a posted report, on the dashboard card (#674) | Report | `autune.intelligence.meeting_report_changed` |
 | Request | "What did we decide about search last week?" | main agent, which may delegate | chat message |
 
 Research does not wake on `autune.transcript.ready`: that event reaches B at the same moment, so B's questions do not exist yet (`agent/docs/specs/2026-09-30-research-subagent-design.md` section 2).
@@ -599,6 +600,13 @@ the same shape.
 task id, so a redelivery of the same task is skipped, while E's re-publish of
 `autune.intelligence.completed` is a new task that runs again and supersedes
 the older pending proposal of the same subagent for the same meeting.
+
+**An edited report goes back through L2.** The dashboard card does not post.
+E stores the edit and publishes `autune.intelligence.meeting_report_changed`
+with the meeting id only; Report reads what waits to be posted through E's
+tools and queues one L2 proposal, which supersedes the one an earlier run left
+for that meeting. An approver with scope `report` posts it from `/approvals`
+as before (#674).
 
 A periodic task is a `@periodic` declaration beside the task itself
 (`async-pipeline.md`, #374); nothing edits `apps/worker`. The agent layer's

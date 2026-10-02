@@ -224,6 +224,68 @@ def test_evidence_is_utterance_ids_only(session: Session) -> None:
 # --- open_action_items ---------------------------------------------------------------
 
 
+@pytest.mark.parametrize("count", [10**9, 10**30, 366, 1e300])
+def test_a_day_count_too_large_is_pulled_into_range(session: Session, count: Any) -> None:
+    """The ask loop lets a model write these arguments (#677). ``timedelta``
+    cannot hold a billion days, and that exception was the tool's answer."""
+    item(session, "act_far", due=TODAY + timedelta(days=300))
+
+    result = tools.open_action_items(session, TEAM, within_days=count)
+    load = tools.workload_by_owner(session, TEAM, days=count)
+
+    assert result["ok"] is True and [i["id"] for i in result["items"]] == ["act_far"]
+    assert "365일 안에 기한 1건" in result["summary"]
+    assert load["ok"] is True
+
+
+def test_a_day_count_too_small_is_pulled_into_range(session: Session) -> None:
+    item(session, "act_today", due=TODAY)
+    item(session, "act_tomorrow", due=TODAY + timedelta(days=1))
+
+    result = tools.open_action_items(session, TEAM, within_days=-5)
+
+    assert [i["id"] for i in result["items"]] == ["act_today"], "0 days: due today or earlier"
+    assert tools.workload_by_owner(session, TEAM, days=0)["ok"] is True
+
+
+def test_a_whole_number_written_as_a_float_is_that_number(session: Session) -> None:
+    item(session, "act_soon", due=TODAY + timedelta(days=3))
+
+    assert tools.open_action_items(session, TEAM, within_days=7.0) == tools.open_action_items(  # type: ignore[arg-type]
+        session, TEAM, within_days=7
+    )
+
+
+@pytest.mark.parametrize("count", ["7", 7.5, None, True, float("nan"), float("inf"), [7]])
+def test_a_value_that_is_not_a_whole_number_of_days_is_refused(
+    session: Session, count: Any
+) -> None:
+    item(session, "act_soon", due=TODAY + timedelta(days=3))
+
+    late = tools.open_action_items(session, TEAM, within_days=count)
+    load = tools.workload_by_owner(session, TEAM, days=count)
+
+    for result in (late, load):
+        assert set(result) == KEYS
+        assert (result["ok"], result["items"]) == (False, [])
+    assert late["reason"] == "within_days is not a whole number of days"
+    assert load["reason"] == "days is not a whole number of days"
+
+
+def test_a_refused_day_count_is_not_repeated_in_the_result(session: Session) -> None:
+    """The value is whatever the model wrote and can carry text from the
+    person's question. ``reason`` goes back to the model and into logs, so it
+    names the argument and nothing else (pr, before the PR was opened)."""
+    typed = "010-1234-5678로 연락 주세요"
+
+    for result in (
+        tools.open_action_items(session, TEAM, within_days=typed),  # type: ignore[arg-type]
+        tools.workload_by_owner(session, TEAM, days=typed),  # type: ignore[arg-type]
+    ):
+        assert result["ok"] is False
+        assert "010" not in str(result) and "연락" not in str(result)
+
+
 def test_open_items_stay_inside_the_team(session: Session) -> None:
     item(session, "act_mine", due=TODAY + timedelta(days=1))
     item(session, "act_theirs", due=TODAY + timedelta(days=1), meeting=OTHER_MEETING)
@@ -708,6 +770,26 @@ def test_reviewing_a_decision(session: Session, acting: dict[str, list[str]]) ->
     assert acting["decisions"] == ["dec_1"]
     statuses = {r.decision_id: r.status for r in session.query(ExtDecisionReview)}
     assert statuses == {"dec_1": "confirmed", "dec_2": "rejected"}
+
+
+def test_rejecting_a_decision_that_has_a_page_queues_the_sync_that_retires_it(
+    session: Session, acting: dict[str, list[str]]
+) -> None:
+    """#669: a verdict other than *confirmed* reaches Notion too while the
+    decision still has the page its confirmation made."""
+    decision(session, "dec_paged", status="confirmed")
+    decision(session, "dec_plain", status="confirmed")
+    session.add(
+        ExtDecisionRef(
+            decision_id="dec_paged", system="notion", meeting_id=MEETING, external_id="page_1"
+        )
+    )
+    session.flush()
+
+    assert tools.review_decision(TEAM, "dec_paged", "rejected")["ok"] is True
+    assert tools.review_decision(TEAM, "dec_plain", "rejected")["ok"] is True
+
+    assert acting["decisions"] == ["dec_paged"]
 
 
 def test_workload_rows_carry_their_counts_as_fields(session: Session) -> None:

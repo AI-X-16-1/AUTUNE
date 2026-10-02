@@ -62,7 +62,12 @@ from .integrations_config import (
 from .jira_connection import JIRA, jira_access
 from .logging import get_logger
 from .oauth.atlassian import AtlassianOAuthClient, get_atlassian_client
-from .oauth.google import CALENDAR_SCOPE, GoogleOAuthClient, get_google_client
+from .oauth.google import (
+    CALENDAR_SCOPE,
+    GoogleOAuthClient,
+    get_google_client,
+    get_google_integration_client,
+)
 from .oauth.notion import NotionOAuthClient, get_notion_oauth_client
 from .oauth.slack import (
     SlackAccountTakenError,
@@ -140,6 +145,20 @@ def _web_url(path: str) -> str:
     return candidate
 
 
+def integration_google(
+    sign_in: Annotated[GoogleOAuthClient, Depends(get_google_client)],
+) -> GoogleOAuthClient:
+    """The Google client a person's own grant goes through -- calendar today.
+    The deployment's integration client when it has one, the sign-in client
+    otherwise. Whichever starts a connect has to finish it: the code Google
+    returns can only be exchanged by the client it was issued to, and the ID
+    token's ``aud`` names that client."""
+    return get_google_integration_client() or sign_in
+
+
+IntegrationGoogle = Annotated[GoogleOAuthClient, Depends(integration_google)]
+
+
 @router.get("/google/start")
 def google_start(
     request: Request,
@@ -170,6 +189,7 @@ def google_callback(
     state: Annotated[str, Query()],
     store: Annotated[StateStore, Depends(get_state_store)],
     google: Annotated[GoogleOAuthClient, Depends(get_google_client)],
+    integration: IntegrationGoogle,
     session: Annotated[Session, Depends(get_session)],
     code: Annotated[str | None, Query()] = None,
     error: Annotated[str | None, Query()] = None,
@@ -178,7 +198,14 @@ def google_callback(
     response: Response
     try:
         response = _complete_sign_in(
-            state, autune_oauth_state, store, google, session, code=code, error=error
+            state,
+            autune_oauth_state,
+            store,
+            google,
+            session,
+            code=code,
+            error=error,
+            integration=integration,
         )
     except AutuneError as exc:
         # Answered here rather than by the app's handler so the state cookie is
@@ -202,6 +229,7 @@ def _complete_sign_in(
     *,
     code: str | None,
     error: str | None,
+    integration: GoogleOAuthClient | None = None,
 ) -> RedirectResponse:
     # Checked before Redis, so a request from another browser never spends it.
     if state_cookie is None or not secrets.compare_digest(state_cookie.encode(), state.encode()):
@@ -212,7 +240,10 @@ def _complete_sign_in(
         raise PermissionDeniedError("sign-in state is unknown or has expired")
 
     if transaction.purpose == "calendar":
-        return _finish_calendar_connect(transaction, google, session, code=code, error=error)
+        # Finished by the client that started it (``integration_google``).
+        return _finish_calendar_connect(
+            transaction, integration or google, session, code=code, error=error
+        )
     if transaction.purpose != "sign_in":
         # Other flows (Jira, Notion, Slack) share this store; their state is
         # never a Google sign-in, even with the cookie and query both set.
@@ -273,7 +304,7 @@ def google_calendar_start(
     request: Request,
     user: CurrentUser,
     store: Annotated[StateStore, Depends(get_state_store)],
-    google: Annotated[GoogleOAuthClient, Depends(get_google_client)],
+    google: IntegrationGoogle,
     redirect_to: Annotated[str, Query()] = "/",
 ) -> RedirectResponse:
     """Send a signed-in person to Google to let Autune put their own tasks'
@@ -405,7 +436,7 @@ def google_calendar_status(
 def google_calendar_disconnect(
     user: CurrentUser,
     session: Annotated[Session, Depends(get_session)],
-    google: Annotated[GoogleOAuthClient, Depends(get_google_client)],
+    google: IntegrationGoogle,
 ) -> dict[str, bool]:
     """Revoke the grant at Google, then forget it here (#444 review). Our copy
     goes even when Google cannot be reached; ``revoked`` says whether Google

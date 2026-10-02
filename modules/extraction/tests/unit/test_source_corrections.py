@@ -37,6 +37,7 @@ from autune_extraction.models import (
     ExtActionItem,
     ExtActionItemSource,
     ExtDecision,
+    ExtDecisionRef,
     ExtDecisionReview,
     ExtDecisionSource,
     ExtEditEvent,
@@ -412,3 +413,104 @@ def test_through_the_task_on_a_meeting_a_person_edited(
     assert kept.id == drafted.id, "the edit kept the item"
     assert "010-1234-5678" not in kept.description
     assert ("sync_action_item", kept.id) in queued
+
+
+def test_a_decision_put_back_with_its_page_still_there_resyncs(session: Session) -> None:
+    """#669: not confirmed any more, but its page from the earlier confirmation
+    holds the uncorrected line; the sync it is queued for retires that page."""
+    for dec_id, page in (("dec_back", "page_1"), ("dec_never", None)):
+        session.add(
+            ExtDecision(
+                id=dec_id,
+                meeting_id=MEETING,
+                statement="결정",
+                confidence=0.9,
+                origin="model",
+                source_digest=service.source_digest([OLD]),
+                sources=[ExtDecisionSource(utterance_id="utt_1", position=0)],
+            )
+        )
+        session.flush()
+        session.add(ExtDecisionReview(decision_id=dec_id, meeting_id=MEETING, status="pending"))
+        if page:
+            session.add(
+                ExtDecisionRef(
+                    decision_id=dec_id, system="notion", meeting_id=MEETING, external_id=page
+                )
+            )
+    session.flush()
+
+    done = correct(session)
+
+    assert done.changed_decisions == ("dec_back",)
+
+
+def test_through_the_task_a_rerun_that_drops_a_decision_queues_its_page_to_retire(
+    session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#669: the run that drops a decision is the one event that knows its page
+    is now nobody's, so it queues the sync that retires it."""
+
+    @contextmanager
+    def scope() -> Iterator[Session]:
+        yield session
+        session.commit()
+
+    queued: list[tuple[str, str]] = []
+    monkeypatch.setattr(tasks, "session_scope", scope)
+    monkeypatch.setattr(tasks, "get_classifier", FakeClassifier)
+    monkeypatch.setattr(tasks, "get_nli", FakeNli)
+    for task in (
+        "sync_action_item",
+        "sync_action_item_jira",
+        "sync_action_item_calendar",
+        "sync_decision",
+    ):
+        monkeypatch.setattr(
+            tasks,
+            task,
+            SimpleNamespace(delay=lambda ident, task=task: queued.append((task, ident))),
+        )
+
+    def publish(text: str) -> None:
+        tasks.on_transcript_ready(
+            TranscriptReady(
+                meeting_id=MEETING,
+                utterances=[
+                    Utterance(
+                        id="utt_1",
+                        speaker="김민경",
+                        speaker_id="user_001",
+                        start=0.0,
+                        end=3.0,
+                        text=text,
+                        confidence=0.9,
+                    )
+                ],
+                metadata=TranscriptMetadata(
+                    duration=3.0,
+                    source=next(iter(TranscriptSource)),
+                    privacy=PrivacyFlags(original_audio_deleted=True, pii_masked=True),
+                ),
+            ).model_dump(mode="json")
+        )
+
+    publish("출시는 금요일에 하기로 했습니다")
+    (made,) = session.scalars(select(ExtDecision)).all()
+    made_id = made.id
+    session.add(
+        ExtDecisionRef(
+            decision_id=made_id, system="notion", meeting_id=MEETING, external_id="page_1"
+        )
+    )
+    session.commit()
+
+    session.get(StoredUtterance, "utt_1").text = "네 알겠어요"  # no decision in it any more
+    session.commit()
+    publish("네 알겠어요")
+
+    session.expire_all()
+    assert session.scalars(select(ExtDecision)).all() == []
+    ref = session.get(ExtDecisionRef, (made_id, "notion"))
+    assert ref is not None and ref.external_id == "page_1", "kept for the retire to find"
+    assert ("sync_decision", made_id) in queued

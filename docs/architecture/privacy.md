@@ -327,7 +327,19 @@ the feature needs.
   - **Notion:** a page in a team's workspace belongs to that team once written.
     Deleting the item in Autune moves its page to Notion's trash, where the
     team can restore it for 30 days. Retention and meeting deletion do not
-    reach it.
+    reach it. A decision that stops being confirmed does not keep its page:
+    the page is retitled first and trashed second, so what the trash holds
+    for those 30 days is not the statement (#669). One exception: when the
+    team's decision property map names no title -- one removed after the
+    page was made, say -- the page cannot be retitled, and it goes to the
+    trash with the statement for those 30 days; a warning is logged, by id
+    (#679). A second: a page a person had already archived when its retire
+    came. Notion refuses to edit a page in its trash, so it stays there with
+    the statement, and Autune forgets it (#691) -- if someone restores it in
+    Notion it stays, with the statement, and Autune does not retire it.
+    Notion's own page history is out of Autune's reach: a workspace on a plan
+    that keeps it can still show the earlier title to someone who restores
+    the page.
   - **Jira (#82):** an issue lives in the team's site. Deleting the item in
     Autune closes its issue with a note rather than deleting it, so the
     team's own comments and work on it stay. The issue carries the item's

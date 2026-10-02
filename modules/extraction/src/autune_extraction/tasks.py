@@ -64,6 +64,7 @@ from .models import (
     ExtCalendarPoll,
     ExtConfirmation,
     ExtDecision,
+    ExtDecisionRef,
     ExtExternalRef,
 )
 from .pipeline.base import give_roster
@@ -210,6 +211,9 @@ def _extract(meeting_id: str, utterances: Sequence[TranscriptUtterance]) -> None
         stale_dms = service.dms_to_correct(
             session, meeting_id=meeting_id, spoken={u.id: u.text for u in utterances}
         )
+        # Pages of decisions this run dropped: their refs are kept so the
+        # pages can be retired, not left live in Notion (#669).
+        orphaned_pages = service.decision_pages_without_a_decision(session, meeting_id)
         # With the rows it describes: a rollback takes both (#518).
         service.record_extraction(session, meeting_id=meeting_id, consented=consented)
         result = service.result_for_meeting(session, meeting_id)
@@ -220,6 +224,11 @@ def _extract(meeting_id: str, utterances: Sequence[TranscriptUtterance]) -> None
             update_confirmation_dm.delay(utterance_id)
         except Exception as exc:  # noqa: BLE001 -- queuing only; the next run finds it again
             log.warning("extraction_dm_correction_not_queued", error=type(exc).__name__)
+    for decision_id in orphaned_pages:
+        try:
+            sync_decision.delay(decision_id)
+        except Exception as exc:  # noqa: BLE001 -- queuing only; the Notion backfill sweeps it
+            log.warning("extraction_decision_page_retire_not_queued", error=type(exc).__name__)
     # Counts and ids only. The utterances are meeting content.
     log.info(
         "extraction_classified",
@@ -602,14 +611,13 @@ def _calendars(session: Session) -> Iterator[calendar_sync.CalendarFor]:
     opened closed on the way out.
 
     Each person's own grant (``user_integrations``, #444) is refreshed with the
-    deployment's Google client (core's ``google_client_id``/``google_client_secret``,
-    #425); a deployment without them has nobody connected as far as this is
-    concerned. A refused refresh token raises ``ReconnectRequiredError`` -- an
+    Google client it was issued to -- core's ``google_integration_credentials``:
+    the deployment's integration client when it has one, the sign-in client
+    otherwise (#425). A deployment with neither has nobody connected as far as
+    this is concerned. A refused refresh token raises ``ReconnectRequiredError`` -- an
     ``IntegrationError`` -- for the caller to handle.
     """
-    core = get_core_settings()
-    client_id = core.google_client_id
-    client_secret = core.google_client_secret
+    client_id, client_secret = get_core_settings().google_integration_credentials
     opened: dict[str, tuple[calendar_sync.CalendarEvents, str]] = {}
     clients: list[CalendarClient] = []
 
@@ -883,7 +891,14 @@ def backfill_notion(team_id: str) -> None:
     items = notion_backfill.Stats()
     notion_backfill.backfill_action_items(notion_backfill._confirmed_action_items(team_id), items)
     decisions = notion_backfill.Stats()
-    notion_backfill.backfill_decisions(notion_backfill._confirmed_decisions(team_id), decisions)
+    # The confirmed ones get their pages; then the other way round, pages of
+    # decisions no longer confirmed, or deleted, whose one retire after the
+    # change did not get through (#669).
+    notion_backfill.backfill_decisions(
+        notion_backfill._confirmed_decisions(team_id)
+        + notion_backfill._decision_pages_to_retire(team_id),
+        decisions,
+    )
     log.info(
         "extraction_notion_backfilled",
         team_id=team_id,
@@ -891,8 +906,59 @@ def backfill_notion(team_id: str) -> None:
         items_replaced=items.replaced,
         items_failed=items.failed,
         decisions_sent=decisions.sent,
+        decisions_retired=decisions.retired,
         decisions_failed=decisions.failed,
     )
+
+
+@shared_task(name="autune.extraction.periodic.retire_decision_pages")
+@periodic(timedelta(minutes=10))
+def retire_decision_pages() -> int:
+    """Take out of Notion the decision pages that should no longer be there,
+    on a timer (#683). Returns how many were retired.
+
+    A decision's page is retired once, right after the decision stops being
+    confirmed, is deleted, or is dropped by a rerun (#669), and a failure of
+    that one call is only logged. A decision that still exists is tried
+    again at its next change; one that is gone has no next change, and its
+    page stayed live with the statement until somebody ran the Notion
+    backfill. This is that second try with nobody doing anything: the same
+    list (``notion_backfill._decision_pages_to_retire``, every team) through
+    the same sync, so a decision whose id came back unconfirmed is covered
+    too.
+
+    A tick with nothing to retire reads the database and calls Notion not
+    at all. A page whose team has no Notion connection cannot be reached and
+    is counted, not failed; it is listed again next time, which costs one
+    read. One row's failure costs that row when it is an ``IntegrationError``
+    or a ``PrivacyViolationError``, the two ``backfill_decisions`` catches; any
+    other exception ends this tick, and the next one starts the list over.
+    Ids and counts only in the log, and ``retired`` counts only what this run
+    retitled and trashed -- a page found archived or deleted is counted as
+    that.
+
+    Not covered, because nothing records them: a *changed* page whose update
+    failed (retried at the row's next change or by the backfill), and the
+    page or issue of an action item a person deleted when
+    ``trash_notion_page`` / ``close_jira_issue`` could not get through --
+    the item's row is gone by then. Both need a record of what is owed,
+    which is a table, not this task.
+    """
+    rows = notion_backfill._decision_pages_to_retire(None)
+    if not rows:
+        return 0
+    stats = notion_backfill.Stats()
+    notion_backfill.backfill_decisions(rows, stats)
+    log.info(
+        "extraction_decision_pages_retired",
+        listed=len(rows),
+        retired=stats.retired,
+        archived=stats.archived,
+        gone=stats.gone,
+        failed=stats.failed,
+        not_connected=stats.not_connected,
+    )
+    return stats.retired
 
 
 def trash_notion_page(action_item_id: str) -> None:
@@ -1024,8 +1090,7 @@ def forget_user_calendar_events(user_id: str) -> None:
 
 def _google_client_configured() -> bool:
     """Whether this deployment can refresh anyone's Google grant at all."""
-    core = get_core_settings()
-    return bool(core.google_client_id and core.google_client_secret)
+    return all(get_core_settings().google_integration_credentials)
 
 
 def _remove_events(
@@ -1145,6 +1210,8 @@ def drain_calendar_cleanup() -> int:
 @shared_task(name="autune.extraction.sync_decision", acks_late=True)
 def sync_decision(decision_id: str) -> None:
     """Step 7 for one decision a person just confirmed: its Notion page, once.
+    And for one that stopped being confirmed, or was deleted, while it had a
+    page: that page is retired (``service.sync_decision_to_notion``, #669).
 
     ``sync_action_item``'s rules, for the team's decision database
     (``decision_db_id`` in its Notion config). A team that connected Notion for
@@ -1153,8 +1220,15 @@ def sync_decision(decision_id: str) -> None:
     """
     with session_scope() as session:
         decision = session.get(ExtDecision, decision_id)
-        meeting = session.get(Meeting, decision.meeting_id) if decision is not None else None
-        if decision is None or meeting is None:
+        # A deleted decision is found through its ref: the row outlives it, and
+        # names the meeting whose team's Notion holds the page to retire.
+        if decision is not None:
+            meeting_id: str | None = decision.meeting_id
+        else:
+            ref = session.get(ExtDecisionRef, (decision_id, "notion"))
+            meeting_id = ref.meeting_id if ref is not None else None
+        meeting = session.get(Meeting, meeting_id) if meeting_id else None
+        if meeting is None:
             log.info("extraction_notion_decision_gone", decision_id=decision_id)
             return
         config = load_integration(session, meeting.team_id, "notion")

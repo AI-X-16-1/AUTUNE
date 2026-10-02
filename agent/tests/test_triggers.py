@@ -20,6 +20,7 @@ from autune_contracts import (
     CONTRACT_VERSION,
     EXTRACTION_COMPLETED,
     INTELLIGENCE_COMPLETED,
+    INTELLIGENCE_MEETING_REPORT_CHANGED,
     TRANSCRIPT_READY,
 )
 from autune_core import consumer_task_suffix
@@ -252,3 +253,72 @@ def test_a_failed_run_is_retried_by_its_redelivery(session: Session, team: dict[
         )
 
     assert len(seen) == 2
+
+
+def test_an_edited_report_wakes_report_and_replaces_its_pending_proposal(
+    session: Session, team: dict[str, str]
+) -> None:
+    """#674: the card stores an edit and E publishes meeting_report_changed; the
+    proposal left by intelligence.completed must not stay pending beside the new one."""
+    seen: list[str] = []
+    publish = ProposedAction(
+        kind="meeting_report_post",
+        title="t",
+        tool="fake.publish",
+        arguments={"meeting_id": team["meeting"]},
+        level="L2",
+        rationale="r",
+    )
+    subagents = {
+        "report": _woken(
+            "report",
+            (INTELLIGENCE_COMPLETED, INTELLIGENCE_MEETING_REPORT_CHANGED),
+            seen,
+            proposes=publish,
+        ),
+        "research": _woken("research", (INTELLIGENCE_COMPLETED,), []),
+    }
+    actions = {
+        "fake.publish": Action("fake.publish", lambda **_: {"ok": True, "summary": "."}, "L2")
+    }
+
+    for event, task_id in (
+        (INTELLIGENCE_COMPLETED, "t1"),
+        (INTELLIGENCE_MEETING_REPORT_CHANGED, "t2"),
+        (INTELLIGENCE_MEETING_REPORT_CHANGED, "t3"),  # edited a second time
+    ):
+        rows = on_event(
+            event,
+            team["meeting"],
+            session=session,
+            subagents=subagents,
+            tools={},
+            actions=actions,
+            task_id=task_id,
+        )
+
+    assert [r.route for r in rows] == ["report"]  # research did not ask for the edit
+    assert seen == [
+        INTELLIGENCE_COMPLETED,
+        INTELLIGENCE_MEETING_REPORT_CHANGED,
+        INTELLIGENCE_MEETING_REPORT_CHANGED,
+    ]
+    by_task = {r.id: r.trigger["task_id"] for r in session.scalars(select(AgentRun))}
+    queued = {by_task[p.run_id]: p.status for p in session.scalars(select(AgentPendingAction))}
+    assert queued == {"t1": "superseded", "t2": "superseded", "t3": "pending"}
+
+
+def test_the_edit_task_reads_the_meeting_id_and_wakes_on_its_event(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    woken: list[tuple[str, dict[str, Any], str | None]] = []
+    monkeypatch.setattr(
+        tasks,
+        "_wake",
+        lambda event, payload, *, task_id=None: woken.append((event, payload, task_id)),
+    )
+    payload = {"contract_version": CONTRACT_VERSION, "meeting_id": "mtg_abc"}
+
+    tasks.on_intelligence_meeting_report_changed.apply(args=(payload,), task_id="t1")
+
+    assert woken == [(INTELLIGENCE_MEETING_REPORT_CHANGED, payload, "t1")]

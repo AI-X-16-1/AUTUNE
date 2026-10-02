@@ -15,20 +15,29 @@ from importlib import import_module
 from typing import Any, Literal, Protocol, TypedDict
 
 from autune_agent.results import SubagentResult
-from autune_contracts import INTELLIGENCE_COMPLETED, TRANSCRIPT_READY
+from autune_contracts import (
+    INTELLIGENCE_COMPLETED,
+    INTELLIGENCE_MEETING_REPORT_CHANGED,
+    TRANSCRIPT_READY,
+)
 
 from .registry import Toolbox, is_personal_only
 
 SUBAGENT_NAMES = ("research", "briefing", "followup", "workload", "report")
 
-TRIGGER_EVENTS = (TRANSCRIPT_READY, INTELLIGENCE_COMPLETED)
+TRIGGER_EVENTS = (TRANSCRIPT_READY, INTELLIGENCE_COMPLETED, INTELLIGENCE_MEETING_REPORT_CHANGED)
 """The pipeline events the main agent listens to on everyone's behalf -- section
-6's two event rows. ``autune_agent.tasks`` has one task per entry, and a test
+6's event rows. ``autune_agent.tasks`` has one task per entry, and a test
 holds the two lists together; a subagent may name only these.
 
 A subagent that reads B's, C's or D's results wakes on
 ``INTELLIGENCE_COMPLETED``. ``TRANSCRIPT_READY`` reaches those modules at the
-same moment it reaches this layer, so their results do not exist yet."""
+same moment it reaches this layer, so their results do not exist yet.
+
+``INTELLIGENCE_MEETING_REPORT_CHANGED`` is E's: a person edited a report on the
+dashboard card, and the edit waits for L2 approval instead of being posted
+(#674). Report wakes on it; a run supersedes the proposal an earlier run left
+for the same meeting, so only the edited report waits on ``/approvals``."""
 
 PERIODIC_TICK = timedelta(hours=1)
 """How often ``autune.agent.periodic.wake_subagents`` looks for a due

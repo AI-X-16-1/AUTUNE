@@ -29,7 +29,9 @@ missing. Never block a user-visible result on a failed module.
 
 ## Publishes
 
-`IntelligenceSnapshot` on `autune.intelligence.completed`.
+`IntelligenceSnapshot` on `autune.intelligence.completed`. A plain `Payload`
+(the meeting id) on `autune.intelligence.meeting_report_changed` when a person
+edits a report's draft, for the Report subagent to propose its post (#674).
 
 ## Owns
 

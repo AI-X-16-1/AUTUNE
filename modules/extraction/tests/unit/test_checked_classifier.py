@@ -161,7 +161,12 @@ def test_llm_checked_without_a_checkpoint_is_refused_by_name(configured) -> None
 
 
 def test_llm_checked_without_a_key_is_refused_by_name(configured) -> None:
-    configured(classifier_impl="llm_checked", classifier_checkpoint="runs/ckpt")
+    configured(
+        classifier_impl="llm_checked",
+        classifier_checkpoint="runs/ckpt",
+        llm_api_key="",
+        AUTUNE_LLM_API_KEY="",
+    )
     with pytest.raises(ValueError, match="CLASSIFIER_IMPL=llm_checked needs .*LLM_API_KEY"):
         registry.get_classifier()
 

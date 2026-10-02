@@ -18,6 +18,15 @@ Notion is made again and counted as ``replaced``; one someone archived is left
 archived and counted as ``archived`` -- a backfill does not undo a person's
 tidying (#404).
 
+It also retires decision pages that should no longer be there (#669): a page
+still recorded for a decision that is not confirmed any more, or is gone. The
+live sync retires such a page once, when the verdict changes or the decision
+is deleted, and only logs a failure; a deleted decision has no later event to
+try again on. The second try is here, when a team connects Notion
+(``tasks.backfill_notion``) or someone runs this command -- and, without
+anyone doing anything, in ``tasks.retire_decision_pages``, which runs the
+same list on a timer (#683).
+
     uv run python -m autune_extraction.notion_backfill
     uv run python -m autune_extraction.notion_backfill --team team_abc123
     uv run python -m autune_extraction.notion_backfill --dry-run
@@ -52,7 +61,14 @@ class Stats:
     replaced: int = 0
     """A page deleted in Notion, made again."""
     archived: int = 0
-    """A page archived in Notion, left as it is."""
+    """A page archived in Notion, left as it is -- under a confirmed row, and
+    under a decision no longer confirmed, where the row then forgets it
+    (#691)."""
+    retired: int = 0
+    """A page of a decision no longer confirmed, retitled and trashed by this
+    run (#669). Not one found archived or deleted: those are counted as such."""
+    gone: int = 0
+    """A page already deleted in Notion when its retire came."""
     not_connected: int = 0
     failed: int = 0
 
@@ -94,6 +110,34 @@ def _confirmed_decisions(team_id: str | None) -> list[tuple[str, str]]:
         )
         if team_id is not None:
             stmt = stmt.join(Meeting, Meeting.id == ExtDecisionReview.meeting_id).where(
+                Meeting.team_id == team_id
+            )
+        return list(session.execute(stmt).tuples().all())
+
+
+def _decision_pages_to_retire(team_id: str | None) -> list[tuple[str, str]]:
+    """``(decision_id, meeting_id)`` for every decision page B still records
+    whose decision is not confirmed -- put back, rejected, or deleted (#669).
+
+    Read from the ref rows, since a deleted decision has no other row left.
+    ``sync_decision_to_notion`` retires each; a row whose page is already
+    retired has no page id and is not listed."""
+    with session_scope() as session:
+        confirmed = (
+            select(ExtDecisionReview.decision_id)
+            .where(
+                ExtDecisionReview.decision_id == ExtDecisionRef.decision_id,
+                ExtDecisionReview.status == "confirmed",
+            )
+            .exists()
+        )
+        stmt = select(ExtDecisionRef.decision_id, ExtDecisionRef.meeting_id).where(
+            ExtDecisionRef.system == "notion",
+            ExtDecisionRef.external_id.is_not(None),
+            ~confirmed,
+        )
+        if team_id is not None:
+            stmt = stmt.join(Meeting, Meeting.id == ExtDecisionRef.meeting_id).where(
                 Meeting.team_id == team_id
             )
         return list(session.execute(stmt).tuples().all())
@@ -196,6 +240,8 @@ def _sync_one_decision(
         )
         if ref is not None:
             if already_had_a_page:
+                # The sync says what it did, a retire included: a page only
+                # found archived or deleted is not counted as retired.
                 stats.count(outcomes)
             else:
                 stats.sent += 1
@@ -226,14 +272,17 @@ def main(argv: list[str] | None = None) -> int:
 
     items = _confirmed_action_items(args.team)
     decisions = _confirmed_decisions(args.team)
+    stale = _decision_pages_to_retire(args.team)
     print(f"action items already confirmed: {len(items)}")
     print(f"decisions already confirmed:    {len(decisions)}")
+    print(f"decision pages to retire:       {len(stale)}")
     if args.dry_run:
         return 0
 
     item_stats, decision_stats = Stats(), Stats()
     backfill_action_items(items, item_stats)
     backfill_decisions(decisions, decision_stats)
+    backfill_decisions(stale, decision_stats)
 
     for label, stats in (("action items", item_stats), ("decisions", decision_stats)):
         print(
@@ -241,6 +290,11 @@ def main(argv: list[str] | None = None) -> int:
             f"replaced {stats.replaced:<5} archived, left alone {stats.archived:<5} "
             f"team not connected {stats.not_connected:<5} failed {stats.failed}"
         )
+
+    print(
+        f"decision pages retired: {decision_stats.retired}, "
+        f"found already deleted in Notion: {decision_stats.gone}"
+    )
 
     return 1 if (item_stats.failed or decision_stats.failed) else 0
 
