@@ -328,10 +328,12 @@ class ExtDecisionRef(Base):
     rather than a second key on that one, kept without a foreign key to
     ``ext_decisions`` even though ``build_decisions`` no longer deletes and
     rebuilds every row on a rerun (#297) -- a decision whose id genuinely goes
-    away still has its rows here deleted by name, the same explicit way as its
-    sources and its review, since a later id that comes back would otherwise
-    inherit a stale "already sent to Notion" claim it never earned. Keyed by
-    the ``dec_`` id like ``ext_decision_reviews``, and taken with the meeting.
+    away has a claim with no page deleted here by name, the same explicit way
+    as its sources and its review. **A row that names a page outlives its
+    decision** (#669): it is how the page is found and retired, after the
+    decision stopped being confirmed, was deleted, or was dropped by a rerun;
+    retired, the row stays with no page. Keyed by the ``dec_`` id like
+    ``ext_decision_reviews``, and taken with the meeting.
     """
 
     __tablename__ = "ext_decision_refs"

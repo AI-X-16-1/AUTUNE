@@ -22,7 +22,9 @@ It also retires decision pages that should no longer be there (#669): a page
 still recorded for a decision that is not confirmed any more, or is gone. The
 live sync retires such a page once, when the verdict changes or the decision
 is deleted, and only logs a failure; a deleted decision has no later event to
-try again on. This is where that second try happens.
+try again on. The second try is here -- **and only when this runs**: a team
+connects Notion (``tasks.backfill_notion``) or someone runs this command.
+Nothing runs it on a timer.
 
     uv run python -m autune_extraction.notion_backfill
     uv run python -m autune_extraction.notion_backfill --team team_abc123

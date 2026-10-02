@@ -1832,9 +1832,14 @@ def build_decisions(
     itself to a different decision reusing that id. The foreign key still
     holds in Postgres, as a backstop for any path that deletes a decision
     without going through here. ``ExtDecisionRef`` has no foreign key at all
-    (its own docstring), so it needs the same explicit delete or a decision
-    whose id comes back after a gap would inherit a stale "already sent to
-    Notion" claim and the resync it needs would silently never happen.
+    (its own docstring), so a claim with no page is deleted here by name.
+    **A ref that still names a page is kept** (#669): deleting it left the
+    page live in Notion, holding the statement, with nothing left to find it
+    by. ``sync_decision_to_notion`` retires that page -- the caller queues it
+    (``decision_pages_without_a_decision``) and the Notion backfill sweeps
+    what is left. If the id comes back first, the ref is not a stale claim:
+    the page is there, and the sync retires or updates it by the new
+    decision's verdict.
 
     **The insert half is one statement, not a loop of ORM adds, because two
     reprocesses of the same meeting can be in flight at once** -- a redelivered
@@ -1877,7 +1882,11 @@ def build_decisions(
     gone = existing_ids - fresh.keys()
     if gone:
         session.execute(delete(ExtDecisionReview).where(ExtDecisionReview.decision_id.in_(gone)))
-        session.execute(delete(ExtDecisionRef).where(ExtDecisionRef.decision_id.in_(gone)))
+        session.execute(
+            delete(ExtDecisionRef).where(
+                ExtDecisionRef.decision_id.in_(gone), ExtDecisionRef.external_id.is_(None)
+            )
+        )
         session.execute(delete(ExtDecisionSource).where(ExtDecisionSource.decision_id.in_(gone)))
         session.execute(delete(ExtDecisionRelated).where(ExtDecisionRelated.decision_id.in_(gone)))
         session.execute(delete(ExtDecision).where(ExtDecision.id.in_(gone)))
@@ -3892,6 +3901,25 @@ def decisions_with_a_page(session: Session, decision_ids: Collection[str]) -> se
     )
 
 
+def decision_pages_without_a_decision(session: Session, meeting_id: str) -> list[str]:
+    """Ids of this meeting's decisions that are gone and still have a Notion
+    page: a rerun dropped the decision (``build_decisions``), or a person
+    deleted their own. For the caller to queue ``sync_decision``, which
+    retires the page (#669). Ids only."""
+    return list(
+        session.scalars(
+            select(ExtDecisionRef.decision_id).where(
+                ExtDecisionRef.meeting_id == meeting_id,
+                ExtDecisionRef.system == NOTION,
+                ExtDecisionRef.external_id.is_not(None),
+                ~select(ExtDecision.id)
+                .where(ExtDecision.id == ExtDecisionRef.decision_id)
+                .exists(),
+            )
+        )
+    )
+
+
 def decision_has_page(session: Session, decision_id: str) -> bool:
     """Whether the decision still has the page its confirmation made. A change
     of verdict on such a decision has to reach Notion even when the new
@@ -3913,7 +3941,10 @@ def _retire_decision_page(
     page: confirming again makes a new one.
 
     Both calls share the caller's transaction, so a failure of either leaves
-    the row pointing at the page and the next sync tries again. A page a
+    the row pointing at the page and the next sync tries again. Retitling
+    does not reach Notion's own page history, which a paid workspace keeps:
+    someone who restores the page from the trash can still read the earlier
+    title there (``privacy.md`` section 6). A page a
     person already archived cannot be edited -- Notion refuses -- and is
     left to them, as ``_update_or_replace_page`` leaves it; one already
     deleted has nothing to retire.
@@ -3921,6 +3952,13 @@ def _retire_decision_page(
     page_id = ref.external_id
     if page_id is None:
         return
+    if "title" not in names:
+        # A team's own property map with no title: nothing here knows which
+        # property holds the statement, so the page goes to the trash as it
+        # is. Better than leaving it live; said loudly (PARK, review of #679).
+        log.warning(
+            "extraction_notion_decision_trashed_without_retitle", decision_id=ref.decision_id
+        )
     if "title" in names:
         retitled = {
             names["title"]: {

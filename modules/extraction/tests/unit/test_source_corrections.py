@@ -443,3 +443,74 @@ def test_a_decision_put_back_with_its_page_still_there_resyncs(session: Session)
     done = correct(session)
 
     assert done.changed_decisions == ("dec_back",)
+
+
+def test_through_the_task_a_rerun_that_drops_a_decision_queues_its_page_to_retire(
+    session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#669: the run that drops a decision is the one event that knows its page
+    is now nobody's, so it queues the sync that retires it."""
+
+    @contextmanager
+    def scope() -> Iterator[Session]:
+        yield session
+        session.commit()
+
+    queued: list[tuple[str, str]] = []
+    monkeypatch.setattr(tasks, "session_scope", scope)
+    monkeypatch.setattr(tasks, "get_classifier", FakeClassifier)
+    monkeypatch.setattr(tasks, "get_nli", FakeNli)
+    for task in (
+        "sync_action_item",
+        "sync_action_item_jira",
+        "sync_action_item_calendar",
+        "sync_decision",
+    ):
+        monkeypatch.setattr(
+            tasks,
+            task,
+            SimpleNamespace(delay=lambda ident, task=task: queued.append((task, ident))),
+        )
+
+    def publish(text: str) -> None:
+        tasks.on_transcript_ready(
+            TranscriptReady(
+                meeting_id=MEETING,
+                utterances=[
+                    Utterance(
+                        id="utt_1",
+                        speaker="김민경",
+                        speaker_id="user_001",
+                        start=0.0,
+                        end=3.0,
+                        text=text,
+                        confidence=0.9,
+                    )
+                ],
+                metadata=TranscriptMetadata(
+                    duration=3.0,
+                    source=next(iter(TranscriptSource)),
+                    privacy=PrivacyFlags(original_audio_deleted=True, pii_masked=True),
+                ),
+            ).model_dump(mode="json")
+        )
+
+    publish("출시는 금요일에 하기로 했습니다")
+    (made,) = session.scalars(select(ExtDecision)).all()
+    made_id = made.id
+    session.add(
+        ExtDecisionRef(
+            decision_id=made_id, system="notion", meeting_id=MEETING, external_id="page_1"
+        )
+    )
+    session.commit()
+
+    session.get(StoredUtterance, "utt_1").text = "네 알겠어요"  # no decision in it any more
+    session.commit()
+    publish("네 알겠어요")
+
+    session.expire_all()
+    assert session.scalars(select(ExtDecision)).all() == []
+    ref = session.get(ExtDecisionRef, (made_id, "notion"))
+    assert ref is not None and ref.external_id == "page_1", "kept for the retire to find"
+    assert ("sync_decision", made_id) in queued

@@ -211,6 +211,9 @@ def _extract(meeting_id: str, utterances: Sequence[TranscriptUtterance]) -> None
         stale_dms = service.dms_to_correct(
             session, meeting_id=meeting_id, spoken={u.id: u.text for u in utterances}
         )
+        # Pages of decisions this run dropped: their refs are kept so the
+        # pages can be retired, not left live in Notion (#669).
+        orphaned_pages = service.decision_pages_without_a_decision(session, meeting_id)
         # With the rows it describes: a rollback takes both (#518).
         service.record_extraction(session, meeting_id=meeting_id, consented=consented)
         result = service.result_for_meeting(session, meeting_id)
@@ -221,6 +224,11 @@ def _extract(meeting_id: str, utterances: Sequence[TranscriptUtterance]) -> None
             update_confirmation_dm.delay(utterance_id)
         except Exception as exc:  # noqa: BLE001 -- queuing only; the next run finds it again
             log.warning("extraction_dm_correction_not_queued", error=type(exc).__name__)
+    for decision_id in orphaned_pages:
+        try:
+            sync_decision.delay(decision_id)
+        except Exception as exc:  # noqa: BLE001 -- queuing only; the Notion backfill sweeps it
+            log.warning("extraction_decision_page_retire_not_queued", error=type(exc).__name__)
     # Counts and ids only. The utterances are meeting content.
     log.info(
         "extraction_classified",

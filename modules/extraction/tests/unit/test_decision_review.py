@@ -1125,3 +1125,45 @@ def test_the_task_finds_a_deleted_decisions_page_through_its_ref(
     assert notion.updates == [("page_7", RETITLED)] and notion.archived == {"page_7"}
     ref = session.get(ExtDecisionRef, ("dec_gone", "notion"))
     assert ref is not None and ref.external_id is None
+
+
+def test_a_rerun_that_drops_a_decision_keeps_the_ref_that_names_its_page(session: Session) -> None:
+    """mkkim68, review of #679: ``build_decisions`` deleted the refs of
+    decisions a rerun dropped, page or not. The page then stayed live in Notion
+    with nothing left to find it by. A claim with no page still goes."""
+    notion = FakeNotion()
+    first = confirmed_with_a_page(session, notion)
+    second = session.scalars(select(ExtDecision).where(ExtDecision.id != first.id)).one()
+    session.add(ExtDecisionRef(decision_id=second.id, system="notion", meeting_id=MEETING))
+    session.flush()
+
+    service.build_decisions(session, meeting_id=MEETING, utterances=labelled({}))
+
+    assert session.get(ExtDecision, first.id) is None, "the rerun dropped it"
+    assert session.get(ExtDecisionRef, (second.id, "notion")) is None
+    assert service.decision_pages_without_a_decision(session, MEETING) == [first.id]
+
+    resync(session, notion, first.id)
+
+    assert notion.updates == [("page_1", RETITLED)] and notion.archived == {"page_1"}
+    assert service.decision_pages_without_a_decision(session, MEETING) == []
+
+
+def test_a_property_map_with_no_title_trashes_the_page_as_it_is(session: Session) -> None:
+    """A team's own map replaces the default one. With no title in it nothing
+    says which property holds the statement, so the page is trashed without a
+    retitle -- better than leaving it live (PARK, review of #679)."""
+    notion = FakeNotion()
+    first = confirmed_with_a_page(session, notion)
+    service.review_decision(session, first, DecisionReviewUpdate(status="pending"))
+
+    ref = service.sync_decision_to_notion(
+        session,
+        notion,
+        decision_id=first.id,
+        database_id="db",
+        property_names={"confidence": "신뢰도"},
+    )
+
+    assert notion.updates == [] and notion.archived == {"page_1"}
+    assert ref is not None and ref.external_id is None
