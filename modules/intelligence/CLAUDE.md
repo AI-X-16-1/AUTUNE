@@ -20,7 +20,8 @@ heatmap, predictions, weekly report, and each person's own speaking ratio.
 ## Consumes
 
 `ExtractionResult`, `GapReport`, and `ContextLinks` from their completion
-events. Read-only access to shared entities.
+events, and B's `TeamActionProgress` every ten minutes (counts per meeting,
+shown only as team totals). Read-only access to shared entities.
 
 **Handle partial input.** Any of B, C, or D can fail. Aggregate when all three
 arrive or when the timeout elapses (10 minutes), and mark which sources were
@@ -33,7 +34,8 @@ missing. Never block a user-visible result on a failed module.
 ## Owns
 
 `intel_scores`, `intel_gap_patterns`, `intel_alignment`, `intel_predictions`,
-`intel_reports`, `intel_completion`, `intel_meeting_reports`.
+`intel_reports`, `intel_completion`, `intel_meeting_reports`,
+`intel_action_progress`, `intel_action_progress_meetings`.
 
 Reference B's and C's outputs by plain string ID columns — never a foreign key
 into another module's tables.

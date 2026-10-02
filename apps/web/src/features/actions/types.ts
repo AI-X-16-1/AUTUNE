@@ -65,12 +65,19 @@ export interface ExternalRefRead {
  */
 export interface ActionItemRead extends ActionItem {
   meeting_id: string;
+  /** The meeting the item came from; the board across meetings shows it. */
+  meeting_title?: string | null;
   /**
    * `model` for what the pipeline drafted, `user` for what a person typed,
    * `followup` for the Follow-up agent's "후속 회의 잡기" (#561), `chat` for an
    * item drafted from an utterance in the chat.
    */
   origin: "model" | "user" | "followup" | "chat";
+  /**
+   * A line it was drawn from was corrected after it was made (#586) and the
+   * text may still need a person's eye. Cleared by their next edit.
+   */
+  needs_recheck: boolean;
   /**
    * Whether the item belongs in the candidate band. Decided by the server,
    * which holds the threshold the classifier's confidences are measured
@@ -264,6 +271,8 @@ export interface ReviewDecision {
   model_statement: string;
   confidence: number;
   origin: "model" | "user";
+  /** A source line was corrected since a person typed or reworded it (#586). */
+  needs_recheck: boolean;
   status: DecisionStatus;
   /** Pre-check it? `null` while the candidate line is unset. */
   suggested: boolean | null;

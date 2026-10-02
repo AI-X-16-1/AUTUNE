@@ -26,6 +26,7 @@ from sqlalchemy.orm import Session
 from autune_contracts.enums import ActionStatus
 from autune_contracts.extraction import ExtractionResult
 from autune_core import CurrentUser, Meeting, User, get_session
+from autune_core.errors import NotFoundError
 from autune_core.settings import get_settings as get_core_settings
 
 from . import notion_connect, service, tasks
@@ -159,7 +160,8 @@ def update_action_item(
     background: BackgroundTasks,
 ) -> ActionItemRead:
     """Edit or close an item. Confirming it queues its Notion page (#30); an
-    edit to an already-confirmed item queues an update to the same page."""
+    edit to an item that has a page queues an update to it -- moving it back to
+    확인 필요 included."""
     item = service.readable_action_item(session, action_item_id, reader)
     item = service.update_action_item(session, item, payload)
     # Before the commit, for the reason ``create_action_item`` gives: an edit
@@ -168,11 +170,14 @@ def update_action_item(
     response = service.read_one(session, item)
     session.commit()
     # After the response, so the sync reads the committed row and the board is
-    # not held on Notion. Confirming or any later edit both queue the same
-    # task -- ``sync_action_item_to_notion`` itself decides create vs. update
-    # from whether the claim already exists, so a still-``needs_confirmation``
-    # item is the only case this need not queue at all.
-    if item.status != ActionStatus.NEEDS_CONFIRMATION.value:
+    # not held on Notion. Confirming or any later edit queues the same task --
+    # ``sync_action_item_to_notion`` decides create vs. update from whether the
+    # claim already exists. An unconfirmed item queues it only when it has a
+    # page: one moved back to 확인 필요 updates that page's status (decided
+    # with the user, 2026-10-01); one never confirmed has nothing to send.
+    if item.status != ActionStatus.NEEDS_CONFIRMATION.value or service.has_notion_page(
+        session, item.id
+    ):
         background.add_task(tasks.sync_after_confirmation, item.id)
     return response
 
@@ -289,13 +294,20 @@ def delete_decision(decision_id: str, session: SessionDep, reader: CurrentUser) 
     session.commit()
 
 
-def _member_team(session: Session, reader: User, meeting_id: str) -> str:
-    """The team of a meeting the caller belongs to -- the check every
-    integration-setup route shares. Anyone else gets the 404 an unknown meeting
-    gets (#189)."""
-    service.require_readable_meeting(session, meeting_id, reader)
-    team_id = session.scalar(select(Meeting.team_id).where(Meeting.id == meeting_id))
-    assert team_id is not None  # the check above found it
+def _member_team(
+    session: Session, reader: User, meeting_id: str | None, team_id: str | None = None
+) -> str:
+    """The team an integration-setup request is about, after checking the caller
+    belongs to it -- named by a meeting (the 액션 tab) or by the team itself (S28
+    settings, #496). Anyone else gets the 404 an unknown meeting or team gets
+    (#189)."""
+    if meeting_id:
+        service.require_readable_meeting(session, meeting_id, reader)
+        found = session.scalar(select(Meeting.team_id).where(Meeting.id == meeting_id))
+        assert found is not None  # the check above found it
+        return found
+    if not team_id or not service.is_team_member(session, team_id, reader.id):
+        raise NotFoundError("team", team_id or "")
     return team_id
 
 
@@ -327,30 +339,45 @@ def answer_confirmation(
 
 
 @router.post("/jira/backfill")
-def backfill_jira(meeting_id: str, session: SessionDep, reader: CurrentUser) -> dict[str, int]:
+def backfill_jira(
+    session: SessionDep,
+    reader: CurrentUser,
+    meeting_id: str | None = None,
+    team_id: str | None = None,
+) -> dict[str, int]:
     """Put every confirmed item of this meeting's team into its Jira project now
     -- what the screen calls right after a project is chosen, so a project that
     replaces a deleted one holds everything the old one did (#458). Members of
     the team only: anyone else gets the 404 an unknown meeting gets (#189)."""
-    return tasks.backfill_jira(_member_team(session, reader, meeting_id))
+    return tasks.backfill_jira(_member_team(session, reader, meeting_id, team_id))
 
 
 @router.get("/notion/setup")
-def notion_setup_state(meeting_id: str, session: SessionDep, reader: CurrentUser) -> dict[str, Any]:
+def notion_setup_state(
+    session: SessionDep,
+    reader: CurrentUser,
+    meeting_id: str | None = None,
+    team_id: str | None = None,
+) -> dict[str, Any]:
     """After a one-click Notion connection (#428): the pages the team shared with
     Autune, and where its databases are now, if anywhere."""
-    return notion_connect.pages_for(_member_team(session, reader, meeting_id))
+    return notion_connect.pages_for(_member_team(session, reader, meeting_id, team_id))
 
 
 @router.post("/notion/setup")
 def notion_set_up(
-    meeting_id: str, page_id: str, session: SessionDep, reader: CurrentUser
+    session: SessionDep,
+    reader: CurrentUser,
+    meeting_id: str | None = None,
+    team_id: str | None = None,
+    page_id: str | None = None,
 ) -> dict[str, Any]:
-    """Make Autune's databases under ``page_id`` and queue filling them with
-    every confirmed action item and decision of the team (#428, #481). Notion's
-    own message comes back when it refuses the page."""
-    team_id = _member_team(session, reader, meeting_id)
+    """Make Autune's databases under ``page_id`` -- or, with none, in an
+    "Autune" page among the connecting person's private pages -- and queue
+    filling them with every confirmed action item and decision of the team
+    (#428, #481). Notion's own message comes back when it refuses the page."""
+    team = _member_team(session, reader, meeting_id, team_id)
     try:
-        return notion_connect.set_up(team_id, page_id)
+        return notion_connect.set_up(team, page_id)
     except NotionSetupError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from None

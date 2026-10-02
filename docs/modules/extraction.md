@@ -117,9 +117,10 @@ agreement, and sync the result to Notion.
    DM quotes their line and links to the meeting's 액션 tab, which lists the
    reader's own open questions (`GET /confirmations?meeting_id=`) with the
    three answers (`POST /confirmations/{utterance_id}`: commitment, decision,
-   not a commitment). The DM carries no buttons: a deployed stack has no
-   receiver for a Slack click yet, and #585 brings one; the answer then takes
-   the same path either way. A speaker who never linked Slack can still answer
+   not a commitment). With `AUTUNE_SLACK_BUTTONS` on — a deployment Slack can
+   reach at `/api/slack/events` (#585) — the DM also carries the three answers
+   as buttons; without it, only the link, since a button nothing receives does
+   nothing. Either way the answer takes the same path. A speaker who never linked Slack can still answer
    there — answering puts the question, so its clock starts then. Nobody but
    the speaker sees or answers it.
    **A DM whose line is corrected afterwards** (#586). Each DM keeps where it
@@ -206,6 +207,32 @@ building on an LLM call per utterance and cutting it back later is not. Keep the
 step positionable. `modules/extraction/scripts/ko_reference_overlap.py` measures
 the overlap the question turns on.
 
+**When a person deletes their own speech** (#587): `tasks.forget_deleted_speech`
+(`@on_speech_deleted("extraction")`) runs before the utterances go. Unconfirmed
+drafts the model or the chat made from them are deleted; a confirmed item whose
+description is the line itself reads "삭제된 발화에서 만든 항목" and its
+`due_text` is cleared; a decision loses `original_statement`, and a model
+statement with no cited lines reads the same placeholder; a model summary or a
+person's text stays. Confirmed changes are queued to Notion, Jira (summary and
+description) and the calendar. Nothing is republished: what C, D and E already
+received in `ExtractionResult` stays with them until they act on the same
+signal. Ids and counts only in the log.
+
+**When a line is corrected after the fact** (#586). A PII report (S30, #584)
+masks stored lines again and republishes `TranscriptReady` without naming them.
+Every item and decision keeps `source_digest`, a sha256 of the masked text it was
+drawn from (set when it is made, and recorded as a baseline by the first run that
+finds none). Each run compares it after its rebuild — also in a meeting a person
+has edited, where the rebuild keeps every item: a description that is the line
+itself reads the corrected line, tidied; a model summary is replaced the same way
+and flagged `needs_recheck`; a person's own text (a typed item, an edited
+description, a typed or reworded decision) is only flagged, because B cannot tell
+which of their words were the private ones; `due_text` is read again from the
+new line. Confirmed changes are queued to Notion, Jira and the calendar. The flag
+shows on the card and on the decision ("출처 발화가 정정됨 · 확인 필요") and is
+cleared by the person's next edit or review. The confirmation DM's quotation is
+#586's second part.
+
 ## Tables
 
 | Table | Purpose |
@@ -220,6 +247,7 @@ the overlap the question turns on.
 | `ext_decision_refs` | The Notion page a confirmed decision became, one per decision and system |
 | `ext_calendar_events` | The event an item's due date became on its assignee's own calendar, and the date last synced |
 | `ext_calendar_polls` | When each person's calendar was last read back |
+| `ext_calendar_cleanup` | Due-date events still to take off a person's calendar after their meeting expired; queued by the meeting hook, removed by `drain_calendar_cleanup` with the owner's grant (#588). No meeting key; `user_id` cascades |
 | `ext_notion_targets` | The page and three databases a team's Notion sync writes to, one row per team (#428) |
 | `ext_confirmations` | Every ambiguous agreement, the DM once sent, and the response |
 | `ext_decisions` | Decision entities, their statements and source utterances. `origin` is `model` or `user`; a rerun rebuilds only the model's |

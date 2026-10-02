@@ -94,7 +94,12 @@ def test_the_span_is_masked_in_the_stored_row_and_announced(
 
     response = report(client_for(member), meeting, utterance)
 
-    assert response.json() == {"utterances": 1, "occurrences": 1, "republished": True}
+    assert response.json() == {
+        "utterances": 1,
+        "occurrences": 1,
+        "republished": True,
+        "rule": None,
+    }
     stored = db_session.get(Utterance, utterance)
     assert stored is not None and SPAN not in stored.text and "*-*****" in stored.text
     [(name, body)] = published
@@ -161,3 +166,57 @@ def test_an_outsider_cannot_report(
 
     assert report(client_for(outsider), meeting, utterance).status_code == 403
     assert db_session.get(Utterance, utterance).text == TEXT  # type: ignore[union-attr]
+
+
+def test_a_report_can_teach_the_team_its_shape(
+    db_session: Session, client_for, member: User, meeting: str, team: str, published: list
+) -> None:
+    from autune_audio.masking_rules import shapes_for_meeting
+
+    utterance = say(db_session, meeting, TEXT)
+
+    response = report(client_for(member), meeting, utterance, add_rule=True)
+
+    assert response.json()["rule"] == "A-#####"
+    assert shapes_for_meeting(db_session, meeting) == ("A-#####",)
+    rules = client_for(member).get(f"/api/audio/teams/{team}/masking-rules").json()
+    assert [r["shape"] for r in rules] == ["A-#####"]
+    assert SPAN not in str(rules)
+
+
+def test_a_name_teaches_no_rule(
+    db_session: Session, client_for, member: User, meeting: str, published: list
+) -> None:
+    text = "담당자는 박민수 과장입니다"
+    utterance = say(db_session, meeting, text)
+    start = text.index("박민수")
+
+    response = client_for(member).post(
+        f"/api/audio/meetings/{meeting}/utterances/{utterance}/pii-report",
+        json={"start": start, "end": start + 3, "category": "name", "add_rule": True},
+    )
+
+    assert response.json()["rule"] is None
+
+
+def test_the_same_shape_twice_is_one_rule_and_a_member_can_remove_it(
+    db_session: Session, client_for, member: User, meeting: str, team: str, published: list
+) -> None:
+    client = client_for(member)
+    report(client, meeting, say(db_session, meeting, TEXT), add_rule=True)
+    report(client, meeting, say(db_session, meeting, TEXT), add_rule=True)
+
+    [rule] = client.get(f"/api/audio/teams/{team}/masking-rules").json()
+    remaining = client.delete(f"/api/audio/teams/{team}/masking-rules/{rule['id']}").json()
+
+    assert remaining == []
+
+
+def test_an_outsider_cannot_see_the_rules(
+    db_session: Session, client_for, team: str, published: list
+) -> None:
+    outsider = User(email="rules-out@example.com", display_name="남")
+    db_session.add(outsider)
+    db_session.flush()
+
+    assert client_for(outsider).get(f"/api/audio/teams/{team}/masking-rules").status_code == 403

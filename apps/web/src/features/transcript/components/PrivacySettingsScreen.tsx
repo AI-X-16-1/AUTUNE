@@ -7,14 +7,16 @@ import { Button, ChipToggle, StatusDot } from "@/shared/ui";
 
 import {
   deleteAccount,
+  deleteMaskingRule,
   deleteMySpeech,
   deleteVoiceProfile,
   downloadMyData,
   getMyData,
   getTeamPrivacy,
+  listMaskingRules,
   setTeamRetention,
 } from "../api";
-import type { MyData, RetentionDays } from "../types";
+import type { MaskingRule, MyData, RetentionDays } from "../types";
 import { TeamScope } from "./TeamScope";
 
 /**
@@ -23,8 +25,9 @@ import { TeamScope } from "./TeamScope";
  * **A row only has a control when the control does something.** The design
  * draws seven policy rows; the ones the product enforces in code and nobody
  * may switch off carry the "항상 켬" dot and no toggle (ui-spec section 0).
- * Rows whose setting does not exist yet — extra masking categories, consent
- * on the first meeting only — say "준비 중" instead of offering a choice that
+ * "추가 마스킹 항목" lists the shapes the team learned from S30 reports, each
+ * removable. Rows whose setting does not exist yet — consent on the first
+ * meeting only — say "준비 중" instead of offering a choice that
  * would be stored nowhere. The design's "팀 탈퇴" row is replaced by account
  * deletion: there is no way to leave a team yet, and the row would promise a
  * deletion nothing performs.
@@ -128,10 +131,6 @@ function AlwaysOn() {
   );
 }
 
-function NotYet() {
-  return <span style={META}>준비 중</span>;
-}
-
 function WorkspacePolicy({ teamId }: { teamId: string }) {
   const [retention, setRetention] = useState<number | null>(null);
   const [saving, setSaving] = useState(false);
@@ -178,8 +177,8 @@ function WorkspacePolicy({ teamId }: { teamId: string }) {
       />
       <PolicyRow
         title="추가 마스킹 항목"
-        description="사람 이름(참석자 제외) · 주소 · 사내 고유 ID 패턴"
-        control={<NotYet />}
+        description="개인정보 신고에서 추가한 사번·ID 형태 · 이후 회의에 자동 적용 · 팀원 누구나 지울 수 있음"
+        control={<TeamRules teamId={teamId} />}
       />
       <PolicyRow
         title="분석 결과 보관 기간"
@@ -212,6 +211,58 @@ function WorkspacePolicy({ teamId }: { teamId: string }) {
         </p>
       )}
     </div>
+  );
+}
+
+/**
+ * The team's own masking shapes, each with a remove control. A shape is
+ * character classes only (`A-#####`), so listing it shows nobody's value.
+ * Removing one stops masking it in later transcripts; what it already masked
+ * stays masked, because the original was never stored.
+ */
+function TeamRules({ teamId }: { teamId: string }) {
+  const [rules, setRules] = useState<MaskingRule[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let current = true;
+    listMaskingRules(teamId)
+      .then((list) => current && setRules(list))
+      .catch((caught: unknown) => {
+        if (current) setError(caught instanceof Error ? caught.message : "규칙을 불러오지 못했습니다.");
+      });
+    return () => {
+      current = false;
+    };
+  }, [teamId]);
+
+  const remove = async (ruleId: number) => {
+    setError(null);
+    try {
+      setRules(await deleteMaskingRule(teamId, ruleId));
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "규칙을 지우지 못했습니다.");
+    }
+  };
+
+  if (error) return <span style={ERROR}>{error}</span>;
+  if (rules === null) return <span style={META}>불러오는 중…</span>;
+  if (rules.length === 0) return <span style={META}>없음</span>;
+  return (
+    <span className="flex flex-wrap justify-end gap-1.5">
+      {rules.map((rule) => (
+        <span
+          key={rule.id}
+          className="inline-flex items-center rounded-[var(--radius)] bg-[var(--color-surface-sunken)]"
+          style={{ height: "var(--control-h-compact)", paddingLeft: 10 }}
+        >
+          <span style={{ fontFamily: "var(--font-mono)", fontSize: "var(--text-data)" }}>{rule.shape}</span>
+          <Button tone="quiet" size="compact" aria-label={`${rule.shape} 규칙 삭제`} onClick={() => void remove(rule.id)}>
+            ×
+          </Button>
+        </span>
+      ))}
+    </span>
   );
 }
 

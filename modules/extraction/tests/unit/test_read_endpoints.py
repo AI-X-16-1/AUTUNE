@@ -195,6 +195,17 @@ def test_the_list_is_every_item_when_nothing_is_filtered(
     assert sorted(ids(response.json())) == ["act_1", "act_2"]
 
 
+def test_each_item_names_its_meeting(client: TestClient, session: Session) -> None:
+    """The board across meetings shows it on every card (mentoring, 2026-10-01)."""
+    action_item(session, "act_1")
+
+    (row,) = client.get(f"{PREFIX}/action-items").json()
+    detail = client.get(f"{PREFIX}/action-items/act_1").json()
+
+    assert row["meeting_title"] == "주간 회의"
+    assert detail["meeting_title"] == "주간 회의"
+
+
 def test_filters_narrow_the_list_and_combine(client: TestClient, session: Session) -> None:
     action_item(session, "act_1", status="todo", assignee_id="user_a")
     action_item(session, "act_2", status="todo", assignee_id="user_b")

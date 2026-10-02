@@ -45,25 +45,32 @@ def test_an_observation_row_cascades_with_its_meeting(db_session: Session, meeti
     assert db_session.scalars(sa.select(AudSpeakerEmbedding)).all() == []
 
 
-def test_a_profile_row_survives_its_source_meeting(
-    db_session: Session, meeting: str, member: User
+def test_a_profile_row_goes_with_its_source_meeting_and_no_other(
+    db_session: Session, meeting: str, team: str, member: User
 ) -> None:
-    db_session.add(
-        AudSpeakerEmbedding(
-            user_id=member.id,
-            vector=vector(),
-            model_version="test/embedder",
-            source_meeting_id=meeting,
-            source_speaker_label="화자 2",
-            confirmed_by=member.id,
+    """#363 item 2: a row whose meeting is gone could never be replaced, so a
+    wrong confirmation stayed in the profile for good. It goes with the meeting;
+    the person's rows from other meetings stay."""
+    other = Meeting(team_id=team, title="Other Meeting")
+    db_session.add(other)
+    db_session.flush()
+    for source in (meeting, other.id):
+        db_session.add(
+            AudSpeakerEmbedding(
+                user_id=member.id,
+                vector=vector(),
+                model_version="test/embedder",
+                source_meeting_id=source,
+                source_speaker_label="화자 2",
+                confirmed_by=member.id,
+            )
         )
-    )
     db_session.flush()
     db_session.delete(db_session.get(Meeting, meeting))
     db_session.flush()
     [row] = db_session.scalars(sa.select(AudSpeakerEmbedding)).all()
     assert row.user_id == member.id
-    assert row.source_meeting_id is None
+    assert row.source_meeting_id == other.id
 
 
 def test_a_profile_row_goes_with_the_person(db_session: Session, member: User) -> None:

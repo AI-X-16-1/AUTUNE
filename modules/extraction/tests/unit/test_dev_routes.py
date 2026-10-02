@@ -101,6 +101,15 @@ def test_the_page_needs_local_and_an_explicit_opt_in(
 # --- which databases a connection keeps -------------------------------------------
 
 
+@pytest.fixture(autouse=True)
+def _no_notion_pages(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Notion is never called: the "Autune" page and the lookup of where kept
+    databases sit are stubbed (``test_notion_setup.py`` covers them)."""
+    monkeypatch.setattr(notion_setup, "create_home_page", lambda client, *, page_id: "home_new")
+    monkeypatch.setattr(notion_setup, "home_of", lambda client, database_id: "home_kept")
+    monkeypatch.setattr(notion_setup, "retire_status_codes", lambda client, database_id: None)
+
+
 class _Session:
     def commit(self) -> None:
         pass

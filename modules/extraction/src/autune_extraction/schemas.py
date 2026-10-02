@@ -97,6 +97,11 @@ class ActionItemRead(BaseModel):
 
     id: str
     meeting_id: str
+    meeting_title: str | None = None
+    """The title of the meeting the item came from. The board across every
+    meeting shows it on each card, so a person can tell which meeting an item
+    belongs to without opening it (mentoring, 2026-10-01). Read with the item,
+    never stored on it."""
     description: str
     description_resolved: bool = False
     """Whether ``description`` is ``ReferenceResolver``'s rewrite rather than
@@ -155,6 +160,11 @@ class ActionItemRead(BaseModel):
     ``source_utterance_ids`` -- the same shape as a hand-added item -- and the
     drawer printed "직접 추가한 항목" over it. ``origin`` says who made the
     item; this says its evidence is gone, and the screen needs both."""
+
+    needs_recheck: bool = False
+    """A line this was drawn from was corrected after it was made (a PII report,
+    #586), and the text shown may still need a person's eye: a summary rewritten
+    from the corrected line, or their own wording. Cleared by their next edit."""
 
     needs_reassignment: bool = False
     """An open item (``todo`` or ``in_progress``) whose assignee is no longer a
@@ -408,6 +418,10 @@ class ReviewDecision(BaseModel):
 
     confidence: float
     origin: Literal["model", "user"]
+    needs_recheck: bool = False
+    """A source line was corrected since a person typed or reworded this (#586):
+    B cannot correct their wording, so it asks them to look. Cleared by their
+    next review."""
     status: Literal["pending", "confirmed", "rejected"]
     suggested: bool | None
     """Whether the screen should pre-check it: the confidence clears

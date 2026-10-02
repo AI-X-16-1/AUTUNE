@@ -191,7 +191,7 @@
       "description": "D's output. Topic linking and decision lineage have different inputs.\n\nTopic linking needs only the transcript, so it runs in parallel with B and C.\nDecision lineage needs B's decisions, so it runs after B. D publishes once\nboth are in — or, if B never reports, with an empty ``decision_lineage`` and\n``\"extraction\"`` in ``missing_sources``. A failure in B must not cost the\nuser their topic links.",
       "properties": {
         "contract_version": {
-          "default": "2.2",
+          "default": "2.3",
           "title": "Contract Version",
           "type": "string"
         },
@@ -396,7 +396,7 @@
     "ExtractionResult": {
       "properties": {
         "contract_version": {
-          "default": "2.2",
+          "default": "2.3",
           "title": "Contract Version",
           "type": "string"
         },
@@ -510,7 +510,7 @@
     "GapReport": {
       "properties": {
         "contract_version": {
-          "default": "2.2",
+          "default": "2.3",
           "title": "Contract Version",
           "type": "string"
         },
@@ -559,7 +559,7 @@
     "IntelligenceSnapshot": {
       "properties": {
         "contract_version": {
-          "default": "2.2",
+          "default": "2.3",
           "title": "Contract Version",
           "type": "string"
         },
@@ -897,7 +897,7 @@
     "TranscriptReady": {
       "properties": {
         "contract_version": {
-          "default": "2.2",
+          "default": "2.3",
           "title": "Contract Version",
           "type": "string"
         },

@@ -30,7 +30,7 @@ nothing to compare a voice against.
 | Where matching happens | **At read time, in the API** — not stored | A candidate written into a column is stale the moment somebody else confirms a profile. Recomputing from the stored vectors is one pgvector query and is always current. It also keeps the worker from needing a profile lookup |
 | Whose voices may be candidates | **Only members of the meeting's team** | A candidate from another team leaks that a person attended that team's meeting. Enforced in the query and pinned by a test |
 | One profile vector or many | **Many — one row per confirmation**, matched against their mean | A voice changes with the room, the microphone and the day. Replacing a single vector would let one bad day overwrite a good profile; the mean of several is what `live/speakers.py` already does within a session |
-| Lifetime | **An observation dies with its meeting; a confirmed profile lives on the person** | `privacy.md` section 4 allows a table reachable by `user_id`. Cascading profiles with meetings would reset identification every retention window. The retention sweep still deletes a profile once no remaining meeting names its owner (#363) |
+| Lifetime | **An observation dies with its meeting; a confirmed profile lives on the person** | `privacy.md` section 4 allows a table reachable by `user_id`. Each row is kept with the meeting it was confirmed in (`CASCADE`, #363): a regular attendee's profile is rebuilt from their recent meetings rather than reset, and a wrong confirmation leaves with its meeting instead of staying forever. The retention sweep deletes what is left once no remaining meeting names its owner |
 | Storing an unconfirmed voice | **Only when the meeting has a consent attestation** | An embedding is biometric data. Without an attestation nothing is stored and the transcript is unaffected |
 
 ## 2. Data — one table, two kinds of row
@@ -44,7 +44,7 @@ nothing to compare a voice against.
 | `user_id` | null | the person, `ON DELETE CASCADE` |
 | `vector` | `vector(256)` | same |
 | `model_version` | the embedder checkpoint | same |
-| `source_meeting_id` | null | where it was confirmed, `ON DELETE SET NULL` |
+| `source_meeting_id` | null | where it was confirmed, `ON DELETE CASCADE` (was `SET NULL` until #363) |
 | `source_speaker_label` | null | `화자 2` |
 | `confirmed_by` / `confirmed_at` | null | who pressed the button, and when |
 
@@ -218,7 +218,7 @@ the worker has written the observation vector.
 | Same person on two labels (over-split) | Both may be assigned to them; each adds a profile vector, which improves the mean |
 | Re-assigning a label | `Participant.user_id` is overwritten; the profile row from that (meeting, label), if any, is deleted regardless of the setting, and replaced with a new one only when `AUTUNE_AUDIO_VOICE_PROFILES_ENABLED=true` |
 | Model version changed | Old profiles are not candidates. One confirmation each rebuilds them |
-| Meeting deleted | Observation rows cascade; profiles survive with `source_meeting_id` set to null |
+| Meeting deleted | Observation rows cascade, and so do the profile rows confirmed in it (#363). The person's profile is the mean of the rows from meetings still kept |
 | User removed from the team | Nothing happens today. `forget_user_voice` would remove every profile of theirs (not team-scoped — see §2), but nothing calls it (#358) |
 
 `identification_threshold` is a setting, provisionally **0.70** — higher than
@@ -231,7 +231,7 @@ sets the real number and goes in `HISTORY.md`, the same way #306's did.
 | Layer | What |
 | --- | --- |
 | Unit | Candidate selection over vectors, no model and no database: threshold boundary, the mean of several profile vectors, a different `model_version` excluded, no candidate when there are no profiles |
-| Integration | No attestation → no observation rows · `GET` returns the candidate and its similarity · `POST` fills `Participant.user_id` and copies the profile · re-assigning replaces that source's profile row · `DELETE` removes only the caller's profiles · **a profile in another team is never a candidate** · deleting the meeting leaves the profile and nulls `source_meeting_id` · the deletion hook removes profiles with the user |
+| Integration | No attestation → no observation rows · `GET` returns the candidate and its similarity · `POST` fills `Participant.user_id` and copies the profile · re-assigning replaces that source's profile row · `DELETE` removes only the caller's profiles · **a profile in another team is never a candidate** · deleting the meeting takes the profile rows confirmed in it · the deletion hook removes profiles with the user |
 | Privacy | `GET` carries no count or duration · no vector in any log line or exception message |
 | Frontend | `pnpm --filter web lint` and `typecheck`; there is no test runner |
 

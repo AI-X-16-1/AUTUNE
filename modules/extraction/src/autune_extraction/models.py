@@ -21,6 +21,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    false,
     func,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -138,6 +139,18 @@ class ExtActionItem(Base, TimestampMixin):
     agent layer's: ``followup`` (the Follow-up subagent's "후속 회의 잡기",
     #561) and ``chat`` (drafted from an utterance in the chat). A rerun replaces
     only ``model`` rows."""
+
+    source_digest: Mapped[str | None] = mapped_column(String(64))
+    """sha256 of the masked text of the utterances this was drawn from, in source
+    order (``service.source_digest``) -- how a corrected transcript is noticed
+    (#586). ``NULL`` until a run records it."""
+
+    needs_recheck: Mapped[bool] = mapped_column(
+        nullable=False, default=False, server_default=false()
+    )
+    """A line this came from was corrected after it was made, and what a person
+    sees may still carry what was corrected: a summary rewritten from the new
+    line, or their own wording (#586). Cleared when a person edits or reviews."""
 
     description_resolved: Mapped[bool] = mapped_column(nullable=False, default=False)
     """True when ``description`` is ``ReferenceResolver``'s rewrite rather than
@@ -381,6 +394,18 @@ class ExtDecision(Base, TimestampMixin):
     rewrite made for the screen must not move it. ``NULL`` for a decision a person
     typed and for rows from before this column: read it as
     ``original_statement or statement``."""
+
+    source_digest: Mapped[str | None] = mapped_column(String(64))
+    """sha256 of the masked text of the utterances this was drawn from, in source
+    order (``service.source_digest``) -- how a corrected transcript is noticed
+    (#586). ``NULL`` until a run records it."""
+
+    needs_recheck: Mapped[bool] = mapped_column(
+        nullable=False, default=False, server_default=false()
+    )
+    """A line this came from was corrected after it was made, and what a person
+    sees may still carry what was corrected: a summary rewritten from the new
+    line, or their own wording (#586). Cleared when a person edits or reviews."""
 
     confidence: Mapped[float] = mapped_column(Float, nullable=False)
 
@@ -754,6 +779,34 @@ class ExtCalendarEvent(Base):
     )
     event_id: Mapped[str | None] = mapped_column(String(1024))
     synced_due_date: Mapped[date] = mapped_column(Date, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class ExtCalendarCleanup(Base):
+    """A due-date event still to take off a person's calendar, after the meeting
+    its item belonged to was deleted (#588).
+
+    ``ext_calendar_events`` goes with the meeting, so the meeting hook copies
+    the event here first and ``tasks.drain_calendar_cleanup`` removes it with
+    that person's own grant. No meeting key: the row has to outlive the meeting.
+    ``user_id`` cascades -- an account deletion removes its own events in its
+    hook, and nothing could remove them after.
+    """
+
+    __tablename__ = "ext_calendar_cleanup"
+    __table_args__ = (UniqueConstraint("user_id", "event_id", name="uq_ext_calendar_cleanup"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("users.id", ondelete="CASCADE", name="fk_ext_calendar_cleanup_user"),
+        nullable=False,
+        index=True,
+    )
+    event_id: Mapped[str] = mapped_column(String(1024), nullable=False)
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

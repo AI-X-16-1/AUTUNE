@@ -34,7 +34,7 @@ from autune_context.notify import (
     build_topic_link_notice,
     build_topic_link_rollup_notice,
 )
-from autune_context.pipeline import get_embedder, get_nli, get_reranker
+from autune_context.pipeline import get_embedder, get_llm_judge, get_nli, get_reranker
 from autune_context.pipeline.change import classify_change, strip_keep_words
 from autune_context.pipeline.retrieval import HybridRetriever, visible_meeting_clauses
 from autune_context.pipeline.topics import extract_topics
@@ -54,6 +54,7 @@ from autune_integrations import PermanentIntegrationError, SlackApi, assert_pers
 
 if TYPE_CHECKING:
     from autune_context.pipeline.base import Embedder, NliModel
+    from autune_context.pipeline.llm_judge import LlmJudge
     from autune_contracts import ExtractionResult, TranscriptReady
 
 log = get_logger(__name__)
@@ -114,6 +115,13 @@ def run_topic_linking(transcript: TranscriptReady) -> bool:
     label, the BM25 corpus, the re-ranker, or ``ctx_embeddings.utterance_ids``.
     A meeting where nobody consented gets no topics and no links -- and a
     re-run after a speaker withdraws drops what their speech produced.
+
+    ``settings.engine_mode`` picks who decides whether a candidate is the same
+    topic: the re-ranker and two thresholds (``classic``), an external LLM
+    (``llm``, ``_link_topic_llm``), or the first with the second checking every
+    link it is about to assert (``hybrid``, ``_link_topic``'s ``verifier``).
+    Segmentation and retrieval are the same in all three, so an ``llm`` run needs
+    no re-ranker endpoint. A user's answer to a link is theirs in every mode.
     """
     return _link_topics(transcript.meeting_id, list(transcript.utterances))
 
@@ -303,7 +311,9 @@ def _link_topics(meeting_id: str, utterances: list[UtteranceContract]) -> bool:
     database alike -- see its docstring."""
     settings = get_settings()
     embedder = get_embedder()
-    reranker = get_reranker()
+    mode = settings.engine_mode
+    judge = get_llm_judge() if mode in ("llm", "hybrid") else None
+    reranker = get_reranker() if mode != "llm" else None
 
     with session_scope() as session:
         meeting = session.get(Meeting, meeting_id)
@@ -373,9 +383,23 @@ def _link_topics(meeting_id: str, utterances: list[UtteranceContract]) -> bool:
                 before=before,
                 exclude_meeting_id=meeting_id,
             )
-            links_written += _link_topic(
-                session, meeting_id, topic, candidates, reranker, settings, embedder, verdicts
-            )
+            if mode == "llm":
+                assert judge is not None
+                links_written += _link_topic_llm(
+                    session, meeting_id, topic, candidates, judge, settings, embedder, verdicts
+                )
+            else:
+                links_written += _link_topic(
+                    session,
+                    meeting_id,
+                    topic,
+                    candidates,
+                    reranker,
+                    settings,
+                    embedder,
+                    verdicts,
+                    verifier=judge,
+                )
 
         # Under the row lock publish_if_ready takes: either a publish committed
         # first and this run republishes, or it waits and publishes these links.
@@ -429,7 +453,25 @@ def _link_topic(
     settings,
     embedder,
     verdicts: dict[tuple[str | None, str], str],
+    verifier: LlmJudge | None = None,
 ) -> int:
+    """``classic`` topic linking; with a ``verifier`` (``hybrid`` mode), also a
+    check on every link about to be asserted.
+
+    The verifier is asked only about candidates the thresholds would *assert*: a
+    link classic already leaves ``pending`` needs no second opinion, and this
+    keeps the calls to a handful per meeting. Its answer replaces classic's
+    verdict on that link (and ``confidence``, the deciding signal, with it):
+    at ``llm_link_threshold`` or above it stays ``asserted``; under it but at
+    ``llm_pending_floor`` or above it is demoted to ``pending``; under that the
+    model is fairly sure it is wrong and no row is written. ``rerank_score``
+    keeps the re-ranker's number, and ``reranker_version`` names both models. A
+    link the verifier could not judge (refused, cut off, not JSON) keeps
+    classic's verdict -- an unreadable answer is not a veto.
+
+    A link the user has already answered (``verdicts``) keeps that answer and is
+    not put to the verifier: the answer is theirs, not the model's to overrule.
+    """
     if not candidates:
         return 0
     scores = reranker.score(topic.text, [c.passage for c in candidates])
@@ -451,7 +493,7 @@ def _link_topic(
         reverse=True,
     )
 
-    written = 0
+    kept = []
     for candidate, rerank_score in ranked[: settings.rerank_top_k]:
         if candidate.linked_meeting_date is None:
             log.info(
@@ -460,10 +502,43 @@ def _link_topic(
                 linked_meeting_id=candidate.linked_meeting_id,
             )
             continue
-        confident = (
+        kept.append((candidate, rerank_score))
+
+    def confident(candidate, rerank_score) -> bool:
+        return bool(
             candidate.similarity >= settings.link_similarity_threshold
             or rerank_score >= settings.link_confidence_threshold
         )
+
+    checked: dict[str, float | None] = {}
+    if verifier is not None:
+        asked = [
+            c
+            for c, s in kept
+            if confident(c, s) and (c.linked_meeting_id, topic.label) not in verdicts
+        ]
+        if asked:
+            checked = dict(
+                zip(
+                    (c.linked_meeting_id for c in asked),
+                    verifier.verify_topics(topic.text, [c.passage for c in asked]),
+                    strict=True,
+                )
+            )
+
+    written = 0
+    for candidate, rerank_score in kept:
+        status = "asserted" if confident(candidate, rerank_score) else "pending"
+        link_confidence = confidence[candidate.linked_meeting_id]
+        reranker_version = reranker.model_version
+        if verifier is not None and candidate.linked_meeting_id in checked:
+            reranker_version = f"{reranker.model_version}|{verifier.model_version}"
+            verdict = checked[candidate.linked_meeting_id]
+            if verdict is not None:  # unjudged: classic's verdict stands
+                if verdict < settings.llm_pending_floor:
+                    continue
+                link_confidence = verdict
+                status = "asserted" if verdict >= settings.llm_link_threshold else "pending"
         session.add(
             CtxTopicLink(
                 meeting_id=meeting_id,
@@ -472,13 +547,80 @@ def _link_topic(
                 linked_meeting_date=candidate.linked_meeting_date,
                 similarity=_clamp(candidate.similarity),
                 rerank_score=_clamp(float(rerank_score)),
-                confidence=_clamp(confidence[candidate.linked_meeting_id]),
-                status=verdicts.get(
-                    (candidate.linked_meeting_id, topic.label),
-                    "asserted" if confident else "pending",
-                ),
+                confidence=_clamp(link_confidence),
+                status=verdicts.get((candidate.linked_meeting_id, topic.label), status),
                 retriever_version=f"hybrid-rrf+{embedder.model_version}",
-                reranker_version=reranker.model_version,
+                reranker_version=reranker_version,
+            )
+        )
+        written += 1
+    return written
+
+
+def _link_topic_llm(
+    session: Session,
+    meeting_id: str,
+    topic,
+    candidates: list,
+    judge: LlmJudge,
+    settings,
+    embedder,
+    verdicts: dict[tuple[str | None, str], str],
+) -> int:
+    """``_link_topic`` with an LLM in place of the re-ranker and both thresholds.
+
+    Asks only about the ``llm_topic_candidates`` best past meetings by hybrid
+    retrieval (``candidates`` arrives fusion-ordered): one external call per
+    candidate is what bounds this, where ``classic`` re-ranks all fifty for
+    free. The LLM's probability that it is the same topic is the score: at or
+    above ``llm_link_threshold`` the link is asserted, above ``llm_pending_floor``
+    it is ``pending`` (ask the user), below that no row is written -- asking about
+    a link the model is fairly sure is wrong is noise. Dense similarity is
+    recorded but decides nothing here.
+
+    A link the user has already answered (``verdicts``) keeps that answer and is
+    not put to the model. ``rerank_score`` and ``reranker_version`` hold the LLM's
+    score and the judge's version (prompt + model): the columns say what produced
+    the score, not which kind of model it was.
+    """
+    shortlist = candidates[: settings.llm_topic_candidates]
+    if not shortlist:
+        return 0
+    asked = [c for c in shortlist if (c.linked_meeting_id, topic.label) not in verdicts]
+    scored = dict(
+        zip(
+            (c.linked_meeting_id for c in asked),
+            judge.topic_relatedness(topic.text, [c.passage for c in asked]) if asked else [],
+            strict=True,
+        )
+    )
+    ranked = sorted(shortlist, key=lambda c: scored.get(c.linked_meeting_id, 1.0), reverse=True)
+
+    written = 0
+    for candidate in ranked[: settings.rerank_top_k]:
+        human = verdicts.get((candidate.linked_meeting_id, topic.label))
+        score = scored.get(candidate.linked_meeting_id, 0.0)
+        if human is None and score < settings.llm_pending_floor:
+            continue
+        if candidate.linked_meeting_date is None:
+            log.info(
+                "context_link_skipped_no_date",
+                meeting_id=meeting_id,
+                linked_meeting_id=candidate.linked_meeting_id,
+            )
+            continue
+        session.add(
+            CtxTopicLink(
+                meeting_id=meeting_id,
+                topic_label=topic.label,
+                linked_meeting_id=candidate.linked_meeting_id,
+                linked_meeting_date=candidate.linked_meeting_date,
+                similarity=_clamp(candidate.similarity),
+                rerank_score=_clamp(score),
+                confidence=_clamp(candidate.similarity if human else score),
+                status=human or ("asserted" if score >= settings.llm_link_threshold else "pending"),
+                retriever_version=f"hybrid-rrf+{embedder.model_version}",
+                reranker_version=judge.model_version,
             )
         )
         written += 1
@@ -612,7 +754,18 @@ def build_decision_lineage(result: ExtractionResult) -> LineageOutcome:
     """
     settings = get_settings()
     embedder = get_embedder()
-    nli = get_nli()
+    # ``engine_mode="llm"`` swaps NLI + cosine threshold for an LLM verdict, both
+    # for which thread a decision joins and for how it changed (see
+    # ``pipeline.llm_judge``); ``nli_version`` then records the judge. ``hybrid``
+    # runs this classic: the LLM only checks topic links.
+    judge: LlmJudge | None = None
+    nli: NliModel | None = None
+    if settings.engine_mode == "llm":
+        judge = get_llm_judge()
+        verdict_version = judge.model_version
+    else:
+        nli = get_nli()
+        verdict_version = nli.model_version
 
     with session_scope() as session:
         meeting = session.get(Meeting, result.meeting_id)
@@ -638,12 +791,19 @@ def build_decision_lineage(result: ExtractionResult) -> LineageOutcome:
         if own_versions:
             own_vectors = embedder.embed([statement for _, statement in own_versions])
             heads += [
-                _ThreadHead(thread_id, vector)
-                for (thread_id, _statement), vector in zip(own_versions, own_vectors, strict=True)
+                _ThreadHead(thread_id, vector, statement)
+                for (thread_id, statement), vector in zip(own_versions, own_vectors, strict=True)
             ]
         decisions = list(result.decisions)
         vectors = embedder.embed([d.statement for d in decisions]) if decisions else []
-        assignment = _assign_decisions_to_threads(vectors, heads, settings.lineage_match_threshold)
+        if judge is not None:
+            assignment = _assign_decisions_by_judge(
+                [d.statement for d in decisions], vectors, heads, judge, settings
+            )
+        else:
+            assignment = _assign_decisions_to_threads(
+                vectors, heads, settings.lineage_match_threshold
+            )
 
         # Idempotency: now drop this meeting's old versions. The threads they
         # were in still need re-chaining even when this run's decisions land
@@ -689,14 +849,14 @@ def build_decision_lineage(result: ExtractionResult) -> LineageOutcome:
                     nli_label=None,
                     confidence=_clamp(decision.confidence),
                     key_stakeholders_absent=[],
-                    nli_version=nli.model_version,
+                    nli_version=verdict_version,
                 )
             )
             affected.add(thread_id)
 
         session.flush()
         for thread_id in affected:
-            _rethread(session, thread_id, nli)
+            _rethread(session, thread_id, nli, judge)
 
         orphans_swept = sweep_orphan_decision_threads(session)
         labels_swept = sweep_stale_topic_labels(session)
@@ -758,13 +918,16 @@ def build_decision_lineage(result: ExtractionResult) -> LineageOutcome:
 
 class _ThreadHead:
     """A thread's most recent statement, embedded — the target
-    ``_assign_decisions_to_threads`` scores a new decision against."""
+    ``_assign_decisions_to_threads`` scores a new decision against. ``statement``
+    is the text behind ``vector``, for ``_assign_decisions_by_judge`` to show the
+    LLM; the cosine path never reads it."""
 
-    __slots__ = ("thread_id", "vector")
+    __slots__ = ("statement", "thread_id", "vector")
 
-    def __init__(self, thread_id: str, vector: list[float]) -> None:
+    def __init__(self, thread_id: str, vector: list[float], statement: str = "") -> None:
         self.thread_id = thread_id
         self.vector = vector
+        self.statement = statement
 
 
 def _meeting_time():
@@ -802,8 +965,8 @@ def _thread_heads(session: Session, team_id: str, embedder: Embedder) -> list[_T
     ordered = sorted(head_by_thread.items())
     vectors = embedder.embed([version.current_statement for _, version in ordered])
     return [
-        _ThreadHead(thread_id, vector)
-        for (thread_id, _version), vector in zip(ordered, vectors, strict=True)
+        _ThreadHead(thread_id, vector, version.current_statement)
+        for (thread_id, version), vector in zip(ordered, vectors, strict=True)
     ]
 
 
@@ -834,13 +997,22 @@ def _assign_decisions_to_threads(
         for d_idx, vector in enumerate(vectors)
         for h_idx, head in enumerate(heads)
     ]
-    candidates = [c for c in candidates if c[0] >= threshold]
-    candidates.sort(key=lambda c: (-c[0], c[1], c[2]))
+    return _assign_scored([c for c in candidates if c[0] >= threshold], heads)
+
+
+def _assign_scored(
+    candidates: list[tuple[float, int, int]], heads: list[_ThreadHead]
+) -> dict[int, _ThreadHead]:
+    """The greedy strongest-first assignment, from ``(score, decision index,
+    head index)`` candidates already filtered to the ones worth taking. Shared by
+    the cosine and the LLM paths; the scores mean different things but are only
+    ever compared with each other."""
+    ordered = sorted(candidates, key=lambda c: (-c[0], c[1], c[2]))
 
     assigned_decisions: set[int] = set()
     assigned_threads: set[str] = set()
     assignment: dict[int, _ThreadHead] = {}
-    for _similarity, d_idx, h_idx in candidates:
+    for _score, d_idx, h_idx in ordered:
         head = heads[h_idx]
         if d_idx in assigned_decisions or head.thread_id in assigned_threads:
             continue
@@ -850,9 +1022,66 @@ def _assign_decisions_to_threads(
     return assignment
 
 
-def _rethread(session: Session, thread_id: str, nli: NliModel) -> None:
+def _assign_decisions_by_judge(
+    statements: list[str],
+    vectors: list[list[float]],
+    heads: list[_ThreadHead],
+    judge: LlmJudge,
+    settings,
+) -> dict[int, _ThreadHead]:
+    """``_assign_decisions_to_threads`` with an LLM in place of the cosine cutoff.
+
+    The embedder still shortlists: each decision is put to the LLM against its
+    ``llm_thread_candidates`` most similar threads (one entry per thread, however
+    many heads it has), with no similarity floor -- the point is to find out
+    whether the model recognises a match the cosine would have missed. A pair is
+    taken when the model calls the two the same decision at ``llm_match_threshold``
+    confidence or better; the greedy assignment is the one ``classic`` uses, with
+    that confidence as the score.
+
+    ``heads`` may list a thread's own reprocessed version and its team head
+    (``build_decision_lineage``); the shortlist keeps whichever is closer, so the
+    LLM is shown one statement per thread.
+    """
+    pairs: list[tuple[str, str]] = []
+    slots: list[tuple[int, int]] = []
+    for d_idx, vector in enumerate(vectors):
+        by_similarity = sorted(
+            range(len(heads)), key=lambda h: (-_cosine(vector, heads[h].vector), h)
+        )
+        seen: set[str] = set()
+        for h_idx in by_similarity:
+            if heads[h_idx].thread_id in seen:
+                continue
+            seen.add(heads[h_idx].thread_id)
+            pairs.append((heads[h_idx].statement, statements[d_idx]))
+            slots.append((d_idx, h_idx))
+            if len(seen) >= settings.llm_thread_candidates:
+                break
+
+    verdicts = judge.compare_decisions(pairs)
+    return _assign_scored(
+        [
+            (verdict.confidence, d_idx, h_idx)
+            for verdict, (d_idx, h_idx) in zip(verdicts, slots, strict=True)
+            if verdict.related and verdict.confidence >= settings.llm_match_threshold
+        ],
+        heads,
+    )
+
+
+def _rethread(
+    session: Session, thread_id: str, nli: NliModel | None, judge: LlmJudge | None = None
+) -> None:
     """Re-chain every *visible* version of one thread in meeting-chronological
     order, and refresh the thread's ``topic_label`` to match.
+
+    Exactly one of ``nli`` and ``judge`` decides how each version changed:
+    ``judge`` (``engine_mode="llm"``) asks the LLM about each adjacent pair and
+    leaves ``nli_label`` empty -- it is an NLI model's verdict, and there is none
+    to record; ``nli_version`` holds the judge's version instead. A pair the LLM
+    calls "unrelated" (threaded together by an earlier run, or out of order)
+    reads ``modified``, the label a change nobody could match reads under NLI too.
 
     ``previous_*``, ``change_type``, ``nli_label``, ``confidence`` and
     ``key_stakeholders_absent`` all depend on which meeting a version follows, so
@@ -900,6 +1129,60 @@ def _rethread(session: Session, thread_id: str, nli: NliModel) -> None:
         (versions[i - 1].current_statement, versions[i].current_statement)
         for i in range(1, len(versions))
     ]
+    # Per adjacent pair: (change type, the score it was decided on, the NLI
+    # label to record -- None when there was no NLI model).
+    if judge is not None:
+        model_version = judge.model_version
+        changes: list[tuple[ChangeType, float, str | None]] = [
+            (verdict.change, verdict.confidence, None) for verdict in judge.compare_decisions(pairs)
+        ]
+    else:
+        assert nli is not None
+        model_version = nli.model_version
+        changes = _classify_pairs_nli(nli, pairs)
+
+    prior_meeting_ids: list[str] = []
+    for index, version in enumerate(versions):
+        if index == 0:
+            version.previous_version_id = None
+            version.previous_statement = None
+            version.previous_meeting_id = None
+            version.change_type = ChangeType.NEW.value
+            version.nli_label = None
+            version.key_stakeholders_absent = []
+        else:
+            prev = versions[index - 1]
+            change, score, nli_label = changes[index - 1]
+            version.previous_version_id = prev.id
+            version.previous_statement = prev.current_statement
+            version.previous_meeting_id = prev.meeting_id
+            version.change_type = change.value
+            version.nli_label = nli_label
+            version.confidence = _clamp(score)
+            present = _confirmed_attendance(session, version.meeting_id)
+            if present is None:
+                version.key_stakeholders_absent = []
+            else:
+                known = _meeting_user_ids(session, *prior_meeting_ids)
+                version.key_stakeholders_absent = sorted(
+                    _current_team_member_ids(session, thread.team_id, known - present)
+                )
+        version.nli_version = model_version
+        prior_meeting_ids.append(version.meeting_id)
+
+    thread.topic_label = versions[-1].current_statement[:400]
+    session.flush()
+
+
+def _classify_pairs_nli(
+    nli: NliModel, pairs: list[tuple[str, str]]
+) -> list[tuple[ChangeType, float, str | None]]:
+    """``classic``'s change classification for ``(earlier, later)`` pairs: NLI in
+    both directions plus the lexical cues (``pipeline.change``), in one batch.
+
+    The label recorded is the model's own forward verdict, kept as-is:
+    ``change_type`` is derived from it, not the same thing.
+    """
     # One batch: forward, then each pair reversed, then forward against the
     # later statement with its keep-words stripped (only where it had any).
     stripped = {
@@ -916,45 +1199,13 @@ def _rethread(session: Session, thread_id: str, nli: NliModel) -> None:
     scored, scored_back = out[: len(pairs)], out[len(pairs) : 2 * len(pairs)]
     scored_kept = dict(zip(stripped, out[2 * len(pairs) :], strict=True))
 
-    prior_meeting_ids: list[str] = []
-    for index, version in enumerate(versions):
-        if index == 0:
-            version.previous_version_id = None
-            version.previous_statement = None
-            version.previous_meeting_id = None
-            version.change_type = ChangeType.NEW.value
-            version.nli_label = None
-            version.key_stakeholders_absent = []
-        else:
-            prev = versions[index - 1]
-            change, score = classify_change(
-                scored[index - 1],
-                scored_back[index - 1],
-                version.current_statement,
-                prev.current_statement,
-                scored_kept.get(index - 1),
-            )
-            version.previous_version_id = prev.id
-            version.previous_statement = prev.current_statement
-            version.previous_meeting_id = prev.meeting_id
-            version.change_type = change.value
-            # The model's own forward verdict, kept as-is: ``change_type`` is
-            # derived from it, not the same thing (see ``pipeline.change``).
-            version.nli_label = NliLabel(scored[index - 1].label).value
-            version.confidence = _clamp(score)
-            present = _confirmed_attendance(session, version.meeting_id)
-            if present is None:
-                version.key_stakeholders_absent = []
-            else:
-                known = _meeting_user_ids(session, *prior_meeting_ids)
-                version.key_stakeholders_absent = sorted(
-                    _current_team_member_ids(session, thread.team_id, known - present)
-                )
-        version.nli_version = nli.model_version
-        prior_meeting_ids.append(version.meeting_id)
-
-    thread.topic_label = versions[-1].current_statement[:400]
-    session.flush()
+    changes: list[tuple[ChangeType, float, str | None]] = []
+    for i, (earlier, later) in enumerate(pairs):
+        change, score = classify_change(
+            scored[i], scored_back[i], later, earlier, scored_kept.get(i)
+        )
+        changes.append((change, score, NliLabel(scored[i].label).value))
+    return changes
 
 
 def _meeting_user_ids(session: Session, *meeting_ids: str) -> set[str]:

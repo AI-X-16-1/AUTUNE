@@ -171,6 +171,20 @@ def test_the_job_puts_the_summary_on_the_draft(session: Session, wired: dict) ->
     assert "제 번호로 연락 주세요" not in sent, "a non-consenting line never reaches the model"
 
 
+def test_the_job_keeps_a_line_the_draft_already_cites(session: Session, wired: dict) -> None:
+    """The pipeline's own draft may already cite the line the summary cites. A new
+    row for it was inserted before the old one was deleted, and broke the unique
+    key (real-service check, 2026-10-01)."""
+    answer(UtteranceKind.COMMITMENT)
+    draft(session).related = [ExtActionItemRelated(utterance_id="utt_1")]
+    session.commit()
+
+    tasks.summarise_confirmed_draft("utt_3")
+
+    assert draft(session).description == tidy(SUMMARY)
+    assert list(session.scalars(select(ExtActionItemRelated.utterance_id))) == ["utt_1"]
+
+
 def test_a_draft_a_person_touched_is_left_alone(session: Session, wired: dict) -> None:
     answer(UtteranceKind.COMMITMENT)
     row = draft(session)

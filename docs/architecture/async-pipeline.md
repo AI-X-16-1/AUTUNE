@@ -96,6 +96,8 @@ agrees on.
 | `autune.extraction.periodic.publish_team_agendas` | task | B |
 | `autune.extraction.agenda_changed` | event | B (per team, #436) |
 | `autune.context.on_extraction_agenda_changed` | task | D |
+| `autune.extraction.action_progress` | event | B (per team, #605) |
+| `autune.intelligence.on_extraction_action_progress` | task | E |
 
 Register tasks in your module's `tasks.py`. `apps/worker` discovers them by
 iterating the module list — never add your module to a registration block by

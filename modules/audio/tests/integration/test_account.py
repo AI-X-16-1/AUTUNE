@@ -151,7 +151,9 @@ def test_deleting_my_speech_leaves_the_meeting_and_everyone_else(
     response = client_for(me).delete("/api/audio/me/speech")
 
     assert response.json() == {"utterances": 1, "voice_rows": 1}
-    remaining = db_session.scalars(sa.select(Utterance.id)).all()
+    remaining = db_session.scalars(
+        sa.select(Utterance.id).where(Utterance.meeting_id == meeting)
+    ).all()
     assert remaining == [spoken["colleague@example.com:utterance"]]
     assert db_session.get(Meeting, meeting) is not None
     assert db_session.get(Participant, spoken["me@example.com:participant"]) is not None
@@ -159,7 +161,12 @@ def test_deleting_my_speech_leaves_the_meeting_and_everyone_else(
 
 
 def test_deleting_my_account_takes_me_and_my_speech(
-    db_session: Session, client_for, me: User, spoken: dict[str, str], no_hooks: list[str]
+    db_session: Session,
+    client_for,
+    me: User,
+    spoken: dict[str, str],
+    no_hooks: list[str],
+    meeting: str,
 ) -> None:
     db_session.add(profile(me.id))
     db_session.flush()
@@ -172,10 +179,15 @@ def test_deleting_my_account_takes_me_and_my_speech(
     assert no_hooks == [my_id]
     db_session.expire_all()
     assert db_session.get(User, my_id) is None
-    assert db_session.scalars(sa.select(Utterance.id)).all() == [
-        spoken["colleague@example.com:utterance"]
-    ]
-    assert db_session.scalars(sa.select(AudSpeakerEmbedding)).all() == []
+    assert db_session.scalars(
+        sa.select(Utterance.id).where(Utterance.meeting_id == meeting)
+    ).all() == [spoken["colleague@example.com:utterance"]]
+    assert (
+        db_session.scalars(
+            sa.select(AudSpeakerEmbedding).where(AudSpeakerEmbedding.user_id == my_id)
+        ).all()
+        == []
+    )
     assert db_session.scalars(sa.select(TeamMember).where(TeamMember.user_id == my_id)).all() == []
     participant = db_session.get(Participant, spoken["me@example.com:participant"])
     assert participant is not None and participant.user_id is None

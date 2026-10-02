@@ -39,10 +39,12 @@ from autune_core import (
     User,
     Utterance,
     get_logger,
+    load_integration,
     session_scope,
 )
 from autune_core.errors import NotFoundError, ValidationError
 from autune_core.settings import get_settings as get_core_settings
+from autune_core.user_integrations import users_linked_to_slack_member
 from autune_integrations import (
     PermanentIntegrationError,
     PostedMessage,
@@ -149,7 +151,10 @@ def send_confirmation_dm(
     assert_personal_delivery(subject_id=speaker_id, recipient_id=recipient_id, is_direct=True)
 
     text, blocks = build_confirmation_dm(
-        utterance_id=utterance_id, quoted_text=quoted_text, answer_url=answer_url
+        utterance_id=utterance_id,
+        quoted_text=quoted_text,
+        answer_url=answer_url,
+        buttons=get_core_settings().slack_buttons,
     )
     sent = slack.send_dm_message(recipient_id, text, blocks)
 
@@ -342,12 +347,6 @@ def answer_confirmation(
     return MyConfirmation(utterance_id=utterance_id, text=own[1], answer=answer)  # type: ignore[arg-type]
 
 
-def source_digest(texts: Sequence[str]) -> str:
-    """sha256 of the masked texts a row was drawn from or quotes, in order -- not
-    reversible, the #518 consent-key pattern (#586)."""
-    return hashlib.sha256("\x1f".join(texts).encode("utf-8")).hexdigest()
-
-
 def dms_to_correct(session: Session, *, meeting_id: str, spoken: Mapping[str, str]) -> list[str]:
     """Utterance ids whose confirmation DM quotes a line that has since been
     corrected (#586): sent with a place kept, and the line no longer hashing to
@@ -379,6 +378,47 @@ def apply_confirmation_response(response: ConfirmationResponse) -> None:
         from . import tasks
 
         tasks.summarise_confirmed_draft.delay(response.utterance_id)
+
+
+def answer_from_slack(response: ConfirmationResponse) -> None:
+    """A click on the DM's buttons (``slack.py``), recorded only when the
+    speaker made it.
+
+    Slack signs the request, not the person. The click counts when the Slack
+    account that made it is the one the speaker linked (#255) and it came from
+    the workspace the meeting's team installed Autune into -- the same "only
+    the speaker" the web path checks in ``answer_confirmation`` (#610 review).
+    Anything else is logged by id and dropped, like an orphaned click.
+    """
+    with session_scope() as session:
+        allowed = _clicked_by_the_speaker(session, response)
+    if not allowed:
+        log.info("extraction_confirmation_not_the_speaker", utterance_id=response.utterance_id)
+        return
+    apply_confirmation_response(response)
+
+
+def _clicked_by_the_speaker(session: Session, response: ConfirmationResponse) -> bool:
+    row = session.get(ExtConfirmation, response.utterance_id)
+    if row is None:
+        # ``resolve_confirmation`` logs and ignores an orphaned click.
+        return True
+    speaker = session.scalar(
+        select(Participant.user_id)
+        .join(Utterance, Utterance.participant_id == Participant.id)
+        .where(Utterance.id == response.utterance_id)
+    )
+    if speaker is None or speaker not in users_linked_to_slack_member(
+        session, response.responder_id
+    ):
+        return False
+    team_id = session.scalar(select(Meeting.team_id).where(Meeting.id == row.meeting_id))
+    slack = load_integration(session, team_id, "slack") if team_id else None
+    return (
+        slack is not None
+        and bool(response.workspace_id)
+        and slack.config.get("workspace_id") == response.workspace_id
+    )
 
 
 def resolve_confirmation(
@@ -502,6 +542,7 @@ def draft_confirmed_commitment(
         origin="model",
         sources=[ExtActionItemSource(utterance_id=confirmation.utterance_id)],
         related=_cited(session, confirmation.meeting_id, confirmation.utterance_id, resolution),
+        source_digest=stored_digest(session, [confirmation.utterance_id]),
     )
     session.add(item)
     session.flush()
@@ -582,7 +623,11 @@ def apply_confirmed_summary(session: Session, utterance_id: str, resolution: Res
     for draft in drafts:
         draft.description = tidy(resolution.text)
         draft.description_resolved = said is not None and resolution.text != said.text
-        draft.related = _cited(session, draft.meeting_id, utterance_id, resolution)
+        # Keep the row of a line the draft already cites: a new equal row is
+        # inserted before the old one is deleted, and breaks the unique key.
+        kept = {r.utterance_id: r for r in draft.related}
+        cited = _cited(session, draft.meeting_id, utterance_id, resolution)
+        draft.related = [kept.get(r.utterance_id, r) for r in cited]
     session.flush()
     return True
 
@@ -617,6 +662,122 @@ def confirmed_summaries(
         for u in classified
     ]
     return resolve_commitment_summaries(resolver, marked, kind=UtteranceKind.AMBIGUOUS)
+
+
+SPEECH_DELETED_TEXT = "삭제된 발화에서 만든 항목"
+"""What replaces a line that was the deleted speech itself (#587)."""
+
+
+@dataclass(frozen=True)
+class SpeechForgotten:
+    """What ``forget_speech`` did, by id: drafts deleted, and the confirmed items
+    and decisions whose text changed and whose copies outside must follow."""
+
+    deleted_items: tuple[str, ...] = ()
+    changed_items: tuple[str, ...] = ()
+    changed_decisions: tuple[str, ...] = ()
+
+
+def _person_wrote_description(session: Session, action_item_id: str) -> bool:
+    """Whether a person ever edited this item's description -- or edited it
+    before edits named their fields (#109), when it cannot be told: then the
+    text may be theirs, and it is kept."""
+    for fields in session.scalars(
+        select(ExtEditEvent.fields).where(
+            ExtEditEvent.action_item_id == action_item_id, ExtEditEvent.kind == "edited"
+        )
+    ):
+        if fields is None or "description" in fields.split(","):
+            return True
+    return False
+
+
+def forget_speech(session: Session, utterance_ids: Collection[str]) -> SpeechForgotten:
+    """A person deleted their own speech (#587): the work stays, their words go.
+
+    Decided with the user (2026-10-01). For every item and decision drawn from
+    ``utterance_ids``:
+
+    - an unconfirmed draft the model or the chat made is deleted -- nobody has
+      accepted it, and it is only the deleted words restated;
+    - a confirmed item whose description is the line itself (not a model's
+      summary, not a person's writing) reads ``SPEECH_DELETED_TEXT``, and its
+      ``due_text`` -- a fragment of the line -- is cleared; a summary or a
+      person's text is the team's record and stays;
+    - a decision loses ``original_statement`` (what B would send D next is
+      then ``statement``), and a model statement that is the line tidied (no
+      cited lines, so not a write-up) reads ``SPEECH_DELETED_TEXT`` too.
+
+    Nothing is republished here: copies C, D and E already received through
+    ``ExtractionResult`` are theirs, and stay until they act on the same signal
+    (#601 review).
+
+    Runs before the utterances are deleted, while the sources still name them.
+    Safe to repeat. Writes no edit event: no person corrected anything.
+    """
+    ids = set(utterance_ids)
+    if not ids:
+        return SpeechForgotten()
+    items = session.scalars(
+        select(ExtActionItem)
+        .join(ExtActionItemSource, ExtActionItemSource.action_item_id == ExtActionItem.id)
+        .where(ExtActionItemSource.utterance_id.in_(ids))
+        .distinct()
+    ).all()
+    deleted: list[str] = []
+    changed: list[str] = []
+    for item in items:
+        drafted = item.origin in ("model", "chat")
+        if drafted and item.status == ActionStatus.NEEDS_CONFIRMATION.value:
+            deleted.append(item.id)
+            session.delete(item)
+            continue
+        touched = False
+        if (
+            drafted
+            and not item.description_resolved
+            and item.description != SPEECH_DELETED_TEXT
+            and not _person_wrote_description(session, item.id)
+        ):
+            item.description = SPEECH_DELETED_TEXT
+            touched = True
+        if item.due_text is not None:
+            item.due_text = None
+            touched = True
+        if touched and item.status != ActionStatus.NEEDS_CONFIRMATION.value:
+            changed.append(item.id)
+
+    decisions = session.scalars(
+        select(ExtDecision)
+        .join(ExtDecisionSource, ExtDecisionSource.decision_id == ExtDecision.id)
+        .where(ExtDecisionSource.utterance_id.in_(ids))
+        .distinct()
+    ).all()
+    confirmed = set(
+        session.scalars(
+            select(ExtDecisionReview.decision_id).where(
+                ExtDecisionReview.decision_id.in_([d.id for d in decisions]),
+                ExtDecisionReview.status == "confirmed",
+            )
+        )
+    )
+    changed_decisions: list[str] = []
+    for decision in decisions:
+        touched = False
+        if decision.original_statement is not None:
+            decision.original_statement = None
+            touched = True
+        if (
+            decision.origin == "model"
+            and not decision.related
+            and decision.statement != SPEECH_DELETED_TEXT
+        ):
+            decision.statement = SPEECH_DELETED_TEXT
+            touched = True
+        if touched and decision.id in confirmed:
+            changed_decisions.append(decision.id)
+    session.flush()
+    return SpeechForgotten(tuple(deleted), tuple(changed), tuple(changed_decisions))
 
 
 def withdraw_confirmed_draft(session: Session, confirmation: ExtConfirmation) -> int:
@@ -737,6 +898,7 @@ def create_action_item(
         ExtActionItemSource(utterance_id=utterance_id)
         for utterance_id in dict.fromkeys(payload.source_utterance_ids)
     ]
+    item.source_digest = stored_digest(session, list(dict.fromkeys(payload.source_utterance_ids)))
     session.add(item)
     session.flush()
 
@@ -834,6 +996,7 @@ def create_chat_item(
         confidence=1.0,
         origin="chat",
         sources=[ExtActionItemSource(utterance_id=utterance_id)],
+        source_digest=source_digest([said.text]),
         related=[
             ExtActionItemRelated(utterance_id=u)
             for u in dict.fromkeys(resolution.used)
@@ -866,6 +1029,7 @@ def read_model(
     summary: str | None = None,
     sync_refs: list[ExternalRefRead] | None = None,
     assignee_departed: bool = False,
+    meeting_title: str | None = None,
 ) -> ActionItemRead:
     """One item as this module's own screens read it.
 
@@ -912,6 +1076,7 @@ def read_model(
     return ActionItemRead(
         id=item.id,
         meeting_id=item.meeting_id,
+        meeting_title=meeting_title,
         description=item.description,
         description_resolved=item.description_resolved,
         assignee_id=None if assignee_departed else item.assignee_id,
@@ -925,6 +1090,7 @@ def read_model(
         source_utterance_ids=source_ids,
         deleted_source_count=0 if hidden else len(item.sources) - len(source_ids),
         needs_reassignment=assignee_departed and item.status in _OPEN_STATUSES,
+        needs_recheck=bool(item.needs_recheck),
         is_candidate=is_candidate,
         summary=summary,
         sync_refs=sync_refs or [],
@@ -979,7 +1145,18 @@ def read_one(session: Session, item: ExtActionItem) -> ActionItemRead:
         item,
         assignee_name=name,
         assignee_departed=item.id in departed_assignees(session, [item]),
+        meeting_title=meeting_titles(session, [item]).get(item.meeting_id),
     )
+
+
+def meeting_titles(session: Session, items: Sequence[ExtActionItem]) -> dict[str, str]:
+    """The title of each meeting ``items`` came from, in one query. Reads the
+    shared ``meetings`` table and never writes it (invariant 4)."""
+    ids = {item.meeting_id for item in items}
+    if not ids:
+        return {}
+    rows = session.execute(select(Meeting.id, Meeting.title).where(Meeting.id.in_(ids)))
+    return dict(rows.tuples().all())
 
 
 def assignee_names(session: Session, items: Sequence[ExtActionItem]) -> dict[str, str]:
@@ -999,6 +1176,12 @@ def assignee_names(session: Session, items: Sequence[ExtActionItem]) -> dict[str
 
 
 # --- who may read what (#189) ---------------------------------------------------
+
+
+def is_team_member(session: Session, team_id: str, user_id: str) -> bool:
+    """Whether ``user_id`` is on ``team_id`` -- for a route that names the team
+    itself (S28 settings, #496) rather than one of its meetings."""
+    return _is_team_member(session, user_id=user_id, team_id=team_id)
 
 
 def _is_team_member(session: Session, *, user_id: str, team_id: str) -> bool:
@@ -1110,6 +1293,7 @@ def list_action_items(
     departed = departed_assignees(session, items)
     summaries = action_item_summaries(session, items)
     refs = action_item_external_refs(session, [item.id for item in items])
+    titles = meeting_titles(session, items)
     return [
         read_model(
             item,
@@ -1117,6 +1301,7 @@ def list_action_items(
             summary=summaries.get(item.id),
             sync_refs=refs.get(item.id, []),
             assignee_departed=item.id in departed,
+            meeting_title=titles.get(item.meeting_id),
         )
         for item in items
     ]
@@ -1187,8 +1372,8 @@ def carried_over(session: Session, meeting_id: str, *, today: date | None = None
                     summary=summaries.get(item.id),
                     sync_refs=refs.get(item.id, []),
                     assignee_departed=item.id in departed,
+                    meeting_title=earlier[item.meeting_id].title,
                 ).model_dump(),
-                meeting_title=earlier[item.meeting_id].title,
                 meeting_started_at=earlier[item.meeting_id].started_at,
             )
             for item in shown
@@ -1279,7 +1464,12 @@ def read_detail(session: Session, item: ExtActionItem) -> ActionItemDetail:
     hidden = originals_hidden(item)
     return ActionItemDetail(
         **read_model(
-            item, assignee_name=name, summary=summary, sync_refs=refs, assignee_departed=departed
+            item,
+            assignee_name=name,
+            summary=summary,
+            sync_refs=refs,
+            assignee_departed=departed,
+            meeting_title=meeting_titles(session, [item]).get(item.meeting_id),
         ).model_dump(),
         sources=[] if hidden else source_utterances(session, item.id),
         context=[]
@@ -1426,6 +1616,9 @@ def update_action_item(
 
     for field, value in changes.items():
         setattr(item, field, value.value if isinstance(value, ActionStatus) else value)
+    # A person has looked at it and changed it: whatever a corrected source asked
+    # them to check, they have now had in front of them (#586).
+    item.needs_recheck = False
     if "due_date" in changes:
         # The phrase explained the date the model read. A date a person set is
         # not explained by it, and keeping it would hold on to what they
@@ -2486,6 +2679,144 @@ def resolve_decision_summaries(
     return dict(zip(keys, resolved, strict=True))
 
 
+def source_digest(texts: Sequence[str]) -> str:
+    """sha256 of the masked texts an item or decision was drawn from, or a
+    confirmation DM quotes, in source order -- not reversible, the #518
+    consent-key pattern. What a later run compares to notice that a line was
+    corrected (#586)."""
+    return hashlib.sha256("\x1f".join(texts).encode("utf-8")).hexdigest()
+
+
+def stored_digest(session: Session, utterance_ids: Sequence[str]) -> str | None:
+    """``source_digest`` over the stored text of ``utterance_ids``; ``None`` when
+    there are none or one is gone."""
+    if not utterance_ids:
+        return None
+    texts = dict(
+        session.execute(select(Utterance.id, Utterance.text).where(Utterance.id.in_(utterance_ids)))
+        .tuples()
+        .all()
+    )
+    if len(texts) != len(set(utterance_ids)):
+        return None
+    return source_digest([texts[u] for u in utterance_ids])
+
+
+@dataclass(frozen=True)
+class SourceCorrections:
+    """What ``apply_source_corrections`` changed, by id -- the confirmed ones,
+    whose copies in Notion, Jira and calendars must follow."""
+
+    changed_items: tuple[str, ...] = ()
+    changed_decisions: tuple[str, ...] = ()
+    flagged: int = 0
+
+
+def _edited_description(session: Session, action_item_id: str) -> bool:
+    for fields in session.scalars(
+        select(ExtEditEvent.fields).where(
+            ExtEditEvent.action_item_id == action_item_id, ExtEditEvent.kind == "edited"
+        )
+    ):
+        if fields is None or "description" in fields.split(","):
+            return True
+    return False
+
+
+def apply_source_corrections(
+    session: Session, *, meeting_id: str, spoken: Mapping[str, str]
+) -> SourceCorrections:
+    """Fix or flag what was drawn from a line that has since been corrected (#586).
+
+    A PII report masks stored lines again and republishes ``TranscriptReady``
+    without naming them. ``spoken`` is that payload's text by utterance id. Every
+    item and decision of the meeting whose sources now hash differently from
+    ``source_digest`` is handled -- **even in a meeting a person has edited**,
+    which ``build_action_items`` otherwise leaves alone (ADR 0006):
+
+    - an item whose description is the line itself reads the corrected line,
+      tidied; a model's summary is replaced the same way and flagged
+      ``needs_recheck`` (a summary is not rewritten here: no model call on a
+      correction); a person's own text is only flagged -- B cannot tell which
+      words of theirs were the private ones;
+    - ``due_text``, a fragment of the line, is read again from the new text;
+    - a model decision was rebuilt from the new text in this same run; one a
+      person typed, or reworded, is flagged.
+
+    A row with no digest yet records one and changes nothing. Runs after this
+    run's rebuild, so what it rebuilt already matches. No edit events: no person
+    corrected anything. Returns the confirmed rows whose outside copies must
+    follow.
+    """
+    meeting = session.get(Meeting, meeting_id)
+    day = meeting_day(meeting.started_at if meeting is not None else None)
+    changed: list[str] = []
+    flagged = 0
+    for item in session.scalars(
+        select(ExtActionItem)
+        .where(ExtActionItem.meeting_id == meeting_id)
+        .options(selectinload(ExtActionItem.sources))
+    ):
+        ids = live_source_ids(item)
+        texts = [spoken.get(u) for u in ids]
+        if not ids or any(t is None for t in texts):
+            continue
+        digest = source_digest([t for t in texts if t is not None])
+        if item.source_digest == digest:
+            continue
+        first = item.source_digest is None
+        item.source_digest = digest
+        if first:
+            continue
+        line = texts[0] or ""
+        if item.origin == "user" or _edited_description(session, item.id):
+            item.needs_recheck = True
+        elif item.description_resolved:
+            item.description = tidy(line)
+            item.description_resolved = False
+            item.needs_recheck = True
+        elif item.origin in ("model", "chat"):
+            item.description = tidy(line)
+        if item.due_text is not None:
+            due = parse_due(line, day)
+            item.due_text = due.text if due is not None else None
+        flagged += int(item.needs_recheck)
+        if item.status != ActionStatus.NEEDS_CONFIRMATION.value:
+            changed.append(item.id)
+
+    reviews = {
+        review.decision_id: review
+        for review in session.scalars(
+            select(ExtDecisionReview).where(ExtDecisionReview.meeting_id == meeting_id)
+        )
+    }
+    changed_decisions: list[str] = []
+    for decision in session.scalars(
+        select(ExtDecision)
+        .where(ExtDecision.meeting_id == meeting_id)
+        .options(selectinload(ExtDecision.sources))
+    ):
+        ids = [s.utterance_id for s in sorted(decision.sources, key=lambda s: s.position)]
+        texts = [spoken.get(u) for u in ids]
+        if not ids or any(t is None for t in texts):
+            continue
+        digest = source_digest([t for t in texts if t is not None])
+        if decision.source_digest == digest:
+            continue
+        first = decision.source_digest is None
+        decision.source_digest = digest
+        if first:
+            continue
+        review = reviews.get(decision.id)
+        if decision.origin == "user" or (review is not None and review.statement):
+            decision.needs_recheck = True
+            flagged += 1
+        if review is not None and review.status == "confirmed":
+            changed_decisions.append(decision.id)
+    session.flush()
+    return SourceCorrections(tuple(changed), tuple(changed_decisions), flagged)
+
+
 def build_action_items(
     session: Session,
     *,
@@ -2787,6 +3118,7 @@ def _review_decision_row(
         model_statement=decision.statement,
         confidence=decision.confidence,
         origin=decision.origin,  # type: ignore[arg-type]
+        needs_recheck=bool(decision.needs_recheck),
         status=review.status if review else "pending",  # type: ignore[arg-type]
         suggested=_suggested(decision.confidence),
         source_utterance_ids=[
@@ -3031,6 +3363,9 @@ def review_decision(
             # decision when the rejection is undone -- wording nobody typed this
             # time, sent to D, E and outbound as if confirmed.
             review.statement = None
+        # A person has reviewed it again: a corrected source has been in front
+        # of them (#586).
+        decision.needs_recheck = False
         session.flush()
 
     return _read_decision(session, decision)
@@ -3123,6 +3458,7 @@ def create_decision(session: Session, payload: DecisionCreate) -> ReviewDecision
             ExtDecisionSource(utterance_id=utterance_id, position=position)
             for position, utterance_id in enumerate(source_ids)
         ],
+        source_digest=stored_digest(session, source_ids),
     )
     session.add(decision)
     session.flush()
@@ -3183,6 +3519,19 @@ receive pages at all -- merged, every default name came along and Notion refused
 the whole page for the properties that database does not have, so that team got
 none. Raised in review of #294.
 """
+
+
+NOTION_STATUS_LABELS: Mapping[str, str] = {
+    ActionStatus.NEEDS_CONFIRMATION.value: "확인 필요",
+    ActionStatus.TODO.value: "진행 전",
+    ActionStatus.IN_PROGRESS.value: "진행 중",
+    ActionStatus.DONE.value: "완료",
+}
+"""The 상태 option a page gets for each status: the board's column names
+(``features/actions/types.ts``), so Notion and the board read the same. The
+codes went out as they were until 2026-10-01 and were hard to tell apart in
+Notion; a database made before then gains these options on first use, since
+Notion adds a select option it has not seen."""
 
 
 class NotionPages(Protocol):
@@ -3246,6 +3595,12 @@ def _update_or_replace_page(
     return "updated"
 
 
+def has_notion_page(session: Session, action_item_id: str) -> bool:
+    """Whether the item was ever sent to Notion -- confirmed once, whatever it
+    is now."""
+    return session.get(ExtExternalRef, (action_item_id, NOTION)) is not None
+
+
 def notion_url(page_id: str) -> str:
     """The page's address. Notion accepts the id without its dashes."""
     return f"https://www.notion.so/{page_id.replace('-', '')}"
@@ -3281,7 +3636,7 @@ def notion_properties(
 
     fields: dict[str, Any] = {
         "title": {"title": [{"type": "text", "text": {"content": item.description[:2000]}}]},
-        "status": {"select": {"name": item.status}},
+        "status": {"select": {"name": NOTION_STATUS_LABELS.get(item.status, item.status)}},
         "confidence": {"number": round(item.confidence, 3)},
     }
     assignee = item.assignee_label
@@ -3310,8 +3665,11 @@ def sync_action_item_to_notion(
     """Create the item's Notion page the first time; update the same page every
     time after. ``None`` when there is nothing to send.
 
-    Nothing is sent for an item that is gone or one still waiting for
-    confirmation. The first send is decided by the database: the claim is an
+    Nothing is sent for an item that is gone, and no page is made for one
+    still waiting for confirmation. An item moved back to 확인 필요 after its
+    page was made updates that page, so Notion shows the status the board does
+    -- the page stays, only its status changes (decided with the user,
+    2026-10-01). The first send is decided by the database: the claim is an
     insert that skips an existing row, so a confirmation delivered twice, or
     two workers holding it at once, create one page -- the second blocks on
     the first's row and then finds it. Claim and create share the caller's
@@ -3351,7 +3709,7 @@ def sync_action_item_to_notion(
         # it to the database has its page id -- there is no committed row
         # from a claim whose create never ran.
         item = session.get(ExtActionItem, action_item_id, populate_existing=True)
-        if item is None or item.status == ActionStatus.NEEDS_CONFIRMATION.value:
+        if item is None:
             return existing
         meeting = session.get(Meeting, item.meeting_id)
         title = meeting.title if meeting else None
@@ -3392,7 +3750,7 @@ def sync_action_item_to_notion(
         existing = session.get(ExtExternalRef, (item.id, NOTION), with_for_update=True)
         assert existing is not None
         item = session.get(ExtActionItem, action_item_id, populate_existing=True)
-        if item is None or item.status == ActionStatus.NEEDS_CONFIRMATION.value:
+        if item is None:
             return existing
         meeting = session.get(Meeting, item.meeting_id)
         title = meeting.title if meeting else None
