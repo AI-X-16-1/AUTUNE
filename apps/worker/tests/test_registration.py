@@ -91,7 +91,12 @@ def test_the_rule_holds_for_every_event_and_consumer(task_names: set[str]) -> No
 
 
 @pytest.mark.parametrize(
-    "task_name", ["autune.agent.on_transcript_ready", "autune.agent.on_intelligence_completed"]
+    "task_name",
+    [
+        "autune.agent.on_transcript_ready",
+        "autune.agent.on_intelligence_completed",
+        "autune.agent.on_intelligence_meeting_report_changed",
+    ],
 )
 def test_the_agent_layer_listens_on_the_default_queue(task_name: str, task_names: set[str]) -> None:
     """The one task module included by name (ADR 0010, monorepo.md section 1).
