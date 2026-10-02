@@ -21,7 +21,7 @@ from autune_core.errors import AutuneError
 from autune_core.events import publish
 from autune_core.settings import get_settings as get_core_settings
 
-from . import account, invitations, masking_rules, pii_report, service
+from . import account, invitations, masking_rules, pii_report, service, storage
 from .config import MAX_UPLOAD_BYTES
 from .config import get_settings as get_audio_settings
 from .enqueue import enqueue_process_recording
@@ -311,6 +311,34 @@ def cancel_transcription(meeting_id: str, user: CurrentUser, session: SessionDep
     )
     session.commit()
     return MeetingState(meeting_id=meeting.id, status=meeting.status)
+
+
+@router.post(
+    "/meetings/{meeting_id}/transcription/restart",
+    response_model=MeetingState,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def restart_transcription(meeting_id: str, user: CurrentUser, session: SessionDep) -> MeetingState:
+    """Run a stalled meeting again from its upload (S12 "다시 시작").
+
+    409 ``not_stalled`` while the worker is alive, ``recording_gone`` when the
+    upload is no longer on the server. Commit before the enqueue and fail the
+    meeting if the broker refuses, exactly as ``upload_recording`` does; here
+    there is no ``handover`` block to delete the file, so this does."""
+    settings = get_audio_settings()
+    job = service.restart_transcription(
+        session, meeting_id=meeting_id, user=user, settings=settings
+    )
+    session.commit()
+    try:
+        enqueue_process_recording(job.id)
+    except Exception as error:
+        log.warning("audio_enqueue_failed", job_id=job.id, error=type(error).__name__)
+        service.mark_failed(session, job_id=job.id)
+        session.commit()
+        storage.delete_orphan(storage.upload_path(job.id, settings))
+        raise EnqueueFailedError() from error
+    return MeetingState(meeting_id=job.meeting_id, status=job.meeting.status)
 
 
 @router.get("/meetings/{meeting_id}/speakers", response_model=list[SpeakerEntry])

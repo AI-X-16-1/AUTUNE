@@ -683,6 +683,73 @@ def cancel_transcription(
     return meeting
 
 
+class NotStalledError(ConflictError):
+    code = "not_stalled"
+
+
+class RecordingGoneError(ConflictError):
+    code = "recording_gone"
+
+
+def recording_restartable(job_id: str, *, settings: AudioSettings, now: datetime) -> bool:
+    """The attempt's upload is still on disk and inside its six hours.
+
+    By mtime, which a rename keeps: the window runs from the upload, so a
+    restart cannot extend it (``sweep_orphans`` measures the same way)."""
+    path = storage.upload_path(job_id, settings)
+    if not path.exists():
+        return False
+    uploaded = datetime.fromtimestamp(path.stat().st_mtime, tz=UTC)
+    return uploaded >= now - timedelta(hours=settings.orphan_after_hours)
+
+
+def restart_transcription(
+    session: Session, *, meeting_id: str, user: User, settings: AudioSettings
+) -> TranscriptionJob:
+    """Run a stalled meeting again from the upload still on the server.
+
+    Only a stalled job: a live one would run the file twice, and the first to
+    finish would delete it under the other. Only an ``analyzing`` meeting: a
+    worker that died after ``mark_complete`` leaves a stale ``running`` job on
+    a meeting already delivered.
+
+    The same steps as an upload's claim, with the file renamed instead of
+    written: the old attempt is ``superseded`` (if its worker was only slow,
+    its guard hears that and stops; its ``adopt`` then finds no file to
+    delete), a new job is ``queued``, and the file takes the new job's name.
+    The caller commits and enqueues, as ``upload_recording`` does. Should the
+    commit fail after the rename, the file is one whose job name no row knows,
+    which the sweep collects past its mtime.
+    """
+    meeting = session.get(Meeting, meeting_id, with_for_update=True)
+    if meeting is None:
+        raise NotFoundError("meeting", meeting_id)
+    require_team_member(session, user_id=user.id, team_id=meeting.team_id)
+    old = latest_job(session, meeting_id=meeting_id, lock=True)
+    now = datetime.now(tz=UTC)
+    if (
+        meeting.status != "analyzing"
+        or old is None
+        or not is_stalled(old, settings=settings, now=now)
+    ):
+        raise NotStalledError(f"meeting {meeting_id} has no stalled transcription")
+    if not recording_restartable(old.id, settings=settings, now=now):
+        raise RecordingGoneError(
+            f"the recording for meeting {meeting_id} is no longer on the server"
+        )
+
+    old.status = "superseded"
+    old.finished_at = now
+    new = TranscriptionJob(meeting_id=meeting_id, status="queued")
+    session.add(new)
+    session.flush()
+    storage.upload_path(old.id, settings).rename(storage.upload_path(new.id, settings))
+    log.info(
+        "audio_transcription_restarted", meeting_id=meeting_id, old_job_id=old.id, job_id=new.id
+    )
+    return new
+
+
 def sweep_orphans(
     session: Session, *, settings: AudioSettings, keep: str | None = None
 ) -> list[str]:
