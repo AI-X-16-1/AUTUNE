@@ -98,6 +98,11 @@ jobs:
       - name: Types
         run: pnpm run typecheck
 
+      # Component tests (ADR 0009). Before Build: a component that renders the
+      # wrong thing is a more useful failure than a bundle that does not build.
+      - name: Test
+        run: pnpm run test
+
       - name: Build
         run: pnpm run build
 
