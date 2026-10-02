@@ -63,17 +63,22 @@ def preview(
 def _followup_gaps(session: Session, row: AgentPendingAction, tools: Mapping[str, Tool]) -> str:
     """The titles of the gaps a Follow-up proposal rests on, most risky first (#562).
 
-    Read from C's ``open_gaps`` now, so a gap dismissed since the proposal drops
-    out. A title is a template item and a masked topic label; no utterance text.
-    ``open_gaps`` returns its five riskiest gaps, so a cited gap ranked lower
-    reads as closed -- a known limit while a meeting rarely has more.
+    Read now from C's ``gaps_by_id`` with the row's evidence, so a gap dismissed
+    since the proposal drops out, and a cited gap is found wherever it ranks
+    (``open_gaps`` stops at five; #644). A title is C's template item and a
+    fixed phrase ("{item} — 논의되지 않았습니다"); no topic label, no utterance.
+
+    The meeting is the row's when a pipeline event woke Follow-up, and the
+    proposal's ``meeting_id`` argument when it was asked in chat, where the run
+    is about no meeting (#626 review). C checks that meeting against the row's
+    team, as ``bind_scope`` does when the proposal is approved.
     """
-    read = tools.get("gap.open_gaps")
-    if read is None or row.meeting_id is None:
+    read = tools.get("gap.gaps_by_id")
+    meeting_id = row.meeting_id or row.arguments.get("meeting_id")
+    if read is None or not isinstance(meeting_id, str):
         return GONE
-    result = read(session, team_id=row.team_id, meeting_id=row.meeting_id)
+    result = read(session, team_id=row.team_id, meeting_id=meeting_id, gap_ids=list(row.evidence))
     if not result.ok:
         return GONE
-    cited = set(row.evidence)
-    titles = [item.title for item in result.items if getattr(item, "id", None) in cited]
+    titles = [item.title for item in result.items]
     return "\n".join(f"· {t}" for t in titles) if titles else FOLLOWUP_GAPS_CLOSED

@@ -127,21 +127,41 @@ def test_an_assignee_outside_the_team_is_not_named(session: Session, team: dict[
     assert "알 수 없는 사람" in shown["body"]
 
 
-def _open_gaps(*gaps: tuple[str, str], ok: bool = True) -> Tool:
-    """C's ``open_gaps``, most risky first, as the registry would wrap it."""
-    return Tool(
-        name="gap.open_gaps",
-        description="Use this.",
-        fn=lambda _s, team_id, meeting_id: {
+def _gaps_by_id(*gaps: tuple[str, str], ok: bool = True) -> tuple[Tool, list[dict[str, Any]]]:
+    """C's ``gaps_by_id``: of the cited ids, the open ones, most risky first.
+
+    ``gaps`` is every open gap of the meeting in risk order; the fake keeps the
+    cited ones, as C does, and records what it was asked.
+    """
+    asked: list[dict[str, Any]] = []
+
+    def read(_s: Session, team_id: str, meeting_id: str, gap_ids: list[str]) -> dict[str, Any]:
+        asked.append({"team_id": team_id, "meeting_id": meeting_id, "gap_ids": gap_ids})
+        return {
             "ok": ok,
-            "summary": "열린 갭",
-            "items": [{"id": i, "title": t, "body": "질문?"} for i, t in gaps],
-        },
+            "summary": "근거 갭",
+            "items": [{"id": i, "title": t, "body": "질문?"} for i, t in gaps if i in set(gap_ids)],
+        }
+
+    return Tool(name="gap.gaps_by_id", description="Use this.", fn=read), asked
+
+
+def _followup(
+    team: dict[str, str],
+    evidence: list[str],
+    *,
+    chat: bool = False,
+) -> AgentPendingAction:
+    """The two shapes Follow-up leaves (subagents/followup/graph.py).
+
+    Woken by an event: the run's meeting is the row's, arguments are empty.
+    Asked in chat: the run has no meeting, the proposal names it.
+    """
+    row = _row(
+        team, "extraction.add_followup_item", {"meeting_id": team["meeting"]} if chat else {}
     )
-
-
-def _followup(team: dict[str, str], evidence: list[str]) -> AgentPendingAction:
-    row = _row(team, "extraction.add_followup_item", {"meeting_id": team["meeting"]})
+    if chat:
+        row.meeting_id = None
     row.evidence = evidence
     return row
 
@@ -149,21 +169,49 @@ def _followup(team: dict[str, str], evidence: list[str]) -> AgentPendingAction:
 def test_a_followup_shows_the_gaps_behind_it_most_risky_first(
     session: Session, team: dict[str, str]
 ) -> None:
-    gaps = _open_gaps(("gap_a", "일정 · 출시일"), ("gap_b", "담당자 · 결제"), ("gap_c", "예산"))
+    gaps, asked = _gaps_by_id(
+        ("gap_a", "일정 · 출시일"), ("gap_b", "담당자 · 결제"), ("gap_c", "예산")
+    )
 
     # Evidence lists carried-over gaps first; the preview orders them by risk.
-    shown = preview(session, _followup(team, ["gap_c", "gap_a"]), tools={"gap.open_gaps": gaps})
+    shown = preview(session, _followup(team, ["gap_c", "gap_a"]), tools={"gap.gaps_by_id": gaps})
 
     assert shown["title"] == "후속 회의 잡기"
     assert shown["body"] == "· 일정 · 출시일\n· 예산"
+    assert asked == [
+        {"team_id": team["team"], "meeting_id": team["meeting"], "gap_ids": ["gap_c", "gap_a"]}
+    ]
+
+
+def test_a_followup_asked_in_chat_reads_the_meeting_it_names(
+    session: Session, team: dict[str, str]
+) -> None:
+    """#626 review: a chat run has no meeting, so the row's is NULL; the argument names it."""
+    gaps, asked = _gaps_by_id(("gap_a", "일정 · 출시일"))
+
+    shown = preview(session, _followup(team, ["gap_a"], chat=True), tools={"gap.gaps_by_id": gaps})
+
+    assert shown["body"] == "· 일정 · 출시일"
+    assert asked[0]["meeting_id"] == team["meeting"]
+
+
+def test_a_followup_naming_no_meeting_at_all_is_gone(
+    session: Session, team: dict[str, str]
+) -> None:
+    row = _followup(team, ["gap_a"])
+    row.meeting_id = None
+
+    shown = preview(session, row, tools={"gap.gaps_by_id": _gaps_by_id(("gap_a", "일정"))[0]})
+
+    assert shown["body"] == GONE
 
 
 def test_a_followup_whose_gaps_were_all_dismissed_says_so(
     session: Session, team: dict[str, str]
 ) -> None:
-    gaps = _open_gaps(("gap_b", "담당자 · 결제"))
+    gaps, asked = _gaps_by_id(("gap_b", "담당자 · 결제"))
 
-    shown = preview(session, _followup(team, ["gap_a"]), tools={"gap.open_gaps": gaps})
+    shown = preview(session, _followup(team, ["gap_a"]), tools={"gap.gaps_by_id": gaps})
 
     assert shown["body"] == FOLLOWUP_GAPS_CLOSED
 
@@ -172,7 +220,7 @@ def test_a_followup_without_c_falls_back_to_gone(session: Session, team: dict[st
     unread = preview(
         session,
         _followup(team, ["gap_a"]),
-        tools={"gap.open_gaps": _open_gaps(("gap_a", "일정"), ok=False)},
+        tools={"gap.gaps_by_id": _gaps_by_id(("gap_a", "일정"), ok=False)[0]},
     )
     absent = preview(session, _followup(team, ["gap_a"]), tools={})
 
