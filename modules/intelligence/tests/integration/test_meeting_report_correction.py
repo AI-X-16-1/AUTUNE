@@ -106,7 +106,9 @@ def _link_slack(
         )
     )
     if row is None:
-        row = TeamIntegration(team_id=team_id, service="slack", config={})
+        # Never decrypted on the write path: a correction checks only that a
+        # token and a channel are there (#698).
+        row = TeamIntegration(team_id=team_id, service="slack", config={}, secret="stored-token")
         db_session.add(row)
     row.config = {"channel": channel}
     if secret is not None:

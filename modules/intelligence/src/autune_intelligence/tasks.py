@@ -211,16 +211,21 @@ def announce_meeting_report_changed(meeting_id: str) -> None:
     is the meeting's id only; the Report subagent reads the stored draft through
     E's tools and proposes its post for approval. Nothing is published when no
     change of a person's waits any more (posted, or overwritten by a rerun).
-    Records which change it covered, so the sweep knows what is left (#698).
+    Claims the change before publishing, so the route's task and the sweep
+    never both announce it; a failed publish gives it back (#698, #705 review).
     """
     with session_scope() as session:
-        changed_at = service.meeting_report_change_to_announce(session, meeting_id)
-    if changed_at is None:
-        log.info("intelligence_meeting_report_change_nothing_waits", meeting_id=meeting_id)
+        claimed = service.claim_meeting_report_announcement(session, meeting_id)
+    if claimed is None:
+        log.info("intelligence_meeting_report_change_nothing_to_announce", meeting_id=meeting_id)
         return
-    publish(INTELLIGENCE_MEETING_REPORT_CHANGED, Payload(meeting_id=meeting_id).model_dump())
-    with session_scope() as session:
-        service.record_meeting_report_announced(session, meeting_id, changed_at)
+    try:
+        publish(INTELLIGENCE_MEETING_REPORT_CHANGED, Payload(meeting_id=meeting_id).model_dump())
+    except Exception:
+        # Not announced after all: give the change back to the sweep.
+        with session_scope() as session:
+            service.release_meeting_report_announcement(session, meeting_id, claimed)
+        raise
     log.info("intelligence_meeting_report_change_announced", meeting_id=meeting_id)
 
 
@@ -235,7 +240,14 @@ def announce_report_changes() -> list[str]:
     with session_scope() as session:
         meetings = service.meeting_reports_unannounced(session, now=datetime.now(UTC))
     for meeting_id in meetings:
-        announce_meeting_report_changed(meeting_id)
+        try:
+            announce_meeting_report_changed(meeting_id)
+        except Exception as exc:  # one meeting must not hold back the rest of the run
+            log.warning(
+                "intelligence_meeting_report_sweep_announce_failed",
+                meeting_id=meeting_id,
+                error=type(exc).__name__,
+            )
     return meetings
 
 
@@ -253,7 +265,7 @@ def deliver_meeting_report_correction(meeting_id: str, correction_id: str) -> No
             return
         config = load_integration(session, report.team_id, "slack")
         channel = config.config.get("channel") if config is not None else None
-        if config is None or channel is None:
+        if config is None or channel is None or not config.secret:
             # Approved, but the team's Slack went away after the post: it can
             # never go out, so say so instead of "승인 대기" forever (#698).
             service.fail_meeting_report_correction(session, meeting_id, correction_id=correction_id)

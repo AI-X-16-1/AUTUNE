@@ -244,12 +244,16 @@ supersede a correction waiting for approval.
 
 **No change is left without an approval request (#698).** The card's routes
 commit a change, then queue its announcement; a queue that refuses it does not
-fail the request. The announcement records which change it covered
-(`announced_at`), and `autune.intelligence.periodic.announce_report_changes`
-announces, every five minutes, any edit or waiting correction older than two
-minutes that no announcement covered -- once, so approvers are not notified
-twice. A correction is refused while the team has no Slack connection or
-channel, and an approved one whose team lost Slack after the post reads as
+fail the request. An announcement claims the change it covers (`announced_at`,
+under the row lock, before it publishes; a failed publish gives it back), so
+the route's task, the sweep and a redelivered task never announce one change
+twice -- each announcement notifies the approvers.
+`autune.intelligence.periodic.announce_report_changes` announces, every five
+minutes, any edit or waiting correction older than two minutes that no
+announcement covered; one meeting's failure does not stop the rest. A save that
+changes only trailing spaces or blank edges counts as unchanged. A correction is
+refused while the team has no Slack token or channel, and an approved one whose
+team lost Slack after the post reads as
 failed (`correction_failed_at`) rather than waiting forever; the next
 correction, after reconnecting, clears it.
 Only the text, its id and `corrected_by` are stored; the name is joined when it

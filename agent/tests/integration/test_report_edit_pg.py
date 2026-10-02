@@ -81,7 +81,12 @@ def team(db_engine: sa.Engine) -> Iterator[dict[str, str]]:
                 TeamMember(team_id=row.id, user_id=member.id),
                 AgentApprover(team_id=row.id, user_id=lead.id, scope="report"),
                 # A correction needs the team's Slack to still be there (#698).
-                TeamIntegration(team_id=row.id, service="slack", config={"channel": "C123"}),
+                TeamIntegration(
+                    team_id=row.id,
+                    service="slack",
+                    config={"channel": "C123"},
+                    secret="stored-token",  # checked for, never decrypted here
+                ),
             ]
         )
         s.flush()

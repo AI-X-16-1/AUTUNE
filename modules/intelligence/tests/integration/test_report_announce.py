@@ -115,9 +115,16 @@ def _posted(db_session: Session, team: str) -> str:
     meeting = _draft(db_session, team)
     service.claim_meeting_report(db_session, meeting, draft_id="rdr_model")
     service.record_meeting_report_post(db_session, meeting, "C123", "1.000100")
-    db_session.add(TeamIntegration(team_id=team, service="slack", config={"channel": "C123"}))
+    db_session.add(_slack(team))
     db_session.flush()
     return meeting
+
+
+def _slack(team: str) -> TeamIntegration:
+    # A token and a channel; the token is checked for, never decrypted, here.
+    return TeamIntegration(
+        team_id=team, service="slack", config={"channel": "C123"}, secret="stored-token"
+    )
 
 
 def _edit(client: TestClient, meeting: str, body: str = "✅ 고친 본문") -> Any:
@@ -234,6 +241,88 @@ def test_nothing_of_a_persons_waiting_is_not_announced(
     assert published == [] and _swept(db_session) == []
 
 
+@pytest.mark.usefixtures("queue_up")
+def test_the_routes_task_after_the_sweep_announces_nothing(
+    db_session: Session,
+    team: str,
+    client_for: Callable[[User], TestClient],
+    published: list[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The route's task sat in a slow queue past the sweep: one announcement, one DM (#705)."""
+    meeting = _draft(db_session, team)
+    _edit(client_for(_user(db_session, team)), meeting)  # its task is still queued
+    monkeypatch.setattr(tasks, "datetime", _clock(datetime.now(UTC) + LATER))
+    tasks.announce_report_changes()
+
+    tasks.announce_meeting_report_changed(meeting)  # the queued task, at last
+    tasks.announce_meeting_report_changed(meeting)  # and redelivered (acks_late)
+
+    assert published == [meeting]
+
+
+@pytest.mark.usefixtures("queue_up")
+def test_a_failed_publish_gives_the_change_back_to_the_sweep(
+    db_session: Session,
+    team: str,
+    client_for: Callable[[User], TestClient],
+    published: list[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    meeting = _draft(db_session, team)
+    _edit(client_for(_user(db_session, team)), meeting)
+
+    def down(_event: str, _payload: dict[str, Any]) -> list[str]:
+        raise ConnectionError("broker unreachable")
+
+    monkeypatch.setattr(tasks, "publish", down)
+    with pytest.raises(ConnectionError):
+        tasks.announce_meeting_report_changed(meeting)
+
+    assert _swept(db_session) == [meeting]
+
+
+@pytest.mark.usefixtures("queue_up")
+def test_one_meeting_that_fails_does_not_hold_back_the_sweep(
+    db_session: Session,
+    team: str,
+    client_for: Callable[[User], TestClient],
+    published: list[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = client_for(_user(db_session, team))
+    first, second = _draft(db_session, team), _draft(db_session, team)
+    _edit(client, first)
+    _edit(client, second)
+    real = tasks.publish
+
+    def flaky(event: str, payload: dict[str, Any]) -> list[str]:
+        if payload["meeting_id"] == first:
+            raise ConnectionError("broker unreachable")
+        return real(event, payload)
+
+    monkeypatch.setattr(tasks, "publish", flaky)
+    monkeypatch.setattr(tasks, "datetime", _clock(datetime.now(UTC) + LATER))
+
+    swept = tasks.announce_report_changes()
+
+    assert set(swept) == {first, second} and published == [second]
+
+
+@pytest.mark.usefixtures("queue_up")
+def test_a_save_that_changes_only_invisible_whitespace_is_unchanged(
+    db_session: Session, team: str, client_for: Callable[[User], TestClient]
+) -> None:
+    meeting = _draft(db_session, team)
+    client = client_for(_user(db_session, team))
+    [shown] = client.get(f"/api/intelligence/meeting-reports/{team}").json()
+    padded = "\n".join(line + "  " for line in shown["body"].splitlines()) + "\n\n"
+
+    response = _edit(client, meeting, padded)
+
+    assert response.status_code == 422 and "unchanged" in response.text
+
+
 # --- a team whose Slack went away after the post -----------------------------------
 
 
@@ -274,10 +363,36 @@ def test_an_approved_correction_with_no_slack_left_reads_failed_not_waiting(
     assert _swept(db_session) == []  # not proposed again either
 
     # Reconnected: a new correction is accepted and waits again.
-    db_session.add(TeamIntegration(team_id=team, service="slack", config={"channel": "C123"}))
+    db_session.add(_slack(team))
     db_session.flush()
     again = _correct(client, meeting, "✅ 다시 정정")
     assert again.status_code == 202 and again.json()["correction_status"] == "pending"
+
+
+@pytest.mark.usefixtures("queue_up")
+def test_a_slack_connection_without_a_token_counts_as_disconnected(
+    db_session: Session,
+    team: str,
+    client_for: Callable[[User], TestClient],
+    published: list[str],
+) -> None:
+    """The channel is set but the token is gone: refused when written, failed when approved."""
+    meeting = _posted(db_session, team)
+    client = client_for(_user(db_session, team))
+    _correct(client, meeting)
+    row = db_session.get(IntelMeetingReport, meeting)
+    assert row is not None and row.correction_id is not None
+    db_session.execute(
+        sa.update(TeamIntegration).where(TeamIntegration.team_id == team).values(secret=None)
+    )
+    db_session.flush()
+
+    tasks.deliver_meeting_report_correction(meeting, row.correction_id)
+    refused = _correct(client, meeting, "✅ 다시 정정")
+
+    [shown] = client.get(f"/api/intelligence/meeting-reports/{team}").json()
+    assert shown["correction_status"] == "failed"
+    assert refused.status_code == 409 and "slack is not connected" in refused.text
 
 
 def _clock(now: datetime) -> Any:
