@@ -4,11 +4,17 @@ import type { ReactNode } from "react";
 
 import { Band } from "@/shared/ui";
 
-import { LEGAL_DOCUMENTS, type Block, type Inline, type Line } from "./content";
+import {
+  COPY_NOTICE,
+  LEGAL_DOCUMENTS,
+  type Block,
+  type Inline,
+  type Line,
+} from "./content";
 
 /**
- * The privacy policy, the terms of use and the security notice on one page --
- * what S01's footer and its consent sentence point at.
+ * The privacy policy, the terms of service and the information security policy
+ * on one page -- what S01's footer and its consent sentence point at.
  *
  * Outside the `(app)` group, like `/login`: the sentence "계속하면 이용약관과
  * 개인정보 처리방침에 동의하는 것입니다" is read by somebody who has not signed
@@ -21,10 +27,16 @@ import { LEGAL_DOCUMENTS, type Block, type Inline, type Line } from "./content";
  * The text is data (`./content`); nothing here knows what it says. While any
  * value in it is unsettled the page says so at the top, and marks each one
  * where it stands.
+ *
+ * **The documents' text cannot be selected** (`select-none`; the user,
+ * 2026-10-02). It is a setting of the page, not a protection: the text is in
+ * the page's source, a screen reader reads it as before, and printing is not
+ * affected. A customer is owed a copy of the terms on request, so the page
+ * says how to get one (`COPY_NOTICE`) -- keep that line while this is on.
  */
 export const metadata: Metadata = {
-  title: "보안 · 개인정보 처리방침 · 이용약관 · Autune",
-  description: "Autune의 개인정보 처리방침, 이용약관, 보안 안내",
+  title: "개인정보 처리방침 · 서비스 이용약관 · 정보보호 정책 · Autune",
+  description: "Autune의 개인정보 처리방침, 서비스 이용약관, 정보보호 정책",
 };
 
 const BODY = {
@@ -187,11 +199,15 @@ export default function LegalPage() {
           ))}
         </nav>
 
+        <p className="text-ink-muted" style={{ fontSize: "var(--text-meta)" }}>
+          <Text line={COPY_NOTICE} />
+        </p>
+
         {LEGAL_DOCUMENTS.map((doc) => (
           <article
             key={doc.id}
             id={doc.id}
-            className="flex scroll-mt-6 flex-col gap-6"
+            className="flex scroll-mt-6 select-none flex-col gap-6"
           >
             <h1
               className="text-ink-strong"
@@ -203,11 +219,25 @@ export default function LegalPage() {
             >
               {doc.title}
             </h1>
-            <p className="text-ink-body" style={BODY}>
-              <Text line={doc.lead} />
-            </p>
+            {doc.lead ? (
+              <p className="text-ink-body" style={BODY}>
+                <Text line={doc.lead} />
+              </p>
+            ) : null}
             {doc.sections.map((section) => (
               <section key={section.heading} className="flex flex-col gap-3">
+                {section.chapter ? (
+                  <h2
+                    className="mt-4 text-ink-strong"
+                    style={{
+                      fontSize: "var(--text-heading)",
+                      fontWeight: "var(--text-heading-weight)",
+                      lineHeight: "var(--text-heading-leading)",
+                    }}
+                  >
+                    {section.chapter}
+                  </h2>
+                ) : null}
                 <h2
                   className="text-ink-strong"
                   style={{
@@ -223,14 +253,6 @@ export default function LegalPage() {
                 ))}
               </section>
             ))}
-            {doc.closing ? (
-              <p
-                className="text-ink-muted"
-                style={{ fontSize: "var(--text-meta)" }}
-              >
-                <Text line={doc.closing} />
-              </p>
-            ) : null}
           </article>
         ))}
       </main>
