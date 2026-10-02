@@ -187,6 +187,15 @@ class IntelMeetingReport(Base, TimestampMixin):
     correction_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     """Set when a task claims the correction, before it posts: at most once."""
     correction_slack_ts: Mapped[str | None] = mapped_column(String(64))
+    correction_failed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    """Set when an approved correction could not be posted at all -- the team's
+    Slack was disconnected after the report went out (#698). It reads as failed
+    at once, and the next correction clears it."""
+    announced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    """The person's change (``edited_at``, or ``corrected_at`` after the post)
+    that the last announcement covered. A later change not covered by it is
+    announced again by the sweep, so a lost enqueue does not lose the approval
+    request (#698)."""
 
 
 class IntelReport(Base, TimestampMixin):

@@ -41,6 +41,7 @@ from autune_core import (
     Meeting,
     Participant,
     Team,
+    TeamIntegration,
     TeamMember,
     User,
     Utterance,
@@ -1563,7 +1564,7 @@ def edit_meeting_report(
         raise ConflictError("meeting report changed since it was opened", meeting_id=meeting_id)
     if not body.strip():
         raise ValidationError("report body is empty", field="body")
-    if body == split_report_document(row.body_markdown)[1]:
+    if _same_text(body, split_report_document(row.body_markdown)[1]):
         # Saved as it was: nothing to approve again, and a new proposal would
         # notify the approvers a second time for the same text (#642 review).
         raise ValidationError("report body is unchanged", field="body")
@@ -1603,6 +1604,17 @@ class AwaitingPost:
     """A ``draft_id`` or a ``correction_id``."""
 
 
+def _same_text(a: str, b: str) -> bool:
+    """Equal once trailing spaces on each line and blank edges are ignored: a save
+    that changes nothing a reader sees asks no approver again (#705 review).
+    Line breaks still count -- they change how the post reads."""
+
+    def seen(text: str) -> str:
+        return "\n".join(line.rstrip() for line in text.strip().splitlines())
+
+    return seen(a) == seen(b)
+
+
 def meeting_report_awaiting_approval(session: Session, meeting_id: str) -> AwaitingPost | None:
     """The meeting's draft before it is posted, its unsent correction after; or ``None``.
 
@@ -1618,9 +1630,17 @@ def meeting_report_awaiting_approval(session: Session, meeting_id: str) -> Await
         return None
     if row.sent_at is None:
         return AwaitingPost("draft", row.draft_id) if row.draft_id is not None else None
-    if row.correction_id is not None and row.correction_sent_at is None:
+    if _correction_waits(row) and row.correction_id is not None:
         return AwaitingPost("correction", row.correction_id)
     return None
+
+
+def _correction_waits(row: IntelMeetingReport) -> bool:
+    return (
+        row.correction_id is not None
+        and row.correction_sent_at is None
+        and row.correction_failed_at is None
+    )
 
 
 def meeting_report_posted(session: Session, meeting_id: str) -> bool:
@@ -1630,6 +1650,103 @@ def meeting_report_posted(session: Session, meeting_id: str) -> bool:
             sa.select(IntelMeetingReport.sent_at).where(IntelMeetingReport.meeting_id == meeting_id)
         )
         is not None
+    )
+
+
+# --- announcing a person's change (#698) ---------------------------------------------
+#
+# The card's routes commit a change and then queue its announcement. Queueing can
+# fail after the commit, and a lost announcement would leave the change with no
+# approval request and no way to ask again (an unchanged save is refused). So the
+# announcement records which change it covered, and a sweep announces any change
+# no announcement covered.
+
+ANNOUNCE_RETRY_AFTER: Final = timedelta(minutes=2)
+"""A change younger than this is left to its own announcement, already queued."""
+
+ANNOUNCE_SWEEP_LIMIT: Final = 50
+
+
+def _changed_at(row: IntelMeetingReport) -> datetime | None:
+    """When a person last changed what waits for approval; ``None`` if nothing of
+    theirs waits -- a model's draft is proposed by the Report's own run."""
+    if row.sent_at is None:
+        return row.edited_at
+    if _correction_waits(row):
+        return row.corrected_at
+    return None
+
+
+@dataclass(frozen=True)
+class ClaimedAnnouncement:
+    """The change an announcement is about to cover, and what was covered before."""
+
+    changed_at: datetime
+    previous: datetime | None
+
+
+def claim_meeting_report_announcement(
+    session: Session, meeting_id: str
+) -> ClaimedAnnouncement | None:
+    """Take the waiting change for one announcement, or ``None`` if there is none.
+
+    ``None`` too when an announcement already covered it: the route's task and
+    the sweep, or a redelivered task, can both reach the same change, and each
+    announcement reaches the approvers by DM (#705 review). Under the row lock,
+    and committed before the publish, as a delivery claim is.
+    """
+    row = session.get(IntelMeetingReport, meeting_id, with_for_update=True)
+    if row is None:
+        return None
+    changed_at = _changed_at(row)
+    if changed_at is None or (row.announced_at is not None and row.announced_at >= changed_at):
+        return None
+    claimed = ClaimedAnnouncement(changed_at=changed_at, previous=row.announced_at)
+    row.announced_at = changed_at
+    session.flush()
+    return claimed
+
+
+def release_meeting_report_announcement(
+    session: Session, meeting_id: str, claimed: ClaimedAnnouncement
+) -> None:
+    """Undo a claim whose publish failed, so the sweep announces the change later.
+    Left alone if another announcement has moved on since."""
+    row = session.get(IntelMeetingReport, meeting_id, with_for_update=True)
+    if row is not None and row.announced_at == claimed.changed_at:
+        row.announced_at = claimed.previous
+        session.flush()
+
+
+def meeting_reports_unannounced(session: Session, *, now: datetime) -> list[str]:
+    """Meetings whose report holds a person's change no announcement covered.
+
+    Older than ``ANNOUNCE_RETRY_AFTER``, so a change still on its way through
+    the queue is not announced twice. At most ``ANNOUNCE_SWEEP_LIMIT`` a run.
+    """
+    r = IntelMeetingReport
+    cutoff = now - ANNOUNCE_RETRY_AFTER
+    edited_draft = sa.and_(
+        r.sent_at.is_(None),
+        r.edited_at.is_not(None),
+        r.edited_at <= cutoff,
+        sa.or_(r.announced_at.is_(None), r.announced_at < r.edited_at),
+    )
+    waiting_correction = sa.and_(
+        r.sent_at.is_not(None),
+        r.correction_id.is_not(None),
+        r.correction_sent_at.is_(None),
+        r.correction_failed_at.is_(None),
+        r.corrected_at <= cutoff,
+        sa.or_(r.announced_at.is_(None), r.announced_at < r.corrected_at),
+    )
+    return list(
+        session.scalars(
+            sa.select(r.meeting_id)
+            .where(sa.or_(edited_draft, waiting_correction))
+            .order_by(r.updated_at)
+            .limit(ANNOUNCE_SWEEP_LIMIT)
+        )
     )
 
 
@@ -1668,7 +1785,9 @@ def correct_meeting_report(
 
     Refused for a draft (edit it instead), for a report whose post never reached
     Slack (there is no message to correct, and the channel never saw the
-    original), while an approved correction is being posted, and for anyone
+    original), for a team whose Slack or channel was disconnected since (it
+    could never be posted, #698), while an approved correction is being posted,
+    and for anyone
     outside the team (404, as for a missing meeting). A correction still waiting
     for approval is replaced: the new one takes a new ``correction_id``, so the
     approval for the earlier one posts nothing. Saving the same text again is
@@ -1681,13 +1800,15 @@ def correct_meeting_report(
         raise ConflictError("meeting report is not posted; edit the draft", meeting_id=meeting_id)
     if row.slack_channel is None or row.slack_ts is None:
         raise ConflictError("meeting report did not reach slack", meeting_id=meeting_id)
+    if not _slack_connected(session, row.team_id):
+        raise ConflictError("slack is not connected", meeting_id=meeting_id)
     now = datetime.now(UTC)
     status = _correction_status(row, now)
     if status == "sending":
         raise ConflictError("the previous correction is still being sent", meeting_id=meeting_id)
     if not body.strip():
         raise ValidationError("correction is empty", field="body")
-    if status == "pending" and body == row.correction_body:
+    if status == "pending" and _same_text(body, row.correction_body or ""):
         raise ValidationError("correction is unchanged", field="body")
     corrector = session.scalar(sa.select(User.display_name).where(User.id == user_id)) or ""
     text = _correction_text(body, name=corrector, when=now)
@@ -1708,6 +1829,7 @@ def correct_meeting_report(
     row.corrected_at = now
     row.correction_sent_at = None
     row.correction_slack_ts = None
+    row.correction_failed_at = None
     session.flush()
     editor = (
         session.scalar(sa.select(User.display_name).where(User.id == row.edited_by))
@@ -1724,11 +1846,42 @@ def _correction_status(
         return None
     if row.correction_slack_ts is not None:
         return "sent"
+    if row.correction_failed_at is not None:
+        return "failed"
     if row.correction_sent_at is None:
         return "pending"
     if now - row.correction_sent_at < CORRECTION_SEND_WINDOW:
         return "sending"
     return "failed"
+
+
+def _slack_connected(session: Session, team_id: str) -> bool:
+    """The team has Slack connected -- a token and a channel to post to. Read
+    without decrypting the token: whether it is there is all this needs."""
+    found = session.execute(
+        sa.select(TeamIntegration.config, TeamIntegration.secret).where(
+            TeamIntegration.team_id == team_id, TeamIntegration.service == "slack"
+        )
+    ).one_or_none()
+    if found is None or found.secret is None:
+        return False
+    return bool((found.config or {}).get("channel"))
+
+
+def fail_meeting_report_correction(
+    session: Session, meeting_id: str, *, correction_id: str
+) -> None:
+    """Mark an approved correction failed when it cannot be posted at all.
+
+    For a team whose Slack or channel went away after the report was posted:
+    left unclaimed it would read "승인 대기" forever (#698). Only the correction
+    the approval named, and only while unclaimed.
+    """
+    row = session.get(IntelMeetingReport, meeting_id, with_for_update=True)
+    if row is None or row.correction_id != correction_id or row.correction_sent_at is not None:
+        return
+    row.correction_failed_at = datetime.now(UTC)
+    session.flush()
 
 
 def _correction_text(body: str, *, name: str, when: datetime) -> str:

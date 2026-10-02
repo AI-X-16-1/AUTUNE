@@ -11,6 +11,7 @@ posted report is not edited here.
 
 from __future__ import annotations
 
+import uuid
 from collections.abc import Callable, Iterator
 from datetime import UTC, datetime
 
@@ -32,7 +33,7 @@ BODY = "✅ 확정된 액션 아이템\n• 결제 API 스펙 초안 — 백엔�
 
 
 def _user(db_session: Session, team: str | None, name: str = "이승환") -> User:
-    user = User(email=f"{name}-{datetime.now(UTC).timestamp()}@example.com", display_name=name)
+    user = User(email=f"{name}-{uuid.uuid4().hex}@example.com", display_name=name)
     db_session.add(user)
     db_session.flush()
     if team is not None:
@@ -517,16 +518,33 @@ def test_a_last_paragraph_that_reads_like_the_footer_stays_in_the_body(
 # --- the approval path (#674) ------------------------------------------------------
 
 
-def test_the_announcement_publishes_the_meeting_id_only(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_the_announcement_publishes_the_meeting_id_only(
+    db_session: Session,
+    team: str,
+    client_for: Callable[[User], TestClient],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import contextlib
+
+    @contextlib.contextmanager
+    def scope() -> Iterator[Session]:
+        yield db_session
+
     published: list[tuple[str, dict[str, object]]] = []
     monkeypatch.setattr(tasks, "publish", lambda event, payload: published.append((event, payload)))
+    monkeypatch.setattr(tasks, "session_scope", scope)
+    meeting = _meeting(db_session, team, "결제 회의", 2)
+    _report(db_session, meeting)
+    client_for(_user(db_session, team)).put(
+        f"/api/intelligence/meeting-reports/{meeting}", json={"body": "✅ 고친 본문"}
+    )
 
-    tasks.announce_meeting_report_changed("mtg_ab12cd")
+    tasks.announce_meeting_report_changed(meeting)
 
     [(event, payload)] = published
     assert event == INTELLIGENCE_MEETING_REPORT_CHANGED
     assert set(payload) == {"contract_version", "meeting_id"}
-    assert payload["meeting_id"] == "mtg_ab12cd"
+    assert payload["meeting_id"] == meeting
 
 
 def test_the_report_subagent_reads_the_draft_awaiting_approval(
