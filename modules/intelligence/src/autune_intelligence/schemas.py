@@ -82,6 +82,30 @@ class ReportRead(BaseModel):
     source_meeting_ids: list[str]
 
 
+class MeetingReportRead(BaseModel):
+    """One meeting's report as the dashboard card shows it (10/2).
+
+    ``title`` is the stored header line, ``body`` the rest -- the subagent's
+    text and E's footer, as a person edited it if they did.
+    """
+
+    meeting_id: str
+    title: str
+    body: str
+    status: Literal["draft", "posted"]
+    posted_at: datetime | None
+    pending_review: bool
+    edited_by_name: str | None
+    edited_at: datetime | None
+    updated_at: datetime
+
+
+class MeetingReportEdit(BaseModel):
+    """A team member's edit of a draft's body; E keeps its own header line."""
+
+    body: str
+
+
 class DashboardScoreEntry(BaseModel):
     """One meeting's grade in the dashboard's recent-scores strip."""
 

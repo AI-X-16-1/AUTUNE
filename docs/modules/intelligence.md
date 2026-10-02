@@ -196,6 +196,8 @@ foreign keys to another module's tables.
 | GET | `/predictions/{team_id}` | Latest misalignment prediction, or `null` with a reason before #27's gate clears |
 | GET | `/gap-titles/{team_id}` | High-severity gap titles behind each pattern count |
 | GET | `/reports/{team_id}` | Weekly reports |
+| GET | `/meeting-reports/{team_id}` | The team's meeting reports for the dashboard card: header line, body, draft/posted, editor. **Team members only** |
+| PUT | `/meeting-reports/{meeting_id}` | A team member edits a draft's body before it is posted; editor and time recorded; the queued approval keeps its `draft_id`. 409 once posted, 422 with categories for personal data |
 | GET | `/me/speaking-ratio/{meeting_id}` | **The requester's own ratio only** |
 
 `/me/speaking-ratio` authorizes on `requester_id == subject_id`. There is no

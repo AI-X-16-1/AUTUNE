@@ -37,8 +37,14 @@ from autune_contracts import (
     TeamActionProgress,
 )
 from autune_contracts.intelligence import Grade
-from autune_core import Meeting, Participant, Team, Utterance, get_logger
-from autune_core.errors import ConflictError, NotFoundError, ValidationError
+from autune_core import Meeting, Participant, Team, TeamMember, User, Utterance, get_logger
+from autune_core.errors import (
+    ConflictError,
+    NotFoundError,
+    PermissionDeniedError,
+    PrivacyViolationError,
+    ValidationError,
+)
 from autune_integrations import (
     PermanentIntegrationError,
     SlackApi,
@@ -75,6 +81,7 @@ from .schemas import (
     DashboardRead,
     DashboardScoreEntry,
     HeatmapCell,
+    MeetingReportRead,
     PredictionRead,
     PredictionsRead,
     SpeakingRatioRead,
@@ -1356,3 +1363,106 @@ def store_action_progress(session: Session, snapshot: TeamActionProgress) -> boo
         not_kept=len(named) - len(own),
     )
     return True
+
+
+# --- the dashboard's meeting-report card (10/2) --------------------------------------
+#
+# A report is meeting text, so these check that the person asking is on the team,
+# unlike the older aggregate routes (#156). Any member may edit a draft until it
+# is posted (decided with the user, 10/2); a posted report changes only by a
+# correction posted under it, never in place.
+
+MEETING_REPORTS_SHOWN: Final = 20
+"""The card lists this many reports, newest meeting first."""
+
+
+def split_report_document(document: str) -> tuple[str, str]:
+    """The stored document's header line (without its mark) and the rest.
+
+    ``meeting_report_document`` writes "📋 <title> · <date>", a blank line, then
+    the body and the footer.
+    """
+    header, _, rest = document.partition("\n\n")
+    return header.removeprefix("📋").strip(), rest
+
+
+def require_team_member(session: Session, *, user_id: str, team_id: str) -> None:
+    """Raise unless ``user_id`` is on ``team_id``. A token says who is asking, not
+    which team's reports they may read."""
+    member = session.scalar(
+        sa.select(TeamMember.id).where(TeamMember.team_id == team_id, TeamMember.user_id == user_id)
+    )
+    if member is None:
+        raise PermissionDeniedError("not a member of this team")
+
+
+def _report_read(row: IntelMeetingReport, editor: str | None) -> MeetingReportRead:
+    title, body = split_report_document(row.body_markdown)
+    return MeetingReportRead(
+        meeting_id=row.meeting_id,
+        title=title,
+        body=body,
+        status="posted" if row.sent_at is not None else "draft",
+        posted_at=row.sent_at,
+        pending_review=row.pending_review,
+        edited_by_name=editor,
+        edited_at=row.edited_at,
+        updated_at=row.updated_at,
+    )
+
+
+def list_meeting_reports(
+    session: Session, team_id: str, *, user_id: str
+) -> list[MeetingReportRead]:
+    """The team's latest reports, newest meeting first, for one of its members."""
+    require_team_member(session, user_id=user_id, team_id=team_id)
+    held = func.coalesce(Meeting.started_at, Meeting.created_at)
+    rows = session.execute(
+        sa.select(IntelMeetingReport, User.display_name)
+        .join(Meeting, Meeting.id == IntelMeetingReport.meeting_id)
+        .outerjoin(User, User.id == IntelMeetingReport.edited_by)
+        .where(IntelMeetingReport.team_id == team_id)
+        .order_by(held.desc(), IntelMeetingReport.meeting_id.desc())
+        .limit(MEETING_REPORTS_SHOWN)
+    ).all()
+    return [_report_read(row, editor) for row, editor in rows]
+
+
+def edit_meeting_report(
+    session: Session, meeting_id: str, body: str, *, user_id: str
+) -> MeetingReportRead:
+    """Replace a draft's body with a team member's text and record who did it.
+
+    The header line stays E's. The draft keeps its ``draft_id``, so an approval
+    already queued posts the edited text -- the approver reads it on this card.
+    Refused once posted (``ConflictError``): people have read that version. The
+    text passes the same length cap and personal-data check as a model's draft;
+    a refusal names categories, never the text.
+    """
+    row = session.get(IntelMeetingReport, meeting_id, with_for_update=True)
+    if row is None:
+        raise NotFoundError("meeting report", meeting_id)
+    require_team_member(session, user_id=user_id, team_id=row.team_id)
+    if row.sent_at is not None:
+        raise ConflictError("meeting report was already posted", meeting_id=meeting_id)
+    if not body.strip():
+        raise ValidationError("report body is empty", field="body")
+    header = row.body_markdown.partition("\n\n")[0]
+    document = f"{header}\n\n{body}"
+    if len(document) > MEETING_REPORT_MAX_CHARS:
+        raise ValidationError(f"report exceeds {MEETING_REPORT_MAX_CHARS} characters", field="body")
+    try:
+        assert_masked(document, destination="intel_meeting_reports")
+    except PrivacyViolationError as exc:
+        # A person typed it, so it is theirs to correct: refuse with the
+        # categories, as the subagent's draft action does, never the text.
+        categories = ", ".join(exc.details.get("categories", []))
+        raise ValidationError(
+            f"report still holds personal data: {categories}", field="body"
+        ) from exc
+    row.body_markdown = document
+    row.edited_by = user_id
+    row.edited_at = datetime.now(UTC)
+    session.flush()
+    editor = session.scalar(sa.select(User.display_name).where(User.id == user_id))
+    return _report_read(row, editor)

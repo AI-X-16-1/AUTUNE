@@ -69,3 +69,21 @@ export interface PredictionsRead {
   prediction: PredictionRead | null;
   reason: "insufficient_history" | "no_prediction" | null;
 }
+
+/**
+ * One meeting's report as `/api/intelligence/meeting-reports/{team_id}` returns
+ * it — `MeetingReportRead` in the module's schemas.py. `title` is the stored
+ * header line, `body` the rest (the subagent's text and E's footer).
+ */
+export interface MeetingReport {
+  meeting_id: string;
+  title: string;
+  body: string;
+  status: "draft" | "posted";
+  posted_at: string | null;
+  pending_review: boolean;
+  edited_by_name: string | null;
+  edited_at: string | null;
+  updated_at: string;
+}
+

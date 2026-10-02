@@ -5,14 +5,17 @@ here — it cannot be reused by ``tasks.py`` if it lives in a route.
 
 The prefix ``/api/intelligence`` is applied by apps/api; declare paths relative to it.
 
-Every route here is read-only. Auth is not enforced yet — apps/api has no auth
-middleware wired (#156, #189). Most of these are team-level aggregates (quality,
-alignment, gap distribution) that carry no per-person data, so the gap is
-tolerable until then. ``/gap-titles`` is the exception: it returns gap *title
-text*, not a number, to anyone who knows a ``team_id`` — narrower than a
-transcript, but real content, not an aggregate. Tracked in #156/#189 rather
-than solved here. ``/me/speaking-ratio`` is the one route that must authorise
-on the subject regardless of when the rest gets auth, and it is not built here.
+Every route here but ``PUT /meeting-reports/{meeting_id}`` is read-only, and the
+two ``/meeting-reports`` routes authenticate and check team membership: a report
+is meeting text, and one of them edits it. Elsewhere auth is not enforced yet —
+apps/api has no auth middleware wired (#156, #189). Most of these are team-level
+aggregates (quality, alignment, gap distribution) that carry no per-person data,
+so the gap is tolerable until then. ``/gap-titles`` is the exception: it returns
+gap *title text*, not a number, to anyone who knows a ``team_id`` — narrower
+than a transcript, but real content, not an aggregate. Tracked in #156/#189
+rather than solved here. ``/me/speaking-ratio`` is the one route that must
+authorise on the subject regardless of when the rest gets auth, and it is not
+built here.
 """
 
 from __future__ import annotations
@@ -30,6 +33,8 @@ from .models import IntelReport, IntelScore
 from .schemas import (
     DashboardRead,
     HeatmapCell,
+    MeetingReportEdit,
+    MeetingReportRead,
     PredictionsRead,
     ReportRead,
     ScoreRead,
@@ -84,6 +89,23 @@ def get_predictions(team_id: str, session: SessionDep) -> PredictionsRead:
 def list_reports(team_id: str, session: SessionDep) -> list[IntelReport]:
     """The team's generated weekly reports, newest period first."""
     return service.list_reports(session, team_id)
+
+
+@router.get("/meeting-reports/{team_id}", response_model=list[MeetingReportRead])
+def list_meeting_reports(
+    team_id: str, user: CurrentUser, session: SessionDep
+) -> list[MeetingReportRead]:
+    """The team's meeting reports for the dashboard card. Members only: a report
+    is meeting text, not an aggregate."""
+    return service.list_meeting_reports(session, team_id, user_id=user.id)
+
+
+@router.put("/meeting-reports/{meeting_id}", response_model=MeetingReportRead)
+def edit_meeting_report(
+    meeting_id: str, edit: MeetingReportEdit, user: CurrentUser, session: SessionDep
+) -> MeetingReportRead:
+    """A team member edits a draft before it is posted; refused once posted."""
+    return service.edit_meeting_report(session, meeting_id, edit.body, user_id=user.id)
 
 
 @router.get("/me/speaking-ratio/{meeting_id}", response_model=SpeakingRatioRead)
