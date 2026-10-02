@@ -98,6 +98,7 @@ class JiraIssues(Protocol):
         due_date: date | None,
         assignee_account_id: str | None,
         keep_assignee: bool = False,
+        description: str | None = None,
     ) -> bool: ...
 
     def move_to_category(self, issue_key: str, category: str) -> bool: ...
@@ -177,6 +178,10 @@ def sync_action_item_to_jira(
 
     account = _assignee_account(session, jira, item)
     summary = _summary(item.description)
+    # The full text when the summary could not hold it, else nothing -- on an
+    # update too, so a description that changed (or was a deleted person's
+    # words, #587) does not stay behind in Jira (#601 review).
+    description = item.description if summary != item.description else ""
     updated = ours and jira.update_task(
         str(ref.external_id),
         summary,
@@ -185,13 +190,14 @@ def sync_action_item_to_jira(
         # Someone Autune could not find in Jira may have been assigned there by
         # hand; only an item with no assignee in Autune clears Jira's.
         keep_assignee=account is None and item.assignee_id is not None,
+        description=description,
     )
     if not updated:
         # First send, an issue deleted in Jira since, or another site: make it.
         ref.external_id = jira.create_task(
             project_key,
             summary,
-            description=item.description if summary != item.description else "",
+            description=description,
             due_date=item.due_date,
             assignee_account_id=account,
         )

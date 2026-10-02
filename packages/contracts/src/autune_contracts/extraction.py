@@ -193,3 +193,87 @@ class TeamAgenda(TeamPayload):
     """With an offset. A consumer compares snapshots by ``as_of``, and a naive
     time against an aware one raises instead of comparing (#491 review)."""
     issues: list[AgendaIssue] = Field(default_factory=list)
+
+
+ACTION_PROGRESS_PUBLISH_EVERY = timedelta(minutes=10)
+"""How often the producer republishes every team's action progress, changed or
+not -- the same cadence as the Jira status read-back (#548)."""
+
+ACTION_PROGRESS_STALE_AFTER = timedelta(minutes=30)
+"""A snapshot older than this -- three missed publishes -- is **unknown** to a
+consumer, not empty: a rate computed from it would be presented as current."""
+
+ACTION_PROGRESS_TODAY_ZONE = "Asia/Seoul"
+"""Whose "today" ``overdue`` is counted against: the date of ``as_of`` in this zone.
+
+Teams have no time zone yet, and a server on UTC would otherwise count a day
+late between 00:00 and 09:00 in Seoul, so B's board and E's dashboard could
+disagree on the same item (#619 review). One zone for every team until a
+team setting exists; changing it is a contract change."""
+
+ACTION_PROGRESS_WINDOW = timedelta(days=91)
+"""Meetings counted: those created within this of ``as_of``. Thirteen weeks,
+the default 90-day retention rounded up to whole weeks."""
+
+
+class MeetingActionProgress(ContractModel):
+    """One meeting's action items as counts, as of the snapshot (#605).
+
+    Counts and the meeting's id, nothing else: no assignee, no title, no item
+    id. Adding an assignee is a privacy violation rather than an additive
+    change -- it would make a per-person completion record
+    (docs/architecture/privacy.md section 3), the same rule as ``RoleStance``.
+    """
+
+    meeting_id: str = Field(pattern=r"^mtg_")
+    confirmed: int = Field(
+        ge=1, description="Items past needs_confirmation; deleted items are gone."
+    )
+    done: int = Field(ge=0, description="Confirmed items in status done.")
+    overdue: int = Field(
+        ge=0,
+        description=(
+            "Confirmed, not done, due before the date of as_of in Asia/Seoul -- the "
+            "board's rule. No per-team time zone exists yet."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _counts_hold_together(self) -> MeetingActionProgress:
+        if self.done > self.confirmed:
+            raise ValueError("done exceeds confirmed")
+        if self.overdue > self.confirmed - self.done:
+            raise ValueError("overdue exceeds the confirmed items not done")
+        return self
+
+
+class TeamActionProgress(TeamPayload):
+    """A team's action-item counts per meeting, as of ``as_of`` (#605).
+
+    A snapshot, not a change: each one replaces the last. Republished every
+    ``ACTION_PROGRESS_PUBLISH_EVERY`` for every team with a meeting inside
+    ``ACTION_PROGRESS_WINDOW``, whether or not anything changed. Events can
+    arrive out of order, so a consumer keeps the one with the latest ``as_of``
+    and treats it as unknown once it is older than
+    ``ACTION_PROGRESS_STALE_AFTER``. A fresh snapshot with no ``meetings`` is a
+    fact -- nothing confirmed in the window -- not "unknown".
+
+    **How a consumer may use it.** Module E shows team totals over the window
+    only. A meeting whose confirmed items are all one person's makes that
+    meeting's counts that person's completion record, so no consumer shows a
+    count per meeting, and none feeds them to a meeting report, a direct
+    message or a prediction feature (#605 review). Widening that is a privacy
+    decision, not a code change.
+    """
+
+    as_of: AwareDatetime
+    """With an offset; snapshots are compared by it."""
+    meetings: list[MeetingActionProgress] = Field(default_factory=list)
+    """Meetings inside the window with at least one confirmed item, once each."""
+
+    @model_validator(mode="after")
+    def _each_meeting_once(self) -> TeamActionProgress:
+        ids = [m.meeting_id for m in self.meetings]
+        if len(ids) != len(set(ids)):
+            raise ValueError("a meeting appears more than once")
+        return self

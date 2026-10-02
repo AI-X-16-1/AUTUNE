@@ -212,6 +212,20 @@ speaking ratio. So:
 Three is the same number module E already requires before it delivers speaking
 ratios for a meeting (`_MIN_SPEAKERS_FOR_RATIO`, #128). Decided on #168.
 
+**Action-item counts are a team total, never a meeting's** (#605, #619). B's
+`TeamActionProgress` carries confirmed, done and overdue counts per meeting
+and never an assignee. In a meeting whose confirmed items are all one
+person's, those counts are that person's completion record. So:
+
+- A consumer shows them only as totals over `ACTION_PROGRESS_WINDOW`, never a
+  count per meeting, and keeps them out of meeting reports, direct messages
+  and prediction features.
+- A total over fewer than **three** meetings with confirmed items is left
+  empty: with one or two, the team total is still a meeting's -- often one
+  person's -- record. Three, as for stance and speaking ratios above.
+- Adding an assignee to the contract is a privacy violation, not an additive
+  change.
+
 ## 4. Retention and deletion
 
 - Analysis results are retained **90 days** by default, adjustable per team.
@@ -241,6 +255,18 @@ ratios for a meeting (`_MIN_SPEAKERS_FOR_RATIO`, #128). Decided on #168.
   decisions and lineage derived from a person's speech after that person's
   utterances are deleted. Until that ADR is accepted or rejected, "their own
   data" includes everything derived from their speech.
+  **For a person deleting their own speech, decided with the user
+  (2026-10-01, #587):** the utterances go, and in what was derived from them
+  their words go too while the team's work stays — an unconfirmed draft drawn
+  from the speech is deleted; a confirmed item or decision whose text is the
+  line itself reads "삭제된 발화에서 만든 항목" and loses its date phrase and
+  original sentence; a model's summary or a person's own writing stays; B's
+  copies in Notion, Jira and calendars follow. Every module that keeps what it
+  derived from speech — D's statements, E's report text — clears its own copy
+  on the same signal; a module that does not yet is a gap to close. Modules
+  receive this through
+  `autune_core.deletion.on_speech_deleted`, before the utterances are deleted
+  (ADR 0007 decision 5, #92).
 - When a user leaves a team, their utterances and everything derived from them
   are deleted. **This rule is under review — see ADR 0007**, which argues the
   record belongs to the meeting rather than to its participants, and that
@@ -249,6 +275,10 @@ ratios for a meeting (`_MIN_SPEAKERS_FOR_RATIO`, #128). Decided on #168.
 
 **Required of every module:**
 - Every module-owned table is reachable from a `meeting_id` or a `user_id`.
+  The exception is a team-scoped row that holds no meeting content and is
+  deleted with its team -- a weekly report, `intel_action_progress`'s
+  snapshot time -- while any per-meeting rows under it cascade from
+  `meetings` (#619 review).
 - Each module registers a deletion hook in `autune_core`'s deletion registry.
   Rows reachable by `ON DELETE CASCADE` from `meetings` are covered
   automatically — embeddings and topic graphs included, since both are
@@ -320,6 +350,8 @@ Reject a pull request that does any of the following:
       stance for a role below three identified people, or reports a unanimous
       role
 - [ ] Adds a table with no path to deletion by `meeting_id` or `user_id`
+- [ ] Shows action-item counts per meeting, or a team total over fewer than
+      three meetings
 - [ ] Uses a soft delete for content
 - [ ] Sends more data to a third party than the feature requires
 

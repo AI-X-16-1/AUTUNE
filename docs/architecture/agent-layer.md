@@ -358,7 +358,7 @@ says.
 | --- | --- | --- |
 | B | its action items; the stored classifications; an item's review state | B's read API, nothing new. `list_action_items` exists today |
 | C | a meeting's gaps with `risk_score` and `suggested_question`; the topic graph; a topic's `silent_share` | all four of C's steps produce values; what is left is measuring precision on real meetings (#22). Tools are C's owner's, in topic-level form |
-| D | this meeting's links; a decision thread; the team's decisions | `links_for_meeting`, `decision_thread`, `list_decisions` over #185's read routes, named by D's owner |
+| D | this meeting's links; a decision thread; the team's decisions; the earlier meeting an upcoming meeting follows; the Jira issues it should take up | `links_for_meeting`, `decision_thread`, `list_decisions` over #185's read routes, and `brief_recap`, `brief_agenda` over the pre-meeting brief's own rows (Briefing's reads), named by D's owner |
 | E | a meeting's quality score; the team's trend; its recurring gap patterns; the misalignment risk (withheld before #27's history gate) | E's aggregate reads. No speaking-ratio tool (invariant 11). Two actions for the Report subagent: `draft_meeting_report` (L1) and `publish_meeting_report` (L2) |
 
 - **C — the charter reaching gap detection is a proposal, to be agreed with

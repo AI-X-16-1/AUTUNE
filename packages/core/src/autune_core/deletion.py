@@ -22,7 +22,7 @@ finds nothing to do the second time.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 
 from .logging import get_logger
 
@@ -30,9 +30,11 @@ log = get_logger(__name__)
 
 MeetingHook = Callable[[str], None]
 UserHook = Callable[[str], None]
+SpeechHook = Callable[[str, Sequence[str]], None]
 
 _meeting_hooks: dict[str, MeetingHook] = {}
 _user_hooks: dict[str, UserHook] = {}
+_speech_hooks: dict[str, SpeechHook] = {}
 
 
 def on_meeting_deleted(module: str) -> Callable[[MeetingHook], MeetingHook]:
@@ -55,6 +57,21 @@ def on_user_deleted(module: str) -> Callable[[UserHook], UserHook]:
     return decorator
 
 
+def on_speech_deleted(module: str) -> Callable[[SpeechHook], SpeechHook]:
+    """Register cleanup that runs when a person deletes their own speech (#587).
+
+    The hook gets the person and the ids of the utterances about to go, before
+    they are deleted -- so it can still find what it derived from them. Ids
+    only, as for the other hooks. It must be safe to repeat.
+    """
+
+    def decorator(fn: SpeechHook) -> SpeechHook:
+        _speech_hooks[module] = fn
+        return fn
+
+    return decorator
+
+
 def run_meeting_hooks(meeting_id: str) -> None:
     for module, hook in _meeting_hooks.items():
         hook(meeting_id)
@@ -65,6 +82,24 @@ def run_user_hooks(user_id: str) -> None:
     for module, hook in _user_hooks.items():
         hook(user_id)
         log.info("deletion_hook_ran", scope="user", module=module, user_id=user_id)
+
+
+def run_speech_hooks(user_id: str, utterance_ids: Sequence[str]) -> None:
+    """Run every speech hook before the utterances are deleted. Called by module
+    A's speech and account deletion (#582, #587); a hook that raises stops it."""
+    for module, hook in _speech_hooks.items():
+        hook(user_id, utterance_ids)
+        log.info(
+            "deletion_hook_ran",
+            scope="speech",
+            module=module,
+            user_id=user_id,
+            utterances=len(utterance_ids),
+        )
+
+
+def registered_speech_modules() -> set[str]:
+    return set(_speech_hooks)
 
 
 def registered_modules() -> tuple[set[str], set[str]]:

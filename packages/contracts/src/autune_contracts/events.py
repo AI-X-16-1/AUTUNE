@@ -20,6 +20,11 @@ not -- the name says what it carries, not that something changed; do not wait
 for a change to arrive. The payload is a ``TeamAgenda``, stale after
 ``AGENDA_STALE_AFTER``. About a team, not a meeting, so it is outside the
 per-meeting pipeline (#436)."""
+EXTRACTION_ACTION_PROGRESS: Final = "autune.extraction.action_progress"
+"""B -> E. A team's action-item counts per meeting, republished every
+``ACTION_PROGRESS_PUBLISH_EVERY`` whether or not anything changed. The payload
+is a ``TeamActionProgress``; keep the latest ``as_of`` and treat one older than
+``ACTION_PROGRESS_STALE_AFTER`` as unknown. About a team, not a meeting (#605)."""
 
 EVENTS: Final = (
     TRANSCRIPT_READY,
@@ -28,6 +33,7 @@ EVENTS: Final = (
     CONTEXT_COMPLETED,
     INTELLIGENCE_COMPLETED,
     EXTRACTION_AGENDA_CHANGED,
+    EXTRACTION_ACTION_PROGRESS,
 )
 """Every event the pipeline publishes.
 

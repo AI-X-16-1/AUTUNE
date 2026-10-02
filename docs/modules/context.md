@@ -827,7 +827,7 @@ meeting itself that the two decision routes already applied.
 
 ### Agent tools — `autune_context.tools`
 
-Three reads the agent layer collects the way `apps/api` collects routers
+Five reads the agent layer collects the way `apps/api` collects routers
 (`agent-layer.md` section 4; `tools.py` is this module's file, ADR 0010):
 
 | Tool | Answers | Built on |
@@ -835,6 +835,8 @@ Three reads the agent layer collects the way `apps/api` collects routers
 | `links_for_meeting(team_id, meeting_id)` | which earlier meetings discussed what this one did | `service.get_topic_links` |
 | `decision_thread(team_id, thread_id)` | how one decision moved across meetings: its five most recent versions, oldest first | `service.get_decision_lineage` |
 | `list_decisions(team_id, topic?, change_type?)` | the team's decisions by current head, most recently touched first | `service.list_decisions` |
+| `brief_recap(team_id, meeting_id)` | the earlier meeting D chose for an upcoming meeting's brief, then at most four of its decisions | `briefs.read_team_brief` |
+| `brief_agenda(team_id, meeting_id)` | the team's open Jira issues, as B last reported them | `briefs.agenda_for` |
 
 Plain functions returning the `ToolResult` dict, with no `autune_agent` import;
 `team_id` is filled from the run's scope and never by a model, and a meeting or
@@ -857,6 +859,14 @@ for the one place a tool cannot call the router, and one case is stricter:
   agent does not state a guess as a fact.
 - `evidence` is a meeting id or a thread id, never text: a link's own id is an
   integer and is not a valid evidence value.
+
+`brief_recap` reads what `send_brief` stored in `ctx_briefs` (the choice, never
+content) and renders the recap from the live rows, so it fails with
+`brief not composed yet` until `brief_lead_minutes` before the start -- composing
+needs the models, which the agent process does not load -- and a meeting swept
+by retention reads as gone, not reconstructed. `brief_agenda` needs no composed
+brief: it reads `ctx_team_agendas`, so it works before the choice is made, and a
+snapshot B stopped refreshing reads as none (`AGENDA_STALE_AFTER`).
 
 The brief the Briefing subagent composes is still sent by D's own surface
 (`briefs.py`), so one brief goes out.
