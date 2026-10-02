@@ -286,6 +286,21 @@ def test_a_grant_issued_to_another_client_says_it_needs_reconnecting(
     }
 
 
+def test_with_no_google_client_configured_a_grant_is_not_called_broken(
+    world: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """mminjae97, review of #711: `"x" != ""` said "reconnect" on a server
+    that cannot connect anything, while module B skipped the person without
+    a word. The card and B say the same thing: nothing."""
+    world["grants"][ME] = "1//refresh"
+    world["configs"][ME] = {"calendar_id": "primary", "client_id": "the-old-client"}
+
+    assert _status_with_current_client(world, monkeypatch, "") == {
+        "connected": True,
+        "needs_reconnect": False,
+    }
+
+
 def test_a_grant_from_before_the_client_was_recorded_is_not_called_broken(
     world: dict[str, Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -409,6 +424,10 @@ def test_with_an_integration_client_the_calendar_goes_through_it_start_to_finish
     assert exchanged == []
     assert response.status_code == 303
     assert world["grants"] == {ME: "1//from-the-integration-client"}
+    # The grant records the client that issued it -- the integration client,
+    # not the sign-in one -- which is what later tells a stranded grant apart
+    # (mkkim68, review of #711).
+    assert world["configs"][ME]["client_id"] == "integration-client"
 
 
 def test_with_an_integration_client_disconnect_revokes_through_it(

@@ -122,7 +122,7 @@ is a separate consent, given after signing in and described next. Nothing reads
 | Variable | Example | Notes |
 | --- | --- | --- |
 | `AUTUNE_GOOGLE_INTEGRATION_CLIENT_ID` | | A second Google Cloud OAuth client, for what a person connects after signing in — their own calendar today (#435), mail when it exists. Optional: blank, the sign-in client does both |
-| `AUTUNE_GOOGLE_INTEGRATION_CLIENT_SECRET` | | Never commit. Set with the id or not at all — one without the other is refused at startup |
+| `AUTUNE_GOOGLE_INTEGRATION_CLIENT_SECRET` | | Never commit. Set with the id or not at all — one without the other is refused at startup. With the pair set, `AUTUNE_GOOGLE_REDIRECT_URI` is required too, and its absence is refused at startup |
 
 Sign-in keeps `AUTUNE_GOOGLE_CLIENT_ID`. The two are separate so that an
 identity-only client and one that asks for somebody's calendar can be reviewed
@@ -134,11 +134,24 @@ it, so a grant is always refreshed with the client that issued it.
 - **No second redirect URI.** One callback (`/api/auth/google/callback`)
   finishes sign-in and the calendar connect, so `AUTUNE_GOOGLE_REDIRECT_URI`
   must be registered on the integration client as well as on the sign-in one.
+  The integration pair without that variable is refused at startup: the
+  connect would start and then have no callback to finish on.
 - **Setting these on a running deployment strands its connected calendars.**
   Google binds a refresh token to the client that issued it. A grant issued
   to the sign-in client is refused at its next refresh once the integration
   client is in use, and the person is asked to connect again. Nothing migrates
   a grant from one client to the other.
+- **A grant records the client that issued it.** A connect stores the
+  issuing `client_id` beside the grant (public by nature, not a credential).
+  When it differs from the client the deployment refreshes with now,
+  `GET /api/auth/google/calendar` reports `needs_reconnect: true`, the
+  calendar card says the connection is broken, and module B skips the
+  refresh instead of sending one Google would refuse. A grant from before
+  the client was recorded says nothing either way and is tried as before —
+  which includes every calendar connected before #711, so the first switch
+  to an integration client is still found out by a refused refresh. With no
+  Google client configured at all, nothing is reported as needing a
+  reconnect: there is nothing to reconnect to.
 
 **Two cookies, two jobs.** `autune_session` is the signed session (7 days,
 `HttpOnly`, `SameSite=Lax`, `Secure` outside local). `autune_oauth_state` lives
