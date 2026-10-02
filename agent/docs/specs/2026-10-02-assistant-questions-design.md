@@ -88,13 +88,14 @@ Chosen by the run's scope, not by the model.
 | Scope | Tools |
 | --- | --- |
 | A meeting (`RunScope.meeting_id` set) | `audio.meeting_overview`, `audio.find_utterances`, `extraction.meeting_decisions`, `extraction.meeting_action_items`, `extraction.unresolved_questions`, `gap.open_gaps`, `context.links_for_meeting`, `intelligence.meeting_quality` |
-| The team (no meeting) | `audio.recent_meetings`, `extraction.open_action_items`, `extraction.workload_by_owner`, `context.list_decisions`, `context.decision_thread`, `intelligence.recurring_gaps`, `intelligence.team_trend` |
+| The team (no meeting) | `audio.recent_meetings`, `extraction.open_action_items`, `extraction.person_action_items`, `extraction.workload_by_owner`, `context.list_decisions`, `context.decision_thread`, `intelligence.recurring_gaps`, `intelligence.team_trend` |
 
 Left out after #677's review: `audio.search_team_meetings` quotes other
-meetings, which section 8 rule 1 does not allow a step to do; and
-`extraction.person_action_items` needs a `user_id` the model can learn only
-for others, never for the asker — it returns once the scope can supply the
-asker's id.
+meetings, which section 8 rule 1 does not allow a step to do.
+`extraction.person_action_items` is back: a chat run's scope carries the
+asker (`RunScope.user_id`), a read called without `user_id` is about them,
+and the declaration marks `user_id` optional — "Leave out for the person
+asking." Actions never get this default; only reads through `Toolbox.call`.
 
 A name not registered (a module that has not shipped it) is dropped with the
 existing warning. Personal-only tools are never registered, so never offered.
