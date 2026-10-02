@@ -15,6 +15,7 @@ import { Button, MaskedText, StatusDot } from "@/shared/ui";
 import { sendChat } from "../api";
 import { contextFor } from "../assistantContext";
 import type { ChatFinding, ChatReply } from "../types";
+import { ChatProposal } from "./ChatProposal";
 
 /**
  * S34 — the assistant: a launcher at the bottom right and a 400×600 chat panel
@@ -28,8 +29,8 @@ import type { ChatFinding, ChatReply } from "../types";
  *   on the server: an answer can quote any of the team's meetings and must not
  *   outlive one (agent/CLAUDE.md rule 8). A reload starts a new conversation.
  * - An action the subagent proposed is not run from here. L1 already ran on
- *   the server; L2 waits on 승인 대기 for an approver, and the answer says so
- *   with a link rather than drawing 생성 buttons that would run it.
+ *   the server. A decidable L2 proposal gets 승인 / 거절 on the card; the
+ *   rest keep the link to 승인 대기, where an approver decides them.
  */
 
 type Turn =
@@ -331,7 +332,9 @@ function TurnView({ turn }: { turn: Turn }) {
 
 function AssistantReply({ reply }: { reply: ChatReply }) {
   const unrouted = reply.outcome === "unrouted";
-  const queued = reply.queued;
+  const decidable = reply.pending ?? [];
+  // Waiting for someone else: the server's count, less the ones drawn here.
+  const queued = Math.max(reply.queued - decidable.length, 0);
   return (
     <div>
       <p
@@ -341,6 +344,8 @@ function AssistantReply({ reply }: { reply: ChatReply }) {
         {unrouted ? UNROUTED : <MaskedText>{reply.answer}</MaskedText>}
       </p>
       {!unrouted && reply.items.length > 0 && <Evidence items={reply.items} />}
+      {!unrouted &&
+        decidable.map((item) => <ChatProposal key={item.id} item={item} />)}
       {!unrouted && (reply.executed > 0 || queued > 0) && (
         <div
           className="mt-3 rounded-[var(--radius)]"
