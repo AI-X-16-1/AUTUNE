@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { Button } from "@/shared/ui";
 
@@ -15,17 +15,35 @@ import type { MeetingSummary } from "../types";
  * pasting it somewhere should not have to wonder. Where the browser will not
  * give the clipboard, the text is shown to select by hand instead of the
  * button just failing.
+ *
+ * **"복사했습니다." is about one copy, not a standing state** (review of #752).
+ * Left on screen it went on saying so after the meeting's content changed, and
+ * nobody could tell whether what they held was the new page. It names the page
+ * that was copied: it goes after `COPIED_FOR` and at once when the page on
+ * screen is no longer that one.
  */
+
+export const COPIED_FOR = 4000;
+
 export function CopyMinutes({ summary }: { summary: MeetingSummary }) {
-  const [state, setState] = useState<"idle" | "copied" | "manual">("idle");
+  // The page that is on the clipboard, while the notice about it stands.
+  const [copied, setCopied] = useState<string | null>(null);
+  const [manual, setManual] = useState(false);
+  const fading = useRef<number | undefined>(undefined);
   const text = minutesText(summary, titleOf(summary));
 
+  useEffect(() => () => window.clearTimeout(fading.current), []);
+
   const copy = async () => {
+    window.clearTimeout(fading.current);
     try {
       await navigator.clipboard.writeText(text);
-      setState("copied");
+      setManual(false);
+      setCopied(text);
+      fading.current = window.setTimeout(() => setCopied(null), COPIED_FOR);
     } catch {
-      setState("manual");
+      setCopied(null);
+      setManual(true);
     }
   };
 
@@ -40,13 +58,13 @@ export function CopyMinutes({ summary }: { summary: MeetingSummary }) {
         <span className="text-[var(--color-ink-muted)]" style={meta}>
           결정과 액션만 담습니다. 근거 발화 인용은 넣지 않습니다.
         </span>
-        {state === "copied" ? (
+        {copied !== null && copied === text ? (
           <span role="status" className="text-[var(--color-ink-muted)]" style={meta}>
             복사했습니다.
           </span>
         ) : null}
       </div>
-      {state === "manual" ? (
+      {manual ? (
         <>
           <p role="alert" className="text-[var(--color-ink-muted)]" style={meta}>
             복사하지 못했습니다. 아래 글을 직접 선택해 복사해 주세요.
