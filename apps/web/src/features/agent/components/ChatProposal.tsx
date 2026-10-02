@@ -1,11 +1,13 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 
 import { ApiError } from "@/shared/api/client";
 import { Button, MaskedText, StatusDot } from "@/shared/ui";
 
 import { approvePending, rejectPending } from "../api";
+import { reportLink } from "../reportLink";
 import type { PendingAction, RejectReason } from "../types";
 
 const REASONS: { value: RejectReason; label: string }[] = [
@@ -96,6 +98,15 @@ export function ChatProposal({ item }: { item: PendingAction }) {
       >
         <MaskedText>{item.body}</MaskedText>
       </p>
+      {reportLink(item) && (
+        <Link
+          href={reportLink(item)!}
+          className="mt-1 inline-block text-[var(--color-accent-default)]"
+          style={{ fontSize: 12, fontWeight: 600 }}
+        >
+          대시보드에서 리포트 보기
+        </Link>
+      )}
       {result ? (
         <p
           role="status"
