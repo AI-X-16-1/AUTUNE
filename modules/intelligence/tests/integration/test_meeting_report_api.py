@@ -489,3 +489,22 @@ def test_the_cap_counts_the_text_as_slack_will_receive_it(
     )
 
     assert response.status_code == 422
+
+
+def test_a_last_paragraph_that_reads_like_the_footer_stays_in_the_body(
+    db_session: Session, team: str, client_for: Callable[[User], TestClient]
+) -> None:
+    """Only E's exact footers are split off; a person's own line is not dropped."""
+    meeting = _meeting(db_session, team, "결제 회의", 2)
+    _report(db_session, meeting)
+    client = client_for(_user(db_session, team, "박재경"))
+    body = "✅ 고친 본문\n\n자동 생성 기능은 다음 주에 다시 봅니다"
+
+    first = client.put(f"/api/intelligence/meeting-reports/{meeting}", json={"body": body}).json()
+    again = client.put(
+        f"/api/intelligence/meeting-reports/{meeting}",
+        json={"body": first["body"], "base_updated_at": first["updated_at"]},
+    ).json()
+
+    assert first["body"] == body and again["body"] == body
+    assert again["footer"].endswith("박재경님이 고쳤습니다.")
