@@ -3,6 +3,7 @@ import Link from "next/link";
 import { StatusDot, type StatusVariant } from "@/shared/ui/StatusDot";
 
 import type { MeetingDetail, ProcessingStage } from "../types";
+import { TranscriptionControls } from "./TranscriptionControls";
 
 type StageState = "done" | "running" | "queued" | "failed";
 
@@ -36,9 +37,9 @@ type Stage = { label: string; detail: string; state: StageState; progress?: numb
  *   The per-step bar is gone — the overall bar above is the one line S12
  *   draws, and a second bar under the step said what its number says.
  *
- * `failed` turns the step that was running red. The retry is a new upload
- * for the same meeting — the pipeline accepts a recording for a `failed`
- * meeting.
+ * `failed` turns the step that was running red, unless the person cancelled
+ * it (`meeting.cancelled`); either way the retry is a new upload for the same
+ * meeting — the pipeline accepts a recording for a `failed` meeting.
  */
 export function ProcessingStages({ meeting }: { meeting: MeetingDetail }) {
   const stages = stagesFor(meeting);
@@ -114,14 +115,22 @@ export function ProcessingStages({ meeting }: { meeting: MeetingDetail }) {
         ))}
       </ol>
 
+      <TranscriptionControls meeting={meeting} />
+
       {meeting.status === "failed" ? (
         <p
-          role="alert"
+          role={meeting.cancelled ? "status" : "alert"}
           className="mt-3"
           style={{ fontSize: "var(--text-meta)" }}
         >
-          <span style={{ color: "var(--color-signal-critical)" }}>
-            처리에 실패했습니다. 원본 녹음은 삭제되었습니다.
+          <span
+            style={{
+              color: meeting.cancelled ? "var(--color-ink-strong)" : "var(--color-signal-critical)",
+            }}
+          >
+            {meeting.cancelled
+              ? "처리를 취소했어요. 서버에 있던 원본 녹음은 삭제됐어요."
+              : "처리에 실패했습니다. 원본 녹음은 삭제되었습니다."}
           </span>{" "}
           <Link
             href={`/meetings/new?meeting=${meeting.meeting_id}`}
