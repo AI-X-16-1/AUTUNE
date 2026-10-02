@@ -30,6 +30,7 @@ from datetime import datetime
 from typing import Final
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .entities import UserConsent
@@ -74,13 +75,24 @@ def record_consents(session: Session, user_id: str, agreed: list[tuple[str, str]
     Agreeing twice is one agreement: the first row and its time are kept, so
     the record says when a person first agreed to that version, not when they
     last reloaded the page. Returns everything they have agreed to.
+
+    That holds for two requests at once as well -- a double click, two tabs.
+    Both read no row and both insert; the unique constraint lets one through,
+    and the other finds the agreement already made, which is what it wanted.
+    Each insert sits in its own savepoint so that losing that race undoes
+    one row and not the rest of the request (review of #715).
     """
     if len(agreed) > MAX_PER_REQUEST:
         raise ValidationError("too many documents in one request", field="consents")
     wanted = list(dict.fromkeys(_checked(document, version) for document, version in agreed))
     have = {(c.document, c.version) for c in consents_of(session, user_id)}
     for document, version in wanted:
-        if (document, version) not in have:
-            session.add(UserConsent(user_id=user_id, document=document, version=version))
-    session.flush()
+        if (document, version) in have:
+            continue
+        try:
+            with session.begin_nested():
+                session.add(UserConsent(user_id=user_id, document=document, version=version))
+        except IntegrityError:
+            # Recorded by another request between the read and this insert.
+            continue
     return consents_of(session, user_id)

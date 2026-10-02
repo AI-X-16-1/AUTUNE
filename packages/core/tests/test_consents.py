@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from autune_core import SESSION_COOKIE, UserConsent, issue_token
+from autune_core import consents as consents_module
 from autune_core.auth_router import router as auth_router
 from autune_core.consents import MAX_PER_REQUEST, consents_of, record_consents
 from autune_core.db import Base, get_session
@@ -141,6 +142,34 @@ def test_a_name_or_version_that_is_not_one_is_refused_and_nothing_is_written(
 
     assert response.status_code == 422
     assert consents_of(db, ME) == []
+
+
+def test_two_requests_at_once_are_one_agreement_not_an_error(
+    db: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A double click, or two tabs: both read no row, both insert. The second
+    to arrive meets the unique constraint, and what it wanted is already
+    true. The other document in the same request is still recorded.
+
+    The race is staged by handing ``record_consents`` the stale read the
+    slower request would have made."""
+    record_consents(db, ME, [("terms", "2026-10-02")])
+    db.commit()
+    first = consents_of(db, ME)
+    real = consents_module.consents_of
+    reads = iter([[]])  # the first read: before the other request committed
+    monkeypatch.setattr(
+        consents_module, "consents_of", lambda s, u: next(reads, None) or real(s, u)
+    )
+
+    recorded = record_consents(db, ME, [("terms", "2026-10-02"), ("privacy", "2026-10-02")])
+    db.commit()
+
+    assert [(c.document, c.version) for c in recorded] == [
+        ("terms", "2026-10-02"),
+        ("privacy", "2026-10-02"),
+    ]
+    assert recorded[0].agreed_at == first[0].agreed_at  # the first agreement stands
 
 
 def test_one_request_cannot_write_without_bound(db: Session) -> None:
