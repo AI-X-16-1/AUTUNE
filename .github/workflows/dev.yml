@@ -32,9 +32,11 @@ jobs:
       DEV_BASIC_AUTH_PASSWORD: ${{ secrets.DEV_BASIC_AUTH_PASSWORD }}
       # Optional: without it /api/agent/chat refuses and the rest works.
       AUTUNE_AGENT_LLM_API_KEY: ${{ secrets.AUTUNE_AGENT_LLM_API_KEY }}
-      # Optional: the provider key under its shared name, which module B
-      # reads when its own is blank (#701). It reaches the containers and,
-      # with B's classifier pinned to `fake`, calls nothing.
+      # Required: the provider key under its shared name, which module B
+      # reads when its own is blank (#701). The compose file sets B's
+      # resolver to `llm`, and without a key B refuses to build it -- on
+      # the first meeting, after the deploy looked fine. "Check
+      # configuration" refuses before that.
       AUTUNE_LLM_API_KEY: ${{ secrets.AUTUNE_LLM_API_KEY }}
       # The address the domain serves. Google sends sign-in back here, and
       # the api sends the browser here afterwards, so it must be the origin
@@ -84,6 +86,7 @@ jobs:
           if not defined AUTUNE_SECRET_KEY (echo AUTUNE_SECRET_KEY secret is not set & exit /b 1)
           if not defined DEV_BASIC_AUTH_PASSWORD (echo DEV_BASIC_AUTH_PASSWORD secret is not set & exit /b 1)
           if not defined DEV_PUBLIC_HOST (echo DEV_PUBLIC_HOST repository variable is not set & exit /b 1)
+          if not defined AUTUNE_LLM_API_KEY (echo AUTUNE_LLM_API_KEY secret is not set and the compose file sets module B's resolver to llm & exit /b 1)
           if defined AUTUNE_GOOGLE_INTEGRATION_CLIENT_ID if not defined AUTUNE_GOOGLE_INTEGRATION_CLIENT_SECRET (echo AUTUNE_GOOGLE_INTEGRATION_CLIENT_SECRET secret is not set and its CLIENT_ID is & exit /b 1)
           if defined AUTUNE_GOOGLE_INTEGRATION_CLIENT_SECRET if not defined AUTUNE_GOOGLE_INTEGRATION_CLIENT_ID (echo AUTUNE_GOOGLE_INTEGRATION_CLIENT_ID secret is not set and its CLIENT_SECRET is & exit /b 1)
           set NEEDS_KEY=
