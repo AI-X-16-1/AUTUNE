@@ -6,11 +6,25 @@ which document, which version of it, when. A document that changes gets a new
 version, and nobody has agreed to that one yet, which is how a changed document
 asks again.
 
+**Two documents, and only those: the terms and the privacy policy**
+(``DOCUMENTS``; decided with the user after mkkim68's review of #715,
+2026-10-02). They are what using the service rests on, so the only way to
+take the agreement back is to leave -- delete the account -- and a row that
+can only say "agreed" is enough for them.
+
+**This is not consent to anything else, and it permits nothing.** A consent
+that a person must be able to refuse and withdraw -- to voice feature data,
+to a transfer abroad -- does not belong in a table with no way to record a
+withdrawal, and is refused here by name. In particular no row here lets
+module A keep voice data: ``voice_profiles_enabled`` stays as it is until a
+separate, refusable consent exists and A reads it (#268, #92 Q4).
+
 **The server does not know what the documents say or which version is
-current.** The text lives with the screen that shows it
-(``apps/web/src/app/legal``), and so does the list of what has to be agreed to.
-This stores what the person's browser said they agreed to and hands it back;
-the screen compares. Only the shape of a name and a version is checked here.
+current.** The text lives with the screen that shows it (the web app's legal
+pages), and so does the version a person has to have agreed to. This stores
+what the person's browser said they agreed to and hands it back; the screen
+compares. The document has to be one of the two; of the version only the
+shape is checked.
 
 **It records; it does not gate.** No API call is refused for a missing row
 (decided with the user, 2026-10-02: the screen holds a person at the consent
@@ -19,7 +33,8 @@ a design conversation of its own.
 
 Rows are the person's: deleted with their account (``ON DELETE CASCADE``), and
 read only for that person -- there is no way to ask what somebody else agreed
-to.
+to. Nothing is kept behind as proof once the account is gone; whether
+evidence of consent should outlive the account is #92's question.
 """
 
 from __future__ import annotations
@@ -36,7 +51,9 @@ from sqlalchemy.orm import Session
 from .entities import UserConsent
 from .errors import ValidationError
 
-_DOCUMENT: Final = re.compile(r"[a-z][a-z0-9_]{0,63}")
+DOCUMENTS: Final = ("terms", "privacy")
+"""Kept in step with the check constraint on ``user_consents.document``."""
+
 _VERSION: Final = re.compile(r"[0-9A-Za-z][0-9A-Za-z._-]{0,63}")
 
 MAX_PER_REQUEST: Final = 20
@@ -52,8 +69,8 @@ class Consent:
 
 
 def _checked(document: str, version: str) -> tuple[str, str]:
-    if not _DOCUMENT.fullmatch(document):
-        raise ValidationError("not a document name", field="document")
+    if document not in DOCUMENTS:
+        raise ValidationError("not a document this record holds", field="document")
     if not _VERSION.fullmatch(version):
         raise ValidationError("not a document version", field="version")
     return document, version

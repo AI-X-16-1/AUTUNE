@@ -1,8 +1,12 @@
 """user_consents
 
-What a person agreed to -- the terms, the privacy policy and whatever else the
-consent page lists -- one row per document and version. Signing in used to
-count as agreeing; nothing recorded it.
+What a person agreed to -- the terms and the privacy policy, and only those
+(the check constraint) -- one row per document and version. Signing in used
+to count as agreeing; nothing recorded it.
+
+Only those two because the table can only say "agreed". A consent that has
+to be refusable and withdrawable -- voice feature data, transfer abroad --
+needs a record of the withdrawal too, and is not kept here (review of #715).
 
 The row is the person's: it goes when they do (``ON DELETE CASCADE``). One row
 per ``(user_id, document, version)``, so agreeing twice is one agreement and
@@ -43,6 +47,7 @@ def upgrade() -> None:
         sa.UniqueConstraint(
             "user_id", "document", "version", name="uq_user_consents_user_document_version"
         ),
+        sa.CheckConstraint("document IN ('terms','privacy')", name="ck_user_consents_document"),
     )
     op.create_index("ix_user_consents_user_id", "user_consents", ["user_id"])
 

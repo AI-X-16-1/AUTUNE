@@ -16,7 +16,7 @@ from sqlalchemy.pool import StaticPool
 from autune_core import SESSION_COOKIE, UserConsent, issue_token
 from autune_core import consents as consents_module
 from autune_core.auth_router import router as auth_router
-from autune_core.consents import MAX_PER_REQUEST, consents_of, record_consents
+from autune_core.consents import DOCUMENTS, MAX_PER_REQUEST, consents_of, record_consents
 from autune_core.db import Base, get_session
 from autune_core.entities import User
 from autune_core.errors import AutuneError, ValidationError
@@ -129,6 +129,9 @@ def test_agreeing_needs_a_signed_in_person(app: FastAPI) -> None:
     "bad",
     [
         {"document": "Terms Of Service", "version": "1"},
+        # Consents a person must be able to withdraw are not recorded here.
+        {"document": "voice_features", "version": "1"},
+        {"document": "overseas_transfer", "version": "1"},
         {"document": "terms", "version": ""},
         {"document": "terms", "version": "1; drop table"},
         {"document": "", "version": "1"},
@@ -183,10 +186,25 @@ def test_one_request_cannot_write_without_bound(db: Session) -> None:
 
 
 def test_a_consent_goes_with_the_account() -> None:
-    """It is the person's record. Deleting the account deletes it; nothing of
-    theirs is kept behind as proof."""
+    """It is the person's record: the foreign key is declared to delete it with
+    the account, and nothing is kept behind as proof. This reads the
+    declaration only -- SQLite does not enforce it. The delete itself was run
+    on a real Postgres while this was written and reviewed (#715)."""
     fk = next(iter(Base.metadata.tables[TABLE].c.user_id.foreign_keys))
     assert fk.ondelete == "CASCADE"
+
+
+def test_the_table_holds_the_terms_and_the_privacy_policy_and_nothing_else() -> None:
+    """mkkim68, review of #715: a row here can only say "agreed", so nothing
+    that needs a withdrawal goes in it. The module's list and the database's
+    constraint say the same two names."""
+    assert DOCUMENTS == ("terms", "privacy")
+    checks = {
+        c.name: str(c.sqltext)
+        for c in Base.metadata.tables[TABLE].constraints
+        if c.name == "ck_user_consents_document"
+    }
+    assert checks == {"ck_user_consents_document": "document IN ('terms','privacy')"}
 
 
 def test_one_row_per_person_document_and_version() -> None:
