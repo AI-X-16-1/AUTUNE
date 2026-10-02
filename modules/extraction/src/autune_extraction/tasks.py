@@ -56,7 +56,7 @@ from autune_integrations import (
 )
 from autune_integrations.errors import SlackRecipientNotLinkedError
 
-from . import calendar_sync, jira_sync, notion_backfill, notion_setup, service
+from . import calendar_sync, jira_sync, notion_backfill, notion_setup, service, sync_state
 from .config import get_settings, require_loadable
 from .confirmations import build_confirmation_dm
 from .models import (
@@ -635,28 +635,74 @@ def sync_after_confirmation(action_item_id: str) -> None:
     """
     try:
         sync_action_item(action_item_id)
-    except IntegrationError:
+    except IntegrationError as exc:
         log.warning("extraction_notion_sync_failed", action_item_id=action_item_id)
-    except PrivacyViolationError:
+        _sync_failed(action_item_id, sync_state.NOTION, exc)
+    except PrivacyViolationError as exc:
         log.warning(
             "extraction_notion_sync_blocked_by_privacy_guard", action_item_id=action_item_id
         )
+        _sync_failed(action_item_id, sync_state.NOTION, exc)
+    else:
+        _sync_went(action_item_id, sync_state.NOTION)
     # Separately, so a Notion failure never costs the calendar its event and
     # the other way round.
     try:
         sync_action_item_calendar(action_item_id)
-    except IntegrationError:
+    except IntegrationError as exc:
         log.warning("extraction_calendar_sync_failed", action_item_id=action_item_id)
-    except PrivacyViolationError:
+        _sync_failed(action_item_id, sync_state.CALENDAR, exc)
+    except PrivacyViolationError as exc:
         log.warning(
             "extraction_calendar_sync_blocked_by_privacy_guard", action_item_id=action_item_id
         )
+        _sync_failed(action_item_id, sync_state.CALENDAR, exc)
+    else:
+        _sync_went(action_item_id, sync_state.CALENDAR)
     # And Jira on its own too. ``AutuneError`` covers a refused Jira grant
     # (``JiraReconnectRequiredError``) as well as integration errors.
     try:
         sync_action_item_jira(action_item_id)
     except AutuneError as exc:
         log.warning("extraction_jira_sync_failed", action_item_id=action_item_id, error=exc.code)
+        _sync_failed(action_item_id, sync_state.JIRA, exc)
+    else:
+        _sync_went(action_item_id, sync_state.JIRA)
+
+
+def _sync_failed(action_item_id: str, system: str, exc: BaseException) -> None:
+    """Keep that this copy failed, by kind (#680), so the board can say so.
+
+    In its own transaction: the failed attempt's is already rolled back. Only
+    the class of ``exc`` is read. **Never raises** -- this is bookkeeping after
+    a failure that has already been handled and logged, and a database
+    hiccup here must not turn into a crashed background task; it is logged by
+    type and the card simply goes on saying nothing."""
+    try:
+        with session_scope() as session:
+            sync_state.record_failure(session, action_item_id, system, sync_state.kind_of(exc))
+    except Exception as error:  # noqa: BLE001 -- see the docstring
+        log.warning(
+            "extraction_sync_failure_not_recorded",
+            action_item_id=action_item_id,
+            system=system,
+            reason=type(error).__name__,
+        )
+
+
+def _sync_went(action_item_id: str, system: str) -> None:
+    """The copy went through, or there was nothing to copy: whatever failure
+    stood for it is over. Never raises, for the reason ``_sync_failed`` gives."""
+    try:
+        with session_scope() as session:
+            sync_state.clear_failure(session, action_item_id, system)
+    except Exception as error:  # noqa: BLE001 -- see ``_sync_failed``
+        log.warning(
+            "extraction_sync_failure_not_cleared",
+            action_item_id=action_item_id,
+            system=system,
+            reason=type(error).__name__,
+        )
 
 
 @shared_task(name="autune.extraction.sync_action_item_jira", acks_late=True)

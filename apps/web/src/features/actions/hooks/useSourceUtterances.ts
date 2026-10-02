@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { getActionItem } from "../api";
 import type {
   ActionItemRead,
+  CalendarState,
   EditHistoryEntry,
   SourceUtterance,
 } from "../types";
@@ -13,10 +14,14 @@ import type {
  * The quotation and the history for one item, fetched when its drawer opens —
  * one request, since `GET /action-items/{id}` returns both.
  *
- * Only `sources` and `history` are taken from the response. Everything else the
- * drawer shows comes from the item the board already holds, which is also what
- * an edit updates — reading the status from here too would show the old one
- * after the user changed it.
+ * Only `sources`, `history` and `calendar` are taken from the response.
+ * Everything else the drawer shows comes from the item the board already
+ * holds, which is also what an edit updates — reading the status from here too
+ * would show the old one after the user changed it.
+ *
+ * `calendar` is where the item stands on its assignee's calendar and, where it
+ * has no event, why not (#680). It follows `revision` like the history: an
+ * edit is exactly what changes it.
  *
  * An item with no source utterances — one somebody typed — has no quotation,
  * and the drawer says why; it is still fetched, because it has a history.
@@ -33,8 +38,17 @@ export function useSourceUtterances(
     context: SourceUtterance[];
     related: SourceUtterance[];
     history: EditHistoryEntry[] | null;
+    calendar: CalendarState | null;
     error: Error | null;
-  }>({ id: item.id, sources: null, context: [], related: [], history: null, error: null });
+  }>({
+    id: item.id,
+    sources: null,
+    context: [],
+    related: [],
+    history: null,
+    calendar: null,
+    error: null,
+  });
 
   useEffect(() => {
     // A quick click from one card to the next must not paint the first card's
@@ -50,6 +64,7 @@ export function useSourceUtterances(
             context: detail.context ?? [],
             related: detail.related ?? [],
             history: detail.history ?? [],
+            calendar: detail.calendar ?? null,
             error: null,
           });
       },
@@ -61,6 +76,7 @@ export function useSourceUtterances(
             context: [],
             related: [],
             history: null,
+            calendar: null,
             error: cause instanceof Error ? cause : new Error(String(cause)),
           });
         }
@@ -74,10 +90,27 @@ export function useSourceUtterances(
   // State left over from the previous item reads as loading, not as its answer.
   const mine = state.id === item.id;
   const history = mine ? state.history : null;
+  const calendar = mine ? state.calendar : null;
   if (expected === 0)
-    return { sources: [], context: [], related: [], loading: false, error: null, history };
+    return {
+      sources: [],
+      context: [],
+      related: [],
+      loading: false,
+      error: null,
+      history,
+      calendar,
+    };
   if (!mine)
-    return { sources: null, context: [], related: [], loading: true, error: null, history: null };
+    return {
+      sources: null,
+      context: [],
+      related: [],
+      loading: true,
+      error: null,
+      history: null,
+      calendar: null,
+    };
   return {
     sources: state.sources,
     context: state.context,
@@ -85,5 +118,6 @@ export function useSourceUtterances(
     loading: state.sources === null && !state.error,
     error: state.error,
     history,
+    calendar,
   };
 }

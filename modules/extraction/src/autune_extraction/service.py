@@ -56,7 +56,7 @@ from autune_integrations import (
 )
 from autune_integrations.privacy import find_unmasked
 
-from . import reminders
+from . import reminders, sync_state
 from .config import get_settings
 from .confirmations import (
     CONFIRMATION_TIMEOUT,
@@ -123,6 +123,7 @@ from .schemas import (
     ReviewDecision,
     SourceUtterance,
     SummaryDecision,
+    SyncFailureRead,
 )
 from .slots import KST, Assignee, assignee_of, meeting_day, parse_due
 
@@ -1050,6 +1051,7 @@ def read_model(
     assignee_name: str | None = None,
     summary: str | None = None,
     sync_refs: list[ExternalRefRead] | None = None,
+    sync_failures: list[SyncFailureRead] | None = None,
     assignee_departed: bool = False,
     meeting_title: str | None = None,
 ) -> ActionItemRead:
@@ -1116,6 +1118,7 @@ def read_model(
         is_candidate=is_candidate,
         summary=summary,
         sync_refs=sync_refs or [],
+        sync_failures=sync_failures or [],
     )
 
 
@@ -1366,6 +1369,7 @@ def list_action_items(
     departed = departed_assignees(session, items)
     summaries = action_item_summaries(session, items)
     refs = action_item_external_refs(session, [item.id for item in items])
+    failures = sync_state.failures_for(session, [item.id for item in items])
     titles = meeting_titles(session, items)
     return [
         read_model(
@@ -1373,6 +1377,7 @@ def list_action_items(
             assignee_name=names.get(item.assignee_id) if item.assignee_id else None,
             summary=summaries.get(item.id),
             sync_refs=refs.get(item.id, []),
+            sync_failures=failures.get(item.id, []),
             assignee_departed=item.id in departed,
             meeting_title=titles.get(item.meeting_id),
         )
@@ -1544,7 +1549,9 @@ def related_utterances(session: Session, item_id: str) -> list[SourceUtterance]:
     return [SourceUtterance(id=uid, text=text) for uid, text in rows]
 
 
-def read_detail(session: Session, item: ExtActionItem) -> ActionItemDetail:
+def read_detail(
+    session: Session, item: ExtActionItem, *, reader_id: str | None = None
+) -> ActionItemDetail:
     """One item with the text of the utterances it was drawn from.
 
     The only route in this module that returns the full *set* of sources
@@ -1557,6 +1564,7 @@ def read_detail(session: Session, item: ExtActionItem) -> ActionItemDetail:
     name = names.get(item.assignee_id) if item.assignee_id else None
     summary = action_item_summaries(session, [item]).get(item.id)
     refs = action_item_external_refs(session, [item.id]).get(item.id, [])
+    failures = sync_state.failures_for(session, [item.id]).get(item.id, [])
     departed = item.id in departed_assignees(session, [item])
     hidden = originals_hidden(item)
     return ActionItemDetail(
@@ -1565,9 +1573,13 @@ def read_detail(session: Session, item: ExtActionItem) -> ActionItemDetail:
             assignee_name=name,
             summary=summary,
             sync_refs=refs,
+            sync_failures=failures,
             assignee_departed=departed,
             meeting_title=meeting_titles(session, [item]).get(item.meeting_id),
         ).model_dump(),
+        # Why there is no calendar event, where there is none (#680). To the
+        # reader: one reason is said only to the assignee.
+        calendar=sync_state.calendar_state(session, item, reader_id=reader_id),
         sources=[] if hidden else source_utterances(session, item.id),
         context=[]
         if hidden
