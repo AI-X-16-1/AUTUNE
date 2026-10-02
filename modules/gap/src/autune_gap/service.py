@@ -642,8 +642,10 @@ def forget_speech(session: Session, utterance_ids: Sequence[str]) -> SpeechForgo
         question = gap.suggested_question
         if not question or not any(label in question for label in labels[gap.meeting_id]):
             continue
-        gap.suggested_question = _general_question(gap)
-        reset.add(gap.id)
+        general = _general_question(gap)
+        if general != question:
+            gap.suggested_question = general
+            reset.add(gap.id)
 
     meetings = tuple(sorted(labels))
     session.execute(delete(GapTopic).where(GapTopic.id.in_(orphaned)))
