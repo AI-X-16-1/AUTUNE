@@ -59,6 +59,8 @@ DRAFT_ACTION = "intelligence.draft_meeting_report"
 """E stores the report. L1: E lists it in ``L1_ACTIONS``."""
 PUBLISH_ACTION = "intelligence.publish_meeting_report"
 """E posts the stored report to the team channel. L2: a channel post moves people."""
+CORRECTION_ACTION = "intelligence.publish_meeting_report_correction"
+"""E posts a member's correction under the posted report. L2, like the post (#674)."""
 
 DRAFT_ID_PREFIX = "rdr"
 """Both proposals carry one id per run. E stores it with the draft and posts only
@@ -95,24 +97,45 @@ def _failed(reason: str) -> SubagentState:
 
 
 def _repropose(toolbox: Toolbox) -> SubagentState:
-    """The post of the draft a person's edit left, for approval -- no model, no render."""
+    """The post of what a person's change left, for approval -- no model, no render.
+
+    Before the report is posted that is an edited draft (``PUBLISH_ACTION`` with
+    its ``draft_id``); after, a correction (``CORRECTION_ACTION`` with its
+    ``correction_id``). Never both: E accepts a correction only once the report
+    is posted, so one proposal per run, superseding the last for the meeting.
+    """
     awaiting = toolbox.call(AWAITING_TOOL)
     if not awaiting.ok:
         return {"outcome": SubagentResult(result=awaiting)}
     if not awaiting.items:
-        return _failed("no draft awaits approval")
-    draft_id = getattr(awaiting.items[0], "draft_id", None)
-    if not isinstance(draft_id, str):
-        return _failed("the awaiting draft has no id")
-    post = ProposedAction(
-        kind="meeting_report_post",
-        title="회의 리포트 게시 (수정본)",
-        tool=PUBLISH_ACTION,
-        arguments={"draft_id": draft_id},
-        level="L2",
-        rationale="A team member edited the report; post the edited text once a person approves.",
-    )
-    summary = ToolResult(ok=True, summary="고친 회의 리포트를 승인 대기로 올렸습니다.", items=[])
+        return _failed("nothing awaits approval")
+    item = awaiting.items[0]
+    kind = getattr(item, "kind", None)
+    if kind == "draft" and isinstance(draft_id := getattr(item, "draft_id", None), str):
+        post = ProposedAction(
+            kind="meeting_report_post",
+            title="회의 리포트 게시 (팀원이 고친 초안)",
+            tool=PUBLISH_ACTION,
+            arguments={"draft_id": draft_id},
+            level="L2",
+            rationale="A team member edited the report; post the edit once a person approves.",
+        )
+        said = "고친 회의 리포트를 승인 대기로 올렸습니다."
+    elif kind == "correction" and isinstance(
+        correction_id := getattr(item, "correction_id", None), str
+    ):
+        post = ProposedAction(
+            kind="meeting_report_correction_post",
+            title="회의 리포트 수정본 게시",
+            tool=CORRECTION_ACTION,
+            arguments={"correction_id": correction_id},
+            level="L2",
+            rationale="A team member corrected the posted report; post it once approved.",
+        )
+        said = "회의 리포트 수정본을 승인 대기로 올렸습니다."
+    else:
+        return _failed("what awaits approval has no id")
+    summary = ToolResult(ok=True, summary=said, items=[])
     return {"outcome": SubagentResult(result=summary, proposed=[post])}
 
 

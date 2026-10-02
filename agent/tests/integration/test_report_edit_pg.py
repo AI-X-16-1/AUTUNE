@@ -32,7 +32,7 @@ from autune_agent import router as routes
 from autune_agent.main.triggers import on_event
 from autune_agent.models import AgentApprover, AgentPendingAction
 from autune_agent.subagents.report import SUBAGENT
-from autune_agent.subagents.report.graph import PUBLISH_ACTION
+from autune_agent.subagents.report.graph import CORRECTION_ACTION, PUBLISH_ACTION
 from autune_contracts import INTELLIGENCE_MEETING_REPORT_CHANGED
 from autune_core import (
     Meeting,
@@ -167,3 +167,50 @@ def test_an_edit_reaches_the_channel_only_through_a_report_approver(
 
     assert reply.is_success and reply.json()["result_ok"] is True
     assert posted == [(team["meeting"], edited.draft_id)]
+
+
+def test_a_correction_reaches_the_thread_only_through_a_report_approver(
+    session: Session, team: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """After the post a person's change is a correction; it takes the same road (#658)."""
+    queued: list[tuple[str, ...]] = []
+    monkeypatch.setattr(
+        intelligence_tasks.deliver_meeting_report_correction, "apply_async", queued.append
+    )
+    with session_scope() as s:
+        # The model's draft was approved and posted; its proposal is done with.
+        s.execute(
+            sa.update(AgentPendingAction)
+            .where(AgentPendingAction.team_id == team["team"])
+            .values(status="approved")
+        )
+        intelligence_service.claim_meeting_report(s, team["meeting"], draft_id="rdr_model")
+        intelligence_service.record_meeting_report_post(s, team["meeting"], "C123", "1.000100")
+    with session_scope() as s:
+        intelligence_service.correct_meeting_report(
+            s, team["meeting"], "✅ 기한을 10/3으로 바로잡습니다", user_id=team["member"]
+        )
+    row = session.get(IntelMeetingReport, team["meeting"])
+    assert row is not None and row.correction_id is not None
+
+    on_event(
+        INTELLIGENCE_MEETING_REPORT_CHANGED,
+        team["meeting"],
+        session=session,
+        subagents=ONLY_REPORT,
+        task_id="task-correction-1",
+    )
+    session.commit()
+
+    [new] = [p for p in pending(session, team["team"]) if p.status == "pending"]
+    assert (new.tool, new.arguments, new.scope) == (
+        CORRECTION_ACTION,
+        {"correction_id": row.correction_id},
+        "report",
+    )
+    member = client(session, team["member"])
+    assert member.post(f"/api/agent/pending/{new.id}/approve").status_code == MEMBER_APPROVE
+    reply = client(session, team["lead"]).post(f"/api/agent/pending/{new.id}/approve")
+
+    assert reply.is_success and reply.json()["result_ok"] is True
+    assert queued == [(team["meeting"], row.correction_id)]

@@ -33,6 +33,7 @@ from .models import IntelReport, IntelScore
 from .schemas import (
     DashboardRead,
     HeatmapCell,
+    MeetingReportCorrection,
     MeetingReportEdit,
     MeetingReportRead,
     PredictionsRead,
@@ -113,6 +114,26 @@ def edit_meeting_report(
     report = service.edit_meeting_report(
         session, meeting_id, edit.body, user_id=user.id, base_updated_at=edit.base_updated_at
     )
+    session.commit()
+    enqueue.announce_meeting_report_changed(meeting_id)
+    return report
+
+
+@router.post(
+    "/meeting-reports/{meeting_id}/corrections",
+    response_model=MeetingReportRead,
+    status_code=202,
+)
+def correct_meeting_report(
+    meeting_id: str, correction: MeetingReportCorrection, user: CurrentUser, session: SessionDep
+) -> MeetingReportRead:
+    """A member corrects a posted report; it waits for approval (#674).
+
+    Nothing is posted from here. Committed, then announced, so the Report
+    subagent woken by it reads the correction and proposes its post; once
+    approved it goes out as a reply under the post. Ids only (#275).
+    """
+    report = service.correct_meeting_report(session, meeting_id, correction.body, user_id=user.id)
     session.commit()
     enqueue.announce_meeting_report_changed(meeting_id)
     return report

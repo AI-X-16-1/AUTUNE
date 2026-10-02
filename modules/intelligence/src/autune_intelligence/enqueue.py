@@ -17,12 +17,13 @@ from celery import current_app
 
 DELIVER_MEETING_REPORT: Final = "autune.intelligence.deliver_meeting_report"
 ANNOUNCE_MEETING_REPORT_CHANGED: Final = "autune.intelligence.announce_meeting_report_changed"
+DELIVER_MEETING_REPORT_CORRECTION: Final = "autune.intelligence.deliver_meeting_report_correction"
 
 
 def announce_meeting_report_changed(meeting_id: str) -> None:
     """Tell the agent layer a person changed the meeting's report (#674).
 
-    Call it after the change commits: the Report subagent reads the stored
-    draft when it wakes.
+    An edited draft or a correction to a posted report. Call it after the
+    change commits: the Report subagent reads what waits when it wakes.
     """
     current_app.send_task(ANNOUNCE_MEETING_REPORT_CHANGED, args=[meeting_id])
