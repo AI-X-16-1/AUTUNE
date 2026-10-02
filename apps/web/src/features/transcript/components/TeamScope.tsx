@@ -2,9 +2,10 @@
 
 import { useEffect, useState, type ReactNode } from "react";
 
-import { ChipToggle } from "@/shared/ui";
+import { ApiError } from "@/shared/api/client";
+import { Button, ChipToggle } from "@/shared/ui";
 
-import { listTeams } from "../api";
+import { listTeams, pinTeam, unpinTeam } from "../api";
 import type { TeamSummary } from "../types";
 
 /**
@@ -21,11 +22,38 @@ import type { TeamSummary } from "../types";
  * One team: rendered straight through. Several: a row of chips above the
  * screen, first team selected. None: said in words, because a screen asked for
  * a team that does not exist would only show an error of its own.
+ *
+ * **The row is also where a team is pinned** (the user, 2026-10-02). The
+ * list comes pinned teams first, then in the order joined, and the first is
+ * the default here and on every other screen. Somebody on several teams can
+ * pin up to three, so the default is theirs to choose and not an accident of
+ * which team they joined first. The pin is stored on the account, so it is
+ * the same on every device, and it is one person's: nobody else sees it.
+ * Pinning does not change which team this screen is showing.
  */
 export function TeamScope({ children }: { children: (teamId: string) => ReactNode }) {
   const [teams, setTeams] = useState<TeamSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [teamId, setTeamId] = useState<string | null>(null);
+  const [pinning, setPinning] = useState(false);
+  const [pinProblem, setPinProblem] = useState<string | null>(null);
+
+  const togglePin = async (team: TeamSummary) => {
+    setPinning(true);
+    setPinProblem(null);
+    try {
+      // The answer is the list in its new order; the team on screen stays.
+      setTeams(await (team.pinned ? unpinTeam(team.team_id) : pinTeam(team.team_id)));
+    } catch (caught) {
+      setPinProblem(
+        caught instanceof ApiError && caught.code === "too_many_pinned_teams"
+          ? "팀은 3개까지 고정할 수 있습니다. 다른 팀의 고정을 풀고 다시 시도해 주세요."
+          : "고정을 바꾸지 못했습니다. 잠시 후 다시 시도해 주세요.",
+      );
+    } finally {
+      setPinning(false);
+    }
+  };
 
   useEffect(() => {
     let current = true;
@@ -54,19 +82,39 @@ export function TeamScope({ children }: { children: (teamId: string) => ReactNod
   if (teams === null) return <p style={muted}>팀을 불러오는 중입니다…</p>;
   if (teams.length === 0 || teamId === null) return <p style={muted}>속한 팀이 없습니다.</p>;
 
+  const current = teams.find((team) => team.team_id === teamId);
+
   return (
     <>
       {teams.length > 1 && (
-        <div className="flex flex-wrap gap-1.5" style={{ marginBottom: "var(--space-16)" }}>
-          {teams.map((team) => (
-            <ChipToggle
-              key={team.team_id}
-              selected={team.team_id === teamId}
-              onClick={() => setTeamId(team.team_id)}
-            >
-              {team.name}
-            </ChipToggle>
-          ))}
+        <div style={{ marginBottom: "var(--space-16)" }}>
+          <div className="flex flex-wrap items-center gap-1.5">
+            {teams.map((team) => (
+              <ChipToggle
+                key={team.team_id}
+                selected={team.team_id === teamId}
+                onClick={() => setTeamId(team.team_id)}
+              >
+                {team.pinned ? `${team.name} · 고정` : team.name}
+              </ChipToggle>
+            ))}
+            {current ? (
+              <Button
+                tone="text"
+                size="compact"
+                type="button"
+                disabled={pinning}
+                onClick={() => void togglePin(current)}
+              >
+                {current.pinned ? "고정 해제" : "맨 위에 고정"}
+              </Button>
+            ) : null}
+          </div>
+          {pinProblem !== null ? (
+            <p role="alert" className="mt-1" style={{ ...muted, color: "var(--color-signal-critical)" }}>
+              {pinProblem}
+            </p>
+          ) : null}
         </div>
       )}
       {children(teamId)}

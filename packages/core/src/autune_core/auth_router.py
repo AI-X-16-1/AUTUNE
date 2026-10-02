@@ -55,7 +55,7 @@ from .auth_service import upsert_user_from_google
 from .consents import Consent, consents_of, record_consents
 from .crypto import ensure_configured
 from .db import get_session
-from .entities import Meeting, Team, TeamMember
+from .entities import Meeting, Team, TeamMember, team_order
 from .errors import AutuneError, NotFoundError, PermissionDeniedError, ValidationError
 from .integrations_config import (
     IntegrationConfig,
@@ -305,7 +305,8 @@ def me(user: CurrentUser, session: Annotated[Session, Depends(get_session)]) -> 
     """Who is signed in, and the teams they belong to -- what S28 settings
     (#496) chooses a team's integrations from, with no meeting to name it.
 
-    **In the order the person joined them** (#742). Two screens take the
+    **Pinned teams first, then the order the person joined them**
+    (``team_order``; #742). Two screens take the
     first as the default: the assistant (S34) asks about ``teams[0]``, and
     S28 opens on it. By name, accepting an invitation (#552) to a team whose
     name sorts earlier silently made the inviting team that default -- the
@@ -316,7 +317,7 @@ def me(user: CurrentUser, session: Annotated[Session, Depends(get_session)]) -> 
         select(Team.id, Team.name)
         .join(TeamMember, TeamMember.team_id == Team.id)
         .where(TeamMember.user_id == user.id)
-        .order_by(TeamMember.id)
+        .order_by(*team_order())
     ).all()
     return {
         "id": user.id,

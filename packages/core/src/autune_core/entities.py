@@ -236,9 +236,28 @@ class TeamMember(Base, TimestampMixin):
     )
     role: Mapped[str | None] = mapped_column(String(50))
     """Job role — PM, Dev, Design, Data. Drives role-level analytics only."""
+    pinned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    """When this person pinned the team to the top of their own team list, or
+    ``None``. Their teams are listed pinned first, in the order pinned, then in
+    the order joined (``team_order``). One person's view of one team: nobody
+    else reads it, and it goes with the membership."""
 
     team: Mapped[Team] = relationship(back_populates="members")
     user: Mapped[User] = relationship(back_populates="memberships")
+
+
+def team_order() -> tuple[Any, ...]:
+    """The order a person's teams are listed in, for ``ORDER BY``: the ones they
+    pinned first, earliest pin first, then the rest in the order they joined.
+
+    One definition, because two places answer the question and the screens
+    take the first team of either as the default -- ``GET /api/auth/me`` here
+    and module A's ``teams_for``. If they ordered differently, the assistant
+    and the new-meeting screen would disagree about which team is a person's.
+
+    ``IS NULL`` first rather than ``NULLS LAST``: false sorts before true on
+    every database this runs on."""
+    return (TeamMember.pinned_at.is_(None), TeamMember.pinned_at, TeamMember.id)
 
 
 class Meeting(Base, TimestampMixin):
