@@ -169,6 +169,13 @@ class ExtractionSettings(BaseSettings):
     """``cpu`` or ``cuda``, for ``nli_impl=local``. Mirrors
     ``classifier_device``."""
 
+    due_reminders: bool = True
+    """``AUTUNE_EXTRACTION_DUE_REMINDERS``: whether an item's assignee is sent a
+    Slack DM the day before its due date and after it passes (``reminders``).
+    On by default; it sends only where a team connected Slack and the
+    assignee linked their account. ``false`` sends none -- for a deployment
+    that should stay quiet."""
+
     candidate_confidence: float | None = Field(default=None, ge=0, le=1)
     """Below this confidence an item is shown as a candidate rather than asserted.
 

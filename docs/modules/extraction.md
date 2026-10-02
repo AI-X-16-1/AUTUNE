@@ -271,6 +271,7 @@ confirmation DM's quotation is #586's second part.
 | `ext_calendar_cleanup` | Due-date events still to take off a person's calendar after their meeting expired; queued by the meeting hook, removed by `drain_calendar_cleanup` with the owner's grant (#588). No meeting key; `user_id` cascades |
 | `ext_notion_targets` | The page and three databases a team's Notion sync writes to, one row per team (#428) |
 | `ext_confirmations` | Every ambiguous agreement, the DM once sent, and the response |
+| `ext_due_reminders` | That an item's assignee was sent a due-date reminder of one kind (`due_soon`, `overdue`) for one due date — the "once". No text, no person; goes with the item |
 | `ext_decisions` | Decision entities, their statements and source utterances. `origin` is `model` or `user`; a rerun rebuilds only the model's |
 | `ext_decision_sources` | Which utterances a decision was settled in, in order |
 | `ext_decision_reviews` | A person's verdict on each proposed decision (pending, confirmed, rejected) and an optional rewording, keyed by `dec_` id so a rerun over the same sources keeps it (#246). No reviewer column |
@@ -396,6 +397,12 @@ other module's tables.
 
 - Action-item card thread posted to the meeting channel
 - A DM to each speaker with an ambiguous agreement, asking for confirmation
+- A DM to an item's assignee the day before its due date and once after it
+  passes (`reminders.py`, `autune.extraction.periodic.remind_due_items`, every
+  ten minutes, 09:00–20:00 Korea time). To the assignee's own linked account
+  and to nobody else; only for a confirmed, unfinished item whose assignee is
+  an account on the meeting's team. `AUTUNE_EXTRACTION_DUE_REMINDERS=false`
+  sends none
 - Role-specific reports (Phase 2)
 
 ## AI stack
@@ -614,6 +621,10 @@ versions.
 - The LLM used for reference resolution receives masked text only, and the
   smallest window that resolves the reference.
 - Confirmation DMs go to the speaker, never to a channel.
+- Due-date reminders go to the item's assignee, never to a channel, a manager
+  or the person who made the item, and nothing counts or ranks what a person
+  has missed. The message carries the item's description, its due date, the
+  meeting's title and a link — no utterance.
 - `GET /action-items/{id}` is the only route in this module that returns
   utterances verbatim: the drawer asks for one item's quotation when it opens,
   and the list returns utterance ids. The list is still meeting content — an

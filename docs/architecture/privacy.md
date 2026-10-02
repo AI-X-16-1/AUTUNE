@@ -364,6 +364,16 @@ the feature needs.
     Autune closes its issue with a note rather than deleting it, so the
     team's own comments and work on it stay. The issue carries the item's
     description, due date and assignee's Jira account only.
+  - **Slack, a due-date reminder:** a direct message to an action item's
+    assignee -- their own linked account, through the bot of the team that
+    held the meeting -- the day before its due date and once after it
+    passes. To that person and nobody else: no channel, no manager, no count
+    of what anybody has missed. It carries the item's description, its due
+    date, the meeting's title and a link to the meeting's board; no
+    utterance. A message already delivered stays in that person's Slack
+    when the item or the meeting is deleted; Autune keeps only that a
+    reminder of that kind went (`ext_due_reminders`), and that goes with
+    the item.
   - **A person's own calendar (#435):** Autune *can* remove its events — they
     carry its tag, and `delete_event` exists. Deleting an item deletes its
     event first. A meeting deleted or expired by the retention sweep does not
