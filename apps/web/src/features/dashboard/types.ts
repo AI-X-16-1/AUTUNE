@@ -79,11 +79,15 @@ export interface MeetingReport {
   meeting_id: string;
   title: string;
   body: string;
+  /** E's last line: "자동 생성된 리포트입니다." or, after an edit, who edited it. */
+  footer: string;
   status: "draft" | "posted";
   posted_at: string | null;
   pending_review: boolean;
   edited_by_name: string | null;
   edited_at: string | null;
+  /** Sent back with an edit, so a save over a newer version is refused. */
   updated_at: string;
+  /** The requester last edited this draft and posts it from the card. */
+  can_post: boolean;
 }
-

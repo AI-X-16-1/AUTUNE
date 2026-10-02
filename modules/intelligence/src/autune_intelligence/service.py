@@ -37,7 +37,16 @@ from autune_contracts import (
     TeamActionProgress,
 )
 from autune_contracts.intelligence import Grade
-from autune_core import Meeting, Participant, Team, TeamMember, User, Utterance, get_logger
+from autune_core import (
+    Meeting,
+    Participant,
+    Team,
+    TeamMember,
+    User,
+    Utterance,
+    get_logger,
+    new_id,
+)
 from autune_core.errors import (
     ConflictError,
     NotFoundError,
@@ -914,6 +923,10 @@ def save_meeting_report(
         row.body_markdown = body_markdown
         row.pending_review = pending_review
         row.draft_id = draft_id
+        # A rerun's draft is the model's text again: a person's edit is
+        # overwritten, so their name must not stay on it (#642 review).
+        row.edited_by = None
+        row.edited_at = None
     session.flush()
     return row
 
@@ -947,8 +960,20 @@ def meeting_report_document(
     return f"📋 {title} · {when.month}/{when.day}\n\n{body_markdown}\n\n{footer}"
 
 
+def _slack_escape(text: str) -> str:
+    """Slack's three control characters as entities, so text reads as text.
+
+    A body may now be a person's (#642): "<!channel>" or "<https://x|상세보기>"
+    must not go out under the bot's name as a mention or a disguised link. The
+    report's own markup -- bullets, emoji, line breaks -- has none of the three.
+    """
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
 def _meeting_report_blocks(meeting_id: str, body_markdown: str, pending_review: bool) -> list[dict]:
-    blocks: list[dict] = [{"type": "section", "text": {"type": "mrkdwn", "text": body_markdown}}]
+    blocks: list[dict] = [
+        {"type": "section", "text": {"type": "mrkdwn", "text": _slack_escape(body_markdown)}}
+    ]
     base_url = get_settings().web_base_url
     if not base_url:
         return blocks
@@ -1369,45 +1394,77 @@ def store_action_progress(session: Session, snapshot: TeamActionProgress) -> boo
 #
 # A report is meeting text, so these check that the person asking is on the team,
 # unlike the older aggregate routes (#156). Any member may edit a draft until it
-# is posted (decided with the user, 10/2); a posted report changes only by a
-# correction posted under it, never in place.
+# is posted. An edit is a person's text, so it takes a new ``draft_id`` -- an
+# approval given for the model's text can never post it -- and the person who
+# last edited it posts it from the card (#642 review, decided with the user
+# 10/2). A rerun of the Report overwrites an edit (``save_meeting_report``). A
+# posted report changes only by a correction posted under it, never in place.
 
 MEETING_REPORTS_SHOWN: Final = 20
 """The card lists this many reports, newest meeting first."""
 
+_EDITED_FOOTER: Final = "자동 생성된 리포트를 {name}님이 고쳤습니다."
 
-def split_report_document(document: str) -> tuple[str, str]:
-    """The stored document's header line (without its mark) and the rest.
 
-    ``meeting_report_document`` writes "📋 <title> · <date>", a blank line, then
-    the body and the footer.
+def split_report_document(document: str) -> tuple[str, str, str]:
+    """The stored document as header line (without its mark), body, and footer.
+
+    ``meeting_report_document`` writes "📋 <title> · <date>", a blank line, the
+    body, a blank line and a footer starting "자동 생성". The footer is not part
+    of what a person edits: E writes it, and after an edit it names the editor.
     """
     header, _, rest = document.partition("\n\n")
-    return header.removeprefix("📋").strip(), rest
+    body, sep, footer = rest.rpartition("\n\n")
+    if not sep or not footer.startswith("자동 생성"):
+        body, footer = rest, ""
+    return header.removeprefix("📋").strip(), body, footer
+
+
+def _is_member(session: Session, *, user_id: str, team_id: str) -> bool:
+    return (
+        session.scalar(
+            sa.select(TeamMember.id).where(
+                TeamMember.team_id == team_id, TeamMember.user_id == user_id
+            )
+        )
+        is not None
+    )
 
 
 def require_team_member(session: Session, *, user_id: str, team_id: str) -> None:
     """Raise unless ``user_id`` is on ``team_id``. A token says who is asking, not
     which team's reports they may read."""
-    member = session.scalar(
-        sa.select(TeamMember.id).where(TeamMember.team_id == team_id, TeamMember.user_id == user_id)
-    )
-    if member is None:
+    if not _is_member(session, user_id=user_id, team_id=team_id):
         raise PermissionDeniedError("not a member of this team")
 
 
-def _report_read(row: IntelMeetingReport, editor: str | None) -> MeetingReportRead:
-    title, body = split_report_document(row.body_markdown)
+def _report_for_member(session: Session, meeting_id: str, user_id: str) -> IntelMeetingReport:
+    """The report, locked, for a member of its team. Anyone else gets the same
+    not-found as for a meeting that does not exist, so an id's existence does
+    not leak (``tools._not_found`` does the same)."""
+    row = session.get(IntelMeetingReport, meeting_id, with_for_update=True)
+    if row is None or not _is_member(session, user_id=user_id, team_id=row.team_id):
+        raise NotFoundError("meeting report", meeting_id)
+    return row
+
+
+def _report_read(
+    row: IntelMeetingReport, editor: str | None, requester_id: str
+) -> MeetingReportRead:
+    title, body, footer = split_report_document(row.body_markdown)
+    draft = row.sent_at is None
     return MeetingReportRead(
         meeting_id=row.meeting_id,
         title=title,
         body=body,
-        status="posted" if row.sent_at is not None else "draft",
+        footer=footer,
+        status="draft" if draft else "posted",
         posted_at=row.sent_at,
         pending_review=row.pending_review,
         edited_by_name=editor,
         edited_at=row.edited_at,
         updated_at=row.updated_at,
+        can_post=draft and row.edited_by is not None and row.edited_by == requester_id,
     )
 
 
@@ -1425,30 +1482,39 @@ def list_meeting_reports(
         .order_by(held.desc(), IntelMeetingReport.meeting_id.desc())
         .limit(MEETING_REPORTS_SHOWN)
     ).all()
-    return [_report_read(row, editor) for row, editor in rows]
+    return [_report_read(row, editor, user_id) for row, editor in rows]
 
 
 def edit_meeting_report(
-    session: Session, meeting_id: str, body: str, *, user_id: str
+    session: Session,
+    meeting_id: str,
+    body: str,
+    *,
+    user_id: str,
+    base_updated_at: datetime | None = None,
 ) -> MeetingReportRead:
     """Replace a draft's body with a team member's text and record who did it.
 
-    The header line stays E's. The draft keeps its ``draft_id``, so an approval
-    already queued posts the edited text -- the approver reads it on this card.
-    Refused once posted (``ConflictError``): people have read that version. The
-    text passes the same length cap and personal-data check as a model's draft;
-    a refusal names categories, never the text.
+    E keeps the header line and writes a footer naming the editor. The draft
+    takes a new ``draft_id``: an approval queued for the model's text -- even one
+    already approved and waiting for the worker -- then posts nothing, and the
+    editor posts this text from the card (``post_edited_report``). Refused once
+    posted (people have read that version), and when ``base_updated_at`` shows
+    someone saved a newer version since the editor opened it. The text passes
+    the same length cap and personal-data check as a model's draft; a refusal
+    names categories, never the text. The "this meeting only" rule (#459) is an
+    instruction to the subagent; a person's text is not checked against it.
     """
-    row = session.get(IntelMeetingReport, meeting_id, with_for_update=True)
-    if row is None:
-        raise NotFoundError("meeting report", meeting_id)
-    require_team_member(session, user_id=user_id, team_id=row.team_id)
+    row = _report_for_member(session, meeting_id, user_id)
     if row.sent_at is not None:
         raise ConflictError("meeting report was already posted", meeting_id=meeting_id)
+    if base_updated_at is not None and base_updated_at != row.updated_at:
+        raise ConflictError("meeting report changed since it was opened", meeting_id=meeting_id)
     if not body.strip():
         raise ValidationError("report body is empty", field="body")
+    editor = session.scalar(sa.select(User.display_name).where(User.id == user_id)) or ""
     header = row.body_markdown.partition("\n\n")[0]
-    document = f"{header}\n\n{body}"
+    document = f"{header}\n\n{body}\n\n{_EDITED_FOOTER.format(name=editor)}"
     if len(document) > MEETING_REPORT_MAX_CHARS:
         raise ValidationError(f"report exceeds {MEETING_REPORT_MAX_CHARS} characters", field="body")
     try:
@@ -1460,9 +1526,32 @@ def edit_meeting_report(
         raise ValidationError(
             f"report still holds personal data: {categories}", field="body"
         ) from exc
+    now = datetime.now(UTC)
     row.body_markdown = document
     row.edited_by = user_id
-    row.edited_at = datetime.now(UTC)
+    row.edited_at = now
+    row.draft_id = new_id("rdr")
+    # Set here, not by the column's onupdate: Postgres' now() is the
+    # transaction's start, and two saves in one transaction must still differ.
+    row.updated_at = now
     session.flush()
-    editor = session.scalar(sa.select(User.display_name).where(User.id == user_id))
-    return _report_read(row, editor)
+    return _report_read(row, editor, user_id)
+
+
+def post_edited_report(session: Session, meeting_id: str, *, user_id: str) -> str:
+    """Check that ``user_id`` may post this edited draft now; return its ``draft_id``.
+
+    Only a person's edit is posted from the card, and only by the person who
+    last edited it -- their text, their post. A model's draft goes through the
+    approval queue instead. The caller enqueues ``deliver_meeting_report`` with
+    the returned id; the claim checks it again, so an edit made in between
+    posts nothing.
+    """
+    row = _report_for_member(session, meeting_id, user_id)
+    if row.sent_at is not None:
+        raise ConflictError("meeting report was already posted", meeting_id=meeting_id)
+    if row.edited_by is None or row.draft_id is None:
+        raise ConflictError("a model's draft is posted through approval", meeting_id=meeting_id)
+    if row.edited_by != user_id:
+        raise PermissionDeniedError("only the person who last edited a draft posts it")
+    return row.draft_id

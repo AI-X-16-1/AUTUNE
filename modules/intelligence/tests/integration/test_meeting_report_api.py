@@ -1,10 +1,11 @@
 """The dashboard's meeting-report card: list a team's reports, edit a draft (10/2).
 
-A report is meeting text, so unlike E's older aggregate routes these two
+A report is meeting text, so unlike E's older aggregate routes these
 authenticate and check team membership. A draft may be edited by any member of
-the team until it is posted; the editor and the time are recorded, and the
-pending approval keeps its ``draft_id`` -- the approver reads the edited text on
-the card (decided with the user, 10/2). A posted report is not edited here.
+the team until it is posted; the editor and the time are recorded. An edit
+takes a new ``draft_id``, so an approval given for the model's text can never
+post a person's text, and the person who last edited it posts it from the card
+(#642 review, decided with the user 10/2). A posted report is not edited here.
 """
 
 from __future__ import annotations
@@ -21,7 +22,7 @@ from sqlalchemy.orm import Session
 
 from autune_core import AutuneError, Meeting, Team, TeamMember, User, get_session
 from autune_core.auth import current_user
-from autune_intelligence import service
+from autune_intelligence import service, tools
 from autune_intelligence.models import IntelMeetingReport
 from autune_intelligence.router import router
 
@@ -141,10 +142,10 @@ def test_a_member_edits_a_draft_and_is_recorded_as_its_editor(
     row = db_session.get(IntelMeetingReport, meeting)
     assert row is not None
     assert row.body_markdown.startswith("📋 결제 회의 · ")  # the header stays E's
-    assert row.body_markdown.endswith("\n\n✅ 고친 본문")
+    assert "\n\n✅ 고친 본문\n\n" in row.body_markdown
     assert row.edited_by == editor.id and row.edited_at is not None
-    # The approval already queued still names this draft (decided 10/2).
-    assert row.draft_id == "rdr_a"
+    # A person's text is a new draft: the model's approval does not cover it.
+    assert row.draft_id is not None and row.draft_id != "rdr_a"
 
 
 def test_a_posted_report_is_not_edited(
@@ -193,17 +194,169 @@ def test_an_edit_over_the_cap_or_empty_is_refused(
     assert (too_long.status_code, empty.status_code) == (422, 422)
 
 
+def test_the_footer_says_who_edited_and_is_not_part_of_the_editable_body(
+    db_session: Session, team: str, client_for: Callable[[User], TestClient]
+) -> None:
+    """ "자동 생성된 리포트입니다." would be false on a person's text."""
+    meeting = _meeting(db_session, team, "결제 회의", 2)
+    _report(db_session, meeting)
+    member = _user(db_session, team, name="박재경")
+    client = client_for(member)
+
+    before = client.get(f"/api/intelligence/meeting-reports/{team}").json()[0]
+    after = client.put(
+        f"/api/intelligence/meeting-reports/{meeting}", json={"body": "✅ 고친 본문"}
+    ).json()
+
+    assert "자동 생성" not in before["body"] and before["footer"].startswith("자동 생성")
+    assert after["body"] == "✅ 고친 본문"
+    assert "박재경" in after["footer"]
+
+
+def test_a_stale_edit_is_refused_instead_of_overwriting_a_newer_one(
+    db_session: Session, team: str, client_for: Callable[[User], TestClient]
+) -> None:
+    meeting = _meeting(db_session, team, "결제 회의", 2)
+    _report(db_session, meeting)
+    first, second = _user(db_session, team, "가"), _user(db_session, team, "나")
+    seen = client_for(first).get(f"/api/intelligence/meeting-reports/{team}").json()[0]
+
+    client_for(second).put(
+        f"/api/intelligence/meeting-reports/{meeting}",
+        json={"body": "✅ 나의 수정", "base_updated_at": seen["updated_at"]},
+    )
+    stale = client_for(first).put(
+        f"/api/intelligence/meeting-reports/{meeting}",
+        json={"body": "✅ 가의 수정", "base_updated_at": seen["updated_at"]},
+    )
+
+    assert stale.status_code == 409
+    row = db_session.get(IntelMeetingReport, meeting)
+    assert row is not None and "나의 수정" in row.body_markdown
+
+
+def test_a_rerun_overwrites_an_edited_draft_and_clears_the_editor(
+    db_session: Session, team: str, client_for: Callable[[User], TestClient]
+) -> None:
+    """A republished event reruns the Report (#556); its draft replaces a person's."""
+    meeting = _meeting(db_session, team, "결제 회의", 2)
+    _report(db_session, meeting)
+    client_for(_user(db_session, team, "박재경")).put(
+        f"/api/intelligence/meeting-reports/{meeting}", json={"body": "✅ 고친 본문"}
+    )
+
+    _report(db_session, meeting, draft_id="rdr_rerun")
+
+    row = db_session.get(IntelMeetingReport, meeting)
+    assert row is not None and "고친 본문" not in row.body_markdown
+    assert (row.edited_by, row.edited_at) == (None, None)
+
+
+def test_an_edit_ends_the_approval_given_for_the_models_text(
+    db_session: Session,
+    team: str,
+    client_for: Callable[[User], TestClient],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Approved and queued, then edited before the worker claims it: nothing posts."""
+    meeting = _meeting(db_session, team, "결제 회의", 2)
+    _report(db_session, meeting, draft_id="rdr_model")
+    client_for(_user(db_session, team)).put(
+        f"/api/intelligence/meeting-reports/{meeting}", json={"body": "✅ 고친 본문"}
+    )
+
+    import contextlib
+
+    @contextlib.contextmanager
+    def scope() -> Iterator[Session]:
+        yield db_session
+
+    monkeypatch.setattr(tools, "session_scope", scope)
+    monkeypatch.setattr(tools.tasks.deliver_meeting_report, "apply_async", lambda _args: None)
+    refused = tools.publish_meeting_report(team, meeting, draft_id="rdr_model")
+    assert refused["ok"] is False and refused["reason"] == "draft not current"
+    with pytest.raises(AutuneError):
+        service.claim_meeting_report(db_session, meeting, draft_id="rdr_model")
+
+
+def test_the_last_editor_posts_their_edit_from_the_card(
+    db_session: Session,
+    team: str,
+    client_for: Callable[[User], TestClient],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from autune_intelligence import router as router_module
+
+    sent: list[tuple[str, ...]] = []
+    monkeypatch.setattr(router_module.tasks.deliver_meeting_report, "apply_async", sent.append)
+    meeting = _meeting(db_session, team, "결제 회의", 2)
+    _report(db_session, meeting)
+    editor = _user(db_session, team, "박재경")
+    client = client_for(editor)
+    edited = client.put(
+        f"/api/intelligence/meeting-reports/{meeting}", json={"body": "✅ 고친 본문"}
+    ).json()
+    assert edited["can_post"] is True
+
+    response = client.post(f"/api/intelligence/meeting-reports/{meeting}/post")
+
+    assert response.status_code == 202
+    row = db_session.get(IntelMeetingReport, meeting)
+    assert row is not None
+    assert sent == [(meeting, row.draft_id)]  # ids only (#275); the claim checks the id again
+
+
+def test_only_the_last_editor_posts(
+    db_session: Session,
+    team: str,
+    client_for: Callable[[User], TestClient],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from autune_intelligence import router as router_module
+
+    monkeypatch.setattr(
+        router_module.tasks.deliver_meeting_report, "apply_async", lambda _args: None
+    )
+    meeting = _meeting(db_session, team, "결제 회의", 2)
+    _report(db_session, meeting)
+    client_for(_user(db_session, team, "박재경")).put(
+        f"/api/intelligence/meeting-reports/{meeting}", json={"body": "✅ 고친 본문"}
+    )
+    other = client_for(_user(db_session, team, "문민재"))
+
+    assert other.get(f"/api/intelligence/meeting-reports/{team}").json()[0]["can_post"] is False
+    assert other.post(f"/api/intelligence/meeting-reports/{meeting}/post").status_code == 403
+
+
+def test_a_models_draft_is_posted_through_approval_not_the_card(
+    db_session: Session, team: str, client_for: Callable[[User], TestClient]
+) -> None:
+    meeting = _meeting(db_session, team, "결제 회의", 2)
+    _report(db_session, meeting)
+
+    response = client_for(_user(db_session, team)).post(
+        f"/api/intelligence/meeting-reports/{meeting}/post"
+    )
+
+    assert response.status_code == 409
+
+
 def test_someone_outside_the_team_cannot_edit(
     db_session: Session, team: str, client_for: Callable[[User], TestClient]
 ) -> None:
     meeting = _meeting(db_session, team, "결제 회의", 2)
     _report(db_session, meeting)
 
-    response = client_for(_user(db_session, None)).put(
+    outsider = client_for(_user(db_session, None))
+    response = outsider.put(
         f"/api/intelligence/meeting-reports/{meeting}", json={"body": "✅ 고친 본문"}
     )
+    unknown = outsider.put(
+        "/api/intelligence/meeting-reports/mtg_unknown", json={"body": "✅ 고친 본문"}
+    )
 
-    assert response.status_code == 403
+    # The same answer either way, so a meeting id's existence is not revealed.
+    assert (response.status_code, unknown.status_code) == (404, 404)
 
 
 def test_deleting_the_editor_keeps_the_report_without_their_id(

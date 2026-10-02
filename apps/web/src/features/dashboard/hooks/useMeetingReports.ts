@@ -4,13 +4,14 @@ import { useCallback, useEffect, useState } from "react";
 
 import { ApiError } from "@/shared/api/client";
 
-import { editMeetingReport, getMeetingReports } from "../api";
+import { editMeetingReport, getMeetingReports, postEditedReport } from "../api";
 import type { MeetingReport } from "../types";
 
 /**
- * The dashboard's meeting reports and the one write the card makes: a draft's
- * body, edited before it is posted. Loaded on its own, apart from the S26
- * rollup, so a failure here leaves the rest of the dashboard standing.
+ * The dashboard's meeting reports and the card's two writes: a member edits a
+ * draft, and the person who last edited it posts it. Loaded on its own, apart
+ * from the S26 rollup, so a failure here leaves the rest of the dashboard
+ * standing.
  */
 export function useMeetingReports(teamId: string) {
   const [reports, setReports] = useState<MeetingReport[]>([]);
@@ -38,17 +39,32 @@ export function useMeetingReports(teamId: string) {
   }, [reload]);
 
   /** Saves an edit; resolves to an error message, or null when it was saved. */
-  const save = useCallback(async (meetingId: string, body: string): Promise<string | null> => {
+  const save = useCallback(async (report: MeetingReport, body: string): Promise<string | null> => {
     try {
-      const saved = await editMeetingReport(meetingId, body);
-      setReports((current) => current.map((r) => (r.meeting_id === meetingId ? saved : r)));
+      const saved = await editMeetingReport(report.meeting_id, body, report.updated_at);
+      setReports((current) => current.map((r) => (r.meeting_id === saved.meeting_id ? saved : r)));
       return null;
     } catch (reason) {
-      return editErrorMessage(reason);
+      return writeErrorMessage(reason);
     }
   }, []);
 
-  return { reports, loading, error, reload, save };
+  /** Queues the post; resolves to an error message, or null once it is queued. */
+  const post = useCallback(
+    async (meetingId: string): Promise<string | null> => {
+      try {
+        await postEditedReport(meetingId);
+        // The worker claims it within moments; show "게시됨" once it has.
+        window.setTimeout(() => void reload(), 3000);
+        return null;
+      } catch (reason) {
+        return writeErrorMessage(reason);
+      }
+    },
+    [reload],
+  );
+
+  return { reports, loading, error, reload, save, post };
 }
 
 /** `autune_integrations.privacy` category names, as a person reads them. */
@@ -61,10 +77,19 @@ const CATEGORY_NAMES: Record<string, string> = {
   email: "이메일",
 };
 
-function editErrorMessage(reason: unknown): string {
-  if (!(reason instanceof ApiError)) return "저장하지 못했습니다. 잠시 후 다시 시도해주세요.";
-  if (reason.status === 409) return "이미 게시된 리포트라 여기서 고칠 수 없습니다.";
-  if (reason.status === 403) return "이 팀의 리포트를 고칠 권한이 없습니다.";
+function writeErrorMessage(reason: unknown): string {
+  if (!(reason instanceof ApiError)) return "처리하지 못했습니다. 잠시 후 다시 시도해주세요.";
+  if (reason.status === 409) {
+    if (reason.message.includes("changed since")) {
+      return "다른 사람이 먼저 고쳤습니다. 새로고침한 뒤 다시 고쳐 주세요.";
+    }
+    if (reason.message.includes("through approval")) {
+      return "자동으로 만든 초안은 승인 화면에서 게시합니다.";
+    }
+    return "이미 게시된 리포트입니다.";
+  }
+  if (reason.status === 403) return "마지막으로 고친 사람만 게시할 수 있습니다.";
+  if (reason.status === 404) return "리포트를 찾을 수 없습니다.";
   if (reason.status === 422) {
     // The server names categories only, never the text (privacy.md section 2).
     const categories = /personal data: (.+)$/.exec(reason.message)?.[1];
@@ -75,8 +100,8 @@ function editErrorMessage(reason: unknown): string {
         .join(", ");
       return `개인정보가 남아 있어 저장하지 않았습니다 (${names}).`;
     }
-    if (reason.message.includes("exceeds")) return "리포트는 3,000자를 넘을 수 없습니다.";
+    if (reason.message.includes("exceeds")) return "리포트가 3,000자를 넘어 저장하지 않았습니다.";
     if (reason.message.includes("empty")) return "본문이 비어 있습니다.";
   }
-  return "저장하지 못했습니다. 잠시 후 다시 시도해주세요.";
+  return "처리하지 못했습니다. 잠시 후 다시 시도해주세요.";
 }

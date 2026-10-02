@@ -225,6 +225,22 @@ def test_a_report_at_the_length_cap_passes_the_outbound_size_check(
 
 
 @pytest.mark.usefixtures("no_web_base_url")
+def test_slack_control_syntax_in_a_report_is_escaped(db_session: Session, meeting: str) -> None:
+    """A person may now write the body; "<!channel>" or a disguised link must not
+    go out under the bot's name as markup (#642 review)."""
+    slack = BlockRecordingSlack()
+
+    service.post_meeting_report(
+        slack,
+        "C123",
+        _claimed(db_session, meeting, body="알림 <!channel> <https://x.io|상세보기> & 끝"),
+    )
+
+    text = slack.blocks[0][0]["text"]["text"]
+    assert "<!channel>" not in text and "<https://x.io|" not in text
+    assert "&lt;!channel&gt;" in text and "&amp; 끝" in text
+
+
 def test_post_without_a_web_url_has_no_button(db_session: Session, meeting: str) -> None:
     slack = BlockRecordingSlack()
 

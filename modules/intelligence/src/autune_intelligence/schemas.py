@@ -92,18 +92,25 @@ class MeetingReportRead(BaseModel):
     meeting_id: str
     title: str
     body: str
+    footer: str
+    """E's last line: "자동 생성된 리포트입니다." or, after an edit, who edited it."""
     status: Literal["draft", "posted"]
     posted_at: datetime | None
     pending_review: bool
     edited_by_name: str | None
     edited_at: datetime | None
     updated_at: datetime
+    """Send back as ``base_updated_at`` so a stale edit is refused, not saved over."""
+    can_post: bool
+    """The requester last edited this draft and may post it from the card."""
 
 
 class MeetingReportEdit(BaseModel):
     """A team member's edit of a draft's body; E keeps its own header line."""
 
     body: str
+    base_updated_at: datetime | None = None
+    """``updated_at`` as the editor saw it; a newer save makes this edit a 409."""
 
 
 class DashboardScoreEntry(BaseModel):

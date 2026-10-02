@@ -197,8 +197,20 @@ foreign keys to another module's tables.
 | GET | `/gap-titles/{team_id}` | High-severity gap titles behind each pattern count |
 | GET | `/reports/{team_id}` | Weekly reports |
 | GET | `/meeting-reports/{team_id}` | The team's meeting reports for the dashboard card: header line, body, draft/posted, editor. **Team members only** |
-| PUT | `/meeting-reports/{meeting_id}` | A team member edits a draft's body before it is posted; editor and time recorded; the queued approval keeps its `draft_id`. 409 once posted, 422 with categories for personal data |
+| PUT | `/meeting-reports/{meeting_id}` | A team member edits a draft's body before it is posted (send back `base_updated_at`; a newer save makes it 409). Editor and time recorded, E's footer names the editor, and the draft takes a **new `draft_id`**, so the approval given for the model's text lapses. 409 once posted, 422 with categories for personal data, 404 for anyone outside the team |
+| POST | `/meeting-reports/{meeting_id}/post` | The person who last edited a draft posts it to the team channel (202). A model's draft is 409 here -- it goes through approval |
 | GET | `/me/speaking-ratio/{meeting_id}` | **The requester's own ratio only** |
+
+**Meeting reports on the dashboard (#642).** A model's draft is posted by
+approval (L2); a person's edit is their own text, so it lapses that approval
+and its last editor posts it from the card. A rerun of the Report (a
+republished `intelligence.completed`, #556) overwrites an edited draft and
+clears its editor -- the corrected inputs win, and the card stops showing a
+name on text that person did not write. The "this meeting only" rule (#459)
+is an instruction to the subagent; a person's text is not checked against it.
+An editor who leaves the team keeps their name on the edit until their
+account is deleted. Report text is escaped for Slack (`&`, `<`, `>`), so a
+mention or a disguised link in it goes out as plain text.
 
 `/me/speaking-ratio` authorizes on `requester_id == subject_id`. There is no
 admin override and no team-level variant of this endpoint.
