@@ -137,7 +137,11 @@ All in `modules/audio` (router, service, schemas). No contract changes.
 - Requires the meeting `analyzing`: a worker that died between `mark_complete`
   and `mark_published` leaves a stale `running` job on a delivered meeting.
 - Requires the upload `{job_id}.upload` to exist and to be younger than
-  `orphan_after_hours` by mtime; otherwise 409 `recording_gone`.
+  `orphan_after_hours` minus a 10-minute margin by mtime, so the sweep cannot
+  take it from the restarted job; otherwise 409 `recording_gone`.
+- "Latest job" is the live (`queued`/`running`) one if there is one, else the
+  newest by `created_at`: that stamp is the transaction start and can be out of
+  order across two uploads seconds apart.
 - Then the same sequence as the upload route: mark the old job `superseded`,
   create a new `queued` job, rename `{old}.upload` to `{new}.upload` (same
   directory, atomic), commit, enqueue. If the enqueue fails: `mark_failed` and
