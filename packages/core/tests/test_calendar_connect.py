@@ -250,8 +250,14 @@ def test_status_is_the_persons_own(world: dict[str, Any]) -> None:
 
 
 def _status_with_current_client(
-    world: dict[str, Any], monkeypatch: pytest.MonkeyPatch, current: str
+    world: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    current: str,
+    secret: str | None = None,
 ) -> dict[str, bool]:
+    """The status as a server whose Google client is ``current`` gives it. A
+    client has a secret exactly when it has an id, unless a test says
+    otherwise: a blank id with a secret is a configuration nobody has."""
     monkeypatch.setattr(
         auth_router_module,
         "get_settings",
@@ -259,7 +265,7 @@ def _status_with_current_client(
             _env_file=None,
             env="local",
             google_client_id=current,
-            google_client_secret="s",
+            google_client_secret=("s" if current else "") if secret is None else secret,
             google_integration_client_id="",
             google_integration_client_secret="",
         ),
@@ -296,6 +302,22 @@ def test_with_no_google_client_configured_a_grant_is_not_called_broken(
     world["configs"][ME] = {"calendar_id": "primary", "client_id": "the-old-client"}
 
     assert _status_with_current_client(world, monkeypatch, "") == {
+        "connected": True,
+        "needs_reconnect": False,
+    }
+
+
+@pytest.mark.parametrize(("client_id", "secret"), [("the-new-client", ""), ("", "s")])
+def test_half_a_google_client_is_not_one_to_reconnect_to(
+    world: dict[str, Any], monkeypatch: pytest.MonkeyPatch, client_id: str, secret: str
+) -> None:
+    """Review of #718: the status looked at the id alone while module B needs
+    the id and the secret, so with a secret missing the card said "reconnect"
+    and B said nothing. Both read the same thing now."""
+    world["grants"][ME] = "1//refresh"
+    world["configs"][ME] = {"calendar_id": "primary", "client_id": "the-old-client"}
+
+    assert _status_with_current_client(world, monkeypatch, client_id, secret) == {
         "connected": True,
         "needs_reconnect": False,
     }
