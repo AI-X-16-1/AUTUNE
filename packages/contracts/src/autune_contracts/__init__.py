@@ -34,6 +34,7 @@ from .events import (
 from .extraction import (
     ACTION_PROGRESS_PUBLISH_EVERY,
     ACTION_PROGRESS_STALE_AFTER,
+    ACTION_PROGRESS_TODAY_ZONE,
     ACTION_PROGRESS_WINDOW,
     AGENDA_PUBLISH_EVERY,
     AGENDA_STALE_AFTER,
@@ -113,6 +114,7 @@ __all__ = [
     "MeetingActionProgress",
     "ACTION_PROGRESS_PUBLISH_EVERY",
     "ACTION_PROGRESS_STALE_AFTER",
+    "ACTION_PROGRESS_TODAY_ZONE",
     "ACTION_PROGRESS_WINDOW",
     # C -> E
     "GapReport",

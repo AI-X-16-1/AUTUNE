@@ -203,6 +203,14 @@ ACTION_PROGRESS_STALE_AFTER = timedelta(minutes=30)
 """A snapshot older than this -- three missed publishes -- is **unknown** to a
 consumer, not empty: a rate computed from it would be presented as current."""
 
+ACTION_PROGRESS_TODAY_ZONE = "Asia/Seoul"
+"""Whose "today" ``overdue`` is counted against: the date of ``as_of`` in this zone.
+
+Teams have no time zone yet, and a server on UTC would otherwise count a day
+late between 00:00 and 09:00 in Seoul, so B's board and E's dashboard could
+disagree on the same item (#619 review). One zone for every team until a
+team setting exists; changing it is a contract change."""
+
 ACTION_PROGRESS_WINDOW = timedelta(days=91)
 """Meetings counted: those created within this of ``as_of``. Thirteen weeks,
 the default 90-day retention rounded up to whole weeks."""
@@ -224,7 +232,10 @@ class MeetingActionProgress(ContractModel):
     done: int = Field(ge=0, description="Confirmed items in status done.")
     overdue: int = Field(
         ge=0,
-        description="Confirmed, not done, due before the team's today -- the board's rule.",
+        description=(
+            "Confirmed, not done, due before the date of as_of in Asia/Seoul -- the "
+            "board's rule. No per-team time zone exists yet."
+        ),
     )
 
     @model_validator(mode="after")

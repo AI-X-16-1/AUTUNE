@@ -10,6 +10,7 @@ from pydantic import ValidationError
 from autune_contracts import (
     ACTION_PROGRESS_PUBLISH_EVERY,
     ACTION_PROGRESS_STALE_AFTER,
+    ACTION_PROGRESS_TODAY_ZONE,
     ACTION_PROGRESS_WINDOW,
     EVENTS,
     EXTRACTION_ACTION_PROGRESS,
@@ -29,6 +30,14 @@ def test_the_event_is_declared_and_reaches_a_consumer() -> None:
 def test_the_snapshot_goes_stale_after_a_few_missed_publishes() -> None:
     assert ACTION_PROGRESS_STALE_AFTER >= 2 * ACTION_PROGRESS_PUBLISH_EVERY
     assert ACTION_PROGRESS_WINDOW.days == 91  # 13 weeks, the 90-day retention
+
+
+def test_overdue_is_counted_against_one_named_zone() -> None:
+    """B's board and E's dashboard must agree on "today" (#619 review)."""
+    from zoneinfo import ZoneInfo
+
+    assert ZoneInfo(ACTION_PROGRESS_TODAY_ZONE).key == "Asia/Seoul"
+    assert "Asia/Seoul" in MeetingActionProgress.model_fields["overdue"].description
 
 
 def test_counts_hold_together() -> None:

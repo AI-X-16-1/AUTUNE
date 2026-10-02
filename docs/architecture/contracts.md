@@ -54,7 +54,9 @@ renders it as an `href`.
 `TeamActionProgress` (#605, version 2.3) is a snapshot of the team's action
 items as counts per meeting -- confirmed, done, overdue -- for every meeting
 created in the last 13 weeks with a confirmed item, republished every ten
-minutes. E computes the real completion rate from it; the meeting quality
+minutes. `overdue` is counted against the date of `as_of` in Asia/Seoul
+(`ACTION_PROGRESS_TODAY_ZONE`; teams have no time zone yet), so B's board and
+E's dashboard agree. E computes the real completion rate from it; the meeting quality
 score keeps its own confirmation rate. Keep the latest `as_of`; one older than
 `ACTION_PROGRESS_STALE_AFTER` (30 minutes) is unknown, while a fresh one with
 no meetings means nothing is confirmed. Counts only, never an assignee: a
