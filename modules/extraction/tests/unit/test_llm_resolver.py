@@ -180,6 +180,10 @@ def test_the_task_hands_the_roster_to_a_resolver_that_sends_text_out() -> None:
 @pytest.fixture
 def configured(monkeypatch: pytest.MonkeyPatch):
     def apply(**overrides: Any) -> None:
+        # These tests are about what an LLM implementation does once it is on;
+        # that it must be acknowledged first has its own file
+        # (test_llm_acknowledged_392.py).
+        overrides = {"llm_acknowledged_392": True} | overrides
         monkeypatch.setattr(
             registry,
             "get_settings",

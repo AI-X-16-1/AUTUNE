@@ -11,12 +11,21 @@ from functools import lru_cache
 from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+CLOUD_IMPLS = frozenset({"llm", "llm_checked"})
+"""The implementation names that send utterance text to a cloud provider."""
+
 
 class ExtractionSettings(BaseSettings):
     # env_file mirrors autune_core.Settings: without it a module reads only
     # real environment variables and silently ignores .env.
+    # hide_input_in_errors: a validator below can refuse the whole object, and
+    # pydantic's message would otherwise print the input it refused -- the
+    # raw environment, the provider key in it.
     model_config = SettingsConfigDict(
-        env_prefix="AUTUNE_EXTRACTION_", env_file=".env", extra="ignore"
+        env_prefix="AUTUNE_EXTRACTION_",
+        env_file=".env",
+        extra="ignore",
+        hide_input_in_errors=True,
     )
 
     classifier_impl: str = "local"
@@ -198,6 +207,26 @@ class ExtractionSettings(BaseSettings):
             return None
         return value
 
+    llm_acknowledged_392: bool = False
+    """``AUTUNE_EXTRACTION_LLM_ACKNOWLEDGED_392``: the second switch a cloud
+    implementation needs (#392, proposed by module A's owner in review of #405).
+
+    "Demo meetings only" and "a paid key for real ones" are both rules the
+    code cannot check: nothing marks a meeting as a dummy, and nothing says
+    which tier a key is. What the code can do is make sending speech to a
+    provider something a deployment says twice. With ``classifier_impl`` set
+    to ``llm`` or ``llm_checked``, or ``resolver_impl`` set to ``llm``, and
+    this not true, these settings refuse to load.
+
+    **It turns nothing on.** Set alone, it changes nothing.
+
+    **Not keyed on ``AUTUNE_ENV``.** ``local`` is that variable's default
+    (#408), so a deployment that forgot to set it would be the one let
+    through.
+
+    **Deleting this flag is the migration** once #392 is decided: every place
+    that set it is a ``grep`` away."""
+
     resolver_impl: str = "fake"
     """Which reference resolver to run: ``local``, ``hosted``, ``llm`` or ``fake``
     (#175). ``llm`` is a cloud model, opt-in the way ``classifier_impl=llm`` is,
@@ -291,6 +320,30 @@ class ExtractionSettings(BaseSettings):
     def _own_key_then_the_shared_one(self) -> ExtractionSettings:
         if not self.llm_api_key:
             self.llm_api_key = self.shared_llm_api_key
+        return self
+
+    @model_validator(mode="after")
+    def _a_cloud_model_is_switched_on_twice(self) -> ExtractionSettings:
+        """Refuse a cloud implementation nobody acknowledged (#392).
+
+        Here and not in the registry, so the refusal is the settings object
+        itself: nothing in module B runs on a configuration that would send
+        speech out unacknowledged -- not the worker's first meeting, and not
+        a route that only wanted a threshold. It names the variable to set and
+        nothing else; the message carries no value from the environment.
+        """
+        if self.llm_acknowledged_392:
+            return self
+        for name, value in (
+            ("CLASSIFIER_IMPL", self.classifier_impl),
+            ("RESOLVER_IMPL", self.resolver_impl),
+        ):
+            if value in CLOUD_IMPLS:
+                raise ValueError(
+                    f"AUTUNE_EXTRACTION_{name}={value} sends meeting text to a cloud "
+                    "model. Set AUTUNE_EXTRACTION_LLM_ACKNOWLEDGED_392=true to confirm "
+                    "this deployment may: demo meetings only until #392 is decided."
+                )
         return self
 
     @model_validator(mode="after")
