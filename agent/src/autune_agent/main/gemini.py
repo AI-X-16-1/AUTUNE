@@ -4,10 +4,15 @@
 the subagents' descriptions (our own text). Composing sends the message and the
 subagent's ``ToolResult`` -- a summary and at most five titles, which are masked
 meeting text, and never utterances (the return contract keeps evidence as ids).
-Both go through ``autune_integrations.HttpClient``, so ``check_outbound`` refuses
-an unmasked phone number, e-mail or account number and a body past
-``MAX_OUTBOUND_CHARS``. A person who types their own phone number into the chat
-gets a refusal, not a model call.
+The ask loop (main/ask.py, via ``GeminiTools``) sends the person's message, the
+function declarations (our own text: a tool name, one sentence, a parameter
+schema), compacted tool results (a summary, and per item the title, a body cut
+to 80 characters and ids), and the echoed model turn. All go through
+``autune_integrations.HttpClient``, so ``check_outbound`` sees the whole
+exchange and refuses an unmasked phone number, e-mail or account number and a
+body past ``MAX_OUTBOUND_CHARS``. The loop stops before a body passes 3,800
+characters. A person who types their own phone number into the chat gets a
+refusal, not a model call.
 
 Not a LangChain chat model, deliberately: a LangChain integration would open an
 outbound path that ``check_outbound`` never sees.
