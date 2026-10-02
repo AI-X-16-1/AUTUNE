@@ -38,3 +38,13 @@ export const editMeetingReport = (meetingId: string, body: string, baseUpdatedAt
     method: "PUT",
     body: JSON.stringify({ body, base_updated_at: baseUpdatedAt }),
   });
+
+/**
+ * A correction to a posted report. It waits for approval (#674); once approved
+ * it goes out as a reply under the post.
+ */
+export const correctMeetingReport = (meetingId: string, body: string) =>
+  api.intelligence<MeetingReport>(`/meeting-reports/${encodeURIComponent(meetingId)}/corrections`, {
+    method: "POST",
+    body: JSON.stringify({ body }),
+  });

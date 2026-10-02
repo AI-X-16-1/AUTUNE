@@ -4,12 +4,13 @@ import { useCallback, useEffect, useState } from "react";
 
 import { ApiError } from "@/shared/api/client";
 
-import { editMeetingReport, getMeetingReports } from "../api";
+import { correctMeetingReport, editMeetingReport, getMeetingReports } from "../api";
 import type { MeetingReport } from "../types";
 
 /**
- * The dashboard's meeting reports and the card's one write: a member edits a
- * draft, which goes to the approval queue (#674). Loaded on its own, apart
+ * The dashboard's meeting reports and the card's two writes: a member edits a
+ * draft, or writes a correction to a posted one. Both go to the approval queue
+ * (#674); nothing is posted from the card. Loaded on its own, apart
  * from the S26 rollup, so a failure here leaves the rest of the dashboard
  * standing.
  */
@@ -49,7 +50,18 @@ export function useMeetingReports(teamId: string) {
     }
   }, []);
 
-  return { reports, loading, error, reload, save };
+  /** Stores a correction; resolves to an error message, or null once it waits for approval. */
+  const correct = useCallback(async (meetingId: string, body: string): Promise<string | null> => {
+    try {
+      const saved = await correctMeetingReport(meetingId, body);
+      setReports((current) => current.map((r) => (r.meeting_id === saved.meeting_id ? saved : r)));
+      return null;
+    } catch (reason) {
+      return writeErrorMessage(reason);
+    }
+  }, []);
+
+  return { reports, loading, error, reload, save, correct };
 }
 
 /** `autune_integrations.privacy` category names, as a person reads them. */
@@ -68,6 +80,13 @@ function writeErrorMessage(reason: unknown): string {
     if (reason.message.includes("changed since")) {
       return "다른 사람이 먼저 고쳤습니다. 새로고침한 뒤 다시 고쳐 주세요.";
     }
+    if (reason.message.includes("still being sent")) {
+      return "승인된 수정본을 보내는 중입니다. 잠시 후 다시 시도해주세요.";
+    }
+    if (reason.message.includes("not posted")) return "게시 전 초안은 편집으로 고칩니다.";
+    if (reason.message.includes("did not reach slack")) {
+      return "이 리포트는 Slack에 올라가지 않아 수정본을 보낼 수 없습니다.";
+    }
     return "이미 게시된 리포트입니다.";
   }
   if (reason.status === 404) return "리포트를 찾을 수 없습니다.";
@@ -82,9 +101,9 @@ function writeErrorMessage(reason: unknown): string {
       return `개인정보가 남아 있어 저장하지 않았습니다 (${names}).`;
     }
     if (reason.message.includes("exceeds")) {
-      return "리포트가 3,000자를 넘어 저장하지 않았습니다 (&, <, >는 Slack에서 여러 글자로 셉니다).";
+      return "3,000자를 넘어 저장하지 않았습니다 (&, <, >는 Slack에서 여러 글자로 셉니다).";
     }
-    if (reason.message.includes("empty")) return "본문이 비어 있습니다.";
+    if (reason.message.includes("empty")) return "내용이 비어 있습니다.";
     if (reason.message.includes("unchanged")) return "바뀐 내용이 없어 저장하지 않았습니다.";
   }
   return "처리하지 못했습니다. 잠시 후 다시 시도해주세요.";

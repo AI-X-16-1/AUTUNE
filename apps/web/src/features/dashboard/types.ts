@@ -88,4 +88,15 @@ export interface MeetingReport {
   edited_at: string | null;
   /** Sent back with an edit, so a save over a newer version is refused. */
   updated_at: string;
+  /** The post reached Slack, so a correction can go under it. */
+  in_slack: boolean;
+  /** The latest correction to a posted report, posted under it once approved. */
+  correction_body: string | null;
+  corrected_by_name: string | null;
+  corrected_at: string | null;
+  /**
+   * "pending": waits for approval; "sending": approved and being posted;
+   * "failed": approved but not posted within a few minutes -- a new one is accepted.
+   */
+  correction_status: "pending" | "sending" | "sent" | "failed" | null;
 }

@@ -16,12 +16,12 @@ from __future__ import annotations
 from collections import Counter
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta, timezone
-from typing import Final
+from typing import Final, Literal
 
 import sqlalchemy as sa
 from sqlalchemy import func, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased
 
 from autune_contracts import (
     ActionItem,
@@ -1490,7 +1490,9 @@ def _report_for_member(session: Session, meeting_id: str, user_id: str) -> Intel
     return row
 
 
-def _report_read(row: IntelMeetingReport, editor: str | None) -> MeetingReportRead:
+def _report_read(
+    row: IntelMeetingReport, editor: str | None, corrector: str | None = None
+) -> MeetingReportRead:
     title, body, footer = split_report_document(_with_editor(row.body_markdown, editor))
     draft = row.sent_at is None
     return MeetingReportRead(
@@ -1504,6 +1506,11 @@ def _report_read(row: IntelMeetingReport, editor: str | None) -> MeetingReportRe
         edited_by_name=editor,
         edited_at=row.edited_at,
         updated_at=row.updated_at,
+        in_slack=row.slack_channel is not None and row.slack_ts is not None,
+        correction_body=row.correction_body,
+        corrected_by_name=corrector if row.correction_body is not None else None,
+        corrected_at=row.corrected_at,
+        correction_status=_correction_status(row, datetime.now(UTC)),
     )
 
 
@@ -1513,15 +1520,18 @@ def list_meeting_reports(
     """The team's latest reports, newest meeting first, for one of its members."""
     require_team_member(session, user_id=user_id, team_id=team_id)
     held = func.coalesce(Meeting.started_at, Meeting.created_at)
+    editor_user = aliased(User)
+    corrector_user = aliased(User)
     rows = session.execute(
-        sa.select(IntelMeetingReport, User.display_name)
+        sa.select(IntelMeetingReport, editor_user.display_name, corrector_user.display_name)
         .join(Meeting, Meeting.id == IntelMeetingReport.meeting_id)
-        .outerjoin(User, User.id == IntelMeetingReport.edited_by)
+        .outerjoin(editor_user, editor_user.id == IntelMeetingReport.edited_by)
+        .outerjoin(corrector_user, corrector_user.id == IntelMeetingReport.corrected_by)
         .where(IntelMeetingReport.team_id == team_id)
         .order_by(held.desc(), IntelMeetingReport.meeting_id.desc())
         .limit(MEETING_REPORTS_SHOWN)
     ).all()
-    return [_report_read(row, editor) for row, editor in rows]
+    return [_report_read(row, editor, corrector) for row, editor, corrector in rows]
 
 
 def edit_meeting_report(
@@ -1584,15 +1594,250 @@ def edit_meeting_report(
     return _report_read(row, editor)
 
 
-def meeting_report_awaiting_approval(session: Session, meeting_id: str) -> str | None:
-    """The ``draft_id`` of the meeting's stored, unposted draft, or ``None``.
+@dataclass(frozen=True)
+class AwaitingPost:
+    """What waits for a person to approve its post, by the id the approval pins."""
 
-    What the Report subagent proposes to post when a person's edit is
-    announced. The draft read now, not the one the announcement was about: a
-    second edit or a rerun since then replaced it, and its own proposal
-    supersedes this one in the queue anyway.
+    kind: Literal["draft", "correction"]
+    id: str
+    """A ``draft_id`` or a ``correction_id``."""
+
+
+def meeting_report_awaiting_approval(session: Session, meeting_id: str) -> AwaitingPost | None:
+    """The meeting's draft before it is posted, its unsent correction after; or ``None``.
+
+    What the Report subagent proposes to post when a person's change is
+    announced. Read now, not the one the announcement was about: a later change
+    or a rerun replaced it, and its own proposal supersedes this one in the
+    queue anyway. A draft and a correction never wait at once -- a correction
+    is accepted only once the report is posted, and a posted report has no
+    draft left to approve.
     """
     row = session.get(IntelMeetingReport, meeting_id)
-    if row is None or row.sent_at is not None:
+    if row is None:
         return None
-    return row.draft_id
+    if row.sent_at is None:
+        return AwaitingPost("draft", row.draft_id) if row.draft_id is not None else None
+    if row.correction_id is not None and row.correction_sent_at is None:
+        return AwaitingPost("correction", row.correction_id)
+    return None
+
+
+def meeting_report_posted(session: Session, meeting_id: str) -> bool:
+    """Whether the meeting's report was claimed for posting -- the channel has it."""
+    return (
+        session.scalar(
+            sa.select(IntelMeetingReport.sent_at).where(IntelMeetingReport.meeting_id == meeting_id)
+        )
+        is not None
+    )
+
+
+# --- a correction to a posted report (10/2) -------------------------------------------
+#
+# A posted report is never changed in place: people have read it. A member writes
+# a correction on the dashboard card. Like an edit it reaches the channel only
+# after a person with the ``report`` scope approves it (#674): the change is
+# announced, the Report subagent proposes ``publish_meeting_report_correction``
+# with the correction's id, and the approved one goes out as a reply under the
+# original post -- or as a new message in the team's channel when the thread is
+# out of reach. Each is sent at most once, and checked and escaped like any
+# report text.
+
+_CORRECTION_HEADER: Final = "✏️ 수정본 · {when} · {name}"
+
+CORRECTION_SEND_WINDOW: Final = timedelta(minutes=5)
+"""An approved correction not posted by then counts as failed, and a new one is
+accepted. Measured from the claim, not from writing it: a correction waits for
+approval as long as that takes (#658 review). After the claim, posting can stop
+short with nothing to report it -- a Slack error, a lost worker."""
+
+_CORRECTION_ORPHAN: Final = "원래 게시물을 찾지 못해 새 메시지로 올립니다 · {title}"
+_ORPHAN_TITLE_CHARS: Final = 80
+"""The title in that line is cut to this, and a name in the header to
+``_NAME_CHARS``, so the message stays under ``MAX_OUTBOUND_CHARS`` whatever the
+meeting or the person is called (#658 review): 3,000 checked at writing, plus a
+longer name at the claim, plus this line."""
+_NAME_CHARS: Final = 40
+
+
+def correct_meeting_report(
+    session: Session, meeting_id: str, body: str, *, user_id: str
+) -> MeetingReportRead:
+    """Store a member's correction to a posted report, to wait for approval.
+
+    Refused for a draft (edit it instead), for a report whose post never reached
+    Slack (there is no message to correct, and the channel never saw the
+    original), while an approved correction is being posted, and for anyone
+    outside the team (404, as for a missing meeting). A correction still waiting
+    for approval is replaced: the new one takes a new ``correction_id``, so the
+    approval for the earlier one posts nothing. Saving the same text again is
+    refused, so the approvers are not asked twice. The caller commits, then
+    announces it. The text passes the length cap and the personal-data check; a
+    refusal names categories, never the text.
+    """
+    row = _report_for_member(session, meeting_id, user_id)
+    if row.sent_at is None:
+        raise ConflictError("meeting report is not posted; edit the draft", meeting_id=meeting_id)
+    if row.slack_channel is None or row.slack_ts is None:
+        raise ConflictError("meeting report did not reach slack", meeting_id=meeting_id)
+    now = datetime.now(UTC)
+    status = _correction_status(row, now)
+    if status == "sending":
+        raise ConflictError("the previous correction is still being sent", meeting_id=meeting_id)
+    if not body.strip():
+        raise ValidationError("correction is empty", field="body")
+    if status == "pending" and body == row.correction_body:
+        raise ValidationError("correction is unchanged", field="body")
+    corrector = session.scalar(sa.select(User.display_name).where(User.id == user_id)) or ""
+    text = _correction_text(body, name=corrector, when=now)
+    if len(_slack_escape(text)) > MEETING_REPORT_MAX_CHARS:
+        raise ValidationError(
+            f"correction exceeds {MEETING_REPORT_MAX_CHARS} characters", field="body"
+        )
+    try:
+        assert_masked(text, destination="intel_meeting_reports")
+    except PrivacyViolationError as exc:
+        categories = ", ".join(exc.details.get("categories", []))
+        raise ValidationError(
+            f"correction still holds personal data: {categories}", field="body"
+        ) from exc
+    row.correction_body = body
+    row.correction_id = new_id("rcr")
+    row.corrected_by = user_id
+    row.corrected_at = now
+    row.correction_sent_at = None
+    row.correction_slack_ts = None
+    session.flush()
+    editor = (
+        session.scalar(sa.select(User.display_name).where(User.id == row.edited_by))
+        if row.edited_by is not None
+        else None
+    )
+    return _report_read(row, editor, corrector)
+
+
+def _correction_status(
+    row: IntelMeetingReport, now: datetime
+) -> Literal["pending", "sending", "sent", "failed"] | None:
+    if row.correction_body is None:
+        return None
+    if row.correction_slack_ts is not None:
+        return "sent"
+    if row.correction_sent_at is None:
+        return "pending"
+    if now - row.correction_sent_at < CORRECTION_SEND_WINDOW:
+        return "sending"
+    return "failed"
+
+
+def _correction_text(body: str, *, name: str, when: datetime) -> str:
+    local = when.astimezone(_KST)
+    shown = name[:_NAME_CHARS] if name and not find_unmasked(name) else "팀원"
+    header = _CORRECTION_HEADER.format(when=f"{local.month}/{local.day} {local:%H:%M}", name=shown)
+    return f"{header}\n\n{body}"
+
+
+def meeting_report_correction(session: Session, meeting_id: str, correction_id: str) -> str | None:
+    """The correction ``correction_id`` names as it would be posted, or ``None``
+    once another replaced it -- for the approval card's preview."""
+    row = session.get(IntelMeetingReport, meeting_id)
+    if row is None or row.correction_body is None or row.correction_id != correction_id:
+        return None
+    name = (
+        session.scalar(sa.select(User.display_name).where(User.id == row.corrected_by))
+        if row.corrected_by
+        else None
+    ) or ""
+    return _correction_text(row.correction_body, name=name, when=row.corrected_at or row.updated_at)
+
+
+@dataclass(frozen=True)
+class ClaimedCorrection:
+    """What ``post_meeting_report_correction`` needs, read under the claim."""
+
+    meeting_id: str
+    channel: str | None
+    thread_ts: str | None
+    title: str
+    text: str
+    """Slack-escaped already."""
+    correction_id: str
+    """Which correction this is: ``record_meeting_report_correction`` keeps the ts
+    only if no newer correction replaced it while this one was in flight."""
+
+
+def claim_meeting_report_correction(
+    session: Session, meeting_id: str, *, correction_id: str
+) -> ClaimedCorrection | None:
+    """Mark the approved correction sent and hand it out.
+
+    ``None`` when there is none or another task claimed it; ``ConflictError``
+    when a newer correction replaced the approved one -- it waits for its own
+    approval. Committed before the post: at most once.
+    """
+    row = session.execute(
+        sa.select(IntelMeetingReport)
+        .where(IntelMeetingReport.meeting_id == meeting_id)
+        .with_for_update()
+    ).scalar_one_or_none()
+    if row is None or row.correction_body is None:
+        return None
+    if row.correction_id != correction_id:
+        raise ConflictError("meeting report correction was replaced", meeting_id=meeting_id)
+    if row.correction_sent_at is not None:
+        return None
+    name = (
+        session.scalar(sa.select(User.display_name).where(User.id == row.corrected_by))
+        if row.corrected_by
+        else None
+    ) or ""
+    title, _, _ = split_report_document(row.body_markdown)
+    text = _slack_escape(
+        _correction_text(row.correction_body, name=name, when=row.corrected_at or datetime.now(UTC))
+    )
+    # The check the Slack client runs, made before the claim, as the report's
+    # claim does: a refusal leaves the correction unclaimed (#658 review).
+    check_outbound({"text": text}, destination="slack", addressing=SlackClient.addressing)
+    row.correction_sent_at = datetime.now(UTC)
+    session.flush()
+    return ClaimedCorrection(
+        meeting_id=meeting_id,
+        channel=row.slack_channel,
+        thread_ts=row.slack_ts,
+        title=_slack_escape(title[:_ORPHAN_TITLE_CHARS]),
+        text=text,
+        correction_id=correction_id,
+    )
+
+
+def post_meeting_report_correction(
+    slack: SlackApi, channel: str, correction: ClaimedCorrection
+) -> str:
+    """Reply under the original post; when it cannot be reached, post a new
+    message in ``channel`` that says so. Returns the message ts."""
+    if correction.channel and correction.thread_ts:
+        try:
+            return slack.reply_in_thread(correction.channel, correction.thread_ts, correction.text)
+        except PermanentIntegrationError:
+            # Reconnected with a new bot or channel: the old thread is out of reach.
+            log.info(
+                "intelligence_meeting_report_correction_thread_lost",
+                meeting_id=correction.meeting_id,
+            )
+    orphan = _CORRECTION_ORPHAN.format(title=correction.title)
+    return slack.post_message(channel, f"{orphan}\n{correction.text}")
+
+
+def record_meeting_report_correction(
+    session: Session, meeting_id: str, slack_ts: str, *, correction_id: str
+) -> None:
+    row = session.get(IntelMeetingReport, meeting_id)
+    if row is None:  # the meeting was deleted while the post was in flight
+        return
+    if row.correction_id != correction_id:
+        # A newer correction was written after this one failed its window; it
+        # waits for its own approval and records its own ts.
+        return
+    row.correction_slack_ts = slack_ts
+    session.flush()

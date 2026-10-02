@@ -34,7 +34,11 @@ from autune_integrations import SlackClient
 
 from . import service
 from .config import get_settings
-from .enqueue import ANNOUNCE_MEETING_REPORT_CHANGED, DELIVER_MEETING_REPORT
+from .enqueue import (
+    ANNOUNCE_MEETING_REPORT_CHANGED,
+    DELIVER_MEETING_REPORT,
+    DELIVER_MEETING_REPORT_CORRECTION,
+)
 from .models import IntelCompletion, IntelMeetingReport
 
 log = get_logger(__name__)
@@ -209,6 +213,43 @@ def announce_meeting_report_changed(meeting_id: str) -> None:
     """
     publish(INTELLIGENCE_MEETING_REPORT_CHANGED, Payload(meeting_id=meeting_id).model_dump())
     log.info("intelligence_meeting_report_change_announced", meeting_id=meeting_id)
+
+
+@shared_task(name=DELIVER_MEETING_REPORT_CORRECTION, acks_late=True)
+def deliver_meeting_report_correction(meeting_id: str, correction_id: str) -> None:
+    """Post an approved correction under the meeting's posted report, at most once.
+
+    Ids only (#275). Posts only the correction ``correction_id`` names: one
+    written since the approval replaced it and waits for its own. Without a
+    connected Slack or a configured channel it stays unclaimed, as a report does.
+    """
+    with session_scope() as session:
+        report = session.get(IntelMeetingReport, meeting_id)
+        if report is None:
+            return
+        config = load_integration(session, report.team_id, "slack")
+        channel = config.config.get("channel") if config is not None else None
+        if config is None or channel is None:
+            log.info("intelligence_meeting_report_correction_no_channel", meeting_id=meeting_id)
+            return
+        secret = config.require_secret()
+        try:
+            claimed = service.claim_meeting_report_correction(
+                session, meeting_id, correction_id=correction_id
+            )
+        except ConflictError:
+            log.info("intelligence_meeting_report_correction_replaced", meeting_id=meeting_id)
+            return
+
+    if claimed is None:
+        log.info("intelligence_meeting_report_correction_already_claimed", meeting_id=meeting_id)
+        return
+    slack_ts = service.post_meeting_report_correction(SlackClient(secret), channel, claimed)
+    with session_scope() as session:
+        service.record_meeting_report_correction(
+            session, meeting_id, slack_ts, correction_id=claimed.correction_id
+        )
+    log.info("intelligence_meeting_report_correction_posted", meeting_id=meeting_id)
 
 
 @shared_task(name=DELIVER_MEETING_REPORT, acks_late=True)

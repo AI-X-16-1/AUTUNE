@@ -19,7 +19,7 @@ import { DashboardCard } from "./DashboardCard";
  * page load.
  */
 export function MeetingReportsCard({ teamId }: { teamId: string }) {
-  const { reports, loading, error, save } = useMeetingReports(teamId);
+  const { reports, loading, error, save, correct } = useMeetingReports(teamId);
   const [open, setOpen] = useState<string | null>(null);
   const [showAll, setShowAll] = useState(false);
   const linkApplied = useRef(false);
@@ -65,6 +65,7 @@ export function MeetingReportsCard({ teamId }: { teamId: string }) {
                   setOpen((current) => (current === report.meeting_id ? null : report.meeting_id))
                 }
                 onSave={(body) => save(report, body)}
+                onCorrect={(body) => correct(report.meeting_id, body)}
               />
             ))}
           </ul>
@@ -88,11 +89,13 @@ function ReportRow({
   open,
   onToggle,
   onSave,
+  onCorrect,
 }: {
   report: MeetingReport;
   open: boolean;
   onToggle: () => void;
   onSave: (body: string) => Promise<string | null>;
+  onCorrect: (body: string) => Promise<string | null>;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(report.body);
@@ -121,6 +124,30 @@ function ReportRow({
           },
     );
     if (!failure) setEditing(false);
+  };
+
+  const [correcting, setCorrecting] = useState(false);
+  const [correction, setCorrection] = useState("");
+
+  const startCorrecting = () => {
+    setCorrection(report.correction_body ?? report.body);
+    setMessage(null);
+    setCorrecting(true);
+  };
+
+  const sendCorrection = async () => {
+    setBusy(true);
+    const failure = await onCorrect(correction);
+    setBusy(false);
+    if (!failure) setCorrecting(false);
+    setMessage(
+      failure
+        ? { text: failure, failed: true }
+        : {
+            text: "수정본을 승인 대기로 보냈습니다. 승인되면 원래 게시물 아래 스레드에 올라갑니다.",
+            failed: false,
+          },
+    );
   };
 
   return (
@@ -237,7 +264,16 @@ function ReportRow({
                   <span style={metaStyle}>게시는 승인 화면에서 승인자가 합니다.</span>
                 </div>
               ) : (
-                <p style={metaStyle}>게시된 리포트는 여기서 고칠 수 없습니다.</p>
+                <PostedActions
+                  report={report}
+                  correcting={correcting}
+                  correction={correction}
+                  busy={busy}
+                  onStart={startCorrecting}
+                  onChange={setCorrection}
+                  onSend={sendCorrection}
+                  onCancel={() => setCorrecting(false)}
+                />
               )}
             </>
           )}
@@ -257,6 +293,112 @@ function ReportRow({
     </li>
   );
 }
+
+/**
+ * A posted report is never changed in place: people have read it. A member
+ * writes a correction; like an edit it waits for an approver on `/approvals`,
+ * then goes out as a reply under the post (or as a new message when that thread
+ * is out of reach) (#674). The latest one shows here.
+ */
+function PostedActions({
+  report,
+  correcting,
+  correction,
+  busy,
+  onStart,
+  onChange,
+  onSend,
+  onCancel,
+}: {
+  report: MeetingReport;
+  correcting: boolean;
+  correction: string;
+  busy: boolean;
+  onStart: () => void;
+  onChange: (text: string) => void;
+  onSend: () => void;
+  onCancel: () => void;
+}) {
+  const sending = report.correction_status === "sending";
+  return (
+    <div style={{ display: "grid", gap: "var(--space-8)" }}>
+      {report.correction_body ? (
+        <div
+          style={{
+            borderLeft: "2px solid var(--color-hairline)",
+            paddingLeft: "var(--space-12)",
+            display: "grid",
+            gap: "var(--space-4)",
+          }}
+        >
+          <span style={metaStyle}>
+            ✏️ 수정본
+            {report.corrected_by_name ? ` · ${report.corrected_by_name}` : ""}
+            {report.corrected_at ? ` · ${formatTime(report.corrected_at)}` : ""}
+            {report.correction_status ? ` · ${CORRECTION_STATUS[report.correction_status]}` : ""}
+          </span>
+          <div
+            style={{
+              whiteSpace: "pre-wrap",
+              fontSize: "var(--text-body)",
+              lineHeight: "var(--text-body-leading)",
+              color: "var(--color-ink-body)",
+            }}
+          >
+            <MaskedText>{report.correction_body}</MaskedText>
+          </div>
+        </div>
+      ) : null}
+      {!report.in_slack ? (
+        <p style={metaStyle}>이 리포트는 Slack에 올라가지 않아 수정본을 보낼 수 없습니다.</p>
+      ) : correcting ? (
+        <>
+          <label htmlFor={`report-correct-${report.meeting_id}`} style={metaStyle}>
+            수정본 작성 · 원래 게시물은 그대로 둡니다. 승인되면 그 아래 스레드에 올라갑니다.
+          </label>
+          <textarea
+            id={`report-correct-${report.meeting_id}`}
+            value={correction}
+            onChange={(event) => onChange(event.target.value)}
+            rows={Math.min(18, Math.max(6, correction.split("\n").length + 1))}
+            style={{
+              width: "100%",
+              font: "inherit",
+              fontSize: "var(--text-body)",
+              lineHeight: "var(--text-body-leading)",
+              color: "var(--color-ink-body)",
+              background: "var(--color-surface-panel)",
+              border: "1px solid var(--color-hairline)",
+              borderRadius: "var(--radius)",
+              padding: "var(--space-8)",
+            }}
+          />
+          <div style={{ display: "flex", gap: "var(--space-8)", alignItems: "center" }}>
+            <Button tone="primary" size="compact" onClick={onSend} disabled={busy}>
+              {busy ? "보내는 중…" : "승인 요청"}
+            </Button>
+            <Button tone="text" size="compact" onClick={onCancel} disabled={busy}>
+              취소
+            </Button>
+          </div>
+        </>
+      ) : (
+        <div>
+          <Button tone="secondary" size="compact" onClick={onStart} disabled={sending}>
+            {sending ? "수정본 보내는 중…" : "수정본 쓰기"}
+          </Button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+const CORRECTION_STATUS: Record<NonNullable<MeetingReport["correction_status"]>, string> = {
+  pending: "승인 대기",
+  sending: "보내는 중",
+  sent: "Slack에 올림",
+  failed: "보내지 못함 — 다시 쓸 수 있습니다",
+};
 
 function StatusChip({ report }: { report: MeetingReport }) {
   const posted = report.status === "posted";

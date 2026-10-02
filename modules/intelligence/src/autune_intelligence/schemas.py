@@ -102,6 +102,15 @@ class MeetingReportRead(BaseModel):
     edited_at: datetime | None
     updated_at: datetime
     """Send back as ``base_updated_at`` so a stale edit is refused, not saved over."""
+    in_slack: bool
+    """The post reached Slack and its message is known, so a correction can go under it."""
+    correction_body: str | None = None
+    """The latest correction to a posted report, as its author wrote it."""
+    corrected_by_name: str | None = None
+    corrected_at: datetime | None = None
+    correction_status: Literal["pending", "sending", "sent", "failed"] | None = None
+    """"pending" waits for approval (L2, #674); "sending" was approved and is being
+    posted; "failed" was approved but not posted within ``CORRECTION_SEND_WINDOW``."""
 
 
 class MeetingReportEdit(BaseModel):
@@ -110,6 +119,12 @@ class MeetingReportEdit(BaseModel):
     body: str
     base_updated_at: datetime | None = None
     """``updated_at`` as the editor saw it; a newer save makes this edit a 409."""
+
+
+class MeetingReportCorrection(BaseModel):
+    """A correction to a posted report, written on the dashboard card."""
+
+    body: str
 
 
 class DashboardScoreEntry(BaseModel):
