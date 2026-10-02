@@ -230,6 +230,27 @@ def test_open_items_stay_inside_the_team(session: Session) -> None:
     assert [i["id"] for i in result["items"]] == ["act_mine"]
 
 
+def test_another_teams_jira_issue_does_not_break_this_teams_open_items(session: Session) -> None:
+    """The list is read across teams and narrowed to this one afterwards, so
+    before #650 a Jira ref on anyone's item raised here for every team."""
+    item(session, "act_mine", due=TODAY + timedelta(days=1))
+    item(session, "act_theirs", due=TODAY + timedelta(days=1), meeting=OTHER_MEETING)
+    session.add(
+        ExtExternalRef(
+            action_item_id="act_theirs",
+            system="jira",
+            meeting_id=OTHER_MEETING,
+            external_id="AUT-7",
+            url="https://x.atlassian.net/browse/AUT-7",
+        )
+    )
+    session.flush()
+
+    result = tools.open_action_items(session, TEAM)
+
+    assert [i["id"] for i in result["items"]] == ["act_mine"]
+
+
 def test_open_items_are_late_soon_or_ownerless_and_never_done_or_draft(session: Session) -> None:
     item(session, "act_late", due=TODAY - timedelta(days=1))
     item(session, "act_soon", status="in_progress", due=TODAY + timedelta(days=3))
