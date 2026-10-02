@@ -29,6 +29,7 @@ absence of a prefix is what marks a table as shared.
 | `team_members` | User ↔ team membership and role |
 | `team_integrations` | One team's connection to Notion, Jira, Slack or Calendar |
 | `user_integrations` | One person's own connection to their Google Calendar |
+| `user_consents` | One person's agreement to one version of one document (terms, privacy policy, …) |
 | `meetings` | One analysis unit |
 | `participants` | One voice at a meeting, identified or not — usually one person, not always; see below |
 | `utterances` | One continuous stretch of speech, PII-masked |
@@ -56,6 +57,16 @@ if config is None:
     return  # this team has not connected Notion; skip the feature
 client = NotionClient(config.require_secret())
 ```
+
+`user_consents` records what a person agreed to on the consent page: which
+document, which version, when. Written by `packages/core`
+(`autune_core.consents`, behind `GET` and `POST /api/auth/consents`), read
+only for the person it is about, deleted with their account
+(`ON DELETE CASCADE`). The server stores the names and versions the page
+sends and does not know which version is current — the documents live with
+the screen (`apps/web/src/app/legal`), and a changed document is a new
+version nobody has agreed to yet. It records and does not gate: no API call
+is refused for a missing row.
 
 `user_integrations` is the per-person counterpart (#59, #435): a person's own
 calendar, which only they can grant and which is deleted with their

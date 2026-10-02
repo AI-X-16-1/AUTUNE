@@ -157,6 +157,36 @@ class UserIntegration(Base, TimestampMixin):
     write it."""
 
 
+class UserConsent(Base):
+    """One person's agreement to one version of one document -- the terms, the
+    privacy policy, whatever the consent page lists.
+
+    Written by ``autune_core`` (``consents.record_consents``), like
+    ``user_integrations``, and read only for the person it is about. The
+    row goes with the account. No ``updated_at``: an agreement is not
+    edited, and a changed document is a new version and a new row.
+    """
+
+    __tablename__ = "user_consents"
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id", "document", "version", name="uq_user_consents_user_document_version"
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    document: Mapped[str] = mapped_column(String(64), nullable=False)
+    """Which document, by the name the consent page gives it (``terms``,
+    ``privacy``, ...). Not an enum: the list is the page's, not the schema's."""
+    version: Mapped[str] = mapped_column(String(64), nullable=False)
+    agreed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
 class User(Base, TimestampMixin):
     __tablename__ = "users"
 

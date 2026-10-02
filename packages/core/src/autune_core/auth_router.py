@@ -35,6 +35,7 @@ from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Cookie, Depends, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -49,6 +50,7 @@ from .auth import (
     set_session_cookie,
 )
 from .auth_service import upsert_user_from_google
+from .consents import Consent, consents_of, record_consents
 from .crypto import ensure_configured
 from .db import get_session
 from .entities import Meeting, Team, TeamMember
@@ -293,6 +295,59 @@ def me(user: CurrentUser, session: Annotated[Session, Depends(get_session)]) -> 
         "display_name": user.display_name,
         "teams": [{"id": team_id, "name": name} for team_id, name in teams],
     }
+
+
+# --------------------------------------------------------------------------- #
+# What a person agreed to: recorded here, asked for by the consent page
+# --------------------------------------------------------------------------- #
+
+
+class _ConsentIn(BaseModel):
+    document: str
+    version: str
+
+
+class _ConsentsIn(BaseModel):
+    consents: list[_ConsentIn]
+
+
+def _consents_answer(consents: list[Consent]) -> dict[str, object]:
+    return {
+        "consents": [
+            {
+                "document": c.document,
+                "version": c.version,
+                "agreed_at": c.agreed_at.isoformat() if c.agreed_at else None,
+            }
+            for c in consents
+        ]
+    }
+
+
+@router.get("/consents")
+def my_consents(
+    user: CurrentUser, session: Annotated[Session, Depends(get_session)]
+) -> dict[str, object]:
+    """The documents and versions the signed-in person agreed to -- theirs
+    only. The consent page compares this with what it requires; the server
+    does not know which version is current (``autune_core.consents``)."""
+    return _consents_answer(consents_of(session, user.id))
+
+
+@router.post("/consents")
+def agree(
+    body: _ConsentsIn,
+    user: CurrentUser,
+    session: Annotated[Session, Depends(get_session)],
+) -> dict[str, object]:
+    """Record that the signed-in person agreed to each document and version
+    named. Agreeing again changes nothing: the first time is the one kept.
+    Nobody can agree for anyone else -- the person is the session's."""
+    recorded = record_consents(
+        session, user.id, [(item.document, item.version) for item in body.consents]
+    )
+    log.info("auth_consents_recorded", user_id=user.id, documents=len(body.consents))
+    return _consents_answer(recorded)
 
 
 # --------------------------------------------------------------------------- #

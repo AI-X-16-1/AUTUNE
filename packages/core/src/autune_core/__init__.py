@@ -23,6 +23,7 @@ from .entities import (
     TeamIntegration,
     TeamMember,
     User,
+    UserConsent,
     UserIntegration,
     Utterance,
 )
@@ -77,6 +78,7 @@ __all__ = [
     "TeamIntegration",
     "JiraAccess",
     "jira_access",
+    "UserConsent",
     "UserIntegration",
     "USER_SERVICES",
     "UserIntegrationConfig",
