@@ -97,3 +97,95 @@ def test_gemini_text_sends_through_the_privacy_guard() -> None:
     with pytest.raises(PrivacyViolationError):
         text.generate("지시", "연락처 010-1234-5678", json_answer=False)
     assert len(sent) == 1
+
+
+def _tools(reply_parts: list[dict[str, Any]], sent: list[dict[str, Any]]) -> Any:
+    from autune_agent.main.gemini import GeminiTools
+
+    model = GeminiTools(api_key="k", model="gemini-test", base_url="https://llm.test/v1beta")
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        sent.append(json.loads(request.content))
+        return httpx.Response(200, json={"candidates": [{"content": {"parts": reply_parts}}]})
+
+    model._client._client = httpx.Client(  # noqa: SLF001 - swap the transport only
+        base_url="https://llm.test/v1beta", transport=httpx.MockTransport(handle)
+    )
+    return model
+
+
+def test_tools_step_sends_declarations_and_returns_the_calls() -> None:
+    from autune_agent.main.toolcall import Declaration, FunctionCall
+
+    sent: list[dict[str, Any]] = []
+    parts = [{"functionCall": {"name": "gap__open_gaps", "args": {"meeting_id": "mtg_1"}}}]
+    decl = Declaration("gap__open_gaps", "Use this.", {"type": "OBJECT", "properties": {}})
+
+    step = _tools(parts, sent).step("지시", [{"role": "user", "parts": [{"text": "갭?"}]}], [decl])
+
+    assert step == [FunctionCall("gap__open_gaps", {"meeting_id": "mtg_1"})]
+    assert sent[0]["tools"][0]["functionDeclarations"][0]["name"] == "gap__open_gaps"
+
+
+def test_tools_step_returns_text_when_there_is_no_call() -> None:
+    assert _tools([{"text": "DONE"}], []).step("지시", [], []) == "DONE"
+
+
+def test_calls_win_over_text_in_one_reply() -> None:
+    from autune_agent.main.toolcall import FunctionCall
+
+    parts = [{"text": "먼저 볼게요"}, {"functionCall": {"name": "a__b", "args": {}}}]
+
+    assert _tools(parts, []).step("지시", [], []) == [FunctionCall("a__b", {})]
+
+
+def test_tools_step_keeps_the_parts_to_echo_back() -> None:
+    parts = [{"functionCall": {"name": "a__b", "args": {}}, "thoughtSignature": "c2ln"}]
+    model = _tools(parts, [])
+
+    model.step("지시", [], [])
+
+    assert model.last_parts == parts
+
+
+def test_a_thought_signature_is_not_scanned_or_counted() -> None:
+    # An opaque base64 token the model asks to get back; its digits are not
+    # meeting content and must not trip the account-number pattern.
+    sent: list[dict[str, Any]] = []
+    turns = [
+        {
+            "role": "model",
+            "parts": [
+                {
+                    "functionCall": {"name": "a__b"},
+                    "thoughtSignature": "1002123456789012",
+                }
+            ],
+        }
+    ]
+
+    _tools([{"text": "DONE"}], sent).step("지시", turns, [])
+
+    assert len(sent) == 1
+
+
+def test_tools_step_refuses_a_phone_number_before_it_leaves() -> None:
+    sent: list[dict[str, Any]] = []
+
+    with pytest.raises(PrivacyViolationError):
+        _tools([{"text": "x"}], sent).step(
+            "지시", [{"role": "user", "parts": [{"text": "010-1234-5678"}]}], []
+        )
+    assert sent == []
+
+
+def test_a_reply_with_no_candidates_is_empty_text() -> None:
+    from autune_agent.main.gemini import GeminiTools
+
+    model = GeminiTools(api_key="k", model="gemini-test", base_url="https://llm.test/v1beta")
+    model._client._client = httpx.Client(  # noqa: SLF001
+        base_url="https://llm.test/v1beta",
+        transport=httpx.MockTransport(lambda _r: httpx.Response(200, json={})),
+    )
+
+    assert model.step("지시", [], []) == ""
