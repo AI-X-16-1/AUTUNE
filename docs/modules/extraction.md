@@ -212,6 +212,24 @@ description) and the calendar. Nothing is republished: what C, D and E already
 received in `ExtractionResult` stays with them until they act on the same
 signal. Ids and counts only in the log.
 
+**When a line is corrected after the fact** (#586). A PII report (S30, #584)
+masks stored lines again and republishes `TranscriptReady` without naming them.
+Every item and decision keeps `source_digest`, a sha256 of the masked text it was
+drawn from (set when it is made, and recorded as a baseline by the first run that
+finds none). Each run compares it after its rebuild — also in a meeting a person
+has edited, where the rebuild keeps every item: a description that is the line
+itself reads the corrected line, tidied; a model summary is replaced the same way
+and flagged `needs_recheck`; a person's own text (a typed item, an edited
+description, a typed or reworded decision) is only flagged, because B cannot tell
+which of their words were the private ones; `due_text` is read again from the
+new line. Confirmed changes are queued to Notion, Jira and the calendar. The flag
+shows on the card and on the decision ("출처 발화가 정정됨 · 확인 필요") and is
+cleared by the person's next edit or review. A line that was *deleted* is not a
+corrected one: `forget_speech` drops the digest of every row it leaves behind,
+because the lines that remain hash differently from a digest taken over all of
+them, and the next run records a baseline instead of rewriting or flagging. The
+confirmation DM's quotation is #586's second part.
+
 ## Tables
 
 | Table | Purpose |
