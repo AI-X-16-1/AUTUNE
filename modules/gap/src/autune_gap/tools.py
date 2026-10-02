@@ -14,7 +14,7 @@ registry validates these dicts when it collects them.
 
 What holds for all three:
 
-- **Topics, never people or roles.** Neither result carries participation, a
+- **Topics, never people or roles.** No result carries participation, a
   participant id or a ``silent_share``. In a small team a role is a person, and
   whoever reads a Follow-up proposal is the team lead (agent-layer.md section
   3.1, privacy.md section 3). A gap's ``title`` is a template's item name
@@ -251,8 +251,9 @@ def gaps_by_id(
     most risky first. Do not use it to find what a meeting left open --
     ``open_gaps`` answers that.
 
-    Returns at most five gaps, in the same shape as ``open_gaps``. An id that
-    is dismissed, unknown or from another meeting is left out, so a cited gap
+    Reads the first five distinct ``gap_ids``, the most a proposal cites, and
+    returns the open ones in the same shape as ``open_gaps``. An id that is
+    dismissed, unknown or from another meeting is left out, so a cited gap
     missing from the result is closed. Nothing about who spoke.
     """
     meeting = _meeting(session, team_id, meeting_id)
@@ -261,17 +262,25 @@ def gaps_by_id(
     if not _analysed(session, meeting_id):
         return _not_analysed(meeting_id)
 
-    gaps = _open_gaps(session, meeting_id, gap_ids) if gap_ids else []
-    labels = _topic_labels(session, [gap.id for gap in gaps[:MAX_ITEMS]])
+    asked = list(dict.fromkeys(gap_ids))[:MAX_ITEMS]
+    gaps = _open_gaps(session, meeting_id, asked) if asked else []
+    labels = _topic_labels(session, [gap.id for gap in gaps])
+    # Count only this meeting's ids, so an id from elsewhere does not read as
+    # a cited gap that has since closed.
+    cited = session.scalar(
+        select(func.count())
+        .select_from(GapGap)
+        .where(GapGap.meeting_id == meeting_id, GapGap.id.in_(asked))
+    )
     summary = (
-        f"근거 갭 {len(set(gap_ids))}건 중 {len(gaps)}건이 아직 열려 있습니다."
+        f"근거 갭 {cited}건 중 {len(gaps)}건이 아직 열려 있습니다."
         if gaps
         else "근거 갭 중 열린 것이 없습니다."
     )
     return _result(
         summary=summary,
         items=[_gap_item(gap, labels) for gap in gaps],
-        evidence=[gap.id for gap in gaps[:MAX_ITEMS]],
+        evidence=[gap.id for gap in gaps],
     )
 
 
