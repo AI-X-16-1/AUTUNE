@@ -33,6 +33,7 @@ from autune_extraction.models import (
     ExtDecisionReview,
     ExtDecisionSource,
     ExtEditEvent,
+    ExtExternalRef,
 )
 
 GONE = ["utt_gone1", "utt_gone2"]
@@ -183,6 +184,46 @@ def test_unconfirmed_drafts_go_and_a_persons_draft_stays(
     assert item_state(session, "act_draft") is None
     assert item_state(session, "act_chatdraft") is None
     assert item_state(session, "act_userdraft") == ("act_userdraft 원문", None)
+
+
+@pytest.mark.parametrize("system", ["notion", "jira"])
+def test_a_draft_that_was_confirmed_once_is_kept_and_its_copy_follows(
+    session: Session, queued: list[tuple[str, str]], system: str
+) -> None:
+    """Moved back to 확인 필요 it still has its page or its issue (#657). Deleting
+    the row, as for a draft nobody accepted, would leave the deleted words
+    outside with nothing left to find them by; so it reads the placeholder and
+    its copies are queued, like a confirmed item."""
+    session.add(
+        ExtActionItem(
+            id="act_back",
+            meeting_id="mtg_1",
+            description="act_back 원문",
+            description_resolved=False,
+            due_text="금요일까지",
+            status="needs_confirmation",
+            confidence=0.9,
+            origin="model",
+            sources=[ExtActionItemSource(utterance_id="utt_gone1")],
+        )
+    )
+    session.flush()
+    session.add(
+        ExtExternalRef(
+            action_item_id="act_back", system=system, meeting_id="mtg_1", external_id="x"
+        )
+    )
+    session.commit()
+
+    tasks.forget_deleted_speech("user_1", GONE)
+
+    assert item_state(session, "act_back") == (PLACEHOLDER, None)
+    assert {task for task, ident in queued if ident == "act_back"} == {
+        "sync_action_item",
+        "sync_action_item_jira",
+        "sync_action_item_calendar",
+    }
+    assert item_state(session, "act_draft") is None, "a draft never confirmed still goes"
 
 
 def test_a_confirmed_line_reads_the_placeholder_the_rest_stays(

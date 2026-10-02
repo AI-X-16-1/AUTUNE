@@ -648,8 +648,8 @@ SPEECH_DELETED_TEXT = "삭제된 발화에서 만든 항목"
 
 @dataclass(frozen=True)
 class SpeechForgotten:
-    """What ``forget_speech`` did, by id: drafts deleted, and the confirmed items
-    and decisions whose text changed and whose copies outside must follow."""
+    """What ``forget_speech`` did, by id: drafts deleted, and the items and
+    decisions whose text changed and whose copies outside must follow."""
 
     deleted_items: tuple[str, ...] = ()
     changed_items: tuple[str, ...] = ()
@@ -677,7 +677,10 @@ def forget_speech(session: Session, utterance_ids: Collection[str]) -> SpeechFor
     ``utterance_ids``:
 
     - an unconfirmed draft the model or the chat made is deleted -- nobody has
-      accepted it, and it is only the deleted words restated;
+      accepted it, and it is only the deleted words restated. A draft that was
+      confirmed once and moved back is not that: it has a copy outside, and
+      deleting its row would leave the words there with nothing left to find
+      them by. It is kept and treated as the next bullet says (#657);
     - a confirmed item whose description is the line itself (not a model's
       summary, not a person's writing) reads ``SPEECH_DELETED_TEXT``, and its
       ``due_text`` -- a fragment of the line -- is cleared; a summary or a
@@ -713,7 +716,8 @@ def forget_speech(session: Session, utterance_ids: Collection[str]) -> SpeechFor
     changed: list[str] = []
     for item in items:
         drafted = item.origin in ("model", "chat")
-        if drafted and item.status == ActionStatus.NEEDS_CONFIRMATION.value:
+        follows = copies_follow(session, item)
+        if drafted and not follows:
             deleted.append(item.id)
             session.delete(item)
             continue
@@ -730,7 +734,7 @@ def forget_speech(session: Session, utterance_ids: Collection[str]) -> SpeechFor
         if item.due_text is not None:
             item.due_text = None
             touched = True
-        if touched and item.status != ActionStatus.NEEDS_CONFIRMATION.value:
+        if touched and follows:
             changed.append(item.id)
 
     decisions = session.scalars(
@@ -2690,8 +2694,8 @@ def stored_digest(session: Session, utterance_ids: Sequence[str]) -> str | None:
 
 @dataclass(frozen=True)
 class SourceCorrections:
-    """What ``apply_source_corrections`` changed, by id -- the confirmed ones,
-    whose copies in Notion, Jira and calendars must follow."""
+    """What ``apply_source_corrections`` changed, by id -- the ones whose copies
+    in Notion, Jira and calendars must follow (``copies_follow``)."""
 
     changed_items: tuple[str, ...] = ()
     changed_decisions: tuple[str, ...] = ()
@@ -2731,8 +2735,9 @@ def apply_source_corrections(
 
     A row with no digest yet records one and changes nothing. Runs after this
     run's rebuild, so what it rebuilt already matches. No edit events: no person
-    corrected anything. Returns the confirmed rows whose outside copies must
-    follow.
+    corrected anything. Returns the rows whose outside copies must follow: the
+    confirmed ones, and an item moved back to 확인 필요 that still has a copy
+    outside (``copies_follow``).
     """
     meeting = session.get(Meeting, meeting_id)
     day = meeting_day(meeting.started_at if meeting is not None else None)
@@ -2767,7 +2772,7 @@ def apply_source_corrections(
             due = parse_due(line, day)
             item.due_text = due.text if due is not None else None
         flagged += int(item.needs_recheck)
-        if item.status != ActionStatus.NEEDS_CONFIRMATION.value:
+        if copies_follow(session, item):
             changed.append(item.id)
 
     reviews = {
@@ -3581,10 +3586,31 @@ def _update_or_replace_page(
     return "updated"
 
 
-def has_notion_page(session: Session, action_item_id: str) -> bool:
-    """Whether the item was ever sent to Notion -- confirmed once, whatever it
-    is now."""
-    return session.get(ExtExternalRef, (action_item_id, NOTION)) is not None
+def has_copy_outside(session: Session, action_item_id: str) -> bool:
+    """Whether the item was ever sent out -- a Notion page or a Jira issue, made
+    when it was confirmed -- whatever its status is now."""
+    return (
+        session.scalar(
+            select(ExtExternalRef.action_item_id)
+            .where(ExtExternalRef.action_item_id == action_item_id)
+            .limit(1)
+        )
+        is not None
+    )
+
+
+def copies_follow(session: Session, item: ExtActionItem) -> bool:
+    """Whether what this item says outside has to follow what it says here.
+
+    A confirmed item, and one that was confirmed once: moved back to 확인 필요
+    it keeps its Notion page and its Jira issue (decided with the user,
+    2026-10-01), so it is a draft on the board and a record outside. Asking
+    only for the status left such an item's page holding a line that had been
+    deleted or corrected here (#657). One rule for the board's edits, a
+    deleted speech and a corrected line."""
+    return item.status != ActionStatus.NEEDS_CONFIRMATION.value or has_copy_outside(
+        session, item.id
+    )
 
 
 def notion_url(page_id: str) -> str:

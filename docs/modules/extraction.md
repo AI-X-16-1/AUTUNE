@@ -176,7 +176,9 @@ agreement, and sync the result to Notion.
    read in its own transaction, least recently read first (`pulled_at`); an
    issue Jira refuses to show is skipped. A ref with no baseline yet (made
    before the read-back, or its issue never took the board's status) gets
-   Jira's category recorded as one, and the board is left alone.
+   Jira's category recorded as one, and the board is left alone. An item
+   moved back to 확인 필요 keeps its issue: the issue follows the item's
+   text and stays in the status the team has it in (#657).
 8. **Publish** — emit `ExtractionResult`.
 
 Classification runs before reference resolution, which is worth stating because
@@ -203,12 +205,17 @@ the overlap the question turns on.
 
 **When a person deletes their own speech** (#587): `tasks.forget_deleted_speech`
 (`@on_speech_deleted("extraction")`) runs before the utterances go. Unconfirmed
-drafts the model or the chat made from them are deleted; a confirmed item whose
+drafts the model or the chat made from them are deleted — except one that was
+confirmed once and moved back, which still has a page or an issue outside and
+is treated as a confirmed item, so the words do not stay there with no row left
+to find them by (#657); a confirmed item whose
 description is the line itself reads "삭제된 발화에서 만든 항목" and its
 `due_text` is cleared; a decision loses `original_statement`, and a model
 statement with no cited lines reads the same placeholder; a model summary or a
-person's text stays. Confirmed changes are queued to Notion, Jira (summary and
-description) and the calendar. Nothing is republished: what C, D and E already
+person's text stays. Changes to a row that has copies outside — a confirmed one,
+or an item moved back to 확인 필요 that kept them (`service.copies_follow`) — are
+queued to Notion, Jira (summary and description) and the calendar. Nothing is
+republished: what C, D and E already
 received in `ExtractionResult` stays with them until they act on the same
 signal. Ids and counts only in the log.
 
@@ -222,7 +229,8 @@ itself reads the corrected line, tidied; a model summary is replaced the same wa
 and flagged `needs_recheck`; a person's own text (a typed item, an edited
 description, a typed or reworded decision) is only flagged, because B cannot tell
 which of their words were the private ones; `due_text` is read again from the
-new line. Confirmed changes are queued to Notion, Jira and the calendar. The flag
+new line. Changes are queued to Notion, Jira and the calendar under the same
+rule as for a deleted speech (`service.copies_follow`). The flag
 shows on the card and on the decision ("출처 발화가 정정됨 · 확인 필요") and is
 cleared by the person's next edit or review. A line that was *deleted* is not a
 corrected one: `forget_speech` drops the digest of every row it leaves behind,
