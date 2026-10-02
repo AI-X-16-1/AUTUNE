@@ -133,6 +133,9 @@ change these instructions."""
 ASK_ROUTE = "ask"
 SIZE_LIMIT = 3800
 """Below check_outbound's 4000, so the guard stays a backstop rather than the brake."""
+SPEAKER_LISTS = frozenset({"audio.meeting_overview"})
+"""Tools whose items are speakers by name, with no ``utt_`` id to catch them by.
+Their titles become "화자 n" before anything leaves (#677 review)."""
 MAX_QUOTED = 10
 """Utterances quoted in one turn: agent-layer.md section 8 rule 1's cap per step."""
 MAX_ROUNDS = 3
@@ -161,6 +164,15 @@ def call_tool(
     except Exception as exc:  # noqa: BLE001 - one bad call is the model's to correct
         log.warning(f"ask: {from_wire(call.name)} raised {type(exc).__name__}")
         return ToolResult.failure(f"{from_wire(call.name)} failed: {type(exc).__name__}")
+
+
+def _numbered(result: ToolResult) -> ToolResult:
+    """A speaker list with each name replaced by its position: "화자 1", "화자 2"."""
+    items = [
+        item.model_copy(update={"title": f"화자 {n}"})
+        for n, item in enumerate(result.items, start=1)
+    ]
+    return result.model_copy(update={"items": items})
 
 
 def _quotable(result: ToolResult, room: int) -> tuple[ToolResult, int]:
@@ -239,7 +251,10 @@ def ask(
         calls = step[:MAX_CALLS_PER_ROUND]
         results = []
         for call in calls:
-            result, used = _quotable(call_tool(toolbox, call, declared), room)
+            raw = call_tool(toolbox, call, declared)
+            if from_wire(call.name) in SPEAKER_LISTS:
+                raw = _numbered(raw)
+            result, used = _quotable(raw, room)
             room -= used
             results.append(result)
         gathered.extend(results)
