@@ -31,6 +31,7 @@ from autune_core.oauth.google import (
     get_google_client,
 )
 from autune_core.oauth.state import InMemoryStateStore, OAuthTransaction, get_state_store
+from autune_core.settings import Settings
 from autune_core.user_integrations import UserIntegrationConfig
 
 ME = "user_me"
@@ -113,7 +114,22 @@ def world(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     app.dependency_overrides[get_session] = lambda: db
     app.dependency_overrides[get_state_store] = lambda: store
     app.dependency_overrides[get_google_client] = lambda: google
+    # No second client unless a test gives one -- and never the one a
+    # developer's own ``.env`` would build, which would reach Google.
+    monkeypatch.setattr(auth_router_module, "get_google_integration_client", lambda: None)
     return {"app": app, "store": store, "google": google, "grants": grants, "configs": configs}
+
+
+def with_integration_client(world: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> FakeGoogle:
+    """Give the deployment a second Google client, apart from the sign-in one."""
+    second = FakeGoogle()
+    second.grant = GoogleGrant(
+        id_token="id-token",
+        refresh_token="1//from-the-integration-client",
+        scopes=frozenset({"openid", CALENDAR_SCOPE}),
+    )
+    monkeypatch.setattr(auth_router_module, "get_google_integration_client", lambda: second)
+    return second
 
 
 def signed_in(world: dict[str, Any], user_id: str = ME) -> TestClient:
@@ -314,6 +330,90 @@ def test_disconnect_forgets_even_when_google_does_not_answer(world: dict[str, An
 
     assert body == {"connected": False, "revoked": False}
     assert world["grants"] == {}
+
+
+# --- a deployment with a second client for what a person connects ---------------------
+
+
+def test_with_an_integration_client_the_calendar_goes_through_it_start_to_finish(
+    world: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Start and callback have to be the same client: Google exchanges a code
+    only for the client it issued it to. The sign-in client is not asked for
+    anything."""
+    second = with_integration_client(world, monkeypatch)
+    exchanged: list[str] = []
+    world["google"].exchange_grant = lambda code: exchanged.append(code)  # type: ignore[method-assign]
+
+    client = signed_in(world)
+    response = callback(client, start(client))
+
+    assert second.asked == {"scope": f"openid {CALENDAR_SCOPE}", "offline": True}
+    assert world["google"].asked == {}
+    assert exchanged == []
+    assert response.status_code == 303
+    assert world["grants"] == {ME: "1//from-the-integration-client"}
+
+
+def test_with_an_integration_client_disconnect_revokes_through_it(
+    world: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    second = with_integration_client(world, monkeypatch)
+    world["grants"][ME] = "1//refresh"
+
+    signed_in(world).post("/api/auth/google/calendar/disconnect")
+
+    assert second.revoked == ["1//refresh"]
+    assert world["google"].revoked == []
+
+
+def test_an_integration_client_leaves_sign_in_on_the_sign_in_client(
+    world: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    second = with_integration_client(world, monkeypatch)
+    # Sign-in asks with no extra arguments, which is what a fake nobody
+    # called also holds -- so both start from something else.
+    world["google"].asked = second.asked = {"called": False}
+
+    response = TestClient(world["app"], follow_redirects=False).get("/api/auth/google/start")
+
+    assert response.status_code == 307
+    assert world["google"].asked == {}
+    assert second.asked == {"called": False}
+
+
+def test_the_integration_client_is_built_only_when_both_values_are_set(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """And it lands on the sign-in redirect URI: one callback finishes both."""
+    from autune_core.oauth import google as google_module
+
+    def settings(**integration: str) -> Settings:
+        return Settings(
+            _env_file=None,
+            env="local",
+            google_client_id="login-id",
+            google_client_secret="login-secret",
+            google_redirect_uri="http://localhost:3000/api/auth/google/callback",
+            google_integration_client_id=integration.get("id", ""),
+            google_integration_client_secret=integration.get("secret", ""),
+        )
+
+    build = google_module.get_google_integration_client.__wrapped__
+    monkeypatch.setattr(google_module, "get_settings", lambda: settings())
+    assert build() is None
+
+    monkeypatch.setattr(
+        google_module, "get_settings", lambda: settings(id="cal-id", secret="cal-s")
+    )
+    client = build()
+    assert client is not None
+    url = client.authorization_url(
+        state="s", nonce="n", scope=f"openid {CALENDAR_SCOPE}", offline=True
+    )
+    query = parse_qs(urlsplit(url).query)
+    assert query["client_id"] == ["cal-id"]
+    assert query["redirect_uri"] == ["http://localhost:3000/api/auth/google/callback"]
 
 
 # --- the client and the state, at their own doors -------------------------------------

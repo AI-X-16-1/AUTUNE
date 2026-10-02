@@ -611,14 +611,13 @@ def _calendars(session: Session) -> Iterator[calendar_sync.CalendarFor]:
     opened closed on the way out.
 
     Each person's own grant (``user_integrations``, #444) is refreshed with the
-    deployment's Google client (core's ``google_client_id``/``google_client_secret``,
-    #425); a deployment without them has nobody connected as far as this is
-    concerned. A refused refresh token raises ``ReconnectRequiredError`` -- an
+    Google client it was issued to -- core's ``google_integration_credentials``:
+    the deployment's integration client when it has one, the sign-in client
+    otherwise (#425). A deployment with neither has nobody connected as far as
+    this is concerned. A refused refresh token raises ``ReconnectRequiredError`` -- an
     ``IntegrationError`` -- for the caller to handle.
     """
-    core = get_core_settings()
-    client_id = core.google_client_id
-    client_secret = core.google_client_secret
+    client_id, client_secret = get_core_settings().google_integration_credentials
     opened: dict[str, tuple[calendar_sync.CalendarEvents, str]] = {}
     clients: list[CalendarClient] = []
 
@@ -1091,8 +1090,7 @@ def forget_user_calendar_events(user_id: str) -> None:
 
 def _google_client_configured() -> bool:
     """Whether this deployment can refresh anyone's Google grant at all."""
-    core = get_core_settings()
-    return bool(core.google_client_id and core.google_client_secret)
+    return all(get_core_settings().google_integration_credentials)
 
 
 def _remove_events(

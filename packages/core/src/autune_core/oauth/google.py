@@ -11,10 +11,12 @@ Authorization Code flow, confidential client:
 
 No Google access token is kept — sign-in needs the ID token and nothing else.
 
-**Calendar is a second request on the same client** (#435): a signed-in person
-asks for ``calendar.events`` with ``access_type=offline``, and the refresh token
-Google returns is theirs, stored in ``user_integrations``. Same client id, same
-redirect URI -- nothing new to register in the Google Cloud console.
+**Calendar is a second request** (#435): a signed-in person asks for
+``calendar.events`` with ``access_type=offline``, and the refresh token Google
+returns is theirs, stored in ``user_integrations``. It goes to the deployment's
+integration client when one is set (``get_google_integration_client``) and to
+the sign-in client otherwise -- the same redirect URI either way, since one
+callback finishes both.
 """
 
 from __future__ import annotations
@@ -244,5 +246,22 @@ def get_google_client() -> GoogleOAuthClient:
     return GoogleOAuthClient(
         client_id=settings.google_client_id,
         client_secret=settings.google_client_secret,
+        redirect_uri=settings.google_redirect_uri,
+    )
+
+
+@lru_cache
+def get_google_integration_client() -> GoogleOAuthClient | None:
+    """The client a person's calendar is connected with, when the deployment has
+    a second one for that (``Settings.google_integration_client_id``). ``None``
+    when it has not: the caller then uses the sign-in client, which is what
+    every deployment did before the second one existed. The redirect URI is
+    the sign-in client's -- one callback finishes both flows."""
+    settings = get_settings()
+    if not settings.google_integration_configured:
+        return None
+    return GoogleOAuthClient(
+        client_id=settings.google_integration_client_id,
+        client_secret=settings.google_integration_client_secret,
         redirect_uri=settings.google_redirect_uri,
     )

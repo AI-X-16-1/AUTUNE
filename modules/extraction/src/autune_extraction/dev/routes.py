@@ -189,13 +189,16 @@ def connect_notion(raw: Annotated[dict[str, Any], Body()], session: SessionDep) 
 @router.post("/connect-calendar", include_in_schema=False)
 def connect_calendar(raw: Annotated[dict[str, Any], Body()], session: SessionDep) -> dict[str, str]:
     body = _read_body(raw, ConnectCalendar)
-    core = get_core_settings()
-    client_id = core.google_client_id
-    client_secret = core.google_client_secret
+    # The client a calendar grant is issued to: the integration client when
+    # the deployment has one, the sign-in client otherwise.
+    client_id, client_secret = get_core_settings().google_integration_credentials
     if not client_id or not client_secret:
         raise HTTPException(
             status_code=400,
-            detail="AUTUNE_GOOGLE_CLIENT_ID and AUTUNE_GOOGLE_CLIENT_SECRET are not set",
+            detail=(
+                "no Google client is set: AUTUNE_GOOGLE_INTEGRATION_CLIENT_ID/_SECRET, "
+                "or AUTUNE_GOOGLE_CLIENT_ID/_SECRET"
+            ),
         )
     try:
         token = refresh_access_token(
