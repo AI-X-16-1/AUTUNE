@@ -1,6 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+
+import { ApiError } from "@/shared/api/client";
 
 import { cancelTranscription, restartTranscription } from "../api";
 import type { MeetingDetail } from "../types";
@@ -23,6 +25,14 @@ export function TranscriptionControls({ meeting }: { meeting: MeetingDetail }) {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // A press leaves `pending` set until the server's view changes. A restart
+  // keeps the meeting `cancellable` (the new attempt is queued), so without
+  // this the 처리 중단 button would stay disabled until a remount.
+  useEffect(() => {
+    setPending(false);
+    setConfirming(false);
+  }, [meeting.stalled, meeting.restartable, meeting.cancellable]);
+
   if (!meeting.cancellable && !meeting.stalled) return null;
 
   const run = async (call: (id: string) => Promise<unknown>) => {
@@ -32,7 +42,7 @@ export function TranscriptionControls({ meeting }: { meeting: MeetingDetail }) {
       await call(meeting.meeting_id);
       setConfirming(false);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "요청을 처리하지 못했습니다.");
+      setError(errorCopy(caught));
       setPending(false);
     }
   };
@@ -45,21 +55,21 @@ export function TranscriptionControls({ meeting }: { meeting: MeetingDetail }) {
       {meeting.stalled && (
         <p role="status" className="text-[var(--color-ink-strong)]">
           {meeting.restartable
-            ? "2분 넘게 처리에 응답이 없어요. 서버가 다시 시작됐을 수 있어요."
-            : "서버에 녹음 파일이 남아 있지 않아 다시 시작할 수 없어요. 처리를 취소하고 녹음을 다시 올려 주세요. 실시간으로 녹음한 회의라면 다시 올릴 파일이 없을 수도 있어요."}
+            ? "2분 넘게 처리 응답이 없습니다. 서버가 다시 시작되었을 수 있습니다."
+            : "서버에 녹음 파일이 남아 있지 않아 다시 시작할 수 없습니다. 처리를 중단한 뒤 녹음을 다시 올려 주세요. 실시간으로 녹음한 회의는 올릴 파일이 없을 수 있습니다."}
         </p>
       )}
 
       {confirming ? (
         <p className="text-[var(--color-ink-strong)]">
-          처리를 취소하면 서버에 있는 원본 녹음이 삭제돼요.{" "}
+          처리를 중단하면 서버에 있는 원본 녹음이 삭제됩니다.{" "}
           <button
             type="button"
             className={link}
             disabled={pending}
             onClick={() => run(cancelTranscription)}
           >
-            취소하기
+            중단하기
           </button>{" "}
           <button
             type="button"
@@ -89,7 +99,7 @@ export function TranscriptionControls({ meeting }: { meeting: MeetingDetail }) {
               disabled={pending}
               onClick={() => setConfirming(true)}
             >
-              처리 취소
+              처리 중단
             </button>
           )}
         </p>
@@ -102,4 +112,20 @@ export function TranscriptionControls({ meeting }: { meeting: MeetingDetail }) {
       )}
     </div>
   );
+}
+
+/**
+ * Korean copy for a refusal, by the server's error code. The server's own
+ * message is English and names the meeting id, so it is never shown.
+ */
+const ERROR_COPY: Record<string, string> = {
+  nothing_to_cancel: "이미 끝났거나 중단된 처리입니다.",
+  not_stalled: "처리가 다시 응답하고 있어 다시 시작하지 않았습니다.",
+  recording_gone: "서버에 녹음 파일이 남아 있지 않아 다시 시작할 수 없습니다.",
+  enqueue_failed: "처리를 다시 시작하지 못했습니다. 녹음을 다시 올려 주세요.",
+};
+
+function errorCopy(caught: unknown): string {
+  const known = caught instanceof ApiError ? ERROR_COPY[caught.code] : undefined;
+  return known ?? "요청을 처리하지 못했습니다.";
 }

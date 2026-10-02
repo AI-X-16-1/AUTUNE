@@ -129,7 +129,7 @@ export function ProcessingStages({ meeting }: { meeting: MeetingDetail }) {
             }}
           >
             {meeting.cancelled
-              ? "처리를 취소했어요. 서버에 있던 원본 녹음은 삭제됐어요."
+              ? "처리를 중단했습니다. 원본 녹음은 삭제되었습니다."
               : "처리에 실패했습니다. 원본 녹음은 삭제되었습니다."}
           </span>{" "}
           <Link
