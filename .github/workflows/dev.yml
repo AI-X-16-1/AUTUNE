@@ -32,6 +32,10 @@ jobs:
       DEV_BASIC_AUTH_PASSWORD: ${{ secrets.DEV_BASIC_AUTH_PASSWORD }}
       # Optional: without it /api/agent/chat refuses and the rest works.
       AUTUNE_AGENT_LLM_API_KEY: ${{ secrets.AUTUNE_AGENT_LLM_API_KEY }}
+      # Optional: the provider key under its shared name, which module B
+      # reads when its own is blank (#701). It reaches the containers and,
+      # with B's classifier pinned to `fake`, calls nothing.
+      AUTUNE_LLM_API_KEY: ${{ secrets.AUTUNE_LLM_API_KEY }}
       # The address the domain serves. Google sends sign-in back here, and
       # the api sends the browser here afterwards, so it must be the origin
       # the session cookie belongs to.
