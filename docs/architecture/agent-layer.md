@@ -206,9 +206,9 @@ iterating the subagent list, never by appending to a registry:
 SUBAGENT = Subagent(
     name="followup",
     description="""Use when deciding whether a team needs another meeting ...""",
-    tools=[...],  # names from C's, B's and D's own tools.py
+    tools=[...],  # names from C's, B's and A's own tools.py
     build=build_graph,  # returns a compiled LangGraph subgraph
-    triggers=[Periodic(hours=6)],
+    triggers=(INTELLIGENCE_COMPLETED,),
 )
 ```
 

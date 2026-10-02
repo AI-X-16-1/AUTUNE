@@ -267,6 +267,7 @@ def test_a_republished_event_proposes_nothing_while_the_item_is_open(
     assert again.proposed == []
     # It got as far as B's read and stopped on the open item, not on a failed read.
     assert calls(again)[-1] == (OPEN_ITEM, True), calls(again)
+    assert all(ok for _, ok in calls(again)), calls(again)
     assert [p.status for p in pending(session, team["team"])] == ["approved"]
     assert len(followup_items(session, team["team"])) == 1
 
