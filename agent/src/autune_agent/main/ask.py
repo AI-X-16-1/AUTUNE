@@ -23,7 +23,7 @@ from autune_core import get_logger
 from autune_core.errors import PrivacyViolationError
 
 from .gemini import ADDRESSING
-from .registry import BudgetExceededError, RunScope, Tool, Toolbox
+from .registry import ASKER_PARAMETER, BudgetExceededError, RunScope, Tool, Toolbox
 from .toolcall import (
     Declaration,
     FunctionCall,
@@ -53,6 +53,7 @@ MEETING_TOOLS = (
 TEAM_TOOLS = (
     "audio.recent_meetings",
     "extraction.open_action_items",
+    "extraction.person_action_items",
     "extraction.workload_by_owner",
     "context.list_decisions",
     "context.decision_thread",
@@ -112,8 +113,11 @@ def declare(tools: Mapping[str, Tool], scope: RunScope) -> list[Declaration]:
                 log.warning(f"ask: {name} has a parameter the model cannot fill")
                 usable = False
                 break
+            asker = p.name == ASKER_PARAMETER and scope.user_id is not None
+            if asker:
+                schema = {**schema, "description": "Leave out for the person asking."}
             properties[p.name] = schema
-            if p.default is inspect.Parameter.empty:
+            if p.default is inspect.Parameter.empty and not asker:
                 required.append(p.name)
         if not usable:
             continue

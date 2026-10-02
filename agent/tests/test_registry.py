@@ -312,3 +312,36 @@ def test_a_missing_argument_other_than_the_meeting_is_named_from_the_code() -> N
     box = Toolbox(tools, SESSION, CallBudget(), allowed=tools, scope=SCOPE)
 
     assert box.call("extraction.search").reason == "missing argument: query"
+
+
+def _person_tool(seen: list[str]) -> Tool:
+    def person_action_items(session: Any, team_id: str, user_id: str) -> dict[str, Any]:
+        seen.append(user_id)
+        return _payload()
+
+    return Tool(
+        name="extraction.person_action_items", description="Use this.", fn=person_action_items
+    )
+
+
+def test_a_read_without_a_user_id_is_about_the_person_asking() -> None:
+    # "내 기한 지난 거" -- the model cannot know the asker's id; the run does.
+    seen: list[str] = []
+    tools = {"extraction.person_action_items": _person_tool(seen)}
+    scope = RunScope(team_id="team_a", user_id="user_me")
+    box = Toolbox(tools, SESSION, CallBudget(), allowed=tools, scope=scope)
+
+    assert box.call("extraction.person_action_items").ok is True
+    assert box.call("extraction.person_action_items", user_id="user_other").ok is True
+    assert seen == ["user_me", "user_other"]
+
+
+def test_a_run_nobody_asked_for_fills_in_no_user() -> None:
+    seen: list[str] = []
+    tools = {"extraction.person_action_items": _person_tool(seen)}
+    box = Toolbox(tools, SESSION, CallBudget(), allowed=tools, scope=SCOPE)
+
+    result = box.call("extraction.person_action_items")
+
+    assert result.ok is False and result.reason == "missing argument: user_id"
+    assert seen == []
