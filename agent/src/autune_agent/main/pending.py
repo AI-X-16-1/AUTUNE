@@ -82,8 +82,10 @@ def queue_l2(
     The new rows supersede the same subagent's earlier pending rows for the
     team: those about the same meeting, or, when ``team_wide`` (the subagent's
     ``proposals_per == "team"``), all of them whatever meeting they came from.
-    A chat turn supersedes nothing: someone asking on a meeting page must not
-    retire the proposal the pipeline left waiting for an approver (#651 review).
+    A team-wide judgment replaces the last one whoever asked, so one item is
+    never left proposed to two people (#636). A chat about a meeting replaces
+    only an earlier chat's rows: someone asking on a meeting page must not
+    retire the proposal the pipeline left there for an approver (#651 review).
     """
     refused: list[dict[str, Any]] = []
     subagent = run.route or ""
@@ -102,13 +104,20 @@ def queue_l2(
             )
             continue
         from_chat = (run.trigger or {}).get("kind") == "chat"
-        if not from_chat and (team_wide or run.meeting_id is not None):
-            same_meeting = () if team_wide else (AgentPendingAction.meeting_id == run.meeting_id,)
+        if team_wide or run.meeting_id is not None:
+            narrower: tuple[Any, ...] = ()
+            if not team_wide:
+                narrower = (AgentPendingAction.meeting_id == run.meeting_id,)
+                if from_chat:
+                    chat_runs = select(AgentRun.id).where(
+                        AgentRun.trigger["kind"].as_string() == "chat"
+                    )
+                    narrower += (AgentPendingAction.run_id.in_(chat_runs),)
             session.execute(
                 update(AgentPendingAction)
                 .where(
                     AgentPendingAction.team_id == run.team_id,
-                    *same_meeting,
+                    *narrower,
                     AgentPendingAction.subagent == subagent,
                     AgentPendingAction.status == "pending",
                     # One run's proposals never supersede each other; a row whose

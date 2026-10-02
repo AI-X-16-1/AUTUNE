@@ -388,12 +388,42 @@ def test_a_team_wide_run_about_no_meeting_supersedes_too(
     """Asked twice in chat, a team-wide subagent leaves one proposal, not two."""
     runs = []
     for _ in range(2):
-        run = _run(session, team, "workload", None)
+        run = _run(session, team, "workload", None, trigger={"kind": "chat"})
         queue_l2(session, run=run, proposed=[_reassign()], actions={}, team_wide=True)
         runs.append(run)
 
     rows = {r.run_id: r.status for r in session.scalars(select(AgentPendingAction))}
     assert rows == {runs[0].id: "superseded", runs[1].id: "pending"}
+
+
+def test_a_team_wide_chat_supersedes_what_the_timer_left(
+    session: Session, team: dict[str, str]
+) -> None:
+    """A team-wide judgment replaces the last one, whoever asked (#651 review):
+    otherwise the same item stays proposed to two people."""
+    timer = _run(session, team, "workload", None, trigger={"kind": "periodic"})
+    queue_l2(session, run=timer, proposed=[_reassign()], actions={}, team_wide=True)
+    chat = _run(session, team, "workload", None, trigger={"kind": "chat"})
+
+    queue_l2(session, run=chat, proposed=[_reassign()], actions={}, team_wide=True)
+
+    rows = {r.run_id: r.status for r in session.scalars(select(AgentPendingAction))}
+    assert rows == {timer.id: "superseded", chat.id: "pending"}
+
+
+def test_a_chat_on_a_meeting_replaces_only_an_earlier_chat(
+    session: Session, team: dict[str, str]
+) -> None:
+    event = _run(session, team, "followup", team["meeting"])
+    queue_l2(session, actions={}, run=event, proposed=[_l2("extraction.add_followup_item")])
+    first = _run(session, team, "followup", team["meeting"], trigger={"kind": "chat"})
+    queue_l2(session, actions={}, run=first, proposed=[_l2("extraction.add_followup_item")])
+    second = _run(session, team, "followup", team["meeting"], trigger={"kind": "chat"})
+
+    queue_l2(session, actions={}, run=second, proposed=[_l2("extraction.add_followup_item")])
+
+    rows = {r.run_id: r.status for r in session.scalars(select(AgentPendingAction))}
+    assert rows == {event.id: "pending", first.id: "superseded", second.id: "pending"}
 
 
 def test_a_team_wide_run_leaves_other_subagents_and_other_teams_alone(
