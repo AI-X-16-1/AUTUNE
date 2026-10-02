@@ -9,6 +9,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, date, datetime, timedelta
+from typing import Any
 
 import pytest
 from sqlalchemy import create_engine
@@ -752,3 +753,90 @@ def test_item_rows_say_whether_they_are_late(session: Session) -> None:
     (row,) = tools.person_action_items(session, TEAM, "user_in")["items"]
 
     assert (row["overdue"], row["needs_reassignment"]) == (True, False)
+
+
+# --- a meeting past its retention window (#656) -------------------------------------
+
+EXPIRED = "mtg_expired"
+
+
+def expired_meeting(s: Session) -> None:
+    """One of the team's own meetings, held last week, past a short retention
+    window and still in the table: A's sweep has not taken it yet. It holds an
+    overdue item of ``user_in`` and an open follow-up item."""
+    now = datetime.now(UTC)
+    s.add(
+        Meeting(
+            id=EXPIRED,
+            team_id=TEAM,
+            title="지난 회의",
+            started_at=now - timedelta(days=7),
+            expires_at=now - timedelta(days=1),
+        )
+    )
+    s.flush()
+    item(s, "act_old", due=TODAY - timedelta(days=1), meeting=EXPIRED)
+    s.add(
+        ExtActionItem(
+            id="act_old_followup",
+            meeting_id=EXPIRED,
+            description="후속 회의 잡기",
+            status="todo",
+            confidence=1.0,
+            origin="followup",
+        )
+    )
+    s.flush()
+
+
+@pytest.mark.parametrize(
+    ("tool", "args"),
+    [
+        (tools.open_action_items, (TEAM,)),
+        (tools.workload_by_owner, (TEAM,)),
+        (tools.person_action_items, (TEAM, "user_in")),
+        (tools.open_followup_item, (TEAM,)),
+    ],
+)
+def test_a_team_read_does_not_see_a_meeting_past_retention(
+    session: Session, tool: Any, args: tuple[str, ...]
+) -> None:
+    item(session, "act_live", due=TODAY + timedelta(days=1))
+    before = tool(session, *args)
+
+    expired_meeting(session)
+
+    assert tool(session, *args) == before
+
+
+@pytest.mark.parametrize(
+    "tool",
+    [
+        tools.meeting_action_items,
+        tools.unresolved_questions,
+        tools.review_state,
+        tools.meeting_decisions,
+    ],
+)
+def test_a_meeting_past_retention_is_a_meeting_that_is_not_there(
+    session: Session, tool: Any
+) -> None:
+    expired_meeting(session)
+
+    result = tool(session, EXPIRED)
+
+    assert (result["ok"], result["reason"], result["items"]) == (False, f"no meeting {EXPIRED}", [])
+
+
+def test_an_item_of_a_meeting_past_retention_is_neither_found_nor_changed(
+    session: Session, acting: dict[str, list[str]]
+) -> None:
+    expired_meeting(session)
+
+    found = tools.action_item_status(session, TEAM, "act_old")
+    changed = tools.set_action_item_status(TEAM, "act_old", "done")
+
+    assert (found["ok"], changed["ok"]) == (False, False)
+    row = session.get(ExtActionItem, "act_old")
+    assert row is not None and row.status == "todo"
+    assert acting["items"] == []
