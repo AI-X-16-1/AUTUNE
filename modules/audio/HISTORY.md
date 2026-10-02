@@ -902,6 +902,19 @@ and after (recall 1.000, precision 1.000, 32/35 exact, the 3 declared rows
 unchanged) -- it has no row with any of these characters, which is itself
 the gap: the regressions are pinned in unit tests, not in the corpus.
 
+**Phones across lines, 2026-10-02 (#688).** Reverting the `_HSPACE` change in
+#687 left a gap that was there on `main` all along: a nine-digit `02` number
+split by newlines matched nothing, because `account` needs ten digits and the
+phone pattern does not cross a line. A second phone pattern on the card's
+narrow separator closes it. The leading zero and the 2-3 / 3-4 / 4 layout
+are what keep it from joining figures on adjacent lines; the corpus scores
+the same, and `예산\n150000\n200000` is matched exactly as before (by
+`account`, a known over-mask). What it newly over-masks, found in review and
+accepted as the safe direction: a short zero-led figure at a line end
+followed by a three-to-four and a four-digit line -- `Q1 05\n300\n2500원`,
+`목표 01\n300\n2024`. If a false positive is reported, look at this pattern
+first.
+
 **Numbers read aloud, 2026-10-02 (#160, evaluation 04).** #160 asked for a
 count of comma-split and one-syllable-at-a-time numbers before widening a
 pattern. There was nothing to count -- 218 stored utterances and HiKE's 1,121

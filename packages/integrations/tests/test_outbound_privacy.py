@@ -653,3 +653,17 @@ def test_a_number_whisper_grouped_its_own_way_is_found(text: str) -> None:
 )
 def test_dates_years_and_short_runs_are_not_grouped_digits(text: str) -> None:
     assert "digits" not in {cat for _, _, cat in find_pii(text)}
+
+
+@pytest.mark.parametrize("text", ["02\n123\n4567", "02\r\n123\r\n4567", "02-123\n4567"])
+def test_a_nine_digit_number_split_across_lines_is_found(text: str) -> None:
+    """#688: `account` covers a line-split number of ten digits or more; a
+    nine-digit `02` number matched nothing, and `check_outbound` passed it."""
+    assert "phone" in find_unmasked(text)
+
+
+def test_figures_on_adjacent_lines_are_not_joined_into_a_phone() -> None:
+    """The leading zero and the layout keep the line-crossing phone pattern from
+    joining unrelated figures -- the hazard `_HSPACE` exists for."""
+    assert "phone" not in {cat for _, _, cat in find_pii("회의 3\n2024\n10월")}
+    assert "phone" not in {cat for _, _, cat in find_pii("예산\n150000\n200000")}
