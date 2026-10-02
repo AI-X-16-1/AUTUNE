@@ -15,6 +15,12 @@ Where the meeting comes from:
 - **The request names exactly one id:** it is passed on, and the scope still
   holds it to the run's team.
 - **Several different ids:** refused rather than guessed.
+
+**Woken by ``autune.intelligence.meeting_report_changed``** (#674): a person
+edited the draft on E's dashboard. Nothing is read from B, C or D and nothing
+is rendered; the run proposes the post of the draft E holds now (L2), with that
+draft's id. Plan mode supersedes the earlier post proposal for the meeting, so
+an approver sees one proposal, for the text that is there.
 """
 
 from __future__ import annotations
@@ -28,7 +34,7 @@ from langgraph.graph import END, START, StateGraph
 from autune_agent.main import BudgetExceededError, SubagentState, Toolbox
 from autune_agent.main.subagents import CompiledSubagent
 from autune_agent.results import ProposedAction, SubagentResult, ToolResult
-from autune_contracts import INTELLIGENCE_COMPLETED
+from autune_contracts import INTELLIGENCE_COMPLETED, INTELLIGENCE_MEETING_REPORT_CHANGED
 from autune_core import new_id
 
 from .render import has_pending, render
@@ -41,7 +47,11 @@ GAPS_TOOL = "gap.open_gaps"
 """C's read since #546. A tool that is not registered is skipped, so a wrong name
 here loses the gap section silently -- a test pins it to C's registry."""
 LINKS_TOOL = "context.links_for_meeting"
-TOOLS = (ACTIONS_TOOL, REVIEW_TOOL, GAPS_TOOL, LINKS_TOOL)
+READS = (ACTIONS_TOOL, REVIEW_TOOL, GAPS_TOOL, LINKS_TOOL)
+"""What a report is composed from, in order."""
+AWAITING_TOOL = "intelligence.meeting_report_awaiting_approval"
+"""E's read of the draft a person's edit left, for the post proposal (#674)."""
+TOOLS = (*READS, AWAITING_TOOL)
 OPTIONAL = (GAPS_TOOL, LINKS_TOOL)
 """Context around B's confirmed items. A failure here drops a section, never the report."""
 
@@ -57,6 +67,9 @@ and approving this run's post then posts nothing (review of #508)."""
 
 TRIGGER = INTELLIGENCE_COMPLETED
 """B, C and D have all reported (or timed out) only by this event."""
+CHANGED_TRIGGER = INTELLIGENCE_MEETING_REPORT_CHANGED
+"""A person edited the draft; propose its post again (#674)."""
+TRIGGERS = (TRIGGER, CHANGED_TRIGGER)
 
 # ASCII boundaries, not \b: in a str pattern \b is Unicode-aware, so a Korean
 # particle right after the id ("mtg_ab12cd의") would count as part of the word.
@@ -81,15 +94,39 @@ def _failed(reason: str) -> SubagentState:
     return {"outcome": SubagentResult(result=ToolResult.failure(reason))}
 
 
+def _repropose(toolbox: Toolbox) -> SubagentState:
+    """The post of the draft a person's edit left, for approval -- no model, no render."""
+    awaiting = toolbox.call(AWAITING_TOOL)
+    if not awaiting.ok:
+        return {"outcome": SubagentResult(result=awaiting)}
+    if not awaiting.items:
+        return _failed("no draft awaits approval")
+    draft_id = getattr(awaiting.items[0], "draft_id", None)
+    if not isinstance(draft_id, str):
+        return _failed("the awaiting draft has no id")
+    post = ProposedAction(
+        kind="meeting_report_post",
+        title="회의 리포트 게시 (수정본)",
+        tool=PUBLISH_ACTION,
+        arguments={"draft_id": draft_id},
+        level="L2",
+        rationale="A team member edited the report; post the edited text once a person approves.",
+    )
+    summary = ToolResult(ok=True, summary="고친 회의 리포트를 승인 대기로 올렸습니다.", items=[])
+    return {"outcome": SubagentResult(result=summary, proposed=[post])}
+
+
 def build(toolbox: Toolbox) -> CompiledSubagent:
     def report(state: SubagentState) -> SubagentState:
+        if state.get("request") == CHANGED_TRIGGER:
+            return _repropose(toolbox)
         named = set(_MEETING_ID.findall(state.get("request", "")))
         if len(named) > 1:
             return _failed("the request names several meetings")
         # None named: the run's scope carries the meeting (or the Toolbox refuses).
         meeting: dict[str, Any] = {"meeting_id": named.pop()} if named else {}
 
-        results = {name: _read(toolbox, name, meeting) for name in TOOLS}
+        results = {name: _read(toolbox, name, meeting) for name in READS}
         actions = results[ACTIONS_TOOL]
         if actions is not None and not actions.ok:
             # B (or the scope check) cannot find the meeting: nothing to report.

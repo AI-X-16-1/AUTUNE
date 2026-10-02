@@ -37,8 +37,23 @@ from autune_contracts import (
     TeamActionProgress,
 )
 from autune_contracts.intelligence import Grade
-from autune_core import Meeting, Participant, Team, Utterance, get_logger
-from autune_core.errors import ConflictError, NotFoundError, ValidationError
+from autune_core import (
+    Meeting,
+    Participant,
+    Team,
+    TeamMember,
+    User,
+    Utterance,
+    get_logger,
+    new_id,
+)
+from autune_core.errors import (
+    ConflictError,
+    NotFoundError,
+    PermissionDeniedError,
+    PrivacyViolationError,
+    ValidationError,
+)
 from autune_integrations import (
     PermanentIntegrationError,
     SlackApi,
@@ -75,6 +90,7 @@ from .schemas import (
     DashboardRead,
     DashboardScoreEntry,
     HeatmapCell,
+    MeetingReportRead,
     PredictionRead,
     PredictionsRead,
     SpeakingRatioRead,
@@ -839,7 +855,8 @@ def generate_weekly_report(
 
 MEETING_REPORT_MAX_CHARS: Final = 3000
 """Slack's limit for one section block's text. A longer body is refused rather
-than cut, because a cut summary reads as a finished one.
+than cut, because a cut summary reads as a finished one. Counted as Slack
+receives it, after ``_slack_escape``: "&" goes out as five characters.
 
 It also has to fit ``autune_integrations.privacy.MAX_OUTBOUND_CHARS`` (4000),
 which counts every string in the request: the body once, the title (at most
@@ -883,7 +900,7 @@ def save_meeting_report(
     meeting = session.get(Meeting, meeting_id)
     if meeting is None:
         raise NotFoundError("meeting", meeting_id)
-    if len(body_markdown) > MEETING_REPORT_MAX_CHARS:
+    if len(_slack_escape(body_markdown)) > MEETING_REPORT_MAX_CHARS:
         raise ValidationError(
             f"report body exceeds {MEETING_REPORT_MAX_CHARS} characters", field="body_markdown"
         )
@@ -907,6 +924,10 @@ def save_meeting_report(
         row.body_markdown = body_markdown
         row.pending_review = pending_review
         row.draft_id = draft_id
+        # A rerun's draft is the model's text again: a person's edit is
+        # overwritten, so their name must not stay on it (#642 review).
+        row.edited_by = None
+        row.edited_at = None
     session.flush()
     return row
 
@@ -940,8 +961,20 @@ def meeting_report_document(
     return f"📋 {title} · {when.month}/{when.day}\n\n{body_markdown}\n\n{footer}"
 
 
+def _slack_escape(text: str) -> str:
+    """Slack's three control characters as entities, so text reads as text.
+
+    A body may now be a person's (#642): "<!channel>" or "<https://x|상세보기>"
+    must not go out under the bot's name as a mention or a disguised link. The
+    report's own markup -- bullets, emoji, line breaks -- has none of the three.
+    """
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
 def _meeting_report_blocks(meeting_id: str, body_markdown: str, pending_review: bool) -> list[dict]:
-    blocks: list[dict] = [{"type": "section", "text": {"type": "mrkdwn", "text": body_markdown}}]
+    blocks: list[dict] = [
+        {"type": "section", "text": {"type": "mrkdwn", "text": _slack_escape(body_markdown)}}
+    ]
     base_url = get_settings().web_base_url
     if not base_url:
         return blocks
@@ -1003,10 +1036,15 @@ def claim_meeting_report(
         # own approval rather than going out under this one.
         raise ConflictError("meeting report draft was replaced", meeting_id=meeting_id)
     title = session.scalar(sa.select(Meeting.title).where(Meeting.id == meeting_id)) or ""
+    editor = (
+        session.scalar(sa.select(User.display_name).where(User.id == row.edited_by))
+        if row.edited_by is not None
+        else None
+    )
     claimed = ClaimedReport(
         meeting_id=meeting_id,
         preview=_report_preview(title),
-        body_markdown=row.body_markdown,
+        body_markdown=_with_editor(row.body_markdown, editor),
         pending_review=row.pending_review,
     )
     # The same check post_message runs, made before sent_at is set: a refusal
@@ -1356,3 +1394,205 @@ def store_action_progress(session: Session, snapshot: TeamActionProgress) -> boo
         not_kept=len(named) - len(own),
     )
     return True
+
+
+# --- the dashboard's meeting-report card (10/2) --------------------------------------
+#
+# A report is meeting text, so these check that the person asking is on the team,
+# unlike the older aggregate routes (#156). Any member may edit a draft until it
+# is posted. An edit takes a new ``draft_id``, so an approval given for the
+# model's text can never post it. Nothing is posted from the card: the edit is
+# announced (``autune.intelligence.meeting_report_changed``) and the Report
+# subagent proposes its post again, for a person with the ``report`` scope to
+# approve -- the same L2 gate as the model's draft (#642 review, #674). A rerun
+# of the Report overwrites an edit (``save_meeting_report``). A posted report
+# changes only by a correction posted under it, never in place.
+
+MEETING_REPORTS_SHOWN: Final = 20
+"""The card lists this many reports, newest meeting first."""
+
+_EDITED_FOOTER: Final = "자동 생성된 리포트를 팀원이 고쳤습니다."
+"""The footer stored after an edit. It does not name the editor: stored text
+outlives the account, and a deleted person's name must not (invariant 11, #642
+review). ``_with_editor`` adds the name from ``edited_by`` when the report is
+read or posted, so it goes when the account does."""
+
+_EDITED_FOOTER_NAMED: Final = "자동 생성된 리포트를 {name}님이 고쳤습니다."
+
+
+def _editor_footer(name: str | None) -> str:
+    """The footer naming ``name``, or the stored one when there is no name or the
+    name itself looks like personal data: ``check_outbound`` would refuse the
+    whole post over it, and the editor cannot fix it by editing the text."""
+    if not name or find_unmasked(name):
+        return _EDITED_FOOTER
+    return _EDITED_FOOTER_NAMED.format(name=name)
+
+
+def _with_editor(document: str, name: str | None) -> str:
+    """The stored document with its editor's current name in the footer.
+
+    Unchanged for a model's draft, for an editor whose account is gone, and when
+    the name would take the text past the cap -- checked at the edit with the
+    name the editor had then, so only a later, longer name gets here.
+    """
+    named = _with_editor_unchecked(document, name)
+    if len(_slack_escape(named)) > MEETING_REPORT_MAX_CHARS:
+        return document
+    return named
+
+
+def _with_editor_unchecked(document: str, name: str | None) -> str:
+    if not document.endswith(_EDITED_FOOTER):
+        return document
+    return document.removesuffix(_EDITED_FOOTER) + _editor_footer(name)
+
+
+def split_report_document(document: str) -> tuple[str, str, str]:
+    """The stored document as header line (without its mark), body, and footer.
+
+    ``meeting_report_document`` writes "📋 <title> · <date>", a blank line, the
+    body, a blank line and a footer starting "자동 생성". The footer is not part
+    of what a person edits: E writes it, and after an edit it names the editor.
+    """
+    header, _, rest = document.partition("\n\n")
+    body, sep, footer = rest.rpartition("\n\n")
+    if not sep or not footer.startswith("자동 생성"):
+        body, footer = rest, ""
+    return header.removeprefix("📋").strip(), body, footer
+
+
+def _is_member(session: Session, *, user_id: str, team_id: str) -> bool:
+    return (
+        session.scalar(
+            sa.select(TeamMember.id).where(
+                TeamMember.team_id == team_id, TeamMember.user_id == user_id
+            )
+        )
+        is not None
+    )
+
+
+def require_team_member(session: Session, *, user_id: str, team_id: str) -> None:
+    """Raise unless ``user_id`` is on ``team_id``. A token says who is asking, not
+    which team's reports they may read."""
+    if not _is_member(session, user_id=user_id, team_id=team_id):
+        raise PermissionDeniedError("not a member of this team")
+
+
+def _report_for_member(session: Session, meeting_id: str, user_id: str) -> IntelMeetingReport:
+    """The report, locked, for a member of its team. Anyone else gets the same
+    not-found as for a meeting that does not exist, so an id's existence does
+    not leak (``tools._not_found`` does the same)."""
+    row = session.get(IntelMeetingReport, meeting_id, with_for_update=True)
+    if row is None or not _is_member(session, user_id=user_id, team_id=row.team_id):
+        raise NotFoundError("meeting report", meeting_id)
+    return row
+
+
+def _report_read(row: IntelMeetingReport, editor: str | None) -> MeetingReportRead:
+    title, body, footer = split_report_document(_with_editor(row.body_markdown, editor))
+    draft = row.sent_at is None
+    return MeetingReportRead(
+        meeting_id=row.meeting_id,
+        title=title,
+        body=body,
+        footer=footer,
+        status="draft" if draft else "posted",
+        posted_at=row.sent_at,
+        pending_review=row.pending_review,
+        edited_by_name=editor,
+        edited_at=row.edited_at,
+        updated_at=row.updated_at,
+    )
+
+
+def list_meeting_reports(
+    session: Session, team_id: str, *, user_id: str
+) -> list[MeetingReportRead]:
+    """The team's latest reports, newest meeting first, for one of its members."""
+    require_team_member(session, user_id=user_id, team_id=team_id)
+    held = func.coalesce(Meeting.started_at, Meeting.created_at)
+    rows = session.execute(
+        sa.select(IntelMeetingReport, User.display_name)
+        .join(Meeting, Meeting.id == IntelMeetingReport.meeting_id)
+        .outerjoin(User, User.id == IntelMeetingReport.edited_by)
+        .where(IntelMeetingReport.team_id == team_id)
+        .order_by(held.desc(), IntelMeetingReport.meeting_id.desc())
+        .limit(MEETING_REPORTS_SHOWN)
+    ).all()
+    return [_report_read(row, editor) for row, editor in rows]
+
+
+def edit_meeting_report(
+    session: Session,
+    meeting_id: str,
+    body: str,
+    *,
+    user_id: str,
+    base_updated_at: datetime | None = None,
+) -> MeetingReportRead:
+    """Replace a draft's body with a team member's text and record who did it.
+
+    E keeps the header line and writes a footer saying a person edited it; the
+    name is added when it is read or posted (``_with_editor``), never stored. The
+    draft takes a new ``draft_id``: an approval queued for the model's text --
+    even one already approved and waiting for the worker -- then posts nothing.
+    The caller commits, then announces the change (``enqueue``), and the Report
+    subagent proposes this draft's post for approval. Refused once
+    posted (people have read that version), and when ``base_updated_at`` shows
+    someone saved a newer version since the editor opened it. The text passes
+    the same length cap and personal-data check as a model's draft; a refusal
+    names categories, never the text. The "this meeting only" rule (#459) is an
+    instruction to the subagent; a person's text is not checked against it.
+    """
+    row = _report_for_member(session, meeting_id, user_id)
+    if row.sent_at is not None:
+        raise ConflictError("meeting report was already posted", meeting_id=meeting_id)
+    if base_updated_at is not None and base_updated_at != row.updated_at:
+        raise ConflictError("meeting report changed since it was opened", meeting_id=meeting_id)
+    if not body.strip():
+        raise ValidationError("report body is empty", field="body")
+    if body == split_report_document(row.body_markdown)[1]:
+        # Saved as it was: nothing to approve again, and a new proposal would
+        # notify the approvers a second time for the same text (#642 review).
+        raise ValidationError("report body is unchanged", field="body")
+    editor = session.scalar(sa.select(User.display_name).where(User.id == user_id))
+    header = row.body_markdown.partition("\n\n")[0]
+    document = f"{header}\n\n{body}\n\n{_EDITED_FOOTER}"
+    # Counted as it will go out: escaped, with the editor's name in the footer.
+    if len(_slack_escape(_with_editor_unchecked(document, editor))) > MEETING_REPORT_MAX_CHARS:
+        raise ValidationError(f"report exceeds {MEETING_REPORT_MAX_CHARS} characters", field="body")
+    try:
+        assert_masked(document, destination="intel_meeting_reports")
+    except PrivacyViolationError as exc:
+        # A person typed it, so it is theirs to correct: refuse with the
+        # categories, as the subagent's draft action does, never the text.
+        categories = ", ".join(exc.details.get("categories", []))
+        raise ValidationError(
+            f"report still holds personal data: {categories}", field="body"
+        ) from exc
+    now = datetime.now(UTC)
+    row.body_markdown = document
+    row.edited_by = user_id
+    row.edited_at = now
+    row.draft_id = new_id("rdr")
+    # Set here, not by the column's onupdate: Postgres' now() is the
+    # transaction's start, and two saves in one transaction must still differ.
+    row.updated_at = now
+    session.flush()
+    return _report_read(row, editor)
+
+
+def meeting_report_awaiting_approval(session: Session, meeting_id: str) -> str | None:
+    """The ``draft_id`` of the meeting's stored, unposted draft, or ``None``.
+
+    What the Report subagent proposes to post when a person's edit is
+    announced. The draft read now, not the one the announcement was about: a
+    second edit or a rerun since then replaced it, and its own proposal
+    supersedes this one in the queue anyway.
+    """
+    row = session.get(IntelMeetingReport, meeting_id)
+    if row is None or row.sent_at is not None:
+        return None
+    return row.draft_id

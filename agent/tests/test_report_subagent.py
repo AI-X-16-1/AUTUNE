@@ -15,6 +15,7 @@ from autune_agent.results import SubagentResult
 from autune_agent.subagents.report import SUBAGENT
 from autune_agent.subagents.report.graph import (
     ACTIONS_TOOL,
+    AWAITING_TOOL,
     DRAFT_ACTION,
     GAPS_TOOL,
     LINKS_TOOL,
@@ -26,6 +27,7 @@ from autune_agent.testing import mock_tool
 TEAM = "team_a"
 MEETING = "mtg_ab12cd"
 EVENT = "autune.intelligence.completed"
+CHANGED = "autune.intelligence.meeting_report_changed"
 
 ACTIONS = {
     "ok": True,
@@ -83,8 +85,8 @@ def _all_tools() -> dict[str, Any]:
 # --- woken by the pipeline --------------------------------------------------------
 
 
-def test_it_wakes_on_the_analysis_finishing() -> None:
-    assert SUBAGENT.triggers == (EVENT,)
+def test_it_wakes_on_the_analysis_finishing_and_on_a_persons_edit() -> None:
+    assert SUBAGENT.triggers == (EVENT, CHANGED)
     assert set(SUBAGENT.triggers) <= set(TRIGGER_EVENTS)
 
 
@@ -100,6 +102,52 @@ def test_a_finished_meeting_becomes_a_draft_at_l1_and_a_post_at_l2() -> None:
     assert post.arguments == {"draft_id": draft.arguments["draft_id"]}
     assert draft.arguments["pending_review"] is True
     assert draft.arguments["body_markdown"].startswith("✅ 확정된 액션 아이템")
+
+
+# --- a person edited the draft (#674) ---------------------------------------------
+
+
+def _awaiting(draft_id: str | None) -> dict[str, Any]:
+    items = (
+        [] if draft_id is None else [{"title": "리포트 초안", "id": MEETING, "draft_id": draft_id}]
+    )
+    return {"ok": True, "summary": "", "items": items}
+
+
+def test_an_edit_is_proposed_for_approval_again_without_rendering() -> None:
+    tools = {**_all_tools(), AWAITING_TOOL: mock_tool(AWAITING_TOOL, _awaiting("rdr_edited"))}
+    budget = CallBudget()
+
+    outcome = _run(CHANGED, tools, scope_meeting=MEETING, budget=budget)
+
+    [post] = outcome.proposed
+    assert (post.tool, post.level, post.kind) == (PUBLISH_ACTION, "L2", "meeting_report_post")
+    # The edited draft's id, so the approval posts exactly that text (#570).
+    assert post.arguments == {"draft_id": "rdr_edited"}
+    assert arguments_ok(post.arguments)
+    assert budget.used == 1  # E's read only; nothing from B, C or D is read again
+
+
+def test_nothing_awaiting_proposes_nothing() -> None:
+    """Posted, or replaced by a rerun that proposed its own post, before this run woke."""
+    tools = {AWAITING_TOOL: mock_tool(AWAITING_TOOL, _awaiting(None))}
+
+    outcome = _run(CHANGED, tools, scope_meeting=MEETING)
+
+    assert outcome.result.ok is False and outcome.proposed == []
+
+
+def test_an_edit_on_another_teams_meeting_proposes_nothing() -> None:
+    missing = {"ok": False, "reason": "meeting not found", "summary": "회의를 찾을 수 없습니다."}
+    tools = {AWAITING_TOOL: mock_tool(AWAITING_TOOL, missing)}
+
+    outcome = _run(CHANGED, tools, scope_meeting=MEETING)
+
+    assert outcome.result.ok is False and outcome.proposed == []
+
+
+def test_the_awaiting_read_is_a_tool_e_actually_ships() -> None:
+    assert AWAITING_TOOL in collect_tools(["intelligence"])
 
 
 # --- asked in chat ----------------------------------------------------------------
@@ -244,9 +292,9 @@ def test_the_gap_read_is_a_tool_c_actually_ships() -> None:
     assert GAPS_TOOL in collect_tools(["gap"])
 
 
-def test_the_allow_list_is_exactly_the_four_reads() -> None:
+def test_the_allow_list_is_exactly_the_five_reads() -> None:
     assert SUBAGENT.name == "report"
-    assert set(SUBAGENT.tools) == {ACTIONS_TOOL, REVIEW_TOOL, GAPS_TOOL, LINKS_TOOL}
+    assert set(SUBAGENT.tools) == {ACTIONS_TOOL, REVIEW_TOOL, GAPS_TOOL, LINKS_TOOL, AWAITING_TOOL}
     assert "extraction.unresolved_questions" not in SUBAGENT.tools
     assert "extraction.open_action_items" not in SUBAGENT.tools
     assert SUBAGENT.description.startswith("Use this")

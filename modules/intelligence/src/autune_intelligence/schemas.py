@@ -82,6 +82,36 @@ class ReportRead(BaseModel):
     source_meeting_ids: list[str]
 
 
+class MeetingReportRead(BaseModel):
+    """One meeting's report as the dashboard card shows it (10/2).
+
+    ``title`` is the stored header line, ``body`` the rest -- the subagent's
+    text and E's footer, as a person edited it if they did.
+    """
+
+    meeting_id: str
+    title: str
+    body: str
+    footer: str
+    """E's last line: "자동 생성된 리포트입니다 · M/D HH:MM 기준." (#604), or after an
+    edit, who edited it."""
+    status: Literal["draft", "posted"]
+    posted_at: datetime | None
+    pending_review: bool
+    edited_by_name: str | None
+    edited_at: datetime | None
+    updated_at: datetime
+    """Send back as ``base_updated_at`` so a stale edit is refused, not saved over."""
+
+
+class MeetingReportEdit(BaseModel):
+    """A team member's edit of a draft's body; E keeps its own header line."""
+
+    body: str
+    base_updated_at: datetime | None = None
+    """``updated_at`` as the editor saw it; a newer save makes this edit a 409."""
+
+
 class DashboardScoreEntry(BaseModel):
     """One meeting's grade in the dashboard's recent-scores strip."""
 
