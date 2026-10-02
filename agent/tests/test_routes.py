@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 from autune_agent import router as routes
 from autune_agent.models import AgentApprover, AgentPendingAction, AgentResearchDocument, AgentRun
 from autune_agent.testing import FakeRouter
-from autune_core import AutuneError, Meeting, User, current_user, get_session
+from autune_core import AutuneError, Meeting, Team, User, current_user, get_session
 
 
 def _client(session: Session, user_id: str, *, chat_router: object | None) -> TestClient:
@@ -52,6 +52,41 @@ def test_a_member_chats_and_the_turn_is_recorded(
     assert run is not None
     assert run.requested_by == team["member"]
     assert run.trigger == {"kind": "chat"}
+
+
+def test_a_chat_from_a_meeting_page_is_scoped_to_that_meeting(
+    member: TestClient, session: Session, team: dict[str, str]
+) -> None:
+    # S34 sends the meeting the person is looking at; the run is bound to it,
+    # the way a triggered run is bound to its event's meeting.
+    reply = member.post(
+        "/api/agent/chat",
+        json={"team_id": team["team"], "meeting_id": team["meeting"], "message": "이 회의"},
+    )
+
+    assert reply.status_code == 200
+    run = session.get(AgentRun, reply.json()["run_id"])
+    assert run is not None and run.meeting_id == team["meeting"]
+
+
+def test_a_meeting_of_another_team_is_refused_as_missing(
+    member: TestClient, session: Session, team: dict[str, str]
+) -> None:
+    other_team = Team(name="다른 팀")
+    session.add(other_team)
+    session.flush()
+    elsewhere = Meeting(team_id=other_team.id, title="남의 회의")
+    session.add(elsewhere)
+    session.commit()
+
+    reply = member.post(
+        "/api/agent/chat",
+        json={"team_id": team["team"], "meeting_id": elsewhere.id, "message": "이 회의"},
+    )
+
+    assert reply.status_code == 404
+    assert elsewhere.id not in reply.text
+    assert session.query(AgentRun).count() == 0
 
 
 def test_a_non_member_is_refused(session: Session, team: dict[str, str]) -> None:

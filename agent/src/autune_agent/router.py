@@ -24,8 +24,14 @@ from pydantic import BaseModel, Field
 from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session
 
-from autune_core import CurrentUser, TeamMember, User, get_session
-from autune_core.errors import ConfigurationError, PermissionDeniedError, PrivacyViolationError
+from autune_core import CurrentUser, Meeting, TeamMember, User, get_session
+from autune_core.errors import (
+    AutuneError,
+    ConfigurationError,
+    NotFoundError,
+    PermissionDeniedError,
+    PrivacyViolationError,
+)
 
 from .config import get_agent_settings
 from .main.actions import collect_actions
@@ -72,7 +78,16 @@ def _require_member(session: Session, team_id: str, user_id: str) -> None:
 
 class ChatRequest(BaseModel):
     team_id: str
+    meeting_id: str | None = None
+    """The meeting the person is looking at (S34), if any. The run is bound to
+    it, the way a triggered run is bound to its event's meeting."""
     message: str = Field(min_length=1, max_length=MAX_MESSAGE_CHARS)
+
+
+class ChatMeetingNotFoundError(NotFoundError):
+    def __init__(self) -> None:
+        # Never the id: it is whatever the caller sent.
+        AutuneError.__init__(self, "meeting not found", resource="meeting")
 
 
 class ChatReply(BaseModel):
@@ -120,11 +135,16 @@ def chat(
     chat_router: Annotated[Router, Depends(get_chat_router)],
 ) -> ChatReply:
     _require_member(session, body.team_id, user.id)
+    if body.meeting_id is not None:
+        meeting = session.get(Meeting, body.meeting_id)
+        if meeting is None or meeting.team_id != body.team_id:
+            raise ChatMeetingNotFoundError()
     row, state = run_and_record(
         body.message,
         session=session,
         router=chat_router,
         team_id=body.team_id,
+        meeting_id=body.meeting_id,
         requested_by=user.id,
         trigger={"kind": "chat"},
     )

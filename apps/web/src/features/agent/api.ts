@@ -1,5 +1,5 @@
 /**
- * The agent layer's approval queue and its approvers. This feature calls
+ * The agent layer's chat, approval queue and approvers. This feature calls
  * `/api/agent` only.
  */
 import { api } from "@/shared/api/client";
@@ -7,6 +7,7 @@ import { api } from "@/shared/api/client";
 import type {
   Approvers,
   ApproverScope,
+  ChatReply,
   PendingAction,
   RejectReason,
 } from "./types";
@@ -36,3 +37,13 @@ export const setApproverScopes = (
     `/approvers/${encodeURIComponent(userId)}?team_id=${encodeURIComponent(teamId)}`,
     { method: "PUT", body: JSON.stringify({ scopes }) },
   );
+
+export const sendChat = (teamId: string, message: string, meetingId?: string) =>
+  api.agent<ChatReply>("/chat", {
+    method: "POST",
+    body: JSON.stringify({
+      team_id: teamId,
+      message,
+      ...(meetingId ? { meeting_id: meetingId } : {}),
+    }),
+  });
