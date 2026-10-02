@@ -378,8 +378,10 @@ the conversation is #392. Until #392 is settled:
   and task refuses, not only the model call, and the error names the variable.
   "Dummy meetings only" and "a paid key" are rules the code cannot check; the
   flag makes sending speech to a provider something a deployment says twice.
-  It turns nothing on by itself, it is not keyed on `AUTUNE_ENV` (whose default
-  is `local`), and deleting it is the migration once #392 is decided.
+  It turns nothing on by itself, and deleting it is the migration once #392 is
+  decided. It is not keyed on `AUTUNE_ENV`: `.env.example` ships
+  `AUTUNE_ENV=local`, so a deployment made from that file would be the one let
+  through.
 - Use it on dummy meetings only. A free-tier key may let the provider keep what
   it is sent; a real meeting needs a paid key and #392's answer.
 

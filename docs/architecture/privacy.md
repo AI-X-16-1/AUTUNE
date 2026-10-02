@@ -342,6 +342,16 @@ the feature needs.
 - Never send raw audio anywhere.
 - Error tracking must scrub message bodies; assume anything in an exception
   string is published.
+- A cloud model is never the default, and in module B it has to be switched on
+  twice (#392). B's classifier and resolver send text to a provider only when
+  their implementation is set to `llm` (or `llm_checked`), and B's settings
+  refuse to load that unless `AUTUNE_EXTRACTION_LLM_ACKNOWLEDGED_392=true` is
+  set as well. The flag checks nothing about the meeting or the key -- the code
+  cannot tell a real meeting from a dummy one, or a paid key from a free one --
+  it makes sending speech out something a deployment says deliberately. Until
+  #392 is decided, only demo meetings go through a deployment that sets it.
+  This is module B's alone: the agent's, C's and D's cloud switches are their
+  owners' and have no second switch today.
 - What was delivered can outlive its source, for different reasons per
   destination, which is why each carries only what it needs:
   - **Notion:** a page in a team's workspace belongs to that team once written.
