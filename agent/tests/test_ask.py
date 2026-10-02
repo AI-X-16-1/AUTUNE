@@ -368,9 +368,9 @@ def test_two_tools_share_the_five_items() -> None:
     assert [i.title for i in result.items] == ["결정 0", "API 문서", "결정 1", "QA", "결정 2"]
 
 
-def test_the_team_set_quotes_no_other_meeting_and_names_no_person_it_cannot_resolve() -> None:
+def test_the_team_set_quotes_no_other_meeting_and_knows_the_asker() -> None:
     assert "audio.search_team_meetings" not in TEAM_TOOLS
-    assert "extraction.person_action_items" not in TEAM_TOOLS
+    assert "extraction.person_action_items" in TEAM_TOOLS
 
 
 def test_the_meeting_overview_sends_speakers_by_number_not_name() -> None:
@@ -394,3 +394,17 @@ def test_the_meeting_overview_sends_speakers_by_number_not_name() -> None:
 
     assert [i["title"] for i in _sent_items(model, 1)] == ["화자 1", "화자 2"]
     assert [i.title for i in result.items] == ["화자 1", "화자 2"]
+
+
+def test_user_id_is_optional_when_the_run_knows_who_asked() -> None:
+    def person(session: Any, team_id: str, user_id: str) -> dict[str, Any]:
+        return {}
+
+    tools = {"extraction.person_action_items": _tool("extraction.person_action_items", person)}
+
+    (asked,) = declare(tools, RunScope(team_id="team_a", user_id="user_me"))
+    (unasked,) = declare(tools, TEAM)
+
+    assert "required" not in asked.parameters
+    assert "asking" in asked.parameters["properties"]["user_id"]["description"]
+    assert unasked.parameters["required"] == ["user_id"]

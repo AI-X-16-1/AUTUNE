@@ -69,6 +69,10 @@ class RunScope:
 
     team_id: str
     meeting_id: str | None = None
+    user_id: str | None = None
+    """Who asked, for a chat turn; None for a run nobody asked for. A read that
+    takes ``user_id`` and is called without one is about this person -- "내 기한
+    지난 거" -- since the model cannot know the asker's id (#677 review)."""
 
 
 @dataclass(frozen=True)
@@ -203,6 +207,13 @@ class Toolbox:
             # A route to correct, not a crash.
             result = ToolResult.failure(f"{name} is not available here")
         else:
+            if (
+                ASKER_PARAMETER in tool.parameters
+                and ASKER_PARAMETER not in arguments
+                and self._scope.user_id is not None
+            ):
+                # Reads only: actions bind through bind_scope, which never does this.
+                arguments = {**arguments, ASKER_PARAMETER: self._scope.user_id}
             scoped = bind_scope(
                 tool.parameters,
                 arguments,
@@ -222,6 +233,9 @@ class Toolbox:
         )
         return result
 
+
+ASKER_PARAMETER = "user_id"
+"""A read's parameter that names one person; left out, it is the person asking."""
 
 NO_MEETING = "this run is about no meeting; pass meeting_id"
 UNEXPECTED_ARGUMENT = "unexpected argument"
