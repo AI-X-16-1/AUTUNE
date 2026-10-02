@@ -538,14 +538,22 @@ def google_calendar_status(
     ``needs_reconnect`` is true for a grant recorded as issued to another
     Google client than the one this deployment refreshes with now: its
     refresh token cannot work. A grant from before the client was recorded
-    says nothing either way, and is reported as it always was."""
+    says nothing either way, and is reported as it always was.
+
+    With no Google client configured at all there is nothing to compare
+    with: module B reaches nobody's calendar in that state and says nothing
+    (``tasks._calendars``), and the card must not say more than B does --
+    connecting again would not help. So that is not ``needs_reconnect``
+    (mminjae97, review of #711)."""
     grant = load_user_integration(session, user.id, "calendar")
     connected = grant is not None and bool(grant.secret)
     issued_to = grant.config.get("client_id") if grant is not None else None
     current = get_settings().google_integration_credentials[0]
     return {
         "connected": connected,
-        "needs_reconnect": connected and bool(issued_to) and issued_to != current,
+        "needs_reconnect": (
+            connected and bool(current) and bool(issued_to) and issued_to != current
+        ),
     }
 
 
