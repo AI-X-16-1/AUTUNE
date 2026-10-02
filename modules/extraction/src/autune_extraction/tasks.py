@@ -503,6 +503,9 @@ def remind_due_items() -> list[str]:
             continue
         except Exception as exc:  # noqa: BLE001 -- one reminder's, see the docstring
             # The type only: a database error carries its parameters.
+            # No soft time limit is set on this task today; one added later
+            # would raise ``SoftTimeLimitExceeded`` into this clause, and would
+            # have to be let through.
             log.warning(
                 "extraction_due_reminder_failed",
                 action_item_id=reminder.action_item_id,
