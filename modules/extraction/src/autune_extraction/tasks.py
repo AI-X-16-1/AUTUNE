@@ -884,11 +884,13 @@ def backfill_notion(team_id: str) -> None:
     items = notion_backfill.Stats()
     notion_backfill.backfill_action_items(notion_backfill._confirmed_action_items(team_id), items)
     decisions = notion_backfill.Stats()
-    notion_backfill.backfill_decisions(notion_backfill._confirmed_decisions(team_id), decisions)
-    # And the other way: pages of decisions no longer confirmed, or deleted,
-    # whose one retire after the change did not get through (#669).
+    # The confirmed ones get their pages; then the other way round, pages of
+    # decisions no longer confirmed, or deleted, whose one retire after the
+    # change did not get through (#669).
     notion_backfill.backfill_decisions(
-        notion_backfill._decision_pages_to_retire(team_id), decisions
+        notion_backfill._confirmed_decisions(team_id)
+        + notion_backfill._decision_pages_to_retire(team_id),
+        decisions,
     )
     log.info(
         "extraction_notion_backfilled",

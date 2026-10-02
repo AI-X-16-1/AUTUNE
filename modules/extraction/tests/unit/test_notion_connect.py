@@ -273,12 +273,18 @@ def test_the_fill_sends_the_teams_confirmed_rows(monkeypatch: pytest.MonkeyPatch
     backfill = notion_connect.tasks.notion_backfill
     monkeypatch.setattr(backfill, "_confirmed_action_items", lambda t: [("a", f"m-{t}")])
     monkeypatch.setattr(backfill, "_confirmed_decisions", lambda t: [("d", f"m-{t}")])
+    # #669: the pages of decisions no longer confirmed go through the same
+    # call, after the confirmed ones.
+    monkeypatch.setattr(backfill, "_decision_pages_to_retire", lambda t: [("gone", f"m-{t}")])
     monkeypatch.setattr(backfill, "backfill_action_items", items)
     monkeypatch.setattr(backfill, "backfill_decisions", decisions)
 
     notion_connect.tasks.backfill_notion(TEAM)
 
-    assert seen == {"items": [("a", "m-team_1")], "decisions": [("d", "m-team_1")]}
+    assert seen == {
+        "items": [("a", "m-team_1")],
+        "decisions": [("d", "m-team_1"), ("gone", "m-team_1")],
+    }
 
 
 def test_setting_up_without_a_connection_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
