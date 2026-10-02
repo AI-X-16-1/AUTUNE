@@ -108,10 +108,14 @@ def _whole_days(value: object, *, low: int) -> int | None:
     return max(low, min(value, MAX_DAYS))
 
 
-def _not_a_day_count(name: str, value: object) -> dict[str, Any]:
+def _not_a_day_count(name: str) -> dict[str, Any]:
+    """The refusal for an argument that is not a day count. It names the
+    argument and never repeats the value: that is whatever the model wrote,
+    it can carry text from the person's question, and ``reason`` goes back to
+    the model and into logs (the rule ``registry.bind_scope`` keeps)."""
     return _result(
         ok=False,
-        reason=f"{name} is not a whole number of days: {repr(value)[:40]}",
+        reason=f"{name} is not a whole number of days",
         summary="기간은 일 단위의 정수여야 합니다.",
         items=[],
         evidence=[],
@@ -214,7 +218,7 @@ def open_action_items(session: Session, team_id: str, *, within_days: int = 7) -
     """
     window = _whole_days(within_days, low=0)
     if window is None:
-        return _not_a_day_count("within_days", within_days)
+        return _not_a_day_count("within_days")
     today = date.today()
     horizon = today + timedelta(days=window)
     meeting_ids = set(
@@ -290,7 +294,7 @@ def workload_by_owner(session: Session, team_id: str, *, days: int = 30) -> dict
     """
     span = _whole_days(days, low=1)
     if span is None:
-        return _not_a_day_count("days", days)
+        return _not_a_day_count("days")
     today = date.today()
     cutoff = datetime.now(UTC) - timedelta(days=span)
     meeting_ids = set(

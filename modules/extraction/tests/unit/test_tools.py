@@ -262,13 +262,28 @@ def test_a_value_that_is_not_a_whole_number_of_days_is_refused(
 ) -> None:
     item(session, "act_soon", due=TODAY + timedelta(days=3))
 
-    for result in (
-        tools.open_action_items(session, TEAM, within_days=count),
-        tools.workload_by_owner(session, TEAM, days=count),
-    ):
+    late = tools.open_action_items(session, TEAM, within_days=count)
+    load = tools.workload_by_owner(session, TEAM, days=count)
+
+    for result in (late, load):
         assert set(result) == KEYS
         assert (result["ok"], result["items"]) == (False, [])
-        assert "whole number of days" in result["reason"]
+    assert late["reason"] == "within_days is not a whole number of days"
+    assert load["reason"] == "days is not a whole number of days"
+
+
+def test_a_refused_day_count_is_not_repeated_in_the_result(session: Session) -> None:
+    """The value is whatever the model wrote and can carry text from the
+    person's question. ``reason`` goes back to the model and into logs, so it
+    names the argument and nothing else (pr, before the PR was opened)."""
+    typed = "010-1234-5678로 연락 주세요"
+
+    for result in (
+        tools.open_action_items(session, TEAM, within_days=typed),  # type: ignore[arg-type]
+        tools.workload_by_owner(session, TEAM, days=typed),  # type: ignore[arg-type]
+    ):
+        assert result["ok"] is False
+        assert "010" not in str(result) and "연락" not in str(result)
 
 
 def test_open_items_stay_inside_the_team(session: Session) -> None:
