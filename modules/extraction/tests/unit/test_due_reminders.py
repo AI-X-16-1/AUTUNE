@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 
 import pytest
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, delete, select
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 from structlog.testing import capture_logs
@@ -291,6 +291,9 @@ def test_a_date_moved_is_a_new_date(session: Session, slack: FakeSlack) -> None:
 def test_nothing_is_sent_for(session: Session, slack: FakeSlack, fields: dict) -> None:
     item(session, "act_1", **fields)
 
+    # Not in the list at all -- the send would refuse it too, and a test of
+    # the task alone could not tell which of the two did.
+    assert service.due_reminders_to_send(session, now=NOW) == []
     assert tasks.remind_due_items() == []
     assert slack.sent == []
     assert reminded(session) == []
@@ -435,3 +438,146 @@ def test_a_reminder_another_run_already_claimed_sends_nothing(
     # A second run that read the same list before the first one finished.
     assert service.send_due_reminder(session, slack, owed, now=NOW) is False
     assert len(slack.sent) == 1
+
+
+# --- between the list and the send (review of #751) ------------------------------
+
+
+def owed_one(session: Session) -> service.DueReminder:
+    (owed,) = service.due_reminders_to_send(session, now=NOW)
+    return owed
+
+
+def test_an_item_given_to_somebody_else_meanwhile_is_not_sent_to_the_one_who_had_it(
+    session: Session, slack: FakeSlack
+) -> None:
+    """The list was read; then the item changed hands. The message must not go
+    to the person who no longer holds it -- and no claim is kept, so the new
+    assignee is reminded by the next run."""
+    row = item(session, "act_1")
+    owed = owed_one(session)
+    row.assignee_id = PARK
+    session.commit()
+
+    assert service.send_due_reminder(session, slack, owed, now=NOW) is False
+    assert slack.sent == []
+    assert reminded(session) == []
+
+    tasks.remind_due_items()
+    assert [m.channel for m in slack.sent] == [PARK]
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"status": "done"},
+        {"status": "needs_confirmation"},
+        {"due_date": TOMORROW + timedelta(days=5)},
+        {"due_date": None},
+        {"assignee_id": None},
+        {"assignee_id": GONE},
+    ],
+    ids=["finished", "moved back", "date moved", "date removed", "unassigned", "off the team"],
+)
+def test_a_reminder_no_longer_owed_by_the_time_it_is_sent_is_not_sent(
+    session: Session, slack: FakeSlack, change: dict
+) -> None:
+    row = item(session, "act_1")
+    owed = owed_one(session)
+    for field, value in change.items():
+        setattr(row, field, value)
+    session.commit()
+
+    assert service.send_due_reminder(session, slack, owed, now=NOW) is False
+    assert slack.sent == []
+    assert reminded(session) == []
+
+
+def test_an_assignee_who_left_the_team_meanwhile_is_not_sent_the_teams_work(
+    session: Session, slack: FakeSlack
+) -> None:
+    """Same item, same assignee, same date -- only the membership went."""
+    item(session, "act_1")
+    owed = owed_one(session)
+    session.execute(delete(TeamMember).where(TeamMember.team_id == TEAM, TeamMember.user_id == KIM))
+    session.commit()
+
+    assert service.send_due_reminder(session, slack, owed, now=NOW) is False
+    assert slack.sent == []
+    assert reminded(session) == []
+
+
+def test_an_item_deleted_meanwhile_sends_nothing_and_claims_nothing(
+    session: Session, slack: FakeSlack
+) -> None:
+    row = item(session, "act_1")
+    owed = owed_one(session)
+    session.delete(row)
+    session.commit()
+
+    assert service.send_due_reminder(session, slack, owed, now=NOW) is False
+    assert slack.sent == []
+    assert reminded(session) == []
+
+
+def test_the_message_says_what_the_item_says_now(session: Session, slack: FakeSlack) -> None:
+    row = item(session, "act_1", description="처음 문장")
+    owed = owed_one(session)
+    row.description = "고친 문장"
+    session.commit()
+
+    assert service.send_due_reminder(session, slack, owed, now=NOW) is True
+    assert slack.sent[0].text.splitlines()[1] == "• 고친 문장"
+
+
+def test_a_collected_privacy_violation_is_raised_whatever_a_later_reminder_runs_into(
+    session: Session, slack: FakeSlack, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The first reminder is refused by the outbound check. A later one hits
+    something the loop did not expect -- here a database error. The run must
+    still end by raising the violation, naming the first item; it used to die
+    on the second error with the violation unsaid."""
+    item(session, "act_a_bad", description="010-1234-5678로 전화하기")
+    item(session, "act_b_breaks", assignee=PARK)
+    item(session, "act_c_fine", assignee=PARK, description="세 번째 일")
+    real = service.send_due_reminder
+
+    def send(session_, slack_, reminder, *, now):  # type: ignore[no-untyped-def]
+        if reminder.action_item_id == "act_b_breaks":
+            raise RuntimeError("(psycopg.errors.ForeignKeyViolation) the item is gone")
+        return real(session_, slack_, reminder, now=now)
+
+    monkeypatch.setattr(service, "send_due_reminder", send)
+
+    with capture_logs() as logs, pytest.raises(PrivacyViolationError, match="act_a_bad"):
+        tasks.remind_due_items()
+
+    # The one after the unexpected error still went.
+    assert [m.text.splitlines()[1] for m in slack.sent] == ["• 세 번째 일"]
+    # Logged by type, never the error's text: a database error carries its parameters.
+    failed = [e for e in logs if e["event"] == "extraction_due_reminder_failed"]
+    assert [(e["action_item_id"], e["reason"]) for e in failed] == [
+        ("act_b_breaks", "RuntimeError")
+    ]
+    assert "ForeignKeyViolation" not in repr(logs)
+
+
+# --- what Slack reads as markup ---------------------------------------------------
+
+
+def test_a_description_cannot_mention_a_channel_or_disguise_a_link(
+    session: Session, slack: FakeSlack
+) -> None:
+    session.get(Meeting, MEETING).title = "주간 <!here> 회의"
+    item(session, "act_1", description="<!channel> 확인 & <https://evil.example|여기> 누르기")
+
+    tasks.remind_due_items()
+
+    text = slack.sent[0].text
+    assert (
+        "<!channel>" not in text and "<!here>" not in text and "<https://evil.example" not in text
+    )
+    assert "• &lt;!channel&gt; 확인 &amp; &lt;https://evil.example|여기&gt; 누르기" in text
+    assert "회의: 주간 &lt;!here&gt; 회의" in text
+    # The link the reminder itself adds is not escaped.
+    assert text.splitlines()[-1] == "http://localhost:3000/meetings/mtg_1/actions"

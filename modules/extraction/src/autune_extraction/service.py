@@ -3232,6 +3232,15 @@ def send_due_reminder(
 ) -> bool:
     """Claim the reminder and send it, in that order -- or send nothing.
 
+    **The item is read again first, and locked.** The list this reminder came
+    from was read in another transaction, seconds or more ago. Since then
+    the item may have been given to somebody else -- the message would go to
+    the person who no longer holds it -- finished, moved to another date, or
+    deleted. It is sent only if the item is still open, still due on that
+    date, and still assigned to the same account on the meeting's team
+    (review of #751). Anything else sends nothing and claims nothing; the
+    next run reads the item as it now is.
+
     The claim is the row in ``ext_due_reminders``, inserted only if absent, so
     two runs cannot both send: the second finds the row and returns false.
     The send is inside the caller's transaction with the claim, so a failed
@@ -3239,6 +3248,17 @@ def send_due_reminder(
     ``ask_for_confirmation`` uses for its DM. It goes to the item's assignee,
     whom the reminder carries; there is no other recipient to pass.
     """
+    item = session.scalar(
+        select(ExtActionItem).where(ExtActionItem.id == reminder.action_item_id).with_for_update()
+    )
+    if (
+        item is None
+        or item.status not in (ActionStatus.TODO.value, ActionStatus.IN_PROGRESS.value)
+        or item.due_date != reminder.due_date
+        or item.assignee_id != reminder.assignee_id
+        or not _is_team_member(session, user_id=reminder.assignee_id, team_id=reminder.team_id)
+    ):
+        return False
     claimed = session.execute(
         _insert_if_absent_into(session, ExtDueReminder)
         .values(
@@ -3256,7 +3276,8 @@ def send_due_reminder(
         reminder.assignee_id,
         reminders.build_due_reminder(
             reminder.kind,
-            description=reminder.description,
+            # As it reads now, not as it read when the list was made.
+            description=item.description,
             due_date=reminder.due_date,
             meeting_title=reminder.meeting_title,
             board_url=answer_url(reminder.meeting_id),

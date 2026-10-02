@@ -11,7 +11,13 @@ not a manager, not whoever made the item -- and nothing here counts or ranks
 what a person has missed. An item with no account behind its assignee (a typed
 name) has nobody to tell and is skipped.
 
-**Two moments, each once.**
+**Two moments, each once -- and rarely twice.** Once is the claim in
+``ext_due_reminders``, written with the send in one transaction. A send Slack
+accepted followed by a commit that failed, or a delivery that timed out on
+our side, takes the claim back with it, and the next run sends again. That
+is the price of never keeping a claim for a message that did not go.
+
+**The two moments:**
 
 - ``due_soon``: the day before the due date.
 - ``overdue``: the day after it, or up to ``OVERDUE_DAYS`` after -- a window, so
@@ -76,15 +82,26 @@ def kind_for(due: date, today: date) -> str | None:
     return None
 
 
+def slack_escape(text: str) -> str:
+    """Slack's three control characters as entities, so text reads as text.
+
+    A description is what a person typed or a model wrote from speech, and a
+    meeting's title is a person's: ``<!channel>`` or ``<https://x|여기>`` in
+    either must not go out under the bot's name as a mention or a disguised
+    link (review of #751; the same three ``autune_intelligence`` escapes for
+    a report body, #642)."""
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
 def build_due_reminder(
     kind: str, *, description: str, due_date: date, meeting_title: str | None, board_url: str
 ) -> str:
     """The message, as plain text: what it is, when it was due, where to act."""
-    where = f" · 회의: {meeting_title}" if meeting_title else ""
+    where = f" · 회의: {slack_escape(meeting_title)}" if meeting_title else ""
     return "\n".join(
         [
             _OPENING[kind],
-            f"• {description}",
+            f"• {slack_escape(description)}",
             f"기한: {due_date.isoformat()}{where}",
             board_url,
         ]

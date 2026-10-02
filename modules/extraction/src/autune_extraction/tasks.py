@@ -456,8 +456,12 @@ def remind_due_items() -> list[str]:
     run tries again, and a claim another run holds sends nothing. A team
     with no Slack connection and an assignee who has not linked a Slack
     account are skipped and looked at again next time, while the reminder
-    is still owed. **A privacy violation is never swallowed**: the others
-    are still sent, then it is raised with the item ids.
+    is still owed. **A privacy violation is never swallowed, and never
+    buried**: the others are still sent, then it is raised with the item
+    ids -- whatever else a later reminder runs into. An error this loop did
+    not expect (a database error, an item deleted under the claim) is that
+    one reminder's: logged by type, and the loop goes on, so it cannot end
+    the run before the violations already collected are raised.
 
     Every ten minutes, in Korea's daytime only: the first run after nine
     sends the day's reminders and the rest find nothing owed.
@@ -493,6 +497,14 @@ def remind_due_items() -> list[str]:
         except IntegrationError as exc:
             log.warning(
                 "extraction_due_reminder_send_failed",
+                action_item_id=reminder.action_item_id,
+                reason=type(exc).__name__,
+            )
+            continue
+        except Exception as exc:  # noqa: BLE001 -- one reminder's, see the docstring
+            # The type only: a database error carries its parameters.
+            log.warning(
+                "extraction_due_reminder_failed",
                 action_item_id=reminder.action_item_id,
                 reason=type(exc).__name__,
             )
