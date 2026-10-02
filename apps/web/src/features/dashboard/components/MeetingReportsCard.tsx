@@ -20,13 +20,22 @@ import { DashboardCard } from "./DashboardCard";
 export function MeetingReportsCard({ teamId }: { teamId: string }) {
   const { reports, loading, error, save } = useMeetingReports(teamId);
   const [open, setOpen] = useState<string | null>(null);
+  const [showAll, setShowAll] = useState(false);
 
   useEffect(() => {
     const target = /^#report-(mtg_[A-Za-z0-9]+)$/.exec(window.location.hash)?.[1];
-    if (!target || !reports.some((r) => r.meeting_id === target)) return;
+    const index = reports.findIndex((r) => r.meeting_id === target);
+    if (!target || index < 0) return;
+    if (index >= FIRST_SHOWN) setShowAll(true);
     setOpen(target);
-    document.getElementById(`report-${target}`)?.scrollIntoView({ block: "start" });
+    // After the row renders, so a report past the first five can be reached too.
+    requestAnimationFrame(() =>
+      document.getElementById(`report-${target}`)?.scrollIntoView({ block: "start" }),
+    );
   }, [reports]);
+
+  const shown = showAll ? reports : reports.slice(0, FIRST_SHOWN);
+  const hidden = reports.length - shown.length;
 
   return (
     <DashboardCard title="회의 리포트">
@@ -39,19 +48,30 @@ export function MeetingReportsCard({ teamId }: { teamId: string }) {
           아직 만들어진 회의 리포트가 없습니다. 회의 분석이 끝나면 초안이 여기에 생깁니다.
         </p>
       ) : (
-        <ul style={{ margin: 0, padding: 0, listStyle: "none" }}>
-          {reports.map((report) => (
-            <ReportRow
-              key={report.meeting_id}
-              report={report}
-              open={open === report.meeting_id}
-              onToggle={() =>
-                setOpen((current) => (current === report.meeting_id ? null : report.meeting_id))
-              }
-              onSave={(body) => save(report.meeting_id, body)}
-            />
-          ))}
-        </ul>
+        <>
+          <ul style={{ margin: 0, padding: 0, listStyle: "none" }}>
+            {shown.map((report) => (
+              <ReportRow
+                key={report.meeting_id}
+                report={report}
+                open={open === report.meeting_id}
+                onToggle={() =>
+                  setOpen((current) => (current === report.meeting_id ? null : report.meeting_id))
+                }
+                onSave={(body) => save(report.meeting_id, body)}
+              />
+            ))}
+          </ul>
+          {hidden > 0 ? (
+            <div
+              style={{ borderTop: "1px solid var(--color-hairline)", paddingTop: "var(--space-8)" }}
+            >
+              <Button tone="text" size="compact" onClick={() => setShowAll(true)}>
+                이전 리포트 {hidden}개 더 보기
+              </Button>
+            </div>
+          ) : null}
+        </>
       )}
     </DashboardCard>
   );
@@ -98,18 +118,30 @@ function ReportRow({
         onClick={onToggle}
         aria-expanded={open}
         aria-controls={bodyId}
-        className="w-full text-left"
+        title={open ? "접기" : "펼쳐서 본문 보기"}
+        className="w-full text-left hover:bg-[var(--color-accent-selection)]"
         style={{
           display: "flex",
           flexWrap: "wrap",
           alignItems: "baseline",
           gap: "var(--space-4) var(--space-12)",
-          padding: "var(--space-row) 0",
+          padding: "var(--space-row) var(--space-4)",
           background: "none",
           border: 0,
           cursor: "pointer",
         }}
       >
+        <span
+          aria-hidden="true"
+          style={{
+            display: "inline-block",
+            width: "1em",
+            color: "var(--color-ink-body)",
+            transform: open ? "rotate(90deg)" : "none",
+          }}
+        >
+          ▸
+        </span>
         <span style={{ color: "var(--color-ink-strong)", fontSize: "var(--text-body)" }}>
           {report.title}
         </span>
@@ -165,6 +197,8 @@ function ReportRow({
             <>
               <div
                 style={{
+                  maxHeight: "60vh",
+                  overflowY: "auto",
                   whiteSpace: "pre-wrap",
                   fontSize: "var(--text-body)",
                   lineHeight: "var(--text-body-leading)",
@@ -234,5 +268,8 @@ function formatTime(iso: string): string {
     minute: "2-digit",
   });
 }
+
+/** Rows shown before "이전 리포트 n개 더 보기"; the server sends at most 20. */
+const FIRST_SHOWN = 5;
 
 const metaStyle = { margin: 0, fontSize: "var(--text-meta)", color: "var(--color-ink-muted)" };
