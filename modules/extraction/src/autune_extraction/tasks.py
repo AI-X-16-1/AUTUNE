@@ -931,8 +931,12 @@ def retire_decision_pages() -> int:
     A tick with nothing to retire reads the database and calls Notion not
     at all. A page whose team has no Notion connection cannot be reached and
     is counted, not failed; it is listed again next time, which costs one
-    read. Every other periodic task of B's follows the same shape: one row's
-    failure costs that row. Ids and counts only in the log.
+    read. One row's failure costs that row when it is an ``IntegrationError``
+    or a ``PrivacyViolationError``, the two ``backfill_decisions`` catches; any
+    other exception ends this tick, and the next one starts the list over.
+    Ids and counts only in the log, and ``retired`` counts only what this run
+    retitled and trashed -- a page found archived or deleted is counted as
+    that.
 
     Not covered, because nothing records them: a *changed* page whose update
     failed (retried at the row's next change or by the backfill), and the
@@ -950,6 +954,8 @@ def retire_decision_pages() -> int:
         "extraction_decision_pages_retired",
         listed=len(rows),
         retired=stats.retired,
+        archived=stats.archived,
+        gone=stats.gone,
         failed=stats.failed,
         not_connected=stats.not_connected,
     )

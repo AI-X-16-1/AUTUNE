@@ -606,6 +606,42 @@ def test_a_page_a_person_archived_is_not_listed_again(
     assert notion.updates == [], "its title is the person's; nothing was written"
 
 
+def test_only_a_page_this_run_took_out_is_counted_as_retired(
+    wired: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """PARK, review of #691: a page a person had already archived loses its id
+    like a retired one, and was counted as "retired" although nothing was
+    retitled or trashed by Autune. The count says what happened."""
+    logged: list[dict[str, object]] = []
+
+    class Recorder:
+        def info(self, event: str, **fields: object) -> None:
+            logged.append(fields)
+
+        warning = info
+
+    for decision_id, page in (
+        ("dec_a", "page_live"),
+        ("dec_b", "page_archived"),
+        ("dec_c", "page_deleted"),
+    ):
+        wired.add(
+            ExtDecisionRef(
+                decision_id=decision_id, system="notion", meeting_id="mtg_1", external_id=page
+            )
+        )
+    wired.commit()
+    notion = FakeNotion(archived={"page_archived"}, deleted={"page_deleted"})
+    wire_notion(monkeypatch, notion, {"team_1": config_for("team_1")})
+    monkeypatch.setattr(tasks, "log", Recorder())
+
+    assert tasks.retire_decision_pages() == 1
+
+    (counts,) = logged
+    assert (counts["retired"], counts["archived"], counts["gone"]) == (1, 1, 1)
+    assert notion.updates == [("page_live", RETITLED)]
+
+
 def test_the_tick_logs_counts_and_nothing_else(
     wired: Session, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -626,6 +662,13 @@ def test_the_tick_logs_counts_and_nothing_else(
     assert logged == [
         (
             "extraction_decision_pages_retired",
-            {"listed": 1, "retired": 1, "failed": 0, "not_connected": 0},
+            {
+                "listed": 1,
+                "retired": 1,
+                "archived": 0,
+                "gone": 0,
+                "failed": 0,
+                "not_connected": 0,
+            },
         )
     ]
