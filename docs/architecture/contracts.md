@@ -182,7 +182,8 @@ two apart. It stays empty until the Korean classifier has a measured quality
 (#10); E shows "not enough data" until then.
 
 `status` is one of `needs_confirmation`, `todo`, `in_progress`, `done` — the
-four columns of the action board (S17).
+four columns of the action board (S17) and, for the last three, the Jira status
+categories they map to.
 `needs_confirmation` means Autune has the item but no external issue exists yet.
 
 ### 3. `GapReport` — C → E

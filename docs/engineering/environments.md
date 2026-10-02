@@ -167,6 +167,9 @@ Where that token comes from, and the two ways to give it to the browser:
 | `AUTUNE_SLACK_CLIENT_ID`, `AUTUNE_SLACK_CLIENT_SECRET` | core, the one-click "Add to Slack" install (#428) |
 | `AUTUNE_SLACK_REDIRECT_URI` | core. The web origin's `/api/auth/slack/callback`; Slack accepts **HTTPS only**, so a local test serves `apps/web` with `next dev --experimental-https` |
 | `AUTUNE_SLACK_CHANNEL_NAME` | core. The private alert channel an install creates (default `autune`; `-2`, `-3`... when taken) |
+| `AUTUNE_JIRA_CLIENT_ID`, `AUTUNE_JIRA_CLIENT_SECRET` | core, a team's one-click Jira connection over Atlassian OAuth 2.0 (3LO) (#458). The app is the one `external-approvals.md` says to register |
+| `AUTUNE_JIRA_REDIRECT_URI` | core. The web origin's `/api/auth/jira/callback`; must match the callback URL in the Atlassian developer console exactly |
+| `AUTUNE_JIRA_SCOPES` | core. What the connection asks for (default `read:jira-work write:jira-work read:jira-user offline_access`) |
 
 ### Module-specific
 
@@ -297,7 +300,7 @@ Where that token comes from, and the two ways to give it to the browser:
 | `AUTUNE_INTELLIGENCE_MISALIGNMENT_REFIT_HOURS` | E | How long a fit (or fallback) is kept before `local` refits. Default `24` |
 | `AUTUNE_INTELLIGENCE_WEB_BASE_URL` | E | Web app origin, e.g. `https://autune.example.com`. The meeting report's details button links to `<this>/meetings/<id>`; unset, the report is posted without the button. Default unset |
 
-Notion and Calendar credentials are **not** environment variables. Each
+Notion, Jira and Calendar credentials are **not** environment variables. Each
 team configures its own on screen S28 and they are stored encrypted in
 `team_integrations` — read them with `autune_core.load_integration`, never from
 settings. See `../architecture/data-model.md`.

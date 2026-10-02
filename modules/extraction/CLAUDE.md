@@ -76,9 +76,9 @@ the model calls none is simply not in `ExtractionResult.classifications`.
 
 ## Privacy
 
-- Send Notion only what an issue needs — description, assignee, due date.
-  Never a transcript. A person's own calendar gets less: the description as
-  the event title, the date, and no attendees (nobody is invited). The
+- Send Notion and Jira only what an issue needs — description, assignee, due
+  date. Never a transcript. A person's own calendar gets less: the description
+  as the event title, the date, and no attendees (nobody is invited). The
   read-back asks Google for Autune's tagged events only, never the rest of the
   calendar.
 - Send the LLM the smallest window that resolves a reference, and only masked

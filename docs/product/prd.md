@@ -55,7 +55,7 @@ carries them. Everything in the table below is still what the modules do:
 | --- | --- |
 | Before | Analyze uploaded material → draft agenda (Phase 2) → pre-meeting brief (5.7) |
 | During | Real-time transcription, interim summaries, undecided-item alerts (Phase 2) |
-| After | Action extraction and tracking, gap detection, context linking, personal speaking-ratio feedback, Slack/Notion delivery |
+| After | Action extraction and tracking, gap detection, context linking, personal speaking-ratio feedback, Slack/Notion/Jira delivery |
 | Over time | Decision lineage, dashboard, influence map, topic linking |
 | **Continuously (#260)** | **Track every open work item, wake up when one stalls, gather what a stuck decision is missing, and escalate — with a person approving anything that moves another person** |
 
@@ -78,7 +78,7 @@ reports) → VP/CTO (dashboard).
 | Module | Owner | Responsibility | What the user gets |
 | --- | --- | --- | --- |
 | **A. Audio Pipeline** | 김민경 | Recording upload → STT → speaker diarization and identification → PII masking → raw audio deletion → unified transcript format | An accurate record of who said what |
-| **B. Structured Extraction** | 강민구 | Classify utterances into five kinds, build action-item cards, verify ambiguous agreement with NLI, sync to Notion, generate role-specific reports | Automatically organized action-item cards |
+| **B. Structured Extraction** | 강민구 | Classify utterances into five kinds, build action-item cards, verify ambiguous agreement with NLI, sync to Notion/Jira, generate role-specific reports | Automatically organized action-item cards |
 | **C. Gap Detection** | 박재경 | Entity and relation extraction → topic graph → participation matrix → domain-template comparison → risk scoring | A list of what this meeting missed |
 | **D. Meeting Context Engine** | 문민재 | Material analysis → agenda generation, past-topic retrieval and linking, decision lineage tracking, pre-meeting briefs | "We decided this last time" |
 | **E. Meeting Intelligence** | 이승환 | Quality scoring, gap classification, prediction, heatmaps, weekly reports, influence map, personal speaking-ratio DMs | A team communication dashboard |
@@ -100,7 +100,8 @@ reports) → VP/CTO (dashboard).
   concern / ambiguous expression.
 - NLI verification of ambiguous agreement; weak agreement triggers a Slack DM
   asking the speaker to confirm.
-- Automatic Notion issue creation with assignee mapping and due-date parsing.
+- Automatic Notion and Jira issue creation with assignee mapping and due-date
+  parsing.
 - Role-specific reports delivered to Slack.
 - Incomplete items from previous meetings resurface in the next one.
 
@@ -150,7 +151,7 @@ per feature and one owner each, do the work. Design and ownership:
 | --- | --- | --- |
 | Main agent | 김민경 | A chat that answers from every meeting, and a morning briefing of what is due and what is stuck — the top five, not everything |
 | Research | 김민경 | When a meeting floats an idea or argues over a fact nobody could confirm, a short document of what is known, proposed to the people involved during or right after the meeting |
-| Briefing | 문민재 | Ten minutes before a meeting, the previous meeting's summary and the issues this one should settle (Jira links only if #82 brings Jira back) |
+| Briefing | 문민재 | Ten minutes before a meeting, the previous meeting's summary and the issues this one should settle (Jira issues through B's `TeamAgenda`, #436) |
 | Follow-up | 박재경 | When progress and unresolved topics say another meeting is needed, a proposal to the team lead only |
 | Workload | 강민구 | When one person is overloaded and another is free, a redistribution proposal to the manager only; Gmail, Google Calendar and Jira integration (Jira per #82) |
 | Report | 이승환 | After a meeting, the summary minutes report |
@@ -239,7 +240,7 @@ Implementation rules: `../architecture/privacy.md`.
     │   [B]    │  │   [C]    │  │   [D]    │  ← parallel
     │Extraction│  │   Gap    │  │ Context  │
     └────┬─────┘  └────┬─────┘  └────┬─────┘
-         ├→ Notion     │             │
+         ├→ Notion/Jira│             │
          ├→ Slack      ├→ Slack      ├→ Slack
          └─────────────┼─────────────┘
                        │ event log
@@ -288,7 +289,7 @@ keep the team building real models rather than prompt chains.
 | Database | PostgreSQL | Structured data and history |
 | Vector search | pgvector, inside PostgreSQL | Embedding search, topic matching, material retrieval — no separate service |
 | Slack | Bolt for Python | Bot framework |
-| External | Notion API, Google Calendar API, Gmail API (proposed); Jira pending #82 | Action item, schedule and mail sync |
+| External | Notion API, Jira REST API, Google Calendar API, Gmail API (proposed) | Action item, schedule and mail sync |
 | Agent (#260) | LangGraph, Gemini | Supervisor graph over five subagents; plan-mode interrupt. `../architecture/agent-layer.md` section 3.3 |
 | Infra | Vercel (frontend); a self-hosted desktop server (RTX 3060) running Docker Compose behind Cloudflare Tunnel (backend) | STT inference on our own GPU; HTTPS and WebSocket without opening a port |
 | Desktop (Phase 2) | Electron | System audio capture |
@@ -325,7 +326,7 @@ half-built ones. Detail: `../architecture/agent-layer.md` section 14.
 
 **In the 6-week MVP:** recording upload; STT + diarization + live transcript;
 automatic PII masking; immediate raw-audio deletion; action item extraction and
-tracking; Notion integration; gap detection; Slack integration; past-topic
+tracking; Notion/Jira integration; gap detection; Slack integration; past-topic
 linking; basic decision lineage; personal speaking-ratio DM; basic dashboard.
 
 **Added by #260, and no larger:** the main agent with chat and the
