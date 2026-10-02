@@ -5,6 +5,13 @@ import { isCandidate } from "../types";
 import type { ActionItemRead } from "../types";
 
 /**
+ * What a dragged card carries: the item's id under Autune's own type, and no
+ * text. `text/plain` would let a card dropped on another application paste the
+ * item's wording there -- meeting content leaving by a route nobody chose.
+ */
+const DRAG_TYPE = "application/x-autune-action-item";
+
+/**
  * One card on the action board (S17).
  *
  * Reading order is fixed: title → reason → assignee and due date → issue key.
@@ -19,28 +26,55 @@ import type { ActionItemRead } from "../types";
  * every meeting, where a card alone did not say which meeting it came from
  * (mentoring, 2026-10-01). One meeting's board leaves it off: every card there
  * would repeat the same title.
+ *
+ * `drag` makes the card something the board can move between columns. The
+ * card is a `div` acting as a button rather than a `button` for that reason:
+ * a drag that starts on a `button` does not begin in every browser. Enter and
+ * Space open it as they did.
  */
 export function ActionCard({
   item,
   selected = false,
   onSelect,
   showMeeting = false,
+  drag,
 }: {
   item: ActionItemRead;
   selected?: boolean;
   onSelect?: (id: string) => void;
   showMeeting?: boolean;
+  /** Present on a board that moves cards; `moving` while its change is in flight. */
+  drag?: { moving: boolean; onStart: () => void; onEnd: () => void };
 }) {
   const overdue = isOverdue(item);
+  const draggable = drag !== undefined && !drag.moving;
 
   return (
-    <button
-      type="button"
+    <div
+      role="button"
+      tabIndex={0}
       onClick={() => onSelect?.(item.id)}
+      onKeyDown={(event) => {
+        if (event.key !== "Enter" && event.key !== " ") return;
+        event.preventDefault();
+        onSelect?.(item.id);
+      }}
       aria-current={selected}
-      className="w-full border text-left"
+      aria-busy={drag?.moving || undefined}
+      draggable={draggable}
+      onDragStart={
+        draggable
+          ? (event) => {
+              event.dataTransfer.effectAllowed = "move";
+              event.dataTransfer.setData(DRAG_TYPE, item.id);
+              drag.onStart();
+            }
+          : undefined
+      }
+      onDragEnd={draggable ? drag.onEnd : undefined}
+      className={`w-full border text-left ${draggable ? "cursor-grab" : "cursor-pointer"}`}
       style={{
-        background: "var(--color-surface-paper)",
+        background: drag?.moving ? "var(--color-surface-sunken)" : "var(--color-surface-paper)",
         borderRadius: "var(--radius)",
         padding: "var(--space-card)",
         borderWidth: selected ? 1.5 : 1,
@@ -122,7 +156,7 @@ export function ActionCard({
           ))}
         </div>
       ) : null}
-    </button>
+    </div>
   );
 }
 
