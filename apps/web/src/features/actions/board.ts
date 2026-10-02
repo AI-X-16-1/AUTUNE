@@ -8,6 +8,19 @@ import type { ActionItemRead, ActionStatus } from "./types";
  */
 export type Moves = Readonly<Record<string, ActionStatus>>;
 
+/**
+ * Said after a change that confirmed an item -- out of "확인 필요" -- by a drop
+ * on the board or by the detail window's select. One sentence for both, so
+ * the same act does not read differently by where it was done.
+ */
+export const CONFIRMED_NOTICE =
+  "확정했습니다. 팀이 연결한 도구가 있으면 그쪽에도 반영됩니다.";
+
+/** Whether moving `item` to `target` is the move that confirms it. */
+export function confirms(item: ActionItemRead, target: ActionStatus): boolean {
+  return columnOf(item) === "needs_confirmation" && target !== "needs_confirmation";
+}
+
 /** The column an item is drawn in. */
 export function columnOf(
   item: ActionItemRead,

@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+
 import pytest
 from sqlalchemy.orm import Session
 
 from autune_audio import service
 from autune_audio.live import registry
 from autune_core import Meeting, TeamMember, User
-from autune_core.auth import issue_token
+from autune_core.auth import end_sessions, issue_token
 from autune_core.errors import ConflictError, NotFoundError, PermissionDeniedError
 
 
@@ -55,6 +57,31 @@ def test_a_missing_meeting_is_not_found(db_session: Session, member: User) -> No
 def test_a_token_naming_a_deleted_user_is_refused(db_session: Session, meeting: str) -> None:
     with pytest.raises(PermissionDeniedError):
         service.authenticate_live(db_session, token=issue_token("usr_nobody"), meeting_id=meeting)
+
+
+def test_a_signed_out_token_is_refused(db_session: Session, meeting: str, member: User) -> None:
+    """#727: signing out ends the token for the routes, and the socket decoded
+    it for itself, so a signed-out or leaked token still opened a recording.
+    One function decides now (``autune_core.auth.user_for_token``)."""
+    token = issue_token(member.id)
+    end_sessions(member)
+    db_session.flush()
+
+    with pytest.raises(PermissionDeniedError):
+        service.authenticate_live(db_session, token=token, meeting_id=meeting)
+
+
+def test_a_token_from_after_the_sign_out_is_let_in(
+    db_session: Session, meeting: str, member: User
+) -> None:
+    # A minute ago, not now: a token issued at the very instant of a sign-out
+    # is ended with it, and two readings of the clock can be the same value.
+    end_sessions(member, now=datetime.now(UTC) - timedelta(minutes=1))
+    db_session.flush()
+
+    user = service.authenticate_live(db_session, token=issue_token(member.id), meeting_id=meeting)
+
+    assert user.id == member.id
 
 
 def test_beginning_moves_the_meeting_to_recording(db_session: Session, meeting: str) -> None:

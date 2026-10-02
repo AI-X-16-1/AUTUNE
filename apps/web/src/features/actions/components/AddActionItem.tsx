@@ -5,7 +5,9 @@ import type { FormEvent, ReactNode } from "react";
 
 import { Button } from "@/shared/ui";
 
+import { AssigneeInput, assigneeFields, type AssigneeValue } from "./AssigneeInput";
 import type { ActionItemDraft } from "../api";
+import { useAssignable } from "../hooks/useAssignable";
 
 /**
  * Manual add, S17 (#64).
@@ -80,7 +82,6 @@ export function AddActionItem({
  * is visible while typing instead of arriving as a 422 afterwards.
  */
 const DESCRIPTION_MAX = 2000;
-const ASSIGNEE_LABEL_MAX = 200;
 
 function AddForm({
   meetingId,
@@ -92,7 +93,8 @@ function AddForm({
   onClose: () => void;
 }) {
   const [description, setDescription] = useState("");
-  const [assigneeLabel, setAssigneeLabel] = useState("");
+  const [assignee, setAssignee] = useState<AssigneeValue>({ kind: "none" });
+  const members = useAssignable(meetingId);
   const [dueDate, setDueDate] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -116,7 +118,7 @@ function AddForm({
       await onAdd({
         meeting_id: meetingId,
         description: trimmed,
-        assignee_label: assigneeLabel.trim() || null,
+        ...assigneeFields(assignee),
         due_date: dueDate || null,
       });
       onClose();
@@ -161,14 +163,14 @@ function AddForm({
 
       <div className="grid gap-3 sm:grid-cols-2">
         <FormField id={`${ids}-assignee`} label="담당자">
-          <input
+          <AssigneeInput
             id={`${ids}-assignee`}
-            value={assigneeLabel}
-            onChange={(event) => setAssigneeLabel(event.target.value)}
-            maxLength={ASSIGNEE_LABEL_MAX}
-            placeholder="이름"
-            className={CONTROL}
-            style={CONTROL_STYLE}
+            members={members}
+            value={assignee}
+            onChange={setAssignee}
+            disabled={pending}
+            controlClassName={CONTROL}
+            controlStyle={CONTROL_STYLE}
           />
         </FormField>
 
