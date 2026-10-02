@@ -270,7 +270,8 @@ person's, those counts are that person's completion record. So:
   and account deletion, where it runs before the user hooks — with the ids
   read before anything is locked, and again for any utterance that appeared
   meanwhile, so every utterance deleted is one the modules were told about. A
-  hook that raises stops the deletion (#628).
+  hook that raises stops the deletion, and so do utterances that are still
+  appearing after three rounds (409, try again) (#628).
 - When a user leaves a team, their utterances and everything derived from them
   are deleted. **This rule is under review — see ADR 0007**, which argues the
   record belongs to the meeting rather than to its participants, and that

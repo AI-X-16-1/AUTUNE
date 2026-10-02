@@ -34,7 +34,7 @@ from sqlalchemy.orm import Session
 
 from autune_core import Meeting, Participant, Team, TeamMember, User, Utterance, get_logger
 from autune_core.deletion import run_speech_hooks, run_user_hooks
-from autune_core.errors import NotFoundError
+from autune_core.errors import ConflictError, NotFoundError
 
 from .models import AudConsentAttestation, AudSpeakerEmbedding
 from .schemas import AccountDeleted, MyData, SpeechDeleted, TeamPrivacy
@@ -171,6 +171,9 @@ def _utterance_ids(session: Session, participant_ids: list[str]) -> list[str]:
     )
 
 
+_TELL_ROUNDS = 3
+
+
 def _tell_modules(session: Session, user_id: str, participant_ids: list[str]) -> None:
     """Run the speech hooks for every utterance the delete below will take.
 
@@ -179,15 +182,24 @@ def _tell_modules(session: Session, user_id: str, participant_ids: list[str]) ->
     rows -- which the delete would take without any module having heard of
     them (review of #628). So the ids are read again after the hooks, and any
     new ones are announced too, until nothing new appears.
+
+    **If they are still changing after three rounds, the deletion stops**
+    (409), the way a raising hook stops it: going on would delete utterances
+    no module heard of, which privacy.md section 4 says does not happen. The
+    person tries again once the reprocess has finished.
     """
     told: set[str] = set()
-    for _ in range(3):
+    for _ in range(_TELL_ROUNDS):
         fresh = [u for u in _utterance_ids(session, participant_ids) if u not in told]
         if not fresh:
             return
         run_speech_hooks(user_id, fresh)
         told.update(fresh)
-    log.warning("audio_speech_ids_kept_changing", user_id=user_id)
+    if any(u not in told for u in _utterance_ids(session, participant_ids)):
+        log.warning("audio_speech_ids_kept_changing", user_id=user_id, rounds=_TELL_ROUNDS)
+        raise ConflictError(
+            "this meeting is being processed again; try deleting your speech once it finishes"
+        )
 
 
 def _delete_utterances(session: Session, participant_ids: list[str]) -> int:

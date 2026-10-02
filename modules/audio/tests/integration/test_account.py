@@ -377,3 +377,38 @@ def test_words_that_appear_while_modules_are_told_are_told_too(
 
     assert told == [[spoken["me@example.com:utterance"]], ["utt_reprocessed"]]
     assert db_session.get(Utterance, "utt_reprocessed") is None
+
+
+def test_words_that_keep_appearing_stop_the_deletion(
+    db_session: Session,
+    client_for,
+    me: User,
+    spoken: dict[str, str],
+    meeting: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Review of #628: if every round finds new utterances, deleting anyway
+    would take some no module heard of. It stops with a 409 instead."""
+    rounds: list[int] = []
+
+    def hook(user_id: str, utterance_ids: list[str]) -> None:
+        rounds.append(len(rounds))
+        db_session.add(
+            Utterance(
+                meeting_id=meeting,
+                participant_id=spoken["me@example.com:participant"],
+                speaker_label="화자 1",
+                start_sec=10 + len(rounds),
+                end_sec=11 + len(rounds),
+                text="계속 생기는 말",
+            )
+        )
+        db_session.flush()
+
+    monkeypatch.setattr(deletion, "_speech_hooks", {"b": hook})
+
+    response = client_for(me).delete("/api/audio/me/speech")
+
+    assert response.status_code == 409
+    assert len(rounds) == 3
+    assert db_session.get(Utterance, spoken["me@example.com:utterance"]) is not None
