@@ -12,11 +12,17 @@ from sqlalchemy.orm import Session
 
 from autune_agent import router as routes
 from autune_agent.models import AgentApprover, AgentPendingAction, AgentResearchDocument, AgentRun
-from autune_agent.testing import FakeRouter
+from autune_agent.testing import FakeRouter, ScriptedToolModel
 from autune_core import AutuneError, Meeting, Team, User, current_user, get_session
 
 
-def _client(session: Session, user_id: str, *, chat_router: object | None) -> TestClient:
+def _client(
+    session: Session,
+    user_id: str,
+    *,
+    chat_router: object | None,
+    tool_model: object | None = None,
+) -> TestClient:
     app = FastAPI()
     app.include_router(routes.router, prefix="/api/agent")
 
@@ -30,6 +36,7 @@ def _client(session: Session, user_id: str, *, chat_router: object | None) -> Te
     app.dependency_overrides[current_user] = lambda: session.get(User, user_id)
     if chat_router is not None:
         app.dependency_overrides[routes.get_chat_router] = lambda: chat_router
+    app.dependency_overrides[routes.get_chat_tool_model] = lambda: tool_model
     return TestClient(app)
 
 
@@ -392,3 +399,77 @@ def test_queued_counts_what_the_run_actually_left_waiting(
     body = client.post("/api/agent/chat", json={"team_id": team["team"], "message": "x"}).json()
 
     assert body["queued"] == 1
+
+
+def _asking_client(session: Session, user_id: str, model: object) -> TestClient:
+    return _client(session, user_id, chat_router=FakeRouter(), tool_model=model)
+
+
+def test_a_free_question_is_answered_from_tools(session: Session, team: dict[str, str]) -> None:
+    # The model asks for nothing: module tools need their own tables, which the
+    # unit suite's SQLite does not build. test_ask.py covers the rounds.
+    model = ScriptedToolModel(["DONE"])
+
+    reply = _asking_client(session, team["member"], model).post(
+        "/api/agent/chat", json={"team_id": team["team"], "message": "최근 회의?"}
+    )
+
+    assert reply.status_code == 200
+    assert reply.json()["route"] == "ask"
+    assert reply.json()["pending"] == []
+
+
+def test_without_a_tool_model_the_chat_answers_as_before(
+    member: TestClient, team: dict[str, str]
+) -> None:
+    reply = member.post("/api/agent/chat", json={"team_id": team["team"], "message": "안녕"})
+
+    assert reply.json()["outcome"] == "unrouted"
+    assert reply.json()["pending"] == []
+
+
+def _queue_from_run(session: Session, team: dict[str, str], run_id: str) -> AgentPendingAction:
+    row = _queue(session, team)
+    row.run_id = run_id
+    session.commit()
+    return row
+
+
+def test_pending_lists_the_runs_proposals_for_an_approver_only(
+    session: Session, team: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    session.add(AgentApprover(team_id=team["team"], user_id=team["member"], scope="research"))
+    session.commit()
+    real = routes.run_and_record
+
+    def recording(*args: Any, **kwargs: Any) -> Any:
+        row, state = real(*args, **kwargs)
+        _queue_from_run(session, team, row.id)
+        return row, state
+
+    monkeypatch.setattr(routes, "run_and_record", recording)
+    approver = _client(session, team["member"], chat_router=FakeRouter())
+
+    got = approver.post("/api/agent/chat", json={"team_id": team["team"], "message": "x"}).json()
+
+    assert [(p["tool"], p["status"]) for p in got["pending"]] == [
+        ("agent.share_research_document", "pending")
+    ]
+
+
+def test_pending_is_empty_for_a_member_who_cannot_decide(
+    session: Session, team: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real = routes.run_and_record
+
+    def recording(*args: Any, **kwargs: Any) -> Any:
+        row, state = real(*args, **kwargs)
+        _queue_from_run(session, team, row.id)
+        return row, state
+
+    monkeypatch.setattr(routes, "run_and_record", recording)
+    member = _client(session, team["member"], chat_router=FakeRouter())
+
+    got = member.post("/api/agent/chat", json={"team_id": team["team"], "message": "x"}).json()
+
+    assert got["pending"] == []
