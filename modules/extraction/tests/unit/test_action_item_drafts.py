@@ -32,6 +32,7 @@ from autune_extraction.models import (
     ExtClassification,
     ExtConfirmation,
     ExtDecision,
+    ExtDecisionRef,
     ExtDecisionReview,
     ExtDecisionSource,
     ExtEditEvent,
@@ -55,6 +56,8 @@ TABLES = [
     ExtDecision.__table__,
     ExtDecisionSource.__table__,
     ExtDecisionReview.__table__,
+    # Every run asks which pages a dropped decision left behind (#669).
+    ExtDecisionRef.__table__,
     ExtActionItem.__table__,
     ExtActionItemSource.__table__,
     ExtEditEvent.__table__,
