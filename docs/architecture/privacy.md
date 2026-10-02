@@ -364,6 +364,14 @@ the feature needs.
     Autune closes its issue with a note rather than deleting it, so the
     team's own comments and work on it stay. The issue carries the item's
     description, due date and assignee's Jira account only.
+    One read brings content back the other way: a team's screen can list
+    the open issues of the project it connected (key, title, status,
+    assignee's display name, due date), read from Jira when a member asks
+    and passed through. None of it is stored or logged, so there is nothing
+    of the team's Jira for Autune to retain or delete. It is read with the
+    team's connection -- the grant of the person who connected it -- so
+    every member of the Autune team sees those titles, whether or not they
+    have an account on the Jira site (decided with the user, 2026-10-02).
   - **A person's own calendar (#435):** Autune *can* remove its events — they
     carry its tag, and `delete_event` exists. Deleting an item deletes its
     event first. A meeting deleted or expired by the retention sweep does not

@@ -9,11 +9,16 @@ What leaves is what an issue needs -- the item's description as the summary,
 its due date, the assignee's Jira account -- never a transcript. Looking the
 assignee up sends their email address to the team's own Jira as a search
 query; that is addressing, declared below, not content.
+
+One call reads content back: ``open_issues``, a project's unfinished issues,
+for a screen that shows them and keeps nothing (module B, 2026-10-02).
 """
 
 from __future__ import annotations
 
+import re
 from base64 import b64encode
+from dataclasses import dataclass
 from datetime import date
 from typing import Any
 
@@ -27,6 +32,28 @@ API_ROOT = "https://api.atlassian.com/ex/jira"
 STATUS_CATEGORIES = frozenset({"new", "indeterminate", "done"})
 """Jira's three fixed status categories. Workflows name their statuses freely
 ("To Do", "할 일", "Backlog"); the category is what every workflow shares."""
+
+
+PROJECT_KEY = re.compile(r"[A-Za-z][A-Za-z0-9_]{0,63}")
+"""A project key as it may be written into JQL. The key is the one value
+``open_issues`` puts inside a query string, so it is held to letters,
+digits and underscores: a quote in it would end the string it sits in."""
+
+OPEN_ISSUES_LIMIT = 50
+OPEN_ISSUES_MAX = 100
+"""Jira returns at most 100 issues a page when fields are asked for."""
+
+
+@dataclass(frozen=True, slots=True)
+class JiraIssue:
+    """One issue as a list shows it. Read to be shown, not to be kept."""
+
+    key: str
+    summary: str
+    status: str | None
+    status_category: str | None
+    assignee: str | None
+    due_date: date | None
 
 
 class JiraClient(HttpClient):
@@ -148,6 +175,50 @@ class JiraClient(HttpClient):
             "POST", f"/issue/{issue_key}/transitions", json={"transition": {"id": transition_id}}
         )
 
+    def open_issues(
+        self, project_key: str, *, limit: int = OPEN_ISSUES_LIMIT
+    ) -> tuple[list[JiraIssue], bool]:
+        """The project's issues that are not done, most recently changed first,
+        and whether Jira has more than ``limit`` of them.
+
+        One page and no more: this is a list for a person to look at, and a
+        project with thousands of open issues is read in Jira. The four
+        fields a row shows are the only ones asked for -- no description, no
+        comments, nobody's email address.
+        """
+        if PROJECT_KEY.fullmatch(project_key) is None:
+            raise PermanentIntegrationError(f"{self.service}: not a project key")
+        found = self.request(
+            "GET",
+            "/search/jql",
+            params={
+                "jql": (
+                    f'project = "{project_key}" AND statusCategory != Done ORDER BY updated DESC'
+                ),
+                "fields": "summary,status,assignee,duedate",
+                "maxResults": max(1, min(limit, OPEN_ISSUES_MAX)),
+            },
+        )
+        issues: list[JiraIssue] = []
+        for raw in found.get("issues") or []:
+            key = raw.get("key")
+            if not key:
+                continue
+            fields = raw.get("fields") or {}
+            status = fields.get("status") or {}
+            issues.append(
+                JiraIssue(
+                    key=str(key),
+                    summary=str(fields.get("summary") or ""),
+                    status=_text(status.get("name")),
+                    status_category=_text((status.get("statusCategory") or {}).get("key")),
+                    assignee=_text((fields.get("assignee") or {}).get("displayName")),
+                    due_date=_day(fields.get("duedate")),
+                )
+            )
+        more = bool(found.get("nextPageToken")) or found.get("isLast") is False
+        return issues, more
+
     def add_comment(self, issue_key: str, text: str) -> None:
         self.request("POST", f"/issue/{issue_key}/comment", json={"body": _doc(text)})
 
@@ -180,6 +251,20 @@ class JiraClient(HttpClient):
                 self.transition(issue_key, str(option["id"]))
                 return True
         return False
+
+
+def _text(value: Any) -> str | None:
+    return str(value) if value else None
+
+
+def _day(value: Any) -> date | None:
+    """Jira writes a due date as ``YYYY-MM-DD``. Anything else is no date."""
+    if not isinstance(value, str):
+        return None
+    try:
+        return date.fromisoformat(value)
+    except ValueError:
+        return None
 
 
 def _doc(text: str) -> dict[str, Any]:
