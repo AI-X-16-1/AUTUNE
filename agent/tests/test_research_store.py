@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import pytest
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from autune_agent.models import AgentResearchDocument, AgentResearchSource
 from autune_agent.research_store import save_research_document, share_research_document
 from autune_core import Meeting, Team, Utterance
+from autune_core.errors import PrivacyViolationError
 
 
 def _utterance(session: Session, meeting_id: str, text: str = "말") -> str:
@@ -127,3 +130,27 @@ def test_an_empty_body_is_refused(session: Session, team: dict[str, str]) -> Non
     result = save_research_document(session, team["team"], team["meeting"], "   ", [])
 
     assert result["ok"] is False
+
+
+def test_an_unmasked_body_is_never_stored(session: Session, team: dict[str, str]) -> None:
+    # The writer's output is a model's text: it can carry a value the masker
+    # missed in the quotes, or one the model made up (#525 review).
+    with pytest.raises(PrivacyViolationError) as raised:
+        save_research_document(
+            session, team["team"], team["meeting"], "담당자 연락처 010-1234-5678", []
+        )
+
+    assert "010" not in str(raised.value)
+    assert session.scalars(select(AgentResearchDocument)).all() == []
+
+
+def test_the_database_holds_one_proposed_document_per_meeting(
+    session: Session, team: dict[str, str]
+) -> None:
+    # The save overwrites in code; the index keeps two racing saves from both inserting.
+    session.add(AgentResearchDocument(team_id=team["team"], meeting_id=team["meeting"], body="1"))
+    session.flush()
+    session.add(AgentResearchDocument(team_id=team["team"], meeting_id=team["meeting"], body="2"))
+
+    with pytest.raises(IntegrityError):
+        session.flush()
