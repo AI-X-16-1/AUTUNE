@@ -15,9 +15,11 @@ What holds for both:
 - **Topics, never people or roles.** Neither result carries participation, a
   participant id or a ``silent_share``. In a small team a role is a person, and
   whoever reads a Follow-up proposal is the team lead (agent-layer.md section
-  3.1, privacy.md section 3). A gap's title is a template's item name plus a
-  topic label, and a topic label is masked transcript text, so no raw
-  utterance leaves here.
+  3.1, privacy.md section 3). A gap's ``title`` is a template's item name
+  plus a coverage phrase (``detect.MISSING_TITLE``, ``PARTIAL_TITLE``) and
+  names no topic. Topic labels reach a caller only through ``body`` (the
+  suggested question) and ``topics``, and a topic label is masked transcript
+  text, so no raw utterance leaves here.
 - **Undismissed gaps only.** A dismissal is a person saying the gap is wrong,
   and C's own report leaves those out too (``service.build_report``).
 - ``evidence`` is gap ids. ``items`` holds at most five, most risky first, and
