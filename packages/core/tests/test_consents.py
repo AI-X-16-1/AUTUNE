@@ -9,14 +9,20 @@ import pytest
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, delete, event
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from autune_core import SESSION_COOKIE, UserConsent, issue_token
 from autune_core import consents as consents_module
 from autune_core.auth_router import router as auth_router
-from autune_core.consents import DOCUMENTS, MAX_PER_REQUEST, consents_of, record_consents
+from autune_core.consents import (
+    DOCUMENTS,
+    MAX_PER_REQUEST,
+    Consent,
+    consents_of,
+    record_consents,
+)
 from autune_core.db import Base, get_session
 from autune_core.entities import User
 from autune_core.errors import AutuneError, ValidationError
@@ -31,6 +37,12 @@ def db() -> Session:
     engine = create_engine(
         "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
     )
+
+    @event.listens_for(engine, "connect")
+    def _foreign_keys(connection, _record) -> None:  # type: ignore[no-untyped-def]
+        # SQLite enforces foreign keys -- and runs ON DELETE CASCADE -- only when asked.
+        connection.execute("PRAGMA foreign_keys=ON")
+
     Base.metadata.create_all(engine, tables=[User.__table__, UserConsent.__table__])
     session = sessionmaker(bind=engine)()
     session.add(User(id=ME, email="me@example.com", display_name="Me"))
@@ -155,19 +167,29 @@ def test_two_requests_at_once_are_one_agreement_not_an_error(
     true. The other document in the same request is still recorded.
 
     The race is staged by handing ``record_consents`` the stale read the
-    slower request would have made."""
+    slower request would have made: empty, although the row is there.
+
+    An earlier version of this test staged nothing. It wrote the stale read
+    as ``next(reads, None) or real(s, u)``, and an empty list is falsy, so
+    the real read ran and the insert was never attempted -- the test passed
+    with the savepoint removed (PARK and mkkim68, review of #715). It is
+    checked against that now: without the savepoint and the ``except``, this
+    fails with ``IntegrityError``."""
     record_consents(db, ME, [("terms", "2026-10-02")])
     db.commit()
     first = consents_of(db, ME)
     real = consents_module.consents_of
-    reads = iter([[]])  # the first read: before the other request committed
-    monkeypatch.setattr(
-        consents_module, "consents_of", lambda s, u: next(reads, None) or real(s, u)
-    )
+    stale: list[list[Consent]] = [[]]  # the read made before the other request committed
+
+    def read(session: Session, user_id: str) -> list[Consent]:
+        return stale.pop() if stale else real(session, user_id)
+
+    monkeypatch.setattr(consents_module, "consents_of", read)
 
     recorded = record_consents(db, ME, [("terms", "2026-10-02"), ("privacy", "2026-10-02")])
     db.commit()
 
+    assert stale == []  # the stale read was the one ``record_consents`` acted on
     assert [(c.document, c.version) for c in recorded] == [
         ("terms", "2026-10-02"),
         ("privacy", "2026-10-02"),
@@ -185,11 +207,20 @@ def test_one_request_cannot_write_without_bound(db: Session) -> None:
 # --- the table ----------------------------------------------------------------------
 
 
-def test_a_consent_goes_with_the_account() -> None:
-    """It is the person's record: the foreign key is declared to delete it with
-    the account, and nothing is kept behind as proof. This reads the
-    declaration only -- SQLite does not enforce it. The delete itself was run
-    on a real Postgres while this was written and reviewed (#715)."""
+def test_a_consent_goes_with_the_account(db: Session) -> None:
+    """It is the person's record: deleting the account deletes it, and nothing
+    is kept behind as proof. The delete is run, not only declared -- the
+    fixture turns SQLite's foreign keys on -- and by a Core ``DELETE``, the
+    way module A removes an account."""
+    record_consents(db, ME, [("terms", "2026-10-02")])
+    record_consents(db, OTHER, [("terms", "2026-10-02")])
+    db.commit()
+
+    db.execute(delete(User).where(User.id == ME))
+    db.commit()
+
+    assert consents_of(db, ME) == []
+    assert len(consents_of(db, OTHER)) == 1
     fk = next(iter(Base.metadata.tables[TABLE].c.user_id.foreign_keys))
     assert fk.ondelete == "CASCADE"
 
