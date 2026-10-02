@@ -9,6 +9,7 @@ B's ``ACTIONS`` (#492): no session argument, each owns its transaction, and
 from __future__ import annotations
 
 import contextlib
+import re
 from collections.abc import Iterator
 from datetime import UTC, datetime
 
@@ -79,9 +80,10 @@ def test_a_draft_is_stored_with_header_and_footer_and_nothing_is_posted(
     ]
     row = db_session.get(IntelMeetingReport, meeting)
     assert row is not None
-    assert row.body_markdown == (
-        "📋 결제 기능 기획 · 9/29\n\n" + BODY + "\n\n자동 생성된 리포트입니다."
-    )
+    assert row.body_markdown.startswith("📋 결제 기능 기획 · 9/29\n\n" + BODY + "\n\n")
+    # The draft is a snapshot of B, C and D as of now; the footer says when.
+    footer = r"\n\n자동 생성된 리포트입니다 · \d{1,2}/\d{1,2} \d{2}:\d{2} 기준\.$"
+    assert re.search(footer, row.body_markdown)
     assert row.pending_review is True
     assert row.sent_at is None
     assert _enqueued(events) == []
