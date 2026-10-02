@@ -7,8 +7,11 @@
   new team would otherwise have no way in, and neither would a team whose
   ``any`` approver left while others kept narrower scopes.
 - After that, only an approver with scope ``any`` may change it.
-- The team never loses its last ``any`` approver, so the list can always be
-  changed again. That makes the first assignment hold ``any`` too.
+- A change is saved only if, afterwards, no rows remain or one of them is
+  ``any``. So the first assignment holds ``any``, clearing every row returns
+  the team to the start, and narrower scopes with no ``any`` are never
+  written -- that state arises only when the ``any`` approver leaves, which
+  the first rule reopens.
 
 Rows of a former member count for nothing here, as in ``approver_scopes``: a
 team whose only ``any`` approver left is open to its members again.
@@ -96,11 +99,19 @@ def set_scopes(
     """Replace ``user_id``'s approver scopes in ``team_id``; the caller commits.
 
     The caller has been checked to be a member. Scopes are validated by the
-    request model; an unknown one here is a programming error.
+    request model; an unknown one here is a programming error. Holds a row lock
+    on the team's approvers until the caller commits.
     """
     wanted = set(scopes)
     if not wanted <= set(APPROVER_SCOPES):
         raise ValueError("unknown approver scope")
+    # Lock the team's rows before reading them: two `any` approvers removing
+    # each other's `any` at once would otherwise both pass the last-manager
+    # check (#621 review). A team with no rows locks nothing; a write there must
+    # leave an `any` row behind, so two at once cannot strand the team.
+    session.execute(
+        select(AgentApprover.user_id).where(AgentApprover.team_id == team_id).with_for_update()
+    )
     if not can_manage(session, team_id, by):
         raise NotAManagerError()
     is_member = session.scalar(

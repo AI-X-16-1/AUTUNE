@@ -113,8 +113,32 @@ prefix `AUTUNE_<MODULE>_`.
 | `AUTUNE_GOOGLE_REDIRECT_URI` | `http://localhost:3000/api/auth/google/callback` | The **web** origin, not the API — the browser reaches `/api/*` through the Next proxy, so the callback must land there too. Must match a redirect URI registered in the Google Cloud console exactly, per environment |
 | `API_PROXY_TARGET` | `http://localhost:8000` | Web-only (read by `apps/web/next.config.ts`), where `/api/*` is proxied. Set per environment; not an `autune_core` setting |
 
-Google *sign-in* is identity only (`openid email profile`) and is unrelated to
-`AUTUNE_GOOGLE_CALENDAR_CREDENTIALS`, which grants module D calendar access.
+Google *sign-in* is identity only (`openid email profile`). A person's calendar
+is a separate consent, given after signing in and described next. Nothing reads
+`AUTUNE_GOOGLE_CALENDAR_CREDENTIALS`, which this page used to name here.
+
+### A person's own Google grant
+
+| Variable | Example | Notes |
+| --- | --- | --- |
+| `AUTUNE_GOOGLE_INTEGRATION_CLIENT_ID` | | A second Google Cloud OAuth client, for what a person connects after signing in — their own calendar today (#435), mail when it exists. Optional: blank, the sign-in client does both |
+| `AUTUNE_GOOGLE_INTEGRATION_CLIENT_SECRET` | | Never commit. Set with the id or not at all — one without the other is refused at startup |
+
+Sign-in keeps `AUTUNE_GOOGLE_CLIENT_ID`. The two are separate so that an
+identity-only client and one that asks for somebody's calendar can be reviewed
+and rotated apart. `Settings.google_integration_credentials` is the one place
+that chooses: the integration pair when it is set, the sign-in pair otherwise.
+The connect route in `autune_core` and module B's calendar refresh both read
+it, so a grant is always refreshed with the client that issued it.
+
+- **No second redirect URI.** One callback (`/api/auth/google/callback`)
+  finishes sign-in and the calendar connect, so `AUTUNE_GOOGLE_REDIRECT_URI`
+  must be registered on the integration client as well as on the sign-in one.
+- **Setting these on a running deployment strands its connected calendars.**
+  Google binds a refresh token to the client that issued it. A grant issued
+  to the sign-in client is refused at its next refresh once the integration
+  client is in use, and the person is asked to connect again. Nothing migrates
+  a grant from one client to the other.
 
 **Two cookies, two jobs.** `autune_session` is the signed session (7 days,
 `HttpOnly`, `SameSite=Lax`, `Secure` outside local). `autune_oauth_state` lives
@@ -167,6 +191,8 @@ Where that token comes from, and the two ways to give it to the browser:
 | `AUTUNE_SLACK_CLIENT_ID`, `AUTUNE_SLACK_CLIENT_SECRET` | core, the one-click "Add to Slack" install (#428) |
 | `AUTUNE_SLACK_REDIRECT_URI` | core. The web origin's `/api/auth/slack/callback`; Slack accepts **HTTPS only**, so a local test serves `apps/web` with `next dev --experimental-https` |
 | `AUTUNE_SLACK_CHANNEL_NAME` | core. The private alert channel an install creates (default `autune`; `-2`, `-3`... when taken) |
+| `AUTUNE_NOTION_CLIENT_ID`, `AUTUNE_NOTION_CLIENT_SECRET` | core, a team's one-click Notion connection: a Notion public integration (#428). The token it returns is the workspace's bot's, stored encrypted |
+| `AUTUNE_NOTION_REDIRECT_URI` | core. The web origin's `/api/auth/notion/callback`; must match a redirect URI of the Notion integration exactly |
 | `AUTUNE_JIRA_CLIENT_ID`, `AUTUNE_JIRA_CLIENT_SECRET` | core, a team's one-click Jira connection over Atlassian OAuth 2.0 (3LO) (#458). The app is the one `external-approvals.md` says to register |
 | `AUTUNE_JIRA_REDIRECT_URI` | core. The web origin's `/api/auth/jira/callback`; must match the callback URL in the Atlassian developer console exactly |
 | `AUTUNE_JIRA_SCOPES` | core. What the connection asks for (default `read:jira-work write:jira-work read:jira-user offline_access`) |
@@ -208,6 +234,7 @@ Where that token comes from, and the two ways to give it to the browser:
 | `AUTUNE_EXTRACTION_CLASSIFIER_ENDPOINT` | B | Our own inference server. Required when `CLASSIFIER_IMPL=hosted` |
 | `AUTUNE_EXTRACTION_CLASSIFIER_DEVICE` | B | `cpu` · `cuda`. Default `cpu`. Mirrors `AUTUNE_AUDIO_DEVICE` |
 | `AUTUNE_EXTRACTION_LLM_API_KEY` | B | Provider key for `CLASSIFIER_IMPL=llm`, sent as a header only. **Blank by default**, and `llm` refuses to start without one. A free-tier key may let the provider keep what it is sent — dummy meetings only |
+| `AUTUNE_LLM_API_KEY` | B | The same provider key under a name with no module in it, which is the name the team's deployment secret has. B reads it only when `AUTUNE_EXTRACTION_LLM_API_KEY` is blank (blank, not just unset: `.env.example` ships that line empty), so a key given to B alone still wins. **No other module reads it today** — C, D and the agent read `AUTUNE_GAP_VERIFIER_API_KEY`, `AUTUNE_CONTEXT_LLM_API_KEY` and `AUTUNE_AGENT_LLM_API_KEY`. A key selects nothing: `CLASSIFIER_IMPL` and `RESOLVER_IMPL` still decide whether B calls a provider, and the free-tier rule is the same |
 | `AUTUNE_EXTRACTION_LLM_MODEL` | B | The model `llm` calls. Default `gemini-3.8-flash`. Every classification records `llm:<model>+<fallback>` while the fallback is on |
 | `AUTUNE_EXTRACTION_LLM_FALLBACK_MODEL` | B | Answers a window when `LLM_MODEL` stays unavailable (429, 5xx, timeout after retries). Default `gemini-3.5-flash-lite`; blank disables it |
 | `AUTUNE_EXTRACTION_LLM_BASE_URL` | B | The provider's API root. Default Google's Generative Language API |

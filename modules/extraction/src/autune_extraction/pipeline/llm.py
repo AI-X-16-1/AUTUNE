@@ -33,9 +33,10 @@ is a label per line and carries no text). Only the request changes; the
 database, the resolver and every other output keep the text as it was. What
 still leaves: names not on the roster -- people outside the team, nicknames,
 English or misheard names. And a roster name that is also a word ("하늘") is
-replaced where it is only a word, which costs accuracy, not data. The resolver
-(#366) and the Notion sync still carry names; enabling ``llm`` outside a demo
-remains a team decision (#392).
+replaced where it is only a word, which costs accuracy, not data. The cloud
+resolver replaces roster names the same way (``resolver._scrubbed``, #530); the
+Notion and Jira syncs still carry names, to the team's own tools. Enabling
+``llm`` outside a demo remains a team decision (#392).
 
 The LLM gives a label, not a probability. ``confidence`` is therefore a fixed
 ``LLM_CONFIDENCE``: the threshold ADR 0006 compares against is unset by default

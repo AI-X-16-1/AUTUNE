@@ -33,6 +33,7 @@ from autune_extraction.models import (
     ExtActionItemSource,
     ExtCalendarEvent,
     ExtDecision,
+    ExtDecisionRef,
     ExtDecisionRelated,
     ExtDecisionReview,
     ExtDecisionSource,
@@ -360,3 +361,22 @@ def test_a_database_failure_stops_the_deletion(
 
     with pytest.raises(RuntimeError):
         tasks.forget_deleted_speech("user_1", GONE)
+
+
+def test_a_decision_put_back_with_its_page_still_there_is_queued_too(
+    session: Session, queued: list[tuple[str, str]]
+) -> None:
+    """#669: ``dec_pending`` is not confirmed, but a page from an earlier
+    confirmation would keep the deleted words. Queued, its sync retires the
+    page."""
+    session.add(
+        ExtDecisionRef(
+            decision_id="dec_pending", system="notion", meeting_id="mtg_1", external_id="page_9"
+        )
+    )
+    session.commit()
+
+    tasks.forget_deleted_speech("user_1", GONE)
+
+    decisions = {ident for task, ident in queued if task == "sync_decision"}
+    assert decisions == {"dec_line", "dec_writeup", "dec_pending"}

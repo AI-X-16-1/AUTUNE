@@ -1,5 +1,6 @@
 import { AppSidebar } from "../_components/AppSidebar";
 import { AppTopBar } from "../_components/AppTopBar";
+import { AssistantMount } from "../_components/AssistantMount";
 import { SessionGate } from "../_components/SessionGate";
 
 /**
@@ -37,6 +38,8 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
           <div className="min-w-0 flex-1">{children}</div>
         </div>
       </div>
+      {/* S34: the assistant floats over every screen in this group, and only these. */}
+      <AssistantMount />
     </SessionGate>
   );
 }

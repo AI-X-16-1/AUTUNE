@@ -3,12 +3,13 @@
 After a meeting's analysis finishes, composes its structured minutes from B, C
 and D's tools and proposes that E store them (L1) and post them (L2, after a
 person approves) -- section 8 rule 2. No LLM: a fixed tool order and a
-template (``render``).
+template (``render``). When a person edits the draft on E's dashboard, proposes
+the post of the edited draft again, for approval (#674).
 """
 
 from autune_agent.main import Subagent
 
-from .graph import TOOLS, TRIGGER, build
+from .graph import TOOLS, TRIGGERS, build
 
 SUBAGENT = Subagent(
     name="report",
@@ -20,5 +21,5 @@ SUBAGENT = Subagent(
     ),
     tools=TOOLS,
     build=build,
-    triggers=(TRIGGER,),
+    triggers=TRIGGERS,
 )

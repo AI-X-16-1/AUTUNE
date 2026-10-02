@@ -326,12 +326,17 @@ def test_saving_a_report_locks_its_row(db_session: Session, team: str) -> None:
 
 def test_the_module_sets_the_levels_not_the_subagent() -> None:
     """#509: a module lists its writes in ACTIONS and the reversible ones in L1_ACTIONS."""
-    assert [tools.draft_meeting_report, tools.publish_meeting_report] == tools.ACTIONS
+    assert [
+        tools.draft_meeting_report,
+        tools.publish_meeting_report,
+        tools.publish_meeting_report_correction,  # #674
+    ] == tools.ACTIONS
     assert [tools.draft_meeting_report] == tools.L1_ACTIONS
     assert not set(tools.ACTIONS) & set(tools.TOOLS)
     # B's form, so one reader parses both modules' docstrings.
     assert "L1 -- runs without approval" in (tools.draft_meeting_report.__doc__ or "")
-    assert "L2 -- runs only after a person approves" in (tools.publish_meeting_report.__doc__ or "")
+    for action in (tools.publish_meeting_report, tools.publish_meeting_report_correction):
+        assert "L2 -- runs only after a person approves" in (action.__doc__ or "")
 
 
 def test_the_run_fills_team_id_never_the_model() -> None:
