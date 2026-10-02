@@ -1,6 +1,6 @@
 # The assistant answers free questions, and an approver decides in the chat
 
-Status: proposed, 2026-10-02. Owner: 김민경 (`main/`, `router.py`,
+Status: built, 2026-10-02. Owner: 김민경 (`main/`, `router.py`,
 `features/agent`).
 
 Builds on: S34 (`docs/design/agent-assistant.md`, #646; screen #651), plan mode
