@@ -115,6 +115,7 @@ def test_a_confirmed_item_becomes_one_issue_assigned_and_dated(session: Session)
     assert task == {
         "project": "AUT",
         "summary": "스펙 초안 공유",
+        "description": "",
         "due": date(2026, 10, 7),
         "assignee": "acc-me",
     }
@@ -170,6 +171,38 @@ def test_edits_rewrite_the_same_issue_and_move_its_status(session: Session) -> N
     sync(session, jira, row)
     assert jira.categories["AUT-1"] == "done"
     assert list(jira.tasks) == ["AUT-1"]
+
+
+LONG = "스펙 초안을 정리하고\n공유 폴더에 올린 다음  리뷰를 받는다 " + "자세히 " * 60
+
+
+def test_an_update_rewrites_the_description_create_wrote(session: Session) -> None:
+    """#601 review: a long or multi-line line went into Jira's description at
+    creation, and an update rewrote only the summary -- so a person deleting
+    their own speech (#587) left their words in Jira. What Jira holds after the
+    re-sync is checked, not what B meant to send."""
+    jira = FakeJira(accounts={"me@example.com": "acc-me"})
+    row = item(session, description=LONG)
+    sync(session, jira, row)
+    assert jira.tasks["AUT-1"]["description"] == LONG, "the full line at creation"
+
+    row.description = "삭제된 발화에서 만든 항목"  # what forget_speech leaves
+    sync(session, jira, row)
+
+    task = jira.tasks["AUT-1"]
+    assert (task["summary"], task["description"]) == ("삭제된 발화에서 만든 항목", "")
+    assert "공유 폴더" not in str(jira.tasks)
+
+
+def test_a_long_description_edited_is_rewritten_in_full(session: Session) -> None:
+    jira = FakeJira(accounts={"me@example.com": "acc-me"})
+    row = item(session, description=LONG)
+    sync(session, jira, row)
+
+    row.description = LONG.replace("스펙", "API 문서")
+    sync(session, jira, row)
+
+    assert jira.tasks["AUT-1"]["description"] == row.description
 
 
 def test_an_issue_deleted_in_jira_is_made_again(session: Session) -> None:

@@ -39,7 +39,7 @@ from autune_core import (
     session_scope,
     users_with_integration,
 )
-from autune_core.deletion import on_meeting_deleted, on_user_deleted
+from autune_core.deletion import on_meeting_deleted, on_speech_deleted, on_user_deleted
 from autune_core.settings import get_settings as get_core_settings
 from autune_integrations import (
     CalendarClient,
@@ -1145,6 +1145,45 @@ def sync_decision_after_confirmation(decision_id: str) -> None:
         log.warning(
             "extraction_notion_decision_sync_blocked_by_privacy_guard", decision_id=decision_id
         )
+
+
+@on_speech_deleted("extraction")
+def forget_deleted_speech(user_id: str, utterance_ids: Sequence[str]) -> None:
+    """Before a person's own speech is deleted (#582, #587): the items and
+    decisions drawn from it keep the work and drop the words
+    (``service.forget_speech``), and the confirmed ones' copies in Notion, Jira
+    and the calendar are queued to follow.
+
+    The database part raises on failure, so A's deletion stops rather than
+    leaving the words behind in B. The copies outside are queued after the
+    commit and a failure to queue is only logged: the person's speech must not
+    stay because a broker was down. Safe to repeat. Ids and counts only.
+
+    B commits before A deletes the utterances, in its own transaction: if A's
+    deletion then fails, B has already dropped the words. That errs toward
+    deleting more, which is the side to err on (mkkim68, review of #601).
+    """
+    with session_scope() as session:
+        done = service.forget_speech(session, utterance_ids)
+    try:
+        for action_item_id in done.changed_items:
+            sync_action_item.delay(action_item_id)
+            sync_action_item_jira.delay(action_item_id)
+            sync_action_item_calendar.delay(action_item_id)
+        for decision_id in done.changed_decisions:
+            sync_decision.delay(decision_id)
+    except Exception as exc:  # noqa: BLE001 -- the deletion must go on; the rows changed
+        log.warning(
+            "extraction_speech_resync_not_queued", user_id=user_id, error=type(exc).__name__
+        )
+    log.info(
+        "extraction_speech_forgotten",
+        user_id=user_id,
+        utterances=len(utterance_ids),
+        drafts_deleted=len(done.deleted_items),
+        items_changed=len(done.changed_items),
+        decisions_changed=len(done.changed_decisions),
+    )
 
 
 @shared_task(name="autune.extraction.periodic.publish_team_agendas")

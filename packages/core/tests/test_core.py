@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 import pytest
 
 from autune_core import Base, deletion, issue_token
@@ -117,3 +119,19 @@ def test_deletion_hooks_run_for_registered_modules(monkeypatch: pytest.MonkeyPat
 
     deletion.run_meeting_hooks("mtg_001")
     assert seen == ["mtg_001"]
+
+
+def test_speech_hooks_get_the_person_and_the_utterances_before_they_go(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(deletion, "_speech_hooks", {})  # extraction's needs B's tables
+    seen: list[tuple[str, tuple[str, ...]]] = []
+
+    @deletion.on_speech_deleted("test_speech_module")
+    def _forget(user_id: str, utterance_ids: Sequence[str]) -> None:
+        seen.append((user_id, tuple(utterance_ids)))
+
+    deletion.run_speech_hooks("user_1", ["utt_1", "utt_2"])
+
+    assert seen == [("user_1", ("utt_1", "utt_2"))]
+    assert "test_speech_module" in deletion.registered_speech_modules()
