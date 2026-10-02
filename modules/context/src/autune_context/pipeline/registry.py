@@ -2,8 +2,10 @@
 
 Nothing outside this package instantiates a model class directly. Call
 ``get_embedder()`` / ``get_reranker()`` / ``get_nli()``; each is cached, so the
-model loads once per worker process. (``LlmClient`` has no Phase 1
-implementation — see ``base.LlmClient``.)
+model loads once per worker process. ``get_llm()`` / ``get_llm_judge()`` are the
+external-LLM counterpart, used only when ``engine_mode="llm"`` (see
+``pipeline.llm_judge``); nothing calls them in ``classic`` mode, so that mode needs
+no API key.
 """
 
 from __future__ import annotations
@@ -12,8 +14,9 @@ from functools import lru_cache
 
 from autune_context.config import get_settings
 from autune_context.constants import EMBEDDING_DIM
-from autune_context.pipeline import embedding, nli, reranking
-from autune_context.pipeline.base import Embedder, NliModel, Reranker
+from autune_context.pipeline import embedding, llm, nli, reranking
+from autune_context.pipeline.base import Embedder, LlmClient, NliModel, Reranker
+from autune_context.pipeline.llm_judge import LlmJudge
 
 _EMBEDDERS: dict[str, type] = {
     "kure_v1_http": embedding.KureHttpEmbedder,
@@ -29,6 +32,12 @@ _NLI: dict[str, type] = {
     "klue_kornli_http": nli.KlueKorNliHttp,
     "klue_kornli_local": nli.KlueKorNliLocal,
     "fake": nli.FakeNli,
+}
+_LLMS: dict[str, type] = {
+    "openai": llm.OpenAiLlm,
+    "gemini": llm.GeminiLlm,
+    "anthropic": llm.AnthropicLlm,
+    "fake": llm.FakeLlm,
 }
 
 
@@ -66,7 +75,23 @@ def get_nli() -> NliModel:
     return _pick("NLI", _NLI, settings.nli_impl)(settings)
 
 
+@lru_cache
+def get_llm() -> LlmClient:
+    settings = get_settings()
+    if not settings.llm_impl:
+        raise RuntimeError(
+            "engine_mode=llm needs AUTUNE_CONTEXT_LLM_IMPL: one of "
+            f"{sorted(k for k in _LLMS if k != 'fake')}"
+        )
+    return _pick("LLM", _LLMS, settings.llm_impl)(settings)
+
+
+@lru_cache
+def get_llm_judge() -> LlmJudge:
+    return LlmJudge(get_llm(), get_settings())
+
+
 def reset_cache() -> None:
     """Drop every cached model. For tests that switch implementations."""
-    for getter in (get_embedder, get_reranker, get_nli):
+    for getter in (get_embedder, get_reranker, get_nli, get_llm, get_llm_judge):
         getter.cache_clear()

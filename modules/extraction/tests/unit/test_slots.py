@@ -452,3 +452,31 @@ def test_a_longer_phrase_still_wins_over_its_month() -> None:
     assert parse_due("다음 달 말까지 하겠습니다", WEDNESDAY) == DueDate(
         text="다음 달 말", date=date(2026, 10, 31)
     )
+
+
+# --- a phrase that names a thing, not the deadline (#616) ---------------------------
+
+
+def test_the_phrase_a_deadline_word_follows_wins_over_one_naming_a_thing() -> None:
+    """Found on the real-account stack (10-01): "이번 주" names the minutes; the
+    deadline is "다음 주 금요일까지". The first phrase made it due this Friday."""
+    due = parse_due(
+        "이번 주 회의록은 제가 다음 주 금요일까지 정리해서 공유하겠습니다", date(2026, 10, 1)
+    )
+
+    assert due is not None
+    assert (due.text, due.date) == ("다음 주 금요일", date(2026, 10, 9))
+
+
+def test_with_no_deadline_word_the_first_phrase_is_still_taken() -> None:
+    """Pinned (#616): a line that only names a thing by a date keeps reading as
+    due then -- for a person to correct, rather than losing the only date."""
+    due = parse_due("이번 주 회의록 정리하겠습니다", date(2026, 10, 1))
+
+    assert due is not None and due.date == date(2026, 10, 2)
+
+
+def test_the_first_deadline_still_wins_over_what_happens_after() -> None:
+    due = parse_due("다음 주 금요일까지 하고 월요일에 공유하겠습니다", date(2026, 10, 1))
+
+    assert due is not None and due.date == date(2026, 10, 9)

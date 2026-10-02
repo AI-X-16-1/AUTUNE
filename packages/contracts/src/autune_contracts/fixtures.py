@@ -21,6 +21,7 @@ NAMES = (
     "context_links",
     "intelligence_snapshot",
     "team_agenda",
+    "team_action_progress",
 )
 
 

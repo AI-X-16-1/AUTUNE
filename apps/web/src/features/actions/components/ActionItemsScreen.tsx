@@ -1,5 +1,7 @@
 "use client";
 
+import type { Route } from "next";
+import Link from "next/link";
 import { useState } from "react";
 
 import { ActionBoard } from "./ActionBoard";
@@ -8,6 +10,7 @@ import { CalendarConnect } from "./CalendarConnect";
 import { CarriedOverActions } from "./CarriedOverActions";
 import { SlackMeConnect } from "./SlackMeConnect";
 import { JiraConnect } from "./JiraConnect";
+import { MyConfirmations } from "./MyConfirmations";
 import { SlackConnect } from "./SlackConnect";
 import { NotionConnect } from "./NotionConnect";
 import { DecisionReview } from "./DecisionReview";
@@ -42,7 +45,7 @@ import { useActionItems } from "../hooks/useActionItems";
  * whole width and the board renders at zero. Raised in review of #292.
  */
 export function ActionItemsScreen({ meetingId }: { meetingId: string }) {
-  const { items, settled, error, add, edit, remove } = useActionItems({
+  const { items, settled, error, add, edit, remove, reload } = useActionItems({
     meeting_id: meetingId,
   });
   const [selectedId, setSelectedId] = useState<string | undefined>(undefined);
@@ -77,11 +80,23 @@ export function ActionItemsScreen({ meetingId }: { meetingId: string }) {
         </p>
 
         <div className="mt-3 flex flex-col gap-2">
+          {/* Every connection, with no meeting needed, lives on S28 (#496). */}
+          <Link
+            href={"/settings/integrations" as Route}
+            className="text-[var(--color-accent-default)]"
+            style={{ fontSize: "var(--text-metaSmall)" }}
+          >
+            연동 설정
+          </Link>
           <CalendarConnect />
           <SlackMeConnect />
           <JiraConnect meetingId={meetingId} />
           <SlackConnect meetingId={meetingId} />
           <NotionConnect meetingId={meetingId} />
+        </div>
+
+        <div className="mt-6">
+          <MyConfirmations meetingId={meetingId} onAnswered={() => void reload()} />
         </div>
 
         <div className="mt-6">

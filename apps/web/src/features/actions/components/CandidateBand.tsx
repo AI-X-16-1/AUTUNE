@@ -16,10 +16,12 @@ export function CandidateBand({
   items,
   selectedId,
   onSelect,
+  showMeeting = false,
 }: {
   items: ActionItemRead[];
   selectedId?: string;
   onSelect?: (id: string) => void;
+  showMeeting?: boolean;
 }) {
   if (items.length === 0) return null;
 
@@ -59,6 +61,7 @@ export function CandidateBand({
             item={item}
             selected={item.id === selectedId}
             onSelect={onSelect}
+            showMeeting={showMeeting}
           />
         ))}
       </div>

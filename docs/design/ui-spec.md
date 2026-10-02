@@ -49,7 +49,7 @@ Modules: A Audio · B Extraction · C Gap · D Context · E Intelligence.
 |---|---|---|---|
 | S01 | Landing · sign-in | MVP | Headline "회의는 끝났는데 실행은 시작되지 않았다면" · Google / Slack / magic link · email-sent state (resend after 60s) · error state · no team branding |
 | S02 | Create workspace | MVP | Name (2–40) · role chips (= the `utterances.role` enum) · invite-email chips · import Slack members · 4-step progress |
-| S03 | Onboarding empty home | MVP | 2-item checklist (connect Slack · enrol voice); done = ink dot, pending = hollow ring · dropzone (mp3/wav/m4a, 3h, 500MB) · sample meeting |
+| S03 | Onboarding empty home | MVP | 2-item checklist (connect Slack · enrol voice); done = ink dot, pending = hollow ring · dropzone (mp3/wav/m4a, 500MB; no duration limit, since nothing enforces one) · sample meeting |
 | S04 | Voice enrolment modal | MVP | Two sentences · waveform · circular accent button · timer (red dot) · quality verdict · disabled under 8 seconds · only the embedding vector is stored |
 | S05 | Home | MVP | Next meeting (single paper block) · "Things for me" (overdue → needs confirmation → due soon → in progress) · unresolved gaps · recent meetings (retention expiry D-n) |
 | S06 | Create meeting modal | MVP | Title · date · start · end (optional) · attendee chips (warn when a voice is not enrolled) · audio-source radio (web mic / file) · Notion DB checkbox (per-meeting override) · P2 items shown disabled |
@@ -62,7 +62,7 @@ Modules: A Audio · B Extraction · C Gap · D Context · E Intelligence.
 | S09 | Pre-meeting brief | P2 | Slack, 30 minutes before · overdue actions · 2 undecided items · previous-decision summary · pattern warning · 3 buttons |
 | S10 | Start recording modal | MVP | Input device and level · scheduled-end chip (P2) · attendee consent table (ink / ochre) · exclude non-consenting checkbox · start disabled at zero consent · "Upload a file instead" |
 | S11 | Attendee consent DM | MVP | 4 explanatory rows · "동의합니다" (accent) / "이번 회의는 제외" (sunken) · no response = logged only, excluded from analysis · follow-up message when no voice is enrolled |
-| S12 | File processing pipeline | MVP | 6 stages (upload → STT → diarization → PII masking → delete original → B/C/D) · done = ink + elapsed · running = accent · queued = hollow ring · failed = red + reason · detection counts on the right |
+| S12 | File processing pipeline | MVP | 6 stages in the order the task runs them (upload → STT → diarization → delete original → PII masking · save → B/C/D); the original is deleted when diarization ends, before masking · done = ink + elapsed · running = accent · queued = hollow ring · failed = red + reason · detection counts on the right |
 | S13 | Live transcript | MVP | **Light theme + recording frame glow.** REC timer in top bar · P1 undecided band (P2) · transcript rows (time code · speaker · body · 5-kind tag) · unidentified-speaker row in ochre (assign / enter manually / send confirmation DM) · related-material card (quotation + open material / cite in minutes / not related) · PII tokens · right rail: 56px timer · elapsed bar · waveform · pause/stop · "Decided so far" (10 min) · "Needs confirmation" · 5-kind detection counts |
 | S14 | Undecided alert | P2 | Inverted ink band "종료 5분 전 · 결정되지 않은 사항 n건" · "질문으로 띄우기" inserts a suggested-question row into the transcript |
 
@@ -73,7 +73,7 @@ Modules: A Audio · B Extraction · C Gap · D Context · E Intelligence.
 | S16 | Speaker confirmation DM | MVP | Quoted candidate utterance · similarity · "제 발화입니다" (accent) / "아닙니다" / "다른 발화 듣기" · yes → store the embedding |
 | S17 | Action board | MVP | 4 columns (Needs confirmation = Autune-only · To Do · In Progress · Done) · card (title → reason → assignee and due date → Notion) · selected card 1.5px accent · broken link in red text |
 | S18 | Action detail drawer | MVP | Assignee / due date / status · source utterance quotation + confidence + the raw text the due date was parsed from · integration rows (Notion page, checkbox / Slack thread) · history · completion chain |
-| S19 | Ambiguous agreement DM | MVP | Quoted utterance + context · 3 choices (confirm = accent / defer / deny) · no response in 72h = undecided |
+| S19 | Ambiguous agreement DM | MVP | Quoted utterance + context · a link to the meeting's 액션 tab, where the speaker's own open questions show the 3 choices (confirm = accent / decision / deny) — in-Slack buttons wait for a click receiver (#585) · no response in 72h = undecided |
 | S20 | Gap report | MVP | HIGH expanded (title · level as text + score + 2px bar · description · resolving-question block · 3 buttons) · MEDIUM collapsed · LOW listed separately · right rail template comparison (covered / partial / missing) · topic × role density (never per person) |
 | S21 | Gap question thread | MVP | Slack thread · answer → classified by B → decision recorded automatically + confirmation reply · "결정 아님" reverts it |
 | S22 | Decision lineage | MVP (graph P2) | Topic list on the left (with revision count) · timeline nodes (hollow ring = original · ochre = changed, with a reason block naming absentees and the NLI label · ink = current) · linked materials · Notion page links |

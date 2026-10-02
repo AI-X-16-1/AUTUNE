@@ -1,4 +1,5 @@
 /** Calls to /api/extraction. This feature calls no other module's endpoints. */
+import { scopeQuery, type IntegrationScope } from "@/shared/api/auth";
 import { api } from "@/shared/api/client";
 
 import type {
@@ -12,6 +13,8 @@ import type {
   MeetingReview,
   MeetingSummary,
   ReviewDecision,
+  ConfirmationAnswer,
+  MyConfirmation,
 } from "./types";
 
 export { api };
@@ -121,6 +124,17 @@ async function withoutBody(path: string): Promise<void> {
 export const getCarriedOver = (meetingId: string) =>
   api.extraction<CarriedOver>(`/carried-over/${encodeURIComponent(meetingId)}`);
 
+/** The reader's own ambiguous agreements in this meeting, to answer here (#585). */
+export const getMyConfirmations = (meetingId: string) =>
+  api.extraction<MyConfirmation[]>(`/confirmations?meeting_id=${encodeURIComponent(meetingId)}`);
+
+/** Answer one of them -- the DM button's path; a commitment makes a draft. */
+export const answerConfirmation = (utteranceId: string, answer: ConfirmationAnswer) =>
+  api.extraction<MyConfirmation>(`/confirmations/${encodeURIComponent(utteranceId)}`, {
+    method: "POST",
+    body: JSON.stringify({ answer }),
+  });
+
 /** S15's 요약 tab (#421): the meeting's decisions, items, counts and memo. */
 export const getSummary = (meetingId: string) =>
   api.extraction<MeetingSummary>(`/summary/${encodeURIComponent(meetingId)}`);
@@ -171,9 +185,9 @@ export const syncResults = (meetingId: string) =>
  * after a project is chosen, so a project replacing a deleted one holds
  * everything (#458).
  */
-export const backfillJira = (meetingId: string) =>
+export const backfillJira = (scope: IntegrationScope) =>
   api.extraction<{ synced: number; failed: number }>(
-    `/jira/backfill?meeting_id=${encodeURIComponent(meetingId)}`,
+    `/jira/backfill?${scopeQuery(scope)}`,
     { method: "POST" },
   );
 
@@ -200,13 +214,18 @@ export interface NotionSetupResult {
 }
 
 /** The pages the team shared with Autune, and where its databases are (#428). */
-export const getNotionSetup = (meetingId: string) =>
-  api.extraction<NotionSetupState>(`/notion/setup?meeting_id=${encodeURIComponent(meetingId)}`);
+export const getNotionSetup = (scope: IntegrationScope) =>
+  api.extraction<NotionSetupState>(`/notion/setup?${scopeQuery(scope)}`);
 
-/** Make the databases under `pageId` and queue filling them with everything confirmed. */
-export const setUpNotion = (meetingId: string, pageId: string) =>
+/**
+ * Make the databases under `pageId` -- or, without one, in an "Autune" page
+ * among the person's private Notion pages -- and queue filling them with
+ * everything confirmed.
+ */
+export const setUpNotion = (scope: IntegrationScope, pageId?: string) =>
   api.extraction<NotionSetupResult>(
-    `/notion/setup?meeting_id=${encodeURIComponent(meetingId)}&page_id=${encodeURIComponent(pageId)}`,
+    `/notion/setup?${scopeQuery(scope)}` +
+      (pageId ? `&page_id=${encodeURIComponent(pageId)}` : ""),
     { method: "POST" },
   );
 

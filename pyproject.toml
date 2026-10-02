@@ -24,6 +24,7 @@ autune-gap = { workspace = true }
 autune-context = { workspace = true }
 autune-intelligence = { workspace = true }
 autune-agent = { workspace = true }
+autune-bot = { workspace = true }
 
 [dependency-groups]
 dev = [

@@ -164,6 +164,7 @@ class FakeJira:
         self.tasks[key] = {
             "project": project_key,
             "summary": summary,
+            "description": description,
             "due": due_date,
             "assignee": assignee_account_id,
         }
@@ -178,11 +179,14 @@ class FakeJira:
         due_date: date | None,
         assignee_account_id: str | None,
         keep_assignee: bool = False,
+        description: str | None = None,
     ) -> bool:
-        check_outbound({"summary": summary}, destination="jira")
+        check_outbound({"summary": summary, "description": description or ""}, destination="jira")
         if issue_key not in self.tasks:
             return False
         self.tasks[issue_key].update(summary=summary, due=due_date)
+        if description is not None:
+            self.tasks[issue_key]["description"] = description
         if not keep_assignee:
             self.tasks[issue_key]["assignee"] = assignee_account_id
         return True

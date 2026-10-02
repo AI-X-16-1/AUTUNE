@@ -12,11 +12,22 @@ from __future__ import annotations
 from datetime import datetime
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import CheckConstraint, DateTime, Float, ForeignKey, Integer, String, func
+from sqlalchemy import (
+    CheckConstraint,
+    DateTime,
+    Float,
+    ForeignKey,
+    Integer,
+    String,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from autune_core import Base, Meeting
 from autune_core.ids import JOB, new_id
+
+from .embedding import EMBEDDING_DIM
 
 JOB_STATUSES = ("queued", "running", "done", "failed", "superseded")
 
@@ -146,12 +157,6 @@ class AudConsentAttestation(Base):
     )
 
 
-EMBEDDING_DIM = 256
-"""Width of ``pyannote/wespeaker-voxceleb-resnet34-LM``'s output -- the model
-``live/embedder.py`` already runs, so a live vector and a stored one are
-comparable."""
-
-
 class AudSpeakerEmbedding(Base, TimestampMixin):
     """One voice, as a vector: ``aud_speaker_embeddings``.
 
@@ -165,15 +170,18 @@ class AudSpeakerEmbedding(Base, TimestampMixin):
     - a **profile** (``user_id``, no meeting): a voice somebody confirmed is
       theirs. Lives on the person, because cascading it with the meeting would
       reset identification every retention window. ``privacy.md`` section 4
-      allows a table reachable by ``user_id``. Bounded all the same: the
-      retention sweep deletes it once no meeting still names its owner
+      allows a table reachable by ``user_id``. Bounded all the same: each row
+      goes with the meeting it was confirmed in (below), and the retention
+      sweep deletes any left once no meeting still names its owner
       (``retention.forget_idle_profiles``, #363).
 
-    ``source_meeting_id``/``source_speaker_label`` are provenance, not a link:
-    ``SET NULL`` so the profile outlives the meeting it came from, and there so
-    that confirming the same (meeting, label) twice replaces the row the first
-    confirmation produced. Without them one wrong pick stays in a person's
-    profile for good and drags every later match.
+    ``source_meeting_id``/``source_speaker_label`` say which confirmation
+    produced the row, so that confirming the same (meeting, label) twice
+    replaces it. ``CASCADE`` on the meeting (#363 item 2): it was ``SET NULL``,
+    which left a row nothing could ever replace once its meeting was gone, so
+    one wrong pick dragged every later match for good. A profile is the mean of
+    the rows still standing, which are the person's meetings still inside
+    their retention window.
 
     Vectors are only ever compared within one ``model_version``: a different
     checkpoint puts the same voice somewhere else in the space.
@@ -199,10 +207,35 @@ class AudSpeakerEmbedding(Base, TimestampMixin):
     vector: Mapped[list[float]] = mapped_column(Vector(EMBEDDING_DIM), nullable=False)
     model_version: Mapped[str] = mapped_column(String(200), nullable=False)
     source_meeting_id: Mapped[str | None] = mapped_column(
-        String(64), ForeignKey("meetings.id", ondelete="SET NULL")
+        String(64), ForeignKey("meetings.id", ondelete="CASCADE")
     )
     source_speaker_label: Mapped[str | None] = mapped_column(String(100))
     confirmed_by: Mapped[str | None] = mapped_column(
         String(64), ForeignKey("users.id", ondelete="SET NULL")
     )
     confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class AudMaskingRule(Base):
+    """A shape one team masks in every transcript, learned from a report (S30).
+
+    ``shape`` is character classes and separators only -- ``A-#####`` -- never
+    the reported text (``masking_rules``). Goes with the team; the person who
+    added it is kept as provenance and cleared when they leave.
+    """
+
+    __tablename__ = "aud_masking_rules"
+    __table_args__ = (UniqueConstraint("team_id", "shape", name="uq_aud_masking_rules_team_shape"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    team_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("teams.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    shape: Mapped[str] = mapped_column(String(64), nullable=False)
+    category: Mapped[str] = mapped_column(String(16), nullable=False)
+    created_by: Mapped[str | None] = mapped_column(
+        String(64), ForeignKey("users.id", ondelete="SET NULL")
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )

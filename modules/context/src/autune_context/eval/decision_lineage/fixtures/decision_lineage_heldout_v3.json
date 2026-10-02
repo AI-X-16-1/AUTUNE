@@ -1,0 +1,1742 @@
+{
+ "version": 1,
+ "_about": "Held-out v3 (2026-09-30). Written before any model was run on it, and frozen: no rule, prompt or threshold may be chosen by looking at its failures. Labels follow dataset.py (a replaced owner is `modified`; a withdrawal or an excluding replacement is `reversed`). Includes phrasings the lexical cues in pipeline.change are known to be weak on (a replaced owner, an absence that means 'smoothly'), labeled by what the decision means, not by what any model says.",
+ "cases": [
+  {
+   "id": "h3_ur_reply_target",
+   "category": "unchanged_restated",
+   "past_meetings": [
+    {
+     "days_ago": 9,
+     "decision": "고객 문의에는 24시간 안에 답하는 것을 목표로 한다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "고객 문의 응답 목표는 계속 24시간 이내로 가기로 했다."
+   },
+   "expected_thread_source": 0,
+   "expected_change_type": "unchanged"
+  },
+  {
+   "id": "h3_ur_weekly_meeting",
+   "category": "unchanged_restated",
+   "past_meetings": [
+    {
+     "days_ago": 21,
+     "decision": "주간 회의는 월요일 오전 열 시에 한다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "주간 회의는 지금처럼 월요일 오전 열 시에 하기로 했다."
+   },
+   "expected_thread_source": 0,
+   "expected_change_type": "unchanged"
+  },
+  {
+   "id": "h3_ur_beta_test",
+   "category": "unchanged_restated",
+   "past_meetings": [
+    {
+     "days_ago": 30,
+     "decision": "신규 기능은 베타 테스트를 거쳐 출시한다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "신규 기능은 이번에도 베타 테스트를 거쳐 출시하기로 했다."
+   },
+   "expected_thread_source": 0,
+   "expected_change_type": "unchanged"
+  },
+  {
+   "id": "h3_ur_safety_stock",
+   "category": "unchanged_restated",
+   "past_meetings": [
+    {
+     "days_ago": 12,
+     "decision": "재고 부족 알림은 안전재고 20% 아래에서 보낸다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "재고 부족 알림 기준은 그대로 안전재고 20% 아래로 유지한다."
+   },
+   "expected_thread_source": 0,
+   "expected_change_type": "unchanged"
+  },
+  {
+   "id": "h3_ur_flight_class",
+   "category": "unchanged_restated",
+   "past_meetings": [
+    {
+     "days_ago": 40,
+     "decision": "출장 항공권은 이코노미석으로 예약한다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "출장 항공권은 여전히 이코노미석으로 예약하기로 했다."
+   },
+   "expected_thread_source": 0,
+   "expected_change_type": "unchanged"
+  },
+  {
+   "id": "h3_ur_log_retention",
+   "category": "unchanged_restated",
+   "past_meetings": [
+    {
+     "days_ago": 16,
+     "decision": "서버 로그는 90일간 보관한다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "서버 로그 보관 기간은 90일로 유지한다."
+   },
+   "expected_thread_source": 0,
+   "expected_change_type": "unchanged"
+  },
+  {
+   "id": "h3_ur_staging",
+   "category": "unchanged_restated",
+   "past_meetings": [
+    {
+     "days_ago": 25,
+     "decision": "배포 전에 스테이징 검증을 반드시 거친다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "배포 전 스테이징 검증은 앞으로도 반드시 거치기로 했다."
+   },
+   "expected_thread_source": 0,
+   "expected_change_type": "unchanged"
+  },
+  {
+   "id": "h3_ur_mentor_period",
+   "category": "unchanged_restated",
+   "past_meetings": [
+    {
+     "days_ago": 33,
+     "decision": "신입 사원 멘토는 입사 6개월까지 배정한다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "신입 사원 멘토 배정은 입사 6개월까지라는 기존 방침을 확인했다."
+   },
+   "expected_thread_source": 0,
+   "expected_change_type": "unchanged"
+  },
+  {
+   "id": "h3_up_overtime",
+   "category": "unchanged_paraphrase",
+   "past_meetings": [
+    {
+     "days_ago": 11,
+     "decision": "야근 시 팀장 사전 승인을 받아야 한다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "초과 근무를 하려면 미리 팀장의 허락을 얻어야 한다."
+   },
+   "expected_thread_source": 0,
+   "expected_change_type": "unchanged"
+  },
+  {
+   "id": "h3_up_email_verify",
+   "category": "unchanged_paraphrase",
+   "past_meetings": [
+    {
+     "days_ago": 18,
+     "decision": "신규 계정은 이메일 인증을 완료해야 활성화된다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "이메일 인증이 끝나야만 새 계정을 쓸 수 있다."
+   },
+   "expected_thread_source": 0,
+   "expected_change_type": "unchanged"
+  },
+  {
+   "id": "h3_up_encrypt",
+   "category": "unchanged_paraphrase",
+   "past_meetings": [
+    {
+     "days_ago": 27,
+     "decision": "고객 개인정보는 암호화해서 저장한다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "고객의 개인 정보를 저장할 때는 암호화를 적용한다."
+   },
+   "expected_thread_source": 0,
+   "expected_change_type": "unchanged"
+  },
+  {
+   "id": "h3_up_notice_channel",
+   "category": "unchanged_paraphrase",
+   "past_meetings": [
+    {
+     "days_ago": 8,
+     "decision": "사내 공지는 메신저 공지 채널에만 올린다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "회사 공지 사항은 메신저의 공지 전용 채널에만 게시한다."
+   },
+   "expected_thread_source": 0,
+   "expected_change_type": "unchanged"
+  },
+  {
+   "id": "h3_up_settlement_report",
+   "category": "unchanged_paraphrase",
+   "past_meetings": [
+    {
+     "days_ago": 22,
+     "decision": "월말 마감 후 재무팀이 결산 보고를 한다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "재무팀은 매월 마감이 끝나면 결산 내용을 보고한다."
+   },
+   "expected_thread_source": 0,
+   "expected_change_type": "unchanged"
+  },
+  {
+   "id": "h3_up_leave_notice",
+   "category": "unchanged_paraphrase",
+   "past_meetings": [
+    {
+     "days_ago": 15,
+     "decision": "휴가는 최소 사흘 전에 신청해야 한다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "휴가를 쓰려면 적어도 3일 전에는 신청해야 한다."
+   },
+   "expected_thread_source": 0,
+   "expected_change_type": "unchanged"
+  },
+  {
+   "id": "h3_up_two_approvals",
+   "category": "unchanged_paraphrase",
+   "past_meetings": [
+    {
+     "days_ago": 19,
+     "decision": "코드 병합 전에 리뷰어 두 명의 승인이 필요하다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "두 명의 리뷰어가 승인해야 코드를 병합할 수 있다."
+   },
+   "expected_thread_source": 0,
+   "expected_change_type": "unchanged"
+  },
+  {
+   "id": "h3_up_minutes_same_day",
+   "category": "unchanged_paraphrase",
+   "past_meetings": [
+    {
+     "days_ago": 10,
+     "decision": "회의록은 회의 당일에 공유한다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "회의가 끝난 그날 안에 회의록을 공유하기로 했다."
+   },
+   "expected_thread_source": 0,
+   "expected_change_type": "unchanged"
+  },
+  {
+   "id": "h3_up_closing_smooth",
+   "category": "unchanged_paraphrase",
+   "past_meetings": [
+    {
+     "days_ago": 45,
+     "decision": "분기 결산 보고는 15일까지 마친다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "분기 결산 보고는 차질 없이 15일까지 마치기로 했다."
+   },
+   "expected_thread_source": 0,
+   "expected_change_type": "unchanged"
+  },
+  {
+   "id": "h3_up_visitor_pass",
+   "category": "unchanged_paraphrase",
+   "past_meetings": [
+    {
+     "days_ago": 13,
+     "decision": "외부 손님은 방문증을 받고 출입한다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "방문객은 방문증을 발급받은 뒤에 출입할 수 있다."
+   },
+   "expected_thread_source": 0,
+   "expected_change_type": "unchanged"
+  },
+  {
+   "id": "h3_mp_launch_date",
+   "category": "modified_param",
+   "past_meetings": [
+    {
+     "days_ago": 20,
+     "decision": "제품 출시일은 4월 8일로 한다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "제품 출시일을 4월 22일로 미루기로 했다."
+   },
+   "expected_thread_source": 0,
+   "expected_change_type": "modified"
+  },
+  {
+   "id": "h3_mp_marketing_budget",
+   "category": "modified_param",
+   "past_meetings": [
+    {
+     "days_ago": 26,
+     "decision": "마케팅 예산은 월 600만 원이다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "마케팅 예산을 월 900만 원으로 늘린다."
+   },
+   "expected_thread_source": 0,
+   "expected_change_type": "modified"
+  },
+  {
+   "id": "h3_mp_hiring_count",
+   "category": "modified_param",
+   "past_meetings": [
+    {
+     "days_ago": 17,
+     "decision": "신규 채용은 디자이너 두 명이다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "신규 채용 인원을 디자이너 다섯 명으로 늘린다."
+   },
+   "expected_thread_source": 0,
+   "expected_change_type": "modified"
+  },
+  {
+   "id": "h3_mp_owner_plain",
+   "category": "modified_param",
+   "past_meetings": [
+    {
+     "days_ago": 9,
+     "decision": "리팩토링 담당은 김민경이다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "리팩토링 담당은 강민구로 바꾸기로 했다."
+   },
+   "expected_thread_source": 0,
+   "expected_change_type": "modified"
+  },
+  {
+   "id": "h3_mp_delivery_fee",
+   "category": "modified_param",
+   "past_meetings": [
+    {
+     "days_ago": 31,
+     "decision": "배송 기본 요금은 3천 원이다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "배송 기본 요금을 2천5백 원으로 낮춘다."
+   },
+   "expected_thread_source": 0,
+   "expected_change_type": "modified"
+  },
+  {
+   "id": "h3_mp_inspection_day",
+   "category": "modified_param",
+   "past_meetings": [
+    {
+     "days_ago": 14,
+     "decision": "정기 점검은 매주 화요일에 한다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "정기 점검을 매주 목요일로 옮긴다."
+   },
+   "expected_thread_source": 0,
+   "expected_change_type": "modified"
+  },
+  {
+   "id": "h3_mp_trial_days",
+   "category": "modified_param",
+   "past_meetings": [
+    {
+     "days_ago": 23,
+     "decision": "무료 체험 기간은 14일이다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "무료 체험 기간을 30일로 늘렸다."
+   },
+   "expected_thread_source": 0,
+   "expected_change_type": "modified"
+  },
+  {
+   "id": "h3_mp_report_deadline",
+   "category": "modified_param",
+   "past_meetings": [
+    {
+     "days_ago": 12,
+     "decision": "월간 리포트는 5일까지 발송한다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "월간 리포트 발송 기한을 10일로 늦춘다."
+   },
+   "expected_thread_source": 0,
+   "expected_change_type": "modified"
+  },
+  {
+   "id": "h3_mp_tier_threshold",
+   "category": "modified_param",
+   "past_meetings": [
+    {
+     "days_ago": 36,
+     "decision": "고객 등급 승급 기준은 연 구매 100만 원이다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "승급 기준을 연 구매 150만 원으로 올린다."
+   },
+   "expected_thread_source": 0,
+   "expected_change_type": "modified"
+  },
+  {
+   "id": "h3_mp_owner_daesin",
+   "category": "modified_param",
+   "past_meetings": [
+    {
+     "days_ago": 6,
+     "decision": "발표는 김지수가 맡기로 했다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "발표는 김지수 대신 이도윤이 맡기로 했다."
+   },
+   "expected_thread_source": 0,
+   "expected_change_type": "modified"
+  },
+  {
+   "id": "h3_mp_sprint_length",
+   "category": "modified_param",
+   "past_meetings": [
+    {
+     "days_ago": 28,
+     "decision": "스프린트 기간은 2주다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "스프린트 기간을 3주로 바꾼다."
+   },
+   "expected_thread_source": 0,
+   "expected_change_type": "modified"
+  },
+  {
+   "id": "h3_mp_password_length",
+   "category": "modified_param",
+   "past_meetings": [
+    {
+     "days_ago": 42,
+     "decision": "비밀번호 최소 길이는 8자다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "비밀번호 최소 길이를 12자로 늘린다."
+   },
+   "expected_thread_source": 0,
+   "expected_change_type": "modified"
+  },
+  {
+   "id": "h3_ms_free_shipping",
+   "category": "modified_scope",
+   "past_meetings": [
+    {
+     "days_ago": 18,
+     "decision": "무료 배송은 전 상품에 적용한다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "무료 배송은 3만 원 이상 주문에만 적용한다."
+   },
+   "expected_thread_source": 0,
+   "expected_change_type": "modified"
+  },
+  {
+   "id": "h3_ms_security_training",
+   "category": "modified_scope",
+   "past_meetings": [
+    {
+     "days_ago": 24,
+     "decision": "보안 교육은 정규직만 받는다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "보안 교육은 협력사 직원까지 받는다."
+   },
+   "expected_thread_source": 0,
+   "expected_change_type": "modified"
+  },
+  {
+   "id": "h3_ms_beta_audience",
+   "category": "modified_scope",
+   "past_meetings": [
+    {
+     "days_ago": 11,
+     "decision": "신규 기능 베타는 일부 고객에게만 연다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "신규 기능 베타를 전체 고객으로 확대한다."
+   },
+   "expected_thread_source": 0,
+   "expected_change_type": "modified"
+  },
+  {
+   "id": "h3_ms_travel_costs",
+   "category": "modified_scope",
+   "past_meetings": [
+    {
+     "days_ago": 30,
+     "decision": "출장비는 항공권과 숙박을 지원한다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "출장비는 항공권과 숙박에 더해 식대까지 지원한다."
+   },
+   "expected_thread_source": 0,
+   "expected_change_type": "modified"
+  },
+  {
+   "id": "h3_ms_night_allowance",
+   "category": "modified_scope",
+   "past_meetings": [
+    {
+     "days_ago": 15,
+     "decision": "야간 수당은 모든 직원에게 지급한다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "야간 수당은 정규직에게만 지급한다."
+   },
+   "expected_thread_source": 0,
+   "expected_change_type": "modified"
+  },
+  {
+   "id": "h3_ms_refund_condition",
+   "category": "modified_scope",
+   "past_meetings": [
+    {
+     "days_ago": 21,
+     "decision": "환불은 구매 후 7일 이내에 가능하다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "환불은 미개봉 상품에 한해 구매 후 7일 이내에 가능하다."
+   },
+   "expected_thread_source": 0,
+   "expected_change_type": "modified"
+  },
+  {
+   "id": "h3_ms_code_review",
+   "category": "modified_scope",
+   "past_meetings": [
+    {
+     "days_ago": 34,
+     "decision": "코드 리뷰는 핵심 모듈에만 적용한다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "코드 리뷰를 모든 모듈로 확대한다."
+   },
+   "expected_thread_source": 0,
+   "expected_change_type": "modified"
+  },
+  {
+   "id": "h3_ms_study_support",
+   "category": "modified_scope",
+   "past_meetings": [
+    {
+     "days_ago": 8,
+     "decision": "사내 스터디 지원은 도서비만 해 준다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "스터디 지원에 강의 수강료도 포함한다."
+   },
+   "expected_thread_source": 0,
+   "expected_change_type": "modified"
+  },
+  {
+   "id": "h3_ms_coupon_target",
+   "category": "modified_scope",
+   "past_meetings": [
+    {
+     "days_ago": 19,
+     "decision": "할인 쿠폰은 신규 가입자에게 준다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "할인 쿠폰은 신규 가입자와 휴면 고객에게도 준다."
+   },
+   "expected_thread_source": 0,
+   "expected_change_type": "modified"
+  },
+  {
+   "id": "h3_ms_parking_support",
+   "category": "modified_scope",
+   "past_meetings": [
+    {
+     "days_ago": 27,
+     "decision": "주차 지원은 전 직원에게 한다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "주차 지원은 임산부와 장애인 직원에게만 한다."
+   },
+   "expected_thread_source": 0,
+   "expected_change_type": "modified"
+  },
+  {
+   "id": "h3_rc_cafe_expansion",
+   "category": "reversed_cancel",
+   "past_meetings": [
+    {
+     "days_ago": 20,
+     "decision": "사내 카페 운영을 확대하기로 했다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "사내 카페 확대 계획은 없던 일로 하기로 했다."
+   },
+   "expected_thread_source": 0,
+   "expected_change_type": "reversed"
+  },
+  {
+   "id": "h3_rc_overseas_branch",
+   "category": "reversed_cancel",
+   "past_meetings": [
+    {
+     "days_ago": 35,
+     "decision": "해외 지사 설립을 추진한다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "해외 지사 설립은 하지 않기로 했다."
+   },
+   "expected_thread_source": 0,
+   "expected_change_type": "reversed"
+  },
+  {
+   "id": "h3_rc_app_launch",
+   "category": "reversed_cancel",
+   "past_meetings": [
+    {
+     "days_ago": 14,
+     "decision": "신규 앱을 다음 달에 출시한다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "신규 앱 출시를 무기한 보류한다."
+   },
+   "expected_thread_source": 0,
+   "expected_change_type": "reversed"
+  },
+  {
+   "id": "h3_rc_year_end_workshop",
+   "category": "reversed_cancel",
+   "past_meetings": [
+    {
+     "days_ago": 25,
+     "decision": "연말 워크숍을 진행한다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "연말 워크숍은 취소한다."
+   },
+   "expected_thread_source": 0,
+   "expected_change_type": "reversed"
+  },
+  {
+   "id": "h3_rc_weekend_canteen",
+   "category": "reversed_cancel",
+   "past_meetings": [
+    {
+     "days_ago": 17,
+     "decision": "구내식당 주말 운영을 시작한다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "주말 운영은 중단하기로 했다."
+   },
+   "expected_thread_source": 0,
+   "expected_change_type": "reversed"
+  },
+  {
+   "id": "h3_rc_job_rotation",
+   "category": "reversed_cancel",
+   "past_meetings": [
+    {
+     "days_ago": 29,
+     "decision": "팀 간 인력 순환 제도를 도입한다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "인력 순환 제도 도입은 철회했다."
+   },
+   "expected_thread_source": 0,
+   "expected_change_type": "reversed"
+  },
+  {
+   "id": "h3_rc_point_expiry",
+   "category": "reversed_cancel",
+   "past_meetings": [
+    {
+     "days_ago": 11,
+     "decision": "고객 포인트 소멸 제도를 만든다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "포인트 소멸 제도는 더 이상 추진하지 않는다."
+   },
+   "expected_thread_source": 0,
+   "expected_change_type": "reversed"
+  },
+  {
+   "id": "h3_rc_beta_paid",
+   "category": "reversed_cancel",
+   "past_meetings": [
+    {
+     "days_ago": 22,
+     "decision": "베타 서비스를 유료로 전환한다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "베타 서비스의 유료 전환을 백지화했다."
+   },
+   "expected_thread_source": 0,
+   "expected_change_type": "reversed"
+  },
+  {
+   "id": "h3_rc_night_delivery",
+   "category": "reversed_cancel",
+   "past_meetings": [
+    {
+     "days_ago": 38,
+     "decision": "야간 배송을 시작하기로 했다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "야간 배송 사업은 접기로 했다."
+   },
+   "expected_thread_source": 0,
+   "expected_change_type": "reversed"
+  },
+  {
+   "id": "h3_rc_extra_floor",
+   "category": "reversed_cancel",
+   "past_meetings": [
+    {
+     "days_ago": 16,
+     "decision": "사무실 층 추가 임대를 하기로 했다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "층 추가 임대는 포기한다."
+   },
+   "expected_thread_source": 0,
+   "expected_change_type": "reversed"
+  },
+  {
+   "id": "h3_ra_payment_vendor",
+   "category": "reversed_alternative",
+   "past_meetings": [
+    {
+     "days_ago": 30,
+     "decision": "결제 대행은 A사를 쓴다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "결제 대행사를 A사에서 B사로 바꾼다."
+   },
+   "expected_thread_source": 0,
+   "expected_change_type": "reversed"
+  },
+  {
+   "id": "h3_ra_cs_outsourcing",
+   "category": "reversed_alternative",
+   "past_meetings": [
+    {
+     "days_ago": 45,
+     "decision": "고객 상담은 외주로 운영한다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "고객 상담은 사내 인력으로 전환한다."
+   },
+   "expected_thread_source": 0,
+   "expected_change_type": "reversed"
+  },
+  {
+   "id": "h3_ra_database",
+   "category": "reversed_alternative",
+   "past_meetings": [
+    {
+     "days_ago": 20,
+     "decision": "데이터베이스는 MySQL로 간다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "데이터베이스는 PostgreSQL로 옮기기로 했다."
+   },
+   "expected_thread_source": 0,
+   "expected_change_type": "reversed"
+  },
+  {
+   "id": "h3_ra_meetings",
+   "category": "reversed_alternative",
+   "past_meetings": [
+    {
+     "days_ago": 13,
+     "decision": "회의는 오프라인으로만 진행한다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "회의는 전면 온라인으로 전환한다."
+   },
+   "expected_thread_source": 0,
+   "expected_change_type": "reversed"
+  },
+  {
+   "id": "h3_ra_design_tool",
+   "category": "reversed_alternative",
+   "past_meetings": [
+    {
+     "days_ago": 26,
+     "decision": "디자인 툴은 스케치를 쓴다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "디자인 툴은 피그마로 통일한다."
+   },
+   "expected_thread_source": 0,
+   "expected_change_type": "reversed"
+  },
+  {
+   "id": "h3_ra_deployment",
+   "category": "reversed_alternative",
+   "past_meetings": [
+    {
+     "days_ago": 18,
+     "decision": "배포는 수동으로 한다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "배포는 완전 자동화로 바꾼다."
+   },
+   "expected_thread_source": 0,
+   "expected_change_type": "reversed"
+  },
+  {
+   "id": "h3_ra_logistics",
+   "category": "reversed_alternative",
+   "past_meetings": [
+    {
+     "days_ago": 33,
+     "decision": "물류는 자체 창고에서 처리한다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "물류는 3PL 업체에 맡기기로 했다."
+   },
+   "expected_thread_source": 0,
+   "expected_change_type": "reversed"
+  },
+  {
+   "id": "h3_ra_messenger",
+   "category": "reversed_alternative",
+   "past_meetings": [
+    {
+     "days_ago": 12,
+     "decision": "사내 메신저는 A 서비스를 쓴다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "메신저를 B 서비스로 갈아탄다."
+   },
+   "expected_thread_source": 0,
+   "expected_change_type": "reversed"
+  },
+  {
+   "id": "h3_ra_product_name",
+   "category": "reversed_alternative",
+   "past_meetings": [
+    {
+     "days_ago": 9,
+     "decision": "신제품 이름은 루멘으로 한다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "신제품 이름을 노바로 바꾼다."
+   },
+   "expected_thread_source": 0,
+   "expected_change_type": "reversed"
+  },
+  {
+   "id": "h3_ra_customer_auth",
+   "category": "reversed_alternative",
+   "past_meetings": [
+    {
+     "days_ago": 24,
+     "decision": "고객 인증은 문자 인증으로 한다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "고객 인증을 앱 기반 생체 인증으로 대체한다."
+   },
+   "expected_thread_source": 0,
+   "expected_change_type": "reversed"
+  },
+  {
+   "id": "h3_nu_parking_vs_terms",
+   "category": "new_unrelated",
+   "past_meetings": [
+    {
+     "days_ago": 15,
+     "decision": "사내 주차장 운영 시간은 오전 7시부터 밤 10시까지다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "신규 서비스 약관은 법무팀이 검토한다."
+   },
+   "expected_thread_source": null,
+   "expected_change_type": "new"
+  },
+  {
+   "id": "h3_nu_price_vs_cafe",
+   "category": "new_unrelated",
+   "past_meetings": [
+    {
+     "days_ago": 21,
+     "decision": "신제품 가격은 12만 원으로 정한다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "사내 카페 메뉴에 채식 옵션을 추가한다."
+   },
+   "expected_thread_source": null,
+   "expected_change_type": "new"
+  },
+  {
+   "id": "h3_nu_settlement_vs_vpn",
+   "category": "new_unrelated",
+   "past_meetings": [
+    {
+     "days_ago": 10,
+     "decision": "협력사 정산은 월말에 한다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "개발 서버 접근은 VPN으로만 허용한다."
+   },
+   "expected_thread_source": null,
+   "expected_change_type": "new"
+  },
+  {
+   "id": "h3_nu_interviewers_vs_warehouse",
+   "category": "new_unrelated",
+   "past_meetings": [
+    {
+     "days_ago": 27,
+     "decision": "채용 면접관은 세 명으로 한다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "물류 창고 온도는 5도 이하로 유지한다."
+   },
+   "expected_thread_source": null,
+   "expected_change_type": "new"
+  },
+  {
+   "id": "h3_nu_report_vs_lobby",
+   "category": "new_unrelated",
+   "past_meetings": [
+    {
+     "days_ago": 18,
+     "decision": "고객 리포트는 PDF로 발송한다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "사옥 로비 조명을 교체하기로 했다."
+   },
+   "expected_thread_source": null,
+   "expected_change_type": "new"
+  },
+  {
+   "id": "h3_nu_minutes_vs_fee",
+   "category": "new_unrelated",
+   "past_meetings": [
+    {
+     "days_ago": 8,
+     "decision": "회의록 작성은 돌아가며 맡는다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "해외 결제 수수료는 1.8%로 협상한다."
+   },
+   "expected_thread_source": null,
+   "expected_change_type": "new"
+  },
+  {
+   "id": "h3_nu_lab_vs_app",
+   "category": "new_unrelated",
+   "past_meetings": [
+    {
+     "days_ago": 32,
+     "decision": "연구실 장비는 사전 예약제로 쓴다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "신규 앱 출시 일정은 4분기로 잡는다."
+   },
+   "expected_thread_source": null,
+   "expected_change_type": "new"
+  },
+  {
+   "id": "h3_nu_report_vs_checkup",
+   "category": "new_unrelated",
+   "past_meetings": [
+    {
+     "days_ago": 14,
+     "decision": "분기 보고는 임원 회의에서 한다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "직원 건강검진은 상반기에 한다."
+   },
+   "expected_thread_source": null,
+   "expected_change_type": "new"
+  },
+  {
+   "id": "h3_nd_support_hours_vs_records",
+   "category": "new_same_domain",
+   "past_meetings": [
+    {
+     "days_ago": 20,
+     "decision": "고객센터 운영 시간은 오전 9시부터 6시까지다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "고객센터 상담 기록은 3년간 보관한다."
+   },
+   "expected_thread_source": null,
+   "expected_change_type": "new"
+  },
+  {
+   "id": "h3_nd_training_vs_mentor",
+   "category": "new_same_domain",
+   "past_meetings": [
+    {
+     "days_ago": 14,
+     "decision": "신규 입사자 교육은 2주간 진행한다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "신규 입사자 멘토는 팀장이 지정한다."
+   },
+   "expected_thread_source": null,
+   "expected_change_type": "new"
+  },
+  {
+   "id": "h3_nd_payment_retry_vs_receipt",
+   "category": "new_same_domain",
+   "past_meetings": [
+    {
+     "days_ago": 9,
+     "decision": "결제 실패 시 자동 재시도는 세 번까지 한다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "결제 영수증은 이메일로 발송한다."
+   },
+   "expected_thread_source": null,
+   "expected_change_type": "new"
+  },
+  {
+   "id": "h3_nd_deploy_day_vs_share",
+   "category": "new_same_domain",
+   "past_meetings": [
+    {
+     "days_ago": 23,
+     "decision": "배포는 주 1회 정해진 요일에 한다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "배포 결과는 슬랙 채널에 공유한다."
+   },
+   "expected_thread_source": null,
+   "expected_change_type": "new"
+  },
+  {
+   "id": "h3_nd_settlement_vs_audit",
+   "category": "new_same_domain",
+   "past_meetings": [
+    {
+     "days_ago": 30,
+     "decision": "협력사 정산일은 매월 말일이다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "협력사를 선정할 때는 실사를 반드시 거친다."
+   },
+   "expected_thread_source": null,
+   "expected_change_type": "new"
+  },
+  {
+   "id": "h3_nd_server_cost_vs_outage",
+   "category": "new_same_domain",
+   "past_meetings": [
+    {
+     "days_ago": 17,
+     "decision": "서버 비용은 월 2천만 원 이내로 관리한다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "서버 장애 시 30분 안에 공지한다."
+   },
+   "expected_thread_source": null,
+   "expected_change_type": "new"
+  },
+  {
+   "id": "h3_nd_interview_vs_posting",
+   "category": "new_same_domain",
+   "past_meetings": [
+    {
+     "days_ago": 12,
+     "decision": "채용 면접은 두 차례로 진행한다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "채용 공고는 사내 게시판에 먼저 올린다."
+   },
+   "expected_thread_source": null,
+   "expected_change_type": "new"
+  },
+  {
+   "id": "h3_nd_login_vs_withdrawal",
+   "category": "new_same_domain",
+   "past_meetings": [
+    {
+     "days_ago": 26,
+     "decision": "앱 로그인은 소셜 로그인을 지원한다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "앱 회원 탈퇴는 즉시 처리한다."
+   },
+   "expected_thread_source": null,
+   "expected_change_type": "new"
+  },
+  {
+   "id": "h3_nd_stocktake_vs_reorder",
+   "category": "new_same_domain",
+   "past_meetings": [
+    {
+     "days_ago": 19,
+     "decision": "재고 실사는 분기마다 한다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "재고 발주는 안전재고 이하일 때 자동으로 넣는다."
+   },
+   "expected_thread_source": null,
+   "expected_change_type": "new"
+  },
+  {
+   "id": "h3_nd_education_budget_vs_credit",
+   "category": "new_same_domain",
+   "past_meetings": [
+    {
+     "days_ago": 35,
+     "decision": "사내 교육 예산은 팀당 100만 원이다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "사내 교육 이수 여부는 인사평가에 반영한다."
+   },
+   "expected_thread_source": null,
+   "expected_change_type": "new"
+  },
+  {
+   "id": "h3_dis_hotel_cap",
+   "category": "distractor",
+   "past_meetings": [
+    {
+     "days_ago": 20,
+     "decision": "출장 숙박비 상한은 1박 12만 원이다."
+    },
+    {
+     "days_ago": 15,
+     "decision": "사내 강의 플랫폼은 연간 구독으로 간다."
+    },
+    {
+     "days_ago": 9,
+     "decision": "장비 반납은 퇴사 당일에 받는다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "출장 숙박비 상한을 1박 15만 원으로 올린다."
+   },
+   "expected_thread_source": 0,
+   "expected_change_type": "modified"
+  },
+  {
+   "id": "h3_dis_survey_keep",
+   "category": "distractor",
+   "past_meetings": [
+    {
+     "days_ago": 22,
+     "decision": "신제품 가격은 9만 9천 원으로 한다."
+    },
+    {
+     "days_ago": 14,
+     "decision": "고객 설문은 분기마다 한다."
+    },
+    {
+     "days_ago": 7,
+     "decision": "창고 이전은 내년으로 미룬다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "고객 설문은 지금처럼 분기마다 하기로 했다."
+   },
+   "expected_thread_source": 1,
+   "expected_change_type": "unchanged"
+  },
+  {
+   "id": "h3_dis_repo_move",
+   "category": "distractor",
+   "past_meetings": [
+    {
+     "days_ago": 25,
+     "decision": "팀 회식은 월 1회 한다."
+    },
+    {
+     "days_ago": 16,
+     "decision": "코드 저장소는 GitHub로 통일한다."
+    },
+    {
+     "days_ago": 8,
+     "decision": "연구비 정산은 월말에 한다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "코드 저장소를 GitLab으로 옮기기로 했다."
+   },
+   "expected_thread_source": 1,
+   "expected_change_type": "reversed"
+  },
+  {
+   "id": "h3_dis_callcenter_staff",
+   "category": "distractor",
+   "past_meetings": [
+    {
+     "days_ago": 19,
+     "decision": "앱 푸시는 오후에만 보낸다."
+    },
+    {
+     "days_ago": 12,
+     "decision": "콜센터 인력은 열 명이다."
+    },
+    {
+     "days_ago": 5,
+     "decision": "포장 박스는 재활용 소재로 쓴다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "콜센터 인력을 열두 명으로 늘린다."
+   },
+   "expected_thread_source": 1,
+   "expected_change_type": "modified"
+  },
+  {
+   "id": "h3_dis_room_booking",
+   "category": "distractor",
+   "past_meetings": [
+    {
+     "days_ago": 28,
+     "decision": "고객사 방문은 사전 예약제다."
+    },
+    {
+     "days_ago": 18,
+     "decision": "데이터 백업은 매일 한다."
+    },
+    {
+     "days_ago": 10,
+     "decision": "회의실 예약은 2주 전까지 받는다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "회의실 예약 제도는 폐지하기로 했다."
+   },
+   "expected_thread_source": 2,
+   "expected_change_type": "reversed"
+  },
+  {
+   "id": "h3_dis_wiki_confirm",
+   "category": "distractor",
+   "past_meetings": [
+    {
+     "days_ago": 23,
+     "decision": "사내 위키는 노션으로 옮긴다."
+    },
+    {
+     "days_ago": 13,
+     "decision": "월간 리포트는 5일에 낸다."
+    },
+    {
+     "days_ago": 6,
+     "decision": "신규 서비스 이름은 미정이다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "위키를 노션으로 옮기기로 한 결정을 재확인했다."
+   },
+   "expected_thread_source": 0,
+   "expected_change_type": "unchanged"
+  },
+  {
+   "id": "h3_dis_corporate_card",
+   "category": "distractor",
+   "past_meetings": [
+    {
+     "days_ago": 30,
+     "decision": "배송 파트너는 두 곳이다."
+    },
+    {
+     "days_ago": 17,
+     "decision": "사무실 조명을 LED로 교체한다."
+    },
+    {
+     "days_ago": 9,
+     "decision": "법인 카드는 팀장에게만 지급한다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "법인 카드를 팀장과 파트장에게도 지급한다."
+   },
+   "expected_thread_source": 2,
+   "expected_change_type": "modified"
+  },
+  {
+   "id": "h3_dis_purifier_buy",
+   "category": "distractor",
+   "past_meetings": [
+    {
+     "days_ago": 21,
+     "decision": "해외 결제는 카드만 받는다."
+    },
+    {
+     "days_ago": 15,
+     "decision": "채용 공고는 상시로 올린다."
+    },
+    {
+     "days_ago": 4,
+     "decision": "정수기는 렌탈로 운영한다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "정수기는 렌탈을 끝내고 구매해서 쓰기로 했다."
+   },
+   "expected_thread_source": 2,
+   "expected_change_type": "reversed"
+  },
+  {
+   "id": "h3_dis_party_date",
+   "category": "distractor",
+   "past_meetings": [
+    {
+     "days_ago": 34,
+     "decision": "앱 최소 지원 버전은 iOS 15다."
+    },
+    {
+     "days_ago": 20,
+     "decision": "연말 행사는 12월 20일이다."
+    },
+    {
+     "days_ago": 11,
+     "decision": "협력사 평가는 연 1회 한다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "연말 행사를 12월 27일로 옮긴다."
+   },
+   "expected_thread_source": 1,
+   "expected_change_type": "modified"
+  },
+  {
+   "id": "h3_dis_report_format",
+   "category": "distractor",
+   "past_meetings": [
+    {
+     "days_ago": 26,
+     "decision": "보고서는 PDF로 제출한다."
+    },
+    {
+     "days_ago": 16,
+     "decision": "모니터 지원 한도는 30만 원이다."
+    },
+    {
+     "days_ago": 7,
+     "decision": "사내 게시판은 익명으로 운영한다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "보고서 제출 형식은 PDF 그대로다."
+   },
+   "expected_thread_source": 0,
+   "expected_change_type": "unchanged"
+  },
+  {
+   "id": "h3_dis_flex_hours",
+   "category": "distractor",
+   "past_meetings": [
+    {
+     "days_ago": 29,
+     "decision": "배포 승인은 팀장이 한다."
+    },
+    {
+     "days_ago": 19,
+     "decision": "출퇴근 시간은 자율이다."
+    },
+    {
+     "days_ago": 8,
+     "decision": "VPN 접속은 이중 인증이 필요하다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "출퇴근 시간 자율제는 없애고 고정 근무로 돌아간다."
+   },
+   "expected_thread_source": 1,
+   "expected_change_type": "reversed"
+  },
+  {
+   "id": "h3_dis_translation_scope",
+   "category": "distractor",
+   "past_meetings": [
+    {
+     "days_ago": 24,
+     "decision": "회원 등급은 세 단계다."
+    },
+    {
+     "days_ago": 14,
+     "decision": "사내 카페 운영 시간은 9시부터다."
+    },
+    {
+     "days_ago": 6,
+     "decision": "번역 외주는 영어만 맡긴다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "번역 외주 범위에 일본어도 넣는다."
+   },
+   "expected_thread_source": 2,
+   "expected_change_type": "modified"
+  },
+  {
+   "id": "h3_chain_trial_keep",
+   "category": "chain",
+   "past_meetings": [
+    {
+     "days_ago": 40,
+     "decision": "무료 체험 기간은 7일이다."
+    },
+    {
+     "days_ago": 20,
+     "decision": "무료 체험 기간을 14일로 늘렸다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "무료 체험 기간은 14일을 유지한다."
+   },
+   "expected_thread_source": 1,
+   "expected_change_type": "unchanged"
+  },
+  {
+   "id": "h3_chain_launch_slip",
+   "category": "chain",
+   "past_meetings": [
+    {
+     "days_ago": 45,
+     "decision": "신제품 출시는 5월이다."
+    },
+    {
+     "days_ago": 22,
+     "decision": "신제품 출시를 6월로 미뤘다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "신제품 출시를 7월로 한 번 더 미룬다."
+   },
+   "expected_thread_source": 1,
+   "expected_change_type": "modified"
+  },
+  {
+   "id": "h3_chain_daycare_stop",
+   "category": "chain",
+   "past_meetings": [
+    {
+     "days_ago": 50,
+     "decision": "사내 어린이집을 운영한다."
+    },
+    {
+     "days_ago": 25,
+     "decision": "어린이집 운영 시간을 저녁 7시까지 늘렸다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "사내 어린이집은 운영을 중단한다."
+   },
+   "expected_thread_source": 1,
+   "expected_change_type": "reversed"
+  },
+  {
+   "id": "h3_chain_api_limit_lower",
+   "category": "chain",
+   "past_meetings": [
+    {
+     "days_ago": 38,
+     "decision": "API 응답 제한은 분당 60회다."
+    },
+    {
+     "days_ago": 18,
+     "decision": "API 응답 제한을 분당 120회로 올렸다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "API 응답 제한을 분당 90회로 낮춘다."
+   },
+   "expected_thread_source": 1,
+   "expected_change_type": "modified"
+  },
+  {
+   "id": "h3_chain_meeting_online_keep",
+   "category": "chain",
+   "past_meetings": [
+    {
+     "days_ago": 42,
+     "decision": "회의는 오프라인으로 한다."
+    },
+    {
+     "days_ago": 21,
+     "decision": "회의를 온라인으로 전환했다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "회의는 온라인 방식을 계속 유지한다."
+   },
+   "expected_thread_source": 1,
+   "expected_change_type": "unchanged"
+  },
+  {
+   "id": "h3_chain_vendor_return",
+   "category": "chain",
+   "past_meetings": [
+    {
+     "days_ago": 48,
+     "decision": "외주 개발은 A사에 맡긴다."
+    },
+    {
+     "days_ago": 23,
+     "decision": "외주 개발사를 B사로 바꿨다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "외주 개발사를 다시 A사로 되돌린다."
+   },
+   "expected_thread_source": 1,
+   "expected_change_type": "reversed"
+  },
+  {
+   "id": "h3_chain_price_keep",
+   "category": "chain",
+   "past_meetings": [
+    {
+     "days_ago": 36,
+     "decision": "월 구독료는 9천 원이다."
+    },
+    {
+     "days_ago": 17,
+     "decision": "월 구독료를 1만 2천 원으로 올렸다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "월 구독료는 1만 2천 원 그대로 둔다."
+   },
+   "expected_thread_source": 1,
+   "expected_change_type": "unchanged"
+  },
+  {
+   "id": "h3_chain_lunch_confirm",
+   "category": "chain",
+   "past_meetings": [
+    {
+     "days_ago": 33,
+     "decision": "점심시간은 12시부터다."
+    },
+    {
+     "days_ago": 15,
+     "decision": "점심시간을 11시 30분으로 앞당겼다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "점심시간은 11시 30분부터로 확정한다."
+   },
+   "expected_thread_source": 1,
+   "expected_change_type": "unchanged"
+  },
+  {
+   "id": "h3_chain_shipping_widen",
+   "category": "chain",
+   "past_meetings": [
+    {
+     "days_ago": 44,
+     "decision": "해외 배송은 미국만 한다."
+    },
+    {
+     "days_ago": 19,
+     "decision": "해외 배송을 일본까지 넓혔다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "해외 배송을 유럽까지 넓힌다."
+   },
+   "expected_thread_source": 1,
+   "expected_change_type": "modified"
+  },
+  {
+   "id": "h3_chain_darkmode_drop",
+   "category": "chain",
+   "past_meetings": [
+    {
+     "days_ago": 39,
+     "decision": "앱 다크모드를 지원한다."
+    },
+    {
+     "days_ago": 16,
+     "decision": "다크모드는 결제 화면까지 확대한다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "다크모드 지원은 접기로 했다."
+   },
+   "expected_thread_source": 1,
+   "expected_change_type": "reversed"
+  }
+ ]
+}

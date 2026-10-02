@@ -22,6 +22,7 @@ from .enums import (
 from .events import (
     CONTEXT_COMPLETED,
     EVENTS,
+    EXTRACTION_ACTION_PROGRESS,
     EXTRACTION_AGENDA_CHANGED,
     EXTRACTION_COMPLETED,
     GAP_COMPLETED,
@@ -31,6 +32,10 @@ from .events import (
     TRANSCRIPT_READY,
 )
 from .extraction import (
+    ACTION_PROGRESS_PUBLISH_EVERY,
+    ACTION_PROGRESS_STALE_AFTER,
+    ACTION_PROGRESS_TODAY_ZONE,
+    ACTION_PROGRESS_WINDOW,
     AGENDA_PUBLISH_EVERY,
     AGENDA_STALE_AFTER,
     AGENDA_TITLE_MAX,
@@ -43,7 +48,9 @@ from .extraction import (
     Decision,
     ExternalRef,
     ExtractionResult,
+    MeetingActionProgress,
     RoleStance,
+    TeamActionProgress,
     TeamAgenda,
 )
 from .gap import Gap, GapReport, Participation, Topic
@@ -67,6 +74,7 @@ __all__ = [
     "TERMINAL_EVENTS",
     "EXTRACTION_COMPLETED",
     "EXTRACTION_AGENDA_CHANGED",
+    "EXTRACTION_ACTION_PROGRESS",
     "EVENTS",
     "GAP_COMPLETED",
     "CONTEXT_COMPLETED",
@@ -101,6 +109,13 @@ __all__ = [
     "AGENDA_TITLE_MAX",
     "AGENDA_PUBLISH_EVERY",
     "AGENDA_STALE_AFTER",
+    # B -> E, team-level
+    "TeamActionProgress",
+    "MeetingActionProgress",
+    "ACTION_PROGRESS_PUBLISH_EVERY",
+    "ACTION_PROGRESS_STALE_AFTER",
+    "ACTION_PROGRESS_TODAY_ZONE",
+    "ACTION_PROGRESS_WINDOW",
     # C -> E
     "GapReport",
     "Gap",

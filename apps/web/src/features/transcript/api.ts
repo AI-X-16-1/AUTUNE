@@ -9,11 +9,19 @@ import { api, API_BASE as SAME_ORIGIN_BASE, ApiError, authHeaders } from "@/shar
 export { api };
 
 import type {
+  AccountDeleted,
+  MaskingRule,
   MeetingDetail,
   MeetingSummary,
+  MyData,
+  PiiCategory,
+  PiiReported,
   ResearchDocument,
+  RetentionDays,
   SpeakerEntry,
+  SpeechDeleted,
   TeamMember,
+  TeamPrivacy,
   TeamSummary,
   Utterance,
 } from "./types";
@@ -240,3 +248,82 @@ export const getResearch = (teamId: string, meetingId: string) =>
   api.agent<ResearchDocument[]>(
     `/research?team_id=${encodeURIComponent(teamId)}&meeting_id=${encodeURIComponent(meetingId)}`,
   );
+
+/** S29 "내 데이터": counts of what Autune holds about the caller. Only theirs. */
+export const getMyData = () => api.audio<MyData>("/me/data");
+
+/**
+ * S29 "내 데이터 내려받기 (JSON)". The route answers JSON with an attachment
+ * header; `request()` reads it as JSON, so the file is made here from what it
+ * returned rather than by navigating to the URL — a navigation would not carry
+ * the developer token a session-less local run authenticates with.
+ */
+export async function downloadMyData(): Promise<void> {
+  const body = await api.audio<unknown>("/me/export");
+  const url = URL.createObjectURL(
+    new Blob([JSON.stringify(body, null, 2)], { type: "application/json" }),
+  );
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = "autune-my-data.json";
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+/** S29 "음성 임베딩 삭제". 204 — see `assignSpeaker` for why this goes to `fetch`. */
+export async function deleteVoiceProfile(): Promise<void> {
+  const response = await fetch(`${SAME_ORIGIN_BASE}/api/audio/me/voice-profile`, {
+    method: "DELETE",
+    headers: authHeaders(),
+  });
+  if (!response.ok) {
+    throw new ApiError(response.status, "unknown", response.statusText, {});
+  }
+}
+
+/** S29 "내 발화 데이터 모두 삭제": my utterances and voice. The account stays. */
+export const deleteMySpeech = () =>
+  api.audio<SpeechDeleted>("/me/speech", { method: "DELETE" });
+
+/** Account deletion (#358). The server clears the session cookie in the same response. */
+export const deleteAccount = () => api.audio<AccountDeleted>("/me", { method: "DELETE" });
+
+/** S29's retention row, for one team. */
+export const getTeamPrivacy = (teamId: string) =>
+  api.audio<TeamPrivacy>(`/teams/${teamId}/privacy`);
+
+export const setTeamRetention = (teamId: string, retentionDays: RetentionDays) =>
+  api.audio<TeamPrivacy>(`/teams/${teamId}/privacy`, {
+    method: "PATCH",
+    body: JSON.stringify({ retention_days: retentionDays }),
+  });
+
+/**
+ * S30: mask a span the masker missed. **Offsets, never the text** — the server
+ * reads the span from the stored row, so the unmasked string is not in the
+ * request, the proxy's log or the API's.
+ */
+export const reportPiiMiss = (
+  meetingId: string,
+  utteranceId: string,
+  body: {
+    start: number;
+    end: number;
+    category: PiiCategory;
+    include_similar: boolean;
+    add_rule: boolean;
+  },
+) =>
+  api.audio<PiiReported>(`/meetings/${meetingId}/utterances/${utteranceId}/pii-report`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+
+/** S29's "추가 마스킹 항목": the shapes this team learned from S30 reports. */
+export const listMaskingRules = (teamId: string) =>
+  api.audio<MaskingRule[]>(`/teams/${teamId}/masking-rules`);
+
+/** Stop masking one shape in later transcripts. Answers the rules that remain. */
+export const deleteMaskingRule = (teamId: string, ruleId: number) =>
+  api.audio<MaskingRule[]>(`/teams/${teamId}/masking-rules/${ruleId}`, { method: "DELETE" });
+

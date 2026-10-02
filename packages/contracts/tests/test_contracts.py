@@ -11,6 +11,7 @@ from autune_contracts import (
     GapReport,
     IntelligenceSnapshot,
     Payload,
+    TeamActionProgress,
     TeamAgenda,
     TeamPayload,
     TranscriptReady,
@@ -29,6 +30,7 @@ FIXTURE_MODELS: dict[str, type[Payload] | type[TeamPayload]] = {
     "context_links": ContextLinks,
     "intelligence_snapshot": IntelligenceSnapshot,
     "team_agenda": TeamAgenda,
+    "team_action_progress": TeamActionProgress,
 }
 
 

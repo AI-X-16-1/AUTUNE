@@ -1,12 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import {
   disconnectNotion,
   getNotionConnection,
   notionConnectUrl,
   type NotionConnection,
+  type IntegrationScope,
 } from "@/shared/api/auth";
 import { Button } from "@/shared/ui";
 
@@ -20,34 +21,47 @@ import { getNotionSetup, setUpNotion, type NotionSetupState } from "../api";
  *
  * A teamspace page is the safe parent: a private page goes with its owner, and
  * the databases with it (external-approvals.md).
+ *
+ * Takes the meeting the 액션 tab shows, or the team itself on S28 settings
+ * (#496); the server checks membership either way.
  */
-export function NotionConnect({ meetingId }: { meetingId: string }) {
+export function NotionConnect({
+  meetingId,
+  teamId,
+}: {
+  meetingId?: string;
+  teamId?: string;
+}) {
+  const scope = useMemo<IntegrationScope>(
+    () => (meetingId !== undefined ? { meetingId } : { teamId: teamId ?? "" }),
+    [meetingId, teamId],
+  );
   const [connection, setConnection] = useState<NotionConnection | null>(null);
   const [setup, setSetup] = useState<NotionSetupState | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   const setUp = useCallback(
-    async (pageId: string) => {
+    async (pageId?: string) => {
       setBusy(true);
-      setNote("Notion에 DB를 만드는 중입니다…");
+      setNote("Notion에 Autune 페이지와 DB를 만드는 중입니다…");
       try {
-        await setUpNotion(meetingId, pageId);
-        setNote("DB를 준비했습니다. 확정된 액션과 결정을 Notion에 넣고 있습니다 — 많으면 몇 분 걸립니다.");
-        setSetup(await getNotionSetup(meetingId));
+        await setUpNotion(scope, pageId);
+        setNote("Autune 페이지에 DB를 준비했습니다. 확정된 액션과 결정을 넣고 있습니다 — 많으면 몇 분 걸립니다.");
+        setSetup(await getNotionSetup(scope));
       } catch {
         setNote("DB를 만들지 못했습니다. 페이지를 Autune에 공유했는지 확인해 주세요.");
       } finally {
         setBusy(false);
       }
     },
-    [meetingId],
+    [scope],
   );
 
   useEffect(() => {
     let alive = true;
     void (async () => {
-      const status = await getNotionConnection(meetingId);
+      const status = await getNotionConnection(scope);
       if (!alive) return;
       setConnection(status);
       const url = new URL(window.location.href);
@@ -58,19 +72,29 @@ export function NotionConnect({ meetingId }: { meetingId: string }) {
       }
       if (result === "failed") setNote("Notion을 연결하지 못했습니다. 다시 시도해 주세요.");
       if (!status?.connected) return;
-      const state = await getNotionSetup(meetingId).catch(() => null);
+      const state = await getNotionSetup(scope).catch(() => null);
       if (!alive) return;
       setSetup(state);
-      // Straight from Notion with one page shared: finish without another click.
-      const only = state?.pages?.length === 1 ? state.pages[0] : undefined;
-      if (result === "connected" && state && !state.target && only) {
-        await setUp(only.id);
+      // Straight from Notion with one page shared, or none: finish without
+      // another click. None makes the "Autune" page among the person's
+      // private pages (decided with the user, 2026-10-01).
+      const pages = state?.pages ?? [];
+      // Not when Notion refused the token: the reconnect prompt is the answer,
+      // and a setup would only fail beside it (#622 review).
+      if (
+        result === "connected" &&
+        state &&
+        !state.target &&
+        !state.needs_reconnect &&
+        pages.length <= 1
+      ) {
+        await setUp(pages[0]?.id);
       }
     })();
     return () => {
       alive = false;
     };
-  }, [meetingId, setUp]);
+  }, [scope, setUp]);
 
   if (connection === null) return null;
   const meta = { fontSize: "var(--text-metaSmall)" } as const;
@@ -82,7 +106,7 @@ export function NotionConnect({ meetingId }: { meetingId: string }) {
 
   const connect = () => {
     const here = window.location.pathname + window.location.search;
-    window.location.assign(notionConnectUrl(meetingId, here));
+    window.location.assign(notionConnectUrl(scope, here));
   };
 
   if (!connection.connected) {
@@ -112,9 +136,14 @@ export function NotionConnect({ meetingId }: { meetingId: string }) {
         </>
       ) : null}
       {setup && !setup.target && setup.pages && setup.pages.length === 0 ? (
-        <span className="text-[var(--color-signal-critical)]" style={meta}>
-          Autune에 공유된 페이지가 없습니다. 다시 연결하면서 팀스페이스 페이지를 하나 골라 주세요.
-        </span>
+        <>
+          <span className="text-[var(--color-ink-muted)]" style={meta}>
+            Autune에 공유된 페이지가 없습니다.
+          </span>
+          <Button tone="text" size="compact" disabled={busy} onClick={() => void setUp()}>
+            내 개인 페이지에 만들기
+          </Button>
+        </>
       ) : null}
       {setup?.needs_reconnect ? (
         <>
@@ -130,7 +159,7 @@ export function NotionConnect({ meetingId }: { meetingId: string }) {
           shared: the stored databases are not used, and a page is chosen again. */}
       {setup && !setup.target && setup.pages && setup.pages.length >= 1 ? (
         <label className="flex items-center gap-2 text-[var(--color-ink-muted)]" style={meta}>
-          DB를 만들 페이지
+          Autune 페이지를 만들 위치
           <select disabled={busy} defaultValue="" onChange={(event) => void setUp(event.target.value)}>
             <option value="" disabled>
               선택
@@ -148,7 +177,7 @@ export function NotionConnect({ meetingId }: { meetingId: string }) {
         size="compact"
         loading={busy}
         onClick={() =>
-          void disconnectNotion(meetingId)
+          void disconnectNotion(scope)
             .then(() => {
               setConnection({ connected: false });
               setSetup(null);

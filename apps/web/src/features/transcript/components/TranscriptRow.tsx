@@ -54,7 +54,8 @@ export function TranscriptRow({ row, name }: { row: LiveRow; name?: string | nul
         {name ?? utterance.speaker}
       </span>
 
-      <p style={{ color: "var(--color-ink-body)" }}>
+      {/* `data-utterance-id` lets S30 turn a text selection into offsets in this utterance. */}
+      <p data-utterance-id={utterance.id} style={{ color: "var(--color-ink-body)" }}>
         <MaskedText>{utterance.text}</MaskedText>
       </p>
 

@@ -886,6 +886,33 @@ one argument at each of the two call sites, and the reason it is two and not one
 is the same as the row above: the guard checks what the masker promises, so it
 has to see everything the masker sees.
 
+**Retention and deletion, 2026-10-01 (#581–#584, then #363).** Four rows that
+were document-only became code: an hourly sweep deletes meetings past
+`expires_at` (`retention.py`); a person can export, delete their speech, or
+delete their account (`account.py`); a reported PII miss is masked where it is
+stored and `TranscriptReady` republished (`pii_report.py`). Two decisions are
+the kind this file exists to keep:
+
+- **The retention window starts when the meeting is held**, not when it is
+  booked. The first version anchored it on creation, and review found a
+  30-day team's meeting booked five weeks ahead would be swept within the hour
+  of starting, mid-recording. Reproduced by a test that fails on the old
+  commit.
+- **A voice profile is bounded by meetings, two ways.** A profile row now
+  cascades with the meeting it was confirmed in (#363 item 2; it was
+  `SET NULL`, which left a wrong confirmation unreplaceable forever), and the
+  sweep deletes whatever is left once no meeting names the person. A profile
+  is therefore the mean of the person's confirmations inside the retention
+  window. What this costs is not measured: identification for someone who
+  attends rarely now starts over after each window, and no evaluation says
+  how many confirmations a usable profile needs. That number is owed by the
+  threshold evaluation in section 2, not by this change.
+- **The embedding width is checked at load** (#363 item 3). `EMBEDDING_DIM`
+  and the checkpoint were kept in sync by hand, and a mismatch would have
+  failed every vector INSERT inside the guard that keeps a meeting's
+  transcript safe from a bad vector -- silently. `Embedder.warm_up` now reads
+  the model's `dimension` and refuses; the stored path logs it at error level.
+
 ---
 
 ## 6. What is open, and why it matters
