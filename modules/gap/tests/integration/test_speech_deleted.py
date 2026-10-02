@@ -163,6 +163,35 @@ def test_the_gap_stays_and_its_question_stops_naming_the_topic(team_id: str) -> 
     assert done.questions_reset == 1
 
 
+def test_a_question_naming_the_topic_without_a_link_to_it_is_reset(team_id: str) -> None:
+    """#598: a missing item's question names the meeting's subject, a topic the
+    gap holds no ``gap_related_topics`` row for. It must not keep the label."""
+    seeded = seed(team_id)
+    missing = next(i for i in GENERAL.items if i.key not in {"success_criteria", "ownership"})
+    with session_scope() as s:
+        row = GapGap(
+            meeting_id=seeded.meeting_id,
+            category="success",
+            title=f"{missing.item} — 논의되지 않았습니다",
+            severity="high",
+            risk_score=0.8,
+            template_item=missing.item,
+            template_key=GENERAL.key,
+            template_version=GENERAL.version,
+            template_item_key=missing.key,
+            suggested_question=missing.question_about.format(topic="검색 개인화"),
+            coverage="missing",
+        )
+        s.add(row)
+        s.flush()
+        unlinked = row.id
+
+    done = forget([seeded.mine])
+
+    assert question(unlinked) == missing.question
+    assert done.questions_reset == 2
+
+
 def test_a_topic_somebody_else_also_named_stays_with_its_question(team_id: str) -> None:
     seeded = seed(team_id)
     before = question(seeded.gap_on_shared)

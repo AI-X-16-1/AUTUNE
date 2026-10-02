@@ -898,10 +898,11 @@ before the utterances go:
 - A topic goes only when every utterance it was built from is being deleted. A
   topic somebody else also named stays, label and all: it is still the
   meeting's topic, in their words too.
-- A gap stays — it is the team's finding. If it was related to a topic that
-  goes and its question names that label, the question falls back to the
-  template item's general `question`, or to none if the template is no longer
-  shipped.
+- A gap stays — it is the team's finding. If its question names the label of
+  a topic that goes, the question falls back to the template item's general
+  `question`, or to none if the template is no longer shipped. Every gap of
+  the meeting is checked, not only those linked to the topic: a missing item's
+  question can name the meeting's subject without a link to it (#598).
 - Each meeting that changed is queued for `autune.gap.publish_report`, so E
   stops quoting the label. A meeting left with no topic at all is not
   republished (`republish_report` skips an unanalysed meeting); E clears its

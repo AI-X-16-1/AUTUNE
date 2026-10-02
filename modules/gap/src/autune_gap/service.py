@@ -599,11 +599,13 @@ def forget_speech(session: Session, utterance_ids: Sequence[str]) -> SpeechForgo
     topic that goes takes its edges, participation rows and related-topic links
     with it by cascade.
 
-    A gap is the team's finding and stays. If it was related to a topic that
-    goes and its question names that topic's label, the question falls back to
-    the template item's general one — what ``detect.question_for`` asks when no
-    topic was matched. A template no longer shipped leaves no question rather
-    than a guess.
+    A gap is the team's finding and stays. If its question names the label of
+    a topic that goes, the question falls back to the template item's general
+    one — what ``detect.question_for`` asks when no topic was matched. Every
+    gap of the topic's meeting is checked, not only the gaps linked to it by
+    ``gap_related_topics``: a missing item's question can name the meeting's
+    subject, a topic it holds no link to (#598). A template no longer shipped
+    leaves no question rather than a guess.
 
     Safe to repeat: the second time there is no link left to find.
     """
@@ -632,19 +634,18 @@ def forget_speech(session: Session, utterance_ids: Sequence[str]) -> SpeechForgo
         topic.id: topic
         for topic in session.scalars(select(GapTopic).where(GapTopic.id.in_(orphaned)))
     }
+    labels: dict[str, set[str]] = {}
+    for topic in topics.values():
+        labels.setdefault(topic.meeting_id, set()).add(topic.label)
     reset: set[str] = set()
-    for gap, topic_id in session.execute(
-        select(GapGap, GapRelatedTopic.topic_id)
-        .join(GapRelatedTopic, GapRelatedTopic.gap_id == GapGap.id)
-        .where(GapRelatedTopic.topic_id.in_(orphaned))
-    ):
+    for gap in session.scalars(select(GapGap).where(GapGap.meeting_id.in_(labels))):
         question = gap.suggested_question
-        if gap.id in reset or not question or topics[topic_id].label not in question:
+        if not question or not any(label in question for label in labels[gap.meeting_id]):
             continue
         gap.suggested_question = _general_question(gap)
         reset.add(gap.id)
 
-    meetings = tuple(sorted({topic.meeting_id for topic in topics.values()}))
+    meetings = tuple(sorted(labels))
     session.execute(delete(GapTopic).where(GapTopic.id.in_(orphaned)))
     session.flush()
     return SpeechForgotten(
