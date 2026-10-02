@@ -166,6 +166,22 @@ def test_an_approver_row_of_a_former_member_does_not_count(
     assert team["outsider"] not in {m["user_id"] for m in body["members"]}
 
 
+def test_a_team_whose_any_approver_left_opens_again_despite_narrower_rows(
+    session: Session, team: dict[str, str]
+) -> None:
+    """The ``any`` approver left; a member who keeps ``report`` must not lock the list."""
+    _grant(session, team["team"], team["outsider"], "any")
+    _grant(session, team["team"], team["member"], "report")
+    client = _client(session, team["member"])
+
+    body = client.get("/api/agent/approvers", params={"team_id": team["team"]}).json()
+    took_over = _set(client, team["team"], team["member"], ["any", "report"])
+
+    assert body["can_manage"] is True
+    assert took_over.status_code == 200
+    assert _scopes(session, team["team"], team["member"]) == {"any", "report"}
+
+
 def test_a_non_member_is_refused_and_cannot_be_named(
     session: Session, team: dict[str, str]
 ) -> None:

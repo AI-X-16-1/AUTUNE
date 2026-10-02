@@ -3,8 +3,9 @@
 ``packages/core`` has no team administrator on purpose (agent-layer.md section
 5), so the layer defines who may change this list itself:
 
-- While no current member holds an approver row, any member may name one. A
-  new team would otherwise have no way in.
+- While no current member holds ``any``, any member may change the list. A
+  new team would otherwise have no way in, and neither would a team whose
+  ``any`` approver left while others kept narrower scopes.
 - After that, only an approver with scope ``any`` may change it.
 - The team never loses its last ``any`` approver, so the list can always be
   changed again. That makes the first assignment hold ``any`` too.
@@ -64,7 +65,10 @@ def _member_rows(session: Session, team_id: str) -> list[tuple[str, str]]:
 
 
 def can_manage(session: Session, team_id: str, user_id: str) -> bool:
-    if not _member_rows(session, team_id):
+    if not any(scope == "any" for _, scope in _member_rows(session, team_id)):
+        # Keyed on ``any``, not on "no rows": when the one ``any`` approver
+        # leaves or deletes their account while another member keeps
+        # ``report``, nobody could change the list again (#621 review).
         return True
     return "any" in approver_scopes(session, team_id, user_id)
 
