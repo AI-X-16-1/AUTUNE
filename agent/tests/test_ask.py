@@ -63,11 +63,9 @@ def test_types_map_and_defaults_are_optional() -> None:
     ) -> dict[str, Any]:
         return {}
 
-    (decl,) = declare(
-        {"audio.search_team_meetings": _tool("audio.search_team_meetings", search)}, TEAM
-    )
+    (decl,) = declare({"audio.recent_meetings": _tool("audio.recent_meetings", search)}, TEAM)
 
-    assert decl.name == "audio__search_team_meetings"
+    assert decl.name == "audio__recent_meetings"
     assert decl.parameters["properties"] == {
         "query": {"type": "STRING"},
         "limit": {"type": "INTEGER"},
@@ -259,3 +257,117 @@ def test_at_most_three_calls_run_per_round() -> None:
     assert len(responses) == 3
     echoed = model.sent[1]["contents"][1]["parts"]
     assert len([p for p in echoed if "functionCall" in p]) == 3
+
+
+UTTERANCES = {
+    "ok": True,
+    "summary": "발화 5건.",
+    "items": [
+        {"title": f"00:0{i}:00 김민경", "body": f"예산 얘기 {i}", "id": f"utt_{i}"}
+        for i in range(5)
+    ],
+    "evidence": [f"utt_{i}" for i in range(5)],
+}
+FIND = [
+    Declaration(
+        "audio__find_utterances",
+        "Use this.",
+        {"type": "OBJECT", "properties": {"query": {"type": "STRING"}}},
+    )
+]
+
+
+def _sent_items(model: ScriptedToolModel, request: int) -> list[dict[str, Any]]:
+    response = model.sent[request]["contents"][-1]["parts"][0]["functionResponse"]["response"]
+    items: list[dict[str, Any]] = response["items"]
+    return items
+
+
+def test_a_speaker_name_never_reaches_the_model_or_the_answer() -> None:
+    # #677 review: names are not masked, and Research strips them for the same reason.
+    box = _box({"audio.find_utterances": mock_tool("audio.find_utterances", UTTERANCES)})
+    model = ScriptedToolModel([[FunctionCall("audio__find_utterances", {"query": "예산"})], "DONE"])
+
+    result = ask("예산 얘기 누가 했어?", model=model, toolbox=box, declarations=FIND)
+
+    assert [i["title"] for i in _sent_items(model, 1)] == [f"00:0{i}:00" for i in range(5)]
+    assert all("김민경" not in item.title for item in result.items)
+
+
+def test_at_most_ten_utterances_are_quoted_in_one_turn() -> None:
+    # agent-layer.md section 8 rule 1: at most ten quoted utterances per step.
+    box = _box({"audio.find_utterances": mock_tool("audio.find_utterances", UTTERANCES)})
+    call = FunctionCall("audio__find_utterances", {"query": "예산"})
+    model = ScriptedToolModel([[call, call], [call], "DONE"])
+
+    result = ask("예산", model=model, toolbox=box, declarations=FIND)
+
+    first = model.sent[1]["contents"][-1]["parts"]
+    assert [len(p["functionResponse"]["response"]["items"]) for p in first] == [5, 5]
+    assert _sent_items(model, 2) == []
+    assert sum(1 for i in result.items if (getattr(i, "id", "") or "").startswith("utt_")) <= 10
+
+
+def test_arguments_the_declaration_does_not_name_are_dropped() -> None:
+    box = _box({"audio.find_utterances": mock_tool("audio.find_utterances", UTTERANCES)})
+    call = FunctionCall("audio__find_utterances", {"query": "예산", "session": "x", "name": "y"})
+    model = ScriptedToolModel([[call], "DONE"])
+
+    result = ask("예산", model=model, toolbox=box, declarations=FIND)
+
+    assert result.ok is True
+
+
+def test_a_tool_that_raises_answers_the_model_and_the_loop_goes_on() -> None:
+    def broken(session: Any, team_id: str, days: int) -> dict[str, Any]:
+        raise OverflowError("days too large")
+
+    tools = {
+        "extraction.workload_by_owner": Tool("extraction.workload_by_owner", "Use this.", broken),
+        "extraction.open_action_items": mock_tool("extraction.open_action_items", OPEN),
+    }
+    decls = [
+        Declaration(
+            "extraction__workload_by_owner",
+            "Use this.",
+            {"type": "OBJECT", "properties": {"days": {"type": "INTEGER"}}},
+        ),
+        *DECL,
+    ]
+    model = ScriptedToolModel(
+        [
+            [FunctionCall("extraction__workload_by_owner", {"days": 10**9})],
+            [FunctionCall("extraction__open_action_items", {})],
+            "DONE",
+        ]
+    )
+
+    result = ask("누가 바빠?", model=model, toolbox=_box(tools), declarations=decls)
+
+    reply = model.sent[1]["contents"][2]["parts"][0]["functionResponse"]["response"]
+    assert reply["ok"] is False and "days" not in reply["reason"]
+    assert result.evidence == ["act_1", "act_2"]
+
+
+def test_two_tools_share_the_five_items() -> None:
+    # #677 review: call order alone let the first tool's five items push the
+    # second tool's out of the answer.
+    five = {**OPEN, "items": [{"title": f"결정 {i}", "id": f"dec_{i}"} for i in range(5)]}
+    tools = {
+        "extraction.meeting_decisions": mock_tool("extraction.meeting_decisions", five),
+        "extraction.open_action_items": mock_tool("extraction.open_action_items", OPEN),
+    }
+    calls = [
+        FunctionCall("extraction__meeting_decisions", {}),
+        FunctionCall("extraction__open_action_items", {}),
+    ]
+    model = ScriptedToolModel([calls, "DONE"])
+
+    result = ask("정한 것과 할 일", model=model, toolbox=_box(tools), declarations=DECL)
+
+    assert [i.title for i in result.items] == ["결정 0", "API 문서", "결정 1", "QA", "결정 2"]
+
+
+def test_the_team_set_quotes_no_other_meeting_and_names_no_person_it_cannot_resolve() -> None:
+    assert "audio.search_team_meetings" not in TEAM_TOOLS
+    assert "extraction.person_action_items" not in TEAM_TOOLS

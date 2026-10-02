@@ -499,3 +499,77 @@ def test_pending_uses_the_meetings_team_when_only_a_meeting_is_sent(
 
     assert [p["tool"] for p in body["pending"]] == ["agent.share_research_document"]
     assert body["queued"] == 1
+
+
+def _chat_queueing(
+    session: Session,
+    team: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    scope: str = "research",
+    status: str = "pending",
+    same_run: bool = True,
+) -> dict[str, Any]:
+    """One chat turn whose run leaves one proposal, shaped by the arguments."""
+    real = routes.run_and_record
+
+    def queueing(*args: Any, **kwargs: Any) -> Any:
+        row, state = real(*args, **kwargs)
+        left = _queue(session, team, scope=scope)
+        left.run_id = row.id if same_run else None
+        left.status = status
+        session.commit()
+        return row, state
+
+    monkeypatch.setattr(routes, "run_and_record", queueing)
+    client = _client(session, team["member"], chat_router=FakeRouter())
+    body: dict[str, Any] = client.post(
+        "/api/agent/chat", json={"team_id": team["team"], "message": "x"}
+    ).json()
+    return body
+
+
+def _approver(session: Session, team: dict[str, str], scope: str) -> None:
+    session.add(AgentApprover(team_id=team["team"], user_id=team["member"], scope=scope))
+    session.commit()
+
+
+def test_pending_hides_a_proposal_of_another_scope(
+    session: Session, team: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _approver(session, team, "research")
+
+    body = _chat_queueing(session, team, monkeypatch, scope="workload")
+
+    assert body["pending"] == []
+    assert body["queued"] == 1
+
+
+def test_pending_shows_any_scope_to_an_any_approver(
+    session: Session, team: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _approver(session, team, "any")
+
+    body = _chat_queueing(session, team, monkeypatch, scope="workload")
+
+    assert len(body["pending"]) == 1
+
+
+def test_pending_skips_another_runs_row(
+    session: Session, team: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _approver(session, team, "research")
+
+    body = _chat_queueing(session, team, monkeypatch, same_run=False)
+
+    assert body["pending"] == [] and body["queued"] == 0
+
+
+def test_pending_skips_a_decided_row(
+    session: Session, team: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _approver(session, team, "research")
+
+    body = _chat_queueing(session, team, monkeypatch, status="rejected")
+
+    assert body["pending"] == [] and body["queued"] == 0

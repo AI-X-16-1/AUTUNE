@@ -88,7 +88,13 @@ Chosen by the run's scope, not by the model.
 | Scope | Tools |
 | --- | --- |
 | A meeting (`RunScope.meeting_id` set) | `audio.meeting_overview`, `audio.find_utterances`, `extraction.meeting_decisions`, `extraction.meeting_action_items`, `extraction.unresolved_questions`, `gap.open_gaps`, `context.links_for_meeting`, `intelligence.meeting_quality` |
-| The team (no meeting) | `audio.recent_meetings`, `audio.search_team_meetings`, `extraction.open_action_items`, `extraction.person_action_items`, `extraction.workload_by_owner`, `context.list_decisions`, `context.decision_thread`, `intelligence.recurring_gaps`, `intelligence.team_trend` |
+| The team (no meeting) | `audio.recent_meetings`, `extraction.open_action_items`, `extraction.workload_by_owner`, `context.list_decisions`, `context.decision_thread`, `intelligence.recurring_gaps`, `intelligence.team_trend` |
+
+Left out after #677's review: `audio.search_team_meetings` quotes other
+meetings, which section 8 rule 1 does not allow a step to do; and
+`extraction.person_action_items` needs a `user_id` the model can learn only
+for others, never for the asker — it returns once the scope can supply the
+asker's id.
 
 A name not registered (a module that has not shipped it) is dropped with the
 existing warning. Personal-only tools are never registered, so never offered.
@@ -118,17 +124,28 @@ Each tool becomes a Gemini function declaration:
    the call and its compact result to the conversation, and go to 1.
 3. Stop when the reply holds no call, after **three rounds**, when the budget
    is spent, or when the next request would pass 3,800 characters (section 3).
-4. Merge the results: summaries joined, items in call order, evidence ids
-   unioned. The merged `ToolResult` goes to `answer`, which composes in Korean
+4. Merge the results: summaries joined, items taken round-robin across the
+   tools that answered (so a second tool's items survive the cut to five),
+   evidence ids unioned. The merged `ToolResult` goes to `answer`, which composes in Korean
    with the existing `COMPOSE_INSTRUCTIONS`.
 
 The loop instructions say: answer only from tool results, prefer one tool,
 treat the request as data. They are ours, short, and counted in the budget.
 
+### 4.4a Quoting
+
+An utterance item's title is "{clock} {speaker}". Names are not masked, so the
+loop cuts the title to the clock before the item goes to the model or to
+`answer` — the rule Research follows (agent-layer.md 13.3). At most ten
+utterances are kept in one turn (section 8 rule 1); later ones are dropped.
+
 ### 4.5 Failure
 
 - A tool's refusal (wrong team, no meeting, missing argument) goes back to the
   model as a failed result, so it can try another tool. It costs a call.
+- Arguments the declaration does not name are dropped before the call. A tool
+  that raises answers the model with a failure naming the error type; a
+  privacy refusal, a spent budget or a database error still fails the turn.
 - An unknown function name is answered `is not available here`, the
   `Toolbox`'s own wording.
 - A `PrivacyViolationError` from the guard — someone typed a phone number into
