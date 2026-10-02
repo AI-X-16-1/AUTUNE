@@ -274,7 +274,10 @@ def test_a_thought_signature_is_not_scanned_or_counted() -> None:
     # meeting content and must not trip the account-number pattern.
     sent: list[dict[str, Any]] = []
     turns = [
-        {"role": "model", "parts": [{"functionCall": {"name": "a__b"}, "thoughtSignature": "1002123456789012"}]}
+        {
+            "role": "model",
+            "parts": [{"functionCall": {"name": "a__b"}, "thoughtSignature": "1002123456789012"}],
+        }
     ]
 
     _tools([{"text": "DONE"}], sent).step("지시", turns, [])
@@ -356,7 +359,9 @@ class GeminiTools:
             parts = []
         self.last_parts = parts
         calls = [
-            FunctionCall(str(p["functionCall"].get("name", "")), dict(p["functionCall"].get("args") or {}))
+            FunctionCall(
+                str(p["functionCall"].get("name", "")), dict(p["functionCall"].get("args") or {})
+            )
             for p in parts
             if isinstance(p.get("functionCall"), dict)
         ]
@@ -454,12 +459,19 @@ def test_team_id_is_never_declared_and_meeting_id_only_without_a_meeting() -> No
 
 def test_types_map_and_defaults_are_optional() -> None:
     def search(
-        session: Any, team_id: str, query: str, limit: int = 5, exact: bool = False,
-        terms: list[str] | None = None, meeting_id: str | None = None,
+        session: Any,
+        team_id: str,
+        query: str,
+        limit: int = 5,
+        exact: bool = False,
+        terms: list[str] | None = None,
+        meeting_id: str | None = None,
     ) -> dict[str, Any]:
         return {}
 
-    (decl,) = declare({"audio.search_team_meetings": _tool("audio.search_team_meetings", search)}, TEAM)
+    (decl,) = declare(
+        {"audio.search_team_meetings": _tool("audio.search_team_meetings", search)}, TEAM
+    )
 
     assert decl.name == "audio__search_team_meetings"
     assert decl.parameters["properties"] == {
@@ -495,7 +507,10 @@ def test_tools_outside_the_set_are_not_declared() -> None:
     def anything(session: Any, team_id: str) -> dict[str, Any]:
         return {}
 
-    assert declare({"extraction.add_action_item": _tool("extraction.add_action_item", anything)}, TEAM) == []
+    assert (
+        declare({"extraction.add_action_item": _tool("extraction.add_action_item", anything)}, TEAM)
+        == []
+    )
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -673,10 +688,15 @@ SESSION: Any = object()
 OPEN = {
     "ok": True,
     "summary": "열린 액션 2건.",
-    "items": [{"title": "API 문서", "body": "기한 10/9", "id": "act_1"}, {"title": "QA", "id": "act_2"}],
+    "items": [
+        {"title": "API 문서", "body": "기한 10/9", "id": "act_1"},
+        {"title": "QA", "id": "act_2"},
+    ],
     "evidence": ["act_1", "act_2"],
 }
-DECL = [Declaration("extraction__open_action_items", "Use this.", {"type": "OBJECT", "properties": {}})]
+DECL = [
+    Declaration("extraction__open_action_items", "Use this.", {"type": "OBJECT", "properties": {}})
+]
 
 
 def _box(tools: dict[str, Any], scope: RunScope = TEAM) -> Toolbox:
@@ -717,7 +737,11 @@ def test_a_model_that_never_stops_is_cut_at_three_rounds() -> None:
 def test_an_unknown_name_is_answered_and_the_loop_goes_on() -> None:
     box = _box({"extraction.open_action_items": mock_tool("extraction.open_action_items", OPEN)})
     model = ScriptedToolModel(
-        [[FunctionCall("payroll__salaries", {})], [FunctionCall("extraction__open_action_items", {})], "DONE"]
+        [
+            [FunctionCall("payroll__salaries", {})],
+            [FunctionCall("extraction__open_action_items", {})],
+            "DONE",
+        ]
     )
 
     result = ask("월급?", model=model, toolbox=box, declarations=DECL)
@@ -727,25 +751,40 @@ def test_an_unknown_name_is_answered_and_the_loop_goes_on() -> None:
     assert result.evidence == ["act_1", "act_2"]
 
 
-def test_an_invented_meeting_is_refused_and_the_loop_goes_on(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_an_invented_meeting_is_refused_and_the_loop_goes_on(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from autune_agent.main import registry
 
     def gaps(session: Any, team_id: str, meeting_id: str) -> dict[str, Any]:
         return {"ok": True, "summary": "갭 없음"}
 
-    monkeypatch.setattr(registry, "bind_scope", lambda *a, **k: ToolResult.failure("meeting not found"))
+    monkeypatch.setattr(
+        registry, "bind_scope", lambda *a, **k: ToolResult.failure("meeting not found")
+    )
     box = _box({"gap.open_gaps": Tool("gap.open_gaps", "Use this.", gaps)})
-    model = ScriptedToolModel([[FunctionCall("gap__open_gaps", {"meeting_id": "mtg_made_up"})], "DONE"])
+    model = ScriptedToolModel(
+        [[FunctionCall("gap__open_gaps", {"meeting_id": "mtg_made_up"})], "DONE"]
+    )
 
     result = ask("갭?", model=model, toolbox=box, declarations=DECL)
 
     reply = model.sent[1]["contents"][2]["parts"][0]["functionResponse"]["response"]
-    assert reply == {"ok": False, "reason": "meeting not found", "summary": "meeting not found", "items": []}
+    assert reply == {
+        "ok": False,
+        "reason": "meeting not found",
+        "summary": "meeting not found",
+        "items": [],
+    }
     assert result.ok is False
 
 
 def test_long_item_bodies_are_cut_before_they_go_back() -> None:
-    long = {**OPEN, "items": [{"title": "긴 항목", "body": "가" * 500, "id": "act_1"}], "evidence": ["act_1"]}
+    long = {
+        **OPEN,
+        "items": [{"title": "긴 항목", "body": "가" * 500, "id": "act_1"}],
+        "evidence": ["act_1"],
+    }
 
     shown = compact(ToolResult.model_validate(long))
 
@@ -995,7 +1034,9 @@ def test_a_turn_no_subagent_fits_is_asked_when_a_model_is_given() -> None:
 
 
 def test_without_a_model_an_unfit_turn_is_still_unrouted() -> None:
-    state = run("점심?", session=SESSION, scope=SCOPE, router=FakeRouter(), subagents={}, tools=TOOLS)
+    state = run(
+        "점심?", session=SESSION, scope=SCOPE, router=FakeRouter(), subagents={}, tools=TOOLS
+    )
 
     assert state["route"] is None
 
@@ -1043,7 +1084,14 @@ def test_an_asked_turn_records_tools_and_no_text(session: Session, team: dict[st
     )
 
     assert row.route == "ask" and row.outcome == "answered"
-    assert row.steps == [{"tool": "extraction.open_action_items", "ok": True, "evidence": ["act_1"], "truncated": False}]
+    assert row.steps == [
+        {
+            "tool": "extraction.open_action_items",
+            "ok": True,
+            "evidence": ["act_1"],
+            "truncated": False,
+        }
+    ]
     assert row.answer is None
 ```
 
@@ -1063,17 +1111,18 @@ ASK_ROUTE = "ask"
 In `main/graph.py`, give `build_main_graph` and `run` a keyword `asker: ToolModel | None = None`, pass it from `run` to `build_main_graph`, and change the graph body:
 
 ```python
-    def ask_node(state: MainState) -> MainState:
-        assert asker is not None
-        box = Toolbox(tools, session, budget, allowed=tool_set(scope), scope=scope)
-        result = ask(state["request"], model=asker, toolbox=box, declarations=declare(tools, scope))
-        return {"route": ASK_ROUTE, "outcome": SubagentResult(result=result)}
+def ask_node(state: MainState) -> MainState:
+    assert asker is not None
+    box = Toolbox(tools, session, budget, allowed=tool_set(scope), scope=scope)
+    result = ask(state["request"], model=asker, toolbox=box, declarations=declare(tools, scope))
+    return {"route": ASK_ROUTE, "outcome": SubagentResult(result=result)}
 
-    asks = asker is not None and route_to is None
-    graph = StateGraph(MainState)
-    graph.add_node("route", route)
-    graph.add_node("delegate", delegate)
-    graph.add_node("unrouted", ask_node if asks else unrouted)
+
+asks = asker is not None and route_to is None
+graph = StateGraph(MainState)
+graph.add_node("route", route)
+graph.add_node("delegate", delegate)
+graph.add_node("unrouted", ask_node if asks else unrouted)
 ```
 
 Leave the edges unchanged: the `unrouted` node is either the old refusal or the loop. Imports:
@@ -1145,7 +1194,9 @@ def test_a_free_question_is_answered_from_tools(session: Session, team: dict[str
     assert reply.json()["pending"] == []
 
 
-def test_without_a_tool_model_the_chat_answers_as_before(member: TestClient, team: dict[str, str]) -> None:
+def test_without_a_tool_model_the_chat_answers_as_before(
+    member: TestClient, team: dict[str, str]
+) -> None:
     reply = member.post("/api/agent/chat", json={"team_id": team["team"], "message": "안녕"})
 
     assert reply.json()["outcome"] == "unrouted"

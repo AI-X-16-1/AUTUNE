@@ -144,13 +144,16 @@ answer, no tool arguments, no model text (rule 8).
 ## 5. Seams for `create_agent`
 
 ```python
-class GeminiTools:                       # main/gemini.py, next to GeminiText
-    def step(self, instructions: str, turns: list[Turn],
-             declarations: list[Declaration]) -> Step: ...
+class GeminiTools:  # main/gemini.py, next to GeminiText
+    def step(
+        self, instructions: str, turns: list[Turn], declarations: list[Declaration]
+    ) -> Step: ...
+
     # Step = text | list[FunctionCall]; one generateContent through check_outbound
 
+
 def declare(tools: Mapping[str, Tool], scope: RunScope) -> list[Declaration]: ...
-def call_tool(toolbox: Toolbox, call: FunctionCall) -> ToolResult: ...   # main/ask.py
+def call_tool(toolbox: Toolbox, call: FunctionCall) -> ToolResult: ...  # main/ask.py
 ```
 
 Later, `GeminiTools.step` becomes the body of a LangChain chat model's
