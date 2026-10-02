@@ -45,6 +45,16 @@ describe("ConsentForm", () => {
     expect(box("privacy").disabled).toBe(true);
   });
 
+  it("shows the document as text that cannot be selected, the same on every document", () => {
+    form();
+
+    for (const { document } of TWO) {
+      open(document);
+      const region = screen.getByRole("region", { name: title(document) });
+      expect(region.querySelector(".select-none")?.textContent).toBe(region.textContent);
+    }
+  });
+
   it("keeps a box unlocked after its document is closed again", () => {
     form();
 

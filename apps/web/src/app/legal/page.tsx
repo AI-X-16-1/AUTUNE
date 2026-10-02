@@ -3,11 +3,11 @@ import Link from "next/link";
 
 import { Band } from "@/shared/ui";
 
-import { LEGAL_DOCUMENTS } from "./content";
-import { BODY, DocumentBody } from "./LegalDocumentView";
+import { COPY_NOTICE, LEGAL_DOCUMENTS } from "./content";
+import { BODY, DocumentBody, Text } from "./LegalDocumentView";
 
 /**
- * The privacy policy, the terms of use, the security notice and the two
+ * The privacy policy, the terms of service, the security policy and the two
  * separate consents on one page -- what S01's footer points at, and the same
  * text the consent page opens one document at a time.
  *
@@ -25,8 +25,8 @@ import { BODY, DocumentBody } from "./LegalDocumentView";
  * says so at the top, and marks each one where it stands.
  */
 export const metadata: Metadata = {
-  title: "보안 · 개인정보 처리방침 · 이용약관 · Autune",
-  description: "Autune의 개인정보 처리방침, 이용약관, 보안 안내",
+  title: "개인정보 처리방침 · 서비스 이용약관 · 정보보호 정책 · Autune",
+  description: "Autune의 개인정보 처리방침, 서비스 이용약관, 정보보호 정책",
 };
 
 export default function LegalPage() {
@@ -75,6 +75,10 @@ export default function LegalPage() {
             </a>
           ))}
         </nav>
+
+        <p className="text-ink-muted" style={{ fontSize: "var(--text-meta)" }}>
+          <Text line={COPY_NOTICE} />
+        </p>
 
         {LEGAL_DOCUMENTS.map((doc) => (
           <article

@@ -16,6 +16,8 @@ import {
   REQUIRED_CONSENTS,
   type RequiredConsent,
 } from "../legal/consents";
+import { COPY_NOTICE } from "../legal/content";
+import { Text } from "../legal/LegalDocumentView";
 import { ConsentForm } from "./ConsentForm";
 
 /**
@@ -112,6 +114,12 @@ export default function ConsentPage() {
           >
             아래 문서를 각각 열어 보고 동의해 주세요. 모두 동의하면 Autune으로
             넘어갑니다.
+          </p>
+          <p
+            className="text-ink-muted"
+            style={{ fontSize: "var(--text-meta)" }}
+          >
+            <Text line={COPY_NOTICE} />
           </p>
         </div>
 

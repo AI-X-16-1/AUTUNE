@@ -3,13 +3,20 @@ import type { ReactNode } from "react";
 import type { Block, Inline, LegalDocument, Line } from "./content";
 
 /**
- * How a legal document's data is drawn: the lead, each section, the closing
- * line. Shared by `/legal`, which shows the documents one after another, and
+ * How a legal document's data is drawn: the preamble when it has one, then
+ * each article under the chapter it opens. Shared by `/legal`, which shows the documents one after another, and
  * the consent page, which opens one at a time -- so what a person reads before
  * agreeing is the same text, drawn the same way, as what the footer links to.
  *
  * Nothing here knows what the text says. An unsettled value is marked where it
  * stands, on both pages.
+ *
+ * **The text cannot be selected** (`select-none` on `DocumentBody`; the user,
+ * 2026-10-02: every document). It is a setting of the page, not a protection:
+ * the text is in the page's source, a screen reader reads it as before, and
+ * printing is not affected. A customer is owed a copy of the terms on request,
+ * so both pages say how to get one (`COPY_NOTICE`) -- keep that line while
+ * this is on.
  */
 
 export const BODY = {
@@ -128,12 +135,26 @@ function BlockView({ block }: { block: Block }): ReactNode {
 /** Everything of a document under its title. The title is the caller's. */
 export function DocumentBody({ doc }: { doc: LegalDocument }) {
   return (
-    <>
-      <p className="text-ink-body" style={BODY}>
-        <Text line={doc.lead} />
-      </p>
+    <div className="flex select-none flex-col gap-6">
+      {doc.lead ? (
+        <p className="text-ink-body" style={BODY}>
+          <Text line={doc.lead} />
+        </p>
+      ) : null}
       {doc.sections.map((section) => (
         <section key={section.heading} className="flex flex-col gap-3">
+          {section.chapter ? (
+            <h2
+              className="mt-4 text-ink-strong"
+              style={{
+                fontSize: "var(--text-heading)",
+                fontWeight: "var(--text-heading-weight)",
+                lineHeight: "var(--text-heading-leading)",
+              }}
+            >
+              {section.chapter}
+            </h2>
+          ) : null}
           <h2
             className="text-ink-strong"
             style={{
@@ -149,11 +170,6 @@ export function DocumentBody({ doc }: { doc: LegalDocument }) {
           ))}
         </section>
       ))}
-      {doc.closing ? (
-        <p className="text-ink-muted" style={{ fontSize: "var(--text-meta)" }}>
-          <Text line={doc.closing} />
-        </p>
-      ) : null}
-    </>
+    </div>
   );
 }
