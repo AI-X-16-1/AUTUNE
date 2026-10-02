@@ -16,6 +16,7 @@ from autune_core import TeamMember, User
 from .registry import Tool
 
 GONE = "원본이 더 이상 없습니다"
+FOLLOWUP_GAPS_CLOSED = "근거가 된 갭이 모두 닫혔습니다"
 
 
 def preview(
@@ -51,7 +52,33 @@ def preview(
             if is_member:
                 to = who.display_name
         return {"title": "액션아이템 재배정", "body": f"{item.title} · {item.body}\n→ {to}"}
+    if row.tool == "extraction.add_followup_item":
+        return {"title": "후속 회의 잡기", "body": _followup_gaps(session, row, tools)}
     if row.tool == "intelligence.publish_meeting_report":
         return {"title": "리포트 게시", "body": "리포트 초안 — 회의 대시보드에서 보기"}
     ids = ", ".join(f"{k}={v}" for k, v in args.items())
     return {"title": row.kind, "body": ids}
+
+
+def _followup_gaps(session: Session, row: AgentPendingAction, tools: Mapping[str, Tool]) -> str:
+    """The titles of the gaps a Follow-up proposal rests on, most risky first (#562).
+
+    Read now from C's ``gaps_by_id`` with the row's evidence, so a gap dismissed
+    since the proposal drops out, and a cited gap is found wherever it ranks
+    (``open_gaps`` stops at five; #644). A title is C's template item and a
+    fixed phrase ("{item} — 논의되지 않았습니다"); no topic label, no utterance.
+
+    The meeting is the row's when a pipeline event woke Follow-up, and the
+    proposal's ``meeting_id`` argument when it was asked in chat, where the run
+    is about no meeting (#626 review). C checks that meeting against the row's
+    team, as ``bind_scope`` does when the proposal is approved.
+    """
+    read = tools.get("gap.gaps_by_id")
+    meeting_id = row.meeting_id or row.arguments.get("meeting_id")
+    if read is None or not isinstance(meeting_id, str):
+        return GONE
+    result = read(session, team_id=row.team_id, meeting_id=meeting_id, gap_ids=list(row.evidence))
+    if not result.ok:
+        return GONE
+    titles = [item.title for item in result.items]
+    return "\n".join(f"· {t}" for t in titles) if titles else FOLLOWUP_GAPS_CLOSED
