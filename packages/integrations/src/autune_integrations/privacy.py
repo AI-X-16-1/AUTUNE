@@ -119,6 +119,32 @@ _SEP_TIGHT: Final = r"[-.\s]?"
 # list of date formats to go stale.
 MIN_ACCOUNT_DIGITS: Final = 10
 
+# Whisper writes a number read aloud in digits and **guesses where the hyphens
+# go** (evaluation 04, #696). A phone number comes back 3-4-4, but an account
+# read 3-2-6 came back `450-80-930-9782` and a resident number
+# `971-227-837-6573`: shapes the patterns above key on by group length, so they
+# matched nothing, or matched `account` on the tail and left the front
+# standing. 15 of 32 synthetic accounts and 13 of 32 resident numbers leaked.
+#
+# So: any run of digit groups joined by a hyphen or a dash -- or by the filler
+# Whisper keeps between them (`628음 84음 919160`) -- however it is split, once
+# it holds MIN_GROUPED_DIGITS digits. Not a bare space and not a dot: `3000
+# 5000 10000원` is a list of prices and `1.2.3` a version, and neither is a
+# shape this needs. The one hyphenated thing a meeting says that is this long
+# and not an identifier is a list of years or a date range (`2024-2025-2026`,
+# `2026-10-02-2026-10-05`, #125's false positive), which ``find_pii`` refuses:
+# every group at most four digits and the first a 19xx/20xx year. A real
+# account starting that way still has a group longer than four.
+#
+# Declared before `account`, so on the same span this wins and every digit
+# goes. That costs a correctly hyphenated account its last four (`1002-123-
+# 456789` is eleven-plus digits and both shapes): the four that #138 kept for a
+# reader to recognise their own account. A mis-grouped resident number keeping
+# four is the leak; an account losing four is the annoyance.
+MIN_GROUPED_DIGITS: Final = 11
+_GROUP_SEP: Final = rf"{_HSPACE}*(?:[-–—]|음|어){_HSPACE}*"
+_YEAR_LED: Final = re.compile(r"(?:19|20)\d\d(?:\D+\d{1,4})+")
+
 PII_PATTERNS: Final[tuple[tuple[str, re.Pattern[str]], ...]] = (
     # Longest shapes first: an RRN also looks like two number groups, and a card
     # number contains things that look like account fragments.
@@ -156,6 +182,12 @@ PII_PATTERNS: Final[tuple[tuple[str, re.Pattern[str]], ...]] = (
     # account said *with* separators is not matched here at all and still keeps
     # its last four.
     ("digits", re.compile(rf"{_L}\d{{12,}}{_R}")),
+    # A hyphen- or filler-joined run of eleven digits or more, however Whisper
+    # grouped it (#696; MIN_GROUPED_DIGITS). **Above `account`**, like the
+    # run-together rule above it: on the same span the first declared wins, and
+    # a resident number Whisper hyphenated 6-3-4 is also an account shape that
+    # would keep its last four.
+    ("digits", re.compile(rf"{_L}\d{{1,7}}(?:{_GROUP_SEP}\d{{1,7}}){{1,5}}{_R}")),
     # Bank layouts vary -- 3-2-6, 6-2-6, 3-3-6 -- and get said without
     # separators as often as with. See MIN_ACCOUNT_DIGITS for what keeps this
     # from matching every date in a transcript.
@@ -211,12 +243,17 @@ def find_pii(text: str) -> list[tuple[int, int, str]]:
         #       masker nor the guard.
         position = 0
         while (match := pattern.search(text, position)) is not None:
-            rejected = MASK_CHAR in match.group() or (
+            rejected = (
+                MASK_CHAR in match.group()
                 # A date, a version, a figure said in three parts.
-                category == "account" and _digit_count(match.group()) < MIN_ACCOUNT_DIGITS
+                or (category == "account" and _digit_count(match.group()) < MIN_ACCOUNT_DIGITS)
+                or (category == "digits" and _is_short_or_dated(match.group()))
             )
             if rejected:
-                position = match.start() + 1
+                # A grouped run refused as a date range or too short is refused
+                # whole: retrying inside it would find `10-02-2026-10-05` in
+                # `2026-10-02-2026-10-05` and mask the date it just let go.
+                position = match.end() if category == "digits" else match.start() + 1
                 continue
             found.append((match.start(), match.end(), category))
             position = match.end()
@@ -246,6 +283,17 @@ def _most_specific(spans: list[tuple[int, int, str]]) -> list[tuple[int, int, st
 
 def _digit_count(value: str) -> int:
     return sum(1 for c in value if c.isdigit())
+
+
+def _is_short_or_dated(value: str) -> bool:
+    """A grouped run too short to be an identifier, or a list of years or a date
+    range -- every group at most four digits and the first a 19xx/20xx year.
+    The run-together ``digits`` rule (twelve and up, no separator) passes both."""
+    if not any(not c.isdigit() for c in value):
+        return False
+    if _digit_count(value) < MIN_GROUPED_DIGITS:
+        return True
+    return _YEAR_LED.fullmatch(value) is not None
 
 
 MASK_CHAR: Final = "*"
