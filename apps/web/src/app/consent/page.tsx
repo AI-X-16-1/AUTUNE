@@ -21,15 +21,15 @@ import { Text } from "../legal/LegalDocumentView";
 import { ConsentForm } from "./ConsentForm";
 
 /**
- * Where a signed-in person agrees to the terms, the privacy policy and the two
- * separate consents before the app opens (the user, 2026-10-02).
+ * Where a signed-in person agrees to the terms and the privacy policy before
+ * the app opens (the user, 2026-10-02).
  *
  * Outside `(app)` and `(focus)`, like `/login`: the session gate in front of
  * those sends a person here, so this page cannot stand behind it. It needs a
  * session of its own accord and sends anybody without one to `/login`.
  *
  * It asks only for what is missing. Somebody who agreed to everything and then
- * meets a changed document is shown that document, not all four again.
+ * meets a changed document is shown that document, not both again.
  *
  * `?next=` is where the gate found the person. Only a path on this site is
  * followed; anything else goes to the home screen.

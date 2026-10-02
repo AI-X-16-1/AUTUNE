@@ -78,7 +78,7 @@ export interface Section {
 }
 
 export interface LegalDocument {
-  id: "privacy" | "terms" | "security" | "voice_features" | "overseas_transfer";
+  id: "privacy" | "terms" | "security";
   title: string;
   /** The preamble, for a document that has one. */
   lead?: Line;
@@ -1043,144 +1043,10 @@ const SECURITY: LegalDocument = {
   ],
 };
 
-/**
- * The two consents asked for apart from the policy (decided with the user,
- * 2026-10-02). Each restates what the policy says -- 제10조 for voice feature
- * data, 제5조 to 제7조 for transfer abroad -- in the shape a separate consent
- * takes: what, why, how long, and the right to refuse. Change a fact in the
- * policy, change it here.
- *
- * What refusing means is unsettled and marked so. The service has no
- * per-person switch for either, which is a fact about the code; whether a
- * consent may be required on that ground is a question for the legal review.
- * The voice consent deliberately does not call the data "sensitive
- * information" under Article 23: that classification is the open question
- * (#92), not something this page may decide.
- */
-const REFUSAL = blank(
-  "동의 거부 시의 처리",
-  "현재 서비스에는 이 항목만을 따로 끄는 설정이 없어, 동의하지 않는 경우 서비스를 이용할 수 없습니다",
-);
-
-const VOICE_CONSENT: LegalDocument = {
-  id: "voice_features",
-  title: "음성 특징정보 수집·이용 동의",
-  lead: "회사는 음성 특징정보의 처리에 관하여 다른 개인정보의 처리에 대한 동의와 별도로 다음 사항을 알리고 동의를 받습니다.",
-  sections: [
-    {
-      heading: "1. 수집·이용 내용",
-      blocks: [
-        table(
-          ["구분", "내용"],
-          [
-            "수집·이용 항목",
-            "음성에서 추출한 특징값(회의별 음성 특징정보 및 본인 확인을 거친 음성 프로필)",
-          ],
-          [
-            "수집·이용 목적",
-            "회의의 화자 구분, 본인이 확인한 음성의 이후 회의에서의 식별",
-          ],
-          [
-            "보유 및 이용 기간",
-            "회의별 음성 특징정보는 해당 회의의 보유 기간과 같습니다. 음성 프로필은 해당 이용자가 참석한 마지막 회의의 보유 기간이 만료되면 파기합니다. 정보주체는 그 전에도 언제든지 삭제할 수 있습니다.",
-          ],
-          [
-            "처리 여부",
-            "회사가 해당 기능을 활성화한 환경에서만 저장하며, 기본값은 비활성입니다.",
-          ],
-        ),
-      ],
-    },
-    {
-      heading: "2. 동의를 거부할 권리 및 거부에 따른 불이익",
-      blocks: [
-        p(["정보주체는 이 동의를 거부할 권리가 있습니다. ", REFUSAL, "."]),
-      ],
-    },
-  ],
-};
-
-const OVERSEAS_CONSENT: LegalDocument = {
-  id: "overseas_transfer",
-  title: "개인정보 국외 이전 동의",
-  lead: "회사는 「개인정보 보호법」 제28조의8에 따라 개인정보의 국외 이전에 관하여 다음 사항을 알리고 동의를 받습니다.",
-  sections: [
-    {
-      heading: "1. 국외 이전의 내용",
-      blocks: [
-        table(
-          [
-            "이전받는 자",
-            "이전되는 국가",
-            "이전 일시 및 방법",
-            "이전 항목",
-            "이용 목적",
-            "보유 및 이용 기간",
-          ],
-          [
-            "Google LLC",
-            "미국",
-            "로그인하는 때, 캘린더에 일정을 등록하는 때, 언어 모델을 이용한 기능을 사용하는 때에 정보통신망을 통하여 전송",
-            "개인정보 처리방침 제5조 및 제6조에 기재한 항목",
-            "본인 인증, 일정 등록, 언어 모델을 이용한 분석 및 AI 비서 응답 생성",
-            "개인정보 처리방침 제5조 및 제6조에 기재한 기간",
-          ],
-          [
-            "Slack Technologies, LLC",
-            "미국",
-            "확인 요청 또는 알림을 보내는 때에 정보통신망을 통하여 전송",
-            "개인정보 처리방침 제5조에 기재한 항목",
-            "확인 요청 및 알림의 전달",
-            "개인정보 처리방침 제5조에 기재한 기간",
-          ],
-          [
-            "Notion Labs, Inc.",
-            "미국",
-            "이용자가 항목을 확정하는 때에 정보통신망을 통하여 전송",
-            "개인정보 처리방침 제5조에 기재한 항목",
-            "팀의 업무 기록 작성",
-            "개인정보 처리방침 제5조에 기재한 기간",
-          ],
-          [
-            "Atlassian Pty Ltd",
-            "호주, 미국",
-            "이용자가 항목을 확정하는 때에 정보통신망을 통하여 전송",
-            "개인정보 처리방침 제5조에 기재한 항목",
-            "팀의 업무 항목 등록",
-            "개인정보 처리방침 제5조에 기재한 기간",
-          ],
-          [
-            HOSTING,
-            blank("이전되는 국가"),
-            "상시, 정보통신망을 통하여 전송",
-            "서비스가 보관하는 자료 전부",
-            "서버 운영 및 데이터 보관",
-            blank("보유 및 이용 기간", "위탁계약 종료 시까지"),
-          ],
-        ),
-        p(
-          "음성 녹음은 국외로 이전하지 않습니다. Slack, Notion, Jira 및 Google Calendar로의 이전은 이용자 또는 이용자가 속한 팀이 해당 외부 서비스를 연결한 경우에만 이루어집니다.",
-        ),
-      ],
-    },
-    {
-      heading: "2. 동의를 거부할 권리 및 거부에 따른 불이익",
-      blocks: [
-        p(
-          "정보주체는 외부 서비스를 연결하지 않는 방법으로 해당 서비스로의 국외 이전을 거부할 수 있습니다. Google 로그인에 따른 이전을 거부하는 경우에는 서비스를 이용할 수 없습니다.",
-        ),
-        p(["정보주체는 이 동의를 거부할 권리가 있습니다. ", REFUSAL, "."]),
-      ],
-    },
-  ],
-};
-
 export const LEGAL_DOCUMENTS: readonly LegalDocument[] = [
   PRIVACY,
   TERMS,
   SECURITY,
-  VOICE_CONSENT,
-  OVERSEAS_CONSENT,
 ];
 
 /** The document the consent page opens for one required consent. */

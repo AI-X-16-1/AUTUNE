@@ -20,7 +20,7 @@ import { DocumentBody } from "../legal/LegalDocumentView";
  * Nothing is sent until every box is ticked, and then all of them go in one
  * request: a person is either through the page or still on it, never half.
  * Each row is ticked on its own; there is no "agree to all" box, because one
- * click that ticks four boxes is the thing the opening rule exists to prevent.
+ * click that ticks every box is the thing the opening rule exists to prevent.
  *
  * The way out without agreeing is to sign out. It is offered here because the
  * page stands in front of every other screen.

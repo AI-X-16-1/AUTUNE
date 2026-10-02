@@ -7,9 +7,9 @@ import { COPY_NOTICE, LEGAL_DOCUMENTS } from "./content";
 import { BODY, DocumentBody, Text } from "./LegalDocumentView";
 
 /**
- * The privacy policy, the terms of service, the security policy and the two
- * separate consents on one page -- what S01's footer points at, and the same
- * text the consent page opens one document at a time.
+ * The privacy policy, the terms of service and the information security policy
+ * on one page -- what S01's footer points at, and the same text the consent
+ * page opens one document at a time.
  *
  * Outside the `(app)` group, like `/login`: it is read by somebody who has not
  * signed in yet, so the page must open without a session and without the

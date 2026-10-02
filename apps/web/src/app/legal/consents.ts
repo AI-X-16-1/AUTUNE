@@ -4,7 +4,7 @@
  * the server recorded for the person (`GET /api/auth/consents`).
  *
  * Kept apart from `./content` on purpose: the gate runs in front of every
- * screen and needs four names and four versions, not the documents' text.
+ * screen and needs two names and two versions, not the documents' text.
  *
  * **Change a document's wording, change its version here.** A new version is
  * one nobody has agreed to, so everyone is asked again the next time they open
@@ -12,18 +12,17 @@
  * While the documents are a draft the versions say so; the first published
  * text takes its effective date as its version.
  *
- * All four are required. The last two are separate consents rather than
- * clauses of the policy (decided with the user, 2026-10-02). They are required
- * because the service has no per-person switch that would honour a refusal:
- * voice data and the outside services are settings of a deployment or a team,
- * not of one member. Whether they may be required at all is for the legal
- * review the draft is waiting on.
+ * **Two documents, and it stays two until something else changes first.** The
+ * page briefly listed two more -- a consent to voice feature data and one to
+ * transfer abroad -- and they were taken out again the same day (the user's
+ * choice after the privacy owner's review of #715). Those are consents a
+ * person must be able to refuse and to withdraw, and here they could do
+ * neither: the service has no per-person switch that would honour a refusal,
+ * and the record can only say "agreed". The server refuses any other name
+ * (`consents.DOCUMENTS`), so adding a row here is not enough to bring one
+ * back -- it needs a record of withdrawal and #92's answer.
  */
-export type ConsentDocument =
-  | "terms"
-  | "privacy"
-  | "voice_features"
-  | "overseas_transfer";
+export type ConsentDocument = "terms" | "privacy";
 
 export interface RequiredConsent {
   document: ConsentDocument;
@@ -33,8 +32,6 @@ export interface RequiredConsent {
 export const REQUIRED_CONSENTS: readonly RequiredConsent[] = [
   { document: "terms", version: "draft-1" },
   { document: "privacy", version: "draft-1" },
-  { document: "voice_features", version: "draft-1" },
-  { document: "overseas_transfer", version: "draft-1" },
 ];
 
 /** The required consents this person has not given, in the page's order. */
