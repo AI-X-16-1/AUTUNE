@@ -35,6 +35,7 @@ from autune_agent.models import AgentRun
 
 from .actions import Action, ActionPrivacyViolationError, collect_actions, execute_l1
 from .graph import MainState, run
+from .notify import tell_approvers
 from .own_tools import collect_own_actions
 from .pending import queue_l2
 from .registry import BudgetExceededError, CallBudget, RunScope, Tool
@@ -58,12 +59,15 @@ def run_and_record(
     budget: CallBudget | None = None,
     actions: Mapping[str, Action] | None = None,
     route_to: str | None = None,
+    notify: bool = True,
 ) -> tuple[AgentRun, MainState]:
     """Run, carry out what the run proposed at L1, and record both.
 
     ``route_to`` skips the router, for a trigger that already knows which
     subagent it woke. L1 runs after the graph and before the row is written,
     so the row says what was done; L2 stays proposed (``main/actions.py``).
+    ``notify=False`` leaves telling the approvers to a caller that records
+    several runs and tells once (``main/notify.py``).
     """
     budget = budget or CallBudget()
     # Collected here rather than inside the graph, so the queue below reads the
@@ -139,6 +143,8 @@ def run_and_record(
                 ),
             ]
     session.commit()
+    if notify and row.outcome == "answered":
+        tell_approvers(session, team_id=team_id, run_ids=[row.id], asked_by=requested_by)
     return row, state
 
 
