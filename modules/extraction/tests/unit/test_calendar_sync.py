@@ -11,7 +11,6 @@ import re
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, date, datetime
-from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -20,6 +19,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
 from autune_core import Base, Meeting, PrivacyViolationError, TeamMember, User, Utterance
+from autune_core.settings import Settings as CoreSettings
 from autune_core.user_integrations import UserIntegrationConfig
 from autune_extraction import calendar_sync, service, tasks
 from autune_extraction.calendar_sync import (
@@ -354,6 +354,23 @@ class ClosableCalendar(FakeCalendar):
         self.closed = True
 
 
+def core_settings(
+    *, sign_in: tuple[str, str] = ("", ""), integration: tuple[str, str] = ("", "")
+) -> CoreSettings:
+    """Core's real settings with only the Google clients given -- so which
+    client a grant is refreshed with is decided by core, not by a stand-in
+    that agrees with whatever the code under test reads. No ``.env``, and
+    all four named, so a developer's own values cannot leak in."""
+    return CoreSettings(
+        _env_file=None,
+        env="local",
+        google_client_id=sign_in[0],
+        google_client_secret=sign_in[1],
+        google_integration_client_id=integration[0],
+        google_integration_client_secret=integration[1],
+    )
+
+
 @pytest.fixture
 def wired(session: Session, monkeypatch: pytest.MonkeyPatch) -> Session:
     @contextmanager
@@ -365,9 +382,7 @@ def wired(session: Session, monkeypatch: pytest.MonkeyPatch) -> Session:
     monkeypatch.setattr(tasks, "remove_calendar_event", REMOVE_CALENDAR_EVENT)
     monkeypatch.setattr(tasks, "session_scope", scope)
     monkeypatch.setattr(
-        tasks,
-        "get_core_settings",
-        lambda: SimpleNamespace(google_client_id="cid", google_client_secret="csecret"),
+        tasks, "get_core_settings", lambda: core_settings(sign_in=("cid", "csecret"))
     )
     return session
 
@@ -413,16 +428,63 @@ def test_a_deployment_without_google_client_credentials_touches_nobody(
         raise AssertionError("no refresh without client credentials")
 
     _grants(monkeypatch, user_me="refresh-me")
-    monkeypatch.setattr(
-        tasks,
-        "get_core_settings",
-        lambda: SimpleNamespace(google_client_id="", google_client_secret=""),
-    )
+    monkeypatch.setattr(tasks, "get_core_settings", core_settings)
     monkeypatch.setattr(tasks, "refresh_access_token", never)
 
     tasks.sync_action_item_calendar(item(wired).id)
 
     assert wired.scalars(select(ExtCalendarEvent)).all() == []
+
+
+def _refreshed_with(
+    wired: Session, monkeypatch: pytest.MonkeyPatch, settings: CoreSettings
+) -> list[tuple[str, str]]:
+    used: list[tuple[str, str]] = []
+
+    def refresh(**kw: str) -> str:
+        used.append((kw["client_id"], kw["client_secret"]))
+        return "access"
+
+    _grants(monkeypatch, user_me="refresh-me")
+    monkeypatch.setattr(tasks, "get_core_settings", lambda: settings)
+    monkeypatch.setattr(tasks, "refresh_access_token", refresh)
+    monkeypatch.setattr(tasks, "CalendarClient", lambda token: ClosableCalendar())
+    tasks.sync_action_item_calendar(item(wired).id)
+    return used
+
+
+def test_a_grant_is_refreshed_with_the_integration_client_when_there_is_one(
+    wired: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A refresh token is bound to the client it was issued to. The calendar
+    is connected through the integration client when the deployment has one
+    (core's ``integration_google``), so that is the one to refresh with --
+    the sign-in client's credentials would be refused."""
+    both = core_settings(sign_in=("login-id", "login-secret"), integration=("cal-id", "cal-s"))
+
+    assert _refreshed_with(wired, monkeypatch, both) == [("cal-id", "cal-s")]
+
+
+def test_without_an_integration_client_the_sign_in_client_refreshes(
+    wired: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """What every deployment did before the second client existed."""
+    only_sign_in = core_settings(sign_in=("login-id", "login-secret"))
+
+    assert _refreshed_with(wired, monkeypatch, only_sign_in) == [("login-id", "login-secret")]
+
+
+def test_an_integration_client_alone_is_enough_to_reach_calendars(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Sign-in switched off does not switch calendars off with it."""
+    monkeypatch.setattr(
+        tasks, "get_core_settings", lambda: core_settings(integration=("cal-id", "cal-s"))
+    )
+    assert tasks._google_client_configured()
+
+    monkeypatch.setattr(tasks, "get_core_settings", core_settings)
+    assert not tasks._google_client_configured()
 
 
 def test_the_pull_reads_each_person_on_their_own_and_keeps_a_cursor(
@@ -497,9 +559,18 @@ class _Session:
         pass
 
 
-def _connect_calendar(monkeypatch: pytest.MonkeyPatch, **settings: str) -> dict[str, Any]:
+def _connect_calendar(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    sign_in: tuple[str, str] = ("", ""),
+    integration: tuple[str, str] = ("", ""),
+) -> dict[str, Any]:
     saved: dict[str, Any] = {}
-    monkeypatch.setattr(routes, "get_core_settings", lambda: SimpleNamespace(**settings))
+    monkeypatch.setattr(
+        routes,
+        "get_core_settings",
+        lambda: core_settings(sign_in=sign_in, integration=integration),
+    )
     monkeypatch.setattr(
         routes,
         "save_user_integration",
@@ -514,7 +585,7 @@ def _connect_calendar(monkeypatch: pytest.MonkeyPatch, **settings: str) -> dict[
 def test_connecting_a_calendar_checks_it_and_stores_it_as_that_persons(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    saved = _connect_calendar(monkeypatch, google_client_id="cid", google_client_secret="cs")
+    saved = _connect_calendar(monkeypatch, sign_in=("cid", "cs"))
     calendar = ClosableCalendar()
     monkeypatch.setattr(routes, "refresh_access_token", lambda **_: "access")
     monkeypatch.setattr(routes, "CalendarClient", lambda token: calendar)
@@ -533,10 +604,30 @@ def test_connecting_a_calendar_checks_it_and_stores_it_as_that_persons(
     assert calendar.closed
 
 
+def test_the_dev_connect_checks_a_token_with_the_integration_client(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A pasted refresh token is checked with the client the timer will later
+    refresh it with, or a token that passed here would fail there."""
+    _connect_calendar(monkeypatch, sign_in=("login-id", "login-s"), integration=("cal-id", "cal-s"))
+    used: list[tuple[str, str]] = []
+
+    def refresh(**kw: str) -> str:
+        used.append((kw["client_id"], kw["client_secret"]))
+        return "access"
+
+    monkeypatch.setattr(routes, "refresh_access_token", refresh)
+    monkeypatch.setattr(routes, "CalendarClient", lambda token: ClosableCalendar())
+
+    routes.connect_calendar({"user_id": ME, "refresh_token": "1//r"}, _Session())  # type: ignore[arg-type]
+
+    assert used == [("cal-id", "cal-s")]
+
+
 def test_a_refused_refresh_token_is_refused_without_echoing_it(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    saved = _connect_calendar(monkeypatch, google_client_id="cid", google_client_secret="cs")
+    saved = _connect_calendar(monkeypatch, sign_in=("cid", "cs"))
 
     def refused(**_: str) -> str:
         raise ReconnectRequiredError("google refused the refresh token with 400")
@@ -555,7 +646,7 @@ def test_a_refused_refresh_token_is_refused_without_echoing_it(
 def test_without_google_client_credentials_nothing_is_stored(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    saved = _connect_calendar(monkeypatch, google_client_id="", google_client_secret="")
+    saved = _connect_calendar(monkeypatch)
 
     body = {"user_id": ME, "refresh_token": "1//r"}
     with pytest.raises(routes.HTTPException) as caught:
