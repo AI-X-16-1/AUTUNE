@@ -247,6 +247,21 @@ Where that token comes from, and the two ways to give it to the browser:
 | `AUTUNE_CONTEXT_MAX_TOPIC_LINK_NOTICES` | D | Individual topic-link Slack messages per meeting before the rest roll up into one notice. Default `3` |
 | `AUTUNE_CONTEXT_BRIEF_LEAD_MINUTES` | D | Minutes before a scheduled meeting's start that its pre-meeting brief is posted. Default `10` |
 | `AUTUNE_CONTEXT_WARM_MODELS_ON_WORKER_INIT` | D | `true` only on workers consuming `cpu_heavy`. Default `false` |
+| `AUTUNE_CONTEXT_ENGINE_MODE` | D | `classic` (default) · `llm` · `hybrid`. `llm` swaps the topic-link, decision-thread and change-type judgements for an external LLM; `hybrid` is `classic` with the LLM vetoing links it is about to assert — see "Engine mode" in `docs/modules/context.md`. Both send masked excerpts to a third party; a team decision before either is set on real meetings |
+| `AUTUNE_CONTEXT_LLM_IMPL` | D | `openai` · `gemini` · `anthropic` · `fake`. **No default**: which provider gets meeting excerpts is a team decision. Only read when `ENGINE_MODE=llm` |
+| `AUTUNE_CONTEXT_LLM_API_KEY` | D | Secret, the chosen provider's key. Never commit it, never log it |
+| `AUTUNE_CONTEXT_LLM_ENDPOINT` | D | Empty = the provider's own. Set for a proxy, Azure OpenAI or an OpenAI-compatible server (use `LLM_IMPL=openai`) |
+| `AUTUNE_CONTEXT_LLM_MODEL` | D | Required for `openai` and `gemini` (model names turn over faster than the repo); `anthropic` defaults to `claude-opus-5-5`. Recorded in every row's version column |
+| `AUTUNE_CONTEXT_LLM_EFFORT` | D | Empty (default) sends nothing. `openai`: `reasoning_effort` (a non-reasoning model rejects it). `anthropic`: `output_config.effort`. `gemini`: not sent. No provider is sent a `temperature` |
+| `AUTUNE_CONTEXT_LLM_MAX_TOKENS` | D | Default `4096`. Covers a reasoning model's thinking as well as the JSON answer; a reply cut off by it is unusable |
+| `AUTUNE_CONTEXT_LLM_TIMEOUT_S` | D | HTTP timeout, seconds. Default `60.0` |
+| `AUTUNE_CONTEXT_LLM_CONCURRENCY` | D | Verdicts in flight at once per batch. Default `4`; lower it on a 429 |
+| `AUTUNE_CONTEXT_LLM_SNIPPET_CHARS` | D | Longest excerpt sent per side of a pair. Default `1200`; `check_outbound` refuses a request over 4000 characters in total |
+| `AUTUNE_CONTEXT_LLM_TOPIC_CANDIDATES` | D | Past meetings the LLM is asked about per topic. Default `5`; each is one paid call |
+| `AUTUNE_CONTEXT_LLM_THREAD_CANDIDATES` | D | Decision threads the LLM is asked about per new decision. Default `3` |
+| `AUTUNE_CONTEXT_LLM_LINK_THRESHOLD` | D | LLM probability of "same topic" at or above which a link is asserted. Default `0.5` |
+| `AUTUNE_CONTEXT_LLM_PENDING_FLOOR` | D | Below this no link row is written at all (in `hybrid`: a veto drops the link). `0` = a veto only demotes to `pending`. Default `0.25` |
+| `AUTUNE_CONTEXT_LLM_MATCH_THRESHOLD` | D | Confidence at or above which "same decision" threads a decision. Default `0.5` |
 | `AUTUNE_INTELLIGENCE_AGGREGATE_TIMEOUT_SECONDS` | E | Wait for B/C/D before aggregating without the rest. Default `600` |
 | `AUTUNE_INTELLIGENCE_GAP_CLASSIFIER_IMPL` | E | `local` (default) · `fake`. **No `external`, no `hosted`** — see below |
 | `AUTUNE_INTELLIGENCE_GAP_CLASSIFIER_BACKBONE` | E | Sentence-embedding backbone SetFit fits its few-shot head onto. Default `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` |

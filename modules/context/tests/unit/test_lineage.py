@@ -8,6 +8,7 @@ from autune_context.pipeline.base import NliScores
 from autune_context.pipeline.change import (
     adds_condition,
     classify_change,
+    marks_replacement,
     marks_reversal,
     strip_keep_words,
 )
@@ -234,3 +235,143 @@ def test_keep_words_are_stripped_and_keep_the_value() -> None:
 )
 def test_adds_condition(current: str, previous: str, expected: bool) -> None:
     assert adds_condition(current, previous) is expected
+
+
+# --- replacement cue: a swap said without a negation ---------------------------
+
+
+@pytest.mark.parametrize(
+    ("previous", "current"),
+    [
+        ("로그 수집은 자체 서버에서 한다.", "로그 수집을 외부 SaaS로 이전한다."),
+        ("사내 메신저는 카카오워크를 쓴다.", "사내 메신저를 슬랙으로 교체한다."),
+        ("고객 문의는 이메일로만 받는다.", "고객 문의를 챗봇으로 대체한다."),
+        ("사무실은 판교에 둔다.", "사무실을 판교에서 성수로 옮긴다."),
+        ("서버는 온프레미스에서 운영한다.", "서버 운영을 온프레미스에서 클라우드로 갈아탄다."),
+        ("원격 회의는 줌으로 한다.", "원격 회의를 구글 미트로 통일한다."),
+        ("야간 모니터링은 사내 인력이 직접 한다.", "야간 모니터링을 외부 관제 업체로 전환한다."),
+        ("문서 저장소는 위키를 쓴다.", "문서 저장소를 노션으로 이관한다."),
+    ],
+)
+def test_a_swap_for_a_new_thing_is_a_replacement(previous: str, current: str) -> None:
+    assert marks_replacement(current, previous)
+
+
+@pytest.mark.parametrize(
+    ("previous", "current"),
+    [
+        # a weekday, a time of day, a number, a unit: a parameter is moving
+        ("회의실 청소는 매주 월요일에 한다.", "회의실 청소를 매주 수요일로 옮긴다."),
+        ("신규 입사자 교육은 오전에 한다.", "신규 입사자 교육을 오후로 옮긴다."),
+        ("월 요금은 9천 원이다.", "월 요금을 1만 원으로 바꾼다."),
+        ("스프린트는 2주 단위다.", "스프린트를 3주 단위로 바꾼다."),
+        ("보고 주기는 월 단위다.", "보고 주기를 주 단위로 전환한다."),
+        ("점심시간은 열두 시부터다.", "점심시간을 열한 시 반으로 옮긴다."),
+        # an owner: replacing the owner is a moved parameter
+        ("점검 담당은 박서연이다.", "점검 담당을 최하준으로 바꾼다."),
+        ("고객 응대 책임은 1팀에 있다.", "고객 응대 책임을 2팀으로 이관한다."),
+        ("행사 주관은 홍보팀이다.", "행사 주관을 마케팅팀으로 옮긴다."),
+        # the target is nothing new
+        ("고객 문의는 챗봇으로 받는다.", "고객 문의는 챗봇으로 통일한다."),
+        # no target at all, or a noun use of a swap word
+        ("배포는 금요일에 한다.", "배포 일정을 이전한다."),
+        ("서버 교체 주기는 3년이다.", "서버 교체 주기는 3년으로 유지한다."),
+        ("회의는 이전 방식으로 진행한다.", "회의는 이전 방식 그대로 진행한다."),
+    ],
+)
+def test_a_moved_value_an_owner_or_no_new_target_is_not_a_replacement(
+    previous: str, current: str
+) -> None:
+    assert not marks_replacement(current, previous)
+
+
+def test_a_state_change_said_with_a_swap_verb_reads_as_a_replacement_a_known_limit() -> None:
+    """ "무료에서 유료로 전환" is arguably a pricing parameter, but nothing in the
+    sentence says so. Pinned so a change to this limit is deliberate."""
+    assert marks_replacement("베타를 유료로 전환한다.", "베타는 무료로 운영한다.")
+
+
+def test_a_contradiction_with_a_replacement_is_reversed() -> None:
+    change, score = classify_change(
+        _nli(0.0, 0.1, 0.9),
+        _nli(0.0, 0.2, 0.8),
+        "고객 문의를 챗봇으로 대체한다.",
+        "고객 문의는 이메일로만 받는다.",
+    )
+    assert (change, score) == (ChangeType.REVERSED, pytest.approx(0.9))
+
+
+def test_neutral_both_ways_with_a_replacement_is_reversed() -> None:
+    change, score = classify_change(
+        _nli(0.1, 0.7, 0.2),
+        _nli(0.1, 0.7, 0.2),
+        "원격 회의를 구글 미트로 통일한다.",
+        "원격 회의는 줌으로 한다.",
+    )
+    assert (change, score) == (ChangeType.REVERSED, pytest.approx(0.7))
+
+
+def test_a_contradiction_that_moves_a_value_stays_modified() -> None:
+    change, _ = classify_change(
+        _nli(0.0, 0.1, 0.9),
+        _nli(0.0, 0.1, 0.9),
+        "회의실 청소를 매주 수요일로 옮긴다.",
+        "회의실 청소는 매주 월요일에 한다.",
+    )
+    assert change is ChangeType.MODIFIED
+
+
+def test_entailment_still_wins_over_a_replacement_cue() -> None:
+    change, _ = classify_change(
+        _nli(0.9, 0.1, 0.0),
+        _nli(0.9, 0.1, 0.0),
+        "원격 회의를 구글 미트로 통일한다.",
+        "원격 회의를 구글 미트로 통일한다.",
+    )
+    assert change is ChangeType.UNCHANGED
+
+
+# --- the two guards that v3 and v4 showed had gaps ------------------------------
+
+
+@pytest.mark.parametrize(
+    ("previous", "current"),
+    [
+        # kiwipiepy makes 책임자 and 담당자 one token; the owner guard knows them
+        ("릴리스 책임자는 한유진이다.", "릴리스 책임자를 서도현으로 교체한다."),
+        ("점검 담당자는 박서연이다.", "점검 담당자를 최하준으로 바꾼다."),
+        ("행사 주관자는 홍보팀이다.", "행사 주관자를 마케팅팀으로 옮긴다."),
+        # a number touching a unit abbreviation is still a quantity
+        ("백업 용량은 5기가다.", "백업 용량을 10GB로 바꾼다."),
+        ("응답 목표는 500ms다.", "응답 목표를 200ms로 바꾼다."),
+    ],
+)
+def test_the_owner_and_unit_guards_cover_the_agent_noun_and_latin_units(
+    previous: str, current: str
+) -> None:
+    assert not marks_replacement(current, previous)
+
+
+@pytest.mark.parametrize(
+    ("previous", "current"),
+    [
+        # a digit touching Latin letters that are not a unit is part of a name
+        ("배송은 직영으로 한다.", "배송을 3PL 업체로 전환한다."),
+        ("모바일 망은 LTE로 쓴다.", "모바일 망을 5G로 전환한다."),
+        ("거래는 일반 고객과 한다.", "거래를 B2B 중심으로 전환한다."),
+        ("파일 저장은 NAS에 한다.", "파일 저장을 S3로 이전한다."),
+        ("배포는 도커로 한다.", "배포를 K8s로 전환한다."),
+    ],
+)
+def test_a_digit_inside_a_name_does_not_make_the_target_a_quantity(
+    previous: str, current: str
+) -> None:
+    assert marks_replacement(current, previous)
+
+
+def test_the_nominaliser_geolo_reads_as_a_new_target_a_known_limit() -> None:
+    """ "…하는 걸로 바꿔요": kiwipiepy tags 걸 (것 + 으로) as a noun here, so the cue sees a
+    new thing and fires on what is a moved value. Pinned so a change is deliberate."""
+    assert marks_replacement(
+        "재고 실사를 반기마다 하는 걸로 바꿔요.", "재고 실사는 분기마다 진행한다."
+    )

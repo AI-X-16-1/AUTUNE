@@ -88,6 +88,15 @@ Sentence-BERT + BM25 hybrid retrieval, cross-encoder re-ranking, NLI for
 decision-change detection, LLM for agenda generation (Phase 2). The
 pre-meeting brief is a template over this module's own rows; no LLM.
 
+`AUTUNE_CONTEXT_ENGINE_MODE=llm` swaps the three linking/lineage judgements (same
+topic, same decision thread, how it changed) for an external LLM; `hybrid` keeps
+the trained stack and lets the LLM veto topic links it is about to assert. Compare
+them with the trained stack: `python -m autune_context.eval --mode all`. Default is
+`classic`; the provider (`openai` | `gemini` | `anthropic`) is chosen by
+`AUTUNE_CONTEXT_LLM_IMPL`, with no default. The LLM clients sit on `autune_integrations.HttpClient` so
+`check_outbound` runs on every call — never call an LLM API any other way. See
+`/docs/modules/context.md`, "Engine mode".
+
 Vector search runs in PostgreSQL through pgvector, so a similarity search and a
 metadata filter (`team_id`, `meeting_id`, retention window) are one query. BM25
 stays in application code: PostgreSQL full-text search has no Korean analyzer
