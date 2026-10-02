@@ -58,6 +58,10 @@ from .schemas import ActionItemCreate, ActionItemRead, ActionItemUpdate, Decisio
 MAX_ITEMS = 5
 """agent-layer.md section 4: a tool ranks and keeps five; the rest stay in B's tables."""
 
+MAX_DAYS = 365
+"""The longest window a tool takes, in days. A year covers every meeting inside
+any retention window a team can set."""
+
 _OPEN = (ActionStatus.TODO, ActionStatus.IN_PROGRESS)
 
 
@@ -81,6 +85,42 @@ def _result(
         "confidence": confidence,
         "truncated": len(items) > MAX_ITEMS,
     }
+
+
+def _whole_days(value: object, *, low: int) -> int | None:
+    """A day count a model wrote, as an integer inside ``low..MAX_DAYS`` -- or
+    ``None`` when it is not a count at all.
+
+    The ask loop lets a model write a read tool's arguments (#677), and
+    ``timedelta(days=...)`` raises on a number it cannot hold and on anything
+    that is not a number; that exception would be the tool's answer. A count
+    outside the range is pulled into it: ten years of meetings is all of them.
+    A value that is not a whole number -- text, a fraction, a boolean, nan --
+    is refused, since guessing what it meant would answer a different question.
+    ``7.0`` is 7: JSON has one number type.
+    """
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return None
+    if isinstance(value, float):
+        if not value.is_integer():  # nan and the infinities are not
+            return None
+        value = int(value)
+    return max(low, min(value, MAX_DAYS))
+
+
+def _not_a_day_count(name: str) -> dict[str, Any]:
+    """The refusal for an argument that is not a day count. It names the
+    argument and never repeats the value: that is whatever the model wrote,
+    it can carry text from the person's question, and ``reason`` goes back to
+    the model and into logs (the rule ``registry.bind_scope`` keeps)."""
+    return _result(
+        ok=False,
+        reason=f"{name} is not a whole number of days",
+        summary="기간은 일 단위의 정수여야 합니다.",
+        items=[],
+        evidence=[],
+        confidence=0.0,
+    )
 
 
 def _missing(meeting_id: str) -> dict[str, Any]:
@@ -173,10 +213,14 @@ def open_action_items(session: Session, team_id: str, *, within_days: int = 7) -
 
     Returns the team's open confirmed items (to do or in progress) that are
     overdue, due within ``within_days``, or need reassigning -- most urgent first,
-    at most five -- with counts of each group in ``summary``.
+    at most five -- with counts of each group in ``summary``. ``within_days`` is
+    a whole number from 0 to 365.
     """
+    window = _whole_days(within_days, low=0)
+    if window is None:
+        return _not_a_day_count("within_days")
     today = date.today()
-    horizon = today + timedelta(days=within_days)
+    horizon = today + timedelta(days=window)
     meeting_ids = set(
         session.scalars(
             select(Meeting.id).where(Meeting.team_id == team_id, service.within_retention())
@@ -202,7 +246,7 @@ def open_action_items(session: Session, team_id: str, *, within_days: int = 7) -
     return _result(
         summary=(
             f"진행 중인 액션아이템 {len(open_items)}건 중 기한 지남 {overdue}건, "
-            f"{within_days}일 안에 기한 {soon}건, 재배정 필요 {reassign}건."
+            f"{window}일 안에 기한 {soon}건, 재배정 필요 {reassign}건."
         ),
         items=[_item_finding(i, today) for i in ranked],
         evidence=[u for i in ranked[:MAX_ITEMS] for u in i.source_utterance_ids],
@@ -245,10 +289,14 @@ def workload_by_owner(session: Session, team_id: str, *, days: int = 30) -> dict
     items nobody on the team holds (one "담당 없음" row), then members with
     nothing open. Counts of work only, never speech (#261 section 3.1): nothing
     here says who spoke, how much, or what anyone said. Unconfirmed items are
-    not counted -- nobody has agreed yet that they are anyone's work.
+    not counted -- nobody has agreed yet that they are anyone's work. ``days``
+    is a whole number from 1 to 365.
     """
+    span = _whole_days(days, low=1)
+    if span is None:
+        return _not_a_day_count("days")
     today = date.today()
-    cutoff = datetime.now(UTC) - timedelta(days=days)
+    cutoff = datetime.now(UTC) - timedelta(days=span)
     meeting_ids = set(
         session.scalars(
             select(Meeting.id).where(
