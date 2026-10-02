@@ -16,7 +16,11 @@ const HIGHLIGHT_MS = 2500;
  * **Why the browser cannot do it alone.** Its own hash scroll runs when the
  * page loads, before the transcript has been fetched, so the row it looks for
  * does not exist yet. This runs once the rows are rendered, and again on
- * `hashchange` for a second link followed on the same page.
+ * `hashchange` for a second link followed on the same page. That covers a typed
+ * address or a plain `<a>`; Next's `<Link>` moves by `history.pushState`, which
+ * fires no `hashchange`, so a `<Link href="#utt_…">` inside this tab would
+ * scroll without the tint. S20's links live on another tab, which remounts
+ * this one, so they always land.
  *
  * **Once per hash.** The transcript is read again after an S30 report; landing
  * again then would yank the reader back to the linked line from wherever they
@@ -24,14 +28,19 @@ const HIGHLIGHT_MS = 2500;
  * page opens at the top as it did before.
  *
  * Returns the id to tint, or `null`; the tint clears after `HIGHLIGHT_MS`.
+ * The timer lives outside the effect: the effect re-runs when the transcript
+ * is read again after an S30 report, and a timer cleared there, with the
+ * landing not repeated, would leave the line tinted for good.
  */
 export function useUtteranceAnchor(ids: readonly string[] | null): string | null {
   const [highlighted, setHighlighted] = useState<string | null>(null);
   const landed = useRef<string | null>(null);
+  const timer = useRef<number | undefined>(undefined);
+
+  useEffect(() => () => window.clearTimeout(timer.current), []);
 
   useEffect(() => {
     if (!ids) return;
-    let timer: number | undefined;
 
     const land = () => {
       const wanted = hashTarget();
@@ -42,16 +51,13 @@ export function useUtteranceAnchor(ids: readonly string[] | null): string | null
       const still = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
       row.scrollIntoView({ block: "center", behavior: still ? "auto" : "smooth" });
       setHighlighted(wanted);
-      window.clearTimeout(timer);
-      timer = window.setTimeout(() => setHighlighted(null), HIGHLIGHT_MS);
+      window.clearTimeout(timer.current);
+      timer.current = window.setTimeout(() => setHighlighted(null), HIGHLIGHT_MS);
     };
 
     land();
     window.addEventListener("hashchange", land);
-    return () => {
-      window.removeEventListener("hashchange", land);
-      window.clearTimeout(timer);
-    };
+    return () => window.removeEventListener("hashchange", land);
   }, [ids]);
 
   return highlighted;
