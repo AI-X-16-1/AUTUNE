@@ -41,6 +41,7 @@ from autune_extraction.models import (
     ExtActionItem,
     ExtActionItemRelated,
     ExtActionItemSource,
+    ExtCalendarEvent,
     ExtClassification,
     ExtConfirmation,
     ExtDecision,
@@ -80,6 +81,8 @@ TABLES = [
     ExtEditEvent.__table__,
     ExtExternalRef.__table__,
     ExtNotionTarget.__table__,
+    # ``has_copy_outside`` counts a calendar event as a copy (#672).
+    ExtCalendarEvent.__table__,
 ]
 
 

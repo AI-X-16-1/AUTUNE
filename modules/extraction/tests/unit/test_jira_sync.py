@@ -164,9 +164,13 @@ def test_a_moved_back_item_whose_issue_is_gone_gets_no_new_one(session: Session)
 
     row.status = "needs_confirmation"
     session.flush()
-    sync(session, jira, row)
+
+    assert sync(session, jira, row) is None
 
     assert jira.tasks == {}
+    # #672: with the issue gone the ref row goes too, so the item is a draft
+    # like any other and stops counting as one with a copy outside.
+    assert session.scalars(select(ExtExternalRef)).all() == []
 
 
 @pytest.mark.parametrize(

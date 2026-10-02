@@ -156,7 +156,9 @@ def sync_action_item_to_jira(
     **An item moved back to 확인 필요 keeps its issue, and the issue keeps
     following its text** (#657): summary, description, due date and assignee
     are rewritten, the status is left where the team has it (Jira has no
-    category for a draft), and an issue deleted in Jira is not made again.
+    category for a draft), and an issue deleted in Jira is not made again --
+    its ref row goes, so the item stops counting as one with a copy outside
+    (#672).
     Without this a line deleted or corrected in Autune stayed in the issue of
     an item that happened to be a draft again. An item never confirmed has no
     issue and gets none.
@@ -205,6 +207,10 @@ def sync_action_item_to_jira(
     )
     if moved_back:
         log.info("extraction_jira_updated_moved_back", action_item_id=item.id, found=bool(updated))
+        if not updated:
+            session.delete(ref)
+            session.flush()
+            return None
         return ref
     if not updated:
         # First send, an issue deleted in Jira since, or another site: make it.
