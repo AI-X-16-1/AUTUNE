@@ -1,6 +1,6 @@
 # Follow-up subagent — design
 
-**Owner:** 박재경 (@PARKJAEKYUNG0525) · **Date:** 2026-09-30 · **Status:** Proposed
+**Owner:** 박재경 (@PARKJAEKYUNG0525) · **Date:** 2026-09-30 · **Status:** Built (#547, #563)
 · **Gate:** runs end to end on one real meeting by 10/9
 (`docs/architecture/agent-layer.md` section 14)
 
@@ -21,7 +21,7 @@ lead. Once approved, it becomes an action item on the board.
 
 | Question | Proposal |
 | --- | --- |
-| When it runs | On `autune.intelligence.completed`, and on a chat request. No periodic run yet (section 2). |
+| When it runs | On `autune.intelligence.completed`, and on a chat request. No periodic run (section 2). |
 | What "a follow-up looks needed" means | Rules, no model call (section 4). A template item left open in this meeting **and** in the team's previous analysed meeting, or two or more high-severity open gaps in this meeting together with an unresolved question. |
 | What the lead approves | One L2 action per run: B adds a "follow-up meeting" item to this meeting, marked as Follow-up's (section 5). Its arguments are ids and an enum only, as plan mode requires (#556). |
 | How the calendar event happens | Not by Follow-up. Four steps: the lead approves; someone gives the item an assignee and a due date on the board; someone confirms it; B's sync (#441, `sync_after_confirmation`) puts it on the assignee's own calendar. Nothing reaches a calendar before the item is confirmed. |
@@ -29,7 +29,7 @@ lead. Once approved, it becomes an action item on the board.
 
 ### Out of scope
 
-A periodic run (the main agent has no scheduler yet), module D's topic links
+A periodic run (section 7), module D's topic links
 (D has no `tools.py`), calendar free/busy reads (the same reason Workload gave
 up on them, #435), a model-written proposal, and the approval screen itself
 (plan mode, 10/7).
@@ -38,7 +38,7 @@ up on them, #435), a model-written proposal, and the approval screen itself
 
 | Section 3.1 says | This design | Why |
 | --- | --- | --- |
-| Wakes on state, `@periodic` | Wakes on `autune.intelligence.completed` and chat | `Subagent.triggers` accepts only `TRIGGER_EVENTS` (`main/subagents.py`); there is no periodic trigger yet. A meeting finishing is also the moment the state changes. |
+| Wakes on state, `@periodic` | Wakes on `autune.intelligence.completed` and chat | When this was written, `Subagent.triggers` accepted only `TRIGGER_EVENTS`. `Periodic` exists since #637, but the rule reads one meeting's state, which changes only when a meeting finishes or C republishes after a dismissal, and both arrive as this event. |
 | Reads D's decision threads and topic links | Recurrence comes from C alone | A topic belongs to one meeting, but a template item key (`risk`, `ownership`, …) is the same across meetings. "Open in two meetings running" needs no cross-meeting topic link. D's links can refine it once D ships `tools.py`. |
 | Reads Calendar `free_busy` | No calendar read | A team account sees one Workspace only, and a person's own grant serves only their own work (#435, as recorded in Workload's `__init__.py`). |
 | Proposes a calendar event | Proposes a board item | The only write Follow-up may name is a module's declared action. B's item reaches a calendar through #441 once it is confirmed with an assignee and a due date. |
@@ -48,8 +48,10 @@ The doc change to `agent-layer.md` is PR ③ (section 9).
 
 Like Research, Follow-up wakes on `intelligence.completed` because it reads B's
 and C's results, which do not exist yet at `transcript.ready`. When E
-re-aggregates and publishes again, the trigger's redelivery guard skips the
-second event (#509). Section 7 covers a gap dismissed in between.
+re-aggregates and publishes again, the republished event is a new task, so
+Follow-up runs again and its new proposal supersedes the one still pending
+(`pending.queue_l2`). Only a redelivered message is skipped (#509). Section 7
+covers a gap dismissed in between.
 
 ## 3. Flow
 
@@ -101,11 +103,15 @@ from the agent layer (agent/CLAUDE.md rule 2).
   team's latest earlier meeting that C has analysed, meaning it has a topic
   graph (the same test C's report and rescore use). Each key comes with both
   meetings' gap ids as evidence. Built in #546.
+- `gap.gaps_by_id(session, meeting_id, gap_ids)`: of the given ids, M's gaps
+  nobody has dismissed, in `open_gaps`' item shape. The approvals card reads a
+  proposal's evidence through it, so a cited gap ranked below the top five
+  does not read as closed (#644).
 - `RUN_SCOPE = ("team_id",)`, as in B and E. A meeting from another team reads
   as missing.
 - `PERSONAL_ONLY_TOOLS = []`. C has no per-person figure to offer.
 
-Neither tool returns participation, per person or per role.
+No tool returns participation, per person or per role.
 
 ### ② The subgraph: `agent/src/autune_agent/subagents/followup/`
 
@@ -140,9 +146,9 @@ One `ProposedAction`, with:
 **What the lead sees.** Plan mode renders a preview from read tools when the
 list is read and stores nothing for display (its spec, section 6). This needs a
 preview row for B's Follow-up write that shows the evidence's gap titles through
-`gap.open_gaps(M)` (#562); without it the lead sees only the kind and the
-ids. A title is a template's item name plus a masked topic label, so no
-utterance text is shown.
+`gap.gaps_by_id(M, evidence)` (#562, #644); without it the lead sees only the
+kind and the ids. A title is a template's item name plus a masked topic label,
+so no utterance text is shown.
 
 `agent_runs` keeps the proposal's arguments and the gap ids, and no other
 text, as settled on #509.
@@ -168,8 +174,9 @@ text, as settled on #509.
 
 - **A gap dismissed between the proposal and the approval.** The proposal was
   built from gaps the team may have since dismissed (#509 review, inline 2).
-  Re-reading the evidence at approval time is plan mode's question (10/7). Until
-  then, the lead sees the gap ids and can reject the proposal.
+  Answered by the preview: the card re-reads the evidence each time the list is
+  read, so a gap dismissed since drops out, and when none is left the card says
+  so (#562, #626).
 - **Repeated proposals.** A key that stays open meeting after meeting would
   produce a proposal each time. Decided: Follow-up does not propose while a
   Follow-up item of the team's is still open on the board (unconfirmed, to do or
@@ -190,7 +197,9 @@ text, as settled on #509.
   Both are intended. D's topic links could bridge a template switch once D ships
   `tools.py`.
 - **Periodic runs.** "Deadline passed, nothing moved" is a state that no event
-  signals. It comes with the main agent's scheduler.
+  signals. The main agent can wake a subagent on a timer since #637
+  (`Periodic`); Follow-up declares none until it has a rule for that state,
+  recorded here first.
 
 ## 8. Testing
 
@@ -205,8 +214,9 @@ text, as settled on #509.
   the most recent analysed meeting otherwise.
 - **C's tools** (PostgreSQL): another team's meeting reads as missing;
   dismissed gaps are left out; `recurring_open_gaps` finds the previous
-  analysed meeting and skips one C never analysed; no participation field in
-  either result.
+  analysed meeting and skips one C never analysed; `gaps_by_id` finds a gap
+  `open_gaps` cuts and leaves out dismissed ids and other meetings' ids; no
+  participation field in any result.
 - **End to end** (10/6–10/8): two real recordings for one team, the second
   leaving a template item open again. The proposal is queued with scope
   `followup`, shows the gap titles on the approvals page, and once approved the
@@ -221,6 +231,7 @@ text, as settled on #509.
 | ② | Follow-up subgraph and `SUBAGENT` | 1 (`subagents/followup/`) |
 | — | B's Follow-up write and its open-item read (#561) | B's owner |
 | — | The approvals-page preview for that write (#562) | 김민경 |
+| — | C's by-id read for that preview (#644) | 1 (module C) |
 | ③ | `agent-layer.md` section 3.1 row and section 6: the deviations in section 2 | 5 (`docs/`) |
 
 Schedule: ① 10/1 · ② 10/2–10/3 · ③ 10/5 · end to end 10/6–10/8. ② builds
