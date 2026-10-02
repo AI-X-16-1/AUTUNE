@@ -269,6 +269,68 @@ def test_a_persons_edit_and_review_clear_the_flag(session: Session) -> None:
     assert reviewed.needs_recheck is False
 
 
+def test_a_deleted_line_is_not_read_as_a_corrected_one(session: Session) -> None:
+    """#607 review: a row drawn from two lines loses one to a speech deletion.
+    The line that is left hashes differently from the digest taken over both,
+    and that must not pass for a correction."""
+    other = "배포 일정도 같이 확인하겠습니다"
+    session.add(
+        StoredUtterance(
+            id="utt_2",
+            meeting_id=MEETING,
+            participant_id="par_kim",
+            speaker_label="김민경",
+            start_sec=3.0,
+            end_sec=6.0,
+            text=other,
+        )
+    )
+    both = service.source_digest([OLD, other])
+    row = item(session, "act_1", origin="user", description="사람이 쓴 설명")
+    row.sources.append(ExtActionItemSource(utterance_id="utt_2"))
+    row.source_digest = both
+    session.add(
+        ExtDecision(
+            id="dec_1",
+            meeting_id=MEETING,
+            statement="사람이 쓴 결정",
+            confidence=0.9,
+            origin="user",
+            source_digest=both,
+            sources=[
+                ExtDecisionSource(utterance_id="utt_1", position=0),
+                ExtDecisionSource(utterance_id="utt_2", position=1),
+            ],
+        )
+    )
+    session.flush()
+    session.add(ExtDecisionReview(decision_id="dec_1", meeting_id=MEETING, status="confirmed"))
+    session.flush()
+
+    service.forget_speech(session, ["utt_2"])
+    # What the database does when A then deletes the utterance: an item's link
+    # stays with a NULL id, a decision's link goes with it.
+    for link in row.sources:
+        if link.utterance_id == "utt_2":
+            link.utterance_id = None
+    decision = session.get(ExtDecision, "dec_1")
+    assert decision is not None
+    decision.sources = [s for s in decision.sources if s.utterance_id != "utt_2"]
+    session.flush()
+
+    done = service.apply_source_corrections(session, meeting_id=MEETING, spoken={"utt_1": OLD})
+
+    assert done == service.SourceCorrections()
+    assert row.description == "사람이 쓴 설명" and row.needs_recheck is False
+    assert decision.needs_recheck is False
+    # A new baseline over the line that is left, so a real correction of it
+    # is still caught afterwards.
+    assert row.source_digest == decision.source_digest == service.source_digest([OLD])
+    again = correct(session)
+    assert row.needs_recheck is True and decision.needs_recheck is True
+    assert again.changed_items == ("act_1",) and again.changed_decisions == ("dec_1",)
+
+
 def test_through_the_task_on_a_meeting_a_person_edited(
     session: Session, monkeypatch: pytest.MonkeyPatch
 ) -> None:

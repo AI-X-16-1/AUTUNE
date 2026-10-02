@@ -224,8 +224,11 @@ description, a typed or reworded decision) is only flagged, because B cannot tel
 which of their words were the private ones; `due_text` is read again from the
 new line. Confirmed changes are queued to Notion, Jira and the calendar. The flag
 shows on the card and on the decision ("출처 발화가 정정됨 · 확인 필요") and is
-cleared by the person's next edit or review. The confirmation DM's quotation is
-#586's second part.
+cleared by the person's next edit or review. A line that was *deleted* is not a
+corrected one: `forget_speech` drops the digest of every row it leaves behind,
+because the lines that remain hash differently from a digest taken over all of
+them, and the next run records a baseline instead of rewriting or flagging. The
+confirmation DM's quotation is #586's second part.
 
 ## Tables
 

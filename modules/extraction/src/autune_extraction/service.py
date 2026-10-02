@@ -687,6 +687,13 @@ def forget_speech(session: Session, utterance_ids: Collection[str]) -> SpeechFor
     ``ExtractionResult`` are theirs, and stay until they act on the same signal
     (#601 review).
 
+    Every row that stays forgets its ``source_digest``. The digest was taken
+    over all of its lines; once one is gone the lines that are left hash
+    differently, and ``apply_source_corrections`` would read that as a corrected
+    line -- rewriting the text from what is left, flagging a person's writing
+    and re-syncing the copies outside. With no digest the next run records a
+    baseline and changes nothing (#607 review).
+
     Runs before the utterances are deleted, while the sources still name them.
     Safe to repeat. Writes no edit event: no person corrected anything.
     """
@@ -707,6 +714,7 @@ def forget_speech(session: Session, utterance_ids: Collection[str]) -> SpeechFor
             deleted.append(item.id)
             session.delete(item)
             continue
+        item.source_digest = None
         touched = False
         if (
             drafted
@@ -738,6 +746,7 @@ def forget_speech(session: Session, utterance_ids: Collection[str]) -> SpeechFor
     )
     changed_decisions: list[str] = []
     for decision in decisions:
+        decision.source_digest = None
         touched = False
         if decision.original_statement is not None:
             decision.original_statement = None
