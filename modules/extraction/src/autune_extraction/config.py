@@ -24,7 +24,8 @@ class ExtractionSettings(BaseSettings):
     ``llm_checked``.
 
     ``llm`` sends utterance text as module A masked it -- nothing else -- to a
-    cloud LLM (``pipeline.llm``). A name said aloud is not masked, so it goes too.
+    cloud LLM (``pipeline.llm``), with the names on the meeting team's roster
+    replaced first (#411). A name that is not on the roster goes as it was said.
     It is never the default: where a meeting's text may go is a privacy
     decision, and the team signs it off before it is enabled outside a demo --
     see ``pipeline.base``.
@@ -169,7 +170,9 @@ class ExtractionSettings(BaseSettings):
         return value
 
     resolver_impl: str = "fake"
-    """Which reference resolver to run: ``local``, ``hosted`` or ``fake`` (#175).
+    """Which reference resolver to run: ``local``, ``hosted``, ``llm`` or ``fake``
+    (#175). ``llm`` is a cloud model, opt-in the way ``classifier_impl=llm`` is,
+    and replaces the team's roster names before it sends (#530).
 
     Defaults to ``fake`` rather than ``local``, unlike the classifier: #175's own
     model choice (``Qwen/Qwen3-4B-Instruct-2507``, a candidate) is not yet
