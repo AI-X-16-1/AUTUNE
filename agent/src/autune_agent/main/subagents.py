@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
+from datetime import timedelta
 from importlib import import_module
 from typing import Any, Literal, Protocol, TypedDict
 
@@ -28,6 +29,43 @@ holds the two lists together; a subagent may name only these.
 A subagent that reads B's, C's or D's results wakes on
 ``INTELLIGENCE_COMPLETED``. ``TRANSCRIPT_READY`` reaches those modules at the
 same moment it reaches this layer, so their results do not exist yet."""
+
+PERIODIC_TICK = timedelta(hours=1)
+"""How often ``autune.agent.periodic.wake_subagents`` looks for a due
+subagent, so the finest period a ``Periodic`` trigger can ask for."""
+
+
+@dataclass(frozen=True)
+class Periodic:
+    """Wake this subagent on a timer, once per team that has members (#634).
+
+    agent-layer.md section 3.1 gives Workload and Follow-up "state,
+    @periodic": what they judge changes between meetings -- an action item is
+    confirmed in the app, and the API process has no Celery app to publish an
+    event about it (#170) -- so they are woken by time, not by the pipeline.
+    One beat task serves every subagent that declares one
+    (``triggers.on_tick``); a subagent never registers a task of its own.
+
+    A periodic run is about the team, not a meeting: ``meeting_id`` is NULL
+    and the run's ``request`` is ``PERIODIC_REQUEST``. A subagent woken this
+    way should also declare ``proposals_per="team"``, or each run leaves one
+    more pending proposal beside the last.
+    """
+
+    hours: int
+
+    def __post_init__(self) -> None:
+        if self.hours < 1:
+            raise ValueError("a periodic trigger fires at most hourly (PERIODIC_TICK)")
+
+    @property
+    def every(self) -> timedelta:
+        return timedelta(hours=self.hours)
+
+
+PERIODIC_REQUEST = "agent.periodic"
+"""What a periodic run's ``request`` says, the way an event-woken run's says
+the event name."""
 """Owners in agent-layer.md section 3.1 and CODEOWNERS."""
 
 
@@ -54,9 +92,9 @@ class Subagent:
     """Registry names this subagent may call, and the only ones it will see."""
     build: Callable[[Toolbox], CompiledSubagent]
     """Given its toolbox, return the compiled subgraph."""
-    triggers: tuple[str, ...] = ()
+    triggers: tuple[str | Periodic, ...] = ()
     """Pipeline events that wake this subagent (agent-layer.md section 6), from
-    ``TRIGGER_EVENTS``. The main agent subscribes once for everyone
+    ``TRIGGER_EVENTS``, and at most one ``Periodic``. The main agent subscribes once for everyone
     (``autune_agent.tasks``); a subagent never registers a task of its own. A
     woken run's ``request`` is the event name, and its scope carries the
     meeting the event was about."""
@@ -77,9 +115,18 @@ class Subagent:
         personal = [tool for tool in self.tools if is_personal_only(tool)]
         if personal:
             raise ValueError(f"subagent {self.name} may not read personal-only tools: {personal}")
-        unknown = [t for t in self.triggers if t not in TRIGGER_EVENTS]
+        unknown = [
+            t for t in self.triggers if not isinstance(t, Periodic) and t not in TRIGGER_EVENTS
+        ]
         if unknown:
             raise ValueError(f"subagent {self.name} names events nothing listens to: {unknown}")
+        if sum(isinstance(t, Periodic) for t in self.triggers) > 1:
+            raise ValueError(f"subagent {self.name} declares more than one period")
+
+    @property
+    def period(self) -> Periodic | None:
+        """Its ``Periodic`` trigger, if it has one."""
+        return next((t for t in self.triggers if isinstance(t, Periodic)), None)
 
 
 def collect_subagents(names: Iterable[str] = SUBAGENT_NAMES) -> dict[str, Subagent]:

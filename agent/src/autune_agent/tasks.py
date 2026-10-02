@@ -8,6 +8,10 @@ monorepo.md section 1); nothing registers a subagent's own task.
 **Only the meeting id is read from the payload.** A ``TranscriptReady`` carries
 the whole masked transcript; the agent reads what it needs through tools, so
 the rest is left where it is and never logged.
+
+**One periodic task wakes every subagent that declared a period**
+(``Periodic``, #634). ``autune_core.periodic`` puts it on beat's schedule by its
+name; it takes no arguments and finds the due subagents and teams itself.
 """
 
 from __future__ import annotations
@@ -22,9 +26,10 @@ from autune_contracts import (
     Payload,
     validate_major_version,
 )
-from autune_core import session_scope
+from autune_core import periodic, session_scope
 
-from .main.triggers import on_event
+from .main.subagents import PERIODIC_TICK
+from .main.triggers import on_event, on_tick
 
 
 def _meeting_id(payload: dict[str, Any]) -> str:
@@ -49,3 +54,10 @@ def on_transcript_ready(self: Any, payload: dict[str, Any]) -> None:
 @shared_task(name="autune.agent.on_intelligence_completed", acks_late=True, bind=True)
 def on_intelligence_completed(self: Any, payload: dict[str, Any]) -> None:
     _wake(INTELLIGENCE_COMPLETED, payload, task_id=self.request.id)
+
+
+@shared_task(name="autune.agent.periodic.wake_subagents", acks_late=True, bind=True)
+@periodic(PERIODIC_TICK)
+def wake_subagents(self: Any) -> None:
+    with session_scope() as session:
+        on_tick(session=session, task_id=self.request.id)
