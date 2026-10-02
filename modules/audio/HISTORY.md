@@ -899,6 +899,34 @@ resident numbers leaked, 0/32 phones. The decision this drives: don't fix
 against the corpus (the `2024-2025-2026` false positive is its known cost).
 TTS is not a meeting, so the rates are not field rates.
 
+**Grouped digits, 2026-10-02 (#696).** Evaluation 04 (PR #697) found that
+Whisper writes a number read aloud in digits and guesses its hyphens, and the
+length-keyed patterns let mis-grouped accounts and resident numbers through
+(28 of 96 synthetic clips). The fix is one rule in `privacy.py`: a run of
+digit groups joined by a hyphen, a dash or the filler Whisper keeps (음, 어)
+is personal data once it holds eleven digits, however it is split -- refused
+when it is a list of years or a date range, and refused whole so a date range
+is not retried from the inside. Not a bare space or a dot: price lists and
+version strings. Re-run of the same 96 clips: **1 leak**, an account Whisper
+wrote run-together (`45080930978`), which keeps its last four by the old
+`account` rule and counts only because the hyphenated baseline now keeps none.
+
+The trade, decided rather than discovered: the rule is declared above
+`account`, so a correctly hyphenated account loses its last four. A resident
+number Whisper hyphenated 6-3-4 is also an account shape, and the alternative
+was four of its digits standing. Two corpus rows (3-3-6, 6-2-6 accounts) now
+differ in the safe direction and say so (`known_inexact`); recall and
+precision stay 1.000. TTS, one voice: not field rates.
+
+Review moved one line. The date exemption first refused any run whose groups
+were all four digits or fewer and started with 19xx/20xx -- which is exactly
+the shape of a number Whisper split into short groups, so `2008-26-643-8793`
+passed as a date. It now refuses only a year followed by one- or two-digit
+groups or more years. What the rule newly over-masks, accepted: hyphenated
+lists past eleven digits (`100-200-300-400-500명`, an ISBN). The filler `어`
+is a separator on the strength of `음` alone; the next corpus run should
+say whether any match is joined only by `어`.
+
 **Retention and deletion, 2026-10-01 (#581–#584, then #363).** Four rows that
 were document-only became code: an hourly sweep deletes meetings past
 `expires_at` (`retention.py`); a person can export, delete their speech, or

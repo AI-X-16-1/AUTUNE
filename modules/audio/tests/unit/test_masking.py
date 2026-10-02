@@ -454,11 +454,12 @@ def test_an_account_said_without_separators_keeps_at_most_one_digit() -> None:
 
     Six-to-eight makes a twelve-digit run match `rrn` first, so an account
     number said without separators is masked to the national-ID layout and one
-    digit survives instead of four. Said *with* separators it is still an
-    `account` and still keeps its last four, which is the common case.
+    digit survives instead of four. Said *with* separators it now keeps none
+    (#696): a hyphenated run of eleven digits or more is taken whole, so that
+    a resident number Whisper hyphenated like an account cannot keep four.
     """
     assert mask("계좌 110123456789").text == "계좌 ******4*****"
-    assert mask("계좌 110-123-456789").text == "계좌 ***-***-**6789"
+    assert mask("계좌 110-123-456789").text == "계좌 ***-***-******"
 
 
 @pytest.mark.parametrize("line", NOT_PERSONAL)
@@ -496,3 +497,14 @@ def test_a_one_character_report_is_still_drawn_as_a_redaction() -> None:
     from autune_audio.masking import hide_reported
 
     assert hide_reported("박") == "**"
+
+
+def test_a_misgrouped_resident_number_keeps_nothing() -> None:
+    """#696: hyphenated 6-3-4 it is also an account shape, which keeps the last
+    four; the grouped rule is declared first so the span is hidden whole."""
+    assert mask("주민번호는 700826-643-8793입니다").text == "주민번호는 ******-***-****입니다"
+
+
+def test_a_phone_number_keeps_its_shape() -> None:
+    """Ten or eleven digits in the phone shape stay `phone`, prefix and last four."""
+    assert mask("제 번호는 010-1234-5678").text == "제 번호는 010-****-5678"
