@@ -82,6 +82,20 @@ export const createActionItem = (draft: ActionItemDraft) =>
     body: JSON.stringify(draft),
   });
 
+/** A member of the meeting's team, as the assignee picker offers them. */
+export interface Assignable {
+  user_id: string;
+  name: string;
+}
+
+/**
+ * Who an item of this meeting can be assigned to. From module B's own
+ * route: this feature calls `/api/extraction` only, and the same people
+ * under `/api/audio` belong to the transcript feature.
+ */
+export const listAssignable = (meetingId: string) =>
+  api.extraction<Assignable[]>(`/meetings/${encodeURIComponent(meetingId)}/assignable`);
+
 export const updateActionItem = (id: string, changes: Partial<ActionItemDraft & { status: ActionStatus }>) =>
   api.extraction<ActionItemRead>(`/action-items/${id}`, {
     method: "PATCH",

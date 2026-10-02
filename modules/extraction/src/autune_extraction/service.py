@@ -103,6 +103,7 @@ from .schemas import (
     ActionItemDetail,
     ActionItemRead,
     ActionItemUpdate,
+    Assignable,
     CarriedOver,
     CarriedOverItem,
     DecisionCreate,
@@ -1359,6 +1360,26 @@ def list_action_items(
 CARRIED_OVER_SHOWN = 10
 """How many carried-over items the popup lists. It counts all of them; past
 ten, a list stops being read and the board is the place to work through it."""
+
+
+def assignable_members(session: Session, meeting_id: str) -> list[Assignable]:
+    """The people an item of this meeting can be assigned to: the members of
+    the meeting's team, by name.
+
+    The team's and nobody else's, because that is who ``_calendar_owner`` and
+    the Jira sync will act for -- an account that is not on the team is
+    cleared at read time (ADR 0007), so offering it would offer an
+    assignment that does not hold. The caller has checked the reader."""
+    meeting = session.get(Meeting, meeting_id)
+    if meeting is None:
+        return []
+    rows = session.execute(
+        select(User.id, User.display_name)
+        .join(TeamMember, TeamMember.user_id == User.id)
+        .where(TeamMember.team_id == meeting.team_id)
+        .order_by(User.display_name, User.id)
+    ).all()
+    return [Assignable(user_id=user_id, name=name) for user_id, name in rows]
 
 
 def carried_over(session: Session, meeting_id: str, *, today: date | None = None) -> CarriedOver:

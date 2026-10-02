@@ -37,6 +37,7 @@ from .schemas import (
     ActionItemDetail,
     ActionItemRead,
     ActionItemUpdate,
+    Assignable,
     CarriedOver,
     ConfirmationAnswerIn,
     DecisionCreate,
@@ -118,6 +119,15 @@ def get_carried_over(meeting_id: str, session: SessionDep, reader: CurrentUser) 
     meeting's review opens with (WBS 4.8). Members of the meeting's team only."""
     service.require_readable_meeting(session, meeting_id, reader)
     return service.carried_over(session, meeting_id)
+
+
+@router.get("/meetings/{meeting_id}/assignable", response_model=list[Assignable])
+def get_assignable(meeting_id: str, session: SessionDep, reader: CurrentUser) -> list[Assignable]:
+    """Who an item of this meeting can be assigned to: the meeting's team, by
+    name, for the assignee picker. Members of that team only -- the same
+    404 as an unknown meeting for anyone else."""
+    service.require_readable_meeting(session, meeting_id, reader)
+    return service.assignable_members(session, meeting_id)
 
 
 @router.get("/action-items/{action_item_id}", response_model=ActionItemDetail)
