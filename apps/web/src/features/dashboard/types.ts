@@ -88,6 +88,4 @@ export interface MeetingReport {
   edited_at: string | null;
   /** Sent back with an edit, so a save over a newer version is refused. */
   updated_at: string;
-  /** The requester last edited this draft and posts it from the card. */
-  can_post: boolean;
 }

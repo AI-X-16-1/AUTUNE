@@ -5,9 +5,9 @@ here — it cannot be reused by ``tasks.py`` if it lives in a route.
 
 The prefix ``/api/intelligence`` is applied by apps/api; declare paths relative to it.
 
-Every route here is read-only but the edit and the post of a meeting report, and
-the three ``/meeting-reports`` routes authenticate and check team membership: a
-report is meeting text, and two of them change or send it. Elsewhere auth is not
+Every route here is read-only but the edit of a meeting report, and the two
+``/meeting-reports`` routes authenticate and check team membership: a report is
+meeting text, and one of them changes it. Nothing here posts. Elsewhere auth is not
 enforced yet — apps/api has no auth middleware wired (#156, #189). Most of these
 are team-level aggregates (quality, alignment, gap distribution) that carry no
 per-person data, so the gap is tolerable until then. ``/gap-titles`` is the
@@ -104,22 +104,18 @@ def list_meeting_reports(
 def edit_meeting_report(
     meeting_id: str, edit: MeetingReportEdit, user: CurrentUser, session: SessionDep
 ) -> MeetingReportRead:
-    """A team member edits a draft before it is posted; refused once posted."""
-    return service.edit_meeting_report(
+    """A team member edits a draft before it is posted; refused once posted.
+
+    Nothing is posted from here. The edit is committed first, so the Report
+    subagent woken by the announcement reads it, and then announced; its post
+    goes to the approval queue (#674). Ids only to the task (#275).
+    """
+    report = service.edit_meeting_report(
         session, meeting_id, edit.body, user_id=user.id, base_updated_at=edit.base_updated_at
     )
-
-
-@router.post("/meeting-reports/{meeting_id}/post", status_code=202)
-def post_edited_report(meeting_id: str, user: CurrentUser, session: SessionDep) -> dict[str, str]:
-    """The person who last edited a draft posts it to the team channel.
-
-    Ids only to the task (#275). Nothing here is written, so the task may run
-    before this request's session closes; its claim checks the draft id again.
-    """
-    draft_id = service.post_edited_report(session, meeting_id, user_id=user.id)
-    enqueue.deliver_meeting_report(meeting_id, draft_id)
-    return {"status": "queued"}
+    session.commit()
+    enqueue.announce_meeting_report_changed(meeting_id)
+    return report
 
 
 @router.get("/me/speaking-ratio/{meeting_id}", response_model=SpeakingRatioRead)

@@ -1400,11 +1400,13 @@ def store_action_progress(session: Session, snapshot: TeamActionProgress) -> boo
 #
 # A report is meeting text, so these check that the person asking is on the team,
 # unlike the older aggregate routes (#156). Any member may edit a draft until it
-# is posted. An edit is a person's text, so it takes a new ``draft_id`` -- an
-# approval given for the model's text can never post it -- and the person who
-# last edited it posts it from the card (#642 review, decided with the user
-# 10/2). A rerun of the Report overwrites an edit (``save_meeting_report``). A
-# posted report changes only by a correction posted under it, never in place.
+# is posted. An edit takes a new ``draft_id``, so an approval given for the
+# model's text can never post it. Nothing is posted from the card: the edit is
+# announced (``autune.intelligence.meeting_report_changed``) and the Report
+# subagent proposes its post again, for a person with the ``report`` scope to
+# approve -- the same L2 gate as the model's draft (#642 review, #674). A rerun
+# of the Report overwrites an edit (``save_meeting_report``). A posted report
+# changes only by a correction posted under it, never in place.
 
 MEETING_REPORTS_SHOWN: Final = 20
 """The card lists this many reports, newest meeting first."""
@@ -1504,7 +1506,6 @@ def _report_read(
         edited_by_name=editor,
         edited_at=row.edited_at,
         updated_at=row.updated_at,
-        can_post=draft and row.edited_by is not None and row.edited_by == requester_id,
     )
 
 
@@ -1536,10 +1537,11 @@ def edit_meeting_report(
     """Replace a draft's body with a team member's text and record who did it.
 
     E keeps the header line and writes a footer saying a person edited it; the
-    name is added when it is read or posted (``_with_editor``), never stored. The draft
-    takes a new ``draft_id``: an approval queued for the model's text -- even one
-    already approved and waiting for the worker -- then posts nothing, and the
-    editor posts this text from the card (``post_edited_report``). Refused once
+    name is added when it is read or posted (``_with_editor``), never stored. The
+    draft takes a new ``draft_id``: an approval queued for the model's text --
+    even one already approved and waiting for the worker -- then posts nothing.
+    The caller commits, then announces the change (``enqueue``), and the Report
+    subagent proposes this draft's post for approval. Refused once
     posted (people have read that version), and when ``base_updated_at`` shows
     someone saved a newer version since the editor opened it. The text passes
     the same length cap and personal-data check as a model's draft; a refusal
@@ -1580,20 +1582,15 @@ def edit_meeting_report(
     return _report_read(row, editor, user_id)
 
 
-def post_edited_report(session: Session, meeting_id: str, *, user_id: str) -> str:
-    """Check that ``user_id`` may post this edited draft now; return its ``draft_id``.
+def meeting_report_awaiting_approval(session: Session, meeting_id: str) -> str | None:
+    """The ``draft_id`` of the meeting's stored, unposted draft, or ``None``.
 
-    Only a person's edit is posted from the card, and only by the person who
-    last edited it -- their text, their post. A model's draft goes through the
-    approval queue instead. The caller enqueues ``deliver_meeting_report`` with
-    the returned id; the claim checks it again, so an edit made in between
-    posts nothing.
+    What the Report subagent proposes to post when a person's edit is
+    announced. The draft read now, not the one the announcement was about: a
+    second edit or a rerun since then replaced it, and its own proposal
+    supersedes this one in the queue anyway.
     """
-    row = _report_for_member(session, meeting_id, user_id)
-    if row.sent_at is not None:
-        raise ConflictError("meeting report was already posted", meeting_id=meeting_id)
-    if row.edited_by is None or row.draft_id is None:
-        raise ConflictError("a model's draft is posted through approval", meeting_id=meeting_id)
-    if row.edited_by != user_id:
-        raise PermissionDeniedError("only the person who last edited a draft posts it")
+    row = session.get(IntelMeetingReport, meeting_id)
+    if row is None or row.sent_at is not None:
+        return None
     return row.draft_id

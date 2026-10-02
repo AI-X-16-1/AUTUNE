@@ -20,9 +20,11 @@ from celery import shared_task
 
 from autune_contracts import (
     INTELLIGENCE_COMPLETED,
+    INTELLIGENCE_MEETING_REPORT_CHANGED,
     ContextLinks,
     ExtractionResult,
     GapReport,
+    Payload,
     TeamActionProgress,
     validate_major_version,
 )
@@ -32,7 +34,7 @@ from autune_integrations import SlackClient
 
 from . import service
 from .config import get_settings
-from .enqueue import DELIVER_MEETING_REPORT
+from .enqueue import ANNOUNCE_MEETING_REPORT_CHANGED, DELIVER_MEETING_REPORT
 from .models import IntelCompletion, IntelMeetingReport
 
 log = get_logger(__name__)
@@ -195,6 +197,18 @@ def generate_weekly_report(team_id: str, period_end: str | None = None) -> None:
         period_start=str(start),
         meeting_count=report.metrics_json["meeting_count"],
     )
+
+
+@shared_task(name=ANNOUNCE_MEETING_REPORT_CHANGED, acks_late=True)
+def announce_meeting_report_changed(meeting_id: str) -> None:
+    """Publish that a person changed the meeting's report, for the agent layer (#674).
+
+    From the worker, because the API process cannot publish (#170). The payload
+    is the meeting's id only; the Report subagent reads the stored draft through
+    E's tools and proposes its post for approval.
+    """
+    publish(INTELLIGENCE_MEETING_REPORT_CHANGED, Payload(meeting_id=meeting_id).model_dump())
+    log.info("intelligence_meeting_report_change_announced", meeting_id=meeting_id)
 
 
 @shared_task(name=DELIVER_MEETING_REPORT, acks_late=True)

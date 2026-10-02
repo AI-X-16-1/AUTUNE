@@ -12,13 +12,14 @@ import { DashboardCard } from "./DashboardCard";
  * The team's meeting reports: what each one says and whether it went out (10/2).
  *
  * An approver on `/approvals` reads the model's draft here. A draft can be
- * edited by any member until it is posted; an edit is the person's own text,
- * so the approval for the model's text lapses and the person who last edited
- * it posts it from this card (#642 review). A posted report is read-only here.
- * `#report-<meeting id>` opens one report directly, once per page load.
+ * edited by any member until it is posted. Nothing is posted from this card: an
+ * edit goes back to `/approvals` as a new post proposal, and the approval given
+ * for the earlier text lapses (#642 review, #674). A posted report is
+ * read-only here. `#report-<meeting id>` opens one report directly, once per
+ * page load.
  */
 export function MeetingReportsCard({ teamId }: { teamId: string }) {
-  const { reports, loading, error, save, post } = useMeetingReports(teamId);
+  const { reports, loading, error, save } = useMeetingReports(teamId);
   const [open, setOpen] = useState<string | null>(null);
   const [showAll, setShowAll] = useState(false);
   const linkApplied = useRef(false);
@@ -64,7 +65,6 @@ export function MeetingReportsCard({ teamId }: { teamId: string }) {
                   setOpen((current) => (current === report.meeting_id ? null : report.meeting_id))
                 }
                 onSave={(body) => save(report, body)}
-                onPost={() => post(report.meeting_id)}
               />
             ))}
           </ul>
@@ -88,16 +88,13 @@ function ReportRow({
   open,
   onToggle,
   onSave,
-  onPost,
 }: {
   report: MeetingReport;
   open: boolean;
   onToggle: () => void;
   onSave: (body: string) => Promise<string | null>;
-  onPost: () => Promise<string | null>;
 }) {
   const [editing, setEditing] = useState(false);
-  const [confirming, setConfirming] = useState(false);
   const [draft, setDraft] = useState(report.body);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ text: string; failed: boolean } | null>(null);
@@ -108,7 +105,6 @@ function ReportRow({
   const startEditing = () => {
     setDraft(report.body);
     setMessage(null);
-    setConfirming(false);
     setEditing(true);
   };
 
@@ -116,20 +112,15 @@ function ReportRow({
     setBusy(true);
     const failure = await onSave(draft);
     setBusy(false);
-    setMessage(failure ? { text: failure, failed: true } : null);
-    if (!failure) setEditing(false);
-  };
-
-  const publish = async () => {
-    setBusy(true);
-    const failure = await onPost();
-    setBusy(false);
-    setConfirming(false);
     setMessage(
       failure
         ? { text: failure, failed: true }
-        : { text: "게시 요청을 보냈습니다. 잠시 후 '게시됨'으로 바뀝니다.", failed: false },
+        : {
+            text: "저장했습니다. 승인 대기로 보냈습니다 — 승인되면 팀 채널에 올라갑니다.",
+            failed: false,
+          },
     );
+    if (!failure) setEditing(false);
   };
 
   return (
@@ -181,8 +172,8 @@ function ReportRow({
           {editing ? (
             <>
               <label htmlFor={`report-edit-${report.meeting_id}`} style={metaStyle}>
-                본문 편집 · 게시 전까지 팀원 누구나 고칠 수 있습니다. 고치면 승인 요청은 효력이
-                없어지고, 마지막으로 고친 사람이 여기서 직접 게시합니다.
+                본문 편집 · 게시 전까지 팀원 누구나 고칠 수 있습니다. 저장하면 고친 내용으로 승인
+                요청이 새로 올라가고, 승인되면 팀 채널에 게시됩니다.
               </label>
               <textarea
                 id={`report-edit-${report.meeting_id}`}
@@ -239,33 +230,12 @@ function ReportRow({
               </div>
               {report.footer ? <p style={metaStyle}>{report.footer}</p> : null}
               {report.status === "draft" ? (
-                confirming ? (
-                  <div style={{ display: "flex", gap: "var(--space-8)", alignItems: "center" }}>
-                    <span style={metaStyle}>이 내용을 팀 채널에 바로 게시할까요?</span>
-                    <Button tone="primary" size="compact" onClick={publish} disabled={busy}>
-                      {busy ? "게시 중…" : "게시"}
-                    </Button>
-                    <Button
-                      tone="text"
-                      size="compact"
-                      onClick={() => setConfirming(false)}
-                      disabled={busy}
-                    >
-                      취소
-                    </Button>
-                  </div>
-                ) : (
-                  <div style={{ display: "flex", gap: "var(--space-8)" }}>
-                    <Button tone="secondary" size="compact" onClick={startEditing}>
-                      편집
-                    </Button>
-                    {report.can_post ? (
-                      <Button tone="primary" size="compact" onClick={() => setConfirming(true)}>
-                        게시
-                      </Button>
-                    ) : null}
-                  </div>
-                )
+                <div style={{ display: "flex", gap: "var(--space-8)", alignItems: "center" }}>
+                  <Button tone="secondary" size="compact" onClick={startEditing}>
+                    편집
+                  </Button>
+                  <span style={metaStyle}>게시는 승인 화면에서 승인자가 합니다.</span>
+                </div>
               ) : (
                 <p style={metaStyle}>게시된 리포트는 여기서 고칠 수 없습니다.</p>
               )}
@@ -312,6 +282,7 @@ function rowMeta(report: MeetingReport): string {
   }
   if (report.edited_by_name && report.edited_at) {
     parts.push(`${report.edited_by_name} 수정 ${formatTime(report.edited_at)}`);
+    if (report.status === "draft") parts.push("승인 대기");
   } else if (report.status === "draft") {
     // `updated_at` moves on every edit, so it is the draft time only until one.
     parts.push(`작성 ${formatTime(report.updated_at)}`);

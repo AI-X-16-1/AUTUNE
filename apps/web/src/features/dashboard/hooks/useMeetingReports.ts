@@ -4,12 +4,12 @@ import { useCallback, useEffect, useState } from "react";
 
 import { ApiError } from "@/shared/api/client";
 
-import { editMeetingReport, getMeetingReports, postEditedReport } from "../api";
+import { editMeetingReport, getMeetingReports } from "../api";
 import type { MeetingReport } from "../types";
 
 /**
- * The dashboard's meeting reports and the card's two writes: a member edits a
- * draft, and the person who last edited it posts it. Loaded on its own, apart
+ * The dashboard's meeting reports and the card's one write: a member edits a
+ * draft, which goes to the approval queue (#674). Loaded on its own, apart
  * from the S26 rollup, so a failure here leaves the rest of the dashboard
  * standing.
  */
@@ -49,22 +49,7 @@ export function useMeetingReports(teamId: string) {
     }
   }, []);
 
-  /** Queues the post; resolves to an error message, or null once it is queued. */
-  const post = useCallback(
-    async (meetingId: string): Promise<string | null> => {
-      try {
-        await postEditedReport(meetingId);
-        // The worker claims it within moments; show "게시됨" once it has.
-        window.setTimeout(() => void reload(), 3000);
-        return null;
-      } catch (reason) {
-        return writeErrorMessage(reason);
-      }
-    },
-    [reload],
-  );
-
-  return { reports, loading, error, reload, save, post };
+  return { reports, loading, error, reload, save };
 }
 
 /** `autune_integrations.privacy` category names, as a person reads them. */
@@ -83,12 +68,8 @@ function writeErrorMessage(reason: unknown): string {
     if (reason.message.includes("changed since")) {
       return "다른 사람이 먼저 고쳤습니다. 새로고침한 뒤 다시 고쳐 주세요.";
     }
-    if (reason.message.includes("through approval")) {
-      return "자동으로 만든 초안은 승인 화면에서 게시합니다.";
-    }
     return "이미 게시된 리포트입니다.";
   }
-  if (reason.status === 403) return "마지막으로 고친 사람만 게시할 수 있습니다.";
   if (reason.status === 404) return "리포트를 찾을 수 없습니다.";
   if (reason.status === 422) {
     // The server names categories only, never the text (privacy.md section 2).

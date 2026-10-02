@@ -4,8 +4,9 @@ A report is meeting text, so unlike E's older aggregate routes these
 authenticate and check team membership. A draft may be edited by any member of
 the team until it is posted; the editor and the time are recorded. An edit
 takes a new ``draft_id``, so an approval given for the model's text can never
-post a person's text, and the person who last edited it posts it from the card
-(#642 review, decided with the user 10/2). A posted report is not edited here.
+post a person's text. Nothing is posted from the card: the edit is announced
+and goes to the approval queue as a new post proposal (#642 review, #674). A
+posted report is not edited here.
 """
 
 from __future__ import annotations
@@ -20,9 +21,10 @@ from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
+from autune_contracts import INTELLIGENCE_MEETING_REPORT_CHANGED
 from autune_core import AutuneError, Meeting, Team, TeamMember, User, get_session
 from autune_core.auth import current_user
-from autune_intelligence import service, tools
+from autune_intelligence import service, tasks, tools
 from autune_intelligence.models import IntelMeetingReport
 from autune_intelligence.router import router
 
@@ -54,6 +56,16 @@ def client_for(db_session: Session) -> Iterator[Callable[[User], TestClient]]:
         return TestClient(app)
 
     yield build
+
+
+@pytest.fixture(autouse=True)
+def announced(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """What the edit route announced -- meeting ids, nothing else (#275)."""
+    from autune_intelligence import router as router_module
+
+    sent: list[str] = []
+    monkeypatch.setattr(router_module.enqueue, "announce_meeting_report_changed", sent.append)
+    return sent
 
 
 def _meeting(db_session: Session, team: str, title: str, day: int) -> str:
@@ -279,68 +291,74 @@ def test_an_edit_ends_the_approval_given_for_the_models_text(
         service.claim_meeting_report(db_session, meeting, draft_id="rdr_model")
 
 
-def test_the_last_editor_posts_their_edit_from_the_card(
+def test_an_edit_goes_to_approval_and_nothing_is_posted_from_the_card(
     db_session: Session,
     team: str,
     client_for: Callable[[User], TestClient],
-    monkeypatch: pytest.MonkeyPatch,
+    announced: list[str],
 ) -> None:
-    from autune_intelligence import router as router_module
-
-    sent: list[tuple[str, ...]] = []
-    monkeypatch.setattr(
-        router_module.enqueue,
-        "deliver_meeting_report",
-        lambda meeting_id, draft_id: sent.append((meeting_id, draft_id)),
-    )
     meeting = _meeting(db_session, team, "결제 회의", 2)
     _report(db_session, meeting)
-    editor = _user(db_session, team, "박재경")
-    client = client_for(editor)
+    client = client_for(_user(db_session, team, "박재경"))
+
     edited = client.put(
         f"/api/intelligence/meeting-reports/{meeting}", json={"body": "✅ 고친 본문"}
     ).json()
-    assert edited["can_post"] is True
+    direct = client.post(f"/api/intelligence/meeting-reports/{meeting}/post")
 
-    response = client.post(f"/api/intelligence/meeting-reports/{meeting}/post")
-
-    assert response.status_code == 202
+    assert announced == [meeting]  # the Report subagent proposes the post (#674)
+    assert "can_post" not in edited
+    assert direct.status_code in (404, 405)  # no route posts from the card (#642 review)
     row = db_session.get(IntelMeetingReport, meeting)
-    assert row is not None
-    assert sent == [(meeting, row.draft_id)]  # ids only (#275); the claim checks the id again
+    assert row is not None and row.sent_at is None
 
 
-def test_only_the_last_editor_posts(
+def test_the_edit_is_committed_before_it_is_announced(
     db_session: Session,
     team: str,
     client_for: Callable[[User], TestClient],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """The Report subagent reads the stored draft when it wakes, so it must be there."""
     from autune_intelligence import router as router_module
 
-    monkeypatch.setattr(router_module.enqueue, "deliver_meeting_report", lambda *_args: None)
+    order: list[str] = []
+    commit = db_session.commit
+
+    def recorded_commit() -> None:
+        order.append("commit")
+        commit()
+
+    monkeypatch.setattr(db_session, "commit", recorded_commit)
+    monkeypatch.setattr(
+        router_module.enqueue,
+        "announce_meeting_report_changed",
+        lambda _m: order.append("announce"),
+    )
     meeting = _meeting(db_session, team, "결제 회의", 2)
     _report(db_session, meeting)
-    client_for(_user(db_session, team, "박재경")).put(
+
+    client_for(_user(db_session, team)).put(
         f"/api/intelligence/meeting-reports/{meeting}", json={"body": "✅ 고친 본문"}
     )
-    other = client_for(_user(db_session, team, "문민재"))
 
-    assert other.get(f"/api/intelligence/meeting-reports/{team}").json()[0]["can_post"] is False
-    assert other.post(f"/api/intelligence/meeting-reports/{meeting}/post").status_code == 403
+    assert order[:2] == ["commit", "announce"]
 
 
-def test_a_models_draft_is_posted_through_approval_not_the_card(
-    db_session: Session, team: str, client_for: Callable[[User], TestClient]
+def test_a_refused_edit_is_not_announced(
+    db_session: Session,
+    team: str,
+    client_for: Callable[[User], TestClient],
+    announced: list[str],
 ) -> None:
     meeting = _meeting(db_session, team, "결제 회의", 2)
     _report(db_session, meeting)
 
-    response = client_for(_user(db_session, team)).post(
-        f"/api/intelligence/meeting-reports/{meeting}/post"
+    response = client_for(_user(db_session, team)).put(
+        f"/api/intelligence/meeting-reports/{meeting}", json={"body": "연락처 010-1234-5678"}
     )
 
-    assert response.status_code == 409
+    assert response.status_code == 422 and announced == []
 
 
 def test_someone_outside_the_team_cannot_edit(
@@ -423,58 +441,21 @@ def test_a_name_that_looks_like_personal_data_is_left_out_of_the_post(
     assert claimed is not None and "010-1234-5678" not in claimed.body_markdown
 
 
-def test_posting_a_posted_report_is_a_conflict_and_an_outsider_gets_not_found(
-    db_session: Session,
-    team: str,
-    client_for: Callable[[User], TestClient],
-    monkeypatch: pytest.MonkeyPatch,
+def test_a_second_edit_ends_the_approval_proposed_for_the_first(
+    db_session: Session, team: str, client_for: Callable[[User], TestClient]
 ) -> None:
-    from autune_intelligence import router as router_module
-
-    monkeypatch.setattr(router_module.enqueue, "deliver_meeting_report", lambda *_args: None)
-    meeting = _meeting(db_session, team, "결제 회의", 2)
-    _report(db_session, meeting)
-    editor = _user(db_session, team, "박재경")
-    client_for(editor).put(
-        f"/api/intelligence/meeting-reports/{meeting}", json={"body": "✅ 고친 본문"}
-    )
-    row = db_session.get(IntelMeetingReport, meeting)
-    assert row is not None
-    service.claim_meeting_report(db_session, meeting, draft_id=row.draft_id)
-
-    posted = client_for(editor).post(f"/api/intelligence/meeting-reports/{meeting}/post")
-    outsider = client_for(_user(db_session, None)).post(
-        f"/api/intelligence/meeting-reports/{meeting}/post"
-    )
-
-    assert (posted.status_code, outsider.status_code) == (409, 404)
-
-
-def test_an_edit_between_posting_and_the_claim_posts_nothing(
-    db_session: Session,
-    team: str,
-    client_for: Callable[[User], TestClient],
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Queued for one draft, edited again before the worker claims it."""
-    from autune_intelligence import router as router_module
-
-    queued: list[tuple[str, str]] = []
-    monkeypatch.setattr(
-        router_module.enqueue,
-        "deliver_meeting_report",
-        lambda meeting_id, draft_id: queued.append((meeting_id, draft_id)),
-    )
+    """Proposed for one edit, edited again before anyone approved: that approval posts nothing."""
     meeting = _meeting(db_session, team, "결제 회의", 2)
     _report(db_session, meeting)
     client = client_for(_user(db_session, team, "박재경"))
     client.put(f"/api/intelligence/meeting-reports/{meeting}", json={"body": "✅ 첫 수정"})
-    client.post(f"/api/intelligence/meeting-reports/{meeting}/post")
+    first = service.meeting_report_awaiting_approval(db_session, meeting)
     client.put(f"/api/intelligence/meeting-reports/{meeting}", json={"body": "✅ 두 번째 수정"})
 
-    [(queued_meeting, queued_draft)] = queued
+    assert first is not None
+    assert service.meeting_report_awaiting_approval(db_session, meeting) != first
     with pytest.raises(AutuneError):
-        service.claim_meeting_report(db_session, queued_meeting, draft_id=queued_draft)
+        service.claim_meeting_report(db_session, meeting, draft_id=first)
 
 
 def test_the_cap_counts_the_text_as_slack_will_receive_it(
@@ -494,7 +475,7 @@ def test_the_cap_counts_the_text_as_slack_will_receive_it(
 def test_a_last_paragraph_that_reads_like_the_footer_stays_in_the_body(
     db_session: Session, team: str, client_for: Callable[[User], TestClient]
 ) -> None:
-    """Only E's exact footers are split off; a person's own line is not dropped."""
+    """The footer is always the last paragraph, so a person's own line is not dropped."""
     meeting = _meeting(db_session, team, "결제 회의", 2)
     _report(db_session, meeting)
     client = client_for(_user(db_session, team, "박재경"))
@@ -508,3 +489,40 @@ def test_a_last_paragraph_that_reads_like_the_footer_stays_in_the_body(
 
     assert first["body"] == body and again["body"] == body
     assert again["footer"].endswith("박재경님이 고쳤습니다.")
+
+
+# --- the approval path (#674) ------------------------------------------------------
+
+
+def test_the_announcement_publishes_the_meeting_id_only(monkeypatch: pytest.MonkeyPatch) -> None:
+    published: list[tuple[str, dict[str, object]]] = []
+    monkeypatch.setattr(tasks, "publish", lambda event, payload: published.append((event, payload)))
+
+    tasks.announce_meeting_report_changed("mtg_ab12cd")
+
+    [(event, payload)] = published
+    assert event == INTELLIGENCE_MEETING_REPORT_CHANGED
+    assert set(payload) == {"contract_version", "meeting_id"}
+    assert payload["meeting_id"] == "mtg_ab12cd"
+
+
+def test_the_report_subagent_reads_the_draft_awaiting_approval(
+    db_session: Session, team: str, client_for: Callable[[User], TestClient]
+) -> None:
+    meeting = _meeting(db_session, team, "결제 회의", 2)
+    _report(db_session, meeting)
+    client_for(_user(db_session, team)).put(
+        f"/api/intelligence/meeting-reports/{meeting}", json={"body": "✅ 고친 본문"}
+    )
+    row = db_session.get(IntelMeetingReport, meeting)
+    assert row is not None
+
+    awaiting = tools.meeting_report_awaiting_approval(db_session, team, meeting)
+    service.claim_meeting_report(db_session, meeting, draft_id=row.draft_id)
+    after_post = tools.meeting_report_awaiting_approval(db_session, team, meeting)
+    other_team = tools.meeting_report_awaiting_approval(db_session, "team_other", meeting)
+
+    assert awaiting["ok"] is True and awaiting["items"][0]["draft_id"] == row.draft_id
+    assert "고친 본문" not in str(awaiting)  # the id, never the text
+    assert after_post["ok"] is True and after_post["items"] == []
+    assert other_team["ok"] is False and other_team["reason"] == "meeting not found"

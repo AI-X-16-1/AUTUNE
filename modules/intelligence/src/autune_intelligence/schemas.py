@@ -102,8 +102,6 @@ class MeetingReportRead(BaseModel):
     edited_at: datetime | None
     updated_at: datetime
     """Send back as ``base_updated_at`` so a stale edit is refused, not saved over."""
-    can_post: bool
-    """The requester last edited this draft and may post it from the card."""
 
 
 class MeetingReportEdit(BaseModel):

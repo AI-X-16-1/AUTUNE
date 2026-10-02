@@ -1,6 +1,6 @@
 """Module E as tools an agent can call (#260/#261, docs/architecture/agent-layer.md section 4).
 
-Four reads (``TOOLS``) over E's existing service functions, and one action
+Reads (``TOOLS``) over E's existing service functions, and one action
 (``ACTIONS``) the main agent runs to carry out a Report subagent's proposal.
 Each returns a dict in the shape agent-layer.md calls ``ToolResult``::
 
@@ -263,7 +263,45 @@ def meeting_report_draft(
     )
 
 
-TOOLS = [meeting_quality, team_trend, recurring_gaps, misalignment_risk, meeting_report_draft]
+def meeting_report_awaiting_approval(
+    session: Session, team_id: str, meeting_id: str
+) -> dict[str, Any]:
+    """Use this when a person changed a meeting's report and its post must be
+    proposed for approval again. Do not use it to read the report's text --
+    that is ``meeting_report_draft``.
+
+    Returns the stored, unposted draft as one item whose ``draft_id`` names it,
+    for the post proposal to carry (#674). No item when no draft is stored or
+    the report was already posted.
+    """
+    meeting = session.get(Meeting, meeting_id)
+    if meeting is None or meeting.team_id != team_id:
+        return _refused("meeting not found", "회의를 찾을 수 없습니다.")
+    draft_id = service.meeting_report_awaiting_approval(session, meeting_id)
+    if draft_id is None:
+        return _result(summary="승인을 기다리는 리포트 초안이 없습니다.", items=[])
+    return _result(
+        summary="승인을 기다리는 리포트 초안이 있습니다.",
+        items=[
+            {
+                "title": "리포트 초안",
+                "body": "",
+                "score": 1.0,
+                "id": meeting_id,
+                "draft_id": draft_id,
+            }
+        ],
+    )
+
+
+TOOLS = [
+    meeting_quality,
+    team_trend,
+    recurring_gaps,
+    misalignment_risk,
+    meeting_report_draft,
+    meeting_report_awaiting_approval,
+]
 """Collected by the agent layer by iterating modules (invariant 6), never registered by hand."""
 
 RUN_SCOPE = ("team_id",)

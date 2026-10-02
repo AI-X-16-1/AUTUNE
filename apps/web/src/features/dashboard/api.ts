@@ -29,17 +29,12 @@ export const getMeetingReports = (teamId: string) =>
 
 /**
  * Replace a draft's body before it is posted; the server records who edited it
- * and gives the draft a new id, so an approval for the model's text lapses.
+ * and gives the draft a new id, so an approval for the model's text lapses and
+ * the edited draft goes to `/approvals` as a new post proposal (#674).
  * `baseUpdatedAt` is the version the editor opened: a newer save makes this a 409.
  */
 export const editMeetingReport = (meetingId: string, body: string, baseUpdatedAt: string) =>
   api.intelligence<MeetingReport>(`/meeting-reports/${encodeURIComponent(meetingId)}`, {
     method: "PUT",
     body: JSON.stringify({ body, base_updated_at: baseUpdatedAt }),
-  });
-
-/** The person who last edited a draft posts it to the team channel. */
-export const postEditedReport = (meetingId: string) =>
-  api.intelligence<{ status: string }>(`/meeting-reports/${encodeURIComponent(meetingId)}/post`, {
-    method: "POST",
   });
