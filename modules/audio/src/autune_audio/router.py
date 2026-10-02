@@ -201,6 +201,9 @@ def get_meeting(meeting_id: str, user: CurrentUser, session: SessionDep) -> Meet
     (``progress.ProgressReporter``)."""
     meeting = service.meeting_for(session, meeting_id=meeting_id, reader=user)
     stage, stage_progress = service.running_stage(session, meeting_id=meeting.id)
+    controls = service.transcription_controls(
+        session, meeting=meeting, settings=get_audio_settings()
+    )
     return MeetingDetail(
         meeting_id=meeting.id,
         title=meeting.title,
@@ -210,6 +213,7 @@ def get_meeting(meeting_id: str, user: CurrentUser, session: SessionDep) -> Meet
         team_id=meeting.team_id,
         stage=stage,
         stage_progress=stage_progress,
+        **controls._asdict(),
     )
 
 

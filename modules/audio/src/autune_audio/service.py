@@ -750,6 +750,32 @@ def restart_transcription(
     return new
 
 
+class TranscriptionControls(NamedTuple):
+    stalled: bool
+    restartable: bool
+    cancellable: bool
+    cancelled: bool
+
+
+def transcription_controls(
+    session: Session, *, meeting: Meeting, settings: AudioSettings
+) -> TranscriptionControls:
+    """What S12 may offer for this meeting, decided here so the screen draws
+    buttons from one rule. Uses the same checks the two routes enforce."""
+    job = latest_job(session, meeting_id=meeting.id)
+    if job is None:
+        return TranscriptionControls(False, False, False, False)
+    now = datetime.now(tz=UTC)
+    analyzing = meeting.status == "analyzing"
+    stalled = analyzing and is_stalled(job, settings=settings, now=now)
+    return TranscriptionControls(
+        stalled=stalled,
+        restartable=stalled and recording_restartable(job.id, settings=settings, now=now),
+        cancellable=analyzing and job.status in ("queued", "running"),
+        cancelled=meeting.status == "failed" and job.status == "cancelled",
+    )
+
+
 def sweep_orphans(
     session: Session, *, settings: AudioSettings, keep: str | None = None
 ) -> list[str]:
