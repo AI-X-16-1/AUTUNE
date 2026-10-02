@@ -33,7 +33,7 @@ from autune_agent.main.triggers import on_event
 from autune_agent.models import AgentApprover, AgentPendingAction
 from autune_agent.subagents.report import SUBAGENT
 from autune_agent.subagents.report.graph import CORRECTION_ACTION, PUBLISH_ACTION
-from autune_contracts import INTELLIGENCE_MEETING_REPORT_CHANGED
+from autune_contracts import INTELLIGENCE_COMPLETED, INTELLIGENCE_MEETING_REPORT_CHANGED
 from autune_core import (
     Meeting,
     Team,
@@ -214,3 +214,41 @@ def test_a_correction_reaches_the_thread_only_through_a_report_approver(
 
     assert reply.is_success and reply.json()["result_ok"] is True
     assert queued == [(team["meeting"], row.correction_id)]
+
+
+def test_a_late_analysis_after_the_post_leaves_the_correction_waiting(
+    session: Session, team: dict[str, str]
+) -> None:
+    """B, C or D finish late after the post: the waiting correction stays in the queue (#658)."""
+    with session_scope() as s:
+        s.execute(
+            sa.update(AgentPendingAction)
+            .where(AgentPendingAction.team_id == team["team"])
+            .values(status="approved")
+        )
+        intelligence_service.claim_meeting_report(s, team["meeting"], draft_id="rdr_model")
+        intelligence_service.record_meeting_report_post(s, team["meeting"], "C123", "1.000100")
+        intelligence_service.correct_meeting_report(
+            s, team["meeting"], "✅ 기한을 10/3으로 바로잡습니다", user_id=team["member"]
+        )
+    on_event(
+        INTELLIGENCE_MEETING_REPORT_CHANGED,
+        team["meeting"],
+        session=session,
+        subagents=ONLY_REPORT,
+        task_id="task-correction-2",
+    )
+    session.commit()
+
+    on_event(
+        INTELLIGENCE_COMPLETED,
+        team["meeting"],
+        session=session,
+        subagents=ONLY_REPORT,
+        task_id="task-late-analysis",
+    )
+    session.commit()
+
+    [waiting] = [p for p in pending(session, team["team"]) if p.status == "pending"]
+    assert waiting.tool == CORRECTION_ACTION
+    assert [p.status for p in pending(session, team["team"])].count("superseded") == 0

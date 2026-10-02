@@ -273,13 +273,17 @@ def meeting_report_awaiting_approval(
     Returns what waits as one item: ``kind`` is ``"draft"`` with the
     ``draft_id`` of an edited draft before the report is posted, or
     ``"correction"`` with the ``correction_id`` of a correction to a posted
-    report (#674). No item when nothing waits.
+    report (#674). ``ok=False`` with reason ``already posted`` when the report
+    is posted and no correction waits: nothing about this meeting's report is
+    to be proposed, a new draft least of all. No item when no report is stored.
     """
     meeting = session.get(Meeting, meeting_id)
     if meeting is None or meeting.team_id != team_id:
         return _refused("meeting not found", "회의를 찾을 수 없습니다.")
     awaiting = service.meeting_report_awaiting_approval(session, meeting_id)
     if awaiting is None:
+        if service.meeting_report_posted(session, meeting_id):
+            return _refused("already posted", "이미 게시된 리포트입니다.")
         return _result(summary="승인을 기다리는 리포트가 없습니다.", items=[])
     key = "draft_id" if awaiting.kind == "draft" else "correction_id"
     title = "리포트 초안" if awaiting.kind == "draft" else "리포트 수정본"

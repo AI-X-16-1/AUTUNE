@@ -1623,6 +1623,16 @@ def meeting_report_awaiting_approval(session: Session, meeting_id: str) -> Await
     return None
 
 
+def meeting_report_posted(session: Session, meeting_id: str) -> bool:
+    """Whether the meeting's report was claimed for posting -- the channel has it."""
+    return (
+        session.scalar(
+            sa.select(IntelMeetingReport.sent_at).where(IntelMeetingReport.meeting_id == meeting_id)
+        )
+        is not None
+    )
+
+
 # --- a correction to a posted report (10/2) -------------------------------------------
 #
 # A posted report is never changed in place: people have read it. A member writes
@@ -1786,6 +1796,9 @@ def claim_meeting_report_correction(
     text = _slack_escape(
         _correction_text(row.correction_body, name=name, when=row.corrected_at or datetime.now(UTC))
     )
+    # The check the Slack client runs, made before the claim, as the report's
+    # claim does: a refusal leaves the correction unclaimed (#658 review).
+    check_outbound({"text": text}, destination="slack", addressing=SlackClient.addressing)
     row.correction_sent_at = datetime.now(UTC)
     session.flush()
     return ClaimedCorrection(

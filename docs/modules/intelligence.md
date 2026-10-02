@@ -238,6 +238,9 @@ posts nothing. Statuses: pending (waits for approval), sending (claimed, being
 posted), sent, failed (claimed but not posted within
 `CORRECTION_SEND_WINDOW`, five minutes from the claim -- a new one is then
 accepted). Each is checked and escaped like the report and posted at most once.
+Once the report is posted, a late `intelligence.completed` run of the Report
+subagent proposes nothing (E's read answers `already posted`), so it cannot
+supersede a correction waiting for approval.
 Only the text, its id and `corrected_by` are stored; the name is joined when it
 is read or sent, as for an edit. The approval card can read it through
 `meeting_report_correction(correction_id)`. Deleting a post from Slack is not

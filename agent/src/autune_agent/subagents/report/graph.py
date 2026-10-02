@@ -139,6 +139,22 @@ def _repropose(toolbox: Toolbox) -> SubagentState:
     return {"outcome": SubagentResult(result=summary, proposed=[post])}
 
 
+def _already_posted(toolbox: Toolbox, meeting: dict[str, Any]) -> bool:
+    """The report went out, so a run proposes nothing (#658 review).
+
+    A late ``intelligence.completed`` after the post would otherwise queue a
+    draft and its post: E refuses both, but plan mode would already have
+    superseded a correction waiting for approval with that dead post proposal.
+    A correction waiting means posted too. Skipped when E's read is not there.
+    """
+    if AWAITING_TOOL not in toolbox.describe():
+        return False
+    awaiting = toolbox.call(AWAITING_TOOL, **meeting)
+    if not awaiting.ok:
+        return awaiting.reason == "already posted"
+    return any(getattr(item, "kind", None) == "correction" for item in awaiting.items)
+
+
 def build(toolbox: Toolbox) -> CompiledSubagent:
     def report(state: SubagentState) -> SubagentState:
         if state.get("request") == CHANGED_TRIGGER:
@@ -148,6 +164,9 @@ def build(toolbox: Toolbox) -> CompiledSubagent:
             return _failed("the request names several meetings")
         # None named: the run's scope carries the meeting (or the Toolbox refuses).
         meeting: dict[str, Any] = {"meeting_id": named.pop()} if named else {}
+        if _already_posted(toolbox, meeting):
+            posted = ToolResult(ok=True, summary="이 회의의 리포트는 이미 게시됐습니다.", items=[])
+            return {"outcome": SubagentResult(result=posted)}
 
         results = {name: _read(toolbox, name, meeting) for name in READS}
         actions = results[ACTIONS_TOOL]

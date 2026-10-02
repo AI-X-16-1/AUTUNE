@@ -163,6 +163,33 @@ def test_the_correction_action_is_one_e_actually_ships() -> None:
     assert CORRECTION_ACTION.split(".", 1)[1] not in {a.__name__ for a in e_tools.L1_ACTIONS}
 
 
+@pytest.mark.parametrize(
+    "awaiting",
+    [
+        {"ok": False, "reason": "already posted", "summary": "이미 게시된 리포트입니다."},
+        _awaiting_correction("rcr_waiting"),
+    ],
+    ids=["posted", "correction-waiting"],
+)
+def test_a_late_analysis_after_the_post_proposes_nothing(awaiting: dict[str, Any]) -> None:
+    """A late intelligence.completed must not supersede a waiting correction (#658 review)."""
+    tools = {**_all_tools(), AWAITING_TOOL: mock_tool(AWAITING_TOOL, awaiting)}
+    budget = CallBudget()
+
+    outcome = _run(EVENT, tools, scope_meeting=MEETING, budget=budget)
+
+    assert outcome.result.ok is True and outcome.proposed == []
+    assert budget.used == 1  # E's read only; nothing is rendered
+
+
+def test_before_the_post_a_late_analysis_still_writes_the_draft() -> None:
+    tools = {**_all_tools(), AWAITING_TOOL: mock_tool(AWAITING_TOOL, _awaiting("rdr_model"))}
+
+    outcome = _run(EVENT, tools, scope_meeting=MEETING)
+
+    assert [p.tool for p in outcome.proposed] == [DRAFT_ACTION, PUBLISH_ACTION]
+
+
 def test_nothing_awaiting_proposes_nothing() -> None:
     """Posted, or replaced by a rerun that proposed its own post, before this run woke."""
     tools = {AWAITING_TOOL: mock_tool(AWAITING_TOOL, _awaiting(None))}

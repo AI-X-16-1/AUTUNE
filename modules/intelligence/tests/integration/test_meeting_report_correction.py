@@ -541,3 +541,23 @@ def test_correcting_an_edited_report_keeps_its_editors_name(
     )
 
     assert (data["edited_by_name"], data["corrected_by_name"]) == ("박재경", "문민재")
+
+
+def test_a_correction_the_outbound_check_refuses_stays_unclaimed(
+    db_session: Session, team: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Checked before the claim, as the report is: a refusal claims nothing (#658 review)."""
+    from autune_core.errors import PrivacyViolationError
+
+    meeting = _posted_report(db_session, team)
+    correction = _write(db_session, team, meeting, "✅ 정정")
+
+    def refuse(*_args: object, **_kwargs: object) -> None:
+        raise PrivacyViolationError("refused", categories=["phone"])
+
+    monkeypatch.setattr(service, "check_outbound", refuse)
+    with pytest.raises(PrivacyViolationError):
+        service.claim_meeting_report_correction(db_session, meeting, correction_id=correction)
+
+    row = db_session.get(IntelMeetingReport, meeting)
+    assert row is not None and row.correction_sent_at is None

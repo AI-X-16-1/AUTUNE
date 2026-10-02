@@ -547,5 +547,6 @@ def test_the_report_subagent_reads_the_draft_awaiting_approval(
 
     assert awaiting["ok"] is True and awaiting["items"][0]["draft_id"] == row.draft_id
     assert "고친 본문" not in str(awaiting)  # the id, never the text
-    assert after_post["ok"] is True and after_post["items"] == []
+    # Posted, nothing waiting: the Report subagent must not propose a new draft (#658 review).
+    assert after_post["ok"] is False and after_post["reason"] == "already posted"
     assert other_team["ok"] is False and other_team["reason"] == "meeting not found"
