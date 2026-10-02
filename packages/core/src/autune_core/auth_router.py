@@ -33,7 +33,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Annotated
 from urllib.parse import urlsplit
 
-from fastapi import APIRouter, Cookie, Depends, Query, Request
+from fastapi import APIRouter, Cookie, Depends, Header, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -46,8 +46,10 @@ from .auth import (
     _session_token,
     clear_session_cookie,
     current_user,
+    end_sessions,
     issue_token,
     set_session_cookie,
+    signed_in_user_or_none,
 )
 from .auth_service import upsert_user_from_google
 from .consents import Consent, consents_of, record_consents
@@ -274,7 +276,25 @@ def providers() -> dict[str, bool]:
 
 
 @router.post("/logout", status_code=204)
-def logout() -> Response:
+def logout(
+    session: Annotated[Session, Depends(get_session)],
+    authorization: Annotated[str | None, Header()] = None,
+    autune_session: Annotated[str | None, Cookie()] = None,
+) -> Response:
+    """Sign out: end every session this person has, then clear the cookie.
+
+    Until now this only cleared the cookie, and the token it held stayed
+    valid for the rest of its seven days. ``end_sessions`` makes the server
+    refuse it, and every other token the person holds -- another browser, a
+    developer token, a copy that leaked.
+
+    204 whoever asks. A request with no session, an expired one or one
+    already signed out has nothing to end and still gets its cookie cleared:
+    signing out must not be something that can fail."""
+    user = signed_in_user_or_none(session, authorization, autune_session)
+    if user is not None:
+        end_sessions(user)
+        log.info("auth_signed_out", user_id=user.id)
     response = Response(status_code=204)
     clear_session_cookie(response)
     return response

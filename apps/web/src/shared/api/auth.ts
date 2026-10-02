@@ -76,8 +76,19 @@ export async function getSession(): Promise<SessionUser | null> {
   }
 }
 
+/**
+ * Sign out: the server ends every session this person has, on every device,
+ * and clears the cookie. Throws when the request did not succeed, so a caller
+ * does not show a signed-out screen to somebody who is still signed in.
+ */
 export async function logout(): Promise<void> {
-  await fetch(authUrl("/logout"), { method: "POST", credentials: "include" });
+  const response = await fetch(authUrl("/logout"), {
+    method: "POST",
+    credentials: "include",
+  });
+  if (!response.ok) {
+    throw new ApiError(response.status, "logout_failed", "sign-out failed");
+  }
 }
 
 /**

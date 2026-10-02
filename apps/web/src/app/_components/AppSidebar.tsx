@@ -2,7 +2,12 @@
 
 import type { Route } from "next";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
+import { useState } from "react";
+
+import { logout } from "@/shared/api/auth";
+import { setSignedIn } from "@/shared/api/client";
+import { Button } from "@/shared/ui";
 
 import { useSessionUser } from "./SessionGate";
 
@@ -16,6 +21,13 @@ import { useSessionUser } from "./SessionGate";
  * sections of a workspace that has nothing in it. That keeps the frame the
  * design files show without a nav of links that land on a 404; each entry
  * gains an `href` when its screen gets a route.
+ *
+ * **Signing out is under the person's name** (the user, 2026-10-02). The route
+ * existed and no screen called it. It ends the person's sessions on every
+ * device (`POST /api/auth/logout`, `autune_core.auth.end_sessions`), then goes
+ * to `/login`. Only a signed-in person sees it: a tab running on a developer
+ * token has no session to end. If the request does not get through it says so
+ * and stays, rather than show a sign-in screen to somebody still signed in.
  *
  * Assembly only: which sections exist and where they go. No feature data —
  * the counts the spec shows beside some entries belong to modules B and C, and
@@ -54,6 +66,24 @@ const itemText = {
 export function AppSidebar() {
   const pathname = usePathname();
   const user = useSessionUser();
+  const router = useRouter();
+  const [leaving, setLeaving] = useState(false);
+  const [failed, setFailed] = useState(false);
+
+  const signOut = async () => {
+    setFailed(false);
+    setLeaving(true);
+    try {
+      await logout();
+    } catch {
+      setFailed(true);
+      setLeaving(false);
+      return;
+    }
+    // The session is over: the client must not go on calling as that person.
+    setSignedIn(false);
+    router.replace("/login");
+  };
 
   return (
     <aside
@@ -111,6 +141,20 @@ export function AppSidebar() {
             >
               {user.email}
             </div>
+            <div className="mt-2 -ml-2">
+              <Button tone="quiet" size="compact" loading={leaving} onClick={() => void signOut()}>
+                로그아웃
+              </Button>
+            </div>
+            {failed ? (
+              <p
+                role="alert"
+                className="mt-1 text-[var(--color-signal-critical)]"
+                style={{ fontSize: "var(--text-metaSmall)" }}
+              >
+                로그아웃하지 못했습니다. 잠시 후 다시 시도해 주세요.
+              </p>
+            ) : null}
           </>
         )}
       </div>
