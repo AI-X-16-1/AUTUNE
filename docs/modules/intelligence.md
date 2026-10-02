@@ -241,6 +241,17 @@ accepted). Each is checked and escaped like the report and posted at most once.
 Once the report is posted, a late `intelligence.completed` run of the Report
 subagent proposes nothing (E's read answers `already posted`), so it cannot
 supersede a correction waiting for approval.
+
+**No change is left without an approval request (#698).** The card's routes
+commit a change, then queue its announcement; a queue that refuses it does not
+fail the request. The announcement records which change it covered
+(`announced_at`), and `autune.intelligence.periodic.announce_report_changes`
+announces, every five minutes, any edit or waiting correction older than two
+minutes that no announcement covered -- once, so approvers are not notified
+twice. A correction is refused while the team has no Slack connection or
+channel, and an approved one whose team lost Slack after the post reads as
+failed (`correction_failed_at`) rather than waiting forever; the next
+correction, after reconnecting, clears it.
 Only the text, its id and `corrected_by` are stored; the name is joined when it
 is read or sent, as for an edit. The approval card can read it through
 `meeting_report_correction(correction_id)`. Deleting a post from Slack is not
@@ -259,7 +270,9 @@ admin override and no team-level variant of this endpoint.
 | `autune.intelligence.send_personal_feedback` | After aggregation | `default` |
 | `autune.intelligence.weekly_report` | Weekly schedule | `cpu_heavy` |
 | `autune.intelligence.deliver_meeting_report` | An approved post (`publish_meeting_report`, L2) | `default` |
-| `autune.intelligence.announce_meeting_report_changed` | A person's edit on the dashboard card, after it commits (#674) | `default` |
+| `autune.intelligence.announce_meeting_report_changed` | A person's edit or correction on the dashboard card, after it commits (#674) | `default` |
+| `autune.intelligence.periodic.announce_report_changes` | Every five minutes: changes no announcement covered (#698) | `default` |
+| `autune.intelligence.deliver_meeting_report_correction` | An approved correction (`publish_meeting_report_correction`, L2) | `default` |
 
 ## Slack surface
 

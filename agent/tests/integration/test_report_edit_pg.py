@@ -37,6 +37,7 @@ from autune_contracts import INTELLIGENCE_COMPLETED, INTELLIGENCE_MEETING_REPORT
 from autune_core import (
     Meeting,
     Team,
+    TeamIntegration,
     TeamMember,
     User,
     current_user,
@@ -79,6 +80,8 @@ def team(db_engine: sa.Engine) -> Iterator[dict[str, str]]:
                 TeamMember(team_id=row.id, user_id=lead.id),
                 TeamMember(team_id=row.id, user_id=member.id),
                 AgentApprover(team_id=row.id, user_id=lead.id, scope="report"),
+                # A correction needs the team's Slack to still be there (#698).
+                TeamIntegration(team_id=row.id, service="slack", config={"channel": "C123"}),
             ]
         )
         s.flush()
@@ -100,6 +103,7 @@ def team(db_engine: sa.Engine) -> Iterator[dict[str, str]]:
         ids = {"team": row.id, "lead": lead.id, "member": member.id, "meeting": meeting.id}
     yield ids
     with session_scope() as s:
+        s.execute(delete(TeamIntegration).where(TeamIntegration.team_id == ids["team"]))
         s.execute(delete(Team).where(Team.id == ids["team"]))
         s.execute(delete(User).where(User.id.in_([ids["lead"], ids["member"]])))
 

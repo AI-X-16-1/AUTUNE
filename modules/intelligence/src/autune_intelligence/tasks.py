@@ -13,7 +13,7 @@ reopens the meeting and re-enqueues ``aggregate``.
 
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 import sqlalchemy as sa
 from celery import shared_task
@@ -28,7 +28,7 @@ from autune_contracts import (
     TeamActionProgress,
     validate_major_version,
 )
-from autune_core import Meeting, get_logger, load_integration, publish, session_scope
+from autune_core import Meeting, get_logger, load_integration, periodic, publish, session_scope
 from autune_core.errors import ConflictError
 from autune_integrations import SlackClient
 
@@ -209,10 +209,34 @@ def announce_meeting_report_changed(meeting_id: str) -> None:
 
     From the worker, because the API process cannot publish (#170). The payload
     is the meeting's id only; the Report subagent reads the stored draft through
-    E's tools and proposes its post for approval.
+    E's tools and proposes its post for approval. Nothing is published when no
+    change of a person's waits any more (posted, or overwritten by a rerun).
+    Records which change it covered, so the sweep knows what is left (#698).
     """
+    with session_scope() as session:
+        changed_at = service.meeting_report_change_to_announce(session, meeting_id)
+    if changed_at is None:
+        log.info("intelligence_meeting_report_change_nothing_waits", meeting_id=meeting_id)
+        return
     publish(INTELLIGENCE_MEETING_REPORT_CHANGED, Payload(meeting_id=meeting_id).model_dump())
+    with session_scope() as session:
+        service.record_meeting_report_announced(session, meeting_id, changed_at)
     log.info("intelligence_meeting_report_change_announced", meeting_id=meeting_id)
+
+
+@shared_task(name="autune.intelligence.periodic.announce_report_changes")
+@periodic(timedelta(minutes=5))
+def announce_report_changes() -> list[str]:
+    """Announce every person's change no announcement covered; return those meetings.
+
+    The card's route queues the announcement after its commit, and queueing can
+    fail there with the change already saved (#698). Ids only, as ever.
+    """
+    with session_scope() as session:
+        meetings = service.meeting_reports_unannounced(session, now=datetime.now(UTC))
+    for meeting_id in meetings:
+        announce_meeting_report_changed(meeting_id)
+    return meetings
 
 
 @shared_task(name=DELIVER_MEETING_REPORT_CORRECTION, acks_late=True)
@@ -230,6 +254,9 @@ def deliver_meeting_report_correction(meeting_id: str, correction_id: str) -> No
         config = load_integration(session, report.team_id, "slack")
         channel = config.config.get("channel") if config is not None else None
         if config is None or channel is None:
+            # Approved, but the team's Slack went away after the post: it can
+            # never go out, so say so instead of "승인 대기" forever (#698).
+            service.fail_meeting_report_correction(session, meeting_id, correction_id=correction_id)
             log.info("intelligence_meeting_report_correction_no_channel", meeting_id=meeting_id)
             return
         secret = config.require_secret()
