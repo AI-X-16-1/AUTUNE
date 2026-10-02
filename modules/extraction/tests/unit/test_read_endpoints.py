@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from datetime import UTC, date, datetime
+from typing import get_args
 
 import pytest
 from fastapi import FastAPI, Request
@@ -51,6 +52,7 @@ from autune_extraction.models import (
     ExtNotionTarget,
 )
 from autune_extraction.router import router
+from autune_extraction.schemas import ExternalRefRead
 
 from .conftest import sign_in
 
@@ -517,6 +519,60 @@ def test_a_confirmed_items_notion_status_reaches_both_the_card_and_the_drawer(
     assert detail["sync_refs"] == [
         {"system": "notion", "url": "https://www.notion.so/page1", "external_id": "page1"}
     ]
+
+
+def test_an_item_with_a_jira_issue_is_listed_with_both_its_refs(
+    client: TestClient, session: Session
+) -> None:
+    """#650: the read type allowed only ``"notion"``, so one item with a Jira
+    issue made the whole board list raise, and the agent's reads with it."""
+    action_item(session, "act_1")
+    action_item(session, "act_2")
+    session.add_all(
+        [
+            ExtExternalRef(
+                action_item_id="act_1",
+                system="notion",
+                meeting_id=MEETING,
+                url="https://www.notion.so/page1",
+                external_id="page1",
+            ),
+            ExtExternalRef(
+                action_item_id="act_1",
+                system="jira",
+                meeting_id=MEETING,
+                url="https://x.atlassian.net/browse/AUT-7",
+                external_id="AUT-7",
+            ),
+        ]
+    )
+    session.flush()
+
+    response = client.get(f"{PREFIX}/action-items")
+    detail = client.get(f"{PREFIX}/action-items/act_1")
+
+    assert response.status_code == 200 and detail.status_code == 200
+    listed = {row["id"]: row for row in response.json()}
+    assert sorted(ref["system"] for ref in listed["act_1"]["sync_refs"]) == ["jira", "notion"]
+    assert listed["act_2"]["sync_refs"] == [], "the item beside it is still listed"
+    jira = next(ref for ref in detail.json()["sync_refs"] if ref["system"] == "jira")
+    assert jira == {
+        "system": "jira",
+        "url": "https://x.atlassian.net/browse/AUT-7",
+        "external_id": "AUT-7",
+    }
+
+
+def test_the_read_type_allows_every_system_the_table_does() -> None:
+    """The two drifted once (#650). The table's check constraint is the list."""
+    constraint = next(
+        c for c in ExtExternalRef.__table__.constraints if c.name == "ck_ext_external_refs_system"
+    )
+    allowed = set(get_args(ExternalRefRead.model_fields["system"].annotation))
+
+    assert allowed == {"notion", "jira"}
+    for system in allowed:
+        assert f"'{system}'" in str(constraint.sqltext)
 
 
 def test_an_item_never_synced_has_no_sync_refs(client: TestClient, session: Session) -> None:

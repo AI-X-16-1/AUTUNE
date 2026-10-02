@@ -76,12 +76,13 @@ class ExternalRefRead(BaseModel):
     ``assignee_label``'s reasoning for being on the list already covers this.
     """
 
-    system: Literal["notion"]
-    """Jira was dropped from the product (#82): both its credential paths tie
-    a workspace to whoever set it up. The DB's own check constraint still
-    allows ``'jira'`` (unused, kept rather than a migration for a value that
-    only removes a possibility) -- this type is the narrower, honest answer
-    for what the API actually returns."""
+    system: Literal["notion", "jira"]
+    """The systems ``ext_external_refs`` holds a row for -- the table's own
+    check constraint. Jira was dropped once (#82) and this type narrowed to
+    ``"notion"`` with it; #458 brought Jira's sync back and wrote
+    ``system='jira'`` rows again while the type stayed narrow, so listing any
+    item with a Jira issue raised (#650). A system added to the constraint is
+    added here in the same change."""
     url: str | None
     external_id: str | None
 
