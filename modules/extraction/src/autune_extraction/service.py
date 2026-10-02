@@ -776,6 +776,7 @@ def forget_speech(session: Session, utterance_ids: Collection[str]) -> SpeechFor
             )
         )
     )
+    paged = decisions_with_a_page(session, [d.id for d in decisions])
     changed_decisions: list[str] = []
     for decision in decisions:
         decision.source_digest = None
@@ -790,7 +791,9 @@ def forget_speech(session: Session, utterance_ids: Collection[str]) -> SpeechFor
         ):
             decision.statement = SPEECH_DELETED_TEXT
             touched = True
-        if touched and decision.id in confirmed:
+        # A confirmed decision's page follows the text; a put-back one that
+        # still has its page is queued so that page is retired (#669).
+        if touched and (decision.id in confirmed or decision.id in paged):
             changed_decisions.append(decision.id)
     session.flush()
     return SpeechForgotten(tuple(deleted), tuple(changed), tuple(changed_decisions))
@@ -2807,6 +2810,7 @@ def apply_source_corrections(
             select(ExtDecisionReview).where(ExtDecisionReview.meeting_id == meeting_id)
         )
     }
+    paged = decisions_with_a_page(session, list(reviews))
     changed_decisions: list[str] = []
     for decision in session.scalars(
         select(ExtDecision)
@@ -2828,7 +2832,7 @@ def apply_source_corrections(
         if decision.origin == "user" or (review is not None and review.statement):
             decision.needs_recheck = True
             flagged += 1
-        if review is not None and review.status == "confirmed":
+        if (review is not None and review.status == "confirmed") or decision.id in paged:
             changed_decisions.append(decision.id)
     session.flush()
     return SourceCorrections(tuple(changed), tuple(changed_decisions), flagged)
@@ -3144,6 +3148,9 @@ def _review_decision_row(
         sync_refs=[
             ExternalRefRead(system=ref.system, url=ref.url, external_id=ref.external_id)  # type: ignore[arg-type]
             for ref in refs
+            # A claim with no page under a decision that is not confirmed is
+            # a retired page (#669), not a send in flight: nothing to show.
+            if ref.external_id is not None or (review is not None and review.status == "confirmed")
         ],
         summary=summary,
     )
@@ -3556,6 +3563,7 @@ class NotionPages(Protocol):
 
     def create_page(self, database_id: str, properties: dict[str, Any]) -> str: ...
     def update_page(self, page_id: str, properties: dict[str, Any]) -> None: ...
+    def trash_page(self, page_id: str) -> bool: ...
     def page_state(self, page_id: str) -> str: ...
 
 
@@ -3829,6 +3837,106 @@ DECISION_NOTION_PROPERTIES: Mapping[str, str] = {
 replaces this one, the rule ``NOTION_PROPERTIES`` explains for items."""
 
 
+DECISION_PUT_BACK_TEXT = "확정이 취소된 결정"
+"""What a decision's page is retitled to before it goes to Notion's trash
+(#669). The trash keeps a page restorable for 30 days; with this title the
+statement is not what it keeps."""
+
+
+def decisions_with_a_page(session: Session, decision_ids: Collection[str]) -> set[str]:
+    """The decisions among ``decision_ids`` whose Notion page is still there --
+    made when they were confirmed, and not retired since."""
+    if not decision_ids:
+        return set()
+    return set(
+        session.scalars(
+            select(ExtDecisionRef.decision_id).where(
+                ExtDecisionRef.decision_id.in_(decision_ids),
+                ExtDecisionRef.system == NOTION,
+                ExtDecisionRef.external_id.is_not(None),
+            )
+        )
+    )
+
+
+def decision_has_page(session: Session, decision_id: str) -> bool:
+    """Whether the decision still has the page its confirmation made. A change
+    of verdict on such a decision has to reach Notion even when the new
+    verdict is not *confirmed* (#669)."""
+    return bool(decisions_with_a_page(session, [decision_id]))
+
+
+def _retire_decision_page(
+    notion: NotionPages, ref: ExtDecisionRef, names: Mapping[str, str]
+) -> None:
+    """Take a decision's page out of the team's Notion: the decision is no
+    longer confirmed, or is gone (#669, decided with the user 2026-10-02).
+
+    Nothing about a decision leaves before a person confirms it (#246), and
+    the decision database has no status column to say a page was put back --
+    left in place it would go on reading as a confirmed decision. So the page
+    is retitled to ``DECISION_PUT_BACK_TEXT`` first, which keeps the statement
+    out of the trash, and then moved there. The ref row stays and forgets its
+    page: confirming again makes a new one.
+
+    Both calls share the caller's transaction, so a failure of either leaves
+    the row pointing at the page and the next sync tries again. A page a
+    person already archived cannot be edited -- Notion refuses -- and is
+    left to them, as ``_update_or_replace_page`` leaves it; one already
+    deleted has nothing to retire.
+    """
+    page_id = ref.external_id
+    if page_id is None:
+        return
+    if "title" in names:
+        retitled = {
+            names["title"]: {
+                "title": [{"type": "text", "text": {"content": DECISION_PUT_BACK_TEXT}}]
+            }
+        }
+        try:
+            notion.update_page(page_id, retitled)
+        except PermanentIntegrationError:
+            state = notion.page_state(page_id)
+            if state == "live":
+                raise
+            if state == "archived":
+                log.info(
+                    "extraction_notion_decision_page_left_archived",
+                    decision_id=ref.decision_id,
+                )
+                return
+            ref.external_id = None
+            ref.url = None
+            log.info("extraction_notion_decision_page_gone", decision_id=ref.decision_id)
+            return
+    notion.trash_page(page_id)
+    ref.external_id = None
+    ref.url = None
+    log.info("extraction_notion_decision_retired", decision_id=ref.decision_id)
+
+
+def _send_decision_page(
+    notion: NotionPages,
+    ref: ExtDecisionRef,
+    *,
+    database_id: str,
+    properties: dict[str, Any],
+) -> PageOutcome:
+    """The confirmed decision's page, for a ref that already exists: updated
+    in place, or made new when the ref has no page -- the decision was put
+    back, its page retired, and it is confirmed again (#669). A new page
+    reports ``"replaced"``, as one made for a page deleted in Notion does."""
+    if ref.external_id is None:
+        page_id = notion.create_page(database_id, properties)
+        ref.external_id = page_id
+        ref.url = notion_url(page_id)
+        return "replaced"
+    return _update_or_replace_page(
+        notion, ref, database_id=database_id, update=properties, create=properties
+    )
+
+
 def decision_notion_properties(
     statement: str,
     decision: ExtDecision,
@@ -3865,7 +3973,9 @@ def sync_decision_to_notion(
     """Create a confirmed decision's Notion page the first time; update the
     same page every time after. ``None`` when nothing is sent.
 
-    Nothing goes for a decision that is gone or is not confirmed (#246). The
+    Nothing goes for a decision that is gone or is not confirmed (#246) -- and
+    a page such a decision still has from an earlier confirmation is taken
+    out of Notion (``_retire_decision_page``, #669). The
     create-then-update shape, the lock-then-reread ordering, and the
     claim-race fallback are all ``sync_action_item_to_notion``'s -- a
     reworded confirmed decision (#246 allows rewording after confirmation)
@@ -3881,14 +3991,15 @@ def sync_decision_to_notion(
         decision = session.get(ExtDecision, decision_id, populate_existing=True)
         review = session.get(ExtDecisionReview, decision_id, populate_existing=True)
         if decision is None or review is None or review.status != "confirmed":
+            _retire_decision_page(notion, existing, names)
             return existing
         meeting = session.get(Meeting, decision.meeting_id)
         statement = _confirmed_statement(decision, review)
         properties = decision_notion_properties(
             statement, decision, meeting.title if meeting else None, names
         )
-        outcome = _update_or_replace_page(
-            notion, existing, database_id=database_id, update=properties, create=properties
+        outcome = _send_decision_page(
+            notion, existing, database_id=database_id, properties=properties
         )
         log.info(
             "extraction_notion_decision_updated",
@@ -3919,14 +4030,15 @@ def sync_decision_to_notion(
         decision = session.get(ExtDecision, decision_id, populate_existing=True)
         review = session.get(ExtDecisionReview, decision_id, populate_existing=True)
         if decision is None or review is None or review.status != "confirmed":
+            _retire_decision_page(notion, existing, names)
             return existing
         meeting = session.get(Meeting, decision.meeting_id)
         statement = _confirmed_statement(decision, review)
         properties = decision_notion_properties(
             statement, decision, meeting.title if meeting else None, names
         )
-        outcome = _update_or_replace_page(
-            notion, existing, database_id=database_id, update=properties, create=properties
+        outcome = _send_decision_page(
+            notion, existing, database_id=database_id, properties=properties
         )
         log.info(
             "extraction_notion_decision_updated_after_claim_race",

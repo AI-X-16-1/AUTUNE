@@ -164,7 +164,14 @@ agreement, and sync the result to Notion and Jira.
    part of the extraction run: nothing the model drafted is confirmed yet (#246).
    A decision goes the same way when a person confirms it (or adds it), to the
    team's decision database, in the wording they confirmed
-   (`ext_decision_refs`).
+   (`ext_decision_refs`). A decision that stops being confirmed after that —
+   put back to pending, rejected, or deleted — does not keep its page: the
+   decision database has no status column, so a page left in place would go
+   on reading as a confirmed decision (#246). The page is retitled to
+   "확정이 취소된 결정" and then moved to Notion's trash, so the trash does
+   not keep the statement; the row stays without a page, and confirming again
+   makes a new one. A page a person had already archived is left to them
+   (#669).
    A confirmed item with a due date also goes on its **assignee's own Google
    Calendar** as an all-day event with no attendees, through that person's grant
    in `user_integrations` (#435, #444); team work is not copied into anyone's

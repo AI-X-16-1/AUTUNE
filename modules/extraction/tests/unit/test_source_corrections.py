@@ -37,6 +37,7 @@ from autune_extraction.models import (
     ExtActionItem,
     ExtActionItemSource,
     ExtDecision,
+    ExtDecisionRef,
     ExtDecisionReview,
     ExtDecisionSource,
     ExtEditEvent,
@@ -412,3 +413,33 @@ def test_through_the_task_on_a_meeting_a_person_edited(
     assert kept.id == drafted.id, "the edit kept the item"
     assert "010-1234-5678" not in kept.description
     assert ("sync_action_item", kept.id) in queued
+
+
+def test_a_decision_put_back_with_its_page_still_there_resyncs(session: Session) -> None:
+    """#669: not confirmed any more, but its page from the earlier confirmation
+    holds the uncorrected line; the sync it is queued for retires that page."""
+    for dec_id, page in (("dec_back", "page_1"), ("dec_never", None)):
+        session.add(
+            ExtDecision(
+                id=dec_id,
+                meeting_id=MEETING,
+                statement="결정",
+                confidence=0.9,
+                origin="model",
+                source_digest=service.source_digest([OLD]),
+                sources=[ExtDecisionSource(utterance_id="utt_1", position=0)],
+            )
+        )
+        session.flush()
+        session.add(ExtDecisionReview(decision_id=dec_id, meeting_id=MEETING, status="pending"))
+        if page:
+            session.add(
+                ExtDecisionRef(
+                    decision_id=dec_id, system="notion", meeting_id=MEETING, external_id=page
+                )
+            )
+    session.flush()
+
+    done = correct(session)
+
+    assert done.changed_decisions == ("dec_back",)

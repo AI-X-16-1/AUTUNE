@@ -709,6 +709,26 @@ def test_reviewing_a_decision(session: Session, acting: dict[str, list[str]]) ->
     assert statuses == {"dec_1": "confirmed", "dec_2": "rejected"}
 
 
+def test_rejecting_a_decision_that_has_a_page_queues_the_sync_that_retires_it(
+    session: Session, acting: dict[str, list[str]]
+) -> None:
+    """#669: a verdict other than *confirmed* reaches Notion too while the
+    decision still has the page its confirmation made."""
+    decision(session, "dec_paged", status="confirmed")
+    decision(session, "dec_plain", status="confirmed")
+    session.add(
+        ExtDecisionRef(
+            decision_id="dec_paged", system="notion", meeting_id=MEETING, external_id="page_1"
+        )
+    )
+    session.flush()
+
+    assert tools.review_decision(TEAM, "dec_paged", "rejected")["ok"] is True
+    assert tools.review_decision(TEAM, "dec_plain", "rejected")["ok"] is True
+
+    assert acting["decisions"] == ["dec_paged"]
+
+
 def test_workload_rows_carry_their_counts_as_fields(session: Session) -> None:
     """The Workload subagent reads numbers, not the Korean body."""
     member(session, "user_free", "최여유")

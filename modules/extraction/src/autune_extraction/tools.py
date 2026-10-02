@@ -815,7 +815,8 @@ def add_followup_item(team_id: str, meeting_id: str) -> dict[str, Any]:
 
 def review_decision(team_id: str, decision_id: str, verdict: str) -> dict[str, Any]:
     """Confirm or reject a decision the model proposed. A confirmed one goes to
-    Notion, as when a person confirms it on the review screen.
+    Notion, as when a person confirms it on the review screen; rejecting one
+    that was confirmed takes its page out of Notion (#669).
 
     L2 -- runs only after a person approves. ``verdict`` is ``confirmed`` or
     ``rejected``.
@@ -826,8 +827,9 @@ def review_decision(team_id: str, decision_id: str, verdict: str) -> dict[str, A
         decision = session.get(ExtDecision, decision_id)
         if decision is None or _team_of(session, decision.meeting_id) != team_id:
             return _not_found("decision", decision_id)
+        had_page = service.decision_has_page(session, decision_id)
         service.review_decision(session, decision, DecisionReviewUpdate(status=verdict))  # type: ignore[arg-type]
-    if verdict == "confirmed":
+    if verdict == "confirmed" or had_page:
         tasks.sync_decision_after_confirmation(decision_id)
     return _acted(
         "결정을 확정했습니다." if verdict == "confirmed" else "결정을 기각했습니다.", decision_id

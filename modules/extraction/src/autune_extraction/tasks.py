@@ -64,6 +64,7 @@ from .models import (
     ExtCalendarPoll,
     ExtConfirmation,
     ExtDecision,
+    ExtDecisionRef,
     ExtExternalRef,
 )
 from .pipeline.base import give_roster
@@ -1145,6 +1146,8 @@ def drain_calendar_cleanup() -> int:
 @shared_task(name="autune.extraction.sync_decision", acks_late=True)
 def sync_decision(decision_id: str) -> None:
     """Step 7 for one decision a person just confirmed: its Notion page, once.
+    And for one that stopped being confirmed, or was deleted, while it had a
+    page: that page is retired (``service.sync_decision_to_notion``, #669).
 
     ``sync_action_item``'s rules, for the team's decision database
     (``decision_db_id`` in its Notion config). A team that connected Notion for
@@ -1153,8 +1156,15 @@ def sync_decision(decision_id: str) -> None:
     """
     with session_scope() as session:
         decision = session.get(ExtDecision, decision_id)
-        meeting = session.get(Meeting, decision.meeting_id) if decision is not None else None
-        if decision is None or meeting is None:
+        # A deleted decision is found through its ref: the row outlives it, and
+        # names the meeting whose team's Notion holds the page to retire.
+        if decision is not None:
+            meeting_id: str | None = decision.meeting_id
+        else:
+            ref = session.get(ExtDecisionRef, (decision_id, "notion"))
+            meeting_id = ref.meeting_id if ref is not None else None
+        meeting = session.get(Meeting, meeting_id) if meeting_id else None
+        if meeting is None:
             log.info("extraction_notion_decision_gone", decision_id=decision_id)
             return
         config = load_integration(session, meeting.team_id, "notion")

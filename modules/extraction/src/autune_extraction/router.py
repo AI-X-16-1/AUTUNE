@@ -228,15 +228,17 @@ def review_decision(
     """Confirm, reject or reword a proposed decision, or put it back to pending.
 
     Confirming it sends its Notion page (#30); rewording an already-confirmed
-    decision updates the same page instead of leaving it stale."""
+    decision updates the same page instead of leaving it stale; taking the
+    confirmation back takes the page out of Notion (#669)."""
     decision = service.readable_decision(session, decision_id, reader)
     # Built before the commit, for the reason ``create_action_item`` gives.
     response = service.review_decision(session, decision, payload)
     session.commit()
     # Confirming or any later reword both queue the same task --
     # ``sync_decision_to_notion`` decides create vs. update from whether the
-    # claim already exists.
-    if response.status == "confirmed":
+    # claim already exists. A decision put back to pending or rejected queues
+    # it too while it has a page: the same task retires that page (#669).
+    if response.status == "confirmed" or service.decision_has_page(session, decision_id):
         background.add_task(tasks.sync_decision_after_confirmation, decision_id)
     return response
 
@@ -282,15 +284,21 @@ def create_decision(
 
 
 @router.delete("/decisions/{decision_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_decision(decision_id: str, session: SessionDep, reader: CurrentUser) -> None:
+def delete_decision(
+    decision_id: str, session: SessionDep, reader: CurrentUser, background: BackgroundTasks
+) -> None:
     """Delete a decision a person added; reject one the model proposed.
 
     The model's would come back on the next run, so rejecting is what keeps it
-    gone. See ``service.delete_decision``.
+    gone. See ``service.delete_decision``. Either way a page its confirmation
+    made is taken out of Notion after the response (#669).
     """
     decision = service.readable_decision(session, decision_id, reader)
+    had_page = service.decision_has_page(session, decision_id)
     service.delete_decision(session, decision)
     session.commit()
+    if had_page:
+        background.add_task(tasks.sync_decision_after_confirmation, decision_id)
 
 
 def _member_team(
