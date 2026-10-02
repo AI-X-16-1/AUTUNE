@@ -1555,6 +1555,10 @@ def edit_meeting_report(
         raise ConflictError("meeting report changed since it was opened", meeting_id=meeting_id)
     if not body.strip():
         raise ValidationError("report body is empty", field="body")
+    if body == split_report_document(row.body_markdown)[1]:
+        # Saved as it was: nothing to approve again, and a new proposal would
+        # notify the approvers a second time for the same text (#642 review).
+        raise ValidationError("report body is unchanged", field="body")
     editor = session.scalar(sa.select(User.display_name).where(User.id == user_id))
     header = row.body_markdown.partition("\n\n")[0]
     document = f"{header}\n\n{body}\n\n{_EDITED_FOOTER}"

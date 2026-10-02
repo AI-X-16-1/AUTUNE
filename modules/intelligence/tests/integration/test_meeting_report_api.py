@@ -361,6 +361,28 @@ def test_a_refused_edit_is_not_announced(
     assert response.status_code == 422 and announced == []
 
 
+def test_saving_the_text_unchanged_is_refused_and_not_announced(
+    db_session: Session,
+    team: str,
+    client_for: Callable[[User], TestClient],
+    announced: list[str],
+) -> None:
+    """No new proposal, so the approvers are not notified again for the same text."""
+    meeting = _meeting(db_session, team, "결제 회의", 2)
+    _report(db_session, meeting, draft_id="rdr_model")
+    client = client_for(_user(db_session, team))
+    [shown] = client.get(f"/api/intelligence/meeting-reports/{team}").json()
+
+    response = client.put(
+        f"/api/intelligence/meeting-reports/{meeting}", json={"body": shown["body"]}
+    )
+
+    assert response.status_code == 422 and "unchanged" in response.text
+    assert announced == []
+    row = db_session.get(IntelMeetingReport, meeting)
+    assert row is not None and (row.draft_id, row.edited_by) == ("rdr_model", None)
+
+
 def test_someone_outside_the_team_cannot_edit(
     db_session: Session, team: str, client_for: Callable[[User], TestClient]
 ) -> None:
@@ -482,12 +504,13 @@ def test_a_last_paragraph_that_reads_like_the_footer_stays_in_the_body(
     body = "✅ 고친 본문\n\n자동 생성 기능은 다음 주에 다시 봅니다"
 
     first = client.put(f"/api/intelligence/meeting-reports/{meeting}", json={"body": body}).json()
+    # The next edit starts from what the card read back, the last paragraph included.
     again = client.put(
         f"/api/intelligence/meeting-reports/{meeting}",
-        json={"body": first["body"], "base_updated_at": first["updated_at"]},
+        json={"body": "✅ 다시 " + first["body"], "base_updated_at": first["updated_at"]},
     ).json()
 
-    assert first["body"] == body and again["body"] == body
+    assert first["body"] == body and again["body"] == "✅ 다시 " + body
     assert again["footer"].endswith("박재경님이 고쳤습니다.")
 
 
