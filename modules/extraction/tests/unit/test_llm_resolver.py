@@ -192,7 +192,7 @@ def configured(monkeypatch: pytest.MonkeyPatch):
 
 
 def test_llm_without_a_key_is_refused_by_name(configured) -> None:
-    configured(resolver_impl="llm")
+    configured(resolver_impl="llm", llm_api_key="", AUTUNE_LLM_API_KEY="")
     with pytest.raises(ValueError, match="LLM_API_KEY"):
         registry.get_resolver()
 
