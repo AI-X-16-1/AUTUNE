@@ -55,7 +55,7 @@ from autune_extraction.models import (
 from autune_extraction.router import router
 from autune_extraction.schemas import ExternalRefRead
 
-from .conftest import sign_in
+from .conftest import READER, sign_in
 
 MEETING = "mtg_1"
 OTHER_MEETING = "mtg_2"
@@ -606,6 +606,37 @@ def test_a_meeting_with_nothing_extracted_is_empty_not_missing(client: TestClien
     assert result.decisions == []
     assert result.classifications == []
     assert result.ambiguous_agreements == []
+
+
+def test_the_assignee_picker_is_offered_the_meetings_team_by_name(
+    client: TestClient, session: Session
+) -> None:
+    """Id and name, nothing else -- and only the team's members: an account
+    that is not on the team would be an assignment that does not hold (ADR
+    0007 clears it at read time)."""
+    session.add(User(id=READER, email="reader@example.com", display_name="읽는 사람"))
+    session.add(User(id="user_mate", email="mate@example.com", display_name="가나다"))
+    session.add(User(id="user_outsider", email="out@example.com", display_name="남"))
+    session.add(TeamMember(team_id="team_1", user_id="user_mate"))
+    session.add(TeamMember(team_id="team_other", user_id="user_outsider"))
+    session.flush()
+
+    body = client.get(f"{PREFIX}/meetings/{MEETING}/assignable").json()
+
+    assert body == [
+        {"user_id": "user_mate", "name": "가나다"},
+        {"user_id": READER, "name": "읽는 사람"},
+    ]
+
+
+def test_the_assignee_picker_of_somebody_elses_meeting_is_a_404(
+    client: TestClient, session: Session
+) -> None:
+    session.add(Meeting(id="mtg_theirs", team_id="team_other", title="남의 회의"))
+    session.flush()
+
+    assert client.get(f"{PREFIX}/meetings/mtg_theirs/assignable").status_code == 404
+    assert client.get(f"{PREFIX}/meetings/mtg_nope/assignable").status_code == 404
 
 
 def test_a_meeting_that_does_not_exist_is_a_404(client: TestClient) -> None:
