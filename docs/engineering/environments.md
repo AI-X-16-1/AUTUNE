@@ -43,6 +43,33 @@ them, but not the other four modules — so the full test suite cannot run in th
 environment. Run `uv sync --all-packages` before `uv run pytest`, or scope the
 run to your own tests with `uv run pytest modules/gap`.
 
+### The whole pipeline on a laptop, without model servers
+
+The defaults of C, D and E expect what a laptop does not have: C's entity
+extractor needs the `local-models` extra, D's three models are HTTP services
+(`autune-embed.internal` and friends), and E's gap classifier needs the
+`local-models` extra too. With the defaults, a meeting processed locally stops
+at C and D with a `RuntimeError`; with those two on fakes, E's aggregate stops
+at its classifier the same way. Either way `autune.intelligence.completed` is
+never published, and nothing after it — the agents included — is woken.
+
+To follow one meeting end to end — to see what the agents do after it, for
+instance — put those on their test fakes in the shell that runs the worker:
+
+```bash
+export AUTUNE_GAP_NER_IMPL=fake
+export AUTUNE_CONTEXT_EMBEDDER_IMPL=fake
+export AUTUNE_CONTEXT_RERANKER_IMPL=fake
+export AUTUNE_CONTEXT_NLI_IMPL=fake
+export AUTUNE_INTELLIGENCE_GAP_CLASSIFIER_IMPL=fake
+```
+
+The fakes are deterministic and read nothing: what C, D and E report for that
+meeting is placeholder, and only the plumbing is real. To see a module's real
+output instead, install its extra or start its service and leave its line out.
+Found in the 2026-10-02 agent check, where every subagent ran only after all
+five were set.
+
 ## Services
 
 | Service | Port | Purpose | Who needs it |
