@@ -41,6 +41,7 @@ from .pending import queue_l2
 from .registry import BudgetExceededError, CallBudget, RunScope, Tool
 from .router import Router
 from .subagents import Subagent, collect_subagents
+from .toolcall import ToolModel
 
 BUDGET_ANSWER = "한 번에 확인할 수 있는 범위를 넘었습니다. 질문을 좁혀서 다시 물어봐 주세요."
 
@@ -60,6 +61,7 @@ def run_and_record(
     actions: Mapping[str, Action] | None = None,
     route_to: str | None = None,
     notify: bool = True,
+    asker: ToolModel | None = None,
 ) -> tuple[AgentRun, MainState]:
     """Run, carry out what the run proposed at L1, and record both.
 
@@ -95,6 +97,7 @@ def run_and_record(
             tools=tools,
             budget=budget,
             route_to=route_to,
+            asker=asker,
         )
         row.outcome = "answered" if state.get("route") else "unrouted"
         outcome = state.get("outcome")
