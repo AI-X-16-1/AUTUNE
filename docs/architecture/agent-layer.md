@@ -484,9 +484,10 @@ not sent to anyone — it stays on the run timeline.
 **Who may set it, as built (#592).** 설정 › 승인자 (`/settings/approvers`)
 writes these rows through `GET`/`PUT /api/agent/approvers`, and the rule is in
 `main/approvers.py`. With no administrator in `packages/core`, the layer
-answers the question itself: while no current member holds an approver row,
-any member may name one, so a new team has a way in; after that only an
-approver with scope `any` may change the list; and as long as any approver row
+answers the question itself. While no current member holds `any`, any member
+may change the list, so a new team has a way in, and so does a team whose only
+`any` approver left while others kept narrower scopes. Once a current member
+holds `any`, only an `any` approver may change it. As long as any approver row
 remains, one of them is `any`, so the list can always be changed again — which
 makes the first assignment hold `any`. Clearing every row is allowed and
 returns the team to its starting state. A former member's rows count for
@@ -494,11 +495,12 @@ nothing, the same as in `approver_scopes`.
 
 Two limits follow from having no administrator. In a new team the first member
 to open the screen takes `any`; the team settles who it should be among
-themselves. And the check reads before it writes without a lock, so two `any`
-approvers removing each other's `any` at the same moment could both pass; a
-row lock in `set_scopes` closes that (follow-up to #621). The table holds a role
-assignment, not meeting content, so it is deleted with its user rather than with
-a meeting.
+themselves. And a change reads the rows before writing them, so two `any`
+approvers removing each other's `any` at once could both pass; `set_scopes`
+locks the team's rows first to close that (#647).
+
+The table holds a role assignment, not meeting content, so it is deleted with
+its user rather than with a meeting.
 
 **Ids are prefixed `TEXT`, in the SQL as well as in the prose.** Primary keys in
 this repository are prefixed strings from `autune_core.ids.new_id` —
