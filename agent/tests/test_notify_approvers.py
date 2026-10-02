@@ -10,13 +10,16 @@ from sqlalchemy.orm import Session
 
 from autune_agent.main import Subagent, SubagentState, Toolbox
 from autune_agent.main import notify as notify_module
-from autune_agent.main import store as store_module
-from autune_agent.main.notify import APPROVALS_PATH, notify_approvers
+from autune_agent.main.notify import APPROVALS_PATH, notify_approvers, tell_approvers
 from autune_agent.main.store import run_and_record
+from autune_agent.main.triggers import on_event
 from autune_agent.models import AgentApprover, AgentPendingAction, AgentRun
 from autune_agent.results import ProposedAction, SubagentResult, ToolResult
 from autune_agent.testing import FakeRouter
+from autune_contracts import INTELLIGENCE_COMPLETED
 from autune_core import TeamMember, User, get_settings
+from autune_core.errors import PrivacyViolationError
+from autune_integrations.errors import SlackRecipientNotLinkedError
 from autune_integrations.fakes import FakeSlack
 
 
@@ -62,6 +65,10 @@ def _run(
     return row
 
 
+def _about(run: AgentRun) -> dict[str, Any]:
+    return {"team_id": run.team_id, "run_ids": [run.id], "asked_by": run.requested_by}
+
+
 def test_the_approvers_of_the_scope_and_of_any_get_one_dm_each(
     session: Session, team: dict[str, str]
 ) -> None:
@@ -72,7 +79,7 @@ def test_the_approvers_of_the_scope_and_of_any_get_one_dm_each(
     run = _run(session, team, "research", "research", "research")
     slack = FakeSlack()
 
-    sent = notify_approvers(session, run, slack=slack)
+    sent = notify_approvers(session, **_about(run), slack=slack)
 
     assert sent == sorted([lead, manager])
     assert [m.channel for m in slack.sent] == sorted([lead, manager])
@@ -85,7 +92,7 @@ def test_the_message_holds_a_count_and_a_link_only(session: Session, team: dict[
     run = _run(session, team, "research", "research")
     slack = FakeSlack()
 
-    notify_approvers(session, run, slack=slack)
+    notify_approvers(session, **_about(run), slack=slack)
 
     (message,) = slack.sent
     assert message.text == (
@@ -104,7 +111,7 @@ def test_the_count_is_everything_waiting_for_that_approver(
     run = _run(session, team, "research", "research")
     slack = FakeSlack()
 
-    notify_approvers(session, run, slack=slack)
+    notify_approvers(session, **_about(run), slack=slack)
 
     assert [(m.channel, "2건" in m.text) for m in slack.sent] == [(lead, True)]
 
@@ -116,7 +123,7 @@ def test_the_person_who_asked_is_not_told_about_their_own_run(
     run = _run(session, team, "research", "research", by=asker)
     slack = FakeSlack()
 
-    assert notify_approvers(session, run, slack=slack) == []
+    assert notify_approvers(session, **_about(run), slack=slack) == []
     assert slack.sent == []
 
 
@@ -125,7 +132,7 @@ def test_an_approver_who_left_the_team_is_not_told(session: Session, team: dict[
     run = _run(session, team, "research", "research")
     slack = FakeSlack()
 
-    assert notify_approvers(session, run, slack=slack) == []
+    assert notify_approvers(session, **_about(run), slack=slack) == []
 
 
 def test_a_run_with_nothing_pending_tells_nobody(session: Session, team: dict[str, str]) -> None:
@@ -133,7 +140,7 @@ def test_a_run_with_nothing_pending_tells_nobody(session: Session, team: dict[st
     run = _run(session, team, "research")
     slack = FakeSlack()
 
-    assert notify_approvers(session, run, slack=slack) == []
+    assert notify_approvers(session, **_about(run), slack=slack) == []
 
 
 def test_one_approvers_slack_failing_does_not_stop_the_others(
@@ -149,7 +156,7 @@ def test_one_approvers_slack_failing_does_not_stop_the_others(
                 raise RuntimeError("not linked")
             return super().send_dm(user_id, text, blocks)
 
-    assert notify_approvers(session, run, slack=Flaky()) == [fine]
+    assert notify_approvers(session, **_about(run), slack=Flaky()) == [fine]
 
 
 def test_a_team_without_slack_is_told_nothing(
@@ -164,7 +171,7 @@ def test_a_team_without_slack_is_told_nothing(
     _person(session, team, "lead@example.com", "any")
     run = _run(session, team, "research", "research")
 
-    assert notify_approvers(session, run) == []
+    assert notify_approvers(session, **_about(run)) == []
     assert looked_up == [(team["team"], "slack")]
 
 
@@ -213,7 +220,9 @@ def test_a_recorded_run_that_queued_tells_the_approvers(
 ) -> None:
     told: list[str] = []
     monkeypatch.setattr(
-        store_module, "notify_approvers", lambda session, row: told.append(row.id) or []
+        notify_module,
+        "notify_approvers",
+        lambda session, *, team_id, run_ids, asked_by: told.extend(run_ids) or [],
     )
 
     row = _record(session, team)
@@ -224,12 +233,101 @@ def test_a_recorded_run_that_queued_tells_the_approvers(
 def test_a_failing_notification_does_not_fail_the_run(
     session: Session, team: dict[str, str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    def boom(session: Session, row: AgentRun) -> list[str]:
+    def boom(session: Session, **_: Any) -> list[str]:
         raise RuntimeError("slack is down")
 
-    monkeypatch.setattr(store_module, "notify_approvers", boom)
+    monkeypatch.setattr(notify_module, "notify_approvers", boom)
 
     row = _record(session, team)
 
     assert row.outcome == "answered"
     assert session.query(AgentPendingAction).filter_by(run_id=row.id).count() == 1
+
+
+def test_an_unlinked_approver_is_skipped_and_a_privacy_violation_is_raised(
+    session: Session, team: dict[str, str]
+) -> None:
+    unlinked = _person(session, team, "a@example.com", "any")
+    _person(session, team, "b@example.com", "any")
+    run = _run(session, team, "research", "research")
+
+    class Strict(FakeSlack):
+        def send_dm(self, user_id: str, text: str, blocks: list[dict] | None = None) -> str:
+            if user_id == unlinked:
+                raise SlackRecipientNotLinkedError("not linked")
+            raise PrivacyViolationError("unmasked")
+
+    with pytest.raises(PrivacyViolationError):
+        notify_approvers(session, **_about(run), slack=Strict())
+
+
+def test_a_failing_notification_is_rolled_back_for_the_caller(
+    session: Session, team: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A trigger keeps using the session; an aborted transaction would stop its next run."""
+    rolled_back: list[bool] = []
+    monkeypatch.setattr(session, "rollback", lambda: rolled_back.append(True))
+
+    def boom(session: Session, **_: Any) -> list[str]:
+        raise RuntimeError("database went away")
+
+    monkeypatch.setattr(notify_module, "notify_approvers", boom)
+
+    tell_approvers(session, team_id=team["team"], run_ids=["run_1"])
+
+    assert rolled_back == [True]
+
+
+def _woken(name: str) -> Subagent:
+    proposal = ProposedAction(
+        kind="k",
+        title="t",
+        tool=f"agent.{name}_thing",
+        arguments={"document_id": "rdoc_1"},
+        level="L2",
+        rationale="r",
+    )
+
+    def build(toolbox: Toolbox) -> Any:
+        def act(state: SubagentState) -> SubagentState:
+            result = ToolResult(ok=True, summary="제안합니다.")
+            return {"outcome": SubagentResult(result=result, proposed=[proposal])}
+
+        graph = StateGraph(SubagentState)
+        graph.add_node("act", act)
+        graph.add_edge(START, "act")
+        graph.add_edge("act", END)
+        return graph.compile()
+
+    return Subagent(
+        name=name,
+        description="Use this in tests.",
+        tools=(),
+        build=build,
+        triggers=(INTELLIGENCE_COMPLETED,),
+    )
+
+
+def test_one_event_that_wakes_three_subagents_tells_the_team_once(
+    session: Session, team: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#638 review: Follow-up, Research and Report all wake on intelligence.completed."""
+    calls: list[tuple[str, list[str]]] = []
+    monkeypatch.setattr(
+        notify_module,
+        "notify_approvers",
+        lambda session, *, team_id, run_ids, asked_by: calls.append((team_id, list(run_ids))) or [],
+    )
+    subagents = {name: _woken(name) for name in ("followup", "research", "report")}
+
+    rows = on_event(
+        INTELLIGENCE_COMPLETED,
+        team["meeting"],
+        session=session,
+        subagents=subagents,
+        tools={},
+        actions={},
+    )
+
+    assert len(rows) == 3
+    assert calls == [(team["team"], [r.id for r in rows])]

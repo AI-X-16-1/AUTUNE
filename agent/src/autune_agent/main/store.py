@@ -25,7 +25,6 @@ until a person approves it, has to answer this again for ``messages``.
 
 from __future__ import annotations
 
-import logging
 import time
 from collections.abc import Mapping
 from typing import Any
@@ -33,18 +32,15 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from autune_agent.models import AgentRun
-from autune_core.errors import PrivacyViolationError
 
 from .actions import Action, ActionPrivacyViolationError, collect_actions, execute_l1
 from .graph import MainState, run
-from .notify import notify_approvers
+from .notify import tell_approvers
 from .own_tools import collect_own_actions
 from .pending import queue_l2
 from .registry import BudgetExceededError, CallBudget, RunScope, Tool
 from .router import Router
 from .subagents import Subagent, collect_subagents
-
-log = logging.getLogger(__name__)
 
 BUDGET_ANSWER = "한 번에 확인할 수 있는 범위를 넘었습니다. 질문을 좁혀서 다시 물어봐 주세요."
 
@@ -63,12 +59,15 @@ def run_and_record(
     budget: CallBudget | None = None,
     actions: Mapping[str, Action] | None = None,
     route_to: str | None = None,
+    notify: bool = True,
 ) -> tuple[AgentRun, MainState]:
     """Run, carry out what the run proposed at L1, and record both.
 
     ``route_to`` skips the router, for a trigger that already knows which
     subagent it woke. L1 runs after the graph and before the row is written,
     so the row says what was done; L2 stays proposed (``main/actions.py``).
+    ``notify=False`` leaves telling the approvers to a caller that records
+    several runs and tells once (``main/notify.py``).
     """
     budget = budget or CallBudget()
     # Collected here rather than inside the graph, so the queue below reads the
@@ -144,19 +143,9 @@ def run_and_record(
                 ),
             ]
     session.commit()
-    if row.outcome == "answered":
-        _tell_approvers(session, row)
+    if notify and row.outcome == "answered":
+        tell_approvers(session, team_id=team_id, run_ids=[row.id], asked_by=requested_by)
     return row, state
-
-
-def _tell_approvers(session: Session, row: AgentRun) -> None:
-    """After the commit, so a Slack outage never loses the queued proposals (#632)."""
-    try:
-        notify_approvers(session, row)
-    except PrivacyViolationError:
-        raise
-    except Exception as exc:  # noqa: BLE001 - telling people is a courtesy; the run is recorded
-        log.warning("agent_notify_skipped run_id=%s error=%s", row.id, type(exc).__name__)
 
 
 def _finish(
