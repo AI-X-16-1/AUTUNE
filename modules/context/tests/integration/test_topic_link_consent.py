@@ -21,6 +21,7 @@ from autune_context import service
 from autune_context.constants import EMBEDDING_DIM
 from autune_context.models import CtxEmbedding, CtxMeetingStatus, CtxTopicLink
 from autune_core import Meeting, Participant, Team, Utterance, session_scope
+from autune_core.errors import NotFoundError
 
 _LABEL = "검색 정렬"
 _OTHER = "배포 일정"
@@ -91,28 +92,29 @@ def _segment(
         return speaker.id
 
 
-def _link(meeting_id: str, label: str, *, status: str = "asserted") -> None:
+def _link(meeting_id: str, label: str, *, status: str = "asserted") -> int:
     """A link from ``meeting_id`` to an earlier meeting of its team, which is what
-    ``ContextLinks`` carries."""
+    ``ContextLinks`` carries. Returns the link's id."""
     with session_scope() as s:
         team_id = s.get(Meeting, meeting_id).team_id
         past = Meeting(team_id=team_id, title="지난 회의", status="complete", started_at=_now())
         s.add(past)
         s.flush()
-        s.add(
-            CtxTopicLink(
-                meeting_id=meeting_id,
-                topic_label=label,
-                linked_meeting_id=past.id,
-                linked_meeting_date=date.today(),
-                similarity=0.8,
-                rerank_score=0.8,
-                confidence=0.8,
-                status=status,
-                retriever_version="test",
-                reranker_version="test",
-            )
+        link = CtxTopicLink(
+            meeting_id=meeting_id,
+            topic_label=label,
+            linked_meeting_id=past.id,
+            linked_meeting_date=date.today(),
+            similarity=0.8,
+            rerank_score=0.8,
+            confidence=0.8,
+            status=status,
+            retriever_version="test",
+            reranker_version="test",
         )
+        s.add(link)
+        s.flush()
+        return link.id
 
 
 def _withdraw(participant_id: str) -> None:
@@ -237,3 +239,33 @@ def test_another_meetings_consent_does_not_open_a_label(team_id: str, meeting: s
     _segment(other_id, _LABEL)
 
     assert _read_api_labels(meeting) == set()
+
+
+def test_a_hidden_pending_link_cannot_be_confirmed_by_id(meeting: str) -> None:
+    """The confirm route answers with the link, label included, so a link whose
+    label is hidden is not found rather than decided (and not left changed)."""
+    _segment(meeting, _LABEL, consented=False)
+    link_id = _link(meeting, _LABEL, status="pending")
+
+    with session_scope() as s, pytest.raises(NotFoundError):
+        service.confirm_topic_link(s, link_id, "rejected")
+
+    with session_scope() as s:
+        assert s.get(CtxTopicLink, link_id).status == "pending"
+
+
+def test_a_withdrawal_makes_a_pending_link_unconfirmable(meeting: str) -> None:
+    speaker = _segment(meeting, _LABEL)
+    link_id = _link(meeting, _LABEL, status="pending")
+    _withdraw(speaker)
+
+    with session_scope() as s, pytest.raises(NotFoundError):
+        service.confirm_topic_link(s, link_id, "confirmed")
+
+
+def test_a_readable_pending_link_is_still_confirmed(meeting: str) -> None:
+    _segment(meeting, _LABEL)
+    link_id = _link(meeting, _LABEL, status="pending")
+
+    with session_scope() as s:
+        assert service.confirm_topic_link(s, link_id, "rejected").status == "rejected"

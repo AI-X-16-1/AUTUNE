@@ -406,6 +406,8 @@ at each place a label leaves D —
 
 - `GET /links/{meeting_id}` (S15) and the agent tool `links_for_meeting`, both
   through `get_topic_links`; `asserted` and `pending` alike;
+- `POST /links/{link_id}/confirm`, whose response carries the link: a hidden
+  link is answered as not found, not decided (`confirm_topic_link`);
 - the `ContextLinks` published to E (`_build_context_links`);
 - the Slack topic-link notice (`collect_topic_link_notices`).
 
@@ -780,7 +782,7 @@ one mutation.
 | Method | Path | Purpose |
 | --- | --- | --- |
 | GET | `/links/{meeting_id}` | Topic links for a meeting, `asserted` and `pending` separated; a link whose label is cut from speech not consented to is left out |
-| POST | `/links/{link_id}/confirm` | User confirms or rejects a `pending` link (`status` → `confirmed`/`rejected`) |
+| POST | `/links/{link_id}/confirm` | User confirms or rejects a `pending` link (`status` → `confirmed`/`rejected`); a link whose label is cut from speech not consented to is answered as not found, since the response carries the label |
 | GET | `/decisions/{thread_id}` | Full lineage timeline, oldest version first |
 | GET | `/decisions` | Filter by team, topic, change type |
 | POST | `/materials` | Upload material — Phase 2 |

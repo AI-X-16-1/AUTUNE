@@ -1817,10 +1817,16 @@ def confirm_topic_link(session: Session, link_id: int, new_status: str) -> CtxTo
     settled, whether by an earlier confirm or because it started ``asserted``,
     does not get a second one. A link whose meeting has since expired is
     treated as not found, the same "gone" rule ``get_topic_links`` applies —
-    there is nothing left to confirm a link for.
+    there is nothing left to confirm a link for. So is a link whose label is not
+    readable (``_readable_topic_links``): the route answers with the link, label
+    included, so it must not give a hidden one out.
     """
     link = session.get(CtxTopicLink, link_id)
-    if link is None or not _meeting_is_visible(session, link.meeting_id):
+    if (
+        link is None
+        or not _meeting_is_visible(session, link.meeting_id)
+        or not _readable_topic_links(session, link.meeting_id, [link])
+    ):
         raise NotFoundError("topic link", str(link_id))
     if link.status != "pending":
         raise ConflictError(f"topic link {link_id} is not pending", status=link.status)
