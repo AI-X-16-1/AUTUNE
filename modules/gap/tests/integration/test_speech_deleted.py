@@ -7,6 +7,8 @@ its own sessions, so these commit real rows and clean up by deleting the team.
 
 from __future__ import annotations
 
+import subprocess
+import sys
 from collections.abc import Iterator
 from dataclasses import dataclass
 
@@ -14,7 +16,6 @@ import pytest
 from sqlalchemy import delete, select
 
 from autune_core import Meeting, Participant, Team, Utterance, session_scope
-from autune_core.deletion import registered_speech_modules
 from autune_gap import service
 from autune_gap.models import GapGap, GapRelatedTopic, GapTopic, GapTopicUtterance
 from autune_gap.template import get_template
@@ -233,9 +234,16 @@ def test_a_template_no_longer_shipped_leaves_no_question(team_id: str) -> None:
 
 
 def test_the_hook_is_registered_where_a_router_is_imported() -> None:
-    import autune_gap.router  # noqa: F401  -- the API process imports routers only
-
-    assert "gap" in registered_speech_modules()
+    """In a fresh interpreter, as the API process starts: it imports routers
+    and never ``tasks``. This file has already imported ``service``, so an
+    in-process check would pass without the router."""
+    probe = (
+        "import autune_gap.router\n"
+        "from autune_core.deletion import registered_speech_modules\n"
+        "assert 'gap' in registered_speech_modules()\n"
+    )
+    result = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
 
 
 def test_the_hook_queues_a_republish_of_each_meeting_it_changed(
