@@ -21,11 +21,11 @@ generation are Phase 2.
 
 ## Agent tools
 
-`tools.py` exposes three reads to the agent layer (`links_for_meeting`,
-`decision_thread`, `list_decisions`). They never return
+`tools.py` exposes five reads to the agent layer (`links_for_meeting`,
+`decision_thread`, `list_decisions`, `brief_recap`, `brief_agenda`). They never return
 `key_stakeholders_absent`, and a quoted `previous_statement` only while its
 predecessor meeting is visible; `tests/integration/test_tools.py` pins both.
-A new tool must go through a `service` read, never a query of its own.
+A new tool must go through a `service` (or, for the brief, a `briefs`) read, never a query of its own.
 
 ## Consumes
 

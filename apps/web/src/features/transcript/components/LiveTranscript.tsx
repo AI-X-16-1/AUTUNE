@@ -1,6 +1,6 @@
 "use client";
 
-import { RecordingFrame } from "@/shared/ui";
+import { RecordingFrame, StatusDot } from "@/shared/ui";
 
 import type { LiveRow, RecordingState, UtteranceKind } from "../types";
 import { LiveRail } from "./LiveRail";
@@ -30,7 +30,22 @@ import { TranscriptRow } from "./TranscriptRow";
  * ever wrote an assignment. `StoredTranscript` is where a name gets attached,
  * once the meeting is processed and the participants — and, later, their
  * candidates — exist to attach one to.
+ *
+ * **The status bar under the transcript says only what this page knows.**
+ * S13 draws model names there too; they are the server's configuration, which
+ * the browser cannot see, so printing them would be a claim the page cannot
+ * check. What it can: whether the microphone track is live and whether the
+ * browser applied noise suppression to it (`MediaStreamTrack.getSettings`),
+ * and that PII masking is on, which is not a setting -- the live path masks
+ * every line before it is sent (`autune_audio.live`).
  */
+export type MicrophoneStatus = {
+  /** The audio track exists and its `readyState` is `live`. */
+  live: boolean;
+  /** The browser reports `noiseSuppression: true` for the track. */
+  noiseSuppression: boolean;
+};
+
 export function LiveTranscript({
   state,
   rows,
@@ -41,6 +56,7 @@ export function LiveTranscript({
   onResume,
   onStop,
   classified = false,
+  microphone,
 }: {
   state: RecordingState;
   rows: LiveRow[];
@@ -57,6 +73,8 @@ export function LiveTranscript({
    * False keeps the rail's tally off the screen instead of printing zeroes for
    * every kind. */
   classified?: boolean;
+  /** Undefined when the caller has no microphone to report on. */
+  microphone?: MicrophoneStatus;
 }) {
   const counts = classified ? countKinds(rows) : undefined;
 
@@ -70,29 +88,29 @@ export function LiveTranscript({
         className="grid min-h-0 flex-1"
         style={{ gridTemplateColumns: "minmax(0, 1fr) 372px" }}
       >
-        <main className="min-w-0" style={{ padding: "var(--space-12) var(--space-24)" }}>
-          {rows.length === 0 ? (
-            <p
-              style={{
-                color: "var(--color-ink-muted)",
-                paddingBlock: "var(--space-page)",
-              }}
-            >
-              {state === "recording"
-                ? "듣고 있습니다. 말씀을 시작하시면 이곳에 전사됩니다."
-                : "전사된 내용이 없습니다."}
-            </p>
-          ) : (
-            rows.map((row) => (
-              <TranscriptRow key={row.utterance.id} row={row} />
-            ))
-          )}
-        </main>
+        <div className="flex min-w-0 flex-col">
+          <main className="min-w-0 flex-1" style={{ padding: "var(--space-12) var(--space-24)" }}>
+            {rows.length === 0 ? (
+              <p
+                style={{
+                  color: "var(--color-ink-muted)",
+                  paddingBlock: "var(--space-page)",
+                }}
+              >
+                {state === "recording"
+                  ? "듣고 있습니다. 말씀을 시작하시면 이곳에 전사됩니다."
+                  : "전사된 내용이 없습니다."}
+              </p>
+            ) : (
+              rows.map((row) => (
+                <TranscriptRow key={row.utterance.id} row={row} />
+              ))
+            )}
+          </main>
+          <StatusBar microphone={microphone} />
+        </div>
 
-        <div
-          className="border-l border-[var(--color-hairline)] bg-[var(--color-surface-paper)]"
-          style={{ padding: "22px 20px" }}
-        >
+        <div className="border-l border-[var(--color-hairline)] bg-[var(--color-surface-paper)]">
           <LiveRail
             state={state}
             elapsedSeconds={elapsedSeconds}
@@ -106,6 +124,36 @@ export function LiveTranscript({
         </div>
       </div>
     </>
+  );
+}
+
+/** S13's footer: the input and the masking, as far as this page can tell. */
+function StatusBar({ microphone }: { microphone?: MicrophoneStatus }) {
+  return (
+    <footer
+      className="flex flex-none items-center"
+      style={{
+        position: "sticky",
+        bottom: 0,
+        height: 52,
+        gap: "var(--space-row)",
+        padding: "0 var(--space-24)",
+        borderTop: "1px solid var(--color-hairline)",
+        background: "var(--color-surface-panel)",
+        fontSize: "var(--text-meta)",
+        fontWeight: "var(--text-meta-weight)",
+        color: "var(--color-ink-muted)",
+      }}
+    >
+      {microphone ? (
+        <span className="flex items-center" style={{ gap: 7 }}>
+          <StatusDot variant={microphone.live ? "confirmed" : "attention"} />
+          {microphone.live ? "마이크 정상" : "마이크 끊김"}
+        </span>
+      ) : null}
+      {microphone?.noiseSuppression ? <span>노이즈 제거 켬</span> : null}
+      <span>PII 마스킹 켬</span>
+    </footer>
   );
 }
 

@@ -39,6 +39,7 @@ def item(key: str = "success_criteria", weight: float = 0.9, **kwargs: object) -
         question="무엇으로 측정합니까?",
         question_about="{topic}의 성공 기준은 무엇으로 측정합니까?",
         relations=tuple(kwargs.get("relations", ())),  # type: ignore[arg-type]
+        ask_about_subject=bool(kwargs.get("ask_about_subject", False)),
     )
 
 
@@ -348,17 +349,109 @@ def test_a_partial_gap_names_the_topic_it_was_inferred_from(
     assert findings[0].question.startswith("성공 기준의")
 
 
-def test_a_missing_gap_keeps_the_generic_question(thresholds: detect.Thresholds) -> None:
-    """There is no topic to name, and naming the meeting's most central one
-    instead would be a guess — with extraction where it is, as likely to be
-    "다음 주" as the thing the meeting was about. Same rule as `score`: what was
-    not measured is not substituted for."""
+def test_a_missing_gap_with_no_subject_keeps_the_generic_question(
+    thresholds: detect.Thresholds,
+) -> None:
+    """No matched topic and no subject: the template's own question stands."""
     findings = detect.compare(
         one_item_template(item()), [topic(label="콜드스타트")], SILENT, thresholds
     )
 
     assert findings[0].coverage is detect.Coverage.MISSING
     assert findings[0].question == "무엇으로 측정합니까?"
+
+
+def test_a_missing_gap_names_the_meetings_subject(thresholds: detect.Thresholds) -> None:
+    """ "이 기능이 …은?" reads "알림 발송의 …은?": the question is about what the
+    meeting was about. The coverage is untouched -- still missing."""
+    subject = topic(label="알림 발송")
+
+    findings = detect.compare(
+        one_item_template(item(ask_about_subject=True)),
+        [subject],
+        SILENT,
+        thresholds,
+        subject=subject,
+    )
+
+    assert findings[0].coverage is detect.Coverage.MISSING
+    assert findings[0].question == "알림 발송의 성공 기준은 무엇으로 측정합니까?"
+    assert findings[0].topic_ids == ()
+
+
+def test_a_matched_topic_wins_over_the_subject(thresholds: detect.Thresholds) -> None:
+    findings = detect.compare(
+        one_item_template(item()),
+        [topic(label="성공 기준", centrality=0.1)],
+        SILENT,
+        thresholds,
+        subject=topic("topic_s", "알림 발송"),
+    )
+
+    assert findings[0].question.startswith("성공 기준의")
+
+
+def test_the_subject_is_the_most_central_topic_that_is_not_a_person() -> None:
+    """A colleague named often is central, and a question about performance is
+    not about them. #521 names a colleague without the honorific, so "민수"
+    against "김민수" is passed over too."""
+    topics = [
+        topic("topic_a", "민수", centrality=1.0),
+        topic("topic_b", "알림 발송", centrality=0.8),
+        topic("topic_c", "배포", centrality=0.5),
+    ]
+
+    assert detect.subject_of(topics, ["김민수", "화자0"]).id == "topic_b"
+    assert detect.subject_of(topics, []).id == "topic_a"
+    assert detect.subject_of([topics[0]], ["김민수"]) is None
+    assert detect.subject_of([], ["김민수"]) is None
+
+
+def test_a_one_syllable_name_passes_nothing_over() -> None:
+    """One syllable inside a label says nothing about whether it is a person."""
+    assert detect.subject_of([topic(label="수요 예측")], ["수"]).label == "수요 예측"
+
+
+# --- the score, explained -------------------------------------------------
+
+
+def test_the_breakdown_is_the_score(thresholds: detect.Thresholds) -> None:
+    """S20 shows the breakdown beside the stored score, so it must be the same
+    arithmetic, part by part."""
+    thin = [topic(label="성공 기준", centrality=0.2, silent_share=0.5)]
+    for matched, coverage in (
+        (thin, detect.Coverage.PARTIAL),
+        ([], detect.Coverage.MISSING),
+        ([], detect.Coverage.PARTIAL),
+    ):
+        breakdown = detect.score_breakdown(item(), matched, coverage, thresholds)
+        assert breakdown.score == detect.score(item(), matched, coverage, thresholds)
+
+
+def test_a_missing_item_scores_its_template_weight_alone(thresholds: detect.Thresholds) -> None:
+    breakdown = detect.score_breakdown(item(weight=0.9), [], detect.Coverage.MISSING, thresholds)
+
+    assert [part.key for part in breakdown.parts] == ["template"]
+    assert breakdown.damping is None
+    assert breakdown.score == 0.9
+
+
+def test_a_partial_topic_shows_every_part_and_the_damping(thresholds: detect.Thresholds) -> None:
+    matched = [topic(label="성공 기준", centrality=0.2, silent_share=0.5)]
+
+    breakdown = detect.score_breakdown(
+        item(weight=0.9), matched, detect.Coverage.PARTIAL, thresholds
+    )
+
+    assert [(p.key, p.value) for p in breakdown.parts] == [
+        ("template", 0.9),
+        ("coverage", pytest.approx(0.8)),
+        ("participation", 0.5),
+    ]
+    assert breakdown.damping == thresholds.partial_damping
+    total = sum(p.weight for p in breakdown.parts)
+    raw = sum(p.weight * p.value for p in breakdown.parts) / total
+    assert breakdown.score == pytest.approx(raw * thresholds.partial_damping)
 
 
 def test_the_topic_named_is_the_one_the_score_was_based_on(
@@ -555,4 +648,107 @@ def test_an_empty_graph_raises_nothing_whatever_was_heard(thresholds: detect.Thr
     assert (
         detect.compare(one_item_template(item()), [], SILENT, thresholds, heard=frozenset({"x"}))
         == []
+    )
+
+
+# --- which topic a question may name (#598 follow-up) ------------------------
+
+GENERAL_WORDS = frozenset(
+    ["성공", "기준", "지표", "목표", "측정", "담당", "기한", "다음", "단계", "필요", "대비", "수집"]
+)
+
+
+@pytest.mark.parametrize(
+    "label",
+    ["성공", "필요", "다음 주", "다음 주에", "3단계로", "담당자", "목표"],
+)
+def test_a_label_of_checklist_words_names_nothing(label: str) -> None:
+    """What is left once the checklist's words, a digit and a particle are out."""
+    assert not detect.nameable(label, GENERAL_WORDS)
+
+
+@pytest.mark.parametrize(
+    "label",
+    ["응답 시간 목표", "로그 수집", "검색 개인화 기능", "캐시", "실시간 개인화"],
+)
+def test_a_label_with_something_left_names_it(label: str) -> None:
+    """ "로그 수집" matches a checklist word and still names a thing: P1a reuses
+    matched topics and only refuses the ones made of checklist words."""
+    assert detect.nameable(label, GENERAL_WORDS)
+
+
+def test_with_no_checklist_every_label_is_nameable() -> None:
+    assert detect.nameable("성공", frozenset())
+
+
+def test_a_matched_topic_of_checklist_words_gets_the_templates_question(
+    thresholds: detect.Thresholds,
+) -> None:
+    """ "필요에 앞서 …" said nothing. The question does not move to another topic:
+    it has to point at the one the score was read from, so it goes generic."""
+    findings = detect.compare(
+        one_item_template(item(keywords=("필요", "의존"))),
+        [topic("topic_a", "필요", centrality=0.1), topic("topic_b", "캐시", centrality=1.0)],
+        SILENT,
+        thresholds,
+        subject=topic("topic_b", "캐시"),
+    )
+
+    assert findings[0].coverage is detect.Coverage.PARTIAL
+    assert findings[0].question == "무엇으로 측정합니까?"
+
+
+def test_a_matched_topic_that_names_something_is_still_named(
+    thresholds: detect.Thresholds,
+) -> None:
+    findings = detect.compare(
+        one_item_template(item(keywords=("목표",))),
+        [topic(label="응답 시간 목표", centrality=0.1)],
+        SILENT,
+        thresholds,
+    )
+
+    assert findings[0].question.startswith("응답 시간 목표의")
+
+
+def test_the_subject_skips_a_checklist_word_for_the_next_topic() -> None:
+    topics = [topic("topic_a", "성공", 1.0), topic("topic_b", "검색 개인화 기능", 0.67)]
+
+    assert detect.subject_of(topics, [], GENERAL_WORDS).label == "검색 개인화 기능"
+    assert detect.subject_of([topics[0]], [], GENERAL_WORDS) is None
+
+
+def test_an_item_that_does_not_ask_about_the_subject_keeps_its_question(
+    thresholds: detect.Thresholds,
+) -> None:
+    """Who owns the work, what happens next: questions about the meeting."""
+    subject = topic(label="알림 발송")
+
+    findings = detect.compare(
+        one_item_template(item(ask_about_subject=False)),
+        [subject],
+        SILENT,
+        thresholds,
+        subject=subject,
+    )
+
+    assert findings[0].question == "무엇으로 측정합니까?"
+
+
+def test_the_question_rule_moves_no_verdict_and_no_score(thresholds: detect.Thresholds) -> None:
+    """Only the question reads ``nameable`` and ``ask_about_subject``."""
+    topics = [topic("topic_a", "필요", centrality=0.1)]
+    plain = item(keywords=("필요",))
+    asking = item(keywords=("필요",), ask_about_subject=True)
+
+    a = detect.compare(one_item_template(plain), topics, SILENT, thresholds)[0]
+    b = detect.compare(
+        one_item_template(asking), topics, SILENT, thresholds, subject=topic("topic_s", "캐시")
+    )[0]
+
+    assert (a.coverage, a.risk_score, a.severity, a.topic_ids) == (
+        b.coverage,
+        b.risk_score,
+        b.severity,
+        b.topic_ids,
     )

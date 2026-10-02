@@ -71,12 +71,17 @@ def queue_l2(
     run: AgentRun,
     proposed: Sequence[ProposedAction],
     actions: Mapping[str, Action],
+    team_wide: bool = False,
 ) -> list[dict[str, Any]]:
     """Queue the L2 proposals of ``run``; return a record for each refused one.
 
     A proposal is L2 when it says so or when its module declared the action L2.
     ``actions`` is the mapping ``execute_l1`` was given, so a proposal marked L1
     that ``execute_l1`` kept for approval is queued here rather than dropped.
+
+    The new rows supersede the same subagent's earlier pending rows for the
+    team: those about the same meeting, or, when ``team_wide`` (the subagent's
+    ``proposals_per == "team"``), all of them whatever meeting they came from.
     """
     refused: list[dict[str, Any]] = []
     subagent = run.route or ""
@@ -94,12 +99,13 @@ def queue_l2(
                 }
             )
             continue
-        if run.meeting_id is not None:
+        if team_wide or run.meeting_id is not None:
+            same_meeting = () if team_wide else (AgentPendingAction.meeting_id == run.meeting_id,)
             session.execute(
                 update(AgentPendingAction)
                 .where(
                     AgentPendingAction.team_id == run.team_id,
-                    AgentPendingAction.meeting_id == run.meeting_id,
+                    *same_meeting,
                     AgentPendingAction.subagent == subagent,
                     AgentPendingAction.status == "pending",
                     # One run's proposals never supersede each other; a row whose

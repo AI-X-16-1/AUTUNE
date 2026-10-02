@@ -207,7 +207,7 @@ export function LiveMeetingScreen({ meetingId }: { meetingId: string }) {
           </p>
         )}
         <p className="mt-6 text-ink-muted" style={{ fontSize: "var(--text-meta)" }}>
-          원본 음성은 전사 후 바로 삭제되고, 전사 텍스트의 개인정보는 저장 전에 자동 마스킹됩니다.
+          원본 음성은 처리 후 삭제되고, 전사 텍스트의 개인정보는 저장 전에 자동 마스킹됩니다.
         </p>
         <div className="mt-4 flex items-center justify-end gap-1">
           <Link
@@ -267,6 +267,14 @@ export function LiveMeetingScreen({ meetingId }: { meetingId: string }) {
   // reached ready yet, or it is live.
   const state: RecordingState = live.phase === "paused" ? "paused" : "recording";
 
+  // Read on every render, and the level meter re-renders every 100ms, so a
+  // track that ends (a headset unplugged) shows up within a tick.
+  const track = microphone.stream?.getAudioTracks()[0];
+  const microphoneStatus = {
+    live: track?.readyState === "live",
+    noiseSuppression: track?.getSettings().noiseSuppression === true,
+  };
+
   return frame(
     <>
       {live.liveLost && (
@@ -283,6 +291,7 @@ export function LiveMeetingScreen({ meetingId }: { meetingId: string }) {
         rows={live.rows}
         elapsedSeconds={live.elapsedSeconds}
         levels={microphone.levels}
+        microphone={microphoneStatus}
         onPause={live.pause}
         onResume={live.resume}
         onStop={() => void onStop()}

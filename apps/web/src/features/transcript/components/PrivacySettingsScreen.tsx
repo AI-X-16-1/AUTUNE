@@ -167,7 +167,7 @@ function WorkspacePolicy({ teamId }: { teamId: string }) {
     <div>
       <PolicyRow
         title="원본 음성"
-        description="분석 완료 즉시 삭제 · 복원 불가 · 변경할 수 없는 정책"
+        description="처리 후 삭제 · 복원 불가 · 변경할 수 없는 정책"
         control={<AlwaysOn />}
       />
       <PolicyRow

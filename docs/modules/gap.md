@@ -886,8 +886,30 @@ gaps off a transcript nothing was read out of.
 | PostgreSQL `gap_scorings` | A digest of who counted as one person when a meeting's gaps were last scored |
 | PostgreSQL `gap_templates` | Domain templates and their items — **not built, and not needed**, see below |
 
-Everything that exists cascades from `meetings.id`, so no deletion hook is
-needed.
+Everything that exists cascades from `meetings.id`, so no meeting or user
+deletion hook is needed.
+
+**A person deleting their own speech is the exception (#587).** A topic's
+`label` is a span cut from an utterance and a gap's `suggested_question` names
+it; only `gap_topic_utterances` cascades from `utterances.id`. So
+`service.forget_deleted_speech` runs on `autune_core.deletion.on_speech_deleted`,
+before the utterances go:
+
+- A topic goes only when every utterance it was built from is being deleted. A
+  topic somebody else also named stays, label and all: it is still the
+  meeting's topic, in their words too.
+- A gap stays — it is the team's finding. If its question names the label of
+  a topic that goes, the question falls back to the template item's general
+  `question`, or to none if the template is no longer shipped. Every gap of
+  the meeting is checked, not only those linked to the topic: a missing item's
+  question can name the meeting's subject without a link to it (#598).
+- Each meeting that changed is queued for `autune.gap.publish_report`, so E
+  stops quoting the label. A meeting left with no topic at all is not
+  republished (`republish_report` skips an unanalysed meeting); E clears its
+  own copy on the same signal.
+
+The hook lives in `service.py` because the API process, where module A's
+deletion runs, imports `router` (and through it `service`) but never `tasks`.
 
 `gap_topic_utterances` and `gap_related_topics` are link tables rather than
 JSONB lists on their parents. The report joins both back — to `utterances` for
@@ -990,6 +1012,7 @@ here, so the no-deletion-hook sentence above still holds.
 | --- | --- | --- |
 | GET | `/reports/{meeting_id}` | Full gap report |
 | GET | `/topics/{meeting_id}` | Topic graph for visualization |
+| GET | `/explanations/{meeting_id}` | Why each gap was raised: its basis, the utterances it rests on, its score breakdown |
 | POST | `/gaps/{id}/dismiss` | Mark a gap as a false positive (feeds threshold tuning) |
 | DELETE | `/gaps/{id}/dismiss` | Take a dismissal back |
 | GET | `/templates` | Available domain templates |
@@ -997,6 +1020,33 @@ here, so the no-deletion-hook sentence above still holds.
 | PUT | `/templates/{meeting_id}` | Point this meeting at a template and re-compare |
 
 ### The read API as built
+
+`/explanations/{meeting_id}` is what S20 shows beside a verdict. It reads the
+stored coverage and score and never re-classifies: a gap rests on a thin topic
+(its first utterances are quoted), on a keyword said without becoming a topic
+(the consenting utterances that say it), on meaning (nothing to quote), or, when
+missing, on nothing (the item's keywords are what was searched for). The score
+breakdown is `detect.score_breakdown` over the same inputs and is sent only
+while it adds up to the stored `risk_score`. Module C's own response, not a
+contract, mirrored by hand in `features/gap/types.ts`.
+
+A missing item's question names the meeting's subject (`detect.subject_of`).
+Gaps stored before that read the template's generic question until detection
+runs again, so `python -m autune_gap.refresh_questions [--team ID] [--dry-run]`
+recomputes the stored `suggested_question` with `detect.question_for` and
+queues `autune.gap.publish_report` for each meeting it changed, so the report,
+E's stored copy and the agent's `gap.open_gaps` keep reading one question.
+Coverage, score and severity are not touched; a second run changes nothing.
+
+Two rules keep a question from naming the wrong thing (`detect.question_for`).
+A topic label made only of the template's own keywords -- "성공", "필요", "다음
+주" -- names nothing (`detect.nameable`): a matched topic like that gets the
+template's question, and the subject skips it for the next topic. And the
+subject is named only on items whose template says `ask_about_subject: true`;
+who owns the work and what happens next are about the meeting, so `ownership`
+and `next_step` keep their own questions. Neither rule moves a verdict or a
+score. On the 48 gaps of the local database it changed 24 questions; see the PR
+that introduced it for the comparison.
 
 Everything above is built.
 `/reports/{meeting_id}` and `/topics/{meeting_id}` read the stored rows; nothing

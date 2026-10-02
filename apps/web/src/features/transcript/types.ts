@@ -28,21 +28,27 @@ export type LiveRow = {
 export type RecordingState = "recording" | "paused" | "ended";
 
 /**
- * What module B calls each kind, in the order the rail lists them.
+ * What each kind is called on screen, in the order the rail lists them.
+ *
+ * Display copy only: the kind itself is the contract value, and nothing sends
+ * these strings anywhere. `tag` is the row's tag, `tally` the rail's shorter
+ * name for the same kind under its count -- S13 draws "미해결 질문" on a row
+ * and "질문" in the rail's five-column tally, where the long form does not
+ * fit.
  *
  * One map, because a row's tag and the rail's tally name the same thing. They
- * were two maps and a renamed label would have made the row and the rail
+ * were two maps once, and a renamed label would have made the row and the rail
  * disagree about what B found.
  */
 export const KIND_LABELS: Record<
   import("@autune/contracts").UtteranceKind,
-  string
+  { tag: string; tally: string }
 > = {
-  commitment: "약속",
-  decision: "결정",
-  open_question: "질문",
-  concern: "우려",
-  ambiguous: "확인 필요",
+  decision: { tag: "결정", tally: "결정" },
+  commitment: { tag: "약속", tally: "약속" },
+  open_question: { tag: "미해결 질문", tally: "질문" },
+  concern: { tag: "우려", tally: "우려" },
+  ambiguous: { tag: "모호한 표현", tally: "모호" },
 };
 
 /**

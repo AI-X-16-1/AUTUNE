@@ -44,8 +44,8 @@ def test_an_extending_template_names_both_files_in_its_version() -> None:
     ``general`` would then be averaged together with one raised after it — the
     thing ``template_version`` exists to keep apart.
     """
-    assert template.get_template("general").version == "general.4"
-    assert template.get_template("feature_planning").version == "general.4+feature_planning.2"
+    assert template.get_template("general").version == "general.5"
+    assert template.get_template("feature_planning").version == "general.5+feature_planning.3"
 
 
 def test_every_shipped_item_can_raise_a_usable_gap() -> None:
@@ -316,3 +316,31 @@ def test_examples_written_as_one_string_are_refused() -> None:
 def test_an_empty_example_is_refused() -> None:
     with pytest.raises(ConfigurationError, match="empty example"):
         template._item(_entry(examples=["제가 맡겠습니다", "  "]), "test")
+
+
+def test_which_items_ask_about_the_meetings_subject() -> None:
+    """The setting as the templates ship it. Owner and next step are about the
+    meeting, not its main topic; every feature item is about the feature."""
+    general = {i.key: i.ask_about_subject for i in template.get_template("general").items}
+    feature = {i.key: i.ask_about_subject for i in template.get_template("feature_planning").items}
+
+    assert general == {
+        "success_criteria": True,
+        "ownership": False,
+        "risk": True,
+        "dependency": True,
+        "next_step": False,
+    }
+    assert {k: v for k, v in feature.items() if k not in general} == {
+        "performance": True,
+        "cold_start": True,
+        "rollout": True,
+        "error_handling": True,
+        "privacy_impact": True,
+    }
+
+
+def test_a_quoted_false_is_refused() -> None:
+    """ "false" in quotes is a non-empty string, which Python reads as true."""
+    with pytest.raises(ConfigurationError, match="ask_about_subject"):
+        template._flag({"key": "x", "ask_about_subject": "false"}, "t", "ask_about_subject")

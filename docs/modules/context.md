@@ -338,7 +338,9 @@ changes afterwards. Two cases leave a meeting's topics out of step with it:
   non-consenting speaker's speech can be in `ctx_embeddings.ref_label`, its
   vector, and `ctx_topic_links.topic_label`. The read-time filter in step 5
   keeps their text from the re-ranker but cannot reach a label or a vector,
-  and those still feed BM25, dense search and the label fallback.
+  and those still feed BM25, dense search and the label fallback. Where a
+  label is *shown*, the read-time filter below covers it; the backfill removes
+  it from storage.
 - **Consent attested after analysis.** `autune_audio.service.attest_consent`
   can land once D has analysed the meeting and tells no consumer, so D keeps
   no topics for speech that is now allowed. When withdrawal exists (#190), it
@@ -393,6 +395,36 @@ speech are removed from storage, not only hidden on read.
 
 Triggering it automatically when consent changes needs an event from module A;
 none exists yet.
+
+### A topic link's label is read against consent — #474
+
+`ctx_topic_links` carries no `utterance_ids`, and its label is the `ref_label`
+of the `ctx_embeddings` row written beside it, which does. A link is therefore
+read through `service._readable_topic_links`: it is shown only while every
+utterance behind its label belongs to a speaker who consents *now*. It applies
+at each place a label leaves D —
+
+- `GET /links/{meeting_id}` (S15) and the agent tool `links_for_meeting`, both
+  through `get_topic_links`; `asserted` and `pending` alike;
+- `POST /links/{link_id}/confirm`, whose response carries the link: a hidden
+  link is answered as not found, not decided (`confirm_topic_link`);
+- the `ContextLinks` published to E (`_build_context_links`);
+- the Slack topic-link notice (`collect_topic_link_notices`).
+
+A withdrawal therefore hides a link at once, without re-deriving the meeting, and
+a row from before #439 never shows a label cut from speech nobody agreed to. The
+check cannot be made, and the link is left out, when its label's segment row has
+no `utterance_ids` (stored before #397), when no segment row carries the label,
+or when its utterances are gone. Two segments of a meeting can share a label and
+the link does not say which it came from, so every row with that label has to
+pass.
+
+A link that is hidden is not deleted: it comes back if consent does, and
+`rederive_topics` rebuilds the link and its segment together from consenting
+speech. So the two halves are complementary — re-deriving removes what was
+stored, the read-time check covers the time before it runs and any later
+withdrawal. The brief's recap label (#437) makes the same check on
+`ctx_embeddings` directly.
 
 ### Decision lineage — from `autune.extraction.completed`
 
@@ -749,8 +781,8 @@ one mutation.
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| GET | `/links/{meeting_id}` | Topic links for a meeting, `asserted` and `pending` separated |
-| POST | `/links/{link_id}/confirm` | User confirms or rejects a `pending` link (`status` → `confirmed`/`rejected`) |
+| GET | `/links/{meeting_id}` | Topic links for a meeting, `asserted` and `pending` separated; a link whose label is cut from speech not consented to is left out |
+| POST | `/links/{link_id}/confirm` | User confirms or rejects a `pending` link (`status` → `confirmed`/`rejected`); a link whose label is cut from speech not consented to is answered as not found, since the response carries the label |
 | GET | `/decisions/{thread_id}` | Full lineage timeline, oldest version first |
 | GET | `/decisions` | Filter by team, topic, change type |
 | POST | `/materials` | Upload material — Phase 2 |
@@ -795,7 +827,7 @@ meeting itself that the two decision routes already applied.
 
 ### Agent tools — `autune_context.tools`
 
-Three reads the agent layer collects the way `apps/api` collects routers
+Five reads the agent layer collects the way `apps/api` collects routers
 (`agent-layer.md` section 4; `tools.py` is this module's file, ADR 0010):
 
 | Tool | Answers | Built on |
@@ -803,6 +835,8 @@ Three reads the agent layer collects the way `apps/api` collects routers
 | `links_for_meeting(team_id, meeting_id)` | which earlier meetings discussed what this one did | `service.get_topic_links` |
 | `decision_thread(team_id, thread_id)` | how one decision moved across meetings: its five most recent versions, oldest first | `service.get_decision_lineage` |
 | `list_decisions(team_id, topic?, change_type?)` | the team's decisions by current head, most recently touched first | `service.list_decisions` |
+| `brief_recap(team_id, meeting_id)` | the earlier meeting D chose for an upcoming meeting's brief, then at most four of its decisions | `briefs.read_team_brief` |
+| `brief_agenda(team_id, meeting_id)` | the team's open Jira issues, as B last reported them | `briefs.agenda_for` |
 
 Plain functions returning the `ToolResult` dict, with no `autune_agent` import;
 `team_id` is filled from the run's scope and never by a model, and a meeting or
@@ -825,6 +859,14 @@ for the one place a tool cannot call the router, and one case is stricter:
   agent does not state a guess as a fact.
 - `evidence` is a meeting id or a thread id, never text: a link's own id is an
   integer and is not a valid evidence value.
+
+`brief_recap` reads what `send_brief` stored in `ctx_briefs` (the choice, never
+content) and renders the recap from the live rows, so it fails with
+`brief not composed yet` until `brief_lead_minutes` before the start -- composing
+needs the models, which the agent process does not load -- and a meeting swept
+by retention reads as gone, not reconstructed. `brief_agenda` needs no composed
+brief: it reads `ctx_team_agendas`, so it works before the choice is made, and a
+snapshot B stopped refreshing reads as none (`AGENDA_STALE_AFTER`).
 
 The brief the Briefing subagent composes is still sent by D's own surface
 (`briefs.py`), so one brief goes out.

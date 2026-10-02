@@ -55,3 +55,10 @@ To be woken by the pipeline rather than a chat message, list the events in
 `autune.intelligence.completed`). Your run then gets the event name as its
 `request` and the meeting in its scope, so every tool and action you name is
 already bound to that meeting. Do not write a Celery task.
+
+To be woken on a timer instead (or as well), add `Periodic(hours=N)` to
+`triggers`. Once an hour the main agent's beat task starts a run of each due
+subagent for each team with members: the run's `request` is
+`PERIODIC_REQUEST`, its scope carries the team and no meeting. If its
+proposals judge the whole team, also set `proposals_per="team"`, so each run
+replaces the last run's pending proposal rather than adding another.

@@ -13,6 +13,7 @@ import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
 from autune_core import Meeting, Utterance
+from autune_integrations import assert_masked
 
 from .models import AgentResearchDocument, AgentResearchSource
 
@@ -28,12 +29,16 @@ def save_research_document(
     for a person to approve. Not for anything a person has not asked to be kept.
 
     Keeps ``body`` as the meeting's one proposed document, replacing an earlier
-    proposal that nobody has decided on. Its sources are the meetings of
+    proposal that nobody has decided on. Raises ``PrivacyViolationError``,
+    writing nothing, when ``body`` still holds personal data. Its sources are the meetings of
     ``utterance_ids`` and the meeting itself. Refuses, writing nothing, when any
     of ``utterance_ids`` no longer exists or is not this team's.
     """
     if not body.strip():
         return _refused("empty document", "빈 문서는 저장하지 않습니다.")
+    # The body is a model's text: it can repeat a value the masker missed or
+    # make one up. Raised, not refused -- a privacy violation fails the run.
+    assert_masked(body, destination="agent_research_documents")
     meeting = session.get(Meeting, meeting_id)
     if meeting is None or meeting.team_id != team_id:
         return _refused("meeting not found", "그 회의를 찾을 수 없습니다.")
