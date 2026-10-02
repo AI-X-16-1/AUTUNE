@@ -34,9 +34,10 @@ from autune_core import (
     get_session,
 )
 from autune_core.oauth.atlassian import JiraReconnectRequiredError
-from autune_extraction import sync_state, tasks
+from autune_extraction import service, sync_state, tasks
 from autune_extraction.models import ExtActionItem, ExtCalendarEvent, ExtSyncFailure
 from autune_extraction.router import router
+from autune_extraction.schemas import CalendarState
 from autune_integrations import (
     PermanentIntegrationError,
     ReconnectRequiredError,
@@ -461,3 +462,21 @@ def test_a_caller_with_no_reader_gets_no_calendar_failure(session: Session) -> N
     found = sync_state.failures_for(session, [row], reader_id=None)
 
     assert [f.system for f in found["act_1"]] == ["notion"]
+
+
+def test_a_caller_with_no_reader_is_told_nothing_about_the_calendar_either(
+    session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``read_detail``'s ``reader_id`` defaults to ``None``. The route is its
+    only caller today and always passes one; the next caller that does not -- a
+    tool, a task -- must not be handed a person's calendar state for it. Found
+    unpinned by pr's mutation run: "no reader" read as "the assignee" passed
+    every test."""
+    monkeypatch.setattr(sync_state, "users_with_integration", lambda _session, _service: [KIM])
+    row = item(session)  # complete: confirmed, dated, assigned to an account on the team
+    event(session)
+
+    assert sync_state.calendar_state(session, row, reader_id=None) is None
+    assert service.read_detail(session, row).calendar is None
+    # The assignee, for contrast: the same item answers them.
+    assert sync_state.calendar_state(session, row, reader_id=KIM) == CalendarState(state="sent")
