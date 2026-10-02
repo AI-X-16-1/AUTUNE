@@ -618,11 +618,14 @@ def sweep_orphans(
 
     **Decided against the database, not the clock.** #209 swept on mtime and
     could delete a file a late task was about to adopt. Here a file is an
-    orphan when its job says so: ``done``, ``failed`` or ``superseded`` means
-    the attempt is over and the file should already be gone; no job at all
-    means nothing will ever look for it. A ``queued`` or ``running`` job is
-    left alone until it is older than ``orphan_after_hours``, and then both
-    the file and the job are failed -- a job that old has no worker.
+    orphan when its job says so: ``done``, ``failed``, ``superseded`` or
+    ``cancelled`` means the attempt is over and the file should already be gone;
+    no job at all means nothing will ever look for it. A ``queued`` or
+    ``running`` job is left alone until it, or its file, is older than
+    ``orphan_after_hours`` -- the file's age counts because a restart
+    (``restart_transcription``) gives an old upload a new job; when it does,
+    the file's time wins, and then both the file and the job are failed -- a
+    job that old has no worker.
 
     A file without the ``.upload`` suffix is one ``handover`` wrote and never
     got to ``assign``: the request died between the write and the claim. A
@@ -685,7 +688,10 @@ def sweep_orphans(
             if not stale(path):
                 continue
         elif job.status in ("queued", "running"):
-            if job.created_at >= cutoff:
+            # The earlier of the job and the file: a restart makes a new job
+            # for an old upload, and must not grant it another window
+            # (invariant 11). A rename keeps mtime.
+            if job.created_at >= cutoff and not stale(path):
                 continue
             mark_failed(session, job_id=job_id)
             log.warning("audio_job_abandoned", job_id=job_id)
