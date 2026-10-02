@@ -205,3 +205,27 @@ def test_the_cancel_route_says_why_it_refused(
 
     assert response.status_code == 409
     assert response.json()["error"]["code"] == "nothing_to_cancel"
+
+
+def test_claiming_a_job_stamps_its_heartbeat(db_session: Session, analyzing: str) -> None:
+    job = _job(db_session, analyzing, "queued")
+
+    service.claim_job(db_session, job_id=job.id)
+
+    assert job.status == "running"
+    assert job.heartbeat_at is not None
+
+
+def test_a_job_claimed_after_a_long_wait_is_not_stalled_and_keeps_its_file(
+    db_session: Session, analyzing: str, member: User, settings: AudioSettings
+) -> None:
+    """The queue wait is not the worker's silence: cancelling right after the
+    claim must leave the upload to the live worker."""
+    job = _job(db_session, analyzing, "queued", age=timedelta(seconds=settings.stall_after_s * 5))
+    upload = _upload(settings, job.id)
+    service.claim_job(db_session, job_id=job.id)
+
+    assert not service.is_stalled(job, settings=settings, now=datetime.now(tz=UTC))
+    service.cancel_transcription(db_session, meeting_id=analyzing, user=member, settings=settings)
+
+    assert upload.exists()
