@@ -39,8 +39,9 @@ key a lineage on without the entity. Changing or dropping that field breaks D.
 See `/docs/architecture/contracts.md`, "The B → D boundary".
 
 `TeamActionProgress` on `autune.extraction.action_progress`, every ten
-minutes for each team with a meeting in the last 91 days, consumed by **E**
-for its real completion rate (#605). Counts per meeting and meeting ids only —
+minutes for each team with a meeting in the last 91 days that is still inside
+its retention window, consumed by **E** for its real completion rate (#605). A
+meeting past `expires_at` is not counted. Counts per meeting and meeting ids only —
 no assignee, title or item id, so no per-person completion record can be
 built from it.
 

@@ -7,7 +7,7 @@ from __future__ import annotations
 import json
 from collections.abc import Iterator
 from contextlib import contextmanager
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta, tzinfo
 from typing import Any
 
 import pytest
@@ -27,6 +27,16 @@ from autune_extraction.models import ExtActionItem
 NOW = datetime(2026, 10, 2, 0, 0, tzinfo=UTC)
 TODAY = date(2026, 10, 2)
 TABLES = [Meeting.__table__, ExtActionItem.__table__]
+
+
+class ClockAtNow(datetime):
+    """``datetime`` whose ``now`` is ``NOW``. The task reads the clock itself,
+    and the meetings here are dated from ``NOW``: on the real clock they would
+    leave the 91-day window and the test would start failing (#649 review)."""
+
+    @classmethod
+    def now(cls, tz: tzinfo | None = None) -> datetime:
+        return NOW if tz is None else NOW.astimezone(tz)
 
 
 @pytest.fixture
@@ -124,6 +134,36 @@ def test_today_is_the_day_in_korea_not_the_servers(session: Session) -> None:
     assert [(m.meeting_id, m.overdue) for m in progress.meetings] == [("mtg_1", 1)]
 
 
+def test_a_meeting_past_its_retention_is_not_counted(session: Session) -> None:
+    """#649 review: 91 days is longer than a team's retention can be, and a
+    meeting past ``expires_at`` waits in the table for A's sweep. Neither its
+    counts nor its id may reach E meanwhile."""
+    for mid, team, expires in (
+        ("mtg_exp", "team_1", NOW - timedelta(days=10)),
+        ("mtg_kept", "team_1", NOW + timedelta(days=50)),
+        ("mtg_only", "team_expired", NOW - timedelta(days=10)),
+    ):
+        session.add(
+            Meeting(
+                id=mid,
+                team_id=team,
+                title="회의",
+                created_at=NOW - timedelta(days=40),
+                expires_at=expires,
+            )
+        )
+    session.flush()
+    item(session, "e1", "mtg_exp", "done")
+    item(session, "k1", "mtg_kept", "done")
+    item(session, "o1", "mtg_only", "done")
+
+    progress = service.team_action_progress(session, "team_1", now=NOW)
+
+    assert [m.meeting_id for m in progress.meetings] == ["mtg_kept"]
+    assert service.team_action_progress(session, "team_expired", now=NOW).meetings == []
+    assert "team_expired" not in service.teams_with_recent_meetings(session, now=NOW)
+
+
 def test_teams_with_a_meeting_in_the_window_are_published(session: Session) -> None:
     assert service.teams_with_recent_meetings(session, now=NOW) == ["team_1", "team_other"]
 
@@ -140,11 +180,13 @@ def test_the_task_publishes_one_snapshot_per_team_empty_ones_included(
 
     monkeypatch.setattr(tasks, "session_scope", scope)
     monkeypatch.setattr(tasks, "publish", lambda event, payload: sent.append((event, payload)))
+    monkeypatch.setattr(tasks, "datetime", ClockAtNow)
 
     tasks.publish_action_progress()
 
     assert [event for event, _ in sent] == [EXTRACTION_ACTION_PROGRESS] * 2
     snapshots = {s.team_id: s for s in (TeamActionProgress.model_validate(p) for _, p in sent)}
+    assert {s.as_of for s in snapshots.values()} == {NOW}, "the task ran on the pinned clock"
     assert [m.meeting_id for m in snapshots["team_1"].meetings] == ["mtg_1"]
     assert snapshots["team_other"].meetings == [], "a fresh empty snapshot is a fact"
 
