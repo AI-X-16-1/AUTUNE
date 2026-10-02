@@ -228,7 +228,42 @@ def misalignment_risk(session: Session, team_id: str) -> dict[str, Any]:
     )
 
 
-TOOLS = [meeting_quality, team_trend, recurring_gaps, misalignment_risk]
+def meeting_report_draft(
+    session: Session, team_id: str, meeting_id: str, draft_id: str
+) -> dict[str, Any]:
+    """Use this to show the person approving a meeting report's post the text it
+    would post. Do not use it to write or change a report.
+
+    Returns the stored report as one item -- ``title`` is its header line,
+    ``body`` the rest, footer included -- when ``draft_id`` names the draft
+    stored now, with ``posted`` saying whether it already went out. Returns no
+    item when a later run replaced that draft or no report is stored: the
+    approval names text that is no longer there (#570, #571).
+    """
+    meeting = session.get(Meeting, meeting_id)
+    if meeting is None or meeting.team_id != team_id:
+        return _refused("meeting not found", "회의를 찾을 수 없습니다.")
+    row = session.get(IntelMeetingReport, meeting_id)
+    if row is None or row.draft_id != draft_id:
+        return _result(summary="이 승인에 해당하는 리포트 초안이 더 이상 없습니다.", items=[])
+    # The stored document is "📋 <title> · <date>", a blank line, the body and
+    # the footer (``service.meeting_report_document``).
+    header, _, rest = row.body_markdown.partition("\n\n")
+    return _result(
+        summary="게시될 리포트 초안입니다.",
+        items=[
+            {
+                "title": header.removeprefix("📋").strip(),
+                "body": rest,
+                "score": 1.0,
+                "id": meeting_id,
+                "posted": row.sent_at is not None,
+            }
+        ],
+    )
+
+
+TOOLS = [meeting_quality, team_trend, recurring_gaps, misalignment_risk, meeting_report_draft]
 """Collected by the agent layer by iterating modules (invariant 6), never registered by hand."""
 
 RUN_SCOPE = ("team_id",)
