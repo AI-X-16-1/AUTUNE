@@ -995,12 +995,17 @@ def explain(session: Session, meeting_id: str) -> GapExplanations:
 
 
 def _topic_evidence(session: Session, topic_id: str) -> list[EvidenceRead]:
-    """A topic's first utterances, in meeting order. The topic was built from
-    consenting speech only (``graph.build_topics``), so these are too."""
+    """A topic's first utterances, in meeting order, by consenting speakers.
+
+    The topic was built from consenting speech only (``graph.build_topics``),
+    but consent can be withdrawn after analysis and before #533's rebuild runs.
+    The same join as ``_timed_speech`` keeps that person's words off the screen
+    in the meantime (privacy.md section 5)."""
     rows = session.execute(
         select(Utterance.id, Utterance.start_sec, Utterance.text)
         .join(GapTopicUtterance, GapTopicUtterance.utterance_id == Utterance.id)
-        .where(GapTopicUtterance.topic_id == topic_id)
+        .join(Participant, Participant.id == Utterance.participant_id)
+        .where(GapTopicUtterance.topic_id == topic_id, Participant.consented.is_(True))
         .order_by(Utterance.start_sec, Utterance.id)
         .limit(MAX_EVIDENCE)
     ).all()

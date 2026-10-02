@@ -115,6 +115,25 @@ def test_a_thin_topic_is_quoted_with_its_time(team_id: str) -> None:
     ]
 
 
+def test_a_topic_quote_leaves_once_its_speaker_withdraws_consent(team_id: str) -> None:
+    """Consent withdrawn after analysis: the topic still exists until #533's
+    rebuild, but its quote must not show that person's words in the meantime."""
+    ids = seed(team_id)
+    with session_scope() as s:
+        speaker = s.scalar(
+            select(Participant)
+            .join(Utterance, Utterance.participant_id == Participant.id)
+            .where(Utterance.id == ids["risk"])
+        )
+        assert speaker is not None
+        speaker.consented = False
+
+    risk = explained(ids["meeting"])["by_key"]["risk"]  # type: ignore[index]
+
+    assert (risk.basis, risk.topic_label) == ("topic", "리스크")
+    assert risk.evidence == []
+
+
 def test_a_keyword_said_is_quoted_and_declined_speech_is_not(team_id: str) -> None:
     ids = seed(team_id)
     dependency = explained(ids["meeting"])["by_key"]["dependency"]  # type: ignore[index]
