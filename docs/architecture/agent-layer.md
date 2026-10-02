@@ -1,8 +1,9 @@
 # The agent layer
 
 > **Status: Decided.** The direction was decided on #260 (closed 2026-09-29)
-> and the layer's location is ADR 0010, `Accepted`. Nothing described here is
-> built yet; the skeleton is #432. The two questions that blocked the first line
+> and the layer's location is ADR 0010, `Accepted`. Much of it is built since:
+> the skeleton (#432), the five subagents, plan mode (#556) and the approver
+> settings (#592); sections marked "as built" say what landed. The two questions that blocked the first line
 > of code are answered: the layer lives in a top-level `agent/` (13.1) and a
 > periodic trigger is a `@periodic` task (13.2, #374). **Who builds what is in
 > section 3.1, and the dates are in section 14** — start there if you are
@@ -482,19 +483,22 @@ by the team in the web settings, and a proposal whose scope has no approver is
 not sent to anyone — it stays on the run timeline.
 
 **Who may set it, as built (#592).** 설정 › 승인자 (`/settings/approvers`)
-writes these rows through `GET`/`PUT /api/agent/approvers`, and the rule is in
+writes these rows through `GET /api/agent/approvers` and
+`PUT /api/agent/approvers/{user_id}`, and the rule is in
 `main/approvers.py`. With no administrator in `packages/core`, the layer
 answers the question itself. While no current member holds `any`, any member
 may change the list, so a new team has a way in, and so does a team whose only
 `any` approver left while others kept narrower scopes. Once a current member
-holds `any`, only an `any` approver may change it. As long as any approver row
-remains, one of them is `any`, so the list can always be changed again — which
-makes the first assignment hold `any`. Clearing every row is allowed and
-returns the team to its starting state. A former member's rows count for
+holds `any`, only an `any` approver may change it. A change is saved only if,
+afterwards, no rows remain or one of them is `any` (`set_scopes`). So the
+first assignment holds `any`, clearing every row returns the team to its
+starting state, and narrower scopes with no `any` are never written — that
+state arises only when the `any` approver leaves, which the rule above
+reopens. A former member's rows count for
 nothing, the same as in `approver_scopes`.
 
 Two limits follow from having no administrator. In a new team the first member
-to open the screen takes `any`; the team settles who it should be among
+to save takes `any`; the team settles who it should be among
 themselves. And a change reads the rows before writing them, so two `any`
 approvers removing each other's `any` at once could both pass; `set_scopes`
 locks the team's rows first to close that (#647).
@@ -1188,8 +1192,8 @@ person, with the partial trace kept in `agent_runs`.
 
 ## 13. Open questions
 
-13.1 and 13.2 blocked the first line of code and are answered. 13.3 to 13.6
-shape the work without blocking it.
+13.1 and 13.2 blocked the first line of code and are answered; 13.5 and 13.7
+are answered as built. 13.3, 13.4 and 13.6 shape the work without blocking it.
 
 ### 13.1 Where does the layer live? — answered: top-level `agent/`
 
@@ -1271,7 +1275,7 @@ an L1 or an L2 action of the person making it. Not decided.
 wrong row sends a workload proposal to the wrong person, so setting a row is
 itself a permission question. #592 answered it inside the layer, without the
 team administrator `packages/core` does not have: see "Who may set it, as
-built" in section 5. No SQL seed is needed; the first member to open
+built" in section 5. No SQL seed is needed; the first member to save in
 설정 › 승인자 names the first `any` approver.
 
 ### 13.6 Gmail is a new integration, and Jira is back
