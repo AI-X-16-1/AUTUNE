@@ -212,6 +212,20 @@ speaking ratio. So:
 Three is the same number module E already requires before it delivers speaking
 ratios for a meeting (`_MIN_SPEAKERS_FOR_RATIO`, #128). Decided on #168.
 
+**Action-item counts are a team total, never a meeting's** (#605, #619). B's
+`TeamActionProgress` carries confirmed, done and overdue counts per meeting
+and never an assignee. In a meeting whose confirmed items are all one
+person's, those counts are that person's completion record. So:
+
+- A consumer shows them only as totals over `ACTION_PROGRESS_WINDOW`, never a
+  count per meeting, and keeps them out of meeting reports, direct messages
+  and prediction features.
+- A total over fewer than **three** meetings with confirmed items is left
+  empty: with one or two, the team total is still a meeting's -- often one
+  person's -- record. Three, as for stance and speaking ratios above.
+- Adding an assignee to the contract is a privacy violation, not an additive
+  change.
+
 ## 4. Retention and deletion
 
 - Analysis results are retained **90 days** by default, adjustable per team.
@@ -261,6 +275,10 @@ ratios for a meeting (`_MIN_SPEAKERS_FOR_RATIO`, #128). Decided on #168.
 
 **Required of every module:**
 - Every module-owned table is reachable from a `meeting_id` or a `user_id`.
+  The exception is a team-scoped row that holds no meeting content and is
+  deleted with its team -- a weekly report, `intel_action_progress`'s
+  snapshot time -- while any per-meeting rows under it cascade from
+  `meetings` (#619 review).
 - Each module registers a deletion hook in `autune_core`'s deletion registry.
   Rows reachable by `ON DELETE CASCADE` from `meetings` are covered
   automatically — embeddings and topic graphs included, since both are
@@ -332,6 +350,8 @@ Reject a pull request that does any of the following:
       stance for a role below three identified people, or reports a unanimous
       role
 - [ ] Adds a table with no path to deletion by `meeting_id` or `user_id`
+- [ ] Shows action-item counts per meeting, or a team total over fewer than
+      three meetings
 - [ ] Uses a soft delete for content
 - [ ] Sends more data to a third party than the feature requires
 

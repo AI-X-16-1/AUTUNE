@@ -1,0 +1,19 @@
+{
+  "contract_version": "2.3",
+  "team_id": "team_001",
+  "as_of": "2026-10-01T09:00:00Z",
+  "meetings": [
+    {
+      "meeting_id": "mtg_001",
+      "confirmed": 5,
+      "done": 2,
+      "overdue": 1
+    },
+    {
+      "meeting_id": "mtg_002",
+      "confirmed": 3,
+      "done": 3,
+      "overdue": 0
+    }
+  ]
+}
