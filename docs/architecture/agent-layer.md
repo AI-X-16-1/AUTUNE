@@ -1,8 +1,9 @@
 # The agent layer
 
 > **Status: Decided.** The direction was decided on #260 (closed 2026-09-29)
-> and the layer's location is ADR 0010, `Accepted`. Nothing described here is
-> built yet; the skeleton is #432. The two questions that blocked the first line
+> and the layer's location is ADR 0010, `Accepted`. Much of it is built since:
+> the skeleton (#432), the five subagents, plan mode (#556) and the approver
+> settings (#592); sections marked "as built" say what landed. The two questions that blocked the first line
 > of code are answered: the layer lives in a top-level `agent/` (13.1) and a
 > periodic trigger is a `@periodic` task (13.2, #374). **Who builds what is in
 > section 3.1, and the dates are in section 14** — start there if you are
@@ -206,9 +207,9 @@ iterating the subagent list, never by appending to a registry:
 SUBAGENT = Subagent(
     name="followup",
     description="""Use when deciding whether a team needs another meeting ...""",
-    tools=[...],  # names from C's, B's and D's own tools.py
+    tools=[...],  # names from C's, B's and A's own tools.py
     build=build_graph,  # returns a compiled LangGraph subgraph
-    triggers=[Periodic(hours=6)],
+    triggers=(INTELLIGENCE_COMPLETED,),
 )
 ```
 
@@ -229,8 +230,22 @@ subgraph the supervisor delegates to. An earlier draft said "no framework — a
 hand-written loop of about 200 lines", and with one orchestrator and one
 subagent that was right. With five subagents built by five people it is not:
 a shared graph shape is what lets each owner build a subagent without
-re-inventing routing, tool calling and interruption, and LangGraph's
-`interrupt` is plan mode's pause point (section 8).
+re-inventing routing and tool calling. An earlier draft also made LangGraph's
+`interrupt` plan mode's pause point; as built, plan mode is an approval queue
+outside the graph (section 8), so no graph waits for a person.
+
+**Why not LangChain's `create_agent`.** It was suggested as the way to build
+the agent, and the layer does not use it. `create_agent` is a loop in which the
+model picks and calls tools itself, and three rules of this layer sit badly
+with that: every model call must go through `check_outbound` and
+`assert_masked` (section 8 rule 1), which a LangChain chat model would bypass;
+a subagent never runs a write, it returns `ProposedAction`s (rule 4 in
+`agent/CLAUDE.md`); and tools come from the registry with an allow-list and a
+call budget per run (section 4). So each subagent is a fixed `StateGraph` and
+the model only routes and writes. None of the three is impossible to adapt —
+a guarded chat-model wrapper and a registry-to-tool adapter would do — so if
+the free-form chat path ever needs the model to choose tools, `create_agent` is
+the first thing to try there, with the event-driven subagents left as they are.
 
 Two uses of LangGraph are **not** allowed, because each would bypass a rule
 this repository already enforces:
@@ -250,6 +265,14 @@ this repository already enforces:
 The LLM behind the graph is Gemini, through the same `check_outbound` /
 `assert_masked` path B's `classifier_impl=llm` already uses (#393; section 8
 rule 1). The model name is configuration, not code.
+
+**The chat's free questions, as built (spec 2026-10-02).** A chat turn no
+subagent fits goes to `main/ask.py`: a read-only loop on Gemini function
+calling, at most three rounds, over a tool set chosen by the run's scope. Every
+request goes through `check_outbound`, and the loop stops before a body passes
+3,800 characters. `main/toolcall.py` and `GeminiTools.step` are the seams a
+later `create_agent` takes. A chat reply also lists the L2 proposals its run
+queued that the asker may decide, and S34 lets them approve on the card.
 
 ## 4. Tools — how a module becomes callable
 
@@ -465,9 +488,31 @@ nothing in the repository says who either is: `packages/core` has a job role
 `Team` or `User` would be a shared-entity change owned by module A (invariant
 4), for a fact only the agent layer reads. So the layer keeps its own row, set
 by the team in the web settings, and a proposal whose scope has no approver is
-not sent to anyone — it stays on the run timeline. The table holds a role
-assignment, not meeting content, so it is deleted with its user rather than with
-a meeting.
+not sent to anyone — it stays on the run timeline.
+
+**Who may set it, as built (#592).** 설정 › 승인자 (`/settings/approvers`)
+writes these rows through `GET /api/agent/approvers` and
+`PUT /api/agent/approvers/{user_id}`, and the rule is in
+`main/approvers.py`. With no administrator in `packages/core`, the layer
+answers the question itself. While no current member holds `any`, any member
+may change the list, so a new team has a way in, and so does a team whose only
+`any` approver left while others kept narrower scopes. Once a current member
+holds `any`, only an `any` approver may change it. A change is saved only if,
+afterwards, no rows remain or one of them is `any` (`set_scopes`). So the
+first assignment holds `any`, clearing every row returns the team to its
+starting state, and narrower scopes with no `any` are never written — that
+state arises only when the `any` approver leaves, which the rule above
+reopens. A former member's rows count for
+nothing, the same as in `approver_scopes`.
+
+Two limits follow from having no administrator. In a new team the first member
+to save takes `any`; the team settles who it should be among
+themselves. And a change reads the rows before writing them, so two `any`
+approvers removing each other's `any` at once could both pass; `set_scopes`
+locks the team's rows first to close that (#647).
+
+The table holds a role assignment, not meeting content, so it is deleted with
+its user rather than with a meeting.
 
 **Ids are prefixed `TEXT`, in the SQL as well as in the prose.** Primary keys in
 this repository are prefixed strings from `autune_core.ids.new_id` —
@@ -1163,8 +1208,8 @@ person, with the partial trace kept in `agent_runs`.
 
 ## 13. Open questions
 
-13.1 and 13.2 blocked the first line of code and are answered. 13.3 to 13.6
-shape the work without blocking it.
+13.1 and 13.2 blocked the first line of code and are answered; 13.5 and 13.7
+are answered as built. 13.3, 13.4 and 13.6 shape the work without blocking it.
 
 ### 13.1 Where does the layer live? — answered: top-level `agent/`
 
@@ -1240,15 +1285,14 @@ question: a team admin, any member, a reviewer? `agent_charters` needs an
 owner column and a version, and the answer decides whether a charter edit is
 an L1 or an L2 action of the person making it. Not decided.
 
-### 13.5 Who sets the approvers
+### 13.5 Who sets the approvers — answered: 설정 › 승인자 (#592)
 
 `agent_approvers` (section 5) says who the lead and the manager are, and a
-wrong row sends a workload proposal to the wrong person. Setting a row is
-therefore itself a permission question, the same one as 13.4, and should be
-answered with it. Not decided: until then nothing in the product sets a row —
-no endpoint, no screen — and the rows are seeded with SQL for the demo.
-
-For the demo: `INSERT INTO agent_approvers (team_id, user_id, scope) VALUES ('<team>', '<user>', 'any');`
+wrong row sends a workload proposal to the wrong person, so setting a row is
+itself a permission question. #592 answered it inside the layer, without the
+team administrator `packages/core` does not have: see "Who may set it, as
+built" in section 5. No SQL seed is needed; the first member to save in
+설정 › 승인자 names the first `any` approver.
 
 ### 13.6 Gmail is a new integration, and Jira is back
 

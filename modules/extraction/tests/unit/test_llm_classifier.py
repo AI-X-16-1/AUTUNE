@@ -209,6 +209,10 @@ SHARED_KEY = "AUTUNE_LLM_API_KEY"
 the field takes its alias, not its own name."""
 
 
+def key_of(configured_settings: ExtractionSettings) -> str:
+    return configured_settings.llm_api_key.get_secret_value()
+
+
 def settings(**overrides: str) -> ExtractionSettings:
     # Both key names blank unless a test gives one: a key exported in the shell
     # that runs the suite must not decide what "no key" means.
@@ -243,13 +247,13 @@ def test_llm_without_its_own_key_uses_the_deployments_shared_one(configured) -> 
     configured(classifier_impl="llm", **{SHARED_KEY: "shared"})
 
     assert isinstance(registry.get_classifier(), LlmClassifier)
-    assert settings(**{SHARED_KEY: "shared"}).llm_api_key == "shared"
+    assert settings(**{SHARED_KEY: "shared"}).llm_api_key.get_secret_value() == "shared"
 
 
 def test_a_key_given_to_b_alone_wins_over_the_shared_one() -> None:
     both = settings(llm_api_key="mine", **{SHARED_KEY: "shared"})
 
-    assert both.llm_api_key == "mine"
+    assert both.llm_api_key.get_secret_value() == "mine"
 
 
 def test_the_shared_key_alone_does_not_turn_the_llm_on() -> None:
@@ -267,7 +271,7 @@ def test_both_names_are_read_from_the_environment_and_a_blank_own_name_falls_thr
     """From real variables and from a ``.env``, the two places a key comes from."""
     monkeypatch.setenv("AUTUNE_EXTRACTION_LLM_API_KEY", "")
     monkeypatch.setenv("AUTUNE_LLM_API_KEY", "from-the-environment")
-    assert ExtractionSettings(_env_file=None).llm_api_key == "from-the-environment"  # type: ignore[call-arg]
+    assert key_of(ExtractionSettings(_env_file=None)) == "from-the-environment"  # type: ignore[call-arg]
 
     monkeypatch.delenv("AUTUNE_EXTRACTION_LLM_API_KEY")
     monkeypatch.delenv("AUTUNE_LLM_API_KEY")
@@ -275,10 +279,42 @@ def test_both_names_are_read_from_the_environment_and_a_blank_own_name_falls_thr
     env_file.write_text(
         "AUTUNE_EXTRACTION_LLM_API_KEY=\nAUTUNE_LLM_API_KEY=from-the-file\n", encoding="utf-8"
     )
-    assert ExtractionSettings(_env_file=env_file).llm_api_key == "from-the-file"  # type: ignore[call-arg]
+    assert key_of(ExtractionSettings(_env_file=env_file)) == "from-the-file"  # type: ignore[call-arg]
 
     monkeypatch.setenv("AUTUNE_EXTRACTION_LLM_API_KEY", "mine")
-    assert ExtractionSettings(_env_file=env_file).llm_api_key == "mine"  # type: ignore[call-arg]
+    assert key_of(ExtractionSettings(_env_file=env_file)) == "mine"  # type: ignore[call-arg]
+
+
+def test_printing_or_dumping_the_settings_does_not_show_either_key() -> None:
+    """mkkim68 and mminjae97, review of #701: as plain strings both keys were
+    in ``repr(settings)`` and in ``model_dump()``, which is what a debug log
+    line or an error report prints."""
+    configured_ = settings(llm_api_key="own-key-value", **{SHARED_KEY: "shared-key-value"})
+
+    shown = repr(configured_) + str(configured_) + str(configured_.model_dump())
+    shown += configured_.model_dump_json()
+
+    assert "own-key-value" not in shown
+    assert "shared-key-value" not in shown
+
+
+def test_the_client_is_given_the_key_itself_not_its_mask(
+    configured, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The other side of hiding it: what goes in the request header has to
+    be the key, and ``str(SecretStr)`` is the asterisks."""
+    given: dict[str, object] = {}
+
+    class Recording:
+        def __init__(self, **kwargs: object) -> None:
+            given.update(kwargs)
+
+    monkeypatch.setattr(llm_module, "LlmClassifier", Recording)
+    configured(classifier_impl="llm", **{SHARED_KEY: "shared-key-value"})
+
+    registry.get_classifier()
+
+    assert given["api_key"] == "shared-key-value"
 
 
 def test_llm_with_a_key_is_the_llm_classifier(configured) -> None:

@@ -55,4 +55,6 @@ export type ChatReply = {
   executed: number;
   /** Proposals this run left waiting for an approver, counted on the server. */
   queued: number;
+  /** L2 proposals this run queued that the caller may decide (plan mode's rule). */
+  pending: PendingAction[];
 };

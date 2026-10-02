@@ -106,6 +106,13 @@ class GoogleOAuthClient:
         self._http = http or httpx.Client(timeout=10.0)
         self._jwks_client = jwks_client or jwt.PyJWKClient(JWKS_URI)
 
+    @property
+    def client_id(self) -> str:
+        """Which OAuth client this is. Public by nature -- it is in every consent
+        URL -- and kept beside a stored grant so that a grant issued to another
+        client can be told apart without asking Google."""
+        return self._client_id
+
     def authorization_url(
         self, *, state: str, nonce: str, scope: str = SCOPE, offline: bool = False
     ) -> str:

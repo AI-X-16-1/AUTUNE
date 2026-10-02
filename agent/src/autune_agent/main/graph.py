@@ -4,12 +4,12 @@
 
 ``delegate`` invokes one subagent's compiled subgraph with the run's shared
 tool budget. Proposed actions come back in the outcome and are **not executed**
-here: plan mode and the approval screen are the next milestone, and until they
-exist nothing at L1 or L2 happens at all.
+here: ``store.run_and_record`` runs L1 at the end of the run and queues L2 for
+an approver (``pending.queue_l2``).
 
 Compiled without a checkpointer. Section 3.3: LangGraph's own tables would hold
 tool results with no deletion path by meeting, so run state goes to
-``agent_runs`` instead once that table exists.
+``agent_runs`` instead.
 """
 
 from __future__ import annotations
@@ -22,10 +22,12 @@ from sqlalchemy.orm import Session
 
 from autune_agent.results import SubagentResult, ToolResult
 
+from .ask import ASK_ROUTE, ask, declare, tool_set
 from .own_tools import collect_own_tools
 from .registry import CallBudget, RunScope, Tool, Toolbox, collect_tools, refuse_tracing
 from .router import Router
 from .subagents import CompiledSubagent, Subagent, collect_subagents
+from .toolcall import ToolModel
 
 
 class MainState(TypedDict, total=False):
@@ -44,6 +46,7 @@ def build_main_graph(
     budget: CallBudget,
     scope: RunScope,
     route_to: str | None = None,
+    asker: ToolModel | None = None,
 ) -> Any:
     refuse_tracing()
     compiled: dict[str, CompiledSubagent] = {
@@ -67,13 +70,20 @@ def build_main_graph(
         result = ToolResult.failure("no subagent fits this request")
         return {"outcome": SubagentResult(result=result)}
 
+    def ask_node(state: MainState) -> MainState:
+        assert asker is not None
+        box = Toolbox(tools, session, budget, allowed=tool_set(scope), scope=scope)
+        result = ask(state["request"], model=asker, toolbox=box, declarations=declare(tools, scope))
+        return {"route": ASK_ROUTE, "outcome": SubagentResult(result=result)}
+
     def answer(state: MainState) -> MainState:
         return {"answer": router.compose(state["request"], state["outcome"])}
 
+    asks = asker is not None and route_to is None
     graph = StateGraph(MainState)
     graph.add_node("route", route)
     graph.add_node("delegate", delegate)
-    graph.add_node("unrouted", unrouted)
+    graph.add_node("unrouted", ask_node if asks else unrouted)
     graph.add_node("answer", answer)
     graph.add_edge(START, "route")
     graph.add_conditional_edges(
@@ -95,6 +105,7 @@ def run(
     tools: Mapping[str, Tool] | None = None,
     budget: CallBudget | None = None,
     route_to: str | None = None,
+    asker: ToolModel | None = None,
 ) -> MainState:
     """One chat turn or one trigger, start to finish.
 
@@ -109,6 +120,7 @@ def run(
         budget=budget or CallBudget(),
         scope=scope,
         route_to=route_to,
+        asker=asker,
     )
     state: MainState = graph.invoke({"request": request})
     return state

@@ -14,7 +14,8 @@ from autune_agent.main import (
     collect_subagents,
     run,
 )
-from autune_agent.testing import FakeRouter, example_subagent, mock_tool
+from autune_agent.main.toolcall import FunctionCall
+from autune_agent.testing import FakeRouter, ScriptedToolModel, example_subagent, mock_tool
 
 SESSION: Any = object()
 SCOPE = RunScope(team_id="team_a")
@@ -112,3 +113,49 @@ def test_a_subagent_cannot_list_a_speaking_ratio_tool(tool: str) -> None:
             tools=(tool,),
             build=lambda _box: None,  # type: ignore[arg-type, return-value]
         )
+
+
+def test_a_turn_no_subagent_fits_is_asked_when_a_model_is_given() -> None:
+    tools = {"extraction.open_action_items": mock_tool("extraction.open_action_items", OPEN_ITEMS)}
+    model = ScriptedToolModel([[FunctionCall("extraction__open_action_items", {})], "DONE"])
+
+    state = run(
+        "기한 지난 거 있어?",
+        session=SESSION,
+        scope=SCOPE,
+        router=FakeRouter(),
+        subagents={},
+        tools=tools,
+        asker=model,
+    )
+
+    assert state["route"] == "ask"
+    assert state["outcome"].result.ok is True
+    assert state["outcome"].proposed == []
+    assert state["answer"] == "마감이 가까운 액션아이템 2건."
+
+
+def test_without_a_model_an_unfit_turn_is_still_unrouted() -> None:
+    state = run(
+        "점심?", session=SESSION, scope=SCOPE, router=FakeRouter(), subagents={}, tools=TOOLS
+    )
+
+    assert state["route"] is None
+
+
+def test_a_triggered_run_never_asks() -> None:
+    model = ScriptedToolModel(["DONE"])
+
+    state = run(
+        "autune.intelligence.completed",
+        session=SESSION,
+        scope=SCOPE,
+        router=FakeRouter(),
+        subagents={},
+        tools=TOOLS,
+        asker=model,
+        route_to="report",
+    )
+
+    assert model.sent == []
+    assert state["route"] is None

@@ -13,6 +13,7 @@ once.
 from __future__ import annotations
 
 import contextlib
+import uuid
 from collections.abc import Callable, Iterator
 from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
@@ -37,7 +38,7 @@ BODY = "✅ 확정된 액션 아이템\n• 결제 API 스펙 초안 — 백엔�
 
 
 def _user(db_session: Session, team: str | None, name: str = "이승환") -> User:
-    user = User(email=f"{name}-{datetime.now(UTC).timestamp()}@example.com", display_name=name)
+    user = User(email=f"{name}-{uuid.uuid4().hex}@example.com", display_name=name)
     db_session.add(user)
     db_session.flush()
     if team is not None:
@@ -89,7 +90,30 @@ def _posted_report(
     service.claim_meeting_report(db_session, meeting.id, draft_id="rdr_a")
     if channel is not None and ts is not None:
         service.record_meeting_report_post(db_session, meeting.id, channel, ts)
+        _link_slack(db_session, team, channel)
     return meeting.id
+
+
+def _link_slack(
+    db_session: Session, team_id: str, channel: str, *, secret: str | None = None
+) -> None:
+    """The team's Slack connection: a correction is refused without one (#698)."""
+    from autune_core import TeamIntegration
+
+    row = db_session.scalar(
+        sa.select(TeamIntegration).where(
+            TeamIntegration.team_id == team_id, TeamIntegration.service == "slack"
+        )
+    )
+    if row is None:
+        # Never decrypted on the write path: a correction checks only that a
+        # token and a channel are there (#698).
+        row = TeamIntegration(team_id=team_id, service="slack", config={}, secret="stored-token")
+        db_session.add(row)
+    row.config = {"channel": channel}
+    if secret is not None:
+        row.secret = secret
+    db_session.flush()
 
 
 def _url(meeting: str) -> str:
@@ -249,18 +273,9 @@ def _scope(db_session: Session) -> Callable[[], contextlib.AbstractContextManage
 
 
 def _connect_slack(db_session: Session, team_id: str, channel: str = "C123") -> None:
-    from autune_core import TeamIntegration
     from autune_core.crypto import encrypt
 
-    db_session.add(
-        TeamIntegration(
-            team_id=team_id,
-            service="slack",
-            secret=encrypt("xoxb-test"),
-            config={"channel": channel},
-        )
-    )
-    db_session.flush()
+    _link_slack(db_session, team_id, channel, secret=encrypt("xoxb-test"))
 
 
 @pytest.fixture

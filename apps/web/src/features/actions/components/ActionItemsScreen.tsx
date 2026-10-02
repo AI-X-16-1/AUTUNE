@@ -133,6 +133,7 @@ export function ActionItemsScreen({ meetingId }: { meetingId: string }) {
                 selectedId={selectedId}
                 onSelect={setSelectedId}
                 add={{ meetingId, onAdd: add }}
+                onMove={(id, status) => edit(id, { status })}
               />
             </>
           )}

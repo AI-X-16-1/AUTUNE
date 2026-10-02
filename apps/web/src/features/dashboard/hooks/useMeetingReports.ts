@@ -87,6 +87,9 @@ function writeErrorMessage(reason: unknown): string {
     if (reason.message.includes("did not reach slack")) {
       return "이 리포트는 Slack에 올라가지 않아 수정본을 보낼 수 없습니다.";
     }
+    if (reason.message.includes("slack is not connected")) {
+      return "팀의 Slack 연결이나 채널 설정이 없어 수정본을 보낼 수 없습니다. 설정에서 다시 연결해 주세요.";
+    }
     return "이미 게시된 리포트입니다.";
   }
   if (reason.status === 404) return "리포트를 찾을 수 없습니다.";

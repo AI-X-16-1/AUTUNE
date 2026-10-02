@@ -195,6 +195,7 @@ def test_status_and_disconnect_are_for_members_only(world: dict[str, Any]) -> No
         "connected": True,
         "needs_reconnect": False,
         "site_name": "acme",
+        "site_url": "https://acme.atlassian.net",
         "project_key": "AUT",
         "project_missing": None,
     }

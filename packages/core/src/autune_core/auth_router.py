@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import re
 import secrets
 from datetime import UTC, datetime, timedelta
 from typing import Annotated
@@ -147,13 +148,14 @@ def _web_url(path: str) -> str:
 
 def integration_google(
     sign_in: Annotated[GoogleOAuthClient, Depends(get_google_client)],
+    integration: Annotated[GoogleOAuthClient | None, Depends(get_google_integration_client)],
 ) -> GoogleOAuthClient:
     """The Google client a person's own grant goes through -- calendar today.
     The deployment's integration client when it has one, the sign-in client
     otherwise. Whichever starts a connect has to finish it: the code Google
     returns can only be exchanged by the client it was issued to, and the ID
     token's ``aud`` names that client."""
-    return get_google_integration_client() or sign_in
+    return integration or sign_in
 
 
 IntegrationGoogle = Annotated[GoogleOAuthClient, Depends(integration_google)]
@@ -372,6 +374,29 @@ def _with_query(path: str, pair: str) -> str:
     return path + ("&" if "?" in path else "?") + pair
 
 
+def _https_link(stored: object) -> str | None:
+    """A stored address as something a screen may put in an ``href``: only an
+    ``https://`` URL. What is stored came from the provider at connect time;
+    this keeps a row that holds anything else from becoming a link a person
+    clicks."""
+    return stored if isinstance(stored, str) and stored.startswith("https://") else None
+
+
+_SLACK_ID = re.compile(r"[A-Z0-9]{2,}")
+
+
+def _slack_channel_link(config: dict) -> str | None:
+    """Where the team's alert channel opens in Slack, built from the workspace
+    and channel ids the install stored. ``None`` when either is missing or is
+    not shaped like a Slack id -- an install from before the ids were kept, or
+    a row somebody edited."""
+    workspace = str(config.get("workspace_id") or "")
+    channel = str(config.get("channel") or "")
+    if not (_SLACK_ID.fullmatch(workspace) and _SLACK_ID.fullmatch(channel)):
+        return None
+    return f"https://app.slack.com/client/{workspace}/{channel}"
+
+
 def _complete_calendar_connect(
     transaction: OAuthTransaction,
     google: GoogleOAuthClient,
@@ -414,7 +439,13 @@ def _complete_calendar_connect(
         secret=grant.refresh_token,
         # ``sub`` is Google's stable account id, not a credential; it is kept
         # only so the next connect can tell a new account from the same one.
-        config={"calendar_id": "primary", "google_sub": account},
+        #
+        # ``client_id`` is the client the grant was issued to, also not a
+        # credential. A refresh token works only with that client, so once the
+        # deployment's integration client changes, this is how the grant is
+        # known to need connecting again without a refused call to Google
+        # (mkkim68, review of #700).
+        config={"calendar_id": "primary", "google_sub": account, "client_id": google.client_id},
     )
     log.info("auth_google_calendar_connected", user_id=transaction.user_id)
     return RedirectResponse(
@@ -427,9 +458,20 @@ def google_calendar_status(
     user: CurrentUser, session: Annotated[Session, Depends(get_session)]
 ) -> dict[str, bool]:
     """Whether the signed-in person has connected their own calendar -- theirs
-    only; there is no way to ask about anyone else."""
+    only; there is no way to ask about anyone else.
+
+    ``needs_reconnect`` is true for a grant recorded as issued to another
+    Google client than the one this deployment refreshes with now: its
+    refresh token cannot work. A grant from before the client was recorded
+    says nothing either way, and is reported as it always was."""
     grant = load_user_integration(session, user.id, "calendar")
-    return {"connected": grant is not None and bool(grant.secret)}
+    connected = grant is not None and bool(grant.secret)
+    issued_to = grant.config.get("client_id") if grant is not None else None
+    current = get_settings().google_integration_credentials[0]
+    return {
+        "connected": connected,
+        "needs_reconnect": connected and bool(issued_to) and issued_to != current,
+    }
 
 
 @router.post("/google/calendar/disconnect")
@@ -442,10 +484,13 @@ def google_calendar_disconnect(
     goes even when Google cannot be reached; ``revoked`` says whether Google
     confirmed, so a person knows to check their Google account otherwise.
 
-    The consent used ``include_granted_scopes``, so revoking this token can end
-    the whole grant that Google account gave Autune -- sign-in scopes included.
-    The next sign-in with that account then shows Google's consent screen again;
-    nothing else changes."""
+    The consent used ``include_granted_scopes``, so where the calendar was
+    connected through the **sign-in client** -- a deployment with no
+    integration client -- revoking this token can end the whole grant that
+    Google account gave Autune, sign-in scopes included. The next sign-in
+    with that account then shows Google's consent screen again; nothing else
+    changes. With an integration client the grant is that client's own, and
+    sign-in is not touched (mkkim68, review of #700)."""
     grant = load_user_integration(session, user.id, "calendar")
     revoked = bool(grant and grant.secret and google.revoke(grant.secret))
     disconnect_user_integration(session, user.id, "calendar")
@@ -641,6 +686,8 @@ def jira_status(
         "connected": True,
         "needs_reconnect": bool(config.config.get("needs_reconnect")),
         "site_name": config.config.get("site_name"),
+        # The team's own Jira site, for a link beside the connection.
+        "site_url": _https_link(config.config.get("site_url")),
         "project_key": config.config.get("project_key"),
         # The key of a chosen project that has since been deleted in Jira.
         "project_missing": config.config.get("project_missing"),
@@ -1074,6 +1121,8 @@ def slack_status(
         "connected": True,
         "workspace_name": config.config.get("workspace_name"),
         "channel_name": config.config.get("channel_name"),
+        # The alert channel in the team's own workspace, for a link beside it.
+        "channel_url": _slack_channel_link(config.config),
     }
 
 
