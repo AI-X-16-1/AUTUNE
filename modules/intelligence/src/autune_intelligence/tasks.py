@@ -32,6 +32,7 @@ from autune_integrations import SlackClient
 
 from . import service
 from .config import get_settings
+from .enqueue import DELIVER_MEETING_REPORT
 from .models import IntelCompletion, IntelMeetingReport
 
 log = get_logger(__name__)
@@ -196,7 +197,7 @@ def generate_weekly_report(team_id: str, period_end: str | None = None) -> None:
     )
 
 
-@shared_task(name="autune.intelligence.deliver_meeting_report", acks_late=True)
+@shared_task(name=DELIVER_MEETING_REPORT, acks_late=True)
 def deliver_meeting_report(meeting_id: str, draft_id: str | None = None) -> None:
     """Post a meeting's stored report to its team's Slack channel, at most once.
 

@@ -331,14 +331,21 @@ function formatTime(iso: string): string {
 /** Rows shown before "이전 리포트 n개 더 보기"; the server sends at most 20. */
 const FIRST_SHOWN = 5;
 
-/** The server's cap counts the whole stored document, in code points. */
+/** The server's cap counts the whole document as Slack receives it, in code points. */
 const DOCUMENT_MAX = 3000;
-/** Room for the footer E writes after an edit, which names the editor. */
+/** Room for the footer E adds after an edit, which names the editor. */
 const EDITED_FOOTER_ROOM = 60;
 
-/** Code points, as the server counts them: an emoji is one, not two. */
+/**
+ * Code points, as the server counts them: an emoji is one, not two. Slack's
+ * three control characters go out escaped, so "&" counts as five ("&amp;") and
+ * "<" or ">" as four.
+ */
 function characters(text: string): number {
-  return Array.from(text).length;
+  return Array.from(text).reduce(
+    (count, char) => count + (char === "&" ? 5 : char === "<" || char === ">" ? 4 : 1),
+    0,
+  );
 }
 
 /** How long the body may be once E adds "📋 <title>" above and its footer below. */

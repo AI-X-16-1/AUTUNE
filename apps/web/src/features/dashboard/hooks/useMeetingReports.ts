@@ -100,7 +100,9 @@ function writeErrorMessage(reason: unknown): string {
         .join(", ");
       return `개인정보가 남아 있어 저장하지 않았습니다 (${names}).`;
     }
-    if (reason.message.includes("exceeds")) return "리포트가 3,000자를 넘어 저장하지 않았습니다.";
+    if (reason.message.includes("exceeds")) {
+      return "리포트가 3,000자를 넘어 저장하지 않았습니다 (&, <, >는 Slack에서 여러 글자로 셉니다).";
+    }
     if (reason.message.includes("empty")) return "본문이 비어 있습니다.";
   }
   return "처리하지 못했습니다. 잠시 후 다시 시도해주세요.";

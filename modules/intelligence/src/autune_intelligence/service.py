@@ -855,7 +855,8 @@ def generate_weekly_report(
 
 MEETING_REPORT_MAX_CHARS: Final = 3000
 """Slack's limit for one section block's text. A longer body is refused rather
-than cut, because a cut summary reads as a finished one.
+than cut, because a cut summary reads as a finished one. Counted as Slack
+receives it, after ``_slack_escape``: "&" goes out as five characters.
 
 It also has to fit ``autune_integrations.privacy.MAX_OUTBOUND_CHARS`` (4000),
 which counts every string in the request: the body once, the title (at most
@@ -899,7 +900,7 @@ def save_meeting_report(
     meeting = session.get(Meeting, meeting_id)
     if meeting is None:
         raise NotFoundError("meeting", meeting_id)
-    if len(body_markdown) > MEETING_REPORT_MAX_CHARS:
+    if len(_slack_escape(body_markdown)) > MEETING_REPORT_MAX_CHARS:
         raise ValidationError(
             f"report body exceeds {MEETING_REPORT_MAX_CHARS} characters", field="body_markdown"
         )
@@ -1035,10 +1036,15 @@ def claim_meeting_report(
         # own approval rather than going out under this one.
         raise ConflictError("meeting report draft was replaced", meeting_id=meeting_id)
     title = session.scalar(sa.select(Meeting.title).where(Meeting.id == meeting_id)) or ""
+    editor = (
+        session.scalar(sa.select(User.display_name).where(User.id == row.edited_by))
+        if row.edited_by is not None
+        else None
+    )
     claimed = ClaimedReport(
         meeting_id=meeting_id,
         preview=_report_preview(title),
-        body_markdown=row.body_markdown,
+        body_markdown=_with_editor(row.body_markdown, editor),
         pending_review=row.pending_review,
     )
     # The same check post_message runs, made before sent_at is set: a refusal
@@ -1403,7 +1409,41 @@ def store_action_progress(session: Session, snapshot: TeamActionProgress) -> boo
 MEETING_REPORTS_SHOWN: Final = 20
 """The card lists this many reports, newest meeting first."""
 
-_EDITED_FOOTER: Final = "자동 생성된 리포트를 {name}님이 고쳤습니다."
+_EDITED_FOOTER: Final = "자동 생성된 리포트를 팀원이 고쳤습니다."
+"""The footer stored after an edit. It does not name the editor: stored text
+outlives the account, and a deleted person's name must not (invariant 11, #642
+review). ``_with_editor`` adds the name from ``edited_by`` when the report is
+read or posted, so it goes when the account does."""
+
+_EDITED_FOOTER_NAMED: Final = "자동 생성된 리포트를 {name}님이 고쳤습니다."
+
+
+def _editor_footer(name: str | None) -> str:
+    """The footer naming ``name``, or the stored one when there is no name or the
+    name itself looks like personal data: ``check_outbound`` would refuse the
+    whole post over it, and the editor cannot fix it by editing the text."""
+    if not name or find_unmasked(name):
+        return _EDITED_FOOTER
+    return _EDITED_FOOTER_NAMED.format(name=name)
+
+
+def _with_editor(document: str, name: str | None) -> str:
+    """The stored document with its editor's current name in the footer.
+
+    Unchanged for a model's draft, for an editor whose account is gone, and when
+    the name would take the text past the cap -- checked at the edit with the
+    name the editor had then, so only a later, longer name gets here.
+    """
+    named = _with_editor_unchecked(document, name)
+    if len(_slack_escape(named)) > MEETING_REPORT_MAX_CHARS:
+        return document
+    return named
+
+
+def _with_editor_unchecked(document: str, name: str | None) -> str:
+    if not document.endswith(_EDITED_FOOTER):
+        return document
+    return document.removesuffix(_EDITED_FOOTER) + _editor_footer(name)
 
 
 def split_report_document(document: str) -> tuple[str, str, str]:
@@ -1451,7 +1491,7 @@ def _report_for_member(session: Session, meeting_id: str, user_id: str) -> Intel
 def _report_read(
     row: IntelMeetingReport, editor: str | None, requester_id: str
 ) -> MeetingReportRead:
-    title, body, footer = split_report_document(row.body_markdown)
+    title, body, footer = split_report_document(_with_editor(row.body_markdown, editor))
     draft = row.sent_at is None
     return MeetingReportRead(
         meeting_id=row.meeting_id,
@@ -1495,7 +1535,8 @@ def edit_meeting_report(
 ) -> MeetingReportRead:
     """Replace a draft's body with a team member's text and record who did it.
 
-    E keeps the header line and writes a footer naming the editor. The draft
+    E keeps the header line and writes a footer saying a person edited it; the
+    name is added when it is read or posted (``_with_editor``), never stored. The draft
     takes a new ``draft_id``: an approval queued for the model's text -- even one
     already approved and waiting for the worker -- then posts nothing, and the
     editor posts this text from the card (``post_edited_report``). Refused once
@@ -1512,10 +1553,11 @@ def edit_meeting_report(
         raise ConflictError("meeting report changed since it was opened", meeting_id=meeting_id)
     if not body.strip():
         raise ValidationError("report body is empty", field="body")
-    editor = session.scalar(sa.select(User.display_name).where(User.id == user_id)) or ""
+    editor = session.scalar(sa.select(User.display_name).where(User.id == user_id))
     header = row.body_markdown.partition("\n\n")[0]
-    document = f"{header}\n\n{body}\n\n{_EDITED_FOOTER.format(name=editor)}"
-    if len(document) > MEETING_REPORT_MAX_CHARS:
+    document = f"{header}\n\n{body}\n\n{_EDITED_FOOTER}"
+    # Counted as it will go out: escaped, with the editor's name in the footer.
+    if len(_slack_escape(_with_editor_unchecked(document, editor))) > MEETING_REPORT_MAX_CHARS:
         raise ValidationError(f"report exceeds {MEETING_REPORT_MAX_CHARS} characters", field="body")
     try:
         assert_masked(document, destination="intel_meeting_reports")

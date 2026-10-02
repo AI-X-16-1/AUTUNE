@@ -28,7 +28,7 @@ from sqlalchemy.orm import Session
 from autune_core import CurrentUser, get_session
 from autune_core.errors import NotFoundError
 
-from . import service, tasks
+from . import enqueue, service
 from .models import IntelReport, IntelScore
 from .schemas import (
     DashboardRead,
@@ -118,7 +118,7 @@ def post_edited_report(meeting_id: str, user: CurrentUser, session: SessionDep) 
     before this request's session closes; its claim checks the draft id again.
     """
     draft_id = service.post_edited_report(session, meeting_id, user_id=user.id)
-    tasks.deliver_meeting_report.apply_async((meeting_id, draft_id))
+    enqueue.deliver_meeting_report(meeting_id, draft_id)
     return {"status": "queued"}
 
 

@@ -288,7 +288,11 @@ def test_the_last_editor_posts_their_edit_from_the_card(
     from autune_intelligence import router as router_module
 
     sent: list[tuple[str, ...]] = []
-    monkeypatch.setattr(router_module.tasks.deliver_meeting_report, "apply_async", sent.append)
+    monkeypatch.setattr(
+        router_module.enqueue,
+        "deliver_meeting_report",
+        lambda meeting_id, draft_id: sent.append((meeting_id, draft_id)),
+    )
     meeting = _meeting(db_session, team, "결제 회의", 2)
     _report(db_session, meeting)
     editor = _user(db_session, team, "박재경")
@@ -314,9 +318,7 @@ def test_only_the_last_editor_posts(
 ) -> None:
     from autune_intelligence import router as router_module
 
-    monkeypatch.setattr(
-        router_module.tasks.deliver_meeting_report, "apply_async", lambda _args: None
-    )
+    monkeypatch.setattr(router_module.enqueue, "deliver_meeting_report", lambda *_args: None)
     meeting = _meeting(db_session, team, "결제 회의", 2)
     _report(db_session, meeting)
     client_for(_user(db_session, team, "박재경")).put(
@@ -376,3 +378,114 @@ def test_deleting_the_editor_keeps_the_report_without_their_id(
 
     row = db_session.get(IntelMeetingReport, meeting)
     assert row is not None and row.edited_by is None
+    # The name was never stored with the text, so it goes with the account
+    # (invariant 11, #642 review): not in the row, not in what the card reads.
+    assert "박재경" not in row.body_markdown
+    reader = client_for(_user(db_session, team, "문민재"))
+    [shown] = reader.get(f"/api/intelligence/meeting-reports/{team}").json()
+    assert "박재경" not in shown["footer"] and "박재경" not in shown["body"]
+
+
+def test_the_editors_name_is_added_when_read_and_posted_not_stored(
+    db_session: Session, team: str, client_for: Callable[[User], TestClient]
+) -> None:
+    meeting = _meeting(db_session, team, "결제 회의", 2)
+    _report(db_session, meeting)
+    editor = _user(db_session, team, name="박재경")
+    edited = (
+        client_for(editor)
+        .put(f"/api/intelligence/meeting-reports/{meeting}", json={"body": "✅ 고친 본문"})
+        .json()
+    )
+
+    row = db_session.get(IntelMeetingReport, meeting)
+    assert row is not None and "박재경" not in row.body_markdown
+    assert "박재경" in edited["footer"]
+    claimed = service.claim_meeting_report(db_session, meeting, draft_id=row.draft_id)
+    assert claimed is not None and claimed.body_markdown.endswith("박재경님이 고쳤습니다.")
+
+
+def test_a_name_that_looks_like_personal_data_is_left_out_of_the_post(
+    db_session: Session, team: str, client_for: Callable[[User], TestClient]
+) -> None:
+    """A display name the outbound check would refuse must not make the post unsendable."""
+    meeting = _meeting(db_session, team, "결제 회의", 2)
+    _report(db_session, meeting)
+    editor = _user(db_session, team, name="010-1234-5678")
+    response = client_for(editor).put(
+        f"/api/intelligence/meeting-reports/{meeting}", json={"body": "✅ 고친 본문"}
+    )
+    assert response.status_code == 200  # the name is not the editor's text to fix
+
+    row = db_session.get(IntelMeetingReport, meeting)
+    assert row is not None
+    claimed = service.claim_meeting_report(db_session, meeting, draft_id=row.draft_id)
+    assert claimed is not None and "010-1234-5678" not in claimed.body_markdown
+
+
+def test_posting_a_posted_report_is_a_conflict_and_an_outsider_gets_not_found(
+    db_session: Session,
+    team: str,
+    client_for: Callable[[User], TestClient],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from autune_intelligence import router as router_module
+
+    monkeypatch.setattr(router_module.enqueue, "deliver_meeting_report", lambda *_args: None)
+    meeting = _meeting(db_session, team, "결제 회의", 2)
+    _report(db_session, meeting)
+    editor = _user(db_session, team, "박재경")
+    client_for(editor).put(
+        f"/api/intelligence/meeting-reports/{meeting}", json={"body": "✅ 고친 본문"}
+    )
+    row = db_session.get(IntelMeetingReport, meeting)
+    assert row is not None
+    service.claim_meeting_report(db_session, meeting, draft_id=row.draft_id)
+
+    posted = client_for(editor).post(f"/api/intelligence/meeting-reports/{meeting}/post")
+    outsider = client_for(_user(db_session, None)).post(
+        f"/api/intelligence/meeting-reports/{meeting}/post"
+    )
+
+    assert (posted.status_code, outsider.status_code) == (409, 404)
+
+
+def test_an_edit_between_posting_and_the_claim_posts_nothing(
+    db_session: Session,
+    team: str,
+    client_for: Callable[[User], TestClient],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Queued for one draft, edited again before the worker claims it."""
+    from autune_intelligence import router as router_module
+
+    queued: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        router_module.enqueue,
+        "deliver_meeting_report",
+        lambda meeting_id, draft_id: queued.append((meeting_id, draft_id)),
+    )
+    meeting = _meeting(db_session, team, "결제 회의", 2)
+    _report(db_session, meeting)
+    client = client_for(_user(db_session, team, "박재경"))
+    client.put(f"/api/intelligence/meeting-reports/{meeting}", json={"body": "✅ 첫 수정"})
+    client.post(f"/api/intelligence/meeting-reports/{meeting}/post")
+    client.put(f"/api/intelligence/meeting-reports/{meeting}", json={"body": "✅ 두 번째 수정"})
+
+    [(queued_meeting, queued_draft)] = queued
+    with pytest.raises(AutuneError):
+        service.claim_meeting_report(db_session, queued_meeting, draft_id=queued_draft)
+
+
+def test_the_cap_counts_the_text_as_slack_will_receive_it(
+    db_session: Session, team: str, client_for: Callable[[User], TestClient]
+) -> None:
+    """An "&" goes out as "&amp;": a body under the cap before escaping can be over it after."""
+    meeting = _meeting(db_session, team, "결제 회의", 2)
+    _report(db_session, meeting)
+
+    response = client_for(_user(db_session, team)).put(
+        f"/api/intelligence/meeting-reports/{meeting}", json={"body": "&" * 700}
+    )
+
+    assert response.status_code == 422
