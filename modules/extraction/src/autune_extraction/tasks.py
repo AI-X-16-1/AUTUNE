@@ -57,7 +57,7 @@ from autune_integrations import (
 from autune_integrations.errors import SlackRecipientNotLinkedError
 
 from . import calendar_sync, jira_sync, notion_backfill, notion_setup, service
-from .config import get_settings
+from .config import get_settings, require_loadable
 from .confirmations import build_confirmation_dm
 from .models import (
     ExtActionItem,
@@ -73,6 +73,13 @@ from .pipeline.base import give_roster
 from .pipeline.registry import get_classifier, get_nli, get_resolver
 
 log = get_logger(__name__)
+
+# Before anything of module B is served or run: a configuration B refuses
+# (an unacknowledged cloud model, #392) stops the process that imports this,
+# instead of surfacing on the first request or the first meeting. The worker
+# imports this module; the API reaches it through ``router``, which imports it
+# too -- one call, and a test for each of the two ways in.
+require_loadable()
 
 
 @shared_task(name="autune.extraction.on_transcript_ready", acks_late=True)

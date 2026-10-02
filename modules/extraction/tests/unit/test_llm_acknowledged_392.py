@@ -93,10 +93,10 @@ def test_it_is_read_from_the_environment_under_its_own_name(
     assert settings().resolver_impl == "llm"
 
 
-@pytest.mark.parametrize("env", ["local", "dev", "production"])
+@pytest.mark.parametrize("env", ["local", "staging", "production"])
 def test_no_environment_name_opens_it(monkeypatch: pytest.MonkeyPatch, env: str) -> None:
-    """``AUTUNE_ENV`` defaults to ``local`` (#408): keyed on it, a deployment that
-    forgot the variable would be the one let through."""
+    """``.env.example`` ships ``AUTUNE_ENV=local``: keyed on it, a deployment
+    made from that file would be the one let through."""
     monkeypatch.setenv("AUTUNE_ENV", env)
 
     with pytest.raises(ValidationError, match=FLAG):
