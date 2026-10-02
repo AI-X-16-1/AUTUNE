@@ -18,15 +18,18 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy import delete, select
+from sqlalchemy.orm import Session
 
 from autune_context import router, service
 from autune_context.config import get_settings
-from autune_context.models import CtxDecision, CtxDecisionVersion, CtxTopicLink
+from autune_context.constants import EMBEDDING_DIM
+from autune_context.models import CtxDecision, CtxDecisionVersion, CtxEmbedding, CtxTopicLink
 from autune_context.pipeline import reset_cache
 from autune_context.schemas import LinkConfirmRequest
 from autune_contracts.extraction import Decision, ExtractionResult
-from autune_core import Meeting, Team, TeamMember, User, session_scope
+from autune_core import Meeting, Participant, Team, TeamMember, User, Utterance, session_scope
 from autune_core.errors import ConflictError, NotFoundError
+from autune_core.ids import new_id
 
 _D1 = "검색 정렬은 최신순으로 한다"
 
@@ -114,8 +117,37 @@ def _extraction(meeting_id: str, decisions: list[tuple[str, str, float]]) -> Ext
     )
 
 
+def _spoken(s: Session, meeting_id: str, label: str, *, consented: bool = True) -> None:
+    """The segment ``label`` was cut from, stored as topic linking stores it, so a
+    link carrying that label reads as cut from a consenting speaker's speech."""
+    speaker = Participant(meeting_id=meeting_id, speaker_label=new_id("spk"), consented=consented)
+    s.add(speaker)
+    s.flush()
+    utterance = Utterance(
+        meeting_id=meeting_id,
+        participant_id=speaker.id,
+        speaker_label=speaker.speaker_label,
+        start_sec=0.0,
+        end_sec=1.0,
+        text=label,
+    )
+    s.add(utterance)
+    s.flush()
+    s.add(
+        CtxEmbedding(
+            meeting_id=meeting_id,
+            kind="topic",
+            ref_label=label,
+            utterance_ids=[utterance.id],
+            embedding=[1.0] + [0.0] * (EMBEDDING_DIM - 1),
+            model_version="test",
+        )
+    )
+
+
 def _topic_link(meeting_id: str, *, status: str, confidence: float = 0.5) -> int:
     with session_scope() as s:
+        _spoken(s, meeting_id, "검색 정렬")
         row = CtxTopicLink(
             meeting_id=meeting_id,
             topic_label="검색 정렬",
@@ -485,6 +517,7 @@ def test_topic_link_date_survives_linked_meeting_deletion(team_id: str) -> None:
     linked_meeting = _meeting(team_id, days_ago=5)
     linked_date = (datetime.now(tz=UTC) - timedelta(days=5)).date()
     with session_scope() as s:
+        _spoken(s, meeting, "검색 정렬")
         link = CtxTopicLink(
             meeting_id=meeting,
             topic_label="검색 정렬",
