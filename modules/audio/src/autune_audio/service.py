@@ -621,11 +621,18 @@ class NothingToCancelError(ConflictError):
 
 def latest_job(session: Session, *, meeting_id: str, lock: bool = False) -> TranscriptionJob | None:
     """The meeting's newest attempt -- the one a restart or a re-upload made
-    last, and so the one the screen and both routes are about."""
+    last, and so the one the screen and both routes are about.
+
+    A live job sorts first because ``created_at`` is the transaction's start,
+    which can precede a wait on the meeting lock, so two uploads seconds apart
+    may be stamped out of order; at most one job per meeting is live."""
     query = (
         sa.select(TranscriptionJob)
         .where(TranscriptionJob.meeting_id == meeting_id)
-        .order_by(TranscriptionJob.created_at.desc())
+        .order_by(
+            TranscriptionJob.status.in_(("queued", "running")).desc(),
+            TranscriptionJob.created_at.desc(),
+        )
         .limit(1)
     )
     if lock:
@@ -691,16 +698,26 @@ class RecordingGoneError(ConflictError):
     code = "recording_gone"
 
 
+RESTART_MARGIN = timedelta(minutes=10)
+"""How long before the sweep's deadline a restart stops being offered, so a
+restarted job is not swept out from under its worker."""
+
+
 def recording_restartable(job_id: str, *, settings: AudioSettings, now: datetime) -> bool:
-    """The attempt's upload is still on disk and inside its six hours.
+    """The attempt's upload is still on disk and inside its six hours, less
+    ``RESTART_MARGIN``.
 
     By mtime, which a rename keeps: the window runs from the upload, so a
-    restart cannot extend it (``sweep_orphans`` measures the same way)."""
+    restart cannot extend it (``sweep_orphans`` measures the same way). The
+    file can vanish between the check and the stat (a cancel, the sweep); that
+    answers False rather than raising, whose message would carry the path."""
     path = storage.upload_path(job_id, settings)
-    if not path.exists():
+    try:
+        mtime = path.stat().st_mtime
+    except OSError:
         return False
-    uploaded = datetime.fromtimestamp(path.stat().st_mtime, tz=UTC)
-    return uploaded >= now - timedelta(hours=settings.orphan_after_hours)
+    uploaded = datetime.fromtimestamp(mtime, tz=UTC)
+    return uploaded >= now - timedelta(hours=settings.orphan_after_hours) + RESTART_MARGIN
 
 
 def restart_transcription(
@@ -743,7 +760,13 @@ def restart_transcription(
     new = TranscriptionJob(meeting_id=meeting_id, status="queued")
     session.add(new)
     session.flush()
-    storage.upload_path(old.id, settings).rename(storage.upload_path(new.id, settings))
+    try:
+        storage.upload_path(old.id, settings).rename(storage.upload_path(new.id, settings))
+    except FileNotFoundError:
+        # Gone since the check; not chained, so the path stays out of any log.
+        raise RecordingGoneError(
+            f"the recording for meeting {meeting_id} is no longer on the server"
+        ) from None
     log.info(
         "audio_transcription_restarted", meeting_id=meeting_id, old_job_id=old.id, job_id=new.id
     )
