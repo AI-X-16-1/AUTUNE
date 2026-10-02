@@ -127,8 +127,8 @@ def on_transcript_ready(payload: dict) -> None:
 
 
 def _follow_corrections(corrections: service.SourceCorrections) -> None:
-    """Queue the outside copies of corrected confirmed rows (#586) -- Notion,
-    Jira and the calendar for an item, Notion for a decision. A failure to queue
+    """Queue the outside copies of corrected rows that have them (#586, #657):
+    Notion, Jira and the calendar for an item, Notion for a decision. A failure to queue
     is logged: the rows are already right, and the next edit sends them."""
     try:
         for action_item_id in corrections.changed_items:
@@ -1236,8 +1236,9 @@ def update_confirmation_dm(utterance_id: str) -> bool:
 def forget_deleted_speech(user_id: str, utterance_ids: Sequence[str]) -> None:
     """Before a person's own speech is deleted (#582, #587): the items and
     decisions drawn from it keep the work and drop the words
-    (``service.forget_speech``), and the confirmed ones' copies in Notion, Jira
-    and the calendar are queued to follow.
+    (``service.forget_speech``), and their copies in Notion, Jira and the
+    calendar are queued to follow -- a confirmed row's, and those of an item
+    moved back to 확인 필요 that still has them (#657).
 
     The database part raises on failure, so A's deletion stops rather than
     leaving the words behind in B. The copies outside are queued after the

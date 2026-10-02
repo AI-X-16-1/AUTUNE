@@ -40,6 +40,7 @@ from autune_extraction.models import (
     ExtDecisionReview,
     ExtDecisionSource,
     ExtEditEvent,
+    ExtExternalRef,
 )
 from autune_extraction.noun_form import tidy
 from autune_extraction.pipeline import FakeClassifier, FakeNli
@@ -204,6 +205,22 @@ def test_an_unconfirmed_draft_is_fixed_but_needs_no_resync(session: Session) -> 
     done = correct(session)
 
     assert row.description == tidy(NEW) and done.changed_items == ()
+
+
+@pytest.mark.parametrize("system", ["notion", "jira"])
+def test_a_draft_that_was_confirmed_once_resyncs_its_copy(session: Session, system: str) -> None:
+    """Moved back to 확인 필요 it is a draft on the board and still a page or an
+    issue outside. Asking only for the status left the uncorrected line there
+    (#657)."""
+    row = item(session, "act_1", status="needs_confirmation")
+    session.add(
+        ExtExternalRef(action_item_id="act_1", system=system, meeting_id=MEETING, external_id="x1")
+    )
+    session.flush()
+
+    done = correct(session)
+
+    assert row.description == tidy(NEW) and done.changed_items == ("act_1",)
 
 
 def test_decisions_a_person_wrote_are_flagged_and_confirmed_ones_resync(
