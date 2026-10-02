@@ -1,0 +1,159 @@
+import type { ReactNode } from "react";
+
+import type { Block, Inline, LegalDocument, Line } from "./content";
+
+/**
+ * How a legal document's data is drawn: the lead, each section, the closing
+ * line. Shared by `/legal`, which shows the documents one after another, and
+ * the consent page, which opens one at a time -- so what a person reads before
+ * agreeing is the same text, drawn the same way, as what the footer links to.
+ *
+ * Nothing here knows what the text says. An unsettled value is marked where it
+ * stands, on both pages.
+ */
+
+export const BODY = {
+  fontSize: "var(--text-body)",
+  lineHeight: "var(--text-body-leading)",
+} as const;
+
+function isBlank(part: Inline): part is { blank: string; proposed?: string } {
+  return typeof part === "object" && "blank" in part;
+}
+
+/** One unsettled value: the proposal when there is one, else what is missing. */
+function Unsettled({ label, proposed }: { label: string; proposed?: string }) {
+  return (
+    <span className="text-attention" title={`${label}: 확정 전`}>
+      〔{proposed ?? label} · 확정 전〕
+    </span>
+  );
+}
+
+export function Text({ line }: { line: Line }) {
+  const parts: readonly Inline[] = Array.isArray(line)
+    ? line
+    : [line as Inline];
+  return (
+    <>
+      {parts.map((part, index) => {
+        if (typeof part === "string") return <span key={index}>{part}</span>;
+        if (isBlank(part))
+          return (
+            <Unsettled
+              key={index}
+              label={part.blank}
+              proposed={part.proposed}
+            />
+          );
+        return (
+          <strong
+            key={index}
+            className="text-ink-strong"
+            style={{ fontWeight: "var(--text-label-weight)" }}
+          >
+            {part.strong}
+          </strong>
+        );
+      })}
+    </>
+  );
+}
+
+function BlockView({ block }: { block: Block }): ReactNode {
+  if (block.kind === "paragraph") {
+    return (
+      <p className="text-ink-body" style={BODY}>
+        <Text line={block.line} />
+      </p>
+    );
+  }
+  if (block.kind === "list") {
+    const List = block.ordered ? "ol" : "ul";
+    return (
+      <List
+        className={`flex flex-col gap-2 pl-5 text-ink-body ${block.ordered ? "list-decimal" : "list-disc"}`}
+        style={BODY}
+      >
+        {block.items.map((item, index) => (
+          <li key={index}>
+            <Text line={item} />
+          </li>
+        ))}
+      </List>
+    );
+  }
+  return (
+    <div className="overflow-x-auto">
+      <table
+        className="w-full border-collapse text-left"
+        style={{ fontSize: "var(--text-meta)" }}
+      >
+        <thead>
+          <tr>
+            {block.head.map((cell) => (
+              <th
+                key={cell}
+                scope="col"
+                className="border-b border-hairline px-3 py-2 text-ink-muted"
+                style={{ fontWeight: "var(--text-label-weight)" }}
+              >
+                {cell}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {block.rows.map((row, rowIndex) => (
+            <tr key={rowIndex}>
+              {row.map((cell, cellIndex) => (
+                <td
+                  key={cellIndex}
+                  className={`border-b border-hairline px-3 py-2 align-top ${
+                    cellIndex === 0 ? "text-ink-strong" : "text-ink-body"
+                  }`}
+                  style={{ lineHeight: "var(--text-meta-leading)" }}
+                >
+                  <Text line={cell} />
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+/** Everything of a document under its title. The title is the caller's. */
+export function DocumentBody({ doc }: { doc: LegalDocument }) {
+  return (
+    <>
+      <p className="text-ink-body" style={BODY}>
+        <Text line={doc.lead} />
+      </p>
+      {doc.sections.map((section) => (
+        <section key={section.heading} className="flex flex-col gap-3">
+          <h2
+            className="text-ink-strong"
+            style={{
+              fontSize: "var(--text-rowTitle)",
+              fontWeight: "var(--text-rowTitle-weight)",
+              lineHeight: "var(--text-rowTitle-leading)",
+            }}
+          >
+            {section.heading}
+          </h2>
+          {section.blocks.map((block, index) => (
+            <BlockView key={index} block={block} />
+          ))}
+        </section>
+      ))}
+      {doc.closing ? (
+        <p className="text-ink-muted" style={{ fontSize: "var(--text-meta)" }}>
+          <Text line={doc.closing} />
+        </p>
+      ) : null}
+    </>
+  );
+}

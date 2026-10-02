@@ -76,6 +76,52 @@ export async function getSession(): Promise<SessionUser | null> {
   }
 }
 
+/** One document and version a person agreed to, as the server recorded it. */
+export interface RecordedConsent {
+  document: string;
+  version: string;
+  agreed_at?: string | null;
+}
+
+/**
+ * What the signed-in person has agreed to, or null when it could not be read
+ * -- no session, a network failure, or a server from before the record
+ * existed. Null is "unknown", not "nothing": the caller decides.
+ */
+export async function getConsents(): Promise<RecordedConsent[] | null> {
+  try {
+    const response = await fetch(authUrl("/consents"), {
+      credentials: "include",
+    });
+    if (!response.ok) return null;
+    const body = (await response.json()) as { consents: RecordedConsent[] };
+    return body.consents;
+  } catch {
+    return null;
+  }
+}
+
+/** Record that the signed-in person agrees to each document and version. */
+export async function agreeToConsents(
+  consents: readonly { document: string; version: string }[],
+): Promise<RecordedConsent[]> {
+  const response = await fetch(authUrl("/consents"), {
+    method: "POST",
+    credentials: "include",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ consents }),
+  });
+  if (!response.ok) {
+    throw new ApiError(
+      response.status,
+      "consent_failed",
+      "consent was not recorded",
+    );
+  }
+  const body = (await response.json()) as { consents: RecordedConsent[] };
+  return body.consents;
+}
+
 export async function logout(): Promise<void> {
   await fetch(authUrl("/logout"), { method: "POST", credentials: "include" });
 }

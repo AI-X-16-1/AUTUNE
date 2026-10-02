@@ -48,7 +48,7 @@ export interface Section {
 }
 
 export interface LegalDocument {
-  id: "privacy" | "terms" | "security";
+  id: "privacy" | "terms" | "security" | "voice_features" | "overseas_transfer";
   title: string;
   lead: Line;
   sections: readonly Section[];
@@ -567,8 +567,133 @@ const SECURITY: LegalDocument = {
   ],
 };
 
+const REFUSAL = blank(
+  "동의 거부 시 처리",
+  "현재는 이 항목만 따로 끄는 설정이 없어, 동의하지 않으면 서비스를 이용할 수 없습니다",
+);
+
+/**
+ * The two consents asked for apart from the policy (decided with the user,
+ * 2026-10-02). Each repeats facts the policy already states -- sections 1, 2
+ * and 3 above -- in the shape a separate consent needs: what, why, how long,
+ * and the right to refuse. Change a fact there, change it here.
+ *
+ * What happens on refusal is unsettled and marked so: the service has no
+ * per-person switch for either, which is a fact about the code, and whether a
+ * consent may be required on that ground is a question for the legal review.
+ */
+const VOICE_CONSENT: LegalDocument = {
+  id: "voice_features",
+  title: "음성 특징정보 수집·이용 동의",
+  lead: "목소리를 수치로 바꾼 정보는 사람을 알아볼 수 있는 정보여서, 개인정보 처리방침과 따로 동의를 받습니다.",
+  sections: [
+    {
+      heading: "수집·이용 내용",
+      blocks: [
+        table(
+          ["구분", "내용"],
+          [
+            "항목",
+            "목소리를 수치로 바꾼 벡터. 회의마다 만드는 음성 특징과, 본인이 확인한 음성 프로필",
+          ],
+          [
+            "목적",
+            "한 회의 안에서 화자를 구분하고, 본인이 확인한 목소리를 다음 회의에서 다시 알아보는 것",
+          ],
+          [
+            "보유 기간",
+            "회의별 음성 특징은 그 회의와 함께 삭제합니다. 음성 프로필은 그 사람이 나온 마지막 회의가 만료되면 삭제합니다. 본인은 그 전에도 언제든지 지울 수 있습니다",
+          ],
+          [
+            "현재 상태",
+            "운영자가 이 기능을 켠 환경에서만 저장하며 기본은 꺼져 있습니다. 꺼진 환경에서는 저장하지 않습니다",
+          ],
+        ),
+      ],
+    },
+    {
+      heading: "동의를 거부할 권리",
+      blocks: [p(["이 동의를 거부할 수 있습니다. ", REFUSAL, "."])],
+    },
+  ],
+};
+
+const ABROAD = blank("이전 국가", "미국");
+
+const OVERSEAS_CONSENT: LegalDocument = {
+  id: "overseas_transfer",
+  title: "개인정보 국외 이전 동의",
+  lead: "아래 서비스는 국외 사업자가 운영하므로, 그쪽으로 나가는 정보는 국외로 이전됩니다. 무엇이 언제 나가는지는 개인정보 처리방침의 \"외부로 나가는 정보\"와 같습니다.",
+  sections: [
+    {
+      heading: "이전 내용",
+      blocks: [
+        table(
+          ["이전받는 자", "이전되는 정보", "이전 시점과 방법", "이용 목적"],
+          [
+            ["언어 모델 제공자 (Google Gemini 등), ", ABROAD],
+            "마스킹된 회의 문장, AI 비서에 입력한 질문, 답을 만들 때 쓰는 항목의 요약과 제목, 인용한 회의의 제목과 날짜",
+            "운영자가 언어 모델 연결을 설정한 환경에서, 분석하거나 질문할 때 네트워크로 전송",
+            "발화 분류, 맥락 해석, 질문에 대한 답 작성",
+          ],
+          [
+            ["Slack, ", ABROAD],
+            "확인 요청 메시지, 본인의 발화 비율, 승인을 기다리는 제안의 건수, 팀 채널 알림",
+            "팀이 Slack을 연결한 경우, 알림을 보낼 때 네트워크로 전송",
+            "알림 전달",
+          ],
+          [
+            ["Notion, ", ABROAD],
+            "확정된 액션 아이템과 결정",
+            "팀이 Notion을 연결하고 사람이 항목을 확정한 뒤 네트워크로 전송",
+            "팀의 작업 도구에 기록",
+          ],
+          [
+            ["Atlassian (Jira), ", ABROAD],
+            "확정된 액션 아이템",
+            "팀이 Jira를 연결하고 사람이 항목을 확정한 뒤 네트워크로 전송",
+            "팀의 작업 도구에 기록",
+          ],
+          [
+            ["Google (Calendar), ", ABROAD],
+            "액션 아이템의 내용과 날짜",
+            "담당자가 본인 캘린더를 연결한 경우 네트워크로 전송",
+            "본인 일정에 기한 표시",
+          ],
+          [
+            [blank("호스팅 사업자"), ", ", blank("이전 국가")],
+            "서비스가 보관하는 모든 자료",
+            "상시",
+            "서비스 운영",
+          ],
+        ),
+        ul(
+          [
+            "이전받는 자의 보유 기간: ",
+            blank("이전받는 자의 보유 기간", "각 사업자의 약관에 따름"),
+          ],
+          "녹음 파일은 어디에도 보내지 않습니다.",
+        ),
+      ],
+    },
+    {
+      heading: "동의를 거부할 권리",
+      blocks: [p(["이 동의를 거부할 수 있습니다. ", REFUSAL, "."])],
+    },
+  ],
+};
+
 export const LEGAL_DOCUMENTS: readonly LegalDocument[] = [
   PRIVACY,
   TERMS,
   SECURITY,
+  VOICE_CONSENT,
+  OVERSEAS_CONSENT,
 ];
+
+/** The document the consent page opens for one required consent. */
+export function legalDocument(id: LegalDocument["id"]): LegalDocument {
+  const found = LEGAL_DOCUMENTS.find((doc) => doc.id === id);
+  if (found === undefined) throw new Error(`no legal document "${id}"`);
+  return found;
+}
