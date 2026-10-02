@@ -1,11 +1,12 @@
-"""Workload wakes after a meeting is processed, on module B's real tools.
+"""Workload wakes on its own, on module B's real tools.
 
-Mentoring (2026-10-01): the agent should act on its own once a meeting is
-processed. ``INTELLIGENCE_COMPLETED`` is when new items land on people, so it
-is when a team's load changes. Under test: the event runs Workload for the
-meeting's team only; its reassignments wait for the manager as L2 rows and
-nothing is written to B; and a later meeting's run replaces the proposals still
-waiting from an earlier one (#631).
+Mentoring (2026-10-01): the agent should act without being asked. Workload
+wakes after a meeting is processed (``INTELLIGENCE_COMPLETED``, when new items
+land on people) and every six hours per team (``Periodic``, #634, because a
+load also changes between meetings). Under test: the event runs it for the
+meeting's team only; the timer runs it for each team; its reassignments wait
+for the manager as L2 rows and nothing is written to B; and a later run,
+whichever way it woke, replaces the proposals still waiting (#631).
 """
 
 from __future__ import annotations
@@ -19,7 +20,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
 import autune_extraction.models  # noqa: F401  (ext_ tables)
-from autune_agent.main import on_event
+from autune_agent.main import Periodic, on_event, on_tick
 from autune_agent.models import AgentPendingAction, AgentRun
 from autune_agent.subagents.workload import SUBAGENT
 from autune_agent.subagents.workload.graph import REASSIGN
@@ -111,8 +112,10 @@ def _pending(session: Session) -> list[AgentPendingAction]:
     )
 
 
-def test_workload_asks_for_the_processed_meeting() -> None:
+def test_workload_asks_for_the_processed_meeting_and_a_timer() -> None:
     assert INTELLIGENCE_COMPLETED in SUBAGENT.triggers
+    assert SUBAGENT.period == Periodic(hours=6)
+    assert SUBAGENT.proposals_per == "team", "its proposals judge the whole team (#631)"
 
 
 def test_a_processed_meeting_proposes_moves_for_the_manager_and_runs_none(
@@ -139,10 +142,6 @@ def test_another_teams_meeting_reads_only_that_team(session: Session, team: dict
     assert _pending(session) == [], "a one-person team is never loaded"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="#631: the main agent supersedes pending proposals per meeting, not per team",
-)
 def test_a_later_meeting_replaces_the_moves_still_waiting(
     session: Session, team: dict[str, str]
 ) -> None:
@@ -152,3 +151,21 @@ def test_a_later_meeting_replaces_the_moves_still_waiting(
     pending = _pending(session)
     assert {p.run_id for p in pending} == {second.id}
     assert len(pending) == 2, "one set of moves waits, not two"
+
+
+def test_the_timer_runs_it_for_each_team_and_replaces_what_a_meeting_left(
+    session: Session, team: dict[str, str]
+) -> None:
+    """A periodic run is about the team, not a meeting (#634). Its proposals
+    still replace the ones a meeting's run left waiting."""
+    _wake(session, "mtg_1")
+
+    runs = on_tick(session=session, subagents={"workload": SUBAGENT})
+
+    by_team = {run.team_id: run for run in runs}
+    assert set(by_team) == {team["team"], team["other"]}
+    assert {run.trigger["kind"] for run in runs} == {"periodic"}
+    assert {run.meeting_id for run in runs} == {None}
+    pending = _pending(session)
+    assert {p.run_id for p in pending} == {by_team[team["team"]].id}
+    assert [(p.tool, p.scope) for p in pending] == [(REASSIGN, "workload")] * 2
