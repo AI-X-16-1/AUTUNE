@@ -34,6 +34,12 @@ x-python: &python
     AUTUNE_GOOGLE_CLIENT_SECRET: ${AUTUNE_GOOGLE_CLIENT_SECRET:-}
     # Registered in the Google OAuth client as an authorised redirect URI.
     AUTUNE_GOOGLE_REDIRECT_URI: ${DEV_SITE_URL:-http://localhost}/api/auth/google/callback
+    # A second Google client, for what a person connects after signing in
+    # (their calendar). Blank, the sign-in client above does both. It has no
+    # redirect URI of its own: the callback above finishes both flows, so
+    # that address is registered on this client too.
+    AUTUNE_GOOGLE_INTEGRATION_CLIENT_ID: ${AUTUNE_GOOGLE_INTEGRATION_CLIENT_ID:-}
+    AUTUNE_GOOGLE_INTEGRATION_CLIENT_SECRET: ${AUTUNE_GOOGLE_INTEGRATION_CLIENT_SECRET:-}
     # The OAuth apps behind "connect Slack / Notion / Jira". Blank, that
     # connect answers "not configured" and the rest works. Each callback is
     # built from the site's address like Google's, not read from a setting:
