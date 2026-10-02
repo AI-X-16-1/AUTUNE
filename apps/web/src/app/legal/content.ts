@@ -10,7 +10,11 @@
  * deliberately does not say that an attendee can withdraw consent (only a
  * per-meeting confirmation exists), that the team dashboard is limited to team
  * members (its routes do not check the caller yet), or that an outside language
- * model is used on real meetings (undecided). Keep it that way when editing:
+ * model is used on real meetings (undecided). The language-model row lists what
+ * leaves for EVERY caller on main -- B's classifier and resolver, C's verifier
+ * and relation assistant, D's judge, the agent's router and Research -- not for
+ * the one that sends least; a new caller means rereading that row. Keep it that
+ * way when editing:
  * a sentence here is a promise to the person who signs in.
  *
  * Source of the facts: docs/architecture/privacy.md and the code it names.
@@ -222,19 +226,19 @@ const PRIVACY: LegalDocument = {
           ],
           [
             "언어 모델 제공자 (Google Gemini 등)",
-            "마스킹된 발화 문장. 화자, 시각, 회의 식별자는 보내지 않음",
-            "운영자가 해당 기능을 켠 환경에서만",
+            "마스킹된 회의 문장(발화와 그 앞뒤 문장), AI 비서에 입력한 질문, 비서가 답을 만들 때 쓰는 항목의 요약과 제목(담당자 이름과 기한이 들어갈 수 있음), 인용한 회의의 제목과 날짜. 녹음 파일은 보내지 않음",
+            "운영자가 언어 모델 연결을 설정한 환경에서만",
           ],
           [blank("호스팅 사업자"), "서비스가 보관하는 모든 자료", "상시"],
         ),
         ul(
           [
-            b("이용자가 연결한 도구로만 나갑니다."),
+            b("연동 도구로는 이용자가 연결했을 때만 나갑니다."),
             " Slack, Notion, Jira, Google Calendar로 나가는 정보는 팀이나 본인이 직접 연결했을 때만 전송됩니다.",
           ],
           [
             b("이름:"),
-            " 언어 모델로 발화를 분류할 때 팀 명단에 있는 이름은 보내기 전에 자리표시자로 바꿉니다. 명단에 없는 이름은 그대로 나갈 수 있습니다.",
+            " 언어 모델로 발화를 분류하거나 약속의 맥락을 풀 때는 팀 명단에 있는 이름을 보내기 전에 자리표시자로 바꿉니다. 명단에 없는 이름은 그대로 나갈 수 있습니다. 그 밖의 기능(논의 누락 확인, 회의 간 연결, AI 비서)에서는 문장과 항목에 담긴 이름이 바뀌지 않고 나갑니다.",
           ],
           [b("오류 추적·분석 도구:"), " 현재 사용하지 않습니다."],
           [b("판매·광고 목적 제공:"), " 하지 않습니다."],
