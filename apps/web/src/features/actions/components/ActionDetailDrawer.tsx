@@ -223,6 +223,7 @@ export function ActionDetailDrawer({
                 <AssigneeInput
                   id={`assignee-${item.id}`}
                   label="담당"
+                  memberName={item.assignee_name}
                   members={members}
                   value={typed !== null ? { kind: "typed", label: typed } : stored}
                   disabled={assigning}

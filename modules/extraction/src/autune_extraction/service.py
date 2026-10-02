@@ -878,19 +878,18 @@ def create_action_item(
     on one meeting citing another meeting's utterance, whose words
     ``GET /action-items/{id}`` then quotes on this meeting's board.
 
-    ``assignee_id`` gets the same treatment as the other two, for the reason
-    ``slots.assignee_of`` already gives for the model's own path: the
-    ``user_`` prefix a well-formed id carries does not promise the row is still
-    there, and the field is a foreign key, so a deleted account or a typo would
-    otherwise reach ``session.flush()`` as a 500 rather than a 422 naming the
-    field.
+    ``assignee_id`` must name a member of the meeting's team
+    (``require_assignable``). That also covers what the check it replaced
+    was for: the field is a foreign key, so a deleted account or a typo
+    would otherwise reach ``session.flush()`` as a 500 rather than a 422
+    naming the field.
     """
     if origin != "user" and origin not in AGENT_ORIGINS:
         raise ValueError(f"not an origin create_action_item makes: {origin!r}")
     if session.get(Meeting, payload.meeting_id) is None:
         raise NotFoundError("meeting", payload.meeting_id)
-    if payload.assignee_id is not None and session.get(User, payload.assignee_id) is None:
-        raise ValidationError("assignee_id does not name an existing user", field="assignee_id")
+    if payload.assignee_id is not None:
+        require_assignable(session, payload.meeting_id, payload.assignee_id)
     wanted = set(payload.source_utterance_ids)
     if wanted:
         found = set(
@@ -984,8 +983,8 @@ def create_chat_item(
         raise ValidationError(
             "utterance_id must be an utterance of this meeting", field="utterance_id"
         )
-    if assignee_id is not None and session.get(User, assignee_id) is None:
-        raise ValidationError("assignee_id does not name an existing user", field="assignee_id")
+    if assignee_id is not None:
+        require_assignable(session, meeting_id, assignee_id)
     meeting = session.get(Meeting, meeting_id)
     if assignee_id is None:
         speaker_id = (
@@ -1235,6 +1234,28 @@ def _is_team_member(session: Session, *, user_id: str, team_id: str) -> bool:
         )
         is not None
     )
+
+
+def require_assignable(session: Session, meeting_id: str, assignee_id: str) -> None:
+    """Raise unless ``assignee_id`` is a member of the team that held the meeting.
+
+    Every write that names an assignee asks this -- an item added by hand,
+    an edit, a chat draft, the agent's reassignment -- so the rule lives
+    here and not in whichever screen sent the request (review of #737).
+    Until then the routes checked only that the account existed: anyone on
+    a team could assign its items to any account whose id they held, and
+    the read side had to clear it again (ADR 0007).
+
+    **One answer for an account that does not exist and one that is not on
+    the team**: telling them apart would let a member learn which ids are
+    accounts. A member who has since left is still cleared at read time;
+    this stops the assignment being made, not what happens after.
+    """
+    team_id = session.scalar(select(Meeting.team_id).where(Meeting.id == meeting_id))
+    if team_id is None or not _is_team_member(session, user_id=assignee_id, team_id=team_id):
+        raise ValidationError(
+            "assignee_id must be a member of the meeting's team", field="assignee_id"
+        )
 
 
 def _refuse(kind: str, ident: str, reader: User, reason: str) -> NotFoundError:
@@ -1676,17 +1697,16 @@ def update_action_item(
     the user had to fix and a no-op is not that. A double-submitted form would
     otherwise inflate the metric the product is trying to lower.
 
-    A new ``assignee_id`` gets the same existence check ``create_action_item``
-    gives it -- the field is the same foreign key either way, and clearing it
-    (``None``) needs no check at all.
+    A new ``assignee_id`` gets the same check ``create_action_item`` gives it
+    -- a member of the meeting's team -- and clearing it (``None``) needs no
+    check at all.
     """
     changes = payload.changes()
     if not changes:
         return item
 
-    new_assignee = changes.get("assignee_id")
-    if new_assignee is not None and session.get(User, new_assignee) is None:
-        raise ValidationError("assignee_id does not name an existing user", field="assignee_id")
+    if "assignee_id" in changes and payload.assignee_id is not None:
+        require_assignable(session, item.meeting_id, payload.assignee_id)
 
     for field, value in changes.items():
         setattr(item, field, value.value if isinstance(value, ActionStatus) else value)

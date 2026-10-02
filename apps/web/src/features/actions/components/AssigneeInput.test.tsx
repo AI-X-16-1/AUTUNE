@@ -166,6 +166,34 @@ describe("the detail window", () => {
     );
   });
 
+  it("keeps an account assignee as it is while the team's list is not there", () => {
+    // The text box would show the account as an empty name under the
+    // "name only" warning, and saving from it would swap the account for a
+    // typed name -- taking the item off that person's calendar (review of #737).
+    members.mockImplementation(() => null);
+    const onAssigneeChange = open({
+      ...ITEM,
+      assignee_id: "user_kim",
+      assignee_label: null,
+      assignee_name: "김민경",
+    });
+
+    expect(screen.getByText("김민경")).toBeTruthy();
+    expect(screen.queryByRole("textbox")).toBeNull();
+    expect(screen.queryByRole("combobox", { name: "담당" })).toBeNull();
+    expect(screen.queryByText(/캘린더와 Jira에 연결되지 않습니다/)).toBeNull();
+    expect(screen.queryByRole("button", { name: "이름 저장" })).toBeNull();
+    expect(onAssigneeChange).not.toHaveBeenCalled();
+  });
+
+  it("ties the note about a typed name to the box it is about", () => {
+    open(ITEM);
+
+    const box = screen.getByLabelText("담당자 이름");
+    const note = document.getElementById(box.getAttribute("aria-describedby") ?? "");
+    expect(note?.textContent).toContain("캘린더와 Jira에 연결되지 않습니다");
+  });
+
   it("only shows the assignee where nothing can change it", () => {
     render(<ActionDetailDrawer item={ITEM} onClose={vi.fn()} />);
 

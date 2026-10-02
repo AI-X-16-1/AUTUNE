@@ -38,7 +38,13 @@ from autune_extraction.models import (
     ExtEditEvent,
     ExtExtractionRun,
 )
-from autune_extraction.pipeline import FakeClassifier, FakeNli, FakeResolver, ResolutionRequest
+from autune_extraction.pipeline import (
+    FakeClassifier,
+    FakeNli,
+    FakeResolver,
+    Resolution,
+    ResolutionRequest,
+)
 from autune_extraction.schemas import ActionItemCreate, ActionItemUpdate
 
 MEETING = "mtg_1"
@@ -80,6 +86,11 @@ def session() -> Iterator[Session]:
     Base.metadata.create_all(engine, tables=TABLES)
     with Session(engine) as session:
         session.add(User(id="user_001", email="a@example.com", display_name="김민경"))
+        # On the meeting's team: an assignee a person names has to be (#737).
+        session.add(TeamMember(team_id="team_1", user_id="user_001"))
+        # An account that exists and is on another team.
+        session.add(User(id="user_out", email="out@example.com", display_name="남"))
+        session.add(TeamMember(team_id="team_other", user_id="user_out"))
         session.add(Meeting(id=MEETING, team_id="team_1", title="주간 회의", started_at=STARTED))
         session.flush()
         yield session
@@ -654,6 +665,68 @@ def test_updating_to_an_unknown_assignee_is_refused_and_changes_nothing(session:
         service.update_action_item(session, item, ActionItemUpdate(assignee_id="user_ghost"))
     assert caught.value.details == {"field": "assignee_id"}
     assert item.assignee_id is None
+
+
+def test_an_assignee_who_is_not_on_the_meetings_team_is_refused_on_create(
+    session: Session,
+) -> None:
+    """``user_out`` is a real account on another team. Until #737 only its
+    existence was checked, so anyone on a team could put its items on any
+    account whose id they held; the screen was the only thing that did not."""
+    with pytest.raises(ValidationError) as caught:
+        service.create_action_item(
+            session,
+            ActionItemCreate(meeting_id=MEETING, description="일", assignee_id="user_out"),
+        )
+    assert caught.value.details == {"field": "assignee_id"}
+    assert session.scalars(select(ExtActionItem)).all() == []
+
+
+def test_an_assignee_who_is_not_on_the_meetings_team_is_refused_on_update(
+    session: Session,
+) -> None:
+    item = service.create_action_item(
+        session,
+        ActionItemCreate(meeting_id=MEETING, description="일", assignee_id="user_001"),
+    )
+
+    with pytest.raises(ValidationError) as caught:
+        service.update_action_item(session, item, ActionItemUpdate(assignee_id="user_out"))
+    assert caught.value.details == {"field": "assignee_id"}
+    assert item.assignee_id == "user_001"
+
+
+def test_an_account_off_the_team_and_one_that_does_not_exist_get_the_same_answer(
+    session: Session,
+) -> None:
+    """Telling them apart would let a member learn which ids are accounts."""
+    messages = []
+    for assignee in ("user_out", "user_ghost"):
+        with pytest.raises(ValidationError) as caught:
+            service.create_action_item(
+                session,
+                ActionItemCreate(meeting_id=MEETING, description="일", assignee_id=assignee),
+            )
+        messages.append(str(caught.value))
+
+    assert messages[0] == messages[1]
+
+
+def test_a_chat_draft_cannot_name_an_assignee_off_the_team_either(session: Session) -> None:
+    """The agent's tool asks first (``tools._on_team``); the rule holds here
+    too, so a second caller cannot forget it."""
+    _stored(session, "utt_here", MEETING)
+
+    with pytest.raises(ValidationError) as caught:
+        service.create_chat_item(
+            session,
+            meeting_id=MEETING,
+            utterance_id="utt_here",
+            resolution=Resolution("회의 내용", used=()),
+            assignee_id="user_out",
+        )
+    assert caught.value.details == {"field": "assignee_id"}
+    assert session.scalars(select(ExtActionItem)).all() == []
 
 
 def test_updating_can_still_clear_an_assignee(session: Session) -> None:

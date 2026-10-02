@@ -45,6 +45,7 @@ export function assigneeFields(value: AssigneeValue): {
 export function AssigneeInput({
   id,
   label,
+  memberName,
   members,
   value,
   onChange,
@@ -55,6 +56,8 @@ export function AssigneeInput({
   id: string;
   /** For a place whose visible label is not a `<label for>` of this control. */
   label?: string;
+  /** The name of the account `value` names, to show while it cannot be changed. */
+  memberName?: string | null;
   members: Assignable[] | null;
   value: AssigneeValue;
   onChange: (value: AssigneeValue) => void;
@@ -71,6 +74,23 @@ export function AssigneeInput({
         ? TYPED
         : NONE;
   const typing = !pick || value.kind === "typed";
+  const noteId = `${id}-note`;
+
+  // An account, and no list to pick another from (still loading, or it could
+  // not be read). The text box would show that account as an empty name with
+  // the "name only" warning, and saving from it would replace the account
+  // with whatever was typed -- taking the item off that person's calendar.
+  // So it is shown and not editable until there is a list (review of #737).
+  if (!pick && value.kind === "member") {
+    return (
+      <div className="grid gap-1">
+        <span>{memberName ?? "지정된 담당자"}</span>
+        <p className="text-[var(--color-ink-muted)]" style={{ fontSize: "var(--text-metaSmall)" }}>
+          팀 구성원 목록을 불러오면 바꿀 수 있습니다.
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div className="grid gap-2">
@@ -103,6 +123,7 @@ export function AssigneeInput({
           <input
             id={pick ? `${id}-typed` : id}
             aria-label={pick ? "담당자 이름" : label}
+            aria-describedby={noteId}
             value={value.kind === "typed" ? value.label : ""}
             disabled={disabled}
             onChange={(event) => onChange({ kind: "typed", label: event.target.value })}
@@ -111,7 +132,11 @@ export function AssigneeInput({
             className={controlClassName}
             style={controlStyle}
           />
-          <p className="text-[var(--color-ink-muted)]" style={{ fontSize: "var(--text-metaSmall)" }}>
+          <p
+            id={noteId}
+            className="text-[var(--color-ink-muted)]"
+            style={{ fontSize: "var(--text-metaSmall)" }}
+          >
             이름만 적은 담당자는 캘린더와 Jira에 연결되지 않습니다.
           </p>
         </>
