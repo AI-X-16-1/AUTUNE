@@ -25,6 +25,13 @@ EXTRACTION_ACTION_PROGRESS: Final = "autune.extraction.action_progress"
 ``ACTION_PROGRESS_PUBLISH_EVERY`` whether or not anything changed. The payload
 is a ``TeamActionProgress``; keep the latest ``as_of`` and treat one older than
 ``ACTION_PROGRESS_STALE_AFTER`` as unknown. About a team, not a meeting (#605)."""
+INTELLIGENCE_MEETING_REPORT_CHANGED: Final = "autune.intelligence.meeting_report_changed"
+"""E -> the agent layer. A person saved an edited meeting-report draft or a
+correction to a posted report on the dashboard card, and it waits for L2
+approval before it reaches the team channel (#674). The payload is a plain
+``Payload``: the meeting id and nothing else. What waits to be posted is read
+through E's tools when the event is handled, because an id carried here could
+already be stale by then."""
 
 EVENTS: Final = (
     TRANSCRIPT_READY,
@@ -34,6 +41,7 @@ EVENTS: Final = (
     INTELLIGENCE_COMPLETED,
     EXTRACTION_AGENDA_CHANGED,
     EXTRACTION_ACTION_PROGRESS,
+    INTELLIGENCE_MEETING_REPORT_CHANGED,
 )
 """Every event the pipeline publishes.
 
@@ -46,7 +54,7 @@ Additive only, like everything in this package: appending an event is fine,
 renaming one changes a task name in somebody else's module.
 """
 
-TERMINAL_EVENTS: Final = (INTELLIGENCE_COMPLETED,)
+TERMINAL_EVENTS: Final = (INTELLIGENCE_COMPLETED, INTELLIGENCE_MEETING_REPORT_CHANGED)
 """Events that may reach no task, on purpose.
 
 The module pipeline ends at E: no module consumes `autune.intelligence.completed`.
@@ -58,6 +66,10 @@ without this list, "nobody is listening" is one message for a normal end of a
 meeting and for a consumer whose task name has a typo in it, and the first one
 happens on every meeting. A warning that fires on the normal path is a warning
 nobody reads, and it was the only signal the second case had.
+
+`autune.intelligence.meeting_report_changed` is the same case (#674). Only the
+agent layer consumes it, and E publishes it from the API process, where the
+layer's tasks may not be registered.
 
 Declared here rather than in the worker's tests, which is where it started: a
 list that decides a log level in production cannot live in a test.
