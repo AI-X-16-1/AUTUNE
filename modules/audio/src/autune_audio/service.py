@@ -26,6 +26,7 @@ from autune_core.errors import ConflictError, NotFoundError, PermissionDeniedErr
 
 from . import identification, storage
 from .config import AudioSettings, get_settings
+from .job_guard import JobStopped
 from .models import AudConsentAttestation, AudSpeakerEmbedding, TranscriptionJob
 from .persistence import transcript_payload
 from .schemas import SpeakerCandidate, SpeakerEntry, TeamMemberSummary
@@ -561,6 +562,31 @@ def mark_complete(session: Session, *, job_id: str) -> None:
 
     meeting.status = "complete"
     session.flush()
+
+
+def lock_running_job(session: Session, *, job_id: str) -> None:
+    """The fence in front of the transcript write: this attempt is still the
+    current one, and stays so until the transaction ends.
+
+    The last ``check()`` and the write are not one step, and a cancel or a
+    restart can commit between them. Reading the status under lock closes
+    that window: whichever transaction locks first wins, and the other sees
+    its result. **Meeting row first, then the job row** -- the order
+    ``start_transcription``, ``cancel_transcription`` and
+    ``restart_transcription`` take them in, so none of them can deadlock
+    against this.
+    """
+    meeting_id = session.scalar(
+        sa.select(TranscriptionJob.meeting_id).where(TranscriptionJob.id == job_id)
+    )
+    if meeting_id is None:
+        raise JobStopped(None)
+    session.get(Meeting, meeting_id, with_for_update=True)
+    status = session.scalar(
+        sa.select(TranscriptionJob.status).where(TranscriptionJob.id == job_id).with_for_update()
+    )
+    if status != "running":
+        raise JobStopped(status)
 
 
 def mark_published(session: Session, *, job_id: str) -> None:
