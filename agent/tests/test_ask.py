@@ -257,3 +257,5 @@ def test_at_most_three_calls_run_per_round() -> None:
 
     responses = model.sent[1]["contents"][2]["parts"]
     assert len(responses) == 3
+    echoed = model.sent[1]["contents"][1]["parts"]
+    assert len([p for p in echoed if "functionCall" in p]) == 3
