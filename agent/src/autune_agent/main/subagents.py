@@ -11,7 +11,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from importlib import import_module
-from typing import Any, Protocol, TypedDict
+from typing import Any, Literal, Protocol, TypedDict
 
 from autune_agent.results import SubagentResult
 from autune_contracts import INTELLIGENCE_COMPLETED, TRANSCRIPT_READY
@@ -60,6 +60,16 @@ class Subagent:
     (``autune_agent.tasks``); a subagent never registers a task of its own. A
     woken run's ``request`` is the event name, and its scope carries the
     meeting the event was about."""
+    proposals_per: Literal["meeting", "team"] = "meeting"
+    """What one of its L2 proposals is about, so what a newer run replaces
+    (``pending.queue_l2``). ``"meeting"``: a run supersedes the pending
+    proposals an earlier run made about the same meeting, and a run about no
+    meeting supersedes nothing. ``"team"``: the proposals judge the whole team
+    -- Workload weighs everyone's open items -- so a run supersedes the team's
+    earlier pending proposals from this subagent whatever meeting, if any,
+    woke it (#631). Otherwise each meeting's run leaves another proposal
+    moving the same item to someone else, and approving both lets the later
+    approval win."""
 
     def __post_init__(self) -> None:
         # The registry never holds a declared personal-only tool; this refuses
