@@ -352,6 +352,20 @@ class ActionItemDetail(ActionItemRead):
     the model extracted and nobody has touched since."""
 
 
+class Assignable(BaseModel):
+    """A member of the meeting's team, as the assignee picker offers them.
+
+    Id and name, the shape module A's speaker picker uses for the same
+    people; a browser needs no more, and an email is not sent. The screen
+    could not set ``assignee_id`` at all before this -- it had a text box
+    for a name -- so an item a person added or corrected never reached the
+    assignee's calendar or their Jira account, both of which need the
+    account and not the name."""
+
+    user_id: str
+    name: str
+
+
 class CarriedOverItem(ActionItemRead):
     """An open item from an earlier meeting of the same team, with the meeting
     it was made in -- the popup says where each one came from."""

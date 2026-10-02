@@ -721,8 +721,9 @@ def _change_item(
             return _not_found("action item", action_item_id)
         assignee = payload.assignee_id
         if assignee is not None and not _on_team(session, team_id, assignee):
-            # Stricter than the board, which checks only that the user exists:
-            # an approved move must land on someone who can see the item.
+            # The same rule ``service.require_assignable`` keeps for every
+            # write; asked here first so the agent gets a refusal it can say
+            # to a person rather than a validation error.
             return _refused(
                 f"{assignee} is not on team {team_id}", "그 사람은 이 팀의 팀원이 아닙니다."
             )
