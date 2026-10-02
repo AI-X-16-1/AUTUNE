@@ -76,7 +76,7 @@ Out of scope:
 | Change | Detail |
 | --- | --- |
 | `status` gains `cancelled` | `ck_aud_jobs_status` becomes `queued, running, done, failed, superseded, cancelled`. A cancelled job gets `finished_at`. |
-| new column `heartbeat_at` | `timestamptz`, nullable. Written when the worker claims the job and every `heartbeat_interval_s` after. |
+| new column `heartbeat_at` | `timestamptz`, nullable. Written when the worker claims the job and every `heartbeat_interval_s` after. `claim_job` stamps it when it claims, so a long queue wait never reads as stalled. |
 
 Job states:
 
@@ -134,6 +134,8 @@ All in `modules/audio` (router, service, schemas). No contract changes.
 
 - Same lock and membership check.
 - Requires the latest job `running` and stalled; otherwise 409 `not_stalled`.
+- Requires the meeting `analyzing`: a worker that died between `mark_complete`
+  and `mark_published` leaves a stale `running` job on a delivered meeting.
 - Requires the upload `{job_id}.upload` to exist and to be younger than
   `orphan_after_hours` by mtime; otherwise 409 `recording_gone`.
 - Then the same sequence as the upload route: mark the old job `superseded`,
@@ -151,7 +153,7 @@ All in `modules/audio` (router, service, schemas). No contract changes.
 | `stalled: bool` | latest job `running` and stalled |
 | `restartable: bool` | `stalled` and the upload passes the restart checks above |
 | `cancellable: bool` | meeting `analyzing` and latest job `queued` or `running` |
-| `cancelled: bool` | meeting `failed` because its latest job was cancelled, so the screen can say 취소됨 rather than show an error |
+| `cancelled: bool` | meeting `failed` because its latest job was cancelled, so the screen can say it was stopped rather than show an error |
 
 The screen already polls this every 3 s; the buttons follow these flags so the
 rule for showing them lives in one place.
@@ -174,11 +176,9 @@ rule for showing them lives in one place.
     one heartbeat interval during recognition, which reports per segment;
   - before masking and before saving;
   - a future STT provider backend's wait loop, which is handed the same check.
-- **Known limit:** if diarization calls no progress callback while it runs, a
-  cancel during diarization waits for that step to end. The implementation
-  checks how often pyannote's hook fires and records it in `HISTORY.md`. The
-  meeting already reads `failed` the moment the API commits, so the screen is
-  not kept waiting either way.
+- Diarization reports progress through pyannote's `hook`
+  (`diarization._progress_hook`), so a cancel lands during diarization as well.
+  The measured latency per stage is in `HISTORY.md`.
 
 ### The commit fence
 
@@ -188,7 +188,7 @@ restart that lands after the last `check()` therefore rolls the whole write
 back: no utterances, no embeddings, no `complete`, no publish. The cancel API
 locks the same row, so the two serialise: if saving commits first, the meeting
 is `complete` and the cancel gets 409; if the cancel commits first, saving
-stops.
+stops. Every path that locks both rows takes the meeting first, then the job.
 
 ### Exceptions
 
@@ -215,13 +215,16 @@ only.
 
 | State | Shows |
 | --- | --- |
-| `cancellable` | A secondary "처리 취소" under the stage list. Pressing it opens an inline confirmation in place (no `window.confirm`): the original on the server is deleted, with [취소하기] / [계속 진행]. |
-| `stalled && restartable` | A notice above the list: no response for over two minutes, the server may have restarted; [다시 시작] (primary) and [처리 취소]. |
-| `stalled && !restartable` | The recording is no longer on the server, so it cannot restart; cancel and upload again; [처리 취소] only. For a live meeting, one more line: a live recording may have no file to upload again. |
-| `cancelled` | The existing failed view's re-upload path, labelled 취소됨 rather than as an error. |
+| `cancellable` | A secondary "처리 중단" under the stage list. Pressing it opens an inline confirmation in place (no `window.confirm`): "처리를 중단하면 서버에 있는 원본 녹음이 삭제됩니다.", with [중단하기] / [계속 진행]. |
+| `stalled && restartable` | A notice above the list: "2분 넘게 처리 응답이 없습니다. 서버가 다시 시작되었을 수 있습니다."; [다시 시작] and [처리 중단]. |
+| `stalled && !restartable` | The recording is no longer on the server, so it cannot restart; stop the processing and upload again; [처리 중단] only. The line also says a live recording may have no file to upload again: `meetings.source` does not tell a live meeting from an upload, so the sentence is shown to both. |
+| `cancelled` | The existing failed view's re-upload path, with the line "처리를 중단했습니다. 원본 녹음은 삭제되었습니다." rather than the error line. |
 
 Korean copy goes through a Korean-writing pass before it ships, so it does not
-read translated.
+read translated; the shipped strings are in
+`apps/web/src/features/transcript/components/TranscriptionControls.tsx`. A
+refusal from the server is shown by its error code in Korean, never the
+server's English message.
 
 ## 5. Testing
 
@@ -252,7 +255,7 @@ Real run, isolated local stack from a worktree:
 1. Upload, `kill -9` the worker during recognition, start it again, wait two
    minutes: the screen shows stalled; [다시 시작] runs the meeting to
    `complete`.
-2. Upload, press 처리 취소 during recognition: the worker stops, the upload is
+2. Upload, press 처리 중단 during recognition: the worker stops, the upload is
    gone from the temp directory, and no `autune.transcript.ready` is sent.
 
 Heartbeat interval, stall threshold and the measured cancel latency per stage go

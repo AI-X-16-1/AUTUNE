@@ -7,7 +7,7 @@ Evaluation reports live in `docs/modules/audio-evaluations/` and hold the full
 tables. This file is the thread through them: the decisions, the reversals, and
 what is still open.
 
-Last updated: 2026-09-28.
+Last updated: 2026-10-02.
 
 ---
 
@@ -785,6 +785,77 @@ gains no line (invariant 6).
 `privacy.md` section 1 was rewritten in the same PR (decision #275). "Scoped
 to the task" never described a two-process handover; "owned by exactly one
 party at a time" does, and names the two primitives.
+
+### Cancel and restart a transcription (2026-10-02)
+
+A meeting entered `analyzing` and left it only when `process_recording` finished
+or failed, so a worker killed mid-job (a deploy recreates the container) left it
+stuck with a `running` job that `claim_job` rightly refuses to re-run, and a
+wrong upload could not be stopped at all. `aud_jobs` gained a `cancelled`
+status and a `heartbeat_at` column; the worker runs a `JobGuard` thread that
+stamps the heartbeat and reads back the job's status, and the stages call
+`guard.check()`, so a cancel is a flag the worker obeys, not a `revoke`
+(`revoke(terminate=True)` does nothing on the solo pool, #329). A job whose
+heartbeat is stale is *stalled*, computed on read; only a stalled job may be
+restarted, from the upload still on the server. The saving transaction locks
+the job row and rolls back unless it is still `running`, so a cancel that lands
+after the last check still writes nothing and publishes nothing. Spec:
+`docs/specs/2026-10-02-transcription-cancel-restart-design.md`.
+
+**Settings, both provisional:** `heartbeat_interval_s = 30`, `stall_after_s =
+120`. Four missed heartbeats, because one missed beat is a slow database call or
+a GC pause and two is a busy host; four is two minutes of silence, which
+diarization of a long meeting never produces now that its hook reports progress.
+They are not tuned against a deploy window or a real stall rate.
+
+**Measured on a real local stack** (own API port, own Redis db, throwaway
+database, fake B/C/D, Whisper `small` on CPU, one Mac, one solo-pool worker).
+Test audio is macOS `say -v Yuna` Korean speech, so the recognition quality
+says nothing about real meetings; only the control flow does.
+
+| Run | Audio | What happened |
+| --- | --- | --- |
+| Kill and restart | 115.8 s | `kill -9` of the worker 7 s into recognition (progress 0.26). The job read `stalled: true, restartable: true` at 17:47:09, 120 s after the claim stamped the heartbeat. `POST .../restart` returned 202; the new job ran to `complete` in 24.5 s; the temp directory was empty; `autune.transcript.ready` went out once, for the restarted job. |
+| Cancel in recognition | 926.1 s | Cancel at 17:51:29.4, `audio_process_stopped` at 17:52:11.4: **42.0 s**. Recognition held no segment boundary for part of this: 28 s to the next heartbeat tick plus about 14 s to the next progress report. |
+| Cancel in diarization | 926.1 s | Cancel at 17:53:21.2, `audio_process_stopped` at 17:53:47.6: **26.5 s**, which is the wait for the next heartbeat tick. The pyannote hook saw the flag within about 0.1 s of it. |
+| Cancel in recognition, short audio | 250.5 s | Cancel at 17:49:53.4, stopped at 17:50:18.5: **25.0 s**. The whole task takes 27 s, shorter than the heartbeat interval, so the flag was never set; recognition and diarization ran to the end and the commit fence stopped it before anything was written. A 115.8 s file gave the same shape (17.4 s). |
+
+In every cancel run the temp directory was empty afterwards, the worker logged
+no `transcript_persisted`, and no `autune.transcript.ready` or consumer task
+followed for the cancelled meeting. The API answered 200 and the meeting read
+`failed, cancelled: true` 14 ms after the press, so the screen does not wait on
+these numbers.
+
+**What the numbers say.** The cancel latency is bounded by the heartbeat
+interval plus the gap between progress reports in the stage, not by the stage.
+The two stages behave the same, because pyannote's hook fires often enough that
+diarization adds almost nothing beyond the heartbeat wait. A person waits up to
+about 30 s for the worker to stop, and the meeting is `failed` from the first
+instant. If that wait ever matters, lower `heartbeat_interval_s`; the cost is one
+short UPDATE per interval.
+
+**What was not measured.**
+
+- The brief's two-minute recording became 115.8 s for the restart run and 250.5
+  s or 926.1 s for the latency runs. The 926.1 s file is the same Korean text
+  spoken three times at different rates and joined; it exists to make the task
+  outlast one heartbeat, and it would trip the repetition guard if it ran to the
+  end (a first restart attempt on a file that repeated one paragraph 14 times
+  did: `TranscriptCollapsedError`, meeting `failed`. The restart itself worked;
+  the input was bad).
+- One run per scenario. The latencies depend on where the cancel lands between
+  heartbeat ticks (0 to 30 s) and are not a distribution.
+- **Redelivery was not observed.** After the `kill -9`, the worker was started
+  again and watched for about 100 s; Redis (Celery's Redis transport restores an
+  unacked message only after `visibility_timeout`, one hour by default) did not
+  hand the killed task back, so the "redelivery is declined by `claim_job`"
+  path was not exercised on a live broker. It stays covered by the unit test
+  only.
+- The UI path (buttons, confirmation) was not driven in a browser; the runs used
+  the HTTP API, and the screen is covered by vitest.
+- During the restart run B's real consumer raised on a missing NLI checkpoint
+  (`AUTUNE_EXTRACTION_NLI_IMPL`), a local-environment setting unrelated to this
+  work.
 
 ---
 
