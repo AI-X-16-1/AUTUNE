@@ -118,7 +118,7 @@ and keeps their module's `tools.py`.
 | **Main agent** | 김민경 | Chat entry point; routes a request or a trigger to one subagent, or answers from tools directly; combines the answer; owns the work-item store, the trigger scheduler, the approval gate and `agent_runs` | every trigger, every chat message | any | the chat answer; L2 plans to the approval screen |
 | **Research** | 김민경 | When a meeting raises an idea or argues over a fact nobody could confirm, gathers what is known into a short document and proposes sending it to the people involved | `autune.intelligence.completed`; a chat request | A (the team's meetings), B (open questions); D once it ships tools.py. Uploaded material has no store yet | a document shown to the team in the app after an approver with scope `research` approves it — L2; a Slack DM to participants follows #478 |
 | **Briefing** | 문민재 | Ten minutes before a meeting, sends the previous meeting's summary and the issues this one should settle; links Jira issues **if #82 brings Jira back** | time, from Google Calendar (`list_events`) | D (links, decision threads), B (open items), C (undismissed gaps and their questions), Jira only after #82 | D's pre-meeting brief — D's own surface, rule 2 |
-| **Follow-up** | 박재경 | Watches progress and gaps nobody closed; when a follow-up meeting looks needed, proposes one — to the team lead only | state, `@periodic` | C's topic-level aggregates only (a topic's `silent_share`, undismissed gaps), B (open items), D (decision threads, topic links), Calendar (`free_busy`) | a proposal on the lead's approval screen; the calendar event only after approval — L2 |
+| **Follow-up** | 박재경 | Watches the gaps nobody closed; when a follow-up meeting looks needed, proposes one — to the team lead only | `autune.intelligence.completed`; a chat request | C (undismissed gaps; the template items left open in this meeting and the team's previous one), B (unresolved questions; whether a Follow-up item is still open), A (the team's latest meeting, on a chat run about none). No participation, no `silent_share`, no calendar | a proposal on the lead's approval screen; after approval, an unconfirmed "후속 회의 잡기" item on the board (B's `add_followup_item`) — L2. It reaches a calendar only through B's sync, once a person confirms it with an assignee and a due date (#441) |
 | **Workload** | 강민구 | Notices that one person is overloaded while another has finished, and proposes a redistribution — to the manager only; owns the Gmail, Google Calendar and Jira integrations | state, `@periodic` | B (items per owner and their state), Calendar (`free_busy`), Jira only after #82 | a proposal on the manager's approval screen; any reassignment only after approval — L2 |
 | **Report** | 이승환 | After a meeting, composes its structured minutes from a template (no LLM) and proposes that E store and post them | `autune.intelligence.completed`; a chat request | B (confirmed action items, review-state counts); C's open gaps (`gap.open_gaps`, HIGH and MEDIUM listed, as S20 shows them; LOW only in C's count); D (linked meetings, by title and date only) once its `tools.py` ships — until then that section is absent. Not E's scores: the report carries no quality grade | a draft stored by E at L1 (`draft_meeting_report`); the channel post through E's report delivery at L2 (`publish_meeting_report`) — E's own surface, rule 2 |
 
@@ -127,8 +127,8 @@ Three things in that table are decisions, not descriptions:
 - **A proposal to a lead is the approval request itself.** Follow-up and
   Workload do not DM the lead and then ask someone to approve the DM. The
   proposal lands on the lead's approval screen (section 8, plan mode), and what
-  it proposes — a calendar event, a reassignment, a message to the people
-  affected — happens only when the lead approves it item by item.
+  it proposes — a follow-up item on the board, a reassignment, a message to
+  the people affected — happens only when the lead approves it item by item.
 - **Workload and Follow-up read counts of work, never speech.** How many open
   items a person owns and how late they are is work state, which a manager
   already sees on a task board. How much a person spoke, or whether they were
@@ -136,9 +136,12 @@ Three things in that table are decisions, not descriptions:
   its speaker and forbids per-person speaking patterns to anyone else, managers
   included. **Per role is no better**: in a team with one person per role, a
   role is a person, and the reader is the lead. So Follow-up reads C's
-  topic-level aggregates only — a topic's `silent_share`, the gaps nobody
-  dismissed — and never participation per role or per person. No speaking-ratio
-  tool is registered at all (section 4, `PERSONAL_ONLY_TOOLS`).
+  topic-level results only — the gaps nobody dismissed — and never
+  participation per role or per person. It does not read a topic's
+  `silent_share` either: the figure is per topic, but in a two- or three-person
+  meeting a share of one-half says a lot about one person, and Follow-up's rule
+  does not need it (its spec, section 6). No speaking-ratio tool is registered
+  at all (section 4, `PERSONAL_ONLY_TOOLS`).
 - **Research reads what we hold, not the open web.** The team's past meetings through A's tools and open questions through B; past meetings through D once D ships its `tools.py`. Uploaded material would belong here too, but there is no store for it yet. Open-web search is still out
   of scope (section 13.3); a subagent owner who wants it raises it there rather
   than adding a search tool.
@@ -146,11 +149,15 @@ Three things in that table are decisions, not descriptions:
 **Integration work runs ahead of the subagents that need it.**
 
 - **Google Calendar is in place.** #438 (#435) gave `CalendarClient` the reads
-  these subagents need: `list_events` for Briefing's upcoming meetings,
-  `free_busy` for Follow-up and Workload, `create_event` for an approved
-  follow-up. It reads **busy windows only** — never titles, attendees or places
-  of other people's events — and returns `None` for a calendar it could not
-  read, which a subagent must not treat as free.
+  these subagents were to need: `list_events` for Briefing's upcoming
+  meetings, `free_busy` and `create_event`. As built, Follow-up reads no
+  calendar: a team account sees one Workspace only, and a person's own grant
+  serves only their own work (#435). An approved follow-up reaches a calendar
+  through B's sync instead, as an all-day event on its assignee's own calendar
+  once a person confirms it with a due date (#441). The client reads **busy
+  windows only** — never titles, attendees or places of other people's events —
+  and returns `None` for a calendar it could not read, which a subagent must
+  not treat as free.
 - **Jira is not, yet.** `integrations.md` records it as evaluated and dropped,
   and #82 — whose credentials it runs on — is reopened. 강민구 owns Jira (agreed
   with 문민재 on #260): moving `JiraClient` to 3LO, B's action-to-issue sync,
@@ -576,8 +583,8 @@ shipping them.
 | Time | 09:00 morning briefing | main agent | `@periodic` (#374) |
 | Time | 10 minutes before a meeting on the team's Google Calendar | Briefing | `@periodic` poll of the calendar, every minute |
 | State | `next_check_at` due; deadline tomorrow and no signal in three days | main agent | `@periodic`, every 5 minutes |
-| State | work piling up on one person; a gap nobody dismissed, on a topic D links across two meetings in a row | Workload, Follow-up | `@periodic`, a few times a day |
-| Event | a meeting's analysis finished | Research, Report | `autune.intelligence.completed` |
+| State | work piling up on one person | Workload | `@periodic`, a few times a day (`Periodic`, #637) |
+| Event | a meeting's analysis finished; for Follow-up, whether it left open what the previous meeting also did | Research, Report, Follow-up | `autune.intelligence.completed` |
 | Request | "What did we decide about search last week?" | main agent, which may delegate | chat message |
 
 Research does not wake on `autune.transcript.ready`: that event reaches B at the same moment, so B's questions do not exist yet (`agent/docs/specs/2026-09-30-research-subagent-design.md` section 2).
@@ -799,7 +806,7 @@ its guard, never a client of its own:
 | Surface | Owner | Level |
 | --- | --- | --- |
 | Research document to the meeting's participants | Research | L2 — an approver with scope `research` |
-| A proposed follow-up meeting, and the calendar event | Follow-up | L2 — an approver with scope `followup` |
+| A proposed follow-up meeting, as an unconfirmed board item (no calendar event: B's sync adds one after a person confirms it, #441) | Follow-up | L2 — an approver with scope `followup` |
 | A proposed redistribution, and any reassignment or message it implies | Workload | L2 — an approver with scope `workload` |
 
 Consequences worth naming:
