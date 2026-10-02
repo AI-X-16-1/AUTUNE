@@ -85,8 +85,15 @@ _R: Final = rf"(?![{_EDGE}])"
 # `+82 (10) 1234-5678` -- and that form is not caught; it is pinned as a known
 # miss rather than widened here, because `(` between groups is also what
 # `(1) 2024-2025` looks like.
-_HSPACE: Final = r"[^\S\r\n]"
-_SEP: Final = rf"{_HSPACE}*(?:[-.–—)]{_HSPACE}*)?"
+#
+# Horizontal means every vertical separator is out, not only `\r` and `\n`:
+# Python's `\s` also matches `\v`, `\f`, U+0085, U+2028 and U+2029, and any
+# one of them let a phone or RRN match bridge two lines (#324).
+_HSPACE: Final = r"[^\S\r\n\v\f\x85\u2028\u2029]"
+SEPARATOR_PUNCTUATION: Final = "-.–—)"
+"""The punctuation `_SEP` accepts between digit groups. Exported so module A's
+masker keeps exactly these as layout instead of a hand-made copy (#324)."""
+_SEP: Final = rf"{_HSPACE}*(?:[{re.escape(SEPARATOR_PUNCTUATION)}]{_HSPACE}*)?"
 
 # The card pattern alone may cross a line break. Four groups of four is a
 # shape nothing else in a transcript has, and a card number read aloud
