@@ -14,10 +14,13 @@ from datetime import UTC, date, datetime, timedelta
 
 import pytest
 from sqlalchemy import delete
+from sqlalchemy.orm import Session
 
 from autune_context import service
-from autune_context.models import CtxDecision, CtxDecisionVersion, CtxTopicLink
-from autune_core import Meeting, Team, session_scope
+from autune_context.constants import EMBEDDING_DIM
+from autune_context.models import CtxDecision, CtxDecisionVersion, CtxEmbedding, CtxTopicLink
+from autune_core import Meeting, Participant, Team, Utterance, session_scope
+from autune_core.ids import new_id
 from autune_integrations.fakes import FakeSlack
 
 _CHANNEL = "C0TESTCHANNEL"
@@ -48,6 +51,34 @@ def _meeting(team_id: str, *, days_ago: int = 0, started_at: datetime | None = N
         return row.id
 
 
+def _spoken(s: Session, meeting_id: str, label: str, *, consented: bool = True) -> None:
+    """The segment ``label`` was cut from, stored as topic linking stores it, so a
+    link carrying that label reads as cut from a consenting speaker's speech."""
+    speaker = Participant(meeting_id=meeting_id, speaker_label=new_id("spk"), consented=consented)
+    s.add(speaker)
+    s.flush()
+    utterance = Utterance(
+        meeting_id=meeting_id,
+        participant_id=speaker.id,
+        speaker_label=speaker.speaker_label,
+        start_sec=0.0,
+        end_sec=1.0,
+        text=label,
+    )
+    s.add(utterance)
+    s.flush()
+    s.add(
+        CtxEmbedding(
+            meeting_id=meeting_id,
+            kind="topic",
+            ref_label=label,
+            utterance_ids=[utterance.id],
+            embedding=[1.0] + [0.0] * (EMBEDDING_DIM - 1),
+            model_version="test",
+        )
+    )
+
+
 def _topic_link(
     meeting_id: str,
     *,
@@ -57,6 +88,7 @@ def _topic_link(
     topic_label: str = "검색 정렬",
 ) -> int:
     with session_scope() as s:
+        _spoken(s, meeting_id, topic_label)
         row = CtxTopicLink(
             meeting_id=meeting_id,
             topic_label=topic_label,

@@ -18,15 +18,18 @@ from datetime import UTC, date, datetime, timedelta
 
 import pytest
 from sqlalchemy import delete
+from sqlalchemy.orm import Session
 
 from autune_context import tools
+from autune_context.constants import EMBEDDING_DIM
 from autune_context.models import (
     CtxDecision,
     CtxDecisionVersion,
+    CtxEmbedding,
     CtxMeetingStatus,
     CtxTopicLink,
 )
-from autune_core import Meeting, Team, session_scope
+from autune_core import Meeting, Participant, Team, Utterance, session_scope
 from autune_core.ids import new_id
 
 KEYS = {"ok", "reason", "summary", "items", "evidence", "confidence", "truncated"}
@@ -80,6 +83,34 @@ def _linked(meeting_id: str, *, done: bool = True) -> None:
         s.add(CtxMeetingStatus(meeting_id=meeting_id, topic_linking_done=done))
 
 
+def _spoken(s: Session, meeting_id: str, label: str, *, consented: bool = True) -> None:
+    """The segment ``label`` was cut from, stored as topic linking stores it, so a
+    link carrying that label reads as cut from a consenting speaker's speech."""
+    speaker = Participant(meeting_id=meeting_id, speaker_label=new_id("spk"), consented=consented)
+    s.add(speaker)
+    s.flush()
+    utterance = Utterance(
+        meeting_id=meeting_id,
+        participant_id=speaker.id,
+        speaker_label=speaker.speaker_label,
+        start_sec=0.0,
+        end_sec=1.0,
+        text=label,
+    )
+    s.add(utterance)
+    s.flush()
+    s.add(
+        CtxEmbedding(
+            meeting_id=meeting_id,
+            kind="topic",
+            ref_label=label,
+            utterance_ids=[utterance.id],
+            embedding=[1.0] + [0.0] * (EMBEDDING_DIM - 1),
+            model_version="test",
+        )
+    )
+
+
 def _link(
     meeting_id: str,
     label: str,
@@ -90,6 +121,7 @@ def _link(
     linked_date: date | None = None,
 ) -> None:
     with session_scope() as s:
+        _spoken(s, meeting_id, label)
         s.add(
             CtxTopicLink(
                 meeting_id=meeting_id,

@@ -10,6 +10,7 @@ contract on a Celery task, never as a direct call.
 from __future__ import annotations
 
 import math
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from enum import StrEnum
@@ -1341,15 +1342,61 @@ def publish_if_ready(meeting_id: str, *, force: bool = False) -> bool:
         return True
 
 
+def _readable_topic_links(
+    session: Session, meeting_id: str, links: Sequence[CtxTopicLink]
+) -> list[CtxTopicLink]:
+    """Those of this meeting's ``links`` whose label may be shown (privacy.md
+    section 5).
+
+    ``ctx_topic_links.topic_label`` is cut from the speech of the segment it
+    names, and a row written before #439 was cut from every utterance, consent
+    or not. The link has no ``utterance_ids`` of its own; its label is the
+    ``ref_label`` of the ``ctx_embeddings`` row written beside it
+    (``_link_topics``), and that row says which utterances it came from. So a
+    link is readable while every utterance behind its label belongs to a
+    speaker who consents *now* -- a withdrawal hides it without re-deriving
+    the meeting, the same read-time check ``HybridRetriever._passages`` makes
+    for a passage and the pre-meeting brief makes for a recap label.
+
+    Cannot be checked, so left out: a label whose embedding row has no
+    ``utterance_ids`` (stored before #397, so possibly before #439), one with
+    no embedding row at all, and one whose utterances are gone. Two segments
+    can carry the same label and the link does not say which it was cut from,
+    so every row with that label has to pass. Re-deriving the meeting
+    (``rederive_topics``) rebuilds links and embeddings together from
+    consenting speech and brings the rest back.
+    """
+    if not links:
+        return []
+    consented = consented_utterance_ids(session, meeting_id)
+    segments: dict[str, list[list[str] | None]] = {}
+    for label, ids in session.execute(
+        select(CtxEmbedding.ref_label, CtxEmbedding.utterance_ids).where(
+            CtxEmbedding.meeting_id == meeting_id, CtxEmbedding.kind == "topic"
+        )
+    ):
+        segments.setdefault(label, []).append(ids)
+    readable = {
+        label
+        for label, provenance in segments.items()
+        if all(ids and consented.issuperset(ids) for ids in provenance)
+    }
+    return [link for link in links if link.topic_label in readable]
+
+
 def _build_context_links(
     session: Session, meeting_id: str, status: CtxMeetingStatus
 ) -> ContextLinks:
-    rows = session.scalars(
-        select(CtxTopicLink).where(
-            CtxTopicLink.meeting_id == meeting_id,
-            CtxTopicLink.status.in_(_PUBLISHABLE),
-        )
-    ).all()
+    rows = _readable_topic_links(
+        session,
+        meeting_id,
+        session.scalars(
+            select(CtxTopicLink).where(
+                CtxTopicLink.meeting_id == meeting_id,
+                CtxTopicLink.status.in_(_PUBLISHABLE),
+            )
+        ).all(),
+    )
     topic_links = [
         TopicLink(
             topic_label=row.topic_label,
@@ -1443,11 +1490,15 @@ def collect_topic_link_notices(session: Session, meeting_id: str) -> list[TopicL
     since this function's contract is "safe to call on whatever is in the
     table," not "safe to call right after ``_link_topic``."
     """
-    rows = session.scalars(
-        select(CtxTopicLink).where(
-            CtxTopicLink.meeting_id == meeting_id, CtxTopicLink.status == "asserted"
-        )
-    ).all()
+    rows = _readable_topic_links(
+        session,
+        meeting_id,
+        session.scalars(
+            select(CtxTopicLink).where(
+                CtxTopicLink.meeting_id == meeting_id, CtxTopicLink.status == "asserted"
+            )
+        ).all(),
+    )
     return [
         TopicLinkNotice(topic_label=row.topic_label, linked_meeting_date=row.linked_meeting_date)
         for row in rows
@@ -1739,13 +1790,21 @@ def get_topic_links(
     ``visible_meeting_clauses`` every other lineage read uses, applied to
     ``meeting_id`` itself rather than to a linked meeting. An expired meeting
     reads the same as an unknown one: both return two empty lists.
+
+    A link whose label is cut from speech that is not consented to is left out
+    of both lists (``_readable_topic_links``), as it is from what E receives
+    and from the Slack notice.
     """
-    links = session.scalars(
-        select(CtxTopicLink)
-        .join(Meeting, Meeting.id == CtxTopicLink.meeting_id)
-        .where(CtxTopicLink.meeting_id == meeting_id, *visible_meeting_clauses(Meeting.team_id))
-        .order_by(CtxTopicLink.confidence.desc())
-    ).all()
+    links = _readable_topic_links(
+        session,
+        meeting_id,
+        session.scalars(
+            select(CtxTopicLink)
+            .join(Meeting, Meeting.id == CtxTopicLink.meeting_id)
+            .where(CtxTopicLink.meeting_id == meeting_id, *visible_meeting_clauses(Meeting.team_id))
+            .order_by(CtxTopicLink.confidence.desc())
+        ).all(),
+    )
     asserted = [link for link in links if link.status in _PUBLISHABLE]
     pending = [link for link in links if link.status == "pending"]
     return asserted, pending

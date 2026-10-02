@@ -338,7 +338,9 @@ changes afterwards. Two cases leave a meeting's topics out of step with it:
   non-consenting speaker's speech can be in `ctx_embeddings.ref_label`, its
   vector, and `ctx_topic_links.topic_label`. The read-time filter in step 5
   keeps their text from the re-ranker but cannot reach a label or a vector,
-  and those still feed BM25, dense search and the label fallback.
+  and those still feed BM25, dense search and the label fallback. Where a
+  label is *shown*, the read-time filter below covers it; the backfill removes
+  it from storage.
 - **Consent attested after analysis.** `autune_audio.service.attest_consent`
   can land once D has analysed the meeting and tells no consumer, so D keeps
   no topics for speech that is now allowed. When withdrawal exists (#190), it
@@ -393,6 +395,34 @@ speech are removed from storage, not only hidden on read.
 
 Triggering it automatically when consent changes needs an event from module A;
 none exists yet.
+
+### A topic link's label is read against consent — #474
+
+`ctx_topic_links` carries no `utterance_ids`, and its label is the `ref_label`
+of the `ctx_embeddings` row written beside it, which does. A link is therefore
+read through `service._readable_topic_links`: it is shown only while every
+utterance behind its label belongs to a speaker who consents *now*. It applies
+at each place a label leaves D —
+
+- `GET /links/{meeting_id}` (S15) and the agent tool `links_for_meeting`, both
+  through `get_topic_links`; `asserted` and `pending` alike;
+- the `ContextLinks` published to E (`_build_context_links`);
+- the Slack topic-link notice (`collect_topic_link_notices`).
+
+A withdrawal therefore hides a link at once, without re-deriving the meeting, and
+a row from before #439 never shows a label cut from speech nobody agreed to. The
+check cannot be made, and the link is left out, when its label's segment row has
+no `utterance_ids` (stored before #397), when no segment row carries the label,
+or when its utterances are gone. Two segments of a meeting can share a label and
+the link does not say which it came from, so every row with that label has to
+pass.
+
+A link that is hidden is not deleted: it comes back if consent does, and
+`rederive_topics` rebuilds the link and its segment together from consenting
+speech. So the two halves are complementary — re-deriving removes what was
+stored, the read-time check covers the time before it runs and any later
+withdrawal. The brief's recap label (#437) makes the same check on
+`ctx_embeddings` directly.
 
 ### Decision lineage — from `autune.extraction.completed`
 
@@ -749,7 +779,7 @@ one mutation.
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| GET | `/links/{meeting_id}` | Topic links for a meeting, `asserted` and `pending` separated |
+| GET | `/links/{meeting_id}` | Topic links for a meeting, `asserted` and `pending` separated; a link whose label is cut from speech not consented to is left out |
 | POST | `/links/{link_id}/confirm` | User confirms or rejects a `pending` link (`status` → `confirmed`/`rejected`) |
 | GET | `/decisions/{thread_id}` | Full lineage timeline, oldest version first |
 | GET | `/decisions` | Filter by team, topic, change type |
