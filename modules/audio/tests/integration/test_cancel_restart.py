@@ -7,6 +7,7 @@ flags the screen draws them from, and the file each one leaves behind.
 
 from __future__ import annotations
 
+import os
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -229,3 +230,158 @@ def test_a_job_claimed_after_a_long_wait_is_not_stalled_and_keeps_its_file(
     service.cancel_transcription(db_session, meeting_id=analyzing, user=member, settings=settings)
 
     assert upload.exists()
+
+
+class Enqueued:
+    def __init__(self) -> None:
+        self.sent: list[tuple[str, list[object]]] = []
+        self.explode = False
+
+    def send_task(self, name: str, args: list[object], **_: object) -> None:
+        if self.explode:
+            raise RuntimeError("broker is unreachable")
+        self.sent.append((name, args))
+
+
+@pytest.fixture
+def broker(monkeypatch: pytest.MonkeyPatch) -> Enqueued:
+    fake = Enqueued()
+    monkeypatch.setattr("autune_audio.enqueue.current_app", fake)
+    return fake
+
+
+# --- restart ------------------------------------------------------------------
+
+
+def test_a_stalled_job_restarts_from_the_same_upload(
+    db_session: Session, analyzing: str, member: User, settings: AudioSettings
+) -> None:
+    old = _job(db_session, analyzing, "running", heartbeat_age=timedelta(minutes=10))
+    upload = _upload(settings, old.id)
+
+    new = service.restart_transcription(
+        db_session, meeting_id=analyzing, user=member, settings=settings
+    )
+
+    assert old.status == "superseded"
+    assert old.finished_at is not None
+    assert new.status == "queued"
+    assert new.meeting_id == analyzing
+    assert not upload.exists()
+    assert (Path(settings.temp_dir) / f"{new.id}.upload").read_bytes() == b"raw audio stand-in"
+    assert db_session.get(Meeting, analyzing).status == "analyzing"
+
+
+def test_a_job_with_a_live_heartbeat_is_not_restarted(
+    db_session: Session, analyzing: str, member: User, settings: AudioSettings
+) -> None:
+    """Restarting a live run would run one file twice."""
+    old = _job(db_session, analyzing, "running", heartbeat_age=timedelta(seconds=10))
+    _upload(settings, old.id)
+
+    with pytest.raises(service.NotStalledError):
+        service.restart_transcription(
+            db_session, meeting_id=analyzing, user=member, settings=settings
+        )
+
+
+def test_a_meeting_already_complete_is_not_restarted(
+    db_session: Session, meeting: str, member: User, settings: AudioSettings
+) -> None:
+    """A worker that died between mark_complete and mark_published leaves the
+    job running and stale, and the meeting delivered."""
+    db_session.get(Meeting, meeting).status = "complete"
+    old = _job(db_session, meeting, "running", heartbeat_age=timedelta(minutes=10))
+    _upload(settings, old.id)
+
+    with pytest.raises(service.NotStalledError):
+        service.restart_transcription(
+            db_session, meeting_id=meeting, user=member, settings=settings
+        )
+
+
+def test_a_stalled_job_without_its_file_cannot_restart(
+    db_session: Session, analyzing: str, member: User, settings: AudioSettings
+) -> None:
+    _job(db_session, analyzing, "running", heartbeat_age=timedelta(minutes=10))
+
+    with pytest.raises(service.RecordingGoneError):
+        service.restart_transcription(
+            db_session, meeting_id=analyzing, user=member, settings=settings
+        )
+
+
+def test_an_upload_past_its_six_hours_cannot_restart(
+    db_session: Session, analyzing: str, member: User, settings: AudioSettings
+) -> None:
+    old = _job(db_session, analyzing, "running", heartbeat_age=timedelta(minutes=10))
+    upload = _upload(settings, old.id)
+    then = (datetime.now(tz=UTC) - timedelta(hours=settings.orphan_after_hours + 1)).timestamp()
+    os.utime(upload, (then, then))
+
+    with pytest.raises(service.RecordingGoneError):
+        service.restart_transcription(
+            db_session, meeting_id=analyzing, user=member, settings=settings
+        )
+
+
+def test_a_second_restart_is_refused(
+    db_session: Session, analyzing: str, member: User, settings: AudioSettings
+) -> None:
+    old = _job(db_session, analyzing, "running", heartbeat_age=timedelta(minutes=10))
+    _upload(settings, old.id)
+    service.restart_transcription(db_session, meeting_id=analyzing, user=member, settings=settings)
+
+    with pytest.raises(service.NotStalledError):
+        service.restart_transcription(
+            db_session, meeting_id=analyzing, user=member, settings=settings
+        )
+
+
+def test_the_restart_route_queues_the_new_job(
+    client: TestClient,
+    db_session: Session,
+    analyzing: str,
+    settings: AudioSettings,
+    broker: Enqueued,
+) -> None:
+    old = _job(db_session, analyzing, "running", heartbeat_age=timedelta(minutes=10))
+    _upload(settings, old.id)
+
+    response = client.post(f"/api/audio/meetings/{analyzing}/transcription/restart")
+
+    assert response.status_code == 202
+    assert response.json() == {"meeting_id": analyzing, "status": "analyzing"}
+    [(name, [job_id])] = broker.sent
+    assert name == "autune.audio.process_recording"
+    assert job_id != old.id
+    assert db_session.get(TranscriptionJob, job_id).status == "queued"
+
+
+def test_a_restart_the_broker_refuses_fails_the_meeting_and_deletes_the_file(
+    client: TestClient,
+    db_session: Session,
+    analyzing: str,
+    settings: AudioSettings,
+    broker: Enqueued,
+) -> None:
+    old = _job(db_session, analyzing, "running", heartbeat_age=timedelta(minutes=10))
+    _upload(settings, old.id)
+    broker.explode = True
+
+    response = client.post(f"/api/audio/meetings/{analyzing}/transcription/restart")
+
+    assert response.status_code == 500
+    assert db_session.get(Meeting, analyzing).status == "failed"
+    assert list(Path(settings.temp_dir).iterdir()) == []
+
+
+def test_the_restart_route_says_the_recording_is_gone(
+    client: TestClient, db_session: Session, analyzing: str, settings: AudioSettings
+) -> None:
+    _job(db_session, analyzing, "running", heartbeat_age=timedelta(minutes=10))
+
+    response = client.post(f"/api/audio/meetings/{analyzing}/transcription/restart")
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "recording_gone"
