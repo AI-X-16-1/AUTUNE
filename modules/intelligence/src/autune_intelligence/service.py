@@ -14,6 +14,7 @@ timeout elapses. The Celery glue that enqueues the aggregate task lives in
 from __future__ import annotations
 
 from collections import Counter
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta, timezone
 from typing import Final, Literal
@@ -47,7 +48,9 @@ from autune_core import (
     Utterance,
     get_logger,
     new_id,
+    session_scope,
 )
+from autune_core.deletion import on_speech_deleted
 from autune_core.errors import (
     ConflictError,
     NotFoundError,
@@ -65,6 +68,7 @@ from autune_integrations import (
     find_unmasked,
 )
 
+from . import forget
 from .alignment import meeting_alignment
 from .config import get_settings
 from .feedback import build_speaking_ratio_dm
@@ -1994,3 +1998,31 @@ def record_meeting_report_correction(
         return
     row.correction_slack_ts = slack_ts
     session.flush()
+
+
+# --- a person deleted their own speech (#587, #614) -----------------------------------
+
+
+@on_speech_deleted("intelligence")
+def forget_deleted_speech(user_id: str, utterance_ids: Sequence[str]) -> None:
+    """Before a person's own speech is deleted: E lets go of the words it copied
+    from it -- in its copies of B's, C's and D's results and in the meeting
+    reports quoting them (``forget``). The work stays.
+
+    Registered from this file because ``router`` imports it: A's deletion runs
+    in the API process, which imports every router and no ``tasks`` module (as
+    C's hook is). Raises on failure, so A's deletion stops rather than leaving
+    the words in E; commits in its own transaction before A deletes, erring
+    toward deleting more. Ids and counts only.
+    """
+    with session_scope() as session:
+        done = forget.forget_speech(session, utterance_ids)
+    log.info(
+        "intelligence_speech_forgotten",
+        user_id=user_id,
+        utterances=len(utterance_ids),
+        meetings=len(done.meetings),
+        texts_replaced=done.texts_replaced,
+        topics_removed=done.topics_removed,
+        reports_changed=done.reports_changed,
+    )
