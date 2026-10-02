@@ -16,7 +16,7 @@ export const metadata: Metadata = {
 const HIGHLIGHTS = [
   ["0분", "회의 후 서기 시간"],
   ["5종 분류", "약속 · 결정 · 질문 · 우려 · 모호"],
-  ["원본 즉시 삭제", "개인정보 자동 마스킹"],
+  ["원본 처리 후 삭제", "개인정보 자동 마스킹"],
 ] as const;
 
 export default function LoginPage() {
