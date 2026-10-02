@@ -525,7 +525,7 @@ class OutboundBlocked(BaseModel):
 class Outbound(BaseModel):
     """What confirm-and-send would send, and nothing else.
 
-    The Notion and Slack sync (#30; Jira dropped, #82) is to read this and only
+    The Notion, Jira and Slack sync (#30, #458) is to read this and only
     this. A decision nobody confirmed is not in it, and neither is an item
     still waiting for confirmation.
     """

@@ -3384,8 +3384,7 @@ def review_decision(
 
 
 def outbound_for_meeting(session: Session, meeting_id: str) -> Outbound:
-    """Exactly what may leave for Notion or Slack: nothing unconfirmed (#246).
-    Jira was dropped from the product (#82).
+    """Exactly what may leave for Notion, Jira or Slack: nothing unconfirmed (#246).
 
     A decision goes only when a person confirmed it, in their wording if they gave
     one. An action item goes only once it is past ``needs_confirmation`` -- the
