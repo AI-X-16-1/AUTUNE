@@ -1194,6 +1194,27 @@ def assignee_names(session: Session, items: Sequence[ExtActionItem]) -> dict[str
 # --- who may read what (#189) ---------------------------------------------------
 
 
+def within_retention(now: datetime | None = None) -> ColumnElement[bool]:
+    """A meeting B may still read or write: not past ``expires_at``.
+
+    A meeting past its retention window stays in the table until A's sweep
+    takes it -- longer when one of its deletion hooks fails -- and until then
+    nothing of it may be shown (invariant 11; #656). D asks the same question
+    with ``visible_meeting_clauses``. Every read of B's that reaches a
+    meeting asks this one, so there is one place to get it wrong.
+    """
+    moment = now if now is not None else datetime.now(UTC)
+    return or_(Meeting.expires_at.is_(None), Meeting.expires_at > moment)
+
+
+def live_meeting(
+    session: Session, meeting_id: str, *, now: datetime | None = None
+) -> Meeting | None:
+    """The meeting, or ``None`` when there is none or it is past retention --
+    one answer for both, the way an unknown id and somebody else's get one."""
+    return session.scalar(select(Meeting).where(Meeting.id == meeting_id, within_retention(now)))
+
+
 def is_team_member(session: Session, team_id: str, user_id: str) -> bool:
     """Whether ``user_id`` is on ``team_id`` -- for a route that names the team
     itself (S28 settings, #496) rather than one of its meetings."""
@@ -1220,7 +1241,10 @@ def _refuse(kind: str, ident: str, reader: User, reason: str) -> NotFoundError:
 def _require_member_of_meeting(
     session: Session, meeting_id: str, reader: User, *, kind: str, ident: str
 ) -> None:
-    team_id = session.scalar(select(Meeting.team_id).where(Meeting.id == meeting_id))
+    # A meeting past retention is refused as one that is not there (#656).
+    team_id = session.scalar(
+        select(Meeting.team_id).where(Meeting.id == meeting_id, within_retention())
+    )
     if team_id is None:
         raise _refuse(kind, ident, reader, "no_such_meeting")
     if not _is_team_member(session, user_id=reader.id, team_id=team_id):
@@ -1278,6 +1302,9 @@ def list_action_items(
     hold a meeting or a team, do not. A meeting outside the caller's teams
     therefore lists nothing, the same answer as a meeting that does not exist.
 
+    A meeting past its retention window lists nothing either, for every
+    caller (``within_retention``, #656).
+
     ``due_before`` is strict: an item due on that day is not before it. That
     makes "overdue" one argument -- today's date -- instead of yesterday's, and
     an item with no due date is never before anything, so it drops out of any
@@ -1288,6 +1315,8 @@ def list_action_items(
     """
     query = (
         select(ExtActionItem)
+        .join(Meeting, Meeting.id == ExtActionItem.meeting_id)
+        .where(within_retention())
         .options(selectinload(ExtActionItem.sources))
         .order_by(ExtActionItem.created_at, ExtActionItem.id)
     )
@@ -1300,7 +1329,7 @@ def list_action_items(
     if due_before is not None:
         query = query.where(ExtActionItem.due_date < due_before)
     if visible_to is not None:
-        query = query.join(Meeting, Meeting.id == ExtActionItem.meeting_id).where(
+        query = query.where(
             Meeting.team_id.in_(select(TeamMember.team_id).where(TeamMember.user_id == visible_to))
         )
 
@@ -1338,9 +1367,10 @@ def carried_over(session: Session, meeting_id: str, *, today: date | None = None
     an old meeting today does not show it the work of the weeks after it.
 
     Reads only what the board already shows the same team: descriptions,
-    assignees and dates, never an utterance.
+    assignees and dates, never an utterance. An earlier meeting past its
+    retention window carries nothing over (``within_retention``, #656).
     """
-    meeting = session.get(Meeting, meeting_id)
+    meeting = live_meeting(session, meeting_id)
     if meeting is None:
         raise NotFoundError("meeting", meeting_id)
     held = func.coalesce(Meeting.started_at, Meeting.created_at)
@@ -1349,7 +1379,10 @@ def carried_over(session: Session, meeting_id: str, *, today: date | None = None
         row.id: row
         for row in session.scalars(
             select(Meeting).where(
-                Meeting.team_id == meeting.team_id, Meeting.id != meeting_id, held < this_held
+                Meeting.team_id == meeting.team_id,
+                Meeting.id != meeting_id,
+                held < this_held,
+                within_retention(),
             )
         )
     }
@@ -3996,13 +4029,10 @@ def _counted_for_progress(now: datetime) -> ColumnElement[bool]:
     past ``expires_at`` stays in the table until A's sweep takes it -- longer
     when one of its deletion hooks fails. Counting it would send its id to E
     and keep it in the team's completion rate after it should be gone
-    (invariant 11; #649 review). The same test as D's
-    ``visible_meeting_clauses``.
+    (invariant 11; #649 review). The retention half is ``within_retention``,
+    the one every read of B's asks.
     """
-    return and_(
-        Meeting.created_at >= now - ACTION_PROGRESS_WINDOW,
-        or_(Meeting.expires_at.is_(None), Meeting.expires_at > now),
-    )
+    return and_(Meeting.created_at >= now - ACTION_PROGRESS_WINDOW, within_retention(now))
 
 
 def teams_with_recent_meetings(session: Session, *, now: datetime) -> list[str]:
@@ -4104,6 +4134,7 @@ def team_agenda(session: Session, team_id: str, *, now: datetime) -> TeamAgenda:
         .join(Meeting, Meeting.id == ExtActionItem.meeting_id)
         .where(
             Meeting.team_id == team_id,
+            within_retention(now),
             ExtExternalRef.external_id.is_not(None),
             ExtActionItem.status.in_(_AGENDA_STATUSES),
         )
