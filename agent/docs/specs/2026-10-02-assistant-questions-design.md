@@ -70,7 +70,9 @@ START → route ─┬→ delegate → answer → END     (a subagent fits: unch
                └→ ask      → answer → END     (none fits: was "unrouted")
 ```
 
-`ask` replaces `unrouted` for chat turns. A triggered run always names its
+`ask` replaces `unrouted` for chat turns when the chat passes a `ToolModel`
+(`run_and_record(..., asker=)`); with none — the layer off, no key — the turn
+is unrouted as today. A triggered run always names its
 subagent and never reaches it. When the layer has no tools for the scope or
 the model asks for nothing, `ask` returns an empty result and `answer` says so,
 as `unrouted` does today.
@@ -192,12 +194,12 @@ link to 승인 대기.
 
 | File | Change |
 | --- | --- |
+| `agent/src/autune_agent/main/toolcall.py` (new) | `FunctionCall`, `Declaration`, `ToolModel`, wire names, the request builder and its size count |
 | `agent/src/autune_agent/main/gemini.py` | `GeminiTools.step`: function declarations in, text or function calls out, through `HttpClient` |
 | `agent/src/autune_agent/main/ask.py` (new) | Tool sets, `declare`, `call_tool`, compaction, size check, the rounds |
-| `agent/src/autune_agent/main/graph.py` | `ask` in place of `unrouted` when the router supports it |
-| `agent/src/autune_agent/main/router.py` | `Router` protocol gains an optional `ask` capability; `FakeRouter` scripts it |
-| `agent/src/autune_agent/router.py` | `ChatReply.pending` |
-| `agent/src/autune_agent/testing.py` | A scripted fake for `GeminiTools` |
+| `agent/src/autune_agent/main/graph.py`, `main/store.py` | An optional `asker: ToolModel`; given one, a chat turn no subagent fits goes to `ask` instead of `unrouted` |
+| `agent/src/autune_agent/router.py` | `get_chat_tool_model` dependency; `ChatReply.pending` |
+| `agent/src/autune_agent/testing.py` | `ScriptedToolModel`, a scripted `ToolModel` |
 | `apps/web/src/features/agent/` | `pending` type, the proposal block with 승인 / 거절 |
 | `docs/architecture/agent-layer.md`, `docs/design/agent-assistant.md` | Section 9 items 2 and 3 answered |
 
