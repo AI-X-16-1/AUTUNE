@@ -270,10 +270,24 @@ def test_gaps_by_id_reads_only_the_meeting_it_was_given(team_id: str) -> None:
     first = meeting(team_id, COVERS_TWO, started=T0)
     second = meeting(team_id, COVERS_TWO, started=T0 + timedelta(days=7))
 
-    # A carried proposal cites both meetings' gaps; only this meeting's count.
-    result = call(tools.gaps_by_id, team_id, second, gap_ids=gap_ids(first) + gap_ids(second))
+    ours = gap_ids(second)
+    result = call(tools.gaps_by_id, team_id, second, gap_ids=gap_ids(first)[:1] + ours)
 
-    assert set(result["evidence"]) == set(gap_ids(second))
+    assert set(result["evidence"]) == set(ours)
+    # The other meeting's id is not counted as a cited gap that closed.
+    assert result["summary"].startswith(f"근거 갭 {len(ours)}건 중 {len(ours)}건")
+
+
+def test_gaps_by_id_reads_five_distinct_ids_at_most(team_id: str) -> None:
+    m = meeting(team_id, COVERS_NOTHING, started=T0)
+    ids = gap_ids(m)
+    assert len(ids) >= 5
+
+    result = call(tools.gaps_by_id, team_id, m, gap_ids=[ids[0], ids[0], *ids])
+
+    assert set(result["evidence"]) == set(ids[:5])
+    assert not result["truncated"]
+    assert result["summary"].startswith("근거 갭 5건 중 5건")
 
 
 def test_gaps_by_id_with_nothing_still_open_is_not_a_failure(team_id: str) -> None:
