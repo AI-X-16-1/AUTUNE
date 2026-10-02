@@ -27,11 +27,15 @@ const status = () => screen.queryByRole("status");
 
 async function copy() {
   fireEvent.click(screen.getByRole("button", { name: "회의록 복사" }));
-  // The clipboard answers in a microtask; timers are faked, so wait by hand.
+  // The clipboard answers in a microtask (a refusal takes one more to reach
+  // the catch); timers are faked, so wait by hand.
   await act(async () => {
+    await Promise.resolve();
     await Promise.resolve();
   });
 }
+
+const refuses = () => Promise.reject(new Error("denied"));
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -88,6 +92,35 @@ describe("the copied notice", () => {
 
     // The first copy's timer would have cleared it a second in.
     expect(status()).not.toBeNull();
+  });
+
+  // The notice and the by-hand page are two states since this change; with the
+  // single one they replaced, neither of these could go wrong (pr's review).
+
+  it("does not say copied beside a clipboard that refused", async () => {
+    vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText: refuses } });
+    render(<CopyMinutes summary={SUMMARY} />);
+
+    await copy();
+
+    expect(screen.getByRole("alert").textContent).toContain("복사하지 못했습니다");
+    expect(status()).toBeNull();
+  });
+
+  it("takes the by-hand page away once a later copy works", async () => {
+    const writeText = vi.fn<() => Promise<void>>().mockImplementationOnce(refuses);
+    writeText.mockResolvedValue(undefined);
+    vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } });
+    render(<CopyMinutes summary={SUMMARY} />);
+    await copy();
+    expect(screen.getByRole("alert")).toBeTruthy();
+    expect(screen.getByLabelText("회의록")).toBeTruthy();
+
+    await copy();
+
+    expect(status()?.textContent).toBe("복사했습니다.");
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.queryByLabelText("회의록")).toBeNull();
   });
 
   it("leaves no timer running after the tab is left", async () => {
