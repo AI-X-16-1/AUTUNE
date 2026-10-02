@@ -46,7 +46,7 @@ export const COLUMN_LABELS: Record<ActionStatus, string> = {
  * (this system absent from the array) means nothing has tried yet.
  */
 export interface ExternalRefRead {
-  system: "notion"; // Jira dropped (#82)
+  system: "notion" | "jira"; // the systems ext_external_refs holds (#650)
   url: string | null;
   external_id: string | null;
 }
@@ -258,7 +258,7 @@ export type DecisionStatus = "pending" | "confirmed" | "rejected";
  * (this system absent from the array) means nothing has tried yet.
  */
 export interface ExternalRefRead {
-  system: "notion"; // Jira dropped (#82)
+  system: "notion" | "jira"; // the systems ext_external_refs holds (#650)
   url: string | null;
   external_id: string | null;
 }
