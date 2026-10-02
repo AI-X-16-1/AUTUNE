@@ -66,12 +66,38 @@ def _require_scalar(value: Any) -> None:
             _require_scalar(inner)
 
 
+_EXEMPT_AT = {
+    "role": ("contents", "*", "role"),
+    "thoughtSignature": ("contents", "*", "parts", "*", "thoughtSignature"),
+    "responseMimeType": ("generationConfig", "responseMimeType"),
+}
+"""Where each ``ADDRESSING`` key may sit. Anywhere else the guard would skip text
+it should read -- a model-written ``functionCall.args`` echoed back could carry
+a key of the same name -- so the request is refused instead."""
+
+
+assert set(_EXEMPT_AT) == ADDRESSING, "every exempt key needs its slot"
+
+
+def _require_placement(value: Any, path: tuple[str, ...] = ()) -> None:
+    if isinstance(value, dict):
+        for key, inner in value.items():
+            here = (*path, key)
+            if key in _EXEMPT_AT and here != _EXEMPT_AT[key]:
+                raise PrivacyViolationError(f"{key!r} is exempt from the check only in its slot")
+            _require_placement(inner, here)
+    elif isinstance(value, (list, tuple)):
+        for inner in value:
+            _require_placement(inner, (*path, "*"))
+
+
 class _GeminiClient(HttpClient):
     service = "agent-router"
     addressing = ADDRESSING
 
     def request(self, method: str, path: str, **kwargs: Any) -> dict[str, Any]:
         _require_scalar(kwargs.get("json"))
+        _require_placement(kwargs.get("json"))
         return super().request(method, path, **kwargs)
 
 

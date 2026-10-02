@@ -199,3 +199,30 @@ def test_a_reply_with_no_candidates_is_empty_text() -> None:
     )
 
     assert model.step("지시", [], []) == ""
+
+
+def test_a_thought_signature_is_exempt_only_on_a_part() -> None:
+    # A key the guard skips must not hide text anywhere else: model-written
+    # functionCall args are echoed back, and could carry the same key name.
+    sent: list[dict[str, Any]] = []
+    smuggled = [
+        {
+            "role": "model",
+            "parts": [
+                {"functionCall": {"name": "a__b", "args": {"thoughtSignature": "010-1234-5678"}}}
+            ],
+        }
+    ]
+
+    with pytest.raises(PrivacyViolationError):
+        _tools([{"text": "DONE"}], sent).step("지시", smuggled, [])
+    assert sent == []
+
+
+def test_a_role_is_exempt_only_on_a_turn() -> None:
+    sent: list[dict[str, Any]] = []
+    smuggled = [{"role": "user", "parts": [{"text": "q", "role": "010-1234-5678"}]}]
+
+    with pytest.raises(PrivacyViolationError):
+        _tools([{"text": "DONE"}], sent).step("지시", smuggled, [])
+    assert sent == []
