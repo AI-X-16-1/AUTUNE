@@ -14,6 +14,20 @@ Two halves:
 The session travels either as ``Authorization: Bearer <jwt>`` (service clients,
 tests) or as the ``autune_session`` cookie (the browser). ``current_user``
 accepts both.
+
+**Signing out ends every session the person has, on the server.** A session
+is a signed token, and until 2026-10-02 signing out only cleared the
+browser's cookie: the token it held stayed good for the rest of its seven
+days, in that browser's history or anywhere it had leaked to. Now
+``end_sessions`` writes the moment down on the person's row
+(``users.sessions_valid_from``) and ``current_user`` refuses any token issued
+before it -- cookie or bearer, a developer token included.
+
+Every device, not the one (decided with the user): one value per person
+and no session table. ``current_user`` already loads the person's row, so
+the check costs no query. Nobody is signed out by the deployment itself: a
+person who has never signed out has no moment to compare with, and their
+older tokens stay good until they expire or the person signs out.
 """
 
 from __future__ import annotations
@@ -38,7 +52,10 @@ SESSION_COOKIE = "autune_session"
 
 def issue_token(user_id: str, ttl: timedelta = DEFAULT_TTL) -> str:
     now = datetime.now(UTC)
-    payload = {"sub": user_id, "iat": now, "exp": now + ttl}
+    # ``iat`` to the microsecond, not PyJWT's whole second for a datetime: a
+    # token issued just after a sign-out has to be told from one issued just
+    # before it, and a person can sign out and in again within a second.
+    payload = {"sub": user_id, "iat": now.timestamp(), "exp": now + ttl}
     return jwt.encode(payload, get_settings().secret_key, algorithm=ALGORITHM)
 
 
@@ -80,18 +97,61 @@ def _session_token(
     raise PermissionDeniedError("no session: send a bearer token or sign in")
 
 
+def _issued_before_sign_out(user: User, claims: dict[str, Any]) -> bool:
+    cutoff = user.sessions_valid_from
+    if cutoff is None:
+        return False
+    if cutoff.tzinfo is None:  # SQLite hands a timezone-aware column back naive
+        cutoff = cutoff.replace(tzinfo=UTC)
+    # A token with no ``iat`` cannot be placed after the sign-out, so it is
+    # before it. An older token's ``iat`` is a whole second, rounded down,
+    # which errs the same way.
+    issued = claims.get("iat")
+    return not isinstance(issued, int | float) or issued < cutoff.timestamp()
+
+
 def current_user(
     token: Annotated[str, Depends(_session_token)],
     session: Annotated[Session, Depends(get_session)],
 ) -> User:
     """FastAPI dependency resolving the authenticated user."""
-    user_id = decode_token(token).get("sub")
+    claims = decode_token(token)
+    user_id = claims.get("sub")
     if not user_id:
         raise PermissionDeniedError("token carries no subject")
     user = session.get(User, user_id)
     if user is None:
         raise NotFoundError("user", user_id)
+    if _issued_before_sign_out(user, claims):
+        raise PermissionDeniedError("this session was signed out; sign in again")
     return user
+
+
+def end_sessions(user: User, *, now: datetime | None = None) -> None:
+    """Sign the person out everywhere: no token issued before this moment is
+    accepted again, whichever browser, device or script holds it. A token
+    issued after it -- the next sign-in -- is unaffected.
+
+    The caller's transaction commits it. Never moved backwards: a second
+    sign-out with an older clock must not revive what the first ended."""
+    moment = now or datetime.now(UTC)
+    current = user.sessions_valid_from
+    if current is not None and current.tzinfo is None:
+        current = current.replace(tzinfo=UTC)
+    if current is None or moment > current:
+        user.sessions_valid_from = moment
+
+
+def signed_in_user_or_none(
+    session: Session, authorization: str | None, autune_session: str | None
+) -> User | None:
+    """Who the request is from, or ``None`` -- for the one route that must
+    answer either way. Signing out with an expired, forged or already
+    signed-out token is still a sign-out, and has nobody to end sessions for."""
+    try:
+        return current_user(_session_token(authorization, autune_session), session)
+    except (PermissionDeniedError, NotFoundError):
+        return None
 
 
 CurrentUser = Annotated[User, Depends(current_user)]

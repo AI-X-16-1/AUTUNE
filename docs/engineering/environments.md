@@ -149,12 +149,16 @@ browser cannot sign them in as whoever started it. Redis proves a state was
 issued; the cookie is what proves to whom.
 `packages/core/src/autune_core/auth_router.py` has the reasoning.
 
-**A signed-out session is signed out in the browser only.** `POST /logout`
-clears the cookie; the JWT it held stays valid until it expires. A token that
-leaked cannot be revoked, which is acceptable for a first version and is not
-acceptable for long — it needs a token version on `User`, or a server-side
-session, before this carries real meetings. Until then the only way to end
-every session at once is rotating `AUTUNE_SECRET_KEY`, which signs everyone out.
+**Signing out ends the person's sessions on the server, on every device.**
+`POST /logout` writes the moment on the person's row
+(`users.sessions_valid_from`) and clears the cookie; from then on
+`current_user` refuses every token of theirs issued before it — the browser
+that signed out, another browser, a developer token, a copy that leaked. The
+next sign-in issues a token after that moment, which is good. It is one value
+per person, not a session per device: signing out in one place signs out
+everywhere, and there is no list of sessions to look at. Deploying this signed
+nobody out — a person who has never signed out has no moment to compare
+with. To end **everybody's** sessions at once, rotate `AUTUNE_SECRET_KEY`.
 
 ### Web (`apps/web`)
 
