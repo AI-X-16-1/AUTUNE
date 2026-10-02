@@ -15,12 +15,13 @@ from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, timedelta
 from typing import Any, Literal, Protocol
 
-from sqlalchemy import Select, and_, delete, func, or_, select, update
+from sqlalchemy import ColumnElement, Select, and_, delete, func, or_, select, update
 from sqlalchemy.dialects import postgresql, sqlite
 from sqlalchemy.orm import Session, selectinload
 
 from autune_contracts.enums import ActionStatus, UtteranceKind
 from autune_contracts.extraction import (
+    ACTION_PROGRESS_WINDOW,
     AGENDA_TITLE_MAX,
     JIRA_ISSUE_URL,
     ActionItem,
@@ -29,6 +30,8 @@ from autune_contracts.extraction import (
     Classification,
     Decision,
     ExtractionResult,
+    MeetingActionProgress,
+    TeamActionProgress,
     TeamAgenda,
 )
 from autune_contracts.transcript import Utterance as TranscriptUtterance
@@ -112,7 +115,7 @@ from .schemas import (
     SourceUtterance,
     SummaryDecision,
 )
-from .slots import Assignee, assignee_of, meeting_day, parse_due
+from .slots import KST, Assignee, assignee_of, meeting_day, parse_due
 
 log = get_logger(__name__)
 
@@ -3932,6 +3935,82 @@ def _one_line(text: str, limit: int) -> str:
     """Whitespace collapsed, and cut to ``limit`` characters with an ellipsis."""
     line = " ".join(text.split())
     return line if len(line) <= limit else line[: limit - 1].rstrip() + "…"
+
+
+def _counted_for_progress(now: datetime) -> ColumnElement[bool]:
+    """A meeting ``TeamActionProgress`` may count: made inside
+    ``ACTION_PROGRESS_WINDOW`` of ``now`` and not past its retention window.
+
+    The window is 91 days and a team's retention can be shorter, and a meeting
+    past ``expires_at`` stays in the table until A's sweep takes it -- longer
+    when one of its deletion hooks fails. Counting it would send its id to E
+    and keep it in the team's completion rate after it should be gone
+    (invariant 11; #649 review). The same test as D's
+    ``visible_meeting_clauses``.
+    """
+    return and_(
+        Meeting.created_at >= now - ACTION_PROGRESS_WINDOW,
+        or_(Meeting.expires_at.is_(None), Meeting.expires_at > now),
+    )
+
+
+def teams_with_recent_meetings(session: Session, *, now: datetime) -> list[str]:
+    """Teams with a meeting ``_counted_for_progress`` -- the teams whose action
+    progress is published (#605), even when nothing in the window is confirmed:
+    a fresh empty snapshot says so. A team whose only meetings in the window
+    are past retention is not one of them."""
+    return sorted(
+        session.scalars(select(Meeting.team_id).where(_counted_for_progress(now)).distinct())
+    )
+
+
+def team_action_progress(session: Session, team_id: str, *, now: datetime) -> TeamActionProgress:
+    """The team's action items as counts per meeting, as of ``now`` (#605).
+
+    Per meeting made inside the window and still inside its retention
+    (``_counted_for_progress``): items past ``needs_confirmation``, those
+    ``done``, and those confirmed, not done and due before the team's today --
+    the board's overdue rule (``tools._overdue``). **Today is the date of
+    ``now`` in Korea** (``slots.KST``): there is no team time zone, and a
+    server's ``date.today()`` on UTC is a day behind from 00:00 to 09:00 KST,
+    when the board and E's dashboard would disagree on what is late (#619
+    review). A meeting with nothing confirmed is left out. Counts and meeting
+    ids only: no assignee, title or item id leaves here, so no per-person
+    completion record can be built from it (privacy.md section 3; the
+    contract's own note).
+    """
+    today = now.astimezone(KST).date()
+    confirmed = ExtActionItem.status != ActionStatus.NEEDS_CONFIRMATION.value
+    done = ExtActionItem.status == ActionStatus.DONE.value
+    overdue = and_(
+        confirmed,
+        ~done,
+        ExtActionItem.due_date.is_not(None),
+        ExtActionItem.due_date < today,
+    )
+    rows = session.execute(
+        select(
+            ExtActionItem.meeting_id,
+            func.count().filter(confirmed),
+            func.count().filter(done),
+            func.count().filter(overdue),
+        )
+        .join(Meeting, Meeting.id == ExtActionItem.meeting_id)
+        .where(Meeting.team_id == team_id, _counted_for_progress(now))
+        .group_by(ExtActionItem.meeting_id)
+        .order_by(ExtActionItem.meeting_id)
+    ).all()
+    return TeamActionProgress(
+        team_id=team_id,
+        as_of=now,
+        meetings=[
+            MeetingActionProgress(
+                meeting_id=meeting_id, confirmed=n_confirmed, done=n_done, overdue=n_overdue
+            )
+            for meeting_id, n_confirmed, n_done, n_overdue in rows
+            if n_confirmed > 0
+        ],
+    )
 
 
 def teams_with_jira_issues(session: Session) -> list[str]:

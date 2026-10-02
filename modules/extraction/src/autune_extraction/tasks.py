@@ -16,7 +16,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from autune_contracts import (
+    ACTION_PROGRESS_PUBLISH_EVERY,
     AGENDA_PUBLISH_EVERY,
+    EXTRACTION_ACTION_PROGRESS,
     EXTRACTION_AGENDA_CHANGED,
     EXTRACTION_COMPLETED,
     TranscriptReady,
@@ -1213,6 +1215,34 @@ def forget_deleted_speech(user_id: str, utterance_ids: Sequence[str]) -> None:
         items_changed=len(done.changed_items),
         decisions_changed=len(done.changed_decisions),
     )
+
+
+@shared_task(name="autune.extraction.periodic.publish_action_progress")
+@periodic(ACTION_PROGRESS_PUBLISH_EVERY)
+def publish_action_progress() -> None:
+    """Every ten minutes, each team's action items as counts per meeting -- a
+    ``TeamActionProgress`` for E's real completion rate (#605).
+
+    A snapshot republished whether or not anything changed, like
+    ``publish_team_agendas`` and for its reasons: the board's edits run in the
+    API process, which has no Celery app to publish from, and the next snapshot
+    corrects a lost one. A team with a meeting in the window but nothing
+    confirmed gets an empty snapshot, which E reads as a fact. Only counts are
+    logged.
+    """
+    now = datetime.now(UTC)
+    with session_scope() as session:
+        snapshots = [
+            service.team_action_progress(session, team_id, now=now)
+            for team_id in service.teams_with_recent_meetings(session, now=now)
+        ]
+    for snapshot in snapshots:
+        publish(EXTRACTION_ACTION_PROGRESS, snapshot.model_dump(mode="json"))
+        log.info(
+            "extraction_action_progress_published",
+            team_id=snapshot.team_id,
+            meetings=len(snapshot.meetings),
+        )
 
 
 @shared_task(name="autune.extraction.periodic.publish_team_agendas")
