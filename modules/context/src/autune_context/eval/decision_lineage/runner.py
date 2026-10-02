@@ -174,12 +174,37 @@ def run_all(cases: list[EvalCase] | None = None) -> list[CaseResult]:
     return [run_case(case) for case in (cases if cases is not None else load_cases())]
 
 
+def _classified(results: list[CaseResult]) -> tuple[int, int]:
+    """(right, total) change types among correctly threaded non-new cases."""
+    classifiable = [r for r in results if r.threaded_correctly and r.expected_change_type != "new"]
+    return sum(r.actual_change_type == r.expected_change_type for r in classifiable), len(
+        classifiable
+    )
+
+
+def headline(results: list[CaseResult]) -> dict[str, float]:
+    """The numbers ``--mode both`` puts side by side."""
+    right, of = _classified(results)
+    return {
+        "accuracy": sum(r.correct for r in results) / len(results) if results else 0.0,
+        "threading": sum(r.threaded_correctly for r in results) / len(results) if results else 0.0,
+        "change type (threaded, non-new)": right / of if of else 0.0,
+    }
+
+
+def case_outcomes(results: list[CaseResult]) -> dict[str, bool]:
+    return {f"{r.category}/{r.case_id}": r.correct for r in results}
+
+
 def report(results: list[CaseResult]) -> str:
     """Per-case lines, the headline number, then threading and change-type
     classification scored separately -- a case fails on either, and the two
     are tuned by different knobs (``lineage_match_threshold`` vs the NLI
-    model)."""
-    threshold = get_settings().lineage_match_threshold
+    model). Under ``engine_mode="llm"`` one model makes both calls and the
+    cosine threshold decides nothing, so the sweep over it is left out."""
+    settings = get_settings()
+    threshold = settings.lineage_match_threshold
+    llm_mode = settings.engine_mode == "llm"
     lines = [_case_line(r) for r in results]
     correct = sum(r.correct for r in results)
     total = len(results)
@@ -187,29 +212,44 @@ def report(results: list[CaseResult]) -> str:
     verdict = "PASS" if accuracy >= _TARGET_ACCURACY else "BELOW TARGET"
 
     threaded = sum(r.threaded_correctly for r in results)
-    classifiable = [r for r in results if r.threaded_correctly and r.expected_change_type != "new"]
-    classified = sum(r.actual_change_type == r.expected_change_type for r in classifiable)
+    classified, classifiable = _classified(results)
 
     lines += [
         "",
         accuracy_line("decision lineage accuracy", correct, total)
         + f" (target {_TARGET_ACCURACY}) -- {verdict}",
-        f"lineage_match_threshold = {threshold}",
+        (
+            f"engine_mode = llm ({settings.llm_impl}:{settings.llm_model_name}): "
+            f"llm_match_threshold = "
+            f"{settings.llm_match_threshold}, asked about the top "
+            f"{settings.llm_thread_candidates} threads per decision"
+            if llm_mode
+            else f"lineage_match_threshold = {threshold}"
+            + (
+                " (engine_mode = hybrid: decision lineage runs classic)"
+                if settings.engine_mode == "hybrid"
+                else ""
+            )
+        ),
         "",
         "by category:",
         *by_category(results),
         "",
         f"threading (right thread, or a new one when expected): {ratio(threaded, total)}",
-        "change type among correctly threaded non-new cases (the NLI step alone): "
-        + ratio(classified, len(classifiable)),
+        "change type among correctly threaded non-new cases "
+        + ("(the LLM's verdict): " if llm_mode else "(the NLI step alone): ")
+        + ratio(classified, classifiable),
         "",
         "change type confusion (rows expected, columns actual):",
         *_confusion(results),
-        "",
-        "threshold sweep (threading accuracy if lineage_match_threshold were t,",
-        "holding the past meetings' own threading as this run produced it):",
-        *_sweep(results, threshold),
     ]
+    if not llm_mode:
+        lines += [
+            "",
+            "threshold sweep (threading accuracy if lineage_match_threshold were t,",
+            "holding the past meetings' own threading as this run produced it):",
+            *_sweep(results, threshold),
+        ]
     return "\n".join(lines)
 
 

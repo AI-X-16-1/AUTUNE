@@ -17,7 +17,7 @@ from contextlib import suppress
 import anyio
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
-from autune_audio import service
+from autune_audio import masking_rules, service
 from autune_audio.config import get_settings
 from autune_audio.live import protocol, registry
 from autune_audio.live.embedder import Embedder
@@ -124,6 +124,7 @@ async def live(websocket: WebSocket, meeting_id: str) -> None:
             # ``recording`` back with it. Nothing below awaits before the
             # claim, so the atomicity comment above still holds.
             session = build_session()
+            session.use_masking_rules(masking_rules.shapes_for_meeting(db, meeting_id))
         registry.claim(meeting_id, session)
     except service.NotATeamMemberError as exc:
         # A real user, just not one this meeting's team recognises --

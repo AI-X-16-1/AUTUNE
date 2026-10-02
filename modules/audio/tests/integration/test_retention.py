@@ -67,7 +67,12 @@ def test_an_expired_meeting_goes_with_everything_under_it(db_session: Session, t
 
     assert result.meetings == (gone,)
     assert db_session.get(Meeting, gone) is None
-    assert db_session.scalar(sa.select(sa.func.count()).select_from(Utterance)) == 0
+    assert (
+        db_session.scalar(
+            sa.select(sa.func.count()).select_from(Utterance).where(Utterance.meeting_id == gone)
+        )
+        == 0
+    )
 
 
 def test_a_meeting_inside_its_window_stays(db_session: Session, team: str) -> None:
@@ -150,8 +155,13 @@ def test_a_profile_goes_with_its_owners_last_meeting(
 
     result = retention.sweep(db_session, now=NOW)
 
-    assert result.profiles == 1
-    assert db_session.scalars(sa.select(AudSpeakerEmbedding)).all() == []
+    assert result.profiles >= 1  # a database other suites committed to may hold more
+    assert (
+        db_session.scalars(
+            sa.select(AudSpeakerEmbedding).where(AudSpeakerEmbedding.user_id == member.id)
+        ).all()
+        == []
+    )
 
 
 def test_a_profile_stays_while_any_meeting_still_names_its_owner(

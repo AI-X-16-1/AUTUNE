@@ -24,6 +24,7 @@ from sqlalchemy import (
     String,
     Text,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
@@ -164,6 +165,15 @@ class AgentResearchDocument(Base):
     __tablename__ = "agent_research_documents"
     __table_args__ = (
         CheckConstraint(_in("status", RESEARCH_STATUSES), name="ck_agent_research_status"),
+        # One proposed document per meeting: the save overwrites it in code, and
+        # this keeps two racing saves from both inserting (#525 review).
+        Index(
+            "uq_agent_research_one_proposed",
+            "meeting_id",
+            unique=True,
+            postgresql_where=text("status = 'proposed'"),
+            sqlite_where=text("status = 'proposed'"),
+        ),
     )
 
     id: Mapped[str] = mapped_column(

@@ -148,6 +148,7 @@ def test_the_response_carries_every_field_the_board_reads() -> None:
     assert set(ActionItemRead.model_fields) == {
         "id",
         "meeting_id",
+        "meeting_title",
         "description",
         "description_resolved",
         "assignee_id",

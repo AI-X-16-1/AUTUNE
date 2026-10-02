@@ -23,6 +23,7 @@ from autune_contracts import (
     ContextLinks,
     ExtractionResult,
     GapReport,
+    TeamActionProgress,
     validate_major_version,
 )
 from autune_core import Meeting, get_logger, load_integration, publish, session_scope
@@ -41,6 +42,20 @@ def on_extraction_completed(payload: dict) -> None:
     result = ExtractionResult.model_validate(payload)
     validate_major_version(result)
     _record(result.meeting_id, "extraction", payload)
+
+
+@shared_task(name="autune.intelligence.on_extraction_action_progress", acks_late=True)
+def on_extraction_action_progress(payload: dict) -> None:
+    """Keep a team's latest action-item counts from B (#605).
+
+    B republishes every ten minutes, so a refused or lost snapshot is replaced
+    shortly, and a late older one is ignored (``service.store_action_progress``).
+    Nothing is computed here; the dashboard reads the stored snapshot.
+    """
+    snapshot = TeamActionProgress.model_validate(payload)
+    validate_major_version(snapshot)
+    with session_scope() as session:
+        service.store_action_progress(session, snapshot)
 
 
 @shared_task(name="autune.intelligence.on_gap_completed", acks_late=True)

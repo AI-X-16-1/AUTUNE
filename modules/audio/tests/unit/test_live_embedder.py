@@ -158,3 +158,23 @@ def test_the_checkpoint_is_exposed() -> None:
 def test_torch_is_not_imported_at_module_scope() -> None:
     assert "torch" not in vars(embedder_module)
     assert "pyannote" not in vars(embedder_module)
+
+
+def test_a_checkpoint_of_another_width_fails_at_warm_up(monkeypatch: pytest.MonkeyPatch) -> None:
+    """#363 item 3: a model whose vectors do not fit ``Vector(256)`` fails once,
+    loudly, at load -- not quietly on every INSERT the stored path swallows."""
+    from autune_audio.live.embedder import EmbedderDimensionMismatch
+
+    install_fakes(monkeypatch, output=np.ones(512, dtype=np.float32), seen=[])
+    monkeypatch.setattr(
+        sys.modules["pyannote.audio"].Model,
+        "from_pretrained",
+        lambda checkpoint, **kwargs: types.SimpleNamespace(dimension=512),
+    )
+    embedder = Embedder()
+    with pytest.raises(EmbedderDimensionMismatch) as raised:
+        embedder.warm_up()
+    assert raised.value.width == 512
+    # Remembered like any failed load: the next call does not load again.
+    with pytest.raises(EmbedderUnavailable):
+        embedder.warm_up()

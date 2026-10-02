@@ -97,6 +97,11 @@ class ActionItemRead(BaseModel):
 
     id: str
     meeting_id: str
+    meeting_title: str | None = None
+    """The title of the meeting the item came from. The board across every
+    meeting shows it on each card, so a person can tell which meeting an item
+    belongs to without opening it (mentoring, 2026-10-01). Read with the item,
+    never stored on it."""
     description: str
     description_resolved: bool = False
     """Whether ``description`` is ``ReferenceResolver``'s rewrite rather than
@@ -246,6 +251,27 @@ class SummaryDecision(BaseModel):
 
 
 MAX_NOTE_CHARS = 2000
+
+
+ConfirmationAnswer = Literal["commitment", "decision", "not_commitment"]
+
+
+class MyConfirmation(BaseModel):
+    """One ambiguous agreement the reader said, as the web asks them about it.
+
+    ``text`` is their own line, masked as stored. ``answer`` is what they said,
+    or ``None`` while they have not; a later answer replaces an earlier one.
+    """
+
+    utterance_id: str
+    text: str
+    answer: ConfirmationAnswer | None = None
+
+
+class ConfirmationAnswerIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    answer: ConfirmationAnswer
 
 
 class MeetingNoteUpdate(BaseModel):

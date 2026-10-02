@@ -16,6 +16,7 @@ from autune_agent.main.store import run_and_record
 from autune_agent.models import AgentPendingAction, AgentRun
 from autune_agent.results import ProposedAction, SubagentResult, ToolResult
 from autune_agent.testing import FakeRouter
+from autune_core import Meeting
 
 
 def _run(session: Session, team: dict[str, str], route: str, meeting: str | None) -> AgentRun:
@@ -329,3 +330,113 @@ def test_a_run_queues_what_execute_l1_kept_for_approval(
     assert [a["reason"] for a in row.actions] == [KEPT_FOR_APPROVAL]
     queued = session.scalars(select(AgentPendingAction)).all()
     assert [(q.tool, q.status, q.run_id) for q in queued] == [("fake.post", "pending", row.id)]
+
+
+def _another_meeting(session: Session, team: dict[str, str]) -> str:
+    meeting = Meeting(team_id=team["team"], title="다른 회의")
+    session.add(meeting)
+    session.flush()
+    return meeting.id
+
+
+def _reassign(action_item: str = "act_1", assignee: str = "user_2") -> ProposedAction:
+    return _l2("extraction.reassign_action_item", action_item_id=action_item, assignee_id=assignee)
+
+
+def test_a_team_wide_run_supersedes_the_teams_proposals_from_other_meetings(
+    session: Session, team: dict[str, str]
+) -> None:
+    """#631: Workload weighs the team, so meeting B's run replaces meeting A's proposal."""
+    first = _run(session, team, "workload", team["meeting"])
+    queue_l2(
+        session, run=first, proposed=[_reassign(assignee="user_2")], actions={}, team_wide=True
+    )
+    second = _run(session, team, "workload", _another_meeting(session, team))
+
+    queue_l2(
+        session, run=second, proposed=[_reassign(assignee="user_3")], actions={}, team_wide=True
+    )
+
+    rows = {r.run_id: r.status for r in session.scalars(select(AgentPendingAction))}
+    assert rows == {first.id: "superseded", second.id: "pending"}
+
+
+def test_a_team_wide_run_about_no_meeting_supersedes_too(
+    session: Session, team: dict[str, str]
+) -> None:
+    """Asked twice in chat, a team-wide subagent leaves one proposal, not two."""
+    runs = []
+    for _ in range(2):
+        run = _run(session, team, "workload", None)
+        queue_l2(session, run=run, proposed=[_reassign()], actions={}, team_wide=True)
+        runs.append(run)
+
+    rows = {r.run_id: r.status for r in session.scalars(select(AgentPendingAction))}
+    assert rows == {runs[0].id: "superseded", runs[1].id: "pending"}
+
+
+def test_a_team_wide_run_leaves_other_subagents_and_other_teams_alone(
+    session: Session, team: dict[str, str]
+) -> None:
+    research = _run(session, team, "research", team["meeting"])
+    queue_l2(
+        session,
+        run=research,
+        proposed=[_l2("agent.share_research_document", document_id="rdoc_1")],
+        actions={},
+    )
+    workload = _run(session, team, "workload", _another_meeting(session, team))
+
+    queue_l2(session, run=workload, proposed=[_reassign()], actions={}, team_wide=True)
+
+    assert {(r.subagent, r.status) for r in session.scalars(select(AgentPendingAction))} == {
+        ("research", "pending"),
+        ("workload", "pending"),
+    }
+
+
+def _proposing(name: str, proposed: ProposedAction, **declared: Any) -> Subagent:
+    def build(toolbox: Toolbox) -> Any:
+        def act(state: SubagentState) -> SubagentState:
+            result = ToolResult(ok=True, summary="제안합니다.")
+            return {"outcome": SubagentResult(result=result, proposed=[proposed])}
+
+        graph = StateGraph(SubagentState)
+        graph.add_node("act", act)
+        graph.add_edge(START, "act")
+        graph.add_edge("act", END)
+        return graph.compile()
+
+    return Subagent(name=name, description="Use this in tests.", tools=(), build=build, **declared)
+
+
+@pytest.mark.parametrize(
+    ("proposals_per", "first_status"), [("team", "superseded"), ("meeting", "pending")]
+)
+def test_a_run_reads_the_subagents_declaration(
+    session: Session, team: dict[str, str], proposals_per: str, first_status: str
+) -> None:
+    """run_and_record passes the woken subagent's ``proposals_per`` to the queue."""
+    subagent = _proposing("workload", _reassign(), proposals_per=proposals_per)
+    rows = []
+    for meeting in (team["meeting"], _another_meeting(session, team)):
+        row, _ = run_and_record(
+            "intelligence.completed",
+            session=session,
+            router=FakeRouter({}),
+            team_id=team["team"],
+            meeting_id=meeting,
+            trigger={"kind": "event"},
+            subagents={"workload": subagent},
+            tools={},
+            actions={},
+            route_to="workload",
+        )
+        rows.append(row)
+
+    statuses = {r.run_id: r.status for r in session.scalars(select(AgentPendingAction))}
+    assert statuses == {rows[0].id: first_status, rows[1].id: "pending"}
+
+
+def test_proposals_default_to_per_meeting() -> None:
+    assert _proposing("research", _reassign()).proposals_per == "meeting"

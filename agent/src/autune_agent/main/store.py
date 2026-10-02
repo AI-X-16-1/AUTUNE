@@ -39,7 +39,7 @@ from .own_tools import collect_own_actions
 from .pending import queue_l2
 from .registry import BudgetExceededError, CallBudget, RunScope, Tool
 from .router import Router
-from .subagents import Subagent
+from .subagents import Subagent, collect_subagents
 
 BUDGET_ANSWER = "한 번에 확인할 수 있는 범위를 넘었습니다. 질문을 좁혀서 다시 물어봐 주세요."
 
@@ -66,6 +66,9 @@ def run_and_record(
     so the row says what was done; L2 stays proposed (``main/actions.py``).
     """
     budget = budget or CallBudget()
+    # Collected here rather than inside the graph, so the queue below reads the
+    # same declarations the run was routed among (chat passes none).
+    subagents = collect_subagents() if subagents is None else subagents
     scope = RunScope(team_id=team_id, meeting_id=meeting_id)
     started = time.monotonic()
     state: MainState = {"request": request}
@@ -124,9 +127,16 @@ def run_and_record(
         session.flush()  # row.id for the queue
         outcome = state.get("outcome")
         if outcome is not None and outcome.proposed:
+            woken = subagents.get(row.route or "")
             row.actions = [
                 *row.actions,
-                *queue_l2(session, run=row, proposed=outcome.proposed, actions=declared),
+                *queue_l2(
+                    session,
+                    run=row,
+                    proposed=outcome.proposed,
+                    actions=declared,
+                    team_wide=woken is not None and woken.proposals_per == "team",
+                ),
             ]
     session.commit()
     return row, state

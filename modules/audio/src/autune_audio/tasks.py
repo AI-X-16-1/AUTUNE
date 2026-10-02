@@ -19,12 +19,12 @@ from celery import shared_task
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from autune_audio import retention, service
+from autune_audio import masking_rules, retention, service
 from autune_audio.config import get_settings
 from autune_audio.decoding import decode
 from autune_audio.diarization import get_diarizer, resolve_device
 from autune_audio.glossary import build_prompt
-from autune_audio.live.embedder import Embedder
+from autune_audio.live.embedder import Embedder, EmbedderDimensionMismatch
 from autune_audio.masking import mask
 from autune_audio.models import AudConsentAttestation, AudSpeakerEmbedding
 from autune_audio.persistence import persist_transcript, transcript_payload
@@ -147,6 +147,10 @@ def process_recording(job_id: str) -> None:
         # re-checks this at write time regardless -- that is the check that
         # actually gates the write.
         consented = session.get(AudConsentAttestation, claim.meeting_id) is not None
+        # The team's own masking shapes (S30), read in the same transaction
+        # rather than a fourth one. A rule added while this meeting is being
+        # transcribed applies from the next meeting.
+        team_shapes = masking_rules.shapes_for_meeting(session, claim.meeting_id)
     meeting_id = claim.meeting_id
 
     if not claim.run:
@@ -210,8 +214,15 @@ def process_recording(job_id: str) -> None:
         # ("공일공 일이삼사...") matches no digit pattern, so without it the
         # batch path stored in the clear what the live path masks (#484 review).
         recogniser = get_recogniser()
+        # The team's own shapes too (S30): an employee number somebody
+        # reported once is masked in every later meeting of that team.
         masked = tuple(
-            replace(utterance, text=mask(utterance.text, recogniser=recogniser).text)
+            replace(
+                utterance,
+                text=masking_rules.apply(
+                    mask(utterance.text, recogniser=recogniser).text, team_shapes
+                ),
+            )
             for utterance in spoken
         )
         _log_masking(meeting_id, spoken, masked)
@@ -293,6 +304,11 @@ def _speaker_vectors(
     embedder = Embedder(token=settings.hf_token)
     try:
         embedder.warm_up()
+    except EmbedderDimensionMismatch as exc:
+        # A configuration error, not a bad day: every meeting will skip its
+        # vectors until the checkpoint or EMBEDDING_DIM changes (#363).
+        log.error("speaker_embedding_dimension_mismatch", width=exc.width)
+        return []
     except Exception as exc:
         log.warning("speaker_embedding_unavailable", error=type(exc).__name__)
         return []

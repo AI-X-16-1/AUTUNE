@@ -476,6 +476,13 @@ def parse_due(text: str, day: date | None) -> DueDate | None:
     one -- "다음 주 금요일까지 하고 월요일에 공유" -- the first is taken: the
     rest is usually what happens after the thing promised.
 
+    **A phrase a deadline word follows wins** (``_BY``: 까지, 전에, 내로, 안에,
+    ...). "이번 주 회의록은 제가 다음 주 금요일까지 정리하겠습니다" names the
+    minutes by their week and the deadline by its 까지; taking the first phrase
+    made it due this Friday (#616). Only when no phrase has a deadline word is
+    the first one taken, as before -- "이번 주 회의록 정리하겠습니다" still
+    reads as due this week, for a person to correct.
+
     **What is said of the past is skipped**, and the next phrase is tried. A
     phrase is the past in two ways:
 
@@ -502,6 +509,7 @@ def parse_due(text: str, day: date | None) -> DueDate | None:
             found.append((match.start(), -(match.end() - match.start()), match, resolve))
 
     taken_until = -1
+    fallback: DueDate | None = None
     for start, _, match, resolve in sorted(found, key=lambda entry: (entry[0], entry[1])):
         if start < taken_until:
             continue  # part of a longer phrase already considered
@@ -516,5 +524,8 @@ def parse_due(text: str, day: date | None) -> DueDate | None:
             resolved = None
         if resolved is not None and day is not None and resolved < day:
             continue
-        return DueDate(text=re.sub(r"\s+", " ", match[0]).strip(), date=resolved)
-    return None
+        due = DueDate(text=re.sub(r"\s+", " ", match[0]).strip(), date=resolved)
+        if _DEADLINE_WORD.match(text, match.end()):
+            return due
+        fallback = fallback or due
+    return fallback

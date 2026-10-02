@@ -17,6 +17,8 @@ INTEL_TABLES = {
     "intel_predictions",
     "intel_reports",
     "intel_meeting_reports",
+    "intel_action_progress",
+    "intel_action_progress_meetings",
 }
 
 

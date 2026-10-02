@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { Button, MaskedText, Quote, StatusDot } from "@/shared/ui";
 
@@ -18,6 +18,10 @@ import type { ActionItemRead, ActionStatus, EditHistoryEntry } from "../types";
  * needs to decide whether the item is real, and the quotation is the whole of
  * that. Without it they would have to replay the meeting, which is the cost the
  * whole decision is trying to avoid.
+ *
+ * A small window over the board, not a column beside it (decided with the
+ * user, 2026-10-01): opening it no longer reflows the board, and a click
+ * outside it -- or Esc -- closes it and leaves the board exactly where it was.
  */
 export function ActionDetailDrawer({
   item,
@@ -46,6 +50,16 @@ export function ActionDetailDrawer({
   // the list the board holds carries utterance ids, never their words.
   // History follows an edit made here or on the board: the item's editable
   // fields are the revision the hook refetches on.
+  // Esc closes the open layer: the delete dialog first, then this window.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      if (confirming) setConfirming(false);
+      else onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [confirming, onClose]);
   const quotation = useSourceUtterances(
     item,
     [
@@ -58,286 +72,290 @@ export function ActionDetailDrawer({
   );
 
   return (
-    <aside
+    <div
+      role="dialog"
+      aria-modal
       aria-label="액션 아이템 상세"
-      className="flex w-full max-w-[420px] flex-col border-l border-[var(--color-hairline)]"
-      style={{
-        background: "var(--color-surface-panel)",
-        // `h-full` matched the left column's height, which is the whole page
-        // once the decisions list and every card are on it -- so the drawer
-        // opened wherever the page happened to be tall, usually well above the
-        // card that was clicked. Sticky keeps it in the viewport at whatever
-        // scroll position the click happened at instead: it travels with the
-        // page up to this offset, then holds. Raised by a user reviewing a
-        // 25-item board -- opening a card near the bottom put the drawer a
-        // full page-height away.
-        position: "sticky",
-        top: "var(--space-page)",
-        maxHeight: "calc(100vh - 2 * var(--space-page))",
-      }}
+      className="fixed inset-0 z-40 flex items-center justify-center"
+      style={{ background: "rgba(22,25,31,.35)", padding: "var(--space-page)" }}
+      onClick={onClose}
     >
-      <header
-        className="flex items-start gap-3 border-b border-[var(--color-hairline)]"
-        style={{ padding: "var(--space-card)" }}
+      <aside
+        className="flex w-full max-w-[480px] flex-col overflow-y-auto"
+        style={{
+          background: "var(--color-surface-panel)",
+          borderRadius: "var(--radius)",
+          boxShadow: "var(--shadow-overlay)",
+          // Fixed to the viewport, so it opens where the person is looking
+          // whatever the page's scroll -- the problem the sticky column once
+          // solved for a card near the bottom of a 25-item board.
+          maxHeight: "calc(100vh - 2 * var(--space-page))",
+        }}
+        onClick={(event) => event.stopPropagation()}
       >
-        <div className="min-w-0 flex-1">
-          <h2
-            className="text-[var(--color-ink-strong)]"
-            style={{
-              fontSize: "var(--text-title)",
-              fontWeight: "var(--text-title-weight)",
-            }}
-          >
-            {item.description}
-          </h2>
-          <div className="mt-1 flex items-center gap-2">
-            <StatusDot
-              variant={isCandidate(item) ? "attention" : "progress"}
-              hollow={item.status === "needs_confirmation"}
-            />
-            <span
-              className="text-[var(--color-ink-muted)]"
-              style={{ fontSize: "var(--text-metaSmall)" }}
-            >
-              {isCandidate(item)
-                ? "후보"
-                : COLUMN_LABELS[item.status ?? "needs_confirmation"]}
-            </span>
-            <span
-              className="text-[var(--color-ink-muted)]"
+        <header
+          className="flex items-start gap-3 border-b border-[var(--color-hairline)]"
+          style={{ padding: "var(--space-card)" }}
+        >
+          <div className="min-w-0 flex-1">
+            <h2
+              className="text-[var(--color-ink-strong)]"
               style={{
-                fontFamily: "var(--font-mono)",
-                fontSize: "var(--text-metaSmall)",
+                fontSize: "var(--text-title)",
+                fontWeight: "var(--text-title-weight)",
               }}
             >
-              {item.confidence.toFixed(2)}
-            </span>
-            {item.description_resolved ? (
+              {item.description}
+            </h2>
+            <div className="mt-1 flex items-center gap-2">
+              <StatusDot
+                variant={isCandidate(item) ? "attention" : "progress"}
+                hollow={item.status === "needs_confirmation"}
+              />
               <span
                 className="text-[var(--color-ink-muted)]"
                 style={{ fontSize: "var(--text-metaSmall)" }}
-                title="AI가 발화 속 지시어(그거, 저희 팀 등)를 풀어 다시 쓴 설명입니다. 원문과 다를 수 있어 확인이 필요합니다."
               >
-                · AI 재구성
+                {isCandidate(item)
+                  ? "후보"
+                  : COLUMN_LABELS[item.status ?? "needs_confirmation"]}
               </span>
-            ) : null}
-          </div>
-        </div>
-        <Button tone="quiet" size="compact" onClick={onClose} aria-label="닫기">
-          닫기
-        </Button>
-      </header>
-
-      <div
-        className="flex-1 overflow-y-auto"
-        style={{ padding: "var(--space-card)" }}
-      >
-        <Field label="담당">
-          {item.needs_reassignment
-            ? "재배정 필요 · 담당자가 이 팀에 없습니다"
-            : (item.assignee_name ?? item.assignee_label ?? "미지정")}
-        </Field>
-        <Field label="기한" mono>
-          {item.due_date ?? "없음"}
-        </Field>
-        {item.due_text ? (
-          <Field label="기한 파싱 원문">
-            <MaskedText>{item.due_text}</MaskedText>
-          </Field>
-        ) : null}
-
-        <Field label="상태">
-          <select
-            value={item.status ?? "needs_confirmation"}
-            disabled={changing}
-            aria-busy={changing || undefined}
-            onChange={async (event) => {
-              setFailure(null);
-              setChanging(true);
-              try {
-                await onStatusChange?.(event.target.value as ActionStatus);
-              } catch {
-                setFailure(
-                  "상태를 바꾸지 못했습니다. 잠시 후 다시 시도해 주세요.",
-                );
-              } finally {
-                setChanging(false);
-              }
-            }}
-            className="w-full border bg-transparent"
-            style={{
-              height: "var(--control-h-default)",
-              paddingInline: "var(--control-px-text)",
-              borderRadius: "var(--radius)",
-              // See AddActionItem: `--border-input` has no dark value.
-              border: "1px solid var(--color-hairline)",
-              fontSize: "var(--text-body)",
-            }}
-          >
-            {COLUMNS.map((status) => (
-              <option key={status} value={status}>
-                {COLUMN_LABELS[status]}
-              </option>
-            ))}
-          </select>
-        </Field>
-
-        <section className="mt-6">
-          <SectionTitle>근거 발화</SectionTitle>
-          {quotation.sources && quotation.sources.length > 0 ? (
-            <div className="mt-2 grid gap-2">
-              <ContextLines lines={quotation.related} label="요약에 쓴 발화" />
-              <ContextLines
-                lines={quotation.context.filter(
-                  (line) => !quotation.related.some((cited) => cited.id === line.id),
-                )}
-              />
-              {quotation.sources.map((source) => (
-                <Quote key={source.id}>
-                  <MaskedText>{source.text}</MaskedText>
-                </Quote>
-              ))}
-              {item.deleted_source_count > 0 ? (
-                <p
+              <span
+                className="text-[var(--color-ink-muted)]"
+                style={{
+                  fontFamily: "var(--font-mono)",
+                  fontSize: "var(--text-metaSmall)",
+                }}
+              >
+                {item.confidence.toFixed(2)}
+              </span>
+              {item.description_resolved ? (
+                <span
                   className="text-[var(--color-ink-muted)]"
                   style={{ fontSize: "var(--text-metaSmall)" }}
+                  title="AI가 발화 속 지시어(그거, 저희 팀 등)를 풀어 다시 쓴 설명입니다. 원문과 다를 수 있어 확인이 필요합니다."
                 >
-                  {`그 밖의 근거 발화 ${item.deleted_source_count}건은 삭제되었습니다.`}
-                </p>
+                  · AI 재구성
+                </span>
               ) : null}
             </div>
-          ) : (
-            <p
-              className="mt-2 text-[var(--color-ink-muted)]"
-              style={{ fontSize: "var(--text-metaSmall)" }}
+          </div>
+          <Button tone="quiet" size="compact" onClick={onClose} aria-label="닫기">
+            닫기
+          </Button>
+        </header>
+
+        <div
+          className="flex-1 overflow-y-auto"
+          style={{ padding: "var(--space-card)" }}
+        >
+          <Field label="담당">
+            {item.needs_reassignment
+              ? "재배정 필요 · 담당자가 이 팀에 없습니다"
+              : (item.assignee_name ?? item.assignee_label ?? "미지정")}
+          </Field>
+          <Field label="기한" mono>
+            {item.due_date ?? "없음"}
+          </Field>
+          {item.due_text ? (
+            <Field label="기한 파싱 원문">
+              <MaskedText>{item.due_text}</MaskedText>
+            </Field>
+          ) : null}
+
+          <Field label="상태">
+            <select
+              value={item.status ?? "needs_confirmation"}
+              disabled={changing}
+              aria-busy={changing || undefined}
+              onChange={async (event) => {
+                setFailure(null);
+                setChanging(true);
+                try {
+                  await onStatusChange?.(event.target.value as ActionStatus);
+                } catch {
+                  setFailure(
+                    "상태를 바꾸지 못했습니다. 잠시 후 다시 시도해 주세요.",
+                  );
+                } finally {
+                  setChanging(false);
+                }
+              }}
+              className="w-full border bg-transparent"
+              style={{
+                height: "var(--control-h-default)",
+                paddingInline: "var(--control-px-text)",
+                borderRadius: "var(--radius)",
+                // See AddActionItem: `--border-input` has no dark value.
+                border: "1px solid var(--color-hairline)",
+                fontSize: "var(--text-body)",
+              }}
             >
-              {quotationNote(item, quotation)}
-            </p>
-          )}
-        </section>
-
-        {item.sync_refs?.length ? (
-          <section className="mt-6">
-            <SectionTitle>연동</SectionTitle>
-            <div className="mt-2 grid gap-2">
-              {item.sync_refs.map((ref) => (
-                <div
-                  key={ref.system}
-                  className="flex items-center gap-2 border-b border-[var(--color-hairline)] pb-2"
-                  style={{ fontSize: "var(--text-metaSmall)" }}
-                >
-                  <StatusDot variant={ref.url ? "confirmed" : "progress"} />
-                  <span className="text-[var(--color-ink-body)]">
-                    {ref.system}
-                  </span>
-                  {ref.external_id ? (
-                    <span
-                      className="text-[var(--color-ink-muted)]"
-                      style={{ fontFamily: "var(--font-mono)" }}
-                    >
-                      {ref.external_id}
-                    </span>
-                  ) : null}
-                  {ref.url ? (
-                    <a
-                      href={ref.url}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="ml-auto text-[var(--color-accent-text)]"
-                    >
-                      열기
-                    </a>
-                  ) : (
-                    <span className="ml-auto text-[var(--color-ink-muted)]">
-                      동기화 확인 중
-                    </span>
-                  )}
-                </div>
+              {COLUMNS.map((status) => (
+                <option key={status} value={status}>
+                  {COLUMN_LABELS[status]}
+                </option>
               ))}
-            </div>
-          </section>
-        ) : null}
+            </select>
+          </Field>
 
-        {quotation.history ? (
           <section className="mt-6">
-            <SectionTitle>이력</SectionTitle>
-            {quotation.history.length > 0 ? (
-              <ol
-                className="mt-2 grid gap-1"
-                style={{ fontSize: "var(--text-metaSmall)" }}
-              >
-                {quotation.history.map((entry, index) => (
-                  <li key={`${entry.at}-${index}`} className="flex gap-2">
-                    <span
-                      className="text-[var(--color-ink-muted)]"
-                      style={{ fontFamily: "var(--font-mono)" }}
-                    >
-                      {historyTime(entry.at)}
-                    </span>
-                    <span className="text-[var(--color-ink-body)]">
-                      {historyText(entry)}
-                    </span>
-                  </li>
+            <SectionTitle>근거 발화</SectionTitle>
+            {quotation.sources && quotation.sources.length > 0 ? (
+              <div className="mt-2 grid gap-2">
+                <ContextLines lines={quotation.related} label="요약에 쓴 발화" />
+                <ContextLines
+                  lines={quotation.context.filter(
+                    (line) => !quotation.related.some((cited) => cited.id === line.id),
+                  )}
+                />
+                {quotation.sources.map((source) => (
+                  <Quote key={source.id}>
+                    <MaskedText>{source.text}</MaskedText>
+                  </Quote>
                 ))}
-              </ol>
+                {item.deleted_source_count > 0 ? (
+                  <p
+                    className="text-[var(--color-ink-muted)]"
+                    style={{ fontSize: "var(--text-metaSmall)" }}
+                  >
+                    {`그 밖의 근거 발화 ${item.deleted_source_count}건은 삭제되었습니다.`}
+                  </p>
+                ) : null}
+              </div>
             ) : (
               <p
                 className="mt-2 text-[var(--color-ink-muted)]"
                 style={{ fontSize: "var(--text-metaSmall)" }}
               >
-                모델이 추출한 뒤로 고친 적이 없습니다.
+                {quotationNote(item, quotation)}
               </p>
             )}
           </section>
-        ) : null}
-      </div>
 
-      {failure !== null && (
-        <p
-          role="alert"
-          className="text-[var(--color-signal-critical)]"
-          style={{
-            paddingInline: "var(--space-card)",
-            fontSize: "var(--text-rowBody)",
-            lineHeight: "var(--text-rowBody-leading)",
-          }}
+          {item.sync_refs?.length ? (
+            <section className="mt-6">
+              <SectionTitle>연동</SectionTitle>
+              <div className="mt-2 grid gap-2">
+                {item.sync_refs.map((ref) => (
+                  <div
+                    key={ref.system}
+                    className="flex items-center gap-2 border-b border-[var(--color-hairline)] pb-2"
+                    style={{ fontSize: "var(--text-metaSmall)" }}
+                  >
+                    <StatusDot variant={ref.url ? "confirmed" : "progress"} />
+                    <span className="text-[var(--color-ink-body)]">
+                      {ref.system}
+                    </span>
+                    {ref.external_id ? (
+                      <span
+                        className="text-[var(--color-ink-muted)]"
+                        style={{ fontFamily: "var(--font-mono)" }}
+                      >
+                        {ref.external_id}
+                      </span>
+                    ) : null}
+                    {ref.url ? (
+                      <a
+                        href={ref.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="ml-auto text-[var(--color-accent-text)]"
+                      >
+                        열기
+                      </a>
+                    ) : (
+                      <span className="ml-auto text-[var(--color-ink-muted)]">
+                        동기화 확인 중
+                      </span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </section>
+          ) : null}
+
+          {quotation.history ? (
+            <section className="mt-6">
+              <SectionTitle>이력</SectionTitle>
+              {quotation.history.length > 0 ? (
+                <ol
+                  className="mt-2 grid gap-1"
+                  style={{ fontSize: "var(--text-metaSmall)" }}
+                >
+                  {quotation.history.map((entry, index) => (
+                    <li key={`${entry.at}-${index}`} className="flex gap-2">
+                      <span
+                        className="text-[var(--color-ink-muted)]"
+                        style={{ fontFamily: "var(--font-mono)" }}
+                      >
+                        {historyTime(entry.at)}
+                      </span>
+                      <span className="text-[var(--color-ink-body)]">
+                        {historyText(entry)}
+                      </span>
+                    </li>
+                  ))}
+                </ol>
+              ) : (
+                <p
+                  className="mt-2 text-[var(--color-ink-muted)]"
+                  style={{ fontSize: "var(--text-metaSmall)" }}
+                >
+                  모델이 추출한 뒤로 고친 적이 없습니다.
+                </p>
+              )}
+            </section>
+          ) : null}
+        </div>
+
+        {failure !== null && (
+          <p
+            role="alert"
+            className="text-[var(--color-signal-critical)]"
+            style={{
+              paddingInline: "var(--space-card)",
+              fontSize: "var(--text-rowBody)",
+              lineHeight: "var(--text-rowBody-leading)",
+            }}
+          >
+            {failure}
+          </p>
+        )}
+
+        <footer
+          className="flex justify-end border-t border-[var(--color-hairline)]"
+          style={{ padding: "var(--space-card)" }}
         >
-          {failure}
-        </p>
-      )}
+          {/* Destructive actions are red text, then a modal. Red never fills a
+              button, and there is no undo afterwards — the row is gone. */}
+          <Button tone="destructiveText" onClick={() => setConfirming(true)}>
+            삭제
+          </Button>
+        </footer>
 
-      <footer
-        className="flex justify-end border-t border-[var(--color-hairline)]"
-        style={{ padding: "var(--space-card)" }}
-      >
-        {/* Destructive actions are red text, then a modal. Red never fills a
-            button, and there is no undo afterwards — the row is gone. */}
-        <Button tone="destructiveText" onClick={() => setConfirming(true)}>
-          삭제
-        </Button>
-      </footer>
-
-      {confirming ? (
-        <ConfirmDelete
-          description={item.description}
-          pending={deleting}
-          onCancel={() => setConfirming(false)}
-          onConfirm={async () => {
-            setDeleting(true);
-            setFailure(null);
-            try {
-              await onDelete?.();
-              onClose();
-            } catch {
-              setFailure("삭제하지 못했습니다. 잠시 후 다시 시도해 주세요.");
-            } finally {
-              setDeleting(false);
-              setConfirming(false);
-            }
-          }}
-        />
-      ) : null}
-    </aside>
+        {confirming ? (
+          <ConfirmDelete
+            description={item.description}
+            pending={deleting}
+            onCancel={() => setConfirming(false)}
+            onConfirm={async () => {
+              setDeleting(true);
+              setFailure(null);
+              try {
+                await onDelete?.();
+                onClose();
+              } catch {
+                setFailure("삭제하지 못했습니다. 잠시 후 다시 시도해 주세요.");
+              } finally {
+                setDeleting(false);
+                setConfirming(false);
+              }
+            }}
+          />
+        ) : null}
+      </aside>
+    </div>
   );
 }
 

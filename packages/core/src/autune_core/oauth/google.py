@@ -33,6 +33,12 @@ from autune_core.settings import get_settings
 
 log = get_logger(__name__)
 
+CLOCK_SKEW_SECONDS = 60
+"""How far this server's clock may sit from Google's when an ID token's
+``iat`` and ``exp`` are checked. With none, a clock one second behind read a
+token Google had just issued as not yet valid and refused the sign-in (#618,
+found in the 2026-10-01 real-service check on a PC 0.9 s behind)."""
+
 # RFC 6749 section 5.2 error codes are lowercase ASCII with underscores.
 _OAUTH_ERROR = re.compile(r"[a-z_]{1,64}")
 
@@ -205,8 +211,12 @@ class GoogleOAuthClient:
                 algorithms=["RS256"],
                 audience=self._client_id,
                 options={"require": ["exp", "iat", "aud", "iss", "sub"]},
+                leeway=CLOCK_SKEW_SECONDS,
             )
         except jwt.InvalidTokenError as exc:
+            # Which check refused it, and nothing of the token: its claims carry
+            # the person's email and Google account id (#618).
+            log.warning("auth_google_id_token_rejected", reason=type(exc).__name__)
             raise PermissionDeniedError("Google ID token failed verification") from exc
 
         if claims.get("iss") not in VALID_ISSUERS:

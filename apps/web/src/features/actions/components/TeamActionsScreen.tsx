@@ -71,7 +71,12 @@ export function TeamActionsScreen({ me }: { me: string | null }) {
             <>
               {error !== null ? <Note>최신 목록을 불러오지 못해 이전 목록을 보여주고 있습니다.</Note> : null}
               {shown.length === 0 ? <Note>{EMPTY[tab]}</Note> : null}
-              <ActionBoard items={shown} selectedId={selectedId} onSelect={setSelectedId} />
+              <ActionBoard
+                items={shown}
+                selectedId={selectedId}
+                onSelect={setSelectedId}
+                showMeeting
+              />
             </>
           )}
         </div>

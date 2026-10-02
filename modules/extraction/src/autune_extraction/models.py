@@ -750,6 +750,34 @@ class ExtCalendarEvent(Base):
     )
 
 
+class ExtCalendarCleanup(Base):
+    """A due-date event still to take off a person's calendar, after the meeting
+    its item belonged to was deleted (#588).
+
+    ``ext_calendar_events`` goes with the meeting, so the meeting hook copies
+    the event here first and ``tasks.drain_calendar_cleanup`` removes it with
+    that person's own grant. No meeting key: the row has to outlive the meeting.
+    ``user_id`` cascades -- an account deletion removes its own events in its
+    hook, and nothing could remove them after.
+    """
+
+    __tablename__ = "ext_calendar_cleanup"
+    __table_args__ = (UniqueConstraint("user_id", "event_id", name="uq_ext_calendar_cleanup"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("users.id", ondelete="CASCADE", name="fk_ext_calendar_cleanup_user"),
+        nullable=False,
+        index=True,
+    )
+    event_id: Mapped[str] = mapped_column(String(1024), nullable=False)
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
 class ExtCalendarPoll(Base):
     """When B last read a person's calendar back (#435) -- the ``updatedMin`` of
     the next read. B's own sync state, kept here rather than in

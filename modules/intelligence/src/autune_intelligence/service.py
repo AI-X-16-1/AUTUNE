@@ -34,9 +34,10 @@ from autune_contracts import (
     Participation,
     Prediction,
     QualityScore,
+    TeamActionProgress,
 )
 from autune_contracts.intelligence import Grade
-from autune_core import Meeting, Participant, Utterance, get_logger
+from autune_core import Meeting, Participant, Team, Utterance, get_logger
 from autune_core.errors import ConflictError, NotFoundError, ValidationError
 from autune_integrations import (
     PermanentIntegrationError,
@@ -52,6 +53,8 @@ from .alignment import meeting_alignment
 from .config import get_settings
 from .feedback import build_speaking_ratio_dm
 from .models import (
+    IntelActionProgress,
+    IntelActionProgressMeeting,
     IntelAlignment,
     IntelCompletion,
     IntelGapPattern,
@@ -1269,3 +1272,77 @@ def send_personal_feedback(session: Session, slack: SlackApi, meeting_id: str) -
 
     log.info("speaking_ratio_feedback_sent", meeting_id=meeting_id, recipients=sent)
     return sent
+
+
+# --- action progress (#605) ---------------------------------------------------------
+#
+# B republishes every team's action-item counts per meeting every ten minutes
+# (``TeamActionProgress``). E keeps the latest one for the dashboard's real
+# completion rate and the weekly report; the quality score keeps its own
+# confirmation rate, computed once from ``ExtractionResult``.
+
+
+def store_action_progress(session: Session, snapshot: TeamActionProgress) -> bool:
+    """Keep ``snapshot`` as its team's action progress if it is newer than the stored one.
+
+    ``False`` when it was not kept: an older snapshot delivered late, or a team
+    that no longer exists. The header is one guarded upsert, so a late older
+    snapshot leaves the newer one standing and two deliveries for one team
+    serialise on its row; when it is kept, the team's meeting rows are replaced
+    wholesale. A meeting id that is not one of the team's meetings -- deleted
+    since B counted, or another team's -- is not kept, so no row points outside
+    the team.
+    """
+    if session.get(Team, snapshot.team_id) is None:
+        log.info("intelligence_action_progress_team_gone", team_id=snapshot.team_id)
+        return False
+    statement = pg_insert(IntelActionProgress).values(
+        team_id=snapshot.team_id, as_of=snapshot.as_of
+    )
+    kept = session.scalar(
+        statement.on_conflict_do_update(
+            index_elements=[IntelActionProgress.team_id],
+            set_={"as_of": statement.excluded.as_of, "updated_at": func.now()},
+            where=IntelActionProgress.as_of < statement.excluded.as_of,
+        ).returning(IntelActionProgress.team_id)
+    )
+    if kept is None:
+        log.info("intelligence_action_progress_older_ignored", team_id=snapshot.team_id)
+        return False
+
+    session.execute(
+        sa.delete(IntelActionProgressMeeting).where(
+            IntelActionProgressMeeting.team_id == snapshot.team_id
+        )
+    )
+    named = {m.meeting_id: m for m in snapshot.meetings}
+    own = (
+        set(
+            session.scalars(
+                sa.select(Meeting.id).where(
+                    Meeting.team_id == snapshot.team_id, Meeting.id.in_(list(named))
+                )
+            )
+        )
+        if named
+        else set()
+    )
+    session.add_all(
+        IntelActionProgressMeeting(
+            team_id=snapshot.team_id,
+            meeting_id=meeting_id,
+            confirmed=named[meeting_id].confirmed,
+            done=named[meeting_id].done,
+            overdue=named[meeting_id].overdue,
+        )
+        for meeting_id in sorted(own)
+    )
+    session.flush()
+    # Counts of rows only: the numbers are per meeting and stay out of logs.
+    log.info(
+        "intelligence_action_progress_stored",
+        team_id=snapshot.team_id,
+        meetings=len(own),
+        not_kept=len(named) - len(own),
+    )
+    return True

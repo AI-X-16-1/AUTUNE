@@ -6,6 +6,8 @@
 - ``GET /pending`` -- L2 proposals waiting for a decision the caller may make.
 - ``POST /pending/{id}/approve`` -- approve one; the action runs.
 - ``POST /pending/{id}/reject`` -- reject one, with a reason from a fixed list.
+- ``GET /approvers`` -- a team's members and the approver scopes each holds.
+- ``PUT /approvers/{user_id}`` -- replace one member's scopes (``main/approvers``).
 
 Every route needs a signed-in member of the team it names. The layer answers on
 behalf of a team, so a non-member gets 403 rather than someone else's work.
@@ -22,11 +24,12 @@ from pydantic import BaseModel, Field
 from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session
 
-from autune_core import CurrentUser, TeamMember, get_session
+from autune_core import CurrentUser, TeamMember, User, get_session
 from autune_core.errors import ConfigurationError, PermissionDeniedError, PrivacyViolationError
 
 from .config import get_agent_settings
 from .main.actions import collect_actions
+from .main.approvers import SCOPE_ORDER, can_manage, list_members, set_scopes
 from .main.gemini import GeminiRouter
 from .main.own_tools import collect_own_actions, collect_own_tools
 from .main.pending import approve, approver_scopes, can_decide, reject
@@ -294,3 +297,52 @@ def reject_pending(
     row = reject(session, pending_id, user_id=user.id, reason=body.reason)
     session.commit()
     return _read(session, row)
+
+
+ApproverScope = Literal["any", "report", "research", "followup", "workload"]
+
+
+class ApproverMember(BaseModel):
+    user_id: str
+    name: str
+    scopes: list[str]
+
+
+class ApproversRead(BaseModel):
+    can_manage: bool
+    """Whether the caller may change the list: nobody is an approver yet, or
+    the caller holds ``any``."""
+    scopes: list[str]
+    members: list[ApproverMember]
+
+
+class ApproverScopesWrite(BaseModel):
+    scopes: list[ApproverScope] = Field(max_length=len(SCOPE_ORDER))
+
+
+@router.get("/approvers", response_model=ApproversRead)
+def list_approvers(user: CurrentUser, session: SessionDep, team_id: str) -> ApproversRead:
+    _require_member(session, team_id, user.id)
+    return ApproversRead(
+        can_manage=can_manage(session, team_id, user.id),
+        scopes=list(SCOPE_ORDER),
+        members=[
+            ApproverMember(user_id=u, name=n, scopes=s)
+            for u, n, s in list_members(session, team_id)
+        ],
+    )
+
+
+@router.put("/approvers/{user_id}", response_model=ApproverMember)
+def put_approver(
+    user_id: str,
+    body: ApproverScopesWrite,
+    user: CurrentUser,
+    session: SessionDep,
+    team_id: str,
+) -> ApproverMember:
+    _require_member(session, team_id, user.id)
+    scopes = set_scopes(session, team_id=team_id, user_id=user_id, scopes=body.scopes, by=user.id)
+    session.commit()
+    name = session.scalar(select(User.display_name).where(User.id == user_id)) or ""
+    return ApproverMember(user_id=user_id, name=name, scopes=scopes)

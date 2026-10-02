@@ -1,12 +1,13 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import {
   disconnectSlack,
   getSlackConnection,
   slackConnectUrl,
   type SlackConnection,
+  type IntegrationScope,
 } from "@/shared/api/auth";
 import { Button } from "@/shared/ui";
 
@@ -14,15 +15,28 @@ import { Button } from "@/shared/ui";
  * One button to install Autune's bot in the team's Slack (#428). The install
  * makes a private #autune (or #autune-2... when taken), invites whoever
  * installed, and the team's briefings and reports go there.
+ *
+ * Takes the meeting the 액션 tab shows, or the team itself on S28 settings
+ * (#496); the server checks membership either way.
  */
-export function SlackConnect({ meetingId }: { meetingId: string }) {
+export function SlackConnect({
+  meetingId,
+  teamId,
+}: {
+  meetingId?: string;
+  teamId?: string;
+}) {
+  const scope = useMemo<IntegrationScope>(
+    () => (meetingId !== undefined ? { meetingId } : { teamId: teamId ?? "" }),
+    [meetingId, teamId],
+  );
   const [state, setState] = useState<SlackConnection | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     let alive = true;
-    void getSlackConnection(meetingId).then((status) => {
+    void getSlackConnection(scope).then((status) => {
       if (!alive) return;
       setState(status);
       const url = new URL(window.location.href);
@@ -48,7 +62,7 @@ export function SlackConnect({ meetingId }: { meetingId: string }) {
     return () => {
       alive = false;
     };
-  }, [meetingId]);
+  }, [scope]);
 
   if (state === null) return null;
   const meta = { fontSize: "var(--text-metaSmall)" } as const;
@@ -66,7 +80,7 @@ export function SlackConnect({ meetingId }: { meetingId: string }) {
           size="compact"
           onClick={() => {
             const here = window.location.pathname + window.location.search;
-            window.location.assign(slackConnectUrl(meetingId, here));
+            window.location.assign(slackConnectUrl(scope, here));
           }}
         >
           팀 Slack 연결
@@ -88,7 +102,7 @@ export function SlackConnect({ meetingId }: { meetingId: string }) {
         loading={busy}
         onClick={() => {
           setBusy(true);
-          void disconnectSlack(meetingId)
+          void disconnectSlack(scope)
             .then(({ revoked, shared }) => {
               setState({ connected: false });
               setNote(

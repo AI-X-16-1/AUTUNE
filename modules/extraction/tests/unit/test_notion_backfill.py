@@ -180,6 +180,25 @@ def test_needs_confirmation_items_and_pending_decisions_are_excluded(wired: Sess
     assert notion_backfill._confirmed_decisions(None) == []
 
 
+def test_an_item_moved_back_with_a_page_is_filled_too(wired: Session) -> None:
+    """Its page reads 확인 필요 (#622), and one written before #622 still shows
+    a status code until it is written again."""
+    sent = item(wired)
+    wired.add(
+        ExtExternalRef(
+            action_item_id=sent.id, system="notion", meeting_id="mtg_1", external_id="p1"
+        )
+    )
+    sent.status = "needs_confirmation"
+    never_sent = item(wired, status="needs_confirmation")
+    wired.flush()
+
+    ids = [row_id for row_id, _ in notion_backfill._confirmed_action_items(None)]
+
+    assert ids == [sent.id]
+    assert never_sent.id not in ids
+
+
 # --- sending --------------------------------------------------------------------
 
 

@@ -192,7 +192,10 @@ export function ApprovalsScreen() {
       ) : null}
       {items?.length === 0 ? (
         <p className="mt-4 text-[var(--color-ink-muted)]">
-          승인할 제안이 없습니다.
+          승인할 제안이 없습니다. 제안은 그 범위의 승인자에게만 보입니다 —{" "}
+          <Link href="/settings/approvers" className="underline">
+            설정 › 승인자
+          </Link>
         </p>
       ) : null}
       <ul className="mt-4 flex flex-col gap-4">

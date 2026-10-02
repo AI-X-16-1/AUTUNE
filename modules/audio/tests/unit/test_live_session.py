@@ -521,3 +521,15 @@ async def test_the_default_tracker_also_reads_the_minimum_seconds(
 
     assert [r.speaker for r in rows] == ["화자 1", "화자 1"]
     assert live.tracker.clusters == 1
+
+
+@pytest.mark.asyncio
+async def test_the_teams_own_shapes_are_masked_live_too() -> None:
+    """S30: what a team taught the masker applies to the live channel, not only
+    to the stored transcript."""
+    live = session(saying("제 사번은 B-77812입니다"))
+    live.use_masking_rules(("A-#####",))
+
+    [row] = await feed(live, np.concatenate([tone(1000), silence(1000)]))
+
+    assert row.text == "제 사번은 *-*****입니다"
