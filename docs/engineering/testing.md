@@ -12,6 +12,7 @@ regressions in shared code either. Test where a break is expensive.
 | Integration | `modules/<name>/tests/integration/` | seconds | Router + service + database against real Postgres |
 | Pipeline | `modules/<name>/tests/pipeline/` | slow, marked | Model inference on small fixtures |
 | Evaluation | `modules/<name>/src/autune_<name>/eval/` | slow, manual | The module's product KPI |
+| Component | `apps/web/src/**/*.test.tsx` | ms | What a screen renders, in jsdom (ADR 0009) |
 
 Unit and contract tests run on every push. Integration runs in CI. Pipeline
 tests are marked and excluded from the default run. Evaluation is run on demand
@@ -34,6 +35,34 @@ These are not optional; a PR without them does not merge.
    log line and no exception.
 5. **Partial-input handling, for module E.** Aggregation works when one of B, C,
    or D is missing.
+
+## Frontend
+
+Component tests run with `vitest` and `@testing-library/react` in jsdom
+(`apps/web/vitest.config.ts`; `pnpm run test`). Put a test next to the
+component, as `<Component>.test.tsx`, and assert what renders. No snapshots: a
+snapshot records that output changed, not that it is wrong (ADR 0009). There
+are no end-to-end tests until P2.
+
+Invariant 11 has two halves on screen, and they are enforced in different
+places:
+
+- **What a component draws.** A masked span renders as `PiiToken`, and no
+  control reveals an original; a destructive action offers no undo the server
+  cannot honour. The owner of the component tests it. Transcript text goes
+  through `MaskedText`, whose test (`shared/ui/MaskedText.test.tsx`) covers
+  every screen that uses it.
+- **What no screen may show.** A person's speaking ratio is never on a screen.
+  A component test cannot state that about components not yet written, so it
+  is a lint rule over the whole app (`no-restricted-syntax` in
+  `apps/web/eslint.config.mjs`) and a contract test that no generated type
+  carries a ratio-shaped property
+  (`packages/contracts/tests/test_privacy_contract.py`). Both live in shared
+  files, so removing either needs everyone's approval.
+
+Until the six-week review, a frontend PR is not required to add component
+tests for screens that already exist. New shared components, and changes to
+how masked text is drawn, come with one.
 
 ## Fixtures
 
@@ -128,6 +157,7 @@ uv run pytest -m "not model"
 uv run alembic -c infra/alembic.ini upgrade heads
 pnpm run lint
 pnpm run typecheck
+pnpm run test                    # component tests (ADR 0009)
 pnpm run gen:contracts --check   # generated TS types are current
 ```
 

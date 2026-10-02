@@ -93,6 +93,14 @@ cannot quietly remove:
 justify yet), snapshot testing (rejected below), and the treatment of
 `useTemplateComparison`-style hooks, which the first hook PR should settle.
 
+**7. Applying it before the deadline (added 2026-10-02, #106).** By the time
+this landed most screens already existed without tests. The infrastructure,
+the lint rule and the contract test land at once, because they cover every
+screen without anyone writing a test. Component tests start with the shared
+`MaskedText`, which every transcript screen draws through. Existing screens
+are not required to add tests before the six-week review; new shared
+components and changes to how masked text is drawn are.
+
 ## Alternatives considered
 
 **Jest instead of vitest.** The team already runs Vite-flavoured tooling
