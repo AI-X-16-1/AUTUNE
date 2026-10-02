@@ -6,6 +6,7 @@ import { ActionCard } from "./ActionCard";
 import { AddActionItem } from "./AddActionItem";
 import { CandidateBand } from "./CandidateBand";
 import { CONFIRMED_NOTICE, canDrop, confirms, groupForBoard } from "../board";
+import { useCardContext } from "../hooks/useCardContext";
 import { COLUMNS, COLUMN_LABELS } from "../types";
 import type { ActionItemDraft } from "../api";
 import type { Moves } from "../board";
@@ -79,6 +80,8 @@ export function ActionBoard({
   useEffect(() => () => window.clearTimeout(starting.current), []);
 
   const { candidates, byColumn } = useMemo(() => groupForBoard(items, moves), [items, moves]);
+  // The line said before a card whose sentence says nothing by itself.
+  const context = useCardContext(items);
   const dragged = draggedId === null ? undefined : items.find((item) => item.id === draggedId);
 
   const drop = async (target: ActionStatus) => {
@@ -185,6 +188,7 @@ export function ActionBoard({
                     selected={item.id === selectedId}
                     onSelect={onSelect}
                     showMeeting={showMeeting}
+                    context={context[item.id]}
                     drag={
                       onMove === undefined
                         ? undefined
@@ -218,6 +222,7 @@ export function ActionBoard({
         selectedId={selectedId}
         onSelect={onSelect}
         showMeeting={showMeeting}
+        context={context}
       />
     </div>
   );
