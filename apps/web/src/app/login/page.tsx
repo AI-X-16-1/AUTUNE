@@ -1,11 +1,12 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 
 import { SignInCard } from "./SignInCard";
 
 /**
  * S01 · Landing / sign-in — the first screen for a signed-out visitor.
  * See docs/design/ui-spec.md (S01). No team or org branding; the footer carries
- * legal links only. On success the backend redirects to the app (S05 when a
+ * legal links only, to the three documents on `/legal`. On success the backend redirects to the app (S05 when a
  * workspace exists, S02 when it does not).
  */
 export const metadata: Metadata = {
@@ -96,7 +97,19 @@ export default function LoginPage() {
         }}
       >
         <span>Slack · Notion · Jira · Google Calendar 연동</span>
-        <span>보안 · 개인정보 처리방침 · 이용약관</span>
+        <span>
+          <Link href="/legal#security" className="underline underline-offset-2">
+            보안
+          </Link>
+          {" · "}
+          <Link href="/legal#privacy" className="underline underline-offset-2">
+            개인정보 처리방침
+          </Link>
+          {" · "}
+          <Link href="/legal#terms" className="underline underline-offset-2">
+            이용약관
+          </Link>
+        </span>
       </footer>
     </div>
   );
