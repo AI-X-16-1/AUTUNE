@@ -1490,9 +1490,7 @@ def _report_for_member(session: Session, meeting_id: str, user_id: str) -> Intel
     return row
 
 
-def _report_read(
-    row: IntelMeetingReport, editor: str | None, requester_id: str
-) -> MeetingReportRead:
+def _report_read(row: IntelMeetingReport, editor: str | None) -> MeetingReportRead:
     title, body, footer = split_report_document(_with_editor(row.body_markdown, editor))
     draft = row.sent_at is None
     return MeetingReportRead(
@@ -1523,7 +1521,7 @@ def list_meeting_reports(
         .order_by(held.desc(), IntelMeetingReport.meeting_id.desc())
         .limit(MEETING_REPORTS_SHOWN)
     ).all()
-    return [_report_read(row, editor, user_id) for row, editor in rows]
+    return [_report_read(row, editor) for row, editor in rows]
 
 
 def edit_meeting_report(
@@ -1583,7 +1581,7 @@ def edit_meeting_report(
     # transaction's start, and two saves in one transaction must still differ.
     row.updated_at = now
     session.flush()
-    return _report_read(row, editor, user_id)
+    return _report_read(row, editor)
 
 
 def meeting_report_awaiting_approval(session: Session, meeting_id: str) -> str | None:
