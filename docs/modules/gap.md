@@ -1016,6 +1016,16 @@ queues `autune.gap.publish_report` for each meeting it changed, so the report,
 E's stored copy and the agent's `gap.open_gaps` keep reading one question.
 Coverage, score and severity are not touched; a second run changes nothing.
 
+Two rules keep a question from naming the wrong thing (`detect.question_for`).
+A topic label made only of the template's own keywords -- "성공", "필요", "다음
+주" -- names nothing (`detect.nameable`): a matched topic like that gets the
+template's question, and the subject skips it for the next topic. And the
+subject is named only on items whose template says `ask_about_subject: true`;
+who owns the work and what happens next are about the meeting, so `ownership`
+and `next_step` keep their own questions. Neither rule moves a verdict or a
+score. On the 48 gaps of the local database it changed 24 questions; see the PR
+that introduced it for the comparison.
+
 Everything above is built.
 `/reports/{meeting_id}` and `/topics/{meeting_id}` read the stored rows; nothing
 was added to `apps/` to mount them.

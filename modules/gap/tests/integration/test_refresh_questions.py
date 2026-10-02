@@ -24,7 +24,8 @@ from autune_gap.template import get_template
 
 TOPICS = {"핵심 지표": 1.0, "담당자": 0.9, "리스크": 0.2}
 """``success_criteria`` and ``ownership`` covered, ``risk`` partial on a thin
-topic, ``dependency`` and ``next_step`` missing. 핵심 지표 is the subject."""
+topic, ``dependency`` and ``next_step`` missing. 핵심 지표 is the subject:
+담당자 and 리스크 are the checklist's own words and are passed over."""
 
 
 def _team(name: str) -> str:
@@ -103,27 +104,34 @@ def test_an_old_generic_question_is_recomputed_and_the_verdict_is_not(team_id: s
     meeting_id = seed(team_id)
     fresh = rows(meeting_id)
     make_generic(meeting_id, "next_step", "dependency")
-    assert "핵심 지표" not in str(rows(meeting_id)["next_step"]["question"])
+    assert "핵심 지표" not in str(rows(meeting_id)["dependency"]["question"])
 
-    assert service.refresh_questions(meeting_id) == 2
+    # next_step does not ask about the subject, so its generic question is
+    # already the right one; only dependency moves.
+    assert service.refresh_questions(meeting_id) == 1
 
     after = rows(meeting_id)
     assert after == fresh
-    assert "핵심 지표" in str(after["next_step"]["question"])
+    assert "핵심 지표" in str(after["dependency"]["question"])
+    general = {item.key: item for item in get_template("general").items}
+    assert after["next_step"]["question"] == general["next_step"].question
 
 
-def test_a_partial_gap_keeps_naming_its_own_topic(team_id: str) -> None:
+def test_a_partial_gap_on_a_checklist_word_keeps_the_templates_question(team_id: str) -> None:
+    """risk matched the topic 리스크, which is the checklist's own word: "리스크에서
+    문제가 생기거나 …" says nothing, so the template's question stands -- and it
+    is not swapped for the subject, since the score was read from 리스크."""
     meeting_id = seed(team_id)
-    make_generic(meeting_id, "risk")
+    general = {item.key: item for item in get_template("general").items}
 
     service.refresh_questions(meeting_id)
 
-    assert str(rows(meeting_id)["risk"]["question"]).startswith("리스크")
+    assert rows(meeting_id)["risk"]["question"] == general["risk"].question
 
 
 def test_a_dry_run_counts_and_writes_nothing(team_id: str) -> None:
     meeting_id = seed(team_id)
-    make_generic(meeting_id, "next_step")
+    make_generic(meeting_id, "dependency")
     stale = rows(meeting_id)
 
     assert service.refresh_questions(meeting_id, apply=False) == 1
@@ -133,16 +141,16 @@ def test_a_dry_run_counts_and_writes_nothing(team_id: str) -> None:
 def test_a_dismissed_gap_is_refreshed_too(team_id: str) -> None:
     """Taking the dismissal back must show the same question as everything else."""
     meeting_id = seed(team_id)
-    fresh = rows(meeting_id)["next_step"]["question"]
-    make_generic(meeting_id, "next_step")
+    fresh = rows(meeting_id)["dependency"]["question"]
+    make_generic(meeting_id, "dependency")
     with session_scope() as s:
-        gap = s.get(GapGap, rows(meeting_id)["next_step"]["id"])
+        gap = s.get(GapGap, rows(meeting_id)["dependency"]["id"])
         assert gap is not None
         gap.dismissed_at = datetime.now(UTC)
 
     service.refresh_questions(meeting_id)
 
-    assert rows(meeting_id)["next_step"]["question"] == fresh
+    assert rows(meeting_id)["dependency"]["question"] == fresh
 
 
 def test_the_report_es_payload_and_the_agent_read_the_same_question(
@@ -183,7 +191,7 @@ def test_the_command_republishes_what_changed_and_is_safe_to_rerun(
 ) -> None:
     """The republish is what carries the new question to E's stored copy."""
     meeting_id = seed(team_id)
-    make_generic(meeting_id, "next_step")
+    make_generic(meeting_id, "dependency")
     queued: list[str] = []
     monkeypatch.setattr(cli, "make_celery_app", lambda **_: None)
     monkeypatch.setattr("autune_gap.enqueue.enqueue_publish_report", queued.append)
