@@ -64,7 +64,12 @@ otherwise two different checklists averaged together.
 
 `gap_meeting_template` stores only the exception — one row for a meeting
 somebody pointed at a non-default template. Everything here still cascades from
-`meetings.id`, so no deletion hook is needed.
+`meetings.id`, so no meeting or user deletion hook is needed.
+
+One hook is: `service.forget_deleted_speech`, on `on_speech_deleted` (#587). A
+topic label is a span cut from an utterance and a gap question names it, and
+neither cascades from `utterances.id`. A topic every utterance of which is being
+deleted goes; a question naming it falls back to the item's general one.
 
 ## AI stack
 
