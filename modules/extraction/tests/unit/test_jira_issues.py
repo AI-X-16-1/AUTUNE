@@ -33,6 +33,7 @@ from autune_core import (
     User,
     get_session,
 )
+from autune_core.errors import PrivacyViolationError
 from autune_core.oauth.atlassian import JiraReconnectRequiredError
 from autune_extraction import jira_issues
 from autune_extraction.models import ExtActionItem, ExtExternalRef
@@ -318,6 +319,68 @@ def test_a_jira_that_does_not_answer_is_unavailable_not_an_error(
     assert response.status_code == 200
     assert [(p["state"], p["issues"]) for p in response.json()] == [("unavailable", [])]
     assert jira.closed == 1
+
+
+def test_a_token_that_cannot_be_fetched_is_unavailable_not_a_500(
+    client: TestClient, jira: StubJira, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Atlassian's token endpoint down is a plain ``AutuneError`` from
+    ``jira_access``, not an integration error. It used to rise as a 500 with
+    Atlassian's words in the body (reproduced in review of #738)."""
+
+    def down(_team: str, **_: Any) -> None:
+        raise AutuneError("Atlassian answered 503")
+
+    monkeypatch.setattr(jira_issues, "jira_access", down)
+
+    response = client.get(f"{PREFIX}/jira/issues")
+
+    assert response.status_code == 200
+    assert [(p["state"], p["issues"]) for p in response.json()] == [("unavailable", [])]
+    assert "Atlassian" not in response.text
+    assert jira.asked == []
+
+
+def test_one_teams_token_failure_does_not_hide_another_teams_issues(
+    client: TestClient, session: Session, jira: StubJira, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The caller is on both teams. ``THEIRS`` cannot get a token; ``MINE``
+    still answers."""
+    session.add(TeamMember(team_id=THEIRS, user_id="user_reader"))
+    session.flush()
+    working = jira_issues.jira_access
+
+    def flaky(team_id: str, **kw: Any) -> JiraAccess | None:
+        if team_id == THEIRS:
+            raise AutuneError("Atlassian answered 503")
+        return working(team_id, **kw)
+
+    monkeypatch.setattr(jira_issues, "jira_access", flaky)
+
+    response = client.get(f"{PREFIX}/jira/issues")
+
+    assert response.status_code == 200
+    by_team = {p["team_id"]: p for p in response.json()}
+    assert by_team[THEIRS]["state"] == "unavailable"
+    assert by_team[MINE]["state"] == "ok"
+    assert [issue["key"] for issue in by_team[MINE]["issues"]] == ["AUT-7", "AUT-8"]
+
+
+def test_a_privacy_violation_is_never_answered_around(
+    client: TestClient, jira: StubJira, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``PrivacyViolationError`` is an ``AutuneError``. The clause that turns a
+    token failure into ``unavailable`` must not take it with the rest."""
+
+    def blocked(_team: str, **_: Any) -> None:
+        raise PrivacyViolationError("blocked")
+
+    monkeypatch.setattr(jira_issues, "jira_access", blocked)
+
+    response = client.get(f"{PREFIX}/jira/issues")
+
+    assert response.status_code == 500
+    assert response.json()["error"]["code"] == "privacy_violation"
 
 
 def test_a_link_is_only_built_on_https_and_a_key_that_is_one(

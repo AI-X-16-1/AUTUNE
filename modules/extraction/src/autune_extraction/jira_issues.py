@@ -20,6 +20,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from autune_core import Team, get_logger, jira_access, load_integration
+from autune_core.errors import AutuneError, PrivacyViolationError
 from autune_core.oauth.atlassian import JiraReconnectRequiredError
 from autune_integrations import IntegrationError, JiraClient
 
@@ -67,6 +68,16 @@ def project_issues(session: Session, team_id: str) -> JiraProjectIssues | None:
         access = jira_access(team_id)
     except JiraReconnectRequiredError:
         return answer("needs_reconnect")
+    except PrivacyViolationError:
+        # An ``AutuneError`` too, and never one to answer around.
+        raise
+    except AutuneError as exc:
+        # Atlassian's token endpoint timing out or answering 5xx is a plain
+        # ``AutuneError``, not an integration error. Left to rise, one team's
+        # bad minute was a 500 for the whole list -- every other team's
+        # issues with it, and Atlassian's words in the body (review of #738).
+        log.warning("extraction_jira_open_issues_failed", team_id=team_id, error=exc.code)
+        return answer("unavailable")
     if access is None:
         return answer("needs_reconnect")
     if not access.project_key:
