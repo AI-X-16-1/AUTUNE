@@ -27,10 +27,12 @@ export function TranscriptionControls({ meeting }: { meeting: MeetingDetail }) {
 
   // A press leaves `pending` set until the server's view changes. A restart
   // keeps the meeting `cancellable` (the new attempt is queued), so without
-  // this the 처리 중단 button would stay disabled until a remount.
+  // this the 처리 중단 button would stay disabled until a remount. A refusal
+  // shown for the old state is stale once the state moves, so it goes too.
   useEffect(() => {
     setPending(false);
     setConfirming(false);
+    setError(null);
   }, [meeting.stalled, meeting.restartable, meeting.cancellable]);
 
   if (!meeting.cancellable && !meeting.stalled) return null;
