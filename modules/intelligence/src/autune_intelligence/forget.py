@@ -11,12 +11,16 @@ E cannot read B's or C's tables, so it applies their rules to its copies with
 what it can see -- the utterances themselves, which still exist when the hook
 runs:
 
-- **B (``ExtractionResult``).** The work stays, the words go. An action item or
-  a decision drawn from a deleted utterance keeps its row; its text reads
-  ``SPEECH_DELETED_TEXT`` when it *is* the deleted line -- equal to it, or one
-  containing the other -- and stays when it is a summary or a person's
-  writing, as B decides. A per-utterance classification or ambiguous agreement
-  on a deleted utterance is dropped.
+- **B (``ExtractionResult``).** The work stays, the words go. An action item
+  still awaiting confirmation that was drawn from a deleted utterance is
+  dropped, as B deletes such a draft whatever it says. Any other item, and a
+  decision, keeps its entry; its text reads ``SPEECH_DELETED_TEXT`` when it *is*
+  one of its own deleted lines -- equal to it, the line with B's
+  " (담당 ..., 기한 ...)" tail, or, both long enough, one containing the other
+  -- and a decision's also when every line it came from is deleted (B replaces
+  a model decision with no cited lines). A summary or a person's writing
+  stays. A per-utterance classification or ambiguous agreement on a deleted
+  utterance is dropped.
 - **C (``GapReport``).** A topic goes only when every utterance it was built
   from goes, and its participation with it. A gap stays; a question naming a
   topic that went is cleared (C falls back to the template's general question,
@@ -70,13 +74,18 @@ def _norm(text: str) -> str:
 
 
 def _is_line(text: str, lines: Collection[str]) -> bool:
-    """Whether ``text`` is one of the deleted lines: equal to it, or -- both long
-    enough to mean something -- one containing the other."""
+    """Whether ``text`` is one of ``lines`` -- the deleted lines its own entry was
+    drawn from, so a short line cannot match some other entry's text.
+
+    Equal to it; the line with the " (담당 ..., 기한 ...)" tail B adds to a
+    decision it lifted verbatim (#725 review); or, both long enough to mean
+    something, one containing the other.
+    """
     t = _norm(text)
     if not t:
         return False
     for line in lines:
-        if t == line:
+        if t == line or t.startswith(line + " ("):
             return True
         if len(t) >= _MIN_QUOTE and len(line) >= _MIN_QUOTE and (t in line or line in t):
             return True
@@ -88,10 +97,11 @@ def forget_speech(session: Session, utterance_ids: Collection[str]) -> SpeechFor
     if not gone:
         return SpeechForgotten()
     rows = session.execute(
-        sa.select(Utterance.meeting_id, Utterance.text).where(Utterance.id.in_(gone))
+        sa.select(Utterance.id, Utterance.meeting_id, Utterance.text).where(Utterance.id.in_(gone))
     ).all()
-    meetings = sorted({meeting_id for meeting_id, _ in rows})
-    lines = {_norm(text) for _, text in rows if _norm(text)}
+    meetings = sorted({meeting_id for _, meeting_id, _ in rows})
+    line_of = {utterance_id: _norm(text) for utterance_id, _, text in rows if _norm(text)}
+    lines = set(line_of.values())
     if not meetings:
         return SpeechForgotten()
 
@@ -105,7 +115,7 @@ def forget_speech(session: Session, utterance_ids: Collection[str]) -> SpeechFor
     ):
         if completion.extraction_payload is not None:
             payload, n = _forget_extraction(
-                completion.extraction_payload, gone, lines, replaced, redacted_decisions
+                completion.extraction_payload, gone, line_of, replaced, redacted_decisions
             )
             completion.extraction_payload, texts = payload, texts + n
         if completion.gap_payload is not None:
@@ -135,7 +145,7 @@ def forget_speech(session: Session, utterance_ids: Collection[str]) -> SpeechFor
 def _forget_extraction(
     payload: dict[str, Any],
     gone: set[str],
-    lines: set[str],
+    line_of: dict[str, str],
     replaced: set[str],
     redacted_decisions: dict[str, str],
 ) -> tuple[dict[str, Any], int]:
@@ -144,9 +154,16 @@ def _forget_extraction(
     items = []
     for item in payload.get("action_items", []):
         item = dict(item)
-        if gone & set(item.get("source_utterance_ids", [])) and _is_line(
-            item.get("description", ""), lines
-        ):
+        own = gone & set(item.get("source_utterance_ids", []))
+        if not own:
+            items.append(item)
+            continue
+        if item.get("status", "needs_confirmation") == "needs_confirmation":
+            # Nobody accepted it: B deletes the draft, whatever it says (#725 review).
+            replaced.add(item.get("description", ""))
+            changed += 1
+            continue
+        if _is_line(item.get("description", ""), [line_of[u] for u in own if u in line_of]):
             replaced.add(item["description"])
             item["description"] = SPEECH_DELETED_TEXT
             changed += 1
@@ -155,8 +172,17 @@ def _forget_extraction(
     decisions = []
     for decision in payload.get("decisions", []):
         decision = dict(decision)
-        if gone & set(decision.get("source_utterance_ids", [])) and _is_line(
-            decision.get("statement", ""), lines
+        sources = set(decision.get("source_utterance_ids", []))
+        own = gone & sources
+        if (
+            own
+            and decision.get("statement") != SPEECH_DELETED_TEXT
+            and (
+                own == sources
+                or _is_line(
+                    decision.get("statement", ""), [line_of[u] for u in own if u in line_of]
+                )
+            )
         ):
             replaced.add(decision["statement"])
             redacted_decisions[decision["id"]] = decision["statement"]
@@ -301,8 +327,9 @@ def _forget_in_reports(session: Session, meetings: Iterable[str], quoted: set[st
 def _replace_quotes(text: str, needles: list[str]) -> str:
     for needle in needles:
         if len(needle) < _MIN_QUOTE and needle != _norm(text):
-            # A short text is replaced only where it stands as a whole line.
-            pattern = re.compile(rf"(?m)^(\s*(?:[-•*]\s*)?){re.escape(needle)}\s*$")
+            # A short text is replaced only where it stands as a line's own text:
+            # the whole line, or a bullet's head before " — owner · date".
+            pattern = re.compile(rf"(?m)^(\s*(?:[-•*]\s*)?){re.escape(needle)}(?=\s*(?:—|$))")
             text = pattern.sub(lambda m: m.group(1) + SPEECH_DELETED_TEXT, text)
             continue
         text = text.replace(needle, SPEECH_DELETED_TEXT)

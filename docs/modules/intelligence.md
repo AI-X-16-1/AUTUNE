@@ -397,11 +397,16 @@ exactly what a surveillance feature looks like. Read
   `service.py`, which every router import reaches) runs `forget.forget_speech`
   before A deletes the utterances, applying B's and C's rules to E's copies --
   the work stays, the words go:
-  - B's copy: an item or decision drawn from the speech reads "삭제된 발화에서
-    만든 항목" when its text is the deleted line (equal, or one containing the
-    other); a summary or a person's writing stays. E cannot see B's edit
+  - B's copy: an item still awaiting confirmation that was drawn from the
+    speech is dropped, as B deletes such a draft. Any other item, and a
+    decision, reads "삭제된 발화에서 만든 항목" when its text is one of its own
+    deleted lines -- equal, the line with B's " (담당 ..., 기한 ...)" tail, or one
+    containing the other -- and a decision also when every line it came from
+    is deleted. A summary or a person's writing stays. E cannot see B's edit
     history, so it errs toward replacing. Classifications and ambiguous
     agreements on the speech are dropped.
+  - Not covered here: the agent layer's run records and pending-action
+    arguments that hold Report output -- mkkim68's, a #614 follow-up.
   - C's copy: a topic built only from the speech goes with its participation,
     and a question naming it is cleared -- this covers a meeting C leaves with
     no topic and does not republish.

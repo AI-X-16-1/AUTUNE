@@ -31,6 +31,10 @@ SUMMARY = "결제 API 명세 정리"
 """A model's summary of the line: the team's record, as B keeps it."""
 
 
+CONFIRMED = {"status": "todo"}
+"""A confirmed item: it keeps its entry. A draft awaiting confirmation does not."""
+
+
 def _meeting(db_session: Session, team: str, day: int = 2) -> str:
     row = Meeting(
         team_id=team, title="결제 회의", started_at=datetime(2026, 10, day, 5, tzinfo=UTC)
@@ -56,9 +60,19 @@ def _copies(
         "contract_version": "2.4",
         "meeting_id": meeting,
         "action_items": [
-            {"id": "act_line", "description": LINE, "source_utterance_ids": [mine]},
-            {"id": "act_summary", "description": SUMMARY, "source_utterance_ids": [mine]},
-            {"id": "act_other", "description": OTHER, "source_utterance_ids": [theirs]},
+            {"id": "act_line", "description": LINE, "source_utterance_ids": [mine], **CONFIRMED},
+            {
+                "id": "act_summary",
+                "description": SUMMARY,
+                "source_utterance_ids": [mine],
+                **CONFIRMED,
+            },
+            {
+                "id": "act_other",
+                "description": OTHER,
+                "source_utterance_ids": [theirs],
+                **CONFIRMED,
+            },
         ],
         "decisions": [
             {"id": "dec_line", "statement": LINE, "source_utterance_ids": [mine]},
@@ -266,3 +280,86 @@ def test_the_hook_is_registered_where_a_router_is_imported() -> None:
     )
     result = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
+
+
+# --- the cases #725's review found -----------------------------------------------------
+
+
+def test_what_b_deletes_or_rewrites_goes_from_es_copy_too(db_session: Session, team: str) -> None:
+    """A draft nobody confirmed goes whatever it says; a short line is caught with
+    B's " (담당 ..., 기한 ...)" tail; a decision every line of which is deleted is
+    replaced even when tidied; a short item at the head of a report line goes."""
+    meeting = _meeting(db_session, team)
+    long_line = _utterance(db_session, meeting, LINE, 1.0)
+    short_line = _utterance(db_session, meeting, "네 그렇게 하죠", 4.0)
+    deploy = _utterance(db_session, meeting, "배포하기", 7.0)
+    theirs = _utterance(db_session, meeting, OTHER, 10.0)
+    tailed = "네 그렇게 하죠 (담당 민구, 기한 2026-10-09)"
+    db_session.add(
+        IntelCompletion(
+            meeting_id=meeting,
+            first_seen_at=datetime.now(UTC),
+            extraction_payload={
+                "contract_version": "2.4",
+                "meeting_id": meeting,
+                "action_items": [
+                    {
+                        "id": "act_draft",
+                        "description": "결제 명세 초안 작성",
+                        "source_utterance_ids": [long_line],
+                        "status": "needs_confirmation",
+                    },
+                    {
+                        "id": "act_deploy",
+                        "description": "배포하기",
+                        "source_utterance_ids": [deploy],
+                        **CONFIRMED,
+                    },
+                ],
+                "decisions": [
+                    {
+                        # Somebody else's line is a source too: only the tail rule finds it.
+                        "id": "dec_short",
+                        "statement": tailed,
+                        "source_utterance_ids": [short_line, theirs],
+                    },
+                    {
+                        "id": "dec_tidy",
+                        "statement": "API 일정은 금요일로 확정",
+                        "source_utterance_ids": [long_line],
+                    },
+                    {
+                        "id": "dec_mixed",
+                        "statement": "디자인은 다음 주 재검토",
+                        "source_utterance_ids": [long_line, theirs],
+                    },
+                ],
+            },
+        )
+    )
+    db_session.flush()
+    row = db_session.get(Meeting, meeting)
+    assert row is not None
+    body = f"• 배포하기 — 김민경 · 10/5\n• {tailed}\n• 디자인은 다음 주 재검토\n• 배포하기 자동화"
+    service.save_meeting_report(
+        db_session, meeting, service.meeting_report_document(row, body), draft_id="rdr_a"
+    )
+
+    forget_speech(db_session, [long_line, short_line, deploy])
+
+    copy = db_session.get(IntelCompletion, meeting)
+    assert copy is not None and copy.extraction_payload is not None
+    items = {i["id"]: i["description"] for i in copy.extraction_payload["action_items"]}
+    decisions = {d["id"]: d["statement"] for d in copy.extraction_payload["decisions"]}
+    assert items == {"act_deploy": SPEECH_DELETED_TEXT}  # the draft is gone
+    assert decisions == {
+        "dec_short": SPEECH_DELETED_TEXT,
+        "dec_tidy": SPEECH_DELETED_TEXT,
+        "dec_mixed": "디자인은 다음 주 재검토",  # somebody else's line too, not the line
+    }
+    report = db_session.get(IntelMeetingReport, meeting)
+    assert report is not None
+    assert "네 그렇게 하죠" not in report.body_markdown
+    assert f"• {SPEECH_DELETED_TEXT} — 김민경 · 10/5" in report.body_markdown
+    assert "• 배포하기 자동화" in report.body_markdown  # another item that only starts so
+    assert "디자인은 다음 주 재검토" in report.body_markdown
