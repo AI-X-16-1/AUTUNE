@@ -14,6 +14,7 @@ from langgraph.graph import END, START, StateGraph
 
 from .main.registry import Tool, Toolbox
 from .main.subagents import CompiledSubagent, Subagent, SubagentState
+from .main.toolcall import Declaration, Step, tools_body
 from .results import SubagentResult, ToolResult
 
 
@@ -87,3 +88,28 @@ def example_subagent(name: str, tools: tuple[str, ...]) -> Subagent:
         tools=tools,
         build=build,
     )
+
+
+class ScriptedToolModel:
+    """A ``ToolModel`` that replies from a script: a list of calls, or text.
+
+    ``sent`` keeps every body it was handed, so a test can read what would
+    have left. It runs the same request builder ``GeminiTools`` does.
+    """
+
+    def __init__(self, steps: list[Step]) -> None:
+        self._steps = list(steps)
+        self.sent: list[dict[str, Any]] = []
+        self.last_parts: list[dict[str, Any]] = []
+
+    def step(
+        self, instructions: str, turns: list[dict[str, Any]], declarations: list[Declaration]
+    ) -> Step:
+        self.sent.append(tools_body(instructions, [dict(t) for t in turns], declarations))
+        reply = self._steps.pop(0) if self._steps else "DONE"
+        self.last_parts = (
+            [{"functionCall": {"name": c.name, "args": c.args}} for c in reply]
+            if isinstance(reply, list)
+            else [{"text": reply}]
+        )
+        return reply
