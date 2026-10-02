@@ -1310,17 +1310,26 @@ def test_the_sweep_handles_a_vanished_job_file(
     """A file can vanish between listing and stat: a worker deletes it in
     ``adopt``'s finally while the job row still reads ``running``. The sweep
     must not abort when this race occurs; a file that disappeared is nothing
-    to do. Simulated by removing the file before stale() calls stat()."""
+    to do.
+
+    The race: is_file() in the listing calls stat() [first call]. Then
+    stale() calls stat() [second call]. We unlink on the second call to
+    simulate a worker finishing between the two checks.
+    """
     orphan = _job(db_session, meeting, "running")
     orphan_file = _upload(settings, orphan)
 
-    # Monkeypatch Path.stat to simulate the file being deleted after listing
-    # but before this stat() call. Only patch the one we care about.
+    # Count stat calls on this file to unlink after the listing check
+    # (is_file) but before stale() is called.
+    stat_calls: dict[Path, int] = {}
     original_stat = Path.stat
 
     def patched_stat(self: Path, **kwargs: object) -> object:
         if self == orphan_file:
-            orphan_file.unlink(missing_ok=True)
+            stat_calls[self] = stat_calls.get(self, 0) + 1
+            if stat_calls[self] == 2:
+                # First call was is_file() in the listing; this is stale()
+                orphan_file.unlink(missing_ok=True)
         return original_stat(self, **kwargs)
 
     monkeypatch.setattr(Path, "stat", patched_stat)
