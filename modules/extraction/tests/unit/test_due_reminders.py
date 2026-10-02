@@ -581,3 +581,24 @@ def test_a_description_cannot_mention_a_channel_or_disguise_a_link(
     assert "회의: 주간 &lt;!here&gt; 회의" in text
     # The link the reminder itself adds is not escaped.
     assert text.splitlines()[-1] == "http://localhost:3000/meetings/mtg_1/actions"
+
+
+def test_every_refused_reminder_is_named_not_only_the_last(
+    session: Session, slack: FakeSlack
+) -> None:
+    """Two descriptions the outbound check refuses in one run, and one it does
+    not. The one that can go goes; the error names both of the others -- "the
+    item ids", plural. Found unpinned by pr's mutation run on #751: keeping only
+    the latest violation passed every test."""
+    item(session, "act_a_bad", description="010-1234-5678로 전화하기")
+    item(session, "act_b_bad", assignee=PARK, description="kim@example.com에게 메일 보내기")
+    item(session, "act_c_fine", assignee=PARK, description="스펙 초안 공유")
+
+    with pytest.raises(PrivacyViolationError) as caught:
+        tasks.remind_due_items()
+
+    message = str(caught.value)
+    assert "2 due reminder(s)" in message
+    assert "act_a_bad" in message and "act_b_bad" in message
+    assert [m.text.splitlines()[1] for m in slack.sent] == ["• 스펙 초안 공유"]
+    assert reminded(session) == [("act_c_fine", "due_soon", TOMORROW)]
