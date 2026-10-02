@@ -656,7 +656,17 @@ def sweep_orphans(
     cutoff = datetime.now(tz=UTC) - timedelta(hours=settings.orphan_after_hours)
 
     def stale(path: Path) -> bool:
-        return datetime.fromtimestamp(path.stat().st_mtime, tz=UTC) < cutoff
+        """Check if a file's mtime is older than the cutoff.
+
+        Returns False if the file has vanished since listing -- a race where
+        a worker deleted it after enqueue but before this sweep reached it.
+        Treating it as "not stale" (nothing to do) is correct for all callers:
+        unassigned files, files between assign and commit, and job files.
+        """
+        try:
+            return datetime.fromtimestamp(path.stat().st_mtime, tz=UTC) < cutoff
+        except FileNotFoundError:
+            return False
 
     files = [path for path in directory.iterdir() if path.is_file()]
     by_job = {jid: path for path in files if (jid := storage.job_id_of(path)) is not None}
