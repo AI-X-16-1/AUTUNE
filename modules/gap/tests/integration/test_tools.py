@@ -195,7 +195,7 @@ def test_another_teams_meeting_reads_as_missing(team_id: str, other_team: str) -
     for fn in (tools.open_gaps, tools.recurring_open_gaps):
         result = call(fn, team_id, theirs)
         assert not result["ok"]
-    assert result["items"] == []
+        assert result["items"] == []
 
     result = call(tools.gaps_by_id, team_id, theirs, gap_ids=gap_ids(theirs))
     assert not result["ok"]
