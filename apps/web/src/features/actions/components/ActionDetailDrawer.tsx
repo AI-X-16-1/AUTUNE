@@ -7,6 +7,7 @@ import { Button, MaskedText, Quote, StatusDot } from "@/shared/ui";
 import { ConfirmDelete } from "./ConfirmDelete";
 import { ContextLines } from "./ContextLines";
 import { useSourceUtterances } from "../hooks/useSourceUtterances";
+import { CONFIRMED_NOTICE, confirms } from "../board";
 import { COLUMNS, COLUMN_LABELS, isCandidate } from "../types";
 import type { ActionItemRead, ActionStatus, EditHistoryEntry } from "../types";
 
@@ -49,6 +50,10 @@ export function ActionDetailDrawer({
   // reason, and a failed delete otherwise closes the dialog and leaves the
   // drawer open saying nothing. Raised in review of #292.
   const [failure, setFailure] = useState<string | null>(null);
+  // A status change out of "확인 필요" confirms the item, which copies it to
+  // the tools the team connected. A drop on the board says so afterwards
+  // (#712); the same change made here said nothing (review of #717).
+  const [notice, setNotice] = useState<string | null>(null);
   // The select is controlled by `item.status`, so while a PATCH is in flight it
   // still shows the old value. Left enabled, a second pick sends a second PATCH
   // and the board ends on whichever response lands last. Raised in review of #292.
@@ -150,9 +155,12 @@ export function ActionDetailDrawer({
           <div className="flex shrink-0 items-center gap-3">
             {/* Destructive actions are red text, then a modal. Red never fills
                 a button, and there is no undo afterwards — the row is gone. */}
+            {/* Named for what it deletes: beside 닫기, a bare "삭제" read aloud
+                does not say of what (review of #722). */}
             <Button
               tone="destructiveText"
               size="compact"
+              aria-label="항목 삭제"
               onClick={() => setConfirming(true)}
             >
               삭제
@@ -187,10 +195,14 @@ export function ActionDetailDrawer({
               disabled={changing}
               aria-busy={changing || undefined}
               onChange={async (event) => {
+                const next = event.target.value as ActionStatus;
+                const confirmed = confirms(item, next);
                 setFailure(null);
+                setNotice(null);
                 setChanging(true);
                 try {
-                  await onStatusChange?.(event.target.value as ActionStatus);
+                  await onStatusChange?.(next);
+                  if (confirmed) setNotice(CONFIRMED_NOTICE);
                 } catch {
                   setFailure(
                     "상태를 바꾸지 못했습니다. 잠시 후 다시 시도해 주세요.",
@@ -216,6 +228,15 @@ export function ActionDetailDrawer({
               ))}
             </select>
           </Field>
+          {notice !== null ? (
+            <p
+              role="status"
+              className="mt-2 text-[var(--color-ink-muted)]"
+              style={{ fontSize: "var(--text-metaSmall)" }}
+            >
+              {notice}
+            </p>
+          ) : null}
 
           <section className="mt-6">
             <SectionTitle>근거 발화</SectionTitle>
