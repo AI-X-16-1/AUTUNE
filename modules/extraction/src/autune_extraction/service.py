@@ -48,7 +48,12 @@ from autune_core import (
 from autune_core.errors import NotFoundError, ValidationError
 from autune_core.settings import get_settings as get_core_settings
 from autune_core.user_integrations import users_linked_to_slack_member
-from autune_integrations import PermanentIntegrationError, SlackApi, assert_personal_delivery
+from autune_integrations import (
+    PermanentIntegrationError,
+    PostedMessage,
+    SlackApi,
+    assert_personal_delivery,
+)
 from autune_integrations.privacy import find_unmasked
 
 from .config import get_settings
@@ -128,7 +133,7 @@ def send_confirmation_dm(
     utterance_id: str,
     quoted_text: str,
     answer_url: str,
-) -> str:
+) -> PostedMessage:
     """Ask one speaker whether their own weak assent was a commitment.
 
     ``speaker_id`` and ``recipient_id`` are both taken rather than one, so the
@@ -154,11 +159,11 @@ def send_confirmation_dm(
         answer_url=answer_url,
         buttons=get_core_settings().slack_buttons,
     )
-    timestamp = slack.send_dm(recipient_id, text, blocks)
+    sent = slack.send_dm_message(recipient_id, text, blocks)
 
     # Ids only. The utterance is meeting content and a log line is a store.
     log.info("extraction_confirmation_sent", utterance_id=utterance_id)
-    return timestamp
+    return sent
 
 
 def ask_for_confirmation(
@@ -196,7 +201,7 @@ def ask_for_confirmation(
         # Ids only, and no send. Another run holds this question.
         log.info("extraction_confirmation_already_asked", utterance_id=utterance_id)
         return None
-    send_confirmation_dm(
+    sent = send_confirmation_dm(
         slack,
         speaker_id=speaker_id,
         recipient_id=recipient_id,
@@ -204,6 +209,10 @@ def ask_for_confirmation(
         quoted_text=quoted_text,
         answer_url=answer_url,
     )
+    # Where it landed and what it quoted, so a later correction of the line can
+    # be carried into the DM itself (#586).
+    row.dm_channel, row.dm_ts = sent.channel or None, sent.ts or None
+    row.dm_digest = source_digest([quoted_text])
     return row
 
 
@@ -339,6 +348,22 @@ def answer_confirmation(
         ),
     )
     return MyConfirmation(utterance_id=utterance_id, text=own[1], answer=answer)  # type: ignore[arg-type]
+
+
+def dms_to_correct(session: Session, *, meeting_id: str, spoken: Mapping[str, str]) -> list[str]:
+    """Utterance ids whose confirmation DM quotes a line that has since been
+    corrected (#586): sent with a place kept, and the line no longer hashing to
+    what the DM quoted."""
+    stale: list[str] = []
+    for row in session.scalars(
+        select(ExtConfirmation).where(
+            ExtConfirmation.meeting_id == meeting_id, ExtConfirmation.dm_ts.is_not(None)
+        )
+    ):
+        text = spoken.get(row.utterance_id)
+        if text is not None and row.dm_digest != source_digest([text]):
+            stale.append(row.utterance_id)
+    return stale
 
 
 def apply_confirmation_response(response: ConfirmationResponse) -> None:
@@ -2667,9 +2692,10 @@ def resolve_decision_summaries(
 
 
 def source_digest(texts: Sequence[str]) -> str:
-    """sha256 of the masked texts an item or decision was drawn from, in source
-    order -- not reversible, the #518 consent-key pattern. What a later run
-    compares to notice that a line was corrected (#586)."""
+    """sha256 of the masked texts an item or decision was drawn from, or a
+    confirmation DM quotes, in source order -- not reversible, the #518
+    consent-key pattern. What a later run compares to notice that a line was
+    corrected (#586)."""
     return hashlib.sha256("\x1f".join(texts).encode("utf-8")).hexdigest()
 
 

@@ -56,11 +56,13 @@ from autune_integrations import (
 from autune_integrations.errors import SlackRecipientNotLinkedError
 
 from . import calendar_sync, jira_sync, notion_backfill, notion_setup, service
+from .confirmations import build_confirmation_dm
 from .models import (
     ExtActionItem,
     ExtCalendarCleanup,
     ExtCalendarEvent,
     ExtCalendarPoll,
+    ExtConfirmation,
     ExtDecision,
     ExtExternalRef,
 )
@@ -204,11 +206,20 @@ def _extract(meeting_id: str, utterances: Sequence[TranscriptUtterance]) -> None
         corrections = service.apply_source_corrections(
             session, meeting_id=meeting_id, spoken={u.id: u.text for u in utterances}
         )
+        # A DM that quotes a line corrected since it went out (#586).
+        stale_dms = service.dms_to_correct(
+            session, meeting_id=meeting_id, spoken={u.id: u.text for u in utterances}
+        )
         # With the rows it describes: a rollback takes both (#518).
         service.record_extraction(session, meeting_id=meeting_id, consented=consented)
         result = service.result_for_meeting(session, meeting_id)
 
     _follow_corrections(corrections)
+    for utterance_id in stale_dms:
+        try:
+            update_confirmation_dm.delay(utterance_id)
+        except Exception as exc:  # noqa: BLE001 -- queuing only; the next run finds it again
+            log.warning("extraction_dm_correction_not_queued", error=type(exc).__name__)
     # Counts and ids only. The utterances are meeting content.
     log.info(
         "extraction_classified",
@@ -1176,6 +1187,49 @@ def sync_decision_after_confirmation(decision_id: str) -> None:
         log.warning(
             "extraction_notion_decision_sync_blocked_by_privacy_guard", decision_id=decision_id
         )
+
+
+@shared_task(name="autune.extraction.update_confirmation_dm", acks_late=True)
+def update_confirmation_dm(utterance_id: str) -> bool:
+    """Carry a corrected line into the confirmation DM that quoted it (#586).
+
+    A PII report masks a stored line again; the DM sent before it still quotes
+    the old text. This rebuilds the DM from the line as stored now and replaces
+    the message in place (``chat.update``) through the team's Slack bot, the
+    same outbound check as any send reading the new blocks. Only a DM whose
+    place was kept can be corrected -- one sent before that cannot. A Slack
+    failure is logged and the next run finds the DM again; a privacy refusal is
+    raised, never swallowed. Returns whether the DM was updated.
+    """
+    with session_scope() as session:
+        row = session.get(ExtConfirmation, utterance_id)
+        said = session.get(Utterance, utterance_id)
+        meeting = session.get(Meeting, row.meeting_id) if row is not None else None
+        if row is None or said is None or meeting is None or not row.dm_channel or not row.dm_ts:
+            return False
+        config = load_integration(session, meeting.team_id, "slack")
+        if config is None or not config.secret:
+            return False
+        text, blocks = build_confirmation_dm(
+            utterance_id=utterance_id,
+            quoted_text=said.text,
+            answer_url=service.answer_url(row.meeting_id),
+            buttons=get_core_settings().slack_buttons,
+        )
+        try:
+            SlackClient(config.require_secret()).update_message(
+                row.dm_channel, row.dm_ts, text, blocks
+            )
+        except IntegrationError as exc:
+            log.warning(
+                "extraction_dm_correction_failed",
+                utterance_id=utterance_id,
+                error=type(exc).__name__,
+            )
+            return False
+        row.dm_digest = service.source_digest([said.text])
+    log.info("extraction_dm_corrected", utterance_id=utterance_id)
+    return True
 
 
 @on_speech_deleted("extraction")

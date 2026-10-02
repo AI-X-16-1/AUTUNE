@@ -673,6 +673,15 @@ class ExtConfirmation(Base, TimestampMixin):
     resolved_kind: Mapped[str | None] = mapped_column(String(32))
     responded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
+    dm_channel: Mapped[str | None] = mapped_column(String(32))
+    dm_ts: Mapped[str | None] = mapped_column(String(32))
+    """Where the DM landed -- Slack's ``D...`` conversation and the message's
+    ``ts`` -- so a quotation masked again after a PII report can be corrected in
+    place (#586). Empty for a DM sent before this was kept: that one cannot be."""
+
+    dm_digest: Mapped[str | None] = mapped_column(String(64))
+    """``service.source_digest`` of the line the DM quotes, to tell that it changed."""
+
     def outcome_at(self, now: datetime | None = None) -> str:
         """``resolved``, ``undecided``, ``pending`` or ``not_asked`` as of ``now``.
 
